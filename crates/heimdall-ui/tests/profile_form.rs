@@ -1095,6 +1095,53 @@ fn the_multi_monitor_picker_shows_the_screens_as_listed_not_as_drawn() {
 }
 
 #[test]
+fn a_refused_save_counts_the_fields_to_fix_on_each_tab_header_as_the_csharp_badges() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let set = |shell: &mut Shell, field, value: &str| {
+        let _ = shell.update(app(AppMessage::ProfileField {
+            field,
+            value: value.to_owned(),
+        }));
+    };
+    set(&mut shell, ProfileField::Host, "dc.lab:3389");
+    set(&mut shell, ProfileField::RdGateway, "https://rdg.lab:443");
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("2").is_err(), "nothing counted before a save");
+    }
+    let _ = shell.update(Message::SaveProfileForm);
+    snapshot(&shell, "profile-error-badges.png");
+    // The name missing and the port in the address on General, the RD Gateway on Network.
+    let badge_beside = |ui: &mut common::Drawn<'_>, tab: &str, count: &str| {
+        let header = ui.find(tab).expect(tab).bounds();
+        let badge = ui.find(count).expect(count).bounds();
+        assert!(
+            badge.x > header.x + header.width && (badge.center_y() - header.center_y()).abs() < 4.0,
+            "{count} beside {tab}: {header:?} {badge:?}"
+        );
+    };
+    {
+        let mut ui = simulator(&shell);
+        badge_beside(&mut ui, "General", "2");
+        badge_beside(&mut ui, "Network", "1");
+    }
+    // Fixed, a field leaves its tab's count, the others stay until fixed in turn.
+    set(&mut shell, ProfileField::Name, "dc");
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("2").is_err(), "one left on General");
+        badge_beside(&mut ui, "General", "1");
+    }
+    set(&mut shell, ProfileField::Host, "dc.lab");
+    set(&mut shell, ProfileField::RdGateway, "rdg.lab");
+    let mut ui = simulator(&shell);
+    assert!(ui.find("1").is_err(), "nothing left to fix");
+}
+
+#[test]
 fn an_rd_gateway_that_is_no_host_name_is_refused_with_the_csharp_reason() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());

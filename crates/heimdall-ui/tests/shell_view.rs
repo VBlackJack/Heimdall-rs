@@ -189,6 +189,34 @@ fn the_sidebar_lists_profiles_by_group_and_a_click_opens_one() {
 }
 
 #[test]
+fn a_folder_in_a_folder_and_its_sessions_step_right_beside_the_csharp_indent_guides() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([profile("a", Some("Production/Web"))]);
+    store.save().expect("save");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    snapshot(&shell, "tree-guides.png");
+    let mut ui = simulator(&shell);
+    let left = |ui: &mut common::Drawn<'_>, label: &str| ui.find(label).expect(label).bounds().x;
+    let outer = left(&mut ui, "Production");
+    let inner = left(&mut ui, "Web");
+    let session = left(&mut ui, "server a");
+    assert!(
+        outer < inner && inner < session,
+        "one indent per folder: {outer} {inner} {session}"
+    );
+}
+
+#[test]
 fn a_password_question_is_answered_from_the_field_and_its_draft_is_wiped() {
     let dir = tempfile::tempdir().expect("dir");
     let mut core = app(dir.path());
@@ -1267,14 +1295,63 @@ fn the_session_selected_is_shown_in_detail_until_one_is_open() {
     let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
     snapshot(&shell, "detail.png");
     let mut ui = simulator(&shell);
-    for label in ["a.lab:22", "Folder:", "Username:", "admin"] {
+    for label in ["a.lab : 22", "Folder:", "Username:", "admin"] {
         ui.find(label).expect(label);
     }
+    assert!(ui.find("Favorite:").is_err(), "not a favourite");
     ui.click("Connect").expect("Connect");
     assert!(ui.into_messages().any(|message| matches!(
         &message,
         Message::App(AppMessage::ConnectProfile(id)) if id.as_str() == "a"
     )));
+}
+
+#[test]
+fn a_favourite_is_marked_in_detail_by_the_csharp_star_and_not_by_a_word() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::ProfileMenu(
+        heimdall_app::ProfileMenuMessage::Favorite {
+            id: ProfileId::new("a"),
+            favorite: true,
+        },
+    )));
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    snapshot(&shell, "detail-favorite.png");
+    let mut ui = simulator(&shell);
+    ui.find("Favorite:").expect("the favourite's line");
+    assert!(
+        ui.find("Yes").is_err(),
+        "a star, as the C# glyph, not a word"
+    );
+}
+
+#[test]
+fn a_name_dialog_has_the_csharp_layout_prompt_above_its_field_and_the_action_at_the_bottom_right() {
+    use heimdall_app::FolderMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::MenuChoice(AppMessage::Folder(
+        FolderMessage::New {
+            parent: String::new(),
+        },
+    )));
+    snapshot(&shell, "folder-name-dialog.png");
+    let mut ui = simulator(&shell);
+    let title = ui.find("New Folder").expect("title").bounds();
+    let prompt = ui.find("Folder name:").expect("prompt").bounds();
+    let cancel = ui.find("Cancel").expect("Cancel").bounds();
+    let create = ui.find("Create").expect("Create").bounds();
+    assert!(title.y < prompt.y && prompt.y < cancel.y, "top to bottom");
+    assert!(
+        (cancel.center_y() - create.center_y()).abs() < 1.0 && cancel.x < create.x,
+        "Cancel, then the action, on one line"
+    );
+    assert!(
+        create.x > title.x + title.width,
+        "at the right, past the title: {title:?} {create:?}"
+    );
 }
 
 #[test]

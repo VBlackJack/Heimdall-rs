@@ -39,13 +39,13 @@ use heimdall_files::Refusal;
 use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
 use iced::widget::{
-    Column, Row, button, center, column, container, mouse_area, responsive, row, scrollable, text,
-    text_input, tooltip,
+    Column, Row, button, center, checkbox, column, container, mouse_area, responsive, row,
+    scrollable, text, text_input, tooltip,
 };
 use iced::{Alignment, Element, Font, Length, Theme};
 
 use crate::i18n::fl;
-use crate::icons::{self, Icon, Tint};
+use crate::icons::{self, Hue, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
 use crate::texts;
@@ -680,15 +680,77 @@ fn headers<'a, E: Listed>(
         .into()
 }
 
-/// The icon before an entry's name, as the C# list's: a folder or a link in the info
-/// colour, a file in the secondary text, a pipe, a socket or a device in the info colour.
-fn entry_icon<'a>(kind: EntryKind) -> Element<'a, Message> {
-    let (icon, tint) = match kind {
+/// What a file holds, by its extension, as the C# `FileIconConverter` and
+/// `FileIconColorConverter` of the local file browser sort it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileCategory {
+    /// `.ps1`, `.bat`, `.cmd`, `.sh`.
+    Script,
+    /// `.json`, `.xml`, `.yaml`, `.yml`, `.conf`, `.cfg`, `.ini`.
+    Config,
+    /// `.log`, `.txt`, `.md`, and every extension the C# does not sort.
+    Document,
+    /// `.zip`, `.tar`, `.gz`, `.7z`, `.rar`.
+    Archive,
+    /// `.exe`, `.msi`, `.dll`.
+    Executable,
+    /// `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.svg`.
+    Image,
+}
+
+impl FileCategory {
+    /// The category of a file named `name`, by its extension as .NET's
+    /// `Path.GetExtension` reads it: from its last dot, whatever its case.
+    fn of(name: &str) -> Self {
+        let extension = name
+            .rfind('.')
+            .map(|dot| name[dot + 1..].to_ascii_lowercase())
+            .unwrap_or_default();
+        match extension.as_str() {
+            "ps1" | "bat" | "cmd" | "sh" => Self::Script,
+            "json" | "xml" | "yaml" | "yml" | "conf" | "cfg" | "ini" => Self::Config,
+            "zip" | "tar" | "gz" | "7z" | "rar" => Self::Archive,
+            "exe" | "msi" | "dll" => Self::Executable,
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" => Self::Image,
+            _ => Self::Document,
+        }
+    }
+
+    /// Its glyph and colour, as the C# converters pick them: `CommandPrompt` green,
+    /// `Setting` cyan, `Page` in the comment colour, `Package` orange, `Zoom` pink, `Photo2`
+    /// yellow.
+    const fn icon(self) -> (Icon, Hue) {
+        match self {
+            Self::Script => (Icon::CommandPrompt, Hue::Green),
+            Self::Config => (Icon::Setting, Hue::Cyan),
+            Self::Document => (Icon::Page, Hue::Comment),
+            Self::Archive => (Icon::Package, Hue::Orange),
+            Self::Executable => (Icon::Zoom, Hue::Pink),
+            Self::Image => (Icon::Photo, Hue::Yellow),
+        }
+    }
+}
+
+/// The icon and colour before an entry's name, as the C# lists': a folder or a link in the
+/// info colour, a pipe, a socket or a device in the info colour; a file of the server in
+/// the secondary text, as the C# SFTP list, and one of this computer by its extension, as
+/// the C# local file browser.
+fn entry_glyph<E: Listed>(entry: &E, side: Side) -> (Icon, Tint) {
+    match entry.kind() {
         EntryKind::Directory => (Icon::FolderGlyph, Tint::Info),
         EntryKind::Link => (Icon::Link, Tint::Info),
+        EntryKind::File if side == Side::Local => {
+            let (icon, hue) = FileCategory::of(entry.label()).icon();
+            (icon, Tint::Hue(hue))
+        }
         EntryKind::File => (Icon::Page, Tint::Secondary),
         EntryKind::Other(_) => (Icon::Info, Tint::Info),
-    };
+    }
+}
+
+/// [`entry_glyph`] drawn.
+fn entry_icon<'a, E: Listed>(entry: &E, side: Side) -> Element<'a, Message> {
+    let (icon, tint) = entry_glyph(entry, side);
     icons::icon(icon, tint, ENTRY_ICON_SIDE)
 }
 
@@ -707,7 +769,7 @@ fn entry_row<'a, E: Listed>(
         let cell = text(cell_text(entry, *column)).wrapping(text::Wrapping::None);
         let cell: Element<'a, Message> = match cell_size(*column) {
             Some(small) => cell.size(small).into(),
-            None => row![entry_icon(entry.kind()), cell]
+            None => row![entry_icon(entry, side), cell]
                 .spacing(ENTRY_ICON_GAP)
                 .align_y(Alignment::Center)
                 .into(),
@@ -952,7 +1014,9 @@ pub fn sudo_delete_question<'a>(names: &[String], more: usize) -> Element<'a, Me
     )
 }
 
-/// The C# filter and hidden-files toggle of a pane, lit while hidden names show.
+/// The C# filter and "Show hidden" check box of a pane, ticked while hidden names show: in
+/// the secondary text, its tooltip saying what it does, kept by the pane alone and ticked
+/// when a pane opens, as the C# `ShowHidden` of each SFTP view.
 fn pane_narrowing<'a>(
     tab: TabId,
     side: Side,
@@ -978,13 +1042,11 @@ fn pane_narrowing<'a>(
             emptied,
         ),
         tooltip(
-            button(text(fl!("ui-files-hidden-toggle")).size(font_size::CAPTION))
-                .style(if show_hidden {
-                    styles::primary
-                } else {
-                    styles::secondary
-                })
-                .on_press(files(FilesMessage::ToggleHidden { tab, side })),
+            checkbox(show_hidden)
+                .label(fl!("ui-files-hidden-toggle"))
+                .text_size(font_size::CAPTION)
+                .style(styles::quiet_checkbox)
+                .on_toggle(move |_| files(FilesMessage::ToggleHidden { tab, side })),
             text(fl!("ui-files-hidden-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
@@ -1857,6 +1919,74 @@ mod tests {
 
     fn named(key: Named) -> keyboard::Key {
         keyboard::Key::Named(key)
+    }
+
+    /// An entry of a list, only its kind and its name.
+    struct Entry(EntryKind, &'static str);
+
+    impl Listed for Entry {
+        fn kind(&self) -> EntryKind {
+            self.0
+        }
+        fn label(&self) -> &str {
+            self.1
+        }
+        fn size(&self) -> Option<u64> {
+            None
+        }
+        fn modified(&self) -> Option<SystemTime> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_file_is_sorted_by_its_extension_whatever_its_case_as_the_csharp_converters() {
+        for (name, expected) in [
+            ("deploy.PS1", FileCategory::Script),
+            ("run.sh", FileCategory::Script),
+            ("nginx.conf", FileCategory::Config),
+            ("values.YML", FileCategory::Config),
+            ("syslog.log", FileCategory::Document),
+            ("backup.tar.gz", FileCategory::Archive),
+            ("setup.msi", FileCategory::Executable),
+            ("logo.svg", FileCategory::Image),
+            ("Makefile", FileCategory::Document),
+            (".bashrc", FileCategory::Document),
+            ("notes.", FileCategory::Document),
+        ] {
+            assert_eq!(FileCategory::of(name), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn this_computers_files_take_their_extensions_glyph_and_colour_the_servers_stay_plain() {
+        let script = Entry(EntryKind::File, "deploy.ps1");
+        assert_eq!(
+            entry_glyph(&script, Side::Local),
+            (Icon::CommandPrompt, Tint::Hue(Hue::Green)),
+            "the C# local file browser"
+        );
+        assert_eq!(
+            entry_glyph(&Entry(EntryKind::File, "logo.png"), Side::Local),
+            (Icon::Photo, Tint::Hue(Hue::Yellow))
+        );
+        assert_eq!(
+            entry_glyph(&Entry(EntryKind::File, "README"), Side::Local),
+            (Icon::Page, Tint::Hue(Hue::Comment)),
+            "the C# FileDocumentBrush for the rest"
+        );
+        assert_eq!(
+            entry_glyph(&script, Side::Remote),
+            (Icon::Page, Tint::Secondary),
+            "the C# SFTP list draws every file alike"
+        );
+        for side in [Side::Local, Side::Remote] {
+            assert_eq!(
+                entry_glyph(&Entry(EntryKind::Directory, "conf.d"), side),
+                (Icon::FolderGlyph, Tint::Info),
+                "a folder is a folder, whatever its name"
+            );
+        }
     }
 
     #[test]

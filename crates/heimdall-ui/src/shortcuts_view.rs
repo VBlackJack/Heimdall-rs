@@ -244,9 +244,9 @@ pub fn view<'a>(ok: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         }
     }
     column![
-        text(fl!("ui-shortcuts-title")).size(font_size::TITLE),
+        crate::dialog_parts::title(fl!("ui-shortcuts-title")),
         styles::scroll(list).height(Length::Fixed(LIST_HEIGHT)),
-        text(fl!("ui-shortcuts-session-keys")).style(text::secondary),
+        crate::dialog_parts::note(fl!("ui-shortcuts-session-keys")),
         row![iced::widget::space::horizontal(), ok.into()],
     ]
     .spacing(spacing::SM)

@@ -27,7 +27,7 @@ use heimdall_app::{
 };
 use heimdall_core::import::openssh::{Code, Diagnostic, GatewayStep, Level, Status};
 use heimdall_core::import::putty;
-use iced::widget::{Column, button, checkbox, column, container, row, text};
+use iced::widget::{Column, checkbox, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 use crate::i18n::fl;
@@ -144,8 +144,8 @@ pub fn preview(preview: &SessionsPreview) -> Element<'_, Message> {
     )
     .spacing(2.0);
     let mut content = column![
-        text(title(preview.source)).size(font_size::TITLE),
-        text(summary).size(font_size::BODY),
+        crate::dialog_parts::list_title(title(preview.source)),
+        crate::dialog_parts::note(summary),
     ]
     .spacing(spacing::SM);
     // The C# hint is about ProxyJump, which only an OpenSSH file has.
@@ -178,21 +178,15 @@ pub fn preview(preview: &SessionsPreview) -> Element<'_, Message> {
             .push(styles::scroll(Column::with_children(said)).height(DIAGNOSTICS_HEIGHT));
     }
     content
-        .push(
-            row![
-                button(text(fl!("ui-dialog-cancel-button")))
-                    .style(styles::secondary)
-                    .on_press(Message::App(AppMessage::DismissDialog)),
-                button(text(fl!("ui-openssh-import-button")))
-                    .style(styles::primary)
-                    .on_press_maybe(
-                        preview
-                            .can_import()
-                            .then_some(Message::App(AppMessage::ConfirmDialog))
-                    ),
-            ]
-            .spacing(spacing::SM),
-        )
+        .push(crate::dialog_parts::buttons([
+            crate::dialog_parts::cancel(),
+            crate::dialog_parts::confirm(
+                fl!("ui-openssh-import-button"),
+                preview
+                    .can_import()
+                    .then_some(Message::App(AppMessage::ConfirmDialog)),
+            ),
+        ]))
         .into()
 }
 

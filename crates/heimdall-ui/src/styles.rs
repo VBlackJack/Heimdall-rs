@@ -446,6 +446,30 @@ pub fn checkbox(theme: &Theme, status: CheckStatus) -> CheckStyle {
     }
 }
 
+/// A count of errors on a tab's header, as the C# server dialog's badge: the window's
+/// background on the error colour, rounded as `CornerRadiusMd`.
+pub fn error_badge(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        text_color: Some(brushes.on_accent),
+        background: Some(Background::Color(brushes.danger)),
+        border: Border {
+            radius: radius::MD.into(),
+            ..Border::default()
+        },
+        ..BoxStyle::default()
+    }
+}
+
+/// [`checkbox`] labelled in the secondary text, as the C# file browser's "Show hidden" one
+/// beside its filter.
+pub fn quiet_checkbox(theme: &Theme, status: CheckStatus) -> CheckStyle {
+    CheckStyle {
+        text_color: Some(Brushes::of(theme).secondary),
+        ..checkbox(theme, status)
+    }
+}
+
 /// A row of a list that draws its own background, as a file list's row over the C#
 /// `FileBrowserRowStyle`: the button itself shows nothing but its text.
 pub fn bare(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
