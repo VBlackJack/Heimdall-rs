@@ -143,6 +143,16 @@ pub enum Icon {
     Zoom,
     /// The `Photo2` glyph: a picture, an image of a file list.
     Photo,
+    /// `Geo.Tool.HashGenerator`: a hash sign, the hash and HMAC generators.
+    ToolHash,
+    /// `Geo.Tool.Jwt`: a token's three parts and a key, the JWT parser.
+    ToolJwt,
+    /// `Geo.Tool.Totp`: a clock turning back, the TOTP generator.
+    ToolTotp,
+    /// The `RedEye` glyph: an eye, a secret's "show" button while it is hidden.
+    Eye,
+    /// The `Hide` glyph: an eye struck through, a secret's "hide" button while it is shown.
+    EyeHidden,
     /// `Geo.Tool.Base64Encoding`: a double arrow between two marks, the Base64 tool.
     ToolBase64,
     /// `Geo.Tool.UrlEncoder`: two links, the URL encoder.
@@ -155,7 +165,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 51] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -198,6 +208,11 @@ impl Icon {
         Self::Package,
         Self::Zoom,
         Self::Photo,
+        Self::ToolHash,
+        Self::ToolJwt,
+        Self::ToolTotp,
+        Self::Eye,
+        Self::EyeHidden,
         Self::ToolBase64,
         Self::ToolUrlEncoder,
         Self::ToolUuid,
@@ -339,6 +354,23 @@ impl Icon {
                 "M1.5,2.5 L14.5,2.5 L14.5,13.5 L1.5,13.5 Z M1.5,11 L5.5,7 L9,10.5 L11,8.5 \
                  L14.5,12 M10,5 A1,1 0 1 1 12,5 A1,1 0 1 1 10,5 Z"
             }
+            Self::ToolHash => {
+                "M4,2 L6,2 L5,14 L3,14 Z M10,2 L12,2 L11,14 L9,14 Z M2,5 L14,5 L14,7 L2,7 Z                  M2,10 L14,10 L14,12 L2,12 Z"
+            }
+            Self::ToolJwt => {
+                "M2,4 L14,4 L14,12 L2,12 Z M2,7 L14,7 M6,4 L6,12 M10,4 L10,7                  M11,9 A1.5,1.5 0 1 1 11,10 Z M10.5,10 L10.5,11.5 L11.5,11.5 L11.5,10"
+            }
+            Self::ToolTotp => {
+                "M8,2 A6,6 0 1 1 8,14 A6,6 0 1 1 8,2 Z M8,4.5 L8,8 L10.5,10 M2,6 L4,8 L2,10                  M1,8 L4,8"
+            }
+            // As Segoe MDL2 Assets draws them: an eye's outline and its pupil; the same
+            // struck through from its top left.
+            Self::Eye => {
+                "M1,8 C3,4 13,4 15,8 C13,12 3,12 1,8 Z M6,8 A2,2 0 1 1 10,8 A2,2 0 1 1 6,8 Z"
+            }
+            Self::EyeHidden => {
+                "M1,8 C3,4 13,4 15,8 C13,12 3,12 1,8 Z M6,8 A2,2 0 1 1 10,8 A2,2 0 1 1 6,8 Z                  M2,2 L14,14"
+            }
             Self::ToolBase64 => {
                 "M1,8 L15,8 M1,8 L4,5 M1,8 L4,11 M15,8 L12,5 M15,8 L12,11 M5,3 L7,3 L7,5 \
                  M9,11 L11,11 L11,13"
@@ -393,10 +425,14 @@ impl Icon {
             | Self::Package
             | Self::Zoom
             | Self::Photo
-            // The C# fills these two, which draws nothing of an open line: their lines are
-            // stroked here, as their drawing means them.
+            | Self::Eye
+            | Self::EyeHidden
+            // The C# fills these tools' geometries, which draws nothing of an open line:
+            // their lines are stroked here, as their drawing means them.
             | Self::ToolBase64
             | Self::ToolUrlEncoder
+            | Self::ToolJwt
+            | Self::ToolTotp
             | Self::Monitor => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }

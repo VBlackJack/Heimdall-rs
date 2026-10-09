@@ -2316,6 +2316,128 @@ ui-tool-uuid-help =
 
     Utilisation :
     Cliquez sur Générer pour créer des UUID. Supporte v4 (aléatoire) avec plusieurs options de format (standard, majuscules, sans tirets, URN).
+ui-tool-hash-name = Générateur de hachage
+ui-tool-hash-description = Générateur de hachage pour fichiers et texte (MD5, SHA-1, SHA-256, SHA-512)
+ui-tool-hash-title = Générateur de hachage
+ui-tool-hash-input = Texte en entrée
+ui-tool-hash-placeholder = texte à hacher
+ui-tool-hash-drop-zone = Déposez un fichier ici ou cliquez Parcourir pour hacher un fichier
+ui-tool-hash-browse = Parcourir
+ui-tool-hash-clear-file = Effacer le fichier
+ui-tool-hash-hashing = Hachage du fichier...
+ui-tool-hash-empty = Saisissez du texte ou parcourez un fichier pour calculer les empreintes.
+ui-tool-hash-results = Résultats de hachage
+ui-tool-hash-copy = Copier
+ui-tool-hash-save = Enregistrer
+ui-tool-hash-verify = Hash attendu (vérification)
+ui-tool-hash-verify-placeholder = coller le hash à vérifier
+ui-tool-hash-byte-length = { $count } octets
+ui-tool-hash-file-status = { $name } - { $size }
+ui-tool-hash-too-large = Le fichier dépasse la taille maximale ({ $size }).
+ui-tool-hash-not-found = Fichier introuvable.
+ui-tool-hash-access-denied = Accès refusé au fichier.
+ui-tool-hash-error = Impossible de calculer le hash du fichier.
+ui-tool-hash-match = ✓ Correspondance ({ $algorithm })
+ui-tool-hash-no-match = ✗ Aucune correspondance
+ui-tool-hash-all-files = Tous les fichiers (*.*)
+ui-tool-hash-help =
+    Générateur de Hash
+
+    Calcule les empreintes cryptographiques pour du texte ou des fichiers.
+
+    Utilisation :
+    1. Tapez ou collez du texte, OU
+    2. Glissez-déposez un fichier (ou cliquez Parcourir)
+    3. Toutes les valeurs de hash sont calculées simultanément
+
+    Algorithmes supportés :
+    - MD5 (128 bits)
+    - SHA-1 (160 bits)
+    - SHA-256 (256 bits)
+    - SHA-384 (384 bits)
+    - SHA-512 (512 bits)
+    - SHA3-256 (256 bits, si supporté)
+
+    Mode vérification :
+    Collez un hash connu dans le champ Vérifier pour comparer. L'algorithme est auto-détecté par la longueur du hash.
+
+    Exemples :
+    - Tapez "hello" - SHA-256 : 2cf24dba...
+    - Déposez un fichier - Vérifiez avec un checksum connu
+ui-tool-hmac-name = Générateur HMAC
+ui-tool-hmac-description = Générateur de code d'authentification de message HMAC
+ui-tool-hmac-title = Générateur HMAC
+ui-tool-hmac-algorithm = Algorithme
+ui-tool-hmac-key = Clé secrète
+ui-tool-hmac-key-placeholder = clé secrète
+ui-tool-hmac-toggle-key = Afficher/masquer la clé
+ui-tool-hmac-input = Texte du message
+ui-tool-hmac-input-placeholder = message
+ui-tool-hmac-format = Format de sortie
+ui-tool-hmac-format-hex = Hex
+ui-tool-hmac-format-base64 = Base64
+ui-tool-hmac-empty = Saisissez une clé et un message pour calculer un HMAC.
+ui-tool-hmac-output = Résultat HMAC
+ui-tool-hmac-copy = Copier
+ui-tool-hmac-byte-length = { $bytes } octets ({ $bits } bits)
+ui-tool-hmac-verify = HMAC attendu (vérification)
+ui-tool-hmac-verify-placeholder = coller le HMAC à vérifier
+ui-tool-hmac-match = Correspondance
+ui-tool-hmac-no-match = Aucune correspondance
+ui-tool-hmac-help =
+    Générateur HMAC
+
+    Calcule les codes d'authentification de message par hachage.
+
+    Utilisation :
+    Entrez un message et une clé secrète, puis sélectionnez un algorithme (SHA-256, SHA-512, etc.) pour calculer le HMAC.
+ui-tool-jwt-name = Analyseur JWT
+ui-tool-jwt-description = Décodeur et validateur de jetons Web JSON
+ui-tool-jwt-title = Analyseur JWT
+ui-tool-jwt-input = Collez le jeton JWT
+ui-tool-jwt-placeholder = coller le jeton JWT (header.payload.signature)
+ui-tool-jwt-empty = Collez un jeton JWT pour décoder son en-tête, son contenu et sa signature.
+ui-tool-jwt-error-format = Format JWT invalide. Un JWT doit contenir exactement 3 parties séparées par des points.
+ui-tool-jwt-error-decode = Échec du décodage JWT. Vérifiez que le jeton est en Base64Url valide.
+ui-tool-jwt-expired = Expiré : { $date }
+ui-tool-jwt-valid = Valide jusqu'au : { $date }
+ui-tool-jwt-no-expiry = Aucune revendication d'expiration (exp) trouvée
+ui-tool-jwt-header = En-tête
+ui-tool-jwt-payload = Charge utile
+ui-tool-jwt-signature = Signature
+ui-tool-jwt-copy = Copier
+ui-tool-jwt-verify-title = Vérification de la signature
+ui-tool-jwt-unsupported = La vérification RSA/ECDSA nécessite une clé publique (non pris en charge)
+ui-tool-jwt-secret = Secret HMAC
+ui-tool-jwt-verify = Vérifier
+ui-tool-jwt-signature-valid = La signature est valide
+ui-tool-jwt-signature-invalid = La signature est invalide
+ui-tool-jwt-help =
+    Analyseur JWT
+
+    Décode et inspecte les JSON Web Tokens.
+
+    Utilisation :
+    Collez un JWT pour voir son en-tête, son contenu et sa signature. L'expiration et les claims sont affichés dans un format lisible.
+ui-tool-totp-name = Générateur TOTP
+ui-tool-totp-description = Générateur de mots de passe à usage unique basés sur le temps (2FA/MFA)
+ui-tool-totp-title = Générateur TOTP
+ui-tool-totp-secret = Clé secrète (Base32)
+ui-tool-totp-secret-placeholder = clé secrète Base32
+ui-tool-totp-start = Démarrer
+ui-tool-totp-code = Code actuel
+ui-tool-totp-copy = Copier
+ui-tool-totp-remaining = { $seconds }s restantes
+ui-tool-totp-info = Entrez une clé secrète encodée en Base32 (comme fournie par Google Authenticator, Authy, etc.) pour générer des mots de passe à usage unique basés sur le temps (TOTP). Les codes se renouvellent toutes les 30 secondes.
+ui-tool-totp-error-required = Veuillez entrer une clé secrète.
+ui-tool-totp-error-base32 = Encodage Base32 invalide. Utilisez uniquement les caractères A-Z et 2-7.
+ui-tool-totp-help =
+    Générateur TOTP
+
+    Génère des mots de passe à usage unique basés sur le temps (RFC 6238).
+
+    Utilisation :
+    Entrez une clé secrète en Base32 pour générer des codes TOTP qui se renouvellent toutes les 30 secondes.
 ui-tunnels-page-title = Tunnels actifs
 ui-import-dropped-rd-gateway = par une passerelle Bureau à distance
 ui-error-rd-gateway = Ce serveur se joint par la passerelle Bureau à distance { $gateway }, que le client intégré ne sait pas encore traverser.

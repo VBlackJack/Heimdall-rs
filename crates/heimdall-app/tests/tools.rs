@@ -50,7 +50,22 @@ fn open(app: &mut App, tool: ToolId) {
 fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(
         ToolId::ALL,
-        [ToolId::Base64, ToolId::UrlEncoder, ToolId::Uuid]
+        [
+            ToolId::Hash,
+            ToolId::Hmac,
+            ToolId::Jwt,
+            ToolId::Totp,
+            ToolId::Base64,
+            ToolId::UrlEncoder,
+            ToolId::Uuid
+        ]
+    );
+    assert_eq!(ToolId::Totp.prefixes(), ["totp", "otp", "2fa"]);
+    assert_eq!(ToolId::Jwt.code(), "JWT");
+    assert!(
+        [ToolId::Hash, ToolId::Hmac, ToolId::Jwt, ToolId::Totp]
+            .iter()
+            .all(|tool| tool.category() == ToolCategory::Security)
     );
     assert_eq!(ToolId::Base64.code(), "BASE64");
     assert_eq!(ToolId::UrlEncoder.prefixes(), ["url", "urlencode"]);
@@ -61,6 +76,7 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     // Looked up as the C# registry looks up, case aside and its prefix taken off.
     assert_eq!(ToolId::from_code("urlenc"), Some(ToolId::UrlEncoder));
     assert_eq!(ToolId::from_code("TOOL:uuid"), Some(ToolId::Uuid));
+    assert_eq!(ToolId::from_code("hmac"), Some(ToolId::Hmac));
     assert_eq!(ToolId::from_code("PING"), None, "not ported");
 }
 

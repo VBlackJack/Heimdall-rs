@@ -88,6 +88,14 @@ impl ToolGroup {
 /// A built-in tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ToolId {
+    /// The hash generator, the C# `HASH`.
+    Hash,
+    /// The HMAC generator, the C# `HMAC`.
+    Hmac,
+    /// The JWT parser, the C# `JWT`.
+    Jwt,
+    /// The TOTP generator, the C# `TOTP`.
+    Totp,
     /// The Base64 encoder and decoder, the C# `BASE64`.
     Base64,
     /// The URL encoder and decoder, the C# `URLENC`.
@@ -112,12 +120,44 @@ pub struct ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 3] = [Self::Base64, Self::UrlEncoder, Self::Uuid];
+    pub const ALL: [Self; 7] = [
+        Self::Hash,
+        Self::Hmac,
+        Self::Jwt,
+        Self::Totp,
+        Self::Base64,
+        Self::UrlEncoder,
+        Self::Uuid,
+    ];
 
-    /// Its entry, as the C# registry's (`ToolRegistry.cs:89-102`).
+    /// Its entry, as the C# registry's (`ToolRegistry.cs:77-104`).
     #[must_use]
     pub const fn descriptor(self) -> ToolDescriptor {
         match self {
+            Self::Hash => ToolDescriptor {
+                code: "HASH",
+                category: ToolCategory::Security,
+                prefixes: &["hash"],
+                network: false,
+            },
+            Self::Hmac => ToolDescriptor {
+                code: "HMAC",
+                category: ToolCategory::Security,
+                prefixes: &["hmac"],
+                network: false,
+            },
+            Self::Jwt => ToolDescriptor {
+                code: "JWT",
+                category: ToolCategory::Security,
+                prefixes: &["jwt"],
+                network: false,
+            },
+            Self::Totp => ToolDescriptor {
+                code: "TOTP",
+                category: ToolCategory::Security,
+                prefixes: &["totp", "otp", "2fa"],
+                network: false,
+            },
             Self::Base64 => ToolDescriptor {
                 code: "BASE64",
                 category: ToolCategory::Encoding,
