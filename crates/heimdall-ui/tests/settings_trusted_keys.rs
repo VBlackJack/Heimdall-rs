@@ -26,7 +26,7 @@ use heimdall_app::{
     SystemCredentials, TrustedKey, TrustedKeysMessage, UiError,
 };
 use heimdall_core::profile::{FtpProfile, ProfileId};
-use heimdall_rdp::KnownRdpHosts;
+use heimdall_rdp::{CertificateHash, KnownRdpHosts};
 use heimdall_ssh::{AgentSource, KnownHosts, PublicKey};
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, SettingsTab, Shell};
@@ -746,4 +746,32 @@ fn the_details_show_the_whole_key_or_say_a_pin_has_none_in_the_csharp_words() {
     ui.find("(not available - reconnect to capture)")
         .expect("a pin keeps no key");
     ui.find("Unknown").expect("nor any date");
+}
+
+#[test]
+fn a_certificate_pinned_whole_shows_its_thumbprint_as_the_csharp_list() {
+    let dir = tempfile::tempdir().expect("dir");
+    // SHA-256 of "abc", as the whole certificate's hash; beside a line of its key alone.
+    let whole = CertificateHash::of(b"abc");
+    std::fs::write(
+        dir.path().join("known_ftps_hosts"),
+        format!("ftp.lab:21 {PIN} trusted=1773576030 certificate={whole}\nfiles.lab:990 {PIN}\n"),
+    )
+    .expect("write");
+    let mut shell = shell(dir.path());
+    show(&mut shell, SettingsTab::Ssh);
+    {
+        let mut ui = sized(&shell, TALL_WINDOW);
+        // The key, as before, and the thumbprint cut after 20 characters.
+        ui.find("SHA256:rgJ0Y04RcqyBp...").expect("the key");
+        ui.find("SHA256:BA:78:16:BF:8...").expect("the thumbprint");
+    }
+    // Found by its thumbprint.
+    let _ = shell.update(Message::TrustedSearch(
+        TrustedList::FtpsCertificates,
+        "BA:78:16".to_owned(),
+    ));
+    let mut ui = sized(&shell, TALL_WINDOW);
+    ui.find("ftp.lab:21").expect("found");
+    assert!(ui.find("files.lab:990").is_err(), "no thumbprint, no match");
 }

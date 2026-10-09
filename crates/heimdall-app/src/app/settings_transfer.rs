@@ -107,6 +107,11 @@ impl App {
             tab.terminal.set_palette(palette);
         }
         self.tell(Notice::SettingsImported(count));
-        Vec::new()
+        // Credential Guard required by the file: checked now, as when turned on by hand.
+        if before.require_credential_guard {
+            Vec::new()
+        } else {
+            self.warm_credential_guard()
+        }
     }
 }

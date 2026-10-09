@@ -86,8 +86,15 @@ pub async fn ensure_reachable(host: &str, port: u16, tls: TlsCheck) -> Result<()
         check_skipped: skipped,
     };
     let name = ServerName::try_from(host.to_owned()).map_err(|_| tls_failed())?;
+    // The check skipped takes any certificate as it is; else the system's alone.
     let connector = heimdall_tls::connector(
-        Arc::new(move |_: &[u8]| skipped),
+        Arc::new(move |_: &[u8], _| {
+            if skipped {
+                heimdall_tls::UserVerdict::Decided
+            } else {
+                heimdall_tls::UserVerdict::Untrusted
+            }
+        }),
         heimdall_tls::PresentedSlot::default(),
     );
     match tokio::time::timeout(PROBE_TIMEOUT, connector.connect(name, stream)).await {

@@ -64,6 +64,16 @@ pub fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
     }
 }
 
+/// What a key typed, for a list's type-ahead: printable text, without Ctrl, Alt or the
+/// logo key.
+#[must_use]
+pub fn typed_text(text: Option<&str>, modifiers: keyboard::Modifiers) -> Option<&str> {
+    if modifiers.control() || modifiers.alt() || modifiers.logo() {
+        return None;
+    }
+    text.filter(|text| !text.is_empty() && text.chars().all(|c| !c.is_control()))
+}
+
 /// The shortcut `key` with `modifiers` stands for, if any. Key repeat is the caller's
 /// concern: copy and paste should not repeat, scrolling may.
 #[must_use]

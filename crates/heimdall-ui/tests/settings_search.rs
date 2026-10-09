@@ -899,7 +899,7 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         );
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
-    assert_eq!(SettingRow::ALL.len(), 58, "no row added");
+    assert_eq!(SettingRow::ALL.len(), 59, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1059,7 +1059,8 @@ fn reset_defaults_asks_first_keeps_the_theme_and_forgets_what_is_typed() {
 /// What "Reset defaults" asks.
 const RESET_ALL_BODY: &str = "Restore every Settings tab to factory defaults? Text typed and \
     not applied yet is discarded. On the Security tab this turns off the external credential \
-    provider and the Windows Hello requirement on connect, and resets the Windows Hello grace \
+    provider, the Credential Guard requirement and the Windows Hello requirement on connect, \
+    and resets the Windows Hello grace \
     period, the auto-lock delay and disconnect on lock. Your language, theme, sessions, SSH \
     gateways, master password, PIN and Windows Hello enrolment are kept. The change is saved \
     at once.";
@@ -1214,4 +1215,64 @@ fn the_default_rdp_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
         shell.app().rdp_profiles()[0].extras.external,
         "a reset changes no profile"
     );
+}
+
+#[test]
+fn credential_guard_is_required_found_marked_its_state_said_and_reset_on_the_security_tab() {
+    use heimdall_app::credential_guard::{Failure, Status};
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("credential guard"),
+        [SettingRow::RequireCredentialGuard]
+    );
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Require Credential Guard").expect("the C# label");
+        ui.find("Credential Guard: Not required")
+            .expect("the overview line");
+        assert!(
+            ui.find("Credential Guard: Enabled").is_err(),
+            "no state said while not required"
+        );
+    }
+    change(&mut shell, SettingsMessage::RequireCredentialGuard(true));
+    assert!(shell.app().settings().require_credential_guard);
+    assert_eq!(
+        shell.settings_found("modified"),
+        [SettingRow::RequireCredentialGuard]
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Credential Guard: Required")
+            .expect("the overview line");
+        assert!(
+            ui.find("Credential Guard: Not available").is_err(),
+            "unknown yet"
+        );
+    }
+    // Where PowerShell is kept from starting, the reason is said for the administrator.
+    let _ = shell.update(Message::App(AppMessage::CredentialGuard(
+        Status::Indeterminate(Failure::NotStarted("blocked by group policy".to_owned())),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        ui.find(
+            "Credential Guard: Not available (PowerShell could not start: blocked by group \
+             policy)",
+        )
+        .expect("the reason");
+    }
+    let _ = shell.update(Message::App(AppMessage::CredentialGuard(Status::Active)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Credential Guard: Enabled").expect("the C# status");
+    }
+    let _ = shell.update(Message::ResetSetting(SettingRow::RequireCredentialGuard));
+    assert!(!shell.app().settings().require_credential_guard);
+    let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
+    assert!(!saved.require_credential_guard);
 }

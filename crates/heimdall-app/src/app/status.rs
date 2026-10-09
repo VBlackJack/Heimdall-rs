@@ -384,6 +384,10 @@ pub enum Notice {
     ProviderTimedOut,
     /// Windows Hello refused the connections waiting for it, for this reason.
     WindowsHelloRefused(crate::windows_hello::HelloRefusal),
+    /// Embedded RDP sessions were refused: the settings require Credential Guard, which does
+    /// not run on this computer or could not be found running, as the C#
+    /// `ErrorEmbeddedCredentialGuardRequired`.
+    CredentialGuardRequired,
     /// The master password opened the vault, but Windows Hello could not be enrolled again,
     /// as the C# `VaultHelloReenrollError`.
     VaultHelloEnrolAgainFailed,

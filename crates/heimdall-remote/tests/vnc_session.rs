@@ -53,7 +53,10 @@ fn config(port: u16, policy: SecurityPolicy) -> VncConfig {
         port,
         policy,
         // Trusting what the system trusts only: no server here starts TLS.
-        tls: heimdall_tls::connector(Arc::new(|_| false), heimdall_tls::PresentedSlot::default()),
+        tls: heimdall_tls::connector(
+            Arc::new(|_, _| heimdall_tls::UserVerdict::Untrusted),
+            heimdall_tls::PresentedSlot::default(),
+        ),
         connect_timeout: WAIT,
         handshake_timeout: WAIT,
     }

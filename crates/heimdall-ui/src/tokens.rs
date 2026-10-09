@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-//! The design tokens of the window: text sizes, corner radii, spacing and borders, each
-//! the value of the C# key it is named after in `Themes/CommonControls.xaml`. A view reads
-//! its sizes here, so the two applications keep one scale.
+//! The design tokens of the window: text sizes, corner radii, spacing, icon sizes and
+//! borders, each the value of the C# key it is named after in `Themes/CommonControls.xaml`.
+//! A view reads its sizes here, so the two applications keep one scale.
 //!
 //! Sizes are in logical pixels, as WPF's device-independent pixels are.
 
@@ -70,6 +70,12 @@ pub mod spacing {
     pub const LG: f32 = 20.0;
     /// `SpacingXl`: around an empty state.
     pub const XL: f32 = 24.0;
+}
+
+/// Icon sizes, as the C# `IconSize*` keys.
+pub mod icon_size {
+    /// `IconSizeHero`: the icon a page is about, the About page's application icon.
+    pub const HERO: f32 = 48.0;
 }
 
 /// Width of a control's border: a button's, a field's, a card's, as every C# style sets it.

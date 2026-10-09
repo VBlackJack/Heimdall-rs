@@ -42,6 +42,7 @@ use heimdall_app::session_log::{
 };
 use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::tunnel_driver::tunnel_events;
+use heimdall_app::type_ahead::TYPE_AHEAD_RESET;
 use heimdall_app::update_check::{Failure as UpdateFailure, GitHubSource, Outcome};
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::winrm_driver::winrm_events;
@@ -80,6 +81,7 @@ use iced::{
 };
 use zeroize::Zeroizing;
 
+mod files_input;
 mod floating_files;
 mod floating_find;
 mod settings_page;
@@ -125,9 +127,6 @@ const SIDEBAR_MIN_WIDTH: f32 = 180.0;
 const SIDEBAR_MAX_WIDTH: f32 = 600.0;
 /// Width of the handle between the sidebar and the sessions, dragged to resize it.
 const SPLITTER_WIDTH: f32 = 4.0;
-/// Letters typed in the tree further apart than this start a new search, as a Windows
-/// tree's type-ahead.
-const TYPE_AHEAD_RESET: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Space between the terminal and the panels around it, in logical pixels.
 const TERMINAL_MARGIN: f32 = 6.0;
@@ -298,15 +297,11 @@ fn tree_shortcut(
     }
 }
 
-/// A character typed that no widget took, for the tree's type-ahead: printable, without
-/// Ctrl, Alt or the logo key.
+/// A character typed that no widget took, for the type-ahead of the tree or of a Files
+/// list: printable, without Ctrl, Alt or the logo key.
 fn type_ahead(text: Option<&str>, modifiers: keyboard::Modifiers) -> Option<Message> {
-    if modifiers.control() || modifiers.alt() || modifiers.logo() {
-        return None;
-    }
-    let text = text?;
-    (!text.is_empty() && text.chars().all(|c| !c.is_control()))
-        .then(|| Message::TypeAhead(text.to_owned()))
+    crate::terminal_view::keys::typed_text(text, modifiers)
+        .map(|text| Message::TypeAhead(text.to_owned()))
 }
 
 /// `event::listen_with` over the listener `$listener`, each message paired with the window
@@ -806,8 +801,8 @@ pub enum Message {
     TreeDragEnd,
     /// Shift+F10 or the menu key, uncaptured by any widget.
     MenuKey,
-    /// A character typed that no widget took: the tree's type-ahead, while it has the
-    /// keyboard.
+    /// A character typed that no widget took: the tree's type-ahead while it has the
+    /// keyboard, else the focused list's of the Files tab shown.
     TypeAhead(String),
     /// The window was resized to this size.
     WindowResized(iced::Size),
@@ -859,8 +854,10 @@ pub enum Message {
     FinderClose(TabId),
     /// Files are dragged over the window, or no longer.
     FilesHovered(bool),
-    /// A file or folder dropped on the window.
+    /// A file or folder dropped on the window: one of a drop, gathered with the others.
     FileDropped(std::path::PathBuf),
+    /// The files dropped on a window together all came: sent on as one drop.
+    DropGathered(crate::drop_batch::DropPlace),
     /// An action in the Settings page's box of resolution presets.
     PresetsEdited(iced::widget::text_editor::Action),
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
@@ -1061,6 +1058,7 @@ impl fmt::Debug for Message {
             Self::ToolPathApply(path) => write!(f, "ToolPathApply({path:?})"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
+            Self::DropGathered(place) => write!(f, "DropGathered({place:?})"),
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
             Self::FontSizeEdited(typed) => write!(f, "FontSizeEdited({typed:?})"),
             Self::FontSizeApply => f.write_str("FontSizeApply"),
@@ -1450,6 +1448,8 @@ pub struct Shell {
     last_input: std::time::Instant,
     /// Files are dragged over the window.
     files_hovered: bool,
+    /// The files of the drops still gathered, by the window they were dropped on.
+    drops: crate::drop_batch::DropBatches,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
     /// search bar's, just opened.
     focus_next: Option<iced::widget::Id>,
@@ -1700,6 +1700,7 @@ impl Shell {
             vnc_certificate_search: String::new(),
             last_input: std::time::Instant::now(),
             files_hovered: false,
+            drops: crate::drop_batch::DropBatches::default(),
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -1779,6 +1780,15 @@ impl Shell {
         } else {
             fl!("ui-window-title")
         }
+    }
+
+    /// What starts with the application: Credential Guard checked in the background when the
+    /// settings require it, so that the first embedded RDP session does not wait for it.
+    pub fn start_tasks(&mut self) -> Task<Message> {
+        let effects = self.app.warm_credential_guard();
+        let tasks: Vec<Task<Message>> =
+            effects.into_iter().map(|effect| self.run(effect)).collect();
+        Task::batch(tasks)
     }
 
     /// Names the main window, asked to open: its events are the only ones taken, and the
@@ -2209,7 +2219,8 @@ impl Shell {
             | FloatEvent::Escape
             | FloatEvent::PointerPressed
             | FloatEvent::FilesHovered(_)
-            | FloatEvent::FileDropped(_)) => return self.floating_files_event(window, event),
+            | FloatEvent::FileDropped(_)
+            | FloatEvent::TypeAhead(_)) => return self.floating_files_event(window, event),
         };
         let effects = self.app.update(AppMessage::Float(message));
         Task::batch(effects.into_iter().map(|effect| self.run(effect)))
@@ -2362,7 +2373,7 @@ impl Shell {
         let reveal = matches!(
             message,
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
-        );
+        ) || (matches!(message, Message::TypeAhead(_)) && !self.tree_focused);
         let effects = match message {
             Message::App(message) => self.app.update(message),
             Message::Editor(message) => self.editors.update(message, &mut self.app),
@@ -2539,8 +2550,14 @@ impl Shell {
             message @ (Message::ToolPathEdited(..) | Message::ToolPathApply(_)) => {
                 self.tool_path_message(message)
             }
-            message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
-                self.drop_message(message)
+            Message::FileDropped(path) => {
+                return self.file_dropped(crate::drop_batch::DropPlace::Main, path);
+            }
+            Message::DropGathered(crate::drop_batch::DropPlace::Floating(window)) => {
+                return self.floating_drop_gathered(window);
+            }
+            message @ (Message::FilesHovered(_) | Message::DropGathered(_)) => {
+                self.drop_message(&message)
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
             Message::NewNote { id, template } => {
@@ -3867,6 +3884,10 @@ impl Shell {
                     Message::App(AppMessage::WindowsHello(answer))
                 })
             }
+            Effect::CheckCredentialGuard(detector) => Task::future(async move {
+                // The check runs on a blocking thread of the runtime, bounded in time.
+                Message::App(AppMessage::CredentialGuard(detector.status().await))
+            }),
             Effect::LaunchCitrix { tab, name, launch } => {
                 crate::citrix_view::launch(tab, name, launch)
             }
@@ -4605,13 +4626,7 @@ impl Shell {
             Page::Tunnels => {
                 crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
             }
-            Page::About => styles::scroll(
-                container(crate::about_view::view(&self.app))
-                    .padding(spacing::MD)
-                    .width(Length::Fill),
-            )
-            .height(Length::Fill)
-            .into(),
+            Page::About => crate::about_view::view(&self.app),
             Page::Settings { .. } => container(self.content())
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -5319,27 +5334,28 @@ impl Shell {
             .map(|tab| tab.id)
     }
 
-    /// Files dragged over the window, or dropped: sent to the server's folder of the Files
-    /// tab shown, as the C# tab takes what Explorer drops on it.
-    fn drop_message(&mut self, message: Message) -> Vec<Effect> {
-        match message {
+    /// Files dragged over the window, or a drop's files all come: sent together to the
+    /// server's folder of the Files tab shown, as the C# tab takes what Explorer drops on it.
+    fn drop_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
             Message::FilesHovered(over) => {
                 self.files_hovered = over;
                 Vec::new()
             }
-            Message::FileDropped(path) => {
-                self.files_hovered = false;
+            Message::DropGathered(place) => {
+                let paths = self.drops.take(place);
+                if paths.is_empty() {
+                    return Vec::new();
+                }
                 match self.drop_target() {
                     Some(tab) => self
                         .app
-                        .update(AppMessage::Files(FilesMessage::Dropped { tab, path })),
-                    // Where no Files tab takes it, a .rdp file is imported, as the C# window
-                    // takes one dropped anywhere.
+                        .update(AppMessage::Files(FilesMessage::Dropped { tab, paths })),
+                    // Where no Files tab takes them, .rdp files are imported, as the C# window
+                    // takes them dropped anywhere.
                     None => self
                         .app
-                        .update(AppMessage::Rdp(heimdall_app::RdpMessage::Dropped(vec![
-                            path,
-                        ]))),
+                        .update(AppMessage::Rdp(heimdall_app::RdpMessage::Dropped(paths))),
                 }
             }
             _ => Vec::new(),
@@ -5871,10 +5887,14 @@ impl Shell {
 
     /// A character typed while the tree has the keyboard: the next profile whose name starts
     /// with what was typed within [`TYPE_AHEAD_RESET`] is selected, as a Windows tree's
-    /// type-ahead; the same letter again goes on to the next one.
+    /// type-ahead; the same letter again goes on to the next one. Else the focused list of
+    /// the Files tab shown searches it.
     fn type_ahead(&mut self, typed: &str) -> Vec<Effect> {
-        if !self.tree_focused || self.app.dialog.is_some() || self.gated() {
+        if self.app.dialog.is_some() || self.gated() {
             return Vec::new();
+        }
+        if !self.tree_focused {
+            return self.files_type_ahead(typed);
         }
         let now = std::time::Instant::now();
         let (buffer, last) = &mut self.type_ahead;
@@ -7039,6 +7059,11 @@ impl Shell {
             UiError::HostKeyChanged {
                 target: Some(_), ..
             } => Some(fl!("ui-session-accept-new-key-button")),
+            // A certificate the user trusted, no longer valid: forgotten, its replacement is
+            // asked about.
+            UiError::PinnedCertificateInvalid { .. } => {
+                Some(fl!("ui-session-forget-server-button"))
+            }
             _ => None,
         };
         if let Some(label) = forget {
@@ -7553,7 +7578,8 @@ fn certificate_body<'a>(
 
 /// What the FTPS certificate question says under the subject, as the C# prompt: the issuer,
 /// when the certificate holds, marked when `now` is outside it, and why the system did not
-/// vouch for it.
+/// vouch for it. A certificate renewed on a key trusted says so first, with when the
+/// certificate on record held, when recorded.
 fn certificate_details<'a>(
     details: &heimdall_app::CertificateDetails,
     now: std::time::SystemTime,
@@ -7563,24 +7589,34 @@ fn certificate_details<'a>(
         heimdall_rdp::ValidityPeriod::Expired => "expired",
         heimdall_rdp::ValidityPeriod::NotYetValid => "future",
     };
-    column![
+    let mut body = Column::new().spacing(spacing::SM);
+    if let Some(renewed) = &details.renewal {
+        body = body.push(text(fl!("ui-certificate-renewed")));
+        if let Some(recorded) = renewed.recorded {
+            body = body.push(text(fl!(
+                "ui-certificate-renewed-previous",
+                from = crate::files_view::modified_text(recorded.not_before),
+                until = crate::files_view::modified_text(recorded.not_after)
+            )));
+        }
+    }
+    body.push(
         text(fl!(
             "ui-certificate-issuer",
             issuer = server_text(&details.issuer)
         ))
         .font(iced::Font::MONOSPACE),
-        text(fl!(
-            "ui-certificate-validity",
-            from = crate::files_view::modified_text(details.validity.not_before),
-            until = crate::files_view::modified_text(details.validity.not_after),
-            period = period
-        )),
-        text(fl!(
-            "ui-certificate-validation-issue",
-            issue = texts::validation_issue(details.issue)
-        )),
-    ]
-    .spacing(spacing::SM)
+    )
+    .push(text(fl!(
+        "ui-certificate-validity",
+        from = crate::files_view::modified_text(details.validity.not_before),
+        until = crate::files_view::modified_text(details.validity.not_after),
+        period = period
+    )))
+    .push(text(fl!(
+        "ui-certificate-validation-issue",
+        issue = texts::validation_issue(details.issue)
+    )))
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

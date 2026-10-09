@@ -26,6 +26,7 @@ mod certificate_pins;
 pub mod citrix;
 pub mod citrix_session;
 pub mod citrix_terminate;
+pub mod credential_guard;
 pub mod credential_provider;
 mod desktop;
 mod driver;
@@ -72,6 +73,7 @@ pub mod time_zone;
 pub mod transcript;
 pub mod tunnel;
 pub mod tunnel_driver;
+pub mod type_ahead;
 pub mod update_check;
 pub mod vault_hello;
 pub mod vnc_driver;
@@ -115,7 +117,7 @@ pub use desktop::{
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, NetworkFailure, ServerAddress, UiError};
 pub use event::{
-    Answer, CertificateDetails, ConnectionEvent, PostConnectProgress, QuestionKind,
+    Answer, CertificateDetails, ConnectionEvent, PostConnectProgress, QuestionKind, Renewal,
     ServerPasswordQuestion, StepStatus,
 };
 /// The quality a VNC desktop is asked at, from its toolbar's "Quality" menu.

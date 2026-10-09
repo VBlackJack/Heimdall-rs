@@ -140,8 +140,18 @@ impl App {
         if !waiting || self.defer_reconnect(tab_id, attempt) {
             return Vec::new();
         }
-        // Windows Hello asked first, as the C# reconnect passes its gate; after the unlock,
-        // never behind the lock.
+        // Credential Guard asked first for a desktop, then Windows Hello, as the C# reconnect
+        // passes its gates; after the unlock, never behind the lock.
+        if self.credential_guard_needed()
+            && self
+                .tab(tab_id)
+                .is_some_and(|tab| tab.purpose == Purpose::Rdp)
+        {
+            return self.wait_for_credential_guard(Message::AutoReconnect {
+                tab: tab_id,
+                attempt,
+            });
+        }
         if self.hello_needed()
             && self
                 .tab(tab_id)

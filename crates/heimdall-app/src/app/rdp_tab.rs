@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use heimdall_core::profile::{DesktopSizing, ProfileId, RdpMode, RdpProfile, SshGateway};
-use heimdall_rdp::{Fingerprint, KnownRdpHosts};
+use heimdall_rdp::{CertificateHash, Fingerprint, KnownRdpHosts};
 use tokio_util::sync::CancellationToken;
 
 use super::{App, CertificateContext, Effect, KeyTrust, Phase, Tab, TabProfile};
@@ -113,15 +113,68 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
     }
 }
 
+/// The user's answer to a certificate question, for the attempt built on it.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Decided {
+    /// The certificate's key, as an RDP server is pinned.
+    key: Fingerprint,
+    /// The hash of the whole certificate asked about, as an FTPS or VNC server is pinned;
+    /// `None` for an RDP server.
+    whole: Option<CertificateHash>,
+    /// Trusted for good, to be recorded; else for this run only.
+    record: bool,
+}
+
+impl Decided {
+    /// The whole certificate accepted to be recorded, and the one trusted once: one of
+    /// them, or neither without a whole certificate.
+    fn whole(self) -> (Option<CertificateHash>, Option<CertificateHash>) {
+        match (self.whole, self.record) {
+            (Some(whole), true) => (Some(whole), None),
+            (Some(whole), false) => (None, Some(whole)),
+            (None, _) => (None, None),
+        }
+    }
+}
+
 impl App {
     /// The certificate keys the user trusted for `host`:`port` for this run only, an RDP
-    /// server's or an FTPS one's.
+    /// server's, an FTPS one's or a VNC one's; the host told apart regardless of case, as the
+    /// pin files tell it.
     pub(super) fn certificates_trusted_for_run(&self, host: &str, port: u16) -> Vec<Fingerprint> {
         self.rdp_run_trust
             .iter()
-            .filter(|(known, known_port, _)| known == host && *known_port == port)
-            .map(|(_, _, key)| *key)
+            .filter(|(known, known_port, ..)| {
+                known.eq_ignore_ascii_case(host) && *known_port == port
+            })
+            .map(|(_, _, key, _)| *key)
             .collect()
+    }
+
+    /// The whole certificates the user trusted for `host`:`port` for this run only, by
+    /// their hash, as an FTPS or VNC server is pinned; the host told apart regardless of
+    /// case.
+    pub(super) fn whole_certificates_trusted_for_run(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Vec<CertificateHash> {
+        self.rdp_run_trust
+            .iter()
+            .filter(|(known, known_port, ..)| {
+                known.eq_ignore_ascii_case(host) && *known_port == port
+            })
+            .filter_map(|(_, _, _, whole)| *whole)
+            .collect()
+    }
+
+    /// Forgets the certificate keys trusted for `host`:`port` for this run, the host told
+    /// apart regardless of case: else a certificate trusted once and no longer valid would
+    /// be refused until the application restarts.
+    pub(super) fn forget_run_trust(&mut self, host: &str, port: u16) {
+        self.rdp_run_trust.retain(|(known, known_port, ..)| {
+            !(known.eq_ignore_ascii_case(host) && *known_port == port)
+        });
     }
 
     pub(super) fn known_rdp_hosts(&self) -> PathBuf {
@@ -172,6 +225,10 @@ impl App {
             route: route.iter().map(SshGateway::as_hop).collect(),
             ssh,
             cancel,
+            credential_guard: self
+                .settings
+                .require_credential_guard
+                .then(|| std::sync::Arc::clone(&self.credential_guard.detector)),
         })
     }
 
@@ -309,6 +366,12 @@ impl App {
             return Vec::new();
         };
         let server = CertifiedServer::of(&tab.profile);
+        // The very certificate asked about, as an FTPS or VNC server is pinned.
+        let whole = tab
+            .certificate_context
+            .as_ref()
+            .and_then(|context| context.details.as_ref())
+            .map(|details| details.certificate);
         tab.certificate_context = None;
         // As the C# `[RdpCertPrompt]` line: the server, the key, the answer.
         log::info!(
@@ -331,36 +394,59 @@ impl App {
                 });
                 Vec::new()
             }
-            // Held in memory for this run: the file is not written.
+            // Held in memory for this run: the file is not written. The next attempt takes it
+            // as it is, later ones check it as a pin.
             KeyTrust::Once => {
-                let trusted = (host, port, fingerprint);
+                let trusted = (host, port, fingerprint, whole);
                 if !self.rdp_run_trust.contains(&trusted) {
                     self.rdp_run_trust.push(trusted);
                 }
-                self.reconnect_certified(tab_id, server, None)
+                let decided = Decided {
+                    key: fingerprint,
+                    whole,
+                    record: false,
+                };
+                self.reconnect_certified(tab_id, server, Some(decided))
             }
-            // Recorded by the next attempt, and only if the server presents exactly this key.
-            KeyTrust::Always => self.reconnect_certified(tab_id, server, Some(fingerprint)),
+            // Recorded by the next attempt, and only if the server presents exactly this key,
+            // or for an FTPS or VNC server this certificate.
+            KeyTrust::Always => {
+                let decided = Decided {
+                    key: fingerprint,
+                    whole,
+                    record: true,
+                };
+                self.reconnect_certified(tab_id, server, Some(decided))
+            }
         }
     }
 
-    /// Connects the tab of a `server` asking about its certificate again, with `accepted` as
-    /// the key the user just agreed to.
+    /// Connects the tab of a `server` asking about its certificate again, with what the user
+    /// just `decided`, if anything. An RDP server takes a key trusted once from the keys
+    /// trusted for this run, and records the key accepted; an FTPS or VNC one takes the very
+    /// certificate decided on.
     fn reconnect_certified(
         &mut self,
         tab_id: TabId,
         server: CertifiedServer,
-        accepted: Option<Fingerprint>,
+        decided: Option<Decided>,
     ) -> Vec<Effect> {
+        let whole = decided.map_or((None, None), Decided::whole);
         match server {
-            CertifiedServer::Rdp => self.reconnect_rdp(tab_id, accepted),
-            CertifiedServer::Ftps => self.reconnect_ftp(tab_id, accepted),
-            CertifiedServer::Vnc => self.reconnect_vnc(tab_id, accepted),
+            CertifiedServer::Rdp => self.reconnect_rdp(
+                tab_id,
+                decided
+                    .filter(|decided| decided.record)
+                    .map(|decided| decided.key),
+            ),
+            CertifiedServer::Ftps => self.reconnect_ftp(tab_id, whole),
+            CertifiedServer::Vnc => self.reconnect_vnc(tab_id, whole),
         }
     }
 
     /// Forgets the keys recorded for the server of an RDP, FTPS or VNC tab whose key
-    /// changed, then connects again: the certificate question comes back.
+    /// changed, or whose trusted certificate is no longer valid, and those trusted for it
+    /// for this run, then connects again: the certificate question comes back.
     pub(super) fn forget_rdp_certificate(&mut self, tab_id: TabId) -> Vec<Effect> {
         let (rdp_file, ftps_file, vnc_file) = (
             self.known_rdp_hosts(),
@@ -373,23 +459,27 @@ impl App {
         // The server's own key only: a gateway's changed SSH key is not this server's.
         if !matches!(
             tab.phase,
-            Phase::Failed(UiError::HostKeyChanged { target: None, .. })
+            Phase::Failed(
+                UiError::HostKeyChanged { target: None, .. }
+                    | UiError::PinnedCertificateInvalid { .. }
+            )
         ) {
             return Vec::new();
         }
         let (path, host, port) = match &tab.profile {
-            TabProfile::Rdp(profile) => (rdp_file, &profile.host, profile.port),
-            TabProfile::Ftp(profile) => (ftps_file, &profile.host, profile.port),
-            TabProfile::Vnc(profile) => (vnc_file, &profile.host, profile.port),
+            TabProfile::Rdp(profile) => (rdp_file, profile.host.clone(), profile.port),
+            TabProfile::Ftp(profile) => (ftps_file, profile.host.clone(), profile.port),
+            TabProfile::Vnc(profile) => (vnc_file, profile.host.clone(), profile.port),
             _ => return Vec::new(),
         };
-        if let Err(error) = KnownRdpHosts::new(path).forget(host, port) {
+        if let Err(error) = KnownRdpHosts::new(path).forget(&host, port) {
             tab.phase = Phase::Failed(UiError::KnownHosts {
                 detail: error.to_string(),
             });
             return Vec::new();
         }
         let server = CertifiedServer::of(&tab.profile);
+        self.forget_run_trust(&host, port);
         self.reconnect_certified(tab_id, server, None)
     }
 

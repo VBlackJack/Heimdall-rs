@@ -19,6 +19,8 @@
 //! The UI chooses a localised sentence per variant; `detail` fields carry technical text
 //! (an OS error, a path) shown as-is under it.
 
+use std::time::SystemTime;
+
 use heimdall_core::profile::display_address;
 use heimdall_core::store::RouteError;
 use heimdall_core::winrm::CommandError;
@@ -26,6 +28,7 @@ use heimdall_ssh::known_hosts_import::Contradiction;
 use heimdall_ssh::{
     AuthMethod, ConnectError, KeyFileError, KnownHostsError, PublicKey, fingerprint,
 };
+use heimdall_tls::ValidationIssue;
 
 /// A server by host and port, as the `known_hosts` file records it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +79,10 @@ pub enum UiError {
     /// The server is reached through this Remote Desktop Gateway, which the built-in client
     /// does not go through yet.
     NeedsRdGateway(String),
+    /// An embedded RDP session while the settings require Credential Guard, which does not
+    /// run on this computer or could not be found running, as the C#
+    /// `ErrorEmbeddedCredentialGuardRequired`.
+    CredentialGuardRequired,
     /// The `WinRM` server's name does not resolve, as the C# preflight says.
     WinRmHostUnresolved {
         /// The name.
@@ -169,6 +176,19 @@ pub enum UiError {
         recorded: String,
         /// SHA-256 fingerprint presented.
         offered: String,
+    },
+    /// The certificate the user trusted for the server, pinned or for this run, is no
+    /// longer valid: refused, as the C# refuses a pinned FTPS certificate that fails its
+    /// validity checks. Forgetting the server is the way to trust its replacement.
+    PinnedCertificateInvalid {
+        /// The server, as `host:port`.
+        target: String,
+        /// SHA-256 fingerprint of the certificate's public key, as pinned.
+        fingerprint: String,
+        /// Why it is no longer valid.
+        issue: ValidationIssue,
+        /// The last moment it held.
+        not_after: SystemTime,
     },
     /// The server no longer offers the recorded key type.
     HostKeyAlgorithmMismatch {

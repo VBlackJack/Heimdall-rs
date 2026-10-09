@@ -1144,7 +1144,7 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
             app,
             FilesMessage::Dropped {
                 tab,
-                path: path.to_owned(),
+                paths: vec![path.to_owned()],
             },
         )
     };
@@ -1191,6 +1191,78 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
             FilesError::NotAFile
         ))
     ));
+}
+
+#[tokio::test]
+async fn files_dropped_together_go_in_one_transfer_planned_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let outside = tempfile::tempdir().expect("dir");
+    let report = outside.path().join("report.pdf");
+    let notes = outside.path().join("notes.md");
+    std::fs::write(&report, b"12345").expect("written");
+    std::fs::write(&notes, b"123").expect("written");
+    let effects = files(
+        &mut app,
+        FilesMessage::Dropped {
+            tab,
+            paths: vec![report.clone(), notes.clone()],
+        },
+    );
+    // One plan for both, as the C# `UploadEntriesAsync` takes them: anything in their way is
+    // asked about in one question.
+    let request = plan_request(&effects);
+    assert_eq!(request.direction, Direction::Upload);
+    assert!(
+        request
+            .roots
+            .iter()
+            .map(|planned| &planned.root.local)
+            .eq([&report, &notes]),
+        "{:?}",
+        request.roots
+    );
+    assert_eq!(request.rows.len(), 2, "each listed in the transfers");
+}
+
+#[tokio::test]
+async fn letters_typed_select_in_the_focused_pane_as_the_csharp_type_ahead() {
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let now = Instant::now();
+    let typed = |app: &mut App, text: &str, at: Instant| {
+        files(
+            app,
+            FilesMessage::TypeAhead {
+                tab,
+                text: text.to_owned(),
+                at,
+            },
+        )
+    };
+    // This computer's pane has the focus first: "B" is "b.txt", whatever its case.
+    assert!(typed(&mut app, "B", now).is_empty());
+    assert_eq!(selected(&app, tab, Side::Local), Some(1));
+    assert_eq!(
+        selected(&app, tab, Side::Remote),
+        None,
+        "the other untouched"
+    );
+    // The server's pane: "a" then "." within the pause is "a.txt"; "l" past it is "logs".
+    key(&mut app, tab, FilesKey::Focus(Side::Remote));
+    typed(&mut app, "a", now);
+    typed(&mut app, ".", now + Duration::from_millis(500));
+    assert_eq!(selected(&app, tab, Side::Remote), Some(1));
+    typed(&mut app, "l", now + Duration::from_secs(3));
+    assert_eq!(selected(&app, tab, Side::Remote), Some(0));
+
+    // Under a question, its field takes the typing.
+    key(&mut app, tab, FilesKey::Rename);
+    assert!(app.dialog.is_some(), "the rename question");
+    typed(&mut app, "a", now + Duration::from_secs(9));
+    assert_eq!(selected(&app, tab, Side::Remote), Some(0), "nothing moved");
 }
 
 #[tokio::test]

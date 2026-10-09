@@ -907,7 +907,7 @@ async fn a_detached_files_tabs_keys_and_drops_reach_it_alone() {
     std::fs::write(&file, b"12345").expect("written");
     let effects = app.update(Message::Files(FilesMessage::Dropped {
         tab: floating,
-        path: file,
+        paths: vec![file],
     }));
     assert!(
         matches!(effects.as_slice(), [Effect::PlanTransfer { tab, .. }] if *tab == floating),

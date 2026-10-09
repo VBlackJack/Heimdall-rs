@@ -26,7 +26,7 @@
 use std::path::PathBuf;
 
 use heimdall_core::profile::{VncProfile, display_address};
-use heimdall_rdp::Fingerprint;
+use heimdall_rdp::CertificateHash;
 use heimdall_remote::vnc::{
     self, AskPassword, CloseReason, DEFAULT_CONNECT_TIMEOUT, DEFAULT_HANDSHAKE_TIMEOUT, RfbError,
     SecurityPolicy, SecurityWrapper, VncConfig, VncConnection, VncError, VncEvent,
@@ -38,7 +38,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
-use crate::certificate_pins::{AcceptedSlot, CertificatePins};
+use crate::certificate_pins::{CertificatePins, RecordSlot};
 use crate::driver::{AnswerRegistry, ask};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind, ServerPasswordQuestion};
@@ -59,11 +59,15 @@ pub struct VncRequest {
     pub profile: VncProfile,
     /// File of the VNC servers whose certificate the user trusts.
     pub known_hosts: PathBuf,
-    /// A key the user accepted after the certificate question, recorded once the server
-    /// presents exactly it.
-    pub accepted: Option<Fingerprint>,
-    /// Keys the user trusted for this server for this run only.
-    pub trusted_for_run: Vec<Fingerprint>,
+    /// The certificate the user accepted after the certificate question, by the hash of the
+    /// whole of it: this attempt takes it as it is, and records it once the server presents
+    /// exactly it.
+    pub accepted: Option<CertificateHash>,
+    /// The certificate the user trusted for this run just now, after the certificate
+    /// question, by its hash: this attempt takes it as it is, later ones check it as a pin.
+    pub trusted_once: Option<CertificateHash>,
+    /// Certificates the user trusted for this server for this run only, by their hash.
+    pub trusted_for_run: Vec<CertificateHash>,
     /// Cancels the attempt and, once connected, the session.
     pub cancel: CancellationToken,
 }
@@ -76,6 +80,7 @@ impl VncRequest {
             host: self.profile.host.clone(),
             port: self.profile.port,
             accepted: self.accepted,
+            trusted_once: self.trusted_once,
             trusted_for_run: self.trusted_for_run.clone(),
             protocol: PROTOCOL,
         }
@@ -189,7 +194,7 @@ async fn open(
         Box::new(move || Box::pin(async move { password(&profile, &registry, &events).await }))
     };
     let presented = PresentedSlot::default();
-    let accepted = AcceptedSlot::default();
+    let to_record = RecordSlot::default();
     let pinned = pins.pinned()?;
     let mut config = VncConfig {
         host: profile.host.clone(),
@@ -201,7 +206,7 @@ async fn open(
             exclude_vencrypt: false,
             username: profile.username.clone(),
         },
-        tls: connector(pins.user_trust(accepted.clone()), presented.clone()),
+        tls: connector(pins.user_trust(to_record.clone()), presented.clone()),
         connect_timeout: DEFAULT_CONNECT_TIMEOUT,
         handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
     };
@@ -220,7 +225,7 @@ async fn open(
     };
     match outcome {
         Ok(connection) => {
-            pins.record_accepted(&accepted)?;
+            pins.record_trusted(&to_record)?;
             Ok(Some(connection))
         }
         Err(VncError::Tls(detail)) => pins
@@ -235,7 +240,7 @@ async fn open(
         }
         Err(error @ VncError::Rfb(RfbError::AuthenticationFailed(_))) => {
             // The certificate went through: trusted, whatever the password.
-            pins.record_accepted(&accepted)?;
+            pins.record_trusted(&to_record)?;
             Err(ui_error(error))
         }
         Err(error) => Err(ui_error(error)),
