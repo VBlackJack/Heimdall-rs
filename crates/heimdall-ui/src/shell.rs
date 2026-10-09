@@ -44,7 +44,6 @@ use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::update_check::{Failure as UpdateFailure, GitHubSource, Outcome};
 use heimdall_app::vnc_driver::vnc_events;
-use heimdall_app::windows_hello;
 use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, CertificateContext,
@@ -59,6 +58,7 @@ use heimdall_app::{
     VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
     master_password_problem, open_vault, server_text,
 };
+use heimdall_app::{VaultHelloMessage, VaultTicket, vault_hello, windows_hello};
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
@@ -2712,7 +2712,12 @@ impl Shell {
                     .update(AppMessage::Settings(SettingsMessage::TrustedKeys(
                         TrustedKeysMessage::Refresh,
                     )));
-                Task::none()
+                // Whether Windows Hello can unlock the vault, asked again as the C# settings
+                // ask it when they load.
+                let effects = self
+                    .app
+                    .update(AppMessage::VaultHello(VaultHelloMessage::Refresh));
+                Task::batch(effects.into_iter().map(|effect| self.run(effect)))
             }
             Message::LanguageChosen(language) => {
                 crate::i18n::apply(Some(*language));
@@ -3982,7 +3987,25 @@ impl Shell {
                 path,
                 password,
                 job,
-            } => open_vault_task(path, password, job),
+                ticket,
+            } => open_vault_task(path, password, job, ticket),
+            Effect::CheckVaultHello => Task::perform(
+                vault_hello::check(vault_hello::SystemKeyCredentials),
+                |available| vault_hello_message(VaultHelloMessage::Checked(available)),
+            ),
+            Effect::EnrolVaultHello { data_key, previous } => Task::perform(
+                vault_hello::enrol_away(vault_hello::SystemKeyCredentials, data_key, previous),
+                |result| vault_hello_message(VaultHelloMessage::Enrolled(result)),
+            ),
+            Effect::UnlockVaultHello { path, envelope } => Task::perform(
+                vault_hello::unlock_away(vault_hello::SystemKeyCredentials, path, envelope),
+                |result| vault_hello_message(VaultHelloMessage::Unlocked(result)),
+            ),
+            Effect::DeleteVaultHelloCredential(name) => Task::future(vault_hello::delete_away(
+                vault_hello::SystemKeyCredentials,
+                name,
+            ))
+            .discard(),
             Effect::AskCredentialProvider(request) => Task::perform(request.run(), |answer| {
                 Message::App(AppMessage::CredentialProvided(Box::new(answer)))
             }),
@@ -10709,10 +10732,20 @@ fn files_task(effect: Effect, journal: Option<OperationJournal>) -> Task<Message
     }
 }
 
+/// A step of Windows Hello for the vault, as the window hands it to the core.
+fn vault_hello_message(message: VaultHelloMessage) -> Message {
+    Message::App(AppMessage::VaultHello(message))
+}
+
 /// Opens the vault away from the window's thread: the key derivation takes a moment.
-fn open_vault_task(path: PathBuf, password: Secret, job: VaultJob) -> Task<Message> {
-    Task::perform(open_vault(path, password, job), |result| {
-        Message::App(AppMessage::VaultOpened(result))
+fn open_vault_task(
+    path: PathBuf,
+    password: Secret,
+    job: VaultJob,
+    ticket: VaultTicket,
+) -> Task<Message> {
+    Task::perform(open_vault(path, password, job), move |result| {
+        Message::App(AppMessage::VaultOpened(ticket, result))
     })
 }
 
@@ -11150,6 +11183,11 @@ fn vault_dialog<'a>(
         form = form.push(text(vault_problem(problem)).style(text::danger));
     }
     if dialog.busy {
+        let busy = if dialog.hello_waiting {
+            fl!("ui-vault-hello-unlock-busy")
+        } else {
+            busy
+        };
         form = form.push(text(busy).size(font_size::CAPTION));
     }
     // As in C#: a new password is taken once it follows the rules and is typed twice alike.
@@ -11157,7 +11195,33 @@ fn vault_dialog<'a>(
         master_password_problem(fields[index].as_str()).is_none()
             && fields[index].as_str() == fields[index + 1].as_str()
     });
-    let mut buttons = row![iced::widget::space::horizontal()].spacing(spacing::SM);
+    form.push(vault_buttons(dialog, action, ready)).into()
+}
+
+/// The vault dialog's buttons: Windows Hello first when offered, as the C# dialog offers it
+/// beside the master password; Cancel, except on the lock screen; then `action`, taken once
+/// `ready`. Locked out, no try is taken until the minutes said are over, Windows Hello's
+/// included; nothing is while a try is under way.
+fn vault_buttons(
+    dialog: &VaultDialog,
+    action: String,
+    ready: bool,
+) -> iced::widget::Row<'_, Message> {
+    let locked_out = matches!(
+        dialog.problem,
+        Some(VaultProblem::LockedOut { until }) if until > std::time::SystemTime::now()
+    );
+    let mut buttons = row![].spacing(spacing::SM);
+    if dialog.hello {
+        buttons = buttons.push(
+            button(text(fl!("ui-vault-hello-unlock-button")))
+                .style(styles::secondary)
+                .on_press_maybe((!dialog.busy && !locked_out).then_some(Message::App(
+                    AppMessage::VaultHello(VaultHelloMessage::Unlock),
+                ))),
+        );
+    }
+    buttons = buttons.push(iced::widget::space::horizontal());
     // The lock screen has no Cancel; the one asked at start quits.
     if dialog.mode != VaultMode::Locked {
         buttons = buttons.push(
@@ -11166,16 +11230,11 @@ fn vault_dialog<'a>(
                 .on_press(Message::App(AppMessage::DismissDialog)),
         );
     }
-    // Locked out, no try is taken until the minutes said are over.
-    let locked_out = matches!(
-        dialog.problem,
-        Some(VaultProblem::LockedOut { until }) if until > std::time::SystemTime::now()
-    );
-    buttons =
-        buttons.push(button(text(action)).style(styles::primary).on_press_maybe(
-            (!dialog.busy && ready && !locked_out).then_some(Message::SubmitVault),
-        ));
-    form.push(buttons).into()
+    buttons.push(
+        button(text(action))
+            .style(styles::primary)
+            .on_press_maybe((!dialog.busy && ready && !locked_out).then_some(Message::SubmitVault)),
+    )
 }
 
 /// The PIN's dialogs, as the C# Heimdall's: the PIN asked at start, and the one setting,
@@ -11301,6 +11360,9 @@ fn vault_problem(problem: &VaultProblem) -> String {
         ),
         VaultProblem::NoSystemStore => fl!("ui-vault-problem-no-system-store"),
         VaultProblem::AlreadyExists => fl!("ui-vault-problem-exists"),
+        VaultProblem::HelloLocked => fl!("ui-vault-problem-hello-locked"),
+        VaultProblem::HelloNotFound => fl!("ui-vault-problem-hello-not-found"),
+        VaultProblem::HelloFailed => fl!("ui-vault-problem-hello-failed"),
         VaultProblem::System { detail } => {
             fl!("ui-vault-problem-system", detail = detail.as_str())
         }
@@ -11371,6 +11433,11 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-reset-rdp-body"),
             fl!("ui-settings-rdp-reset-defaults"),
         ),
+        Dialog::ConfirmVaultHelloEnrolAgain => (
+            fl!("ui-vault-hello-enrol-again-title"),
+            fl!("ui-vault-hello-enrol-again-body"),
+            fl!("ui-vault-hello-enrol-again-button"),
+        ),
         Dialog::ConfirmApplySshMode {
             mode,
             changes,
@@ -11438,6 +11505,7 @@ fn ok_button<'a>() -> iced::widget::Button<'a, Message> {
     dialog_parts::ok()
 }
 
+#[expect(clippy::too_many_lines, reason = "one arm per dialog")]
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
     match dialog {
         Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
@@ -11468,6 +11536,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmExit { .. }
         | Dialog::ConfirmSessionLogging
         | Dialog::ConfirmResetRdpDefaults
+        | Dialog::ConfirmVaultHelloEnrolAgain
         | Dialog::ConfirmApplySshMode { .. }
         | Dialog::ConfirmDeleteMacro(_)
         | Dialog::ConfirmDeleteGateway { .. }

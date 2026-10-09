@@ -99,19 +99,21 @@ async fn submit_master(app: &mut App, password: &str, confirm: bool) {
         new: None,
         confirm: confirm.then(|| secret(password)),
     });
-    let result: Result<OpenedVault, VaultProblem> = match <[Effect; 1]>::try_from(effects) {
-        Ok(
-            [
-                Effect::OpenVault {
-                    path,
-                    password,
-                    job,
-                },
-            ],
-        ) => open_vault(path, password, job).await,
-        other => panic!("expected OpenVault, got {other:?}"),
-    };
-    app.update(Message::VaultOpened(result));
+    let (ticket, result): (_, Result<OpenedVault, VaultProblem>) =
+        match <[Effect; 1]>::try_from(effects) {
+            Ok(
+                [
+                    Effect::OpenVault {
+                        path,
+                        password,
+                        job,
+                        ticket,
+                    },
+                ],
+            ) => (ticket, open_vault(path, password, job).await),
+            other => panic!("expected OpenVault, got {other:?}"),
+        };
+    app.update(Message::VaultOpened(ticket, result));
 }
 
 #[test]

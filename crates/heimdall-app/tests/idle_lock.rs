@@ -102,19 +102,20 @@ async fn submit(app: &mut App, master: &str, confirm: bool) -> Vec<Effect> {
         new: None,
         confirm: confirm.then(|| Secret::new(master.to_owned())),
     });
-    let result = match <[Effect; 1]>::try_from(effects) {
+    let (ticket, result) = match <[Effect; 1]>::try_from(effects) {
         Ok(
             [
                 Effect::OpenVault {
                     path,
                     password,
                     job,
+                    ticket,
                 },
             ],
-        ) => open_vault(path, password, job).await,
+        ) => (ticket, open_vault(path, password, job).await),
         other => panic!("expected OpenVault, got {other:?}"),
     };
-    app.update(Message::VaultOpened(result))
+    app.update(Message::VaultOpened(ticket, result))
 }
 
 /// The application with a master password set, the vault open.

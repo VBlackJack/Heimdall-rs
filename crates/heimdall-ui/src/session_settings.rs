@@ -15,9 +15,9 @@
  */
 
 //! The numbers of the Settings page, as the C# SSH/SFTP Session tab, its session health
-//! monitor, its session logging, its idle auto-lock, its update checks and its Windows Hello
-//! grace have them: each typed, then applied with Enter; one out of its range stays typed,
-//! its rule said under it.
+//! monitor, its session logging, its idle auto-lock, its update checks, its Windows Hello
+//! grace and the days Windows Hello unlocks the vault have them: each typed, then applied
+//! with Enter; one out of its range stays typed, its rule said under it.
 
 use heimdall_app::SettingsMessage;
 use heimdall_core::settings::{
@@ -28,6 +28,7 @@ use heimdall_core::settings::{
     SSH_KEEP_ALIVE_INTERVAL_MAX, SSH_KEEP_ALIVE_INTERVAL_MIN, SSH_TMOUT_RESET_INTERVAL_MAX,
     Settings, UPDATE_INTERVAL_HOURS_MAX, UPDATE_INTERVAL_HOURS_MIN,
     WINDOWS_HELLO_GRACE_MINUTES_MAX, WINDOWS_HELLO_GRACE_MINUTES_NONE,
+    WINDOWS_HELLO_VAULT_MAX_DAYS_MAX, WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER,
 };
 
 use crate::i18n::fl;
@@ -55,6 +56,9 @@ pub enum SessionField {
     UpdateInterval,
     /// Minutes a Windows Hello verification counts, 0 for every time.
     WindowsHelloGrace,
+    /// Days Windows Hello unlocks the vault before the master password is asked again, 0
+    /// for never.
+    VaultHelloMaxDays,
 }
 
 impl SessionField {
@@ -72,7 +76,7 @@ impl SessionField {
     pub const TRANSCRIPTS: [Self; 1] = [Self::TranscriptRetention];
 
     /// How many there are.
-    pub(crate) const COUNT: usize = 10;
+    pub(crate) const COUNT: usize = 11;
 
     /// Its place among them all.
     pub(crate) fn index(self) -> usize {
@@ -87,6 +91,7 @@ impl SessionField {
             Self::AutoLock => 7,
             Self::UpdateInterval => 8,
             Self::WindowsHelloGrace => 9,
+            Self::VaultHelloMaxDays => 10,
         }
     }
 
@@ -103,6 +108,7 @@ impl SessionField {
             Self::AutoLock => fl!("ui-settings-auto-lock"),
             Self::UpdateInterval => fl!("ui-settings-updates-interval"),
             Self::WindowsHelloGrace => fl!("ui-settings-windows-hello-grace"),
+            Self::VaultHelloMaxDays => fl!("ui-settings-vault-hello-max-days"),
         }
     }
 
@@ -113,7 +119,9 @@ impl SessionField {
                 Some(fl!("ui-settings-anti-idle-unit"))
             }
             Self::ReachabilityTimeout => Some(fl!("ui-settings-milliseconds-unit")),
-            Self::TranscriptRetention => Some(fl!("ui-settings-days-unit")),
+            Self::TranscriptRetention | Self::VaultHelloMaxDays => {
+                Some(fl!("ui-settings-days-unit"))
+            }
             Self::AutoLock | Self::WindowsHelloGrace => Some(fl!("ui-settings-minutes-unit")),
             Self::UpdateInterval => Some(fl!("ui-settings-hours-unit")),
             Self::ReachabilityProbes => None,
@@ -126,6 +134,7 @@ impl SessionField {
             Self::KeepAlive => Some(fl!("ui-settings-ssh-keep-alive-hint")),
             Self::TranscriptRetention => Some(fl!("ui-settings-session-log-retention-hint")),
             Self::AutoLock => Some(fl!("ui-settings-auto-lock-hint")),
+            Self::VaultHelloMaxDays => Some(fl!("ui-settings-vault-hello-max-days-hint")),
             _ => None,
         }
     }
@@ -143,6 +152,7 @@ impl SessionField {
             Self::AutoLock => settings.auto_lock_idle_minutes,
             Self::UpdateInterval => settings.updates.interval_hours,
             Self::WindowsHelloGrace => settings.windows_hello.grace_minutes,
+            Self::VaultHelloMaxDays => settings.windows_hello.vault_max_days,
         }
     }
 
@@ -159,6 +169,7 @@ impl SessionField {
             Self::AutoLock => settings::auto_lock_idle_minutes_accepted(value),
             Self::UpdateInterval => settings::update_interval_accepted(value),
             Self::WindowsHelloGrace => settings::windows_hello_grace_minutes_accepted(value),
+            Self::VaultHelloMaxDays => settings::windows_hello_vault_max_days_accepted(value),
         }
     }
 
@@ -175,6 +186,7 @@ impl SessionField {
             Self::AutoLock => SettingsMessage::AutoLockIdleMinutes(value),
             Self::UpdateInterval => SettingsMessage::UpdateInterval(value),
             Self::WindowsHelloGrace => SettingsMessage::WindowsHelloGraceMinutes(value),
+            Self::VaultHelloMaxDays => SettingsMessage::VaultHelloMaxDays(value),
         }
     }
 
@@ -230,6 +242,11 @@ impl SessionField {
                 "ui-settings-windows-hello-grace-refused",
                 min = WINDOWS_HELLO_GRACE_MINUTES_NONE,
                 max = WINDOWS_HELLO_GRACE_MINUTES_MAX
+            ),
+            Self::VaultHelloMaxDays => fl!(
+                "ui-settings-vault-hello-max-days-refused",
+                min = WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER,
+                max = WINDOWS_HELLO_VAULT_MAX_DAYS_MAX
             ),
         }
     }

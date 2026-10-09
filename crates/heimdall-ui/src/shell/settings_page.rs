@@ -27,8 +27,8 @@
 use heimdall_app::update_check::{Failure, minutes_to_wait};
 use heimdall_app::windows_hello;
 use heimdall_app::{
-    Effect, Message as AppMessage, PinMessage, UpdateMessage, UpdateStatus, VaultStatus,
-    search_folded,
+    Effect, Message as AppMessage, PinMessage, UpdateMessage, UpdateStatus, VaultHelloMessage,
+    VaultHelloStatus, VaultStatus, search_folded,
 };
 use heimdall_core::profile::{RdpDefaults, SshMode};
 use heimdall_core::settings::{
@@ -431,6 +431,19 @@ fn rdp_changes(current: &RdpDefaults, defaults: &RdpDefaults) -> String {
         changes.push(fl!("ui-profile-color-depth"));
     }
     changes.join(DEFAULT_LIST_SEPARATOR)
+}
+
+/// What the settings say of Windows Hello for the vault, in the C# words.
+fn vault_hello_status(status: VaultHelloStatus) -> String {
+    match status {
+        VaultHelloStatus::Enabled => fl!("ui-settings-vault-hello-status-enabled"),
+        VaultHelloStatus::Available => fl!("ui-settings-vault-hello-status-available"),
+        VaultHelloStatus::Unavailable => fl!("ui-settings-vault-hello-status-unavailable"),
+        VaultHelloStatus::Enrolling => fl!("ui-settings-vault-hello-status-enrolling"),
+        VaultHelloStatus::UnlockRequired => {
+            fl!("ui-settings-vault-hello-status-unlock-required")
+        }
+    }
 }
 
 /// The name of a line of the security overview.
@@ -1464,13 +1477,45 @@ impl Shell {
                     .on_press(Message::App(AppMessage::ShowVault)),
             );
         }
-        column![
+        let mut body = column![
             text(row_label(SettingRow::Vault)).size(font_size::SUBTITLE),
             text(fl!("ui-settings-vault-explanation")).size(font_size::CAPTION),
             actions,
         ]
-        .spacing(spacing::SM)
-        .into()
+        .spacing(spacing::SM);
+        // Windows Hello unlocking the vault, only with one, as the C#
+        // `VaultHelloSectionVisible`.
+        if enabled {
+            body = body.push(self.vault_hello_row());
+        }
+        body.into()
+    }
+
+    /// Windows Hello unlocking the vault: what stands, and enabling or disabling it, as the
+    /// C# settings card's buttons and status line.
+    fn vault_hello_row(&self) -> Element<'_, Message> {
+        let card = self.app.vault_hello_card();
+        let mut line = row![].spacing(spacing::SM).align_y(iced::Alignment::Center);
+        if let Some(status) = card.status {
+            line = line.push(text(vault_hello_status(status)).size(font_size::CAPTION));
+        }
+        line = line.push(iced::widget::space::horizontal());
+        let hello = |message| Message::App(AppMessage::VaultHello(message));
+        if card.can_enable {
+            line = line.push(
+                button(text(fl!("ui-settings-vault-hello-enable")))
+                    .style(styles::secondary)
+                    .on_press(hello(VaultHelloMessage::Enable)),
+            );
+        }
+        if card.can_disable {
+            line = line.push(
+                button(text(fl!("ui-settings-vault-hello-disable")))
+                    .style(styles::secondary)
+                    .on_press(hello(VaultHelloMessage::Disable)),
+            );
+        }
+        line.into()
     }
 
     /// The C# security overview: the security-relevant choices as they stand, how many need

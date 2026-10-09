@@ -28,6 +28,7 @@ use heimdall_core::settings::{
     ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
     update_interval_accepted, windows_hello_grace_minutes_accepted,
+    windows_hello_vault_max_days_accepted,
 };
 use heimdall_term::Palette;
 
@@ -130,6 +131,9 @@ pub enum SettingsMessage {
     /// Minutes a Windows Hello verification counts, 0 for every time; refused out of the
     /// C# range.
     WindowsHelloGraceMinutes(u32),
+    /// Days Windows Hello unlocks the vault before the master password is asked again, 0
+    /// for never; refused out of the C# range.
+    VaultHelloMaxDays(u32),
 }
 
 /// The colours of `scheme`.
@@ -291,6 +295,11 @@ impl App {
             {
                 self.settings.windows_hello.grace_minutes = minutes;
             }
+            SettingsMessage::VaultHelloMaxDays(days)
+                if windows_hello_vault_max_days_accepted(days) =>
+            {
+                self.settings.windows_hello.vault_max_days = days;
+            }
             _ => return false,
         }
         true
@@ -387,7 +396,8 @@ impl App {
             | SettingsMessage::SshKeepAliveInterval(_)
             | SettingsMessage::SshTmoutResetInterval(_)
             | SettingsMessage::UpdateInterval(_)
-            | SettingsMessage::WindowsHelloGraceMinutes(_)) => {
+            | SettingsMessage::WindowsHelloGraceMinutes(_)
+            | SettingsMessage::VaultHelloMaxDays(_)) => {
                 if !self.set_limit(message) {
                     return Vec::new();
                 }

@@ -544,6 +544,7 @@ fn create_vault(core: &mut App) {
                 path,
                 password,
                 job,
+                ticket,
             },
         ],
     ) = <[Effect; 1]>::try_from(effects)
@@ -552,7 +553,7 @@ fn create_vault(core: &mut App) {
     };
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     let result = runtime.block_on(open_vault(path, password, job));
-    core.update(AppMessage::VaultOpened(result));
+    core.update(AppMessage::VaultOpened(ticket, result));
 }
 
 #[test]
