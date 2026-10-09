@@ -566,6 +566,11 @@ pub struct Settings {
     /// Seconds an RDP connection may take to log on before it is given up, 0 for no limit,
     /// as the C# `RdpConnectWatchdogTimeoutMs`.
     pub rdp_connect_timeout: u32,
+    /// Milliseconds a desktop following its tab keeps the size it connected with before the
+    /// tab's later sizes are asked of the server, as the C# `RdpResizeEnableDelayMs`: 0
+    /// turns the wait off, else within [`RDP_RESIZE_ENABLE_DELAY_MIN_MS`] and
+    /// [`RDP_RESIZE_ENABLE_DELAY_MAX_MS`]. A profile may set its own.
+    pub rdp_resize_enable_delay_ms: u32,
     /// An embedded RDP session opens only while Credential Guard runs on this computer, as
     /// the C# `RequireCredentialGuard`: off unless chosen. Remote Desktop Connection's own
     /// window is not concerned.
@@ -984,6 +989,37 @@ pub fn rdp_connect_timeout_accepted(seconds: u32) -> bool {
     seconds == 0 || (RDP_CONNECT_TIMEOUT_MIN..=RDP_CONNECT_TIMEOUT_MAX).contains(&seconds)
 }
 
+/// Milliseconds a desktop following its tab waits after connecting by default, as the C#
+/// `DefaultRdpResizeEnableDelayMs`.
+pub const RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS: u32 = 10_000;
+/// Fewest milliseconds accepted besides 0, as the C# range's.
+pub const RDP_RESIZE_ENABLE_DELAY_MIN_MS: u32 = 1_000;
+/// Most milliseconds accepted, as the C# range's.
+pub const RDP_RESIZE_ENABLE_DELAY_MAX_MS: u32 = 60_000;
+
+/// Whether `ms` is a wait after connecting the settings and a profile accept: 0 for none, or
+/// within the C# range.
+#[must_use]
+pub fn rdp_resize_enable_delay_accepted(ms: u32) -> bool {
+    ms == 0 || (RDP_RESIZE_ENABLE_DELAY_MIN_MS..=RDP_RESIZE_ENABLE_DELAY_MAX_MS).contains(&ms)
+}
+
+/// How long a desktop following its tab waits after connecting before asking the server for
+/// the tab's later sizes, as the C# `ResolveRdpResizeEnableDelayMs`: the profile's own value
+/// when it sets one, else the settings' `global`. A value out of the range, which neither
+/// the form nor an import writes and the C# refuses when it loads its profiles, is not
+/// taken: the profile's falls back to the settings', the settings' to the default.
+#[must_use]
+pub fn rdp_resize_enable_delay(profile: Option<u32>, global: u32) -> Duration {
+    let global = Some(global)
+        .filter(|ms| rdp_resize_enable_delay_accepted(*ms))
+        .unwrap_or(RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS);
+    let ms = profile
+        .filter(|ms| rdp_resize_enable_delay_accepted(*ms))
+        .unwrap_or(global);
+    Duration::from_millis(u64::from(ms))
+}
+
 /// Whether `attempts` is a number of RDP auto-reconnect attempts the settings accept.
 #[must_use]
 pub fn rdp_auto_reconnect_attempts_accepted(attempts: u32) -> bool {
@@ -1109,6 +1145,7 @@ impl Default for Settings {
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
             rdp_auto_reconnect_attempts: RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
             rdp_connect_timeout: RDP_CONNECT_TIMEOUT_DEFAULT,
+            rdp_resize_enable_delay_ms: RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
             require_credential_guard: false,
             rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
@@ -1286,6 +1323,9 @@ struct RdpSessionSection {
     /// Seconds, 0 for no limit.
     #[serde(default)]
     connect_timeout: Option<u32>,
+    /// Milliseconds, 0 for no wait.
+    #[serde(default)]
+    resize_enable_delay_ms: Option<u32>,
     /// One `WIDTHxHEIGHT` per preset.
     #[serde(default)]
     resolution_presets: Option<Vec<String>>,
@@ -1295,6 +1335,27 @@ struct RdpSessionSection {
     /// Absent is the C# default, off.
     #[serde(default)]
     require_credential_guard: Option<bool>,
+}
+
+impl RdpSessionSection {
+    /// The RDP session settings of `settings`, as their file holds them.
+    fn of(settings: &Settings) -> Self {
+        Self {
+            auto_reconnect_attempts: Some(settings.rdp_auto_reconnect_attempts),
+            connect_timeout: Some(settings.rdp_connect_timeout),
+            resize_enable_delay_ms: Some(settings.rdp_resize_enable_delay_ms),
+            resolution_presets: Some(
+                settings
+                    .rdp_resolution_presets
+                    .iter()
+                    .copied()
+                    .map(resolution_text)
+                    .collect(),
+            ),
+            default_mode: Some(settings.rdp_default_mode.name().to_owned()),
+            require_credential_guard: Some(settings.require_credential_guard),
+        }
+    }
 }
 
 /// Absent flags are the C# defaults.
@@ -1593,6 +1654,7 @@ impl Settings {
         self.rdp_defaults = defaults.rdp_defaults;
         self.rdp_auto_reconnect_attempts = defaults.rdp_auto_reconnect_attempts;
         self.rdp_connect_timeout = defaults.rdp_connect_timeout;
+        self.rdp_resize_enable_delay_ms = defaults.rdp_resize_enable_delay_ms;
         self.rdp_resolution_presets = defaults.rdp_resolution_presets;
         self.rdp_default_mode = defaults.rdp_default_mode;
     }
@@ -1736,6 +1798,11 @@ impl Settings {
                 file.rdp_session.connect_timeout,
                 rdp_connect_timeout_accepted,
                 RDP_CONNECT_TIMEOUT_DEFAULT,
+            ),
+            rdp_resize_enable_delay_ms: within(
+                file.rdp_session.resize_enable_delay_ms,
+                rdp_resize_enable_delay_accepted,
+                RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
             ),
             require_credential_guard: file
                 .rdp_session
@@ -1971,19 +2038,7 @@ impl Settings {
             credential_provider: ProviderSection::of(&self.credential_provider),
             ssh: SshSection::of(self),
             rdp: self.rdp_defaults,
-            rdp_session: RdpSessionSection {
-                auto_reconnect_attempts: Some(self.rdp_auto_reconnect_attempts),
-                connect_timeout: Some(self.rdp_connect_timeout),
-                resolution_presets: Some(
-                    self.rdp_resolution_presets
-                        .iter()
-                        .copied()
-                        .map(resolution_text)
-                        .collect(),
-                ),
-                default_mode: Some(self.rdp_default_mode.name().to_owned()),
-                require_credential_guard: Some(self.require_credential_guard),
-            },
+            rdp_session: RdpSessionSection::of(self),
             files: FilesSection {
                 external_editor: self.external_editor.clone(),
                 browser_enabled: Some(self.sftp_browser.enabled),

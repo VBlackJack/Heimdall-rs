@@ -725,6 +725,12 @@ pub struct RdpOptions {
     /// The proportions the desktop is first given, as the C# `RdpAspectRatio`.
     #[serde(default, skip_serializing_if = "Aspect::is_default")]
     pub aspect: Aspect,
+    /// Milliseconds a desktop following its tab keeps the size it connected with before the
+    /// tab's later sizes are asked of the server, as the C# `RdpResizeEnableDelayMs`: 0 for
+    /// no wait; `None` takes the settings' value. See
+    /// [`crate::settings::rdp_resize_enable_delay`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resize_enable_delay_ms: Option<u32>,
 }
 
 /// The proportions of a desktop that follows its tab, as the C# `AspectRatio` offers them
@@ -873,6 +879,7 @@ impl Default for RdpOptions {
             dynamic_resolution: true,
             performance_flags: 0,
             aspect: Aspect::Stretch,
+            resize_enable_delay_ms: None,
         }
     }
 }

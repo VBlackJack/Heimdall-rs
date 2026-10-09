@@ -239,6 +239,9 @@ pub enum Notice {
     ResolutionReconnected,
     /// The size chosen is larger than the tab: the desktop is shown scaled.
     ResolutionScaled,
+    /// The wait after connecting was skipped from the Resolution menu: the desktop follows
+    /// its tab now, as the C# `RdpStabilizationSkippedToast`.
+    StabilizationSkipped,
     /// The files copied were not offered to the RDP server: more files and folders than
     /// one copy takes.
     RdpFilesTooMany,

@@ -55,6 +55,7 @@ impl ProfileTab {
         match field {
             ProfileField::FixedWidth
             | ProfileField::FixedHeight
+            | ProfileField::ResizeDelay
             | ProfileField::IcaFile
             | ProfileField::WorkingDirectory => Self::Options,
             ProfileField::SocksPort

@@ -441,6 +441,11 @@ pub enum Message {
     },
     /// Stop the anti-idle keys of a tab's session, until it connects again.
     StopAntiIdle(TabId),
+    /// A second of the RDP desktops settling after connecting, at this instant: those whose
+    /// wait is over follow their tab again.
+    StabilizationTick(Instant),
+    /// The C# Resolution menu's "Skip stabilization": the tab's desktop follows its tab now.
+    SkipStabilization(TabId),
     /// Send this side's clipboard to the remote desktop of a tab, as the C# Heimdall's
     /// noVNC "sync" does: on a click, never by itself over a clear VNC connection.
     SendClipboard(TabId),
@@ -955,6 +960,8 @@ impl fmt::Debug for Message {
             }
             Self::HealthRead { tab, .. } => write!(f, "HealthRead({})", tab.value()),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
+            Self::StabilizationTick(_) => f.write_str("StabilizationTick"),
+            Self::SkipStabilization(tab) => write!(f, "SkipStabilization({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
             Self::SaveRemoteFiles(tab) => write!(f, "SaveRemoteFiles({})", tab.value()),
             Self::SaveFolderPicked { tab, folder } => {
@@ -3455,7 +3462,9 @@ impl App {
             | Message::AntiIdleTick
             | Message::DisplayScale(_)
             | Message::TmoutResetTick
-            | Message::StopAntiIdle(_)) => self.desktop_message(message),
+            | Message::StopAntiIdle(_)
+            | Message::StabilizationTick(_)
+            | Message::SkipStabilization(_)) => self.desktop_message(message),
             message @ (Message::HealthTick | Message::HealthRead { .. }) => {
                 self.health_message(message)
             }
@@ -3727,6 +3736,8 @@ impl App {
             // Not a desktop's, but a session timer's as anti-idle is.
             Message::TmoutResetTick => self.tmout_reset_tick(),
             Message::StopAntiIdle(tab) => self.stop_anti_idle(tab),
+            Message::StabilizationTick(now) => self.stabilization_tick(now),
+            Message::SkipStabilization(tab) => self.skip_stabilization(tab),
             _ => {}
         }
         Vec::new()

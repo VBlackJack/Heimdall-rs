@@ -168,6 +168,16 @@ fn the_search_finds_rows_by_name_hint_heading_or_choice_on_every_tab_whatever_th
         shell.settings_found("   ").is_empty(),
         "blank finds nothing"
     );
+    assert_eq!(
+        shell.settings_found("stabilization delay"),
+        [SettingRow::RdpResizeDelay],
+        "the C# RDP session card's wait after connecting"
+    );
+    assert_eq!(
+        SettingRow::RdpResizeDelay.card(),
+        SettingsCard::RdpSession,
+        "beside the watchdog"
+    );
 
     let _ = shell.update(Message::SettingsSearch("keep-alive".to_owned()));
     let mut ui = simulator(&shell);
@@ -899,7 +909,7 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         );
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
-    assert_eq!(SettingRow::ALL.len(), 60, "no row added");
+    assert_eq!(SettingRow::ALL.len(), 61, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(

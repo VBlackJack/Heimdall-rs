@@ -55,7 +55,12 @@ fn app(dir: &Path) -> App {
         gateway: None,
         redirect_clipboard: true,
         redirect_drives: false,
-        options: heimdall_core::profile::RdpOptions::default(),
+        // No wait after connecting: each size reaches the session at once here; the wait
+        // has its own tests, in `rdp_stabilization.rs`.
+        options: heimdall_core::profile::RdpOptions {
+            resize_enable_delay_ms: Some(0),
+            ..heimdall_core::profile::RdpOptions::default()
+        },
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
@@ -581,7 +586,10 @@ fn the_profile_decides_the_desktop_asked_and_which_tab_sizes_reach_the_server() 
     ] {
         let dir = tempfile::tempdir().expect("dir");
         let mut profile = app(dir.path()).rdp_profiles()[0].clone();
-        profile.options = options;
+        profile.options = RdpOptions {
+            resize_enable_delay_ms: Some(0),
+            ..options
+        };
         let profiles_file = dir.path().join("profiles.toml");
         let mut store = ProfileStore::open(&profiles_file).expect("store");
         store.merge_rdp([profile]);

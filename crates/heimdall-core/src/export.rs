@@ -221,6 +221,9 @@ struct RdpKeys {
     rdp_auto_reconnect: bool,
     rdp_performance_flags: u32,
     rdp_aspect_ratio: &'static str,
+    /// Absent takes the global setting, as the C# `null`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rdp_resize_enable_delay_ms: Option<u32>,
     rdp_mode: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     rdp_gateway: Option<String>,
@@ -449,6 +452,7 @@ fn rdp(profile: &RdpProfile) -> Entry {
                 Aspect::Standard => "4:3",
                 Aspect::UltraWide => "21:9",
             },
+            rdp_resize_enable_delay_ms: options.resize_enable_delay_ms,
             rdp_mode: if profile.extras.external {
                 "External"
             } else {

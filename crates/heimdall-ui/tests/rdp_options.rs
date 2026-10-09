@@ -184,7 +184,14 @@ fn the_resolution_modes_are_offered_in_the_csharp_order_without_multi_monitor() 
 #[test]
 fn the_fixed_mode_offers_the_csharp_sizes_and_its_own_fields_only_there() {
     let mut draft = own_options();
-    assert_eq!(fields_asked(&draft), [], "fitting the window");
+    assert_eq!(
+        fields_asked(&draft),
+        [ProfileField::ResizeDelay],
+        "fitting the window: the C# wait after connecting only"
+    );
+    let mut once = draft.clone();
+    once.choose(ProfileChoice::DynamicResolution(false));
+    assert_eq!(fields_asked(&once), [], "the tab's size once: no wait");
     {
         let mut ui = resolution(&draft);
         assert!(ui.find("Common resolutions").is_err(), "fitting the window");
