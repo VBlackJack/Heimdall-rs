@@ -11436,11 +11436,62 @@ fn with_unsaved(body: Option<String>, unsaved: usize) -> String {
     }
 }
 
+/// The title, text and action of a question the Settings page asks: resetting the RDP
+/// defaults or every setting, writing the default SSH or RDP mode into every profile of its
+/// protocol. `None` for any other dialog.
+fn settings_question(dialog: &Dialog) -> Option<(String, String, String)> {
+    let question = match dialog {
+        Dialog::ConfirmResetRdpDefaults => (
+            fl!("ui-dialog-reset-rdp-title"),
+            fl!("ui-dialog-reset-rdp-body"),
+            fl!("ui-settings-rdp-reset-defaults"),
+        ),
+        Dialog::ConfirmResetAllSettings => (
+            fl!("ui-dialog-reset-all-title"),
+            fl!("ui-dialog-reset-all-body"),
+            fl!("ui-settings-reset-all"),
+        ),
+        Dialog::ConfirmApplySshMode {
+            mode,
+            changes,
+            total,
+        } => (
+            fl!("ui-dialog-apply-ssh-mode-title"),
+            fl!(
+                "ui-dialog-apply-ssh-mode-body",
+                mode = settings_page::ssh_mode_name(*mode),
+                changes = (*changes),
+                total = (*total)
+            ),
+            fl!("ui-settings-apply-mode-to-all"),
+        ),
+        Dialog::ConfirmApplyRdpMode {
+            mode,
+            changes,
+            total,
+        } => (
+            fl!("ui-dialog-apply-rdp-mode-title"),
+            fl!(
+                "ui-dialog-apply-rdp-mode-body",
+                mode = settings_page::rdp_mode_name(*mode),
+                changes = (*changes),
+                total = (*total)
+            ),
+            fl!("ui-settings-apply-mode-to-all"),
+        ),
+        _ => return None,
+    };
+    Some(question)
+}
+
 /// The title, text and action of a plain question: leaving the window with sessions live,
 /// broadcasting input to every tab, recording every session, resetting the RDP settings,
 /// writing the default SSH or RDP mode into every profile of its protocol, deleting
 /// profiles or folders, terminating a Citrix session.
 fn plain_question(dialog: &Dialog) -> (String, String, String) {
+    if let Some(question) = settings_question(dialog) {
+        return question;
+    }
     match dialog {
         Dialog::ConfirmCitrixTerminate { force, .. } => {
             crate::citrix_view::terminate_question(*force)
@@ -11473,48 +11524,10 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-session-logging-body"),
             fl!("ui-dialog-session-logging-confirm"),
         ),
-        Dialog::ConfirmResetRdpDefaults => (
-            fl!("ui-dialog-reset-rdp-title"),
-            fl!("ui-dialog-reset-rdp-body"),
-            fl!("ui-settings-rdp-reset-defaults"),
-        ),
-        Dialog::ConfirmResetAllSettings => (
-            fl!("ui-dialog-reset-all-title"),
-            fl!("ui-dialog-reset-all-body"),
-            fl!("ui-settings-reset-all"),
-        ),
         Dialog::ConfirmVaultHelloEnrolAgain => (
             fl!("ui-vault-hello-enrol-again-title"),
             fl!("ui-vault-hello-enrol-again-body"),
             fl!("ui-vault-hello-enrol-again-button"),
-        ),
-        Dialog::ConfirmApplySshMode {
-            mode,
-            changes,
-            total,
-        } => (
-            fl!("ui-dialog-apply-ssh-mode-title"),
-            fl!(
-                "ui-dialog-apply-ssh-mode-body",
-                mode = settings_page::ssh_mode_name(*mode),
-                changes = (*changes),
-                total = (*total)
-            ),
-            fl!("ui-settings-apply-mode-to-all"),
-        ),
-        Dialog::ConfirmApplyRdpMode {
-            mode,
-            changes,
-            total,
-        } => (
-            fl!("ui-dialog-apply-rdp-mode-title"),
-            fl!(
-                "ui-dialog-apply-rdp-mode-body",
-                mode = settings_page::rdp_mode_name(*mode),
-                changes = (*changes),
-                total = (*total)
-            ),
-            fl!("ui-settings-apply-mode-to-all"),
         ),
         Dialog::ConfirmDeleteMacro(name) => (
             fl!("ui-macro-editor-delete-macro"),
