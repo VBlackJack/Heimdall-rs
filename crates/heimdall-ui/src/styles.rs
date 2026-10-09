@@ -498,7 +498,7 @@ pub fn dialog(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.surface)),
-        border: outline(brushes.edge, radius::XL),
+        border: brushes.outline(brushes.edge, radius::XL),
         ..BoxStyle::default()
     }
 }
@@ -509,7 +509,7 @@ pub fn tab_frame(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.card)),
-        border: outline(brushes.edge, radius::XL),
+        border: brushes.outline(brushes.edge, radius::XL),
         ..BoxStyle::default()
     }
 }
