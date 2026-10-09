@@ -51,7 +51,7 @@ const CONFLICTS: [ConflictChoice; 3] = [
 
 /// A choice for a name taken, named in the user's language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ConflictChoice(Conflict);
+pub(crate) struct ConflictChoice(pub(crate) Conflict);
 
 impl fmt::Display for ConflictChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

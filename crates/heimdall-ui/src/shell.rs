@@ -4281,6 +4281,7 @@ impl Shell {
                     dialog,
                     Dialog::SessionsPreview(_)
                         | Dialog::RdpPreview(_)
+                        | Dialog::ProfileImportPreview(_)
                         | Dialog::HostKeysPreview(_)
                         | Dialog::FileConflicts { .. }
                 ) {
@@ -8417,6 +8418,7 @@ fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
     match dialog {
         Dialog::SessionsPreview(preview) => crate::sessions_view::preview(preview),
         Dialog::RdpPreview(preview) => crate::rdp_view::preview(preview),
+        Dialog::ProfileImportPreview(preview) => crate::profile_import_view::preview(preview),
         Dialog::HostKeysPreview(preview) => crate::hostkeys_view::preview(preview),
         Dialog::ConfirmImportFile(_) | Dialog::ConfirmCitrixImport(_) => {
             let (title, body, action) = match dialog {
@@ -8433,17 +8435,41 @@ fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
 
 /// The report of an import, as the C# message after it: what was added, updated and left as
 /// it was, the profiles left out and why, the settings dropped, the host keys carried.
-fn import_report<'a>(
-    summary: &'a heimdall_app::ImportSummary,
-    ok: iced::widget::Button<'a, Message>,
-) -> Element<'a, Message> {
-    let mut content = column![dialog_parts::body(fl!(
+/// What each choice of a previewed import did, first, as the C# summary says it; then what
+/// the merge did.
+fn import_counts(summary: &heimdall_app::ImportSummary) -> Column<'_, Message> {
+    let mut content = column![].spacing(spacing::SM);
+    if let Some(actions) = summary.actions {
+        content = content.push(dialog_parts::body(
+            crate::profile_import_view::actions_line(actions),
+        ));
+    }
+    content.push(dialog_parts::body(fl!(
         "ui-dialog-import-counts",
         added = summary.merged.added,
         updated = summary.merged.updated,
         unchanged = summary.merged.unchanged
-    ))]
-    .spacing(spacing::SM);
+    )))
+}
+
+/// As the C# `ShowInfo` after an import; a previewed one that wrote nothing, or left a
+/// gateway reference unresolved, is a warning (`ProfileImportService.cs:196-203`).
+fn import_severity(summary: &heimdall_app::ImportSummary) -> Severity {
+    match summary.actions {
+        Some(actions)
+            if actions.imported + actions.replaced == 0 || summary.gateways.orphans > 0 =>
+        {
+            Severity::Warning
+        }
+        _ => Severity::Info,
+    }
+}
+
+fn import_report<'a>(
+    summary: &'a heimdall_app::ImportSummary,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let mut content = import_counts(summary);
     // The file's gateways on a line of their own, as the C# summary says them, then what to
     // do about the references none resolves (`ProfileImportService.cs:446-476`).
     let gateways = summary.gateways;
@@ -8534,9 +8560,8 @@ fn import_report<'a>(
     {
         content = content.push(text(line).size(font_size::CAPTION));
     }
-    // As the C# `ShowInfo` after an import.
     dialog_parts::message(
-        Severity::Info,
+        import_severity(summary),
         fl!("ui-dialog-import-title"),
         content,
         dialog_parts::buttons([ok]),
@@ -11923,6 +11948,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::RdpPreview(_)
         | Dialog::HostKeysPreview(_)
         | Dialog::ConfirmImportFile(_)
+        | Dialog::ProfileImportPreview(_)
         | Dialog::ConfirmCitrixImport(_) => import_preview(dialog),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::BulkPassword {

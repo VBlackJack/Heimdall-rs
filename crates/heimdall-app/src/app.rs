@@ -109,6 +109,7 @@ mod macros;
 mod mstsc_launch;
 mod pin;
 mod post_connect;
+mod profile_import;
 mod profile_menu;
 mod profiles;
 mod provider;
@@ -173,6 +174,9 @@ pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEd
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
+pub use profile_import::{
+    ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow,
+};
 pub use profile_menu::ProfileMenuMessage;
 pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use provider_connect::{ProviderAnswer, ProviderRequest};
@@ -624,6 +628,8 @@ pub enum Message {
     Sessions(SessionsMessage),
     /// The import of `.rdp` files.
     Rdp(RdpMessage),
+    /// The preview of a Heimdall session document's profiles.
+    ProfileImport(ProfileImportMessage),
     /// How the export's file went.
     ExportFinished(ExportOutcome),
     /// Open an empty profile form.
@@ -1037,6 +1043,7 @@ impl fmt::Debug for Message {
                 write!(f, "Rdp(Read({} files))", files.len())
             }
             Self::Rdp(message) => write!(f, "Rdp({message:?})"),
+            Self::ProfileImport(message) => write!(f, "ProfileImport({message:?})"),
             Self::ExportFinished(outcome) => write!(f, "ExportFinished({outcome:?})"),
             Self::NewProfile => f.write_str("NewProfile"),
             Self::EditProfile(id) => write!(f, "EditProfile({id})"),
@@ -2483,6 +2490,9 @@ pub struct ImportSummary {
     /// The SSH gateways the file brought, created or found already saved, as the C# summary's
     /// gateway line counts them.
     pub gateways: heimdall_core::import::gateways::Reconciliation,
+    /// For a Heimdall session document previewed, what each choice did, as the C# summary
+    /// counts it.
+    pub actions: Option<ImportActions>,
 }
 
 /// One destination in a transfer's way, and the answer picked for it.
@@ -2795,6 +2805,8 @@ pub enum Dialog {
     RdpDone(RdpOutcome),
     /// How many sessions a picked file gives, asked before they are imported.
     ConfirmImportFile(Box<PendingImport>),
+    /// The profiles of a Heimdall session document, each clash with a choice.
+    ProfileImportPreview(Box<ProfileImportPreview>),
     /// How many applications Citrix Workspace's cache gives, asked before they are imported.
     ConfirmCitrixImport(Box<heimdall_core::import::citrix_cache::CacheScan>),
     /// Citrix Workspace's cache gives no application: what the scan said.
@@ -3550,6 +3562,7 @@ impl App {
             | Message::ExportFinished(_)
             | Message::Sessions(_)
             | Message::Rdp(_)
+            | Message::ProfileImport(_)
             | Message::Settings(_)
             | Message::Macro(_)
             | Message::NoteOpened(_)
@@ -4653,7 +4666,8 @@ impl App {
                 dialog @ (Dialog::SessionsPreview(_)
                 | Dialog::RdpPreview(_)
                 | Dialog::HostKeysPreview(_)
-                | Dialog::ConfirmImportFile(_)),
+                | Dialog::ConfirmImportFile(_)
+                | Dialog::ProfileImportPreview(_)),
             ) => {
                 self.confirm_import(dialog);
                 Vec::new()
@@ -4873,6 +4887,10 @@ impl App {
             }
             Message::Sessions(message) => self.sessions_message(message.clone()),
             Message::Rdp(message) => self.rdp_message(message.clone()),
+            Message::ProfileImport(message) => {
+                self.profile_import_message(*message);
+                Vec::new()
+            }
             Message::ExportFinished(outcome) => {
                 self.dialog = match outcome {
                     ExportOutcome::Saved(count) => Some(Dialog::ExportDone { count: *count }),

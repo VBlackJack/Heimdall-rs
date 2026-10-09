@@ -15,9 +15,11 @@
  */
 
 //! "Import Sessions", as the C# Heimdall's: a file picked, a Heimdall document or a
-//! `MobaXterm`, `mRemoteNG` or `RDCMan` file, its kind told by its extension; the number of
-//! sessions asked about, then merged, with what was left out and, for `MobaXterm`, that
-//! passwords must be entered again.
+//! `MobaXterm`, `mRemoteNG` or `RDCMan` file, its kind told by its extension. A Heimdall
+//! document is previewed profile by profile, each clash with a choice
+//! ([`super::profile_import`]); for the other files the number of sessions is asked about,
+//! then they are merged, with what was left out and, for `MobaXterm`, that passwords must be
+//! entered again.
 //!
 //! Its SSH gateways are reconciled with those saved, as the C# `GatewayImportReconciler`: one
 //! logging in to the same host, port and user as a saved one is that one, and the profiles
@@ -34,7 +36,8 @@ use heimdall_core::import::csharp::{self, ImportReport};
 use heimdall_core::import::foreign::{FileWarning, Parsed};
 use heimdall_core::import::gateways;
 use heimdall_core::import::{mobaxterm, mremoteng, rdcman};
-use heimdall_core::metadata::ProfileOrigin;
+use heimdall_core::metadata::{ProfileMetadata, ProfileOrigin};
+use heimdall_core::profile::ProfileId;
 use heimdall_core::store::MergeReport;
 
 use super::{App, Dialog, Effect, ImportSummary, server_text};
@@ -99,6 +102,9 @@ pub struct ImportFile {
     /// The `settings.json` beside a `servers.json`, whose group defaults and gateways it
     /// uses.
     pub settings: Option<String>,
+    /// The words a profile renamed by the import takes, `{name}` and `{n}` in them, in the
+    /// user's language, as the C# `DialogImportRdpRenameSuffix`.
+    pub rename: String,
 }
 
 impl fmt::Debug for ImportFile {
@@ -127,15 +133,7 @@ impl PendingImport {
     /// Sessions the import would add or update.
     #[must_use]
     pub fn count(&self) -> usize {
-        let report = &self.report;
-        report.profiles.len()
-            + report.rdp.len()
-            + report.telnet.len()
-            + report.vnc.len()
-            + report.local.len()
-            + report.winrm.len()
-            + report.ftp.len()
-            + report.citrix.len()
+        report_count(&self.report)
     }
 }
 
@@ -152,12 +150,22 @@ impl App {
         let kind = FileKind::of(&file.name, &file.text);
         let mut pending = match kind {
             FileKind::Heimdall => match csharp::import(&file.text, file.settings.as_deref()) {
-                Ok(report) => PendingImport {
-                    kind,
-                    report,
-                    warnings: Vec::new(),
-                    stored_credentials: 0,
-                },
+                Ok(mut report) => {
+                    distrust(&mut report);
+                    // As the C# `ImportJsonProfilesAsync`: nothing in the file is said, the
+                    // rest previewed profile by profile.
+                    self.dialog = Some(if report_count(&report) == 0 {
+                        nothing(report, Vec::new())
+                    } else {
+                        Dialog::ProfileImportPreview(Box::new(self.profile_preview(
+                            file.name,
+                            &file.text,
+                            file.rename,
+                            report,
+                        )))
+                    });
+                    return Vec::new();
+                }
                 Err(error) => {
                     self.dialog = Some(Dialog::ImportFailed {
                         detail: error.to_string(),
@@ -171,16 +179,7 @@ impl App {
         };
         distrust(&mut pending.report);
         self.dialog = Some(if pending.count() == 0 {
-            // As the C#: nothing to import is said, with why when the file says it.
-            Dialog::ImportNothing {
-                skipped: pending
-                    .report
-                    .skipped
-                    .into_iter()
-                    .map(|skipped| (server_text(&skipped.name), skipped.reason))
-                    .collect(),
-                warnings: pending.warnings,
-            }
+            nothing(pending.report, pending.warnings)
         } else {
             Dialog::ConfirmImportFile(Box::new(pending))
         });
@@ -216,6 +215,7 @@ impl App {
             Dialog::RdpPreview(preview) => self.import_rdp(&preview),
             Dialog::HostKeysPreview(preview) => self.import_hostkeys(&preview),
             Dialog::ConfirmImportFile(pending) => self.confirm_import_file(*pending),
+            Dialog::ProfileImportPreview(preview) => self.import_profiles(*preview),
             _ => {}
         }
     }
@@ -234,10 +234,30 @@ impl App {
 
     /// Merges `report` into the store, saved before it is kept, its gateways reconciled with
     /// those saved; the summary of what it did, or `None` with the store's error shown.
-    pub(super) fn merge_import(&mut self, mut report: ImportReport) -> Option<ImportSummary> {
+    pub(super) fn merge_import(&mut self, report: ImportReport) -> Option<ImportSummary> {
+        self.merge_import_replacing(report, &[])
+    }
+
+    /// As [`Self::merge_import`], the saved profiles of `replacing` first made ready for the
+    /// file's profile written under their identifier: one of another protocol removed, one of
+    /// the same protocol no longer a favorite nor described, so that what the file says of it
+    /// is all it keeps, as the C# replace writes the file's profile in its place.
+    pub(super) fn merge_import_replacing(
+        &mut self,
+        mut report: ImportReport,
+        replacing: &[(ProfileId, bool)],
+    ) -> Option<ImportSummary> {
         let reconciled =
             gateways::reconcile(&mut report, self.store.gateways(), &mut || self.fresh_id());
         let merged = self.store.apply(|store| {
+            for (id, elsewhere) in replacing {
+                if *elsewhere {
+                    store.remove(id);
+                } else {
+                    store.set_favorite(id, false);
+                    store.set_metadata(id, ProfileMetadata::default());
+                }
+            }
             let ssh = store.merge(report.profiles);
             let rdp = store.merge_rdp(report.rdp);
             let telnet = store.merge_telnet(report.telnet);
@@ -283,12 +303,37 @@ impl App {
                     .collect(),
                 host_keys: None,
                 gateways: reconciled,
+                actions: None,
             }),
             Err(error) => {
                 self.dialog = Some(Dialog::save_failed(&error));
                 None
             }
         }
+    }
+}
+
+/// How many sessions `report` would add or update.
+fn report_count(report: &ImportReport) -> usize {
+    report.profiles.len()
+        + report.rdp.len()
+        + report.telnet.len()
+        + report.vnc.len()
+        + report.local.len()
+        + report.winrm.len()
+        + report.ftp.len()
+        + report.citrix.len()
+}
+
+/// As the C#: nothing to import is said, with why when the file says it.
+fn nothing(report: ImportReport, warnings: Vec<FileWarning>) -> Dialog {
+    Dialog::ImportNothing {
+        skipped: report
+            .skipped
+            .into_iter()
+            .map(|skipped| (server_text(&skipped.name), skipped.reason))
+            .collect(),
+        warnings,
     }
 }
 

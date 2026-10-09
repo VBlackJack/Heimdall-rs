@@ -365,6 +365,19 @@ ui-dialog-paste-body = { $count ->
 ui-dialog-paste-confirm = Coller
 ui-dialog-import-title = Import terminé
 ui-dialog-import-counts = Ajoutés : { $added }. Mis à jour : { $updated }. Inchangés : { $unchanged }.
+ui-dialog-import-actions = { $imported ->
+    [one] { $imported } importé
+   *[other] { $imported } importés
+}, { $replaced ->
+    [one] { $replaced } remplacé
+   *[other] { $replaced } remplacés
+}, { $renamed ->
+    [one] { $renamed } renommé auto
+   *[other] { $renamed } renommés auto
+}, { $skipped ->
+    [one] { $skipped } ignoré
+   *[other] { $skipped } ignorés
+}.
 ui-dialog-import-gateways = Passerelles SSH : { $created ->
     [one] { $created } créée
    *[other] { $created } créées
@@ -719,6 +732,20 @@ ui-rdp-done = { $imported ->
    *[other] { $passwords } mots de passe ignorés.
 }
 ui-rdp-nothing = Aucun fichier .rdp valide à importer.
+ui-profile-import-title = Importer des profils
+ui-profile-import-subtitle = { $count ->
+    [one] { $count } profil prêt à l'import.
+   *[other] { $count } profils prêts à l'import.
+}
+ui-profile-import-summary = { $chosen ->
+    [one] { $chosen } profil sélectionné sur { $total }
+   *[other] { $chosen } profils sélectionnés sur { $total }
+}, { $conflicts ->
+    [one] { $conflicts } conflit
+   *[other] { $conflicts } conflits
+}.
+ui-profile-import-button = Importer la sélection
+ui-profile-import-source = { $file }#{ $position }
 ui-tree-import-known-hosts = Importer des hôtes SSH de confiance...
 ui-hostkeys-title = Importer les hôtes SSH de confiance
 ui-hostkeys-pick-title = Sélectionner le fichier known_hosts
