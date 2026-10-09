@@ -27,7 +27,7 @@ use heimdall_app::{App, AppConfig, Message as AppMessage, ProviderMessage, Syste
 use heimdall_core::credential_provider::TemplateProblem;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, ProfileTab, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
 
@@ -306,6 +306,8 @@ fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
     store.save().expect("save");
     let mut shell = shell(dir.path());
     let _ = shell.update(Message::App(AppMessage::EditProfile(ProfileId::new("a"))));
+    // The C# Info tab's metadata.
+    let _ = shell.update(Message::ProfileTab(ProfileTab::Info));
     let messages: Vec<Message> = {
         let mut ui = simulator(&shell);
         ui.find("Vault entry name").expect("the C# label");
@@ -314,6 +316,7 @@ fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
              the credential provider's {Title} lookup; when empty, the display name is used.",
         )
         .expect("the C# help");
+        common::reveal(&mut ui, "Leave empty to use the display name");
         ui.click("Leave empty to use the display name")
             .expect("the field, by its placeholder");
         ui.typewrite("Servers/Web");

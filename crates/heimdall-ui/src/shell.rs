@@ -85,12 +85,14 @@ mod settings_page;
 pub use settings_page::search_field_id as settings_search_field_id;
 
 use crate::desktop_view::DesktopView;
+use crate::dialog_parts::{self, Severity};
 use crate::files_view;
 use crate::finder::Finder;
 use crate::floating_view::{FloatEvent, FloatingWindow};
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::palette::Palette;
+pub use crate::profile_tabs::ProfileTab;
 use crate::report;
 use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
@@ -133,6 +135,9 @@ const CARD_WIDTH: f32 = 520.0;
 
 /// Widest a dialog holding a table grows.
 const WIDE_CARD_WIDTH: f32 = 1000.0;
+
+/// Size of the profile form, as the C# server dialog's window: 650 by 750.
+const FORM_SIZE: iced::Size = iced::Size::new(650.0, 750.0);
 
 /// Height of the sidebar's heading, as the C# `SidebarTabStyle`'s, its underline in.
 const SIDEBAR_TAB_HEIGHT: f32 = 32.0;
@@ -194,6 +199,30 @@ const TAB_PIN_SIDE: f32 = 10.0;
 /// Width of the port column beside the server field, as in the C# dialog.
 const PORT_FIELD_WIDTH: f32 = 150.0;
 
+/// Side of a protocol's icon on its card in the new session's picker, as the C#'s.
+const PICKER_ICON_SIDE: f32 = 28.0;
+
+/// Cards to a row in the new session's picker, as the C# `UniformGrid`.
+const PICKER_COLUMNS: usize = 4;
+
+/// Padding of the profile form's protocol, as the C# badge's 10 by 4.
+const CHIP_PADDING: [f32; 2] = [4.0, 10.0];
+
+/// Padding of a tab control's headers, as the C#'s 8 above and on the sides.
+const TAB_HEADERS_PADDING: iced::Padding = iced::Padding {
+    top: spacing::SM,
+    right: spacing::SM,
+    bottom: 0.0,
+    left: spacing::SM,
+};
+
+/// Space between two sections of the profile form, as the C# cards' margin and padding.
+const SECTION_GAP: f32 = spacing::LG + spacing::MD;
+
+/// The boxes of a `WinRM` profile drawn under its port, as the C# General tab draws them.
+const WINRM_TRANSPORT: [ProfileToggle; 2] =
+    [ProfileToggle::UseSsl, ProfileToggle::SkipCertificateCheck];
+
 /// Where the SOCKS proxy listens: this computer's loopback address, as in the C# Heimdall.
 const LOOPBACK: &str = "127.0.0.1";
 
@@ -241,11 +270,6 @@ const VEIL_ALPHA: f32 = 0.6;
 
 /// Widest the settings' cards grow.
 const SETTINGS_WIDTH: f32 = 720.0;
-
-/// Height of the window a dialog's scrolling fields leave to the rest: the card's padding
-/// (24), the buttons (31), the error line (21) with the spacing around them (16), and a
-/// margin of a spacing and a half above and below the card.
-const DIALOG_RESERVED_HEIGHT: f32 = 112.0;
 
 /// Window events and the window's shortcuts.
 /// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N.
@@ -644,6 +668,8 @@ pub enum Message {
     SubmitBulkPassword,
     /// Show this tab of the Settings page.
     SettingsTab(SettingsTab),
+    /// Show this tab of the profile form.
+    ProfileTab(ProfileTab),
     /// The Settings page's search changed: its rows are filtered by what it holds.
     SettingsSearch(String),
     /// "Find modified settings": the search set to the "Modified" marker's word.
@@ -930,6 +956,7 @@ impl fmt::Debug for Message {
             Self::FocusBulkPasswordField(index) => write!(f, "FocusBulkPasswordField({index})"),
             Self::SubmitBulkPassword => f.write_str("SubmitBulkPassword"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
+            Self::ProfileTab(tab) => write!(f, "ProfileTab({tab:?})"),
             Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
             Self::FindModifiedSettings => f.write_str("FindModifiedSettings"),
             Self::ResetSetting(row) => write!(f, "ResetSetting({row:?})"),
@@ -1374,6 +1401,8 @@ pub struct Shell {
     host_key_search: String,
     /// The Settings tab shown, kept while the application runs.
     settings_tab: SettingsTab,
+    /// The profile form's tab shown, General each time the form opens.
+    profile_tab: ProfileTab,
     /// What the Settings page's search holds: while it holds a word, the rows it finds are
     /// shown in place of the tab.
     settings_search: String,
@@ -1627,6 +1656,7 @@ impl Shell {
             session_typed: Default::default(),
             host_key_search: String::new(),
             settings_tab: SettingsTab::default(),
+            profile_tab: ProfileTab::default(),
             settings_search: String::new(),
             settings_highlight: None,
             certificate_search: String::new(),
@@ -2276,6 +2306,7 @@ impl Shell {
             | Message::ProviderUnlock(_)
             | Message::Search(_)
             | Message::SettingsTab(_)
+            | Message::ProfileTab(_)
             | Message::ProfilePassword(_)
             | Message::BulkPasswordField { .. }
             | Message::FocusBulkPasswordField(_)
@@ -2453,6 +2484,11 @@ impl Shell {
         }
         self.forget_finished();
         self.keep_monitors();
+        // The form closed, or back to its protocols: it opens again on General. A gateway
+        // edited from it keeps its tab for its return.
+        if !self.profile_form_open() {
+            self.profile_tab = ProfileTab::General;
+        }
         // The previous run's sessions, offered once nothing else is asked and the window is
         // open to the user.
         if !self.gated() {
@@ -2514,6 +2550,11 @@ impl Shell {
                 // A tab chosen is shown whole: the search, and the row outlined, give way.
                 self.settings_search.clear();
                 self.settings_highlight = None;
+            }
+            Message::ProfileTab(tab) => {
+                self.profile_tab = tab;
+                // A tab opens at its top.
+                return operation::snap_to(profile_page_id(), RelativeOffset::START);
             }
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
             Message::BulkPasswordField { index, value } => {
@@ -2753,9 +2794,8 @@ impl Shell {
 
     /// What the dialogs show that the window holds: typed secrets, and where passwords go.
     /// The dialogs' inputs, for a window `height` high.
-    fn forms(&self, height: f32) -> Forms<'_> {
+    fn forms(&self) -> Forms<'_> {
         Forms {
-            fields_height: (height - DIALOG_RESERVED_HEIGHT).max(0.0),
             monitors: self.monitors.as_deref().unwrap_or_default(),
             vault: &self.vault_fields,
             profile_password: &self.profile_password,
@@ -2768,6 +2808,17 @@ impl Shell {
             agent_chip: self.app.agent_chip(),
             bulk_password: &self.bulk_password,
             passwords: self.password_store(),
+            profile_tab: self.profile_tab,
+        }
+    }
+
+    /// Whether the profile form is open with a protocol chosen, or left for a gateway it
+    /// opened.
+    fn profile_form_open(&self) -> bool {
+        match &self.app.dialog {
+            Some(Dialog::EditProfile { draft, .. }) => draft.protocol_chosen,
+            Some(Dialog::EditGateway { back, .. }) => back.is_some(),
+            _ => false,
         }
     }
 
@@ -3423,6 +3474,10 @@ impl Shell {
         if next == self.dialog_focus {
             return Task::none();
         }
+        // A form refused shows the tab holding the field to fix.
+        if let Some(DialogFocus::FormError(DialogForm::Profile, error)) = next {
+            self.profile_tab = ProfileTab::holding(error.field());
+        }
         self.dialog_focus = next;
         if next.is_none() {
             return Task::none();
@@ -3902,10 +3957,10 @@ impl Shell {
             .dialog
             .as_ref()
             .filter(|_| self.inline_rename().is_none())?;
-        // Built for the window's height: a long form scrolls above its buttons.
+        // Built for the window's height: the profile form scrolls above its buttons.
         Some(opaque(
             container(responsive(move |size| {
-                let content = dialog_view(dialog, &self.forms(size.height));
+                let content = dialog_view(dialog, &self.forms());
                 // The OpenSSH preview is a table: wider than a form, as the C# one.
                 let card = if matches!(
                     dialog,
@@ -3915,6 +3970,9 @@ impl Shell {
                         | Dialog::FileConflicts { .. }
                 ) {
                     wide_card(content)
+                } else if matches!(dialog, Dialog::EditProfile { .. }) {
+                    // A margin of a spacing above and below it.
+                    form_card(content, size.height - 2.0 * spacing::LG)
                 } else {
                     card(content)
                 };
@@ -7278,9 +7336,9 @@ fn certificate_details<'a>(
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(content)
-        .padding(spacing::MD)
+        .padding(spacing::LG)
         .max_width(CARD_WIDTH)
-        .style(container::bordered_box)
+        .style(styles::dialog)
         .into()
 }
 
@@ -7292,9 +7350,20 @@ fn action_label<'a>(label: String) -> iced::widget::Text<'a> {
 /// A card for a table, wider than a form's.
 fn wide_card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(content)
-        .padding(spacing::MD)
+        .padding(spacing::LG)
         .max_width(WIDE_CARD_WIDTH)
-        .style(container::bordered_box)
+        .style(styles::dialog)
+        .into()
+}
+
+/// The profile form's card, as the C# server dialog's window: as wide as it, and as high
+/// as it or as `height`, the room the window leaves.
+fn form_card<'a>(content: impl Into<Element<'a, Message>>, height: f32) -> Element<'a, Message> {
+    container(content)
+        .padding(spacing::LG)
+        .max_width(FORM_SIZE.width)
+        .height(FORM_SIZE.height.min(height).max(0.0))
+        .style(styles::dialog)
         .into()
 }
 
@@ -7342,37 +7411,51 @@ fn open_with_system(target: std::path::PathBuf) -> Task<Message> {
     )
 }
 
-/// The tabs of the Settings page, as the C# `TabControl` of `ThemedTabItemStyle`: each its
-/// name over a line, the one shown a card, its name semi-bold over the accent's line.
+/// The tabs of the Settings page.
 fn settings_tabs<'a>(shown: SettingsTab) -> Element<'a, Message> {
-    SettingsTab::ALL
-        .into_iter()
-        .fold(row![].spacing(TAB_GAP), |tabs, tab| {
-            let selected = tab == shown;
-            let name = text(tab.label());
-            let name = if selected {
-                name.font(styles::SEMIBOLD)
-            } else {
-                name
-            };
-            tabs.push(
-                button(
-                    column![
-                        name,
-                        container(iced::widget::space())
-                            .width(Length::Fill)
-                            .height(TAB_UNDERLINE)
-                            .style(styles::underline(selected)),
-                    ]
-                    .spacing(spacing::XS)
-                    .width(Length::Shrink),
-                )
-                .padding(TAB_PADDING)
-                .style(styles::tab(selected))
-                .on_press(Message::SettingsTab(tab)),
+    tab_strip(
+        SettingsTab::ALL,
+        shown,
+        SettingsTab::label,
+        Message::SettingsTab,
+    )
+    .into()
+}
+
+/// Headers of tabs, as the C# `TabControl` of `ThemedTabItemStyle`: each its `label` over a
+/// line, the one `shown` a card, its name semi-bold over the accent's line; a click sends
+/// `show`.
+fn tab_strip<'a, T: Copy + PartialEq>(
+    tabs: impl IntoIterator<Item = T>,
+    shown: T,
+    label: fn(T) -> String,
+    show: fn(T) -> Message,
+) -> iced::widget::Row<'a, Message> {
+    tabs.into_iter().fold(row![].spacing(TAB_GAP), |tabs, tab| {
+        let selected = tab == shown;
+        let name = text(label(tab));
+        let name = if selected {
+            name.font(styles::SEMIBOLD)
+        } else {
+            name
+        };
+        tabs.push(
+            button(
+                column![
+                    name,
+                    container(iced::widget::space())
+                        .width(Length::Fill)
+                        .height(TAB_UNDERLINE)
+                        .style(styles::underline(selected)),
+                ]
+                .spacing(spacing::XS)
+                .width(Length::Shrink),
             )
-        })
-        .into()
+            .padding(TAB_PADDING)
+            .style(styles::tab(selected))
+            .on_press(show(tab)),
+        )
+    })
 }
 
 /// The open dialog of "Import Sessions", held by the window, then the file read; a `.rdp`
@@ -7854,11 +7937,21 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
             (title, lines.into_iter().map(text).collect())
         }
     };
-    column![text(title).size(font_size::TITLE)]
-        .extend(lines.into_iter().map(Element::from))
-        .push(ok)
-        .spacing(spacing::SM)
-        .into()
+    let severity = match dialog {
+        Dialog::ExportFailed { .. }
+        | Dialog::ImportFailed { .. }
+        | Dialog::PasswordSaveFailed { .. }
+        | Dialog::StoreUnreadable { .. }
+        | Dialog::StoreError { .. } => Severity::Error,
+        Dialog::StoreChanged { .. } => Severity::Warning,
+        _ => Severity::Info,
+    };
+    dialog_parts::message(
+        severity,
+        title,
+        Column::with_children(lines.into_iter().map(Element::from)).spacing(spacing::SM),
+        dialog_parts::buttons([ok]),
+    )
 }
 
 /// The preview of an import, a table of what the file gives to choose from.
@@ -8015,10 +8108,10 @@ struct Forms<'a> {
     agent_chip: &'a heimdall_app::AgentChip,
     /// Whether a password typed now can be saved.
     passwords: PasswordStore,
-    /// The most a dialog's scrolling fields may take, so its buttons stay in the window.
-    fields_height: f32,
     /// This computer's screens, as last listed for the RDP profile form.
     monitors: &'a [crate::rdp_options::Monitor],
+    /// The profile form's tab shown.
+    profile_tab: ProfileTab,
 }
 
 /// Whether a password typed now can be saved.
@@ -8055,16 +8148,13 @@ fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Me
             .on_input(Message::ProfilePassword)
             .on_submit(Message::SaveProfileForm);
     }
-    let mut field = column![
-        text(fl!("ui-profile-field-password")).size(font_size::CAPTION),
-        input
-    ]
-    .spacing(spacing::XS);
+    let mut field =
+        column![dialog_parts::label(fl!("ui-profile-field-password")), input].spacing(spacing::XS);
     match forms.passwords {
         PasswordStore::Ready if draft.password_saved => {
             field = field.push(
                 row![
-                    text(fl!("ui-profile-password-saved")).size(font_size::CAPTION),
+                    dialog_parts::hint(fl!("ui-profile-password-saved")),
                     tooltip(
                         button(text(fl!("ui-profile-password-clear")).size(font_size::CAPTION))
                             .style(styles::subtle)
@@ -8080,13 +8170,19 @@ fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Me
         }
         PasswordStore::Ready => {}
         PasswordStore::VaultLocked => {
-            field = field.push(text(fl!("ui-profile-password-locked")).size(font_size::CAPTION));
+            field = field.push(dialog_parts::hint(fl!("ui-profile-password-locked")));
         }
         PasswordStore::None => {
-            field = field.push(text(fl!("ui-profile-password-no-store")).size(font_size::CAPTION));
+            field = field.push(dialog_parts::hint(fl!("ui-profile-password-no-store")));
         }
     }
     field.into()
+}
+
+/// The profile form's page, scrolled under its tabs.
+#[must_use]
+pub fn profile_page_id() -> iced::widget::Id {
+    iced::widget::Id::from("profile-page")
 }
 
 fn password_field_id() -> iced::widget::Id {
@@ -8122,42 +8218,78 @@ fn protocol_description(protocol: DraftProtocol) -> String {
     }
 }
 
-/// The first step of a new session, as in the C# dialog: a card per protocol.
+/// The first step of a new session, as in the C# dialog: a card per protocol, four to a
+/// row, each its icon in the protocol's colour, its name and what it is.
 fn protocol_picker<'a>() -> Element<'a, Message> {
-    let mut cards = Column::new().spacing(spacing::XS);
-    for protocol in DraftProtocol::ALL {
-        cards = cards.push(
-            button(column![
-                text(protocol_name(protocol)),
-                text(protocol_description(protocol)).size(font_size::CAPTION),
-            ])
-            .width(Length::Fill)
-            .style(styles::secondary)
-            .on_press(Message::App(AppMessage::ChooseProtocol(protocol))),
-        );
-    }
+    let card = |protocol: DraftProtocol| {
+        let kind = protocol_kind(protocol);
+        button(
+            column![
+                icons::icon(Icon::of(kind), Tint::Protocol(kind), PICKER_ICON_SIDE),
+                text(protocol_name(protocol)).font(styles::SEMIBOLD),
+                text(protocol_description(protocol))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary)
+                    .align_x(iced::alignment::Horizontal::Center),
+            ]
+            .spacing(spacing::XS)
+            .align_x(iced::Alignment::Center)
+            .width(Length::Fill),
+        )
+        .padding(spacing::MD)
+        .width(Length::Fill)
+        .style(styles::secondary)
+        .on_press(Message::App(AppMessage::ChooseProtocol(protocol)))
+    };
+    let cards = DraftProtocol::ALL.chunks(PICKER_COLUMNS).fold(
+        Column::new().spacing(spacing::SM),
+        |cards, chunk| {
+            let mut line = row![].spacing(spacing::SM);
+            for protocol in chunk {
+                line = line.push(card(*protocol));
+            }
+            // A last row short of cards keeps their width.
+            for _ in chunk.len()..PICKER_COLUMNS {
+                line = line.push(iced::widget::space::horizontal());
+            }
+            cards.push(line)
+        },
+    );
     column![
-        text(fl!("ui-profile-new-title")).size(font_size::TITLE),
-        text(fl!("ui-profile-protocol-picker-title")),
-        text(fl!("ui-profile-protocol-picker-desc")).size(font_size::CAPTION),
-        cards,
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-        ],
+        text(fl!("ui-profile-new-title"))
+            .size(font_size::TITLE)
+            .font(styles::SEMIBOLD),
+        section(
+            fl!("ui-profile-protocol-picker-title"),
+            Some(fl!("ui-profile-protocol-picker-desc"))
+        ),
+        styles::scroll(cards).height(Length::Fill),
+        dialog_parts::buttons([dialog_parts::cancel()]),
     ]
-    .spacing(spacing::SM)
+    .spacing(spacing::MD)
+    .height(Length::Fill)
     .into()
+}
+
+/// The kind of profile `protocol` makes, whose icon and colour it takes.
+fn protocol_kind(protocol: DraftProtocol) -> heimdall_app::ProfileKind {
+    use heimdall_app::ProfileKind;
+    match protocol {
+        DraftProtocol::Rdp => ProfileKind::Rdp,
+        DraftProtocol::Ssh => ProfileKind::Ssh,
+        DraftProtocol::Sftp => ProfileKind::Sftp,
+        DraftProtocol::WinRm => ProfileKind::WinRm,
+        DraftProtocol::Vnc => ProfileKind::Vnc,
+        DraftProtocol::Telnet => ProfileKind::Telnet,
+        DraftProtocol::Ftp => ProfileKind::Ftp,
+        DraftProtocol::Citrix => ProfileKind::Citrix,
+        DraftProtocol::Local => ProfileKind::Local,
+    }
 }
 
 /// A section of the form: its title, and its description when it has one.
 fn section<'a>(title: String, description: Option<String>) -> Element<'a, Message> {
-    let mut heading = column![text(title).size(font_size::SUBTITLE)].spacing(2.0);
-    if let Some(description) = description {
-        heading = heading.push(text(description).size(font_size::CAPTION));
-    }
-    heading.into()
+    dialog_parts::section(title, description)
 }
 
 /// A text field of the form: its label, then the box. Enter saves.
@@ -8237,7 +8369,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ),
     };
     column![
-        text(label).size(font_size::CAPTION),
+        dialog_parts::label(label),
         text_input(&placeholder, draft.value(field))
             .style(styles::text_input)
             .id(profile_field_id(field))
@@ -8252,7 +8384,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
 fn key_field(draft: &ProfileDraft) -> Element<'_, Message> {
     let field = ProfileField::KeyPath;
     column![
-        text(fl!("ui-profile-field-key")).size(font_size::CAPTION),
+        dialog_parts::label(fl!("ui-profile-field-key")),
         row![
             text_input(&fl!("ui-profile-optional"), draft.value(field))
                 .style(styles::text_input)
@@ -8487,16 +8619,16 @@ fn network_section<'a>(
             fl!("ui-profile-direct-connect")
         ),
     ]
-    .spacing(spacing::SM);
+    .spacing(spacing::MD);
     if gateways.is_empty() {
         section_column = section_column
-            .push(text(fl!("ui-gateway-list-empty")).size(font_size::CAPTION))
-            .push(text(fl!("ui-gateway-empty-hint")).size(font_size::CAPTION));
+            .push(dialog_parts::hint(fl!("ui-gateway-list-empty")))
+            .push(dialog_parts::hint(fl!("ui-gateway-empty-hint")));
     }
     let routed = draft.routed_gateway();
     if direct {
-        section_column = section_column
-            .push(text(fl!("ui-profile-gateway-direct-hint")).size(font_size::CAPTION));
+        section_column =
+            section_column.push(dialog_parts::hint(fl!("ui-profile-gateway-direct-hint")));
     } else {
         let choices: Vec<GatewayChoice> = gateways.iter().map(gateway_choice).collect();
         let selected = draft
@@ -8517,14 +8649,11 @@ fn network_section<'a>(
             ]
             .spacing(spacing::SM),
         );
-        section_column = section_column.push(
-            text(if routed.is_some() {
-                fl!("ui-profile-gateway-explain-tunnel")
-            } else {
-                fl!("ui-profile-gateway-explain-direct")
-            })
-            .size(font_size::CAPTION),
-        );
+        section_column = section_column.push(dialog_parts::hint(if routed.is_some() {
+            fl!("ui-profile-gateway-explain-tunnel")
+        } else {
+            fl!("ui-profile-gateway-explain-direct")
+        }));
     }
     if let Some(id) = routed.filter(|id| gateways.iter().any(|known| known.id == *id)) {
         section_column = section_column.push(
@@ -8536,8 +8665,8 @@ fn network_section<'a>(
     // Said where the SSL box was, as the C# dialog says it; HTTPS asked for, then a gateway
     // chosen, is said to be off.
     if draft.protocol == DraftProtocol::WinRm && draft.routed_gateway().is_some() {
-        section_column = section_column
-            .push(text(fl!("ui-profile-winrm-gateway-http")).size(font_size::CAPTION));
+        section_column =
+            section_column.push(dialog_parts::hint(fl!("ui-profile-winrm-gateway-http")));
         if draft.is_on(ProfileToggle::UseSsl) {
             section_column = section_column.push(
                 text(fl!("ui-profile-winrm-https-off-by-gateway"))
@@ -8602,7 +8731,7 @@ fn forward_cards<'a>(draft: &'a ProfileDraft, column: Column<'a, Message>) -> Co
             ]
             .spacing(spacing::SM),
         )
-        .push(text(fl!("ui-profile-remote-local-hint")).size(font_size::CAPTION))
+        .push(dialog_parts::hint(fl!("ui-profile-remote-local-hint")))
         .push(text(route).size(font_size::CAPTION))
 }
 
@@ -8750,7 +8879,7 @@ fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Colum
             .on_submit(passphrase.submit.clone());
     }
     let mut field = column![
-        text(fl!("ui-profile-field-passphrase")).size(font_size::CAPTION),
+        dialog_parts::label(fl!("ui-profile-field-passphrase")),
         input
     ]
     .spacing(spacing::XS);
@@ -8780,7 +8909,7 @@ fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Colum
             field = field.push(text(fl!("ui-profile-password-no-store")).size(font_size::CAPTION));
         }
     }
-    field.push(text(fl!("ui-profile-passphrase-hint")).size(font_size::CAPTION))
+    field.push(dialog_parts::hint(fl!("ui-profile-passphrase-hint")))
 }
 
 /// What is typed into a secret field, taken out of the window; `None` when nothing is.
@@ -8866,7 +8995,7 @@ impl std::fmt::Display for WinRmIdentity {
 
 /// The protocol's credentials, as its C# card: title, account fields, password.
 fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Message> {
-    let mut form = Column::new().spacing(spacing::SM);
+    let mut form = Column::new().spacing(spacing::MD);
     let credentials = match draft.protocol {
         DraftProtocol::Rdp => Some((
             fl!("ui-profile-credentials-rdp"),
@@ -8880,7 +9009,10 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             fl!("ui-profile-credentials-winrm"),
             Some(fl!("ui-profile-credentials-winrm-desc")),
         )),
-        DraftProtocol::Vnc => Some((fl!("ui-profile-credentials-vnc"), None)),
+        DraftProtocol::Vnc => Some((
+            fl!("ui-profile-credentials-vnc"),
+            Some(fl!("ui-profile-credentials-vnc-desc")),
+        )),
         DraftProtocol::Ftp => Some((
             fl!("ui-profile-credentials-ftp"),
             Some(fl!("ui-profile-credentials-ftp-desc")),
@@ -8899,7 +9031,7 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
         };
         form = form.push(
             column![
-                text(fl!("ui-profile-winrm-identity")).size(font_size::CAPTION),
+                dialog_parts::label(fl!("ui-profile-winrm-identity")),
                 pick_list(
                     [WinRmIdentity::Current, WinRmIdentity::Stored],
                     Some(selected),
@@ -8913,8 +9045,8 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
                 .width(Length::Fill),
                 // How the identity is proven, and what HTTP outside a domain needs, as the
                 // C# dialog's hints.
-                text(fl!("ui-profile-winrm-identity-hint")).size(font_size::CAPTION),
-                text(fl!("ui-profile-winrm-trusted-hosts-hint")).size(font_size::CAPTION),
+                dialog_parts::hint(fl!("ui-profile-winrm-identity-hint")),
+                dialog_parts::hint(fl!("ui-profile-winrm-trusted-hosts-hint")),
             ]
             .spacing(spacing::XS),
         );
@@ -8946,36 +9078,69 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
         }
     }
     if draft.protocol == DraftProtocol::Rdp {
-        form = form.push(text(fl!("ui-profile-domain-hint")).size(font_size::CAPTION));
+        form = form.push(dialog_parts::hint(fl!("ui-profile-domain-hint")));
     }
     if draft.shows_password() {
         form = form.push(password_field(draft, forms));
         if draft.protocol == DraftProtocol::WinRm {
             // Optional here, unlike the C# dialog: without one, PowerShell asks.
-            form = form.push(text(fl!("ui-profile-winrm-password-hint")).size(font_size::CAPTION));
+            form = form.push(dialog_parts::hint(fl!("ui-profile-winrm-password-hint")));
         }
     }
 
     form
 }
 
-/// The protocol's options, as its C# card; an RDP form's monitors among `monitors`.
+/// The C# Options tab: session logging, then the protocol's options, as its C# card; an
+/// RDP form's monitors among `monitors`.
 fn options_section<'a>(
     draft: &'a ProfileDraft,
     monitors: &[crate::rdp_options::Monitor],
 ) -> Column<'a, Message> {
-    let mut form = Column::new().spacing(spacing::SM);
+    let mut tab = Column::new().spacing(SECTION_GAP);
+    if draft.shows_session_logging() {
+        tab = tab.push(session_logging_choice(draft));
+    }
+    tab = tab.push(protocol_options(draft, monitors));
+    // A card of its own after the options, as the C# one.
+    if draft.protocol == DraftProtocol::Ssh {
+        tab = tab.push(crate::post_connect_form::view(&draft.post_connect));
+    }
+    tab
+}
+
+/// The protocol's options, as its C# card; an RDP form's monitors among `monitors`.
+fn protocol_options<'a>(
+    draft: &'a ProfileDraft,
+    monitors: &[crate::rdp_options::Monitor],
+) -> Column<'a, Message> {
+    let mut form = Column::new().spacing(spacing::MD);
     let options = match draft.protocol {
-        DraftProtocol::Rdp => Some(fl!("ui-profile-options-rdp")),
-        DraftProtocol::Vnc => Some(fl!("ui-profile-options-vnc")),
-        DraftProtocol::Telnet => Some(fl!("ui-profile-options-telnet")),
-        DraftProtocol::Ftp => Some(fl!("ui-profile-options-ftp")),
-        DraftProtocol::Ssh | DraftProtocol::Sftp => Some(fl!("ui-profile-options-ssh")),
+        DraftProtocol::Rdp => Some((
+            fl!("ui-profile-options-rdp"),
+            fl!("ui-profile-options-rdp-desc"),
+        )),
+        DraftProtocol::Vnc => Some((
+            fl!("ui-profile-options-vnc"),
+            fl!("ui-profile-options-vnc-desc"),
+        )),
+        DraftProtocol::Telnet => Some((
+            fl!("ui-profile-options-telnet"),
+            fl!("ui-profile-options-telnet-desc"),
+        )),
+        DraftProtocol::Ftp => Some((
+            fl!("ui-profile-options-ftp"),
+            fl!("ui-profile-options-ftp-desc"),
+        )),
+        DraftProtocol::Ssh | DraftProtocol::Sftp => Some((
+            fl!("ui-profile-options-ssh"),
+            fl!("ui-profile-options-ssh-desc"),
+        )),
         // Their own cards' titles.
         DraftProtocol::WinRm | DraftProtocol::Local | DraftProtocol::Citrix => None,
     };
-    if let Some(options) = options {
-        form = form.push(section(options, None));
+    if let Some((options, description)) = options {
+        form = form.push(section(options, Some(description)));
     }
     if draft.protocol == DraftProtocol::Rdp {
         // As the C# card: the choice first; the profile's own options stay shown, those the
@@ -8987,8 +9152,10 @@ fn options_section<'a>(
         ));
         if draft.is_on(ProfileToggle::FollowDefaults) {
             form = form
-                .push(text(fl!("ui-profile-rdp-defaults-banner")).size(font_size::CAPTION))
-                .push(text(fl!("ui-profile-rdp-defaults-not-in-effect")).size(font_size::CAPTION));
+                .push(dialog_parts::hint(fl!("ui-profile-rdp-defaults-banner")))
+                .push(dialog_parts::hint(fl!(
+                    "ui-profile-rdp-defaults-not-in-effect"
+                )));
         }
         form = form
             .push(crate::rdp_options::display_audio(
@@ -9009,42 +9176,25 @@ fn options_section<'a>(
         form = form.push(ssh_mode_choice(draft));
     }
     for toggle in ProfileToggle::of(draft.protocol) {
-        // The RDP groups draw their own boxes, in the C# tabs.
-        let grouped = draft.protocol == DraftProtocol::Rdp && crate::rdp_options::draws(*toggle);
-        if *toggle != ProfileToggle::StoredCredential && !grouped && draft.shows_toggle(*toggle) {
+        // The RDP groups draw their own boxes, in the C# tabs; the favourite mark is the
+        // Info tab's, the WinRM transport the General tab's.
+        let drawn_elsewhere = *toggle == ProfileToggle::StoredCredential
+            || *toggle == ProfileToggle::Favorite
+            || (draft.protocol == DraftProtocol::WinRm && WINRM_TRANSPORT.contains(toggle))
+            || (draft.protocol == DraftProtocol::Rdp && crate::rdp_options::draws(*toggle));
+        if !drawn_elsewhere && draft.shows_toggle(*toggle) {
             form = form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
             // What the box does, under it, as the C# dialog's hint.
             if let Some(hint) = toggle_hint(*toggle) {
-                form = form.push(text(hint).size(font_size::CAPTION));
+                form = form.push(dialog_parts::hint(hint));
             }
         }
-    }
-    if draft.shows_session_logging() {
-        form = form.push(session_logging_choice(draft));
-    }
-    // TLS to the plaintext port: said, not corrected, as the C# schema check reports it.
-    if draft.protocol == DraftProtocol::WinRm
-        && draft.uses_ssl()
-        && draft.port.trim() == heimdall_core::profile::DEFAULT_WINRM_HTTP_PORT.to_string()
-    {
-        form = form.push(
-            text(fl!(
-                "ui-profile-winrm-tls-on-http-port",
-                http = heimdall_core::profile::DEFAULT_WINRM_HTTP_PORT,
-                https = heimdall_core::profile::DEFAULT_WINRM_HTTPS_PORT
-            ))
-            .size(font_size::CAPTION)
-            .style(text::danger),
-        );
     }
     for warning in option_warnings(draft) {
         form = form.push(text(warning).size(font_size::CAPTION).style(text::danger));
     }
-    if draft.protocol == DraftProtocol::Ssh {
-        form = form.push(crate::post_connect_form::view(&draft.post_connect));
-    }
     if draft.protocol == DraftProtocol::Local {
-        form = form.push(crate::local_form::view(draft, |field| {
+        form = form.push(crate::local_form::advanced(draft, |field| {
             form_field(draft, field)
         }));
     }
@@ -9078,8 +9228,9 @@ fn option_warnings(draft: &ProfileDraft) -> Vec<String> {
     warnings
 }
 
-/// The profile form, in the C# session dialog's order: the protocol, the connection basics,
-/// the protocol's credentials, its options, then the folder. Enter in a field saves.
+/// The profile form, as the C# server dialog: its title, the protocol, the tabs of
+/// [`ProfileTab`] with the one shown, then where an imported profile came from, why the last
+/// save was refused, Cancel and Save. Enter in a field saves.
 fn profile_form<'a>(
     draft: &'a ProfileDraft,
     error: Option<DraftError>,
@@ -9094,74 +9245,107 @@ fn profile_form<'a>(
     } else {
         fl!("ui-profile-edit-title")
     };
-    // The protocol chip: in a new session it goes back to the picker, as in C#.
-    let chip = button(text(protocol_name(draft.protocol)).size(font_size::CAPTION))
-        .style(styles::secondary)
-        .on_press_maybe(adding.then_some(Message::App(AppMessage::NewProfile)));
-    let mut form = column![
-        text(title).size(font_size::TITLE),
-        row![
-            text(fl!("ui-profile-protocol-badge")).size(font_size::CAPTION),
-            chip
-        ]
-        .spacing(spacing::XS)
-        .align_y(iced::Alignment::Center),
-        section(
-            fl!("ui-profile-section-basics"),
-            Some(if draft.protocol.is_serverless() {
-                fl!("ui-profile-section-basics-local-desc")
-            } else {
-                fl!("ui-profile-section-basics-desc")
-            })
-        ),
-        form_field(draft, ProfileField::Name),
+    let tabs = ProfileTab::of(draft.protocol);
+    // A tab the protocol has not is shown as General.
+    let shown = if tabs.contains(&forms.profile_tab) {
+        forms.profile_tab
+    } else {
+        ProfileTab::General
+    };
+    let page: Element<'a, Message> = match shown {
+        ProfileTab::General => general_tab(draft, forms).into(),
+        ProfileTab::Options => options_section(draft, forms.monitors).into(),
+        ProfileTab::Network => network_section(draft, forms.gateways),
+        ProfileTab::Info => info_tab(draft).into(),
+    };
+    column![
+        text(title).size(font_size::TITLE).font(styles::SEMIBOLD),
+        protocol_line(draft.protocol, adding),
+        tab_control(&tabs, shown, page),
+        form_footer(draft, error),
     ]
-    .spacing(spacing::SM);
-    // A local shell has no server.
-    if draft.shows(ProfileField::Host) {
-        form = form
-            .push(
-                row![
-                    container(form_field(draft, ProfileField::Host)).width(Length::Fill),
-                    container(form_field(draft, ProfileField::Port)).width(PORT_FIELD_WIDTH),
-                ]
-                .spacing(spacing::SM),
-            )
-            .push(crate::address_test_view::view(draft, forms.gateways));
-    }
-    if draft.protocol == DraftProtocol::Citrix {
-        form = form.push(crate::citrix_form::basics(|field| form_field(draft, field)));
-    }
+    .spacing(spacing::MD)
+    .height(Length::Fill)
+    .into()
+}
 
-    form = form
-        .push(credentials_section(draft, forms))
-        .push(options_section(draft, forms.monitors));
+/// The protocol above the tabs, as the C# badge: its label, then the protocol's icon in the
+/// accent and its name. In a new session it is a button back to the protocols.
+fn protocol_line<'a>(protocol: DraftProtocol, adding: bool) -> Element<'a, Message> {
+    let chip = row![
+        icons::icon(
+            Icon::of(protocol_kind(protocol)),
+            Tint::Accent,
+            icons::GLYPH_SIDE
+        ),
+        text(protocol_name(protocol)).font(styles::SEMIBOLD),
+    ]
+    .spacing(spacing::XS)
+    .align_y(iced::Alignment::Center);
+    let chip: Element<'a, Message> = if adding {
+        tooltip(
+            button(chip)
+                .padding(CHIP_PADDING)
+                .style(styles::subtle)
+                .on_press(Message::App(AppMessage::NewProfile)),
+            text(fl!("ui-profile-protocol-change-tooltip")).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
+        .into()
+    } else {
+        container(chip).padding(CHIP_PADDING).into()
+    };
+    row![
+        text(fl!("ui-profile-protocol-badge"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+        chip,
+    ]
+    .spacing(spacing::SM)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
 
-    if draft.protocol.routes_through_gateway() {
-        form = form.push(network_section(draft, forms.gateways));
-    }
+/// The C# `ThemedTabControlStyle`: the tabs' headers on the window's background over a
+/// line, then the tab shown on a card, scrolled when it is longer than the dialog.
+fn tab_control<'a>(
+    tabs: &[ProfileTab],
+    shown: ProfileTab,
+    page: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let headers = tab_strip(
+        tabs.iter().copied(),
+        shown,
+        ProfileTab::label,
+        Message::ProfileTab,
+    );
+    container(column![
+        container(headers)
+            .padding(TAB_HEADERS_PADDING)
+            .width(Length::Fill)
+            .style(styles::tab_headers),
+        container(iced::widget::space())
+            .width(Length::Fill)
+            .height(crate::tokens::BORDER_WIDTH)
+            .style(styles::divider),
+        styles::scroll(container(page).padding(spacing::LG).width(Length::Fill))
+            .id(profile_page_id())
+            .height(Length::Fill),
+    ])
+    .height(Length::Fill)
+    .style(styles::tab_frame)
+    .into()
+}
 
-    // Organization.
-    form = form
-        .push(section(fl!("ui-profile-section-organization"), None))
-        .push(form_field(draft, ProfileField::Group))
-        // As the C#: the separator is taught by the example and by a sentence that stays.
-        .push(text(fl!("ui-profile-folder-hint")).size(font_size::CAPTION));
-    form = form.push(metadata_fields(draft));
-    // With the C# metadata: the password manager's entry, for the protocols it serves.
-    if draft.shows(ProfileField::VaultEntry) {
-        form = form
-            .push(form_field(draft, ProfileField::VaultEntry))
-            .push(text(fl!("ui-profile-vault-entry-help")).size(font_size::CAPTION));
-    }
-    // The fields scroll; the error and the buttons stay in view under them, as the C#
-    // dialog's footer does.
+/// Under the tabs, as the C# dialog's footer: where an imported profile came from, why the
+/// last save was refused, then Cancel and Save at the bottom right.
+fn form_footer<'a>(draft: &ProfileDraft, error: Option<DraftError>) -> Element<'a, Message> {
     let mut footer = Column::new().spacing(spacing::SM);
-    // Above the error, as the C# dialog's footer: where an imported profile came from.
     if let Some(origin) = draft.metadata_kept.origin {
         footer = footer.push(
             text(texts::origin_name(origin))
-                .size(font_size::CAPTION)
+                .size(font_size::SMALL_CAPTION)
                 .style(text::secondary)
                 .font(iced::Font {
                     style: iced::font::Style::Italic,
@@ -9173,28 +9357,122 @@ fn profile_form<'a>(
         footer = footer.push(text(texts::draft_error(error)).style(text::danger));
     }
     // As in C#: Cancel, then Save; a profile is deleted from its menu.
-    footer = footer.push(
-        row![
-            iced::widget::space::horizontal(),
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-profile-save-button")))
-                .style(styles::primary)
+    footer
+        .push(dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(fl!("ui-profile-save-button"), styles::primary)
                 .on_press(Message::SaveProfileForm),
-        ]
-        .spacing(spacing::SM),
-    );
-    column![
-        container(
-            styles::scroll(form.padding(iced::Padding::ZERO.right(spacing::MD)))
-                .height(Length::Shrink)
-        )
-        .max_height(forms.fields_height),
-        footer,
+        ]))
+        .into()
+}
+
+/// The C# General tab: the connection basics, a Citrix application's or a local shell's
+/// own card, then the protocol's credentials.
+fn general_tab<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Message> {
+    let mut basics = column![
+        section(
+            fl!("ui-profile-section-basics"),
+            Some(if draft.protocol.is_serverless() {
+                fl!("ui-profile-section-basics-local-desc")
+            } else {
+                fl!("ui-profile-section-basics-desc")
+            })
+        ),
+        form_field(draft, ProfileField::Name),
     ]
-    .spacing(spacing::SM)
-    .into()
+    .spacing(spacing::MD);
+    // A local shell has no server.
+    if draft.shows(ProfileField::Host) {
+        basics = basics.push(
+            row![
+                container(form_field(draft, ProfileField::Host)).width(Length::Fill),
+                container(form_field(draft, ProfileField::Port)).width(PORT_FIELD_WIDTH),
+            ]
+            .spacing(spacing::MD),
+        );
+        if draft.protocol == DraftProtocol::WinRm {
+            basics = basics.push(winrm_transport(draft));
+        }
+        basics = basics.push(crate::address_test_view::view(draft, forms.gateways));
+    }
+    let mut tab = column![basics].spacing(SECTION_GAP);
+    if draft.protocol == DraftProtocol::Citrix {
+        tab = tab.push(crate::citrix_form::basics(|field| form_field(draft, field)));
+    }
+    if draft.protocol == DraftProtocol::Local {
+        tab = tab.push(crate::local_form::basics(draft, |field| {
+            form_field(draft, field)
+        }));
+    }
+    tab.push(credentials_section(draft, forms))
+}
+
+/// A `WinRM` profile's transport under its port, as the C# General tab: HTTPS and the
+/// certificate check, each with its hint, and TLS asked of the plaintext port said.
+fn winrm_transport<'a>(draft: &ProfileDraft) -> Column<'a, Message> {
+    let mut transport = Column::new().spacing(spacing::SM);
+    for toggle in WINRM_TRANSPORT {
+        if draft.shows_toggle(toggle) {
+            transport = transport.push(toggle_box(draft, toggle, toggle_label(toggle)));
+            if let Some(hint) = toggle_hint(toggle) {
+                transport = transport.push(dialog_parts::hint(hint));
+            }
+        }
+    }
+    // TLS to the plaintext port: said, not corrected, as the C# schema check reports it.
+    if draft.uses_ssl()
+        && draft.port.trim() == heimdall_core::profile::DEFAULT_WINRM_HTTP_PORT.to_string()
+    {
+        transport = transport.push(
+            text(fl!(
+                "ui-profile-winrm-tls-on-http-port",
+                http = heimdall_core::profile::DEFAULT_WINRM_HTTP_PORT,
+                https = heimdall_core::profile::DEFAULT_WINRM_HTTPS_PORT
+            ))
+            .size(font_size::CAPTION)
+            .style(text::danger),
+        );
+    }
+    transport
+}
+
+/// The C# Info tab: the organization, its folder, environment and favourite mark, then the
+/// metadata, its tags, MAC address and password manager's entry.
+fn info_tab(draft: &ProfileDraft) -> Column<'_, Message> {
+    let mut organization = column![
+        section(
+            fl!("ui-profile-section-organization"),
+            Some(fl!("ui-profile-section-organization-desc"))
+        ),
+        form_field(draft, ProfileField::Group),
+        // As the C#: the separator is taught by the example and by a sentence that stays.
+        dialog_parts::hint(fl!("ui-profile-folder-hint")),
+        environment_choice(draft),
+    ]
+    .spacing(spacing::MD);
+    if draft.shows_toggle(ProfileToggle::Favorite) {
+        organization = organization.push(toggle_box(
+            draft,
+            ProfileToggle::Favorite,
+            toggle_label(ProfileToggle::Favorite),
+        ));
+    }
+    let mut metadata = column![
+        section(
+            fl!("ui-profile-section-metadata"),
+            Some(fl!("ui-profile-section-metadata-desc"))
+        ),
+        form_field(draft, ProfileField::Tags),
+        form_field(draft, ProfileField::MacAddress),
+    ]
+    .spacing(spacing::MD);
+    // With the C# metadata: the password manager's entry, for the protocols it serves.
+    if draft.shows(ProfileField::VaultEntry) {
+        metadata = metadata
+            .push(form_field(draft, ProfileField::VaultEntry))
+            .push(dialog_parts::hint(fl!("ui-profile-vault-entry-help")));
+    }
+    column![organization, metadata].spacing(SECTION_GAP)
 }
 
 /// Asks for a name, or for permission bits in octal: Enter in the field confirms, like the
@@ -9415,17 +9693,13 @@ fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
 /// profile's name.
 fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let buttons = |action: String| {
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(action))
-                .style(styles::primary)
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(action, styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM)
+        ])
     };
-    let (title, body, action) = match dialog {
+    let (severity, title, body, action) = match dialog {
         Dialog::FolderName {
             naming,
             value,
@@ -9465,6 +9739,7 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
             return content.push(buttons(action)).into();
         }
         Dialog::ConfirmDeleteFolder { name, count, .. } => (
+            Severity::Danger,
             fl!("ui-folder-delete"),
             fl!(
                 "ui-folder-delete-body",
@@ -9482,6 +9757,7 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
             refused,
         } => return bulk_edit_dialog(*field, ids.len(), value, *mixed, *refused),
         Dialog::ConfirmDeleteProfiles { ids, names } => (
+            Severity::Danger,
             fl!("ui-dialog-delete-selection-title"),
             std::iter::once(fl!("ui-dialog-delete-selection-body", count = ids.len()))
                 .chain(names.iter().map(|name| format!("- {name}")))
@@ -9490,24 +9766,19 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-delete-profile-confirm"),
         ),
         Dialog::ConfirmConnectFolder { count, .. } => (
+            Severity::Info,
             fl!("ui-folder-connect-all-title"),
             fl!("ui-folder-connect-all-body", count = (*count)),
             fl!("ui-folder-connect-all-confirm"),
         ),
         _ => return column![].into(),
     };
-    column![
-        text(title).size(font_size::TITLE),
-        text(body),
-        buttons(action)
-    ]
-    .spacing(spacing::SM)
-    .into()
+    dialog_parts::question(severity, title, body, action)
 }
 
 /// The dialogs about a tab: closing it or others, naming it, pasting several lines in it.
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
-    let (title, body, action) = match dialog {
+    let (severity, title, body, action) = match dialog {
         Dialog::RenameTab { value, .. } => return rename_tab_dialog(value),
         Dialog::SaveMacro { name, entries } => return save_macro_dialog(name, entries.len()),
         Dialog::CustomResolution { value, .. } => return custom_resolution_dialog(value),
@@ -9518,16 +9789,19 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             ..
         } => return paste_dialog(*lines, *command, preview),
         Dialog::ConfirmDisconnectDesktop { name, .. } => (
+            Severity::Warning,
             fl!("ui-desktop-disconnect-title"),
             fl!("ui-desktop-disconnect-body", name = name.as_str()),
             fl!("ui-desktop-disconnect"),
         ),
         Dialog::ConfirmCloseTransfers { name, .. } => (
+            Severity::Warning,
             fl!("ui-dialog-close-transfers-title"),
             fl!("ui-dialog-close-transfers-body", name = name.as_str()),
             fl!("ui-dialog-close-tab-confirm"),
         ),
         Dialog::ConfirmCloseEdits { name, .. } => (
+            Severity::Warning,
             fl!("ui-dialog-close-tab-title"),
             fl!("ui-dialog-close-edits-body", name = name.as_str()),
             fl!("ui-dialog-close-tab-confirm"),
@@ -9537,6 +9811,7 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             live,
             unsaved,
         } => (
+            Severity::Warning,
             fl!("ui-dialog-close-tabs-title"),
             with_unsaved(
                 (*live > 0).then(|| {
@@ -9551,51 +9826,43 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-close-tab-confirm"),
         ),
         Dialog::ConfirmCloseEditor { name, .. } => (
+            Severity::Warning,
             fl!("ui-dialog-close-tab-title"),
             fl!("ui-dialog-close-editor-body", name = name.as_str()),
             fl!("ui-dialog-close-tab-confirm"),
         ),
         Dialog::ConfirmDiscardEditor { .. } => (
+            Severity::Danger,
             fl!("ui-dialog-discard-editor-title"),
             fl!("ui-dialog-discard-editor-body"),
             fl!("ui-editor-close"),
         ),
         Dialog::ConfirmOpenLink { url } => (
+            Severity::Info,
             fl!("ui-dialog-open-link-title"),
             fl!("ui-dialog-open-link-body", url = server_text(url)),
             fl!("ui-dialog-open-link-confirm"),
         ),
         Dialog::ConfirmOpenRunnable { shown, .. } => (
+            Severity::Warning,
             fl!("ui-dialog-open-runnable-title"),
             fl!("ui-dialog-open-runnable-body", path = shown.as_str()),
             fl!("ui-dialog-open-runnable-confirm"),
         ),
         Dialog::ConfirmDownloadBinary { name, .. } => (
+            Severity::Info,
             fl!("ui-dialog-binary-title"),
             fl!("ui-dialog-binary-body", name = name.as_str()),
             fl!("ui-dialog-binary-confirm"),
         ),
         _ => (
+            Severity::Warning,
             fl!("ui-dialog-close-tab-title"),
             fl!("ui-dialog-close-tab-body"),
             fl!("ui-dialog-close-tab-confirm"),
         ),
     };
-    column![
-        text(title).size(font_size::TITLE),
-        text(body),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(action))
-                .style(styles::danger)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+    dialog_parts::question(severity, title, body, action)
 }
 
 /// Pasting several lines into a shell that would run them, or a command that can destroy
@@ -10349,33 +10616,26 @@ impl fmt::Display for EnvironmentChoice {
     }
 }
 
-/// The C# Metadata section's fields: the environment, the tags and the MAC address
-/// Wake-on-LAN wakes the server with.
-fn metadata_fields(draft: &ProfileDraft) -> Element<'_, Message> {
+/// The C# Organization section's environment: its label, then the list.
+fn environment_choice(draft: &ProfileDraft) -> Element<'_, Message> {
     let choices: Vec<EnvironmentChoice> = std::iter::once(None)
         .chain(heimdall_core::metadata::Environment::ALL.map(Some))
         .map(EnvironmentChoice)
         .collect();
     column![
-        row![
-            text(fl!("ui-profile-field-environment")),
-            iced::widget::space::horizontal(),
-            pick_list(
-                choices,
-                Some(EnvironmentChoice(draft.environment)),
-                |EnvironmentChoice(environment)| Message::App(AppMessage::ProfileChoice(
-                    ProfileChoice::Environment(environment)
-                )),
-            )
-            .style(styles::pick_list)
-            .menu_style(styles::menu),
-        ]
-        .spacing(spacing::SM)
-        .align_y(iced::Alignment::Center),
-        form_field(draft, ProfileField::Tags),
-        form_field(draft, ProfileField::MacAddress),
+        dialog_parts::label(fl!("ui-profile-field-environment")),
+        pick_list(
+            choices,
+            Some(EnvironmentChoice(draft.environment)),
+            |EnvironmentChoice(environment)| Message::App(AppMessage::ProfileChoice(
+                ProfileChoice::Environment(environment)
+            )),
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .width(Length::Fill),
     ]
-    .spacing(spacing::SM)
+    .spacing(spacing::XS)
     .into()
 }
 
@@ -10420,25 +10680,21 @@ impl fmt::Display for SshModeChoice {
 /// explained.
 fn ssh_mode_choice(draft: &ProfileDraft) -> Element<'_, Message> {
     let mut mode = column![
-        row![
-            text(fl!("ui-profile-ssh-mode")),
-            iced::widget::space::horizontal(),
-            pick_list(
-                SshModeChoice::ALL.to_vec(),
-                Some(SshModeChoice(draft.ssh_mode)),
-                |SshModeChoice(mode)| Message::App(AppMessage::ProfileChoice(
-                    ProfileChoice::SshMode(mode)
-                )),
-            )
-            .style(styles::pick_list)
-            .menu_style(styles::menu),
-        ]
-        .spacing(spacing::SM)
-        .align_y(iced::Alignment::Center),
+        dialog_parts::label(fl!("ui-profile-ssh-mode")),
+        pick_list(
+            SshModeChoice::ALL.to_vec(),
+            Some(SshModeChoice(draft.ssh_mode)),
+            |SshModeChoice(mode)| Message::App(AppMessage::ProfileChoice(ProfileChoice::SshMode(
+                mode
+            ))),
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .width(Length::Fill),
     ]
     .spacing(spacing::XS);
     if draft.ssh_mode == SshMode::External {
-        mode = mode.push(text(fl!("ui-profile-ssh-mode-external-desc")).size(font_size::CAPTION));
+        mode = mode.push(dialog_parts::hint(fl!("ui-profile-ssh-mode-external-desc")));
     }
     mode.into()
 }
@@ -10446,22 +10702,18 @@ fn ssh_mode_choice(draft: &ProfileDraft) -> Element<'_, Message> {
 /// Whether the profile's sessions keep a transcript, as the C# server dialog's choice.
 fn session_logging_choice(draft: &ProfileDraft) -> Element<'_, Message> {
     column![
-        row![
-            text(fl!("ui-profile-session-logging")),
-            iced::widget::space::horizontal(),
-            pick_list(
-                LoggingChoice::ALL.to_vec(),
-                Some(LoggingChoice(draft.session_logging)),
-                |LoggingChoice(logging)| Message::App(AppMessage::ProfileChoice(
-                    ProfileChoice::SessionLogging(logging)
-                )),
-            )
-            .style(styles::pick_list)
-            .menu_style(styles::menu),
-        ]
-        .spacing(spacing::SM)
-        .align_y(iced::Alignment::Center),
-        text(fl!("ui-profile-session-logging-hint")).size(font_size::CAPTION),
+        dialog_parts::label(fl!("ui-profile-session-logging")),
+        pick_list(
+            LoggingChoice::ALL.to_vec(),
+            Some(LoggingChoice(draft.session_logging)),
+            |LoggingChoice(logging)| Message::App(AppMessage::ProfileChoice(
+                ProfileChoice::SessionLogging(logging)
+            )),
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .width(Length::Fill),
+        dialog_parts::hint(fl!("ui-profile-session-logging-hint")),
     ]
     .spacing(spacing::XS)
     .into()
@@ -10975,31 +11227,29 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
     }
 }
 
-/// A plain question drawn: its title, its text, Cancel and its action, in the danger colour.
+/// A plain question drawn as the C# `MessageDialog`: the icon of its severity, its title,
+/// its text, Cancel and its action.
 fn plain_question_view<'a>(dialog: &Dialog) -> Element<'a, Message> {
     let (title, body, action) = plain_question(dialog);
-    column![
-        text(title).size(font_size::TITLE),
-        text(body),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(action))
-                .style(styles::danger)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+    dialog_parts::question(plain_severity(dialog), title, body, action)
+}
+
+/// How serious a plain question is: a deletion destroys; leaving with sessions live,
+/// broadcasting, resetting or rewriting settings warn; recording sessions informs.
+fn plain_severity(dialog: &Dialog) -> Severity {
+    match dialog {
+        Dialog::ConfirmDeleteProfile { .. }
+        | Dialog::ConfirmDelete { .. }
+        | Dialog::ConfirmDeleteMacro(_)
+        | Dialog::ConfirmDeleteGateway { .. } => Severity::Danger,
+        Dialog::ConfirmSessionLogging => Severity::Info,
+        _ => Severity::Warning,
+    }
 }
 
 /// The OK that closes a dialog which only informs.
 fn ok_button<'a>() -> iced::widget::Button<'a, Message> {
-    button(text(fl!("ui-dialog-ok-button")))
-        .style(styles::primary)
-        .on_press(Message::App(AppMessage::DismissDialog))
+    dialog_parts::ok()
 }
 
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {

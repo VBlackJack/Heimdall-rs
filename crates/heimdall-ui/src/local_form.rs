@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-//! A local shell profile's form, as the C# cards: "Local shell", the executable (typed, or
-//! taken from the common shells) and its arguments, then "Advanced shell options", the
-//! folder it starts in and "Run as administrator". The C# elevation modes come down to that
-//! one box: a shell run as administrator opens in a window of its own, never in a tab.
+//! A local shell profile's form, as the C# cards: "Local shell" on the General tab, the
+//! executable (typed, or taken from the common shells) and its arguments, then "Advanced
+//! shell options" on the Options tab, the folder it starts in and "Run as administrator".
+//! The C# elevation modes come down to that one box: a shell run as administrator opens in
+//! a window of its own, never in a tab.
 
 use heimdall_app::Message as AppMessage;
 use heimdall_app::elevated_shell;
@@ -26,13 +27,15 @@ use heimdall_app::profile_draft::{ProfileDraft, ProfileField, ProfileToggle};
 use iced::Element;
 use iced::widget::{checkbox, column, pick_list, text};
 
+use crate::dialog_parts;
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
 
-/// The two cards; `field` draws a field of the form as the other cards do.
-pub fn view<'a>(
+/// The "Local shell" card of the General tab; `field` draws a field of the form as the
+/// other cards do.
+pub fn basics<'a>(
     draft: &'a ProfileDraft,
     field: impl Fn(ProfileField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
@@ -41,8 +44,10 @@ pub fn view<'a>(
         .find(|preset| **preset == draft.local_program.trim())
         .copied();
     column![
-        text(fl!("ui-profile-local-title")),
-        text(fl!("ui-profile-local-desc")).size(font_size::CAPTION),
+        dialog_parts::section(
+            fl!("ui-profile-local-title"),
+            Some(fl!("ui-profile-local-desc"))
+        ),
         field(ProfileField::LocalProgram),
         pick_list(SHELL_PRESETS, chosen, |preset: &str| {
             Message::App(AppMessage::ProfileField {
@@ -54,12 +59,26 @@ pub fn view<'a>(
         .menu_style(styles::menu)
         .placeholder(fl!("ui-profile-local-presets")),
         field(ProfileField::LocalArguments),
-        text(fl!("ui-profile-local-advanced-title")),
-        text(fl!("ui-profile-local-advanced-desc")).size(font_size::CAPTION),
+    ]
+    .spacing(spacing::MD)
+    .into()
+}
+
+/// The "Advanced shell options" card of the Options tab: the folder the shell starts in,
+/// then "Run as administrator".
+pub fn advanced<'a>(
+    draft: &'a ProfileDraft,
+    field: impl Fn(ProfileField) -> Element<'a, Message>,
+) -> Element<'a, Message> {
+    column![
+        dialog_parts::section(
+            fl!("ui-profile-local-advanced-title"),
+            Some(fl!("ui-profile-local-advanced-desc"))
+        ),
         field(ProfileField::WorkingDirectory),
     ]
     .push(run_as_administrator(draft))
-    .spacing(spacing::SM)
+    .spacing(spacing::MD)
     .into()
 }
 
@@ -71,7 +90,7 @@ fn run_as_administrator<'a>(draft: &ProfileDraft) -> Option<Element<'a, Message>
         return None;
     }
     let hint = if elevated_shell::SUPPORTED {
-        text(fl!("ui-profile-local-run-as-admin-hint")).size(font_size::CAPTION)
+        dialog_parts::hint(fl!("ui-profile-local-run-as-admin-hint"))
     } else {
         text(fl!("ui-profile-local-run-as-admin-windows-only"))
             .size(font_size::CAPTION)
