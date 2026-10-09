@@ -1385,6 +1385,9 @@ pub enum Effect {
     /// Ask which settings file to import, then read it; answered with
     /// [`SettingsTransferMessage::Read`], or nothing when none is picked.
     PickSettingsFile,
+    /// Every setting was put back to its default: what the Settings page holds typed and
+    /// not applied yet goes with the values it was typed over.
+    SettingsReset,
     /// Ask which `known_hosts` file to import, then read it; answered with
     /// [`HostKeysMessage::Read`], or nothing when none is picked.
     PickKnownHosts,
@@ -1803,6 +1806,7 @@ impl fmt::Debug for Effect {
             Self::PickSessionsFile => f.write_str("PickSessionsFile"),
             Self::SaveSettingsFile { .. } => f.write_str("SaveSettingsFile"),
             Self::PickSettingsFile => f.write_str("PickSettingsFile"),
+            Self::SettingsReset => f.write_str("SettingsReset"),
             Self::PickKnownHosts => f.write_str("PickKnownHosts"),
             Self::ReadRdpFiles(paths) => write!(f, "ReadRdpFiles({})", paths.len()),
             Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
@@ -2554,6 +2558,8 @@ pub enum Dialog {
     ConfirmSessionLogging,
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
     ConfirmResetRdpDefaults,
+    /// Every setting back to its default, as the C# "Reset defaults" asks.
+    ConfirmResetAllSettings,
     /// Enrol Windows Hello again once the master password opened the vault, its credential
     /// having been found gone, as the C# "Re-enable Windows Hello unlock?".
     ConfirmVaultHelloEnrolAgain,
@@ -3891,6 +3897,7 @@ impl App {
         }
         if !was_connected && self.active == Some(tab_id) {
             self.warn_winrm(tab_id);
+            self.warn_ftp_cleartext(tab_id);
         }
         if shell_up {
             effects.extend(self.dock_sftp(tab_id));
@@ -4650,6 +4657,7 @@ impl App {
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
+            Some(Dialog::ConfirmResetAllSettings) => self.confirm_reset_all_settings(),
             Some(Dialog::ConfirmVaultHelloEnrolAgain) => self.enrol_vault_hello_again(),
             Some(Dialog::ConfirmApplySshMode { mode, .. }) => self.confirm_apply_ssh_mode(mode),
             Some(Dialog::EditMacro(draft)) => {

@@ -24,17 +24,20 @@
 //! walk. Every choice applies at once, so the C# Ctrl+S, which saves the panel's pending
 //! edits, has nothing to save.
 
-use heimdall_app::update_check::{Failure, minutes_to_wait};
+use std::path::PathBuf;
+
+use heimdall_app::profile_draft::ProfileField;
+use heimdall_app::update_check::{Failure, ReleaseTag, minutes_to_wait};
 use heimdall_app::windows_hello;
 use heimdall_app::{
-    Effect, Message as AppMessage, PinMessage, UpdateMessage, UpdateStatus, VaultHelloMessage,
-    VaultHelloStatus, VaultStatus, search_folded,
+    Dialog, Effect, Message as AppMessage, PinMessage, ProviderMessage, UpdateMessage,
+    UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus, search_folded,
 };
 use heimdall_core::profile::{RdpDefaults, SshMode};
 use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
     Language, MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
-    SSH_AUTO_RECONNECT_ATTEMPTS_MAX, SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings,
+    SSH_AUTO_RECONNECT_ATTEMPTS_MAX, SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings, settings_path,
 };
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
@@ -48,6 +51,7 @@ use super::{
     LanguageChoice, Message, PolicyChoice, SETTINGS_WIDTH, SchemeChoice, SessionField,
     SessionsChoice, SettingsMessage, SettingsTab, Shell, TimeoutChoice, settings_tabs,
 };
+use crate::browse::{BrowseTarget, browse_button};
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::search_keys::SearchKeys;
@@ -605,8 +609,19 @@ impl Shell {
         .into()
     }
 
-    /// "Find modified settings" and the search, as the C# bar at the top of its Settings
-    /// tab, at its right; its Save and Undo left out, every choice applying at once.
+    /// What the Settings page holds typed and not applied yet, forgotten: every setting was
+    /// put back to its default, and what was typed over the old values goes with them.
+    pub(super) fn forget_typed_settings(&mut self) {
+        self.log_directory = None;
+        self.editor_typed = None;
+        self.tool_paths_typed = Default::default();
+        self.font_size_typed = None;
+        self.session_typed = Default::default();
+    }
+
+    /// "Reset defaults" at the left, as the C# bar at the top of its Settings tab
+    /// (`MainWindow.xaml:2406-2408`), asked first; "Find modified settings" and the search
+    /// at its right. Its Save and Undo are left out, every choice applying at once.
     fn settings_header(&self) -> Element<'_, Message> {
         let field = SearchKeys::escape_only(
             text_input(
@@ -621,6 +636,9 @@ impl Shell {
             (!self.settings_search.is_empty()).then(|| Message::SettingsSearch(String::new())),
         );
         let mut header = row![
+            button(text(fl!("ui-settings-reset-all")))
+                .style(styles::secondary)
+                .on_press(send(SettingsMessage::ResetAllSettings)),
             iced::widget::space::horizontal(),
             tooltip(
                 button(text(fl!("ui-settings-find-modified")))
@@ -952,7 +970,9 @@ impl Shell {
     }
 
     /// The version running, as the C# Updates card shows it, then "Check now" and what it
-    /// found; the button waits while a look runs.
+    /// found; the button waits while a look runs. The release skipped from the banner is
+    /// said under them with "Offer it again", as the C# `SkippedVersionPanel`
+    /// (`MainWindow.xaml:2618-2626`).
     fn update_version_row(&self) -> Element<'_, Message> {
         let version = self.app.running_release().map_or_else(
             || {
@@ -986,6 +1006,35 @@ impl Shell {
                 text(update_status_text(status))
                     .size(font_size::CAPTION)
                     .style(style),
+            );
+        }
+        if let Some(skipped) = self
+            .app
+            .settings()
+            .update_check
+            .skipped
+            .as_deref()
+            .filter(|skipped| !skipped.trim().is_empty())
+        {
+            // Shown as the banner shows a release: `2026.100901`, without its tag's "v".
+            let skipped = skipped.trim();
+            let version = ReleaseTag::parse(skipped)
+                .map_or_else(|| skipped.to_owned(), |release| release.to_string());
+            body = body.push(
+                row![
+                    text(fl!(
+                        "ui-settings-updates-skipped-version",
+                        version = version.as_str()
+                    ))
+                    .style(text::secondary),
+                    button(text(fl!("ui-settings-updates-clear-skipped")))
+                        .style(styles::secondary)
+                        .on_press(Message::App(AppMessage::Update(
+                            UpdateMessage::ClearSkipped
+                        ))),
+                ]
+                .spacing(spacing::MD)
+                .align_y(iced::Alignment::Center),
             );
         }
         body.into()
@@ -1268,10 +1317,15 @@ impl Shell {
         body.into()
     }
 
-    /// The transcripts' folder or the external editor, typed and applied with Enter, what is
-    /// said of it under it.
+    /// The transcripts' folder or the external editor, typed and applied with Enter,
+    /// "Browse..." beside it, what is said of it under it.
     fn path_row(&self, row: SettingRow) -> Element<'_, Message> {
         let settings = self.app.settings();
+        let target = if row == SettingRow::SessionLogDirectory {
+            BrowseTarget::SessionLogDirectory
+        } else {
+            BrowseTarget::ExternalEditor
+        };
         let field = if row == SettingRow::SessionLogDirectory {
             let typed = self
                 .log_directory
@@ -1294,6 +1348,9 @@ impl Shell {
                 .on_input(Message::EditorEdited)
                 .on_submit(Message::EditorApply)
         };
+        let field = row![field, browse_button(target)]
+            .spacing(spacing::SM)
+            .align_y(iced::Alignment::Center);
         let mut body = column![labelled(row_label(row), field)].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));
@@ -1301,8 +1358,74 @@ impl Shell {
         body.into()
     }
 
-    /// A program's path, `PuTTY` or the X server, typed and applied with Enter, what is said
-    /// of it under it.
+    /// The dialog of a "Browse..." button, opening where the path set now is.
+    pub(super) fn browse(&self, target: BrowseTarget) -> Task<Message> {
+        let settings = self.app.settings();
+        let current = match target {
+            BrowseTarget::Tool(path) => PathBuf::from(
+                self.tool_paths_typed[path.index()]
+                    .as_deref()
+                    .unwrap_or_else(|| path.value(settings))
+                    .trim(),
+            ),
+            BrowseTarget::ExternalEditor => PathBuf::from(
+                self.editor_typed
+                    .as_deref()
+                    .unwrap_or(&settings.external_editor)
+                    .trim(),
+            ),
+            // Where the transcripts go, a relative folder read beside the settings.
+            BrowseTarget::SessionLogDirectory => {
+                settings.session_log_folder(&settings_path(self.app.profiles_file()))
+            }
+            BrowseTarget::ProviderDatabase => {
+                PathBuf::from(settings.credential_provider.database.trim())
+            }
+            BrowseTarget::ProviderKeyFile => {
+                PathBuf::from(settings.credential_provider.key_file.trim())
+            }
+            BrowseTarget::GatewayKey => match &self.app.dialog {
+                Some(Dialog::EditGateway { draft, .. }) => {
+                    PathBuf::from(draft.value(ProfileField::KeyPath).trim())
+                }
+                _ => PathBuf::new(),
+            },
+        };
+        crate::browse::pick(target, target.start(&current), self.main_window)
+    }
+
+    /// The path picked in a "Browse..." dialog, put in its field and applied as Enter
+    /// applies what is typed there; what was typed and not applied goes.
+    pub(super) fn browsed(&mut self, target: BrowseTarget, path: String) -> Vec<Effect> {
+        let message = match target {
+            BrowseTarget::Tool(tool) => {
+                self.tool_paths_typed[tool.index()] = None;
+                AppMessage::Settings(tool.applied(path))
+            }
+            BrowseTarget::ExternalEditor => {
+                self.editor_typed = None;
+                AppMessage::Settings(SettingsMessage::ExternalEditor(path))
+            }
+            BrowseTarget::SessionLogDirectory => {
+                self.log_directory = None;
+                AppMessage::Settings(SettingsMessage::SessionLogDirectory(path))
+            }
+            BrowseTarget::ProviderDatabase => {
+                AppMessage::CredentialProvider(ProviderMessage::Database(path))
+            }
+            BrowseTarget::ProviderKeyFile => {
+                AppMessage::CredentialProvider(ProviderMessage::KeyFile(path))
+            }
+            BrowseTarget::GatewayKey => AppMessage::GatewayField {
+                field: ProfileField::KeyPath,
+                value: path,
+            },
+        };
+        self.app.update(message)
+    }
+
+    /// A program's path, `PuTTY` or the X server, typed and applied with Enter, "Browse..."
+    /// beside it, what is said of it under it.
     fn tool_path_row(&self, row: SettingRow) -> Element<'_, Message> {
         let Some(path) = row.tool_path() else {
             return column![].into();
@@ -1314,6 +1437,9 @@ impl Shell {
             .style(styles::text_input)
             .on_input(move |typed| Message::ToolPathEdited(path, typed))
             .on_submit(Message::ToolPathApply(path));
+        let field = row![field, browse_button(BrowseTarget::Tool(path))]
+            .spacing(spacing::SM)
+            .align_y(iced::Alignment::Center);
         let mut body = column![labelled(row_label(row), field)].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));

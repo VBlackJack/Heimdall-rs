@@ -682,6 +682,10 @@ pub enum Message {
     GoToSetting(SettingRow),
     /// Pick the SSH key of the profile form in the system's open dialog.
     BrowseKeyFile,
+    /// A "Browse..." button: the system's dialog for this path.
+    Browse(crate::browse::BrowseTarget),
+    /// The path picked in that dialog.
+    Browsed(crate::browse::BrowseTarget, String),
     /// The password field of the gateway dialog changed.
     GatewayPassword(String),
     /// The key passphrase field of the gateway dialog changed.
@@ -966,6 +970,8 @@ impl fmt::Debug for Message {
             Self::ResetSetting(row) => write!(f, "ResetSetting({row:?})"),
             Self::GoToSetting(row) => write!(f, "GoToSetting({row:?})"),
             Self::BrowseKeyFile => f.write_str("BrowseKeyFile"),
+            Self::Browse(target) => write!(f, "Browse({target:?})"),
+            Self::Browsed(target, _) => write!(f, "Browsed({target:?}, ..)"),
             Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
             Self::GatewayPassphrase(_) => f.write_str("GatewayPassphrase(..)"),
             Self::SaveGatewayForm => f.write_str("SaveGatewayForm"),
@@ -2444,6 +2450,8 @@ impl Shell {
                 Vec::new()
             }
             Message::BrowseKeyFile => return pick_key_file(self.main_window),
+            Message::Browse(target) => return self.browse(target),
+            Message::Browsed(target, path) => self.browsed(target, path),
             Message::CopyError(tab) => return self.copy_error(tab),
             Message::CopyAnonymousError(tab) => {
                 return self
@@ -3931,6 +3939,10 @@ impl Shell {
             Effect::PickSessionsFile => pick_sessions_file(main),
             Effect::SaveSettingsFile { document } => crate::settings_file::save(document, main),
             Effect::PickSettingsFile => crate::settings_file::pick(main),
+            Effect::SettingsReset => {
+                self.forget_typed_settings();
+                Task::none()
+            }
             Effect::PickKnownHosts => pick_known_hosts(main),
             // The registry or the files, read off the window's thread.
             Effect::ReadPuttySessions => Task::perform(
@@ -6581,13 +6593,19 @@ impl Shell {
         tabs.wrap().into()
     }
 
-    /// A Files tab's page: its integrated editor when a file is open in it, else its lists.
+    /// A Files tab's page: its integrated editor when a file is open in it, else its lists,
+    /// the server's beside the notice its transport discloses: plain FTP sends everything
+    /// in clear, as the C# badge says (`EmbeddedSftpView.xaml:161-186`).
     fn files_page<'a>(
         &'a self,
-        tab: TabId,
+        tab: &Tab,
         pane: &'a heimdall_app::files::FilesPane,
         live: bool,
     ) -> Element<'a, Message> {
+        let notice = tab
+            .sent_in_clear()
+            .then(|| fl!("ui-files-ftp-cleartext-badge"));
+        let tab = tab.id;
         match &pane.editor {
             Some(edit) => crate::integrated_editor::view(
                 tab,
@@ -6608,6 +6626,7 @@ impl Shell {
                     .filter(|drag| drag.active)
                     .and_then(|drag| drag.over),
                 self.file_columns.get(&tab).copied().unwrap_or_default(),
+                notice,
             ),
         }
     }
@@ -6755,7 +6774,7 @@ impl Shell {
                 self.certificate_owner(tab),
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
-                (Some(pane), _) => self.files_page(tab.id, pane, tab.is_live()),
+                (Some(pane), _) => self.files_page(tab, pane, tab.is_live()),
                 (_, Some(pane)) => self.desktop(tab, pane, focused),
                 _ => self.shell_page(tab, focused),
             },
@@ -6910,7 +6929,7 @@ impl Shell {
         focused: bool,
     ) -> Element<'a, Message> {
         let kept = match tab.files.as_deref() {
-            Some(pane) => self.files_page(tab.id, pane, false),
+            Some(pane) => self.files_page(tab, pane, false),
             None => self.searchable_terminal(tab, self.app.dialog.is_none() && focused),
         };
         let bar = match tab.retry {
@@ -8946,17 +8965,25 @@ fn gateway_dialog<'a>(
             ProfileField::Username => fl!("ui-gateway-field-username"),
             _ => fl!("ui-gateway-field-key"),
         };
-        form = form.push(
-            column![
-                text(label).size(font_size::CAPTION),
-                text_input("", draft.value(field))
-                    .style(styles::text_input)
-                    .id(gateway_field_id(field))
-                    .on_input(move |value| Message::App(AppMessage::GatewayField { field, value }))
-                    .on_submit(Message::SaveGatewayForm),
+        let input = text_input("", draft.value(field))
+            .style(styles::text_input)
+            .id(gateway_field_id(field))
+            .on_input(move |value| Message::App(AppMessage::GatewayField { field, value }))
+            .on_submit(Message::SaveGatewayForm);
+        // The key file, "Browse..." beside it, as the C# gateway dialog
+        // (`GatewayDialog.xaml:81-89`).
+        let input: Element<'a, Message> = if field == ProfileField::KeyPath {
+            row![
+                input,
+                crate::browse::browse_button(crate::browse::BrowseTarget::GatewayKey)
             ]
-            .spacing(spacing::XS),
-        );
+            .spacing(spacing::SM)
+            .align_y(iced::Alignment::Center)
+            .into()
+        } else {
+            input.into()
+        };
+        form = form.push(column![text(label).size(font_size::CAPTION), input].spacing(spacing::XS));
     }
     form = form
         .push(gateway_password(draft, forms))
@@ -11424,6 +11451,11 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-reset-rdp-body"),
             fl!("ui-settings-rdp-reset-defaults"),
         ),
+        Dialog::ConfirmResetAllSettings => (
+            fl!("ui-dialog-reset-all-title"),
+            fl!("ui-dialog-reset-all-body"),
+            fl!("ui-settings-reset-all"),
+        ),
         Dialog::ConfirmVaultHelloEnrolAgain => (
             fl!("ui-vault-hello-enrol-again-title"),
             fl!("ui-vault-hello-enrol-again-body"),
@@ -11527,6 +11559,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmExit { .. }
         | Dialog::ConfirmSessionLogging
         | Dialog::ConfirmResetRdpDefaults
+        | Dialog::ConfirmResetAllSettings
         | Dialog::ConfirmVaultHelloEnrolAgain
         | Dialog::ConfirmApplySshMode { .. }
         | Dialog::ConfirmDeleteMacro(_)

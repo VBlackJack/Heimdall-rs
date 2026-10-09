@@ -1229,3 +1229,61 @@ fn an_ssh_form_chooses_putty_and_x11_forwarding_with_its_warning() {
         assert!(ui.find(absent).is_err(), "{absent}");
     }
 }
+
+/// What is said of hardware acceleration, which neither client honours yet.
+const HARDWARE_UNSUPPORTED: &str = "Not supported yet: the built-in client has no such switch, \
+    and Remote Desktop Connection (mstsc.exe) reads no setting for it from its .rdp file.";
+
+#[test]
+fn hardware_acceleration_is_kept_and_said_not_supported_yet_in_either_session_mode() {
+    use heimdall_app::profile_draft::ProfileChoice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
+    show(&mut shell, ProfileTab::Options);
+    for external in [false, true] {
+        let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::External(
+            external,
+        ))));
+        let mut ui = tall_simulator(&shell);
+        let tick = ui
+            .find("Use hardware-accelerated rendering")
+            .expect("the box, kept");
+        let said = ui.find(HARDWARE_UNSUPPORTED).expect("said under it");
+        assert!(said.bounds().y > tick.bounds().y, "external: {external}");
+        // Not said to be Remote Desktop Connection's: it reads no such key either.
+        let next = ui.find("Automatically reconnect").expect("the next box");
+        assert!(next.bounds().y > said.bounds().y);
+    }
+}
+
+#[test]
+fn the_gateway_dialog_browses_for_its_key_and_the_path_picked_fills_it() {
+    use heimdall_ui::browse::BrowseTarget;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewGateway));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.click("Browse...")
+            .expect("beside the key, as the C# dialog");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::Browse(BrowseTarget::GatewayKey)))
+        );
+    }
+    let _ = shell.update(Message::Browsed(
+        BrowseTarget::GatewayKey,
+        "/home/me/.ssh/bastion".to_owned(),
+    ));
+    let mut ui = tall_simulator(&shell);
+    ui.find("/home/me/.ssh/bastion")
+        .expect("the key path shown");
+}

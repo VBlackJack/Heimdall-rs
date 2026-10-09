@@ -134,6 +134,9 @@ pub enum SettingsMessage {
     /// Days Windows Hello unlocks the vault before the master password is asked again, 0
     /// for never; refused out of the C# range.
     VaultHelloMaxDays(u32),
+    /// Every setting back to its default but what the C# keeps, asked first as the C#
+    /// "Reset defaults" asks (`SettingsViewModel.cs:2376-2464`).
+    ResetAllSettings,
 }
 
 /// The colours of `scheme`.
@@ -195,6 +198,10 @@ impl App {
                 self.dialog = Some(Dialog::ConfirmResetRdpDefaults);
                 Vec::new()
             }
+            SettingsMessage::ResetAllSettings => {
+                self.dialog = Some(Dialog::ConfirmResetAllSettings);
+                Vec::new()
+            }
             SettingsMessage::ApplySshModeToAll => {
                 self.ask_apply_ssh_mode();
                 Vec::new()
@@ -235,6 +242,17 @@ impl App {
     /// The RDP settings reset, as the user agreed to.
     pub(super) fn confirm_reset_rdp_defaults(&mut self) -> Vec<Effect> {
         self.apply_settings(&SettingsMessage::ResetRdpDefaults)
+    }
+
+    /// Every setting reset, as the user agreed to; what the Settings page held typed goes
+    /// with it. A save that fails leaves every setting as it was.
+    pub(super) fn confirm_reset_all_settings(&mut self) -> Vec<Effect> {
+        let mut effects = self.apply_settings(&SettingsMessage::ResetAllSettings);
+        // A save that failed says so in a dialog of its own.
+        if self.dialog.is_none() {
+            effects.push(Effect::SettingsReset);
+        }
+        effects
     }
 
     /// Transcripts turned on, as the user agreed to.
@@ -427,6 +445,12 @@ impl App {
                 self.settings.rdp_resolution_presets.clone_from(presets);
             }
             SettingsMessage::ResetRdpDefaults => self.settings.reset_rdp(),
+            SettingsMessage::ResetAllSettings => {
+                self.settings.reset_all();
+                // The agent preference may have changed: the chip says what the next
+                // connection reaches.
+                self.agent_chip = super::agent_chip::AgentChip::Unknown;
+            }
             SettingsMessage::TrustedKeys(_) | SettingsMessage::ApplySshModeToAll => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {

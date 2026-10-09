@@ -179,19 +179,35 @@ fn toggle_box<'a>(
 }
 
 /// The box of `switch`, out of reach while the global defaults decide it, said to be
-/// Remote Desktop Connection's.
+/// Remote Desktop Connection's; hardware acceleration said honoured by neither client yet.
 fn switch_box<'a>(draft: &ProfileDraft, switch: RdpSwitch) -> Element<'a, Message> {
     let locked = following(draft) && switch.follows_defaults();
-    external_only(
-        draft,
-        checkbox(switch.is_on(&draft.rdp_extras))
-            .style(styles::checkbox)
-            .label(switch_label(switch))
-            .on_toggle_maybe(
-                (!locked).then_some(move |on| choice(ProfileChoice::Extra(switch, on))),
-            )
-            .into(),
-    )
+    let tick = checkbox(switch.is_on(&draft.rdp_extras))
+        .style(styles::checkbox)
+        .label(switch_label(switch))
+        .on_toggle_maybe((!locked).then_some(move |on| choice(ProfileChoice::Extra(switch, on))))
+        .into();
+    if switch == RdpSwitch::HardwareAcceleration {
+        return unsupported(tick);
+    }
+    external_only(draft, tick)
+}
+
+/// The hardware acceleration box, and under it that it is not supported yet: the C# sets
+/// the `MsTscAx` control's `EnableHardwareMode` (`RdpActiveXHost.cs:2017-2042`), which the
+/// built-in client has no counterpart of, and writes nothing of it in the `.rdp` file it
+/// gives Remote Desktop Connection (`RdpFileGenerator.cs`), which documents no key for it.
+/// The box is kept, its value saved and carried to and from the C# as the fields of
+/// decision D8 are.
+fn unsupported(tick: Element<'_, Message>) -> Element<'_, Message> {
+    column![
+        tick,
+        text(fl!("ui-profile-rdp-hardware-acceleration-unsupported"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+    ]
+    .spacing(spacing::XS)
+    .into()
 }
 
 /// The C# server dialog's label of `switch`, the RDP settings' where the words are the same.
@@ -498,6 +514,8 @@ struct Switch {
     /// Offered only while Network Level Authentication is on, as the C# page greys strict
     /// server authentication out without it.
     needs_nla: bool,
+    /// Honoured by neither client yet, which is said under it: hardware acceleration.
+    unsupported: bool,
 }
 
 impl Switch {
@@ -507,6 +525,7 @@ impl Switch {
             get,
             set,
             needs_nla: false,
+            unsupported: false,
         }
     }
 }
@@ -575,11 +594,14 @@ fn switches() -> [Switch; 16] {
             |d| d.compression,
             |d, on| d.compression = on,
         ),
-        Switch::new(
-            fl!("ui-settings-rdp-hardware-acceleration"),
-            |d| d.hardware_acceleration,
-            |d, on| d.hardware_acceleration = on,
-        ),
+        Switch {
+            unsupported: true,
+            ..Switch::new(
+                fl!("ui-settings-rdp-hardware-acceleration"),
+                |d| d.hardware_acceleration,
+                |d, on| d.hardware_acceleration = on,
+            )
+        },
         Switch::new(
             fl!("ui-settings-rdp-auto-reconnect"),
             |d| d.auto_reconnect,
@@ -629,7 +651,11 @@ pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
                 send(changed)
             });
         }
-        page = page.push(tick);
+        page = page.push(if switch.unsupported {
+            unsupported(tick.into())
+        } else {
+            tick.into()
+        });
     }
     page.into()
 }

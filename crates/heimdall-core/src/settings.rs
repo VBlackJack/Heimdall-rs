@@ -27,7 +27,8 @@ use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, Provide
 use crate::lockout::{LOCKOUT_DURATION, Lockout};
 use crate::pin::PinHash;
 use crate::profile::{
-    RESOLUTION_PRESETS, RdpDefaults, SshMode, preset_fits, resolution_preset, resolution_text,
+    ProfileId, RESOLUTION_PRESETS, RdpDefaults, SshMode, preset_fits, resolution_preset,
+    resolution_text,
 };
 use crate::store::{StoreError, write_atomic};
 
@@ -630,6 +631,11 @@ pub struct Settings {
     pub update_check: UpdateCheck,
     /// Windows Hello asked before a connection uses what is saved for it.
     pub windows_hello: WindowsHello,
+    /// The SSH gateway of the last profile saved from the profile form, as the C#
+    /// `LastUsedGatewayId` (`AppSettings.cs:363`): a new profile's form starts on it while it
+    /// still exists. This computer's own, as the C# settings transfer leaves it behind: never
+    /// exported, and kept by a reset.
+    pub last_used_gateway: Option<ProfileId>,
 }
 
 /// The SFTP browser's settings, as the C# `SftpBrowserEnabled`, `SftpAutoOpenOnSsh` and
@@ -1094,6 +1100,7 @@ impl Default for Settings {
             updates: Updates::default(),
             update_check: UpdateCheck::default(),
             windows_hello: WindowsHello::default(),
+            last_used_gateway: None,
         }
     }
 }
@@ -1131,6 +1138,24 @@ struct SettingsFile {
     update_check: UpdateCheckSection,
     #[serde(default)]
     windows_hello: WindowsHelloSection,
+    #[serde(default)]
+    profile_form: ProfileFormSection,
+}
+
+/// This computer's own: never exported.
+#[derive(Serialize, Deserialize, Default)]
+struct ProfileFormSection {
+    /// The identifier of the gateway; absent when the last profile saved had none.
+    #[serde(default)]
+    last_used_gateway: Option<String>,
+}
+
+impl ProfileFormSection {
+    fn of(last_used_gateway: Option<&ProfileId>) -> Self {
+        Self {
+            last_used_gateway: last_used_gateway.map(|id| id.as_str().to_owned()),
+        }
+    }
 }
 
 /// Absent values are the C# defaults.
@@ -1467,6 +1492,32 @@ impl Settings {
         self.rdp_resolution_presets = defaults.rdp_resolution_presets;
     }
 
+    /// Every setting back to its default, as the C# "Reset defaults"
+    /// (`SettingsViewModel.cs:2376-2464`), but what the C# carries across: the language,
+    /// the theme and the accent, which a reader of another language needs to find the way
+    /// back; the PIN and the lockouts, which are state, not preferences; the release skipped
+    /// and the last look for one; and what no C# Settings panel edits (the tree's gateway
+    /// badge, the broadcast scope, the gateway a new profile starts on). The gateways, the
+    /// profiles, the master password, the Windows Hello enrolment, the macros and the
+    /// credential provider's unlock secret are kept elsewhere and are not touched.
+    pub fn reset_all(&mut self) {
+        let kept = Self {
+            language: self.language,
+            theme: self.theme,
+            accent: self.accent,
+            vault_unlock: self.vault_unlock,
+            vault_last_master_unlock: self.vault_last_master_unlock,
+            pin: self.pin.take(),
+            pin_unlock: self.pin_unlock,
+            broadcast_scope: self.broadcast_scope,
+            show_gateway_badge: self.show_gateway_badge,
+            update_check: std::mem::take(&mut self.update_check),
+            last_used_gateway: self.last_used_gateway.take(),
+            ..Self::default()
+        };
+        *self = kept;
+    }
+
     /// Reads the settings at `path`; a missing file holds the defaults.
     ///
     /// # Errors
@@ -1683,6 +1734,11 @@ impl Settings {
                     WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER,
                 ),
             },
+            last_used_gateway: file
+                .profile_form
+                .last_used_gateway
+                .filter(|id| !id.trim().is_empty())
+                .map(ProfileId::new),
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -1845,6 +1901,7 @@ impl Settings {
                 grace_minutes: Some(self.windows_hello.grace_minutes),
                 vault_max_days: Some(self.windows_hello.vault_max_days),
             },
+            profile_form: ProfileFormSection::of(self.last_used_gateway.as_ref()),
         }
     }
 
@@ -2069,8 +2126,14 @@ mod transfer_tests {
     use super::{Settings, TRANSFERRED};
 
     /// The sections that never travel: this computer's PIN and lockouts, its last look for a
-    /// newer release, and the file's own version.
-    const HELD_BACK: [&str; 4] = ["version", "vault_unlock", "pin", "update_check"];
+    /// newer release, the gateway its profile form starts on, and the file's own version.
+    const HELD_BACK: [&str; 5] = [
+        "version",
+        "vault_unlock",
+        "pin",
+        "update_check",
+        "profile_form",
+    ];
 
     #[test]
     fn every_section_of_the_settings_file_travels_or_is_held_back() {
