@@ -132,6 +132,7 @@ pub mod split;
 mod status;
 mod tab_menu;
 mod telnet_tab;
+mod tools;
 mod transcripts;
 mod tree;
 mod tree_drag;
@@ -190,6 +191,7 @@ pub use status::{
     ANNOUNCEMENTS_KEPT, Announced, Announcement, Notice, SessionState, SessionStatus,
 };
 pub use tab_menu::{TabGroup, TabMenuMessage};
+pub use tools::ToolsMessage;
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary, search_folded};
 pub use tree_drag::{DropTarget, OrganizationChange};
 pub use tree_filter::{FilterMessage, TreeFilter};
@@ -314,6 +316,8 @@ pub enum Message {
     },
     /// Time to look at the Citrix tabs' clients.
     CitrixTick,
+    /// A message about the Tools area: a tool opened, pinned, the sidebar's tab.
+    Tools(ToolsMessage),
     /// What a Citrix tab's probe saw.
     CitrixProbed {
         /// The tab.
@@ -901,6 +905,7 @@ impl fmt::Debug for Message {
                 write!(f, "ElevatedLaunched({}, {outcome:?})", tab.value())
             }
             Self::OpenWinRm(id) => write!(f, "OpenWinRm({id})"),
+            Self::Tools(message) => write!(f, "Tools({message:?})"),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             Self::OpenFtp(id) => write!(f, "OpenFtp({id})"),
             Self::OpenCitrix(id) => write!(f, "OpenCitrix({id})"),
@@ -2199,8 +2204,11 @@ impl Tab {
     #[must_use]
     pub fn is_live(&self) -> bool {
         // The local file browser is no session: nothing is lost when it closes. Nor is a
-        // Citrix tab's: closing it leaves the Citrix session as it is.
-        self.phase == Phase::Connected && !self.is_local_browser() && self.citrix.is_none()
+        // Citrix tab's: closing it leaves the Citrix session as it is. Nor a tool's.
+        self.phase == Phase::Connected
+            && !self.is_local_browser()
+            && self.citrix.is_none()
+            && self.tool().is_none()
     }
 
     fn write(&self, bytes: Vec<u8>) {
@@ -2358,6 +2366,8 @@ pub enum TabProfile {
     WinRm(WinRmProfile),
     /// A Citrix application launched outside Heimdall: its status alone.
     Citrix(heimdall_core::profile::CitrixProfile),
+    /// A built-in tool: nothing connects.
+    Tool(crate::tools::ToolId),
 }
 
 impl TabProfile {
@@ -2368,9 +2378,12 @@ impl TabProfile {
             Self::Ssh(profile) => profile.gateway.as_ref(),
             Self::Rdp(profile) => profile.gateway.as_ref(),
             Self::WinRm(profile) => profile.gateway.as_ref(),
-            Self::Telnet(_) | Self::Vnc(_) | Self::Ftp(_) | Self::Local(_) | Self::Citrix(_) => {
-                None
-            }
+            Self::Telnet(_)
+            | Self::Vnc(_)
+            | Self::Ftp(_)
+            | Self::Local(_)
+            | Self::Citrix(_)
+            | Self::Tool(_) => None,
         }
     }
 
@@ -2384,7 +2397,8 @@ impl TabProfile {
             Self::Telnet(_) => ProfileKind::Telnet,
             Self::Vnc(_) => ProfileKind::Vnc,
             Self::Ftp(_) => ProfileKind::Ftp,
-            Self::Local(_) => ProfileKind::Local,
+            // A tool runs on this computer, as a local shell: no protocol of its own.
+            Self::Local(_) | Self::Tool(_) => ProfileKind::Local,
             Self::WinRm(_) => ProfileKind::WinRm,
             Self::Citrix(_) => ProfileKind::Citrix,
         }
@@ -2402,6 +2416,8 @@ impl TabProfile {
             Self::Local(shell) => &shell.name,
             Self::WinRm(profile) => &profile.name,
             Self::Citrix(profile) => &profile.name,
+            // Its tab is named in the language shown when it opens.
+            Self::Tool(tool) => tool.code(),
         }
     }
 
@@ -2415,7 +2431,7 @@ impl TabProfile {
             Self::Vnc(profile) => Some((&profile.host, profile.port)),
             Self::Ftp(profile) => Some((&profile.host, profile.port)),
             // A Citrix application's server is its StoreFront's to choose.
-            Self::Local(_) | Self::Citrix(_) => None,
+            Self::Local(_) | Self::Citrix(_) | Self::Tool(_) => None,
             Self::WinRm(profile) => Some((&profile.host, profile.port)),
         }
     }
@@ -2430,7 +2446,9 @@ impl TabProfile {
             Self::WinRm(profile) => profile.username.as_deref(),
             // Telnet asks for its account in the session; VNC has none; a local shell runs
             // as the user running Heimdall; Citrix Workspace signs in by itself.
-            Self::Telnet(_) | Self::Vnc(_) | Self::Local(_) | Self::Citrix(_) => None,
+            Self::Telnet(_) | Self::Vnc(_) | Self::Local(_) | Self::Citrix(_) | Self::Tool(_) => {
+                None
+            }
         }
     }
 }
@@ -3065,6 +3083,8 @@ pub struct App {
     /// The hosts connected to, newest first, with the protocol, as the C#
     /// `RecentConnectionTracker` keeps them: for this run only.
     recent_hosts: Vec<(String, ProfileKind)>,
+    /// The tools used lately, as the C# `RecentToolList`: for this run only.
+    recent_tools: crate::tools::RecentTools,
     /// The credentials kept for the session selected, as last read.
     detail: detail::DetailCache,
     /// The terminal macros kept.
@@ -3232,6 +3252,7 @@ impl App {
             docking_sftp: Vec::new(),
             pending_restore,
             recent_hosts: Vec::new(),
+            recent_tools: crate::tools::RecentTools::default(),
             detail: detail::DetailCache::default(),
             macros,
             monitor: reachability_monitor::Monitor::default(),
@@ -3425,6 +3446,7 @@ impl App {
                 self.health_message(message)
             }
             Message::CitrixTick => self.citrix_tick(),
+            Message::Tools(message) => self.tools_message(message),
             Message::CitrixProbed { tab, probe } => {
                 self.citrix_probed(tab, &probe);
                 Vec::new()
@@ -3807,7 +3829,7 @@ impl App {
         let open = self
             .tabs
             .iter()
-            .filter(|tab| !matches!(tab.profile, TabProfile::Local(_)))
+            .filter(|tab| !matches!(tab.profile, TabProfile::Local(_) | TabProfile::Tool(_)))
             .count();
         let reached = open >= usize::try_from(max).unwrap_or(usize::MAX);
         if reached {

@@ -76,7 +76,8 @@ impl App {
                 Reopen::Shell(_)
                 | Reopen::Script(_)
                 | Reopen::Transient(..)
-                | Reopen::LocalBrowser => None,
+                | Reopen::LocalBrowser
+                | Reopen::Tool => None,
             })
             .collect();
         let path = session_snapshot::snapshot_path(&self.config.profiles_file);

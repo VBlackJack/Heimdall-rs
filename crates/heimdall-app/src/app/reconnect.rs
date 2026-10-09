@@ -44,6 +44,9 @@ pub(super) enum Reopen {
     /// Nothing: the file browser docked beside a local shell is no session, and opens
     /// with the shell's start.
     LocalBrowser,
+    /// Nothing: a tool's tab is no session, and the C# restores no tool
+    /// (`SessionSnapshotProjection.cs:44`).
+    Tool,
 }
 
 impl Reopen {
@@ -58,6 +61,7 @@ impl Reopen {
             TabProfile::Local(shell) => Self::Shell(shell.clone()),
             TabProfile::WinRm(profile) => Self::Profile(profile.id.clone()),
             TabProfile::Citrix(profile) => Self::Profile(profile.id.clone()),
+            TabProfile::Tool(_) => Self::Tool,
         }
     }
 }
@@ -68,9 +72,11 @@ impl Tab {
     pub(super) fn saved_profile(&self) -> Option<&ProfileId> {
         match &self.reopen {
             Reopen::Profile(id) => Some(id),
-            Reopen::Shell(_) | Reopen::Script(_) | Reopen::Transient(..) | Reopen::LocalBrowser => {
-                None
-            }
+            Reopen::Shell(_)
+            | Reopen::Script(_)
+            | Reopen::Transient(..)
+            | Reopen::LocalBrowser
+            | Reopen::Tool => None,
         }
     }
 }
@@ -225,7 +231,7 @@ impl App {
                 self.ask_script(*shell, None);
                 Vec::new()
             }
-            Reopen::LocalBrowser => Vec::new(),
+            Reopen::LocalBrowser | Reopen::Tool => Vec::new(),
             Reopen::Transient(profile, purpose) => {
                 let effects = self.open_transient(TabProfile::clone(&profile), purpose);
                 self.reopened_by(Reopen::Transient(profile, purpose));

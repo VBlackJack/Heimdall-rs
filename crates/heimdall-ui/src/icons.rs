@@ -30,6 +30,7 @@ use std::cell::Cell;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use heimdall_app::ProfileKind;
+use heimdall_app::tools::ToolCategory;
 use iced::widget::canvas::{self, Cache, Fill, Frame, Geometry, Path, Stroke, fill::Rule};
 use iced::{Color, Element, Point, Rectangle, Renderer, Size, Theme, mouse};
 
@@ -142,13 +143,19 @@ pub enum Icon {
     Zoom,
     /// The `Photo2` glyph: a picture, an image of a file list.
     Photo,
+    /// `Geo.Tool.Base64Encoding`: a double arrow between two marks, the Base64 tool.
+    ToolBase64,
+    /// `Geo.Tool.UrlEncoder`: two links, the URL encoder.
+    ToolUrlEncoder,
+    /// `Geo.Tool.Uuid`: blocks of a UUID's groups, the UUID generator.
+    ToolUuid,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 46] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -191,6 +198,9 @@ impl Icon {
         Self::Package,
         Self::Zoom,
         Self::Photo,
+        Self::ToolBase64,
+        Self::ToolUrlEncoder,
+        Self::ToolUuid,
         Self::Monitor,
     ];
 
@@ -329,6 +339,20 @@ impl Icon {
                 "M1.5,2.5 L14.5,2.5 L14.5,13.5 L1.5,13.5 Z M1.5,11 L5.5,7 L9,10.5 L11,8.5 \
                  L14.5,12 M10,5 A1,1 0 1 1 12,5 A1,1 0 1 1 10,5 Z"
             }
+            Self::ToolBase64 => {
+                "M1,8 L15,8 M1,8 L4,5 M1,8 L4,11 M15,8 L12,5 M15,8 L12,11 M5,3 L7,3 L7,5 \
+                 M9,11 L11,11 L11,13"
+            }
+            Self::ToolUrlEncoder => {
+                "M4,6 A3,3 0 0 1 7,3 L9,3 A3,3 0 0 1 12,6 L12,7 A3,3 0 0 1 9,10 \
+                 M12,10 A3,3 0 0 1 9,13 L7,13 A3,3 0 0 1 4,10 L4,9 A3,3 0 0 1 7,6 M6,8 L10,8"
+            }
+            Self::ToolUuid => {
+                "M1,3 L4,3 L4,6 L1,6 Z M5.5,3 L7,3 L7,6 L5.5,6 Z M8.5,3 L12,3 L12,6 Z \
+                 M1,7.5 L4,7.5 L4,10.5 L1,10.5 Z M5.5,7.5 L10.5,7.5 L10.5,10.5 L5.5,10.5 Z \
+                 M12,7.5 L15,7.5 L15,10.5 L12,10.5 Z M1,12 L6.5,12 L6.5,15 L1,15 Z \
+                 M8,12 L15,12 L15,15 L8,15 Z"
+            }
             // As Segoe MDL2 Assets draws it at 48: a screen 15 by 9 lines wide, a neck of
             // one, a stand of 5.
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
@@ -369,6 +393,10 @@ impl Icon {
             | Self::Package
             | Self::Zoom
             | Self::Photo
+            // The C# fills these two, which draws nothing of an open line: their lines are
+            // stroked here, as their drawing means them.
+            | Self::ToolBase64
+            | Self::ToolUrlEncoder
             | Self::Monitor => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
@@ -414,6 +442,8 @@ pub enum Tint {
     Hue(Hue),
     /// A colour of its own: a folder's.
     Own(Color),
+    /// A tool category's, as the C# `Tool*Brush`.
+    Tool(ToolCategory),
 }
 
 /// A colour of the theme's palette, as the C# `*Color` keys a brush is made of.
@@ -461,6 +491,7 @@ impl Tint {
             Self::Warning => theme.extended_palette().warning.base.color,
             Self::Hue(hue) => hue.color(theme),
             Self::Own(color) => color,
+            Self::Tool(category) => tool_color(theme, category),
         }
     }
 }
@@ -479,6 +510,20 @@ pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
         ProfileKind::Vnc => colors.cyan,
         ProfileKind::Telnet => colors.comment,
         ProfileKind::Local => theme.palette().primary,
+    }
+}
+
+/// The colour of tool `category` in `theme`, as the C# `HeimdallThemeBridge.xaml` gives each
+/// `Tool*Brush`: network blue, security orange, encoding purple, system cyan, external pink.
+#[must_use]
+pub fn tool_color(theme: &Theme, category: ToolCategory) -> Color {
+    let colors = crate::themes::colors_of(theme);
+    match category {
+        ToolCategory::Network => colors.blue,
+        ToolCategory::Security => colors.orange,
+        ToolCategory::Encoding => colors.purple,
+        ToolCategory::System => colors.cyan,
+        ToolCategory::External => colors.pink,
     }
 }
 

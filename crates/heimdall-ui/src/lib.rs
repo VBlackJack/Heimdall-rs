@@ -81,6 +81,7 @@ pub mod terminal_view;
 mod texts;
 pub mod themes;
 pub mod tokens;
+pub mod tools;
 pub mod transcript_lines;
 mod tree_drag;
 mod tree_row;

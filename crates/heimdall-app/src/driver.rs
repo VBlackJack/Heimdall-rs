@@ -186,6 +186,8 @@ pub enum Purpose {
     Vnc,
     /// A Citrix application's status: nothing is connected.
     Citrix,
+    /// A built-in tool: nothing is connected.
+    Tool,
 }
 
 /// What an attempt needs.

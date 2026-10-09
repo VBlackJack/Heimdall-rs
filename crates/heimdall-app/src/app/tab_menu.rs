@@ -240,7 +240,7 @@ impl App {
             TabProfile::Ftp(profile) => ProfileDraft::from_ftp(profile),
             TabProfile::WinRm(profile) => ProfileDraft::from_winrm(profile),
             TabProfile::Citrix(profile) => ProfileDraft::from_citrix(profile),
-            TabProfile::Local(_) => return,
+            TabProfile::Local(_) | TabProfile::Tool(_) => return,
         };
         // A new profile: saved under an identifier of its own.
         draft.editing = None;
@@ -309,7 +309,7 @@ impl App {
         match &tab.reopen {
             Reopen::Profile(id) => self.profile_summary(id).is_some(),
             Reopen::Shell(_) | Reopen::Script(_) | Reopen::Transient(..) => true,
-            Reopen::LocalBrowser => false,
+            Reopen::LocalBrowser | Reopen::Tool => false,
         }
     }
 
@@ -335,9 +335,11 @@ impl App {
     pub fn tab_profile(&self, tab: &Tab) -> Option<ProfileSummary> {
         match &tab.reopen {
             Reopen::Profile(id) => self.profile_summary(id),
-            Reopen::Shell(_) | Reopen::Script(_) | Reopen::Transient(..) | Reopen::LocalBrowser => {
-                None
-            }
+            Reopen::Shell(_)
+            | Reopen::Script(_)
+            | Reopen::Transient(..)
+            | Reopen::LocalBrowser
+            | Reopen::Tool => None,
         }
     }
 }

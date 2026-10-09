@@ -129,6 +129,8 @@ impl App {
             TabProfile::Local(shell) => self.open_local(shell),
             TabProfile::WinRm(profile) => self.open_winrm_profile(profile),
             TabProfile::Citrix(profile) => self.open_citrix_profile(profile),
+            // A tool's tab is never one saved nowhere: it opens from the Tools area.
+            TabProfile::Tool(_) => Vec::new(),
         }
     }
 }

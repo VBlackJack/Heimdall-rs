@@ -98,7 +98,8 @@ impl App {
                 Reopen::Shell(_)
                 | Reopen::Script(_)
                 | Reopen::Transient(..)
-                | Reopen::LocalBrowser => None,
+                | Reopen::LocalBrowser
+                | Reopen::Tool => None,
             },
             _ => None,
         };

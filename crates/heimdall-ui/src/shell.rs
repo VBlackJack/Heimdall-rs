@@ -30,7 +30,7 @@ use heimdall_app::files::{
 };
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
-use heimdall_app::local_driver::{LocalShell, local_events};
+use heimdall_app::local_driver::local_events;
 use heimdall_app::profile_draft::{
     DraftError, DraftProtocol, ProfileChoice, ProfileDraft, ProfileField, ProfileToggle,
     SavedSecret,
@@ -41,6 +41,7 @@ use heimdall_app::session_log::{
     transfer_events_recorded,
 };
 use heimdall_app::telnet_driver::telnet_events;
+use heimdall_app::tools::SidebarTab;
 use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::type_ahead::TYPE_AHEAD_RESET;
 use heimdall_app::update_check::{Failure as UpdateFailure, GitHubSource, Outcome};
@@ -59,7 +60,7 @@ use heimdall_app::{
     VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
     master_password_problem, open_vault, server_text,
 };
-use heimdall_app::{VaultHelloMessage, VaultTicket, vault_hello, windows_hello};
+use heimdall_app::{ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello, windows_hello};
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
@@ -900,6 +901,15 @@ pub enum Message {
     /// A message of the session drawn in a tab's own window: it reaches the core as the
     /// main window's would, but resolves nothing through the main window's tab shown.
     InFloating(window::Id, Box<Message>),
+    /// A message of a tool's tab, whose state the window holds.
+    Tool(TabId, crate::tools::ToolMessage),
+    /// What is typed in the filter of the sidebar's Tools tab.
+    ToolsFilter(String),
+    /// What is typed in the Tools page's search.
+    ToolsSearch(String),
+    /// Open a tool in a tab and show it, as the C# card and sidebar launch it from either
+    /// page: the Sessions page shown, the tab named in the language shown.
+    OpenTool(heimdall_app::tools::ToolId),
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -1068,6 +1078,11 @@ impl fmt::Debug for Message {
             Self::SessionFieldApply(field) => write!(f, "SessionFieldApply({field:?})"),
             Self::Float(window, event) => write!(f, "Float({window:?}, {event:?})"),
             Self::InFloating(window, message) => write!(f, "InFloating({window:?}, {message:?})"),
+            // What is typed in a tool can be anything: only its kind is shown.
+            Self::Tool(tab, _) => write!(f, "Tool({}, ..)", tab.value()),
+            Self::ToolsFilter(typed) => write!(f, "ToolsFilter({typed:?})"),
+            Self::ToolsSearch(typed) => write!(f, "ToolsSearch({typed:?})"),
+            Self::OpenTool(tool) => write!(f, "OpenTool({tool:?})"),
         }
     }
 }
@@ -1113,17 +1128,6 @@ fn field_id(question: QuestionId, index: usize) -> iced::widget::Id {
     iced::widget::Id::from(format!("question-{}-{index}", question.value()))
 }
 
-/// The shell the sidebar button opens: the user's own, in the home folder.
-fn default_local_shell() -> LocalShell {
-    LocalShell {
-        name: fl!("ui-local-shell-name"),
-        program: None,
-        arguments: heimdall_term::local::LocalArguments::default(),
-        working_directory: None,
-        environment: Vec::new(),
-    }
-}
-
 /// `user@host:port`, or `host:port` without a user.
 fn target(host: &str, port: u16, user: Option<&str>) -> String {
     let address = display_address(host, port);
@@ -1146,23 +1150,53 @@ fn tab_label(title: &str) -> String {
     format!("{kept}{ELLIPSIS}")
 }
 
-/// The sidebar's heading, as the C# Sessions tab selected: its name in the text's colour
-/// and semi-bold, over the accent's line.
-fn sidebar_heading<'a>() -> Element<'a, Message> {
-    column![
+/// Widget identifier of a tab of the sidebar's "Sessions | Tools".
+#[must_use]
+pub fn sidebar_tab_id(tab: SidebarTab) -> iced::widget::Id {
+    iced::widget::Id::new(match tab {
+        SidebarTab::Sessions => "sidebar-tab-sessions",
+        SidebarTab::Tools => "sidebar-tab-tools",
+    })
+}
+
+/// The sidebar's "Sessions | Tools", as the C# segmented switch (`MainWindow.xaml:355-384`):
+/// two tabs sharing its width, the one `shown` underlined in the accent.
+fn sidebar_tabs<'a>(shown: SidebarTab) -> Element<'a, Message> {
+    let tab = |label: String, which: SidebarTab| -> Element<'a, Message> {
+        let selected = shown == which;
+        let mut label = text(label).size(font_size::BODY);
+        if selected {
+            label = label.font(styles::SEMIBOLD);
+        }
         container(
-            text(fl!("ui-sidebar-title"))
-                .size(font_size::BODY)
-                .font(styles::SEMIBOLD),
-        )
-        .center_x(Length::Fill)
-        .center_y(SIDEBAR_TAB_HEIGHT - SIDEBAR_TAB_UNDERLINE),
-        container(iced::widget::space())
+            button(
+                column![
+                    container(label)
+                        .center_x(Length::Fill)
+                        .center_y(SIDEBAR_TAB_HEIGHT - SIDEBAR_TAB_UNDERLINE),
+                    container(iced::widget::space())
+                        .width(Length::Fill)
+                        .height(SIDEBAR_TAB_UNDERLINE)
+                        .style(styles::underline(selected)),
+                ]
+                .width(Length::Fill),
+            )
+            .padding(0.0)
             .width(Length::Fill)
-            .height(SIDEBAR_TAB_UNDERLINE)
-            .style(styles::underline(true)),
+            .style(styles::sidebar_tab(selected))
+            .on_press(Message::App(AppMessage::Tools(
+                ToolsMessage::ShowSidebarTab(which),
+            ))),
+        )
+        .id(sidebar_tab_id(which))
+        .width(Length::FillPortion(1))
+        .into()
+    };
+    row![
+        tab(fl!("ui-sidebar-title"), SidebarTab::Sessions),
+        tab(fl!("ui-sidebar-tools-tab"), SidebarTab::Tools),
     ]
-    .width(Length::FillPortion(1))
+    .width(Length::Fill)
     .into()
 }
 
@@ -1457,6 +1491,12 @@ pub struct Shell {
     desktop_fit: HashMap<TabId, (bool, Option<(u16, u16)>)>,
     /// What the tree's search holds: the profiles it finds are shown.
     search: String,
+    /// What the tool tabs hold, by tab.
+    tools: crate::tools::ToolPanes,
+    /// What the filter of the sidebar's Tools tab holds.
+    tools_filter: String,
+    /// What the Tools page's search holds.
+    tools_search: String,
 }
 
 /// What the content area shows.
@@ -1468,6 +1508,8 @@ enum Page {
     Tunnels,
     /// About Heimdall, as the C# About page.
     About,
+    /// The built-in tools, as the C# Tools page.
+    Tools,
     /// The settings, over the tab shown when they were opened: showing another tab leaves
     /// them.
     Settings {
@@ -1476,14 +1518,16 @@ enum Page {
     },
 }
 
-/// A page of the window's navigation, as the C# toolbar's tabs. The C# Scheduled and Tools
-/// pages come with what they hold.
+/// A page of the window's navigation, as the C# toolbar's tabs. The C# Scheduled page comes
+/// with what it holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Destination {
     /// The sessions: the tree beside them.
     Sessions,
     /// Every tunnel.
     Tunnels,
+    /// The built-in tools.
+    Tools,
     /// The settings.
     Settings,
     /// About Heimdall.
@@ -1492,12 +1536,19 @@ pub enum Destination {
 
 impl Destination {
     /// Every page, in the C# order.
-    pub const ALL: [Self; 4] = [Self::Sessions, Self::Tunnels, Self::Settings, Self::About];
+    pub const ALL: [Self; 5] = [
+        Self::Sessions,
+        Self::Tunnels,
+        Self::Tools,
+        Self::Settings,
+        Self::About,
+    ];
 
     fn label(self) -> String {
         match self {
             Self::Sessions => fl!("ui-nav-sessions"),
             Self::Tunnels => fl!("ui-nav-tunnels"),
+            Self::Tools => fl!("ui-nav-tools"),
             Self::Settings => fl!("ui-nav-settings"),
             Self::About => fl!("ui-nav-about"),
         }
@@ -1703,7 +1754,17 @@ impl Shell {
             drops: crate::drop_batch::DropBatches::default(),
             desktop_fit: HashMap::new(),
             search: String::new(),
+            tools: crate::tools::ToolPanes::default(),
+            tools_filter: String::new(),
+            tools_search: String::new(),
         }
+        .with_tool_panes()
+    }
+
+    /// The tool tabs' states made for the tabs the core already holds.
+    fn with_tool_panes(mut self) -> Self {
+        self.tools.sync(&self.app);
+        self
     }
 
     /// The field Ctrl+F gives the keyboard to: the Settings page's search on that page, as
@@ -2560,6 +2621,26 @@ impl Shell {
                 self.drop_message(&message)
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
+            Message::Tool(tab, message) => {
+                return self.tools.update(tab, message, self.main_window);
+            }
+            Message::ToolsFilter(typed) => {
+                self.tools_filter = typed;
+                Vec::new()
+            }
+            Message::ToolsSearch(typed) => {
+                self.tools_search = typed;
+                Vec::new()
+            }
+            Message::OpenTool(tool) => {
+                // As the C# launch from a card or the sidebar: the Sessions page shown first.
+                self.menu = None;
+                self.page = Page::Tab;
+                self.app.update(AppMessage::Tools(ToolsMessage::Open {
+                    tool,
+                    title: crate::tools::label(tool),
+                }))
+            }
             Message::NewNote { id, template } => {
                 self.menu = None;
                 return self.new_note(&id, template);
@@ -2592,6 +2673,8 @@ impl Shell {
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // The tool tabs' states follow their tabs.
+        self.tools.sync(&self.app);
         // What the detail panel says of the session selected, read again once it changed.
         self.app.refresh_detail();
         // The diagnostics log as the settings say now.
@@ -2742,6 +2825,7 @@ impl Shell {
                 match destination {
                     Destination::Sessions => self.page = Page::Tab,
                     Destination::Tunnels => self.page = Page::Tunnels,
+                    Destination::Tools => self.page = Page::Tools,
                     Destination::About => self.page = Page::About,
                     Destination::Settings => return self.view_message(&Message::ShowSettings),
                 }
@@ -3058,6 +3142,12 @@ impl Shell {
         if shortcut == WindowShortcut::CopyStatus {
             return self.copy_status();
         }
+        // The sidebar's other tab, as the C# Ctrl+Shift+T, tab or no tab.
+        if shortcut == WindowShortcut::ToggleToolsPanel {
+            return self
+                .app
+                .update(AppMessage::Tools(ToolsMessage::ToggleSidebarTab));
+        }
         if shortcut == WindowShortcut::Settings {
             // Ctrl+, as the C#, with or without a tab; not over a dialog, which has the keyboard.
             if self.app.dialog.is_none() {
@@ -3109,7 +3199,8 @@ impl Shell {
                 | WindowShortcut::Help
                 | WindowShortcut::Screenshot
                 | WindowShortcut::QuickConnect
-                | WindowShortcut::CopyStatus,
+                | WindowShortcut::CopyStatus
+                | WindowShortcut::ToggleToolsPanel,
                 _,
             )
             | (_, None) => {
@@ -4388,6 +4479,8 @@ impl Shell {
             } else {
                 tree_view::files_bookmarks_menu(tab, &shown)
             }
+        } else if let TreeMenu::Tool(tool) = *menu {
+            tree_view::tool_menu_entries(tool, self.app.is_favorite_tool(tool))
         } else if let TreeMenu::Tunnel(id) = *menu {
             // Only while the tunnel is listed.
             tree_view::tunnel_menu_entries(id, self.app.tunnel(id)?.interrupted)
@@ -4548,6 +4641,7 @@ impl Shell {
                 | TreeMenu::Resolution(_)
                 | TreeMenu::Macros(_)
                 | TreeMenu::Notes(_)
+                | TreeMenu::Tool(_)
                 | TreeMenu::Tunnel(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
@@ -4596,6 +4690,11 @@ impl Shell {
                                 .can_import()
                                 .then_some(Message::App(AppMessage::ImportLegacy)),
                         ),
+                    // As the C# empty state's "Explore Tools", which opens the Tools page
+                    // as the navigation does (`MainWindow.xaml.cs:2331`).
+                    button(text(fl!("ui-home-explore-tools-button")))
+                        .style(styles::secondary)
+                        .on_press(Message::Navigate(Destination::Tools)),
                 ]
                 .spacing(spacing::SM),
                 text(fl!("ui-home-shortcuts")).size(font_size::CAPTION),
@@ -4626,6 +4725,7 @@ impl Shell {
             Page::Tunnels => {
                 crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
             }
+            Page::Tools => crate::tools::catalog::page(&self.app, &self.tools_search),
             Page::About => crate::about_view::view(&self.app),
             Page::Settings { .. } => container(self.content())
                 .width(Length::Fill)
@@ -4639,6 +4739,7 @@ impl Shell {
         let shown = match self.page {
             Page::Tab => Destination::Sessions,
             Page::Tunnels => Destination::Tunnels,
+            Page::Tools => Destination::Tools,
             Page::About => Destination::About,
             Page::Settings { .. } => Destination::Settings,
         };
@@ -4820,22 +4921,11 @@ impl Shell {
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
-        // As the C# sidebar's top: its tabs, then the button hiding it. Without a Tools tab,
-        // "Sessions" is the selected tab alone, and the local shell, the one tool opened from
-        // here, takes the Tools tab's place as a secondary button, its name kept: its icon
-        // alone would read as any terminal.
+        // As the C# sidebar's top: its "Sessions | Tools" tabs, then the button hiding it.
+        // A local shell is a Local profile, opened as any session.
+        let shown = self.app.sidebar_tab();
         let header = row![
-            sidebar_heading(),
-            container(
-                button(
-                    container(text(fl!("ui-sidebar-local-shell-button")))
-                        .center_y(icons::BUTTON_SIDE)
-                )
-                .padding([0.0, spacing::SM])
-                .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
-                .style(styles::secondary),
-            )
-            .center_x(Length::FillPortion(1)),
+            sidebar_tabs(shown),
             tooltip(
                 container(
                     icons::button(Icon::ClosePane)
@@ -4861,15 +4951,23 @@ impl Shell {
             )
             .style(container::rounded_box)
         });
-        let list = self.tree_list();
-        // A right click beside the rows is the tree's own menu.
-        let tree = mouse_area(
-            container(styles::scroll(list))
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
-        container(
+        // The Tools tab: its filter, its context and its tools, as the C#
+        // `SidebarToolsContent`, in place of the tree.
+        let body = if shown == SidebarTab::Tools {
+            column![
+                header,
+                crate::tools::catalog::sidebar_panel(&self.app, &self.tools_filter)
+            ]
+            .push(actions)
+        } else {
+            let list = self.tree_list();
+            // A right click beside the rows is the tree's own menu.
+            let tree = mouse_area(
+                container(styles::scroll(list))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
             column![header, self.search_box()]
                 .push(actions)
                 .push(self.filter_feedback())
@@ -4877,13 +4975,12 @@ impl Shell {
                 .push(self.no_folder_zone())
                 .push(self.selection_bar())
                 .push(self.undo_bar())
-                .spacing(spacing::SM)
-                .padding(spacing::MD),
-        )
-        .width(self.sidebar_width)
-        .height(Length::Fill)
-        .style(container::rounded_box)
-        .into()
+        };
+        container(body.spacing(spacing::SM).padding(spacing::MD))
+            .width(self.sidebar_width)
+            .height(Length::Fill)
+            .style(container::rounded_box)
+            .into()
     }
 
     /// Under the tree while something is dragged, as the C# one: dropped there, a session
@@ -6521,13 +6618,14 @@ impl Shell {
     /// and a dot while it connects, then its marks.
     fn tab_title(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
         let kind = self.app.tab_kind(tab);
-        let mut label = row![icons::icon(
-            Icon::of(kind),
-            Tint::Protocol(kind),
-            icons::GLYPH_SIDE
-        )]
-        .spacing(spacing::XS)
-        .align_y(iced::Alignment::Center);
+        // A tool's tab bears the tool's icon, in its category's colour.
+        let (glyph, tint) = match tab.tool() {
+            Some(tool) => (crate::tools::icon(tool), Tint::Tool(tool.category())),
+            None => (Icon::of(kind), Tint::Protocol(kind)),
+        };
+        let mut label = row![icons::icon(glyph, tint, icons::GLYPH_SIDE)]
+            .spacing(spacing::XS)
+            .align_y(iced::Alignment::Center);
         if tab.pinned {
             label = label.push(
                 tooltip(
@@ -6808,9 +6906,14 @@ impl Shell {
         }
     }
 
-    /// What `tab` shows: its question, its session, or what became of it. Only the pane with
-    /// the keyboard, `focused`, takes typing.
+    /// What `tab` shows: its question, its session, or what became of it; a tool's tab, the
+    /// tool, as the C# tool view in its tab. Only the pane with the keyboard, `focused`,
+    /// takes typing.
+    #[expect(clippy::too_many_lines, reason = "one arm per state of a tab")]
     fn tab_page<'a>(&'a self, tab: &'a Tab, focused: bool) -> Element<'a, Message> {
+        if let TabProfile::Tool(tool) = tab.profile {
+            return crate::tools::view(tab.id, tool, self.tools.get(tab.id));
+        }
         // A Citrix application's window is Citrix's own: its tab shows its status alone.
         if let (TabProfile::Citrix(profile), Some(pane)) = (&tab.profile, tab.citrix.as_deref()) {
             let offer = self
@@ -10851,7 +10954,8 @@ fn fits_by_default(profile: &TabProfile) -> bool {
         | TabProfile::Local(_)
         | TabProfile::Ftp(_)
         | TabProfile::WinRm(_)
-        | TabProfile::Citrix(_) => false,
+        | TabProfile::Citrix(_)
+        | TabProfile::Tool(_) => false,
     }
 }
 

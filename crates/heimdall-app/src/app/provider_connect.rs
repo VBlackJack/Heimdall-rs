@@ -95,7 +95,8 @@ fn provider_title(profile: &TabProfile) -> String {
         TabProfile::Telnet(_)
         | TabProfile::Local(_)
         | TabProfile::WinRm(_)
-        | TabProfile::Citrix(_) => None,
+        | TabProfile::Citrix(_)
+        | TabProfile::Tool(_) => None,
     };
     entry
         .map(str::trim)
