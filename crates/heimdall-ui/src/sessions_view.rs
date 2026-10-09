@@ -27,6 +27,7 @@ use heimdall_app::{
 };
 use heimdall_core::import::openssh::{Code, Diagnostic, GatewayStep, Level, Status};
 use heimdall_core::import::putty;
+use heimdall_core::paths;
 use iced::widget::{Column, checkbox, column, container, row, text};
 use iced::{Element, Length, Theme};
 
@@ -37,9 +38,6 @@ use crate::tokens::{font_size, spacing};
 
 /// The file OpenSSH reads, offered first.
 const CONFIG_FILE_NAME: &str = "config";
-
-/// The folder OpenSSH keeps its files in, under the home folder.
-pub const SSH_FOLDER: &str = ".ssh";
 
 /// Tallest the list of servers grows before it scrolls.
 const ROWS_HEIGHT: f32 = 300.0;
@@ -60,8 +58,8 @@ pub fn pick(title: String, parent: Option<&dyn iced::window::Window>) -> Pick {
     let mut dialog = rfd::AsyncFileDialog::new()
         .set_title(title)
         .set_file_name(CONFIG_FILE_NAME);
-    if let Some(folder) = std::env::home_dir()
-        .map(|home| home.join(SSH_FOLDER))
+    if let Some(folder) = paths::home_dir()
+        .map(|home| home.join(paths::OPENSSH_FOLDER))
         .filter(|folder| folder.is_dir())
     {
         dialog = dialog.set_directory(folder);
