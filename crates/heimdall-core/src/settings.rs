@@ -609,6 +609,10 @@ pub struct Settings {
     pub x11_auto_start: bool,
     /// Which SSH agent's keys are offered first, or alone; applied to the next connection.
     pub ssh_agent_preference: AgentPreference,
+    /// The keys of the user's OpenSSH `known_hosts` are trusted at each start, as the C#
+    /// `SyncKnownHostsAtStartup`: off unless chosen. A key that contradicts one trusted is
+    /// never taken.
+    pub sync_known_hosts_at_startup: bool,
     /// The execution policy a local `PowerShell` is started with.
     pub powershell_execution_policy: ExecutionPolicy,
     /// What Ctrl+V does in a terminal.
@@ -1118,6 +1122,7 @@ impl Default for Settings {
             x11_server_path: String::new(),
             x11_auto_start: true,
             ssh_agent_preference: AgentPreference::default(),
+            sync_known_hosts_at_startup: false,
             powershell_execution_policy: ExecutionPolicy::default(),
             ctrl_v_paste: CtrlVPaste::default(),
             ctrl_k_terminal: CtrlKTerminal::default(),
@@ -1355,6 +1360,28 @@ struct SshSection {
     /// Absent is the C# default: on.
     #[serde(default)]
     x11_auto_start: Option<bool>,
+    /// Absent is the C# default, off.
+    #[serde(default)]
+    sync_known_hosts_at_startup: Option<bool>,
+}
+
+impl SshSection {
+    /// The SSH section `settings` write.
+    fn of(settings: &Settings) -> Self {
+        Self {
+            auto_reconnect: settings.ssh_auto_reconnect,
+            auto_reconnect_attempts: Some(settings.ssh_auto_reconnect_attempts),
+            anti_idle_interval: Some(settings.anti_idle_interval),
+            keep_alive_interval: Some(settings.ssh_keep_alive_interval),
+            tmout_reset_interval: Some(settings.ssh_tmout_reset_interval),
+            agent_preference: Some(settings.ssh_agent_preference.name().to_owned()),
+            putty_path: settings.putty_path.clone(),
+            default_mode: Some(settings.ssh_default_mode.name().to_owned()),
+            x11_server_path: settings.x11_server_path.clone(),
+            x11_auto_start: Some(settings.x11_auto_start),
+            sync_known_hosts_at_startup: Some(settings.sync_known_hosts_at_startup),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1750,6 +1777,7 @@ impl Settings {
                 .as_deref()
                 .map(AgentPreference::named)
                 .unwrap_or_default(),
+            sync_known_hosts_at_startup: file.ssh.sync_known_hosts_at_startup.unwrap_or_default(),
             powershell_execution_policy: file
                 .terminal
                 .powershell_execution_policy
@@ -1941,18 +1969,7 @@ impl Settings {
                 locked_until: self.pin_unlock.until().map(to_epoch),
             },
             credential_provider: ProviderSection::of(&self.credential_provider),
-            ssh: SshSection {
-                auto_reconnect: self.ssh_auto_reconnect,
-                auto_reconnect_attempts: Some(self.ssh_auto_reconnect_attempts),
-                anti_idle_interval: Some(self.anti_idle_interval),
-                keep_alive_interval: Some(self.ssh_keep_alive_interval),
-                tmout_reset_interval: Some(self.ssh_tmout_reset_interval),
-                agent_preference: Some(self.ssh_agent_preference.name().to_owned()),
-                putty_path: self.putty_path.clone(),
-                default_mode: Some(self.ssh_default_mode.name().to_owned()),
-                x11_server_path: self.x11_server_path.clone(),
-                x11_auto_start: Some(self.x11_auto_start),
-            },
+            ssh: SshSection::of(self),
             rdp: self.rdp_defaults,
             rdp_session: RdpSessionSection {
                 auto_reconnect_attempts: Some(self.rdp_auto_reconnect_attempts),

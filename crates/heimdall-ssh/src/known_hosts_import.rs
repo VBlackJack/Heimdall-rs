@@ -26,6 +26,10 @@
 //! server trusted by a pinned fingerprint alone is trusted for that key and no other: the
 //! key with that fingerprint is recorded in full and the pin dropped, any other key is a
 //! conflict.
+//!
+//! The import at startup, as the C# `KnownHostsStartupSync`, follows the same rule with
+//! one difference ([`sync`]): a server already trusted takes no key of another algorithm
+//! from the file, as the C# store keeps one key per server.
 
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
@@ -448,4 +452,173 @@ pub fn import(
         }
     }
     Ok(done)
+}
+
+/// A key the import at startup left out, as the C# `KnownHostsImportConflict` says it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostKeyConflict {
+    /// Host, as the file names it.
+    pub host: String,
+    /// Port.
+    pub port: u16,
+    /// Its line, from 1.
+    pub line: usize,
+    /// The fingerprint that contradicts it: of a key recorded, of a pin, or of another key
+    /// the file gives for the server.
+    pub existing: String,
+    /// Its fingerprint.
+    pub imported: String,
+    /// The file contradicts itself for the server: another key of one algorithm.
+    pub within_file: bool,
+}
+
+/// How the import at startup went, as the C# `KnownHostsImportReport`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HostKeysSynced {
+    /// Keys now trusted.
+    pub imported: usize,
+    /// Keys trusted already, their last seen time raised.
+    pub matched: usize,
+    /// Keys left out, never written over the trust the user gave.
+    pub conflicts: Vec<HostKeyConflict>,
+}
+
+/// Trusts the keys `candidates` give, as the C# `KnownHostsImporter` does at startup, with
+/// the source "imported", each server decided under the lock of the trust files against
+/// what `store` recorded and pinned for it before:
+///
+/// - a server with nothing recorded nor pinned: every key is learnt, of every algorithm,
+///   unless the file gives two keys of one algorithm for it: the file contradicts itself,
+///   and nothing of that server is learnt;
+/// - a server with keys recorded: the same key is a match, its last seen time raised as
+///   the C# `Verify` raises it; any other key, of any algorithm, is a conflict;
+/// - a server pinned by a fingerprint alone: the key with that fingerprint is recorded in
+///   full and the pin dropped; any other key is a conflict.
+///
+/// # Errors
+///
+/// [`KnownHostsError`] when the store or its pins cannot be read, or a key recorded; the
+/// servers done before stay.
+pub fn sync(
+    candidates: &[HostKeyCandidate],
+    store: &KnownHosts,
+) -> Result<HostKeysSynced, KnownHostsError> {
+    let pins = Pins::beside(store.path());
+    let mut done = HostKeysSynced::default();
+    for ((host, port), keys) in by_server(candidates) {
+        // One server at a time: a connection waits for one server's keys at most.
+        let lock = trust_files::lock();
+        let known =
+            !store.recorded(&host, port)?.is_empty() || !pins.pinned(&host, port)?.is_empty();
+        if !known && let Some(clash) = clash(&keys) {
+            for &candidate in &keys {
+                let imported = fingerprint(&candidate.key);
+                let existing =
+                    keys_of_its_algorithm(&keys, candidate).unwrap_or_else(|| clash.clone());
+                done.conflicts.push(HostKeyConflict {
+                    host: host.clone(),
+                    port,
+                    line: candidate.line,
+                    existing,
+                    imported,
+                    within_file: true,
+                });
+            }
+            continue;
+        }
+        let other = if known {
+            OtherAlgorithm::Conflicts
+        } else {
+            OtherAlgorithm::Adds
+        };
+        for &candidate in &keys {
+            let decided = trust_locked(
+                &lock,
+                store,
+                &host,
+                port,
+                &candidate.key,
+                other,
+                HostKeySource::Imported,
+            )?;
+            match decided {
+                Trusting::Learn | Trusting::LearnPinned => done.imported += 1,
+                Trusting::Recorded => {
+                    done.matched += 1;
+                    log::info!("known_hosts import matched existing trust entry for {host}:{port}");
+                    host_key_details::record(
+                        &lock,
+                        store,
+                        &[Change::Seen {
+                            host: &host,
+                            port,
+                            fingerprint: &fingerprint(&candidate.key),
+                            now: host_key_details::now(),
+                            // Every match raises it, as the C# `Verify`.
+                            resolution: 0,
+                        }],
+                    );
+                }
+                Trusting::Conflict(contradiction) => {
+                    let existing = match contradiction {
+                        Contradiction::Changed(existing) | Contradiction::Pinned(existing) => {
+                            existing
+                        }
+                        Contradiction::OtherAlgorithm(_) => store
+                            .recorded(&host, port)?
+                            .first()
+                            .map(fingerprint)
+                            .unwrap_or_default(),
+                    };
+                    done.conflicts.push(HostKeyConflict {
+                        host: host.clone(),
+                        port,
+                        line: candidate.line,
+                        existing,
+                        imported: fingerprint(&candidate.key),
+                        within_file: false,
+                    });
+                }
+            }
+        }
+    }
+    Ok(done)
+}
+
+/// `candidates` by server, each server in the order the file first names it, its keys in
+/// the file's order.
+fn by_server(candidates: &[HostKeyCandidate]) -> Vec<((String, u16), Vec<&HostKeyCandidate>)> {
+    let mut servers: Vec<((String, u16), Vec<&HostKeyCandidate>)> = Vec::new();
+    let mut index: HashMap<(String, u16), usize> = HashMap::new();
+    for candidate in candidates {
+        let server = (candidate.host.clone(), candidate.port);
+        let at = *index.entry(server.clone()).or_insert_with(|| {
+            servers.push((server, Vec::new()));
+            servers.len() - 1
+        });
+        servers[at].1.push(candidate);
+    }
+    servers
+}
+
+/// The fingerprint of another key of `candidate`'s algorithm among `keys`, when the file
+/// gives one.
+fn keys_of_its_algorithm(
+    keys: &[&HostKeyCandidate],
+    candidate: &HostKeyCandidate,
+) -> Option<String> {
+    keys.iter()
+        .find(|other| {
+            other.key.algorithm() == candidate.key.algorithm()
+                && other.key.key_data() != candidate.key.key_data()
+        })
+        .map(|other| fingerprint(&other.key))
+}
+
+/// The fingerprint of a key that another key of the same algorithm contradicts among
+/// `keys`, one server's: the file contradicts itself for that server.
+fn clash(keys: &[&HostKeyCandidate]) -> Option<String> {
+    keys.iter()
+        .find(|candidate| keys_of_its_algorithm(keys, candidate).is_some())
+        .map(|candidate| fingerprint(&candidate.key))
 }
