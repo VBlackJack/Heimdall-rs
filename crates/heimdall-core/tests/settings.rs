@@ -1722,3 +1722,52 @@ fn the_default_rdp_mode_is_embedded_kept_by_its_csharp_name_reset_and_travels() 
             .any(|change| change.key == "rdp_session.default_mode")
     );
 }
+
+#[test]
+fn credential_guard_is_not_required_by_default_kept_carried_and_reset_with_everything_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(!settings.require_credential_guard, "off, as the C# default");
+
+    settings.require_credential_guard = true;
+    settings.save(&path).expect("save");
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(
+        text.contains("[rdp_session]") && text.contains("require_credential_guard = true"),
+        "{text}"
+    );
+    assert!(
+        Settings::load(&path)
+            .expect("load")
+            .require_credential_guard
+    );
+    // An older file, without the key: the C# default.
+    let read = written(
+        dir.path(),
+        "version = 1\n[rdp_session]\nconnect_timeout = 30\n",
+    );
+    assert!(!read.require_credential_guard);
+
+    // A preference: it travels with the others, as the C# `RequireCredentialGuard`.
+    let (exported, _) = settings.export(None, false);
+    assert!(
+        exported.contains("require_credential_guard = true"),
+        "{exported}"
+    );
+    let imported = Settings::default().import(&exported).expect("read");
+    assert!(imported.settings.require_credential_guard);
+    assert!(
+        imported
+            .changes
+            .iter()
+            .any(|change| change.key == "rdp_session.require_credential_guard"),
+        "said among the changes"
+    );
+
+    // "Reset RDP defaults" leaves it, as the C# one; "Reset defaults" turns it off.
+    settings.reset_rdp();
+    assert!(settings.require_credential_guard);
+    settings.reset_all();
+    assert!(!settings.require_credential_guard);
+}

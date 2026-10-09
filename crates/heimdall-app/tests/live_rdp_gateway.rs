@@ -108,6 +108,7 @@ fn request(
         }],
         ssh,
         cancel: CancellationToken::new(),
+        credential_guard: None,
     }
 }
 

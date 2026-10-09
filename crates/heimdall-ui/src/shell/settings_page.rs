@@ -26,6 +26,7 @@
 
 use std::path::PathBuf;
 
+use heimdall_app::credential_guard::{self, CHECK_TIME_LIMIT};
 use heimdall_app::profile_draft::ProfileField;
 use heimdall_app::update_check::{Failure, ReleaseTag, minutes_to_wait};
 use heimdall_app::windows_hello;
@@ -281,6 +282,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::Vault => fl!("ui-settings-vault-title"),
         SettingRow::DisconnectOnLock => fl!("ui-settings-disconnect-on-lock"),
         SettingRow::Provider => fl!("ui-settings-provider-title"),
+        SettingRow::RequireCredentialGuard => fl!("ui-settings-require-credential-guard"),
         SettingRow::RequireWindowsHello => fl!("ui-settings-require-windows-hello"),
         // Numbers, named above.
         _ => String::new(),
@@ -315,6 +317,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::Gateways => fl!("ui-gateways-description"),
         SettingRow::Vault => fl!("ui-settings-vault-explanation"),
         SettingRow::DisconnectOnLock => fl!("ui-settings-disconnect-on-lock-hint"),
+        SettingRow::RequireCredentialGuard => fl!("ui-settings-require-credential-guard-hint"),
         SettingRow::RequireWindowsHello => fl!("ui-settings-require-windows-hello-hint"),
         _ => return None,
     })
@@ -476,6 +479,52 @@ fn vault_hello_status(status: VaultHelloStatus) -> String {
     }
 }
 
+/// What the settings say of Credential Guard while it is required, in the C# words: why
+/// it is not available when that is known, so that a computer where `PowerShell` is kept
+/// from starting can be told apart.
+fn credential_guard_text(status: &credential_guard::Status) -> String {
+    match status {
+        credential_guard::Status::Active => fl!("ui-settings-credential-guard-enabled"),
+        credential_guard::Status::Inactive => fl!("ui-settings-credential-guard-disabled"),
+        credential_guard::Status::Indeterminate(failure) => {
+            let reason = credential_guard_failure(failure);
+            fl!(
+                "ui-settings-credential-guard-disabled-reason",
+                reason = reason.as_str()
+            )
+        }
+    }
+}
+
+/// Why Credential Guard's state could not be found, worded.
+fn credential_guard_failure(failure: &credential_guard::Failure) -> String {
+    use credential_guard::Failure;
+    match failure {
+        Failure::NotWindows => fl!("ui-settings-credential-guard-reason-not-windows"),
+        Failure::NoSystemFolder => fl!("ui-settings-credential-guard-reason-no-system-folder"),
+        Failure::NotStarted(detail) => fl!(
+            "ui-settings-credential-guard-reason-not-started",
+            detail = detail.trim()
+        ),
+        Failure::TimedOut => fl!(
+            "ui-settings-credential-guard-reason-timed-out",
+            seconds = CHECK_TIME_LIMIT.as_secs()
+        ),
+        Failure::Exited(Some(code)) => {
+            let code = *code;
+            fl!("ui-settings-credential-guard-reason-exited", code = code)
+        }
+        Failure::Exited(None) => fl!("ui-settings-credential-guard-reason-stopped"),
+        Failure::NoInstance => fl!("ui-settings-credential-guard-reason-no-instance"),
+        Failure::Unread(detail) => fl!(
+            "ui-settings-credential-guard-reason-unread",
+            detail = detail.trim()
+        ),
+        Failure::NoValue => fl!("ui-settings-credential-guard-reason-no-value"),
+        Failure::InvalidValue => fl!("ui-settings-credential-guard-reason-invalid-value"),
+    }
+}
+
 /// The name of a line of the security overview.
 fn posture_label(key: PostureKey) -> String {
     match key {
@@ -488,6 +537,7 @@ fn posture_label(key: PostureKey) -> String {
         PostureKey::Vault => fl!("ui-settings-posture-label-vault"),
         PostureKey::AutoLock => fl!("ui-settings-posture-label-auto-lock"),
         PostureKey::DisconnectOnLock => fl!("ui-settings-posture-label-disconnect-on-lock"),
+        PostureKey::CredentialGuard => fl!("ui-settings-posture-label-credential-guard"),
         PostureKey::WindowsHelloOnConnect => fl!("ui-settings-posture-label-windows-hello"),
         PostureKey::UpdateChecks => fl!("ui-settings-posture-label-update-checks"),
     }
@@ -522,6 +572,7 @@ fn posture_warning(key: PostureKey) -> Option<String> {
         PostureKey::RdpStrictServerAuthentication
         | PostureKey::Vault
         | PostureKey::DisconnectOnLock
+        | PostureKey::CredentialGuard
         | PostureKey::WindowsHelloOnConnect => None,
     }
 }
@@ -1088,6 +1139,23 @@ impl Shell {
         let mut body = column![tick].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));
+        }
+        // Required, whether Credential Guard runs, as the C# status beside the box; nothing
+        // until the check answers.
+        if row == SettingRow::RequireCredentialGuard
+            && settings.require_credential_guard
+            && let Some(status) = self.app.credential_guard_status()
+        {
+            let style: fn(&Theme) -> text::Style = if status.is_active() {
+                text::secondary
+            } else {
+                text::warning
+            };
+            body = body.push(
+                text(credential_guard_text(&status))
+                    .size(font_size::CAPTION)
+                    .style(style),
+            );
         }
         // Where Windows Hello does not exist, why the box is greyed, or what it does on.
         if row == SettingRow::RequireWindowsHello && !windows_hello::SUPPORTED {
