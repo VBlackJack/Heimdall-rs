@@ -19,7 +19,7 @@
 //! tunnels' and broadcast input's buttons, then how many sessions and tunnels there are.
 
 use heimdall_app::windows_hello::HelloRefusal;
-use heimdall_app::{Notice, SessionStatus, server_text};
+use heimdall_app::{Announced, Announcement, Notice, SessionStatus, server_text};
 use heimdall_core::settings::BroadcastScope;
 use iced::widget::{Button, button, container, row, space, text};
 use iced::{Element, Length};
@@ -556,6 +556,34 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
     fl!("ui-status-state", name = name.as_str(), state = state)
 }
 
+/// What the bar said with `what`: a state of the session shown, or a notice.
+#[must_use]
+pub fn announcement_text(what: &Announcement, targets: usize) -> String {
+    match what {
+        Announcement::Status(status) => status_text(status, None, targets),
+        Announcement::Notice(notice) => status_text(&SessionStatus::Ready, Some(notice), targets),
+    }
+}
+
+/// What Ctrl+Shift+A copies for a screen reader, one plain line each: what the bar says
+/// `now`, then each of the `announced`, newest first, with its time. What the C# live
+/// region announced, read back.
+#[must_use]
+pub fn status_report<'a>(
+    now: &str,
+    announced: impl IntoIterator<Item = &'a Announced>,
+    targets: usize,
+) -> String {
+    let lines = announced.into_iter().filter_map(|each| {
+        let said = announcement_text(&each.what, targets);
+        (!said.is_empty()).then(|| fl!("ui-status-report-line", time = each.clock(), text = said))
+    });
+    std::iter::once(fl!("ui-status-report-now", text = now))
+        .chain(lines)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// What the right of the bar says: the sessions, and how many of them the search shows
 /// while it filters.
 #[must_use]
@@ -880,6 +908,33 @@ mod tests {
         ] {
             assert_eq!(status_text(&status, Some(&notice), 2), said);
         }
+    }
+
+    #[test]
+    fn the_status_report_says_now_then_each_announcement_newest_first_with_its_time() {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let announced = |what, seconds| Announced {
+            what,
+            at: UNIX_EPOCH + Duration::from_secs(seconds),
+        };
+        let newer = announced(Announcement::Notice(Notice::BroadcastOff), 90);
+        let older = announced(
+            Announcement::Status(SessionStatus::Connected(named("web"))),
+            30,
+        );
+        let report = status_report("Broadcast mode OFF", [&newer, &older], 0);
+        assert_eq!(
+            report,
+            format!(
+                "Now: Broadcast mode OFF
+{} Broadcast mode OFF
+{} Connected to: web",
+                newer.clock(),
+                older.clock()
+            )
+        );
+        assert_eq!(status_report("Ready", [], 0), "Now: Ready", "nothing yet");
     }
 
     #[test]

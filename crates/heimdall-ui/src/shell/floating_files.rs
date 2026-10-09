@@ -83,7 +83,8 @@ impl Shell {
             | FloatEvent::Rescaled(_)
             | FloatEvent::Modifiers(_)
             | FloatEvent::TerminalFind
-            | FloatEvent::QuickConnect => Task::none(),
+            | FloatEvent::QuickConnect
+            | FloatEvent::CopyStatus => Task::none(),
         }
     }
 

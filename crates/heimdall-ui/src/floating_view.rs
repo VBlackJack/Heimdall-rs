@@ -108,6 +108,8 @@ pub enum FloatEvent {
     TerminalFind,
     /// Ctrl+K or Ctrl+Shift+K no widget took: Quick Connect, in the main window.
     QuickConnect,
+    /// Ctrl+Shift+A no widget took: what the status bar said lately, copied.
+    CopyStatus,
     /// Escape, taken by a widget or not: a Files tab's menu, its path bar typed in, then
     /// its listing on its way, as the main window's.
     Escape,
@@ -187,6 +189,11 @@ fn files_key_event(event: keyboard::Event, status: event::Status) -> Option<Floa
             == Some(WindowShortcut::QuickConnect) =>
         {
             (!repeat).then_some(FloatEvent::QuickConnect)
+        }
+        _ if crate::terminal_view::keys::window_shortcut(&key, physical_key, modifiers)
+            == Some(WindowShortcut::CopyStatus) =>
+        {
+            (!repeat).then_some(FloatEvent::CopyStatus)
         }
         _ => crate::files_view::files_key(&key, physical_key, modifiers).map(FloatEvent::FilesKey),
     }
@@ -549,6 +556,35 @@ mod tests {
             Modifiers::CTRL,
         );
         assert_eq!(window_event(lock, untaken, window::Id::unique()), None);
+    }
+
+    #[test]
+    fn ctrl_shift_a_left_by_its_session_copies_the_status_once() {
+        let (untaken, taken) = (event::Status::Ignored, event::Status::Captured);
+        let copy = pressed(
+            Key::Character("A".into()),
+            Physical::Code(Code::KeyA),
+            Modifiers::CTRL | Modifiers::SHIFT,
+        );
+        assert_eq!(
+            window_event(copy.clone(), untaken, window::Id::unique()),
+            Some(FloatEvent::CopyStatus)
+        );
+        assert_eq!(window_event(copy, taken, window::Id::unique()), None);
+        let held = iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character("A".into()),
+            modified_key: Key::Character("A".into()),
+            physical_key: Physical::Code(Code::KeyA),
+            location: Location::Standard,
+            modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+            text: None,
+            repeat: true,
+        });
+        assert_eq!(
+            window_event(held, untaken, window::Id::unique()),
+            None,
+            "held, copied once"
+        );
     }
 
     #[test]

@@ -284,6 +284,12 @@ fn a_gateway_s_unknown_key_is_asked_about_then_learnt_and_the_tunnel_tried_again
         &app.dialog,
         Some(Dialog::TunnelHostKey { host, port: 22, .. }) if host == "bastion.lab"
     ));
+    assert!(
+        app.dialog
+            .as_ref()
+            .is_some_and(|dialog| !dialog.confirms_on_enter()),
+        "trusted for good by a click, never by an Enter"
+    );
     let effects = app.update(Message::ConfirmDialog);
     let [Effect::OpenTunnel { id: retried, .. }] = effects.as_slice() else {
         panic!("{effects:?}");

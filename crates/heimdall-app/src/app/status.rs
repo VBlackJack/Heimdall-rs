@@ -16,7 +16,12 @@
 
 //! What the status bar says, as the C# Heimdall's: the state of the session shown, read
 //! from it each time rather than kept; and a notice of what was just done, shown while
-//! the same session is shown in the same state.
+//! the same session is shown in the same state. What both said is kept a while, newest
+//! first: what the C# live region announced to a screen reader, copied for one.
+
+use std::collections::VecDeque;
+use std::mem::Discriminant;
+use std::time::SystemTime;
 
 use heimdall_core::profile::ProfileId;
 use heimdall_core::settings::BroadcastScope;
@@ -41,6 +46,75 @@ pub enum SessionStatus {
     Disconnected(String),
     /// Failed.
     Error(String),
+}
+
+/// How many announcements are kept: the last ones a screen reader would have read.
+pub const ANNOUNCEMENTS_KEPT: usize = 10;
+
+/// How an announcement's time is written: this computer's clock, to the second.
+const CLOCK_FORMAT: &str = "%H:%M:%S";
+
+/// What the status bar said, as the C# `LiveRegionBehavior` announced its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Announcement {
+    /// The session shown, or its state, changed.
+    Status(SessionStatus),
+    /// Something was just done.
+    Notice(Notice),
+}
+
+/// An announcement and when it was made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Announced {
+    /// What was said.
+    pub what: Announcement,
+    /// When.
+    pub at: SystemTime,
+}
+
+impl Announced {
+    /// When it was said, in this computer's time.
+    #[must_use]
+    pub fn clock(&self) -> String {
+        chrono::DateTime::<chrono::Local>::from(self.at)
+            .format(CLOCK_FORMAT)
+            .to_string()
+    }
+}
+
+/// The last announcements, newest first, and the state they last said.
+#[derive(Debug, Default)]
+pub(super) struct Announcements {
+    /// At most [`ANNOUNCEMENTS_KEPT`], newest first.
+    kept: VecDeque<Announced>,
+    /// The tab shown and its kind of state when last looked at: a title the server
+    /// changes is not a new state.
+    status: Option<(Option<TabId>, Discriminant<SessionStatus>)>,
+}
+
+impl Announcements {
+    /// Keeps `what`, said `at`, unless it repeats the last one, as a live region says the
+    /// same text once.
+    pub(super) fn push(&mut self, what: Announcement, at: SystemTime) {
+        if self.kept.front().is_some_and(|last| last.what == what) {
+            return;
+        }
+        self.kept.push_front(Announced { what, at });
+        self.kept.truncate(ANNOUNCEMENTS_KEPT);
+    }
+
+    /// Notes the state of the session shown, kept as an announcement when it changed.
+    fn look(&mut self, shown: Option<TabId>, status: SessionStatus, at: SystemTime) {
+        let seen = Some((shown, std::mem::discriminant(&status)));
+        if self.status == seen {
+            return;
+        }
+        let first = self.status.is_none();
+        self.status = seen;
+        if !first {
+            self.push(Announcement::Status(status), at);
+        }
+    }
 }
 
 /// What was just done, said while the same session is shown in the same state.
@@ -444,7 +518,21 @@ impl App {
 
     /// Says `notice` while the same session is shown in the same state.
     pub(super) fn tell(&mut self, notice: Notice) {
+        self.announcements
+            .push(Announcement::Notice(notice.clone()), SystemTime::now());
         self.notice = Some((notice, self.shown()));
+    }
+
+    /// The last announcements, newest first: the states the status bar said and the
+    /// notices told, at most [`ANNOUNCEMENTS_KEPT`].
+    pub fn announcements(&self) -> impl Iterator<Item = &Announced> {
+        self.announcements.kept.iter()
+    }
+
+    /// Notes the state of the session shown, once a message is applied.
+    pub(super) fn note_status(&mut self) {
+        let (shown, status) = self.shown();
+        self.announcements.look(shown, status, SystemTime::now());
     }
 
     /// The tab of the strip shown, and its state: a notice stays while the keyboard moves
@@ -455,5 +543,81 @@ impl App {
             shown.map(|tab| tab.id),
             shown.map_or(SessionStatus::Ready, tab_status),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use super::*;
+
+    fn at(seconds: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(seconds)
+    }
+
+    fn told(kept: &Announcements) -> Vec<Announcement> {
+        kept.kept.iter().map(|each| each.what.clone()).collect()
+    }
+
+    #[test]
+    fn the_announcements_are_kept_newest_first_and_bounded() {
+        let mut kept = Announcements::default();
+        let count = ANNOUNCEMENTS_KEPT + 3;
+        for index in 0..count {
+            let port = u16::try_from(index).expect("small");
+            kept.push(
+                Announcement::Notice(Notice::PortCopied(port)),
+                at(index as u64),
+            );
+        }
+        assert_eq!(kept.kept.len(), ANNOUNCEMENTS_KEPT, "the oldest dropped");
+        let newest = u16::try_from(count - 1).expect("small");
+        assert_eq!(
+            told(&kept).first(),
+            Some(&Announcement::Notice(Notice::PortCopied(newest)))
+        );
+        let oldest = u16::try_from(count - ANNOUNCEMENTS_KEPT).expect("small");
+        assert_eq!(
+            told(&kept).last(),
+            Some(&Announcement::Notice(Notice::PortCopied(oldest)))
+        );
+        assert!(
+            kept.kept
+                .iter()
+                .zip(kept.kept.iter().skip(1))
+                .all(|(newer, older)| newer.at > older.at),
+            "newest first"
+        );
+    }
+
+    #[test]
+    fn the_same_text_twice_in_a_row_is_announced_once() {
+        let mut kept = Announcements::default();
+        kept.push(Announcement::Notice(Notice::BroadcastOff), at(1));
+        kept.push(Announcement::Notice(Notice::BroadcastOff), at(2));
+        assert_eq!(kept.kept.len(), 1);
+        assert_eq!(kept.kept[0].at, at(1));
+        kept.push(Announcement::Notice(Notice::AllTunnelsClosed), at(3));
+        kept.push(Announcement::Notice(Notice::BroadcastOff), at(4));
+        assert_eq!(kept.kept.len(), 3, "again after another");
+    }
+
+    #[test]
+    fn a_change_of_state_is_announced_and_a_new_title_is_not() {
+        let mut kept = Announcements::default();
+        kept.look(None, SessionStatus::Ready, at(1));
+        assert!(kept.kept.is_empty(), "the state at start is not news");
+        let tab = Some(TabId::fresh());
+        kept.look(tab, SessionStatus::Connecting("a".to_owned()), at(2));
+        kept.look(tab, SessionStatus::Connected("a".to_owned()), at(3));
+        kept.look(tab, SessionStatus::Connected("a: ~/src".to_owned()), at(4));
+        assert_eq!(
+            told(&kept),
+            [
+                Announcement::Status(SessionStatus::Connected("a".to_owned())),
+                Announcement::Status(SessionStatus::Connecting("a".to_owned())),
+            ]
+        );
     }
 }
