@@ -1139,5 +1139,8 @@ fn every_rdp_profile_takes_a_mode() {
     assert_eq!(modes, [true, true, true]);
     assert_eq!(store.set_rdp_modes(RdpMode::External), 0, "already so");
     assert_eq!(store.rdp_mode_changes(RdpMode::External), (0, 3));
-    assert!(store.ssh_profiles()[0].ssh_mode.is_embedded(), "SSH untouched");
+    assert!(
+        store.ssh_profiles()[0].ssh_mode.is_embedded(),
+        "SSH untouched"
+    );
 }
