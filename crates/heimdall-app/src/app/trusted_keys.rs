@@ -42,11 +42,11 @@ const TRUSTED_SINCE_FORMAT: &str = "%Y-%m-%d %H:%M";
 pub enum TrustedKey {
     /// An SSH host key.
     Ssh(KnownHostEntry),
-    /// The key of an RDP server's certificate.
+    /// An RDP server's certificate, by its key and, once pinned whole, its thumbprint.
     Rdp(KnownRdpHost),
-    /// The key of an FTPS server's certificate, pinned as an RDP one, in a file of its own.
+    /// An FTPS server's certificate, pinned as an RDP one, in a file of its own.
     Ftps(KnownRdpHost),
-    /// The key of a VNC server's certificate, pinned as an FTPS one, in a file of its own.
+    /// A VNC server's certificate, pinned as an FTPS one, in a file of its own.
     Vnc(KnownRdpHost),
 }
 

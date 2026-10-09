@@ -29,7 +29,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use heimdall_rdp::{
-    Fingerprint, KnownRdpHosts, RdpConfig, RdpError, Refusal, Security, Timeouts, connect_over,
+    AcceptedCertificate, KnownRdpHosts, RdpConfig, RdpError, Refusal, Security, ServerCertificate,
+    Timeouts, connect_over,
 };
 use ironrdp::connector::sspi::credssp::{NStatusCode, TsRequest};
 use ironrdp::pdu::nego::{ConnectionConfirm, ResponseFlags, SecurityProtocol};
@@ -47,8 +48,6 @@ const PORT: u16 = 3389;
 
 const CERT: &[u8] = include_bytes!("fixtures/server-cert.der");
 const KEY: &[u8] = include_bytes!("fixtures/server-key.der");
-/// SHA-256 of the fixture's `SubjectPublicKeyInfo`, computed by openssl.
-const EXPECTED_PIN: &str = include_str!("fixtures/server-spki-sha256.txt");
 
 /// NTSTATUS of an expired password.
 const STATUS_PASSWORD_EXPIRED: u32 = 0xC000_0071;
@@ -123,9 +122,8 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, answer: Answer)
 }
 
 fn config(known_hosts: &std::path::Path) -> RdpConfig {
-    let pin: Fingerprint = format!("SHA256:{}", EXPECTED_PIN.trim())
-        .parse()
-        .expect("fixture pin");
+    // Accepted after the question, as the fixture certificate is.
+    let pin = AcceptedCertificate::from(&ServerCertificate::from_der(CERT).expect("fixture"));
     RdpConfig {
         host: HOST.to_owned(),
         port: PORT,

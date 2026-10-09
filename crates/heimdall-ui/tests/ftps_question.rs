@@ -64,8 +64,7 @@ fn details(der: &[u8], issue: ValidationIssue) -> CertificateDetails {
     CertificateDetails {
         issuer: ServerCertificate::from_der(der).expect("read").issuer,
         validity: Validity::from_der(der).expect("validity"),
-        issue,
-        certificate: heimdall_rdp::CertificateHash::of(der),
+        issue: Some(issue),
         renewal: None,
     }
 }
@@ -79,6 +78,7 @@ fn asked(dir: &Path, details: CertificateDetails) -> Shell {
             host: "files.lab".to_owned(),
             port: 21,
             fingerprint: FINGERPRINT.parse().expect("fingerprint"),
+            certificate: heimdall_rdp::CertificateHash::of(b"the certificate of files.lab"),
             subject: Some("CN=files.lab".to_owned()),
             details: Some(Box::new(details)),
         },

@@ -213,6 +213,11 @@ fn a_name_with_spaces_and_accents_stays_one_field_and_reads_back() {
     let known = KnownRdpHosts::new(dir.path().join("known_rdp_hosts"));
     let certificate = ServerCertificate {
         fingerprint: pin(),
+        certificate: CertificateHash::of(b"a certificate"),
+        validity: Validity {
+            not_before: UNIX_EPOCH,
+            not_after: UNIX_EPOCH,
+        },
         public_key: Vec::new(),
         subject: "CN=Soci\u{e9}t\u{e9} G\u{e9}n\u{e9}rale, O=Ville de Paris".to_owned(),
         issuer: "CN=Lab Root CA,O=Heimdall Lab".to_owned(),

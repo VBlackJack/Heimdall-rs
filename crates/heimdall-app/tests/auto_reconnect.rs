@@ -351,6 +351,7 @@ fn a_question_on_the_way_back_stops_the_attempts() {
             fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
                 .parse()
                 .expect("fingerprint"),
+            certificate: heimdall_rdp::CertificateHash::of(b"a certificate"),
         },
     );
     assert_eq!(app.tab(tab).expect("tab").retry, None, "the user decides");

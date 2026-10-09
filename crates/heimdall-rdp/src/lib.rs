@@ -17,8 +17,9 @@
 //! RDP sessions on top of `IronRDP`.
 //!
 //! [`connect`] opens a connection with Network Level Authentication, trusting a server by
-//! the key of its certificate as SSH trusts host keys: recorded on first use with the
-//! user's agreement, refused if it changes. [`session::start`] then runs it.
+//! its whole certificate, as the C# does, much as SSH trusts host keys: recorded on first use
+//! with the user's agreement, asked about again when renewed on the same key, refused if its
+//! key changes. [`session::start`] then runs it.
 
 pub mod audio;
 pub mod certificate;
@@ -42,8 +43,8 @@ pub use clipboard::{MAX_IMAGE_BYTES, MAX_REMOTE_TEXT_BYTES};
 pub use clipboard_files::{CopyRefusal, MAX_COPY_BYTES, MAX_COPY_ENTRIES};
 pub use clipboard_save::{SaveEnd, SaveRefusal};
 pub use connect::{
-    AskCredentials, Credentials, DESKTOP_SCALE_FACTORS, Opening, RdpConfig, RdpConnection,
-    RdpError, Security, Timeouts, Transport, connect, connect_over, connect_through,
+    AcceptedCertificate, AskCredentials, Credentials, DESKTOP_SCALE_FACTORS, Opening, RdpConfig,
+    RdpConnection, RdpError, Security, Timeouts, Transport, connect, connect_over, connect_through,
     desktop_scale_factor, given,
 };
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};

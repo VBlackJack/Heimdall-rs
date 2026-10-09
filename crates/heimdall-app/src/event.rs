@@ -26,7 +26,8 @@ use heimdall_ssh::{
 
 use heimdall_files::RemoteSession;
 use heimdall_rdp::{
-    CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation, SaveEnd,
+    CertificateHash, CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation,
+    SaveEnd,
 };
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
 use heimdall_tls::ValidationIssue;
@@ -83,20 +84,19 @@ impl fmt::Debug for Answer {
     }
 }
 
-/// What the FTPS certificate question shows of the certificate beside its subject, as the C#
-/// prompt: its issuer, when it holds, and why the system did not vouch for it; and whether
-/// it renews, on the same key, a certificate the user trusted.
+/// What the FTPS and VNC certificate question shows of the certificate beside its subject, as
+/// the C# FTPS prompt: its issuer, when it holds, and why the system did not vouch for it; and
+/// whether it renews, on the same key, a certificate the user trusted. The RDP question shows
+/// them only for a renewal, the C# RDP prompt showing the subject alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertificateDetails {
     /// The issuer, made safe to show.
     pub issuer: String,
     /// When it holds.
     pub validity: heimdall_rdp::Validity,
-    /// Why this computer's certificate authorities did not vouch for it.
-    pub issue: ValidationIssue,
-    /// The hash of the whole certificate: what the user's answer trusts, this very
-    /// certificate and no other on the same key.
-    pub certificate: heimdall_rdp::CertificateHash,
+    /// Why this computer's certificate authorities did not vouch for it; `None` when they
+    /// were not asked, as for an RDP server outside strict server authentication.
+    pub issue: Option<ValidationIssue>,
     /// Set when the server's key is the one trusted, its certificate another: renewed, or
     /// minted again by whoever holds the key.
     pub renewal: Option<Renewal>,
@@ -138,10 +138,13 @@ pub enum ConnectionEvent {
         port: u16,
         /// SHA-256 of the certificate's public key.
         fingerprint: Fingerprint,
+        /// The hash of the whole certificate: what the user's answer trusts, this very
+        /// certificate and no other on the same key.
+        certificate: CertificateHash,
         /// The certificate's subject, made safe, when it was read.
         subject: Option<String>,
-        /// Its issuer, validity and validation issue, for an FTPS server, as the C# FTPS
-        /// prompt shows them; the RDP question shows none.
+        /// Its issuer, validity and validation issue, for an FTPS or VNC server, as the C#
+        /// FTPS prompt shows them; for an RDP server only when its certificate is renewed.
         details: Option<Box<CertificateDetails>>,
     },
     /// The RDP session is open.

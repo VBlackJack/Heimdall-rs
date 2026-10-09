@@ -2057,7 +2057,9 @@ pub struct Tab {
     pub citrix: Option<Box<crate::citrix_session::CitrixPane>>,
     /// What the certificate question says beside the fingerprint, while it is asked.
     pub certificate_context: Option<CertificateContext>,
-    pending_rdp_key: Option<heimdall_rdp::Fingerprint>,
+    /// The key and the whole certificate the certificate question asks about, while it is
+    /// asked.
+    pending_rdp_key: Option<(heimdall_rdp::Fingerprint, heimdall_rdp::CertificateHash)>,
     attempt: AttemptId,
     sink: Option<Arc<dyn InputSink>>,
     cancel: CancellationToken,
@@ -2332,7 +2334,7 @@ pub struct CertificateContext {
     /// The certificate's subject, as the C# prompt shows it, when it was read.
     pub subject: Option<String>,
     /// Its issuer, validity and validation issue, as the C# FTPS prompt shows them, for an
-    /// FTPS server.
+    /// FTPS or VNC server; for an RDP server only when its certificate is renewed.
     pub details: Option<crate::event::CertificateDetails>,
 }
 
@@ -3128,13 +3130,9 @@ pub struct App {
     deferred_reconnects: Vec<(TabId, AttemptId)>,
     /// SSH keys trusted for this run only, shared with every connection.
     run_trust: RunTrust,
-    /// RDP certificates trusted for this run only: server, port, key.
-    rdp_run_trust: Vec<(
-        String,
-        u16,
-        heimdall_rdp::Fingerprint,
-        Option<heimdall_rdp::CertificateHash>,
-    )>,
+    /// RDP, FTPS and VNC certificates trusted for this run only: server, port, and the hash
+    /// of the whole certificate.
+    rdp_run_trust: Vec<(String, u16, heimdall_rdp::CertificateHash)>,
     /// The shared session logs beside the transcripts: desktops' events, Files changes.
     session_logs: crate::session_log::SessionLogs,
     /// The desktops connected, for the events log.

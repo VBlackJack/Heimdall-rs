@@ -7565,10 +7565,10 @@ fn certificate_body<'a>(
     body
 }
 
-/// What the FTPS certificate question says under the subject, as the C# prompt: the issuer,
-/// when the certificate holds, marked when `now` is outside it, and why the system did not
-/// vouch for it. A certificate renewed on a key trusted says so first, with when the
-/// certificate on record held, when recorded.
+/// What the FTPS and VNC certificate question says under the subject, as the C# prompt: the
+/// issuer, when the certificate holds, marked when `now` is outside it, and why the system
+/// did not vouch for it, when it was asked. A certificate renewed on a key trusted, an RDP
+/// one's included, says so first, with when the certificate on record held, when recorded.
 fn certificate_details<'a>(
     details: &heimdall_app::CertificateDetails,
     now: std::time::SystemTime,
@@ -7602,10 +7602,12 @@ fn certificate_details<'a>(
         until = crate::files_view::modified_text(details.validity.not_after),
         period = period
     )))
-    .push(text(fl!(
-        "ui-certificate-validation-issue",
-        issue = texts::validation_issue(details.issue)
-    )))
+    .push(details.issue.map(|issue| {
+        text(fl!(
+            "ui-certificate-validation-issue",
+            issue = texts::validation_issue(issue)
+        ))
+    }))
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

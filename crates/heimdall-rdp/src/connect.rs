@@ -17,8 +17,15 @@
 //! Opening an RDP connection: negotiation, TLS, the pin, then Network Level Authentication.
 //!
 //! No credential leaves before the pin passes: the X.224 request carries a neutral cookie
-//! instead of the user name, and `CredSSP` runs only once the server's key is the one
+//! instead of the user name, and `CredSSP` runs only once the server's certificate is the one
 //! recorded, or the one the user just accepted.
+//!
+//! A server is pinned by its whole certificate, as the C# pins it by its thumbprint
+//! (`RdpCertificateTrust.Decide`): another certificate on the key trusted, renewed or minted
+//! again by whoever holds the key, is asked about again, said to be a renewal; another key is
+//! the changed-key alarm. A server recorded by an earlier Heimdall, which pinned keys alone,
+//! is let through on its key as before, and the certificate it presents is adopted once the
+//! connection is up: from then on, that certificate only.
 
 use std::future::Future;
 use std::io;
@@ -54,10 +61,10 @@ use ironrdp::rdpdr::Rdpdr;
 use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
 use tokio::sync::mpsc;
 
-use crate::certificate::{Fingerprint, ServerCertificate};
+use crate::certificate::{CertificateHash, Fingerprint, ServerCertificate, Validity};
 use crate::clipboard::{ClipboardBackend, Offered, Request};
 use crate::drives::{DriveBackend, SharedDrive};
-use crate::known_hosts::{KnownRdpHosts, Verdict};
+use crate::known_hosts::{CertificateVerdict, KnownRdpHosts};
 use crate::reason::{self, Ending, Refusal};
 use crate::time_zone::TimeZone;
 use crate::{kdc, tls};
@@ -135,6 +142,25 @@ pub fn given(username: String, password: Zeroizing<String>) -> AskCredentials {
     Box::new(move || Box::pin(std::future::ready(Some((username, password)))))
 }
 
+/// A certificate the user accepted for a server after the certificate question: recorded if
+/// the server presents exactly it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcceptedCertificate {
+    /// Its key: another key presented is the changed-key alarm.
+    pub key: Fingerprint,
+    /// The hash of the whole of it: what is recorded.
+    pub certificate: CertificateHash,
+}
+
+impl From<&ServerCertificate> for AcceptedCertificate {
+    fn from(certificate: &ServerCertificate) -> Self {
+        Self {
+            key: certificate.fingerprint,
+            certificate: certificate.certificate,
+        }
+    }
+}
+
 /// Where to connect.
 #[derive(Debug, Clone)]
 #[expect(
@@ -163,9 +189,10 @@ pub struct RdpConfig {
     pub strict_server_authentication: bool,
     /// Pins of the servers trusted so far.
     pub known_hosts: KnownRdpHosts,
-    /// A key the user accepted for this server after an [`RdpError::UnknownCertificate`]:
-    /// recorded if the server presents exactly it.
-    pub accepted: Option<Fingerprint>,
+    /// The certificate the user accepted for this server after an
+    /// [`RdpError::UnknownCertificate`] or an [`RdpError::RenewedCertificate`]: recorded if
+    /// the server presents exactly it.
+    pub accepted: Option<AcceptedCertificate>,
     /// Phase timeouts.
     pub timeouts: Timeouts,
     /// Share the clipboard with the server, text only: its copies reach this side, and this
@@ -173,9 +200,9 @@ pub struct RdpConfig {
     pub clipboard: bool,
     /// Drives of this computer the server may read and write; none when empty.
     pub drives: Vec<SharedDrive>,
-    /// Keys the user trusted for this server for this run only, as the C# Heimdall's "Just
-    /// this once": accepted, never recorded.
-    pub trusted_for_run: Vec<Fingerprint>,
+    /// Certificates the user trusted for this server for this run only, by the hash of the
+    /// whole of each, as the C# Heimdall's "Just this once": accepted, never recorded.
+    pub trusted_for_run: Vec<CertificateHash>,
     /// Colour depth, sound and administrative session asked for.
     pub options: RdpOptions,
     /// Network Level Authentication may log on with Kerberos, the domain's KDC being reached
@@ -241,6 +268,16 @@ pub enum RdpError {
     /// [`RdpConfig::accepted`]. Boxed: the error stays small.
     #[error("unknown server certificate {}", .0.fingerprint)]
     UnknownCertificate(Box<ServerCertificate>),
+    /// The server presents another certificate on a key trusted, renewed or minted again by
+    /// whoever holds the key: the user decides, as for [`RdpError::UnknownCertificate`],
+    /// told it is a renewal.
+    #[error("renewed server certificate {} on the key {}", .presented.certificate, .presented.fingerprint)]
+    RenewedCertificate {
+        /// What it presented, boxed as in [`RdpError::UnknownCertificate`].
+        presented: Box<ServerCertificate>,
+        /// When the certificate on record holds, when recorded.
+        recorded: Option<Validity>,
+    },
     /// The server presents another key than the recorded one. Never asked about.
     #[error("the server certificate changed from {recorded} to {}", presented.fingerprint)]
     CertificateChanged {
@@ -492,19 +529,12 @@ pub async fn connect_over(
     )
     .await?
     .map_err(RdpError::Tls)?;
-    let der = tls
-        .get_ref()
-        .1
-        .peer_certificates()
-        .and_then(|certificates| certificates.first())
-        .ok_or(RdpError::Certificate)?;
-    // The pin and the key CredSSP binds to come from this one certificate.
-    let certificate = ServerCertificate::from_der(der).map_err(|_| RdpError::Certificate)?;
-    trust(
-        config,
-        certificate.clone(),
-        system.as_ref().is_some_and(tls::SystemTrust::validated),
-    )?;
+    let (certificate, passed) = checked(&tls, config, system.as_ref())?;
+    let pin = (
+        certificate.fingerprint,
+        certificate.certificate,
+        certificate.validity,
+    );
 
     // The server is trusted: now, and only now, the credentials. No timeout: a person is
     // typing; the server may give up meanwhile, which then reads as a network failure.
@@ -541,6 +571,9 @@ pub async fn connect_over(
     if width > MAX_DESKTOP_SIDE || height > MAX_DESKTOP_SIDE {
         return Err(RdpError::DesktopTooLarge { width, height });
     }
+    if passed == Passed::KeyOnly {
+        adopt(config, pin)?;
+    }
     Ok(RdpConnection {
         framed,
         clipboard,
@@ -549,78 +582,184 @@ pub async fn connect_over(
     })
 }
 
-/// Decides about the server's key; `Ok` lets the credentials go. `validated`: this
+/// The certificate the server presented over `tls`, read, and what the pin check let
+/// through; `system`, the system's check when strict server authentication asked for it.
+fn checked(
+    tls: &Upgraded,
+    config: &RdpConfig,
+    system: Option<&tls::SystemTrust>,
+) -> Result<(ServerCertificate, Passed), RdpError> {
+    let der = tls
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|certificates| certificates.first())
+        .ok_or(RdpError::Certificate)?;
+    // The pin and the key CredSSP binds to come from this one certificate.
+    let certificate = ServerCertificate::from_der(der).map_err(|_| RdpError::Certificate)?;
+    let passed = trust(
+        config,
+        &certificate,
+        system.is_some_and(tls::SystemTrust::validated),
+    )?;
+    Ok((certificate, passed))
+}
+
+/// What the pin check let through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Passed {
+    /// A certificate trusted, or accepted: nothing left to do.
+    Trusted,
+    /// A certificate on a key recorded alone, by a Heimdall that pinned keys alone: let
+    /// through on its key, as before, and adopted once the connection is up.
+    KeyOnly,
+}
+
+/// Decides about the server's certificate; `Ok` lets the credentials go. `validated`: this
 /// computer's certificate authorities validate its chain for the server's name. Each
-/// decision but an unknown key, which the caller asks about, is said in the diagnostics log.
+/// decision but a question, which the caller asks, is said in the diagnostics log.
+///
+/// It runs once the TLS handshake is done, every handshake signature verified against the
+/// key of `certificate` ([`tls::connector`]): the server proved it holds that key, so a
+/// certificate minted again on the key by someone without it never gets this far.
 fn trust(
     config: &RdpConfig,
-    certificate: ServerCertificate,
+    certificate: &ServerCertificate,
     validated: bool,
-) -> Result<(), RdpError> {
-    let presented = certificate.fingerprint;
+) -> Result<Passed, RdpError> {
+    let (presented, whole) = (certificate.fingerprint, certificate.certificate);
     let target = heimdall_core::profile::display_address(&config.host, config.port);
     let verdict = match config
         .known_hosts
-        .verdict(&config.host, config.port, &presented)
+        .certificate_verdict(&config.host, config.port, &presented, &whole)
         .map_err(RdpError::KnownHosts)?
     {
-        // Several machines answer at the address: a certificate not trusted yet is another
-        // machine to ask about, trusted beside the others, not a change.
-        Verdict::Changed { .. } if config.several_servers => Verdict::Unknown,
+        // Several machines answer at the address: a key not trusted yet is another machine
+        // to ask about, trusted beside the others, not a change.
+        CertificateVerdict::Changed { .. } if config.several_servers => CertificateVerdict::Unknown,
         verdict => verdict,
     };
-    match (verdict, config.accepted) {
-        (Verdict::Known, _) => {
-            log::info!("the certificate of {target} is the one trusted: {presented}");
-            Ok(())
+    let verdict = match verdict {
+        CertificateVerdict::Known => {
+            log::info!("the certificate of {target} is the one trusted: {whole}, key {presented}");
+            return Ok(Passed::Trusted);
         }
-        (Verdict::Unknown, _) if config.trusted_for_run.contains(&presented) => {
-            log::info!("the certificate of {target} is trusted for this run: {presented}");
-            Ok(())
+        CertificateVerdict::KeyOnly => {
+            log::info!(
+                "the certificate of {target} carries the key trusted alone {presented}: {whole}, adopted once the connection is up"
+            );
+            return Ok(Passed::KeyOnly);
         }
-        (Verdict::Changed { recorded }, _) => {
+        CertificateVerdict::Changed { recorded } => {
             log::warn!(
                 "the certificate of {target} changed: trusted {recorded}, presented {presented}: refused"
             );
-            Err(RdpError::CertificateChanged {
+            return Err(RdpError::CertificateChanged {
                 recorded,
-                presented: Box::new(certificate),
-            })
+                presented: Box::new(certificate.clone()),
+            });
         }
-        (Verdict::Unknown, Some(accepted)) if accepted == presented => {
+        asked @ (CertificateVerdict::Renewed { .. } | CertificateVerdict::Unknown) => asked,
+    };
+    unsettled(config, certificate, validated, verdict)
+}
+
+/// Decides about a certificate not trusted yet, as `verdict` says: never seen, or renewed on a
+/// key trusted. Trusted for this run, accepted just now, decided by the system under strict
+/// authentication, else asked about.
+fn unsettled(
+    config: &RdpConfig,
+    certificate: &ServerCertificate,
+    validated: bool,
+    verdict: CertificateVerdict,
+) -> Result<Passed, RdpError> {
+    let (presented, whole) = (certificate.fingerprint, certificate.certificate);
+    let target = heimdall_core::profile::display_address(&config.host, config.port);
+    if config.trusted_for_run.contains(&whole) {
+        log::info!("the certificate of {target} is trusted for this run: {whole}, key {presented}");
+        return Ok(Passed::Trusted);
+    }
+    match config.accepted {
+        Some(accepted) if accepted.certificate == whole => {
             config
                 .known_hosts
-                .record_certificate(&config.host, config.port, &certificate)
+                .record_whole_certificate(
+                    &config.host,
+                    config.port,
+                    certificate,
+                    (&whole, Some(&certificate.validity)),
+                )
                 .map_err(RdpError::KnownHosts)?;
-            log::info!("the certificate of {target} accepted by the user is recorded: {presented}");
-            Ok(())
+            log::info!(
+                "the certificate of {target} accepted by the user is recorded: {whole}, key {presented}"
+            );
+            return Ok(Passed::Trusted);
         }
         // The key changed between the question and this connection.
-        (Verdict::Unknown, Some(accepted)) => {
+        Some(accepted) if accepted.key != presented => {
             log::warn!(
-                "the certificate of {target} changed since it was accepted: accepted {accepted}, presented {presented}: refused"
+                "the certificate of {target} changed since it was accepted: accepted {}, presented {presented}: refused",
+                accepted.key
             );
-            Err(RdpError::CertificateChanged {
-                recorded: accepted,
-                presented: Box::new(certificate),
-            })
+            return Err(RdpError::CertificateChanged {
+                recorded: accepted.key,
+                presented: Box::new(certificate.clone()),
+            });
         }
-        // Strict: never asked about; the system's certificate authorities decide.
-        (Verdict::Unknown, None) if config.strict_server_authentication => {
-            if validated {
-                log::info!(
-                    "the certificate of {target} is validated by this computer's authorities: {presented}"
-                );
-                Ok(())
-            } else {
-                log::warn!(
-                    "the certificate of {target} is not validated by this computer's authorities: refused"
-                );
-                Err(RdpError::ServerNotAuthenticated)
+        // The same key, another certificate than the one accepted: asked about again.
+        Some(_) | None => {}
+    }
+    // Strict: never asked about; the system's certificate authorities decide.
+    if config.strict_server_authentication {
+        if validated {
+            log::info!(
+                "the certificate of {target} is validated by this computer's authorities: {presented}"
+            );
+            return Ok(Passed::Trusted);
+        }
+        log::warn!(
+            "the certificate of {target} is not validated by this computer's authorities: refused"
+        );
+        return Err(RdpError::ServerNotAuthenticated);
+    }
+    Err(match verdict {
+        CertificateVerdict::Renewed { recorded } => {
+            log::info!(
+                "{target} presented a renewed certificate {whole}: the same key {presented}, another certificate than the one trusted"
+            );
+            RdpError::RenewedCertificate {
+                presented: Box::new(certificate.clone()),
+                recorded,
             }
         }
-        (Verdict::Unknown, None) => Err(RdpError::UnknownCertificate(Box::new(certificate))),
+        _ => RdpError::UnknownCertificate(Box::new(certificate.clone())),
+    })
+}
+
+/// The connection is up, its certificate let through on a key an earlier Heimdall recorded
+/// alone: adopts that certificate, `(key, hash, validity)`, for the server, so the next
+/// connections take that certificate only.
+///
+/// Only now, for what the server proved by now: its TLS handshake was signed with the
+/// private key of the certificate ([`tls::connector`] verifies every handshake signature),
+/// and the connection sequence went through to its end, `CredSSP` included under Network
+/// Level Authentication, which binds the logon to that very key. A connection that did not
+/// get that far adopts nothing: the next one is checked on the key again, as before.
+fn adopt(
+    config: &RdpConfig,
+    (key, whole, validity): (Fingerprint, CertificateHash, Validity),
+) -> Result<(), RdpError> {
+    let adopted = config
+        .known_hosts
+        .adopt_certificate(&config.host, config.port, &key, (&whole, Some(&validity)))
+        .map_err(RdpError::KnownHosts)?;
+    if adopted {
+        log::info!(
+            "the RDP server {}, trusted by its key {key} alone, is now pinned by its whole certificate {whole}",
+            heimdall_core::profile::display_address(&config.host, config.port)
+        );
     }
+    Ok(())
 }
 
 fn connector_config(config: &RdpConfig) -> connector::Config {
@@ -865,6 +1004,127 @@ fn closed(error: &io::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fixture certificate of the trust tests, and another one on its key.
+    const CERT: &[u8] = include_bytes!("../tests/fixtures/server-cert.der");
+    const RENEWED: &[u8] = include_bytes!("../tests/fixtures/renewed-cert.der");
+    const HOST: &str = "rdp.test";
+    const PORT: u16 = 3389;
+
+    /// A connection to [`HOST`]:[`PORT`] checked against the pins of `known`.
+    fn pinned_by(known: &std::path::Path) -> RdpConfig {
+        RdpConfig {
+            host: HOST.to_owned(),
+            port: PORT,
+            domain: None,
+            desktop: (1024, 768),
+            keyboard_layout: 0,
+            security: Security::Nla,
+            several_servers: false,
+            strict_server_authentication: false,
+            known_hosts: KnownRdpHosts::new(known),
+            accepted: None,
+            timeouts: Timeouts::default(),
+            clipboard: false,
+            drives: Vec::new(),
+            trusted_for_run: Vec::new(),
+            options: RdpOptions::default(),
+            kerberos: false,
+            time_zone: None,
+            desktop_scale: 100,
+        }
+    }
+
+    #[test]
+    fn a_key_recorded_alone_adopts_the_certificate_once_the_connection_is_up_then_is_strict() {
+        let dir = tempfile::tempdir().expect("dir");
+        let known = dir.path().join("known_rdp_hosts");
+        let certificate = ServerCertificate::from_der(CERT).expect("fixture");
+        let renewed = ServerCertificate::from_der(RENEWED).expect("fixture");
+        assert_eq!(renewed.fingerprint, certificate.fingerprint, "the same key");
+        // As a Heimdall that pinned keys alone recorded it.
+        let file = KnownRdpHosts::new(&known);
+        file.record(HOST, PORT, &certificate.fingerprint)
+            .expect("legacy");
+        let config = pinned_by(&known);
+        let whole = |file: &KnownRdpHosts| {
+            let [entry] = file.entries().expect("read").try_into().expect("one entry");
+            (entry.certificate, entry.validity)
+        };
+
+        // Checked on its key, as before; nothing written by the check.
+        assert_eq!(
+            trust(&config, &certificate, false).ok(),
+            Some(Passed::KeyOnly)
+        );
+        assert_eq!(whole(&file), (None, None));
+        // The connection up: the certificate it presented is adopted, with its validity.
+        adopt(
+            &config,
+            (
+                certificate.fingerprint,
+                certificate.certificate,
+                certificate.validity,
+            ),
+        )
+        .expect("adopted");
+        assert_eq!(
+            whole(&file),
+            (Some(certificate.certificate), Some(certificate.validity))
+        );
+
+        // From then on, that certificate only: another on the key is a renewal to ask about.
+        assert_eq!(
+            trust(&config, &certificate, false).ok(),
+            Some(Passed::Trusted)
+        );
+        assert!(
+            matches!(
+                trust(&config, &renewed, false),
+                Err(RdpError::RenewedCertificate { recorded: Some(recorded), .. })
+                    if recorded == certificate.validity
+            ),
+            "never adopted in its turn"
+        );
+        // Adopting again changes nothing: the line names its certificate now.
+        let text = std::fs::read_to_string(&known).expect("file");
+        adopt(
+            &config,
+            (renewed.fingerprint, renewed.certificate, renewed.validity),
+        )
+        .expect("nothing to adopt");
+        assert_eq!(std::fs::read_to_string(&known).expect("file"), text);
+    }
+
+    #[test]
+    fn a_renewal_under_strict_authentication_is_never_asked_about() {
+        let dir = tempfile::tempdir().expect("dir");
+        let known = dir.path().join("known_rdp_hosts");
+        let certificate = ServerCertificate::from_der(CERT).expect("fixture");
+        let renewed = ServerCertificate::from_der(RENEWED).expect("fixture");
+        KnownRdpHosts::new(&known)
+            .record_whole_certificate(
+                HOST,
+                PORT,
+                &certificate,
+                (&certificate.certificate, Some(&certificate.validity)),
+            )
+            .expect("pinned");
+        let strict = RdpConfig {
+            strict_server_authentication: true,
+            ..pinned_by(&known)
+        };
+        // As the C# `RdpStrictServerAuthentication`: the system's authorities decide.
+        assert!(matches!(
+            trust(&strict, &renewed, false),
+            Err(RdpError::ServerNotAuthenticated)
+        ));
+        assert_eq!(trust(&strict, &renewed, true).ok(), Some(Passed::Trusted));
+        assert_eq!(
+            trust(&strict, &certificate, false).ok(),
+            Some(Passed::Trusted)
+        );
+    }
 
     #[test]
     fn a_screen_scale_is_the_nearest_factor_a_server_is_offered_as_the_csharp_maps_it() {

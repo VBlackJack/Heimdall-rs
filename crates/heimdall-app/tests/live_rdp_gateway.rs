@@ -29,7 +29,7 @@ use std::time::Duration;
 use heimdall_app::rdp_driver::{DEFAULT_DESKTOP, RdpRequest, rdp_events};
 use heimdall_app::{Answer, AnswerRegistry, ConnectionEvent};
 use heimdall_core::profile::{Forwards, ProfileId, RdpProfile, SshProfile};
-use heimdall_rdp::Fingerprint;
+use heimdall_rdp::AcceptedCertificate;
 use heimdall_ssh::{AgentSource, ConnectOptions, KnownHosts, Secret};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
@@ -49,7 +49,7 @@ fn request(
     keys: &Path,
     dir: &Path,
     user: &str,
-    accepted: Option<Fingerprint>,
+    accepted: Option<AcceptedCertificate>,
     socks_port: u16,
 ) -> RdpRequest {
     let mut ssh = ConnectOptions::new(dir.join("known_hosts"));
@@ -182,10 +182,16 @@ async fn a_desktop_comes_up_through_the_lab_gateway() {
                     break;
                 }
                 ConnectionEvent::UnknownRdpCertificate {
-                    host, fingerprint, ..
+                    host,
+                    fingerprint,
+                    certificate,
+                    ..
                 } => {
                     assert_eq!(host, "heimdall-rdp", "the server's own certificate");
-                    accepted = Some(fingerprint);
+                    accepted = Some(AcceptedCertificate {
+                        key: fingerprint,
+                        certificate,
+                    });
                     break;
                 }
                 ConnectionEvent::Question { question, .. } => {

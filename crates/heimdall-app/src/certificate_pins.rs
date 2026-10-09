@@ -347,8 +347,7 @@ impl CertificatePins {
         let details = seen.validity.map(|validity| CertificateDetails {
             issuer: certificate.issuer.clone(),
             validity,
-            issue,
-            certificate: seen.hash,
+            issue: Some(issue),
             renewal,
         });
         let _ = events
@@ -356,6 +355,7 @@ impl CertificatePins {
                 host: self.host.clone(),
                 port: self.port,
                 fingerprint: presented,
+                certificate: seen.hash,
                 // Shown in the question, as the C# FTPS one shows them.
                 subject: Some(certificate.subject.clone()),
                 details: details.map(Box::new),
