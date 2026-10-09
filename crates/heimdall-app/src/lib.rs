@@ -74,6 +74,7 @@ pub mod tunnel_driver;
 pub mod update_check;
 pub mod vnc_driver;
 pub mod wake_on_lan;
+pub mod windows_hello;
 pub mod winrm_driver;
 pub mod winrm_preflight;
 pub mod x11_server;

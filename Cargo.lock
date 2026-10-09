@@ -2408,6 +2408,7 @@ dependencies = [
  "unftp-sbe-fs",
  "unicode-normalization",
  "ureq",
+ "windows 0.62.2",
  "windows-registry 0.100.0",
  "winsafe",
  "zeroize",

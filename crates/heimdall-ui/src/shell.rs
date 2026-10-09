@@ -44,6 +44,7 @@ use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::update_check::{Failure as UpdateFailure, GitHubSource, Outcome};
 use heimdall_app::vnc_driver::vnc_events;
+use heimdall_app::windows_hello;
 use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, CertificateContext,
@@ -3739,6 +3740,21 @@ impl Shell {
                     outcome,
                 )))
             }),
+            Effect::VerifyWindowsHello => {
+                let reason = fl!("ui-windows-hello-verify-reason");
+                Task::future(async move {
+                    // The prompt holds the call until answered: off the UI thread.
+                    let answer = tokio::task::spawn_blocking(move || {
+                        windows_hello::ask(&windows_hello::SystemVerifier, &reason)
+                    })
+                    .await
+                    .unwrap_or_else(|error| {
+                        log::warn!("the Windows Hello verification stopped: {error}");
+                        Err(windows_hello::HelloRefusal::NotVerified)
+                    });
+                    Message::App(AppMessage::WindowsHello(answer))
+                })
+            }
             Effect::LaunchCitrix { tab, name, launch } => {
                 crate::citrix_view::launch(tab, name, launch)
             }

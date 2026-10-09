@@ -25,6 +25,7 @@
 //! edits, has nothing to save.
 
 use heimdall_app::update_check::{Failure, minutes_to_wait};
+use heimdall_app::windows_hello;
 use heimdall_app::{
     Effect, Message as AppMessage, PinMessage, UpdateMessage, UpdateStatus, VaultStatus,
     search_folded,
@@ -182,6 +183,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::X11 => fl!("ui-settings-x11"),
         SettingsCard::ExternalEditor => fl!("ui-settings-external-editor"),
         SettingsCard::RdpDefaults => fl!("ui-settings-rdp-defaults"),
+        SettingsCard::ConnectionChecks => fl!("ui-settings-connection-checks"),
         _ => return None,
     })
 }
@@ -255,6 +257,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::Vault => fl!("ui-settings-vault-title"),
         SettingRow::DisconnectOnLock => fl!("ui-settings-disconnect-on-lock"),
         SettingRow::Provider => fl!("ui-settings-provider-title"),
+        SettingRow::RequireWindowsHello => fl!("ui-settings-require-windows-hello"),
         // Numbers, named above.
         _ => String::new(),
     }
@@ -287,6 +290,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::Gateways => fl!("ui-gateways-description"),
         SettingRow::Vault => fl!("ui-settings-vault-explanation"),
         SettingRow::DisconnectOnLock => fl!("ui-settings-disconnect-on-lock-hint"),
+        SettingRow::RequireWindowsHello => fl!("ui-settings-require-windows-hello-hint"),
         _ => return None,
     })
 }
@@ -441,6 +445,7 @@ fn posture_label(key: PostureKey) -> String {
         PostureKey::Vault => fl!("ui-settings-posture-label-vault"),
         PostureKey::AutoLock => fl!("ui-settings-posture-label-auto-lock"),
         PostureKey::DisconnectOnLock => fl!("ui-settings-posture-label-disconnect-on-lock"),
+        PostureKey::WindowsHelloOnConnect => fl!("ui-settings-posture-label-windows-hello"),
         PostureKey::UpdateChecks => fl!("ui-settings-posture-label-update-checks"),
     }
 }
@@ -458,6 +463,8 @@ fn posture_state(state: PostureState) -> String {
         }
         PostureState::Never => fl!("ui-settings-posture-state-never"),
         PostureState::RequiresVault => fl!("ui-settings-posture-state-requires-vault"),
+        PostureState::Required => fl!("ui-settings-posture-state-required"),
+        PostureState::NotRequired => fl!("ui-settings-posture-state-not-required"),
     }
 }
 
@@ -471,7 +478,8 @@ fn posture_warning(key: PostureKey) -> Option<String> {
         PostureKey::UpdateChecks => Some(fl!("ui-settings-posture-warning-update-checks")),
         PostureKey::RdpStrictServerAuthentication
         | PostureKey::Vault
-        | PostureKey::DisconnectOnLock => None,
+        | PostureKey::DisconnectOnLock
+        | PostureKey::WindowsHelloOnConnect => None,
     }
 }
 
@@ -884,9 +892,10 @@ impl Shell {
     }
 
     /// Whether `row` can be changed now: a workspace lock setting only with a master
-    /// password set, as the C# panel enables them.
+    /// password set, the Windows Hello grace only with Windows Hello required, as the C#
+    /// panel enables them.
     fn row_available(&self, row: SettingRow) -> bool {
-        !row.needs_vault() || self.vault_set()
+        (!row.needs_vault() || self.vault_set()) && row.number_enabled(self.app.settings())
     }
 
     /// What `row` shows: its box, list or field, with what is said of it.
@@ -987,6 +996,14 @@ impl Shell {
         let mut body = column![tick].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));
+        }
+        // Where Windows Hello does not exist, why the box is greyed, or what it does on.
+        if row == SettingRow::RequireWindowsHello && !windows_hello::SUPPORTED {
+            body = body.push(
+                text(fl!("ui-settings-require-windows-hello-windows-only"))
+                    .size(font_size::CAPTION)
+                    .style(text::danger),
+            );
         }
         body.into()
     }

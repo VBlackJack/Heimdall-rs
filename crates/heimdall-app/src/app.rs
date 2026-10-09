@@ -95,6 +95,7 @@ mod ftp_tab;
 mod gateway_overview;
 mod gateways;
 mod health_tab;
+mod hello_gate;
 mod hostkeys_import;
 mod idle_lock;
 mod keep_alive;
@@ -829,6 +830,9 @@ pub enum Message {
     CredentialProvider(ProviderMessage),
     /// The external credential provider answered a tab's question, or could not.
     CredentialProvided(Box<ProviderAnswer>),
+    /// Windows Hello answered [`Effect::VerifyWindowsHello`]: the sessions waiting open, or
+    /// why they do not.
+    WindowsHello(Result<(), crate::windows_hello::HelloRefusal>),
     /// A change from the Settings page.
     Settings(SettingsMessage),
     /// A step of the terminal macros.
@@ -1082,6 +1086,7 @@ impl fmt::Debug for Message {
                     answer.result.is_ok()
                 )
             }
+            Self::WindowsHello(answer) => write!(f, "WindowsHello({answer:?})"),
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             // What a macro types is not logged.
             Self::Macro(MacroMessage::NameEdited(_)) => f.write_str("Macro(NameEdited)"),
@@ -1254,6 +1259,9 @@ pub enum Effect {
     /// Ask GitHub for the latest release, off the UI thread, and say what it found as
     /// [`UpdateMessage::Checked`].
     CheckForUpdate,
+    /// Ask Windows Hello for the user's verification, off the UI thread, and say what it
+    /// came to as [`Message::WindowsHello`].
+    VerifyWindowsHello,
     /// Launch a Citrix application outside Heimdall, off the UI thread, the client's
     /// processes listed first; answered with [`Message::CitrixLaunched`].
     LaunchCitrix {
@@ -1728,6 +1736,7 @@ impl fmt::Debug for Effect {
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
             Self::CheckForUpdate => f.write_str("CheckForUpdate"),
+            Self::VerifyWindowsHello => f.write_str("VerifyWindowsHello"),
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
                 write!(f, "ProbeCitrix({}, {lists})", tab.value())
@@ -2971,6 +2980,8 @@ pub struct App {
     monitor: reachability_monitor::Monitor,
     /// The look for a newer release.
     updates: updates::Updates,
+    /// Windows Hello asked before a connection.
+    hello: hello_gate::HelloGate,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
     /// The identifier of the next tunnel.
@@ -3124,6 +3135,7 @@ impl App {
             macros,
             monitor: reachability_monitor::Monitor::default(),
             updates: updates::Updates::new(crate::update_check::running_release()),
+            hello: hello_gate::HelloGate::default(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
@@ -3263,6 +3275,9 @@ impl App {
     fn apply(&mut self, message: Message) -> Vec<Effect> {
         self.forget_stale_notice();
         self.stop_orphan_route_test();
+        if self.waits_for_hello(&message) {
+            return self.wait_for_hello(message);
+        }
         match message {
             message @ (Message::OpenProfile(_)
             | Message::OpenFiles(_)
@@ -3465,6 +3480,7 @@ impl App {
             Message::Pin(message) => self.pin_message(message),
             Message::CredentialProvider(message) => self.provider_message(message),
             Message::CredentialProvided(answer) => self.provider_answered(*answer),
+            Message::WindowsHello(answer) => self.hello_answered(answer),
         }
     }
 
