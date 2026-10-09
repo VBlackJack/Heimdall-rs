@@ -383,8 +383,6 @@ pub fn skip_reason(reason: &SkipReason) -> String {
         SkipReason::InvalidPort(port) => {
             fl!("ui-import-skip-invalid-port", port = port.to_string())
         }
-        SkipReason::MissingGateway => fl!("ui-import-skip-missing-gateway"),
-        SkipReason::GatewayLoop => fl!("ui-import-skip-gateway-loop"),
         SkipReason::UnsafeLocalCommand => fl!("ui-import-skip-unsafe-local"),
         SkipReason::MissingUsername => fl!("ui-import-skip-missing-username"),
         SkipReason::UnknownIdentityMode => fl!("ui-import-skip-unknown-identity"),

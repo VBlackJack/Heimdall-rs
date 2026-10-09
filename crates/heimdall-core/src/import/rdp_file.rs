@@ -17,16 +17,21 @@
 //! Import of Remote Desktop `.rdp` files, as the C# Heimdall reads them (`RdpFileParser`,
 //! `RdpImportService`).
 //!
-//! A file is `key:type:value` lines. What a profile can carry is read onto it: the address
-//! and port, the account and domain, the administrative session, audio, the clipboard and
-//! drives, dynamic resolution, colour depth and Network Level Authentication. A stored
-//! password is never read. What the profile has no field for is named, so the preview says
-//! the mapping is partial; a file routed through a Remote Desktop Gateway is refused, as the
-//! import from the C# settings refuses one.
+//! A file is `key:type:value` lines. What a profile can carry is read onto it, as the C#
+//! `TryMapSchema` maps it (`RdpImportService.cs:329-526`): the address and port, the account
+//! and domain, the administrative session, audio playback and the microphone, the clipboard,
+//! drives, printers, smart cards, serial ports, USB devices and webcams, compression, the
+//! persistent bitmap cache, auto-reconnect, several monitors, dynamic resolution, colour
+//! depth, Network Level Authentication and strict server authentication. A stored password
+//! is never read. What the profile has no field for (the screen mode, the window size) is
+//! named, so the preview says the mapping is partial; a file routed through a Remote Desktop
+//! Gateway is refused, as the import from the C# settings refuses one.
 //!
 //! A file is read onto a profile as a [`Patch`]: the settings the file names. A new profile
 //! starts from the C# defaults; replacing one keeps every setting the file does not name, as
-//! the C# `ReplaceExisting` does.
+//! the C# `ReplaceExisting` does. A file that names a setting of the profile's own makes the
+//! profile stop following the global RDP defaults, without which that setting would not be
+//! used; a file naming only its address and account leaves the profile following them.
 
 use std::collections::HashSet;
 use std::hash::BuildHasher;
@@ -44,25 +49,19 @@ const GENERIC_NAMES: [&str; 3] = ["default", "connection", "remote desktop conne
 /// `drivestoredirect` naming every drive.
 const ALL_DRIVES: &str = "*";
 
-/// The keys read but not carried: named in the preview as a partial mapping.
-const NOT_CARRIED: [&str; 12] = [
-    "audiocapturemode",
-    "redirectprinters",
-    "redirectsmartcards",
-    "redirectcomports",
-    "usbdevicestoredirect",
-    "camerastoredirect",
-    "compression",
-    "bitmapcachepersistenable",
-    "autoreconnection enabled",
-    "use multimon",
-    "screen mode id",
-    "authentication level",
-];
+/// The keys read but not carried, numbers as the C# reads them: named in the preview as a
+/// partial mapping. The screen mode has no field, as in the C# (`RdpImportService.cs:506-510`);
+/// the window size is not carried as the C# does not carry it (`RdpImportService.cs:512-516`):
+/// every file the client saves has it, and a fixed size taken from it would change every
+/// imported profile.
+const NOT_CARRIED: [&str; 3] = ["screen mode id", "desktopwidth", "desktopheight"];
 
-/// The window size keys, not carried as the C# does not carry them: every file the client
-/// saves has them, and a fixed size taken from them would change every imported profile.
-const SIZE_KEYS: [&str; 2] = ["desktopwidth", "desktopheight"];
+/// `authentication level` asking for strict server authentication, as the C# maps it: 0
+/// connects anyway, 2 warns.
+const AUTHENTICATION_LEVEL_STRICT: i64 = 1;
+
+/// The `authentication level` values the C# reads; any other leaves the profile as it was.
+const AUTHENTICATION_LEVELS: [i64; 3] = [0, AUTHENTICATION_LEVEL_STRICT, 2];
 
 /// What a `.rdp` file says.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -72,12 +71,23 @@ pub struct RdpFile {
     username: Option<String>,
     domain: Option<String>,
     audio_mode: Option<i64>,
+    audio_capture: Option<bool>,
     redirect_clipboard: Option<bool>,
+    redirect_printers: Option<bool>,
+    redirect_smart_cards: Option<bool>,
+    redirect_com_ports: Option<bool>,
     redirect_drives: Option<bool>,
     drives_to_redirect: Option<String>,
+    usb_devices_to_redirect: Option<String>,
+    cameras_to_redirect: Option<String>,
     administrative_session: Option<bool>,
+    compression: Option<bool>,
+    bitmap_cache_persist: Option<bool>,
+    auto_reconnect: Option<bool>,
     dynamic_resolution: Option<bool>,
+    multi_monitor: Option<bool>,
     session_bpp: Option<i64>,
+    authentication_level: Option<i64>,
     enable_credssp: Option<i64>,
     gateway_hostname: Option<String>,
     gateway_usage: Option<i64>,
@@ -138,21 +148,31 @@ fn read_key(file: &mut RdpFile, key: &str, kind: &str, value: &str) {
         "username" => text().map(|v| file.username = Some(v)),
         "domain" => text().map(|v| file.domain = Some(v)),
         "audiomode" => number().map(|v| file.audio_mode = Some(v)),
+        "audiocapturemode" => flag().map(|v| file.audio_capture = Some(v)),
         "redirectclipboard" => flag().map(|v| file.redirect_clipboard = Some(v)),
+        "redirectprinters" => flag().map(|v| file.redirect_printers = Some(v)),
+        "redirectsmartcards" => flag().map(|v| file.redirect_smart_cards = Some(v)),
+        "redirectcomports" => flag().map(|v| file.redirect_com_ports = Some(v)),
         "redirectdrives" => flag().map(|v| file.redirect_drives = Some(v)),
         "drivestoredirect" => text().map(|v| file.drives_to_redirect = Some(v)),
+        "usbdevicestoredirect" => text().map(|v| file.usb_devices_to_redirect = Some(v)),
+        "camerastoredirect" => text().map(|v| file.cameras_to_redirect = Some(v)),
         "administrative session" => flag().map(|v| file.administrative_session = Some(v)),
+        "compression" => flag().map(|v| file.compression = Some(v)),
+        "bitmapcachepersistenable" => flag().map(|v| file.bitmap_cache_persist = Some(v)),
+        "autoreconnection enabled" => flag().map(|v| file.auto_reconnect = Some(v)),
         "dynamic resolution" => flag().map(|v| file.dynamic_resolution = Some(v)),
+        "use multimon" => flag().map(|v| file.multi_monitor = Some(v)),
         "session bpp" => number().map(|v| file.session_bpp = Some(v)),
+        "authentication level" => number().map(|v| file.authentication_level = Some(v)),
         "enablecredsspsupport" => number().map(|v| file.enable_credssp = Some(v)),
         "gatewayhostname" => text().map(|v| file.gateway_hostname = Some(v)),
         "gatewayusagemethod" => number().map(|v| file.gateway_usage = Some(v)),
-        other if NOT_CARRIED.contains(&other) || SIZE_KEYS.contains(&other) => {
+        other if NOT_CARRIED.contains(&other) => number().map(|_| {
             if !file.not_carried.iter().any(|seen| seen == other) {
                 file.not_carried.push(other.to_owned());
             }
-            Some(())
-        }
+        }),
         _ => None,
     };
     if known.is_none() {
@@ -182,13 +202,24 @@ pub struct Patch {
     domain: Option<String>,
     administrative_session: Option<bool>,
     audio: Option<AudioPlayback>,
+    microphone: Option<bool>,
     redirect_clipboard: Option<bool>,
+    redirect_printers: Option<bool>,
+    redirect_smart_cards: Option<bool>,
+    redirect_com_ports: Option<bool>,
     redirect_drives: Option<bool>,
     /// Some drives only were named: the profile shares all of them.
     pub drives_widened: bool,
+    redirect_usb: Option<bool>,
+    redirect_webcam: Option<bool>,
+    compression: Option<bool>,
+    bitmap_caching: Option<bool>,
+    auto_reconnect: Option<bool>,
     dynamic_resolution: Option<bool>,
+    multi_monitor: Option<bool>,
     color_depth: Option<ColorDepth>,
     nla: Option<bool>,
+    strict_server_authentication: Option<bool>,
 }
 
 impl Patch {
@@ -231,21 +262,73 @@ impl Patch {
                 1 => AudioPlayback::OnServer,
                 _ => AudioPlayback::Off,
             }),
+            microphone: file.audio_capture,
             redirect_clipboard: file.redirect_clipboard,
+            redirect_printers: file.redirect_printers,
+            redirect_smart_cards: file.redirect_smart_cards,
+            redirect_com_ports: file.redirect_com_ports,
             redirect_drives: drives,
             drives_widened: drives == Some(true)
                 && file
                     .drives_to_redirect
                     .as_deref()
                     .is_some_and(|named| !named.trim().is_empty() && named.trim() != ALL_DRIVES),
+            // A list of devices, any of them, shares them all: the profile has one switch.
+            redirect_usb: file
+                .usb_devices_to_redirect
+                .as_deref()
+                .map(|named| !named.trim().is_empty()),
+            redirect_webcam: file
+                .cameras_to_redirect
+                .as_deref()
+                .map(|named| !named.trim().is_empty()),
+            compression: file.compression,
+            bitmap_caching: file.bitmap_cache_persist,
+            auto_reconnect: file.auto_reconnect,
             dynamic_resolution: file.dynamic_resolution,
+            multi_monitor: file.multi_monitor,
             color_depth: file.session_bpp.map(ColorDepth::nearest),
             // Only 0 and 1 mean something; anything else leaves the profile as it was.
             nla: file
                 .enable_credssp
                 .filter(|value| matches!(value, 0 | 1))
                 .map(|value| value == 1),
+            // As the C#: only the values it reads, the strict one 1; NLA is never derived
+            // from it, which describes the server's authentication alone.
+            strict_server_authentication: file
+                .authentication_level
+                .filter(|level| AUTHENTICATION_LEVELS.contains(level))
+                .map(|level| level == AUTHENTICATION_LEVEL_STRICT),
         })
+    }
+
+    /// Whether the file names a setting of the profile's own, which the session only uses
+    /// once the profile stops following the global RDP defaults: the C#
+    /// `carriesPerProfileSettings`. The account, the domain and the administrative session
+    /// are the profile's whether it follows them or not.
+    #[must_use]
+    pub fn carries_own_settings(&self) -> bool {
+        [
+            self.microphone,
+            self.redirect_clipboard,
+            self.redirect_printers,
+            self.redirect_smart_cards,
+            self.redirect_com_ports,
+            self.redirect_drives,
+            self.redirect_usb,
+            self.redirect_webcam,
+            self.compression,
+            self.bitmap_caching,
+            self.auto_reconnect,
+            self.dynamic_resolution,
+            self.multi_monitor,
+            self.nla,
+            self.strict_server_authentication,
+        ]
+        .iter()
+        .any(Option::is_some)
+            || self.audio.is_some()
+            || self.color_depth.is_some()
     }
 
     /// Whether settings of the file are not carried: the C# "Partial mapping".
@@ -273,7 +356,9 @@ impl Patch {
             options: RdpOptions::default(),
             vault_entry: None,
             forwards: Forwards::default(),
-            follow_defaults: false,
+            // As the C# `RdpUseGlobalDefaults`, on for a new profile: off once the file
+            // names a setting of the profile's own, in `apply`.
+            follow_defaults: true,
             several_servers: false,
             anti_idle: false,
             auto_reconnect: true,
@@ -299,20 +384,58 @@ impl Patch {
         if let Some(audio) = self.audio {
             profile.options.audio = audio;
         }
+        if let Some(microphone) = self.microphone {
+            profile.extras.microphone = microphone;
+        }
         if let Some(clipboard) = self.redirect_clipboard {
             profile.redirect_clipboard = clipboard;
+        }
+        if let Some(printers) = self.redirect_printers {
+            profile.extras.redirect_printers = printers;
+        }
+        if let Some(smart_cards) = self.redirect_smart_cards {
+            profile.extras.redirect_smart_cards = smart_cards;
+        }
+        if let Some(com_ports) = self.redirect_com_ports {
+            profile.extras.redirect_com_ports = com_ports;
         }
         if let Some(drives) = self.redirect_drives {
             profile.redirect_drives = drives;
         }
+        if let Some(usb) = self.redirect_usb {
+            profile.extras.redirect_usb = usb;
+        }
+        if let Some(webcam) = self.redirect_webcam {
+            profile.extras.redirect_webcam = webcam;
+        }
+        if let Some(compression) = self.compression {
+            profile.extras.compression = compression;
+        }
+        if let Some(caching) = self.bitmap_caching {
+            profile.extras.bitmap_caching = caching;
+        }
+        if let Some(reconnect) = self.auto_reconnect {
+            profile.auto_reconnect = reconnect;
+        }
         if let Some(dynamic) = self.dynamic_resolution {
             profile.options.dynamic_resolution = dynamic;
+        }
+        if let Some(multi_monitor) = self.multi_monitor {
+            profile.extras.multi_monitor = multi_monitor;
         }
         if let Some(depth) = self.color_depth {
             profile.options.color_depth = depth;
         }
         if let Some(nla) = self.nla {
             profile.allow_tls_only = !nla;
+        }
+        if let Some(strict) = self.strict_server_authentication {
+            profile.extras.strict_server_authentication = strict;
+        }
+        if self.carries_own_settings() {
+            // Without this the session answers from the global defaults, and every value
+            // written above is unused (`RdpImportService.cs:518-523`).
+            profile.follow_defaults = false;
         }
     }
 }

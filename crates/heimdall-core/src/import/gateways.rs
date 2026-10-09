@@ -19,6 +19,13 @@
 //! host (without case), port and user, whatever its identifier. The file's gateway is then
 //! the one already there, and every imported profile going through it is rewired to it, so
 //! that importing a colleague's file does not duplicate the bastions both use.
+//!
+//! A reference the import cannot resolve, to a gateway neither the file nor the saved ones
+//! hold, does not keep a profile out: as the C# (`GatewayImportReconciler.cs:94-145`), the
+//! profile is imported still naming it, so that connecting says the gateway is missing until
+//! it is recreated or reassigned, and the reference is counted for the import's summary. A
+//! gateway's parent the import cannot resolve, or that leads back to the gateway, is cleared
+//! and counted the same way.
 
 use std::collections::{HashMap, HashSet};
 
@@ -33,6 +40,10 @@ pub struct Reconciliation {
     /// Gateways of the file found already saved, or earlier in the file: not added, the
     /// profiles going through them rewired.
     pub merged: usize,
+    /// References to a gateway neither the file nor the saved ones hold, as the C#
+    /// `OrphanReferences`: a profile's, kept, and a gateway's parent, cleared, as is one that
+    /// leads back to its gateway.
+    pub orphans: usize,
 }
 
 /// What tells two gateways apart: the host without case and around spaces, the port, the user
@@ -59,7 +70,9 @@ impl Identity {
 /// file that is one of them, or one earlier in the file, is left out and the profiles and
 /// gateways going through it go through that one; one whose identifier is already taken by
 /// another gateway is given a fresh one from `fresh_id`, as the C# gives a new GUID. A chain
-/// of parents the rewiring closes on itself loses the parent that closes it.
+/// of parents the rewiring closes on itself loses the parent that closes it. A reference to a
+/// gateway neither saved nor added is counted: a profile keeps it, a gateway's parent is
+/// cleared.
 pub fn reconcile(
     report: &mut ImportReport,
     existing: &[SshGateway],
@@ -97,18 +110,27 @@ pub fn reconcile(
             *gateway = Some(found.clone());
         }
     };
+    // `used` holds the saved gateways and those added: what a reference can resolve to.
+    let orphan = |gateway: Option<&ProfileId>| gateway.is_some_and(|id| !used.contains(id));
     for gateway in &mut kept {
         rewired(&mut gateway.parent);
+        if orphan(gateway.parent.as_ref()) {
+            gateway.parent = None;
+            counts.orphans += 1;
+        }
     }
-    break_loops(&mut kept);
-    for profile in &mut report.profiles {
-        rewired(&mut profile.gateway);
-    }
-    for profile in &mut report.rdp {
-        rewired(&mut profile.gateway);
-    }
-    for profile in &mut report.winrm {
-        rewired(&mut profile.gateway);
+    counts.orphans += break_loops(&mut kept);
+    let profiles = report
+        .profiles
+        .iter_mut()
+        .map(|profile| &mut profile.gateway)
+        .chain(report.rdp.iter_mut().map(|profile| &mut profile.gateway))
+        .chain(report.winrm.iter_mut().map(|profile| &mut profile.gateway));
+    for gateway in profiles {
+        rewired(gateway);
+        if orphan(gateway.as_ref()) {
+            counts.orphans += 1;
+        }
     }
     counts.created = kept.len();
     report.gateways = kept;
@@ -116,8 +138,10 @@ pub fn reconcile(
 }
 
 /// Clears the parent of a gateway its parents lead back to, as the C# `BreakParentLoops`:
-/// saved gateways never go through imported ones, so a loop runs through `added` alone.
-fn break_loops(added: &mut [SshGateway]) {
+/// saved gateways never go through imported ones, so a loop runs through `added` alone. How
+/// many were cleared, each counted as a parent not kept, as the C# counts it.
+fn break_loops(added: &mut [SshGateway]) -> usize {
+    let mut cleared = 0;
     let mut parents: HashMap<ProfileId, ProfileId> = added
         .iter()
         .filter_map(|gateway| Some((gateway.id.clone(), gateway.parent.clone()?)))
@@ -130,6 +154,7 @@ fn break_loops(added: &mut [SshGateway]) {
                 // Cleared for the gateways after it too: the first found loses its parent.
                 parents.remove(&gateway.id);
                 gateway.parent = None;
+                cleared += 1;
                 break;
             }
             next = parents.get(&parent).cloned();
@@ -138,6 +163,7 @@ fn break_loops(added: &mut [SshGateway]) {
             }
         }
     }
+    cleared
 }
 
 #[cfg(test)]
@@ -171,8 +197,10 @@ mod tests {
             counts,
             Reconciliation {
                 created: 1,
-                merged: 1
-            }
+                merged: 1,
+                orphans: 1
+            },
+            "the parent cleared counted, as the C# BreakParentLoops reports it"
         );
         assert_eq!(report.gateways.len(), 1);
         assert_eq!(report.gateways[0].id, ProfileId::new("inner"));

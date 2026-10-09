@@ -8191,14 +8191,23 @@ fn import_report<'a>(
         )),
     ]
     .spacing(spacing::SM);
-    // The file's gateways on a line of their own, as the C# summary says them.
+    // The file's gateways on a line of their own, as the C# summary says them, then what to
+    // do about the references none resolves (`ProfileImportService.cs:446-476`).
     let gateways = summary.gateways;
-    if gateways.created + gateways.merged > 0 {
+    if gateways.created + gateways.merged + gateways.orphans > 0 {
         content = content.push(text(fl!(
             "ui-dialog-import-gateways",
             created = gateways.created,
-            merged = gateways.merged
+            merged = gateways.merged,
+            orphans = gateways.orphans
         )));
+    }
+    if gateways.orphans > 0 {
+        content = content.push(
+            text(fl!("ui-dialog-import-gateways-orphans-action"))
+                .size(font_size::CAPTION)
+                .style(text::warning),
+        );
     }
     if !summary.skipped.is_empty() {
         let skipped = summary.skipped.iter().fold(

@@ -107,10 +107,6 @@ const GROUP_SEPARATOR: char = '/';
 pub enum SkipReason {
     /// A protocol not supported yet; carries its `connectionType`.
     NotSsh(String),
-    /// Names an SSH gateway that is not in the file, or that was itself left out.
-    MissingGateway,
-    /// An SSH gateway reached through itself, by way of its parents.
-    GatewayLoop,
     /// Has no host.
     MissingHost,
     /// Has no identifier, so a later import could not update it.
@@ -158,7 +154,8 @@ pub struct ImportReport {
     /// Citrix profiles ready to be merged into the store, without their Workspace cache
     /// launch line, a secret the C# import and export drop too.
     pub citrix: Vec<CitrixProfile>,
-    /// SSH gateways ready to be merged into the store; each one's parent is among them.
+    /// SSH gateways ready to be merged into the store, each one's parent as the file names
+    /// it: [`super::gateways::reconcile`] resolves it, as the C# `GatewayImportReconciler`.
     pub gateways: Vec<SshGateway>,
     /// Profiles imported without some of their settings, which Heimdall-rs does not have.
     pub dropped: Vec<DroppedSettings>,
@@ -895,7 +892,6 @@ pub fn import(
         }
     }
     let (gateways, skipped_gateways) = convert_gateways(&legacy_gateways);
-    let known: HashSet<&str> = gateways.iter().map(|gateway| gateway.id.as_str()).collect();
     for mut server in servers.servers {
         resolve_group_defaults(server.group.as_deref(), &settings.group_defaults)
             .apply_to(&mut server);
@@ -908,10 +904,9 @@ pub fn import(
             .connection_type
             .eq_ignore_ascii_case(WINRM_CONNECTION_TYPE)
         {
-            convert_winrm(&server, &known).map(|profile| report.winrm.push(profile))
+            convert_winrm(&server).map(|profile| report.winrm.push(profile))
         } else if server.connection_type == RDP_CONNECTION_TYPE {
-            convert_rdp(&server, &known, &settings.rdp_defaults)
-                .map(|profile| report.rdp.push(profile))
+            convert_rdp(&server, &settings.rdp_defaults).map(|profile| report.rdp.push(profile))
         } else if server
             .connection_type
             .eq_ignore_ascii_case(TELNET_CONNECTION_TYPE)
@@ -933,7 +928,7 @@ pub fn import(
         {
             convert_citrix(&server).map(|profile| report.citrix.push(profile))
         } else {
-            convert(&server, &known).map(|profile| report.profiles.push(profile))
+            convert(&server).map(|profile| report.profiles.push(profile))
         };
         match converted {
             Ok(()) => {
@@ -1033,12 +1028,14 @@ fn host_and_port(name: &str) -> Option<(&str, u16)> {
     (!host.is_empty()).then_some((host, port))
 }
 
-/// The gateways that can be used: each with an identifier, a host and a valid port, and a
-/// parent that is itself usable; a chain of parents that comes back on itself is left out
-/// whole. The others are listed with the reason.
+/// The gateways that can be used, in the file's order: each with an identifier, a host and a
+/// valid port. The others are listed with the reason. A parent is kept as the file names it,
+/// even one the file does not hold or one leading back to the gateway: as the C#
+/// `GatewayImportReconciler` (`GatewayImportReconciler.cs:98-121`), the import keeps the
+/// gateway, and [`super::gateways::reconcile`] clears that parent and counts it.
 fn convert_gateways(legacy: &[LegacyGateway]) -> (Vec<SshGateway>, Vec<Skipped>) {
     let mut skipped = Vec::new();
-    let mut candidates: HashMap<&str, SshGateway> = HashMap::new();
+    let mut kept = Vec::new();
     for gateway in legacy {
         let port = match gateway.port {
             None => Ok(DEFAULT_SSH_PORT),
@@ -1055,39 +1052,19 @@ fn convert_gateways(legacy: &[LegacyGateway]) -> (Vec<SshGateway>, Vec<Skipped>)
             port
         };
         match checked {
-            Ok(port) => {
-                candidates.insert(
-                    gateway.id.as_str(),
-                    SshGateway {
-                        id: ProfileId::new(gateway.id.clone()),
-                        name: if gateway.name.is_empty() {
-                            gateway.host.trim().to_owned()
-                        } else {
-                            gateway.name.clone()
-                        },
-                        host: gateway.host.trim().to_owned(),
-                        port,
-                        username: non_empty(gateway.user.as_ref()),
-                        key_path: non_empty(gateway.key_path.as_ref()).map(PathBuf::from),
-                        parent: non_empty(gateway.parent_gateway_id.as_ref()).map(ProfileId::new),
-                    },
-                );
-            }
-            Err(reason) => skipped.push(Skipped {
-                id: gateway.id.clone(),
-                name: gateway.name.clone(),
-                reason,
+            Ok(port) => kept.push(SshGateway {
+                id: ProfileId::new(gateway.id.clone()),
+                name: if gateway.name.is_empty() {
+                    gateway.host.trim().to_owned()
+                } else {
+                    gateway.name.clone()
+                },
+                host: gateway.host.trim().to_owned(),
+                port,
+                username: non_empty(gateway.user.as_ref()),
+                key_path: non_empty(gateway.key_path.as_ref()).map(PathBuf::from),
+                parent: non_empty(gateway.parent_gateway_id.as_ref()).map(ProfileId::new),
             }),
-        }
-    }
-    // Kept in the file's order; each one's whole chain of parents must be kept too.
-    let mut kept = Vec::new();
-    for gateway in legacy {
-        let Some(candidate) = candidates.get(gateway.id.as_str()) else {
-            continue;
-        };
-        match chain_ends(candidate, &candidates) {
-            Ok(()) => kept.push(candidate.clone()),
             Err(reason) => skipped.push(Skipped {
                 id: gateway.id.clone(),
                 name: gateway.name.clone(),
@@ -1096,22 +1073,6 @@ fn convert_gateways(legacy: &[LegacyGateway]) -> (Vec<SshGateway>, Vec<Skipped>)
         }
     }
     (kept, skipped)
-}
-
-/// Whether following `gateway`'s parents ends on one with none, every parent there.
-fn chain_ends(gateway: &SshGateway, all: &HashMap<&str, SshGateway>) -> Result<(), SkipReason> {
-    let mut seen = HashSet::from([gateway.id.as_str()]);
-    let mut current = gateway;
-    while let Some(parent) = &current.parent {
-        let Some(next) = all.get(parent.as_str()) else {
-            return Err(SkipReason::MissingGateway);
-        };
-        if !seen.insert(next.id.as_str()) {
-            return Err(SkipReason::GatewayLoop);
-        }
-        current = next;
-    }
-    Ok(())
 }
 
 /// The folders' colours of `all`, in path order; a colour out of the C# palette is left out,
@@ -1202,8 +1163,10 @@ fn non_empty(value: Option<&String>) -> Option<String> {
     value.filter(|value| !value.is_empty()).cloned()
 }
 
-/// An SSH or SFTP profile, through its gateway when it names one among `gateways`.
-fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile, SkipReason> {
+/// An SSH or SFTP profile, through the gateway it names. One the file does not hold is kept,
+/// as the C# keeps it (`GatewayImportReconciler.cs:123-139`): the import is not refused for
+/// it, [`super::gateways::reconcile`] counts it, and connecting says it is missing.
+fn convert(server: &LegacyServer) -> Result<SshProfile, SkipReason> {
     let sftp = server.connection_type == SFTP_CONNECTION_TYPE;
     if server.connection_type != SSH_CONNECTION_TYPE && !sftp {
         return Err(SkipReason::NotSsh(server.connection_type.clone()));
@@ -1214,11 +1177,7 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
     if server.remote_server.trim().is_empty() {
         return Err(SkipReason::MissingHost);
     }
-    let gateway = match non_empty(server.ssh_gateway_id.as_ref()) {
-        None => None,
-        Some(id) if gateways.contains(id.as_str()) => Some(ProfileId::new(id)),
-        Some(_) => return Err(SkipReason::MissingGateway),
-    };
+    let gateway = non_empty(server.ssh_gateway_id.as_ref()).map(ProfileId::new);
     let port = match server.ssh_port {
         None => DEFAULT_SSH_PORT,
         Some(value) => match u16::try_from(value) {
@@ -1335,10 +1294,10 @@ fn forwards_of(server: &LegacyServer) -> Result<Forwards, SkipReason> {
     })
 }
 
-/// An RDP profile, through its SSH gateway when it goes through one among `gateways`.
+/// An RDP profile, through its SSH gateway when it goes through one, kept as [`convert`]
+/// keeps it.
 fn convert_rdp(
     server: &LegacyServer,
-    gateways: &HashSet<&str>,
     defaults: &LegacyRdpDefaults,
 ) -> Result<RdpProfile, SkipReason> {
     if server.id.is_empty() {
@@ -1347,7 +1306,7 @@ fn convert_rdp(
     if server.remote_server.trim().is_empty() {
         return Err(SkipReason::MissingHost);
     }
-    let gateway = routed_gateway(server, gateways)?;
+    let gateway = routed_gateway(server);
     let port = match server.remote_port {
         None => DEFAULT_RDP_PORT,
         Some(value) => match u16::try_from(value) {
@@ -1663,25 +1622,18 @@ fn trimmed(value: Option<&str>) -> Option<String> {
 /// A `WinRM` profile as `WinRmPowerShellLaunchBuilder` connects it: directly, never through a
 /// gateway. The stored password is not carried over: `PowerShell` asks for it.
 /// The SSH gateway `server` goes through, as `ConnectionService` decides: the one it names
-/// unless it asks for a direct connection. A gateway the file does not hold skips the profile.
-fn routed_gateway(
-    server: &LegacyServer,
-    gateways: &HashSet<&str>,
-) -> Result<Option<ProfileId>, SkipReason> {
-    match non_empty(server.ssh_gateway_id.as_ref()) {
-        Some(_) if server.use_direct_connection => Ok(None),
-        None => Ok(None),
-        Some(id) if gateways.contains(id.as_str()) => Ok(Some(ProfileId::new(id))),
-        Some(_) => Err(SkipReason::MissingGateway),
+/// unless it asks for a direct connection. One the file does not hold is kept, as
+/// [`convert`] keeps it.
+fn routed_gateway(server: &LegacyServer) -> Option<ProfileId> {
+    if server.use_direct_connection {
+        return None;
     }
+    non_empty(server.ssh_gateway_id.as_ref()).map(ProfileId::new)
 }
 
 /// A `WinRM` profile as `WinRmHandler` connects it, through its SSH gateway when it names one.
 /// One over HTTPS keeps it: connecting then says why the C# refuses it, as the C# does.
-fn convert_winrm(
-    server: &LegacyServer,
-    gateways: &HashSet<&str>,
-) -> Result<WinRmProfile, SkipReason> {
+fn convert_winrm(server: &LegacyServer) -> Result<WinRmProfile, SkipReason> {
     if server.id.is_empty() {
         return Err(SkipReason::MissingId);
     }
@@ -1718,7 +1670,7 @@ fn convert_winrm(
         use_ssl: server.win_rm_use_ssl,
         skip_certificate_check: server.win_rm_use_ssl && server.win_rm_skip_certificate_check,
         username,
-        gateway: routed_gateway(server, gateways)?,
+        gateway: routed_gateway(server),
     })
 }
 
