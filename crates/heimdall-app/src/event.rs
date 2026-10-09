@@ -84,7 +84,8 @@ impl fmt::Debug for Answer {
 }
 
 /// What the FTPS certificate question shows of the certificate beside its subject, as the C#
-/// prompt: its issuer, when it holds, and why the system did not vouch for it.
+/// prompt: its issuer, when it holds, and why the system did not vouch for it; and whether
+/// it renews, on the same key, a certificate the user trusted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertificateDetails {
     /// The issuer, made safe to show.
@@ -93,6 +94,19 @@ pub struct CertificateDetails {
     pub validity: heimdall_rdp::Validity,
     /// Why this computer's certificate authorities did not vouch for it.
     pub issue: ValidationIssue,
+    /// The hash of the whole certificate: what the user's answer trusts, this very
+    /// certificate and no other on the same key.
+    pub certificate: heimdall_rdp::CertificateHash,
+    /// Set when the server's key is the one trusted, its certificate another: renewed, or
+    /// minted again by whoever holds the key.
+    pub renewal: Option<Renewal>,
+}
+
+/// A certificate presented on a key trusted, with another certificate on record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Renewal {
+    /// When the certificate on record holds, when recorded.
+    pub recorded: Option<heimdall_rdp::Validity>,
 }
 
 /// One step of a connection attempt.

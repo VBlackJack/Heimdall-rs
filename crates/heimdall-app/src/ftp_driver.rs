@@ -27,14 +27,14 @@ use std::time::Duration;
 
 use heimdall_core::profile::{FtpProfile, display_address};
 use heimdall_files::{FtpClient, FtpConnectError, FtpSecurity, FtpTarget, RemoteSession};
-use heimdall_rdp::Fingerprint;
+use heimdall_rdp::CertificateHash;
 use heimdall_ssh::{AuthMethod, PasswordQuestion};
 use heimdall_tls::{PresentedSlot, connector};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::certificate_pins::{AcceptedSlot, CertificatePins};
+use crate::certificate_pins::{CertificatePins, RecordSlot};
 use crate::driver::{AnswerRegistry, ask};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
@@ -73,14 +73,15 @@ pub struct FtpRequest {
     pub profile: FtpProfile,
     /// File of the FTPS servers the user trusts.
     pub known_hosts: PathBuf,
-    /// A key the user accepted after the certificate question, recorded once the server
-    /// presents exactly it.
-    pub accepted: Option<Fingerprint>,
-    /// The key the user trusted for this run just now, after the certificate question:
-    /// this attempt takes it as it is, later ones check it as a pin.
-    pub trusted_once: Option<Fingerprint>,
-    /// Keys the user trusted for this server for this run only.
-    pub trusted_for_run: Vec<Fingerprint>,
+    /// The certificate the user accepted after the certificate question, by the hash of the
+    /// whole of it: this attempt takes it as it is, and records it once the server presents
+    /// exactly it.
+    pub accepted: Option<CertificateHash>,
+    /// The certificate the user trusted for this run just now, after the certificate
+    /// question, by its hash: this attempt takes it as it is, later ones check it as a pin.
+    pub trusted_once: Option<CertificateHash>,
+    /// Certificates the user trusted for this server for this run only, by their hash.
+    pub trusted_for_run: Vec<CertificateHash>,
     /// Cancels the attempt.
     pub cancel: CancellationToken,
 }
@@ -155,10 +156,10 @@ async fn connect(
             }
         };
         let presented = PresentedSlot::default();
-        let accepted = AcceptedSlot::default();
+        let to_record = RecordSlot::default();
         let security = if profile.tls {
             FtpSecurity::Explicit {
-                connector: connector(pins.user_trust(accepted.clone()), presented.clone()),
+                connector: connector(pins.user_trust(to_record.clone()), presented.clone()),
                 domain: profile.host.clone(),
             }
         } else {
@@ -175,7 +176,7 @@ async fn connect(
         };
         match FtpClient::connect(&target).await {
             Ok(client) => {
-                pins.record_accepted(&accepted)?;
+                pins.record_trusted(&to_record)?;
                 return Ok(Some(client));
             }
             Err(FtpConnectError::LoginRefused) if profile.username.is_some() => {}

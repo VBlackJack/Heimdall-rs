@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 
 use heimdall_core::profile::{ProfileId, VncProfile};
-use heimdall_rdp::Fingerprint;
+use heimdall_rdp::CertificateHash;
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Effect, Phase, Tab, TabProfile};
@@ -45,7 +45,7 @@ impl App {
     fn vnc_request(
         &self,
         profile: &VncProfile,
-        (accepted, trusted_once): (Option<Fingerprint>, Option<Fingerprint>),
+        (accepted, trusted_once): (Option<CertificateHash>, Option<CertificateHash>),
         cancel: CancellationToken,
     ) -> VncRequest {
         VncRequest {
@@ -53,7 +53,7 @@ impl App {
             known_hosts: self.known_vnc_hosts(),
             accepted,
             trusted_once,
-            trusted_for_run: self.certificates_trusted_for_run(&profile.host, profile.port),
+            trusted_for_run: self.whole_certificates_trusted_for_run(&profile.host, profile.port),
             cancel,
         }
     }
@@ -99,7 +99,7 @@ impl App {
     pub(super) fn reconnect_vnc(
         &mut self,
         tab_id: TabId,
-        decided: (Option<Fingerprint>, Option<Fingerprint>),
+        decided: (Option<CertificateHash>, Option<CertificateHash>),
     ) -> Vec<Effect> {
         let Some(TabProfile::Vnc(profile)) = self.tab(tab_id).map(|tab| tab.profile.clone()) else {
             return Vec::new();

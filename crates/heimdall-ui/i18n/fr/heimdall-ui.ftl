@@ -1303,6 +1303,7 @@ ui-trusted-certificates-hint = Les certificats acceptés pour un bureau à dista
 ui-trusted-certificates-search = Rechercher par serveur ou empreinte
 ui-trusted-certificates-server = Serveur
 ui-trusted-certificates-fingerprint = Empreinte
+ui-trusted-certificates-thumbprint = Certificat : { $thumbprint }
 ui-trusted-certificates-subject = Sujet
 ui-trusted-certificates-issuer = Émetteur
 ui-trusted-certificates-trusted = Approuvé depuis
@@ -2444,11 +2445,14 @@ ui-certificate-validity = Valide du / au : { $from } - { $until }{ $period ->
    *[current] {""}
 }
 ui-certificate-validation-issue = Problème de validation : { $issue }
+ui-certificate-renewed = Certificat renouvelé : même clé, nouveau certificat. Le serveur présente un autre certificat sur la clé que vous avez approuvée. Un renouvellement est courant, mais qui détient la clé a pu aussi le fabriquer : approuvez-le seulement si vous attendez ce renouvellement.
+ui-certificate-renewed-previous = Certificat enregistré valide du / au : { $from } - { $until }
 ui-certificate-issue-self-signed = Le certificat est auto-signé : aucune autorité de certification ne le garantit.
 ui-certificate-issue-unknown-issuer = Il a été émis par une autorité de certification que cet ordinateur n'approuve pas.
 ui-certificate-issue-expired = Le certificat a expiré.
 ui-certificate-issue-not-yet-valid = Le certificat n'est pas encore valide.
 ui-certificate-issue-name-mismatch = Le certificat a été émis pour un autre nom que celui de ce serveur.
+ui-certificate-issue-wrong-purpose = Le certificat n'est pas destiné à un serveur : son usage de clé en nomme d'autres.
 ui-certificate-issue-revoked = Son émetteur a révoqué le certificat.
 ui-certificate-issue-no-system-store = Cet ordinateur n'a aucune autorité de certification pour le vérifier.
 ui-certificate-issue-other = Le certificat n'a pas passé la validation de cet ordinateur.

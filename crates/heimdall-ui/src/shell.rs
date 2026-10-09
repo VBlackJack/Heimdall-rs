@@ -7518,7 +7518,8 @@ fn certificate_body<'a>(
 
 /// What the FTPS certificate question says under the subject, as the C# prompt: the issuer,
 /// when the certificate holds, marked when `now` is outside it, and why the system did not
-/// vouch for it.
+/// vouch for it. A certificate renewed on a key trusted says so first, with when the
+/// certificate on record held, when recorded.
 fn certificate_details<'a>(
     details: &heimdall_app::CertificateDetails,
     now: std::time::SystemTime,
@@ -7528,24 +7529,34 @@ fn certificate_details<'a>(
         heimdall_rdp::ValidityPeriod::Expired => "expired",
         heimdall_rdp::ValidityPeriod::NotYetValid => "future",
     };
-    column![
+    let mut body = Column::new().spacing(spacing::SM);
+    if let Some(renewed) = &details.renewal {
+        body = body.push(text(fl!("ui-certificate-renewed")));
+        if let Some(recorded) = renewed.recorded {
+            body = body.push(text(fl!(
+                "ui-certificate-renewed-previous",
+                from = crate::files_view::modified_text(recorded.not_before),
+                until = crate::files_view::modified_text(recorded.not_after)
+            )));
+        }
+    }
+    body.push(
         text(fl!(
             "ui-certificate-issuer",
             issuer = server_text(&details.issuer)
         ))
         .font(iced::Font::MONOSPACE),
-        text(fl!(
-            "ui-certificate-validity",
-            from = crate::files_view::modified_text(details.validity.not_before),
-            until = crate::files_view::modified_text(details.validity.not_after),
-            period = period
-        )),
-        text(fl!(
-            "ui-certificate-validation-issue",
-            issue = texts::validation_issue(details.issue)
-        )),
-    ]
-    .spacing(spacing::SM)
+    )
+    .push(text(fl!(
+        "ui-certificate-validity",
+        from = crate::files_view::modified_text(details.validity.not_before),
+        until = crate::files_view::modified_text(details.validity.not_after),
+        period = period
+    )))
+    .push(text(fl!(
+        "ui-certificate-validation-issue",
+        issue = texts::validation_issue(details.issue)
+    )))
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

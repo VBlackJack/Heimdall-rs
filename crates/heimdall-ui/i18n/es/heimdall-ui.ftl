@@ -1300,6 +1300,7 @@ ui-trusted-certificates-hint = Certificados aceptados para un escritorio remoto,
 ui-trusted-certificates-search = Buscar por servidor o huella
 ui-trusted-certificates-server = Servidor
 ui-trusted-certificates-fingerprint = Huella
+ui-trusted-certificates-thumbprint = Certificado: { $thumbprint }
 ui-trusted-certificates-subject = Sujeto
 ui-trusted-certificates-issuer = Emisor
 ui-trusted-certificates-trusted = De confianza desde
@@ -2441,11 +2442,14 @@ ui-certificate-validity = Válido desde / hasta: { $from } - { $until }{ $period
    *[current] {""}
 }
 ui-certificate-validation-issue = Problema de validación: { $issue }
+ui-certificate-renewed = Certificado renovado: misma clave, certificado nuevo. El servidor presenta otro certificado con la clave en la que confió. Una renovación es habitual, pero quien tenga la clave también podría haberlo creado: apruébelo solo si espera esta renovación.
+ui-certificate-renewed-previous = Certificado registrado válido desde / hasta: { $from } - { $until }
 ui-certificate-issue-self-signed = El certificado está autofirmado: ninguna autoridad de certificación lo respalda.
 ui-certificate-issue-unknown-issuer = Lo emitió una autoridad de certificación en la que este equipo no confía.
 ui-certificate-issue-expired = El certificado ha caducado.
 ui-certificate-issue-not-yet-valid = El certificado aún no es válido.
 ui-certificate-issue-name-mismatch = El certificado se emitió para otro nombre distinto del de este servidor.
+ui-certificate-issue-wrong-purpose = El certificado no está destinado a un servidor: su uso de clave indica otros fines.
 ui-certificate-issue-revoked = Su emisor revocó el certificado.
 ui-certificate-issue-no-system-store = Este equipo no tiene ninguna autoridad de certificación con la que comprobarlo.
 ui-certificate-issue-other = El certificado no superó la validación de este equipo.

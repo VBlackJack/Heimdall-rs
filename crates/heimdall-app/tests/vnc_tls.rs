@@ -31,7 +31,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, VncProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_rdp::{Fingerprint, KnownRdpHosts, ServerCertificate};
+use heimdall_rdp::{CertificateHash, Fingerprint, KnownRdpHosts, ServerCertificate, Validity};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
@@ -40,6 +40,8 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::rustls::crypto::ring::default_provider;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
+use tokio_rustls::rustls::sign::CertifiedKey;
 use tokio_stream::StreamExt as _;
 
 /// Bound on anything the test waits for.
@@ -75,27 +77,86 @@ fn server_tls() -> (TlsAcceptor, Fingerprint) {
 /// A TLS server with a fresh self-signed certificate over since 2001, and the key it is
 /// pinned by.
 fn expired_server_tls() -> (TlsAcceptor, Fingerprint) {
-    let mut params = rcgen::CertificateParams::new(vec![HOST.to_owned()]).expect("params");
-    params.not_before = rcgen::date_time_ymd(2000, 1, 1);
-    params.not_after = rcgen::date_time_ymd(2001, 1, 1);
-    let key = rcgen::KeyPair::generate().expect("key");
-    let cert = params.self_signed(&key).expect("cert");
-    acceptor(cert.der().to_vec(), key.serialize_der())
+    made_server_tls((2000, 2001), Vec::new(), false).0
 }
 
-/// A TLS server presenting certificate `der` of private key `key` (PKCS #8), and the key it
-/// is pinned by.
+/// The parameters of a certificate for [`HOST`], valid from the first of January of `from`
+/// to that of `until`, for `purposes`, any when none; a certificate authority when
+/// `authority`.
+fn params(
+    (from, until): (i32, i32),
+    purposes: Vec<rcgen::ExtendedKeyUsagePurpose>,
+    authority: bool,
+) -> rcgen::CertificateParams {
+    let mut params = rcgen::CertificateParams::new(vec![HOST.to_owned()]).expect("params");
+    params.not_before = rcgen::date_time_ymd(from, 1, 1);
+    params.not_after = rcgen::date_time_ymd(until, 1, 1);
+    params.extended_key_usages = purposes;
+    if authority {
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    }
+    params
+}
+
+/// A TLS server with a fresh self-signed certificate made by [`params`], the key it is
+/// pinned by, and its private key (PKCS #8).
+fn made_server_tls(
+    validity: (i32, i32),
+    purposes: Vec<rcgen::ExtendedKeyUsagePurpose>,
+    authority: bool,
+) -> ((TlsAcceptor, Fingerprint), Vec<u8>) {
+    let key = rcgen::KeyPair::generate().expect("key");
+    let cert = params(validity, purposes, authority)
+        .self_signed(&key)
+        .expect("cert");
+    (
+        acceptor(cert.der().to_vec(), key.serialize_der()),
+        key.serialize_der(),
+    )
+}
+
+/// A forger's TLS server: a certificate around the public key of `victim` (PKCS #8), over
+/// since 2001, signed by a key of its own, which signs the handshake too.
+fn forged_server_tls(victim: &[u8]) -> TlsAcceptor {
+    let victim = rcgen::KeyPair::try_from(victim).expect("victim's key");
+    let forger = rcgen::KeyPair::generate().expect("key");
+    let mut authority = rcgen::CertificateParams::new(Vec::<String>::new()).expect("params");
+    authority.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let issuer = rcgen::Issuer::new(authority, rcgen::KeyPair::generate().expect("key"));
+    let cert = params((2000, 2001), Vec::new(), false)
+        .signed_by(&victim, &issuer)
+        .expect("forged");
+    acceptor(cert.der().to_vec(), forger.serialize_der()).0
+}
+
+/// The server's certificate, whatever the client says: no check that the key is the
+/// certificate's, for a forger.
+#[derive(Debug)]
+struct Fixed(Arc<CertifiedKey>);
+
+impl ResolvesServerCert for Fixed {
+    fn resolve(&self, _: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        Some(Arc::clone(&self.0))
+    }
+}
+
+/// A TLS server presenting certificate `der` and signing with private key `key` (PKCS #8),
+/// and the key the certificate is pinned by.
 fn acceptor(der: Vec<u8>, key: Vec<u8>) -> (TlsAcceptor, Fingerprint) {
     let pin = ServerCertificate::from_der(&der)
         .expect("readable")
         .fingerprint;
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key));
-    let config = ServerConfig::builder_with_provider(Arc::new(default_provider()))
+    let provider = Arc::new(default_provider());
+    let key = provider
+        .key_provider
+        .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)))
+        .expect("signing key");
+    let certified = CertifiedKey::new(vec![CertificateDer::from(der)], key);
+    let config = ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("versions")
         .with_no_client_auth()
-        .with_single_cert(vec![CertificateDer::from(der)], key)
-        .expect("server config");
+        .with_cert_resolver(Arc::new(Fixed(Arc::new(certified))));
     (TlsAcceptor::from(Arc::new(config)), pin)
 }
 
@@ -129,6 +190,32 @@ fn app_with(dir: &Path, port: u16, require_tls: bool) -> App {
         files_start: dir.to_owned(),
         system_credentials: heimdall_app::SystemCredentials::memory(),
     })
+}
+
+/// The whole certificate the single question of `events` asks about.
+fn asked_whole(events: &[ConnectionEvent]) -> CertificateHash {
+    match events {
+        [
+            ConnectionEvent::UnknownRdpCertificate {
+                details: Some(details),
+                ..
+            },
+        ] => details.certificate,
+        other => panic!("one question, with its certificate: {other:?}"),
+    }
+}
+
+/// The renewal the single question of `events` says, if any.
+fn asked_renewal(events: &[ConnectionEvent]) -> Option<heimdall_app::Renewal> {
+    match events {
+        [
+            ConnectionEvent::UnknownRdpCertificate {
+                details: Some(details),
+                ..
+            },
+        ] => details.renewal,
+        other => panic!("one question, with its certificate: {other:?}"),
+    }
 }
 
 /// The VNC attempt `effects` start: its tab, its attempt and what it needs.
@@ -255,13 +342,18 @@ async fn an_unknown_certificate_is_asked_about_before_any_password_then_pinned_o
         ),
         "the certificate question alone, no password asked: {events:?}"
     );
+    let whole = asked_whole(&events);
     let found = app.tab(tab).expect("tab");
     assert!(matches!(found.phase, Phase::HostKey { .. }));
     assert!(found.asks_about_certificate());
 
     // Trusted: the next attempt goes through, encrypted, and records it.
     let second = attempt_of(&app.update(Message::HostKeyDecision { tab, accept: true }));
-    assert_eq!(second.2.accepted, Some(pin));
+    assert_eq!(
+        second.2.accepted,
+        Some(whole),
+        "the very certificate asked about"
+    );
     let events = run(&mut app, second).await;
     assert!(
         events.iter().any(|event| matches!(
@@ -526,14 +618,26 @@ async fn a_vencrypt_only_server_with_nothing_accepted_inside_is_refused_not_trie
 /// Whether `events` are the refusal of the certificate pinned by `pin` as no longer valid,
 /// over, and nothing else: no question.
 fn refused_as_over(events: &[ConnectionEvent], port: u16, pin: Fingerprint) -> bool {
+    refused_for(events, port, pin, heimdall_tls::ValidationIssue::Expired)
+}
+
+/// Whether `events` are the refusal of the certificate pinned by `pin` as no longer valid,
+/// for `why`, and nothing else: no question.
+fn refused_for(
+    events: &[ConnectionEvent],
+    port: u16,
+    pin: Fingerprint,
+    why: heimdall_tls::ValidationIssue,
+) -> bool {
     matches!(
         events,
         [ConnectionEvent::Failed(UiError::PinnedCertificateInvalid {
             target,
             fingerprint,
-            issue: heimdall_tls::ValidationIssue::Expired,
+            issue,
             ..
         })] if *target == format!("{HOST}:{port}") && *fingerprint == pin.to_string()
+            && *issue == why
     )
 }
 
@@ -606,12 +710,13 @@ async fn a_certificate_trusted_once_goes_through_on_the_answer_then_is_checked_a
         ),
         "{events:?}"
     );
+    let whole = asked_whole(&events);
 
     // Trusted once: the attempt built on the answer takes it as it is.
     let second = attempt_of(&app.update(Message::HostKeyTrustOnce(tab)));
     assert_eq!(second.2.accepted, None, "nothing to record");
-    assert_eq!(second.2.trusted_once, Some(pin));
-    assert_eq!(second.2.trusted_for_run, [pin]);
+    assert_eq!(second.2.trusted_once, Some(whole));
+    assert_eq!(second.2.trusted_for_run, [whole]);
     let events = run(&mut app, second).await;
     assert!(
         events
@@ -624,7 +729,7 @@ async fn a_certificate_trusted_once_goes_through_on_the_answer_then_is_checked_a
     let third = attempt_of(&app.update(Message::ReconnectTab(tab)));
     let tab = third.0;
     assert_eq!(third.2.trusted_once, None, "decided once only");
-    assert_eq!(third.2.trusted_for_run, [pin]);
+    assert_eq!(third.2.trusted_for_run, [whole]);
     let events = run(&mut app, third).await;
     assert!(refused_as_over(&events, port, pin), "{events:?}");
 
@@ -641,6 +746,318 @@ async fn a_certificate_trusted_once_goes_through_on_the_answer_then_is_checked_a
         ),
         "{events:?}"
     );
+    server.await.expect("server");
+    assert!(
+        !dir.path().join("known_vnc_hosts").exists(),
+        "never written"
+    );
+}
+
+/// The events of one attempt to the profile's server on `port`, its key pinned on file by
+/// `pin` beforehand, the server presenting what `acceptor` holds; and the tab.
+async fn pinned_attempt(
+    dir: &Path,
+    acceptor: TlsAcceptor,
+    pin: Fingerprint,
+) -> (App, TabId, Vec<ConnectionEvent>, u16) {
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_to_tls(&mut stream).await;
+        assert!(acceptor.accept(stream).await.is_err(), "refused");
+    });
+    KnownRdpHosts::new(dir.join("known_vnc_hosts"))
+        .record(HOST, port, &pin)
+        .expect("pinned");
+    let mut app = app(dir, port);
+    let attempt = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let tab = attempt.0;
+    let events = run(&mut app, attempt).await;
+    server.await.expect("server");
+    (app, tab, events, port)
+}
+
+#[tokio::test]
+async fn a_pinned_certificate_not_yet_valid_is_refused_never_asked_about() {
+    let ((acceptor, pin), _) = made_server_tls((2045, 2046), Vec::new(), false);
+    let dir = tempfile::tempdir().expect("dir");
+    let (_, _, events, port) = pinned_attempt(dir.path(), acceptor, pin).await;
+    assert!(
+        refused_for(
+            &events,
+            port,
+            pin,
+            heimdall_tls::ValidationIssue::NotYetValid
+        ),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_pinned_authority_serving_as_its_own_server_for_clients_only_is_refused() {
+    let ((acceptor, pin), _) = made_server_tls(
+        (2020, 2045),
+        vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth],
+        true,
+    );
+    let dir = tempfile::tempdir().expect("dir");
+    let (_, _, events, port) = pinned_attempt(dir.path(), acceptor, pin).await;
+    assert!(
+        refused_for(
+            &events,
+            port,
+            pin,
+            heimdall_tls::ValidationIssue::WrongPurpose
+        ),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_forged_certificate_around_the_pinned_key_fails_as_tls_never_as_a_pin_to_forget() {
+    // The server's own certificate, current, its key pinned; the forger has its public key
+    // only.
+    let ((_, pin), victim_key) = made_server_tls((2020, 2045), Vec::new(), false);
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("known_vnc_hosts");
+    let (mut app, tab, events, _) =
+        pinned_attempt(dir.path(), forged_server_tls(&victim_key), pin).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ConnectionEvent::Failed(UiError::VncProtocol { .. })]
+        ),
+        "a TLS failure, no refusal of the pin: {events:?}"
+    );
+    assert!(
+        app.update(Message::ForgetServer(tab)).is_empty(),
+        "nothing to forget"
+    );
+    let [entry] = KnownRdpHosts::new(&file)
+        .entries()
+        .expect("read")
+        .try_into()
+        .expect("one entry");
+    assert_eq!(entry.fingerprint, pin, "the pin stays");
+
+    // The server itself, over, holding the key: refused as the pin no longer valid.
+    let victim = rcgen::KeyPair::try_from(victim_key.as_slice()).expect("key");
+    let cert = params((2000, 2001), Vec::new(), false)
+        .self_signed(&victim)
+        .expect("cert");
+    let (genuine, same_pin) = acceptor(cert.der().to_vec(), victim_key);
+    assert_eq!(same_pin, pin, "the same key");
+    let dir = tempfile::tempdir().expect("dir");
+    let (_, _, events, port) = pinned_attempt(dir.path(), genuine, pin).await;
+    assert!(refused_as_over(&events, port, pin), "{events:?}");
+}
+
+/// A certificate minted for [`HOST`] on a key: the whole of it, its hash and its validity.
+#[derive(Clone)]
+struct Minted {
+    der: Vec<u8>,
+    hash: CertificateHash,
+    held: Validity,
+}
+
+/// A self-signed certificate for [`HOST`] minted on `key` (PKCS #8), valid from the first
+/// of January of `from` to that of `until`. Each one minted is another certificate, even
+/// on the same key and dates.
+fn mint(key: &[u8], validity: (i32, i32)) -> Minted {
+    let pair = rcgen::KeyPair::try_from(key).expect("key");
+    let der = params(validity, Vec::new(), false)
+        .self_signed(&pair)
+        .expect("cert")
+        .der()
+        .to_vec();
+    Minted {
+        hash: CertificateHash::of(&der),
+        held: Validity::from_der(&der).expect("validity"),
+        der,
+    }
+}
+
+/// A fresh key pair (PKCS #8), and the key the certificates on it are pinned by.
+fn fresh_key() -> (Vec<u8>, Fingerprint) {
+    let key = rcgen::KeyPair::generate().expect("key").serialize_der();
+    let fingerprint = ServerCertificate::from_der(&mint(&key, (2020, 2045)).der)
+        .expect("readable")
+        .fingerprint;
+    (key, fingerprint)
+}
+
+/// A server on `listener` presenting, at each connection in turn, the certificate of a step
+/// signing with `key`; the session goes on when the step says so, else the client is
+/// expected to go away at the certificate.
+fn serve_steps(
+    listener: TcpListener,
+    key: &[u8],
+    steps: Vec<(&Minted, bool)>,
+) -> tokio::task::JoinHandle<()> {
+    let acceptors: Vec<(TlsAcceptor, bool)> = steps
+        .into_iter()
+        .map(|(minted, session)| (acceptor(minted.der.clone(), key.to_vec()).0, session))
+        .collect();
+    tokio::spawn(async move {
+        for (acceptor, session) in acceptors {
+            let (mut stream, _) = listener.accept().await.expect("accepted");
+            serve_to_tls(&mut stream).await;
+            if session {
+                let mut tls = acceptor.accept(stream).await.expect("TLS");
+                serve_desktop(&mut tls).await;
+            } else {
+                assert!(acceptor.accept(stream).await.is_err(), "stopped at it");
+            }
+        }
+    })
+}
+
+fn ready(events: &[ConnectionEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, ConnectionEvent::VncReady { .. }))
+}
+
+#[tokio::test]
+async fn a_certificate_minted_again_on_the_pinned_key_is_asked_about_as_a_renewal() {
+    let (key, pin) = fresh_key();
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    // Pinned whole.
+    let first = mint(&key, (2020, 2045));
+    let dir = tempfile::tempdir().expect("dir");
+    let file = KnownRdpHosts::new(dir.path().join("known_vnc_hosts"));
+    file.record_whole_certificate(
+        HOST,
+        port,
+        &ServerCertificate::from_der(&first.der).expect("readable"),
+        (&first.hash, Some(&first.held)),
+    )
+    .expect("pinned");
+    // Whoever holds the key mints another, current: asked about, never taken silently;
+    // trusted, the session; then the one it replaced is asked about in turn.
+    let minted_again = mint(&key, (2021, 2046));
+    let server = serve_steps(
+        listener,
+        &key,
+        vec![
+            (&minted_again, false),
+            (&minted_again, true),
+            (&first, false),
+        ],
+    );
+    let mut app = app(dir.path(), port);
+    let attempt = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let tab = attempt.0;
+    let events = run(&mut app, attempt).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ConnectionEvent::UnknownRdpCertificate { fingerprint, .. }] if *fingerprint == pin
+        ),
+        "the question, not a silent connection: {events:?}"
+    );
+    assert_eq!(
+        asked_renewal(&events),
+        Some(heimdall_app::Renewal {
+            recorded: Some(first.held)
+        }),
+        "said renewed, with the certificate on record"
+    );
+    assert_eq!(asked_whole(&events), minted_again.hash);
+
+    let second = attempt_of(&app.update(Message::HostKeyDecision { tab, accept: true }));
+    assert_eq!(second.2.accepted, Some(minted_again.hash));
+    assert!(ready(&run(&mut app, second).await));
+    let [entry] = file
+        .entries()
+        .expect("read")
+        .try_into()
+        .expect("one entry: the renewed one replaced the old");
+    assert_eq!(
+        (entry.fingerprint, entry.certificate),
+        (pin, Some(minted_again.hash))
+    );
+
+    let third = attempt_of(&app.update(Message::ReconnectTab(tab)));
+    let events = run(&mut app, third).await;
+    assert_eq!(asked_whole(&events), first.hash, "no longer trusted");
+    assert!(asked_renewal(&events).is_some());
+    server.await.expect("server");
+}
+
+#[tokio::test]
+async fn a_server_pinned_by_its_key_alone_adopts_its_certificate_then_asks_about_another() {
+    let (key, pin) = fresh_key();
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let dir = tempfile::tempdir().expect("dir");
+    let file = KnownRdpHosts::new(dir.path().join("known_vnc_hosts"));
+    // As an earlier Heimdall pinned it: its key alone.
+    file.record(HOST, port, &pin).expect("pinned");
+    let (presented, another) = (mint(&key, (2020, 2045)), mint(&key, (2021, 2046)));
+    let server = serve_steps(
+        listener,
+        &key,
+        vec![(&presented, true), (&presented, true), (&another, false)],
+    );
+    let mut app = app(dir.path(), port);
+
+    // The first connection goes as before, and adopts its certificate.
+    let attempt = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let tab = attempt.0;
+    assert!(ready(&run(&mut app, attempt).await));
+    let [entry] = file.entries().expect("read").try_into().expect("one entry");
+    assert_eq!(
+        (entry.certificate, entry.validity),
+        (Some(presented.hash), Some(presented.held))
+    );
+
+    // The same certificate: known.
+    let again = attempt_of(&app.update(Message::ReconnectTab(tab)));
+    let tab = again.0;
+    assert!(ready(&run(&mut app, again).await));
+
+    // Another on the same key: asked about, as a renewal.
+    let third = attempt_of(&app.update(Message::ReconnectTab(tab)));
+    let events = run(&mut app, third).await;
+    assert_eq!(asked_whole(&events), another.hash);
+    assert_eq!(
+        asked_renewal(&events),
+        Some(heimdall_app::Renewal {
+            recorded: Some(presented.held)
+        })
+    );
+    server.await.expect("server");
+}
+
+#[tokio::test]
+async fn an_answer_trusts_the_very_certificate_asked_about_not_its_key() {
+    let (key, pin) = fresh_key();
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    // Asked about one certificate; the attempt built on the answer meets another on the
+    // same key.
+    let (asked, other) = (mint(&key, (2020, 2045)), mint(&key, (2021, 2046)));
+    let server = serve_steps(listener, &key, vec![(&asked, false), (&other, false)]);
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), port);
+    let attempt = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let tab = attempt.0;
+    let events = run(&mut app, attempt).await;
+    assert_eq!(asked_whole(&events), asked.hash);
+    let second = attempt_of(&app.update(Message::HostKeyTrustOnce(tab)));
+    assert_eq!(second.2.trusted_once, Some(asked.hash));
+    let events = run(&mut app, second).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ConnectionEvent::UnknownRdpCertificate { fingerprint, .. }] if *fingerprint == pin
+        ),
+        "another certificate on the key is asked about: {events:?}"
+    );
+    assert_eq!(asked_whole(&events), other.hash);
     server.await.expect("server");
     assert!(
         !dir.path().join("known_vnc_hosts").exists(),

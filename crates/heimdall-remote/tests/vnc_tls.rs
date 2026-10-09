@@ -83,6 +83,7 @@ fn config(port: u16, policy: SecurityPolicy, pinned: &[Vec<u8>]) -> (VncConfig, 
         if pins.contains(&fingerprint(der)) {
             UserVerdict::Pinned {
                 period: Period::Current,
+                for_servers: true,
             }
         } else {
             UserVerdict::Untrusted

@@ -65,6 +65,8 @@ fn details(der: &[u8], issue: ValidationIssue) -> CertificateDetails {
         issuer: ServerCertificate::from_der(der).expect("read").issuer,
         validity: Validity::from_der(der).expect("validity"),
         issue,
+        certificate: heimdall_rdp::CertificateHash::of(der),
+        renewal: None,
     }
 }
 
@@ -208,4 +210,37 @@ fn a_trusted_certificate_no_longer_valid_is_refused_with_the_way_to_trust_its_re
         message,
         Message::App(AppMessage::ForgetServer(forgotten)) if forgotten == tab
     )));
+}
+
+#[test]
+fn a_certificate_renewed_on_the_trusted_key_is_said_so_with_both_validities() {
+    let dir = tempfile::tempdir().expect("dir");
+    let der = certificate("Lab Root", (2021, 2046));
+    let recorded = Validity::from_der(&certificate("Lab Root", (2020, 2045))).expect("validity");
+    let mut shown = details(&der, ValidationIssue::SelfSigned);
+    shown.renewal = Some(heimdall_app::Renewal {
+        recorded: Some(recorded),
+    });
+    let shell = asked(dir.path(), shown);
+    let mut ui = simulator(&shell);
+    ui.find(
+        "Renewed certificate: same key, new certificate. The server presents another \
+         certificate on the key you trusted. A renewal is routine, but whoever holds the key \
+         could also have made it: approve it only if you expect this renewal.",
+    )
+    .expect("said renewed");
+    ui.find("Certificate on record valid from / until: 2020-01-01 00:00 - 2045-01-01 00:00")
+        .expect("the certificate on record");
+    ui.find("Valid from / until: 2021-01-01 00:00 - 2046-01-01 00:00")
+        .expect("the one presented");
+    drop(ui);
+
+    // A first contact says nothing of a renewal.
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = asked(dir.path(), details(&der, ValidationIssue::SelfSigned));
+    let mut ui = simulator(&shell);
+    assert!(
+        ui.find("Certificate on record valid from / until: 2020-01-01 00:00 - 2045-01-01 00:00")
+            .is_err()
+    );
 }

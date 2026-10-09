@@ -482,17 +482,29 @@ fn an_ftp_profile_opens_a_files_tab_and_its_certificate_question_reconnects_it()
     assert!(request.known_hosts.ends_with("known_ftps_hosts"));
     assert!(app.tab(tab).expect("tab").files.is_some(), "a Files tab");
 
-    // The certificate question, answered "trust": the next attempt carries the key.
+    // The certificate question, answered "trust": the next attempt carries the very
+    // certificate asked about.
     let fingerprint: heimdall_rdp::Fingerprint =
         "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"
             .parse()
             .expect("fingerprint");
+    let whole = heimdall_rdp::CertificateHash::of(b"the certificate");
+    let at = std::time::UNIX_EPOCH;
     app.update(Message::Connection {
         tab,
         attempt,
         event: ConnectionEvent::UnknownRdpCertificate {
             subject: None,
-            details: None,
+            details: Some(Box::new(heimdall_app::CertificateDetails {
+                issuer: "CN=ftp.lab".to_owned(),
+                validity: heimdall_rdp::Validity {
+                    not_before: at,
+                    not_after: at,
+                },
+                issue: heimdall_tls::ValidationIssue::SelfSigned,
+                certificate: whole,
+                renewal: None,
+            })),
             host: "ftp.lab".to_owned(),
             port: 21,
             fingerprint,
@@ -502,5 +514,5 @@ fn an_ftp_profile_opens_a_files_tab_and_its_certificate_question_reconnects_it()
     let [Effect::ConnectFtp { request, .. }] = effects.as_slice() else {
         panic!("{effects:?}");
     };
-    assert_eq!(request.accepted, Some(fingerprint));
+    assert_eq!(request.accepted, Some(whole));
 }

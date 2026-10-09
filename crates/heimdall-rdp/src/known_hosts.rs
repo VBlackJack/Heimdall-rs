@@ -21,15 +21,23 @@
 //!
 //! - `trusted=<seconds since 1970-01-01 UTC>`: when the key was trusted;
 //! - `subject=<text>` and `issuer=<text>`: the names its certificate carried, as UTF-8 in
-//!   base64url without padding, so that no space splits them.
+//!   base64url without padding, so that no space splits them;
+//! - `certificate=SHA256:<base64>`: the SHA-256 of the whole certificate, written as a key's
+//!   fingerprint, for the FTPS and VNC servers, which are pinned by their whole certificate
+//!   as the C# pins them; the RDP servers' lines never carry it;
+//! - `valid_from=<seconds>` and `valid_until=<seconds>`: that certificate's validity, since
+//!   1970-01-01 UTC, beside it.
 //!
-//! For example `dc.lab:3389 SHA256:rgJ0... trusted=1767225600 subject=Q049ZGMubGFi`.
+//! For example `dc.lab:3389 SHA256:rgJ0... trusted=1767225600 subject=Q049ZGMubGFi`, or
+//! `files.lab:990 SHA256:rgJ0... trusted=1767225600 certificate=SHA256:ungWv48Bz...
+//! valid_from=1767225600 valid_until=1798761600`.
 //!
 //! The key stays the second field: a reader of the first two fields alone, an older
 //! Heimdall among them, reads every line as before. An attribute not known, or that does
 //! not decode, is ignored. Lines starting with `#` and lines that do not parse are kept as
-//! they are; forgetting drops whole lines and never rewrites one, so every other line keeps
-//! its attributes byte for byte, unknown ones included.
+//! they are; forgetting drops whole lines and never rewrites one, and adopting a certificate
+//! for a line recorded with its key alone only adds attributes at the end of that line, so
+//! every other line keeps its attributes byte for byte, unknown ones included.
 
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
@@ -40,7 +48,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use data_encoding::BASE64URL_NOPAD;
 use heimdall_core::profile::display_address;
 
-use crate::certificate::{Fingerprint, ServerCertificate, shown};
+use crate::certificate::{CertificateHash, Fingerprint, ServerCertificate, Validity, shown};
 
 /// Attribute of the time a key was trusted, in seconds since the Unix epoch.
 const TRUSTED_ATTRIBUTE: &str = "trusted";
@@ -48,6 +56,14 @@ const TRUSTED_ATTRIBUTE: &str = "trusted";
 const SUBJECT_ATTRIBUTE: &str = "subject";
 /// Attribute of the issuer of the certificate trusted.
 const ISSUER_ATTRIBUTE: &str = "issuer";
+/// Attribute of the hash of the whole certificate trusted.
+const CERTIFICATE_ATTRIBUTE: &str = "certificate";
+/// Attribute of the first moment the certificate trusted holds, in seconds since the Unix
+/// epoch.
+const VALID_FROM_ATTRIBUTE: &str = "valid_from";
+/// Attribute of the last moment the certificate trusted holds, in seconds since the Unix
+/// epoch.
+const VALID_UNTIL_ATTRIBUTE: &str = "valid_until";
 /// What separates an attribute's name from its value.
 const ATTRIBUTE_SEPARATOR: char = '=';
 
@@ -56,6 +72,30 @@ const ATTRIBUTE_SEPARATOR: char = '=';
 pub enum Verdict {
     /// Recorded with this key.
     Known,
+    /// Never recorded.
+    Unknown,
+    /// Recorded with another key.
+    Changed {
+        /// A key recorded for it.
+        recorded: Fingerprint,
+    },
+}
+
+/// Where a server pinned by its whole certificate, an FTPS or VNC one, stands against the
+/// recorded pins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CertificateVerdict {
+    /// Recorded with this whole certificate.
+    Known,
+    /// Recorded with this key, by a Heimdall that pinned keys alone: no certificate on
+    /// record for it, the one presented may be adopted.
+    KeyOnly,
+    /// Recorded with this key, but with another certificate: renewed on the same key, or
+    /// minted again on it by whoever holds it.
+    Renewed {
+        /// When the certificate on record holds, when recorded.
+        recorded: Option<Validity>,
+    },
     /// Never recorded.
     Unknown,
     /// Recorded with another key.
@@ -104,26 +144,69 @@ pub struct KnownRdpHost {
     pub issuer: Option<String>,
     /// When the key was trusted; `None` when not recorded.
     pub trusted: Option<SystemTime>,
+    /// The hash of the whole certificate trusted; `None` when only its key is recorded, as
+    /// for every RDP server.
+    pub certificate: Option<CertificateHash>,
+    /// When the certificate trusted holds; `None` when not recorded.
+    pub validity: Option<Validity>,
+}
+
+/// Seconds since the Unix epoch, as an attribute holds them.
+fn moment(value: &str) -> Option<SystemTime> {
+    value
+        .parse()
+        .ok()
+        .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+}
+
+/// `time` as an attribute holds it, in seconds since the Unix epoch; `None` before it.
+fn seconds(time: SystemTime) -> Option<u64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|since| since.as_secs())
 }
 
 /// Fills `entry` from a line's attributes, those after its key; the first of a name counts.
 fn read_attributes<'a>(entry: &mut KnownRdpHost, attributes: impl Iterator<Item = &'a str>) {
+    let (mut valid_from, mut valid_until) = (None, None);
     for attribute in attributes {
         let Some((name, value)) = attribute.split_once(ATTRIBUTE_SEPARATOR) else {
             continue;
         };
         match name {
-            TRUSTED_ATTRIBUTE if entry.trusted.is_none() => {
-                entry.trusted = value
-                    .parse()
-                    .ok()
-                    .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)));
-            }
+            TRUSTED_ATTRIBUTE if entry.trusted.is_none() => entry.trusted = moment(value),
             SUBJECT_ATTRIBUTE if entry.subject.is_none() => entry.subject = decoded(value),
             ISSUER_ATTRIBUTE if entry.issuer.is_none() => entry.issuer = decoded(value),
+            CERTIFICATE_ATTRIBUTE if entry.certificate.is_none() => {
+                entry.certificate = value.parse().ok();
+            }
+            VALID_FROM_ATTRIBUTE if valid_from.is_none() => valid_from = moment(value),
+            VALID_UNTIL_ATTRIBUTE if valid_until.is_none() => valid_until = moment(value),
             _ => {}
         }
     }
+    if let (Some(not_before), Some(not_after)) = (valid_from, valid_until) {
+        entry.validity = Some(Validity {
+            not_before,
+            not_after,
+        });
+    }
+}
+
+/// The attributes recording the whole certificate `hash`, and its `validity` when known,
+/// each after a space.
+fn whole_certificate_attributes(hash: &CertificateHash, validity: Option<&Validity>) -> String {
+    let mut attributes = format!(" {CERTIFICATE_ATTRIBUTE}={hash}");
+    if let Some(validity) = validity
+        && let (Some(from), Some(until)) =
+            (seconds(validity.not_before), seconds(validity.not_after))
+    {
+        let _ = write!(
+            attributes,
+            " {VALID_FROM_ATTRIBUTE}={from} {VALID_UNTIL_ATTRIBUTE}={until}"
+        );
+    }
+    attributes
 }
 
 /// A name as an attribute holds it: UTF-8 in base64url without padding.
@@ -226,6 +309,8 @@ impl KnownRdpHosts {
                     subject: None,
                     issuer: None,
                     trusted: None,
+                    certificate: None,
+                    validity: None,
                 };
                 read_attributes(&mut entry, fields);
                 Some(entry)
@@ -249,6 +334,131 @@ impl KnownRdpHosts {
                     .and_then(|text| text.parse::<Fingerprint>().ok())
                     .is_some_and(|recorded| recorded == *key)
         })
+    }
+
+    /// Where `host:port`, pinned by its whole certificate, stands when it presents the
+    /// certificate of hash `certificate` on `key`.
+    ///
+    /// # Errors
+    ///
+    /// The file exists and cannot be read.
+    pub fn certificate_verdict(
+        &self,
+        host: &str,
+        port: u16,
+        key: &Fingerprint,
+        certificate: &CertificateHash,
+    ) -> io::Result<CertificateVerdict> {
+        let host = host.to_ascii_lowercase();
+        let entries: Vec<KnownRdpHost> = self
+            .entries()?
+            .into_iter()
+            .filter(|entry| entry.host == host && entry.port == port)
+            .collect();
+        let same_key: Vec<&KnownRdpHost> = entries
+            .iter()
+            .filter(|entry| entry.fingerprint == *key)
+            .collect();
+        if same_key
+            .iter()
+            .any(|entry| entry.certificate == Some(*certificate))
+        {
+            return Ok(CertificateVerdict::Known);
+        }
+        if same_key.iter().any(|entry| entry.certificate.is_none()) {
+            return Ok(CertificateVerdict::KeyOnly);
+        }
+        if !same_key.is_empty() {
+            return Ok(CertificateVerdict::Renewed {
+                recorded: same_key.iter().find_map(|entry| entry.validity),
+            });
+        }
+        Ok(entries
+            .first()
+            .map_or(CertificateVerdict::Unknown, |recorded| {
+                CertificateVerdict::Changed {
+                    recorded: recorded.fingerprint,
+                }
+            }))
+    }
+
+    /// Records for `host:port` the whole `certificate`, of hash `hash` and holding during
+    /// `validity` when known, with its key, the time, its subject and its issuer, creating
+    /// the file and its folder if needed. It replaces the lines of the same key for the
+    /// server, a renewed certificate or one recorded by its key alone, as the C# keeps one
+    /// certificate per server: the certificate it replaces is no longer trusted.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be read or written.
+    pub fn record_whole_certificate(
+        &self,
+        host: &str,
+        port: u16,
+        certificate: &ServerCertificate,
+        (hash, validity): (&CertificateHash, Option<&Validity>),
+    ) -> io::Result<()> {
+        self.forget_key(host, port, &certificate.fingerprint)?;
+        self.append(
+            host,
+            port,
+            &certificate.fingerprint,
+            Some(certificate),
+            &whole_certificate_attributes(hash, validity),
+        )
+    }
+
+    /// Adopts the whole certificate of hash `hash`, holding during `validity` when known,
+    /// for the lines of `host:port` that record `key` alone, as a Heimdall that pinned keys
+    /// wrote them: its attributes are added at the end of those lines, every other line kept
+    /// byte for byte. Whether a line took it.
+    ///
+    /// # Errors
+    ///
+    /// The file exists and cannot be read or written.
+    pub fn adopt_certificate(
+        &self,
+        host: &str,
+        port: u16,
+        key: &Fingerprint,
+        (hash, validity): (&CertificateHash, Option<&Validity>),
+    ) -> io::Result<bool> {
+        let wanted = address(host, port);
+        let added = whole_certificate_attributes(hash, validity);
+        let text = match fs::read_to_string(&self.path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let mut adopted = false;
+        let lines: Vec<String> = text
+            .lines()
+            .map(|line| {
+                let mut fields = line.split_whitespace();
+                let recorded_alone = fields.next() == Some(wanted.as_str())
+                    && fields
+                        .next()
+                        .and_then(|text| text.parse::<Fingerprint>().ok())
+                        .is_some_and(|recorded| recorded == *key)
+                    && !fields.any(|attribute| {
+                        attribute
+                            .split_once(ATTRIBUTE_SEPARATOR)
+                            .is_some_and(|(name, _)| name == CERTIFICATE_ATTRIBUTE)
+                    });
+                if recorded_alone {
+                    adopted = true;
+                    format!("{}{added}", line.trim_end())
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        if adopted {
+            let mut rewritten = lines.join("\n");
+            rewritten.push('\n');
+            fs::write(&self.path, rewritten)?;
+        }
+        Ok(adopted)
     }
 
     /// Rewrites the file without the lines `drop` picks; whether one was.
@@ -288,7 +498,7 @@ impl KnownRdpHosts {
     ///
     /// The file cannot be written.
     pub fn record(&self, host: &str, port: u16, key: &Fingerprint) -> io::Result<()> {
-        self.append(host, port, key, None)
+        self.append(host, port, key, None, "")
     }
 
     /// Records `host:port` with the key of `certificate`, the time, and the subject and
@@ -303,16 +513,18 @@ impl KnownRdpHosts {
         port: u16,
         certificate: &ServerCertificate,
     ) -> io::Result<()> {
-        self.append(host, port, &certificate.fingerprint, Some(certificate))
+        self.append(host, port, &certificate.fingerprint, Some(certificate), "")
     }
 
-    /// Appends the line of `host:port` and `key`, with the names of `certificate` if given.
+    /// Appends the line of `host:port` and `key`, with the names of `certificate` if given,
+    /// then `more`, attributes each after a space.
     fn append(
         &self,
         host: &str,
         port: u16,
         key: &Fingerprint,
         certificate: Option<&ServerCertificate>,
+        more: &str,
     ) -> io::Result<()> {
         let mut line = format!("{} {key}", address(host, port));
         if let Ok(since) = SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -328,6 +540,7 @@ impl KnownRdpHosts {
                 }
             }
         }
+        line.push_str(more);
         if let Some(dir) = self.path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
             fs::create_dir_all(dir)?;
         }

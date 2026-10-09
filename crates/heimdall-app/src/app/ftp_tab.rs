@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 
 use heimdall_core::profile::{FtpProfile, ProfileId};
-use heimdall_rdp::Fingerprint;
+use heimdall_rdp::CertificateHash;
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Effect, Phase, Tab, TabProfile};
@@ -86,7 +86,7 @@ impl App {
     fn ftp_request(
         &self,
         profile: &FtpProfile,
-        (accepted, trusted_once): (Option<Fingerprint>, Option<Fingerprint>),
+        (accepted, trusted_once): (Option<CertificateHash>, Option<CertificateHash>),
         cancel: CancellationToken,
     ) -> FtpRequest {
         FtpRequest {
@@ -94,7 +94,7 @@ impl App {
             known_hosts: self.known_ftps_hosts(),
             accepted,
             trusted_once,
-            trusted_for_run: self.certificates_trusted_for_run(&profile.host, profile.port),
+            trusted_for_run: self.whole_certificates_trusted_for_run(&profile.host, profile.port),
             cancel,
         }
     }
@@ -104,7 +104,7 @@ impl App {
     pub(super) fn reconnect_ftp(
         &mut self,
         tab_id: TabId,
-        decided: (Option<Fingerprint>, Option<Fingerprint>),
+        decided: (Option<CertificateHash>, Option<CertificateHash>),
     ) -> Vec<Effect> {
         let Some(TabProfile::Ftp(profile)) = self.tab(tab_id).map(|tab| tab.profile.clone()) else {
             return Vec::new();

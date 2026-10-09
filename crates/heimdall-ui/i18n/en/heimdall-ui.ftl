@@ -1482,6 +1482,7 @@ ui-trusted-certificates-hint = Certificates you accepted for a remote desktop, k
 ui-trusted-certificates-search = Search by server or fingerprint
 ui-trusted-certificates-server = Server
 ui-trusted-certificates-fingerprint = Fingerprint
+ui-trusted-certificates-thumbprint = Certificate: { $thumbprint }
 ui-trusted-certificates-subject = Subject
 ui-trusted-certificates-issuer = Issuer
 ui-trusted-certificates-trusted = Trusted since
@@ -2384,11 +2385,14 @@ ui-certificate-validity = Valid from / until: { $from } - { $until }{ $period ->
    *[current] {""}
 }
 ui-certificate-validation-issue = Validation issue: { $issue }
+ui-certificate-renewed = Renewed certificate: same key, new certificate. The server presents another certificate on the key you trusted. A renewal is routine, but whoever holds the key could also have made it: approve it only if you expect this renewal.
+ui-certificate-renewed-previous = Certificate on record valid from / until: { $from } - { $until }
 ui-certificate-issue-self-signed = The certificate is self-signed: no certificate authority vouches for it.
 ui-certificate-issue-unknown-issuer = It was issued by a certificate authority this computer does not trust.
 ui-certificate-issue-expired = The certificate has expired.
 ui-certificate-issue-not-yet-valid = The certificate is not valid yet.
 ui-certificate-issue-name-mismatch = The certificate was issued for another name than this server's.
+ui-certificate-issue-wrong-purpose = The certificate is not meant for a server: its key usage names other purposes.
 ui-certificate-issue-revoked = Its issuer has revoked the certificate.
 ui-certificate-issue-no-system-store = This computer has no certificate authority to check it against.
 ui-certificate-issue-other = The certificate did not pass this computer's validation.

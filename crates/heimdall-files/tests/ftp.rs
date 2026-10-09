@@ -738,6 +738,7 @@ async fn an_unknown_certificate_stops_the_handshake_and_is_kept_then_once_truste
             if fingerprints.contains(&fingerprint(der)) {
                 UserVerdict::Pinned {
                     period: Period::Current,
+                    for_servers: true,
                 }
             } else {
                 UserVerdict::Untrusted

@@ -1446,3 +1446,47 @@ fn the_answer_to_a_certificate_question_is_in_the_diagnostics_log_with_the_key()
         app.update(Message::RequestCloseTab(tab));
     }
 }
+
+#[test]
+fn forgetting_an_rdp_server_from_its_card_forgets_its_key_trusted_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::UnknownRdpCertificate {
+            subject: None,
+            details: None,
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: key(),
+        },
+    );
+    let effects = app.update(Message::HostKeyTrustOnce(tab));
+    let [
+        Effect::ConnectRdp {
+            attempt, request, ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(request.trusted_for_run, [key()]);
+    event(
+        &mut app,
+        tab,
+        *attempt,
+        ConnectionEvent::Failed(UiError::HostKeyChanged {
+            target: None,
+            recorded: KEY.to_owned(),
+            offered: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+        }),
+    );
+    let effects = app.update(Message::ForgetServer(tab));
+    let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(request.trusted_for_run.is_empty(), "asked about again");
+}

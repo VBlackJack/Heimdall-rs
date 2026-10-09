@@ -160,9 +160,11 @@ async fn an_unknown_ftps_certificate_is_asked_about_then_pinned_once_trusted() {
         details.issue
     );
 
-    // Trusted: the next attempt goes through and records it.
+    // Trusted: the next attempt goes through and records it, whole.
+    let whole = details.certificate;
+    assert_eq!(details.renewal, None, "a first contact");
     let mut accepted = request(port, true, &known);
-    accepted.accepted = Some(fingerprint);
+    accepted.accepted = Some(whole);
     let event = first(accepted).await;
     assert!(
         matches!(event, ConnectionEvent::FilesReady { .. }),
@@ -183,6 +185,8 @@ async fn an_unknown_ftps_certificate_is_asked_about_then_pinned_once_trusted() {
     assert!(entry.subject.is_some(), "{entry:?}");
     assert_eq!(entry.issuer, entry.subject, "self-signed");
     assert!(entry.trusted.is_some(), "{entry:?}");
+    assert_eq!(entry.certificate, Some(whole), "pinned whole");
+    assert_eq!(entry.validity, Some(details.validity));
     // Known now: no question.
     let event = first(request(port, true, &known)).await;
     assert!(
@@ -198,13 +202,15 @@ async fn a_certificate_trusted_for_this_run_goes_through_without_being_recorded(
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_ftps_hosts");
     let port = serve(root.path(), Some(keys.path())).await;
-    let ConnectionEvent::UnknownRdpCertificate { fingerprint, .. } =
-        first(request(port, true, &known)).await
+    let ConnectionEvent::UnknownRdpCertificate {
+        details: Some(details),
+        ..
+    } = first(request(port, true, &known)).await
     else {
         panic!("the certificate question");
     };
     let mut once = request(port, true, &known);
-    once.trusted_for_run = vec![fingerprint];
+    once.trusted_for_run = vec![details.certificate];
     let event = first(once).await;
     assert!(
         matches!(event, ConnectionEvent::FilesReady { .. }),
@@ -293,8 +299,8 @@ async fn entries_copied_on_one_server_are_pasted_on_another_never_over_what_is_t
 }
 
 /// Writes in `keys` a fresh self-signed certificate for `localhost`, over since 2001; the
-/// key it is pinned by.
-fn expired_certificate(keys: &Path) -> heimdall_rdp::Fingerprint {
+/// key it is pinned by, and the hash of the whole of it.
+fn expired_certificate(keys: &Path) -> (heimdall_rdp::Fingerprint, heimdall_rdp::CertificateHash) {
     let mut params = rcgen::CertificateParams::new(vec!["localhost".to_owned()]).expect("params");
     params.not_before = rcgen::date_time_ymd(2000, 1, 1);
     params.not_after = rcgen::date_time_ymd(2001, 1, 1);
@@ -302,9 +308,12 @@ fn expired_certificate(keys: &Path) -> heimdall_rdp::Fingerprint {
     let cert = params.self_signed(&key).expect("cert");
     std::fs::write(keys.join("cert.pem"), cert.pem()).expect("cert file");
     std::fs::write(keys.join("key.pem"), key.serialize_pem()).expect("key file");
-    heimdall_rdp::ServerCertificate::from_der(cert.der())
-        .expect("readable")
-        .fingerprint
+    (
+        heimdall_rdp::ServerCertificate::from_der(cert.der())
+            .expect("readable")
+            .fingerprint,
+        heimdall_rdp::CertificateHash::of(cert.der()),
+    )
 }
 
 /// Whether `event` refuses the certificate pinned by `pin` on `port` as no longer valid,
@@ -327,8 +336,10 @@ async fn a_pinned_ftps_certificate_over_is_refused_never_asked_about_and_stays_p
     let keys = tempfile::tempdir().expect("keys");
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_ftps_hosts");
-    let pin = expired_certificate(keys.path());
+    let (pin, _) = expired_certificate(keys.path());
     let port = serve(root.path(), Some(keys.path())).await;
+    // By its key alone, as an earlier Heimdall pinned it: refused all the same, and its
+    // certificate never adopted.
     KnownRdpHosts::new(&known)
         .record("localhost", port, &pin)
         .expect("pinned");
@@ -360,27 +371,27 @@ async fn an_ftps_certificate_over_goes_through_on_the_answer_only() {
     let keys = tempfile::tempdir().expect("keys");
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_ftps_hosts");
-    let pin = expired_certificate(keys.path());
+    let (pin, whole) = expired_certificate(keys.path());
     let port = serve(root.path(), Some(keys.path())).await;
 
     // Trusted once: the attempt built on the answer goes through, the next ones refuse it.
     let mut once = request(port, true, &known);
-    once.trusted_once = Some(pin);
-    once.trusted_for_run = vec![pin];
+    once.trusted_once = Some(whole);
+    once.trusted_for_run = vec![whole];
     let event = first(once).await;
     assert!(
         matches!(event, ConnectionEvent::FilesReady { .. }),
         "{event:?}"
     );
     let mut later = request(port, true, &known);
-    later.trusted_for_run = vec![pin];
+    later.trusted_for_run = vec![whole];
     let event = first(later).await;
     assert!(refused_as_over(&event, port, pin), "{event:?}");
     assert!(!known.exists(), "never written");
 
     // Trusted for good: recorded on the answer, refused at the next connection.
     let mut accepted = request(port, true, &known);
-    accepted.accepted = Some(pin);
+    accepted.accepted = Some(whole);
     let event = first(accepted).await;
     assert!(
         matches!(event, ConnectionEvent::FilesReady { .. }),
@@ -388,9 +399,9 @@ async fn an_ftps_certificate_over_goes_through_on_the_answer_only() {
     );
     assert_eq!(
         KnownRdpHosts::new(&known)
-            .verdict("localhost", port, &pin)
+            .certificate_verdict("localhost", port, &pin, &whole)
             .expect("read"),
-        Verdict::Known
+        heimdall_rdp::CertificateVerdict::Known
     );
     let event = first(request(port, true, &known)).await;
     assert!(refused_as_over(&event, port, pin), "{event:?}");
