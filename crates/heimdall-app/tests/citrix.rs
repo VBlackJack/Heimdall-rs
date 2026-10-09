@@ -21,12 +21,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use heimdall_app::citrix::{CitrixLaunch, CitrixRefusal};
 use heimdall_app::citrix_session::{
-    ClientState, LaunchMethod, Launched, LauncherStatus, LauncherWatch, Probe,
+    ClientState, LaunchMethod, Launched, LauncherStatus, LauncherWatch, ListError, Probe,
 };
+use heimdall_app::citrix_terminate::{TerminateOffer, TerminateResult};
 use heimdall_app::profile_draft::{DraftProtocol, ProfileField, ProfileToggle};
 use heimdall_app::{
     App, AppConfig, CitrixImportOutcome, Dialog, Effect, Message, Notice, Phase, ProfileKind,
@@ -340,6 +341,222 @@ fn closing_a_citrix_tab_stops_looking_at_its_client() {
     });
     assert!(effects.is_empty());
     assert!(app.tabs.is_empty());
+}
+
+/// Opens `id`, launched with the clients `before` running, then sees the clients `now`.
+fn open_seen(app: &mut App, id: &str, before: &[u32], now: &[u32]) -> TabId {
+    let tab = open_launched(app, id, before);
+    app.update(Message::CitrixProbed {
+        tab,
+        probe: seen(LauncherStatus::Running, now),
+    });
+    tab
+}
+
+/// What Citrix tab `tab` offers now to end its session.
+fn offer(app: &App, tab: TabId) -> TerminateOffer {
+    app.citrix_terminate_offer(tab, Instant::now())
+}
+
+/// Presses Terminate, or Force terminate when `force`, in tab `tab`: whether it asked.
+fn press_terminate(app: &mut App, tab: TabId, force: bool) -> bool {
+    let effects = app.update(Message::CitrixTerminate { tab, force });
+    assert!(
+        effects.is_empty(),
+        "nothing runs before the answer: {effects:?}"
+    );
+    matches!(
+        app.dialog,
+        Some(Dialog::ConfirmCitrixTerminate { tab: asked, force: forced, .. })
+            if asked == tab && forced == force
+    )
+}
+
+#[test]
+fn terminate_is_offered_only_for_a_client_the_tab_found_itself() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[outlook()]);
+    let own = open_seen(&mut app, "outlook", &[], &[42]);
+    assert_eq!(client(&app, own), ClientState::Running(42));
+    assert_eq!(offer(&app, own), TerminateOffer::Terminate);
+
+    // Another tab seeing the same client, already followed: not its own.
+    let other = open_seen(&mut app, "outlook", &[], &[42]);
+    assert_eq!(client(&app, other), ClientState::NotFoundYet);
+    assert_eq!(offer(&app, other), TerminateOffer::Nothing);
+    assert!(!press_terminate(&mut app, other, false));
+
+    // A client running before the launch: shared with other sessions.
+    let shared = open_seen(&mut app, "outlook", &[7], &[7]);
+    assert_eq!(client(&app, shared), ClientState::Shared);
+    assert_eq!(offer(&app, shared), TerminateOffer::Nothing);
+    assert!(!press_terminate(&mut app, shared, false));
+
+    // Not tracked: no client known.
+    let untracked = open(&mut app, "outlook");
+    app.update(Message::CitrixLaunched {
+        tab: untracked,
+        name: "Outlook".to_owned(),
+        result: Ok(Launched {
+            baseline: Err(ListError::Unsupported),
+            launcher: Arc::new(Watch(LauncherStatus::Running)),
+            at: SystemTime::now(),
+        }),
+    });
+    assert_eq!(offer(&app, untracked), TerminateOffer::Nothing);
+    assert!(!press_terminate(&mut app, untracked, false));
+
+    // Ended: nothing left to end.
+    app.update(Message::CitrixProbed {
+        tab: own,
+        probe: seen(LauncherStatus::Running, &[]),
+    });
+    assert_eq!(client(&app, own), ClientState::Ended(42));
+    assert_eq!(offer(&app, own), TerminateOffer::Nothing);
+    assert!(!press_terminate(&mut app, own, false));
+    assert!(app.dialog.is_none());
+}
+
+#[test]
+fn terminate_asks_first_then_asks_the_client_to_close() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[outlook()]);
+    let tab = open_seen(&mut app, "outlook", &[], &[42]);
+
+    // Cancelled: nothing runs, Terminate stays offered.
+    assert!(press_terminate(&mut app, tab, false));
+    let effects = app.update(Message::DismissDialog);
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(app.dialog.is_none());
+    assert_eq!(offer(&app, tab), TerminateOffer::Terminate);
+    // Forcing is not offered before the client was asked.
+    assert!(!press_terminate(&mut app, tab, true));
+
+    assert!(press_terminate(&mut app, tab, false));
+    let effects = app.update(Message::ConfirmDialog);
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::TerminateCitrix { tab: asked, pid: 42, force: false }] if *asked == tab
+        ),
+        "{effects:?}"
+    );
+    assert_eq!(offer(&app, tab), TerminateOffer::Pending { force: false });
+    assert!(
+        !press_terminate(&mut app, tab, true),
+        "one request at a time"
+    );
+
+    // Accepted: the client is given time to close, forcing not offered yet.
+    app.update(Message::CitrixTerminated {
+        tab,
+        pid: 42,
+        result: TerminateResult::Requested,
+    });
+    assert_eq!(offer(&app, tab), TerminateOffer::Asked { force: false });
+    assert!(!press_terminate(&mut app, tab, true));
+    assert!(!press_terminate(&mut app, tab, false));
+
+    // The next look sees it gone.
+    app.update(Message::CitrixProbed {
+        tab,
+        probe: seen(LauncherStatus::Running, &[]),
+    });
+    assert_eq!(client(&app, tab), ClientState::Ended(42));
+    assert_eq!(
+        app.tab(tab).expect("tab").phase,
+        Phase::Closed { exit_status: None }
+    );
+    assert_eq!(offer(&app, tab), TerminateOffer::Nothing);
+}
+
+#[test]
+fn a_request_that_failed_offers_to_force_it_asked_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[outlook()]);
+    let tab = open_seen(&mut app, "outlook", &[], &[42]);
+    assert!(press_terminate(&mut app, tab, false));
+    app.update(Message::ConfirmDialog);
+    app.update(Message::CitrixTerminated {
+        tab,
+        pid: 42,
+        result: TerminateResult::Refused(1),
+    });
+    assert_eq!(
+        offer(&app, tab),
+        TerminateOffer::Force(TerminateResult::Refused(1))
+    );
+    assert!(!press_terminate(&mut app, tab, false), "only forcing now");
+
+    // The second question, cancelled, runs nothing.
+    assert!(press_terminate(&mut app, tab, true));
+    assert!(app.update(Message::DismissDialog).is_empty());
+
+    assert!(press_terminate(&mut app, tab, true));
+    let effects = app.update(Message::ConfirmDialog);
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::TerminateCitrix {
+                pid: 42,
+                force: true,
+                ..
+            }]
+        ),
+        "{effects:?}"
+    );
+    assert_eq!(offer(&app, tab), TerminateOffer::Pending { force: true });
+    // An answer for another client changes nothing.
+    app.update(Message::CitrixTerminated {
+        tab,
+        pid: 43,
+        result: TerminateResult::Requested,
+    });
+    assert_eq!(offer(&app, tab), TerminateOffer::Pending { force: true });
+    app.update(Message::CitrixTerminated {
+        tab,
+        pid: 42,
+        result: TerminateResult::TimedOut,
+    });
+    assert_eq!(
+        offer(&app, tab),
+        TerminateOffer::Force(TerminateResult::TimedOut)
+    );
+}
+
+#[test]
+fn a_confirmation_for_a_client_gone_meanwhile_runs_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[outlook()]);
+    let tab = open_seen(&mut app, "outlook", &[], &[42]);
+    assert!(press_terminate(&mut app, tab, false));
+    app.update(Message::CitrixProbed {
+        tab,
+        probe: seen(LauncherStatus::Running, &[]),
+    });
+    assert!(app.update(Message::ConfirmDialog).is_empty());
+
+    // Its tab closed meanwhile: nothing runs, and closing it ended nothing.
+    let closed = open_seen(&mut app, "outlook", &[], &[42, 50]);
+    assert_eq!(client(&app, closed), ClientState::Running(50));
+    assert!(press_terminate(&mut app, closed, false));
+    app.dialog = None;
+    assert!(app.update(Message::RequestCloseTab(closed)).is_empty());
+    app.dialog = Some(Dialog::ConfirmCitrixTerminate {
+        tab: closed,
+        pid: 50,
+        force: false,
+    });
+    assert!(app.update(Message::ConfirmDialog).is_empty());
+    // A request answering after its tab closed changes nothing.
+    assert!(
+        app.update(Message::CitrixTerminated {
+            tab: closed,
+            pid: 50,
+            result: TerminateResult::Requested,
+        })
+        .is_empty()
+    );
 }
 
 #[test]

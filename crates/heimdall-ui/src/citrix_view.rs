@@ -17,8 +17,8 @@
 //! A Citrix application's tab, as the info panel of the C# `EmbeddedCitrixView` in its
 //! external mode: its name, its protocol and its state; its `StoreFront`, its application
 //! and how it launched; when it launched, the launcher's exit code once it exited, and its
-//! client's state. And the work behind it, off the UI thread: the launch, and each look at
-//! the client.
+//! client's state; and its Terminate, as the C# one, for a client it found itself. And the
+//! work behind it, off the UI thread: the launch, each look at the client, and ending it.
 
 use std::sync::Arc;
 
@@ -27,14 +27,16 @@ use heimdall_app::citrix_session::{
     self, ChildWatch, CitrixPane, ClientLister, ClientState, LaunchMethod, LauncherStatus,
     LauncherWatch, ListError, Probe, Tasklist, Untracked,
 };
+use heimdall_app::citrix_terminate::{ClientTerminator, Taskkill, TerminateOffer, TerminateResult};
 use heimdall_app::{Message as AppMessage, ProfileKind, SessionState, TabId, server_text};
 use heimdall_core::profile::CitrixProfile;
-use iced::widget::{Column, center, column, container, row, text};
+use iced::widget::{Column, button, center, column, container, row, text};
 use iced::{Alignment, Element, Task};
 
 use crate::detail_view;
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
 use crate::tokens::{font_size, spacing};
 
 /// The card's widest, as the C# panel's `MaxWidth`.
@@ -96,11 +98,72 @@ pub fn detail_lines(profile: &CitrixProfile, pane: &CitrixPane) -> Vec<String> {
     lines
 }
 
-/// The tab of `profile`, launched as `pane` says, its state `state`.
+/// What the tab says of the last request to end its client, while there is one to say.
+#[must_use]
+pub fn terminate_text(offer: &TerminateOffer) -> Option<String> {
+    Some(match offer {
+        TerminateOffer::Nothing | TerminateOffer::Terminate => return None,
+        TerminateOffer::Pending { force: false } => fl!("ui-citrix-tab-terminating"),
+        TerminateOffer::Pending { force: true } => fl!("ui-citrix-tab-force-terminating"),
+        TerminateOffer::Asked { force: false } => fl!("ui-citrix-tab-terminate-asked"),
+        TerminateOffer::Asked { force: true } => fl!("ui-citrix-tab-terminate-forced"),
+        TerminateOffer::Force(TerminateResult::Requested | TerminateResult::Gone) => {
+            fl!("ui-citrix-tab-terminate-still-running")
+        }
+        TerminateOffer::Force(TerminateResult::Refused(code)) => {
+            fl!("ui-citrix-tab-terminate-refused", code = code.to_string())
+        }
+        TerminateOffer::Force(TerminateResult::TimedOut) => {
+            fl!("ui-citrix-tab-terminate-timed-out")
+        }
+        TerminateOffer::Force(TerminateResult::NotRun(_)) => fl!("ui-citrix-tab-terminate-not-run"),
+    })
+}
+
+/// The question asked before the client is asked to close, or forced when `force`: its
+/// title, its text and its action, as the C# confirmation.
+#[must_use]
+pub fn terminate_question(force: bool) -> (String, String, String) {
+    if force {
+        (
+            fl!("ui-citrix-force-terminate-title"),
+            fl!("ui-citrix-force-terminate-body"),
+            fl!("ui-citrix-tab-force-terminate"),
+        )
+    } else {
+        (
+            fl!("ui-citrix-terminate-title"),
+            fl!("ui-citrix-terminate-body"),
+            fl!("ui-citrix-tab-terminate"),
+        )
+    }
+}
+
+/// The button ending tab `tab`'s session, in the danger colour, when `offer` offers one.
+fn terminate_button<'a>(tab: TabId, offer: &TerminateOffer) -> Option<Element<'a, Message>> {
+    let (label, force) = match offer {
+        TerminateOffer::Terminate => (fl!("ui-citrix-tab-terminate"), false),
+        TerminateOffer::Force(_) => (fl!("ui-citrix-tab-force-terminate"), true),
+        TerminateOffer::Nothing | TerminateOffer::Pending { .. } | TerminateOffer::Asked { .. } => {
+            return None;
+        }
+    };
+    Some(
+        button(text(label))
+            .style(styles::danger)
+            .on_press(Message::App(AppMessage::CitrixTerminate { tab, force }))
+            .into(),
+    )
+}
+
+/// Tab `tab` of `profile`, launched as `pane` says, its state `state`, offering `offer` to
+/// end its session.
 pub fn view<'a>(
     profile: &CitrixProfile,
     pane: &CitrixPane,
     state: SessionState,
+    tab: TabId,
+    offer: &TerminateOffer,
 ) -> Element<'a, Message> {
     let client = pane.tracker.state();
     let failed = matches!(
@@ -129,6 +192,17 @@ pub fn view<'a>(
             .size(font_size::BODY)
             .style(if failed { text::danger } else { text::default }),
     );
+    if let Some(said) = terminate_text(offer) {
+        let refused = matches!(offer, TerminateOffer::Force(result) if !result.accepted());
+        card = card.push(text(said).size(font_size::BODY).style(if refused {
+            text::danger
+        } else {
+            text::secondary
+        }));
+    }
+    if let Some(button) = terminate_button(tab, offer) {
+        card = card.push(button);
+    }
     center(
         container(card)
             .padding(spacing::XL)
@@ -168,5 +242,16 @@ pub(crate) fn probe(tab: TabId, launcher: Arc<dyn LauncherWatch>, lists: bool) -
             clients: Err(ListError::Failed(error.to_string())),
         });
         Message::App(AppMessage::CitrixProbed { tab, probe })
+    })
+}
+
+/// Asks tab `tab`'s client `pid` to close, or forces it when `force`, by `taskkill.exe`.
+pub(crate) fn terminate(tab: TabId, pid: u32, force: bool) -> Task<Message> {
+    Task::future(async move {
+        // `taskkill.exe` waits on the client: off the UI thread.
+        let result = tokio::task::spawn_blocking(move || Taskkill.terminate(pid, force))
+            .await
+            .unwrap_or_else(|error| TerminateResult::NotRun(error.to_string()));
+        Message::App(AppMessage::CitrixTerminated { tab, pid, result })
     })
 }

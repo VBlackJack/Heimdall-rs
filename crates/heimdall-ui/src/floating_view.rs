@@ -226,6 +226,7 @@ pub fn floating_message_allowed(message: &Message, tab: &Tab) -> bool {
             | AppMessage::CancelSave(named)
             | AppMessage::StopAntiIdle(named)
             | AppMessage::DisconnectDesktop(named)
+            | AppMessage::CitrixTerminate { tab: named, .. }
             | AppMessage::RequestCloseTab(named)
             | AppMessage::ReconnectTab(named)
             | AppMessage::ForgetServer(named)

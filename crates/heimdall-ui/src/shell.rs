@@ -3659,6 +3659,9 @@ impl Shell {
                 launcher,
                 lists,
             } => crate::citrix_view::probe(tab, launcher, lists),
+            Effect::TerminateCitrix { tab, pid, force } => {
+                crate::citrix_view::terminate(tab, pid, force)
+            }
             Effect::LaunchRdpExternal {
                 name,
                 gateway,
@@ -6483,7 +6486,10 @@ impl Shell {
     fn tab_page<'a>(&'a self, tab: &'a Tab, focused: bool) -> Element<'a, Message> {
         // A Citrix application's window is Citrix's own: its tab shows its status alone.
         if let (TabProfile::Citrix(profile), Some(pane)) = (&tab.profile, tab.citrix.as_deref()) {
-            return crate::citrix_view::view(profile, pane, SessionState::of(tab));
+            let offer = self
+                .app
+                .citrix_terminate_offer(tab.id, std::time::Instant::now());
+            return crate::citrix_view::view(profile, pane, SessionState::of(tab), tab.id, &offer);
         }
         if let Some(prompt) = tab.prompts.front() {
             return center(card(self.question(tab, prompt))).into();
@@ -10897,9 +10903,13 @@ fn with_unsaved(body: Option<String>, unsaved: usize) -> String {
 
 /// The title, text and action of a plain question: leaving the window with sessions live,
 /// broadcasting input to every tab, recording every session, resetting the RDP settings,
-/// writing the default SSH mode into every SSH profile, deleting profiles or folders.
+/// writing the default SSH mode into every SSH profile, deleting profiles or folders,
+/// terminating a Citrix session.
 fn plain_question(dialog: &Dialog) -> (String, String, String) {
     match dialog {
+        Dialog::ConfirmCitrixTerminate { force, .. } => {
+            crate::citrix_view::terminate_question(*force)
+        }
         Dialog::ConfirmDeleteProfile { name, .. } => (
             fl!("ui-dialog-delete-profile-title"),
             fl!("ui-dialog-delete-profile-body", name = name.as_str()),
@@ -11036,6 +11046,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmDeleteMacro(_)
         | Dialog::ConfirmDeleteGateway { .. }
         | Dialog::ConfirmDeleteProfile { .. }
+        | Dialog::ConfirmCitrixTerminate { .. }
         | Dialog::ConfirmDelete { .. } => plain_question_view(dialog),
         Dialog::ConfirmSettingsExportPaths { count } => {
             crate::settings_file::export_question(*count)

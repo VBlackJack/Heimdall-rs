@@ -35,6 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::citrix::{CitrixLaunch, CitrixRefusal};
+use crate::citrix_terminate::{TerminateOffer, TerminateResult, Termination};
 
 /// How often the client is looked for while the tab is open, as the C#
 /// `HealthCheckIntervalMs`.
@@ -656,6 +657,8 @@ pub struct CitrixPane {
     launcher: Option<Arc<dyn LauncherWatch>>,
     /// A probe is under way: none other is started before it answers.
     probing: bool,
+    /// The last request to end its client, once the user asked one.
+    termination: Option<Termination>,
 }
 
 impl std::fmt::Debug for CitrixPane {
@@ -663,6 +666,7 @@ impl std::fmt::Debug for CitrixPane {
         f.debug_struct("CitrixPane")
             .field("method", &self.method)
             .field("tracker", &self.tracker)
+            .field("termination", &self.termination)
             .finish_non_exhaustive()
     }
 }
@@ -677,6 +681,7 @@ impl CitrixPane {
             tracker: ClientTracker::default(),
             launcher: None,
             probing: false,
+            termination: None,
         }
     }
 
@@ -719,6 +724,40 @@ impl CitrixPane {
     pub fn probed(&mut self, probe: &Probe, claimed: &Pids) -> bool {
         self.probing = false;
         self.tracker.observe(probe, claimed)
+    }
+
+    /// What is offered at `now` to end the session, `claimed` being the clients of the
+    /// other tabs: only for a client this tab found itself and still running, never a
+    /// shared one, another tab's, or one not tracked.
+    #[must_use]
+    pub fn terminate_offer(&self, claimed: &Pids, now: Instant) -> TerminateOffer {
+        let ClientState::Running(pid) = *self.tracker.state() else {
+            return TerminateOffer::Nothing;
+        };
+        if claimed.contains(&pid) {
+            return TerminateOffer::Nothing;
+        }
+        match &self.termination {
+            Some(termination) if termination.pid() == pid => termination.offer(now),
+            _ => TerminateOffer::Terminate,
+        }
+    }
+
+    /// The user confirmed ending client `pid`, forced when `force`, at `now`.
+    pub fn terminate_started(&mut self, pid: u32, force: bool, now: Instant) {
+        self.termination = Some(Termination::started(pid, force, now));
+    }
+
+    /// `taskkill.exe` answered `result` for client `pid`, at `now`; whether it was the
+    /// request under way.
+    pub fn terminate_answered(&mut self, pid: u32, result: TerminateResult, now: Instant) -> bool {
+        match &mut self.termination {
+            Some(termination) if termination.pid() == pid => {
+                termination.answered(result, now);
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -1132,5 +1171,36 @@ mod tests {
         assert!(pane.start_probe().is_none(), "one under way");
         pane.probed(&seen(LauncherStatus::Running, &[1]), &Pids::new());
         assert!(pane.polls());
+    }
+
+    #[test]
+    fn terminate_is_never_offered_for_another_tabs_client() {
+        let now = Instant::now();
+        let mut pane = CitrixPane::new(LaunchMethod::StoreFront);
+        assert_eq!(
+            pane.terminate_offer(&Pids::new(), now),
+            TerminateOffer::Nothing
+        );
+        pane.launched(Launched {
+            baseline: Ok(Pids::new()),
+            launcher: Arc::new(Watch(LauncherStatus::Running)),
+            at: SystemTime::UNIX_EPOCH,
+        });
+        pane.probed(&seen(LauncherStatus::Running, &[4]), &Pids::new());
+        assert_eq!(
+            pane.terminate_offer(&Pids::new(), now),
+            TerminateOffer::Terminate
+        );
+        assert_eq!(
+            pane.terminate_offer(&pids(&[4]), now),
+            TerminateOffer::Nothing
+        );
+        pane.terminate_started(4, false, now);
+        assert!(!pane.terminate_answered(5, TerminateResult::Requested, now));
+        assert!(pane.terminate_answered(4, TerminateResult::Requested, now));
+        assert_eq!(
+            pane.terminate_offer(&Pids::new(), now),
+            TerminateOffer::Asked { force: false }
+        );
     }
 }
