@@ -28,6 +28,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
+use heimdall_core::paths;
 use iced::widget::{button, text};
 use iced::{Element, Task, window};
 
@@ -137,9 +138,9 @@ impl BrowseTarget {
             .map(Path::to_path_buf)
             .or_else(|| {
                 (self == Self::GatewayKey)
-                    .then(std::env::home_dir)
+                    .then(paths::home_dir)
                     .flatten()
-                    .map(|home| home.join(crate::sessions_view::SSH_FOLDER))
+                    .map(|home| home.join(paths::OPENSSH_FOLDER))
                     .filter(|folder| folder.is_dir())
             })
     }

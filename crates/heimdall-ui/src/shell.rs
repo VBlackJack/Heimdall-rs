@@ -8859,8 +8859,8 @@ fn pick_key_file(main: Option<window::Id>) -> Task<Message> {
             .add_filter(fl!("ui-profile-browse-key-all"), &["*"])
             .add_filter(fl!("ui-profile-browse-key-ppk"), &["ppk"])
             .add_filter(fl!("ui-profile-browse-key-pem"), &["pem"]);
-        if let Some(folder) = std::env::home_dir()
-            .map(|home| home.join(crate::sessions_view::SSH_FOLDER))
+        if let Some(folder) = paths::home_dir()
+            .map(|home| home.join(paths::OPENSSH_FOLDER))
             .filter(|folder| folder.is_dir())
         {
             dialog = dialog.set_directory(folder);

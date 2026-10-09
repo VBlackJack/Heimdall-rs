@@ -41,7 +41,7 @@ impl App {
     pub(super) fn settings_transfer(&mut self, message: SettingsTransferMessage) -> Vec<Effect> {
         match message {
             SettingsTransferMessage::Export => {
-                let home = std::env::home_dir();
+                let home = heimdall_core::paths::home_dir();
                 let (document, held_back) = self.settings.export(home.as_deref(), false);
                 // A path of this computer's user travels only when asked, as the C# asks.
                 if held_back > 0 {
@@ -79,7 +79,7 @@ impl App {
     /// The settings written, with the paths of this computer's user or without them, as
     /// the user answered.
     pub(super) fn export_settings(&self, with_home: bool) -> Vec<Effect> {
-        let home = std::env::home_dir();
+        let home = heimdall_core::paths::home_dir();
         let (document, _) = self.settings.export(home.as_deref(), with_home);
         vec![Effect::SaveSettingsFile { document }]
     }

@@ -73,7 +73,8 @@ fn read_store() -> Result<Vec<RawSession>, String> {
 fn read_store() -> Result<Vec<RawSession>, String> {
     use heimdall_core::import::putty::SESSIONS_FOLDER;
 
-    let Some(folder) = std::env::home_dir().map(|home| home.join(SESSIONS_FOLDER)) else {
+    let Some(folder) = heimdall_core::paths::home_dir().map(|home| home.join(SESSIONS_FOLDER))
+    else {
         return Ok(Vec::new());
     };
     read_folder(&folder)
