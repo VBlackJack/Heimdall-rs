@@ -22,7 +22,10 @@
 use heimdall_core::profile::display_address;
 use heimdall_core::store::RouteError;
 use heimdall_core::winrm::CommandError;
-use heimdall_ssh::{AuthMethod, ConnectError, KeyFileError, KnownHostsError};
+use heimdall_ssh::known_hosts_import::Contradiction;
+use heimdall_ssh::{
+    AuthMethod, ConnectError, KeyFileError, KnownHostsError, PublicKey, fingerprint,
+};
 
 /// A server by host and port, as the `known_hosts` file records it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,6 +335,33 @@ impl NetworkFailure {
 }
 
 impl UiError {
+    /// The error of a key the user accepted for `host` on `port` that a key recorded, or a
+    /// fingerprint pinned, came to contradict while the question was open: said as a
+    /// connection says it, a changed key or another algorithm.
+    #[must_use]
+    pub(crate) fn host_key_contradicted(
+        contradiction: Contradiction,
+        host: &str,
+        port: u16,
+        offered: &PublicKey,
+    ) -> Self {
+        match contradiction {
+            Contradiction::Changed(recorded) | Contradiction::Pinned(recorded) => {
+                Self::HostKeyChanged {
+                    target: Some(ServerAddress {
+                        host: host.to_owned(),
+                        port,
+                    }),
+                    recorded,
+                    offered: fingerprint(offered),
+                }
+            }
+            Contradiction::OtherAlgorithm(recorded) => Self::HostKeyAlgorithmMismatch {
+                recorded: recorded.iter().map(ToString::to_string).collect(),
+            },
+        }
+    }
+
     /// The error of a network connection that failed with `error`.
     #[must_use]
     pub fn network(error: &std::io::Error) -> Self {

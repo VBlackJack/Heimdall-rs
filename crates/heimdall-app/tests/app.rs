@@ -386,6 +386,87 @@ fn a_key_recorded_meanwhile_by_another_tab_turns_acceptance_into_a_refusal() {
     ));
 }
 
+/// Pins `key`'s fingerprint for `host` on port 22 as the C# trust carried over pins one
+/// kept without its key.
+fn carry_over_pin(dir: &Path, host: &str, key: &str) -> String {
+    let print = heimdall_ssh::fingerprint(&PublicKey::from_openssh(key.trim()).expect("key"));
+    let carried = heimdall_ssh::carry_over(
+        &KnownHosts::new(dir.join("known_hosts")),
+        &[heimdall_core::import::csharp::TrustedHostKey {
+            host: host.to_owned(),
+            port: 22,
+            fingerprint: print.clone(),
+            key: None,
+        }],
+    )
+    .expect("carried over");
+    assert_eq!(carried.pins, 1);
+    print
+}
+
+#[test]
+fn a_pin_carried_over_while_the_question_is_open_refuses_acceptance_as_a_changed_key() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt) = open(&mut app, "a");
+    event(&mut app, tab, attempt, unknown_key_event(HOST_KEY));
+    let pinned = carry_over_pin(dir.path(), "a.lab", OTHER_HOST_KEY);
+    let pins = heimdall_ssh::Pins::beside(&dir.path().join("known_hosts"));
+    let pins_before = std::fs::read(pins.path()).expect("pins");
+
+    let effects = app.update(Message::HostKeyDecision { tab, accept: true });
+    assert!(effects.is_empty(), "no reconnection: {effects:?}");
+    let offered =
+        heimdall_ssh::fingerprint(&PublicKey::from_openssh(HOST_KEY.trim()).expect("key"));
+    assert!(
+        matches!(
+            &app.tab(tab).expect("tab").phase,
+            Phase::Failed(UiError::HostKeyChanged {
+                target: Some(target),
+                recorded,
+                offered: presented,
+            }) if target.host == "a.lab" && target.port == 22
+                && *recorded == pinned && *presented == offered
+        ),
+        "{:?}",
+        app.tab(tab).expect("tab").phase
+    );
+    assert!(
+        !dir.path().join("known_hosts").exists(),
+        "the key never written"
+    );
+    assert_eq!(
+        std::fs::read(pins.path()).expect("pins"),
+        pins_before,
+        "the pin kept"
+    );
+}
+
+#[test]
+fn accepting_the_key_of_a_pin_carried_over_meanwhile_records_it_in_full_and_drops_the_pin() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt) = open(&mut app, "a");
+    event(&mut app, tab, attempt, unknown_key_event(HOST_KEY));
+    carry_over_pin(dir.path(), "a.lab", HOST_KEY);
+
+    let effects = app.update(Message::HostKeyDecision { tab, accept: true });
+    assert!(
+        matches!(effects.as_slice(), [Effect::Connect { .. }]),
+        "{effects:?}"
+    );
+    let recorded = KnownHosts::new(dir.path().join("known_hosts"))
+        .recorded("a.lab", 22)
+        .expect("read");
+    assert_eq!(recorded.len(), 1);
+    assert!(
+        heimdall_ssh::Pins::beside(&dir.path().join("known_hosts"))
+            .pinned("a.lab", 22)
+            .expect("pins")
+            .is_empty()
+    );
+}
+
 // ---- prompts ----------------------------------------------------------------------------
 
 #[test]
