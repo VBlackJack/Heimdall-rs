@@ -21,8 +21,10 @@
 //! in the status bar. A success counts for the grace the settings give, in memory only.
 //!
 //! What waits: a saved session opened, whatever opened it (the tree, Quick Connect, a
-//! folder's "Connect all", "Connect selected", a restore), a saved local program included,
-//! as the C# Connect command gates it; one opened in a split, a tab reconnected and an
+//! folder's "Connect all", "Connect selected", a restore, an RDP profile's one-time
+//! "Connect with"), a saved local program included, as the C# Connect command gates it,
+//! `ConnectEmbedded` and `ConnectExternal` going through the same `ConnectCoreAsync`
+//! (`ServerListViewModel.cs:835-854`); one opened in a split, a tab reconnected and an
 //! auto-reconnect, as each reaches the C# gate. Sessions opened while a verification is
 //! asked wait for that one: a batch is asked once, and refused at once. A session saved
 //! nowhere ("Connect as...", Quick Connect to a host, a local shell without a profile)
@@ -82,6 +84,7 @@ impl App {
             Message::OpenProfile(_)
             | Message::OpenFiles(_)
             | Message::OpenRdp(_)
+            | Message::OpenRdpWith { .. }
             | Message::OpenTelnet(_)
             | Message::OpenVnc(_)
             | Message::OpenFtp(_)

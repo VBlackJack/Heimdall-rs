@@ -118,10 +118,18 @@ impl App {
             self.ask_script(*shell, Some(tab_id));
             return Vec::new();
         }
+        let forced = self.tabs[index].rdp_mode_override;
         let keyboard = self.keyboard_kept(tab_id);
         let before = self.tabs.len();
         self.replacing = true;
-        let effects = self.open_again(reopen, purpose);
+        let effects = match (reopen, forced) {
+            // The mode "Connect with" chose travels with the reconnect, as the C#
+            // `RestoreServerAsync(serverId, ..., tab.RdpModeOverride)`
+            // (`SessionCoordinator.cs:1474-1481`): else the profile's External mode would
+            // open Remote Desktop Connection in place of the tab.
+            (Reopen::Profile(id), Some(mode)) => self.update(Message::OpenRdpWith { id, mode }),
+            (reopen, _) => self.open_again(reopen, purpose),
+        };
         self.replacing = false;
         self.take_place(index, before, keyboard);
         effects
