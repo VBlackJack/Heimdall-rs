@@ -618,6 +618,8 @@ pub struct Settings {
     /// The last look for a newer release and the release skipped, kept across runs on
     /// this computer as the C# `UpdateLastCheckUtc` and `UpdateSkippedVersion`.
     pub update_check: UpdateCheck,
+    /// Windows Hello asked before a connection uses what is saved for it.
+    pub windows_hello: WindowsHello,
 }
 
 /// The SFTP browser's settings, as the C# `SftpBrowserEnabled`, `SftpAutoOpenOnSsh` and
@@ -790,6 +792,45 @@ pub struct UpdateCheck {
     pub last_check: Option<SystemTime>,
     /// The release tag the user chose to skip, as the release names it: `v2026.100901`.
     pub skipped: Option<String>,
+}
+
+/// Windows Hello asked before connecting, as the C# `RequireWindowsHelloOnConnect` and
+/// `WindowsHelloGraceMinutes`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowsHello {
+    /// A connection waits for a successful Windows Hello verification: off, as the C#.
+    /// Where Windows Hello is unavailable, connections are refused while it is on.
+    pub require_on_connect: bool,
+    /// Minutes a successful verification still counts, within
+    /// [`WINDOWS_HELLO_GRACE_MINUTES_MAX`]; [`WINDOWS_HELLO_GRACE_MINUTES_NONE`] asks every
+    /// time. The verification itself is kept in memory only.
+    pub grace_minutes: u32,
+}
+
+impl Default for WindowsHello {
+    fn default() -> Self {
+        Self {
+            require_on_connect: false,
+            grace_minutes: WINDOWS_HELLO_GRACE_MINUTES_DEFAULT,
+        }
+    }
+}
+
+/// Minutes a Windows Hello verification counts by default, as the C#
+/// `DefaultWindowsHelloGraceMinutes`.
+pub const WINDOWS_HELLO_GRACE_MINUTES_DEFAULT: u32 = 5;
+
+/// The Windows Hello grace that asks every time, as the C# `0 = always re-verify`.
+pub const WINDOWS_HELLO_GRACE_MINUTES_NONE: u32 = 0;
+
+/// Longest grace accepted, in minutes, as the C# setting's range: a day.
+pub const WINDOWS_HELLO_GRACE_MINUTES_MAX: u32 = 1440;
+
+/// Whether `minutes` is a Windows Hello grace the settings accept: none, which asks every
+/// time, up to [`WINDOWS_HELLO_GRACE_MINUTES_MAX`].
+#[must_use]
+pub fn windows_hello_grace_minutes_accepted(minutes: u32) -> bool {
+    minutes <= WINDOWS_HELLO_GRACE_MINUTES_MAX
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -1020,6 +1061,7 @@ impl Default for Settings {
             show_gateway_badge: true,
             updates: Updates::default(),
             update_check: UpdateCheck::default(),
+            windows_hello: WindowsHello::default(),
         }
     }
 }
@@ -1055,6 +1097,17 @@ struct SettingsFile {
     updates: UpdatesSection,
     #[serde(default)]
     update_check: UpdateCheckSection,
+    #[serde(default)]
+    windows_hello: WindowsHelloSection,
+}
+
+/// Absent values are the C# defaults.
+#[derive(Serialize, Deserialize, Default)]
+struct WindowsHelloSection {
+    #[serde(default)]
+    require_on_connect: Option<bool>,
+    #[serde(default)]
+    grace_minutes: Option<u32>,
 }
 
 /// Absent values are the C# defaults.
@@ -1566,6 +1619,15 @@ impl Settings {
                     .skipped
                     .filter(|tag| !tag.trim().is_empty()),
             },
+            windows_hello: WindowsHello {
+                require_on_connect: file.windows_hello.require_on_connect.unwrap_or_default(),
+                // Out of the range, as the C# load warns and keeps the default.
+                grace_minutes: within(
+                    file.windows_hello.grace_minutes,
+                    windows_hello_grace_minutes_accepted,
+                    WINDOWS_HELLO_GRACE_MINUTES_DEFAULT,
+                ),
+            },
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -1722,6 +1784,10 @@ impl Settings {
                 last_check: self.update_check.last_check.map(to_epoch),
                 skipped: self.update_check.skipped.clone(),
             },
+            windows_hello: WindowsHelloSection {
+                require_on_connect: Some(self.windows_hello.require_on_connect),
+                grace_minutes: Some(self.windows_hello.grace_minutes),
+            },
         }
     }
 
@@ -1838,7 +1904,7 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 11] = [
+const TRANSFERRED: [&str; 12] = [
     "terminal",
     "session_log",
     "general",
@@ -1850,6 +1916,7 @@ const TRANSFERRED: [&str; 11] = [
     "files",
     "reachability",
     "updates",
+    "windows_hello",
 ];
 
 /// The name a portable settings file is offered under.
