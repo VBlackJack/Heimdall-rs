@@ -18,9 +18,13 @@
 //! the code under test.
 
 use heimdall_remote::vnc::{
-    Authentication, MAX_CUT_TEXT, MAX_PLAIN_PASSWORD, MAX_PLAIN_USERNAME, Quality, Rect, Rfb,
-    RfbError, RfbEvent, Security, SecurityPolicy, SecurityWrapper, TooLong, Version,
+    Authentication, MAX_CUT_TEXT, MAX_EXTENDED_CUT_TEXT, MAX_PLAIN_PASSWORD, MAX_PLAIN_USERNAME,
+    Quality, Rect, Rfb, RfbError, RfbEvent, Security, SecurityPolicy, SecurityWrapper, TooLong,
+    Version,
 };
+
+/// The Extended Clipboard pseudo-encoding, 0xC0A1E5CE as noVNC's `encodings.js` has it.
+const EXTENDED_CLIPBOARD: i32 = 0xC0A1_E5CE_u32.cast_signed();
 
 const VERSION_3_8: &[u8] = b"RFB 003.008\n";
 
@@ -76,7 +80,17 @@ fn opening_requests(width: u16, height: u16) -> Vec<u8> {
     // Tight first, ZRLE, CopyRect, Raw, the pseudo-encodings; then compression level 6
     // (-256 + 6) and JPEG quality 6 (-32 + 6), noVNC's, the C# default "Performance".
     bytes.extend(set_encodings(&[
-        7, 16, 1, 0, -223, -224, -308, -307, -250, -26,
+        7,
+        16,
+        1,
+        0,
+        -223,
+        -224,
+        -308,
+        -307,
+        EXTENDED_CLIPBOARD,
+        -250,
+        -26,
     ]));
     bytes.extend_from_slice(&full_request(false, width, height));
     bytes
@@ -465,7 +479,18 @@ fn a_quality_asks_its_levels_again_then_the_whole_desktop() {
     let mut rfb = opened(4, 2);
     // Best: compression 0 (-256) and no JPEG quality at all.
     rfb.set_quality(Quality::Best);
-    let mut expected = set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -256]);
+    let mut expected = set_encodings(&[
+        7,
+        16,
+        1,
+        0,
+        -223,
+        -224,
+        -308,
+        -307,
+        EXTENDED_CLIPBOARD,
+        -256,
+    ]);
     expected.extend(full_request(false, 4, 2));
     assert_eq!(rfb.take_output(), expected);
     // The quality asked already: nothing.
@@ -473,7 +498,19 @@ fn a_quality_asks_its_levels_again_then_the_whole_desktop() {
     assert!(rfb.take_output().is_empty());
     // Low bandwidth: compression 9 (-247), JPEG quality 3 (-29).
     rfb.set_quality(Quality::LowBandwidth);
-    let mut expected = set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -247, -29]);
+    let mut expected = set_encodings(&[
+        7,
+        16,
+        1,
+        0,
+        -223,
+        -224,
+        -308,
+        -307,
+        EXTENDED_CLIPBOARD,
+        -247,
+        -29,
+    ]);
     expected.extend(full_request(false, 4, 2));
     assert_eq!(rfb.take_output(), expected);
     assert_eq!(rfb.quality(), Quality::LowBandwidth);
@@ -493,7 +530,19 @@ fn a_quality_chosen_before_the_session_opens_is_asked_first() {
     // Balanced: compression 3 (-253), JPEG quality 7 (-25), after the pixel format.
     assert_eq!(
         output[20..output.len() - 10],
-        set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -253, -25])
+        set_encodings(&[
+            7,
+            16,
+            1,
+            0,
+            -223,
+            -224,
+            -308,
+            -307,
+            EXTENDED_CLIPBOARD,
+            -253,
+            -25
+        ])
     );
 }
 
@@ -1173,5 +1222,298 @@ fn nothing_accepted_inside_vencrypt_asks_to_connect_again_without_it_only_when_t
             rfb.receive(&vencrypt_subtypes(&[258])),
             Err(RfbError::NoAcceptableInnerSecurity { .. })
         ));
+    }
+}
+
+/// The Adler-32 of `data`, RFC 1950.
+fn adler32(data: &[u8]) -> u32 {
+    const MODULO: u32 = 65_521;
+    let (mut a, mut b) = (1_u32, 0_u32);
+    for byte in data {
+        a = (a + u32::from(*byte)) % MODULO;
+        b = (b + a) % MODULO;
+    }
+    (b << 16) | a
+}
+
+/// A zlib stream of `data` in one stored block, written by hand from RFC 1950 and 1951:
+/// header, final stored block, its length and complement, the data, the Adler-32.
+fn zlib_stored(data: &[u8]) -> Vec<u8> {
+    let length = u16::try_from(data.len()).expect("one block");
+    let mut bytes = vec![0x78, 0x01, 0x01];
+    bytes.extend_from_slice(&length.to_le_bytes());
+    bytes.extend_from_slice(&(!length).to_le_bytes());
+    bytes.extend_from_slice(data);
+    bytes.extend_from_slice(&adler32(data).to_be_bytes());
+    bytes
+}
+
+/// A cut text message of type `kind` carrying the extended clipboard `message`: its length
+/// negative.
+fn extended(kind: u8, message: &[u8]) -> Vec<u8> {
+    let size = -i32::try_from(message.len()).expect("short");
+    let mut bytes = vec![kind, 0, 0, 0];
+    bytes.extend_from_slice(&size.to_be_bytes());
+    bytes.extend_from_slice(message);
+    bytes
+}
+
+/// From the server.
+fn server_extended(message: &[u8]) -> Vec<u8> {
+    extended(3, message)
+}
+
+/// From the client.
+fn client_extended(message: &[u8]) -> Vec<u8> {
+    extended(6, message)
+}
+
+/// Server caps flags: every action, and the text format.
+const SERVER_CAPS_ALL: [u8; 4] = [0x1F, 0, 0, 0x01];
+
+/// Server caps of `flags`, the text's longest unasked size `text_max`.
+fn server_caps(flags: [u8; 4], text_max: u32) -> Vec<u8> {
+    let mut message = flags.to_vec();
+    message.extend_from_slice(&text_max.to_be_bytes());
+    server_extended(&message)
+}
+
+/// The client's caps: caps, request, peek, notify and provide, the text format, and the
+/// longest text it takes, `MAX_CUT_TEXT` (1 MiB).
+const CLIENT_CAPS: [u8; 8] = [0x1F, 0, 0, 0x01, 0x00, 0x10, 0x00, 0x00];
+
+/// A session whose server announced the Extended Clipboard with `flags`, its caps answered.
+fn extended_session(flags: [u8; 4], text_max: u32) -> Rfb {
+    let mut rfb = opened(2, 2);
+    assert!(
+        rfb.receive(&server_caps(flags, text_max))
+            .expect("caps")
+            .is_empty()
+    );
+    assert_eq!(rfb.take_output(), client_extended(&CLIENT_CAPS));
+    rfb
+}
+
+/// A provide of text from the server: its length, then it, in a stored zlib stream.
+fn server_provide(text: &[u8]) -> Vec<u8> {
+    let mut inflated = u32::try_from(text.len())
+        .expect("short")
+        .to_be_bytes()
+        .to_vec();
+    inflated.extend_from_slice(text);
+    let mut message = vec![0x10, 0, 0, 0x01];
+    message.extend(zlib_stored(&inflated));
+    server_extended(&message)
+}
+
+/// Inflates a client provide's payload with flate2 directly.
+fn inflate(compressed: &[u8]) -> Vec<u8> {
+    use std::io::Read as _;
+    let mut inflated = Vec::new();
+    flate2::read::ZlibDecoder::new(compressed)
+        .read_to_end(&mut inflated)
+        .expect("a zlib stream");
+    inflated
+}
+
+#[test]
+fn the_extended_clipboard_is_asked_for_and_its_caps_are_answered_as_novnc() {
+    // Asked after the desktop name, as noVNC's `_sendEncodings`.
+    assert!(
+        opening_requests(2, 2)
+            .windows(4)
+            .any(|word| word == [0xC0, 0xA1, 0xE5, 0xCE])
+    );
+    let mut rfb = extended_session(SERVER_CAPS_ALL, 10 << 20);
+    // Caps again are answered again.
+    rfb.receive(&server_caps(SERVER_CAPS_ALL, 0)).expect("caps");
+    assert_eq!(rfb.take_output(), client_extended(&CLIENT_CAPS));
+}
+
+#[test]
+fn the_clipboard_is_notified_then_provided_in_utf_8_with_cr_lf_and_a_nul() {
+    let mut rfb = extended_session(SERVER_CAPS_ALL, 10 << 20);
+    rfb.cut_text("\u{e9}\n\u{263a}");
+    assert_eq!(
+        rfb.take_output(),
+        client_extended(&[0x08, 0, 0, 0x01]),
+        "notify, text"
+    );
+    // The server asks for the text.
+    assert!(
+        rfb.receive(&server_extended(&[0x02, 0, 0, 0x01]))
+            .expect("request")
+            .is_empty()
+    );
+    let output = rfb.take_output();
+    assert_eq!(output[..4], [6, 0, 0, 0]);
+    let size = i32::from_be_bytes([output[4], output[5], output[6], output[7]]);
+    assert_eq!(usize::try_from(-size).expect("negative"), output.len() - 8);
+    assert_eq!(output[8..12], [0x10, 0, 0, 0x01], "provide, text");
+    assert_eq!(output[12], 0x78, "a zlib stream");
+    assert_eq!(
+        inflate(&output[12..]),
+        [
+            0, 0, 0, 8, // the length, NUL included
+            0xC3, 0xA9, // e acute
+            b'\r', b'\n', // the line ending made CR LF
+            0xE2, 0x98, 0xBA, // the smiling face
+            0,    // the NUL
+        ]
+    );
+    // Asked again, the same text is provided again; a peek is told the text is there.
+    rfb.receive(&server_extended(&[0x02, 0, 0, 0x01]))
+        .expect("request");
+    assert_eq!(rfb.take_output(), output);
+    rfb.receive(&server_extended(&[0x04, 0, 0, 0]))
+        .expect("peek");
+    assert_eq!(rfb.take_output(), client_extended(&[0x08, 0, 0, 0x01]));
+    // Once the server provides its own, nothing is left to provide.
+    rfb.receive(&server_provide(b"x\0")).expect("provide");
+    rfb.receive(&server_extended(&[0x04, 0, 0, 0]))
+        .expect("peek");
+    assert_eq!(rfb.take_output(), client_extended(&[0x08, 0, 0, 0]));
+    rfb.receive(&server_extended(&[0x02, 0, 0, 0x01]))
+        .expect("request");
+    assert!(rfb.take_output().is_empty());
+}
+
+#[test]
+fn a_server_notify_is_answered_by_a_request_and_its_provide_is_utf_8() {
+    let mut rfb = extended_session(SERVER_CAPS_ALL, 10 << 20);
+    assert!(
+        rfb.receive(&server_extended(&[0x08, 0, 0, 0x01]))
+            .expect("notify")
+            .is_empty()
+    );
+    assert_eq!(rfb.take_output(), client_extended(&[0x02, 0, 0, 0x01]));
+    // A notify without text asks for nothing.
+    rfb.receive(&server_extended(&[0x08, 0, 0, 0]))
+        .expect("notify");
+    assert!(rfb.take_output().is_empty());
+
+    let text = "caf\u{e9} \u{6f22}\u{5b57} \u{1f389}\r\nfin\0";
+    let mut bytes = server_provide(text.as_bytes());
+    bytes.push(2); // then a bell
+    // Fed byte by byte, it is read once whole.
+    let mut events = Vec::new();
+    for byte in bytes {
+        events.extend(rfb.receive(&[byte]).expect("provide"));
+    }
+    assert_eq!(
+        events,
+        [
+            RfbEvent::ServerCutText("caf\u{e9} \u{6f22}\u{5b57} \u{1f389}\nfin".to_owned()),
+            RfbEvent::Bell
+        ],
+        "CR LF made LF, the NUL taken off, as noVNC"
+    );
+}
+
+#[test]
+fn without_the_extended_clipboard_or_its_text_format_the_clipboard_is_latin_1() {
+    let latin1 = [6, 0, 0, 0, 0, 0, 0, 2, 0xe9, b'?'];
+    // Not announced.
+    let mut rfb = opened(2, 2);
+    rfb.cut_text("\u{e9}\u{263a}");
+    assert_eq!(rfb.take_output(), latin1);
+    // Announced without the text format.
+    let mut rfb = opened(2, 2);
+    rfb.receive(&server_extended(&[0x1F, 0, 0, 0]))
+        .expect("caps");
+    assert_eq!(rfb.take_output(), client_extended(&CLIENT_CAPS));
+    rfb.cut_text("\u{e9}\u{263a}");
+    assert_eq!(rfb.take_output(), latin1);
+}
+
+#[test]
+fn a_server_taking_no_notify_is_provided_at_once_within_the_size_it_takes_unasked() {
+    // Caps and provide only; text up to 6 bytes, NUL included.
+    let mut rfb = extended_session([0x11, 0, 0, 0x01], 6);
+    rfb.cut_text("\u{e9}t\u{e9}");
+    let output = rfb.take_output();
+    assert_eq!(output[8..12], [0x10, 0, 0, 0x01], "provide, text, unasked");
+    assert_eq!(
+        inflate(&output[12..]),
+        [0, 0, 0, 6, 0xC3, 0xA9, b't', 0xC3, 0xA9, 0]
+    );
+    // Past the size: Latin-1.
+    rfb.cut_text("\u{e9}t\u{e9}s");
+    assert_eq!(
+        rfb.take_output(),
+        [6, 0, 0, 0, 0, 0, 0, 4, 0xe9, b't', 0xe9, b's']
+    );
+}
+
+#[test]
+fn an_oversized_or_bombing_extended_clipboard_is_dropped_and_the_session_goes_on() {
+    use std::io::Write as _;
+
+    let mut rfb = extended_session(SERVER_CAPS_ALL, 10 << 20);
+    // A text announced past the bound is not inflated.
+    let size = u32::try_from(MAX_CUT_TEXT + 1).expect("fits");
+    let mut message = vec![0x10, 0, 0, 0x01];
+    message.extend(zlib_stored(&size.to_be_bytes()));
+    let mut bytes = server_extended(&message);
+    bytes.push(2);
+    assert_eq!(rfb.receive(&bytes).expect("dropped"), [RfbEvent::Bell]);
+
+    // A zip bomb: 8 MiB of zeros announced as 1 GiB, in a few kilobytes.
+    let mut deflater = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    deflater
+        .write_all(&(1_u32 << 30).to_be_bytes())
+        .expect("size");
+    let zeros = vec![0; 1 << 20];
+    for _ in 0..8 {
+        deflater.write_all(&zeros).expect("zeros");
+    }
+    let mut message = vec![0x10, 0, 0, 0x01];
+    message.extend(deflater.finish().expect("deflated"));
+    assert!(message.len() < MAX_EXTENDED_CUT_TEXT);
+    let mut bytes = server_extended(&message);
+    bytes.push(2);
+    assert_eq!(rfb.receive(&bytes).expect("dropped"), [RfbEvent::Bell]);
+
+    // A message past its bound is read and dropped in pieces.
+    let size = -i32::try_from(MAX_EXTENDED_CUT_TEXT + 1).expect("fits");
+    let mut bytes = vec![3, 0, 0, 0];
+    bytes.extend_from_slice(&size.to_be_bytes());
+    assert!(rfb.receive(&bytes).expect("header").is_empty());
+    let chunk = vec![0; 1 << 16];
+    let mut left = MAX_EXTENDED_CUT_TEXT + 1;
+    while left > 0 {
+        let piece = left.min(chunk.len());
+        assert!(rfb.receive(&chunk[..piece]).expect("dropped").is_empty());
+        left -= piece;
+    }
+    assert_eq!(rfb.receive(&[2]).expect("bell"), [RfbEvent::Bell]);
+}
+
+#[test]
+fn a_malformed_extended_clipboard_is_a_protocol_error() {
+    let garbage = server_extended(&[0x10, 0, 0, 0x01, 0xDE, 0xAD, 0xBE, 0xEF]);
+    let truncated = {
+        let mut message = vec![0x10, 0, 0, 0x01];
+        message.extend(zlib_stored(&[0, 0, 0, 10, b'a', b'b', b'c']));
+        server_extended(&message)
+    };
+    let not_utf8 = server_provide(b"caf\xe9\0");
+    let cases: [(&str, Vec<u8>); 6] = [
+        ("shorter than its flags", server_extended(&[0x10, 0])),
+        (
+            "caps missing a size",
+            server_extended(&[0x1F, 0, 0, 0x03, 0, 0, 0, 1]),
+        ),
+        ("no action", server_extended(&[0, 0, 0, 0x01])),
+        ("garbage for zlib", garbage),
+        ("a text shorter than announced", truncated),
+        ("a text not UTF-8", not_utf8),
+    ];
+    for (what, bytes) in cases {
+        let mut rfb = extended_session(SERVER_CAPS_ALL, 10 << 20);
+        assert!(
+            matches!(rfb.receive(&bytes), Err(RfbError::Protocol(_))),
+            "{what}"
+        );
     }
 }

@@ -52,8 +52,8 @@ const RESPONSE: [u8; 16] = [
 ];
 
 /// What the client sends between `ServerInit` and the first update: `SetPixelFormat` (20),
-/// `SetEncodings` of 10 (4 + 40) and a `FramebufferUpdateRequest` (10).
-const OPENING_REQUESTS: usize = 20 + 44 + 10;
+/// `SetEncodings` of 11 (4 + 44) and a `FramebufferUpdateRequest` (10).
+const OPENING_REQUESTS: usize = 20 + 48 + 10;
 
 /// The X509 subtypes.
 const X509_NONE: u32 = 260;
