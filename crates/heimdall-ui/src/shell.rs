@@ -2022,6 +2022,14 @@ impl Shell {
         if let Some(interval) = self.app.anti_idle_interval() {
             ticks.push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
         }
+        // The RDP desktops settling after connecting, while one does: the end of the wait
+        // and the session bar's countdown.
+        if let Some(interval) = self.app.stabilization_interval() {
+            ticks.push(
+                iced::time::every(interval)
+                    .map(|at| Message::App(AppMessage::StabilizationTick(at))),
+            );
+        }
         // Windows high contrast turned on or off while the window is open.
         if heimdall_app::high_contrast::WATCHED {
             ticks.push(
@@ -2999,6 +3007,7 @@ impl Shell {
     /// The dialogs' inputs, for a window `height` high.
     fn forms(&self) -> Forms<'_> {
         Forms {
+            rdp_resize_delay: self.app.settings().rdp_resize_enable_delay_ms,
             monitors: self.monitors.as_deref().unwrap_or_default(),
             vault: &self.vault_fields,
             profile_password: &self.profile_password,
@@ -4053,6 +4062,21 @@ impl Shell {
                     result,
                 })
             }),
+            Effect::OpenMstscRoute { id, request } => {
+                // Its end is Remote Desktop Connection's: the stream ends once the forward
+                // is released.
+                let registry = self.registry.clone();
+                let events = stream::once(async move {
+                    heimdall_app::mstsc_driver::mstsc_route_events(
+                        *request,
+                        registry,
+                        heimdall_app::rdp_external::start,
+                    )
+                })
+                .flatten();
+                Task::stream(events)
+                    .map(move |event| Message::App(AppMessage::MstscRoute { id, event }))
+            }
             Effect::LaunchElevated { tab, request } => Task::future(async move {
                 // The elevation prompt holds the call until answered: off the UI thread, on
                 // a worker thread of its own, where COM is set up for it.
@@ -4305,6 +4329,7 @@ impl Shell {
                     dialog,
                     Dialog::SessionsPreview(_)
                         | Dialog::RdpPreview(_)
+                        | Dialog::ProfileImportPreview(_)
                         | Dialog::HostKeysPreview(_)
                         | Dialog::FileConflicts { .. }
                 ) {
@@ -7341,6 +7366,7 @@ impl Shell {
             mode: tab.resolution_mode()?,
             shown: pane.tab_size(),
             aspect: pane.aspect,
+            stabilizing: pane.stabilizing_until().is_some(),
         })
     }
 
@@ -7464,6 +7490,24 @@ impl Shell {
                         .style(style)
                         .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab_id))),
                     text(state.tooltip()).size(font_size::CAPTION),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
+        // The C# status line's countdown while the session settles after connecting, its
+        // tip saying how to stop waiting.
+        if let Some(seconds) = pane.stabilization_seconds_left(std::time::Instant::now()) {
+            bar = bar.push(
+                tooltip(
+                    text(fl!("ui-desktop-stabilizing", seconds = seconds))
+                        .size(font_size::CAPTION)
+                        .font(iced::Font {
+                            style: iced::font::Style::Italic,
+                            ..crate::UI_FONT
+                        })
+                        .style(text::secondary),
+                    text(fl!("ui-desktop-stabilizing-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -8467,6 +8511,7 @@ fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
     match dialog {
         Dialog::SessionsPreview(preview) => crate::sessions_view::preview(preview),
         Dialog::RdpPreview(preview) => crate::rdp_view::preview(preview),
+        Dialog::ProfileImportPreview(preview) => crate::profile_import_view::preview(preview),
         Dialog::HostKeysPreview(preview) => crate::hostkeys_view::preview(preview),
         Dialog::ConfirmImportFile(_) | Dialog::ConfirmCitrixImport(_) => {
             let (title, body, action) = match dialog {
@@ -8483,17 +8528,41 @@ fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
 
 /// The report of an import, as the C# message after it: what was added, updated and left as
 /// it was, the profiles left out and why, the settings dropped, the host keys carried.
-fn import_report<'a>(
-    summary: &'a heimdall_app::ImportSummary,
-    ok: iced::widget::Button<'a, Message>,
-) -> Element<'a, Message> {
-    let mut content = column![dialog_parts::body(fl!(
+/// What each choice of a previewed import did, first, as the C# summary says it; then what
+/// the merge did.
+fn import_counts(summary: &heimdall_app::ImportSummary) -> Column<'_, Message> {
+    let mut content = column![].spacing(spacing::SM);
+    if let Some(actions) = summary.actions {
+        content = content.push(dialog_parts::body(
+            crate::profile_import_view::actions_line(actions),
+        ));
+    }
+    content.push(dialog_parts::body(fl!(
         "ui-dialog-import-counts",
         added = summary.merged.added,
         updated = summary.merged.updated,
         unchanged = summary.merged.unchanged
-    ))]
-    .spacing(spacing::SM);
+    )))
+}
+
+/// As the C# `ShowInfo` after an import; a previewed one that wrote nothing, or left a
+/// gateway reference unresolved, is a warning (`ProfileImportService.cs:196-203`).
+fn import_severity(summary: &heimdall_app::ImportSummary) -> Severity {
+    match summary.actions {
+        Some(actions)
+            if actions.imported + actions.replaced == 0 || summary.gateways.orphans > 0 =>
+        {
+            Severity::Warning
+        }
+        _ => Severity::Info,
+    }
+}
+
+fn import_report<'a>(
+    summary: &'a heimdall_app::ImportSummary,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let mut content = import_counts(summary);
     // The file's gateways on a line of their own, as the C# summary says them, then what to
     // do about the references none resolves (`ProfileImportService.cs:446-476`).
     let gateways = summary.gateways;
@@ -8584,9 +8653,8 @@ fn import_report<'a>(
     {
         content = content.push(text(line).size(font_size::CAPTION));
     }
-    // As the C# `ShowInfo` after an import.
     dialog_parts::message(
-        Severity::Info,
+        import_severity(summary),
         fl!("ui-dialog-import-title"),
         content,
         dialog_parts::buttons([ok]),
@@ -8623,6 +8691,9 @@ struct Forms<'a> {
     profile_tab: ProfileTab,
     /// Whether a save of the profile form was refused, its tabs counting what to fix.
     profile_refused: bool,
+    /// The settings' wait after connecting, in milliseconds: what an RDP profile leaving
+    /// its own empty takes, said in the field.
+    rdp_resize_delay: u32,
 }
 
 /// Whether a password typed now can be saved.
@@ -8805,6 +8876,16 @@ fn section<'a>(title: String, description: Option<String>) -> Element<'a, Messag
 
 /// A text field of the form: its label, then the box. Enter saves.
 fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message> {
+    labelled_field(draft, field, None)
+}
+
+/// A text field of the form, with `shown` in its empty box in place of its own placeholder
+/// when given.
+fn labelled_field(
+    draft: &ProfileDraft,
+    field: ProfileField,
+    shown: Option<String>,
+) -> Element<'_, Message> {
     let (label, placeholder) = match field {
         ProfileField::Name => (fl!("ui-profile-field-name"), String::new()),
         ProfileField::Group => (
@@ -8848,6 +8929,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ProfileField::KeyPath => (fl!("ui-profile-field-key"), fl!("ui-profile-optional")),
         ProfileField::FixedWidth => (fl!("ui-profile-resolution-width"), String::new()),
         ProfileField::FixedHeight => (fl!("ui-profile-resolution-height"), String::new()),
+        ProfileField::ResizeDelay => (fl!("ui-profile-resize-delay"), String::new()),
         ProfileField::VaultEntry => (
             fl!("ui-profile-field-vault-entry"),
             fl!("ui-profile-vault-entry-placeholder"),
@@ -8879,6 +8961,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
             fl!("ui-profile-mac-address-placeholder"),
         ),
     };
+    let placeholder = shown.unwrap_or(placeholder);
     column![
         dialog_parts::label(label),
         text_input(&placeholder, draft.value(field))
@@ -9613,12 +9696,13 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
 fn options_section<'a>(
     draft: &'a ProfileDraft,
     monitors: &[crate::rdp_options::Monitor],
+    resize_delay: u32,
 ) -> Column<'a, Message> {
     let mut tab = Column::new().spacing(SECTION_GAP);
     if draft.shows_session_logging() {
         tab = tab.push(session_logging_choice(draft));
     }
-    tab = tab.push(protocol_options(draft, monitors));
+    tab = tab.push(protocol_options(draft, monitors, resize_delay));
     // A card of its own after the options, as the C# one.
     if draft.protocol == DraftProtocol::Ssh {
         tab = tab.push(crate::post_connect_form::view(&draft.post_connect));
@@ -9626,10 +9710,12 @@ fn options_section<'a>(
     tab
 }
 
-/// The protocol's options, as its C# card; an RDP form's monitors among `monitors`.
+/// The protocol's options, as its C# card; an RDP form's monitors among `monitors`, its
+/// wait after connecting left empty taking the settings' `resize_delay`.
 fn protocol_options<'a>(
     draft: &'a ProfileDraft,
     monitors: &[crate::rdp_options::Monitor],
+    resize_delay: u32,
 ) -> Column<'a, Message> {
     let mut form = Column::new().spacing(spacing::MD);
     let options = match draft.protocol {
@@ -9678,7 +9764,15 @@ fn protocol_options<'a>(
             .push(crate::rdp_options::display_audio(
                 draft,
                 monitors,
-                |field| form_field(draft, field),
+                move |field| {
+                    if field == ProfileField::ResizeDelay {
+                        // The C# watermark: the settings' value, which empty takes.
+                        let global = fl!("ui-profile-resize-delay-global", ms = resize_delay);
+                        labelled_field(draft, field, Some(global))
+                    } else {
+                        form_field(draft, field)
+                    }
+                },
             ))
             .push(crate::rdp_options::devices(draft))
             .push(crate::rdp_options::performance(draft))
@@ -9771,7 +9865,9 @@ fn profile_form<'a>(
     };
     let page: Element<'a, Message> = match shown {
         ProfileTab::General => general_tab(draft, forms).into(),
-        ProfileTab::Options => options_section(draft, forms.monitors).into(),
+        ProfileTab::Options => {
+            options_section(draft, forms.monitors, forms.rdp_resize_delay).into()
+        }
         ProfileTab::Network => network_section(draft, forms.gateways),
         ProfileTab::Info => info_tab(draft).into(),
     };
@@ -11985,6 +12081,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::RdpPreview(_)
         | Dialog::HostKeysPreview(_)
         | Dialog::ConfirmImportFile(_)
+        | Dialog::ProfileImportPreview(_)
         | Dialog::ConfirmCitrixImport(_) => import_preview(dialog),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::BulkPassword {

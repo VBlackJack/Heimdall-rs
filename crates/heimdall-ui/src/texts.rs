@@ -25,6 +25,7 @@ use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
 use heimdall_core::import::csharp::{Dropped, LegacyElevation, SkipReason};
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
+use heimdall_core::settings::{RDP_RESIZE_ENABLE_DELAY_MAX_MS, RDP_RESIZE_ENABLE_DELAY_MIN_MS};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
 use heimdall_rdp::{Ending, Refusal as RdpRefusal};
@@ -333,6 +334,9 @@ pub fn dropped_setting(dropped: Dropped) -> String {
         Dropped::RdpUsb => fl!("ui-import-dropped-rdp-usb"),
         Dropped::RdpMicrophone => fl!("ui-import-dropped-rdp-microphone"),
         Dropped::RdpMultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
+        Dropped::RdpResizeDelayOutOfRange(ms) => {
+            fl!("ui-import-dropped-rdp-resize-delay", ms = ms.to_string())
+        }
         Dropped::CitrixCacheLaunch => fl!("ui-import-dropped-citrix-cache-launch"),
         Dropped::LocalPostConnect(count) => {
             fl!("ui-import-dropped-local-post-connect", count = count)
@@ -456,6 +460,11 @@ pub fn draft_error(error: DraftError) -> String {
             "ui-profile-error-fixed-height",
             min = FIXED_SIDE_MIN,
             max = FIXED_HEIGHT_MAX
+        ),
+        DraftError::ResizeDelayInvalid => fl!(
+            "ui-profile-error-resize-delay",
+            min = RDP_RESIZE_ENABLE_DELAY_MIN_MS,
+            max = RDP_RESIZE_ENABLE_DELAY_MAX_MS
         ),
         DraftError::GatewayLoop => fl!("ui-gateway-error-loop"),
         DraftError::SocksPortInvalid => fl!("ui-profile-error-socks-port"),

@@ -19,6 +19,7 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use heimdall_core::profile::DesktopSizing;
 use heimdall_rdp::{
@@ -219,6 +220,9 @@ enum DesktopSink {
         sizing: DesktopSizing,
         /// The tab's last size, kept to be asked again when the user goes back to it.
         tab: std::sync::Mutex<Option<(u16, u16)>>,
+        /// Until when the session settles after connecting, as the C# post-connect
+        /// stabilization: sizes are kept, not asked, the first one excepted.
+        stabilizing_until: Option<Instant>,
     },
     Vnc(VncSink),
 }
@@ -311,6 +315,7 @@ impl DesktopPane {
                 size,
                 sizing,
                 tab: std::sync::Mutex::new(None),
+                stabilizing_until: None,
             },
             clipboard,
             anti_idle: false,
@@ -338,10 +343,107 @@ impl DesktopPane {
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((width, height));
         }
         if self.asks_tab_size()
-            && let DesktopSink::Rdp { size, .. } = &self.sink
+            && let DesktopSink::Rdp {
+                size,
+                stabilizing_until,
+                ..
+            } = &self.sink
         {
+            // The first size the session gets is the tab's, whatever the wait: it replaces
+            // the one it connected with, as the C# control starts at its own size. Only the
+            // later ones wait for the session to settle.
+            if stabilizing_until.is_some() && size.borrow().is_some() {
+                return;
+            }
             size.send_replace(Some(self.aspect.fit((width, height))));
         }
+    }
+
+    /// Starts the wait after connecting, as the C# post-connect stabilization: for `delay`
+    /// from `now`, the tab's sizes and the Resolution menu's choices are kept, then the
+    /// latest is asked once. Only for a desktop following its tab, as the C# only with
+    /// dynamic resolution; a `delay` of zero waits for nothing.
+    ///
+    /// Not ported from the C#: the DPI change it drops during the wait and forces after it
+    /// (a session here keeps the scale it connected with), and its full screen re-trigger,
+    /// an `ActiveX` control's.
+    pub(crate) fn stabilize(&mut self, delay: Duration, now: Instant) {
+        if let DesktopSink::Rdp {
+            sizing: DesktopSizing::FollowsTab,
+            stabilizing_until,
+            ..
+        } = &mut self.sink
+        {
+            *stabilizing_until = (!delay.is_zero()).then(|| now + delay);
+        }
+    }
+
+    /// Until when the session settles after connecting, while it does.
+    #[must_use]
+    pub fn stabilizing_until(&self) -> Option<Instant> {
+        match &self.sink {
+            DesktopSink::Rdp {
+                stabilizing_until, ..
+            } => *stabilizing_until,
+            DesktopSink::Vnc(_) => None,
+        }
+    }
+
+    /// Whole seconds left of the wait after connecting at `now`, rounded up as the C#
+    /// countdown; `None` once over.
+    #[must_use]
+    pub fn stabilization_seconds_left(&self, now: Instant) -> Option<u64> {
+        let left = self.stabilizing_until()?.checked_duration_since(now)?;
+        let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+        (seconds > 0).then_some(seconds)
+    }
+
+    /// Ends the wait after connecting when it is over at `now`; whether it ended.
+    pub(crate) fn settle(&mut self, now: Instant) -> bool {
+        if self.stabilizing_until().is_some_and(|until| until <= now) {
+            self.end_stabilization()
+        } else {
+            false
+        }
+    }
+
+    /// Ends the wait after connecting now, its time over or skipped from the Resolution menu:
+    /// the size the desktop is to have is asked when it is not the one asked last, as the C#
+    /// `RdpStabilizationResumePolicy`. Whether there was a wait to end.
+    pub(crate) fn end_stabilization(&mut self) -> bool {
+        let aspect = self.aspect;
+        let DesktopSink::Rdp {
+            size,
+            sizing,
+            tab,
+            stabilizing_until,
+            ..
+        } = &mut self.sink
+        else {
+            return false;
+        };
+        if stabilizing_until.take().is_none() {
+            return false;
+        }
+        let wanted = match *sizing {
+            DesktopSizing::Fixed { width, height } => Some((width, height)),
+            DesktopSizing::FollowsTab => tab
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .map(|shown| aspect.fit(shown)),
+            DesktopSizing::TabSizeOnce => None,
+        };
+        if let Some(wanted) = wanted
+            && *size.borrow() != Some(wanted)
+        {
+            log::info!(
+                "RDP desktop settled: {}x{} asked after the wait",
+                wanted.0,
+                wanted.1
+            );
+            size.send_replace(Some(wanted));
+        }
+        true
     }
 
     /// The size the tab shows the desktop in, kept without asking the server for it: the
@@ -407,22 +509,31 @@ impl DesktopPane {
     /// The size the user chose from the tab's menu, as the C# "Resolution" one: a size of
     /// its own, asked of the server now and kept; or `None`, the tab's size again, followed
     /// from then on.
+    /// While the session settles after connecting, the choice is kept and asked once the
+    /// wait ends, as the C# defers the menu's choices then.
     pub(crate) fn choose_size(&mut self, chosen: Option<(u16, u16)>) {
         let DesktopSink::Rdp {
-            size, sizing, tab, ..
+            size,
+            sizing,
+            tab,
+            stabilizing_until,
+            ..
         } = &mut self.sink
         else {
             return;
         };
+        let held = stabilizing_until.is_some();
         if let Some((width, height)) = chosen {
             *sizing = DesktopSizing::Fixed { width, height };
-            size.send_replace(Some((width, height)));
+            if !held {
+                size.send_replace(Some((width, height)));
+            }
         } else {
             *sizing = DesktopSizing::FollowsTab;
             let last = *tab
                 .get_mut()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(last) = last {
+            if let Some(last) = last.filter(|_| !held) {
                 size.send_replace(Some(self.aspect.fit(last)));
             }
         }
@@ -828,6 +939,143 @@ fn rdp_operations(inputs: &[DesktopInput]) -> Vec<Operation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The C# default wait after connecting.
+    const WAIT: Duration = Duration::from_secs(10);
+
+    /// An RDP desktop sized by `sizing`, and what its session is asked.
+    fn rdp_pane(sizing: DesktopSizing) -> (DesktopPane, watch::Receiver<Option<(u16, u16)>>) {
+        let (size, watched) = watch::channel(None);
+        let (input, _received) = mpsc::unbounded_channel();
+        let pane = DesktopPane::rdp(
+            heimdall_rdp::Framebuffer::new(64, 48),
+            input,
+            (size, sizing),
+            None,
+        );
+        (pane, watched)
+    }
+
+    #[test]
+    fn the_first_size_replaces_the_connection_s_and_later_ones_wait_then_go_once() {
+        let (mut pane, watched) = rdp_pane(DesktopSizing::FollowsTab);
+        let start = Instant::now();
+        pane.stabilize(WAIT, start);
+        assert_eq!(pane.stabilizing_until(), Some(start + WAIT));
+
+        pane.resize(1600, 900);
+        assert_eq!(
+            *watched.borrow(),
+            Some((1600, 900)),
+            "the size connected with is replaced at once"
+        );
+        pane.resize(1400, 850);
+        pane.resize(1200, 800);
+        assert_eq!(
+            *watched.borrow(),
+            Some((1600, 900)),
+            "held while it settles"
+        );
+
+        assert!(!pane.settle(start + Duration::from_millis(9_999)));
+        assert_eq!(*watched.borrow(), Some((1600, 900)), "not yet");
+        assert!(pane.settle(start + WAIT), "over");
+        assert_eq!(*watched.borrow(), Some((1200, 800)), "the latest, once");
+        assert_eq!(pane.stabilizing_until(), None);
+        pane.resize(1000, 700);
+        assert_eq!(*watched.borrow(), Some((1000, 700)), "followed again");
+    }
+
+    #[test]
+    fn a_wait_ending_on_the_size_asked_last_asks_nothing() {
+        let (mut pane, mut watched) = rdp_pane(DesktopSizing::FollowsTab);
+        let start = Instant::now();
+        pane.stabilize(WAIT, start);
+        pane.resize(1600, 900);
+        pane.resize(1200, 800);
+        pane.resize(1600, 900);
+        watched.mark_unchanged();
+        assert!(pane.end_stabilization());
+        assert!(
+            !watched.has_changed().expect("open"),
+            "back at the size asked: nothing sent"
+        );
+        assert!(!pane.end_stabilization(), "nothing left to end");
+    }
+
+    #[test]
+    fn skipped_the_latest_size_goes_at_once() {
+        let (mut pane, watched) = rdp_pane(DesktopSizing::FollowsTab);
+        pane.stabilize(WAIT, Instant::now());
+        pane.resize(1600, 900);
+        pane.resize(1280, 720);
+        assert!(pane.end_stabilization(), "skipped");
+        assert_eq!(*watched.borrow(), Some((1280, 720)));
+        assert_eq!(pane.stabilization_seconds_left(Instant::now()), None);
+    }
+
+    #[test]
+    fn a_menu_choice_made_while_it_settles_waits_too() {
+        let (mut pane, watched) = rdp_pane(DesktopSizing::FollowsTab);
+        let start = Instant::now();
+        pane.stabilize(WAIT, start);
+        pane.resize(1600, 900);
+        pane.choose_size(Some((1920, 1080)));
+        assert_eq!(pane.fixed_size(), Some((1920, 1080)), "chosen");
+        assert_eq!(*watched.borrow(), Some((1600, 900)), "not asked yet");
+        assert!(pane.settle(start + WAIT));
+        assert_eq!(*watched.borrow(), Some((1920, 1080)), "asked at the end");
+
+        // Back to the tab while it settles: the tab's last size at the end.
+        let (mut pane, watched) = rdp_pane(DesktopSizing::FollowsTab);
+        pane.stabilize(WAIT, start);
+        pane.resize(1600, 900);
+        pane.choose_size(Some((1920, 1080)));
+        pane.resize(1500, 850);
+        pane.choose_size(None);
+        assert_eq!(*watched.borrow(), Some((1600, 900)));
+        assert!(pane.end_stabilization());
+        assert_eq!(*watched.borrow(), Some((1500, 850)));
+    }
+
+    #[test]
+    fn a_desktop_not_following_its_tab_never_waits_nor_does_a_zero_wait() {
+        let start = Instant::now();
+        for sizing in [
+            DesktopSizing::TabSizeOnce,
+            DesktopSizing::Fixed {
+                width: 1366,
+                height: 768,
+            },
+        ] {
+            let (mut pane, _watched) = rdp_pane(sizing);
+            pane.stabilize(WAIT, start);
+            assert_eq!(pane.stabilizing_until(), None, "{sizing:?}");
+        }
+        let (mut pane, watched) = rdp_pane(DesktopSizing::FollowsTab);
+        pane.stabilize(Duration::ZERO, start);
+        assert_eq!(pane.stabilizing_until(), None, "0 is off");
+        pane.resize(1600, 900);
+        pane.resize(1200, 800);
+        assert_eq!(*watched.borrow(), Some((1200, 800)));
+    }
+
+    #[test]
+    fn the_countdown_rounds_up_as_the_csharp_one() {
+        let (mut pane, _watched) = rdp_pane(DesktopSizing::FollowsTab);
+        let start = Instant::now();
+        pane.stabilize(WAIT, start);
+        assert_eq!(pane.stabilization_seconds_left(start), Some(10));
+        assert_eq!(
+            pane.stabilization_seconds_left(start + Duration::from_millis(100)),
+            Some(10)
+        );
+        assert_eq!(
+            pane.stabilization_seconds_left(start + Duration::from_millis(9_001)),
+            Some(1)
+        );
+        assert_eq!(pane.stabilization_seconds_left(start + WAIT), None);
+    }
 
     #[test]
     fn a_size_chosen_is_asked_and_kept_then_the_tab_s_asked_again_and_followed() {

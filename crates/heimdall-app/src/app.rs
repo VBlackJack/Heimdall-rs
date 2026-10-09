@@ -110,6 +110,7 @@ mod macros;
 mod mstsc_launch;
 mod pin;
 mod post_connect;
+mod profile_import;
 mod profile_menu;
 mod profiles;
 mod provider;
@@ -175,6 +176,9 @@ pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEd
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
+pub use profile_import::{
+    ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow,
+};
 pub use profile_menu::ProfileMenuMessage;
 pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use provider_connect::{ProviderAnswer, ProviderRequest};
@@ -353,6 +357,13 @@ pub enum Message {
         /// Started, or why not.
         result: Result<(), crate::rdp_external::ExternalRefusal>,
     },
+    /// What a launch of Remote Desktop Connection through an SSH gateway reports.
+    MstscRoute {
+        /// The launch.
+        id: crate::mstsc_driver::MstscRouteId,
+        /// What happened.
+        event: crate::mstsc_driver::MstscRouteEvent,
+    },
     /// The host key of an SSH profile to open in `PuTTY` was probed.
     PuttyHostKey {
         /// The profile, as it was to open.
@@ -443,6 +454,11 @@ pub enum Message {
     },
     /// Stop the anti-idle keys of a tab's session, until it connects again.
     StopAntiIdle(TabId),
+    /// A second of the RDP desktops settling after connecting, at this instant: those whose
+    /// wait is over follow their tab again.
+    StabilizationTick(Instant),
+    /// The C# Resolution menu's "Skip stabilization": the tab's desktop follows its tab now.
+    SkipStabilization(TabId),
     /// Send this side's clipboard to the remote desktop of a tab, as the C# Heimdall's
     /// noVNC "sync" does: on a click, never by itself over a clear VNC connection.
     SendClipboard(TabId),
@@ -626,6 +642,8 @@ pub enum Message {
     Sessions(SessionsMessage),
     /// The import of `.rdp` files.
     Rdp(RdpMessage),
+    /// The preview of a Heimdall session document's profiles.
+    ProfileImport(ProfileImportMessage),
     /// How the export's file went.
     ExportFinished(ExportOutcome),
     /// Open an empty profile form.
@@ -929,6 +947,7 @@ impl fmt::Debug for Message {
             Self::RdpExternalLaunched { result, .. } => {
                 write!(f, "RdpExternalLaunched({})", result.is_ok())
             }
+            Self::MstscRoute { id, .. } => write!(f, "MstscRoute({})", id.value()),
             Self::PuttyHostKey { profile, .. } => write!(f, "PuttyHostKey({})", profile.id),
             Self::PuttyLaunched { result, .. } => {
                 write!(f, "PuttyLaunched({})", result.is_ok())
@@ -959,6 +978,8 @@ impl fmt::Debug for Message {
             }
             Self::HealthRead { tab, .. } => write!(f, "HealthRead({})", tab.value()),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
+            Self::StabilizationTick(_) => f.write_str("StabilizationTick"),
+            Self::SkipStabilization(tab) => write!(f, "SkipStabilization({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
             Self::SaveRemoteFiles(tab) => write!(f, "SaveRemoteFiles({})", tab.value()),
             Self::SaveFolderPicked { tab, folder } => {
@@ -1041,6 +1062,7 @@ impl fmt::Debug for Message {
                 write!(f, "Rdp(Read({} files))", files.len())
             }
             Self::Rdp(message) => write!(f, "Rdp({message:?})"),
+            Self::ProfileImport(message) => write!(f, "ProfileImport({message:?})"),
             Self::ExportFinished(outcome) => write!(f, "ExportFinished({outcome:?})"),
             Self::NewProfile => f.write_str("NewProfile"),
             Self::EditProfile(id) => write!(f, "EditProfile({id})"),
@@ -1379,6 +1401,15 @@ pub enum Effect {
         gateway: Option<String>,
         /// The `.rdp` file, as [`crate::rdp_external::rdp_file`] writes it.
         content: String,
+    },
+    /// Open an RDP profile in Remote Desktop Connection through its SSH gateway, as
+    /// [`mstsc_route_events`](crate::mstsc_driver::mstsc_route_events) does; answered with
+    /// [`Message::MstscRoute`].
+    OpenMstscRoute {
+        /// The launch.
+        id: crate::mstsc_driver::MstscRouteId,
+        /// What it needs.
+        request: Box<crate::mstsc_driver::MstscRouteRequest>,
     },
     /// Probe an SSH profile's host key before it opens in `PuTTY`, off the UI thread;
     /// answered with [`Message::PuttyHostKey`].
@@ -1841,6 +1872,7 @@ impl fmt::Debug for Effect {
                 write!(f, "TerminateCitrix({}, {pid}, {force})", tab.value())
             }
             Self::LaunchRdpExternal { .. } => f.write_str("LaunchRdpExternal(..)"),
+            Self::OpenMstscRoute { id, .. } => write!(f, "OpenMstscRoute({})", id.value()),
             Self::ProbePuttyHostKey { profile, .. } => {
                 write!(f, "ProbePuttyHostKey({})", profile.id)
             }
@@ -2498,6 +2530,9 @@ pub struct ImportSummary {
     /// The SSH gateways the file brought, created or found already saved, as the C# summary's
     /// gateway line counts them.
     pub gateways: heimdall_core::import::gateways::Reconciliation,
+    /// For a Heimdall session document previewed, what each choice did, as the C# summary
+    /// counts it.
+    pub actions: Option<ImportActions>,
 }
 
 /// One destination in a transfer's way, and the answer picked for it.
@@ -2815,6 +2850,8 @@ pub enum Dialog {
     RdpDone(RdpOutcome),
     /// How many sessions a picked file gives, asked before they are imported.
     ConfirmImportFile(Box<PendingImport>),
+    /// The profiles of a Heimdall session document, each clash with a choice.
+    ProfileImportPreview(Box<ProfileImportPreview>),
     /// How many applications Citrix Workspace's cache gives, asked before they are imported.
     ConfirmCitrixImport(Box<heimdall_core::import::citrix_cache::CacheScan>),
     /// Citrix Workspace's cache gives no application: what the scan said.
@@ -3143,6 +3180,9 @@ pub struct App {
     putty_routes: Vec<putty_launch::PuttyRoute>,
     /// The identifier of the next launch of `PuTTY` through a gateway.
     next_putty_route: crate::putty_driver::PuttyRouteId,
+    /// Launches of Remote Desktop Connection through gateways, until their forwards are
+    /// released.
+    mstsc_routes: mstsc_launch::MstscRoutes,
     /// The profile selected in the tree, the last one clicked: where a Shift+click range
     /// starts.
     pub selected_profile: Option<ProfileId>,
@@ -3301,6 +3341,7 @@ impl App {
             pending_tunnel_key: None,
             putty_routes: Vec::new(),
             next_putty_route: crate::putty_driver::PuttyRouteId::default(),
+            mstsc_routes: mstsc_launch::MstscRoutes::default(),
             selected_profile: None,
             selected_folder: None,
             selection: std::collections::BTreeSet::new(),
@@ -3426,6 +3467,7 @@ impl App {
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
             self.close_session_logs();
             self.release_putty_routes();
+            self.release_mstsc_routes();
         }
         debug_assert!(
             self.floating_invariant_holds(),
@@ -3463,6 +3505,7 @@ impl App {
             | Message::OpenCitrix(_)
             | Message::CitrixLaunched { .. }
             | Message::RdpExternalLaunched { .. }
+            | Message::MstscRoute { .. }
             | Message::PuttyHostKey { .. }
             | Message::PuttyLaunched { .. }
             | Message::PuttyRoute { .. }
@@ -3478,7 +3521,9 @@ impl App {
             | Message::AntiIdleTick
             | Message::DisplayScale(_)
             | Message::TmoutResetTick
-            | Message::StopAntiIdle(_)) => self.desktop_message(message),
+            | Message::StopAntiIdle(_)
+            | Message::StabilizationTick(_)
+            | Message::SkipStabilization(_)) => self.desktop_message(message),
             message @ (Message::HealthTick | Message::HealthRead { .. }) => {
                 self.health_message(message)
             }
@@ -3573,6 +3618,7 @@ impl App {
             | Message::ExportFinished(_)
             | Message::Sessions(_)
             | Message::Rdp(_)
+            | Message::ProfileImport(_)
             | Message::Settings(_)
             | Message::Macro(_)
             | Message::NoteOpened(_)
@@ -3751,6 +3797,8 @@ impl App {
             // Not a desktop's, but a session timer's as anti-idle is.
             Message::TmoutResetTick => self.tmout_reset_tick(),
             Message::StopAntiIdle(tab) => self.stop_anti_idle(tab),
+            Message::StabilizationTick(now) => self.stabilization_tick(now),
+            Message::SkipStabilization(tab) => self.skip_stabilization(tab),
             _ => {}
         }
         Vec::new()
@@ -3779,6 +3827,7 @@ impl App {
                 gateway,
                 result,
             } => self.rdp_external_launched(name, gateway, result),
+            Message::MstscRoute { id, event } => self.mstsc_route_event(id, event),
             Message::PuttyHostKey { profile, probe } => self.putty_host_key(*profile, probe),
             Message::PuttyLaunched { name, result } => self.putty_launched(name, result),
             Message::PuttyRoute { id, event } => self.putty_route_event(id, event),
@@ -4679,7 +4728,8 @@ impl App {
                 dialog @ (Dialog::SessionsPreview(_)
                 | Dialog::RdpPreview(_)
                 | Dialog::HostKeysPreview(_)
-                | Dialog::ConfirmImportFile(_)),
+                | Dialog::ConfirmImportFile(_)
+                | Dialog::ProfileImportPreview(_)),
             ) => {
                 self.confirm_import(dialog);
                 Vec::new()
@@ -4904,6 +4954,10 @@ impl App {
             }
             Message::Sessions(message) => self.sessions_message(message.clone()),
             Message::Rdp(message) => self.rdp_message(message.clone()),
+            Message::ProfileImport(message) => {
+                self.profile_import_message(*message);
+                Vec::new()
+            }
             Message::ExportFinished(outcome) => {
                 self.dialog = match outcome {
                     ExportOutcome::Saved(count) => Some(Dialog::ExportDone { count: *count }),

@@ -231,9 +231,9 @@ impl App {
     /// Opens saved RDP profile `id` in `mode` this once, as the C# "Connect with"
     /// (`ServerListViewModel.cs:835-854`, `RdpHandler.cs:662-675`): the profile is not
     /// changed, and everything else is as a plain connection, the Windows Hello gate passed
-    /// already. Remote Desktop Connection is still refused behind an SSH gateway, and an RD
-    /// Gateway, which the built-in client does not go through, still opens there. The tab
-    /// opened keeps `mode` for its Reconnect, as the C# tab keeps it.
+    /// already. Remote Desktop Connection goes through an SSH gateway as a plain connection
+    /// does, and an RD Gateway, which the built-in client does not go through, still opens
+    /// there. The tab opened keeps `mode` for its Reconnect, as the C# tab keeps it.
     pub(super) fn open_rdp_with(&mut self, id: &ProfileId, mode: RdpMode) -> Vec<Effect> {
         let Some(mut profile) = self.rdp_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
@@ -518,6 +518,48 @@ impl App {
     }
 }
 
+/// How often the RDP desktops settling after connecting are looked at, as the C#
+/// countdown's tick: the wait ends within this of its time, and the session bar counts down.
+pub const STABILIZATION_TICK: Duration = Duration::from_secs(1);
+
+impl App {
+    /// How often the desktops settling after connecting are looked at; `None` while none is,
+    /// so nothing ticks for nothing.
+    #[must_use]
+    pub fn stabilization_interval(&self) -> Option<Duration> {
+        self.tabs
+            .iter()
+            .any(|tab| {
+                tab.desktop
+                    .as_ref()
+                    .is_some_and(|pane| pane.stabilizing_until().is_some())
+            })
+            .then_some(STABILIZATION_TICK)
+    }
+
+    /// A tick at `now`: the desktops whose wait is over follow their tab again.
+    pub(super) fn stabilization_tick(&mut self, now: std::time::Instant) {
+        for tab in &mut self.tabs {
+            if let Some(pane) = tab.desktop.as_deref_mut() {
+                pane.settle(now);
+            }
+        }
+    }
+
+    /// The Resolution menu's "Skip stabilization": `tab`'s desktop follows its tab now, said
+    /// as the C# says it.
+    pub(super) fn skip_stabilization(&mut self, tab: TabId) {
+        let skipped = self
+            .tab_mut(tab)
+            .and_then(|found| found.desktop.as_deref_mut())
+            .is_some_and(DesktopPane::end_stabilization);
+        if skipped {
+            log::info!("RDP desktop settling skipped by the user");
+            self.tell(super::Notice::StabilizationSkipped);
+        }
+    }
+}
+
 /// Whether `tab`'s connected session asks for anti-idle keys.
 fn anti_idle(tab: &Tab) -> bool {
     tab.desktop.as_ref().is_some_and(|pane| pane.anti_idle)
@@ -644,11 +686,30 @@ impl App {
                 }),
             _ => None,
         };
+        let global_delay = self.settings.rdp_resize_enable_delay_ms;
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
         let ready = matches!(event, ConnectionEvent::RdpReady { .. });
         apply(tab, event);
+        // Each connection, a reconnection included, settles before following the tab, as
+        // the C# one: the wait the profile sets, else the settings'.
+        if ready {
+            let own = match &tab.profile {
+                TabProfile::Rdp(profile) => profile.options.resize_enable_delay_ms,
+                _ => None,
+            };
+            if let Some(pane) = tab.desktop.as_deref_mut() {
+                let delay = heimdall_core::settings::rdp_resize_enable_delay(own, global_delay);
+                pane.stabilize(delay, std::time::Instant::now());
+                if pane.stabilizing_until().is_some() {
+                    log::info!(
+                        "RDP desktop settling for {} ms before following its tab",
+                        delay.as_millis()
+                    );
+                }
+            }
+        }
         if context.is_some() {
             tab.certificate_context = context;
         }

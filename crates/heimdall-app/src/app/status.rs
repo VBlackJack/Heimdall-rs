@@ -239,6 +239,9 @@ pub enum Notice {
     ResolutionReconnected,
     /// The size chosen is larger than the tab: the desktop is shown scaled.
     ResolutionScaled,
+    /// The wait after connecting was skipped from the Resolution menu: the desktop follows
+    /// its tab now, as the C# `RdpStabilizationSkippedToast`.
+    StabilizationSkipped,
     /// The files copied were not offered to the RDP server: more files and folders than
     /// one copy takes.
     RdpFilesTooMany,
@@ -424,6 +427,13 @@ pub enum Notice {
         name: String,
         /// The RD Gateway the built-in client does not go through.
         gateway: Option<String>,
+    },
+    /// An RDP profile opened in Remote Desktop Connection through its SSH gateway.
+    RdpExternalLaunchedThrough {
+        /// The profile's name.
+        name: String,
+        /// The SSH gateway's name.
+        gateway: String,
     },
     /// An RDP profile did not open in Remote Desktop Connection, for this reason.
     RdpExternalRefused(crate::rdp_external::ExternalRefusal),

@@ -1820,3 +1820,46 @@ fn the_ssh_mode_and_x11_forwarding_of_a_shell_are_carried_and_dropped_where_noth
         ]
     );
 }
+
+#[test]
+fn an_rdp_profile_s_own_wait_after_connecting_is_kept_and_one_out_of_range_dropped_with_a_note() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+
+    let json = servers(
+        r#"{"id": "own", "displayName": "Own", "remoteServer": "own.lab", "connectionType": "RDP",
+            "rdpUseGlobalDefaults": false, "rdpResizeEnableDelayMs": 5000},
+           {"id": "off", "displayName": "Off", "remoteServer": "off.lab", "connectionType": "RDP",
+            "rdpUseGlobalDefaults": false, "rdpResizeEnableDelayMs": 0},
+           {"id": "global", "displayName": "Global", "remoteServer": "g.lab", "connectionType": "RDP",
+            "rdpUseGlobalDefaults": false},
+           {"id": "short", "displayName": "Short", "remoteServer": "s.lab", "connectionType": "RDP",
+            "rdpUseGlobalDefaults": false, "rdpResizeEnableDelayMs": 500},
+           {"id": "negative", "displayName": "Negative", "remoteServer": "n.lab",
+            "connectionType": "RDP", "rdpUseGlobalDefaults": false, "rdpResizeEnableDelayMs": -1}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let delays: Vec<Option<u32>> = report
+        .rdp
+        .iter()
+        .map(|profile| profile.options.resize_enable_delay_ms)
+        .collect();
+    assert_eq!(
+        delays,
+        [Some(5_000), Some(0), None, None, None],
+        "out of the range: the global setting, never brought within it"
+    );
+    assert_eq!(
+        report.dropped,
+        [
+            DroppedSettings {
+                name: "Short".to_owned(),
+                settings: vec![Dropped::RdpResizeDelayOutOfRange(500)],
+            },
+            DroppedSettings {
+                name: "Negative".to_owned(),
+                settings: vec![Dropped::RdpResizeDelayOutOfRange(-1)],
+            },
+        ]
+    );
+}

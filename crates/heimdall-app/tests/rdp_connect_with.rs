@@ -16,12 +16,11 @@
 
 //! The profile menu's one-time "Connect with", as the C# `ConnectEmbedded` and
 //! `ConnectExternal`: an RDP profile opens in the mode chosen this once, its own mode
-//! unchanged, through every gate a plain connection passes; Remote Desktop Connection is
-//! still refused behind an SSH gateway, and Reconnect keeps the mode chosen.
+//! unchanged, through every gate a plain connection passes; Remote Desktop Connection goes
+//! through an SSH gateway as a plain connection does, and Reconnect keeps the mode chosen.
 
 use std::path::Path;
 
-use heimdall_app::rdp_external::ExternalRefusal;
 use heimdall_app::windows_hello::HelloRefusal;
 use heimdall_app::{
     App, AppConfig, Effect, Message, Notice, Phase, SettingsMessage, SystemCredentials, UiError,
@@ -182,16 +181,28 @@ fn external_once_opens_remote_desktop_connection_for_a_profile_set_to_a_tab() {
 }
 
 #[test]
-fn external_once_behind_an_ssh_gateway_is_refused_and_embedded_once_goes_through_it() {
+fn external_once_behind_an_ssh_gateway_goes_through_it_as_embedded_once_does() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let effects = app.update(once("far", RdpMode::External));
-    assert!(effects.is_empty(), "{effects:?}");
-    assert!(app.tabs.is_empty());
+    let [Effect::OpenMstscRoute { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}: never sent straight to the server");
+    };
+    assert!(request.before.is_empty());
     assert_eq!(
-        app.notice(),
-        Some(&Notice::RdpExternalRefused(ExternalRefusal::SshGateway)),
-        "never sent straight to the server"
+        (request.gateway.host.as_str(), request.gateway.port),
+        ("bastion.lab", 22),
+        "through its gateway"
+    );
+    assert_eq!(
+        (request.profile.host.as_str(), request.profile.port),
+        ("far.lab", 3389)
+    );
+    assert!(app.tabs.is_empty());
+    assert_eq!(app.notice(), None);
+    assert_eq!(
+        modes(&app, dir.path()),
+        (SAVED_MODES.to_vec(), SAVED_MODES.to_vec())
     );
 
     let effects = app.update(once("far", RdpMode::Embedded));
@@ -263,6 +274,32 @@ fn windows_hello_is_asked_first_in_either_mode_and_a_refusal_opens_nothing() {
         matches!(effects.as_slice(), [Effect::LaunchRdpExternal { .. }]),
         "{effects:?}"
     );
+
+    // Behind an SSH gateway too: nothing is dialled before the answer.
+    for message in [
+        Message::OpenRdp(ProfileId::new("far")),
+        once("far", RdpMode::External),
+    ] {
+        assert!(matches!(
+            app.update(message).as_slice(),
+            [Effect::VerifyWindowsHello]
+        ));
+        assert!(
+            app.update(Message::WindowsHello(Err(HelloRefusal::NotVerified)))
+                .is_empty(),
+            "fail closed: no route opened"
+        );
+    }
+    assert!(matches!(
+        app.update(Message::OpenRdp(ProfileId::new("far")))
+            .as_slice(),
+        [Effect::VerifyWindowsHello]
+    ));
+    let effects = app.update(Message::WindowsHello(Ok(())));
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenMstscRoute { .. }]),
+        "{effects:?}"
+    );
 }
 
 #[test]
@@ -287,10 +324,7 @@ fn reconnect_keeps_the_mode_chosen_not_the_profiles() {
     assert_ne!(app.tabs[0].id, failed, "opened again");
     assert_eq!(app.tabs[0].rdp_mode_override, Some(RdpMode::Embedded));
     assert_eq!(app.tabs[0].phase, missing);
-    assert_ne!(
-        app.notice(),
-        Some(&Notice::RdpExternalRefused(ExternalRefusal::SshGateway))
-    );
+    assert!(!matches!(app.notice(), Some(Notice::RdpExternalRefused(_))));
 
     // A plain connection's tab opens again as its profile says.
     let effects = app.update(Message::OpenRdp(ProfileId::new("tab")));

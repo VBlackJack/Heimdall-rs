@@ -3229,6 +3229,7 @@ fn a_mobaxterm_file_is_asked_about_then_its_passwords_are_said() {
             name: "lab.mxtsessions".to_owned(),
             text: "[Bookmarks]\nweb= #109#0%web.lab%22%root\n[Passwords]\na=x\nb=y\n".to_owned(),
             settings: None,
+            rename: "{name} (Imported {n})".to_owned(),
         })),
     )));
     {
@@ -3264,6 +3265,7 @@ fn a_file_giving_nothing_says_so_and_why() {
             name: "confCons.xml".to_owned(),
             text: r#"<Connections FullFileEncryption="true"/>"#.to_owned(),
             settings: None,
+            rename: "{name} (Imported {n})".to_owned(),
         })),
     )));
     let mut ui = simulator(&shell);
@@ -3274,6 +3276,78 @@ fn a_file_giving_nothing_says_so_and_why() {
     ] {
         ui.find(said).expect(said);
     }
+}
+
+#[test]
+fn a_heimdall_document_is_previewed_profile_by_profile_then_what_each_choice_did_is_said() {
+    use heimdall_app::{ImportFile, SessionsMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let read = |text: &str| {
+        Message::App(AppMessage::Sessions(SessionsMessage::FileRead(Ok(
+            ImportFile {
+                name: "export.json".to_owned(),
+                text: text.to_owned(),
+                settings: None,
+                rename: heimdall_ui::rdp_view::names().rename,
+            },
+        ))))
+    };
+    let document = r#"[{"id":"w1","displayName":"web","remoteServer":"web.lab","connectionType":"SSH"},
+        {"id":"d1","displayName":"db","remoteServer":"db.lab","connectionType":"SSH"}]"#;
+    let _ = shell.update(read(document));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    // The same file again: both profiles clash with those just imported, by identifier.
+    let _ = shell.update(read(document));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Import profiles",
+            "2 profiles ready to import.",
+            "2 profiles selected out of 2, 2 conflicts.",
+            "export.json#0",
+            "export.json#1",
+            "web.lab:22",
+            "Conflict with web",
+            "Conflict with db",
+            "Apply to all conflicts:",
+            "Select all",
+            "Select none",
+        ] {
+            ui.find(said).expect(said);
+        }
+        ui.click("Replace").expect("apply to all: replace");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                Message::App(AppMessage::ProfileImport(
+                    heimdall_app::ProfileImportMessage::ConflictAll(
+                        heimdall_core::import::rdp_file::Conflict::Replace
+                    )
+                ))
+            )),
+            "{messages:?}"
+        );
+        for message in messages {
+            let _ = shell.update(message);
+        }
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Import selected").expect("the button");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = simulator(&shell);
+    ui.find("0 imported, 2 replaced, 0 auto-renamed, 0 skipped.")
+        .expect("what each choice did, as the C# summary");
+    ui.find("Added: 0. Updated: 0. Unchanged: 2.")
+        .expect("the counts as before");
 }
 
 #[tokio::test]
@@ -3644,6 +3718,7 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         stored_credentials: None,
         host_keys: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
+        actions: None,
         dropped: vec![(
             "desk".to_owned(),
             vec![Dropped::RdpPrinters, Dropped::RdpSmartCards],
@@ -3682,6 +3757,7 @@ fn an_import_counts_the_gateways_it_created_and_merged_as_the_csharp_summary() {
             orphans: 0,
         },
         dropped: Vec::new(),
+        actions: None,
     }));
     let shell = Shell::with_app(core);
     let mut ui = simulator(&shell);
@@ -3716,6 +3792,7 @@ fn an_import_with_orphan_gateway_references_counts_them_and_says_what_to_do_as_t
             orphans: 1,
         },
         dropped: Vec::new(),
+        actions: None,
     }));
     let shell = Shell::with_app(core);
     let mut ui = simulator(&shell);

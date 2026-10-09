@@ -25,10 +25,12 @@ use heimdall_core::post_connect::PostConnect;
 use heimdall_core::profile::{
     Aspect, AudioPlayback, CitrixProfile, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
-    Experience, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile,
-    LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, RdpSwitch,
-    Resolution, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    DesktopSizing, Experience, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards,
+    FtpProfile, LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile,
+    RdpSwitch, Resolution, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    fixed_desktop,
 };
+use heimdall_core::settings::rdp_resize_enable_delay_accepted;
 
 use crate::local_draft;
 use crate::reachability::{Reached, Unreached};
@@ -77,6 +79,9 @@ pub enum ProfileField {
     FixedWidth,
     /// Height of a fixed RDP desktop.
     FixedHeight,
+    /// Milliseconds an RDP desktop following its tab waits after connecting, as the C#
+    /// "Dynamic resize delay (ms)"; empty takes the settings' value.
+    ResizeDelay,
     /// The profile's entry in the external password manager.
     VaultEntry,
     /// The local port of the SOCKS proxy opened through the gateway.
@@ -102,7 +107,7 @@ pub enum ProfileField {
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -115,6 +120,7 @@ impl ProfileField {
         Self::KeyPath,
         Self::FixedWidth,
         Self::FixedHeight,
+        Self::ResizeDelay,
         Self::VaultEntry,
         Self::SocksPort,
         Self::RemoteBindPort,
@@ -199,6 +205,7 @@ impl DraftProtocol {
             ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
+            | ProfileField::ResizeDelay
             | ProfileField::RdGateway => self == Self::Rdp,
             ProfileField::KeyPath => self.is_ssh_family(),
             // The protocols whose password the external credential provider gives: not
@@ -489,6 +496,8 @@ pub struct ProfileDraft {
     pub fixed_width: String,
     /// RDP: height of a fixed desktop, as typed.
     pub fixed_height: String,
+    /// RDP: the wait after connecting, in milliseconds, as typed; empty takes the settings'.
+    pub resize_delay: String,
     /// The entry in the external password manager; empty uses the name.
     pub vault_entry: String,
     /// The SOCKS proxy's local port, as typed; empty or 0 opens none, as the C# 0.
@@ -580,6 +589,9 @@ pub enum DraftError {
     FixedWidthInvalid,
     /// A fixed height is not a number from 200 to 4320.
     FixedHeightInvalid,
+    /// The wait after connecting is neither empty, 0, nor a number of milliseconds within
+    /// the C# range.
+    ResizeDelayInvalid,
     /// A gateway's parents lead back to it.
     GatewayLoop,
     /// The SOCKS port is not a number from 0 to 65535.
@@ -612,6 +624,7 @@ impl DraftError {
             Self::DomainInvalid => ProfileField::Domain,
             Self::FixedWidthInvalid => ProfileField::FixedWidth,
             Self::FixedHeightInvalid => ProfileField::FixedHeight,
+            Self::ResizeDelayInvalid => ProfileField::ResizeDelay,
             Self::SocksPortInvalid => ProfileField::SocksPort,
             Self::RemoteBindPortInvalid => ProfileField::RemoteBindPort,
             Self::RemoteLocalPortInvalid => ProfileField::RemoteLocalPort,
@@ -837,6 +850,11 @@ impl ProfileDraft {
             rd_gateway: profile.extras.rd_gateway.clone().unwrap_or_default(),
             fixed_width: profile.options.fixed_width.to_string(),
             fixed_height: profile.options.fixed_height.to_string(),
+            resize_delay: profile
+                .options
+                .resize_enable_delay_ms
+                .map(|ms| ms.to_string())
+                .unwrap_or_default(),
             ..Self::default()
         }
     }
@@ -1083,7 +1101,26 @@ impl ProfileDraft {
             let height = self.fixed_height()?;
             (options.fixed_width, options.fixed_height) = fixed_desktop(width, height);
         }
+        options.resize_enable_delay_ms = self.resize_delay()?;
         Ok(options)
+    }
+
+    /// The wait after connecting typed, in milliseconds: `None` when empty, the settings'
+    /// value then applying, as the C# `null`.
+    ///
+    /// # Errors
+    ///
+    /// [`DraftError::ResizeDelayInvalid`] for anything but 0 or a number within the C# range,
+    /// while the field is shown; hidden, such a value is dropped, as it could not be used.
+    fn resize_delay(&self) -> Result<Option<u32>, DraftError> {
+        match self.resize_delay.trim() {
+            "" => Ok(None),
+            typed => match typed.parse::<u32>() {
+                Ok(ms) if rdp_resize_enable_delay_accepted(ms) => Ok(Some(ms)),
+                _ if self.shows(ProfileField::ResizeDelay) => Err(DraftError::ResizeDelayInvalid),
+                _ => Ok(None),
+            },
+        }
     }
 
     /// The fixed width typed.
@@ -1145,7 +1182,11 @@ impl ProfileDraft {
     #[must_use]
     pub fn shows(&self, field: ProfileField) -> bool {
         let fixed_size = matches!(field, ProfileField::FixedWidth | ProfileField::FixedHeight);
+        // As the C# shows it only where it applies: a desktop following its tab.
+        let delay_unused = field == ProfileField::ResizeDelay
+            && self.rdp_options.sizing() != DesktopSizing::FollowsTab;
         self.protocol.shows(field)
+            && !delay_unused
             && !(self.protocol == DraftProtocol::WinRm
                 && field == ProfileField::Username
                 && !self.is_on(ProfileToggle::StoredCredential))
@@ -1241,6 +1282,7 @@ impl ProfileDraft {
                     errors.extend(self.fixed_width().err());
                     errors.extend(self.fixed_height().err());
                 }
+                errors.extend(self.resize_delay().err());
                 errors.extend(forwards);
             }
             DraftProtocol::WinRm => {
@@ -1623,6 +1665,7 @@ impl ProfileDraft {
             ProfileField::Domain => &self.domain,
             ProfileField::FixedWidth => &self.fixed_width,
             ProfileField::FixedHeight => &self.fixed_height,
+            ProfileField::ResizeDelay => &self.resize_delay,
             ProfileField::VaultEntry => &self.vault_entry,
             ProfileField::Tags => &self.tags,
             ProfileField::MacAddress => &self.mac_address,
@@ -1655,6 +1698,7 @@ impl ProfileDraft {
             ProfileField::Domain => &mut self.domain,
             ProfileField::FixedWidth => &mut self.fixed_width,
             ProfileField::FixedHeight => &mut self.fixed_height,
+            ProfileField::ResizeDelay => &mut self.resize_delay,
             ProfileField::VaultEntry => &mut self.vault_entry,
             ProfileField::Tags => &mut self.tags,
             ProfileField::MacAddress => &mut self.mac_address,
@@ -2947,5 +2991,54 @@ mod tests {
         for protocol in [DraftProtocol::Rdp, DraftProtocol::WinRm, DraftProtocol::Ftp] {
             assert!(!ProfileDraft::new_for(protocol).shows_session_logging());
         }
+    }
+
+    #[test]
+    fn the_wait_after_connecting_is_shown_where_the_desktop_follows_its_tab_and_saved() {
+        let mut form = rdp_form();
+        assert!(form.shows(ProfileField::ResizeDelay), "follows its tab");
+        assert_eq!(
+            saved_rdp(&form).options.resize_enable_delay_ms,
+            None,
+            "empty: the settings' value"
+        );
+        for (typed, saved) in [
+            ("0", Some(0)),
+            (" 2500 ", Some(2_500)),
+            ("60000", Some(60_000)),
+        ] {
+            form.set(ProfileField::ResizeDelay, typed.to_owned());
+            assert_eq!(
+                saved_rdp(&form).options.resize_enable_delay_ms,
+                saved,
+                "{typed}"
+            );
+            assert_eq!(
+                ProfileDraft::from_rdp(&saved_rdp(&form)).value(ProfileField::ResizeDelay),
+                typed.trim(),
+                "read back"
+            );
+        }
+        for typed in ["500", "60001", "-1", "soon"] {
+            form.set(ProfileField::ResizeDelay, typed.to_owned());
+            assert_eq!(form.errors(), [DraftError::ResizeDelayInvalid], "{typed}");
+        }
+        assert_eq!(
+            DraftError::ResizeDelayInvalid.field(),
+            ProfileField::ResizeDelay
+        );
+
+        // Hidden where the desktop keeps a size, its value out of the range dropped.
+        form.rdp_options.dynamic_resolution = false;
+        assert!(
+            !form.shows(ProfileField::ResizeDelay),
+            "the tab's size once"
+        );
+        assert!(form.errors().is_empty());
+        assert_eq!(saved_rdp(&form).options.resize_enable_delay_ms, None);
+        form.rdp_options.dynamic_resolution = true;
+        form.rdp_options.resolution = Resolution::Fixed;
+        assert!(!form.shows(ProfileField::ResizeDelay), "a size of its own");
+        assert!(!ProfileDraft::new_for(DraftProtocol::Ssh).shows(ProfileField::ResizeDelay));
     }
 }

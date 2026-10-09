@@ -56,6 +56,7 @@ mod macros_view;
 pub mod palette;
 pub mod post_connect_form;
 pub mod presets_editor;
+pub mod profile_import_view;
 pub mod profile_tabs;
 mod provider_view;
 pub mod rdp_options;

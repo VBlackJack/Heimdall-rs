@@ -27,7 +27,7 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_ssh::known_hosts_import::{self, OtherAlgorithm, Trusting};
 use heimdall_ssh::{HostKeySource, KnownHosts, PublicKey};
 use tokio_util::sync::CancellationToken;
@@ -103,6 +103,9 @@ enum KeyFor {
     Tunnel(TunnelSpec),
     /// An SSH profile, opened in `PuTTY`.
     Putty(Box<SshProfile>),
+    /// An RDP profile, its options the session's, opened in Remote Desktop Connection
+    /// through the gateway that presented it.
+    Mstsc(Box<RdpProfile>),
 }
 
 impl PendingTunnelKey {
@@ -115,6 +118,22 @@ impl PendingTunnelKey {
     ) -> Self {
         Self {
             then: KeyFor::Putty(Box::new(profile)),
+            host,
+            port,
+            key,
+        }
+    }
+
+    /// The key the gateway `host:port` presented when `profile` was to open in Remote
+    /// Desktop Connection through it.
+    pub(super) fn for_mstsc(
+        profile: RdpProfile,
+        host: String,
+        port: u16,
+        key: Arc<PublicKey>,
+    ) -> Self {
+        Self {
+            then: KeyFor::Mstsc(Box::new(profile)),
             host,
             port,
             key,
@@ -502,7 +521,7 @@ impl App {
     }
 
     /// The user's answer about an unknown key: learnt, or trusted for this run only, and the
-    /// tunnel or `PuTTY` tried again; or refused, and neither opened.
+    /// tunnel, `PuTTY` or Remote Desktop Connection tried again; or refused, and none opened.
     pub(super) fn tunnel_host_key_decision(&mut self, trust: super::KeyTrust) -> Vec<Effect> {
         let Some(pending) = self.pending_tunnel_key.take() else {
             return Vec::new();
@@ -567,6 +586,10 @@ impl App {
         match then {
             KeyFor::Tunnel(spec) => self.open_tunnel(spec),
             KeyFor::Putty(profile) => self.probe_for_putty(*profile),
+            KeyFor::Mstsc(profile) => match profile.gateway.clone() {
+                Some(gateway) => self.open_mstsc_route(*profile, gateway),
+                None => Vec::new(),
+            },
         }
     }
 
@@ -575,6 +598,9 @@ impl App {
         self.tell(match then {
             KeyFor::Tunnel(_) => Notice::TunnelFailed(error),
             KeyFor::Putty(_) => Notice::PuttyRefused(crate::putty::PuttyRefusal::HostKey(error)),
+            KeyFor::Mstsc(_) => {
+                Notice::RdpExternalRefused(crate::rdp_external::ExternalRefusal::Gateway(error))
+            }
         });
     }
 

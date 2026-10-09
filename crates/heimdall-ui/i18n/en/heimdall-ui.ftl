@@ -13,6 +13,8 @@ ui-desktop-send-keys = Send keys
 ui-desktop-send-keys-tooltip = Send keys to remote
 ui-desktop-anti-idle = Anti-idle
 ui-desktop-anti-idle-tooltip = Anti-idle is keeping this session alive. Click to disable for the current session.
+ui-desktop-stabilizing = Stabilizing session... { $seconds }s
+ui-desktop-stabilizing-tooltip = Automatic resizing is paused while the session settles. Use the Resolution menu, Skip stabilization, to resume now.
 ui-desktop-send-clipboard = Send clipboard
 ui-desktop-send-clipboard-tooltip = Send this computer's clipboard to the server, unencrypted
 ui-desktop-fullscreen = Fullscreen (F11)
@@ -206,7 +208,9 @@ ui-citrix-tab-terminate-not-run = The request to end the Citrix client failed: t
 ui-status-rdp-external-launched = External client launched: { $name } opened in Remote Desktop Connection.
 ui-status-rdp-external-launched-gateway = External client launched: { $name } goes through the Remote Desktop Gateway { $gateway }, which the built-in client does not go through yet, so it opened in Remote Desktop Connection.
 ui-status-rdp-external-not-windows = This profile opens in Remote Desktop Connection (mstsc.exe), which only Windows has: it cannot be opened on this system.
-ui-status-rdp-external-ssh-gateway = Remote Desktop Connection (mstsc.exe) cannot go through the SSH gateway of this profile: it was not opened.
+ui-status-rdp-external-launched-through = External client launched: { $name } opened in Remote Desktop Connection through the SSH gateway { $gateway }.
+ui-status-rdp-external-gateway = Remote Desktop Connection was not opened, its SSH gateway not reached: { $reason }
+ui-status-rdp-external-forward = Remote Desktop Connection was not opened, no local port could be opened for its SSH gateway: { $reason }
 ui-status-rdp-external-not-found = mstsc.exe was not found on this computer.
 ui-status-rdp-external-not-written = Failed to write the Remote Desktop connection file: { $reason }
 ui-status-rdp-external-not-started = mstsc.exe did not start: { $reason }
@@ -448,6 +452,7 @@ ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-paste-truncated = Preview is truncated. The full clipboard content will be pasted if you continue.
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
+ui-dialog-import-actions = { $imported } imported, { $replaced } replaced, { $renamed } auto-renamed, { $skipped } skipped.
 ui-dialog-import-gateways = SSH gateways: { $created } created, { $merged } merged, { $orphans ->
     [one] { $orphans } orphan reference
    *[other] { $orphans } orphan references
@@ -475,6 +480,7 @@ ui-import-dropped-rdp-webcam = webcam
 ui-import-dropped-rdp-usb = USB devices
 ui-import-dropped-rdp-microphone = microphone
 ui-import-dropped-rdp-multi-monitor = several monitors
+ui-import-dropped-rdp-resize-delay = a resize delay of { $ms } ms, out of range (the global setting applies)
 ui-import-dropped-citrix-cache-launch = launch from the Citrix Workspace cache, not imported
 ui-import-dropped-local-post-connect = { $count ->
     [one] post-connect sequence of { $count } step, which a local shell never runs
@@ -828,6 +834,20 @@ ui-rdp-done = { $imported } imported, { $replaced } replaced, { $renamed } auto-
    *[other] { $passwords } passwords ignored.
 }
 ui-rdp-nothing = No valid .rdp files were found to import.
+ui-profile-import-title = Import profiles
+ui-profile-import-subtitle = { $count ->
+    [one] { $count } profile ready to import.
+   *[other] { $count } profiles ready to import.
+}
+ui-profile-import-summary = { $chosen ->
+    [one] { $chosen } profile selected out of { $total }
+   *[other] { $chosen } profiles selected out of { $total }
+}, { $conflicts ->
+    [one] { $conflicts } conflict
+   *[other] { $conflicts } conflicts
+}.
+ui-profile-import-button = Import selected
+ui-profile-import-source = { $file }#{ $position }
 ui-tree-import-known-hosts = Import trusted SSH hosts...
 ui-hostkeys-title = Import trusted SSH hosts
 ui-hostkeys-pick-title = Select known_hosts file
@@ -1040,6 +1060,8 @@ ui-profile-resolution-custom = Custom...
 ui-profile-resolution-preset = { $width }x{ $height }
 ui-profile-resolution-width = Width
 ui-profile-resolution-height = Height
+ui-profile-resize-delay = Dynamic resize delay (ms)
+ui-profile-resize-delay-global = { $ms } (global default)
 ui-profile-resolution-scale-fixed = Scale fixed resolution to fit the pane
 ui-profile-resolution-dynamic = Allow dynamic resolution updates
 ui-profile-nla-off-hint = Without Network Level Authentication, a saved password is not sent: Heimdall asks for it.
@@ -1067,6 +1089,7 @@ ui-profile-error-username-missing = Username is required.
 ui-profile-error-domain-invalid = The domain cannot hold a space or a double quote.
 ui-profile-error-fixed-width = RDP fixed width must be between { $min } and { $max }.
 ui-profile-error-fixed-height = RDP fixed height must be between { $min } and { $max }.
+ui-profile-error-resize-delay = Leave the RDP resize delay empty to inherit the global default, enter 0 to disable the lockout, or enter a value from { $min } to { $max } ms.
 ui-profile-error-socks-port = The SOCKS5 port must be a number from 0 to 65535; 0 disables the proxy.
 ui-profile-error-remote-bind-port = The remote port must be a number from 0 to 65535; 0 disables the forward.
 ui-profile-error-remote-local-port = The local port must be a number from 0 to 65535; 0 uses the remote port.
@@ -1673,6 +1696,7 @@ ui-resolution-mode-fit-window = Fit window
 ui-resolution-mode-fixed = Fixed
 ui-resolution-match-window = Match window
 ui-resolution-custom = Custom...
+ui-resolution-skip-stabilization = Skip stabilization
 ui-resolution-custom-title = Custom resolution
 ui-resolution-custom-prompt = Enter resolution as WIDTHxHEIGHT.
 ui-resolution-custom-invalid = Invalid resolution. Use WIDTHxHEIGHT.
@@ -1713,6 +1737,7 @@ ui-files-menu-run-in-shell = Run in Shell
 ui-files-menu-open-with = Open With...
 ui-files-menu-open-in-editor = Open in Editor
 ui-status-resolution-reconnected = Resolution change required reconnect.
+ui-status-stabilization-skipped = Stabilization skipped - dynamic resolution is now active.
 ui-resolution-mode-smart-sizing = Smart sizing
 ui-resolution-tooltip = Change resolution - { $mode }
 ui-resolution-tooltip-size = Change resolution - { $mode } ({ $width }x{ $height })
@@ -3551,6 +3576,8 @@ ui-desktop-shares-drives-tooltip = Drive redirection
 ui-desktop-shares-audio = Sound
 ui-desktop-shares-audio-tooltip = Audio redirection
 ui-settings-rdp-connect-timeout = RDP connection watchdog timeout (0 = off)
+ui-settings-rdp-resize-delay = Resolution stabilization delay after connect (0 = off)
+ui-settings-rdp-resize-delay-refused = RDP resize delay must be zero or between { $min } and { $max } ms.
 ui-settings-rdp-connect-timeout-off = Off
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Give the keyboard back from a remote desktop

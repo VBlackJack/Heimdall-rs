@@ -55,7 +55,12 @@ fn app(dir: &Path) -> App {
         gateway: None,
         redirect_clipboard: true,
         redirect_drives: false,
-        options: heimdall_core::profile::RdpOptions::default(),
+        // No wait after connecting: each size reaches the session at once here; the wait
+        // has its own tests, in `rdp_stabilization.rs`.
+        options: heimdall_core::profile::RdpOptions {
+            resize_enable_delay_ms: Some(0),
+            ..heimdall_core::profile::RdpOptions::default()
+        },
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
@@ -581,7 +586,10 @@ fn the_profile_decides_the_desktop_asked_and_which_tab_sizes_reach_the_server() 
     ] {
         let dir = tempfile::tempdir().expect("dir");
         let mut profile = app(dir.path()).rdp_profiles()[0].clone();
-        profile.options = options;
+        profile.options = RdpOptions {
+            resize_enable_delay_ms: Some(0),
+            ..options
+        };
         let profiles_file = dir.path().join("profiles.toml");
         let mut store = ProfileStore::open(&profiles_file).expect("store");
         store.merge_rdp([profile]);
@@ -1239,7 +1247,7 @@ fn full_screen_opens_remote_desktop_connection_full_screen_and_leaves_a_tab_as_i
 }
 
 #[test]
-fn an_external_profile_through_an_ssh_gateway_is_refused_not_sent_straight() {
+fn an_external_profile_through_a_gateway_gone_is_refused_with_its_reason_not_sent_straight() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app_with(dir.path(), |profile| {
         profile.extras.external = true;
@@ -1250,7 +1258,11 @@ fn an_external_profile_through_an_ssh_gateway_is_refused_not_sent_straight() {
     assert!(app.tabs.is_empty());
     assert_eq!(
         app.notice(),
-        Some(&Notice::RdpExternalRefused(ExternalRefusal::SshGateway))
+        Some(&Notice::RdpExternalRefused(ExternalRefusal::Gateway(
+            UiError::Route(heimdall_core::store::RouteError::MissingGateway(
+                ProfileId::new("bastion")
+            ))
+        )))
     );
 }
 

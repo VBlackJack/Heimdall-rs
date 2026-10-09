@@ -127,6 +127,7 @@ pub async fn read(path: PathBuf) -> Result<ImportFile, String> {
         name,
         text,
         settings,
+        rename: crate::rdp_view::names().rename,
     })
 }
 

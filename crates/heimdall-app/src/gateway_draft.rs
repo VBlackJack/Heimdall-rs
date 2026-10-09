@@ -160,6 +160,7 @@ impl GatewayDraft {
             | ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
+            | ProfileField::ResizeDelay
             | ProfileField::VaultEntry
             | ProfileField::SocksPort
             | ProfileField::RemoteBindPort
@@ -190,6 +191,7 @@ impl GatewayDraft {
             | ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
+            | ProfileField::ResizeDelay
             | ProfileField::VaultEntry
             | ProfileField::SocksPort
             | ProfileField::RemoteBindPort

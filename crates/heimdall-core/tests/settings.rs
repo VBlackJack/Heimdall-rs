@@ -1773,6 +1773,105 @@ fn credential_guard_is_not_required_by_default_kept_carried_and_reset_with_every
 }
 
 #[test]
+fn the_rdp_resize_delay_is_kept_within_the_csharp_range_exported_and_reset_with_rdp() {
+    use heimdall_core::settings::{
+        RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS, rdp_resize_enable_delay_accepted,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.rdp_resize_enable_delay_ms, 10_000,
+        "the C# 10 000 ms"
+    );
+    assert_eq!(RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS, 10_000);
+    for (ms, accepted) in [
+        (0, true),
+        (1, false),
+        (999, false),
+        (1_000, true),
+        (60_000, true),
+        (60_001, false),
+    ] {
+        assert_eq!(rdp_resize_enable_delay_accepted(ms), accepted, "{ms}");
+    }
+
+    settings.rdp_resize_enable_delay_ms = 0;
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path)
+            .expect("load")
+            .rdp_resize_enable_delay_ms,
+        0,
+        "off, kept"
+    );
+
+    // Edited by hand out of the range: the default.
+    std::fs::write(
+        &path,
+        "version = 1\n[rdp_session]\nresize_enable_delay_ms = 500\n",
+    )
+    .expect("write");
+    let mut read = Settings::load(&path).expect("load");
+    assert_eq!(
+        read.rdp_resize_enable_delay_ms,
+        RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS
+    );
+
+    // In a portable settings file, as the C# exports it.
+    read.rdp_resize_enable_delay_ms = 4_000;
+    let (text, _) = read.export(None, false);
+    assert!(text.contains("resize_enable_delay_ms = 4000"), "{text}");
+    let imported = Settings::default().import(&text).expect("import");
+    assert_eq!(imported.settings.rdp_resize_enable_delay_ms, 4_000);
+    assert!(
+        imported
+            .changes
+            .iter()
+            .any(|change| change.key == "rdp_session.resize_enable_delay_ms"),
+        "{:?}",
+        imported.changes
+    );
+
+    read.reset_rdp();
+    assert_eq!(
+        read.rdp_resize_enable_delay_ms, RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
+        "reset with RDP, as the C# `ApplyRdpDefaults`"
+    );
+}
+
+#[test]
+fn the_wait_after_connecting_is_the_profile_s_else_the_settings_and_never_out_of_range() {
+    use heimdall_core::settings::rdp_resize_enable_delay;
+
+    let ms = Duration::from_millis;
+    assert_eq!(
+        rdp_resize_enable_delay(Some(2_000), 10_000),
+        ms(2_000),
+        "own"
+    );
+    assert_eq!(rdp_resize_enable_delay(Some(0), 10_000), ms(0), "own off");
+    assert_eq!(rdp_resize_enable_delay(None, 30_000), ms(30_000), "global");
+    assert_eq!(rdp_resize_enable_delay(None, 0), ms(0), "global off");
+    assert_eq!(
+        rdp_resize_enable_delay(Some(500), 30_000),
+        ms(30_000),
+        "an own value out of the range is not taken"
+    );
+    assert_eq!(
+        rdp_resize_enable_delay(Some(u32::MAX), 0),
+        ms(0),
+        "nor one past it"
+    );
+    assert_eq!(
+        rdp_resize_enable_delay(None, 70_000),
+        ms(10_000),
+        "a global value out of the range is the default"
+    );
+}
+
+#[test]
 fn the_known_hosts_import_at_startup_is_off_by_default_kept_carried_and_reset() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);

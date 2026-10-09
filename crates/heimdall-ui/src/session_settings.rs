@@ -31,6 +31,8 @@ use heimdall_core::settings::{
     WINDOWS_HELLO_VAULT_MAX_DAYS_MAX, WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER,
 };
 
+use heimdall_core::settings::{RDP_RESIZE_ENABLE_DELAY_MAX_MS, RDP_RESIZE_ENABLE_DELAY_MIN_MS};
+
 use crate::i18n::fl;
 
 /// A number of the Settings page.
@@ -59,6 +61,8 @@ pub enum SessionField {
     /// Days Windows Hello unlocks the vault before the master password is asked again, 0
     /// for never.
     VaultHelloMaxDays,
+    /// Milliseconds an RDP desktop following its tab waits after connecting, 0 for none.
+    RdpResizeDelay,
 }
 
 impl SessionField {
@@ -76,7 +80,7 @@ impl SessionField {
     pub const TRANSCRIPTS: [Self; 1] = [Self::TranscriptRetention];
 
     /// How many there are.
-    pub(crate) const COUNT: usize = 11;
+    pub(crate) const COUNT: usize = 12;
 
     /// Its place among them all.
     pub(crate) fn index(self) -> usize {
@@ -92,6 +96,7 @@ impl SessionField {
             Self::UpdateInterval => 8,
             Self::WindowsHelloGrace => 9,
             Self::VaultHelloMaxDays => 10,
+            Self::RdpResizeDelay => 11,
         }
     }
 
@@ -109,6 +114,7 @@ impl SessionField {
             Self::UpdateInterval => fl!("ui-settings-updates-interval"),
             Self::WindowsHelloGrace => fl!("ui-settings-windows-hello-grace"),
             Self::VaultHelloMaxDays => fl!("ui-settings-vault-hello-max-days"),
+            Self::RdpResizeDelay => fl!("ui-settings-rdp-resize-delay"),
         }
     }
 
@@ -118,7 +124,9 @@ impl SessionField {
             Self::KeepAlive | Self::TmoutReset | Self::AntiIdle | Self::ReachabilityInterval => {
                 Some(fl!("ui-settings-anti-idle-unit"))
             }
-            Self::ReachabilityTimeout => Some(fl!("ui-settings-milliseconds-unit")),
+            Self::ReachabilityTimeout | Self::RdpResizeDelay => {
+                Some(fl!("ui-settings-milliseconds-unit"))
+            }
             Self::TranscriptRetention | Self::VaultHelloMaxDays => {
                 Some(fl!("ui-settings-days-unit"))
             }
@@ -153,6 +161,7 @@ impl SessionField {
             Self::UpdateInterval => settings.updates.interval_hours,
             Self::WindowsHelloGrace => settings.windows_hello.grace_minutes,
             Self::VaultHelloMaxDays => settings.windows_hello.vault_max_days,
+            Self::RdpResizeDelay => settings.rdp_resize_enable_delay_ms,
         }
     }
 
@@ -170,6 +179,7 @@ impl SessionField {
             Self::UpdateInterval => settings::update_interval_accepted(value),
             Self::WindowsHelloGrace => settings::windows_hello_grace_minutes_accepted(value),
             Self::VaultHelloMaxDays => settings::windows_hello_vault_max_days_accepted(value),
+            Self::RdpResizeDelay => settings::rdp_resize_enable_delay_accepted(value),
         }
     }
 
@@ -187,6 +197,7 @@ impl SessionField {
             Self::UpdateInterval => SettingsMessage::UpdateInterval(value),
             Self::WindowsHelloGrace => SettingsMessage::WindowsHelloGraceMinutes(value),
             Self::VaultHelloMaxDays => SettingsMessage::VaultHelloMaxDays(value),
+            Self::RdpResizeDelay => SettingsMessage::RdpResizeEnableDelay(value),
         }
     }
 
@@ -247,6 +258,11 @@ impl SessionField {
                 "ui-settings-vault-hello-max-days-refused",
                 min = WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER,
                 max = WINDOWS_HELLO_VAULT_MAX_DAYS_MAX
+            ),
+            Self::RdpResizeDelay => fl!(
+                "ui-settings-rdp-resize-delay-refused",
+                min = RDP_RESIZE_ENABLE_DELAY_MIN_MS,
+                max = RDP_RESIZE_ENABLE_DELAY_MAX_MS
             ),
         }
     }

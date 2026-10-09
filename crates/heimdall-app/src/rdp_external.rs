@@ -20,17 +20,24 @@
 //! Connection asks for it, the user name already filled in. The file is removed a few
 //! seconds after the client started, which reads it at once; one a run left behind is
 //! swept at the next start.
+//!
+//! Behind an SSH gateway, the file names the loopback forward the gateway carries to the
+//! server, as the C# names its tunnel's local end, and the client is waited for: the
+//! forward lives as long as it runs.
 
 use std::fmt::Write as _;
+use std::future::Future;
 use std::io;
-use std::net::Ipv6Addr;
+use std::net::{Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
 use heimdall_core::profile::{
     AudioPlayback, DEFAULT_FIXED_SIZE, Experience, RdpProfile, Resolution, fixed_desktop,
 };
 
+use crate::error::UiError;
 use crate::external_edit::{private_base, write_new};
 
 /// The folder of the connection files, in the system's temporary folder.
@@ -84,9 +91,11 @@ const EXPERIENCE_KEYS: [(&str, Experience); 7] = [
 pub enum ExternalRefusal {
     /// Remote Desktop Connection is Windows' own.
     NotWindows,
-    /// The profile goes through an SSH gateway, which Remote Desktop Connection does not
-    /// follow.
-    SshGateway,
+    /// The SSH gateway the profile goes through was not reached, or refused the user: why.
+    Gateway(UiError),
+    /// No port of this computer's loopback address could be opened for the gateway's
+    /// forward: why.
+    Forward(String),
     /// `mstsc.exe` is not on this computer.
     NotFound,
     /// The connection file could not be written, and why.
@@ -180,6 +189,19 @@ fn full_address(host: &str, port: u16) -> String {
 /// the performance options and the RD Gateway. Never a password.
 #[must_use]
 pub fn rdp_file(profile: &RdpProfile) -> String {
+    rdp_file_to(profile, &profile.host, profile.port)
+}
+
+/// The `.rdp` file `profile` opens with when its server is reached through the forward
+/// listening at `forward`, as the C# writes its tunnel's local end for the address; the RD
+/// Gateway, when the profile names one, written as [`rdp_file`] writes it, as the C# does.
+#[must_use]
+pub fn rdp_file_through(profile: &RdpProfile, forward: SocketAddr) -> String {
+    rdp_file_to(profile, &forward.ip().to_string(), forward.port())
+}
+
+/// The `.rdp` file `profile` opens with, its address `host:port`.
+fn rdp_file_to(profile: &RdpProfile, host: &str, port: u16) -> String {
     let display = display(profile);
     let options = &profile.options;
     let extras = &profile.extras;
@@ -187,7 +209,7 @@ pub fn rdp_file(profile: &RdpProfile) -> String {
     line(
         &mut file,
         "full address:s",
-        clean(&full_address(&profile.host, profile.port)),
+        clean(&full_address(host, port)),
     );
     if let Some(username) = present(profile.username.as_deref()) {
         line(&mut file, "username:s", clean(username));
@@ -409,14 +431,22 @@ fn mstsc() -> Option<PathBuf> {
         .find(|program| program.is_file())
 }
 
-/// Opens connection file `content` in Remote Desktop Connection: the file written, then
-/// `mstsc.exe` started with its path as its only argument, no shell between them; the file
-/// removed [`REMOVE_AFTER`] later, on a thread of its own.
-///
-/// # Errors
-///
-/// [`ExternalRefusal`] when the client was not started; the file is then removed at once.
-pub fn launch(content: &str) -> Result<(), ExternalRefusal> {
+/// Remote Desktop Connection started, and its end to wait for.
+pub struct Running {
+    /// Completes once the program has exited.
+    pub exited: Pin<Box<dyn Future<Output = ()> + Send>>,
+}
+
+impl std::fmt::Debug for Running {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Running").finish_non_exhaustive()
+    }
+}
+
+/// What starts Remote Desktop Connection on connection file `content`: the file written,
+/// then `mstsc.exe` with its path as its only argument, no shell between them; the command
+/// and the file.
+fn prepare(content: &str) -> Result<(std::process::Command, PathBuf), ExternalRefusal> {
     if !cfg!(windows) {
         return Err(ExternalRefusal::NotWindows);
     }
@@ -427,20 +457,24 @@ pub fn launch(content: &str) -> Result<(), ExternalRefusal> {
     if let Some(system) = program.parent() {
         command.current_dir(system);
     }
-    let started = command
+    command
         .arg(&file)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(drop);
+        .stderr(std::process::Stdio::null());
+    Ok((command, file))
+}
+
+/// What became of starting `mstsc.exe` on `file`: the file removed [`REMOVE_AFTER`] later,
+/// on a thread of its own, once started; at once otherwise.
+fn started<T>(started: io::Result<T>, file: PathBuf) -> Result<T, ExternalRefusal> {
     match started {
-        Ok(()) => {
+        Ok(running) => {
             std::thread::spawn(move || {
                 std::thread::sleep(REMOVE_AFTER);
                 let _ = std::fs::remove_file(&file);
             });
-            Ok(())
+            Ok(running)
         }
         Err(error) => {
             let _ = std::fs::remove_file(&file);
@@ -450,6 +484,42 @@ pub fn launch(content: &str) -> Result<(), ExternalRefusal> {
             })
         }
     }
+}
+
+/// Opens connection file `content` in Remote Desktop Connection: the file written, then
+/// `mstsc.exe` started with its path as its only argument, no shell between them; the file
+/// removed [`REMOVE_AFTER`] later, on a thread of its own.
+///
+/// # Errors
+///
+/// [`ExternalRefusal`] when the client was not started; the file is then removed at once.
+pub fn launch(content: &str) -> Result<(), ExternalRefusal> {
+    let (mut command, file) = prepare(content)?;
+    started(command.spawn().map(drop), file)
+}
+
+/// Opens connection file `content` in Remote Desktop Connection as [`launch`] does, its end
+/// to wait for: what a forward through an SSH gateway lives as long as, as the C# tunnel
+/// is released when `mstsc.exe` exits. Called within the runtime.
+///
+/// # Errors
+///
+/// [`ExternalRefusal`] when the client was not started; the file is then removed at once.
+pub fn start(content: &str) -> Result<Running, ExternalRefusal> {
+    let (command, file) = prepare(content)?;
+    let mut child = started(tokio::process::Command::from(command).spawn(), file)?;
+    log::info!(
+        "mstsc.exe started, process {}",
+        child.id().unwrap_or_default()
+    );
+    Ok(Running {
+        exited: Box::pin(async move {
+            match child.wait().await {
+                Ok(status) => log::info!("mstsc.exe ended: {status}"),
+                Err(error) => log::warn!("mstsc.exe could not be waited for: {error}"),
+            }
+        }),
+    })
 }
 
 #[cfg(test)]
@@ -705,6 +775,26 @@ mod tests {
                 launch("full address:s:a\r\n"),
                 Err(ExternalRefusal::NotWindows)
             );
+            assert!(matches!(
+                start("full address:s:a\r\n"),
+                Err(ExternalRefusal::NotWindows)
+            ));
         }
+    }
+
+    #[test]
+    fn through_a_forward_the_file_names_the_forward_and_keeps_the_rest() {
+        let mut profile = profile();
+        profile.extras.rd_gateway = Some("rdg.lab".to_owned());
+        let forward = SocketAddr::from(([127, 0, 0, 1], 50123));
+        let through = rdp_file_through(&profile, forward);
+        assert!(
+            through.starts_with("full address:s:127.0.0.1:50123\r\n"),
+            "{through}"
+        );
+        assert!(!through.contains("rds.lab"), "{through}");
+        // Every other line as the file the server's own address opens with.
+        assert_eq!(lines(&through)[1..], lines(&rdp_file(&profile))[1..]);
+        assert!(through.contains("\r\ngatewayhostname:s:rdg.lab\r\n"));
     }
 }

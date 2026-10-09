@@ -845,6 +845,12 @@ pub fn resolution<'a>(
                     (!locked).then_some(|on| choice(ProfileChoice::DynamicResolution(on))),
                 ),
         )
+        // The C# "Dynamic resize delay (ms)", where the desktop follows the tab.
+        .push(
+            draft
+                .shows(ProfileField::ResizeDelay)
+                .then(|| field(ProfileField::ResizeDelay)),
+        )
         .push(part(fl!("ui-profile-rdp-audio-section")))
         .push(switch_box(draft, RdpSwitch::Microphone))
         .into()

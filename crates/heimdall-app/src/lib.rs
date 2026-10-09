@@ -49,6 +49,7 @@ pub mod local_open;
 pub mod local_paste;
 pub mod local_properties;
 pub mod macro_player;
+pub mod mstsc_driver;
 pub mod notes;
 mod paste_guard;
 mod post_connect;
@@ -114,6 +115,7 @@ pub use app::{
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
+pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
 pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use desktop::{

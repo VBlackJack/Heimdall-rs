@@ -365,6 +365,19 @@ ui-dialog-paste-body = { $count ->
 ui-dialog-paste-confirm = Coller
 ui-dialog-import-title = Import terminé
 ui-dialog-import-counts = Ajoutés : { $added }. Mis à jour : { $updated }. Inchangés : { $unchanged }.
+ui-dialog-import-actions = { $imported ->
+    [one] { $imported } importé
+   *[other] { $imported } importés
+}, { $replaced ->
+    [one] { $replaced } remplacé
+   *[other] { $replaced } remplacés
+}, { $renamed ->
+    [one] { $renamed } renommé auto
+   *[other] { $renamed } renommés auto
+}, { $skipped ->
+    [one] { $skipped } ignoré
+   *[other] { $skipped } ignorés
+}.
 ui-dialog-import-gateways = Passerelles SSH : { $created ->
     [one] { $created } créée
    *[other] { $created } créées
@@ -719,6 +732,20 @@ ui-rdp-done = { $imported ->
    *[other] { $passwords } mots de passe ignorés.
 }
 ui-rdp-nothing = Aucun fichier .rdp valide à importer.
+ui-profile-import-title = Importer des profils
+ui-profile-import-subtitle = { $count ->
+    [one] { $count } profil prêt à l'import.
+   *[other] { $count } profils prêts à l'import.
+}
+ui-profile-import-summary = { $chosen ->
+    [one] { $chosen } profil sélectionné sur { $total }
+   *[other] { $chosen } profils sélectionnés sur { $total }
+}, { $conflicts ->
+    [one] { $conflicts } conflit
+   *[other] { $conflicts } conflits
+}.
+ui-profile-import-button = Importer la sélection
+ui-profile-import-source = { $file }#{ $position }
 ui-tree-import-known-hosts = Importer des hôtes SSH de confiance...
 ui-hostkeys-title = Importer les hôtes SSH de confiance
 ui-hostkeys-pick-title = Sélectionner le fichier known_hosts
@@ -906,6 +933,8 @@ ui-profile-resolution-custom = Personnalisé...
 ui-profile-resolution-preset = { $width }x{ $height }
 ui-profile-resolution-width = Largeur
 ui-profile-resolution-height = Hauteur
+ui-profile-resize-delay = Délai de redimensionnement dynamique (ms)
+ui-profile-resize-delay-global = { $ms } (valeur globale par défaut)
 ui-profile-resolution-scale-fixed = Mettre la résolution fixe à l'échelle du panneau
 ui-profile-resolution-dynamic = Autoriser la résolution dynamique
 ui-profile-nla-off-hint = Sans authentification au niveau du réseau, un mot de passe enregistré n'est pas envoyé : Heimdall le demande.
@@ -930,6 +959,7 @@ ui-profile-error-username-missing = Le nom d'utilisateur est requis.
 ui-profile-error-domain-invalid = Le domaine ne peut contenir ni espace ni guillemet double.
 ui-profile-error-fixed-width = La largeur fixe RDP doit être comprise entre { $min } et { $max }.
 ui-profile-error-fixed-height = La hauteur fixe RDP doit être comprise entre { $min } et { $max }.
+ui-profile-error-resize-delay = Laissez le délai de redimensionnement RDP vide pour hériter de la valeur globale, saisissez 0 pour désactiver le verrouillage, ou saisissez une valeur de { $min } à { $max } ms.
 ui-profile-error-socks-port = Le port SOCKS5 doit être un nombre de 0 à 65535 ; 0 désactive le proxy.
 ui-profile-error-remote-bind-port = Le port distant doit être un nombre de 0 à 65535 ; 0 désactive la redirection.
 ui-profile-error-remote-local-port = Le port local doit être un nombre de 0 à 65535 ; 0 reprend le port distant.
@@ -1493,6 +1523,7 @@ ui-resolution-mode-fit-window = Adapter à la fenêtre
 ui-resolution-mode-fixed = Fixe
 ui-resolution-match-window = Adapter à la fenêtre
 ui-resolution-custom = Personnalisé...
+ui-resolution-skip-stabilization = Ignorer la stabilisation
 ui-resolution-custom-title = Résolution personnalisée
 ui-resolution-custom-prompt = Saisissez la résolution au format LARGEURxHAUTEUR.
 ui-resolution-custom-invalid = Résolution invalide. Utilisez LARGEURxHAUTEUR.
@@ -1533,6 +1564,7 @@ ui-files-menu-run-in-shell = Exécuter dans le terminal
 ui-files-menu-open-with = Ouvrir avec...
 ui-files-menu-open-in-editor = Ouvrir dans l'éditeur
 ui-status-resolution-reconnected = Le changement de résolution a nécessité une reconnexion.
+ui-status-stabilization-skipped = Stabilisation ignorée - la résolution dynamique est désormais active.
 ui-resolution-mode-smart-sizing = Mise à l'échelle intelligente
 ui-resolution-tooltip = Changer la résolution - { $mode }
 ui-resolution-tooltip-size = Changer la résolution - { $mode } ({ $width }x{ $height })
@@ -3290,6 +3322,7 @@ ui-import-dropped-rdp-webcam = webcam
 ui-import-dropped-rdp-usb = périphériques USB
 ui-import-dropped-rdp-microphone = microphone
 ui-import-dropped-rdp-multi-monitor = plusieurs écrans
+ui-import-dropped-rdp-resize-delay = un délai de redimensionnement de { $ms } ms, hors plage (la valeur globale s'applique)
 ui-import-dropped-citrix-cache-launch = lancement depuis le cache Citrix Workspace, non importé
 ui-import-dropped-local-post-connect = { $count ->
     [one] séquence post-connexion de { $count } étape, qu'un shell local n'exécute jamais
@@ -3355,6 +3388,8 @@ ui-connect-via = via { $route }
 ## Translations of text written in English first.
 ui-desktop-anti-idle = Anti-inactivité
 ui-desktop-anti-idle-tooltip = L'anti-inactivité garde cette session ouverte. Cliquez pour le désactiver pour cette session.
+ui-desktop-stabilizing = Stabilisation de la session... { $seconds }s
+ui-desktop-stabilizing-tooltip = Le redimensionnement automatique est suspendu le temps que la session se stabilise. Utilisez le menu Résolution, Ignorer la stabilisation, pour reprendre maintenant.
 ui-desktop-keys-f11 = F11
 ui-dialog-close-transfers-body = Un transfert de fichiers est en cours sur "{ $name }". Fermer maintenant l'annule. Fermer quand même ?
 ui-dialog-close-transfers-title = Transfert en cours
@@ -3493,7 +3528,9 @@ ui-citrix-tab-terminate-not-run = La demande de fin du client Citrix a échoué 
 ui-status-rdp-external-launched = Client externe lancé : { $name } s'est ouvert dans Connexion Bureau à distance.
 ui-status-rdp-external-launched-gateway = Client externe lancé : { $name } passe par la passerelle Bureau à distance { $gateway }, que le client intégré ne sait pas encore traverser : il s'est ouvert dans Connexion Bureau à distance.
 ui-status-rdp-external-not-windows = Ce profil s'ouvre dans Connexion Bureau à distance (mstsc.exe), que seul Windows possède : il ne peut pas être ouvert sur ce système.
-ui-status-rdp-external-ssh-gateway = Connexion Bureau à distance (mstsc.exe) ne sait pas passer par la passerelle SSH de ce profil : il n'a pas été ouvert.
+ui-status-rdp-external-launched-through = Client externe lancé : { $name } s'est ouvert dans Connexion Bureau à distance par la passerelle SSH { $gateway }.
+ui-status-rdp-external-gateway = Connexion Bureau à distance n'a pas été ouverte, sa passerelle SSH n'a pas été atteinte : { $reason }
+ui-status-rdp-external-forward = Connexion Bureau à distance n'a pas été ouverte, aucun port local n'a pu être ouvert pour sa passerelle SSH : { $reason }
 ui-status-rdp-external-not-found = mstsc.exe est introuvable sur cet ordinateur.
 ui-status-rdp-external-not-written = Échec de l'écriture du fichier de connexion Bureau à distance : { $reason }
 ui-status-rdp-external-not-started = mstsc.exe n'a pas démarré : { $reason }
@@ -3530,6 +3567,8 @@ ui-desktop-shares-drives-tooltip = Redirection des disques
 ui-desktop-shares-audio = Son
 ui-desktop-shares-audio-tooltip = Redirection audio
 ui-settings-rdp-connect-timeout = Délai du watchdog de connexion RDP (0 = désactivé)
+ui-settings-rdp-resize-delay = Délai de stabilisation de la résolution après connexion (0 = désactivé)
+ui-settings-rdp-resize-delay-refused = Le délai de redimensionnement RDP doit être nul ou compris entre { $min } et { $max } ms.
 ui-settings-rdp-connect-timeout-off = Désactivé
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Rendre le clavier depuis un bureau distant
