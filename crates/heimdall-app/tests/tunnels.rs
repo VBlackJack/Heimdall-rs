@@ -313,6 +313,68 @@ fn a_gateway_s_unknown_key_is_asked_about_then_learnt_and_the_tunnel_tried_again
 }
 
 #[test]
+fn a_pin_carried_over_while_the_gateway_s_key_is_asked_about_refuses_it_as_a_changed_key() {
+    const OTHER_KEY: &str =
+        include_str!("../../heimdall-ssh/tests/fixtures/hostkeys/host-ed25519-other.pub");
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    save_gateway(&mut app);
+    let id = open_tunnel(&mut app);
+    let key = PublicKey::from_openssh(GATEWAY_KEY.trim()).expect("key");
+    event(
+        &mut app,
+        id,
+        TunnelEvent::Route(ConnectionEvent::UnknownHostKey {
+            host: "bastion.lab".to_owned(),
+            port: 22,
+            fingerprint: "SHA256:fingerprint".to_owned(),
+            key: Arc::new(key.clone()),
+        }),
+    );
+    assert!(matches!(&app.dialog, Some(Dialog::TunnelHostKey { .. })));
+    // The C# trust carried over meanwhile: the gateway pinned to another key.
+    let pinned =
+        heimdall_ssh::fingerprint(&PublicKey::from_openssh(OTHER_KEY.trim()).expect("key"));
+    let known = KnownHosts::new(dir.path().join("known_hosts"));
+    heimdall_ssh::carry_over(
+        &known,
+        &[heimdall_core::import::csharp::TrustedHostKey {
+            host: "bastion.lab".to_owned(),
+            port: 22,
+            fingerprint: pinned.clone(),
+            key: None,
+        }],
+    )
+    .expect("carried over");
+
+    let effects = app.update(Message::ConfirmDialog);
+    assert!(effects.is_empty(), "not tried again: {effects:?}");
+    assert!(
+        matches!(
+            app.notice(),
+            Some(Notice::TunnelFailed(UiError::HostKeyChanged {
+                target: Some(target),
+                recorded,
+                offered,
+            })) if target.host == "bastion.lab" && target.port == 22
+                && *recorded == pinned && *offered == heimdall_ssh::fingerprint(&key)
+        ),
+        "{:?}",
+        app.notice()
+    );
+    assert!(known.recorded("bastion.lab", 22).expect("read").is_empty());
+    assert!(!known.path().exists(), "the key never written");
+    assert_eq!(
+        heimdall_ssh::Pins::beside(known.path())
+            .pinned("bastion.lab", 22)
+            .expect("pins"),
+        [pinned],
+        "the pin kept"
+    );
+}
+
+#[test]
 fn a_key_arriving_while_another_dialog_is_open_is_never_asked_nor_accepted() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());

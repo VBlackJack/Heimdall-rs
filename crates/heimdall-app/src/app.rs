@@ -36,9 +36,10 @@ use heimdall_core::profile::{
 use heimdall_core::settings::Settings;
 use heimdall_core::store::{MergeReport, ProfileStore, StoreError};
 use heimdall_core::winrm_diagnostic::{Diagnostic, EarlyOutput};
+use heimdall_ssh::known_hosts_import::{self, OtherAlgorithm, Trusting};
 use heimdall_ssh::{
     AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
-    Secret, TerminalSize, Verdict, fingerprint, verdict,
+    Secret, TerminalSize, fingerprint,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, FindDirection, GridSize, Key, KeyLocation, KeyPress,
@@ -50,7 +51,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::desktop::{DesktopInput, DesktopPane, SpecialKeys};
 use crate::driver::{ConnectRequest, Purpose};
-use crate::error::{ServerAddress, UiError};
+use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, PostConnectProgress, QuestionKind};
 use crate::files::{FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::ftp_driver::FtpRequest;
@@ -4102,7 +4103,6 @@ impl App {
             tab.phase = Phase::Failed(UiError::Cancelled);
             return Vec::new();
         }
-        // Another tab may have recorded a key for this host meanwhile: read again.
         let learned = match known_hosts.recorded(&host, port) {
             // Held in memory for this run: the file is not written.
             Ok(_) if trust == KeyTrust::Once => {
@@ -4113,28 +4113,31 @@ impl App {
                 run_trust.trust(&host, port, PublicKey::clone(&key));
                 Ok(())
             }
-            Ok(recorded) => match verdict(&recorded, &key) {
-                Verdict::Trusted => Ok(()),
-                Verdict::Unknown => known_hosts
-                    .learn(&host, port, &key)
-                    .inspect(|()| {
-                        log::info!(
-                            "the host key of {target} is trusted by the user and recorded: {}",
-                            fingerprint(&key)
-                        );
-                    })
-                    .map_err(|error| UiError::from(&error)),
-                Verdict::Changed { recorded } => Err(UiError::HostKeyChanged {
-                    target: Some(ServerAddress {
-                        host: host.clone(),
-                        port,
-                    }),
-                    recorded: fingerprint(&recorded),
-                    offered: fingerprint(&key),
-                }),
-                Verdict::OtherAlgorithm { recorded } => Err(UiError::HostKeyAlgorithmMismatch {
-                    recorded: recorded.iter().map(ToString::to_string).collect(),
-                }),
+            // Another tab may have recorded a key for this host meanwhile, or a pin been
+            // carried over: checked again, and written, under the lock of the trust files.
+            // A key of another algorithm is refused, as a connection refuses it.
+            Ok(_) => match known_hosts_import::trust(
+                &known_hosts,
+                &host,
+                port,
+                &key,
+                OtherAlgorithm::Conflicts,
+            ) {
+                Ok(Trusting::Recorded) => Ok(()),
+                Ok(Trusting::Learn | Trusting::LearnPinned) => {
+                    log::info!(
+                        "the host key of {target} is trusted by the user and recorded: {}",
+                        fingerprint(&key)
+                    );
+                    Ok(())
+                }
+                Ok(Trusting::Conflict(contradiction)) => Err(UiError::host_key_contradicted(
+                    contradiction,
+                    &host,
+                    port,
+                    &key,
+                )),
+                Err(error) => Err(UiError::from(&error)),
             },
             Err(error) => Err(UiError::from(&error)),
         };

@@ -19,14 +19,14 @@
 //! other hosts stays as it is.
 
 use std::fs;
-use std::io::{self, Write as _};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::io;
+use std::path::Path;
 
 use russh::keys::PublicKey;
 
 use crate::known_hosts::{DEFAULT_SSH_PORT, KnownHosts, KnownHostsError, plain_host};
 use crate::pins::Pins;
+use crate::trust_files::{self, followed};
 
 /// What a file may start with, and the C# export leaves out.
 const BYTE_ORDER_MARK: char = '\u{feff}';
@@ -85,6 +85,8 @@ impl KnownHosts {
     /// Either file cannot be read, or `target` cannot be written: it is read-only, or the
     /// system refused.
     pub fn export_to(&self, target: &Path) -> Result<KnownHostsExport, KnownHostsError> {
+        // The target may be this very file: read and written as every other writer does.
+        let _lock = trust_files::lock();
         let trusted = self.trusted()?;
         let mut pinned: Vec<(String, u16)> = Pins::beside(self.path())
             .all()?
@@ -209,16 +211,6 @@ fn write_keys(
     }
 }
 
-/// `path`, or the file it names when it is a link.
-fn followed(path: &Path) -> PathBuf {
-    let link = fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink());
-    if link {
-        fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
-    } else {
-        path.to_owned()
-    }
-}
-
 /// The text of `path`, without a byte order mark; empty when there is no such file.
 fn read(path: &Path) -> Result<String, KnownHostsError> {
     match fs::read_to_string(path) {
@@ -236,54 +228,11 @@ fn read(path: &Path) -> Result<String, KnownHostsError> {
     }
 }
 
-/// Replaces `path` with `text` whole: written beside it first, with its permissions, then
-/// moved over it. A read-only file is left as it is.
+/// Replaces `path` with `text` whole, as the trust files are: written beside it first, with
+/// its permissions, then moved over it. A read-only file is left as it is.
 fn replace(path: &Path, text: &str) -> Result<(), KnownHostsError> {
-    let failed = |source: io::Error| KnownHostsError::ExportFailed {
+    trust_files::replace(path, text).map_err(|source| KnownHostsError::ExportFailed {
         path: path.to_owned(),
         source,
-    };
-    let existing = match fs::metadata(path) {
-        Ok(metadata) => Some(metadata),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(failed(error)),
-    };
-    if existing
-        .as_ref()
-        .is_some_and(|metadata| metadata.permissions().readonly())
-    {
-        return Err(failed(io::ErrorKind::PermissionDenied.into()));
-    }
-    let dir = path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(dir).map_err(failed)?;
-    let beside = beside(dir, path);
-    let written = fs::File::create_new(&beside)
-        .and_then(|mut file| {
-            file.write_all(text.as_bytes())?;
-            file.sync_all()
-        })
-        .and_then(|()| match &existing {
-            Some(metadata) => fs::set_permissions(&beside, metadata.permissions()),
-            None => Ok(()),
-        })
-        .and_then(|()| fs::rename(&beside, path));
-    if let Err(error) = written {
-        let _ = fs::remove_file(&beside);
-        return Err(failed(error));
-    }
-    Ok(())
-}
-
-/// A name for the file written beside `path` before it replaces it, never used before.
-fn beside(dir: &Path, path: &Path) -> PathBuf {
-    let name = path
-        .file_name()
-        .map_or_else(|| "known_hosts".into(), |name| name.to_string_lossy());
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_nanos());
-    dir.join(format!(".{name}.{}.{stamp}.tmp", std::process::id()))
+    })
 }
