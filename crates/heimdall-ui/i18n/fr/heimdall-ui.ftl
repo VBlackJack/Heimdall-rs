@@ -2904,6 +2904,359 @@ ui-tool-textcase-help =
     Convertit le texte entre plusieurs formats de casse.
 
     Formats supportés : MAJUSCULES, minuscules, Casse Titre, camelCase, PascalCase, snake_case, kebab-case, CONSTANT_CASE, et plus.
+ui-tool-password-name = Générateur de mots de passe
+ui-tool-password-description = Générateur de mots de passe aléatoires sécurisés avec règles personnalisables
+ui-tool-password-title = Générateur de mot de passe
+ui-tool-password-generate = Générer
+ui-tool-password-generate-tooltip = Générer un nouveau mot de passe
+ui-tool-password-copy = Copier
+ui-tool-password-copy-tooltip = Copier le mot de passe
+ui-tool-password-length = Longueur
+ui-tool-password-total-length = Longueur totale : { $count } caractères
+ui-tool-password-uppercase = Majuscules (A-Z)
+ui-tool-password-lowercase = Minuscules (a-z)
+ui-tool-password-digits = Chiffres (0-9)
+ui-tool-password-symbols = Spéciaux (!@#$...)
+ui-tool-password-mode = Mode :
+ui-tool-password-mode-random = Aléatoire
+ui-tool-password-mode-syllable = Syllabique
+ui-tool-password-mode-passphrase = Phrase de passe
+ui-tool-password-mode-leet = Leet
+ui-tool-password-mode-random-desc = Caractères aléatoires parmi les jeux sélectionnés
+ui-tool-password-mode-syllable-desc = Paires consonne-voyelle prononçables (facile à retenir)
+ui-tool-password-mode-passphrase-desc = Mots du dictionnaire séparés par un délimiteur
+ui-tool-password-mode-leet-desc = Un mot réécrit en leet, avec chiffres et caractères spéciaux ajoutés
+ui-tool-password-case = Casse
+ui-tool-password-case-mixed = Mixte
+ui-tool-password-case-lower = Minuscules
+ui-tool-password-case-upper = Majuscules
+ui-tool-password-case-title = Première lettre
+ui-tool-password-case-alternating = Alterné
+ui-tool-password-case-word = Casse mot
+ui-tool-password-case-inverse = Inverse
+ui-tool-password-case-blocks = Motif
+ui-tool-password-word-count = Nombre de mots
+ui-tool-password-separator = Séparateur
+ui-tool-password-language = Langue
+ui-tool-password-word-list-size = { $words } mots, { $bits } bits chacun
+ui-tool-password-lang-english = Anglais
+ui-tool-password-lang-french = Français
+ui-tool-password-lang-spanish = Espagnol
+ui-tool-password-lang-latin = Latin
+ui-tool-password-strength-critical = Critique
+ui-tool-password-strength-weak = Faible
+ui-tool-password-strength-fair = Moyen
+ui-tool-password-strength-good = Bon
+ui-tool-password-strength-strong = Fort
+ui-tool-password-bits = bits
+ui-tool-password-issue-too-short = Trop court (< 8 caractères)
+ui-tool-password-issue-no-upper = Pas de majuscules
+ui-tool-password-issue-no-lower = Pas de minuscules
+ui-tool-password-issue-no-digit = Pas de chiffres
+ui-tool-password-issue-no-special = Pas de caractères spéciaux
+ui-tool-password-issue-chosen-word = Un mot que vous avez choisi vous-même ne compte pour rien dans la force affichée
+ui-tool-password-issue-floor-unreachable = Ces réglages ne peuvent pas garantir { $floor } bits. Leur maximum est { $ceiling }, donc rien n'a été changé
+ui-tool-password-classes-not-promised = Ce mot de passe est un tirage ordinaire : la longueur ne peut pas porter un caractère de chaque sorte cochée.
+ui-tool-password-counts-cut = Cette longueur laisse la place à { $digits } chiffres et { $specials } spéciaux.
+ui-tool-password-floor-raised = Ce mot de passe a utilisé { $used } là où vous avez réglé { $chosen }, pour atteindre le minimum. Votre réglage est inchangé.
+ui-tool-password-floor-set-length = Longueur portée à { $length } pour garantir { $floor } bits.
+ui-tool-password-floor-set-syllable = Réglé sur { $length } caractères, { $digits } chiffres et { $specials } caractères spéciaux, pour garantir { $floor } bits.
+ui-tool-password-floor-set-passphrase = Réglé sur { $words } mots, { $digits } chiffres et { $specials } caractères spéciaux, pour garantir { $floor } bits.
+ui-tool-password-floor-set-leet = Réglé sur { $digits } chiffres et { $specials } caractères spéciaux, pour garantir { $floor } bits.
+ui-tool-password-exclude-ambiguous = Exclure les ambiguës (0O, 1lI)
+ui-tool-password-cli-safe = CLI-safe (exclure les caractères shell)
+ui-tool-password-layout-safe = Layout-safe (compatible AZERTY/QWERTY)
+ui-tool-password-custom-specials = Spéciaux personnalisés :
+ui-tool-password-specials-usable = Parmi ceux-ci, le générateur utilisera : { $specials }
+ui-tool-password-specials-none-usable = Aucun de ceux-ci n'est utilisable : un caractère spécial doit être une ponctuation ASCII, tapable sur tout clavier
+ui-tool-password-clipboard-auto-clear = Effacement automatique du presse-papiers
+ui-tool-password-clipboard-clear-hint = Le presse-papiers s'efface dans { $seconds } s
+ui-tool-password-clipboard-cleared = Presse-papiers effacé
+ui-tool-password-seconds = s
+ui-tool-password-remember-settings = Retenir mes réglages
+ui-tool-password-advanced = Avancé
+ui-tool-password-advanced-tooltip = Ouvrir les options avancées
+ui-tool-password-preset-label = Préréglage :
+ui-tool-password-preset-tooltip = Choisissez un préréglage, ou Enregistrer pour conserver les réglages actuels
+ui-tool-password-preset-custom = Personnalisé
+ui-tool-password-presets-built-in = Fournis
+ui-tool-password-presets-saved = Enregistrés
+ui-tool-password-preset-pin4 = PIN 4
+ui-tool-password-preset-pin6 = PIN 6
+ui-tool-password-preset-wifi = WiFi
+ui-tool-password-preset-api-key = Clé API
+ui-tool-password-preset-mysql = MySQL
+ui-tool-password-preset-ssh = SSH
+ui-tool-password-preset-syl-easy = Facile 18
+ui-tool-password-preset-syl-balanced = Équilibré 24
+ui-tool-password-preset-syl-strong = Fort 30
+ui-tool-password-preset-passphrase4 = 4 mots
+ui-tool-password-preset-passphrase6 = 6 mots
+ui-tool-password-save-preset = Sauvegarder le préréglage
+ui-tool-password-save-preset-tooltip = Enregistrer un préréglage personnalisé
+ui-tool-password-save-preset-prompt = Entrez un nom pour ce préréglage :
+ui-tool-password-delete-preset = Supprimer
+ui-tool-password-delete-preset-tooltip = Supprimer le préréglage enregistré sélectionné
+ui-tool-password-delete-preset-title = Supprimer le préréglage
+ui-tool-password-delete-preset-confirm = Supprimer le préréglage "{ $name }" ?
+ui-tool-password-entropy-floor = Force minimale :
+ui-tool-password-entropy-floor-off = Aucun minimum
+ui-tool-password-phonetic = Phonétique :
+ui-tool-password-copy-phonetic = Copier la phonétique
+ui-tool-password-copy-phonetic-tooltip = Copier l'épellation phonétique
+ui-tool-password-keyboard-hint = Entrée : regénérer - Échap : effacer
+ui-tool-password-quick-length = Rapide :
+ui-tool-password-history = Mots de passe récents
+ui-tool-password-clear-history = Effacer
+ui-tool-password-clear-history-tooltip = Effacer l'historique
+ui-tool-password-history-empty = Les mots de passe générés apparaîtront ici
+ui-tool-password-syl-step-note = Incréments de 2 (paires consonne-voyelle)
+ui-tool-password-syl-step-note-cvc = Mélange de syllabes de 2 et 3 caractères
+ui-tool-password-syl-cvc = Syllabes fermées (CVC)
+ui-tool-password-syl-cvc-hint = bat, fen au lieu de ba, fe - plus naturel
+ui-tool-password-syl-structure = Structure :
+ui-tool-password-leet-word = Mot de base
+ui-tool-password-leet-random-word = Tirer le mot au hasard
+ui-tool-password-leet-full-substitution = Réécrire toutes les lettres de la table
+ui-tool-password-leet-word-source = Mot tiré :
+ui-tool-password-blocks = Motif de casse :
+ui-tool-password-blocks-hint = Cliquez un bloc pour le faire tourner : U majuscules, l minuscules, T capitale initiale
+ui-tool-password-blocks-random = Mélanger
+ui-tool-password-blocks-auto-sync = Un bloc par syllabe
+ui-tool-password-blocks-auto-sync-words = Un bloc par mot
+ui-tool-password-blocks-add = Ajouter un bloc
+ui-tool-password-blocks-remove = Retirer un bloc
+ui-tool-password-blocks-all-upper = Tous les blocs en majuscules
+ui-tool-password-blocks-all-lower = Tous les blocs en minuscules
+ui-tool-password-blocks-all-title = Tous les blocs en capitale initiale
+ui-tool-password-placement = Placement
+ui-tool-password-placement-random = Aléatoire
+ui-tool-password-placement-start = Début
+ui-tool-password-placement-end = Fin
+ui-tool-password-placement-middle = Milieu
+ui-tool-password-placement-positions = Par position
+ui-tool-password-placement-bar = Barre de placement :
+ui-tool-password-placement-bar-hint = Faites glisser un curseur, ou donnez-lui le focus et utilisez les flèches
+ui-tool-password-placement-distribute = Répartir
+ui-tool-password-batch-count = Combien :
+ui-tool-password-batch = Lot généré :
+ui-tool-password-batch-mask = Masquer
+ui-tool-password-batch-copy-all = Tout copier
+ui-tool-password-batch-export = Exporter
+ui-tool-password-batch-export-failed = Échec de l'export : { $error }
+ui-tool-password-text-filter = Fichiers texte
+ui-tool-password-crack-time = Temps de crack : { $time }
+ui-tool-password-crack-assumption = cas moyen, à { $rate } essais par seconde contre une empreinte volée
+ui-tool-password-crack-instant = instantané
+ui-tool-password-crack-forever = des milliards d'années
+ui-tool-password-help =
+    Générateur de Mots de Passe
+
+    Génère des mots de passe sécurisés selon quatre modes.
+
+    Modes :
+    1. Aléatoire : caractères aléatoires d'un jeu configurable
+    2. Syllabique : mots de passe prononçables par paires consonne-voyelle
+    3. Phrase de passe : mots de passe basés sur un dictionnaire
+    4. Leet : un mot réécrit en leet, avec chiffres et caractères spéciaux ajoutés
+
+    Fonctionnalités :
+    - Indicateur de force en temps réel avec calcul d'entropie
+    - Estimation du temps de cassage
+    - Lecture phonétique alphabet OTAN
+    - Mode layout-safe (évite les différences QWERTY/AZERTY)
+    - Mode CLI-safe (évite les métacaractères shell)
+    - Préréglages rapides (PIN, Wi-Fi, clé API, SSH, etc.)
+    - Préréglages personnalisés : sauvegardez vos propres configurations
+    - Historique des mots de passe (10 derniers)
+
+    Clavier :
+    - Entrée : regénérer le mot de passe
+    - Échap : effacer la sortie
+
+ui-tool-sshkey-name = Générateur de clé SSH
+ui-tool-sshkey-description = Générateur de paires de clés SSH (RSA, Ed25519, ECDSA)
+ui-tool-sshkey-title = Générateur de clé SSH
+ui-tool-sshkey-algorithm = Algorithme
+ui-tool-sshkey-rsa-2048 = RSA (2048)
+ui-tool-sshkey-rsa-4096 = RSA (4096)
+ui-tool-sshkey-ed25519 = Ed25519
+ui-tool-sshkey-comment = Commentaire
+ui-tool-sshkey-comment-placeholder = user@hostname
+ui-tool-sshkey-passphrase = Phrase secrète
+ui-tool-sshkey-passphrase-hint = Facultatif. Chiffre la clé privée avec AES-256-CBC.
+ui-tool-sshkey-generate = Générer
+ui-tool-sshkey-generating = Génération...
+ui-tool-sshkey-copy = Copier
+ui-tool-sshkey-save = Enregistrer
+ui-tool-sshkey-show = Afficher
+ui-tool-sshkey-hide = Masquer
+ui-tool-sshkey-fingerprint = Empreinte
+ui-tool-sshkey-public-key = Clé publique
+ui-tool-sshkey-private-key = Clé privée
+ui-tool-sshkey-ed25519-notice = Les clés Ed25519 offrent une sécurité robuste avec des clés compactes de 256 bits.
+ui-tool-sshkey-public-filter = Clé publique SSH
+ui-tool-sshkey-private-filter = Clé privée PEM
+ui-tool-sshkey-help =
+    Générateur de Clés SSH
+
+    Génère des paires de clés SSH pour l'authentification sécurisée.
+
+    Utilisation :
+    1. Sélectionnez l'algorithme : RSA 2048, RSA 4096 ou Ed25519
+    2. Entrez un commentaire optionnel (défaut : utilisateur@machine)
+    3. Entrez une phrase de passe optionnelle pour le chiffrement
+    4. Cliquez sur Générer
+
+    Sortie :
+    - Clé publique au format OpenSSH (ssh-rsa / ssh-ed25519)
+    - Clé privée au format PKCS#8 PEM
+    - Empreinte SHA-256
+
+    Note :
+    - RSA 4096 est recommandé pour la compatibilité maximale
+    - Les clés avec phrase de passe sont chiffrées en AES-256-CBC
+
+    Astuce : copiez la clé publique et ajoutez-la à ~/.ssh/authorized_keys sur le serveur distant.
+ui-tool-certgen-name = Générateur de certificats
+ui-tool-certgen-description = Générateur de certificats auto-signés pour le développement et les tests
+ui-tool-certgen-title = Générateur de certificats
+ui-tool-certgen-subject = Sujet
+ui-tool-certgen-cn = Nom commun (CN)
+ui-tool-certgen-org = Organisation (O)
+ui-tool-certgen-country = Pays (C)
+ui-tool-certgen-options = Options
+ui-tool-certgen-key-size = Taille de clé
+ui-tool-certgen-rsa-2048 = RSA 2048
+ui-tool-certgen-rsa-4096 = RSA 4096
+ui-tool-certgen-validity = Validité (jours)
+ui-tool-certgen-san = Noms alternatifs
+ui-tool-certgen-san-hint = Noms d'hôtes ou IPs séparés par des virgules (ex. server1.local, 10.0.0.1)
+ui-tool-certgen-type = Type de certificat
+ui-tool-certgen-type-self-signed = Certificat auto-signé
+ui-tool-certgen-type-ca-leaf = Paire CA + Leaf
+ui-tool-certgen-generate = Générer
+ui-tool-certgen-generating = Génération...
+ui-tool-certgen-fingerprint = Empreinte
+ui-tool-certgen-copy = Copier
+ui-tool-certgen-show = Afficher
+ui-tool-certgen-hide = Masquer
+ui-tool-certgen-cert-pem = Certificat (PEM)
+ui-tool-certgen-key-pem = Clé privée (PEM)
+ui-tool-certgen-ca-cert-pem = Certificat CA (PEM)
+ui-tool-certgen-ca-key-pem = Clé privée CA (PEM)
+ui-tool-certgen-leaf-cert-pem = Certificat Leaf (PEM)
+ui-tool-certgen-leaf-key-pem = Clé privée Leaf (PEM)
+ui-tool-certgen-save-pem = Enregistrer .pem
+ui-tool-certgen-save-pfx = Enregistrer .pfx
+ui-tool-certgen-ok = OK
+ui-tool-certgen-cancel = Annuler
+ui-tool-certgen-pfx-password-title = Mot de passe PFX
+ui-tool-certgen-pfx-password-prompt = Entrez un mot de passe pour le fichier PFX (peut être vide) :
+ui-tool-certgen-error-cn-required = Veuillez entrer un nom commun (CN).
+ui-tool-certgen-error-invalid-validity = Veuillez entrer un nombre de jours valide (1 ou plus).
+ui-tool-certgen-error-generation = La génération du certificat a échoué : { $error }
+ui-tool-certgen-error-export = L'export PFX a échoué : { $error }
+ui-tool-certgen-pem-filter = Certificat PEM
+ui-tool-certgen-pfx-filter = PFX/PKCS#12
+ui-tool-certgen-help =
+    Générateur de Certificats
+
+    Génère des certificats X.509 auto-signés pour le développement et les tests.
+
+    Utilisation :
+    Configurez le sujet, la validité, la taille de clé et les SANs, puis générez et exportez le certificat.
+ui-tool-pwdaudit-name = Auditeur de mot de passe
+ui-tool-pwdaudit-description = Analyseur de robustesse des mots de passe avec vérification de politique
+ui-tool-pwdaudit-title = Vérificateur de politique de mot de passe
+ui-tool-pwdaudit-input = Mot de passe
+ui-tool-pwdaudit-placeholder = Saisissez un mot de passe
+ui-tool-pwdaudit-show = Afficher le mot de passe
+ui-tool-pwdaudit-hide = Masquer le mot de passe
+ui-tool-pwdaudit-policy = Politique
+ui-tool-pwdaudit-policy-nist = NIST 800-63B
+ui-tool-pwdaudit-policy-anssi = ANSSI
+ui-tool-pwdaudit-policy-custom = Personnalisé
+ui-tool-pwdaudit-strength = Robustesse
+ui-tool-pwdaudit-length = Longueur
+ui-tool-pwdaudit-uppercase = Majuscules
+ui-tool-pwdaudit-lowercase = Minuscules
+ui-tool-pwdaudit-digits = Chiffres
+ui-tool-pwdaudit-symbols = Symboles
+ui-tool-pwdaudit-entropy = Entropie
+ui-tool-pwdaudit-common = Mot de passe courant
+ui-tool-pwdaudit-patterns = Motifs détectés
+ui-tool-pwdaudit-pass = OK
+ui-tool-pwdaudit-fail = Échec
+ui-tool-pwdaudit-warn = Avertissement
+ui-tool-pwdaudit-score-weak = Faible
+ui-tool-pwdaudit-score-fair = Moyen
+ui-tool-pwdaudit-score-good = Bon
+ui-tool-pwdaudit-score-strong = Fort
+ui-tool-pwdaudit-empty = Saisissez un mot de passe pour analyser sa robustesse
+ui-tool-pwdaudit-entropy-bits = { $bits } bits
+ui-tool-pwdaudit-length-detail = { $length } caractères (minimum : { $minimum })
+ui-tool-pwdaudit-pattern-repeat = Caractères répétés
+ui-tool-pwdaudit-pattern-sequence = Caractères séquentiels
+ui-tool-pwdaudit-pattern-keyboard = Motif clavier
+ui-tool-pwdaudit-not-in-common-list = Absent de la liste des mots de passe courants
+ui-tool-pwdaudit-in-common-list = Présent dans la liste des mots de passe courants
+ui-tool-pwdaudit-help =
+    Vérificateur de politique de mot de passe
+
+    Analyse la robustesse d'un mot de passe selon les normes industrielles.
+
+    Politiques :
+    - NIST 800-63B : Privilégie la longueur plutôt que la complexité. Minimum 8 caractères, vérifie les mots de passe courants.
+    - ANSSI : Norme française exigeant 12+ caractères avec majuscules, minuscules, chiffres et symboles.
+    - Personnalisé : Configurez vos propres règles.
+
+    L'analyse comprend :
+    - Couverture des classes de caractères
+    - Calcul de l'entropie de Shannon
+    - Vérification du dictionnaire de mots de passe courants (top 100)
+    - Détection de motifs (séquences clavier, suites, répétitions)
+    - Score de robustesse global (0-100)
+ui-tool-password-saved-elsewhere =
+    { $count ->
+        [one] { $count } autre enregistré dans un autre mode.
+       *[other] { $count } autres enregistrés dans d'autres modes.
+    }
+ui-tool-password-crack-seconds =
+    { $count ->
+        [one] { $count } seconde
+       *[other] { $count } secondes
+    }
+ui-tool-password-crack-minutes =
+    { $count ->
+        [one] { $count } minute
+       *[other] { $count } minutes
+    }
+ui-tool-password-crack-hours =
+    { $count ->
+        [one] { $count } heure
+       *[other] { $count } heures
+    }
+ui-tool-password-crack-days =
+    { $count ->
+        [one] { $count } jour
+       *[other] { $count } jours
+    }
+ui-tool-password-crack-years =
+    { $count ->
+        [one] { $count } an
+       *[other] { $count } ans
+    }
+ui-tool-password-crack-centuries =
+    { $count ->
+        [one] { $count } siècle
+       *[other] { $count } siècles
+    }
+ui-tool-password-remember-settings-note = Rouvre l'outil là où vous l'avez laissé. Conservé sur cet ordinateur, dans le dossier de réglages de Heimdall, lisible par votre seul compte.
+ui-tool-password-save-failed = L'enregistrement a échoué : { $error }
+ui-tool-sshkey-error = La génération de la clé a échoué : { $error }
+ui-tool-sshkey-save-failed = L'enregistrement a échoué : { $error }
+ui-tool-certgen-save-failed = L'enregistrement a échoué : { $error }
 ui-tunnels-page-title = Tunnels actifs
 ui-import-dropped-rd-gateway = par une passerelle Bureau à distance
 ui-error-rd-gateway = Ce serveur se joint par la passerelle Bureau à distance { $gateway }, que le client intégré ne sait pas encore traverser.

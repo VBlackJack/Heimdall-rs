@@ -56,8 +56,12 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::NetworkCalculator,
             ToolId::Hash,
             ToolId::Hmac,
+            ToolId::Password,
+            ToolId::SshKey,
+            ToolId::CertGen,
             ToolId::Jwt,
             ToolId::Totp,
+            ToolId::PwdAudit,
             ToolId::Base64,
             ToolId::UrlEncoder,
             ToolId::JsonFormatter,
@@ -103,6 +107,20 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(ToolId::from_code("urlenc"), Some(ToolId::UrlEncoder));
     assert_eq!(ToolId::from_code("TOOL:uuid"), Some(ToolId::Uuid));
     assert_eq!(ToolId::from_code("hmac"), Some(ToolId::Hmac));
+    assert_eq!(ToolId::from_code("certgen"), Some(ToolId::CertGen));
+    assert_eq!(ToolId::from_code("TOOL:SSHKEY"), Some(ToolId::SshKey));
+    assert_eq!(ToolId::Password.prefixes(), ["password", "pwgen"]);
+    assert_eq!(ToolId::PwdAudit.code(), "PWDAUDIT");
+    assert!(
+        [
+            ToolId::Password,
+            ToolId::SshKey,
+            ToolId::CertGen,
+            ToolId::PwdAudit
+        ]
+        .iter()
+        .all(|tool| tool.category() == ToolCategory::Security)
+    );
     assert_eq!(ToolId::from_code("PING"), None, "not ported");
 }
 

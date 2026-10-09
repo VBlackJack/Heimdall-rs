@@ -98,10 +98,18 @@ pub enum ToolId {
     Hash,
     /// The HMAC generator, the C# `HMAC`.
     Hmac,
+    /// The password generator, the C# `PASSWORD`.
+    Password,
+    /// The SSH key generator, the C# `SSHKEY`.
+    SshKey,
+    /// The certificate generator, the C# `CERTGEN`.
+    CertGen,
     /// The JWT parser, the C# `JWT`.
     Jwt,
     /// The TOTP generator, the C# `TOTP`.
     Totp,
+    /// The password audit, the C# `PWDAUDIT`.
+    PwdAudit,
     /// The Base64 encoder and decoder, the C# `BASE64`.
     Base64,
     /// The URL encoder and decoder, the C# `URLENC`.
@@ -160,14 +168,18 @@ impl ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 23] = [
         Self::SubnetCalculator,
         Self::IpConverter,
         Self::NetworkCalculator,
         Self::Hash,
         Self::Hmac,
+        Self::Password,
+        Self::SshKey,
+        Self::CertGen,
         Self::Jwt,
         Self::Totp,
+        Self::PwdAudit,
         Self::Base64,
         Self::UrlEncoder,
         Self::JsonFormatter,
@@ -199,10 +211,26 @@ impl ToolId {
             ),
             Self::Hash => ToolDescriptor::local("HASH", ToolCategory::Security, &["hash"]),
             Self::Hmac => ToolDescriptor::local("HMAC", ToolCategory::Security, &["hmac"]),
+            Self::Password => {
+                ToolDescriptor::local("PASSWORD", ToolCategory::Security, &["password", "pwgen"])
+            }
+            Self::SshKey => {
+                ToolDescriptor::local("SSHKEY", ToolCategory::Security, &["sshkey", "keygen"])
+            }
+            Self::CertGen => ToolDescriptor::local(
+                "CERTGEN",
+                ToolCategory::Security,
+                &["certgen", "certificate", "openssl"],
+            ),
             Self::Jwt => ToolDescriptor::local("JWT", ToolCategory::Security, &["jwt"]),
             Self::Totp => {
                 ToolDescriptor::local("TOTP", ToolCategory::Security, &["totp", "otp", "2fa"])
             }
+            Self::PwdAudit => ToolDescriptor::local(
+                "PWDAUDIT",
+                ToolCategory::Security,
+                &["pwdaudit", "password-audit", "passcheck"],
+            ),
             Self::Base64 => ToolDescriptor::local("BASE64", ToolCategory::Encoding, &["base64"]),
             Self::UrlEncoder => {
                 ToolDescriptor::local("URLENC", ToolCategory::Encoding, &["url", "urlencode"])

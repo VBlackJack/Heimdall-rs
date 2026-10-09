@@ -158,6 +158,12 @@ unicode-normalization = "0.1.25"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls-no-provider"] }
 x509-cert = "0.3.0"
 zeroize = "1.9.0"
+# rsa, ssh-key, pkcs8: the Certificate and SSH Key generators' RSA and Ed25519 keys, their
+# OpenSSH public form and their PKCS#8 private form, encrypted with PBES2 as the C#; all
+# already in the tree through russh, at these versions and with these features.
+rsa = "0.10.0-rc.18"
+ssh-key = { version = "=0.7.0-rc.11", features = ["ed25519", "rsa"] }
+pkcs8 = { version = "0.11.0", features = ["encryption", "pem", "std"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -170,6 +176,20 @@ pedantic = { level = "warn", priority = -1 }
 opt-level = 3
 
 [profile.dev.package.blake2]
+opt-level = 3
+
+# An RSA key made unoptimised takes minutes at 4096 bits, and 600,000 rounds of PBKDF2
+# seconds: the key generators' tests stay fast, nothing else changes.
+[profile.dev.package.crypto-bigint]
+opt-level = 3
+
+[profile.dev.package.crypto-primes]
+opt-level = 3
+
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.sha2]
 opt-level = 3
 
 [profile.release]
