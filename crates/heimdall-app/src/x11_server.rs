@@ -77,6 +77,17 @@ pub struct X11Settings {
     pub auto_start: bool,
 }
 
+impl X11Settings {
+    /// What `settings` say of the X server.
+    #[must_use]
+    pub fn of(settings: &heimdall_core::settings::Settings) -> Self {
+        Self {
+            server_path: settings.x11_server_path.clone(),
+            auto_start: settings.x11_auto_start,
+        }
+    }
+}
+
 /// Whether an X server could be counted on, and which.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum X11Outcome {

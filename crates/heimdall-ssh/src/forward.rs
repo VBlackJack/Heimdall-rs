@@ -22,14 +22,16 @@
 //! refused, so a server cannot reach this computer's ports on its own initiative.
 //!
 //! Agent forwarding (`ssh -A`) goes the same way: the server may reach this computer's SSH
-//! agent only on a connection whose shell asked for it.
+//! agent only on a connection whose shell asked for it. So does X11 forwarding (`ssh -X`):
+//! the server may reach this computer's X server only on a connection whose shell asked.
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 
-use russh::Channel;
 use russh::client::Msg;
+use russh::{Channel, ChannelStream};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 
@@ -37,18 +39,42 @@ use crate::agent;
 use crate::connection::Connection;
 use crate::error::ConnectError;
 use crate::options::AgentSource;
+use crate::x11::{X11Display, X11Grant};
 
 /// Address the server listens on for this side: its own loopback, as in the C# Heimdall.
 pub(crate) const SERVER_LOOPBACK: &str = "127.0.0.1";
 
 /// What the server may send back over a connection: the ports it listens on for this side,
-/// each with the local port its connections go to, and the agent it may reach; and whether
-/// the connection has ended. Shared between a connection and its russh handler.
+/// each with the local port its connections go to, the agent it may reach, and the X display;
+/// and whether the connection has ended. Shared between a connection and its russh handler:
+/// each connection has its own, a gateway's apart from the server's beyond it.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Routes {
     ports: Arc<Mutex<HashMap<u32, u16>>>,
     agent: Arc<Mutex<Option<AgentSource>>>,
+    x11: Arc<Mutex<X11Granted>>,
     ended: CancellationToken,
+}
+
+/// The X display granted to a connection, and how many shells hold it: it goes with the
+/// last of them.
+#[derive(Debug, Default)]
+struct X11Granted {
+    grant: Option<Arc<X11Grant>>,
+    holders: usize,
+}
+
+/// A shell's hold on its connection's X11 grant: dropped, the grant goes once no other
+/// shell holds it, and an X11 channel opened after that is refused.
+#[derive(Debug)]
+pub(crate) struct X11Hold {
+    routes: Routes,
+}
+
+impl Drop for X11Hold {
+    fn drop(&mut self) {
+        self.routes.release_x11();
+    }
 }
 
 impl Routes {
@@ -71,6 +97,38 @@ impl Routes {
     pub(crate) fn grant_agent(&self, source: AgentSource) {
         if let Ok(mut agent) = self.agent.lock() {
             *agent = Some(source);
+        }
+    }
+
+    /// The X display the server may reach, while a shell that asked to forward X11 lasts.
+    pub(crate) fn x11(&self) -> Option<Arc<X11Grant>> {
+        self.x11.lock().ok()?.grant.clone()
+    }
+
+    /// Lets the server reach `display` while the hold returned lasts: the grant already
+    /// given, or a new one; `None` when none can be made.
+    pub(crate) fn grant_x11(&self, display: &X11Display) -> Option<(Arc<X11Grant>, X11Hold)> {
+        let mut granted = self.x11.lock().ok()?;
+        if granted.grant.is_none() {
+            granted.grant = Some(Arc::new(X11Grant::new(display)?));
+        }
+        granted.holders += 1;
+        let grant = granted.grant.clone()?;
+        Some((
+            grant,
+            X11Hold {
+                routes: self.clone(),
+            },
+        ))
+    }
+
+    /// One shell less holds the X11 grant; with none left, it goes.
+    fn release_x11(&self) {
+        if let Ok(mut granted) = self.x11.lock() {
+            granted.holders = granted.holders.saturating_sub(1);
+            if granted.holders == 0 {
+                granted.grant = None;
+            }
         }
     }
 
@@ -97,11 +155,9 @@ impl Routes {
 /// both ways until either side closes it.
 pub(crate) async fn carry(channel: Channel<Msg>, local: u16) {
     match TcpStream::connect((Ipv4Addr::LOCALHOST, local)).await {
-        Ok(mut near) => {
-            let mut far = channel.into_stream();
-            if let Err(error) = tokio::io::copy_bidirectional(&mut near, &mut far).await {
-                log::debug!("a forwarded connection to local port {local} ended: {error}");
-            }
+        Ok(near) => {
+            let what = format!("a forwarded connection to local port {local}");
+            join(near, channel.into_stream(), &what).await;
         }
         Err(error) => {
             log::debug!("nothing took the forwarded connection on local port {local}: {error}");
@@ -118,10 +174,23 @@ pub(crate) async fn carry_agent(channel: Channel<Msg>, source: AgentSource) {
         let _ = channel.close().await;
         return;
     };
-    let mut near = agent.into_inner();
-    let mut far = channel.into_stream();
+    join(
+        agent.into_inner(),
+        channel.into_stream(),
+        "a forwarded agent connection",
+    )
+    .await;
+}
+
+/// Carries bytes between `near`, on this computer, and `far`, a channel the server opened,
+/// both ways until either side closes; `what` names the connection in the debug log.
+pub(crate) async fn join<N: AsyncRead + AsyncWrite + Unpin>(
+    mut near: N,
+    mut far: ChannelStream<Msg>,
+    what: &str,
+) {
     if let Err(error) = tokio::io::copy_bidirectional(&mut near, &mut far).await {
-        log::debug!("a forwarded agent connection ended: {error}");
+        log::debug!("{what} ended: {error}");
     }
 }
 
@@ -201,6 +270,26 @@ pub(crate) async fn start(
 #[cfg(test)]
 mod tests {
     use super::Routes;
+    use crate::x11::X11Display;
+
+    #[test]
+    fn the_x11_grant_lasts_while_a_shell_holds_it() {
+        let routes = Routes::default();
+        assert!(routes.x11().is_none());
+        let display = X11Display::parse(":0")
+            .expect("display")
+            .with_authority(None);
+        let (first, held) = routes.grant_x11(&display).expect("granted");
+        let (second, also_held) = routes.grant_x11(&display).expect("granted");
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "one cookie a connection"
+        );
+        drop(held);
+        assert!(routes.x11().is_some(), "the second shell still holds it");
+        drop(also_held);
+        assert!(routes.x11().is_none(), "gone with the last shell");
+    }
 
     #[test]
     fn only_a_port_asked_for_has_a_route() {

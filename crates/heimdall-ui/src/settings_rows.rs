@@ -36,6 +36,8 @@ pub enum SettingsCard {
     Appearance,
     /// The tunnels panel, the computer's sleep, the most sessions.
     Behavior,
+    /// The look for a newer release.
+    Updates,
     /// The background check of every server.
     Reachability,
     /// The terminals' text and colours, Ctrl+V and the `PowerShell` policy.
@@ -80,9 +82,10 @@ pub enum SettingsCard {
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Appearance,
         Self::Behavior,
+        Self::Updates,
         Self::Reachability,
         Self::Terminal,
         Self::SessionLogging,
@@ -109,7 +112,9 @@ impl SettingsCard {
     #[must_use]
     pub fn tab(self) -> SettingsTab {
         match self {
-            Self::Appearance | Self::Behavior | Self::Reachability => SettingsTab::General,
+            Self::Appearance | Self::Behavior | Self::Updates | Self::Reachability => {
+                SettingsTab::General
+            }
             Self::Terminal | Self::SessionLogging | Self::Macros => SettingsTab::Terminal,
             Self::SshReconnect
             | Self::SshSession
@@ -154,6 +159,12 @@ pub enum SettingRow {
     PreventSleep,
     /// Most sessions open at once.
     MaxSessions,
+    /// A newer release is looked for by itself.
+    UpdateChecks,
+    /// Hours between two looks.
+    UpdateInterval,
+    /// The version running, with "Check now" and what it found.
+    UpdateVersion,
     /// The background check of every server runs.
     Reachability,
     /// Seconds between two background checks.
@@ -248,13 +259,16 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 51] = [
+    pub const ALL: [Self; 54] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
         Self::CollapseTunnelsPanel,
         Self::PreventSleep,
         Self::MaxSessions,
+        Self::UpdateChecks,
+        Self::UpdateInterval,
+        Self::UpdateVersion,
         Self::Reachability,
         Self::ReachabilityInterval,
         Self::ReachabilityTimeout,
@@ -309,6 +323,9 @@ impl SettingRow {
             Self::Language | Self::Theme | Self::Accent => SettingsCard::Appearance,
             Self::CollapseTunnelsPanel | Self::PreventSleep | Self::MaxSessions => {
                 SettingsCard::Behavior
+            }
+            Self::UpdateChecks | Self::UpdateInterval | Self::UpdateVersion => {
+                SettingsCard::Updates
             }
             Self::Reachability
             | Self::ReachabilityInterval
@@ -370,6 +387,7 @@ impl SettingRow {
             Self::TmoutReset => SessionField::TmoutReset,
             Self::AntiIdle => SessionField::AntiIdle,
             Self::AutoLock => SessionField::AutoLock,
+            Self::UpdateInterval => SessionField::UpdateInterval,
             _ => return None,
         })
     }
@@ -395,12 +413,14 @@ impl SettingRow {
     /// language follows the desktop unless chosen, which the list cannot offer back, and the
     /// C# keeps it apart from its settings; the lists and cards are inventories (keys,
     /// macros, gateways) or secrets (the PIN, the vault, the provider's secret), as the C#
-    /// leaves its external tools and its unlock secret unmarked.
+    /// leaves its external tools and its unlock secret unmarked. The version running is no
+    /// choice.
     #[must_use]
     pub fn is_marked(self) -> bool {
         !matches!(
             self,
             Self::Language
+                | Self::UpdateVersion
                 | Self::Macros
                 | Self::HostKeys
                 | Self::FtpsCertificates
@@ -522,6 +542,7 @@ impl SettingRow {
         Some(match self {
             Self::CollapseTunnelsPanel => settings.collapse_tunnels_panel,
             Self::PreventSleep => settings.prevent_sleep,
+            Self::UpdateChecks => settings.updates.enabled,
             Self::Reachability => settings.reachability.enabled,
             Self::SessionLogging => settings.session_logging,
             Self::SshAutoReconnect => settings.ssh_auto_reconnect,
@@ -558,6 +579,7 @@ impl SettingRow {
         Some(match self {
             Self::CollapseTunnelsPanel => SettingsMessage::CollapseTunnelsPanel(on),
             Self::PreventSleep => SettingsMessage::PreventSleep(on),
+            Self::UpdateChecks => SettingsMessage::UpdateChecks(on),
             Self::Reachability => SettingsMessage::Reachability(on),
             Self::SessionLogging => SettingsMessage::SessionLogging(on),
             Self::SshAutoReconnect => SettingsMessage::SshAutoReconnect(on),
@@ -631,9 +653,9 @@ impl ToolPath {
 
 /// A line of the security overview: a security-relevant choice the application has.
 ///
-/// The C# card has twelve; five name what this application does not have: TFTP sharing,
-/// Credential Guard, Windows Hello before connecting, update checks and the `known_hosts`
-/// import at startup. They are left out rather than shown in a state nothing can change.
+/// The C# card has twelve; four name what this application does not have: TFTP sharing,
+/// Credential Guard, Windows Hello before connecting and the `known_hosts` import at
+/// startup. They are left out rather than shown in a state nothing can change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostureKey {
     /// RDP Network Level Authentication.
@@ -650,6 +672,8 @@ pub enum PostureKey {
     AutoLock,
     /// The sessions closed when the workspace locks.
     DisconnectOnLock,
+    /// The automatic look for a newer release.
+    UpdateChecks,
 }
 
 /// The state a line of the security overview reports.
@@ -694,10 +718,11 @@ pub struct PostureLine {
 /// script signing check off; a master password set with no idle lock stays unlocked for as
 /// long as the application runs. Strict server authentication off is the Windows default,
 /// and the master password and disconnecting on lock are hardening one opts into: their
-/// states are reported, never flagged. Without a master password, the two lock lines say so
+/// states are reported, never flagged. Update checks off are risky: a security release goes
+/// unnoticed. Without a master password, the two lock lines say so
 /// and lead to it, as there is nothing to lock.
 #[must_use]
-pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 7] {
+pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 8] {
     let on_off = |on: bool| {
         if on {
             PostureState::On
@@ -759,6 +784,12 @@ pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 7] {
             } else {
                 SettingRow::Vault
             },
+        },
+        PostureLine {
+            key: PostureKey::UpdateChecks,
+            state: on_off(settings.updates.enabled),
+            risky: !settings.updates.enabled,
+            target: SettingRow::UpdateChecks,
         },
     ]
 }
@@ -924,6 +955,7 @@ mod tests {
         settings.rdp_defaults.nla = false;
         settings.session_logging = true;
         settings.powershell_execution_policy = ExecutionPolicy::Unrestricted;
+        settings.updates.enabled = false;
         let risky: Vec<PostureKey> = posture(&settings, true)
             .iter()
             .filter(|line| line.risky)
@@ -936,6 +968,7 @@ mod tests {
                 PostureKey::SessionTranscripts,
                 PostureKey::PowerShellExecutionPolicy,
                 PostureKey::AutoLock,
+                PostureKey::UpdateChecks,
             ]
         );
         settings.powershell_execution_policy = ExecutionPolicy::RemoteSigned;
@@ -1021,6 +1054,50 @@ mod tests {
         assert_eq!(
             SettingRow::DisconnectOnLock.reset(&changed),
             Some(SettingsMessage::DisconnectOnLock(false))
+        );
+    }
+
+    #[test]
+    fn the_updates_card_is_on_the_general_tab_its_choices_marked_and_reset() {
+        assert_eq!(
+            SettingsCard::Updates.rows(),
+            [
+                SettingRow::UpdateChecks,
+                SettingRow::UpdateInterval,
+                SettingRow::UpdateVersion
+            ]
+        );
+        assert_eq!(SettingsCard::Updates.tab(), SettingsTab::General);
+        assert!(
+            !SettingRow::UpdateVersion.is_marked(),
+            "the version is no choice"
+        );
+        let changed = Settings {
+            updates: heimdall_core::settings::Updates {
+                enabled: false,
+                interval_hours: 72,
+            },
+            ..Settings::default()
+        };
+        assert!(SettingRow::UpdateChecks.is_modified(&changed));
+        assert!(SettingRow::UpdateInterval.is_modified(&changed));
+        assert_eq!(
+            SettingRow::UpdateChecks.reset(&changed),
+            Some(SettingsMessage::UpdateChecks(true))
+        );
+        assert_eq!(
+            SettingRow::UpdateInterval.reset(&changed),
+            Some(SettingsMessage::UpdateInterval(24))
+        );
+        let line = posture(&changed, false)[7];
+        assert_eq!(
+            (line.key, line.state, line.risky, line.target),
+            (
+                PostureKey::UpdateChecks,
+                PostureState::Off,
+                true,
+                SettingRow::UpdateChecks
+            )
         );
     }
 }

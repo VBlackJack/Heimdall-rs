@@ -27,6 +27,7 @@ use heimdall_core::settings::{
     reachability_timeout_accepted, session_log_retention_days_accepted, settings_path,
     ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
+    update_interval_accepted,
 };
 use heimdall_term::Palette;
 
@@ -120,6 +121,10 @@ pub enum SettingsMessage {
     AutoLockIdleMinutes(u32),
     /// Locking the workspace closes every session, or leaves them running behind the lock.
     DisconnectOnLock(bool),
+    /// A newer release is looked for by itself, or not.
+    UpdateChecks(bool),
+    /// Hours between two looks for a newer release; refused out of the C# range.
+    UpdateInterval(u32),
 }
 
 /// The colours of `scheme`.
@@ -273,6 +278,9 @@ impl App {
             {
                 self.settings.ssh_tmout_reset_interval = seconds;
             }
+            SettingsMessage::UpdateInterval(hours) if update_interval_accepted(hours) => {
+                self.settings.updates.interval_hours = hours;
+            }
             _ => return false,
         }
         true
@@ -367,7 +375,8 @@ impl App {
             | SettingsMessage::SshAutoReconnectAttempts(_)
             | SettingsMessage::AntiIdleInterval(_)
             | SettingsMessage::SshKeepAliveInterval(_)
-            | SettingsMessage::SshTmoutResetInterval(_)) => {
+            | SettingsMessage::SshTmoutResetInterval(_)
+            | SettingsMessage::UpdateInterval(_)) => {
                 if !self.set_limit(message) {
                     return Vec::new();
                 }
@@ -378,6 +387,7 @@ impl App {
                 self.settings.collapse_tunnels_panel = *collapse;
             }
             SettingsMessage::DiagnosticsLog(on) => self.settings.diagnostics_log = *on,
+            SettingsMessage::UpdateChecks(on) => self.settings.updates.enabled = *on,
             SettingsMessage::Reachability(on) => self.settings.reachability.enabled = *on,
             SettingsMessage::ReachabilityInterval(_)
             | SettingsMessage::ReachabilityTimeout(_)

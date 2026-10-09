@@ -73,6 +73,7 @@ fn request(keys: &Path, known_hosts: &Path, purpose: Purpose) -> ConnectRequest 
         route: vec![hop("127.0.0.1", 2222, "gateway", keys.join("gateway"))],
         purpose,
         options,
+        x11: None,
         cancel: CancellationToken::new(),
     }
 }

@@ -41,6 +41,8 @@ mod run_trust;
 mod secret;
 mod session;
 pub mod socks;
+mod x11;
+mod xauthority;
 
 pub use agent::{AgentSurvey, survey as survey_agents};
 pub use client::{
@@ -68,3 +70,4 @@ pub use run_trust::RunTrust;
 pub use russh::keys::{Algorithm, PublicKey};
 pub use secret::Secret;
 pub use session::{SessionClosed, SessionEvent, SessionInput, ShellSession};
+pub use x11::X11Display;

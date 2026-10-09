@@ -142,6 +142,10 @@ pub struct Spec {
     /// Speaks only what an old appliance does: SHA-1 Diffie-Hellman, a CBC cipher,
     /// HMAC-SHA1.
     pub legacy_only: bool,
+    /// X11 channels it opens to the client once the shell starts, one after the other.
+    pub x11_opens: Vec<X11Open>,
+    /// Opens them once the client closed the shell instead.
+    pub x11_on_close: bool,
 }
 
 impl Default for Spec {
@@ -163,6 +167,8 @@ impl Default for Spec {
             forwarding: false,
             unasked: Unasked::Nothing,
             legacy_only: false,
+            x11_opens: Vec::new(),
+            x11_on_close: false,
         }
     }
 }
@@ -175,6 +181,139 @@ pub enum Unasked {
     Agent,
     /// One of every other kind a client never asks for.
     Channels,
+}
+
+/// The authorization protocol an X11 client presents.
+pub const MIT_MAGIC_COOKIE: &[u8] = b"MIT-MAGIC-COOKIE-1";
+
+/// The byte order bytes of an X11 setup message: most, then least significant byte first.
+pub const X11_MSB_FIRST: u8 = b'B';
+pub const X11_LSB_FIRST: u8 = b'l';
+
+/// The X11 protocol version a client asks for.
+pub const X11_MAJOR: u16 = 11;
+pub const X11_MINOR: u16 = 0;
+
+/// What an X11 channel sends after its setup message, as a program's requests.
+pub const X11_CLIENT_BYTES: &[u8] = b"from-the-x11-program";
+
+/// An X11 channel the server opens, as an X11 program on it would.
+#[derive(Clone, Debug)]
+pub enum X11Open {
+    /// A setup in byte `order` presenting the cookie the client gave, under `name`.
+    Given { order: u8, name: &'static [u8] },
+    /// A setup presenting `data` as a `MIT-MAGIC-COOKIE-1` cookie.
+    Other { data: Vec<u8> },
+    /// The setup of [`X11Open::Given`], most significant byte first, cut after `keep` bytes.
+    Cut { keep: usize },
+    /// A header announcing an authorization name and data of these lengths, then the bytes.
+    Oversize { name_length: u16, data_length: u16 },
+    /// The cookie the client gave, its last byte changed, or with one byte more.
+    Tampered { longer: bool },
+    /// The setup of [`X11Open::Given`] and what follows it written at once, in one packet.
+    Joined { order: u8 },
+    /// Opened, then nothing sent and the channel kept open.
+    Silent,
+}
+
+/// How a channel sends its setup and what follows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sending {
+    Apart,
+    Joined,
+    Nothing,
+}
+
+/// An X11 connection setup message: header, then the name and data, each padded to 4.
+pub fn x11_setup(order: u8, name: &[u8], data: &[u8]) -> Vec<u8> {
+    let encode = |value: u16| {
+        if order == X11_MSB_FIRST {
+            value.to_be_bytes()
+        } else {
+            value.to_le_bytes()
+        }
+    };
+    let length = |bytes: &[u8]| u16::try_from(bytes.len()).expect("short");
+    let mut message = vec![order, 0];
+    for value in [X11_MAJOR, X11_MINOR, length(name), length(data)] {
+        message.extend(encode(value));
+    }
+    message.extend([0, 0]);
+    for field in [name, data] {
+        message.extend(field);
+        message.resize(message.len().next_multiple_of(4), 0);
+    }
+    message
+}
+
+impl X11Open {
+    /// What the channel sends after its setup: nothing after a setup cut short.
+    fn after(&self) -> &'static [u8] {
+        if matches!(self, Self::Cut { .. } | Self::Silent) {
+            &[]
+        } else {
+            X11_CLIENT_BYTES
+        }
+    }
+
+    fn sending(&self) -> Sending {
+        match self {
+            Self::Joined { .. } => Sending::Joined,
+            Self::Silent => Sending::Nothing,
+            _ => Sending::Apart,
+        }
+    }
+
+    /// The bytes this channel sends, `cookie` being the one the client gave.
+    fn bytes(&self, cookie: &[u8]) -> Vec<u8> {
+        match self {
+            Self::Given { order, name } => x11_setup(*order, name, cookie),
+            Self::Joined { order } => x11_setup(*order, MIT_MAGIC_COOKIE, cookie),
+            Self::Silent => Vec::new(),
+            Self::Tampered { longer } => {
+                let mut data = cookie.to_vec();
+                if *longer {
+                    data.push(0);
+                } else if let Some(last) = data.last_mut() {
+                    *last ^= 1;
+                }
+                x11_setup(X11_MSB_FIRST, MIT_MAGIC_COOKIE, &data)
+            }
+            Self::Other { data } => x11_setup(X11_MSB_FIRST, MIT_MAGIC_COOKIE, data),
+            Self::Cut { keep } => {
+                let mut whole = x11_setup(X11_MSB_FIRST, MIT_MAGIC_COOKIE, cookie);
+                whole.truncate(*keep);
+                whole
+            }
+            Self::Oversize {
+                name_length,
+                data_length,
+            } => {
+                let mut header = vec![X11_MSB_FIRST, 0];
+                for value in [X11_MAJOR, X11_MINOR, *name_length, *data_length] {
+                    header.extend(value.to_be_bytes());
+                }
+                header.extend([0, 0]);
+                header.extend(vec![b'n'; usize::from(*name_length)]);
+                header.extend(vec![b'd'; usize::from(*data_length)]);
+                header
+            }
+        }
+    }
+}
+
+/// Sends the end of what `stream` writes, then reads what comes back until it closes.
+async fn exchange_end(stream: &mut russh::ChannelStream<Msg>, reply: &mut Vec<u8>) {
+    let _ = stream.shutdown().await;
+    let _ = tokio::time::timeout(STEP_TIMEOUT, stream.read_to_end(reply)).await;
+}
+
+/// `text`, hexadecimal digits, as bytes; what is not hexadecimal ends it.
+fn from_hex(text: &str) -> Vec<u8> {
+    text.as_bytes()
+        .chunks(2)
+        .map_while(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect()
 }
 
 /// What the server observed, for assertions.
@@ -217,6 +356,11 @@ pub struct Observed {
     pub commands: Vec<(String, Vec<u8>)>,
     /// Signals clients sent to their commands.
     pub signals: Vec<String>,
+    /// X11 requests: single connection, authorization protocol, cookie, screen.
+    pub x11_requests: Vec<(bool, String, String, u32)>,
+    /// X11 channels the server opened, whether the client took each, and what came back
+    /// through it.
+    pub x11_opens: Vec<(bool, Vec<u8>)>,
 }
 
 /// An agent request for the identities it holds: length 1, `SSH_AGENTC_REQUEST_IDENTITIES`.
@@ -274,6 +418,8 @@ pub async fn start(spec: Spec) -> TestServer {
                 kbd_round: 0,
                 relayed: std::collections::HashSet::new(),
                 commands: std::collections::HashMap::new(),
+                x11_cookie: Vec::new(),
+                shell: None,
             };
             let config = config.clone();
             tokio::spawn(async move {
@@ -299,6 +445,10 @@ struct Connection {
     relayed: std::collections::HashSet<ChannelId>,
     /// Channels running a command: its name and the input given so far.
     commands: std::collections::HashMap<ChannelId, (String, Vec<u8>)>,
+    /// The X11 cookie the client gave, as bytes.
+    x11_cookie: Vec<u8>,
+    /// The channel of the shell, once started.
+    shell: Option<ChannelId>,
 }
 
 fn reject() -> Auth {
@@ -386,6 +536,53 @@ impl Connection {
                     .await
                     .is_ok(),
             );
+        });
+    }
+
+    /// Opens to the client, one after the other, the X11 channels of the spec: each sends
+    /// its setup, then [`X11_CLIENT_BYTES`] unless cut short, then its end, and records what
+    /// comes back. A silent one is recorded at once and kept open until the test ends.
+    fn open_x11(&self, session: &Session) {
+        let handle = session.handle();
+        let observed = self.observed.clone();
+        let opens: Vec<(Vec<u8>, &'static [u8], Sending)> = self
+            .spec
+            .x11_opens
+            .iter()
+            .map(|open| (open.bytes(&self.x11_cookie), open.after(), open.sending()))
+            .collect();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            for (bytes, after, sending) in opens {
+                let opened = handle.channel_open_x11(LOOPBACK, 0).await;
+                let took = opened.is_ok();
+                let mut reply = Vec::new();
+                if let Ok(channel) = opened {
+                    let mut stream = channel.into_stream();
+                    match sending {
+                        Sending::Nothing => held.push(stream),
+                        Sending::Joined => {
+                            let mut whole = bytes;
+                            whole.extend(after);
+                            let _ = stream.write_all(&whole).await;
+                            exchange_end(&mut stream, &mut reply).await;
+                        }
+                        Sending::Apart => {
+                            let _ = stream.write_all(&bytes).await;
+                            let _ = stream.write_all(after).await;
+                            exchange_end(&mut stream, &mut reply).await;
+                        }
+                    }
+                }
+                observed
+                    .lock()
+                    .expect("observed")
+                    .x11_opens
+                    .push((took, reply));
+            }
+            if !held.is_empty() {
+                std::future::pending::<()>().await;
+            }
         });
     }
 
@@ -608,6 +805,45 @@ impl server::Handler for Connection {
             Unasked::Agent => self.open_agent(session),
             Unasked::Channels => self.open_unasked(session),
         }
+        self.shell = Some(channel);
+        if !self.spec.x11_opens.is_empty() && !self.spec.x11_on_close {
+            self.open_x11(session);
+        }
+        session.channel_success(channel)
+    }
+
+    /// The client closed a channel: when it is the shell and the spec says so, the X11
+    /// channels are opened now.
+    async fn channel_close(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if self.spec.x11_on_close && self.shell == Some(channel) {
+            self.open_x11(session);
+        }
+        Ok(())
+    }
+
+    /// Records the request and takes it, keeping the cookie for the X11 channels it opens.
+    async fn x11_request(
+        &mut self,
+        channel: ChannelId,
+        single_connection: bool,
+        protocol: &str,
+        cookie: &str,
+        screen: u32,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.x11_cookie = from_hex(cookie);
+        self.observe(|o| {
+            o.x11_requests.push((
+                single_connection,
+                protocol.to_owned(),
+                cookie.to_owned(),
+                screen,
+            ));
+        });
         session.channel_success(channel)
     }
 
