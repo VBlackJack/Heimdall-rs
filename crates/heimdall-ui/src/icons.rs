@@ -99,11 +99,35 @@ pub enum Icon {
     Broadcast,
     /// The `AllApps` glyph: a list, broadcast input's scope.
     List,
+    /// The `Back` glyph: an arrow left, a file browser's Back.
+    Back,
+    /// The `Up` glyph: an arrow up, a file browser's parent folder.
+    Up,
+    /// The `Home` glyph: a house, a file browser's home folder.
+    Home,
+    /// The `Refresh` glyph: a turning arrow, a folder listed again.
+    Refresh,
+    /// The `Folder` glyph: a folder of a file list.
+    FolderGlyph,
+    /// The `Page` glyph: a file of a file list.
+    Page,
+    /// The `Link` glyph: a link of a file list.
+    Link,
+    /// The `Info` glyph: a pipe, a socket or a device of a file list.
+    Info,
+    /// The `NewFolder` glyph: a folder with a plus.
+    NewFolder,
+    /// The `FavoriteStar` glyph: a star, the bookmarks.
+    FavoriteStar,
+    /// The `Admin` glyph: a shield, browsing as root.
+    Admin,
+    /// The `UpdateRestore` glyph: an arrow turning back, a setting reset.
+    Restore,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 34] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -126,6 +150,18 @@ impl Icon {
         Self::Pin,
         Self::Broadcast,
         Self::List,
+        Self::Back,
+        Self::Up,
+        Self::Home,
+        Self::Refresh,
+        Self::FolderGlyph,
+        Self::Page,
+        Self::Link,
+        Self::Info,
+        Self::NewFolder,
+        Self::FavoriteStar,
+        Self::Admin,
+        Self::Restore,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -209,6 +245,35 @@ impl Icon {
                 "M2,3.5 L3,3.5 M5,3.5 L14,3.5 M2,8 L3,8 M5,8 L14,8 M2,12.5 L3,12.5 \
                  M5,12.5 L14,12.5"
             }
+            Self::Back => "M14.5,8 L1.5,8 M7,2.5 L1.5,8 L7,13.5",
+            Self::Up => "M8,14.5 L8,1.5 M2.5,7 L8,1.5 L13.5,7",
+            Self::Home => {
+                "M1.5,8 L8,1.5 L14.5,8 M3.5,6 L3.5,14.5 L12.5,14.5 L12.5,6 \
+                 M6.5,14.5 L6.5,10 L9.5,10 L9.5,14.5"
+            }
+            Self::Refresh => "M13.5,8 A5.5,5.5 0 1 1 11.9,4.1 M12,1 L12,4.5 L8.5,4.5",
+            Self::FolderGlyph => "M1.5,3.5 L6,3.5 L7.5,5 L14.5,5 L14.5,13 L1.5,13 Z",
+            Self::Page => "M3.5,1.5 L10,1.5 L12.5,4 L12.5,14.5 L3.5,14.5 Z M10,1.5 L10,4 L12.5,4",
+            Self::Link => {
+                "M9.5,6.5 L6.5,9.5 M8,4.5 L9.5,3 A2.5,2.5 0 0 1 13,6.5 L11.5,8 \
+                 M8,11.5 L6.5,13 A2.5,2.5 0 0 1 3,9.5 L4.5,8"
+            }
+            Self::Info => {
+                "M8,1.5 A6.5,6.5 0 1 1 8,14.5 A6.5,6.5 0 1 1 8,1.5 Z M8,7 L8,11.5 \
+                 M8,4.5 L8,5.5"
+            }
+            Self::NewFolder => {
+                "M1.5,3.5 L6,3.5 L7.5,5 L14.5,5 L14.5,13 L1.5,13 Z M8,7 L8,11 M6,9 L10,9"
+            }
+            Self::FavoriteStar => {
+                "M8,1.5 L9.65,5.73 L14.18,5.99 L10.66,8.87 L11.82,13.26 L8,10.8 L4.18,13.26 \
+                 L5.34,8.87 L1.82,5.99 L6.35,5.73 Z"
+            }
+            Self::Admin => {
+                "M8,1.5 L13.5,3.5 L13.5,8 C13.5,11 11,13.5 8,14.5 C5,13.5 2.5,11 2.5,8 \
+                 L2.5,3.5 Z"
+            }
+            Self::Restore => "M2.5,8 A5.5,5.5 0 1 0 4.1,4.1 M4,1 L4,4.5 L7.5,4.5",
         }
     }
 
@@ -225,7 +290,19 @@ impl Icon {
             | Self::Close
             | Self::Pin
             | Self::Broadcast
-            | Self::List => Some(GLYPH_STROKE_WIDTH),
+            | Self::List
+            | Self::Back
+            | Self::Up
+            | Self::Home
+            | Self::Refresh
+            | Self::FolderGlyph
+            | Self::Page
+            | Self::Link
+            | Self::Info
+            | Self::NewFolder
+            | Self::FavoriteStar
+            | Self::Admin
+            | Self::Restore => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
     }

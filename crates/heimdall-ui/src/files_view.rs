@@ -39,16 +39,18 @@ use heimdall_files::Refusal;
 use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
 use iced::widget::{
-    Column, Row, button, column, container, mouse_area, responsive, row, scrollable, text,
+    Column, Row, button, center, column, container, mouse_area, responsive, row, scrollable, text,
     text_input, tooltip,
 };
-use iced::{Alignment, Element, Length, Theme};
+use iced::{Alignment, Element, Font, Length, Theme};
 
 use crate::i18n::fl;
+use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
 use crate::texts;
-use crate::tokens::{font_size, spacing};
+use crate::tokens::{BORDER_WIDTH, OPACITY_DISABLED, font_size, spacing};
+use crate::tree_row::{Mark, RowChrome};
 use crate::tree_view::TreeMenu;
 
 /// Width of the size column until resized, in logical pixels.
@@ -106,17 +108,40 @@ const TRANSFERS_HEIGHT: f32 = 160.0;
 /// Width of the border of the pane with the focus, in logical pixels.
 const FOCUS_BORDER_WIDTH: f32 = 2.0;
 
-/// Marks a folder after its name: language-neutral, like a path.
-const FOLDER_MARK: &str = "/";
+/// Font of a path, as the C# `FontFamilyMonospace`: the terminal's, always embedded.
+const PATH_FONT: Font = Font::with_name(crate::terminal_view::FONT_FAMILY);
 
-/// Marks a link after its name.
-const LINK_MARK: &str = " ->";
+/// Room around the breadcrumb's folders, above and below then beside, as the C# path box's.
+const BREADCRUMB_PADDING: [f32; 2] = [1.0, 4.0];
 
-/// Between two folders of the breadcrumb: language-neutral, like a path.
-const SEGMENT_SEPARATOR: &str = ">";
+/// Room around a folder of the breadcrumb, as the C# `SftpIconButtonPadding`.
+const SEGMENT_PADDING: [f32; 2] = [2.0, 6.0];
 
-/// Room around the breadcrumb's folders, the path bar's own, so neither moves the other.
-const BREADCRUMB_PADDING: f32 = 5.0;
+/// Side of the chevron between two folders of the breadcrumb, as the C#'s at
+/// `FontSizeSmallCaption`.
+const CHEVRON_SIDE: f32 = 8.0;
+
+/// Side of a toolbar's square button, as the C# `SftpToolbarButtonMinHeight`.
+const TOOL_SIDE: f32 = 28.0;
+
+/// Width of the filter, as the C# `SftpFilterBoxWidth`.
+const FILTER_WIDTH: f32 = 160.0;
+
+/// Width of a toolbar's separator, as the C# `ToolbarVerticalSeparatorStyle`'s.
+const SEPARATOR_WIDTH: f32 = 1.5;
+
+/// Height of a toolbar's separator, as the C#'s.
+const SEPARATOR_HEIGHT: f32 = 16.0;
+
+/// Side of an entry's icon before its name, as the C# glyph at `FontSizeBodyLarge`.
+const ENTRY_ICON_SIDE: f32 = 14.0;
+
+/// Between an entry's icon and its name, as the C# icon's margin.
+const ENTRY_ICON_GAP: f32 = 6.0;
+
+/// Room around the pane's footer, above and below then beside, as the C#
+/// `SessionHeaderPadding`.
+const FOOTER_PADDING: [f32; 2] = [4.0, 8.0];
 
 /// A field of a pane the keyboard can be given to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +162,38 @@ pub fn field_id(tab: TabId, side: Side, field: PaneField) -> Id {
         PaneField::Filter => "filter",
     };
     Id::from(format!("files-{}-{}-{field}", tab.value(), side_name(side)))
+}
+
+/// A button of a pane that shows a glyph alone, as the C# toolbar's and path bar's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneTool {
+    /// Back, Alt+Left.
+    Back,
+    /// The parent folder, Alt+Up.
+    Up,
+    /// The home folder.
+    Home,
+    /// The folder listed again, F5.
+    Refresh,
+    /// The path typed gone to, Enter.
+    Go,
+    /// The server's bookmarks.
+    Bookmarks,
+}
+
+/// Widget identifier of the button `tool` of `tab`'s pane `side`, which shows a glyph
+/// alone; made of the tab as its fields are.
+#[must_use]
+pub fn tool_id(tab: TabId, side: Side, tool: PaneTool) -> Id {
+    let tool = match tool {
+        PaneTool::Back => "back",
+        PaneTool::Up => "up",
+        PaneTool::Home => "home",
+        PaneTool::Refresh => "refresh",
+        PaneTool::Go => "go",
+        PaneTool::Bookmarks => "bookmarks",
+    };
+    Id::from(format!("files-{}-{}-{tool}", tab.value(), side_name(side)))
 }
 
 /// Widget identifier of the list of `tab`'s pane `side`, to scroll the selection into view;
@@ -517,10 +574,11 @@ fn cell_text<E: Listed>(entry: &E, column: SortColumn) -> String {
     match column {
         SortColumn::Name => {
             match entry.kind() {
-                EntryKind::Directory => format!("{}{FOLDER_MARK}", entry.label()),
-                EntryKind::Link => format!("{}{LINK_MARK}", entry.label()),
-                EntryKind::File => entry.label().to_owned(),
-                // A pipe, a socket, a device marked, as the C# icons tell them apart.
+                // A folder and a link told apart by their icons, as the C#'s.
+                EntryKind::Directory | EntryKind::Link | EntryKind::File => {
+                    entry.label().to_owned()
+                }
+                // A pipe, a socket, a device marked, its icon shared.
                 special @ EntryKind::Other(_) => fl!(
                     "ui-files-special-mark",
                     name = entry.label(),
@@ -587,6 +645,7 @@ fn headers<'a, E: Listed>(
             button(
                 text(column_title(*column, sort))
                     .size(font_size::CAPTION)
+                    .style(text::secondary)
                     .wrapping(text::Wrapping::None),
             )
             .style(styles::subtle)
@@ -621,8 +680,21 @@ fn headers<'a, E: Listed>(
         .into()
 }
 
+/// The icon before an entry's name, as the C# list's: a folder or a link in the info
+/// colour, a file in the secondary text, a pipe, a socket or a device in the info colour.
+fn entry_icon<'a>(kind: EntryKind) -> Element<'a, Message> {
+    let (icon, tint) = match kind {
+        EntryKind::Directory => (Icon::FolderGlyph, Tint::Info),
+        EntryKind::Link => (Icon::Link, Tint::Info),
+        EntryKind::File => (Icon::Page, Tint::Secondary),
+        EntryKind::Other(_) => (Icon::Info, Tint::Info),
+    };
+    icons::icon(icon, tint, ENTRY_ICON_SIDE)
+}
+
 /// An entry's row: its cells laid out at `laid` as the headers above, each cut at its
-/// column's edge.
+/// column's edge, its name after its icon; drawn as the C# `FileBrowserRowStyle`, lit
+/// under the pointer, the accent's tint and edge once selected.
 fn entry_row<'a, E: Listed>(
     entry: &E,
     (columns, laid): (&[SortColumn], &[f32]),
@@ -633,9 +705,12 @@ fn entry_row<'a, E: Listed>(
     let mut cells = row![].spacing(spacing::SM);
     for (column, width) in columns.iter().zip(laid.iter().copied()) {
         let cell = text(cell_text(entry, *column)).wrapping(text::Wrapping::None);
-        let cell = match cell_size(*column) {
-            Some(small) => cell.size(small),
-            None => cell,
+        let cell: Element<'a, Message> = match cell_size(*column) {
+            Some(small) => cell.size(small).into(),
+            None => row![entry_icon(entry.kind()), cell]
+                .spacing(ENTRY_ICON_GAP)
+                .align_y(Alignment::Center)
+                .into(),
         };
         cells = cells.push(container(cell).width(width).clip(true));
     }
@@ -645,21 +720,24 @@ fn entry_row<'a, E: Listed>(
         .style(if target {
             // A drag over this folder: where the entries would go.
             button::success
-        } else if selected {
-            styles::primary
         } else {
-            styles::subtle
+            styles::bare
         })
         .on_press(on_press);
+    let mark = if selected && !target {
+        Mark::Selected
+    } else {
+        Mark::None
+    };
     // A right click opens its menu, as in the C# Files tab.
     crate::files_drag::spot(
-        mouse_area(row_tooltip(line, entry)).on_right_press(Message::OpenTreeMenu(
-            TreeMenu::FilesEntry {
+        mouse_area(RowChrome::new(row_tooltip(line, entry), mark)).on_right_press(
+            Message::OpenTreeMenu(TreeMenu::FilesEntry {
                 tab,
                 side,
                 index: Some(index),
-            },
-        )),
+            }),
+        ),
         crate::files_drag::Spot {
             tab,
             side,
@@ -668,42 +746,126 @@ fn entry_row<'a, E: Listed>(
     )
 }
 
-/// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
-/// bookmarks, and its `toggles`: over SSH the "sudo" toggle, over SFTP the "cwd" one, as in
-/// the C# tab; the local file browser's own "cwd" toggle on this computer's. The row wraps:
-/// a narrow pane keeps every button whole.
-fn pane_tools<'a>(
-    tab: TabId,
-    side: Side,
-    (selected, chosen): (Option<usize>, usize),
-    toggles: PaneToggles,
+/// A glyph alone on a quiet button, as the C# toolbar's: named on hover, found by `id`,
+/// faded while it has nothing to do.
+fn glyph_button<'a>(
+    icon: Icon,
+    tip: String,
+    id: Id,
+    on_press: Option<Message>,
 ) -> Element<'a, Message> {
+    let opacity = if on_press.is_some() {
+        1.0
+    } else {
+        OPACITY_DISABLED
+    };
+    tooltip(
+        container(
+            button(center(icons::faded(
+                icon,
+                Tint::Text,
+                icons::GLYPH_SIDE,
+                opacity,
+            )))
+            .width(TOOL_SIDE)
+            .height(TOOL_SIDE)
+            .padding(0)
+            .style(styles::subtle)
+            .on_press_maybe(on_press),
+        )
+        .id(id),
+        text(tip).size(font_size::CAPTION),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box)
+    .into()
+}
+
+/// A labelled button of a toolbar, its glyph before its words, as the C#'s.
+fn glyph_label<'a>(icon: Icon, label: String) -> Row<'a, Message> {
+    row![
+        icons::icon(icon, Tint::Text, icons::GLYPH_SIDE),
+        text(label).size(font_size::CAPTION).font(styles::SEMIBOLD),
+    ]
+    .spacing(spacing::XS)
+    .align_y(Alignment::Center)
+}
+
+/// The line between two groups of a toolbar, as the C# `ToolbarVerticalSeparatorStyle`.
+fn tool_separator<'a>() -> Element<'a, Message> {
+    container(iced::widget::space())
+        .width(SEPARATOR_WIDTH)
+        .height(SEPARATOR_HEIGHT)
+        .style(styles::divider)
+        .into()
+}
+
+/// A line across a pane between its toolbar, its path bar, its list and its footer, as
+/// the C# borders between them.
+fn pane_rule<'a>() -> Element<'a, Message> {
+    container(iced::widget::space())
+        .width(Length::Fill)
+        .height(BORDER_WIDTH)
+        .style(styles::divider)
+        .into()
+}
+
+/// A pane's toolbar, as the C# file browser's: Back, Up, Home and Refresh as glyphs, then
+/// New folder; on the server's, its toggles, "sudo" over SSH and "cwd" over SFTP, and its
+/// bookmarks behind a star; on this computer's in the local file browser, its own "cwd".
+/// Renaming and deleting are in the entries' menu, on F2 and Delete, as the C#'s. The
+/// filter and the hidden-files toggle on the right. The tools wrap: a narrow pane keeps
+/// every one whole.
+fn pane_toolbar<'a>(
+    (tab, side): (TabId, Side),
+    moves: Moves,
+    toggles: PaneToggles,
+    (filter, show_hidden): (&str, bool),
+) -> Element<'a, Message> {
+    let tool =
+        |icon, tip, which, message| glyph_button(icon, tip, tool_id(tab, side, which), message);
     let mut tools = row![
-        button(text(fl!("ui-files-new-folder-button")).size(font_size::CAPTION))
+        tool(
+            Icon::Back,
+            fl!("ui-files-back-tooltip"),
+            PaneTool::Back,
+            moves.back.then(|| files(FilesMessage::Back { tab, side })),
+        ),
+        tool(
+            Icon::Up,
+            fl!("ui-files-up-tooltip"),
+            PaneTool::Up,
+            Some(files(FilesMessage::Up { tab, side })),
+        ),
+        tool(
+            Icon::Home,
+            fl!("ui-files-home-tooltip"),
+            PaneTool::Home,
+            moves.home.then(|| files(FilesMessage::Home { tab, side })),
+        ),
+        tool(
+            Icon::Refresh,
+            fl!("ui-files-refresh-tooltip"),
+            PaneTool::Refresh,
+            Some(files(FilesMessage::Refresh { tab, side })),
+        ),
+        tool_separator(),
+        tooltip(
+            button(glyph_label(
+                Icon::NewFolder,
+                fl!("ui-files-new-folder-button")
+            ))
             .style(styles::secondary)
             .on_press(files(FilesMessage::AskNewFolder { tab, side })),
-        button(text(fl!("ui-files-rename-button")).size(font_size::CAPTION))
-            .style(styles::secondary)
-            // One entry at a time, as in the C# tab.
-            .on_press_maybe((chosen == 1).then(|| files(FilesMessage::AskRename { tab, side })),),
-        button(text(fl!("ui-files-delete-button")).size(font_size::CAPTION))
-            .style(styles::danger)
-            .on_press_maybe(selected.map(|_| files(FilesMessage::AskDelete { tab, side }))),
+            text(fl!("ui-files-new-folder-tooltip")).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box),
     ]
-    .spacing(spacing::SM);
-    // The server's folders only, as in the C# tab.
-    if side == Side::Remote {
-        tools = tools
-            .push(
-                button(text(fl!("ui-files-bookmark-button")).size(font_size::CAPTION))
-                    .style(styles::secondary)
-                    .on_press(files(FilesMessage::Bookmark { tab })),
-            )
-            .push(
-                button(text(fl!("ui-files-bookmarks-button")).size(font_size::CAPTION))
-                    .style(styles::secondary)
-                    .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab))),
-            );
+    .spacing(spacing::XS)
+    .align_y(Alignment::Center);
+    if toggles.sudo.is_some() || toggles.follow.is_some() {
+        tools = tools.push(tool_separator());
     }
     if let Some(on) = toggles.sudo {
         tools = tools.push(sudo_toggle(tab, on));
@@ -711,7 +873,22 @@ fn pane_tools<'a>(
     if let Some(on) = toggles.follow {
         tools = tools.push(follow_toggle(tab, side, on));
     }
-    tools.wrap().vertical_spacing(spacing::SM).into()
+    // The server's folders only, as in the C# tab.
+    if side == Side::Remote {
+        tools = tools.push(tool_separator()).push(tool(
+            Icon::FavoriteStar,
+            fl!("ui-files-bookmark-button"),
+            PaneTool::Bookmarks,
+            Some(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab))),
+        ));
+    }
+    row![
+        container(tools.wrap().vertical_spacing(spacing::XS)).width(Length::Fill),
+        pane_narrowing(tab, side, filter, show_hidden),
+    ]
+    .spacing(spacing::SM)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 /// The C# "cwd" toggle of an SFTP server pane, lit while the pane follows the working
@@ -724,13 +901,12 @@ fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
         Side::Local => fl!("ui-files-follow-local-tooltip"),
     };
     tooltip(
-        button(text(fl!("ui-files-follow-toggle")).size(font_size::CAPTION))
-            .style(if on {
-                styles::primary
-            } else {
-                styles::secondary
-            })
-            .on_press(files(FilesMessage::ToggleFollow { tab })),
+        button(glyph_label(
+            Icon::FolderGlyph,
+            fl!("ui-files-follow-toggle"),
+        ))
+        .style(styles::toggle(on))
+        .on_press(files(FilesMessage::ToggleFollow { tab })),
         text(tip).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
@@ -738,16 +914,12 @@ fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
     .into()
 }
 
-/// The C# "sudo" toggle of the server pane, lit in the warning colour while its folders are
-/// listed as root.
+/// The C# "sudo" toggle of the server pane, outlined in the warning colour while its
+/// folders are listed as root.
 fn sudo_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
     tooltip(
-        button(text(fl!("ui-files-sudo-toggle")).size(font_size::CAPTION))
-            .style(if on {
-                button::warning
-            } else {
-                styles::secondary
-            })
+        button(glyph_label(Icon::Admin, fl!("ui-files-sudo-toggle")))
+            .style(styles::toggle(on))
             .on_press(files(FilesMessage::ToggleSudo { tab })),
         text(fl!("ui-files-sudo-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
@@ -770,7 +942,7 @@ pub fn sudo_delete_question<'a>(names: &[String], more: usize) -> Element<'a, Me
     column![
         text(fl!("ui-dialog-sudo-delete-title")).size(font_size::SUBTITLE),
         text(fl!("ui-dialog-sudo-delete-body")),
-        scrollable(listed).height(Length::Shrink),
+        styles::scroll(listed).height(Length::Shrink),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
                 .style(styles::secondary)
@@ -807,7 +979,7 @@ fn pane_narrowing<'a>(
                 .id(field_id(tab, side, PaneField::Filter))
                 .size(font_size::CAPTION)
                 .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
-                .width(Length::Fill),
+                .width(FILTER_WIDTH),
             emptied,
         ),
         tooltip(
@@ -827,25 +999,22 @@ fn pane_narrowing<'a>(
     .align_y(Alignment::Center)
 }
 
-/// A pane's title, how many entries it lists and shows as the C# tab counts them, and how
-/// many are selected past one.
-fn pane_heading<'a>(
-    title: String,
+/// A pane's footer, as the C# status bar under the list: how many entries it lists and
+/// shows as the C# tab counts them, and how many are selected past one, in the secondary
+/// text.
+fn pane_footer<'a>(
     shown: usize,
     total: usize,
     (chosen, size): (usize, u64),
-) -> iced::widget::Row<'a, Message> {
+) -> Element<'a, Message> {
     let count = if shown == total {
         fl!("ui-files-item-count", count = total)
     } else {
         fl!("ui-files-item-count-filtered", shown = shown, count = total)
     };
-    let mut heading = row![
-        text(title).size(font_size::SUBTITLE),
-        text(count).size(font_size::CAPTION)
-    ]
-    .spacing(spacing::SM)
-    .align_y(Alignment::Center);
+    let mut said = row![text(count).size(font_size::CAPTION).style(text::secondary)]
+        .spacing(spacing::SM)
+        .align_y(Alignment::Center);
     if chosen > 1 {
         let selection = fl!("ui-files-selected-count", count = chosen);
         // The files' size beside it, as the C# selection line; folders are not counted.
@@ -858,16 +1027,22 @@ fn pane_heading<'a>(
         } else {
             selection
         };
-        heading = heading.push(text(selection).size(font_size::CAPTION));
+        said = said.push(
+            text(selection)
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+        );
     }
-    heading
+    container(said).padding(FOOTER_PADDING).into()
 }
 
 /// What a pane is drawn from, shared by both sides.
 struct PaneParts<'p, E> {
     tab: TabId,
     side: Side,
-    title: String,
+    /// Its name beside the other pane; none for the local file browser's, whose pane header
+    /// names it.
+    title: Option<String>,
     location: String,
     /// The folders of the one shown, the root first, as the breadcrumb shows them; `None`
     /// while the path bar is typed in.
@@ -949,19 +1124,24 @@ struct Moves {
     home: bool,
 }
 
-/// The folder shown as its folders, each a button going there, as the C# breadcrumb; a
-/// click beside them gives the path back to be typed in. The deepest stays in sight.
+/// The folder shown as its folders, each a button going there between chevrons, in a box
+/// drawn as the path field, as the C# breadcrumb; a click beside them gives the path back
+/// to be typed in. The deepest stays in sight.
 fn breadcrumb_bar<'a>(tab: TabId, side: Side, segments: Vec<String>) -> Element<'a, Message> {
     let last = segments.len().saturating_sub(1);
     let mut trail = Row::new().spacing(spacing::XS).align_y(Alignment::Center);
     for (index, name) in segments.into_iter().enumerate() {
         if index > 0 {
-            trail = trail.push(text(SEGMENT_SEPARATOR).size(font_size::CAPTION));
+            trail = trail.push(icons::icon(
+                Icon::ChevronRight,
+                Tint::Secondary,
+                CHEVRON_SIDE,
+            ));
         }
         trail = trail.push(
-            button(text(name).size(font_size::CAPTION))
+            button(text(name).font(PATH_FONT))
                 .style(styles::subtle)
-                .padding(0)
+                .padding(SEGMENT_PADDING)
                 .on_press(files(FilesMessage::Ascend {
                     tab,
                     side,
@@ -979,7 +1159,7 @@ fn breadcrumb_bar<'a>(tab: TabId, side: Side, segments: Vec<String>) -> Element<
         container(trail)
             .padding(BREADCRUMB_PADDING)
             .width(Length::Fill)
-            .style(container::bordered_box),
+            .style(styles::field_box),
     )
     .on_press(Message::EditPath { tab, side })
     .into()
@@ -1069,6 +1249,42 @@ fn batch_row<'a>(tab: TabId, batch: &heimdall_app::files::Batch) -> Element<'a, 
         .into()
 }
 
+/// A pane's path bar, as the C#'s: the folder shown in a rounded box, as its folders to
+/// click or typed over to go elsewhere, then Go as a chevron, there while a path is typed.
+fn path_bar<'a>(
+    (tab, side): (TabId, Side),
+    location: &str,
+    breadcrumb: Option<Vec<String>>,
+    typed: Option<&str>,
+) -> Element<'a, Message> {
+    let field = match breadcrumb.filter(|_| typed.is_none()) {
+        Some(segments) => breadcrumb_bar(tab, side, segments),
+        None => text_input(location, typed.unwrap_or(location))
+            .style(styles::text_input)
+            .id(field_id(tab, side, PaneField::Path))
+            .font(PATH_FONT)
+            .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
+            .on_submit(files(FilesMessage::GoTo { tab, side }))
+            .width(Length::Fill)
+            .into(),
+    };
+    row![
+        field,
+        glyph_button(
+            Icon::ChevronRight,
+            fl!("ui-files-go-tooltip"),
+            tool_id(tab, side, PaneTool::Go),
+            typed.map(|_| files(FilesMessage::GoTo { tab, side })),
+        ),
+    ]
+    .spacing(spacing::XS)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// A pane, as the C# file browser: its title beside a server's, its toolbar, its path bar,
+/// what it says of itself, its list under the columns' headers, and its footer counting the
+/// entries.
 fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     let PaneParts {
         tab,
@@ -1095,47 +1311,12 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         toggles,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
-    let tools = pane_tools(tab, side, (selected, chosen), toggles);
-    let header = row![
-        // As the C# Files tab: Back, Up, Home.
-        button(text(fl!("ui-files-back-button")).size(font_size::CAPTION))
-            .style(styles::secondary)
-            .on_press_maybe(moves.back.then(|| files(FilesMessage::Back { tab, side }))),
-        button(text(fl!("ui-files-up-button")).size(font_size::CAPTION))
-            .style(styles::secondary)
-            .on_press(files(FilesMessage::Up { tab, side })),
-        button(text(fl!("ui-files-home-button")).size(font_size::CAPTION))
-            .style(styles::secondary)
-            .on_press_maybe(moves.home.then(|| files(FilesMessage::Home { tab, side }))),
-        // The folder shown, typed over to go elsewhere, as the C# path bar; its folders to
-        // click while it is not typed in.
-        match breadcrumb.filter(|_| typed.is_none()) {
-            Some(segments) => breadcrumb_bar(tab, side, segments),
-            None => text_input(&location, typed.unwrap_or(&location))
-                .style(styles::text_input)
-                .id(field_id(tab, side, PaneField::Path))
-                .size(font_size::CAPTION)
-                .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
-                .on_submit(files(FilesMessage::GoTo { tab, side }))
-                .width(Length::Fill)
-                .into(),
-        },
-        button(text(fl!("ui-files-go-button")).size(font_size::CAPTION))
-            .style(styles::secondary)
-            .on_press_maybe(typed.map(|_| files(FilesMessage::GoTo { tab, side }))),
-        button(text(fl!("ui-files-refresh-button")).size(font_size::CAPTION))
-            .style(styles::secondary)
-            .on_press(files(FilesMessage::Refresh { tab, side })),
-    ]
-    .spacing(spacing::SM)
-    .align_y(Alignment::Center);
-    let narrowing = pane_narrowing(tab, side, filter, show_hidden);
     let failed = error.is_some();
     // The columns that fit beside a name still readable, laid out for the pane's width.
     let listing = responsive(move |size| {
         let shown = fitting_columns(columns, widths, size.width);
         let laid = laid_widths(&shown, widths, size.width - 2.0 * ROW_PADDING_X);
-        let mut list = Column::new().spacing(2.0);
+        let mut list = Column::new();
         if loading {
             list = list.push(text(fl!("ui-files-loading")).size(font_size::CAPTION));
         } else if entries.is_empty() && !failed {
@@ -1148,24 +1329,43 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             list = list.push(entry_row(entry, (&shown, &laid), (picked, target), place));
         }
         // A right click beside the entries: the menu of the folder shown, as the C# list's.
-        let list = mouse_area(scrollable(list).id(list_id(tab, side)).height(Length::Fill))
-            .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
-                tab,
-                side,
-                index: None,
-            }));
+        let list = mouse_area(
+            styles::scroll(list)
+                .id(list_id(tab, side))
+                .height(Length::Fill),
+        )
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+            tab,
+            side,
+            index: None,
+        }));
         let header = headers((tab, side), entries, (&shown, &laid), (sort, widths));
-        column![header, list].spacing(spacing::SM).into()
+        column![header, list].spacing(spacing::XS).into()
     });
-    let heading = pane_heading(
-        title,
+    let mut content = Column::new().spacing(spacing::SM);
+    if let Some(title) = title {
+        content = content.push(text(title).size(font_size::SUBTITLE).font(styles::SEMIBOLD));
+    }
+    content = content
+        .push(pane_toolbar(
+            (tab, side),
+            moves,
+            toggles,
+            (filter, show_hidden),
+        ))
+        .push(pane_rule())
+        .push(path_bar((tab, side), &location, breadcrumb, typed))
+        .push(pane_rule());
+    let footer = pane_footer(
         entries.len(),
         total,
         (chosen, chosen_size(entries, selected, marked)),
     );
-    let content = column![heading, header, tools, narrowing].spacing(spacing::SM);
     pane_frame(
-        pane_notes(content, tab, (toggles.sudo, error, batch)).push(listing),
+        pane_notes(content, tab, (toggles.sudo, error, batch))
+            .push(listing)
+            .push(pane_rule())
+            .push(footer),
         (tab, side),
         focused,
         drop == Some(DropHere::Pane),
@@ -1235,7 +1435,9 @@ fn pane_frame(
         .width(Length::FillPortion(1))
         .height(Length::Fill)
         .style(move |theme: &Theme| {
+            // The window's background, as the C# list's: a row is lit over it.
             let mut style = container::bordered_box(theme);
+            style.background = Some(theme.palette().background.into());
             if whole_target {
                 // A drag over it: where its entries would go.
                 style.border.color = theme.extended_palette().success.base.color;
@@ -1481,7 +1683,7 @@ pub fn view(
     let local = pane(PaneParts {
         tab,
         side: Side::Local,
-        title: fl!("ui-files-local-title"),
+        title: (!files_pane.local_only).then(|| fl!("ui-files-local-title")),
         location: local_location,
         breadcrumb: (editing != Some(Side::Local)).then(|| local_segments(&files_pane.local.path)),
         typed: files_pane.local.typed.as_deref(),
@@ -1511,7 +1713,7 @@ pub fn view(
     let remote = pane(PaneParts {
         tab,
         side: Side::Remote,
-        title: fl!("ui-files-remote-title"),
+        title: Some(fl!("ui-files-remote-title")),
         location: remote_location,
         breadcrumb: (editing != Some(Side::Remote))
             .then(|| remote_segments(&files_pane.remote.path)),
@@ -1649,7 +1851,7 @@ fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Messa
     }
     column![
         title,
-        container(scrollable(list)).max_height(TRANSFERS_HEIGHT)
+        container(styles::scroll(list)).max_height(TRANSFERS_HEIGHT)
     ]
     .spacing(spacing::SM)
 }
@@ -1745,7 +1947,11 @@ mod tests {
         let names = column_texts(&entries, SortColumn::Name, sort);
         assert_eq!(names.len(), 3, "the header, then each entry");
         assert_eq!(names[0].1, Some(font_size::CAPTION), "the header's size");
-        assert_eq!(names[2], (format!("docs{FOLDER_MARK}"), None), "as listed");
+        assert_eq!(
+            names[2],
+            ("docs".to_owned(), None),
+            "its icon tells it a folder"
+        );
         let sizes = column_texts(&entries, SortColumn::Size, sort);
         assert_eq!(sizes[1].1, Some(font_size::CAPTION));
         assert_eq!(sizes[2].0, "", "a folder shows no size");

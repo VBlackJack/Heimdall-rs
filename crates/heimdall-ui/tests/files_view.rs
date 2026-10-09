@@ -36,6 +36,7 @@ use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
+use heimdall_ui::floating_view::{PaneTool, tool_id};
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
@@ -258,7 +259,7 @@ async fn both_panes_show_their_folders_and_a_folder_click_selects_it() {
     ui.find("Server").expect("remote pane");
     ui.find("admin").expect("remote path, as its folders");
     ui.find("5.0 MiB").expect("size");
-    ui.click("logs/").expect("folder");
+    ui.click("logs").expect("folder");
     let messages = files_messages(ui);
     assert!(
         matches!(
@@ -506,9 +507,10 @@ async fn the_path_bar_is_typed_over_and_enter_goes_there() {
             "{messages:?}"
         );
     }
-    // What is typed shows until gone to, and Go is offered only then.
+    // What is typed shows until gone to, and Go, a chevron as the C#'s, is offered only then.
     let mut ui = simulator(&shell);
-    ui.click("Go").expect("Go");
+    ui.click(tool_id(tab, Side::Local, PaneTool::Go))
+        .expect("Go");
     assert!(files_messages(ui).is_empty(), "nothing typed: greyed out");
     let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::PathEdited {
         tab,
@@ -517,7 +519,8 @@ async fn the_path_bar_is_typed_over_and_enter_goes_there() {
     })));
     let mut ui = simulator(&shell);
     ui.find("elsewhere").expect("typed, shown");
-    ui.click("Go").expect("Go");
+    ui.click(tool_id(tab, Side::Local, PaneTool::Go))
+        .expect("Go");
     assert!(files_messages(ui).iter().any(|message| matches!(
         message,
         FilesMessage::GoTo {
@@ -977,10 +980,9 @@ async fn ctrl_and_shift_clicks_select_several_entries_and_the_pane_says_how_many
         let mut ui = simulator(&shell);
         ui.find("2 selected (2.0 KiB)")
             .expect("counted, the file's size beside it, as the C#: not the folder's");
-        ui.click("Rename").expect("the button");
         assert!(
-            files_messages(ui).is_empty(),
-            "renaming is for one entry: greyed out"
+            ui.find("Rename").is_err(),
+            "in the entries' menu, as the C#'s, not on the toolbar"
         );
     }
     let _ = shell.update(Message::Modifiers(Modifiers::empty()));
@@ -1005,31 +1007,31 @@ async fn the_servers_pane_bookmarks_its_folder_and_lists_the_bookmarks() {
     let mut shell = Shell::with_app(core);
     {
         let mut ui = simulator(&shell);
-        let found = ui.find("Bookmark this path").expect("shown");
         assert!(
-            found.bounds().x > WINDOW.width / 2.0,
-            "the first found is the server's pane's, on the right: this computer's has none"
+            ui.find(tool_id(tab, Side::Local, PaneTool::Bookmarks))
+                .is_err(),
+            "this computer's pane has none"
         );
-        ui.click("Bookmark this path")
+        // A star, as the C# toolbar's, opening its menu.
+        ui.click(tool_id(tab, Side::Remote, PaneTool::Bookmarks))
             .expect("the server's pane only");
-        assert!(
-            files_messages(ui)
-                .iter()
-                .any(|message| matches!(message, FilesMessage::Bookmark { .. }))
-        );
-    }
-    {
-        let mut ui = simulator(&shell);
-        ui.click("Bookmarks").expect("its list");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::OpenTreeMenu(TreeMenu::FilesBookmarks(opened)) if opened == tab
         )));
     }
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab)));
-    simulator(&shell)
-        .find("No bookmarks saved")
-        .expect("none yet");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("No bookmarks saved").expect("none yet");
+        ui.click("Bookmark this path")
+            .expect("the menu's first entry, as the C# star's");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::MenuChoice(AppMessage::Files(FilesMessage::Bookmark { tab: chosen }))
+                if chosen == tab
+        )));
+    }
     let _ = shell.update(Message::CloseTreeMenu);
     let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Bookmark {
         tab,
@@ -1122,23 +1124,26 @@ async fn the_files_menus_are_drawn_on_a_card_that_hides_what_is_under_them() {
 }
 
 #[tokio::test]
-async fn a_narrow_window_wraps_the_servers_buttons_instead_of_cutting_them() {
-    // At this width one row of the server's buttons runs past the window's edge, as the
-    // hand test saw "Bookmarks" cut in half.
+async fn a_narrow_window_wraps_the_servers_tools_instead_of_cutting_them() {
+    // At this width one row of the server's tools and its filter runs past the window's
+    // edge, as the hand test once saw a button cut in half.
     let dir = tempfile::tempdir().expect("dir");
-    let (core, _) = files_tab(dir.path()).await;
+    let (core, tab) = files_tab(dir.path()).await;
     let shell = Shell::with_app(core);
     let mut ui = simulator(&shell);
-    let bookmark = ui.find("Bookmark this path").expect("shown").bounds();
-    let bookmarks = ui.find("Bookmarks").expect("shown").bounds();
+    let back = ui
+        .find(tool_id(tab, Side::Remote, PaneTool::Back))
+        .expect("shown")
+        .bounds();
+    let star = ui
+        .find(tool_id(tab, Side::Remote, PaneTool::Bookmarks))
+        .expect("shown")
+        .bounds();
     assert!(
-        bookmarks.x + bookmarks.width <= WINDOW.width,
-        "whole in the window: {bookmarks:?}"
+        star.x + star.width <= WINDOW.width,
+        "whole in the window: {star:?}"
     );
-    assert!(
-        bookmarks.y > bookmark.y,
-        "on the next line: {bookmark:?} then {bookmarks:?}"
-    );
+    assert!(star.y > back.y, "on the next line: {back:?} then {star:?}");
 }
 
 #[tokio::test]
@@ -1175,7 +1180,7 @@ async fn a_pane_filters_its_entries_hides_dot_names_and_counts_them() {
     let mut ui = simulator(&shell);
     ui.find("1/2 items").expect("shown of listed");
     assert!(ui.find("backup.tar.gz").is_err(), "filtered out");
-    ui.find("logs/").expect("kept");
+    ui.find("logs").expect("kept");
 }
 
 #[tokio::test]
@@ -1752,6 +1757,9 @@ const MODIFIED_LEAST: f32 = 60.0;
 /// How close two edges laid out from the same widths are, in logical pixels.
 const EDGE_TOLERANCE: f32 = 0.5;
 
+/// Farthest a name starts after its header: its icon and the room after it.
+const NAME_AFTER_ICON: f32 = 24.0;
+
 /// Times a double click is tried: iced tells one by the real time between the presses.
 const DOUBLE_CLICK_TRIES: usize = 3;
 
@@ -1909,11 +1917,13 @@ async fn a_separator_dragged_resizes_its_columns_live_and_the_cells_follow_the_h
     }
     let name = bounds_of(&mut ui, "Name \u{25b2}").x;
     let (local, remote) = (
-        bounds_of(&mut ui, "Documents/").x,
+        bounds_of(&mut ui, "Documents").x,
         bounds_of(&mut ui, "run.sh").x,
     );
+    // After its icon, as the C#'s: the icon starts under the header.
+    let under = |at: f32| (0.0..=NAME_AFTER_ICON).contains(&(at - name));
     assert!(
-        (name - local).abs() <= EDGE_TOLERANCE || (name - remote).abs() <= EDGE_TOLERANCE,
+        under(local) || under(remote),
         "a name under its header: {name}, {local}, {remote}"
     );
     // A click on a header still sorts.
@@ -2045,7 +2055,7 @@ async fn a_dropped_files_tab_keeps_its_listing_in_sight_read_only() {
     let shell = Shell::with_app(core);
     snapshot(&shell, "files-dropped.png");
     let mut ui = simulator(&shell);
-    for entry in ["logs/", "backup.tar.gz", "Documents/", "notes.md"] {
+    for entry in ["logs", "backup.tar.gz", "Documents", "notes.md"] {
         ui.find(entry).expect(entry);
     }
     ui.find("Session disconnected unexpectedly.")
