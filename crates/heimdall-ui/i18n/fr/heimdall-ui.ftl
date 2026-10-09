@@ -347,7 +347,11 @@ ui-dialog-import-gateways = Passerelles SSH : { $created ->
 }, { $merged ->
     [one] { $merged } fusionnée
    *[other] { $merged } fusionnées
+}, { $orphans ->
+    [one] { $orphans } référence orpheline
+   *[other] { $orphans } références orphelines
 }.
+ui-dialog-import-gateways-orphans-action = Certaines sessions importées référencent encore des passerelles SSH manquantes. Réexportez depuis un build qui embarque les passerelles, ou recréez/réassignez la passerelle dans les Paramètres avant de vous connecter.
 ui-dialog-import-skipped = Écartés :
 ui-dialog-import-skipped-item = { $name } : { $reason }
 ui-dialog-import-failed-title = L'import n'a pas pu s'exécuter
@@ -501,8 +505,6 @@ ui-dialog-run-script-body = { $name } se lance dans un nouvel onglet avec la com
 ui-error-remote-forward = La passerelle SSH n'a pas voulu écouter sur son port { $port } pour la redirection distante : la redirection y est désactivée, ou le port y est déjà pris.
 ui-error-proxy-port = Le proxy SOCKS n'a pas pu ouvrir le port local { $port } : un autre programme l'utilise peut-être. ({ $detail })
 ui-error-jump-refused = La passerelle SSH n'a pas voulu se connecter à { $target } : la redirection y est désactivée, ou cet hôte n'est pas joignable depuis elle.
-ui-import-skip-missing-gateway = passe par une passerelle SSH absente du fichier, ou écartée
-ui-import-skip-gateway-loop = sa passerelle SSH est atteinte par elle-même, via ses parents
 ui-import-skip-missing-username = se connecte avec un compte qu'il ne nomme pas
 ui-import-skip-unknown-identity = se connecte avec un mode d'identité que Heimdall ne connaît pas
 ui-error-hostkey-changed-at = La clé d'hôte de { $target } n'est pas celle enregistrée : la connexion est peut-être interceptée. Enregistrée : { $recorded }. Présentée : { $offered }.

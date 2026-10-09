@@ -423,7 +423,11 @@ ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-paste-truncated = Preview is truncated. The full clipboard content will be pasted if you continue.
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
-ui-dialog-import-gateways = SSH gateways: { $created } created, { $merged } merged.
+ui-dialog-import-gateways = SSH gateways: { $created } created, { $merged } merged, { $orphans ->
+    [one] { $orphans } orphan reference
+   *[other] { $orphans } orphan references
+}.
+ui-dialog-import-gateways-orphans-action = Some imported sessions still reference missing SSH gateways. Re-export from a build that includes gateways, or recreate/reassign the gateway in Settings before connecting.
 ui-dialog-import-skipped = Left out:
 ui-dialog-import-host-keys = Trusted SSH servers carried over: { $keys ->
     [one] { $keys } key
@@ -648,8 +652,6 @@ ui-dialog-run-script-body = { $name } runs in a new tab with the command below, 
 ui-error-remote-forward = The SSH gateway would not listen on its port { $port } for the remote forward: forwarding is off on it, or the port is taken there.
 ui-error-proxy-port = The SOCKS proxy could not open local port { $port }: another program may be using it. ({ $detail })
 ui-error-jump-refused = The SSH gateway would not connect onward to { $target }: forwarding is off on it, or that host cannot be reached from it.
-ui-import-skip-missing-gateway = goes through an SSH gateway that is not in the file, or that was left out
-ui-import-skip-gateway-loop = its SSH gateway is reached through itself, by way of its parents
 ui-import-skip-missing-username = logs in with an account it does not name
 ui-import-skip-unknown-identity = logs in with an identity mode Heimdall does not know
 ui-error-hostkey-changed-at = The host key of { $target } is not the one recorded: the connection may be intercepted. Recorded: { $recorded }. Presented: { $offered }.
