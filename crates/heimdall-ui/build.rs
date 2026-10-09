@@ -20,9 +20,15 @@
 //! is not shown. The clock of the computer building is never read. A release build's date
 //! comes from its release tag instead, read by the page itself, as the C# reads it from its
 //! version.
+//!
+//! It also hands the page the versions of the components its "System" card names, read
+//! from the workspace's `Cargo.lock`: the versions this binary is built with, offline.
 
 #[path = "src/build_date.rs"]
 mod build_date;
+
+#[path = "src/component_versions.rs"]
+mod component_versions;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,12 +36,16 @@ use std::process::Command;
 /// The variable of reproducible builds: the build's time, in seconds since 1970.
 const SOURCE_DATE_EPOCH: &str = "SOURCE_DATE_EPOCH";
 
+/// The file holding the versions every package of the workspace is built with.
+const LOCK_FILE: &str = "Cargo.lock";
+
 /// The files of the git folder written when the commit checked out changes.
 const HEAD_FILES: [&str; 2] = ["HEAD", "logs/HEAD"];
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=src/build_date.rs");
+    println!("cargo::rerun-if-changed=src/component_versions.rs");
     println!("cargo::rerun-if-env-changed={SOURCE_DATE_EPOCH}");
     let seconds = std::env::var(SOURCE_DATE_EPOCH)
         .ok()
@@ -47,6 +57,33 @@ fn main() {
             build_date::BUILD_DATE_VARIABLE
         );
     }
+    pass_component_versions();
+}
+
+/// Sets the variable of each component the lock pins to one version; the others are left
+/// unset, and the page leaves their rows out.
+fn pass_component_versions() {
+    let Some(lock) = lock_file() else {
+        return;
+    };
+    println!("cargo::rerun-if-changed={}", lock.display());
+    let Ok(text) = std::fs::read_to_string(&lock) else {
+        return;
+    };
+    for (package, variable) in component_versions::COMPONENTS {
+        if let Some(version) = component_versions::locked_version(&text, package) {
+            println!("cargo::rustc-env={variable}={version}");
+        }
+    }
+}
+
+/// The `Cargo.lock` of the workspace: the nearest one in this package's folder or above it.
+fn lock_file() -> Option<PathBuf> {
+    let folder = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
+    folder
+        .ancestors()
+        .map(|folder| folder.join(LOCK_FILE))
+        .find(|lock| lock.is_file())
 }
 
 /// The time of the commit checked out, in seconds since 1970; `None` without git or
