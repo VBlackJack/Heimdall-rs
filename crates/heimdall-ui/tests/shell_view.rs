@@ -25,6 +25,7 @@ mod common;
 use std::path::Path;
 use std::sync::Arc;
 
+use heimdall_app::tools::SidebarTab;
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Dialog, Message as AppMessage,
     PostConnectConfirmation, QuestionId, QuestionKind, TabId, UiError,
@@ -36,7 +37,7 @@ use heimdall_ssh::{
     SessionClosed, TerminalSize,
 };
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell, sidebar_toggle_id, tab_close_id};
+use heimdall_ui::shell::{Message, Shell, sidebar_tab_id, sidebar_toggle_id, tab_close_id};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::terminal_view::keys::WindowShortcut;
 use iced::keyboard::key::Named;
@@ -585,7 +586,7 @@ fn create_vault(core: &mut App) {
 }
 
 #[test]
-fn the_navigation_shows_the_sessions_the_tunnels_the_settings_and_about() {
+fn the_navigation_shows_the_sessions_the_tunnels_the_tools_the_settings_and_about() {
     use heimdall_ui::shell::Destination;
 
     let dir = tempfile::tempdir().expect("dir");
@@ -594,15 +595,12 @@ fn the_navigation_shows_the_sessions_the_tunnels_the_settings_and_about() {
     {
         let mut ui = simulator(&shell);
         for label in [
-            "Heimdall",
-            "Sessions",
-            "Tunnels",
-            "Settings",
-            "About",
-            "Local shell",
+            "Heimdall", "Sessions", "Tunnels", "Tools", "Settings", "About",
         ] {
             ui.find(label).expect(label);
         }
+        ui.find(sidebar_tab_id(SidebarTab::Tools))
+            .expect("the sidebar's Tools tab");
         ui.click("Tunnels").expect("Tunnels");
         assert!(
             ui.into_messages()
@@ -615,7 +613,10 @@ fn the_navigation_shows_the_sessions_the_tunnels_the_settings_and_about() {
         let mut ui = simulator(&shell);
         ui.find("Active Tunnels").expect("the Tunnels page");
         ui.find("No active tunnels").expect("none open");
-        assert!(ui.find("Local shell").is_err(), "no tree");
+        assert!(
+            ui.find(sidebar_tab_id(SidebarTab::Tools)).is_err(),
+            "no tree"
+        );
     }
     let _ = shell.update(Message::Navigate(Destination::About));
     simulator(&shell)
@@ -625,7 +626,7 @@ fn the_navigation_shows_the_sessions_the_tunnels_the_settings_and_about() {
     assert!(shell.settings_shown());
     let _ = shell.update(Message::Navigate(Destination::Sessions));
     simulator(&shell)
-        .find("Local shell")
+        .find(sidebar_tab_id(SidebarTab::Tools))
         .expect("the tree again");
 }
 
@@ -3879,8 +3880,12 @@ fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
     let _ = shell.update(Message::FilesKey(FilesKey::SelectAll));
     assert_eq!(shell.app().selected_profiles().len(), 3, "every one shown");
 
-    // The sidebar's own button: "Sessions" is the navigation's too.
-    let title = |shell: &Shell| simulator(shell).find("Local shell").is_ok();
+    // The sidebar's own tab: "Sessions" is the navigation's too.
+    let title = |shell: &Shell| {
+        simulator(shell)
+            .find(sidebar_tab_id(SidebarTab::Tools))
+            .is_ok()
+    };
     assert!(title(&shell));
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
     assert!(!title(&shell), "hidden");
@@ -3958,7 +3963,10 @@ fn escape_no_widget_took_leaves_full_screen_once_nothing_else_is_open() {
     let _ = shell.update(Message::ToggleFullscreen);
     {
         let mut ui = simulator(&shell);
-        assert!(ui.find("Local shell").is_err(), "no tree in full screen");
+        assert!(
+            ui.find(sidebar_tab_id(SidebarTab::Tools)).is_err(),
+            "no tree in full screen"
+        );
         ui.click("Exit fullscreen")
             .expect("a way out for the mouse");
         assert!(
@@ -3976,7 +3984,8 @@ fn escape_no_widget_took_leaves_full_screen_once_nothing_else_is_open() {
     );
     let _ = shell.update(Message::EscapeUntaken);
     let mut ui = simulator(&shell);
-    ui.find("Local shell").expect("the tree again");
+    ui.find(sidebar_tab_id(SidebarTab::Tools))
+        .expect("the tree again");
     assert!(ui.find("Exit fullscreen").is_err());
 }
 
@@ -4027,7 +4036,10 @@ fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_but
     }
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
     let mut ui = simulator(&shell);
-    assert!(ui.find("Local shell").is_err(), "hidden");
+    assert!(
+        ui.find(sidebar_tab_id(SidebarTab::Tools)).is_err(),
+        "hidden"
+    );
     ui.click(sidebar_toggle_id())
         .expect("a way to show it again");
     assert!(

@@ -6,6 +6,7 @@ ui-window-title-tab = { $tab } - Heimdall
 ui-window-title-detached = { $tab } - Détaché
 
 ui-sidebar-title = Sessions
+ui-sidebar-tools-tab = Outils
 ui-sidebar-empty = Aucun profil enregistré.
 ui-sidebar-settings-button = Paramètres
 ui-desktop-send-keys = Envoyer des touches
@@ -245,6 +246,7 @@ ui-home-welcome = Bienvenue dans Heimdall-rs.
 ui-home-subtitle = Ajoutez une session ou importez vos connexions existantes pour commencer.
 ui-home-add-button = Ajouter une session
 ui-home-import-button = Importer des connexions
+ui-home-explore-tools-button = Explorer les outils
 ui-home-shortcuts = Ctrl+N pour ajouter une session, Ctrl+K pour une connexion rapide
 ui-home-select = Sélectionnez une session ou appuyez sur Ctrl+K pour vous connecter
 
@@ -485,8 +487,6 @@ ui-session-vnc-quality-best = Meilleure qualité
 ui-session-vnc-quality-balanced = Équilibré
 ui-session-vnc-quality-performance = Performance
 ui-session-vnc-quality-low-bandwidth = Faible bande passante
-ui-sidebar-local-shell-button = Shell local
-ui-local-shell-name = Shell local
 ui-local-starting = Démarrage de { $name }...
 ui-local-admin-badge = ADMIN
 ui-local-elevated-starting = { $name } : Windows demande les droits d'administrateur.
@@ -1880,6 +1880,7 @@ ui-shortcuts-select-all-sessions = Sélectionner toutes les sessions affichées
 ui-shortcuts-session-menu = Menu de la session sélectionnée
 ui-shortcuts-find-by-name = Aller à la session dont le nom commence par ce qui est tapé
 ui-shortcuts-toggle-sidebar = Afficher ou masquer le panneau latéral
+ui-shortcuts-toggle-tools-panel = Afficher/masquer le panneau d'outils
 ui-restore-title = Restaurer les sessions précédentes
 ui-restore-message = Heimdall a trouvé un instantané de session sauvegardé lors de l'exécution précédente. Sélectionnez les sessions à restaurer.
 ui-restore-saved-at = Sauvegardé le { $time }
@@ -2175,8 +2176,114 @@ ui-status-note-opened = Note { $name } ouverte dans l'éditeur.
 ui-status-note-failed = La note n'a pas pu être ouverte : { $reason }
 ui-nav-sessions = Sessions
 ui-nav-tunnels = Tunnels
+ui-nav-tools = Outils
 ui-nav-settings = Paramètres
 ui-nav-about = À propos
+ui-tools-filter-placeholder = Filtrer les outils...
+ui-tools-no-results = Aucun outil correspondant
+ui-tools-no-results-hint = Essayez un autre terme ou un alias comme ping, dns, json ou password.
+ui-tools-context-with = Les outils réseau utiliseront la cible sélectionnée : { $host }
+ui-tools-context-none = Les outils réseau s'ouvriront sans cible héritée.
+ui-tools-favorites = Favoris
+ui-tools-recent = Utilisés récemment
+ui-tools-all = Tous les outils
+ui-tools-empty-favorites = Épinglez vos outils favoris pour un accès rapide
+ui-tools-pin-tooltip = Épingler aux favoris
+ui-tools-unpin-tooltip = Retirer des favoris
+ui-tools-page-title = Outils
+ui-tools-search-placeholder = Rechercher un outil...
+ui-tools-count =
+    { $count ->
+        [one] { $count } outil
+       *[other] { $count } outils
+    }
+ui-tools-category-network = Réseau
+ui-tools-category-security = Sécurité
+ui-tools-category-encoding = Encodage et format
+ui-tools-category-system = Système
+ui-tools-category-external = Externe
+ui-tool-help-tooltip = Afficher l'aide
+ui-tool-help-close = Fermer
+ui-tool-copy-tooltip = Copier dans le presse-papiers
+ui-tool-base64-name = Encodeur / Décodeur Base64
+ui-tool-base64-description = Encodeur et décodeur Base64 pour texte et fichiers
+ui-tool-base64-title = Encodeur / Décodeur Base64
+ui-tool-base64-input = Entrée
+ui-tool-base64-output = Sortie
+ui-tool-base64-encode = Encoder →
+ui-tool-base64-decode = ← Décoder
+ui-tool-base64-copy = Copier la sortie
+ui-tool-base64-browse = Parcourir...
+ui-tool-base64-file-mode = Mode fichier
+ui-tool-base64-url-safe = URL-safe (RFC 4648)
+ui-tool-base64-placeholder = texte à encoder/décoder
+ui-tool-base64-empty = Saisissez du texte et appuyez sur Encoder ou Décoder.
+ui-tool-base64-status-encoded =
+    { $count ->
+        [one] { $count } octet encodé
+       *[other] { $count } octets encodés
+    }
+ui-tool-base64-status-decoded =
+    { $count ->
+        [one] { $count } octet décodé
+       *[other] { $count } octets décodés
+    }
+ui-tool-base64-status-saved = Enregistré dans { $path }
+ui-tool-base64-status-error = Erreur : { $error }
+ui-tool-base64-status-invalid = Entrée Base64 invalide
+ui-tool-base64-save-title = Enregistrer le fichier décodé
+ui-tool-base64-open-title = Sélectionner un fichier à encoder
+ui-tool-base64-file-loaded =
+    { $count ->
+        [one] Fichier chargé : { $name } ({ $count } octet)
+       *[other] Fichier chargé : { $name } ({ $count } octets)
+    }
+ui-tool-base64-too-large = Le fichier dépasse la limite de 5 Mo.
+ui-tool-base64-help =
+    Encodeur/Décodeur Base64
+
+    Encode du texte en Base64 ou décode du Base64 en texte.
+
+    Utilisation :
+    Collez du texte et cliquez sur Encoder ou Décoder. Supporte la variante Base64 URL-safe.
+ui-tool-urlenc-name = Encodeur / Décodeur URL
+ui-tool-urlenc-description = Encodeur et décodeur d'URL pour chaînes de requête et chemins
+ui-tool-urlenc-title = Encodeur / Décodeur URL
+ui-tool-urlenc-decoded = Décodé
+ui-tool-urlenc-encoded = Encodé
+ui-tool-urlenc-copy = Copier
+ui-tool-urlenc-component = Encodage strict des composants (encoder tous les caractères réservés)
+ui-tool-urlenc-decoded-placeholder = URL ou texte à encoder/décoder
+ui-tool-urlenc-encoded-placeholder = URL encodée
+ui-tool-urlenc-help =
+    Encodeur/Décodeur URL
+
+    Encode ou décode les chaînes URL-encodées (percent-encoding).
+
+    Utilisation :
+    Collez une URL ou du texte et cliquez sur Encoder ou Décoder.
+ui-tool-uuid-name = Générateur UUID
+ui-tool-uuid-description = Générateur UUID/GUID avec options de formats multiples
+ui-tool-uuid-title = Générateur UUID
+ui-tool-uuid-result-v4 = UUID généré (v4)
+ui-tool-uuid-result-v7 = UUID généré (v7)
+ui-tool-uuid-v4 = v4 (Aléatoire)
+ui-tool-uuid-v7 = v7 (Horodatage)
+ui-tool-uuid-generate = Générer
+ui-tool-uuid-copy = Copier
+ui-tool-uuid-uppercase = Majuscules
+ui-tool-uuid-hyphens = Avec tirets
+ui-tool-uuid-batch = Génération par lot
+ui-tool-uuid-count = Nombre
+ui-tool-uuid-generate-batch = Générer le lot
+ui-tool-uuid-copy-batch = Tout copier
+ui-tool-uuid-help =
+    Générateur UUID
+
+    Génère des identifiants universellement uniques.
+
+    Utilisation :
+    Cliquez sur Générer pour créer des UUID. Supporte v4 (aléatoire) avec plusieurs options de format (standard, majuscules, sans tirets, URN).
 ui-tunnels-page-title = Tunnels actifs
 ui-import-dropped-rd-gateway = par une passerelle Bureau à distance
 ui-error-rd-gateway = Ce serveur se joint par la passerelle Bureau à distance { $gateway }, que le client intégré ne sait pas encore traverser.

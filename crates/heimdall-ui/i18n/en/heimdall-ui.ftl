@@ -6,6 +6,7 @@ ui-window-title-tab = { $tab } - Heimdall
 ui-window-title-detached = { $tab } - Detached
 
 ui-sidebar-title = Sessions
+ui-sidebar-tools-tab = Tools
 ui-sidebar-empty = No saved profile yet.
 ui-sidebar-settings-button = Settings
 ui-desktop-send-keys = Send keys
@@ -315,6 +316,7 @@ ui-home-welcome = Welcome to Heimdall-rs
 ui-home-subtitle = Add a session or import your existing connections to get started.
 ui-home-add-button = Add Session
 ui-home-import-button = Import Connections
+ui-home-explore-tools-button = Explore Tools
 ui-home-shortcuts = Ctrl+N to add a session, Ctrl+K to quick connect
 ui-home-select = Select a session or press Ctrl+K to connect
 
@@ -633,8 +635,6 @@ ui-session-vnc-quality-best = Best Quality
 ui-session-vnc-quality-balanced = Balanced
 ui-session-vnc-quality-performance = Performance
 ui-session-vnc-quality-low-bandwidth = Low Bandwidth
-ui-sidebar-local-shell-button = Local shell
-ui-local-shell-name = Local shell
 ui-local-starting = Starting { $name }...
 ui-local-admin-badge = ADMIN
 ui-local-elevated-starting = { $name }: Windows asks for administrator rights.
@@ -2060,6 +2060,7 @@ ui-shortcuts-select-all-sessions = Select every session shown
 ui-shortcuts-session-menu = The selected session's menu
 ui-shortcuts-find-by-name = Go to the session whose name starts with what is typed
 ui-shortcuts-toggle-sidebar = Show or hide the sidebar
+ui-shortcuts-toggle-tools-panel = Toggle tools panel
 ui-restore-title = Restore previous sessions
 ui-restore-message = Heimdall found a saved session snapshot from the previous run. Select the sessions to restore.
 ui-restore-saved-at = Saved at { $time }
@@ -2355,8 +2356,114 @@ ui-status-note-opened = Note { $name } opened in the editor.
 ui-status-note-failed = The note could not be opened: { $reason }
 ui-nav-sessions = Sessions
 ui-nav-tunnels = Tunnels
+ui-nav-tools = Tools
 ui-nav-settings = Settings
 ui-nav-about = About
+ui-tools-filter-placeholder = Filter tools...
+ui-tools-no-results = No matching tool
+ui-tools-no-results-hint = Try another term or an alias such as ping, dns, json, or password.
+ui-tools-context-with = Network tools will use the selected target: { $host }
+ui-tools-context-none = Network tools will open without an inherited target.
+ui-tools-favorites = Favorites
+ui-tools-recent = Recently Used
+ui-tools-all = All Tools
+ui-tools-empty-favorites = Pin your favorite tools for quick access
+ui-tools-pin-tooltip = Pin to favorites
+ui-tools-unpin-tooltip = Unpin from favorites
+ui-tools-page-title = Tools
+ui-tools-search-placeholder = Search tools...
+ui-tools-count =
+    { $count ->
+        [one] { $count } tool
+       *[other] { $count } tools
+    }
+ui-tools-category-network = Network
+ui-tools-category-security = Security
+ui-tools-category-encoding = Encoding & Format
+ui-tools-category-system = System
+ui-tools-category-external = External
+ui-tool-help-tooltip = Show help
+ui-tool-help-close = Close
+ui-tool-copy-tooltip = Copy to clipboard
+ui-tool-base64-name = Base64 Encoder / Decoder
+ui-tool-base64-description = Base64 encoder and decoder for text and files
+ui-tool-base64-title = Base64 Encoder / Decoder
+ui-tool-base64-input = Input
+ui-tool-base64-output = Output
+ui-tool-base64-encode = Encode →
+ui-tool-base64-decode = ← Decode
+ui-tool-base64-copy = Copy output
+ui-tool-base64-browse = Browse file...
+ui-tool-base64-file-mode = File mode
+ui-tool-base64-url-safe = URL-safe (RFC 4648)
+ui-tool-base64-placeholder = text to encode/decode
+ui-tool-base64-empty = Enter text and press Encode or Decode.
+ui-tool-base64-status-encoded =
+    { $count ->
+        [one] Encoded { $count } byte
+       *[other] Encoded { $count } bytes
+    }
+ui-tool-base64-status-decoded =
+    { $count ->
+        [one] Decoded { $count } byte
+       *[other] Decoded { $count } bytes
+    }
+ui-tool-base64-status-saved = Saved to { $path }
+ui-tool-base64-status-error = Error: { $error }
+ui-tool-base64-status-invalid = Invalid Base64 input
+ui-tool-base64-save-title = Save decoded file
+ui-tool-base64-open-title = Select file to encode
+ui-tool-base64-file-loaded =
+    { $count ->
+        [one] File loaded: { $name } ({ $count } byte)
+       *[other] File loaded: { $name } ({ $count } bytes)
+    }
+ui-tool-base64-too-large = File exceeds the 5 MB size limit.
+ui-tool-base64-help =
+    Base64 Encoder/Decoder
+
+    Encodes text to Base64 or decodes Base64 back to text.
+
+    Usage:
+    Paste text and click Encode or Decode. Supports URL-safe Base64 variant.
+ui-tool-urlenc-name = URL Encoder / Decoder
+ui-tool-urlenc-description = URL encoder and decoder for query strings and paths
+ui-tool-urlenc-title = URL Encoder / Decoder
+ui-tool-urlenc-decoded = Decoded
+ui-tool-urlenc-encoded = Encoded
+ui-tool-urlenc-copy = Copy
+ui-tool-urlenc-component = Strict component encoding (encode all reserved characters)
+ui-tool-urlenc-decoded-placeholder = URL or text to encode/decode
+ui-tool-urlenc-encoded-placeholder = encoded URL
+ui-tool-urlenc-help =
+    URL Encoder/Decoder
+
+    Encodes or decodes URL-encoded (percent-encoded) strings.
+
+    Usage:
+    Paste a URL or text and click Encode or Decode.
+ui-tool-uuid-name = UUID Generator
+ui-tool-uuid-description = UUID/GUID generator with multiple format options
+ui-tool-uuid-title = UUID Generator
+ui-tool-uuid-result-v4 = Generated UUID (v4)
+ui-tool-uuid-result-v7 = Generated UUID (v7)
+ui-tool-uuid-v4 = v4 (Random)
+ui-tool-uuid-v7 = v7 (Timestamp)
+ui-tool-uuid-generate = Generate
+ui-tool-uuid-copy = Copy
+ui-tool-uuid-uppercase = Uppercase
+ui-tool-uuid-hyphens = With hyphens
+ui-tool-uuid-batch = Batch Generation
+ui-tool-uuid-count = Count
+ui-tool-uuid-generate-batch = Generate Batch
+ui-tool-uuid-copy-batch = Copy all
+ui-tool-uuid-help =
+    UUID Generator
+
+    Generates universally unique identifiers.
+
+    Usage:
+    Click Generate to create UUIDs. Supports v4 (random) with multiple format options (standard, uppercase, no dashes, URN).
 ui-tunnels-page-title = Active Tunnels
 ui-import-dropped-rd-gateway = through a Remote Desktop Gateway
 ui-error-rd-gateway = This server is reached through the Remote Desktop Gateway { $gateway }, which the built-in client does not go through yet.

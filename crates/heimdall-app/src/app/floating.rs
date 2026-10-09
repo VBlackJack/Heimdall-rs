@@ -97,10 +97,10 @@ impl App {
     }
 
     /// Whether the tab's menu offers "Detach to Window": a tab of the strip, not split, as
-    /// the C# offers it to a tab not split.
+    /// the C# offers it to a tab not split; a session's, not a tool's.
     #[must_use]
     pub fn can_detach(&self, tab: &Tab) -> bool {
-        !self.in_split(tab.id) && !self.is_floating(tab.id)
+        !self.in_split(tab.id) && !self.is_floating(tab.id) && tab.tool().is_none()
     }
 
     /// The pane "Detach Secondary Pane" takes out of split tab `host`, as the C#
@@ -139,7 +139,8 @@ impl App {
     /// Detaches `tab_id` to a window of its own; the keyboard, when it was the tab shown's,
     /// goes to the tab of the strip that takes its place, else to the one before.
     fn detach(&mut self, tab_id: TabId) -> Vec<Effect> {
-        if self.tab(tab_id).is_none() {
+        // A tool's tab stays on the strip.
+        if self.tab(tab_id).is_none_or(|tab| tab.tool().is_some()) {
             return Vec::new();
         }
         if let Some(key) = self.floating_of(tab_id) {

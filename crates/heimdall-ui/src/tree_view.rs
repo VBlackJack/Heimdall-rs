@@ -110,6 +110,8 @@ pub enum TreeMenu {
     FilesBookmarksRemove(TabId),
     /// The menu of a row of the tunnels panel, as the C# one.
     Tunnel(heimdall_app::tunnel::TunnelId),
+    /// The menu of a tool of the sidebar's Tools tab, as the C# one: pin or unpin it.
+    Tool(heimdall_app::tools::ToolId),
     /// An RDP tab's "Resolution" menu, as the C# one.
     Resolution(TabId),
     /// A terminal tab's macros: record, play, stop.
@@ -1972,6 +1974,26 @@ pub fn tunnel_menu_entries<'a>(
             fl!("ui-tunnels-menu-close-all"),
             tunnel(heimdall_app::TunnelMessage::CloseAll),
         ));
+    menu_card(entries).into()
+}
+
+/// A tool's menu in the sidebar, as the C# `OnSidebarToolsRightButtonDown`: one entry, which
+/// pins the tool, or unpins it when it is a `favorite`.
+pub fn tool_menu_entries<'a>(
+    tool: heimdall_app::tools::ToolId,
+    favorite: bool,
+) -> Element<'a, Message> {
+    let label = if favorite {
+        fl!("ui-tree-favorite-remove")
+    } else {
+        fl!("ui-tree-favorite-add")
+    };
+    let entries = column![].spacing(0.0).width(MENU_WIDTH).push(entry(
+        label,
+        Some(AppMessage::Tools(
+            heimdall_app::ToolsMessage::ToggleFavorite(tool),
+        )),
+    ));
     menu_card(entries).into()
 }
 

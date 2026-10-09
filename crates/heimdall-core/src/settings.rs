@@ -641,6 +641,26 @@ pub struct Settings {
     /// still exists. This computer's own, as the C# settings transfer leaves it behind: never
     /// exported, and kept by a reset.
     pub last_used_gateway: Option<ProfileId>,
+    /// The Tools area's own state: the tools pinned, the sidebar's tab and its categories.
+    pub tools: ToolsSettings,
+}
+
+/// What the Tools area keeps across runs on this computer, as the C# `FavoriteToolIds`,
+/// `ShowToolsPanel` and `SidebarExpandedCategories` (`AppSettings.cs:344-353`). None of it is
+/// edited by a C# Settings panel, so none of it is exported, as the C# settings transfer
+/// leaves them behind (`SettingsTransfer.cs:46-62`); a reset keeps them, as it keeps the
+/// tree's gateway badge. The tools used lately are not kept: the C# `RecentToolList` lives
+/// for the run alone.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ToolsSettings {
+    /// The tools pinned, by their C# identifier (`BASE64`, `URLENC`...), in the order they
+    /// were pinned. One not known to this version is kept, and not shown.
+    pub favorites: Vec<String>,
+    /// The sidebar shows its Tools tab rather than the sessions, as the C# `ShowToolsPanel`.
+    pub show_tools_panel: bool,
+    /// The sidebar's tool categories shown folded, by their key; the others are unfolded,
+    /// as the C# `SidebarExpandedCategories` defaults to.
+    pub collapsed_categories: Vec<String>,
 }
 
 /// The SFTP browser's settings, as the C# `SftpBrowserEnabled`, `SftpAutoOpenOnSsh` and
@@ -1107,6 +1127,7 @@ impl Default for Settings {
             update_check: UpdateCheck::default(),
             windows_hello: WindowsHello::default(),
             last_used_gateway: None,
+            tools: ToolsSettings::default(),
         }
     }
 }
@@ -1146,6 +1167,45 @@ struct SettingsFile {
     windows_hello: WindowsHelloSection,
     #[serde(default)]
     profile_form: ProfileFormSection,
+    #[serde(default)]
+    tools: ToolsSection,
+}
+
+/// This computer's own: never exported.
+#[derive(Serialize, Deserialize, Default)]
+struct ToolsSection {
+    #[serde(default)]
+    favorites: Vec<String>,
+    #[serde(default)]
+    show_tools_panel: bool,
+    #[serde(default)]
+    collapsed_categories: Vec<String>,
+}
+
+impl ToolsSection {
+    fn of(tools: &ToolsSettings) -> Self {
+        Self {
+            favorites: tools.favorites.clone(),
+            show_tools_panel: tools.show_tools_panel,
+            collapsed_categories: tools.collapsed_categories.clone(),
+        }
+    }
+
+    /// The settings it holds, blank names left out.
+    fn settings(self) -> ToolsSettings {
+        let named = |names: Vec<String>| -> Vec<String> {
+            names
+                .into_iter()
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty())
+                .collect()
+        };
+        ToolsSettings {
+            favorites: named(self.favorites),
+            show_tools_panel: self.show_tools_panel,
+            collapsed_categories: named(self.collapsed_categories),
+        }
+    }
 }
 
 /// This computer's own: never exported.
@@ -1507,7 +1567,8 @@ impl Settings {
     /// the theme and the accent, which a reader of another language needs to find the way
     /// back; the PIN and the lockouts, which are state, not preferences; the release skipped
     /// and the last look for one; and what no C# Settings panel edits (the tree's gateway
-    /// badge, the broadcast scope, the gateway a new profile starts on). The gateways, the
+    /// badge, the broadcast scope, the gateway a new profile starts on, the Tools area's pins,
+    /// tab and folded categories, which the C# resets but its tab). The gateways, the
     /// profiles, the master password, the Windows Hello enrolment, the macros and the
     /// credential provider's unlock secret are kept elsewhere and are not touched.
     pub fn reset_all(&mut self) {
@@ -1523,6 +1584,7 @@ impl Settings {
             show_gateway_badge: self.show_gateway_badge,
             update_check: std::mem::take(&mut self.update_check),
             last_used_gateway: self.last_used_gateway.take(),
+            tools: std::mem::take(&mut self.tools),
             ..Self::default()
         };
         *self = kept;
@@ -1755,6 +1817,7 @@ impl Settings {
                 .last_used_gateway
                 .filter(|id| !id.trim().is_empty())
                 .map(ProfileId::new),
+            tools: file.tools.settings(),
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -1919,6 +1982,7 @@ impl Settings {
                 vault_max_days: Some(self.windows_hello.vault_max_days),
             },
             profile_form: ProfileFormSection::of(self.last_used_gateway.as_ref()),
+            tools: ToolsSection::of(&self.tools),
         }
     }
 
@@ -2144,12 +2208,13 @@ mod transfer_tests {
 
     /// The sections that never travel: this computer's PIN and lockouts, its last look for a
     /// newer release, the gateway its profile form starts on, and the file's own version.
-    const HELD_BACK: [&str; 5] = [
+    const HELD_BACK: [&str; 6] = [
         "version",
         "vault_unlock",
         "pin",
         "update_check",
         "profile_form",
+        "tools",
     ];
 
     #[test]

@@ -32,6 +32,7 @@ use iced::widget::pick_list::{Status as ListStatus, Style as ListStyle};
 use iced::widget::scrollable::{
     Direction, Rail, Scrollable, Scrollbar, Scroller, Status as ScrollStatus, Style as ScrollStyle,
 };
+use iced::widget::text_editor::{Status as EditorStatus, Style as EditorStyle};
 use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
 use iced::{Background, Border, Color, Element, Font, Shadow, Theme, font};
 
@@ -382,6 +383,88 @@ pub fn text_input(theme: &Theme, status: FieldStatus) -> FieldStyle {
             value: brushes.text.scale_alpha(OPACITY_DISABLED),
             ..rest
         },
+    }
+}
+
+/// A box of several lines, as the C# `ThemedTextBoxStyle` on a box that takes line breaks:
+/// drawn as [`text_input`].
+pub fn text_box(theme: &Theme, status: EditorStatus) -> EditorStyle {
+    let field = text_input(
+        theme,
+        match status {
+            EditorStatus::Active => FieldStatus::Active,
+            EditorStatus::Hovered => FieldStatus::Hovered,
+            EditorStatus::Focused { is_hovered } => FieldStatus::Focused { is_hovered },
+            EditorStatus::Disabled => FieldStatus::Disabled,
+        },
+    );
+    EditorStyle {
+        background: field.background,
+        border: field.border,
+        placeholder: field.placeholder,
+        value: field.value,
+        selection: field.selection,
+    }
+}
+
+/// The colour of a card, as the C# `CardBrush`: a badge's background.
+#[must_use]
+pub fn card_color(theme: &Theme) -> Color {
+    Brushes::of(theme).card
+}
+
+/// A mark filled with `color`, rounded by `corner`: a category's dot or bar, a card's icon
+/// square, a count's badge.
+#[must_use]
+pub fn filled(color: Color, corner: f32) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(color)),
+        border: Border {
+            radius: corner.into(),
+            ..Border::default()
+        },
+        ..BoxStyle::default()
+    }
+}
+
+/// A tool's card on the Tools page, as the C# `CreateToolsTabCard`: a card outlined in the
+/// border colour, rounded as `CornerRadiusMd`; under the pointer or pressed, outlined in the
+/// accent on the highlight, which the card colour is.
+pub fn tool_card(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
+    let brushes = Brushes::of(theme);
+    let rest = brushes.button(Some(brushes.card), brushes.text, brushes.edge);
+    match status {
+        ButtonStatus::Active => rest,
+        ButtonStatus::Hovered | ButtonStatus::Pressed => ButtonStyle {
+            border: brushes.outline(brushes.accent, radius::MD),
+            ..rest
+        },
+        ButtonStatus::Disabled => faded(&rest),
+    }
+}
+
+/// A tab of the sidebar's "Sessions | Tools", as the C# `SidebarTabStyle`: nothing behind it
+/// but the highlight under the pointer; its text secondary until `selected`, then the text's
+/// own colour. The accent's line under it is its caller's.
+pub fn sidebar_tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
+    move |theme, status| {
+        let brushes = Brushes::of(theme);
+        let lit = matches!(status, ButtonStatus::Hovered | ButtonStatus::Pressed);
+        ButtonStyle {
+            background: lit.then_some(Background::Color(brushes.card)),
+            text_color: if selected {
+                brushes.text
+            } else {
+                brushes.secondary
+            },
+            border: Border {
+                color: brushes.quiet_edge,
+                width: brushes.width,
+                radius: 0.0.into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
     }
 }
 

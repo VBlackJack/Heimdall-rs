@@ -435,18 +435,21 @@ impl App {
 
     /// The tabs of the strip `host` can be merged with, as the C# "Merge with..." lists them:
     /// the others not split themselves, nor detached; none once `host` is split, docked or
-    /// detached.
+    /// detached. Sessions only: a tool's tab is neither split nor merged.
     #[must_use]
     pub fn merge_candidates(&self, host: TabId) -> Vec<&Tab> {
         let splittable = self.tab(host).is_some_and(|tab| {
-            tab.layout.is_none() && !self.is_docked(host) && !self.is_floating(host)
+            tab.layout.is_none()
+                && !self.is_docked(host)
+                && !self.is_floating(host)
+                && tab.tool().is_none()
         });
         if !splittable {
             return Vec::new();
         }
         self.strip()
             .into_iter()
-            .filter(|tab| tab.id != host && tab.layout.is_none())
+            .filter(|tab| tab.id != host && tab.layout.is_none() && tab.tool().is_none())
             .collect()
     }
 
@@ -516,7 +519,9 @@ impl App {
             && self.tab(host).is_some()
             && self.tab(tab).is_some_and(|found| found.layout.is_none())
             && !self.is_docked(host)
-            && !self.is_docked(tab);
+            && !self.is_docked(tab)
+            && !self.is_tool(host)
+            && !self.is_tool(tab);
         if !mergeable {
             return Vec::new();
         }
@@ -557,9 +562,11 @@ impl App {
     pub(super) fn saved_profile(&self, tab: TabId) -> Option<ProfileId> {
         match &self.tab(tab)?.reopen {
             Reopen::Profile(id) => Some(id.clone()),
-            Reopen::Shell(_) | Reopen::Script(_) | Reopen::Transient(..) | Reopen::LocalBrowser => {
-                None
-            }
+            Reopen::Shell(_)
+            | Reopen::Script(_)
+            | Reopen::Transient(..)
+            | Reopen::LocalBrowser
+            | Reopen::Tool => None,
         }
     }
 
@@ -612,7 +619,7 @@ impl App {
     /// with the keyboard. Beyond [`MAX_PANES`] it is said and nothing opens; an open
     /// refused, by the session limit or a question asked first, merges nothing.
     fn open_merged(&mut self, host: TabId, axis: Axis, open: Message) -> Vec<Effect> {
-        if self.tab(host).is_none() || self.is_docked(host) {
+        if self.tab(host).is_none() || self.is_docked(host) || self.is_tool(host) {
             return Vec::new();
         }
         if self.panes_of(host).len() >= MAX_PANES {

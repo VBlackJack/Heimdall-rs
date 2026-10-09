@@ -69,6 +69,7 @@ pub mod telnet_driver;
 mod text;
 pub mod text_codec;
 pub mod time_zone;
+pub mod tools;
 pub mod transcript;
 pub mod tunnel;
 pub mod tunnel_driver;
@@ -84,6 +85,7 @@ pub mod x11_server;
 
 pub use app::SavedCredentials;
 pub use app::SettingsTransferMessage;
+pub use app::ToolsMessage;
 pub use app::split;
 pub use app::{ANNOUNCEMENTS_KEPT, Announced, Announcement};
 pub use app::{

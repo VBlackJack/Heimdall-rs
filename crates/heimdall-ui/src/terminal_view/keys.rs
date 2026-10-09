@@ -164,6 +164,8 @@ pub enum WindowShortcut {
     /// Open Quick Connect: Ctrl+K, as the C# one, wherever the keyboard is, and
     /// Ctrl+Shift+K, which a terminal never keeps.
     QuickConnect,
+    /// Show the sidebar's other tab, Sessions or Tools: Ctrl+Shift+T, as the C# one.
+    ToggleToolsPanel,
     /// Show the keyboard shortcuts: F1, as the C# one, when no session has the keyboard; a
     /// terminal keeps F1 for its programs. Never a key a terminal leaves to the window.
     Help,
@@ -286,6 +288,9 @@ pub fn window_shortcut(
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('o') => {
             Some(WindowShortcut::ToggleSplit)
+        }
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('t') => {
+            Some(WindowShortcut::ToggleToolsPanel)
         }
         keyboard::Key::Character(_) if letter(key, physical) == Some('k') => {
             Some(WindowShortcut::QuickConnect)

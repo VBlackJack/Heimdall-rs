@@ -14,30 +14,9 @@
  * limitations under the License.
  */
 
-//! Domain model shared by every Heimdall crate: server profiles, settings, paths and the
-//! credential vault.
+//! The engines of the built-in tools, as the C# `Heimdall.Core` `Codecs` and `Identifiers`:
+//! what a tool computes, apart from how its tab shows it.
 
-pub mod credential_provider;
-pub mod credentials;
-pub mod export;
-pub mod files_state;
-pub mod folder;
-pub mod folder_acl;
-pub mod import;
-pub mod instance;
-pub mod lockout;
-pub mod macros;
-pub mod metadata;
-pub mod paths;
-pub mod pin;
-pub mod post_connect;
-pub mod profile;
-pub mod session_snapshot;
-pub mod settings;
-pub mod split_layouts;
-pub mod store;
-pub mod tools;
-pub mod utc;
-pub mod window_state;
-pub mod winrm;
-pub mod winrm_diagnostic;
+pub mod base64_codec;
+pub mod url_codec;
+pub mod uuid_generator;

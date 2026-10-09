@@ -505,10 +505,13 @@ impl App {
             .map(|(_, state)| state)
     }
 
-    /// The state of the session shown.
+    /// The state of the session shown; a tool's tab is no session, and says Ready, as the
+    /// C# tool tab's status (`MainViewModel.cs:1280`).
     #[must_use]
     pub fn session_status(&self) -> SessionStatus {
-        self.active_tab().map_or(SessionStatus::Ready, tab_status)
+        self.active_tab()
+            .filter(|tab| tab.tool().is_none())
+            .map_or(SessionStatus::Ready, tab_status)
     }
 
     /// The notice of what was just done, while the session shown is as it was then.

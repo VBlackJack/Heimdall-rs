@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-//! Local shells from the window, drawn headless: the sidebar button opens the user's own
-//! shell, and a saved local profile shows what it runs before it runs it.
+//! Local shells from the window, drawn headless: a local shell is a Local profile, as in the
+//! C#, with no button of its own in the sidebar; a saved local profile shows what it runs
+//! before it runs it.
 
 mod common;
 
@@ -26,7 +27,6 @@ use heimdall_core::profile::{LocalArguments, LocalCommand, LocalProfile, Profile
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_term::local::LocalArguments as TermArguments;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
@@ -82,18 +82,28 @@ fn tool() -> LocalProfile {
 }
 
 #[test]
-fn the_sidebar_opens_the_default_local_shell() {
+fn the_sidebar_offers_no_local_shell_of_its_own_but_its_sessions_and_tools() {
+    // As the C# sidebar's header (`MainWindow.xaml:355-384`): "Sessions | Tools" and the
+    // button hiding it; a local shell is opened as a Local profile, as any session.
     let dir = tempfile::tempdir().expect("dir");
-    let shell = Shell::with_app(app(dir.path(), None));
+    let shell = Shell::with_app(app(dir.path(), Some(tool())));
     let mut ui = common::simulator(settings(), WINDOW, shell.view());
-    ui.click("Local shell").expect("button");
-    assert!(ui.into_messages().any(|message| matches!(
-        message,
-        Message::App(AppMessage::OpenLocal(shell))
-            if shell.program.is_none()
-                && shell.arguments == TermArguments::default()
-                && shell.name == "Local shell"
-    )));
+    assert!(ui.find("Local shell").is_err(), "no button");
+    ui.find(heimdall_ui::shell::sidebar_tab_id(
+        heimdall_app::tools::SidebarTab::Sessions,
+    ))
+    .expect("Sessions");
+    ui.find(heimdall_ui::shell::sidebar_tab_id(
+        heimdall_app::tools::SidebarTab::Tools,
+    ))
+    .expect("Tools");
+    ui.find("Build tool")
+        .expect("the local profile, in the tree");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::OpenLocal(_)))),
+        "nothing opens by itself"
+    );
 }
 
 #[test]
