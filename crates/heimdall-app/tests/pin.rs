@@ -192,13 +192,14 @@ async fn the_master_password_is_asked_once_the_pin_is_taken() {
             path,
             password,
             job,
+            ticket,
         },
     ] = <[Effect; 1]>::try_from(effects).expect("one effect")
     else {
         panic!("expected OpenVault");
     };
     let opened = heimdall_app::open_vault(path, password, job).await;
-    app.update(Message::VaultOpened(opened));
+    app.update(Message::VaultOpened(ticket, opened));
     drop(app);
 
     let mut app = self::app(dir.path());

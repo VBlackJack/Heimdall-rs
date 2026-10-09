@@ -26,6 +26,9 @@
 //!   encryption takes a fresh random nonce.
 //! - Whatever is wrong (the password, a changed byte, a cut file) is one [`VaultError::Unreadable`]:
 //!   nothing tells which, and nothing is ever read as an empty vault.
+//! - The data key itself opens the vault too, without the password ([`Vault::open_with_data_key`]):
+//!   a copy kept elsewhere under another lock, Windows Hello for one. The file is the same
+//!   either way, and changing the password keeps that copy good, the data key being the same.
 //!
 //! What it does not do: anyone who can copy the file can try passwords offline, at the
 //! Argon2id cost, as often as they like; and without `unsafe`, keys and secrets can reach
@@ -47,6 +50,10 @@ use zeroize::Zeroizing;
 use crate::format::{Header, KEY_LEN, NONCE_LEN, SALT_LEN};
 
 pub use crate::format::KdfParams;
+
+/// Bytes of the data key, as [`Vault::data_key`] gives it and [`Vault::open_with_data_key`]
+/// takes it.
+pub const DATA_KEY_LEN: usize = KEY_LEN;
 
 /// Context of the data key's wrapping, so no other sealing can pass for it.
 const WRAP_CONTEXT: &[u8] = b"sealvault v1 data key";
@@ -88,7 +95,8 @@ pub struct Vault {
     salt: [u8; SALT_LEN],
     wrap_nonce: [u8; NONCE_LEN],
     wrapped_key: Vec<u8>,
-    data_key: Zeroizing<[u8; KEY_LEN]>,
+    /// On the heap: the vault moved, only the pointer is copied.
+    data_key: Box<Zeroizing<[u8; KEY_LEN]>>,
     entries: BTreeMap<String, Zeroizing<Vec<u8>>>,
 }
 
@@ -117,7 +125,7 @@ impl Vault {
         if path.exists() {
             return Err(VaultError::AlreadyExists(path));
         }
-        let mut data_key = Zeroizing::new([0; KEY_LEN]);
+        let mut data_key = new_key();
         random(data_key.as_mut_slice())?;
         let mut vault = Self {
             path,
@@ -141,10 +149,7 @@ impl Vault {
     /// [`VaultError::Io`] when it cannot be read.
     pub fn open(path: impl Into<PathBuf>, password: &[u8]) -> Result<Self, VaultError> {
         let path = path.into();
-        let bytes = fs::read(&path).map_err(|source| VaultError::Io {
-            path: path.clone(),
-            source,
-        })?;
+        let bytes = read(&path)?;
         let (header, sealed_body) = Header::parse(&bytes).ok_or(VaultError::Unreadable)?;
         // Before the derivation: a file must not choose a weak one, nor one that exhausts.
         if !header.params.is_acceptable() {
@@ -161,12 +166,46 @@ impl Vault {
             ]
             .concat(),
         )?;
-        let data_key: Zeroizing<[u8; KEY_LEN]> = Zeroizing::new(
-            data_key
-                .as_slice()
-                .try_into()
-                .map_err(|_| VaultError::Unreadable)?,
-        );
+        if data_key.len() != KEY_LEN {
+            return Err(VaultError::Unreadable);
+        }
+        let mut key = new_key();
+        key.copy_from_slice(&data_key);
+        Self::unsealed(path, header, sealed_body, key)
+    }
+
+    /// Opens the vault at `path` with its data key, as [`Vault::data_key`] gave it, instead
+    /// of the password: no derivation runs. The whole header is authenticated by the body's
+    /// seal, so a key of another vault, a changed byte or a cut file is
+    /// [`VaultError::Unreadable`], as for a wrong password. The vault opened is the same: the
+    /// password still seals it again, and saving keeps its wrapping.
+    ///
+    /// # Errors
+    ///
+    /// [`VaultError::Unreadable`], [`VaultError::Io`].
+    pub fn open_with_data_key(
+        path: impl Into<PathBuf>,
+        data_key: &[u8; DATA_KEY_LEN],
+    ) -> Result<Self, VaultError> {
+        let path = path.into();
+        let bytes = read(&path)?;
+        let (header, sealed_body) = Header::parse(&bytes).ok_or(VaultError::Unreadable)?;
+        // The same file only: one the password path would refuse is refused here too.
+        if !header.params.is_acceptable() {
+            return Err(VaultError::Unreadable);
+        }
+        let mut key = new_key();
+        key.copy_from_slice(data_key);
+        Self::unsealed(path, header, sealed_body, key)
+    }
+
+    /// The vault of `header`, its body unsealed with `data_key`.
+    fn unsealed(
+        path: PathBuf,
+        header: Header,
+        sealed_body: &[u8],
+        data_key: Box<Zeroizing<[u8; KEY_LEN]>>,
+    ) -> Result<Self, VaultError> {
         let plain = open_sealed(
             &data_key,
             &header.body_nonce,
@@ -183,6 +222,17 @@ impl Vault {
             data_key,
             entries,
         })
+    }
+
+    /// A copy of the data key, for [`Vault::open_with_data_key`]: whoever holds it opens
+    /// this vault, whatever its password becomes, until a new vault replaces it. Written
+    /// straight onto the heap, so moving it copies only the pointer, and zeroed when dropped;
+    /// kept only under another lock, and dropped as soon as it is.
+    #[must_use]
+    pub fn data_key(&self) -> Box<Zeroizing<[u8; DATA_KEY_LEN]>> {
+        let mut key = new_key();
+        key.copy_from_slice(self.data_key.as_slice());
+        key
     }
 
     /// The secret named `name`.
@@ -299,6 +349,23 @@ pub fn backup_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_owned();
     name.push(BACKUP_SUFFIX);
     path.with_file_name(name)
+}
+
+/// A data key of zeros on the heap, to be written in place.
+#[expect(
+    clippy::unnecessary_box_returns,
+    reason = "on the heap, so that moving the key copies only the pointer"
+)]
+fn new_key() -> Box<Zeroizing<[u8; KEY_LEN]>> {
+    Box::new(Zeroizing::new([0; KEY_LEN]))
+}
+
+/// The bytes of the file at `path`.
+fn read(path: &Path) -> Result<Vec<u8>, VaultError> {
+    fs::read(path).map_err(|source| VaultError::Io {
+        path: path.to_owned(),
+        source,
+    })
 }
 
 fn random(buffer: &mut [u8]) -> Result<(), VaultError> {

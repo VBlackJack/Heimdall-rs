@@ -198,6 +198,7 @@ async fn create_vault(app: &mut App) {
                 path,
                 password,
                 job,
+                ticket,
             },
         ],
     ) = <[Effect; 1]>::try_from(effects)
@@ -205,7 +206,7 @@ async fn create_vault(app: &mut App) {
         panic!("expected OpenVault");
     };
     let result = open_vault(path, password, job).await;
-    app.update(Message::VaultOpened(result));
+    app.update(Message::VaultOpened(ticket, result));
     assert_eq!(app.vault_status(), VaultStatus::Open);
 }
 

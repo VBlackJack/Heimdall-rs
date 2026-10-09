@@ -514,6 +514,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 HelloRefusal::NotVerified => fl!("ui-status-windows-hello-failed"),
                 HelloRefusal::Cancelled => fl!("ui-status-windows-hello-cancelled"),
             },
+            Notice::VaultHelloEnrolAgainFailed => fl!("ui-status-vault-hello-enrol-again-failed"),
             Notice::LinkNotAFolder(name) => {
                 fl!("ui-status-link-not-a-folder", name = name.as_str())
             }

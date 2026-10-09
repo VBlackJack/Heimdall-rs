@@ -310,6 +310,9 @@ pub enum Notice {
     ProviderTimedOut,
     /// Windows Hello refused the connections waiting for it, for this reason.
     WindowsHelloRefused(crate::windows_hello::HelloRefusal),
+    /// The master password opened the vault, but Windows Hello could not be enrolled again,
+    /// as the C# `VaultHelloReenrollError`.
+    VaultHelloEnrolAgainFailed,
     /// The link of this name, opened in a Files tab, points at no folder.
     LinkNotAFolder(String),
     /// A `WinRM` session started through an SSH gateway, where Kerberos is out of reach and

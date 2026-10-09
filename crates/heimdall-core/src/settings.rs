@@ -24,7 +24,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, ProviderSettings};
-use crate::lockout::Lockout;
+use crate::lockout::{LOCKOUT_DURATION, Lockout};
 use crate::pin::PinHash;
 use crate::profile::{
     RESOLUTION_PRESETS, RdpDefaults, SshMode, preset_fits, resolution_preset, resolution_text,
@@ -530,6 +530,11 @@ pub struct Settings {
     /// Wrong master passwords in a row when the application starts, kept across runs as
     /// the C# startup gate keeps them: quitting does not give the tries back.
     pub vault_unlock: Lockout,
+    /// When the master password last opened the vault, on this computer, as the C#
+    /// `VaultLastMasterUnlockUtc`: a Windows Hello unlock does not change it. It says when
+    /// Windows Hello must give way to the master password again
+    /// ([`WindowsHello::vault_max_days`]).
+    pub vault_last_master_unlock: Option<SystemTime>,
     /// Minutes without any input on the computer after which the workspace locks, as the C#
     /// `AutoLockIdleMinutes`: [`AUTO_LOCK_IDLE_MINUTES_OFF`] never locks, else at most
     /// [`AUTO_LOCK_IDLE_MINUTES_MAX`]. Only with a master password set.
@@ -805,6 +810,11 @@ pub struct WindowsHello {
     /// [`WINDOWS_HELLO_GRACE_MINUTES_MAX`]; [`WINDOWS_HELLO_GRACE_MINUTES_NONE`] asks every
     /// time. The verification itself is kept in memory only.
     pub grace_minutes: u32,
+    /// Days Windows Hello unlocks the vault since the master password last did, as the C#
+    /// `VaultHelloMaxDaysBeforeMasterPassword`: then the master password is asked once.
+    /// [`WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER`] never asks, as the C# default; at most
+    /// [`WINDOWS_HELLO_VAULT_MAX_DAYS_MAX`].
+    pub vault_max_days: u32,
 }
 
 impl Default for WindowsHello {
@@ -812,6 +822,7 @@ impl Default for WindowsHello {
         Self {
             require_on_connect: false,
             grace_minutes: WINDOWS_HELLO_GRACE_MINUTES_DEFAULT,
+            vault_max_days: WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER,
         }
     }
 }
@@ -831,6 +842,21 @@ pub const WINDOWS_HELLO_GRACE_MINUTES_MAX: u32 = 1440;
 #[must_use]
 pub fn windows_hello_grace_minutes_accepted(minutes: u32) -> bool {
     minutes <= WINDOWS_HELLO_GRACE_MINUTES_MAX
+}
+
+/// The days Windows Hello unlocks the vault without the master password ever being asked
+/// again, as the C# `0 disables the periodic re-authentication policy`; the default.
+pub const WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER: u32 = 0;
+
+/// Most days accepted before the master password is asked again, as the C# setting's
+/// range: ten years.
+pub const WINDOWS_HELLO_VAULT_MAX_DAYS_MAX: u32 = 3650;
+
+/// Whether `days` is a number of days before the master password is asked again that the
+/// settings accept: never, up to [`WINDOWS_HELLO_VAULT_MAX_DAYS_MAX`].
+#[must_use]
+pub fn windows_hello_vault_max_days_accepted(days: u32) -> bool {
+    days <= WINDOWS_HELLO_VAULT_MAX_DAYS_MAX
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -1029,6 +1055,7 @@ impl Default for Settings {
             theme: AppTheme::default(),
             accent: Accent::default(),
             vault_unlock: Lockout::default(),
+            vault_last_master_unlock: None,
             auto_lock_idle_minutes: AUTO_LOCK_IDLE_MINUTES_DEFAULT,
             disconnect_on_lock: false,
             pin: None,
@@ -1108,6 +1135,8 @@ struct WindowsHelloSection {
     require_on_connect: Option<bool>,
     #[serde(default)]
     grace_minutes: Option<u32>,
+    #[serde(default)]
+    vault_max_days: Option<u32>,
 }
 
 /// Absent values are the C# defaults.
@@ -1302,6 +1331,9 @@ struct VaultUnlockSection {
     /// Seconds since 1970, UTC.
     #[serde(default)]
     locked_until: Option<u64>,
+    /// Seconds since 1970, UTC.
+    #[serde(default)]
+    last_master_unlock: Option<u64>,
 }
 
 /// The workspace lock's preferences; apart from the tries above, which stay on this
@@ -1376,9 +1408,16 @@ struct TerminalSection {
     ctrl_k: Option<String>,
 }
 
-/// The instant `seconds` after 1970, UTC.
-fn from_epoch(seconds: u64) -> SystemTime {
-    SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+/// The instant `seconds` after 1970, UTC; `None` past what this system's clock can say,
+/// a value no run wrote.
+fn from_epoch(seconds: u64) -> Option<SystemTime> {
+    SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds))
+}
+
+/// The end of a lockout saved as `seconds` after 1970, read at `now`. Past what the clock can
+/// say, it fails closed: a full lockout from `now`, never none.
+fn lockout_until(seconds: u64, now: SystemTime) -> SystemTime {
+    from_epoch(seconds).unwrap_or(now + LOCKOUT_DURATION)
 }
 
 /// Seconds from 1970, UTC, to `instant`; 0 for an instant before.
@@ -1493,9 +1532,13 @@ impl Settings {
             ),
             vault_unlock: Lockout::restored(
                 file.vault_unlock.failures,
-                file.vault_unlock.locked_until.map(from_epoch),
+                file.vault_unlock
+                    .locked_until
+                    .map(|seconds| lockout_until(seconds, SystemTime::now())),
                 SystemTime::now(),
             ),
+            // Past what the clock can say, never typed: the master password is asked.
+            vault_last_master_unlock: file.vault_unlock.last_master_unlock.and_then(from_epoch),
             // Out of the range, as the C# load warns and keeps the default.
             auto_lock_idle_minutes: within(
                 file.vault.auto_lock_idle_minutes,
@@ -1513,7 +1556,9 @@ impl Settings {
             },
             pin_unlock: Lockout::restored(
                 file.pin.failures,
-                file.pin.locked_until.map(from_epoch),
+                file.pin
+                    .locked_until
+                    .map(|seconds| lockout_until(seconds, SystemTime::now())),
                 SystemTime::now(),
             ),
             credential_provider: file.credential_provider.settings(),
@@ -1613,7 +1658,7 @@ impl Settings {
                 ),
             },
             update_check: UpdateCheck {
-                last_check: file.update_check.last_check.map(from_epoch),
+                last_check: file.update_check.last_check.and_then(from_epoch),
                 skipped: file
                     .update_check
                     .skipped
@@ -1626,6 +1671,11 @@ impl Settings {
                     file.windows_hello.grace_minutes,
                     windows_hello_grace_minutes_accepted,
                     WINDOWS_HELLO_GRACE_MINUTES_DEFAULT,
+                ),
+                vault_max_days: within(
+                    file.windows_hello.vault_max_days,
+                    windows_hello_vault_max_days_accepted,
+                    WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER,
                 ),
             },
             reachability: Reachability {
@@ -1726,6 +1776,7 @@ impl Settings {
             vault_unlock: VaultUnlockSection {
                 failures: self.vault_unlock.failures(),
                 locked_until: self.vault_unlock.until().map(to_epoch),
+                last_master_unlock: self.vault_last_master_unlock.map(to_epoch),
             },
             vault: VaultSection {
                 auto_lock_idle_minutes: Some(self.auto_lock_idle_minutes),
@@ -1787,6 +1838,7 @@ impl Settings {
             windows_hello: WindowsHelloSection {
                 require_on_connect: Some(self.windows_hello.require_on_connect),
                 grace_minutes: Some(self.windows_hello.grace_minutes),
+                vault_max_days: Some(self.windows_hello.vault_max_days),
             },
         }
     }
@@ -2024,5 +2076,28 @@ mod transfer_tests {
                 "{section}: travels with an export or not? Say so in TRANSFERRED or HELD_BACK."
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod epoch_tests {
+    use std::time::{Duration, SystemTime};
+
+    use super::{LOCKOUT_DURATION, from_epoch, lockout_until};
+
+    #[test]
+    fn a_time_past_what_the_clock_can_say_is_absent_and_a_lockout_there_stays_locked() {
+        assert_eq!(
+            from_epoch(90),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(90))
+        );
+        assert_eq!(from_epoch(u64::MAX), None, "read, never a panic");
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_001);
+        // Fail closed: a full lockout from now, rather than none.
+        assert_eq!(lockout_until(u64::MAX, now), now + LOCKOUT_DURATION);
+        assert_eq!(
+            lockout_until(1_700_000_101, now),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_101)
+        );
     }
 }

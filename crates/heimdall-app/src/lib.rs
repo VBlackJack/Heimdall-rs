@@ -72,6 +72,7 @@ pub mod transcript;
 pub mod tunnel;
 pub mod tunnel_driver;
 pub mod update_check;
+pub mod vault_hello;
 pub mod vnc_driver;
 pub mod wake_on_lan;
 pub mod windows_hello;
@@ -98,9 +99,10 @@ pub use app::{
     SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
     SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
     TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
-    UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultJob,
-    VaultMode, VaultProblem, VaultStatus, WHEEL_LINES, bulk_password_refusal,
-    master_password_problem, open_vault, search_folded, should_auto_lock,
+    UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard,
+    VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    VaultTicket, WHEEL_LINES, bulk_password_refusal, master_password_problem, open_vault,
+    search_folded, should_auto_lock,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};

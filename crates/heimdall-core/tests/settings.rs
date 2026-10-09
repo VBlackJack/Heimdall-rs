@@ -1107,6 +1107,7 @@ fn windows_hello_is_off_with_the_csharp_grace_kept_within_its_range_and_carried(
         WindowsHello {
             require_on_connect: false,
             grace_minutes: 5,
+            vault_max_days: 0,
         },
         "the C# defaults"
     );
@@ -1120,6 +1121,7 @@ fn windows_hello_is_off_with_the_csharp_grace_kept_within_its_range_and_carried(
     settings.windows_hello = WindowsHello {
         require_on_connect: true,
         grace_minutes: 0,
+        ..WindowsHello::default()
     };
     settings.save(&path).expect("save");
     assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
@@ -1157,6 +1159,48 @@ grace_minutes = 5000
             "windows_hello.require_on_connect"
         ]
     );
+}
+
+#[test]
+fn the_vault_s_windows_hello_days_travel_within_the_csharp_range_and_the_last_master_unlock_stays()
+{
+    use heimdall_core::settings::{WindowsHello, windows_hello_vault_max_days_accepted};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(settings.windows_hello.vault_max_days, 0, "never, as the C#");
+    assert_eq!(settings.vault_last_master_unlock, None);
+    for (days, accepted) in [(0, true), (3650, true), (3651, false)] {
+        assert_eq!(
+            windows_hello_vault_max_days_accepted(days),
+            accepted,
+            "{days}"
+        );
+    }
+    let unlocked =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    settings.windows_hello.vault_max_days = 30;
+    settings.vault_last_master_unlock = Some(unlocked);
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+    // Out of the C# range: the default, as the C# load keeps it.
+    let read = written(
+        dir.path(),
+        "version = 1
+[windows_hello]
+vault_max_days = 4000
+",
+    );
+    assert_eq!(read.windows_hello, WindowsHello::default());
+    // The days are a preference and travel; when the master password was last typed is this
+    // computer's, and does not.
+    let (text, _) = settings.export(None, false);
+    assert!(text.contains("vault_max_days = 30"), "{text}");
+    assert!(!text.contains("last_master_unlock"), "{text}");
+    let imported = Settings::default().import(&text).expect("read");
+    assert_eq!(imported.settings.windows_hello.vault_max_days, 30);
+    assert_eq!(imported.settings.vault_last_master_unlock, None);
 }
 
 #[test]
