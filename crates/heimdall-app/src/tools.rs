@@ -88,6 +88,12 @@ impl ToolGroup {
 /// A built-in tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ToolId {
+    /// The subnet calculator, the C# `SUBNET`.
+    SubnetCalculator,
+    /// The IP address converter, the C# `IPCONV`.
+    IpConverter,
+    /// The network calculator, the C# `NETCALC`.
+    NetworkCalculator,
     /// The hash generator, the C# `HASH`.
     Hash,
     /// The HMAC generator, the C# `HMAC`.
@@ -116,8 +122,18 @@ pub enum ToolId {
     TextDiff,
     /// The text case converter, the C# `TEXTCASE`.
     TextCase,
+    /// The chmod calculator, the C# `CHMOD`.
+    Chmod,
+    /// The date and time converter, the C# `DATETIME`.
+    DateTime,
     /// The UUID generator, the C# `UUID`.
     Uuid,
+    /// The ULID generator, the C# `ULID`.
+    Ulid,
+    /// The crontab builder, the C# `CRONTAB`.
+    Crontab,
+    /// The SSH config generator, the C# `SSHCONFIG`.
+    SshConfig,
 }
 
 /// What the registry says of a tool.
@@ -134,9 +150,28 @@ pub struct ToolDescriptor {
     pub network: bool,
 }
 
+impl ToolDescriptor {
+    /// The entry of a tool that reaches no host.
+    const fn local(
+        code: &'static str,
+        category: ToolCategory,
+        prefixes: &'static [&'static str],
+    ) -> Self {
+        Self {
+            code,
+            category,
+            prefixes,
+            network: false,
+        }
+    }
+}
+
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 23] = [
+        Self::SubnetCalculator,
+        Self::IpConverter,
+        Self::NetworkCalculator,
         Self::Hash,
         Self::Hmac,
         Self::Password,
@@ -151,103 +186,75 @@ impl ToolId {
         Self::RegexTester,
         Self::TextDiff,
         Self::TextCase,
+        Self::Chmod,
+        Self::DateTime,
         Self::Uuid,
+        Self::Ulid,
+        Self::Crontab,
+        Self::SshConfig,
     ];
 
-    /// Its entry, as the C# registry's (`ToolRegistry.cs:77-104`).
+    /// Its entry, as the C# registry's (`ToolRegistry.cs:62-109`).
     #[must_use]
     pub const fn descriptor(self) -> ToolDescriptor {
         match self {
-            Self::Hash => ToolDescriptor {
-                code: "HASH",
-                category: ToolCategory::Security,
-                prefixes: &["hash"],
-                network: false,
-            },
-            Self::Hmac => ToolDescriptor {
-                code: "HMAC",
-                category: ToolCategory::Security,
-                prefixes: &["hmac"],
-                network: false,
-            },
-            Self::Password => ToolDescriptor {
-                code: "PASSWORD",
-                category: ToolCategory::Security,
-                prefixes: &["password", "pwgen"],
-                network: false,
-            },
-            Self::SshKey => ToolDescriptor {
-                code: "SSHKEY",
-                category: ToolCategory::Security,
-                prefixes: &["sshkey", "keygen"],
-                network: false,
-            },
-            Self::CertGen => ToolDescriptor {
-                code: "CERTGEN",
-                category: ToolCategory::Security,
-                prefixes: &["certgen", "certificate", "openssl"],
-                network: false,
-            },
-            Self::PwdAudit => ToolDescriptor {
-                code: "PWDAUDIT",
-                category: ToolCategory::Security,
-                prefixes: &["pwdaudit", "password-audit", "passcheck"],
-                network: false,
-            },
-            Self::Jwt => ToolDescriptor {
-                code: "JWT",
-                category: ToolCategory::Security,
-                prefixes: &["jwt"],
-                network: false,
-            },
-            Self::Totp => ToolDescriptor {
-                code: "TOTP",
-                category: ToolCategory::Security,
-                prefixes: &["totp", "otp", "2fa"],
-                network: false,
-            },
-            Self::Base64 => ToolDescriptor {
-                code: "BASE64",
-                category: ToolCategory::Encoding,
-                prefixes: &["base64"],
-                network: false,
-            },
-            Self::UrlEncoder => ToolDescriptor {
-                code: "URLENC",
-                category: ToolCategory::Encoding,
-                prefixes: &["url", "urlencode"],
-                network: false,
-            },
-            Self::JsonFormatter => ToolDescriptor {
-                code: "JSON",
-                category: ToolCategory::Encoding,
-                prefixes: &["json"],
-                network: false,
-            },
-            Self::RegexTester => ToolDescriptor {
-                code: "REGEX",
-                category: ToolCategory::Encoding,
-                prefixes: &["regex"],
-                network: false,
-            },
-            Self::TextDiff => ToolDescriptor {
-                code: "DIFF",
-                category: ToolCategory::Encoding,
-                prefixes: &["diff"],
-                network: false,
-            },
-            Self::TextCase => ToolDescriptor {
-                code: "TEXTCASE",
-                category: ToolCategory::Encoding,
-                prefixes: &["case", "textcase"],
-                network: false,
-            },
-            Self::Uuid => ToolDescriptor {
-                code: "UUID",
-                category: ToolCategory::System,
-                prefixes: &["uuid", "guid"],
-                network: false,
-            },
+            Self::SubnetCalculator => {
+                ToolDescriptor::local("SUBNET", ToolCategory::Network, &["subnet"])
+            }
+            Self::IpConverter => {
+                ToolDescriptor::local("IPCONV", ToolCategory::Network, &["ip", "ipconv"])
+            }
+            Self::NetworkCalculator => ToolDescriptor::local(
+                "NETCALC",
+                ToolCategory::Network,
+                &["netcalc", "vlan", "supernet"],
+            ),
+            Self::Hash => ToolDescriptor::local("HASH", ToolCategory::Security, &["hash"]),
+            Self::Hmac => ToolDescriptor::local("HMAC", ToolCategory::Security, &["hmac"]),
+            Self::Password => {
+                ToolDescriptor::local("PASSWORD", ToolCategory::Security, &["password", "pwgen"])
+            }
+            Self::SshKey => {
+                ToolDescriptor::local("SSHKEY", ToolCategory::Security, &["sshkey", "keygen"])
+            }
+            Self::CertGen => ToolDescriptor::local(
+                "CERTGEN",
+                ToolCategory::Security,
+                &["certgen", "certificate", "openssl"],
+            ),
+            Self::Jwt => ToolDescriptor::local("JWT", ToolCategory::Security, &["jwt"]),
+            Self::Totp => {
+                ToolDescriptor::local("TOTP", ToolCategory::Security, &["totp", "otp", "2fa"])
+            }
+            Self::PwdAudit => ToolDescriptor::local(
+                "PWDAUDIT",
+                ToolCategory::Security,
+                &["pwdaudit", "password-audit", "passcheck"],
+            ),
+            Self::Base64 => ToolDescriptor::local("BASE64", ToolCategory::Encoding, &["base64"]),
+            Self::UrlEncoder => {
+                ToolDescriptor::local("URLENC", ToolCategory::Encoding, &["url", "urlencode"])
+            }
+            Self::JsonFormatter => ToolDescriptor::local("JSON", ToolCategory::Encoding, &["json"]),
+            Self::RegexTester => ToolDescriptor::local("REGEX", ToolCategory::Encoding, &["regex"]),
+            Self::TextDiff => ToolDescriptor::local("DIFF", ToolCategory::Encoding, &["diff"]),
+            Self::TextCase => {
+                ToolDescriptor::local("TEXTCASE", ToolCategory::Encoding, &["case", "textcase"])
+            }
+            Self::Chmod => ToolDescriptor::local("CHMOD", ToolCategory::System, &["chmod"]),
+            Self::DateTime => {
+                ToolDescriptor::local("DATETIME", ToolCategory::System, &["datetime", "epoch"])
+            }
+            Self::Uuid => ToolDescriptor::local("UUID", ToolCategory::System, &["uuid", "guid"]),
+            Self::Ulid => ToolDescriptor::local("ULID", ToolCategory::System, &["ulid"]),
+            Self::Crontab => {
+                ToolDescriptor::local("CRONTAB", ToolCategory::System, &["cron", "crontab"])
+            }
+            Self::SshConfig => ToolDescriptor::local(
+                "SSHCONFIG",
+                ToolCategory::System,
+                &["sshconfig", "ssh-config"],
+            ),
         }
     }
 

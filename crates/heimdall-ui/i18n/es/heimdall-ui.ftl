@@ -2435,6 +2435,309 @@ ui-tool-totp-help =
 
     Uso:
     Introduce una clave secreta en Base32 para generar códigos TOTP que se renuevan cada 30 segundos.
+ui-tool-copy-value = Copiar
+ui-tool-number-group-separator = {"."}
+ui-tool-number-decimal-separator = {","}
+ui-tool-subnet-name = Calculadora de subredes
+ui-tool-subnet-description = Calculadora de subredes con notación CIDR y desglose de rango de direcciones
+ui-tool-subnet-title = Calculadora de subredes
+ui-tool-subnet-input = Dirección IP / notación CIDR (por ejemplo, 192.168.1.0/24)
+ui-tool-subnet-placeholder = 192.168.1.0/24
+ui-tool-subnet-network = Dirección de red
+ui-tool-subnet-broadcast = Dirección de difusión
+ui-tool-subnet-mask = Máscara de subred
+ui-tool-subnet-first-host = Primer host
+ui-tool-subnet-last-host = Último host
+ui-tool-subnet-total-hosts = Total de hosts
+ui-tool-subnet-cidr = Notación CIDR
+ui-tool-subnet-wildcard = Máscara comodín
+ui-tool-subnet-too-many = Demasiados para listar
+ui-tool-subnet-error-invalid = Dirección IP o notación CIDR no válida. Usa el formato: 192.168.1.0/24
+ui-tool-subnet-empty = Introduce una notación CIDR para calcular los detalles de la subred
+ui-tool-subnet-help =
+    Calculadora de subredes
+
+    Calcula información de red IPv4 e IPv6 a partir de la notación CIDR.
+
+    Uso:
+    1. Introduce una dirección IP con prefijo CIDR (por ejemplo, 192.168.1.0/24)
+    2. Los resultados se actualizan automáticamente
+
+    Información mostrada:
+    - Dirección de red
+    - Dirección de difusión
+    - Máscara de subred y máscara comodín
+    - Primer y último host utilizable
+    - Número total de hosts utilizables
+    - Notación CIDR
+
+    Ejemplos:
+    - 192.168.1.0/24 - 254 hosts (clase C)
+    - 10.0.0.0/8 - 16.777.214 hosts (clase A)
+    - 172.16.0.0/16 - 65.534 hosts (clase B)
+    - 192.168.1.64/26 - 62 hosts (subred)
+    - 2001:db8::/32 - prefijo IPv6
+ui-tool-ipconv-name = Convertidor de direcciones IP
+ui-tool-ipconv-description = Convertidor de formato de dirección IP (decimal, binario, hexadecimal)
+ui-tool-ipconv-title = Convertidor de direcciones IP
+ui-tool-ipconv-input = Introduce una dirección IPv4 (con puntos, entero, hex o binario)
+ui-tool-ipconv-placeholder = dirección IP o entero
+ui-tool-ipconv-dotted = Decimal con puntos
+ui-tool-ipconv-integer = Entero
+ui-tool-ipconv-hex = Hexadecimal
+ui-tool-ipconv-binary = Binario
+ui-tool-ipconv-mapped = IPv6 mapeada a IPv4
+ui-tool-ipconv-error-invalid = Entrada no válida. Introduce una dirección IPv4 válida, un entero, hex (0x...), o binario con puntos.
+ui-tool-ipconv-empty = Introduce una dirección IP, entero, hex, o binario con puntos para convertir.
+ui-tool-ipconv-help =
+    Convertidor de IP
+
+    Convierte direcciones IP entre formatos decimal, hexadecimal, binario y entero.
+
+    Uso:
+    Introduce una dirección IP en cualquier formato admitido y todas las conversiones se muestran al instante.
+ui-tool-netcalc-name = Calculadora de red
+ui-tool-netcalc-description = Calculadora de red avanzada con soporte de VLAN y superredes
+ui-tool-netcalc-title = Calculadora de red
+ui-tool-netcalc-mode = Modo
+ui-tool-netcalc-mode-supernet = Calculadora de superredes
+ui-tool-netcalc-mode-range = Rango de IP a CIDR
+ui-tool-netcalc-mode-vlan = Planificador de VLAN
+ui-tool-netcalc-supernet-input = Rangos CIDR (uno por línea)
+ui-tool-netcalc-compute = Calcular
+ui-tool-netcalc-start-ip = IP inicial
+ui-tool-netcalc-end-ip = IP final
+ui-tool-netcalc-start-placeholder = por ejemplo, 192.168.1.0
+ui-tool-netcalc-end-placeholder = por ejemplo, 192.168.1.255
+ui-tool-netcalc-hosts-needed = Hosts necesarios
+ui-tool-netcalc-hosts-placeholder = por ejemplo, 50
+ui-tool-netcalc-base-network = Red base
+ui-tool-netcalc-base-placeholder = por ejemplo, 10.0.0.0
+ui-tool-netcalc-error-no-cidrs = Introduce al menos un rango CIDR.
+ui-tool-netcalc-error-invalid-cidr = Notación CIDR no válida: { $line }
+ui-tool-netcalc-error-invalid-range = Introduce direcciones IPv4 válidas para inicio y fin.
+ui-tool-netcalc-error-start-after-end = La IP inicial debe ser menor o igual que la IP final.
+ui-tool-netcalc-error-host-count = Introduce un número positivo de hosts.
+ui-tool-netcalc-error-base-network = Introduce una dirección de red base IPv4 válida.
+ui-tool-netcalc-supernet-result = Superred: { $network }/{ $prefix }
+ui-tool-netcalc-supernet-range = Rango: { $first } - { $last }
+ui-tool-netcalc-supernet-hosts = Total de hosts utilizables: { $hosts }
+ui-tool-netcalc-range-result = Bloques CIDR que cubren el rango:
+ui-tool-netcalc-vlan-network = Red: { $network }/{ $prefix }
+ui-tool-netcalc-vlan-mask = Máscara de subred: { $mask }
+ui-tool-netcalc-vlan-broadcast = Difusión: { $broadcast }
+ui-tool-netcalc-vlan-usable-range = Rango utilizable: { $first } - { $last }
+ui-tool-netcalc-vlan-usable-hosts = Hosts utilizables: { $hosts }
+ui-tool-netcalc-vlan-requested = Solicitados: { $hosts }
+ui-tool-netcalc-vlan-utilization = Utilización: { $percent }%
+ui-tool-netcalc-empty = Introduce subredes o rangos de IP para calcular.
+ui-tool-netcalc-help =
+    Calculadora de red
+
+    Cálculos de red avanzados que incluyen VLAN, superredes y división de subredes.
+
+    Uso:
+    Introduce los parámetros de red para realizar cálculos entre varias subredes.
+ui-tool-chmod-name = Calculadora Chmod
+ui-tool-chmod-description = Calculadora interactiva de permisos chmod para modos de archivo Unix
+ui-tool-chmod-title = Calculadora Chmod
+ui-tool-chmod-read = Lectura
+ui-tool-chmod-write = Escritura
+ui-tool-chmod-execute = Ejecución
+ui-tool-chmod-owner = Propietario
+ui-tool-chmod-group = Grupo
+ui-tool-chmod-others = Otros
+ui-tool-chmod-octal = Octal:
+ui-tool-chmod-symbolic = Simbólico:
+ui-tool-chmod-copy-octal = Copiar octal
+ui-tool-chmod-copy-symbolic = Copiar simbólico
+ui-tool-chmod-presets = Preajustes comunes
+ui-tool-chmod-symbolic-input = Notación simbólica (por ejemplo, u+x,g-w,o=r):
+ui-tool-chmod-symbolic-placeholder = u+x,g-w,o=r
+ui-tool-chmod-error-symbolic = Notación simbólica no válida
+ui-tool-chmod-command-preview = Vista previa del comando:
+ui-tool-chmod-copy-command = Copiar comando
+ui-tool-chmod-command = chmod { $mode } filename
+ui-tool-chmod-help =
+    Calculadora Chmod
+
+    Calculadora interactiva de permisos de archivo Unix.
+
+    Uso:
+    Alterna los permisos de lectura/escritura/ejecución para propietario, grupo y otros. Los valores numéricos y simbólicos de chmod se actualizan en tiempo real.
+ui-tool-datetime-name = Convertidor de fecha y hora
+ui-tool-datetime-description = Convertidor de fecha/hora y época Unix con soporte de zona horaria
+ui-tool-datetime-title = Convertidor de fecha y hora
+ui-tool-datetime-input = Marca de tiempo Unix (segundos) o fecha y hora ISO 8601
+ui-tool-datetime-placeholder = marca de tiempo, ISO 8601, o cadena de fecha
+ui-tool-datetime-now = Ahora
+ui-tool-datetime-copy = Copiar
+ui-tool-datetime-unix = Marca de tiempo Unix (segundos)
+ui-tool-datetime-iso-utc = ISO 8601 (UTC)
+ui-tool-datetime-iso-local = ISO 8601 (local)
+ui-tool-datetime-local-time = Hora local
+ui-tool-datetime-timezone = Zona horaria
+ui-tool-datetime-relative = Tiempo relativo
+ui-tool-datetime-detected-unix = Detectado: marca de tiempo Unix
+ui-tool-datetime-detected-ms = Detectado: marca de tiempo Unix (milisegundos)
+ui-tool-datetime-detected-iso = Detectado: fecha y hora ISO 8601
+ui-tool-datetime-error-invalid = Entrada no válida. Introduce una marca de tiempo Unix o una fecha y hora ISO 8601.
+ui-tool-datetime-empty = Introduce una marca de tiempo Unix o una fecha ISO 8601 para convertir.
+ui-tool-datetime-relative-seconds = { $count } segundos
+ui-tool-datetime-relative-minutes = { $count } minutos
+ui-tool-datetime-relative-hours = { $count } horas
+ui-tool-datetime-relative-days = { $count } días
+ui-tool-datetime-relative-months = { $count } meses
+ui-tool-datetime-relative-years = { $count } años
+ui-tool-datetime-relative-ago = hace { $duration }
+ui-tool-datetime-relative-in = en { $duration }
+ui-tool-datetime-long = { $weekday }, { $d } de { $month } de { $year } { $time }
+ui-tool-datetime-weekday-0 = domingo
+ui-tool-datetime-weekday-1 = lunes
+ui-tool-datetime-weekday-2 = martes
+ui-tool-datetime-weekday-3 = miércoles
+ui-tool-datetime-weekday-4 = jueves
+ui-tool-datetime-weekday-5 = viernes
+ui-tool-datetime-weekday-6 = sábado
+ui-tool-datetime-month-1 = enero
+ui-tool-datetime-month-2 = febrero
+ui-tool-datetime-month-3 = marzo
+ui-tool-datetime-month-4 = abril
+ui-tool-datetime-month-5 = mayo
+ui-tool-datetime-month-6 = junio
+ui-tool-datetime-month-7 = julio
+ui-tool-datetime-month-8 = agosto
+ui-tool-datetime-month-9 = septiembre
+ui-tool-datetime-month-10 = octubre
+ui-tool-datetime-month-11 = noviembre
+ui-tool-datetime-month-12 = diciembre
+ui-tool-datetime-help =
+    Convertidor de fecha/hora
+
+    Convierte entre fechas legibles y marcas de tiempo Unix.
+
+    Uso:
+    Introduce una fecha o un valor de época Unix. Admite varios formatos de fecha y conversión de zona horaria.
+ui-tool-ulid-name = Generador de ULID
+ui-tool-ulid-description = Generador de ULID: identificador ordenable lexicográficamente de 128 bits (Crockford base32)
+ui-tool-ulid-title = Generador de ULID
+ui-tool-ulid-result = ULID generado
+ui-tool-ulid-generate = Generar
+ui-tool-ulid-copy = Copiar
+ui-tool-ulid-batch = Generación por lotes
+ui-tool-ulid-count = Cantidad
+ui-tool-ulid-generate-batch = Generar lote
+ui-tool-ulid-copy-batch = Copiar todo
+ui-tool-ulid-help =
+    Generador de ULID
+
+    Genera identificadores ordenables lexicográficamente de 128 bits.
+
+    Formato: 26 caracteres en base32 de Crockford (sin I, L, O, U).
+
+    Estructura:
+    - Primeros 10 caracteres: marca de tiempo Unix de 48 bits en milisegundos
+    - Últimos 16 caracteres: 80 bits de datos aleatorios criptográficamente seguros
+
+    Los ULID generados en orden se ordenan en orden. Útiles como claves primarias en sistemas distribuidos.
+ui-tool-crontab-name = Constructor de Crontab
+ui-tool-crontab-description = Constructor de expresiones crontab con vista previa legible
+ui-tool-crontab-title = Constructor de Crontab
+ui-tool-crontab-presets = Preajustes rápidos
+ui-tool-crontab-preset-every-minute = Cada minuto
+ui-tool-crontab-preset-every-hour = Cada hora
+ui-tool-crontab-preset-daily-midnight = Diario a medianoche
+ui-tool-crontab-preset-weekdays-9am = Días laborables a las 9
+ui-tool-crontab-preset-weekly-sunday = Domingo semanal
+ui-tool-crontab-preset-monthly-1st = Día 1 mensual
+ui-tool-crontab-minute = Minuto
+ui-tool-crontab-hour = Hora
+ui-tool-crontab-day-of-month = Día del mes
+ui-tool-crontab-month = Mes
+ui-tool-crontab-day-of-week = Día de la semana
+ui-tool-crontab-every-minute = Cada minuto (*)
+ui-tool-crontab-every-5-min = Cada 5 minutos (*/5)
+ui-tool-crontab-every-15-min = Cada 15 minutos (*/15)
+ui-tool-crontab-every-30-min = Cada 30 minutos (*/30)
+ui-tool-crontab-every-hour = Cada hora (*)
+ui-tool-crontab-every-day = Cada día (*)
+ui-tool-crontab-every-month = Cada mes (*)
+ui-tool-crontab-every-day-of-week = Cada día (*)
+ui-tool-crontab-month-1 = Ene
+ui-tool-crontab-month-2 = Feb
+ui-tool-crontab-month-3 = Mar
+ui-tool-crontab-month-4 = Abr
+ui-tool-crontab-month-5 = May
+ui-tool-crontab-month-6 = Jun
+ui-tool-crontab-month-7 = Jul
+ui-tool-crontab-month-8 = Ago
+ui-tool-crontab-month-9 = Sep
+ui-tool-crontab-month-10 = Oct
+ui-tool-crontab-month-11 = Nov
+ui-tool-crontab-month-12 = Dic
+ui-tool-crontab-day-abbr-0 = Dom
+ui-tool-crontab-day-abbr-1 = Lun
+ui-tool-crontab-day-abbr-2 = Mar
+ui-tool-crontab-day-abbr-3 = Mié
+ui-tool-crontab-day-abbr-4 = Jue
+ui-tool-crontab-day-abbr-5 = Vie
+ui-tool-crontab-day-abbr-6 = Sáb
+ui-tool-crontab-day-0 = Domingo
+ui-tool-crontab-day-1 = Lunes
+ui-tool-crontab-day-2 = Martes
+ui-tool-crontab-day-3 = Miércoles
+ui-tool-crontab-day-4 = Jueves
+ui-tool-crontab-day-5 = Viernes
+ui-tool-crontab-day-6 = Sábado
+ui-tool-crontab-expression = Expresión cron
+ui-tool-crontab-copy = Copiar
+ui-tool-crontab-manual-edit = Edición manual (expresión cron de 5 campos)
+ui-tool-crontab-placeholder = { "* * * * *" }
+ui-tool-crontab-next-runs = Próximas 5 ejecuciones
+ui-tool-crontab-desc-every-minute = Se ejecuta cada minuto
+ui-tool-crontab-desc-every-hour = Se ejecuta al principio de cada hora
+ui-tool-crontab-desc-every-day = Se ejecuta diariamente a medianoche
+ui-tool-crontab-desc-every-n-min = Se ejecuta cada { $interval } minutos
+ui-tool-crontab-desc-daily-at = Se ejecuta diariamente a las { $time }
+ui-tool-crontab-desc-weekly-at = Se ejecuta cada { $day } a las { $time }
+ui-tool-crontab-desc-monthly-at = Se ejecuta el { $day } de cada mes a las { $time }
+ui-tool-crontab-desc-custom = Programación personalizada: { $expression }
+ui-tool-crontab-error-field-count = Una expresión cron debe tener exactamente 5 campos separados por espacios
+ui-tool-crontab-error-invalid-field = Caracteres no válidos en el campo "{ $field }": { $value }
+ui-tool-crontab-error-out-of-range = Los valores del campo "{ $field }" deben estar entre { $min } y { $max }
+ui-tool-crontab-help =
+    Constructor de Crontab
+
+    Construye expresiones cron con una vista previa legible.
+
+    Uso:
+    Configura los campos de minuto, hora, día, mes y día de la semana. Se muestran las próximas horas de ejecución programadas.
+ui-tool-sshconfig-name = Generador de configuración SSH
+ui-tool-sshconfig-description = Generador de archivos de configuración de cliente SSH
+ui-tool-sshconfig-title = Generador de configuración SSH
+ui-tool-sshconfig-host-alias = Alias del host
+ui-tool-sshconfig-host-name = HostName
+ui-tool-sshconfig-user = User
+ui-tool-sshconfig-port = Port
+ui-tool-sshconfig-identity-file = IdentityFile
+ui-tool-sshconfig-proxy-jump = ProxyJump
+ui-tool-sshconfig-forward-agent = ForwardAgent
+ui-tool-sshconfig-alive-interval = ServerAliveInterval
+ui-tool-sshconfig-generate = Generar
+ui-tool-sshconfig-generate-all = Generar todo desde Heimdall
+ui-tool-sshconfig-copy = Copiar
+ui-tool-sshconfig-error-host-required = HostName es obligatorio.
+ui-tool-sshconfig-generate-all-hint =
+    Abre esta herramienta desde el contexto de una sesión para rellenar los campos automáticamente.
+    Usa el formulario de arriba para generar bloques de configuración manualmente para cada host.
+ui-tool-sshconfig-empty = Configura las opciones de arriba para generar un bloque de configuración SSH
+ui-tool-sshconfig-help =
+    Generador de configuración SSH
+
+    Genera archivos de configuración de cliente SSH.
+
+    Uso:
+    Configura entradas de host con nombre de host, usuario, puerto, archivo de clave y ajustes de proxy. Exporta al formato ~/.ssh/config.
 ui-tool-json-name = Formateador JSON
 ui-tool-json-description = Formateador, validador y minificador de JSON
 ui-tool-json-title = Formateador JSON
