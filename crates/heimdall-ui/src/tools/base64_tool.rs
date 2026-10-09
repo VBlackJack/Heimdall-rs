@@ -38,9 +38,6 @@ use crate::tokens::{font_size, spacing};
 /// The largest file encoded, as the C# `MaxFileSizeBytes`: 5 MB.
 pub const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
-/// Room around the empty state, as the C# `ToolEmptyStateStyle`'s padding.
-const EMPTY_STATE_PADDING: f32 = 24.0;
-
 /// Room between the input's label row and the boxes, as the C# `MarginStackItem`.
 const STACK_GAP: f32 = 8.0;
 
@@ -342,14 +339,7 @@ impl Base64Pane {
                 .on_action(move |action| send(Base64Message::Output(action)))
                 .into()
         } else {
-            container(
-                text(fl!("ui-tool-base64-empty"))
-                    .size(font_size::BODY_LARGE)
-                    .style(text::secondary),
-            )
-            .padding(EMPTY_STATE_PADDING)
-            .center(Length::Fill)
-            .into()
+            super::empty_state(fl!("ui-tool-base64-empty"))
         };
         let status = self.status.said().map(|(said, error)| {
             text(said).size(font_size::CAPTION).style(if error {
@@ -374,26 +364,17 @@ impl Base64Pane {
             ))
             .spacing(spacing::SM)
             .align_y(iced::Alignment::Center);
-        container(
+        super::tool_body(
             column![
                 options,
                 input,
                 container(actions).center_x(Length::Fill),
-                text(fl!("ui-tool-base64-output"))
-                    .size(font_size::BODY)
-                    .style(text::secondary),
+                super::field_label(fl!("ui-tool-base64-output")),
                 output,
                 footer,
             ]
             .spacing(STACK_GAP),
         )
-        .padding(iced::Padding {
-            top: 0.0,
-            right: spacing::LG - spacing::XS,
-            bottom: spacing::LG - spacing::XS,
-            left: spacing::LG - spacing::XS,
-        })
-        .into()
     }
 }
 

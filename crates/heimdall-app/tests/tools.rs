@@ -56,6 +56,10 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::NetworkCalculator,
             ToolId::Base64,
             ToolId::UrlEncoder,
+            ToolId::JsonFormatter,
+            ToolId::RegexTester,
+            ToolId::TextDiff,
+            ToolId::TextCase,
             ToolId::Chmod,
             ToolId::DateTime,
             ToolId::Uuid,
@@ -76,6 +80,11 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(ToolId::Base64.code(), "BASE64");
     assert_eq!(ToolId::UrlEncoder.prefixes(), ["url", "urlencode"]);
     assert_eq!(ToolId::Uuid.prefixes(), ["uuid", "guid"]);
+    assert_eq!(ToolId::TextCase.prefixes(), ["case", "textcase"]);
+    assert_eq!(ToolId::from_code("json"), Some(ToolId::JsonFormatter));
+    assert_eq!(ToolId::from_code("TOOL:REGEX"), Some(ToolId::RegexTester));
+    assert_eq!(ToolId::from_code("diff"), Some(ToolId::TextDiff));
+    assert_eq!(ToolId::TextDiff.category(), ToolCategory::Encoding);
     assert_eq!(ToolId::Base64.category(), ToolCategory::Encoding);
     assert_eq!(ToolId::Uuid.category(), ToolCategory::System);
     assert!(ToolId::ALL.iter().all(|tool| !tool.is_network()));

@@ -2799,6 +2799,165 @@ ui-tool-sshconfig-help =
 
     Usage:
     Configure host entries with hostname, user, port, key file, and proxy settings. Export to ~/.ssh/config format.
+ui-tool-json-name = JSON Formatter
+ui-tool-json-description = JSON formatter, validator, and minifier
+ui-tool-json-title = JSON Formatter
+ui-tool-json-input = Input JSON
+ui-tool-json-output = Output
+ui-tool-json-prettify = Prettify
+ui-tool-json-minify = Minify
+ui-tool-json-copy = Copy output
+ui-tool-json-placeholder = paste JSON here
+ui-tool-json-empty = Paste JSON and press Prettify or Minify.
+ui-tool-json-processing = Processing...
+ui-tool-json-status-prettified =
+    { $count ->
+        [one] Prettified ({ $count } character)
+       *[other] Prettified ({ $count } characters)
+    }
+ui-tool-json-status-minified =
+    { $count ->
+        [one] Minified ({ $count } character)
+       *[other] Minified ({ $count } characters)
+    }
+ui-tool-json-status-error = Invalid JSON: { $error }
+ui-tool-json-status-error-at = Error at line { $line }, position { $column }: { $error }
+ui-tool-json-too-large = Input exceeds the 5 MB size limit.
+ui-tool-json-help =
+    JSON Formatter
+
+    Formats (prettifies) or minifies JSON data.
+
+    Usage:
+    1. Paste or type JSON in the input field
+    2. Click Prettify to format with indentation
+    3. Click Minify to compact into a single line
+    4. Copy the result to clipboard
+
+    Features:
+    - Syntax validation with error messages
+    - Handles large JSON documents (up to 5 MB)
+    - Preserves Unicode characters
+
+    Keyboard:
+    - Ctrl+Enter: Prettify
+    - Ctrl+Shift+Enter: Minify
+
+    Examples:
+    - { "{" }"name":"value"{ "}" } → Prettified with 2-space indentation
+    - Paste API responses for quick formatting
+ui-tool-regex-name = Regex Tester
+ui-tool-regex-description = Regular expression tester with match highlighting
+ui-tool-regex-title = Regex Tester
+ui-tool-regex-pattern = Pattern
+ui-tool-regex-pattern-placeholder = regex pattern
+ui-tool-regex-ignore-case = Ignore case
+ui-tool-regex-multiline = Multiline
+ui-tool-regex-singleline = Singleline
+ui-tool-regex-test-text = Test text
+ui-tool-regex-test-placeholder = test string
+ui-tool-regex-matches = Matches
+ui-tool-regex-copy = Copy matches
+ui-tool-regex-count =
+    { $count ->
+        [one] { $count } match
+       *[other] { $count } matches
+    }
+ui-tool-regex-match-entry = { "[" }{ $number }] Index { $index }: "{ $value }"
+ui-tool-regex-group-entry = { "  " }Group { $number }: "{ $value }"
+ui-tool-regex-status-valid = Valid regex
+ui-tool-regex-status-invalid = Invalid regex: { $error }
+ui-tool-regex-status-timeout = Regex evaluation timed out (ReDoS protection)
+ui-tool-regex-unsupported-variable-lookbehind = Invalid regex: a look-behind whose length varies is not supported by this engine
+ui-tool-regex-unsupported-balancing-group = Invalid regex: balancing groups (?<open-close>...) are not supported by this engine
+ui-tool-regex-truncated = Showing first { $shown } of { $total } matches
+ui-tool-regex-empty = Enter a regex pattern and test string above
+ui-tool-regex-help =
+    Regex Tester
+
+    Tests regular expressions against sample text with real-time matching.
+
+    Usage:
+    1. Enter a regex pattern
+    2. Enter test text
+    3. Matches are highlighted and listed automatically
+
+    Options:
+    - Ignore Case: case-insensitive matching
+    - Multiline: ^ and $ match line boundaries
+    - Singleline: . matches newline characters
+
+    Features:
+    - Real-time highlighting of matches in the test text
+    - Numbered match list with capture group details
+    - Match count display
+    - Copy all matches to clipboard
+
+    Examples:
+    - \b\w+@\w+\.\w+\b - Match email addresses
+    - \d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" } - Match IPv4 addresses
+    - ^#.*$ (Multiline) - Match comment lines
+
+    Engine:
+    - Look-ahead, look-behind, backreferences, atomic groups and conditionals are supported.
+    - Not supported: look-behind of varying length, balancing groups.
+    - A test that takes longer than one second stops (ReDoS protection).
+ui-tool-diff-name = Text Diff
+ui-tool-diff-description = Side-by-side text comparison and difference viewer
+ui-tool-diff-title = Text Diff
+ui-tool-diff-original = Original
+ui-tool-diff-modified = Modified
+ui-tool-diff-original-placeholder = original text
+ui-tool-diff-modified-placeholder = modified text
+ui-tool-diff-output = Diff output
+ui-tool-diff-compare = Compare
+ui-tool-diff-swap = Swap
+ui-tool-diff-clear = Clear
+ui-tool-diff-copy = Copy diff
+ui-tool-diff-ignore-whitespace = Ignore whitespace
+ui-tool-diff-ignore-case = Ignore case
+ui-tool-diff-auto-compare = Auto-compare
+ui-tool-diff-stats = +{ $added } additions, -{ $removed } deletions, { $unchanged } unchanged
+ui-tool-diff-status-done =
+    { $count ->
+        [one] Diff complete: { $count } line
+       *[other] Diff complete: { $count } lines
+    }
+ui-tool-diff-status-too-large = Input exceeds { $max } lines. Please reduce the text size.
+ui-tool-diff-comparing = Comparing...
+ui-tool-diff-original-header = --- original
+ui-tool-diff-modified-header = +++ modified
+ui-tool-diff-empty = Enter original and modified text, then press Compare.
+ui-tool-diff-help =
+    Text Diff
+
+    Compares two texts side by side and highlights differences.
+
+    Usage:
+    Paste text in both panels. Additions, deletions, and changes are color-coded.
+ui-tool-textcase-name = Text Case Converter
+ui-tool-textcase-description = Text case converter (upper, lower, camel, snake, kebab)
+ui-tool-textcase-title = Text Case Converter
+ui-tool-textcase-input = Input Text
+ui-tool-textcase-placeholder = text to convert
+ui-tool-textcase-conversions = Conversions
+ui-tool-textcase-output = Output
+ui-tool-textcase-copy = Copy
+ui-tool-textcase-camel = camelCase
+ui-tool-textcase-pascal = PascalCase
+ui-tool-textcase-snake = snake_case
+ui-tool-textcase-kebab = kebab-case
+ui-tool-textcase-upper = UPPER CASE
+ui-tool-textcase-lower = lower case
+ui-tool-textcase-title-case = Title Case
+ui-tool-textcase-constant = CONSTANT_CASE
+ui-tool-textcase-empty = Enter text and select a case conversion.
+ui-tool-textcase-help =
+    Text Case Converter
+
+    Converts text between multiple case formats.
+
+    Supported formats: UPPER, lower, Title Case, camelCase, PascalCase, snake_case, kebab-case, CONSTANT_CASE, and more.
 ui-tunnels-page-title = Active Tunnels
 ui-import-dropped-rd-gateway = through a Remote Desktop Gateway
 ui-error-rd-gateway = This server is reached through the Remote Desktop Gateway { $gateway }, which the built-in client does not go through yet.

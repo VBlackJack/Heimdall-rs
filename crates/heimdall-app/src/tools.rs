@@ -98,6 +98,14 @@ pub enum ToolId {
     Base64,
     /// The URL encoder and decoder, the C# `URLENC`.
     UrlEncoder,
+    /// The JSON formatter, the C# `JSON`.
+    JsonFormatter,
+    /// The regular expression tester, the C# `REGEX`.
+    RegexTester,
+    /// The text comparison, the C# `DIFF`.
+    TextDiff,
+    /// The text case converter, the C# `TEXTCASE`.
+    TextCase,
     /// The chmod calculator, the C# `CHMOD`.
     Chmod,
     /// The date and time converter, the C# `DATETIME`.
@@ -128,12 +136,16 @@ pub struct ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 15] = [
         Self::SubnetCalculator,
         Self::IpConverter,
         Self::NetworkCalculator,
         Self::Base64,
         Self::UrlEncoder,
+        Self::JsonFormatter,
+        Self::RegexTester,
+        Self::TextDiff,
+        Self::TextCase,
         Self::Chmod,
         Self::DateTime,
         Self::Uuid,
@@ -174,6 +186,30 @@ impl ToolId {
                 code: "URLENC",
                 category: ToolCategory::Encoding,
                 prefixes: &["url", "urlencode"],
+                network: false,
+            },
+            Self::JsonFormatter => ToolDescriptor {
+                code: "JSON",
+                category: ToolCategory::Encoding,
+                prefixes: &["json"],
+                network: false,
+            },
+            Self::RegexTester => ToolDescriptor {
+                code: "REGEX",
+                category: ToolCategory::Encoding,
+                prefixes: &["regex"],
+                network: false,
+            },
+            Self::TextDiff => ToolDescriptor {
+                code: "DIFF",
+                category: ToolCategory::Encoding,
+                prefixes: &["diff"],
+                network: false,
+            },
+            Self::TextCase => ToolDescriptor {
+                code: "TEXTCASE",
+                category: ToolCategory::Encoding,
+                prefixes: &["case", "textcase"],
                 network: false,
             },
             Self::Chmod => ToolDescriptor {
