@@ -204,10 +204,7 @@ pub fn plan(profile: &SshProfile, settings: &Settings, host_key: String) -> Putt
         compression: profile.compression,
         forward_agent: profile.forward_agent,
         host_key,
-        x11: profile.x11_forwarding.then(|| X11Settings {
-            server_path: settings.x11_server_path.clone(),
-            auto_start: settings.x11_auto_start,
-        }),
+        x11: profile.x11_forwarding.then(|| X11Settings::of(settings)),
     }
 }
 

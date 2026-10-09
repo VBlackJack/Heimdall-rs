@@ -44,7 +44,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::connection::Connection;
 use crate::error::ConnectError;
+use crate::forward::X11Hold;
 use crate::options::{AgentSource, ConnectOptions, TerminalSize};
+use crate::x11;
 
 /// Output messages buffered before the reader waits for the UI.
 const OUTPUT_QUEUE_LENGTH: usize = 256;
@@ -237,14 +239,18 @@ async fn apply_resizes(
     }
 }
 
-/// Holds the connection for the life of the session; once it is cancelled, closes this
-/// channel and releases the connection.
+/// Holds the connection, and the X11 grant when the shell asked for one, for the life of the
+/// session; once it is cancelled, lets the grant go, closes this channel and releases the
+/// connection.
 async fn keep_connection(
     connection: Connection,
     writer: Arc<ChannelWriteHalf<Msg>>,
+    x11: Option<X11Hold>,
     cancel: CancellationToken,
 ) {
     cancel.cancelled().await;
+    // Before the close: an X11 channel the server opens once it sees it is refused.
+    drop(x11);
     let _ = writer.close().await;
     drop(connection);
 }
@@ -282,6 +288,11 @@ pub(crate) async fn open(
             .await
             .map_err(ConnectError::Protocol)?;
     }
+    // Held until the shell ends; let go at once if it does not open.
+    let x11 = match &options.x11 {
+        Some(display) => x11::request(&connection, &channel, display).await?,
+        None => None,
+    };
     channel
         .request_shell(true)
         .await
@@ -298,7 +309,7 @@ pub(crate) async fn open(
     tokio::spawn(read_output(reader, events_tx, cancel.clone()));
     tokio::spawn(write_input(writer.clone(), data_rx, cancel.clone()));
     tokio::spawn(apply_resizes(writer.clone(), size_rx, cancel.clone()));
-    tokio::spawn(keep_connection(connection, writer, cancel.clone()));
+    tokio::spawn(keep_connection(connection, writer, x11, cancel.clone()));
 
     Ok(ShellSession {
         input: SessionInput {

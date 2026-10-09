@@ -67,6 +67,7 @@ use crate::telnet_driver::TelnetRequest;
 use crate::text::{server_prompt_text, server_text};
 use crate::vnc_driver::VncRequest;
 use crate::winrm_driver::WinRmRequest;
+use crate::x11_server::X11Settings;
 
 mod address_test;
 mod agent_chip;
@@ -3501,11 +3502,16 @@ impl App {
         options.initial_size = terminal_size(grid, None);
         options.forward_agent = profile.forward_agent;
         options.compression = profile.compression;
+        // X11 for a shell alone: its files and a desktop tunnelled through it have no
+        // X11 programs.
+        let x11 = (purpose == Purpose::Shell && profile.x11_forwarding)
+            .then(|| X11Settings::of(&self.settings));
         Ok(ConnectRequest {
             profile: profile.clone(),
             route: route.iter().map(SshGateway::as_hop).collect(),
             purpose,
             options,
+            x11,
             cancel,
         })
     }
@@ -3726,6 +3732,10 @@ impl App {
             }
             ConnectionEvent::RemoteImage(image) => vec![Effect::WriteClipboardImage(image)],
             ConnectionEvent::SshConnection(connection) => self.shell_connection(tab_id, connection),
+            ConnectionEvent::X11ServerNotFound => {
+                self.tell(Notice::X11ServerNotFound);
+                Vec::new()
+            }
             event @ (ConnectionEvent::RdpFilesRefused(_)
             | ConnectionEvent::RdpRemoteFiles(_)
             | ConnectionEvent::RdpSaveProgress { .. }

@@ -39,6 +39,7 @@ use crate::options::ConnectOptions;
 use crate::pins::{PinVerdict, Pins, pin_verdict};
 use crate::prompter::{Prompter, UsernameQuestion};
 use crate::session::ShellSession;
+use crate::x11;
 
 /// Message the server sent with its disconnect, shared between the russh session task and
 /// the code waiting on authentication.
@@ -253,6 +254,31 @@ impl client::Handler for ClientHandler {
         }
     }
 
+    /// An X11 channel reaches the X server only on a connection whose shell asked to forward
+    /// X11, its cookie checked first; otherwise it is refused, as a kind never asked for.
+    fn server_channel_open_x11(
+        &mut self,
+        channel: Channel<Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        let grant = self.routes.x11();
+        async move {
+            let Some(grant) = grant else {
+                return refuse_unasked(reply, "X11").await;
+            };
+            if let Some(waiting) = x11::admit(&grant) {
+                reply.accept().await;
+                tokio::spawn(x11::carry(channel, grant, waiting));
+            } else {
+                drop(reply);
+            }
+            Ok(())
+        }
+    }
+
     // The channels below are never asked for by this side: russh accepts each by default,
     // so each is refused here, dropping `reply` refusing it.
 
@@ -263,17 +289,6 @@ impl client::Handler for ClientHandler {
         _session: &mut client::Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         refuse_unasked(reply, "session")
-    }
-
-    fn server_channel_open_x11(
-        &mut self,
-        _channel: Channel<Msg>,
-        _originator_address: &str,
-        _originator_port: u32,
-        reply: ChannelOpenHandle,
-        _session: &mut client::Session,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        refuse_unasked(reply, "X11")
     }
 
     fn server_channel_open_direct_tcpip(

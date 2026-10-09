@@ -2518,9 +2518,11 @@ name = "heimdall-ssh"
 version = "0.1.0"
 dependencies = [
  "data-encoding",
+ "getrandom 0.4.3",
  "heimdall-core",
  "log",
  "russh",
+ "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

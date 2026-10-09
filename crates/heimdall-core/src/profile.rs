@@ -133,9 +133,9 @@ pub struct SshProfile {
     /// when it is `PuTTY`.
     #[serde(default, skip_serializing_if = "SshMode::is_embedded")]
     pub ssh_mode: SshMode,
-    /// Forward the server's X11 windows to this computer's X server (`putty -X`), as the C#
-    /// `SshX11Forwarding`: off unless turned on, written down only when on. Only `PuTTY`
-    /// forwards them for now.
+    /// Forward the server's X11 windows to this computer's X server (`ssh -X`), as the C#
+    /// `SshX11Forwarding`: off unless turned on, written down only when on. The shell
+    /// forwards them in a tab as in `PuTTY`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub x11_forwarding: bool,
 }
