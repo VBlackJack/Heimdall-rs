@@ -20,6 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
+use heimdall_app::update_check::{ReleaseTag, running_release};
 use heimdall_app::{App, Message as AppMessage, SettingsMessage, SettingsTransferMessage};
 use iced::widget::{Column, button, checkbox, column, container, row, text};
 use iced::{Element, Length};
@@ -39,6 +40,20 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
+
+/// The day this build was made, as the C# About page's "Build date"
+/// (`MainWindow.xaml:4775-4778`, filled at `MainWindow.xaml.cs:614-617`): a release's, read
+/// from its tag as the C# reads it from its version; else the day the build script found,
+/// `SOURCE_DATE_EPOCH` or the commit's (see `build.rs`); else none, and the row is left
+/// out where the C# writes its version instead.
+#[must_use]
+pub fn build_date() -> Option<String> {
+    running_release()
+        .and_then(ReleaseTag::date)
+        // The variable `crate::build_date::BUILD_DATE_VARIABLE` names: `option_env!` takes a
+        // literal only.
+        .or_else(|| option_env!("HEIMDALL_BUILD_DATE").map(str::to_owned))
+}
 
 /// A label and its value, on a line.
 fn line<'a>(label: String, value: String) -> Element<'a, Message> {
@@ -83,6 +98,16 @@ pub fn view(app: &App) -> Column<'_, Message> {
     let config = app.profiles_file().parent().map(Path::to_path_buf);
     let logs = heimdall_core::paths::log_dir();
     let settings = app.settings();
+    let mut system = column![line(
+        fl!("ui-about-platform"),
+        format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+    )];
+    if let Some(date) = build_date() {
+        system = system.push(line(fl!("ui-about-build-date"), date));
+    }
+    system = system
+        .push(line(fl!("ui-about-author"), AUTHORS.to_owned()))
+        .push(line(fl!("ui-about-license"), LICENSE.to_owned()));
     column![
         column![
             text(fl!("ui-window-title")).size(font_size::DISPLAY),
@@ -90,17 +115,7 @@ pub fn view(app: &App) -> Column<'_, Message> {
             text(fl!("ui-about-tagline")).style(text::secondary),
         ]
         .spacing(spacing::XS),
-        card(
-            fl!("ui-about-section-system"),
-            column![
-                line(
-                    fl!("ui-about-platform"),
-                    format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
-                ),
-                line(fl!("ui-about-author"), AUTHORS.to_owned()),
-                line(fl!("ui-about-license"), LICENSE.to_owned()),
-            ],
-        ),
+        card(fl!("ui-about-section-system"), system),
         card(
             fl!("ui-about-section-data"),
             column![

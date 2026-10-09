@@ -109,7 +109,12 @@ async fn run(request: FtpRequest, registry: AnswerRegistry, events: mpsc::Sender
     };
     let event = match outcome {
         Ok(Some(client)) => {
-            log::info!("FTP session open to {target}");
+            if profile.tls {
+                log::info!("FTP session open to {target}");
+            } else {
+                // As the C# logs its clear-text warning (`ConnectionService.cs:309-314`).
+                log::warn!("FTP session open to {target} in clear text, without TLS");
+            }
             ConnectionEvent::FilesReady {
                 client: RemoteSession::Ftp(client),
                 shell: None,

@@ -258,6 +258,45 @@ async fn the_tree_menu_opens_a_files_tab_through_connect_as_sftp() {
 }
 
 #[tokio::test]
+async fn show_hidden_is_the_csharp_check_box_ticked_in_a_new_pane_and_unticked_it_hides_dot_names()
+{
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, tab) = files_tab(dir.path()).await;
+    core.update(AppMessage::Files(FilesMessage::LocalListed {
+        tab,
+        result: Ok((
+            PathBuf::from(dir.path()),
+            vec![
+                local(".gitconfig", EntryKind::File),
+                local("notes.md", EntryKind::File),
+            ],
+        )),
+    }));
+    let mut shell = Shell::with_app(core);
+    let toggled = {
+        let mut ui = simulator(&shell);
+        ui.find(".gitconfig")
+            .expect("shown: a pane opens with the box ticked, as the C# ShowHidden");
+        ui.click(".*").expect("the check box, by its C# label");
+        files_messages(ui)
+            .into_iter()
+            .find(|message| matches!(message, FilesMessage::ToggleHidden { .. }))
+            .expect("toggled")
+    };
+    assert!(matches!(
+        toggled,
+        FilesMessage::ToggleHidden {
+            side: Side::Local,
+            ..
+        }
+    ));
+    let _ = shell.update(Message::App(AppMessage::Files(toggled)));
+    let mut ui = simulator(&shell);
+    assert!(ui.find(".gitconfig").is_err(), "a dot name, hidden");
+    ui.find("notes.md").expect("the rest, kept");
+}
+
+#[tokio::test]
 async fn both_panes_show_their_folders_and_a_folder_click_selects_it() {
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;

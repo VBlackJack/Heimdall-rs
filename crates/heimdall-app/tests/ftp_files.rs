@@ -686,3 +686,36 @@ async fn each_change_on_the_server_is_one_line_of_the_operations_log_never_a_fil
     assert!(lines[4]["errorCategory"].is_string());
     assert!(lines[4].get("bytes").is_none());
 }
+
+#[tokio::test]
+async fn a_plain_ftp_session_is_said_to_be_in_clear_and_an_ftps_one_is_not() {
+    let root = tempfile::tempdir().expect("root");
+    let port = serve(root.path()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let ftps = FtpProfile {
+        tls: true,
+        ..profile("secure", port)
+    };
+    let mut app = app(dir.path(), vec![profile("plain", port), ftps]);
+
+    // As the C# `WarnFtpCleartext`, anonymous included: every file still crosses in clear.
+    let plain = ftp_tab(&mut app, "plain", session(port).await, Vec::new());
+    assert!(app.tab(plain).expect("tab").sent_in_clear());
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::FtpCleartext {
+            host: "127.0.0.1".to_owned(),
+            port,
+        })
+    );
+
+    // Explicit FTPS: nothing to disclose. The session handed to it here is a plain one: what
+    // is said follows the profile, which the driver connects over TLS.
+    let secure = ftp_tab(&mut app, "secure", session(port).await, Vec::new());
+    assert!(!app.tab(secure).expect("tab").sent_in_clear());
+    assert!(
+        !matches!(app.notice(), Some(Notice::FtpCleartext { .. })),
+        "{:?}",
+        app.notice()
+    );
+}

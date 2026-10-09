@@ -45,7 +45,7 @@ use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
-use crate::tree_row::{EDGE_WIDTH, Mark, RowChrome};
+use crate::tree_row::{EDGE_WIDTH, Guided, Mark, RowChrome};
 
 /// Tallest a "Move to folder" list grows before it scrolls.
 const MOVE_MENU_HEIGHT: f32 = 360.0;
@@ -280,7 +280,27 @@ fn reach_text(reach: &Verdict) -> String {
 /// and the margin of the items under it.
 const INDENT: f32 = 16.0;
 
-/// `row` moved right for `depth` folders.
+/// Space between two rows of the tree.
+pub const ROW_GAP: f32 = 2.0;
+
+/// Space between the expander's column and an open folder's indent guide, as the C# guide's
+/// left margin.
+const GUIDE_MARGIN: f32 = 1.0;
+
+/// Where an open folder's indent guide is from its own row's left edge, as the C# draws it:
+/// in the column of its items, past the expander and its margin.
+const GUIDE_OFFSET: f32 = EXPANDER_SIDE + EXPANDER_GAP + GUIDE_MARGIN;
+
+/// Where the guides beside a row `depth` folders deep are, from the tree's left edge: one
+/// for each open folder it is in, the outermost first.
+#[must_use]
+pub fn guide_offsets(depth: usize) -> Vec<f32> {
+    std::iter::successors(Some(GUIDE_OFFSET), |offset| Some(offset + INDENT))
+        .take(depth)
+        .collect()
+}
+
+/// `row` moved right for `depth` folders, the indent guide of each beside it.
 #[must_use]
 pub fn indented(row: Element<'_, Message>, depth: usize) -> Element<'_, Message> {
     #[allow(
@@ -288,12 +308,15 @@ pub fn indented(row: Element<'_, Message>, depth: usize) -> Element<'_, Message>
         reason = "a folder depth, far below the 2^24 where f32 loses units"
     )]
     let left = depth as f32 * INDENT;
-    container(row)
-        .padding(iced::Padding {
+    Guided::new(
+        container(row).padding(iced::Padding {
             left,
             ..iced::Padding::ZERO
-        })
-        .into()
+        }),
+        guide_offsets(depth),
+        ROW_GAP,
+    )
+    .into()
 }
 
 /// A folder: open or closed at a click, as the C# tree's; "(No Folder)" for [`NO_FOLDER`].
@@ -2363,5 +2386,31 @@ impl Widget<Message, Theme, iced::Renderer> for CursorTracker<'_> {
 impl<'a> From<CursorTracker<'a>> for Element<'a, Message> {
     fn from(tracker: CursorTracker<'a>) -> Self {
         Element::new(tracker)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_open_folder_a_row_is_in_draws_its_guide_past_the_folders_expander() {
+        assert!(
+            guide_offsets(0).is_empty(),
+            "a folder at the root is in none"
+        );
+        assert_eq!(
+            guide_offsets(1),
+            vec![15.0],
+            "12 + 2 + 1, as the C# template"
+        );
+        assert_eq!(guide_offsets(3), vec![15.0, 31.0, 47.0], "one indent apart");
+        // Between the expander of the folder and the items it holds, one indent further in.
+        for (offset, items) in guide_offsets(3).into_iter().zip([16.0, 32.0, 48.0]) {
+            assert!(
+                offset > items - INDENT + EXPANDER_SIDE && offset < items,
+                "{offset}"
+            );
+        }
     }
 }

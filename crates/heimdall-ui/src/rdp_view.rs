@@ -162,15 +162,14 @@ pub fn preview(preview: &RdpPreview) -> Element<'_, Message> {
     )
     .spacing(2.0);
     let mut content = column![
-        text(fl!("ui-rdp-title")).size(font_size::TITLE),
-        text(fl!(
+        crate::dialog_parts::list_title(fl!("ui-rdp-title")),
+        crate::dialog_parts::note(fl!(
             "ui-rdp-summary",
             chosen = chosen,
             files = files,
             conflicts = conflicts,
             passwords = passwords
-        ))
-        .size(font_size::BODY),
+        )),
     ]
     .spacing(spacing::SM);
     if !preview.unreadable.is_empty() {
@@ -202,21 +201,15 @@ pub fn preview(preview: &RdpPreview) -> Element<'_, Message> {
         .push(choices)
         .push(header)
         .push(styles::scroll(rows).height(ROWS_HEIGHT))
-        .push(
-            row![
-                button(text(fl!("ui-dialog-cancel-button")))
-                    .style(styles::secondary)
-                    .on_press(Message::App(AppMessage::DismissDialog)),
-                button(text(fl!("ui-rdp-import-button")))
-                    .style(styles::primary)
-                    .on_press_maybe(
-                        preview
-                            .can_import()
-                            .then_some(Message::App(AppMessage::ConfirmDialog))
-                    ),
-            ]
-            .spacing(spacing::SM),
-        )
+        .push(crate::dialog_parts::buttons([
+            crate::dialog_parts::cancel(),
+            crate::dialog_parts::confirm(
+                fl!("ui-rdp-import-button"),
+                preview
+                    .can_import()
+                    .then_some(Message::App(AppMessage::ConfirmDialog)),
+            ),
+        ]))
         .width(Length::Shrink)
         .into()
 }

@@ -472,9 +472,9 @@ pub fn view(heading: Header, body: Element<'_, Message>) -> Element<'_, Message>
 #[must_use]
 pub fn veil<'a>() -> Element<'a, Message> {
     opaque(
-        container(center(
-            text(fl!("ui-vault-locked-title")).size(font_size::TITLE),
-        ))
+        container(center(crate::dialog_parts::title(fl!(
+            "ui-vault-locked-title"
+        ))))
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|theme: &iced::Theme| container::Style {

@@ -394,6 +394,15 @@ pub enum Notice {
     WinRmGatewayNtlm,
     /// A `WinRM` session started with its TLS certificate checks skipped, as the C# warns.
     WinRmCertificateSkipped,
+    /// An FTP session opened without TLS to this host and port: its credentials and files
+    /// cross the network in clear, as the C# `WarnFtpCleartext` says
+    /// (`FtpHandler.cs:136-161`).
+    FtpCleartext {
+        /// Host.
+        host: String,
+        /// Port.
+        port: u16,
+    },
     /// A Citrix application is being launched, as the C# "Launching Citrix session...".
     CitrixLaunching,
     /// The Citrix application of this profile name was launched, outside Heimdall.

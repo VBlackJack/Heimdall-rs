@@ -43,6 +43,9 @@ pub enum UpdateMessage {
     Later,
     /// The banner's "Skip this version": hidden for good, for this release.
     Skip,
+    /// The Settings page's "Offer it again": the release skipped is forgotten, so the next
+    /// look offers it again, as the C# `ClearSkippedVersion` (`SettingsViewModel.cs:253`).
+    ClearSkipped,
 }
 
 /// What the Settings page says of its last "Check now".
@@ -171,6 +174,12 @@ impl App {
                     self.save_update_check();
                 }
                 self.updates.shown = false;
+                Vec::new()
+            }
+            UpdateMessage::ClearSkipped => {
+                if self.settings.update_check.skipped.take().is_some() {
+                    self.save_update_check();
+                }
                 Vec::new()
             }
         }

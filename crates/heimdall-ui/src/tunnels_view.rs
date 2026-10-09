@@ -105,7 +105,7 @@ pub fn problem_text(problem: TunnelProblem) -> String {
 
 fn field(label: String, value: &str, which: TunnelField) -> Element<'_, Message> {
     column![
-        text(label),
+        crate::dialog_parts::dialog_label(label),
         text_input("", value)
             .style(styles::text_input)
             .on_input(move |value| {
@@ -129,19 +129,15 @@ pub fn new_tunnel<'a>(
     gateways: &'a [SshGateway],
     problem: Option<TunnelProblem>,
 ) -> Element<'a, Message> {
-    let mut content = column![
-        text(fl!("ui-tunnel-new-title")).size(font_size::TITLE),
-        text(fl!("ui-tunnel-new-description")),
-    ]
-    .spacing(spacing::SM);
-    let cancel = button(text(fl!("ui-dialog-cancel-button")))
-        .style(styles::secondary)
-        .on_press(Message::App(AppMessage::DismissDialog));
+    let title = crate::dialog_parts::title(fl!("ui-tunnel-new-title"));
+    let mut content =
+        column![crate::dialog_parts::note(fl!("ui-tunnel-new-description"))].spacing(spacing::SM);
     if gateways.is_empty() {
-        return content
-            .push(text(fl!("ui-tunnel-no-gateways")).style(text::warning))
-            .push(row![cancel].spacing(spacing::SM))
-            .into();
+        return crate::dialog_parts::form(
+            title,
+            content.push(text(fl!("ui-tunnel-no-gateways")).style(text::warning)),
+            crate::dialog_parts::buttons([crate::dialog_parts::cancel()]),
+        );
     }
     let choices: Vec<GatewayChoice> = gateways.iter().map(choice).collect();
     let selected = choices
@@ -151,7 +147,7 @@ pub fn new_tunnel<'a>(
     content = content
         .push(
             column![
-                text(fl!("ui-tunnel-gateway-label")),
+                crate::dialog_parts::dialog_label(fl!("ui-tunnel-gateway-label")),
                 pick_list(choices, selected, |chosen: GatewayChoice| {
                     Message::App(AppMessage::Tunnel(TunnelMessage::Gateway(chosen.id)))
                 })
@@ -181,16 +177,21 @@ pub fn new_tunnel<'a>(
             TunnelField::Label,
         ));
     if let Some(problem) = problem {
-        content = content.push(text(problem_text(problem)).style(text::danger));
+        content = content.push(crate::dialog_parts::error(problem_text(problem)));
     }
-    let open = button(text(fl!("ui-tunnel-open-button")))
-        .style(styles::primary)
-        .on_press_maybe(
-            problem
-                .is_none()
-                .then_some(Message::App(AppMessage::ConfirmDialog)),
-        );
-    content.push(row![cancel, open].spacing(spacing::SM)).into()
+    crate::dialog_parts::form(
+        title,
+        content,
+        crate::dialog_parts::buttons([
+            crate::dialog_parts::cancel(),
+            crate::dialog_parts::confirm(
+                fl!("ui-tunnel-open-button"),
+                problem
+                    .is_none()
+                    .then_some(Message::App(AppMessage::ConfirmDialog)),
+            ),
+        ]),
+    )
 }
 
 /// The question about a gateway's unknown key on a tunnel's way, in the words and with the
@@ -203,9 +204,9 @@ pub fn host_key<'a>(
     algorithm: &'a str,
 ) -> Element<'a, Message> {
     let port = port.to_string();
-    column![
-        text(fl!("ui-hostkey-title")).size(font_size::TITLE),
-        text(fl!("ui-hostkey-body", host = host, port = port.as_str())),
+    // As the C# `HostKeyPromptDialog`: the warning's icon beside its title.
+    let body = column![
+        crate::dialog_parts::body(fl!("ui-hostkey-body", host = host, port = port.as_str())),
         text(fl!("ui-hostkey-algorithm", algorithm = algorithm)).font(Font::MONOSPACE),
         row![
             text(fl!("ui-hostkey-fingerprint", fingerprint = fingerprint))
@@ -217,21 +218,25 @@ pub fn host_key<'a>(
         ]
         .spacing(spacing::SM)
         .align_y(Alignment::Center),
-        row![
-            button(text(fl!("ui-hostkey-reject-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-hostkey-trust-once-button")))
-                .style(styles::secondary)
-                .on_press(tunnel(TunnelMessage::TrustKeyOnce)),
-            button(text(fl!("ui-hostkey-accept-button")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
     ]
-    .spacing(spacing::SM)
-    .into()
+    .spacing(spacing::SM);
+    crate::dialog_parts::form(
+        crate::dialog_parts::header(
+            crate::dialog_parts::Severity::Warning,
+            crate::dialog_parts::title(fl!("ui-hostkey-title")),
+        ),
+        body,
+        crate::dialog_parts::buttons([
+            crate::dialog_parts::action(fl!("ui-hostkey-reject-button"), styles::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            crate::dialog_parts::action(fl!("ui-hostkey-trust-once-button"), styles::secondary)
+                .on_press(tunnel(TunnelMessage::TrustKeyOnce)),
+            crate::dialog_parts::confirm(
+                fl!("ui-hostkey-accept-button"),
+                Some(Message::App(AppMessage::ConfirmDialog)),
+            ),
+        ]),
+    )
 }
 
 fn tunnel(message: TunnelMessage) -> Message {

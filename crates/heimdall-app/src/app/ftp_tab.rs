@@ -22,7 +22,7 @@ use heimdall_core::profile::{FtpProfile, ProfileId};
 use heimdall_rdp::CertificateHash;
 use tokio_util::sync::CancellationToken;
 
-use super::{App, Effect, Phase, Tab, TabProfile};
+use super::{App, Effect, Notice, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::files::FilesPane;
 use crate::ftp_driver::FtpRequest;
@@ -31,7 +31,36 @@ use crate::ids::{AttemptId, TabId};
 /// Name of the file of the FTPS servers the user trusts, beside the SSH `known_hosts`.
 const KNOWN_FTPS_HOSTS_FILE_NAME: &str = "known_ftps_hosts";
 
+impl Tab {
+    /// Whether this tab is an FTP session without TLS, whose credentials and files cross
+    /// the network in clear: the C# raises its "Sent in clear text (no TLS)" badge for it
+    /// (`EmbeddedSftpView.xaml.cs:2737-2771`, `EmbeddedSftpView.xaml:161-186`). Anonymous
+    /// sessions too: no password is sent, but every file still is in clear.
+    #[must_use]
+    pub fn sent_in_clear(&self) -> bool {
+        matches!(&self.profile, TabProfile::Ftp(profile) if !profile.tls)
+    }
+}
+
 impl App {
+    /// Says, once an FTP tab without TLS connects, that it is in clear, as the C# status
+    /// line tells the handler's warning on connect (`ConnectionService.cs:309-314`).
+    pub(super) fn warn_ftp_cleartext(&mut self, tab_id: TabId) {
+        let notice = match self.tab(tab_id) {
+            Some(tab) if tab.phase == Phase::Connected && tab.sent_in_clear() => {
+                match &tab.profile {
+                    TabProfile::Ftp(profile) => Notice::FtpCleartext {
+                        host: profile.host.clone(),
+                        port: profile.port,
+                    },
+                    _ => return,
+                }
+            }
+            _ => return,
+        };
+        self.tell(notice);
+    }
+
     /// The file of the FTPS servers the user trusts, beside the SSH one.
     pub(super) fn known_ftps_hosts(&self) -> PathBuf {
         self.config

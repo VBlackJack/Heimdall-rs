@@ -27,7 +27,7 @@ use heimdall_term::local;
 
 use super::{App, Dialog, Message};
 use crate::profile_draft::{
-    DraftError, DraftProfile, ProfileDraft, ProfileField, ProfileToggle, SavedSecret,
+    DraftError, DraftProfile, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle, SavedSecret,
 };
 use crate::text::server_text;
 
@@ -65,6 +65,7 @@ impl App {
                     self.settings.ssh_default_mode,
                     self.settings.rdp_default_mode,
                 );
+                let gateway = self.last_used_gateway(protocol);
                 if let Some(Dialog::EditProfile { draft, error }) = self.dialog.as_mut()
                     && draft.editing.is_none()
                 {
@@ -72,6 +73,9 @@ impl App {
                     // As the C# "Add server" starts with the settings' default SSH and RDP
                     // modes (`ServerListViewModel.cs:1527-1531`).
                     draft.ssh_mode = ssh_mode;
+                    if let Some(gateway) = gateway {
+                        draft.choose_gateway(gateway);
+                    }
                     draft.rdp_extras.external = rdp_mode.is_external();
                     *error = None;
                 }
@@ -116,6 +120,36 @@ impl App {
         };
         draft.rdp_extras.external = self.settings.rdp_default_mode.is_external();
         draft
+    }
+
+    /// The gateway a new profile of `protocol` starts on, as the C# "Add server" preselects
+    /// the last one used (`ServerListViewModel.cs:2290-2297`): only for a protocol that goes
+    /// through one, and only while that gateway still exists, matched as the C# matches it,
+    /// whatever the case.
+    fn last_used_gateway(&self, protocol: DraftProtocol) -> Option<ProfileId> {
+        if !protocol.routes_through_gateway() {
+            return None;
+        }
+        let last = self.settings.last_used_gateway.as_ref()?;
+        self.gateways()
+            .iter()
+            .find(|gateway| gateway.id.as_str().eq_ignore_ascii_case(last.as_str()))
+            .map(|gateway| gateway.id.clone())
+    }
+
+    /// Keeps `gateway`, the one of the profile just saved, as the one a new profile starts
+    /// on, as the C# writes `LastUsedGatewayId` after "Add server", "Save as profile" and
+    /// "Edit server" (`ServerListViewModel.cs:1547-1552`, `1606-1610`, `1712-1717`): none
+    /// when the profile has none. A save that fails is logged; the profile itself is saved
+    /// all the same.
+    fn remember_gateway(&mut self, gateway: Option<ProfileId>) {
+        if self.settings.last_used_gateway == gateway {
+            return;
+        }
+        self.settings.last_used_gateway = gateway;
+        if let Err(error) = self.settings.save(&self.settings_file) {
+            log::warn!("the last gateway used was not saved: {error}");
+        }
     }
 
     /// Opens the form of a saved profile, in its own protocol.
@@ -215,6 +249,7 @@ impl App {
         let drops_password =
             matches!(&profile, DraftProfile::WinRm(winrm) if winrm.username.is_none());
         let favorite = draft.is_on(ProfileToggle::Favorite);
+        let gateway = saved_gateway(&draft);
         // The key whose passphrase the form saves: an SSH profile's, which may have none.
         let key_file = match &profile {
             DraftProfile::Ssh(profile) => Some(profile.key_path.clone()),
@@ -272,6 +307,7 @@ impl App {
             self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
+        self.remember_gateway(gateway);
         if let Some(endpoint) = endpoint
             && self.can_save_passwords()
         {
@@ -319,6 +355,15 @@ impl App {
             }
         }
     }
+}
+
+/// The gateway `draft` saves its profile with: none for a protocol that goes through none.
+fn saved_gateway(draft: &ProfileDraft) -> Option<ProfileId> {
+    draft
+        .protocol
+        .routes_through_gateway()
+        .then(|| draft.routed_gateway())
+        .flatten()
 }
 
 fn saved_id(profile: &DraftProfile) -> &ProfileId {

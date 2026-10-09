@@ -16,8 +16,8 @@
 
 //! The session selected, in place of a session when none is open, as the C# detail panel:
 //! at the top left, its name, its protocol in the protocol's colour and its state; where it
-//! connects and its folder; a card of what is known of its account; Connect, then Edit and
-//! Delete, and their keys.
+//! connects, as "host : port", and its folder; a card of what is known of its account, a
+//! favourite marked with the star; Connect, then Edit and Delete, and their keys.
 
 use heimdall_app::{
     GatewayBadge, Message as AppMessage, ProfileKind, ProfileSummary, SavedCredentials,
@@ -27,6 +27,7 @@ use iced::widget::{Column, button, column, container, row, space, text};
 use iced::{Alignment, Element, Font, Length, Theme, font};
 
 use crate::i18n::fl;
+use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
@@ -42,6 +43,11 @@ pub(crate) const SMALL_GAP: f32 = 6.0;
 const PILL_PADDING_Y: f32 = 2.0;
 /// Space on each side of Connect's label, as the C# primary button's padding.
 const CONNECT_PADDING_X: f32 = 16.0;
+/// Side of the favourite's star, as the C# glyph at `FontSizeBody`.
+const FAVORITE_SIDE: f32 = font_size::BODY;
+/// Height of a line of text for its size, as iced lays a line out by default: the star is
+/// centred on a line of the card.
+const LINE_HEIGHT: f32 = 1.3;
 
 /// The window's font, bold, as the C# panel's title.
 pub(crate) const BOLD: Font = Font {
@@ -118,35 +124,78 @@ fn line<'a>(label: String, value: String) -> Element<'a, Message> {
     .into()
 }
 
+/// What a line of the card says: a text, in the warning colour when `warning`, or the
+/// favourite's star.
+enum Value {
+    /// A text.
+    Text { said: String, warning: bool },
+    /// The C# `FavoriteStarFill` glyph, in the warning colour.
+    Star,
+}
+
+impl Value {
+    /// A text in the window's colour.
+    fn plain(said: String) -> Self {
+        Self::Text {
+            said,
+            warning: false,
+        }
+    }
+
+    /// It drawn, as the C# card's second column.
+    fn view<'a>(self) -> Element<'a, Message> {
+        match self {
+            Self::Text { said, warning } => text(said)
+                .size(font_size::CAPTION)
+                .style(if warning {
+                    text::warning
+                } else {
+                    text::default
+                })
+                .into(),
+            // As the C# `FontSizeBody` glyph in `WarningTextBrush`, centred on its line.
+            Self::Star => container(icons::icon(
+                Icon::FavoriteStarFill,
+                Tint::Warning,
+                FAVORITE_SIDE,
+            ))
+            .center_y(font_size::CAPTION * LINE_HEIGHT)
+            .into(),
+        }
+    }
+}
+
 /// What is known of the account, labelled, as the C# card: username, gateway, credentials
-/// kept, tags, favourite. `None` when nothing is.
+/// kept, tags, and the favourite's star. `None` when nothing is.
 fn card<'a>(
     profile: &ProfileSummary,
     saved: Option<&SavedCredentials>,
 ) -> Option<Element<'a, Message>> {
-    let mut fields: Vec<(String, String, bool)> = Vec::new();
+    let mut fields: Vec<(String, Value)> = Vec::new();
     if let Some(user) = profile.username.as_deref().filter(|user| !user.is_empty()) {
-        fields.push((fl!("ui-detail-username"), server_text(user), false));
+        fields.push((fl!("ui-detail-username"), Value::plain(server_text(user))));
     }
     if let Some(gateway) = &profile.gateway {
-        let (said, missing) = match gateway {
+        let (said, warning) = match gateway {
             GatewayBadge::Via(name) => (server_text(name), false),
             GatewayBadge::Missing => (fl!("ui-tree-gateway-missing"), true),
         };
-        fields.push((fl!("ui-detail-gateway"), said, missing));
+        fields.push((fl!("ui-detail-gateway"), Value::Text { said, warning }));
     }
     if let Some(saved) = saved.filter(|saved| !saved.is_empty()) {
-        fields.push((fl!("ui-detail-credentials"), credentials(saved), false));
+        fields.push((
+            fl!("ui-detail-credentials"),
+            Value::plain(credentials(saved)),
+        ));
     }
     if !profile.metadata.tags.is_empty() {
         fields.push((
             fl!("ui-detail-tags"),
-            server_text(&profile.metadata.tags),
-            false,
+            Value::plain(server_text(&profile.metadata.tags)),
         ));
     }
     if profile.favorite {
-        fields.push((fl!("ui-detail-favorite"), fl!("ui-detail-yes"), false));
+        fields.push((fl!("ui-detail-favorite"), Value::Star));
     }
     if fields.is_empty() {
         return None;
@@ -154,13 +203,9 @@ fn card<'a>(
     // Two columns, as the C# grid: the labels as wide as the widest.
     let mut labels = Column::new().spacing(spacing::XS);
     let mut values = Column::new().spacing(spacing::XS).width(Length::Fill);
-    for (label, value, warning) in fields {
+    for (label, value) in fields {
         labels = labels.push(text(label).size(font_size::CAPTION).style(text::secondary));
-        values = values.push(text(value).size(font_size::CAPTION).style(if warning {
-            text::warning
-        } else {
-            text::default
-        }));
+        values = values.push(value.view());
     }
     Some(
         container(row![labels, values].spacing(spacing::MD))
@@ -202,9 +247,13 @@ pub fn view<'a>(
     ];
     if let Some((host, port)) = &profile.endpoint {
         panel = panel.push(gap(spacing::MD)).push(
-            text(format!("{}:{port}", server_text(host)))
-                .size(font_size::BODY_LARGE)
-                .style(text::secondary),
+            text(fl!(
+                "ui-detail-host-port",
+                host = server_text(host),
+                port = port.to_string()
+            ))
+            .size(font_size::BODY_LARGE)
+            .style(text::secondary),
         );
     }
     if let Some(group) = &profile.group {
