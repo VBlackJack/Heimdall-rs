@@ -307,6 +307,23 @@ pub enum Message {
         /// What it saw.
         probe: crate::citrix_session::Probe,
     },
+    /// End a Citrix tab's session, as the C# "Terminate", asked first: its client asked to
+    /// close, or forced once it did not.
+    CitrixTerminate {
+        /// The tab.
+        tab: TabId,
+        /// Whether the client is forced.
+        force: bool,
+    },
+    /// What a request to end a Citrix tab's client came to.
+    CitrixTerminated {
+        /// The tab.
+        tab: TabId,
+        /// The client process asked.
+        pid: u32,
+        /// What it came to.
+        result: crate::citrix_terminate::TerminateResult,
+    },
     /// An RDP profile was opened in Remote Desktop Connection, or why not.
     RdpExternalLaunched {
         /// The profile's name.
@@ -874,6 +891,12 @@ impl fmt::Debug for Message {
             Self::CitrixProbed { tab, probe } => {
                 write!(f, "CitrixProbed({}, {probe:?})", tab.value())
             }
+            Self::CitrixTerminate { tab, force } => {
+                write!(f, "CitrixTerminate({}, {force})", tab.value())
+            }
+            Self::CitrixTerminated { tab, pid, result } => {
+                write!(f, "CitrixTerminated({}, {pid}, {result:?})", tab.value())
+            }
             Self::RdpExternalLaunched { result, .. } => {
                 write!(f, "RdpExternalLaunched({})", result.is_ok())
             }
@@ -1258,6 +1281,16 @@ pub enum Effect {
         launcher: std::sync::Arc<dyn crate::citrix_session::LauncherWatch>,
         /// Whether the client's processes are listed.
         lists: bool,
+    },
+    /// Ask a Citrix tab's client to close, or force it, by `taskkill.exe`, off the UI
+    /// thread; answered with [`Message::CitrixTerminated`].
+    TerminateCitrix {
+        /// The tab.
+        tab: TabId,
+        /// The client process.
+        pid: u32,
+        /// Whether it is forced.
+        force: bool,
     },
     /// Open an RDP profile in Remote Desktop Connection, off the UI thread: its connection
     /// file written and `mstsc.exe` started on it; answered with
@@ -1707,6 +1740,9 @@ impl fmt::Debug for Effect {
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
                 write!(f, "ProbeCitrix({}, {lists})", tab.value())
+            }
+            Self::TerminateCitrix { tab, pid, force } => {
+                write!(f, "TerminateCitrix({}, {pid}, {force})", tab.value())
             }
             Self::LaunchRdpExternal { .. } => f.write_str("LaunchRdpExternal(..)"),
             Self::ProbePuttyHostKey { profile, .. } => {
@@ -2779,6 +2815,16 @@ pub enum Dialog {
         /// What it is connected to.
         name: String,
     },
+    /// End a Citrix tab's session, as the C# "Terminate the Citrix session?" asks, or force
+    /// its client once it did not close.
+    ConfirmCitrixTerminate {
+        /// The tab.
+        tab: TabId,
+        /// Its client process.
+        pid: u32,
+        /// Whether the client is forced.
+        force: bool,
+    },
     /// A new name for a profile.
     RenameProfile {
         /// The profile.
@@ -3268,6 +3314,14 @@ impl App {
             Message::CitrixTick => self.citrix_tick(),
             Message::CitrixProbed { tab, probe } => {
                 self.citrix_probed(tab, &probe);
+                Vec::new()
+            }
+            Message::CitrixTerminate { tab, force } => {
+                self.request_citrix_terminate(tab, force, Instant::now());
+                Vec::new()
+            }
+            Message::CitrixTerminated { tab, pid, result } => {
+                self.citrix_terminated(tab, pid, result, Instant::now());
                 Vec::new()
             }
             Message::ReachabilityTick => self.reachability_round(),
@@ -4514,6 +4568,9 @@ impl App {
             Some(Dialog::ConfirmDisconnectDesktop { tab, .. }) => {
                 self.disconnect_desktop(tab);
                 Vec::new()
+            }
+            Some(Dialog::ConfirmCitrixTerminate { tab, pid, force }) => {
+                self.confirm_citrix_terminate(tab, pid, force, Instant::now())
             }
             Some(Dialog::BulkEdit {
                 field,

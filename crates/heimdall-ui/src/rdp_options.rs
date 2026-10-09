@@ -137,7 +137,7 @@ fn opens_in_tab(draft: &ProfileDraft) -> bool {
 
 /// A group of the options, named as the C# names its tab.
 fn group<'a>(title: String) -> Element<'a, Message> {
-    text(title).into()
+    crate::dialog_parts::section(title, None)
 }
 
 /// A part of a group, named as the C# labels it.

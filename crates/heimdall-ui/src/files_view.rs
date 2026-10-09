@@ -939,22 +939,17 @@ pub fn sudo_delete_question<'a>(names: &[String], more: usize) -> Element<'a, Me
         listed = listed
             .push(text(fl!("ui-dialog-sudo-delete-more", count = more)).size(font_size::CAPTION));
     }
-    column![
-        text(fl!("ui-dialog-sudo-delete-title")).size(font_size::SUBTITLE),
-        text(fl!("ui-dialog-sudo-delete-body")),
-        styles::scroll(listed).height(Length::Shrink),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-sudo-delete-confirm")))
-                .style(styles::danger)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
+    crate::dialog_parts::choice(
+        crate::dialog_parts::Severity::Danger,
+        fl!("ui-dialog-sudo-delete-title"),
+        column![
+            crate::dialog_parts::body(fl!("ui-dialog-sudo-delete-body")),
+            styles::scroll(listed).height(Length::Shrink),
         ]
         .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+        fl!("ui-dialog-cancel-button"),
+        fl!("ui-dialog-sudo-delete-confirm"),
+    )
 }
 
 /// The C# filter and hidden-files toggle of a pane, lit while hidden names show.

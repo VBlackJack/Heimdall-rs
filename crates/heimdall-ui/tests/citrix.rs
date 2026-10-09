@@ -30,7 +30,7 @@ use heimdall_core::profile::{CitrixProfile, ProfileId};
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, ProfileTab, Shell};
 use heimdall_ui::status_bar::status_text;
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
@@ -128,17 +128,29 @@ fn a_citrix_form_asks_for_its_storefront_and_application_not_a_server() {
         "Citrix Workspace",
         "StoreFront URL",
         "Application name",
+        "Name the session as the tree lists it.",
+    ] {
+        ui.find(label).expect(label);
+    }
+    for absent in ["Server *", "Password", "Username", "Network"] {
+        assert!(ui.find(absent).is_err(), "{absent}");
+    }
+    drop(ui);
+    // The ICA file and the boxes are the C# Options tab's.
+    let _ = shell.update(Message::ProfileTab(ProfileTab::Options));
+    let mut ui = common::simulator(
+        settings(),
+        Size::new(WINDOW.width, TALL_HEIGHT),
+        shell.view(),
+    );
+    for label in [
         "Advanced Citrix options",
         "ICA file path",
         "Provide either a StoreFront URL + application name, or a direct ICA file path.",
         "Seamless mode",
         "Use SSO (Kerberos)",
-        "Name the session as the tree lists it.",
     ] {
         ui.find(label).expect(label);
-    }
-    for absent in ["Server *", "Password", "Username", "Gateway routing"] {
-        assert!(ui.find(absent).is_err(), "{absent}");
     }
 }
 
@@ -305,4 +317,105 @@ fn each_client_state_is_said() {
         client_text(&ClientState::NotStarted(CitrixRefusal::WorkspaceNotFound)),
         "Citrix Workspace not found. Install Citrix Workspace App."
     );
+}
+
+/// A Citrix tab of `app`, launched with the clients `before` running, then seeing `now`.
+fn seen_tab(app: &mut App, before: &[u32], now: &[u32]) -> heimdall_app::TabId {
+    use heimdall_app::Effect;
+    use heimdall_app::citrix_session::{Launched, LauncherStatus, Probe};
+
+    // The launch asked is not run: the tab is drawn from what it would answer.
+    let effects = app.update(AppMessage::OpenCitrix(ProfileId::new("outlook")));
+    let [Effect::LaunchCitrix { tab, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let tab = *tab;
+    app.update(AppMessage::CitrixLaunched {
+        tab,
+        name: "Outlook".to_owned(),
+        result: Ok(Launched {
+            baseline: Ok(before.iter().copied().collect()),
+            launcher: std::sync::Arc::new(Watch(LauncherStatus::Running)),
+            at: std::time::SystemTime::now(),
+        }),
+    });
+    app.update(AppMessage::CitrixProbed {
+        tab,
+        probe: Probe {
+            launcher: LauncherStatus::Running,
+            clients: Ok(now.iter().copied().collect()),
+        },
+    });
+    tab
+}
+
+#[test]
+fn its_own_client_offers_terminate_asked_first_in_the_csharp_words() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), Some(outlook()));
+    let tab = seen_tab(&mut app, &[], &[4242]);
+    let mut shell = Shell::with_app(app);
+    {
+        let mut ui = common::simulator(settings(), WINDOW, shell.view());
+        ui.click("Terminate").expect("the button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::CitrixTerminate { tab: asked, force: false }) if asked == tab
+        )));
+    }
+    let _ = shell.update(Message::App(AppMessage::CitrixTerminate {
+        tab,
+        force: false,
+    }));
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("Terminate the Citrix session?")
+        .expect("the C# title");
+    ui.find(
+        "Unsaved work in the remote application will be lost. Are you sure you want to terminate?",
+    )
+    .expect("the C# question");
+}
+
+#[test]
+fn a_shared_client_offers_no_terminate() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), Some(outlook()));
+    seen_tab(&mut app, &[5], &[5]);
+    let shell = Shell::with_app(app);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("The session uses a Citrix client that was already running: it cannot be told apart from the other sessions.")
+        .expect("shared");
+    assert!(ui.find("Terminate").is_err(), "no button");
+}
+
+#[test]
+fn each_terminate_step_is_said() {
+    use heimdall_app::citrix_terminate::{TerminateOffer, TerminateResult};
+    use heimdall_ui::citrix_view::{terminate_question, terminate_text};
+
+    assert_eq!(terminate_text(&TerminateOffer::Nothing), None);
+    assert_eq!(terminate_text(&TerminateOffer::Terminate), None);
+    assert_eq!(
+        terminate_text(&TerminateOffer::Pending { force: false }).as_deref(),
+        Some("Asking the Citrix client to close...")
+    );
+    assert_eq!(
+        terminate_text(&TerminateOffer::Asked { force: false }).as_deref(),
+        Some("The Citrix client was asked to close.")
+    );
+    assert_eq!(
+        terminate_text(&TerminateOffer::Force(TerminateResult::Requested)).as_deref(),
+        Some("The Citrix client is still running after it was asked to close.")
+    );
+    assert_eq!(
+        terminate_text(&TerminateOffer::Force(TerminateResult::Refused(1))).as_deref(),
+        Some("The request to end the Citrix client failed: taskkill ended with exit code 1.")
+    );
+    assert!(
+        terminate_text(&TerminateOffer::Force(TerminateResult::TimedOut))
+            .is_some_and(|said| said.contains("in time"))
+    );
+    let (title, _, action) = terminate_question(true);
+    assert_eq!(title, "Force terminate the Citrix session?");
+    assert_eq!(action, "Force terminate");
 }

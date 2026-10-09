@@ -14,38 +14,43 @@
  * limitations under the License.
  */
 
-//! A Citrix profile's form, as the C# cards: "Citrix Workspace", the `StoreFront` address
-//! and the application's name, then "Advanced Citrix options", the ICA file and what it
-//! takes; its boxes follow, drawn as every protocol's.
+//! A Citrix profile's form, as the C# cards: "Citrix Workspace" on the General tab, the
+//! `StoreFront` address and the application's name, then "Advanced Citrix options" on the
+//! Options tab, the ICA file and what it takes; its boxes follow, drawn as every protocol's.
 
 use heimdall_app::profile_draft::ProfileField;
 use iced::Element;
-use iced::widget::{column, text};
+use iced::widget::column;
 
+use crate::dialog_parts;
 use crate::i18n::fl;
 use crate::shell::Message;
-use crate::tokens::{font_size, spacing};
+use crate::tokens::spacing;
 
 /// The "Citrix Workspace" card; `field` draws a field of the form as the other cards do.
 pub fn basics<'a>(field: impl Fn(ProfileField) -> Element<'a, Message>) -> Element<'a, Message> {
     column![
-        text(fl!("ui-profile-citrix-title")),
-        text(fl!("ui-profile-citrix-desc")).size(font_size::CAPTION),
+        dialog_parts::section(
+            fl!("ui-profile-citrix-title"),
+            Some(fl!("ui-profile-citrix-desc"))
+        ),
         field(ProfileField::StoreFrontUrl),
         field(ProfileField::AppName),
     ]
-    .spacing(spacing::SM)
+    .spacing(spacing::MD)
     .into()
 }
 
 /// The "Advanced Citrix options" card: the ICA file, then the C# hint of what to fill.
 pub fn advanced<'a>(field: impl Fn(ProfileField) -> Element<'a, Message>) -> Element<'a, Message> {
     column![
-        text(fl!("ui-profile-citrix-advanced-title")),
-        text(fl!("ui-profile-citrix-advanced-desc")).size(font_size::CAPTION),
+        dialog_parts::section(
+            fl!("ui-profile-citrix-advanced-title"),
+            Some(fl!("ui-profile-citrix-advanced-desc"))
+        ),
         field(ProfileField::IcaFile),
-        text(fl!("ui-profile-citrix-hint")).size(font_size::CAPTION),
+        dialog_parts::hint(fl!("ui-profile-citrix-hint")),
     ]
-    .spacing(spacing::SM)
+    .spacing(spacing::MD)
     .into()
 }

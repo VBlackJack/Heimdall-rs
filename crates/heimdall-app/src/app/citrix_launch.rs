@@ -17,14 +17,18 @@
 //! Citrix profiles: their application launched outside Heimdall, as the C# `CitrixHandler`
 //! launches it, and a tab showing its status, as the C# `EmbeddedCitrixView` in its external
 //! mode: how it launched, and its client's state, looked at every 3 seconds while the tab is
-//! open. Closing the tab stops looking; the Citrix session is left as it is.
+//! open. Closing the tab stops looking; the Citrix session is left as it is. Only the
+//! user's Terminate, confirmed, ends it, as [`crate::citrix_terminate`] says.
+
+use std::time::Instant;
 
 use heimdall_core::profile::{CitrixProfile, ProfileId};
 use tokio_util::sync::CancellationToken;
 
-use super::{App, Effect, Notice, Phase, Tab, TabProfile};
+use super::{App, Dialog, Effect, Notice, Phase, Tab, TabProfile};
 use crate::citrix::{self, CitrixRefusal};
 use crate::citrix_session::{CitrixPane, ClientState, LaunchMethod, Launched, Pids, Probe};
+use crate::citrix_terminate::{TerminateOffer, TerminateResult};
 use crate::driver::Purpose;
 use crate::ids::{AttemptId, TabId};
 
@@ -164,15 +168,19 @@ impl App {
             .collect()
     }
 
-    /// What tab `tab`'s probe saw; nothing when it was closed meanwhile.
-    pub(super) fn citrix_probed(&mut self, tab: TabId, probe: &Probe) {
-        // Another tab's client is never this one's.
-        let claimed: Pids = self
-            .tabs
+    /// The clients the Citrix tabs other than `tab` follow.
+    fn citrix_claimed(&self, tab: TabId) -> Pids {
+        self.tabs
             .iter()
             .filter(|other| other.id != tab)
             .filter_map(|other| other.citrix.as_deref()?.tracker.state().client())
-            .collect();
+            .collect()
+    }
+
+    /// What tab `tab`'s probe saw; nothing when it was closed meanwhile.
+    pub(super) fn citrix_probed(&mut self, tab: TabId, probe: &Probe) {
+        // Another tab's client is never this one's.
+        let claimed = self.citrix_claimed(tab);
         let Some(found) = self.tab_mut(tab) else {
             return;
         };
@@ -187,6 +195,90 @@ impl App {
         }
         if changed {
             follow(found);
+        }
+    }
+
+    /// What Citrix tab `tab` offers at `now` to end its session.
+    #[must_use]
+    pub fn citrix_terminate_offer(&self, tab: TabId, now: Instant) -> TerminateOffer {
+        let claimed = self.citrix_claimed(tab);
+        self.tab(tab)
+            .and_then(|found| found.citrix.as_deref())
+            .map_or(TerminateOffer::Nothing, |pane| {
+                pane.terminate_offer(&claimed, now)
+            })
+    }
+
+    /// The client of tab `tab` that Terminate, or Force terminate when `force`, would end at
+    /// `now`, when it is offered.
+    fn citrix_terminable(&self, tab: TabId, force: bool, now: Instant) -> Option<u32> {
+        let offered = match self.citrix_terminate_offer(tab, now) {
+            TerminateOffer::Terminate => !force,
+            TerminateOffer::Force(_) => force,
+            TerminateOffer::Nothing
+            | TerminateOffer::Pending { .. }
+            | TerminateOffer::Asked { .. } => false,
+        };
+        if !offered {
+            return None;
+        }
+        self.tab(tab)?.citrix.as_deref()?.tracker.state().client()
+    }
+
+    /// Terminate, or Force terminate, pressed in tab `tab`: asked first, as the C# asks.
+    pub(super) fn request_citrix_terminate(&mut self, tab: TabId, force: bool, now: Instant) {
+        if let Some(pid) = self.citrix_terminable(tab, force, now) {
+            self.dialog = Some(Dialog::ConfirmCitrixTerminate { tab, pid, force });
+        }
+    }
+
+    /// Ending client `pid` of tab `tab` confirmed: asked of `taskkill.exe`, when it is still
+    /// the client offered; the launcher is never the fallback.
+    pub(super) fn confirm_citrix_terminate(
+        &mut self,
+        tab: TabId,
+        pid: u32,
+        force: bool,
+        now: Instant,
+    ) -> Vec<Effect> {
+        if self.citrix_terminable(tab, force, now) != Some(pid) {
+            log::info!(
+                "Citrix tab {}: terminate not requested, the client changed",
+                tab.value()
+            );
+            return Vec::new();
+        }
+        if let Some(pane) = self
+            .tab_mut(tab)
+            .and_then(|found| found.citrix.as_deref_mut())
+        {
+            pane.terminate_started(pid, force, now);
+        }
+        log::info!(
+            "Citrix tab {}: terminate client {pid} requested, force {force}",
+            tab.value()
+        );
+        vec![Effect::TerminateCitrix { tab, pid, force }]
+    }
+
+    /// What the request to end client `pid` of tab `tab` came to, at `now`; nothing when the
+    /// tab was closed meanwhile.
+    pub(super) fn citrix_terminated(
+        &mut self,
+        tab: TabId,
+        pid: u32,
+        result: TerminateResult,
+        now: Instant,
+    ) {
+        log::info!(
+            "Citrix tab {}: terminate client {pid}: {result:?}",
+            tab.value()
+        );
+        if let Some(pane) = self
+            .tab_mut(tab)
+            .and_then(|found| found.citrix.as_deref_mut())
+        {
+            pane.terminate_answered(pid, result, now);
         }
     }
 }
