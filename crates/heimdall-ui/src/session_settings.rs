@@ -15,8 +15,8 @@
  */
 
 //! The numbers of the Settings page, as the C# SSH/SFTP Session tab, its session health
-//! monitor, its session logging and its idle auto-lock have them: each typed, then applied
-//! with Enter; one out of its range stays typed, its rule said under it.
+//! monitor, its session logging, its idle auto-lock and its update checks have them: each
+//! typed, then applied with Enter; one out of its range stays typed, its rule said under it.
 
 use heimdall_app::SettingsMessage;
 use heimdall_core::settings::{
@@ -25,7 +25,7 @@ use heimdall_core::settings::{
     REACHABILITY_PROBES_MAX, REACHABILITY_PROBES_MIN, REACHABILITY_TIMEOUT_MAX,
     REACHABILITY_TIMEOUT_MIN, SESSION_LOG_RETENTION_DAYS_MAX, SESSION_LOG_RETENTION_DAYS_MIN,
     SSH_KEEP_ALIVE_INTERVAL_MAX, SSH_KEEP_ALIVE_INTERVAL_MIN, SSH_TMOUT_RESET_INTERVAL_MAX,
-    Settings,
+    Settings, UPDATE_INTERVAL_HOURS_MAX, UPDATE_INTERVAL_HOURS_MIN,
 };
 
 use crate::i18n::fl;
@@ -49,6 +49,8 @@ pub enum SessionField {
     TranscriptRetention,
     /// Minutes without input before the workspace locks, 0 for never.
     AutoLock,
+    /// Hours between two looks for a newer release.
+    UpdateInterval,
 }
 
 impl SessionField {
@@ -66,7 +68,7 @@ impl SessionField {
     pub const TRANSCRIPTS: [Self; 1] = [Self::TranscriptRetention];
 
     /// How many there are.
-    pub(crate) const COUNT: usize = 8;
+    pub(crate) const COUNT: usize = 9;
 
     /// Its place among them all.
     pub(crate) fn index(self) -> usize {
@@ -79,6 +81,7 @@ impl SessionField {
             Self::ReachabilityProbes => 5,
             Self::TranscriptRetention => 6,
             Self::AutoLock => 7,
+            Self::UpdateInterval => 8,
         }
     }
 
@@ -93,6 +96,7 @@ impl SessionField {
             Self::ReachabilityProbes => fl!("ui-settings-reachability-probes"),
             Self::TranscriptRetention => fl!("ui-settings-session-log-retention"),
             Self::AutoLock => fl!("ui-settings-auto-lock"),
+            Self::UpdateInterval => fl!("ui-settings-updates-interval"),
         }
     }
 
@@ -105,6 +109,7 @@ impl SessionField {
             Self::ReachabilityTimeout => Some(fl!("ui-settings-milliseconds-unit")),
             Self::TranscriptRetention => Some(fl!("ui-settings-days-unit")),
             Self::AutoLock => Some(fl!("ui-settings-minutes-unit")),
+            Self::UpdateInterval => Some(fl!("ui-settings-hours-unit")),
             Self::ReachabilityProbes => None,
         }
     }
@@ -130,6 +135,7 @@ impl SessionField {
             Self::ReachabilityProbes => settings.reachability.probes,
             Self::TranscriptRetention => settings.session_log_retention_days,
             Self::AutoLock => settings.auto_lock_idle_minutes,
+            Self::UpdateInterval => settings.updates.interval_hours,
         }
     }
 
@@ -144,6 +150,7 @@ impl SessionField {
             Self::ReachabilityProbes => settings::reachability_probes_accepted(value),
             Self::TranscriptRetention => settings::session_log_retention_days_accepted(value),
             Self::AutoLock => settings::auto_lock_idle_minutes_accepted(value),
+            Self::UpdateInterval => settings::update_interval_accepted(value),
         }
     }
 
@@ -158,6 +165,7 @@ impl SessionField {
             Self::ReachabilityProbes => SettingsMessage::ReachabilityProbes(value),
             Self::TranscriptRetention => SettingsMessage::SessionLogRetentionDays(value),
             Self::AutoLock => SettingsMessage::AutoLockIdleMinutes(value),
+            Self::UpdateInterval => SettingsMessage::UpdateInterval(value),
         }
     }
 
@@ -203,6 +211,11 @@ impl SessionField {
                 "ui-settings-auto-lock-refused",
                 min = AUTO_LOCK_IDLE_MINUTES_OFF,
                 max = AUTO_LOCK_IDLE_MINUTES_MAX
+            ),
+            Self::UpdateInterval => fl!(
+                "ui-settings-updates-interval-refused",
+                min = UPDATE_INTERVAL_HOURS_MIN,
+                max = UPDATE_INTERVAL_HOURS_MAX
             ),
         }
     }

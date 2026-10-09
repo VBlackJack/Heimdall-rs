@@ -4631,3 +4631,108 @@ fn the_bulk_password_dialog_names_its_count_and_saves_the_password_typed_twice()
         "none of that kind"
     );
 }
+
+#[test]
+fn a_newer_release_is_offered_in_a_banner_that_full_screen_hides() {
+    use heimdall_app::UpdateMessage;
+    use heimdall_app::update_check::{Outcome, ReleaseTag};
+
+    const BANNER: &str = "A new version is available: 2026.101001";
+    let release = |tag: &str| ReleaseTag::parse(tag).expect(tag);
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()).with_release(Some(release("v2026.100901"))));
+    assert!(simulator(&shell).find(BANNER).is_err(), "nothing found yet");
+    let _ = shell.update(Message::App(AppMessage::Update(UpdateMessage::Checked(
+        Outcome::Latest(release("v2026.101001")),
+    ))));
+    {
+        let mut ui = simulator(&shell);
+        ui.find(BANNER).expect("the banner");
+        for button in ["View release", "Later", "Skip this version"] {
+            ui.click(button).expect(button);
+        }
+        let sent: Vec<UpdateMessage> = ui
+            .into_messages()
+            .filter_map(|message| match message {
+                Message::App(AppMessage::Update(message)) => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sent,
+            [
+                UpdateMessage::ViewRelease,
+                UpdateMessage::Later,
+                UpdateMessage::Skip
+            ]
+        );
+    }
+    let _ = shell.update(Message::ToggleFullscreen);
+    assert!(
+        simulator(&shell).find(BANNER).is_err(),
+        "full screen is the session's"
+    );
+    let _ = shell.update(Message::ToggleFullscreen);
+    simulator(&shell)
+        .find(BANNER)
+        .expect("back with the window");
+    let _ = shell.update(Message::App(AppMessage::Update(UpdateMessage::Later)));
+    assert!(simulator(&shell).find(BANNER).is_err(), "later");
+}
+
+#[test]
+fn the_general_settings_hold_the_csharp_updates_card_and_check_now() {
+    use heimdall_app::UpdateMessage;
+    use heimdall_ui::shell::SessionField;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()).with_release(None));
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(
+        heimdall_ui::shell::SettingsTab::General,
+    ));
+    {
+        let mut ui = tall(&shell);
+        for label in [
+            "Updates",
+            "Check for updates automatically",
+            "Current version",
+            concat!(env!("CARGO_PKG_VERSION"), " (development build)"),
+        ] {
+            ui.find(label).expect(label);
+        }
+        ui.click("Check now").expect("Check now");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Update(UpdateMessage::CheckNow))
+        )));
+    }
+    let _ = shell.update(Message::App(AppMessage::Update(UpdateMessage::CheckNow)));
+    tall(&shell)
+        .find("Current version is unknown; cannot check for updates.")
+        .expect("a development build says why it does not look");
+    for (typed, refused) in [("0", true), ("8761", true), ("48", false)] {
+        let _ = shell.update(Message::SessionFieldEdited(
+            SessionField::UpdateInterval,
+            typed.to_owned(),
+        ));
+        let _ = shell.update(Message::SessionFieldApply(SessionField::UpdateInterval));
+        assert_eq!(
+            tall(&shell)
+                .find("Update check interval must be between 1 and 8760 hours.")
+                .is_ok(),
+            refused,
+            "{typed}"
+        );
+    }
+    assert_eq!(shell.app().settings().updates.interval_hours, 48);
+}
+
+/// The window drawn tall enough for a whole Settings tab.
+fn tall(shell: &Shell) -> common::Drawn<'_> {
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    common::simulator(settings, TALL_WINDOW, shell.view())
+}

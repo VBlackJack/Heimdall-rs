@@ -32,7 +32,7 @@ use heimdall_ssh::socks::{self, Proxy};
 use heimdall_ssh::{
     ConnectError, ConnectOptions, Connection, KeyboardInteractiveQuestion, PassphraseQuestion,
     PasswordQuestion, Prompter, Routed, Secret, SessionEvent, ShellSession, UsernameQuestion,
-    establish_via, establish_via_keeping_gateway, fingerprint,
+    X11Display, establish_via, establish_via_keeping_gateway, fingerprint,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -43,6 +43,7 @@ use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::ids::QuestionId;
 use crate::post_connect;
 use crate::sink::InputSink;
+use crate::x11_server::{self, X11Outcome, X11Settings};
 
 /// Events buffered before the attempt waits for the UI to read them.
 const EVENT_QUEUE_LENGTH: usize = 64;
@@ -198,6 +199,8 @@ pub struct ConnectRequest {
     pub purpose: Purpose,
     /// Connection settings, initial terminal size included.
     pub options: ConnectOptions,
+    /// The X server to count on when the shell forwards X11; `None` forwards nothing.
+    pub x11: Option<X11Settings>,
     /// Cancels the attempt and, once connected, the session.
     pub cancel: CancellationToken,
 }
@@ -243,9 +246,10 @@ async fn run(
     {
         Ok(Routed { server, gateway }) => {
             let weak = server.downgrade();
+            let options = shell_options(&request, &events).await;
             match open_forwards(request.profile.forwards, gateway.as_ref()).await {
                 Ok(forwards) => server
-                    .open_shell(&request.options, request.cancel.clone())
+                    .open_shell(&options, request.cancel.clone())
                     .await
                     .map(|session| (session, forwards, gateway, weak)),
                 Err(error) => Err(error),
@@ -320,6 +324,54 @@ async fn run(
         if last {
             return;
         }
+    }
+}
+
+/// The options the shell opens with: X11 forwarded to a display when its profile asks and
+/// one is there; without one, the shell opens without X11, and the tab is told.
+async fn shell_options(
+    request: &ConnectRequest,
+    events: &mpsc::Sender<ConnectionEvent>,
+) -> ConnectOptions {
+    let mut options = request.options.clone();
+    let Some(settings) = request.x11.clone() else {
+        return options;
+    };
+    let own = std::env::var(x11_server::DISPLAY_VARIABLE).ok();
+    let mut display = own_display(own.as_deref());
+    if display.is_none() {
+        // The X server is detected, and perhaps started and waited for: off the runtime.
+        let outcome = tokio::task::spawn_blocking(move || {
+            x11_server::shared().ensure(&settings, x11_server::DISPLAY_PORT)
+        })
+        .await
+        .unwrap_or(X11Outcome::Unavailable);
+        display = display_for(&outcome);
+    }
+    if display.is_none() {
+        log::warn!("X11 forwarding asked but no X server is available: the shell opens without it");
+        let _ = events.send(ConnectionEvent::X11ServerNotFound).await;
+    }
+    options.x11 = display;
+    options
+}
+
+/// The display this application runs on, as `value` names it: on Unix, where `DISPLAY` is
+/// the session's own; never on Windows, where an X server is counted on as for `PuTTY`.
+fn own_display(value: Option<&str>) -> Option<X11Display> {
+    if cfg!(unix) {
+        value.and_then(X11Display::parse)
+    } else {
+        None
+    }
+}
+
+/// The display of the X server counted on, as `PuTTY` is given it; none without one.
+fn display_for(outcome: &X11Outcome) -> Option<X11Display> {
+    if outcome.available() {
+        X11Display::parse(x11_server::DISPLAY)
+    } else {
+        None
     }
 }
 
@@ -465,5 +517,39 @@ async fn open_files(
                 }))
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use heimdall_ssh::X11Display;
+
+    use super::{display_for, own_display};
+    use crate::x11_server::{self, X11Outcome};
+
+    #[test]
+    fn without_an_x_server_counted_on_no_display_is_given() {
+        assert_eq!(display_for(&X11Outcome::Unavailable), None);
+        let expected = X11Display::parse(x11_server::DISPLAY);
+        assert!(expected.is_some());
+        assert_eq!(display_for(&X11Outcome::Running), expected);
+        assert_eq!(
+            display_for(&X11Outcome::Started(PathBuf::from("vcxsrv"))),
+            expected
+        );
+    }
+
+    #[test]
+    fn the_session_s_own_display_is_used_on_unix_alone() {
+        let own = own_display(Some(":1"));
+        if cfg!(unix) {
+            assert_eq!(own, X11Display::parse(":1"));
+        } else {
+            assert_eq!(own, None, "an X server is counted on, as for PuTTY");
+        }
+        assert_eq!(own_display(None), None);
+        assert_eq!(own_display(Some("not a display")), None);
     }
 }

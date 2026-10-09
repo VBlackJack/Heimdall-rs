@@ -17,6 +17,7 @@
 //! Connection settings and their defaults.
 
 use crate::run_trust::RunTrust;
+use crate::x11::X11Display;
 use heimdall_core::settings::AgentPreference;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -99,6 +100,9 @@ pub struct ConnectOptions {
     pub compression: bool,
     /// Keys trusted for this run only, counted as recorded beside `known_hosts`.
     pub run_trust: RunTrust,
+    /// Forward X11 to this display from the server's shell (`ssh -X`); `None` forwards
+    /// nothing. Never asked on a gateway: only the shell of the server asks.
+    pub x11: Option<X11Display>,
 }
 
 impl ConnectOptions {
@@ -117,6 +121,7 @@ impl ConnectOptions {
             run_trust: RunTrust::default(),
             forward_agent: false,
             compression: false,
+            x11: None,
         }
     }
 }

@@ -67,6 +67,7 @@ use crate::telnet_driver::TelnetRequest;
 use crate::text::{server_prompt_text, server_text};
 use crate::vnc_driver::VncRequest;
 use crate::winrm_driver::WinRmRequest;
+use crate::x11_server::X11Settings;
 
 mod address_test;
 mod agent_chip;
@@ -134,6 +135,7 @@ mod tree_drag;
 mod tree_filter;
 mod trusted_keys;
 mod tunnels;
+mod updates;
 mod vault;
 mod vnc_tab;
 mod winrm_tab;
@@ -187,6 +189,7 @@ pub use tree_drag::{DropTarget, OrganizationChange};
 pub use tree_filter::{FilterMessage, TreeFilter};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
 pub use tunnels::TunnelMessage;
+pub use updates::{UpdateMessage, UpdateStatus};
 use vault::VaultState;
 pub use vault::{
     LONG_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
@@ -384,6 +387,8 @@ pub enum Message {
     HealthTick,
     /// Time for the background check of every server.
     ReachabilityTick,
+    /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
+    Update(UpdateMessage),
     /// A server answered the background check, or did not.
     ReachabilityChecked {
         /// The profile.
@@ -892,6 +897,7 @@ impl fmt::Debug for Message {
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::HealthTick => f.write_str("HealthTick"),
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
+            Self::Update(message) => write!(f, "Update({message:?})"),
             Self::ReachabilityChecked { id, verdict } => {
                 write!(f, "ReachabilityChecked({id}, {verdict:?})")
             }
@@ -1222,6 +1228,9 @@ pub enum Effect {
     WriteFileList(Vec<PathBuf>),
     /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
     OpenUrl(String),
+    /// Ask GitHub for the latest release, off the UI thread, and say what it found as
+    /// [`UpdateMessage::Checked`].
+    CheckForUpdate,
     /// Launch a Citrix application outside Heimdall, off the UI thread, the client's
     /// processes listed first; answered with [`Message::CitrixLaunched`].
     LaunchCitrix {
@@ -1685,6 +1694,7 @@ impl fmt::Debug for Effect {
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
+            Self::CheckForUpdate => f.write_str("CheckForUpdate"),
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
                 write!(f, "ProbeCitrix({}, {lists})", tab.value())
@@ -2913,6 +2923,8 @@ pub struct App {
     macros: heimdall_core::macros::Macros,
     /// The background check of every server.
     monitor: reachability_monitor::Monitor,
+    /// The look for a newer release.
+    updates: updates::Updates,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
     /// The identifier of the next tunnel.
@@ -3065,6 +3077,7 @@ impl App {
             detail: detail::DetailCache::default(),
             macros,
             monitor: reachability_monitor::Monitor::default(),
+            updates: updates::Updates::new(crate::update_check::running_release()),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
@@ -3243,6 +3256,7 @@ impl App {
                 Vec::new()
             }
             Message::ReachabilityTick => self.reachability_round(),
+            Message::Update(message) => self.update_message(message),
             Message::ReachabilityChecked { id, verdict } => {
                 self.reachability_checked(&id, verdict);
                 Vec::new()
@@ -3575,11 +3589,16 @@ impl App {
         options.initial_size = terminal_size(grid, None);
         options.forward_agent = profile.forward_agent;
         options.compression = profile.compression;
+        // X11 for a shell alone: its files and a desktop tunnelled through it have no
+        // X11 programs.
+        let x11 = (purpose == Purpose::Shell && profile.x11_forwarding)
+            .then(|| X11Settings::of(&self.settings));
         Ok(ConnectRequest {
             profile: profile.clone(),
             route: route.iter().map(SshGateway::as_hop).collect(),
             purpose,
             options,
+            x11,
             cancel,
         })
     }
@@ -3800,6 +3819,10 @@ impl App {
             }
             ConnectionEvent::RemoteImage(image) => vec![Effect::WriteClipboardImage(image)],
             ConnectionEvent::SshConnection(connection) => self.shell_connection(tab_id, connection),
+            ConnectionEvent::X11ServerNotFound => {
+                self.tell(Notice::X11ServerNotFound);
+                Vec::new()
+            }
             event @ (ConnectionEvent::RdpFilesRefused(_)
             | ConnectionEvent::RdpRemoteFiles(_)
             | ConnectionEvent::RdpSaveProgress { .. }

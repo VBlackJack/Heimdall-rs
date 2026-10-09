@@ -1211,7 +1211,8 @@ fn a_step_linked_to_the_command_library_loses_its_link_and_the_report_counts_it(
             },
             DroppedSettings {
                 name: "b.lab".to_owned(),
-                settings: vec![Dropped::X11Forwarding, Dropped::CommandLibraryLinks(1)],
+                // X11 forwarding is carried for a shell in a tab too.
+                settings: vec![Dropped::CommandLibraryLinks(1)],
             },
         ]
     );
@@ -1674,7 +1675,7 @@ fn the_ssh_mode_and_x11_forwarding_of_a_shell_are_carried_and_dropped_where_noth
     assert_eq!(profile("tab").ssh_mode, SshMode::Embedded);
     assert!(
         profile("tab").x11_forwarding,
-        "kept for when PuTTY opens it"
+        "the built-in terminal forwards it"
     );
     assert_eq!(
         profile("plain").ssh_mode,
@@ -1691,8 +1692,7 @@ fn the_ssh_mode_and_x11_forwarding_of_a_shell_are_carried_and_dropped_where_noth
     assert_eq!(
         report.dropped,
         [
-            // The built-in terminal does not forward X11 yet.
-            dropped("tab", &[Dropped::X11Forwarding]),
+            // The built-in terminal forwards X11 too: only the files tab drops it.
             dropped("files", &[Dropped::ExternalClient, Dropped::X11Forwarding]),
         ]
     );

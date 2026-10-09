@@ -1196,7 +1196,7 @@ fn an_ssh_form_chooses_putty_and_x11_forwarding_with_its_warning() {
     show(&mut shell, ProfileTab::Options);
     {
         let mut ui = tall_simulator(&shell);
-        for label in ["SSH mode", "Enable X11 forwarding (External mode only)"] {
+        for label in ["SSH mode", "Enable X11 forwarding"] {
             ui.find(label).expect(label);
         }
         assert!(ui.find("Opens PuTTY in a separate window").is_err());
@@ -1225,7 +1225,7 @@ fn an_ssh_form_chooses_putty_and_x11_forwarding_with_its_warning() {
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Sftp)));
     show(&mut shell, ProfileTab::Options);
     let mut ui = tall_simulator(&shell);
-    for absent in ["SSH mode", "Enable X11 forwarding (External mode only)"] {
+    for absent in ["SSH mode", "Enable X11 forwarding"] {
         assert!(ui.find(absent).is_err(), "{absent}");
     }
 }

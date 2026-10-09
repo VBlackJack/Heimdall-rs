@@ -283,7 +283,7 @@ pub enum ProfileToggle {
     /// SSH: compress the traffic, as the C# "Enable compression".
     Compression,
     /// SSH: forward the server's X11 windows to this computer's X server, as the C# "Enable
-    /// X11 forwarding"; only `PuTTY` forwards them for now.
+    /// X11 forwarding", in a tab as in `PuTTY`.
     X11Forwarding,
     /// FTP: passive data connections, as the C# "Passive mode", ticked by default.
     Passive,

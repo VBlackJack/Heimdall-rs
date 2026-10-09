@@ -149,6 +149,9 @@ pub enum ConnectionEvent {
     /// The SSH shell's connection, held without keeping it open: its server health is
     /// asked over it.
     SshConnection(heimdall_ssh::WeakConnection),
+    /// The shell's profile forwards X11 and no X server could be found or started: the
+    /// shell opens without X11 forwarding.
+    X11ServerNotFound,
     /// The files copied on this side were not offered to the RDP server.
     RdpFilesRefused(CopyRefusal),
     /// The RDP server's clipboard holds files to save here, or no longer.
@@ -284,6 +287,7 @@ impl fmt::Debug for ConnectionEvent {
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),
             Self::RemoteImage(image) => write!(f, "RemoteImage({})", image.len()),
             Self::SshConnection(_) => f.write_str("SshConnection"),
+            Self::X11ServerNotFound => f.write_str("X11ServerNotFound"),
             Self::RdpFilesRefused(refusal) => write!(f, "RdpFilesRefused({refusal:?})"),
             Self::RdpRemoteFiles(available) => write!(f, "RdpRemoteFiles({available})"),
             Self::RdpSaveProgress { saved, total } => {

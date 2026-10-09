@@ -319,6 +319,74 @@ fn a_shell_forwards_the_agent_only_when_its_profile_says_so() {
 }
 
 #[test]
+fn a_shell_forwards_x11_only_when_its_profile_says_so_and_its_files_never() {
+    use heimdall_app::x11_server::X11Settings;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    let mut forwarding = profile("forwarding", PostConnect::default());
+    forwarding.x11_forwarding = true;
+    store.merge([forwarding, profile("plain", PostConnect::default())]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        ..config(dir.path())
+    });
+    let effects = app.update(Message::OpenProfile(ProfileId::new("forwarding")));
+    let request = connect_request(&effects);
+    assert_eq!(request.x11, Some(X11Settings::of(app.settings())));
+    assert_eq!(
+        request.options.x11, None,
+        "the display is found when the shell opens"
+    );
+    let effects = app.update(Message::OpenProfile(ProfileId::new("plain")));
+    assert_eq!(connect_request(&effects).x11, None);
+    let effects = app.update(Message::OpenFiles(ProfileId::new("forwarding")));
+    let files = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Connect { request, .. } => Some(request),
+            _ => None,
+        })
+        .expect("files connect");
+    assert_eq!(files.purpose, Purpose::Files);
+    assert_eq!(files.x11, None);
+}
+
+#[test]
+fn without_an_x_server_the_shell_opens_and_the_csharp_notice_is_said() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    let mut forwarding = profile("forwarding", PostConnect::default());
+    forwarding.x11_forwarding = true;
+    store.merge([forwarding]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        ..config(dir.path())
+    });
+    let effects = app.update(Message::OpenProfile(ProfileId::new("forwarding")));
+    let [Effect::Connect { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let (tab, attempt) = (*tab, *attempt);
+    let effects = app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::X11ServerNotFound,
+    });
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(app.notice(), Some(&Notice::X11ServerNotFound));
+    // The attempt goes on: the shell opens without X11.
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.tabs[0].phase, heimdall_app::Phase::Connecting);
+}
+
+#[test]
 fn an_sftp_profile_opens_its_files_is_shown_as_sftp_and_offers_a_shell_as_another_protocol() {
     use heimdall_app::{ConnectAs, ProfileKind};
 

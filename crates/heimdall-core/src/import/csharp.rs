@@ -718,16 +718,13 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
             Dropped::CitrixCacheLaunch,
         )])
     } else {
-        // A shell opens in PuTTY, which forwards X11, as the C# one; an SFTP profile opens
-        // its files in a tab, where neither is done.
+        // A shell forwards X11, in a tab or in PuTTY, as the C# one; an SFTP profile opens
+        // its files in a tab, where neither PuTTY nor X11 is.
         let shell = kind == SSH_CONNECTION_TYPE;
         let external = is_external(server.ssh_mode.as_deref());
         let mut dropped = turned_on(&[
             (external && !shell, Dropped::ExternalClient),
-            (
-                server.ssh_x11_forwarding && !(shell && external),
-                Dropped::X11Forwarding,
-            ),
+            (server.ssh_x11_forwarding && !shell, Dropped::X11Forwarding),
         ]);
         match library_links(server) {
             0 => {}
