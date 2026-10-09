@@ -356,23 +356,70 @@ fn a_key_trusted_through_the_one_rule_is_written_once_under_the_lock() {
     pins.pin("web.lab", 22, &print("host-ed25519"))
         .expect("pinned");
     let rule = OtherAlgorithm::Conflicts;
+    let user = heimdall_ssh::HostKeySource::User;
     assert_eq!(
-        trust(&store, "web.lab", 22, &read("host-ecdsa"), rule).expect("trust"),
+        trust(&store, "web.lab", 22, &read("host-ecdsa"), rule, user).expect("trust"),
         Trusting::Conflict(Contradiction::Pinned(print("host-ed25519")))
     );
     assert_eq!(
-        trust(&store, "web.lab", 22, &read("host-ed25519"), rule).expect("trust"),
+        trust(&store, "web.lab", 22, &read("host-ed25519"), rule, user).expect("trust"),
         Trusting::LearnPinned
     );
     assert_eq!(
-        trust(&store, "web.lab", 22, &read("host-ed25519"), rule).expect("trust"),
+        trust(&store, "web.lab", 22, &read("host-ed25519"), rule, user).expect("trust"),
         Trusting::Recorded
     );
     assert_eq!(
-        trust(&store, "new.lab", 22, &read("host-ecdsa"), rule).expect("trust"),
+        trust(&store, "new.lab", 22, &read("host-ecdsa"), rule, user).expect("trust"),
         Trusting::Learn
     );
     assert_eq!(store.recorded("web.lab", 22).expect("read").len(), 1);
     assert_eq!(store.recorded("new.lab", 22).expect("read").len(), 1);
     assert!(pins.pinned("web.lab", 22).expect("read").is_empty());
+
+    // Each key recorded is the user's, first and last seen when it was trusted.
+    for entry in store.entries().expect("listed") {
+        let details = entry.details;
+        assert_eq!(details.source, user, "{}", entry.host);
+        assert!(details.first_seen.is_some(), "{}", entry.host);
+        assert_eq!(details.first_seen, details.last_seen, "{}", entry.host);
+    }
+}
+
+#[test]
+fn a_key_imported_from_a_file_is_said_imported_and_a_key_already_there_keeps_its_details() {
+    use heimdall_ssh::HostKeySource;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    let ed = key("host-ed25519");
+    // Trusted before the details were kept: unknown, never given invented dates.
+    store
+        .learn(
+            "old.lab",
+            22,
+            &heimdall_ssh::PublicKey::from_openssh(&ed).expect("key"),
+        )
+        .expect("learn");
+    let parsed = parse(&format!(
+        "old.lab {ed}
+new.lab {ed}
+"
+    ));
+    import(&parsed.candidates, &store).expect("imported");
+    let listed = store.entries().expect("listed");
+    let of = |host: &str| {
+        listed
+            .iter()
+            .find(|entry| entry.host == host)
+            .map(|entry| entry.details)
+            .expect(host)
+    };
+    assert_eq!(of("old.lab"), heimdall_ssh::HostKeyDetails::default());
+    assert_eq!(of("new.lab").source, HostKeySource::Imported);
+    assert!(of("new.lab").first_seen.is_some());
+    assert!(
+        listed.iter().all(|entry| entry.public_key.is_some()),
+        "each key's base64 read from known_hosts"
+    );
 }

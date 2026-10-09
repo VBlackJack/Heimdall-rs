@@ -113,7 +113,7 @@ use crate::tokens::{font_size, radius, spacing};
 use crate::tree_view::{
     self, CursorSpot, CursorTracker, SplitEntries, TabMenuState, TranscriptEntry, TreeMenu,
 };
-use crate::trusted_keys_view::TrustedList;
+use crate::trusted_keys_view::{HostKeyColumn, HostKeySort, TrustedList};
 use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, SplitMessage};
 
 /// Grid of a tab before its first layout.
@@ -602,6 +602,8 @@ pub enum Message {
     ShowSettings,
     /// A search typed over a list of trusted keys on the Settings page.
     TrustedSearch(TrustedList, String),
+    /// The header of a column of the trusted SSH host keys clicked: sorted by it.
+    HostKeySort(HostKeyColumn),
     /// A language chosen on the Settings page.
     LanguageChosen(Language),
     /// F11: the window full screen, showing the session only, or back.
@@ -942,6 +944,7 @@ impl fmt::Debug for Message {
             Self::ContentRelease => f.write_str("ContentRelease"),
             Self::ManageGateways => f.write_str("ManageGateways"),
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
+            Self::HostKeySort(column) => write!(f, "HostKeySort({column:?})"),
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::WindowOpened(_) => f.write_str("WindowOpened"),
@@ -1419,6 +1422,8 @@ pub struct Shell {
     session_typed: [Option<String>; SessionField::COUNT],
     /// The search typed over the trusted SSH host keys.
     host_key_search: String,
+    /// How the trusted SSH host keys are sorted, while the application runs.
+    host_key_sort: HostKeySort,
     /// The Settings tab shown, kept while the application runs.
     settings_tab: SettingsTab,
     /// The profile form's tab shown, General each time the form opens.
@@ -1684,6 +1689,7 @@ impl Shell {
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
+            host_key_sort: HostKeySort::default(),
             settings_tab: SettingsTab::default(),
             profile_tab: ProfileTab::default(),
             profile_refused: false,
@@ -2437,6 +2443,7 @@ impl Shell {
             | Message::Navigate(_)
             | Message::ManageGateways
             | Message::TrustedSearch(..)
+            | Message::HostKeySort(_)
             | Message::LanguageChosen(_)
             | Message::Modifiers(_)
             | Message::Tick) => return self.view_message(&message),
@@ -2776,6 +2783,10 @@ impl Shell {
                         typed.clone_into(&mut self.vnc_certificate_search);
                     }
                 }
+                Task::none()
+            }
+            Message::HostKeySort(column) => {
+                self.host_key_sort = self.host_key_sort.clicked(*column);
                 Task::none()
             }
             _ => Task::none(),
@@ -11730,6 +11741,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmRunScript(confirmation) => run_script_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
+        Dialog::TrustedHostKeyDetails(entry) => crate::trusted_keys_view::details(entry),
         Dialog::ForgetTrustedServer { key, count } => {
             crate::trusted_keys_view::forget_server_question(key, *count)
         }

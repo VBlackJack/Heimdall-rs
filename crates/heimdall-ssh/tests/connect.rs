@@ -132,6 +132,36 @@ async fn a_learned_key_is_trusted_on_the_next_connection() {
 }
 
 #[tokio::test]
+async fn a_trusted_key_checked_has_its_last_seen_time_written_off_the_connection() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let prompter = Arc::new(ScriptedPrompter::passwords(&[PASSWORD]));
+
+    let session = run(server.port, None, &options, prompter).await;
+    assert!(session.is_ok(), "{:?}", session.err());
+    let known = KnownHosts::new(&options.known_hosts);
+    let details = tokio::time::timeout(STEP_TIMEOUT, async {
+        loop {
+            let listed = known.entries().expect("listed");
+            if let Some(entry) = listed.first()
+                && entry.details.last_seen.is_some()
+            {
+                return entry.details;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("last seen written");
+    assert_eq!(
+        details.first_seen, None,
+        "trusted before the details were kept: never an invented date"
+    );
+    assert_eq!(details.source, heimdall_ssh::HostKeySource::Unknown);
+}
+
+#[tokio::test]
 async fn a_key_trusted_for_the_run_connects_and_is_never_written() {
     let server = start(Spec::default()).await;
     let dir = tempfile::tempdir().expect("temp dir");

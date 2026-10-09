@@ -29,7 +29,7 @@ use std::time::SystemTime;
 
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_ssh::known_hosts_import::{self, OtherAlgorithm, Trusting};
-use heimdall_ssh::{KnownHosts, PublicKey};
+use heimdall_ssh::{HostKeySource, KnownHosts, PublicKey};
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Dialog, Effect, Notice};
@@ -536,6 +536,7 @@ impl App {
             pending.port,
             &pending.key,
             OtherAlgorithm::Conflicts,
+            HostKeySource::User,
         ) {
             Ok(Trusting::Recorded) => Ok(()),
             Ok(Trusting::Learn | Trusting::LearnPinned) => {
