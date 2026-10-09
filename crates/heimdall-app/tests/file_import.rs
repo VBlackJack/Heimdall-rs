@@ -46,6 +46,7 @@ fn read(app: &mut App, name: &str, text: &str, settings: Option<&str>) -> Vec<Ef
             name: name.to_owned(),
             text: text.to_owned(),
             settings: settings.map(str::to_owned),
+            rename: "{name} (Imported {n})".to_owned(),
         },
     ))))
 }
@@ -108,6 +109,7 @@ fn a_mobaxterm_file_is_asked_about_then_merged_with_new_ids_and_its_passwords_sa
             dropped: Vec::new(),
             host_keys: None,
             gateways: heimdall_core::import::gateways::Reconciliation::default(),
+            actions: None,
         }))
     );
     let web = &app.profiles()[0];
@@ -135,10 +137,11 @@ fn a_heimdall_document_keeps_its_ids_and_reads_its_settings_beside_it() {
     let servers = r#"[{"id":"a1","displayName":"web","remoteServer":"web.lab","connectionType":"SSH","group":"Lab"}]"#;
     let settings = r#"{"groupDefaults":{"Lab":{"sshUsername":"deploy"}}}"#;
     read(&mut app, "servers.json", servers, Some(settings));
-    let Some(Dialog::ConfirmImportFile(pending)) = &app.dialog else {
-        panic!("not asked: {:?}", app.dialog);
-    };
-    assert_eq!(pending.kind, FileKind::Heimdall);
+    assert!(
+        matches!(app.dialog, Some(Dialog::ProfileImportPreview(_))),
+        "previewed: {:?}",
+        app.dialog
+    );
     app.update(Message::ConfirmDialog);
     let web = &app.profiles()[0];
     assert_eq!(
@@ -151,13 +154,12 @@ fn a_heimdall_document_keeps_its_ids_and_reads_its_settings_beside_it() {
     };
     assert_eq!(summary.stored_credentials, None, "no password notice");
 
+    // As the C#: the same id again is a clash, auto-renamed at first.
     read(&mut app, "servers.json", servers, Some(settings));
     app.update(Message::ConfirmDialog);
-    assert_eq!(
-        app.profiles().len(),
-        1,
-        "the same id updates, it does not add"
-    );
+    let names: Vec<&str> = app.profiles().iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["web", "web (Imported 2)"]);
+    assert_ne!(app.profiles()[1].id.as_str(), "a1", "a fresh id");
 }
 
 #[test]
@@ -214,6 +216,7 @@ fn the_file_read_never_appears_in_a_log() {
         name: "sessions.mxtsessions".to_owned(),
         text: "secret.lab".to_owned(),
         settings: Some("hidden".to_owned()),
+        rename: "{name} (Imported {n})".to_owned(),
     })));
     let logged = format!("{message:?}");
     assert!(
