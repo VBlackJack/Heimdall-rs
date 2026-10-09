@@ -1041,6 +1041,61 @@ fn the_reachability_check_is_on_with_the_csharp_numbers_and_kept_within_their_ra
 }
 
 #[test]
+fn update_checks_are_on_daily_kept_within_the_csharp_range_and_their_state_stays_here() {
+    use heimdall_core::settings::{UpdateCheck, Updates, update_interval_accepted};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.updates,
+        Updates {
+            enabled: true,
+            interval_hours: 24,
+        },
+        "the C# defaults"
+    );
+    assert_eq!(settings.update_check, UpdateCheck::default());
+    for (hours, accepted) in [(0, false), (1, true), (8760, true), (8761, false)] {
+        assert_eq!(update_interval_accepted(hours), accepted, "{hours}");
+    }
+    let checked = SystemTime::UNIX_EPOCH + Duration::from_secs(1_791_000_123);
+    settings.updates = Updates {
+        enabled: false,
+        interval_hours: 168,
+    };
+    settings.update_check = UpdateCheck {
+        last_check: Some(checked),
+        skipped: Some("v2026.100901".to_owned()),
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+    // Out of the C# range: the default, as the C# load keeps it.
+    let read = written(
+        dir.path(),
+        "version = 1
+[updates]
+interval_hours = 9000
+",
+    );
+    assert_eq!(read.updates, Updates::default());
+    // The preferences travel; when this computer last looked, and what it skips, do not.
+    let (text, _) = settings.export(None, false);
+    assert!(text.contains("interval_hours = 168"), "{text}");
+    assert!(!text.contains("update_check"), "{text}");
+    assert!(!text.contains("v2026.100901"), "{text}");
+    let imported = Settings::default().import(&text).expect("read");
+    assert_eq!(imported.settings.updates, settings.updates);
+    assert_eq!(imported.settings.update_check, UpdateCheck::default());
+    let keys: Vec<&str> = imported
+        .changes
+        .iter()
+        .map(|change| change.key.as_str())
+        .collect();
+    assert_eq!(keys, ["updates.enabled", "updates.interval_hours"]);
+}
+
+#[test]
 fn the_powershell_execution_policy_is_kept_by_its_csharp_name_and_powershell_s_own_by_default() {
     use heimdall_core::settings::ExecutionPolicy;
 

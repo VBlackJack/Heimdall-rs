@@ -135,6 +135,7 @@ mod tree_drag;
 mod tree_filter;
 mod trusted_keys;
 mod tunnels;
+mod updates;
 mod vault;
 mod vnc_tab;
 mod winrm_tab;
@@ -188,6 +189,7 @@ pub use tree_drag::{DropTarget, OrganizationChange};
 pub use tree_filter::{FilterMessage, TreeFilter};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
 pub use tunnels::TunnelMessage;
+pub use updates::{UpdateMessage, UpdateStatus};
 use vault::VaultState;
 pub use vault::{
     LONG_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
@@ -385,6 +387,8 @@ pub enum Message {
     HealthTick,
     /// Time for the background check of every server.
     ReachabilityTick,
+    /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
+    Update(UpdateMessage),
     /// A server answered the background check, or did not.
     ReachabilityChecked {
         /// The profile.
@@ -893,6 +897,7 @@ impl fmt::Debug for Message {
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::HealthTick => f.write_str("HealthTick"),
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
+            Self::Update(message) => write!(f, "Update({message:?})"),
             Self::ReachabilityChecked { id, verdict } => {
                 write!(f, "ReachabilityChecked({id}, {verdict:?})")
             }
@@ -1223,6 +1228,9 @@ pub enum Effect {
     WriteFileList(Vec<PathBuf>),
     /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
     OpenUrl(String),
+    /// Ask GitHub for the latest release, off the UI thread, and say what it found as
+    /// [`UpdateMessage::Checked`].
+    CheckForUpdate,
     /// Launch a Citrix application outside Heimdall, off the UI thread, the client's
     /// processes listed first; answered with [`Message::CitrixLaunched`].
     LaunchCitrix {
@@ -1686,6 +1694,7 @@ impl fmt::Debug for Effect {
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
+            Self::CheckForUpdate => f.write_str("CheckForUpdate"),
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
                 write!(f, "ProbeCitrix({}, {lists})", tab.value())
@@ -2914,6 +2923,8 @@ pub struct App {
     macros: heimdall_core::macros::Macros,
     /// The background check of every server.
     monitor: reachability_monitor::Monitor,
+    /// The look for a newer release.
+    updates: updates::Updates,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
     /// The identifier of the next tunnel.
@@ -3066,6 +3077,7 @@ impl App {
             detail: detail::DetailCache::default(),
             macros,
             monitor: reachability_monitor::Monitor::default(),
+            updates: updates::Updates::new(crate::update_check::running_release()),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
@@ -3244,6 +3256,7 @@ impl App {
                 Vec::new()
             }
             Message::ReachabilityTick => self.reachability_round(),
+            Message::Update(message) => self.update_message(message),
             Message::ReachabilityChecked { id, verdict } => {
                 self.reachability_checked(&id, verdict);
                 Vec::new()
