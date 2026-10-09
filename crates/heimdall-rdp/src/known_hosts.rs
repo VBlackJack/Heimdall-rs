@@ -34,15 +34,24 @@
 //!
 //! The key stays the second field: a reader of the first two fields alone, an older
 //! Heimdall among them, reads every line as before. An attribute not known, or that does
-//! not decode, is ignored. Lines starting with `#` and lines that do not parse are kept as
-//! they are; forgetting drops whole lines and never rewrites one, and adopting a certificate
-//! for a line recorded with its key alone only adds attributes at the end of that line, so
-//! every other line keeps its attributes byte for byte, unknown ones included.
+//! not decode, is ignored; but a `certificate` that does not read still names a
+//! certificate, so its line is never taken for a key recorded alone. Lines starting with
+//! `#` and lines that do not parse are kept as they are; forgetting drops whole lines and
+//! never rewrites one, and adopting a certificate for a line recorded with its key alone
+//! only adds attributes at the end of that line, so every other line keeps its bytes, its
+//! line ending included (a file edited on Windows keeps its CRLF), unknown attributes too.
+//!
+//! Every read and every change of these files holds one lock of the process, so a reader
+//! never sees a server between the two steps of a change, and two changes never interleave.
+//! A file is changed in place only by an append; anything else writes the new text whole
+//! beside it (`<file>.tmp`), syncs it, then renames it over the file: a failure, or a crash,
+//! leaves the old file whole.
 
 use std::fmt::Write as _;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use data_encoding::BASE64URL_NOPAD;
@@ -66,6 +75,10 @@ const VALID_FROM_ATTRIBUTE: &str = "valid_from";
 const VALID_UNTIL_ATTRIBUTE: &str = "valid_until";
 /// What separates an attribute's name from its value.
 const ATTRIBUTE_SEPARATOR: char = '=';
+/// What ends a line, whichever system wrote it.
+const LINE_ENDING_CHARACTERS: [char; 2] = ['\r', '\n'];
+/// Added to a file's name for the new text written beside it, before it takes its place.
+const REWRITE_SUFFIX: &str = ".tmp";
 
 /// Where a server stands against the recorded pins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,8 +158,12 @@ pub struct KnownRdpHost {
     /// When the key was trusted; `None` when not recorded.
     pub trusted: Option<SystemTime>,
     /// The hash of the whole certificate trusted; `None` when only its key is recorded, as
-    /// for every RDP server.
+    /// for every RDP server, or when the certificate named does not read.
     pub certificate: Option<CertificateHash>,
+    /// The line names a certificate that does not read: the file was edited or damaged.
+    /// It is no key recorded alone, so no certificate is ever taken, nor adopted, on its
+    /// key without asking.
+    pub certificate_unreadable: bool,
     /// When the certificate trusted holds; `None` when not recorded.
     pub validity: Option<Validity>,
 }
@@ -169,6 +186,7 @@ fn seconds(time: SystemTime) -> Option<u64> {
 /// Fills `entry` from a line's attributes, those after its key; the first of a name counts.
 fn read_attributes<'a>(entry: &mut KnownRdpHost, attributes: impl Iterator<Item = &'a str>) {
     let (mut valid_from, mut valid_until) = (None, None);
+    let mut certificate_named = false;
     for attribute in attributes {
         let Some((name, value)) = attribute.split_once(ATTRIBUTE_SEPARATOR) else {
             continue;
@@ -177,8 +195,10 @@ fn read_attributes<'a>(entry: &mut KnownRdpHost, attributes: impl Iterator<Item 
             TRUSTED_ATTRIBUTE if entry.trusted.is_none() => entry.trusted = moment(value),
             SUBJECT_ATTRIBUTE if entry.subject.is_none() => entry.subject = decoded(value),
             ISSUER_ATTRIBUTE if entry.issuer.is_none() => entry.issuer = decoded(value),
-            CERTIFICATE_ATTRIBUTE if entry.certificate.is_none() => {
+            CERTIFICATE_ATTRIBUTE if !certificate_named => {
+                certificate_named = true;
                 entry.certificate = value.parse().ok();
+                entry.certificate_unreadable = entry.certificate.is_none();
             }
             VALID_FROM_ATTRIBUTE if valid_from.is_none() => valid_from = moment(value),
             VALID_UNTIL_ATTRIBUTE if valid_until.is_none() => valid_until = moment(value),
@@ -222,6 +242,28 @@ fn decoded(value: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+/// What a rewrite does with one line.
+enum LineEdit {
+    /// Kept, byte for byte, its line ending included.
+    Keep,
+    /// Dropped, line ending included.
+    Drop,
+    /// Replaced by this text, before the line's own ending.
+    Replace(String),
+}
+
+/// The lock of every trust file of this process: held for each read and each change, a
+/// change that reads then writes included, and never beyond one call, so never across an
+/// await or a question. One process per configuration folder is enough: Heimdall runs a
+/// single instance there.
+static TRUST_FILES: Mutex<()> = Mutex::new(());
+
+/// The trust files, locked; a lock poisoned by a panic elsewhere is taken all the same, as
+/// every change leaves a file whole.
+fn locked() -> MutexGuard<'static, ()> {
+    TRUST_FILES.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl KnownRdpHosts {
     /// The file at `path`; a missing file knows no server.
     #[must_use]
@@ -235,13 +277,25 @@ impl KnownRdpHosts {
         &self.path
     }
 
+    /// The file's text; `None` when there is no file.
+    fn text(&self) -> io::Result<Option<String>> {
+        match fs::read_to_string(&self.path) {
+            Ok(text) => Ok(Some(text)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Where `host:port` presenting `presented` stands.
     ///
     /// # Errors
     ///
     /// The file exists and cannot be read.
     pub fn verdict(&self, host: &str, port: u16, presented: &Fingerprint) -> io::Result<Verdict> {
-        let keys = self.keys(host, port)?;
+        let keys = {
+            let _files = locked();
+            self.keys(host, port)?
+        };
         if keys.contains(presented) {
             return Ok(Verdict::Known);
         }
@@ -258,15 +312,14 @@ impl KnownRdpHosts {
     ///
     /// The file exists and cannot be read.
     pub fn knows(&self, host: &str, port: u16) -> io::Result<bool> {
+        let _files = locked();
         Ok(!self.keys(host, port)?.is_empty())
     }
 
-    /// The keys recorded for `host:port`, in the order of the file.
+    /// The keys recorded for `host:port`, in the order of the file; the files locked.
     fn keys(&self, host: &str, port: u16) -> io::Result<Vec<Fingerprint>> {
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error),
+        let Some(text) = self.text()? else {
+            return Ok(Vec::new());
         };
         let wanted = address(host, port);
         Ok(text
@@ -291,10 +344,14 @@ impl KnownRdpHosts {
     ///
     /// The file exists and cannot be read.
     pub fn entries(&self) -> io::Result<Vec<KnownRdpHost>> {
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error),
+        let _files = locked();
+        self.read_entries()
+    }
+
+    /// [`Self::entries`], the files locked.
+    fn read_entries(&self) -> io::Result<Vec<KnownRdpHost>> {
+        let Some(text) = self.text()? else {
+            return Ok(Vec::new());
         };
         Ok(text
             .lines()
@@ -310,6 +367,7 @@ impl KnownRdpHosts {
                     issuer: None,
                     trusted: None,
                     certificate: None,
+                    certificate_unreadable: false,
                     validity: None,
                 };
                 read_attributes(&mut entry, fields);
@@ -325,19 +383,125 @@ impl KnownRdpHosts {
     ///
     /// The file exists and cannot be read or written.
     pub fn forget_key(&self, host: &str, port: u16, key: &Fingerprint) -> io::Result<bool> {
+        let _files = locked();
+        self.drop_key(host, port, key)
+    }
+
+    /// [`Self::forget_key`], the files locked.
+    fn drop_key(&self, host: &str, port: u16, key: &Fingerprint) -> io::Result<bool> {
         let wanted = address(host, port);
-        self.rewrite_without(|line| {
+        self.rewrite(|line| {
             let mut fields = line.split_whitespace();
-            fields.next() == Some(wanted.as_str())
+            let recorded = fields.next() == Some(wanted.as_str())
                 && fields
                     .next()
                     .and_then(|text| text.parse::<Fingerprint>().ok())
-                    .is_some_and(|recorded| recorded == *key)
+                    .is_some_and(|recorded| recorded == *key);
+            if recorded {
+                LineEdit::Drop
+            } else {
+                LineEdit::Keep
+            }
         })
     }
 
+    /// Rewrites the file, each line as `edit` says, the files locked; whether a line
+    /// changed. The lines kept are kept byte for byte, their line endings included, and
+    /// a line replaced keeps its own ending. The new text is written beside the file then
+    /// put in its place, so the file is never seen, nor left, half written.
+    fn rewrite(&self, edit: impl Fn(&str) -> LineEdit) -> io::Result<bool> {
+        let Some(text) = self.text()? else {
+            return Ok(false);
+        };
+        let mut changed = false;
+        let mut rewritten = String::with_capacity(text.len());
+        for chunk in text.split_inclusive('\n') {
+            let line = chunk.trim_end_matches(LINE_ENDING_CHARACTERS);
+            let ending = &chunk[line.len()..];
+            match edit(line) {
+                LineEdit::Keep => rewritten.push_str(chunk),
+                LineEdit::Drop => changed = true,
+                LineEdit::Replace(replaced) => {
+                    changed = true;
+                    rewritten.push_str(&replaced);
+                    rewritten.push_str(ending);
+                }
+            }
+        }
+        if changed {
+            self.replace_with(&rewritten)?;
+        }
+        Ok(changed)
+    }
+
+    /// Puts `text` in place of the file: written whole and synced beside it, then renamed
+    /// over it. A failure leaves the file as it was.
+    fn replace_with(&self, text: &str) -> io::Result<()> {
+        let mut name = self.path.file_name().unwrap_or_default().to_owned();
+        name.push(REWRITE_SUFFIX);
+        let beside = self.path.with_file_name(name);
+        let written = (|| {
+            let mut file = File::create(&beside)?;
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&beside, &self.path)
+        })();
+        if written.is_err() {
+            // What could be written is not the file: never left behind.
+            let _ = fs::remove_file(&beside);
+        }
+        written
+    }
+
+    /// Forgets every key recorded for `host:port`, keeping the other lines as they are.
+    /// Whether one was there. The next connection asks about the server again.
+    ///
+    /// # Errors
+    ///
+    /// The file exists and cannot be read or written.
+    pub fn forget(&self, host: &str, port: u16) -> io::Result<bool> {
+        let _files = locked();
+        let wanted = address(host, port);
+        self.rewrite(|line| {
+            if line.split_whitespace().next() == Some(wanted.as_str()) {
+                LineEdit::Drop
+            } else {
+                LineEdit::Keep
+            }
+        })
+    }
+
+    /// Records `host:port` with `key` and the time, creating the file and its folder if
+    /// needed.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be written.
+    pub fn record(&self, host: &str, port: u16, key: &Fingerprint) -> io::Result<()> {
+        let _files = locked();
+        self.append(host, port, key, None, "")
+    }
+
+    /// Records `host:port` with the key of `certificate`, the time, and the subject and
+    /// issuer of the certificate, creating the file and its folder if needed.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be written.
+    pub fn record_certificate(
+        &self,
+        host: &str,
+        port: u16,
+        certificate: &ServerCertificate,
+    ) -> io::Result<()> {
+        let _files = locked();
+        self.append(host, port, &certificate.fingerprint, Some(certificate), "")
+    }
+
     /// Where `host:port`, pinned by its whole certificate, stands when it presents the
-    /// certificate of hash `certificate` on `key`.
+    /// certificate of hash `certificate` on `key`. A line naming a certificate that does
+    /// not read is no key recorded alone: its key is asked about again, never adopted.
     ///
     /// # Errors
     ///
@@ -350,11 +514,13 @@ impl KnownRdpHosts {
         certificate: &CertificateHash,
     ) -> io::Result<CertificateVerdict> {
         let host = host.to_ascii_lowercase();
-        let entries: Vec<KnownRdpHost> = self
-            .entries()?
-            .into_iter()
-            .filter(|entry| entry.host == host && entry.port == port)
-            .collect();
+        let entries: Vec<KnownRdpHost> = {
+            let _files = locked();
+            self.read_entries()?
+        }
+        .into_iter()
+        .filter(|entry| entry.host == host && entry.port == port)
+        .collect();
         let same_key: Vec<&KnownRdpHost> = entries
             .iter()
             .filter(|entry| entry.fingerprint == *key)
@@ -365,7 +531,10 @@ impl KnownRdpHosts {
         {
             return Ok(CertificateVerdict::Known);
         }
-        if same_key.iter().any(|entry| entry.certificate.is_none()) {
+        if same_key
+            .iter()
+            .any(|entry| entry.certificate.is_none() && !entry.certificate_unreadable)
+        {
             return Ok(CertificateVerdict::KeyOnly);
         }
         if !same_key.is_empty() {
@@ -386,7 +555,8 @@ impl KnownRdpHosts {
     /// `validity` when known, with its key, the time, its subject and its issuer, creating
     /// the file and its folder if needed. It replaces the lines of the same key for the
     /// server, a renewed certificate or one recorded by its key alone, as the C# keeps one
-    /// certificate per server: the certificate it replaces is no longer trusted.
+    /// certificate per server: the certificate it replaces is no longer trusted. Both steps
+    /// under one lock, so no reader sees the server between them.
     ///
     /// # Errors
     ///
@@ -398,7 +568,8 @@ impl KnownRdpHosts {
         certificate: &ServerCertificate,
         (hash, validity): (&CertificateHash, Option<&Validity>),
     ) -> io::Result<()> {
-        self.forget_key(host, port, &certificate.fingerprint)?;
+        let _files = locked();
+        self.drop_key(host, port, &certificate.fingerprint)?;
         self.append(
             host,
             port,
@@ -411,7 +582,8 @@ impl KnownRdpHosts {
     /// Adopts the whole certificate of hash `hash`, holding during `validity` when known,
     /// for the lines of `host:port` that record `key` alone, as a Heimdall that pinned keys
     /// wrote them: its attributes are added at the end of those lines, every other line kept
-    /// byte for byte. Whether a line took it.
+    /// byte for byte. A line naming a certificate, even one that does not read, is not
+    /// recorded alone. Whether a line took it.
     ///
     /// # Errors
     ///
@@ -423,101 +595,31 @@ impl KnownRdpHosts {
         key: &Fingerprint,
         (hash, validity): (&CertificateHash, Option<&Validity>),
     ) -> io::Result<bool> {
+        let _files = locked();
         let wanted = address(host, port);
         let added = whole_certificate_attributes(hash, validity);
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        let mut adopted = false;
-        let lines: Vec<String> = text
-            .lines()
-            .map(|line| {
-                let mut fields = line.split_whitespace();
-                let recorded_alone = fields.next() == Some(wanted.as_str())
-                    && fields
-                        .next()
-                        .and_then(|text| text.parse::<Fingerprint>().ok())
-                        .is_some_and(|recorded| recorded == *key)
-                    && !fields.any(|attribute| {
-                        attribute
-                            .split_once(ATTRIBUTE_SEPARATOR)
-                            .is_some_and(|(name, _)| name == CERTIFICATE_ATTRIBUTE)
-                    });
-                if recorded_alone {
-                    adopted = true;
-                    format!("{}{added}", line.trim_end())
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect();
-        if adopted {
-            let mut rewritten = lines.join("\n");
-            rewritten.push('\n');
-            fs::write(&self.path, rewritten)?;
-        }
-        Ok(adopted)
-    }
-
-    /// Rewrites the file without the lines `drop` picks; whether one was.
-    fn rewrite_without(&self, drop: impl Fn(&str) -> bool) -> io::Result<bool> {
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        let kept: Vec<&str> = text.lines().filter(|line| !drop(line)).collect();
-        if kept.len() == text.lines().count() {
-            return Ok(false);
-        }
-        let mut rewritten = kept.join("\n");
-        if !rewritten.is_empty() {
-            rewritten.push('\n');
-        }
-        fs::write(&self.path, rewritten)?;
-        Ok(true)
-    }
-
-    /// Forgets every key recorded for `host:port`, keeping the other lines as they are.
-    /// Whether one was there. The next connection asks about the server again.
-    ///
-    /// # Errors
-    ///
-    /// The file exists and cannot be read or written.
-    pub fn forget(&self, host: &str, port: u16) -> io::Result<bool> {
-        let wanted = address(host, port);
-        self.rewrite_without(|line| line.split_whitespace().next() == Some(wanted.as_str()))
-    }
-
-    /// Records `host:port` with `key` and the time, creating the file and its folder if
-    /// needed.
-    ///
-    /// # Errors
-    ///
-    /// The file cannot be written.
-    pub fn record(&self, host: &str, port: u16, key: &Fingerprint) -> io::Result<()> {
-        self.append(host, port, key, None, "")
-    }
-
-    /// Records `host:port` with the key of `certificate`, the time, and the subject and
-    /// issuer of the certificate, creating the file and its folder if needed.
-    ///
-    /// # Errors
-    ///
-    /// The file cannot be written.
-    pub fn record_certificate(
-        &self,
-        host: &str,
-        port: u16,
-        certificate: &ServerCertificate,
-    ) -> io::Result<()> {
-        self.append(host, port, &certificate.fingerprint, Some(certificate), "")
+        self.rewrite(|line| {
+            let mut fields = line.split_whitespace();
+            let recorded_alone = fields.next() == Some(wanted.as_str())
+                && fields
+                    .next()
+                    .and_then(|text| text.parse::<Fingerprint>().ok())
+                    .is_some_and(|recorded| recorded == *key)
+                && !fields.any(|attribute| {
+                    attribute
+                        .split_once(ATTRIBUTE_SEPARATOR)
+                        .is_some_and(|(name, _)| name == CERTIFICATE_ATTRIBUTE)
+                });
+            if recorded_alone {
+                LineEdit::Replace(format!("{}{added}", line.trim_end()))
+            } else {
+                LineEdit::Keep
+            }
+        })
     }
 
     /// Appends the line of `host:port` and `key`, with the names of `certificate` if given,
-    /// then `more`, attributes each after a space.
+    /// then `more`, attributes each after a space; the files locked.
     fn append(
         &self,
         host: &str,

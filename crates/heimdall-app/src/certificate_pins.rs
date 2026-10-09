@@ -149,6 +149,10 @@ impl CertificatePins {
         let run = self.trusted_for_run.clone();
         let (accepted, once) = (self.accepted, self.trusted_once);
         Arc::new(move |der, now| {
+            // What an earlier handshake of this connector left is not this one's.
+            if let Ok(mut left) = slot.lock() {
+                *left = None;
+            }
             let Some(seen) = SeenCertificate::read(der) else {
                 return UserVerdict::Untrusted;
             };
@@ -210,6 +214,17 @@ impl CertificatePins {
     /// `slot`. The certificate the user accepted, when the server presented exactly it,
     /// whole, with its key, names and validity; or the certificate adopted for a key an
     /// earlier Heimdall recorded alone.
+    ///
+    /// The certificate recorded is the one of the connection just completed, though the
+    /// connection is not asked for it (neither the FTP client nor the VNC session exposes
+    /// its peer's certificate): the slot belongs to one attempt and one connector, every
+    /// handshake on it first empties it, and the drivers call this right after the login,
+    /// before any other handshake on that connector, so the slot holds what the one
+    /// completed handshake presented. FTPS opens its data channels after this call only
+    /// ([`heimdall_files::FtpClient::connect`] secures the control channel, logs in, sets
+    /// the transfer type and asks FEAT, none of which opens a data channel), and a VNC
+    /// attempt makes a single TLS handshake (connecting again without `VeNCrypt` makes
+    /// none).
     pub(crate) fn record_trusted(&self, slot: &RecordSlot) -> Result<(), UiError> {
         let Some(to_record) = slot.lock().ok().and_then(|mut slot| slot.take()) else {
             return Ok(());

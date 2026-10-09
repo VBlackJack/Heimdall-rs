@@ -1064,3 +1064,100 @@ async fn an_answer_trusts_the_very_certificate_asked_about_not_its_key() {
         "never written"
     );
 }
+
+/// What a forger presents around the public key of `victim` (PKCS #8): a certificate valid
+/// from the first of January of `from` to that of `until`, signed by an authority of its
+/// own; and the key it signs the handshake with, its own, not holding the victim's.
+fn forge(victim: &[u8], validity: (i32, i32)) -> (Minted, Vec<u8>) {
+    let victim = rcgen::KeyPair::try_from(victim).expect("victim's key");
+    let mut authority = rcgen::CertificateParams::new(Vec::<String>::new()).expect("params");
+    authority.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let issuer = rcgen::Issuer::new(authority, rcgen::KeyPair::generate().expect("key"));
+    let der = params(validity, Vec::new(), false)
+        .signed_by(&victim, &issuer)
+        .expect("forged")
+        .der()
+        .to_vec();
+    let forged = Minted {
+        hash: CertificateHash::of(&der),
+        held: Validity::from_der(&der).expect("validity"),
+        der,
+    };
+    (
+        forged,
+        rcgen::KeyPair::generate().expect("key").serialize_der(),
+    )
+}
+
+/// Whether `events` are a TLS failure for the handshake signature, and nothing else.
+fn failed_at_the_signature(events: &[ConnectionEvent]) -> bool {
+    matches!(
+        events,
+        [ConnectionEvent::Failed(UiError::VncProtocol { detail })] if detail.contains("BadSignature")
+    )
+}
+
+#[tokio::test]
+async fn a_forged_renewal_on_the_pinned_key_is_asked_about_and_once_trusted_fails_recording_nothing()
+ {
+    let (key, pin) = fresh_key();
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let pinned = mint(&key, (2020, 2045));
+    let dir = tempfile::tempdir().expect("dir");
+    let file = KnownRdpHosts::new(dir.path().join("known_vnc_hosts"));
+    file.record_whole_certificate(
+        HOST,
+        port,
+        &ServerCertificate::from_der(&pinned.der).expect("readable"),
+        (&pinned.hash, Some(&pinned.held)),
+    )
+    .expect("pinned");
+    let before = std::fs::read(file.path()).expect("pins");
+    // Around the pinned public key, which anyone can read, without its private key.
+    let (forged, forger_key) = forge(&key, (2021, 2046));
+    let server = serve_steps(listener, &forger_key, vec![(&forged, false); 4]);
+    let mut app = app(dir.path(), port);
+
+    // Asked about, as a renewal.
+    let attempt = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let tab = attempt.0;
+    let events = run(&mut app, attempt).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ConnectionEvent::UnknownRdpCertificate { fingerprint, .. }] if *fingerprint == pin
+        ),
+        "{events:?}"
+    );
+    assert_eq!(
+        asked_renewal(&events),
+        Some(heimdall_app::Renewal {
+            recorded: Some(pinned.held)
+        })
+    );
+    assert_eq!(asked_whole(&events), forged.hash);
+
+    // Trusted for good: the forger cannot sign the handshake, nothing is recorded.
+    let second = attempt_of(&app.update(Message::HostKeyDecision { tab, accept: true }));
+    assert_eq!(second.2.accepted, Some(forged.hash));
+    let events = run(&mut app, second).await;
+    assert!(failed_at_the_signature(&events), "{events:?}");
+    assert_eq!(std::fs::read(file.path()).expect("pins"), before);
+
+    // Asked again, trusted once: the same.
+    let third = attempt_of(&app.update(Message::ReconnectTab(tab)));
+    let tab = third.0;
+    let events = run(&mut app, third).await;
+    assert_eq!(asked_whole(&events), forged.hash);
+    let fourth = attempt_of(&app.update(Message::HostKeyTrustOnce(tab)));
+    assert_eq!(fourth.2.trusted_once, Some(forged.hash));
+    let events = run(&mut app, fourth).await;
+    assert!(failed_at_the_signature(&events), "{events:?}");
+    server.await.expect("server");
+    assert_eq!(
+        std::fs::read(file.path()).expect("pins"),
+        before,
+        "the file unchanged"
+    );
+}
