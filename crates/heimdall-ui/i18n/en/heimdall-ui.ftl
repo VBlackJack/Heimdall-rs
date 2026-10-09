@@ -2564,10 +2564,9 @@ ui-tool-regex-match-entry = { "[" }{ $number }] Index { $index }: "{ $value }"
 ui-tool-regex-group-entry = { "  " }Group { $number }: "{ $value }"
 ui-tool-regex-status-valid = Valid regex
 ui-tool-regex-status-invalid = Invalid regex: { $error }
-ui-tool-regex-unsupported-lookaround = Invalid regex: look-ahead and look-behind are not supported by this engine
-ui-tool-regex-unsupported-backreference = Invalid regex: backreferences (\1, \k<name>) are not supported by this engine
-ui-tool-regex-unsupported-atomic = Invalid regex: atomic groups (?>...) are not supported by this engine
-ui-tool-regex-unsupported-conditional = Invalid regex: conditionals (?(...)...) are not supported by this engine
+ui-tool-regex-status-timeout = Regex evaluation timed out (ReDoS protection)
+ui-tool-regex-unsupported-variable-lookbehind = Invalid regex: a look-behind whose length varies is not supported by this engine
+ui-tool-regex-unsupported-balancing-group = Invalid regex: balancing groups (?<open-close>...) are not supported by this engine
 ui-tool-regex-truncated = Showing first { $shown } of { $total } matches
 ui-tool-regex-empty = Enter a regex pattern and test string above
 ui-tool-regex-help =
@@ -2597,7 +2596,9 @@ ui-tool-regex-help =
     - ^#.*$ (Multiline) - Match comment lines
 
     Engine:
-    - Look-ahead, look-behind, backreferences, atomic groups and conditionals are not supported.
+    - Look-ahead, look-behind, backreferences, atomic groups and conditionals are supported.
+    - Not supported: look-behind of varying length, balancing groups.
+    - A test that takes longer than one second stops (ReDoS protection).
 ui-tool-diff-name = Text Diff
 ui-tool-diff-description = Side-by-side text comparison and difference viewer
 ui-tool-diff-title = Text Diff

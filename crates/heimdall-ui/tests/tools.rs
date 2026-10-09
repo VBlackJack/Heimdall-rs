@@ -497,12 +497,21 @@ fn the_regex_tester_lists_and_counts_the_matches_after_the_pause() {
         ui.find("Copy matches").expect("copy");
     }
     snapshot(&shell, "tools-regex.png");
-    let _ = shell.update(send(RegexMessage::Pattern("a(?=b)".to_owned())));
+    // A look-behind and a backreference run, as in .NET.
+    let _ = shell.update(send(RegexMessage::Pattern(r"(?<=a)(b)\1".to_owned())));
     let _ = shell.update(send(RegexMessage::Run(3)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("1 match").expect("count");
+        ui.find("[0] Index 1: \"bb\"  Group 1: \"b\"")
+            .expect("the match");
+    }
+    let _ = shell.update(send(RegexMessage::Pattern("(?<=a+)b".to_owned())));
+    let _ = shell.update(send(RegexMessage::Run(4)));
     let mut ui = simulator(&shell);
-    ui.find("Invalid regex: look-ahead and look-behind are not supported by this engine")
+    ui.find("Invalid regex: a look-behind whose length varies is not supported by this engine")
         .expect("the construct named");
-    assert!(ui.find("2 matches").is_err(), "the matches cleared");
+    assert!(ui.find("1 match").is_err(), "the matches cleared");
 }
 
 #[test]

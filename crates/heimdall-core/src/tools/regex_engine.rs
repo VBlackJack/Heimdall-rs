@@ -19,18 +19,43 @@
 //! match, a group that took no part said so; places and lengths counted in UTF-16 units, as
 //! .NET counts them.
 //!
-//! The engine is the `regex` crate's, not .NET's. Its syntax is .NET's for what both have:
+//! The engine is `fancy-regex`, not .NET's, and the `regex` crate under it for a pattern that
+//! needs no backtracking. Its syntax is .NET's for what both have:
 //! classes, quantifiers lazy or not, anchors, `\b`, `\d`, `\w`, `\s` (Unicode, as .NET's),
-//! groups numbered or named `(?<name>...)`, inline flags. What .NET has and it has not is
-//! refused, as .NET refuses a pattern it cannot read, and named so the user sees why:
-//! look-ahead and look-behind, backreferences (`\1`, `\k<name>`), atomic groups `(?>...)`
-//! and conditionals `(?(...)...)`. It runs in linear time, so no pattern can hang it: the
-//! C#'s one-second timeout has nothing to stop.
+//! groups numbered or named `(?<name>...)`, inline flags, look-ahead and look-behind,
+//! backreferences (`\1`, `\k<name>`), atomic groups `(?>...)` and conditionals
+//! `(?(1)...|...)`. What .NET has and it has not is refused, as .NET refuses a pattern it
+//! cannot read, and named so the user sees why: a look-behind whose length varies, and
+//! balancing groups `(?<open-close>...)`.
+//!
+//! A pattern with look-arounds, backreferences, atomic groups or conditionals backtracks, as
+//! .NET's engine does, and can take forever on a text. The C# stops a test after its
+//! one-second timeout (`RegexEngine.cs:51`, `:65`, `:98-101`) and says it timed out. Here
+//! such a pattern is searched on a thread of its own, which the caller waits for at most
+//! [`DEFAULT_TIMEOUT`]: past it, the test has timed out. The thread stops by itself at its
+//! next match, its clock past the same limit, or when a search takes more than
+//! [`BACKTRACK_LIMIT`] steps back, which also ends the test as timed out; what it finds
+//! afterwards is dropped. A pattern the `regex` crate reads needs no backtracking: it is
+//! searched in linear time where it is asked, the clock read between its matches.
+//!
+//! Matches follow one another as .NET's do: the next search starts where a match ended, one
+//! character further after an empty one.
 //!
 //! Groups are numbered as .NET numbers them: the unnamed ones first, in order, then the
 //! named ones.
 
-use regex::RegexBuilder;
+use std::ops::Range;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+use fancy_regex::{CompileError, Error, RegexBuilder};
+
+/// How long a test may run, as the C# `RegexEngine.DefaultTimeout`.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Most steps back one search may take before it is stopped as timed out: `fancy-regex`'s
+/// own default, said here as the bound the timeout relies on.
+pub const BACKTRACK_LIMIT: usize = 1_000_000;
 
 /// The options of a test, as the C# `RegexOptions` the tool sets.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -46,14 +71,10 @@ pub struct RegexOptions {
 /// A construct of .NET's syntax the engine does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DotnetConstruct {
-    /// `(?=...)`, `(?!...)`, `(?<=...)` or `(?<!...)`.
-    LookAround,
-    /// `\1` to `\9`, or `\k<name>`.
-    Backreference,
-    /// `(?>...)`.
-    AtomicGroup,
-    /// `(?(...)...)`.
-    Conditional,
+    /// A look-behind whose length varies, as `(?<=a+)`.
+    VariableLookBehind,
+    /// A balancing group, `(?<open-close>...)` or `(?<-close>...)`.
+    BalancingGroup,
 }
 
 /// Why a pattern was refused.
@@ -104,96 +125,251 @@ pub enum RegexTest {
     EmptyPattern,
     /// The pattern was refused.
     InvalidPattern(InvalidPattern),
+    /// The test took longer than allowed, as the C#'s `RegexMatchTimeoutException`.
+    MatchTimeout,
     /// The matches, in order.
     Success(Vec<RegexMatch>),
 }
 
-/// `pattern` tried on `input` with `options`, as the C# `RegexEngine.Test`
-/// (`RegexEngine.cs:53-102`).
+/// `pattern` tried on `input` with `options` within [`DEFAULT_TIMEOUT`], as the C#
+/// `RegexEngine.Test` (`RegexEngine.cs:53-102`).
 #[must_use]
 pub fn test(pattern: &str, input: &str, options: RegexOptions) -> RegexTest {
+    test_within(pattern, input, options, DEFAULT_TIMEOUT)
+}
+
+/// `pattern` tried on `input` with `options`, stopped as timed out past `timeout`, as the C#
+/// `RegexEngine.Test` with its `timeout` argument.
+#[must_use]
+pub fn test_within(
+    pattern: &str,
+    input: &str,
+    options: RegexOptions,
+    timeout: Duration,
+) -> RegexTest {
     if pattern.is_empty() {
         return RegexTest::EmptyPattern;
     }
-    let regex = match RegexBuilder::new(pattern)
+    let started = Instant::now();
+    // The pattern read by `fancy-regex` first: it says what is wrong with it, as .NET would.
+    let fancy = match fancy_builder(pattern, options).build() {
+        Ok(regex) => regex,
+        Err(error) => return RegexTest::InvalidPattern(refusal(pattern, &error)),
+    };
+    let names: Vec<Option<String>> = fancy
+        .capture_names()
+        .map(|name| name.map(str::to_owned))
+        .collect();
+    let engine = match regex::RegexBuilder::new(pattern)
         .case_insensitive(options.ignore_case)
         .multi_line(options.multiline)
         .dot_matches_new_line(options.singleline)
         .build()
     {
-        Ok(regex) => regex,
-        Err(error) => return RegexTest::InvalidPattern(refusal(pattern, &error)),
+        Ok(linear) => Engine::Linear(linear),
+        Err(_) => Engine::Backtracking(fancy),
     };
-    // The groups in .NET's order: (index in the engine, name).
-    let names: Vec<Option<&str>> = regex.capture_names().collect();
-    let order: Vec<(usize, Option<&str>)> = names
-        .iter()
-        .enumerate()
-        .skip(1)
-        .filter(|(_, name)| name.is_none())
-        .chain(
-            names
-                .iter()
-                .enumerate()
-                .skip(1)
-                .filter(|(_, name)| name.is_some()),
-        )
-        .map(|(index, name)| (index, *name))
-        .collect();
+    let order = dotnet_order(&names);
+    let deadline = started + timeout;
+    match engine {
+        Engine::Linear(linear) => matches_until(input, &order, deadline, |at| {
+            Ok(linear_find(&linear, input, at))
+        }),
+        Engine::Backtracking(fancy) => {
+            // Searched apart, the caller waiting no longer than the timeout.
+            let (sender, receiver) = mpsc::channel();
+            let text = input.to_owned();
+            std::thread::spawn(move || {
+                let found =
+                    matches_until(&text, &order, deadline, |at| fancy_find(&fancy, &text, at));
+                // The caller may have stopped waiting: what was found is then dropped.
+                let _ = sender.send(found);
+            });
+            receiver
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap_or(RegexTest::MatchTimeout)
+        }
+    }
+}
+
+/// The groups' places of a match, by the engine's numbers.
+type Found = Vec<Option<Range<usize>>>;
+
+/// The matches of `input`, each found by `find` from a byte on, in .NET's `order` of
+/// groups, as .NET follows them: the next search where a match ended, one character
+/// further after an empty one; timed out past `deadline` or when `find` is stopped.
+fn matches_until(
+    input: &str,
+    order: &[(usize, Option<String>)],
+    deadline: Instant,
+    mut find: impl FnMut(usize) -> Result<Option<Found>, Timeout>,
+) -> RegexTest {
+    let mut counter = Utf16Counter::default();
     let mut matches = Vec::new();
-    // The UTF-16 place of a byte of the input, counted forward as matches come in order.
-    let mut counted = (0_usize, 0_usize);
-    let mut utf16_at = |byte: usize| {
-        let (from_byte, from_utf16) = counted;
-        let at = if byte >= from_byte {
-            from_utf16 + utf16_len(&input[from_byte..byte])
+    let mut at = 0;
+    while at <= input.len() {
+        if Instant::now() > deadline {
+            return RegexTest::MatchTimeout;
+        }
+        let Ok(found) = find(at) else {
+            return RegexTest::MatchTimeout;
+        };
+        let Some(Some(whole)) = found.as_ref().and_then(|groups| groups.first().cloned()) else {
+            break;
+        };
+        let groups = found.unwrap_or_default();
+        matches.push(found_match(input, &whole, &groups, order, &mut counter));
+        at = if whole.end > whole.start {
+            whole.end
         } else {
-            utf16_len(&input[..byte])
+            next_char(input, whole.end)
         };
-        counted = (byte, at);
-        at
-    };
-    for captures in regex.captures_iter(input) {
-        let Some(whole) = captures.get(0) else {
-            continue;
-        };
-        let index = utf16_at(whole.start());
-        let groups = order
-            .iter()
-            .enumerate()
-            .map(|(position, (engine_index, name))| {
-                let number = position + 1;
-                let group = captures.get(*engine_index);
-                RegexGroup {
-                    number,
-                    name: name.map_or_else(|| number.to_string(), str::to_owned),
-                    start: group
-                        .map(|group| index + utf16_len(&input[whole.start()..group.start()])),
-                    length: group.map_or(0, |group| utf16_len(group.as_str())),
-                    value: group.map_or_else(String::new, |group| group.as_str().to_owned()),
-                    named: name.is_some(),
-                }
-            })
-            .collect();
-        matches.push(RegexMatch {
-            index,
-            length: utf16_len(whole.as_str()),
-            bytes: whole.range(),
-            value: whole.as_str().to_owned(),
-            groups,
-        });
     }
     RegexTest::Success(matches)
 }
 
-/// Why `pattern` was refused: the .NET construct it uses, if one, else what the engine says.
-fn refusal(pattern: &str, error: &regex::Error) -> InvalidPattern {
-    if let Some(construct) = dotnet_construct(pattern) {
-        return InvalidPattern::Unsupported(construct);
+/// The match of `regex` in `input` from byte `at` on.
+fn linear_find(regex: &regex::Regex, input: &str, at: usize) -> Option<Found> {
+    regex.captures_at(input, at).map(|captures| {
+        captures
+            .iter()
+            .map(|group| group.map(|group| group.range()))
+            .collect()
+    })
+}
+
+/// The match of `regex` in `input` from byte `at` on; stopped past its steps back.
+fn fancy_find(
+    regex: &fancy_regex::Regex,
+    input: &str,
+    at: usize,
+) -> Result<Option<Found>, Timeout> {
+    regex
+        .captures_from_pos(input, at)
+        .map(|found| {
+            found.map(|captures| {
+                captures
+                    .iter()
+                    .map(|group| group.map(|group| group.range()))
+                    .collect()
+            })
+        })
+        .map_err(|_| Timeout)
+}
+
+/// A builder of `pattern` with `options`, its steps back bounded.
+fn fancy_builder(pattern: &str, options: RegexOptions) -> RegexBuilder {
+    let mut builder = RegexBuilder::new(pattern);
+    builder
+        .case_insensitive(options.ignore_case)
+        .multi_line(options.multiline)
+        .dot_matches_new_line(options.singleline)
+        .backtrack_limit(BACKTRACK_LIMIT);
+    builder
+}
+
+/// A search stopped past its steps back.
+struct Timeout;
+
+/// How a pattern is searched.
+enum Engine {
+    /// By the `regex` crate, in linear time.
+    Linear(regex::Regex),
+    /// By `fancy-regex`, which backtracks.
+    Backtracking(fancy_regex::Regex),
+}
+
+/// The byte after the character at byte `at` of `input`; past its end at its end.
+fn next_char(input: &str, at: usize) -> usize {
+    input[at..]
+        .chars()
+        .next()
+        .map_or(input.len() + 1, |c| at + c.len_utf8())
+}
+
+/// The groups in .NET's order, as (number in the engine, name): the unnamed ones first,
+/// then the named ones.
+fn dotnet_order(names: &[Option<String>]) -> Vec<(usize, Option<String>)> {
+    let numbered = names.iter().enumerate().skip(1);
+    numbered
+        .clone()
+        .filter(|(_, name)| name.is_none())
+        .chain(numbered.filter(|(_, name)| name.is_some()))
+        .map(|(index, name)| (index, name.clone()))
+        .collect()
+}
+
+/// Counts a text's UTF-16 units up to a byte, forward from the last place counted.
+#[derive(Default)]
+struct Utf16Counter {
+    byte: usize,
+    units: usize,
+}
+
+impl Utf16Counter {
+    /// The UTF-16 place of byte `byte` of `input`.
+    fn at(&mut self, input: &str, byte: usize) -> usize {
+        let units = if byte >= self.byte {
+            self.units + utf16_len(&input[self.byte..byte])
+        } else {
+            utf16_len(&input[..byte])
+        };
+        self.byte = byte;
+        self.units = units;
+        units
+    }
+}
+
+/// The match `whole` of `input`, with its `groups` in .NET's `order`.
+fn found_match(
+    input: &str,
+    whole: &Range<usize>,
+    groups: &[Option<Range<usize>>],
+    order: &[(usize, Option<String>)],
+    counter: &mut Utf16Counter,
+) -> RegexMatch {
+    let index = counter.at(input, whole.start);
+    let groups = order
+        .iter()
+        .enumerate()
+        .map(|(position, (engine_index, name))| {
+            let number = position + 1;
+            let group = groups.get(*engine_index).cloned().flatten();
+            RegexGroup {
+                number,
+                name: name.clone().unwrap_or_else(|| number.to_string()),
+                start: group
+                    .as_ref()
+                    .map(|group| index + utf16_len(&input[whole.start..group.start])),
+                length: group
+                    .as_ref()
+                    .map_or(0, |group| utf16_len(&input[group.clone()])),
+                value: group.map_or_else(String::new, |group| input[group].to_owned()),
+                named: name.is_some(),
+            }
+        })
+        .collect();
+    RegexMatch {
+        index,
+        length: utf16_len(&input[whole.clone()]),
+        bytes: whole.clone(),
+        value: input[whole.clone()].to_owned(),
+        groups,
+    }
+}
+
+/// Why `pattern` was refused: the .NET construct it uses that the engine lacks, if one,
+/// else what the engine says.
+fn refusal(pattern: &str, error: &Error) -> InvalidPattern {
+    if matches!(error, Error::CompileError(CompileError::LookBehindNotConst)) {
+        return InvalidPattern::Unsupported(DotnetConstruct::VariableLookBehind);
+    }
+    if has_balancing_group(pattern) {
+        return InvalidPattern::Unsupported(DotnetConstruct::BalancingGroup);
     }
     let said = error.to_string();
-    // The engine draws the pattern and points under it before its message: the message
-    // alone is shown, on the status line.
+    // The `regex` crate under it draws the pattern and points under it before its
+    // message: the message alone is shown, on the status line.
     let message = said
         .lines()
         .rev()
@@ -202,24 +378,15 @@ fn refusal(pattern: &str, error: &regex::Error) -> InvalidPattern {
     InvalidPattern::Syntax(message)
 }
 
-/// The first construct of .NET's in `pattern` the engine does not have, outside a class and
-/// not escaped.
+/// Whether `pattern` opens a .NET balancing group, `(?<a-b>`, `(?<-b>`, `(?'a-b'` or
+/// `(?'-b'`, outside a class and not escaped.
 #[must_use]
-pub fn dotnet_construct(pattern: &str) -> Option<DotnetConstruct> {
+pub fn has_balancing_group(pattern: &str) -> bool {
     let chars: Vec<char> = pattern.chars().collect();
     let mut at = 0;
     let mut in_class = false;
     while let Some(&c) = chars.get(at) {
         if c == '\\' {
-            let next = chars.get(at + 1).copied();
-            if !in_class {
-                if next.is_some_and(|next| ('1'..='9').contains(&next)) {
-                    return Some(DotnetConstruct::Backreference);
-                }
-                if next == Some('k') && matches!(chars.get(at + 2), Some('<' | '\'' | '{')) {
-                    return Some(DotnetConstruct::Backreference);
-                }
-            }
             at += 2;
             continue;
         }
@@ -228,40 +395,36 @@ pub fn dotnet_construct(pattern: &str) -> Option<DotnetConstruct> {
             at += 1;
             continue;
         }
-        match c {
-            '[' => {
-                in_class = true;
+        if c == '[' {
+            in_class = true;
+            at += 1;
+            // A `^` and a `]` at the class's start are its own.
+            if chars.get(at) == Some(&'^') {
                 at += 1;
-                // A `^` and a `]` at the class's start are its own.
-                if chars.get(at) == Some(&'^') {
-                    at += 1;
-                }
-                if chars.get(at) == Some(&']') {
-                    at += 1;
-                }
-                continue;
             }
-            '(' if chars.get(at + 1) == Some(&'?') => {
-                let rest: String = chars.iter().skip(at + 2).take(2).collect();
-                if rest.starts_with('=')
-                    || rest.starts_with('!')
-                    || rest.starts_with("<=")
-                    || rest.starts_with("<!")
-                {
-                    return Some(DotnetConstruct::LookAround);
-                }
-                if rest.starts_with('>') {
-                    return Some(DotnetConstruct::AtomicGroup);
-                }
-                if rest.starts_with('(') {
-                    return Some(DotnetConstruct::Conditional);
-                }
+            if chars.get(at) == Some(&']') {
+                at += 1;
             }
-            _ => {}
+            continue;
+        }
+        if c == '('
+            && chars.get(at + 1) == Some(&'?')
+            && let Some(&open @ ('<' | '\'')) = chars.get(at + 2)
+        {
+            let close = if open == '<' { '>' } else { '\'' };
+            let name: String = chars
+                .iter()
+                .skip(at + 3)
+                .take_while(|c| **c != close && **c != ')')
+                .collect();
+            // `(?<=` and `(?<!` are look-behinds, not names.
+            if !name.starts_with(['=', '!']) && name.contains('-') {
+                return true;
+            }
         }
         at += 1;
     }
-    None
+    false
 }
 
 /// The length of `text` in UTF-16 units, as .NET counts it.

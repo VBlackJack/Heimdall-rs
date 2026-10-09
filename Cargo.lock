@@ -2432,6 +2432,7 @@ dependencies = [
  "argon2",
  "data-encoding",
  "directories",
+ "fancy-regex",
  "getrandom 0.4.3",
  "regex",
  "roxmltree 0.21.1",

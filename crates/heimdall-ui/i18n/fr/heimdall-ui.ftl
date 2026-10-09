@@ -2384,10 +2384,9 @@ ui-tool-regex-match-entry = { "[" }{ $number }] Index { $index } : "{ $value }"
 ui-tool-regex-group-entry = { "  " }Groupe { $number } : "{ $value }"
 ui-tool-regex-status-valid = Expression valide
 ui-tool-regex-status-invalid = Expression invalide : { $error }
-ui-tool-regex-unsupported-lookaround = Expression invalide : les assertions avant et arrière (look-ahead, look-behind) ne sont pas prises en charge par ce moteur
-ui-tool-regex-unsupported-backreference = Expression invalide : les références arrière (\1, \k<nom>) ne sont pas prises en charge par ce moteur
-ui-tool-regex-unsupported-atomic = Expression invalide : les groupes atomiques (?>...) ne sont pas pris en charge par ce moteur
-ui-tool-regex-unsupported-conditional = Expression invalide : les conditionnelles (?(...)...) ne sont pas prises en charge par ce moteur
+ui-tool-regex-status-timeout = Expiration de l'évaluation regex (protection ReDoS)
+ui-tool-regex-unsupported-variable-lookbehind = Expression invalide : une assertion arrière de longueur variable n'est pas prise en charge par ce moteur
+ui-tool-regex-unsupported-balancing-group = Expression invalide : les groupes d'équilibrage (?<ouvre-ferme>...) ne sont pas pris en charge par ce moteur
 ui-tool-regex-truncated = Affichage des { $shown } premiers résultats sur { $total }
 ui-tool-regex-empty = Saisissez une expression régulière et une chaîne de test ci-dessus
 ui-tool-regex-help =
@@ -2417,7 +2416,9 @@ ui-tool-regex-help =
     - ^#.*$ (Multiligne) - Lignes de commentaire
 
     Moteur :
-    - Les assertions avant et arrière, les références arrière, les groupes atomiques et les conditionnelles ne sont pas pris en charge.
+    - Les assertions avant et arrière, les références arrière, les groupes atomiques et les conditionnelles sont pris en charge.
+    - Non pris en charge : assertion arrière de longueur variable, groupes d'équilibrage.
+    - Un test qui dure plus d'une seconde s'arrête (protection ReDoS).
 ui-tool-diff-name = Comparaison de texte
 ui-tool-diff-description = Comparateur de texte côte à côte avec visualisation des différences
 ui-tool-diff-title = Comparaison de texte

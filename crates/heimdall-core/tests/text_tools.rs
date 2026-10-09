@@ -17,6 +17,8 @@
 //! The text tools' engines against the C# tests' vectors: `JsonCodecTests.cs`,
 //! `RegexEngineTests.cs`, `TextCaseCodecTests.cs` and `DiffEngineTests.cs`.
 
+use std::time::Duration;
+
 use heimdall_core::tools::diff_engine::{
     self, DEFAULT_MAX_LINE_COUNT, DiffLineKind, DiffOptions, TextDiff, WordSegment,
 };
@@ -210,20 +212,83 @@ fn regex_places_are_counted_in_utf16_units_and_groups_numbered_as_dotnet() {
 }
 
 #[test]
-fn regex_a_catastrophic_pattern_runs_in_linear_time() {
+fn regex_a_runaway_pattern_times_out_as_the_csharp() {
+    // `RegexEngineTests.Test_Timeout_ReturnsMatchTimeout`: 20,000 `a`, a 1 ms timeout. The
+    // C#'s `(a+)+b` needs no backtracking here and runs in linear time; made to backtrack,
+    // by an atomic group before it, it times out on the clock as in the C#.
     let input = "a".repeat(20_000);
+    assert_eq!(
+        regex_engine::test_within(
+            r"(?>a)(a+)+b",
+            &input,
+            RegexOptions::default(),
+            Duration::from_millis(1)
+        ),
+        RegexTest::MatchTimeout
+    );
     assert!(matches("(a+)+b", &input, RegexOptions::default()).is_empty());
+    // Too many steps back stops a search whatever the clock says.
+    assert_eq!(
+        regex_engine::test_within(
+            r"(a+)+\1b",
+            &input,
+            RegexOptions::default(),
+            Duration::from_secs(60)
+        ),
+        RegexTest::MatchTimeout
+    );
+    assert_eq!(regex_engine::DEFAULT_TIMEOUT, Duration::from_secs(1));
+}
+
+#[test]
+fn regex_dotnet_constructs_run_as_in_dotnet() {
+    let values = |pattern: &str, input: &str| -> Vec<(usize, String)> {
+        matches(pattern, input, RegexOptions::default())
+            .into_iter()
+            .map(|found| (found.index, found.value))
+            .collect()
+    };
+    let owned = |pairs: &[(usize, &str)]| -> Vec<(usize, String)> {
+        pairs
+            .iter()
+            .map(|(at, text)| (*at, (*text).to_owned()))
+            .collect()
+    };
+    assert_eq!(values(r"a(?=b)", "ab ac"), owned(&[(0, "a")]));
+    assert_eq!(values(r"a(?!b)", "ab ac"), owned(&[(3, "a")]));
+    assert_eq!(values(r"(?<=a)b", "abcab"), owned(&[(1, "b"), (4, "b")]));
+    assert_eq!(values(r"(?<!a)b", "abcb"), owned(&[(3, "b")]));
+    assert_eq!(values(r"(\w)\1", "aabcc"), owned(&[(0, "aa"), (3, "cc")]));
+    assert_eq!(values(r"(?<c>\w)\k<c>", "xyy"), owned(&[(1, "yy")]));
+    assert_eq!(values(r"(?>a+)b", "aab"), owned(&[(0, "aab")]));
+    assert!(
+        values(r"(?>a+)ab", "aab").is_empty(),
+        "an atomic group gives nothing back"
+    );
+    assert_eq!(
+        values(r"(a)?(?(1)b|c)", "ab c"),
+        owned(&[(0, "ab"), (3, "c")])
+    );
+    // Matches follow one another as .NET's: an empty one where the last one ended.
+    assert_eq!(values("a*", "aab"), owned(&[(0, "aa"), (2, ""), (3, "")]));
+    assert_eq!(values("(?=a)", "aba"), owned(&[(0, ""), (2, "")]));
+    // Places in UTF-16 units and .NET's group numbers on the backtracking path too.
+    let found = matches(r"(?<n>a)(b)(?=c)", "\u{1F600}abc", RegexOptions::default());
+    assert_eq!(found[0].index, 2);
+    let groups: Vec<(usize, &str)> = found[0]
+        .groups
+        .iter()
+        .map(|group| (group.number, group.value.as_str()))
+        .collect();
+    assert_eq!(groups, [(1, "b"), (2, "a")]);
 }
 
 #[test]
 fn regex_dotnet_constructs_the_engine_lacks_are_named() {
     for (pattern, construct) in [
-        ("a(?=b)", DotnetConstruct::LookAround),
-        ("(?<!a)b", DotnetConstruct::LookAround),
-        ("(a)\\1", DotnetConstruct::Backreference),
-        ("(?<n>a)\\k<n>", DotnetConstruct::Backreference),
-        ("(?>a+)b", DotnetConstruct::AtomicGroup),
-        ("(?(a)b|c)", DotnetConstruct::Conditional),
+        ("(?<=a+)b", DotnetConstruct::VariableLookBehind),
+        ("(?<open-close>a)", DotnetConstruct::BalancingGroup),
+        ("(?<-close>a)", DotnetConstruct::BalancingGroup),
     ] {
         assert_eq!(
             regex(pattern, "ab", RegexOptions::default()),
@@ -231,9 +296,10 @@ fn regex_dotnet_constructs_the_engine_lacks_are_named() {
             "{pattern}"
         );
     }
-    // Escaped or in a class, they are plain characters.
-    assert_eq!(regex_engine::dotnet_construct("\\(?=[(?=]"), None);
-    assert_eq!(regex_engine::dotnet_construct("[\\1]"), None);
+    // Escaped or in a class, a balancing group's spelling is plain characters.
+    assert!(!regex_engine::has_balancing_group(r"\(?<a-b>"));
+    assert!(!regex_engine::has_balancing_group("[(?<a-b>]"));
+    assert!(!regex_engine::has_balancing_group("(?<=a-b)"));
 }
 
 #[test]

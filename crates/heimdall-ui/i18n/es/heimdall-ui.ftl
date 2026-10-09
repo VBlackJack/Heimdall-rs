@@ -2381,10 +2381,9 @@ ui-tool-regex-match-entry = { "[" }{ $number }] Índice { $index }: "{ $value }"
 ui-tool-regex-group-entry = { "  " }Grupo { $number }: "{ $value }"
 ui-tool-regex-status-valid = Expresión regular válida
 ui-tool-regex-status-invalid = Expresión regular no válida: { $error }
-ui-tool-regex-unsupported-lookaround = Expresión regular no válida: este motor no admite búsquedas hacia delante ni hacia atrás (look-ahead, look-behind)
-ui-tool-regex-unsupported-backreference = Expresión regular no válida: este motor no admite referencias inversas (\1, \k<nombre>)
-ui-tool-regex-unsupported-atomic = Expresión regular no válida: este motor no admite grupos atómicos (?>...)
-ui-tool-regex-unsupported-conditional = Expresión regular no válida: este motor no admite condicionales (?(...)...)
+ui-tool-regex-status-timeout = Se agotó el tiempo de evaluación de la expresión regular (protección ReDoS)
+ui-tool-regex-unsupported-variable-lookbehind = Expresión regular no válida: este motor no admite búsquedas hacia atrás de longitud variable
+ui-tool-regex-unsupported-balancing-group = Expresión regular no válida: este motor no admite grupos de equilibrio (?<abre-cierra>...)
 ui-tool-regex-truncated = Mostrando las primeras { $shown } de { $total } coincidencias
 ui-tool-regex-empty = Introduce un patrón de expresión regular y un texto de prueba arriba
 ui-tool-regex-help =
@@ -2414,7 +2413,9 @@ ui-tool-regex-help =
     - ^#.*$ (Multilínea) - Coincidir con líneas de comentario
 
     Motor:
-    - No se admiten las búsquedas hacia delante y hacia atrás, las referencias inversas, los grupos atómicos ni los condicionales.
+    - Se admiten las búsquedas hacia delante y hacia atrás, las referencias inversas, los grupos atómicos y los condicionales.
+    - No se admiten: búsquedas hacia atrás de longitud variable, grupos de equilibrio.
+    - Una prueba que dura más de un segundo se detiene (protección ReDoS).
 ui-tool-diff-name = Diferencias de texto
 ui-tool-diff-description = Comparador y visor de diferencias de texto lado a lado
 ui-tool-diff-title = Diferencias de texto

@@ -16,6 +16,7 @@ publish.workspace = true
 argon2.workspace = true
 data-encoding.workspace = true
 directories.workspace = true
+fancy-regex.workspace = true
 getrandom.workspace = true
 regex.workspace = true
 roxmltree.workspace = true

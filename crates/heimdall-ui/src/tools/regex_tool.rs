@@ -20,7 +20,8 @@
 //! counted and listed with their groups, the first 500 of them; the list copied.
 //!
 //! The engine is the core's ([`regex_engine`]): what .NET has and it has not is refused
-//! with its name, on the status line.
+//! with its name, on the status line; a test past the C#'s one-second timeout says it timed
+//! out, as the C#'s protection against runaway patterns does.
 
 use std::time::Duration;
 
@@ -81,6 +82,8 @@ pub enum RegexStatus {
     Valid,
     /// The pattern was refused.
     Invalid(InvalidPattern),
+    /// The test took longer than the timeout.
+    Timeout,
 }
 
 impl RegexStatus {
@@ -96,6 +99,7 @@ impl RegexStatus {
             Self::Invalid(InvalidPattern::Unsupported(construct)) => {
                 (unsupported_label(*construct), true)
             }
+            Self::Timeout => (fl!("ui-tool-regex-status-timeout"), true),
         };
         Some(said)
     }
@@ -104,10 +108,10 @@ impl RegexStatus {
 /// What the status line says of a .NET construct the engine lacks.
 fn unsupported_label(construct: DotnetConstruct) -> String {
     match construct {
-        DotnetConstruct::LookAround => fl!("ui-tool-regex-unsupported-lookaround"),
-        DotnetConstruct::Backreference => fl!("ui-tool-regex-unsupported-backreference"),
-        DotnetConstruct::AtomicGroup => fl!("ui-tool-regex-unsupported-atomic"),
-        DotnetConstruct::Conditional => fl!("ui-tool-regex-unsupported-conditional"),
+        DotnetConstruct::VariableLookBehind => {
+            fl!("ui-tool-regex-unsupported-variable-lookbehind")
+        }
+        DotnetConstruct::BalancingGroup => fl!("ui-tool-regex-unsupported-balancing-group"),
     }
 }
 
@@ -261,6 +265,12 @@ impl RegexPane {
             }
             RegexTest::InvalidPattern(refusal) => {
                 self.status = RegexStatus::Invalid(refusal);
+                self.empty_state = false;
+                self.results = false;
+            }
+            // As the C# `ExecuteMatch` (`RegexTesterViewModel.cs:186-190`).
+            RegexTest::MatchTimeout => {
+                self.status = RegexStatus::Timeout;
                 self.empty_state = false;
                 self.results = false;
             }
@@ -553,11 +563,36 @@ mod tests {
         assert!(!pane.results);
         let (said, error) = pane.status.said().expect("said");
         assert!(error && said.starts_with("Invalid regex: "), "{said}");
-        let _ = pane.update(RegexMessage::Pattern("a(?=b)".to_owned()));
+        let _ = pane.update(RegexMessage::Pattern("(?<=a+)b".to_owned()));
         pane.execute();
         assert_eq!(
             &pane.status,
-            &RegexStatus::Invalid(InvalidPattern::Unsupported(DotnetConstruct::LookAround))
+            &RegexStatus::Invalid(InvalidPattern::Unsupported(
+                DotnetConstruct::VariableLookBehind
+            ))
+        );
+        let _ = pane.update(RegexMessage::Pattern("a(?=c)".to_owned()));
+        pane.execute();
+        assert_eq!(&pane.status, &RegexStatus::Valid, "a look-ahead runs");
+        assert_eq!(pane.matches.len(), 0);
+    }
+
+    #[test]
+    fn a_runaway_pattern_times_out_as_the_csharp_says() {
+        let mut pane = tested("b", "abc");
+        let _ = pane.update(RegexMessage::Test(Action::Edit(Edit::Paste(Arc::new(
+            "a".repeat(20_000),
+        )))));
+        let _ = pane.update(RegexMessage::Pattern(r"(a+)+\1b".to_owned()));
+        pane.execute();
+        assert_eq!(&pane.status, &RegexStatus::Timeout);
+        assert!(!pane.empty_state && !pane.results && pane.matches.is_empty());
+        assert_eq!(
+            pane.status.said(),
+            Some((
+                "Regex evaluation timed out (ReDoS protection)".to_owned(),
+                true
+            ))
         );
     }
 
