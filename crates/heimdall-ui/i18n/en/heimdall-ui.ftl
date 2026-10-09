@@ -2618,6 +2618,309 @@ ui-tool-totp-help =
 
     Usage:
     Enter a Base32 secret key to generate TOTP codes that refresh every 30 seconds.
+ui-tool-copy-value = Copy
+ui-tool-number-group-separator = {","}
+ui-tool-number-decimal-separator = {"."}
+ui-tool-subnet-name = Subnet Calculator
+ui-tool-subnet-description = Subnet calculator with CIDR notation and address range breakdown
+ui-tool-subnet-title = Subnet Calculator
+ui-tool-subnet-input = IP address / CIDR notation (e.g. 192.168.1.0/24)
+ui-tool-subnet-placeholder = 192.168.1.0/24
+ui-tool-subnet-network = Network Address
+ui-tool-subnet-broadcast = Broadcast Address
+ui-tool-subnet-mask = Subnet Mask
+ui-tool-subnet-first-host = First Host
+ui-tool-subnet-last-host = Last Host
+ui-tool-subnet-total-hosts = Total Hosts
+ui-tool-subnet-cidr = CIDR Notation
+ui-tool-subnet-wildcard = Wildcard Mask
+ui-tool-subnet-too-many = Too many to list
+ui-tool-subnet-error-invalid = Invalid IP address or CIDR notation. Use format: 192.168.1.0/24
+ui-tool-subnet-empty = Enter a CIDR notation to calculate subnet details
+ui-tool-subnet-help =
+    Subnet Calculator
+
+    Calculates IPv4 and IPv6 network information from CIDR notation.
+
+    Usage:
+    1. Enter an IP address with CIDR prefix (e.g. 192.168.1.0/24)
+    2. Results update automatically
+
+    Displayed information:
+    - Network address
+    - Broadcast address
+    - Subnet mask and wildcard mask
+    - First and last usable host
+    - Total number of usable hosts
+    - CIDR notation
+
+    Examples:
+    - 192.168.1.0/24 - 254 hosts (Class C)
+    - 10.0.0.0/8 - 16,777,214 hosts (Class A)
+    - 172.16.0.0/16 - 65,534 hosts (Class B)
+    - 192.168.1.64/26 - 62 hosts (subnet)
+    - 2001:db8::/32 - IPv6 prefix
+ui-tool-ipconv-name = IP Address Converter
+ui-tool-ipconv-description = IP address format converter (decimal, binary, hexadecimal)
+ui-tool-ipconv-title = IP Address Converter
+ui-tool-ipconv-input = Enter IPv4 address (dotted, integer, hex, or binary)
+ui-tool-ipconv-placeholder = IP address or integer
+ui-tool-ipconv-dotted = Dotted Decimal
+ui-tool-ipconv-integer = Integer
+ui-tool-ipconv-hex = Hexadecimal
+ui-tool-ipconv-binary = Binary
+ui-tool-ipconv-mapped = IPv4-Mapped IPv6
+ui-tool-ipconv-error-invalid = Invalid input. Enter a valid IPv4 address, integer, hex (0x...), or dotted binary.
+ui-tool-ipconv-empty = Enter an IP address, integer, hex, or dotted binary to convert.
+ui-tool-ipconv-help =
+    IP Converter
+
+    Converts IP addresses between decimal, hexadecimal, binary, and integer formats.
+
+    Usage:
+    Enter an IP address in any supported format and all conversions are displayed instantly.
+ui-tool-netcalc-name = Network Calculator
+ui-tool-netcalc-description = Advanced network calculator with VLAN and supernet support
+ui-tool-netcalc-title = Network Calculator
+ui-tool-netcalc-mode = Mode
+ui-tool-netcalc-mode-supernet = Supernet Calculator
+ui-tool-netcalc-mode-range = IP Range to CIDR
+ui-tool-netcalc-mode-vlan = VLAN Planner
+ui-tool-netcalc-supernet-input = CIDR ranges (one per line)
+ui-tool-netcalc-compute = Compute
+ui-tool-netcalc-start-ip = Start IP
+ui-tool-netcalc-end-ip = End IP
+ui-tool-netcalc-start-placeholder = e.g. 192.168.1.0
+ui-tool-netcalc-end-placeholder = e.g. 192.168.1.255
+ui-tool-netcalc-hosts-needed = Hosts needed
+ui-tool-netcalc-hosts-placeholder = e.g. 50
+ui-tool-netcalc-base-network = Base network
+ui-tool-netcalc-base-placeholder = e.g. 10.0.0.0
+ui-tool-netcalc-error-no-cidrs = Enter at least one CIDR range.
+ui-tool-netcalc-error-invalid-cidr = Invalid CIDR notation: { $line }
+ui-tool-netcalc-error-invalid-range = Enter valid IPv4 addresses for start and end.
+ui-tool-netcalc-error-start-after-end = Start IP must be less than or equal to End IP.
+ui-tool-netcalc-error-host-count = Enter a positive number of hosts.
+ui-tool-netcalc-error-base-network = Enter a valid IPv4 base network address.
+ui-tool-netcalc-supernet-result = Supernet: { $network }/{ $prefix }
+ui-tool-netcalc-supernet-range = Range: { $first } - { $last }
+ui-tool-netcalc-supernet-hosts = Total usable hosts: { $hosts }
+ui-tool-netcalc-range-result = CIDR blocks covering the range:
+ui-tool-netcalc-vlan-network = Network: { $network }/{ $prefix }
+ui-tool-netcalc-vlan-mask = Subnet mask: { $mask }
+ui-tool-netcalc-vlan-broadcast = Broadcast: { $broadcast }
+ui-tool-netcalc-vlan-usable-range = Usable range: { $first } - { $last }
+ui-tool-netcalc-vlan-usable-hosts = Usable hosts: { $hosts }
+ui-tool-netcalc-vlan-requested = Requested: { $hosts }
+ui-tool-netcalc-vlan-utilization = Utilization: { $percent }%
+ui-tool-netcalc-empty = Enter subnets or IP ranges to calculate.
+ui-tool-netcalc-help =
+    Network Calculator
+
+    Advanced network calculations including VLAN, supernetting, and subnet splitting.
+
+    Usage:
+    Enter network parameters to perform calculations across multiple subnets.
+ui-tool-chmod-name = Chmod Calculator
+ui-tool-chmod-description = Interactive chmod permission calculator for Unix file modes
+ui-tool-chmod-title = Chmod Calculator
+ui-tool-chmod-read = Read
+ui-tool-chmod-write = Write
+ui-tool-chmod-execute = Execute
+ui-tool-chmod-owner = Owner
+ui-tool-chmod-group = Group
+ui-tool-chmod-others = Others
+ui-tool-chmod-octal = Octal:
+ui-tool-chmod-symbolic = Symbolic:
+ui-tool-chmod-copy-octal = Copy octal
+ui-tool-chmod-copy-symbolic = Copy symbolic
+ui-tool-chmod-presets = Common presets
+ui-tool-chmod-symbolic-input = Symbolic notation (e.g. u+x,g-w,o=r):
+ui-tool-chmod-symbolic-placeholder = u+x,g-w,o=r
+ui-tool-chmod-error-symbolic = Invalid symbolic notation
+ui-tool-chmod-command-preview = Command preview:
+ui-tool-chmod-copy-command = Copy command
+ui-tool-chmod-command = chmod { $mode } filename
+ui-tool-chmod-help =
+    Chmod Calculator
+
+    Interactive Unix file permission calculator.
+
+    Usage:
+    Toggle read/write/execute permissions for owner, group, and others. The numeric and symbolic chmod values update in real time.
+ui-tool-datetime-name = DateTime Converter
+ui-tool-datetime-description = Date/time and Unix epoch converter with timezone support
+ui-tool-datetime-title = DateTime Converter
+ui-tool-datetime-input = Unix timestamp (seconds) or ISO 8601 datetime
+ui-tool-datetime-placeholder = timestamp, ISO 8601, or date string
+ui-tool-datetime-now = Now
+ui-tool-datetime-copy = Copy
+ui-tool-datetime-unix = Unix Timestamp (seconds)
+ui-tool-datetime-iso-utc = ISO 8601 (UTC)
+ui-tool-datetime-iso-local = ISO 8601 (Local)
+ui-tool-datetime-local-time = Local Time
+ui-tool-datetime-timezone = Timezone
+ui-tool-datetime-relative = Relative time
+ui-tool-datetime-detected-unix = Detected: Unix timestamp
+ui-tool-datetime-detected-ms = Detected: Unix timestamp (milliseconds)
+ui-tool-datetime-detected-iso = Detected: ISO 8601 datetime
+ui-tool-datetime-error-invalid = Invalid input. Enter a Unix timestamp or ISO 8601 datetime.
+ui-tool-datetime-empty = Enter a Unix timestamp or ISO 8601 date to convert.
+ui-tool-datetime-relative-seconds = { $count } seconds
+ui-tool-datetime-relative-minutes = { $count } minutes
+ui-tool-datetime-relative-hours = { $count } hours
+ui-tool-datetime-relative-days = { $count } days
+ui-tool-datetime-relative-months = { $count } months
+ui-tool-datetime-relative-years = { $count } years
+ui-tool-datetime-relative-ago = { $duration } ago
+ui-tool-datetime-relative-in = in { $duration }
+ui-tool-datetime-long = { $weekday }, { $d } { $month } { $year } { $time }
+ui-tool-datetime-weekday-0 = Sunday
+ui-tool-datetime-weekday-1 = Monday
+ui-tool-datetime-weekday-2 = Tuesday
+ui-tool-datetime-weekday-3 = Wednesday
+ui-tool-datetime-weekday-4 = Thursday
+ui-tool-datetime-weekday-5 = Friday
+ui-tool-datetime-weekday-6 = Saturday
+ui-tool-datetime-month-1 = January
+ui-tool-datetime-month-2 = February
+ui-tool-datetime-month-3 = March
+ui-tool-datetime-month-4 = April
+ui-tool-datetime-month-5 = May
+ui-tool-datetime-month-6 = June
+ui-tool-datetime-month-7 = July
+ui-tool-datetime-month-8 = August
+ui-tool-datetime-month-9 = September
+ui-tool-datetime-month-10 = October
+ui-tool-datetime-month-11 = November
+ui-tool-datetime-month-12 = December
+ui-tool-datetime-help =
+    Date/Time Converter
+
+    Converts between human-readable dates and Unix timestamps.
+
+    Usage:
+    Enter a date or Unix epoch value. Supports multiple date formats and timezone conversion.
+ui-tool-ulid-name = ULID Generator
+ui-tool-ulid-description = ULID generator - 128-bit lexicographically sortable identifier (Crockford base32)
+ui-tool-ulid-title = ULID Generator
+ui-tool-ulid-result = Generated ULID
+ui-tool-ulid-generate = Generate
+ui-tool-ulid-copy = Copy
+ui-tool-ulid-batch = Batch Generation
+ui-tool-ulid-count = Count
+ui-tool-ulid-generate-batch = Generate Batch
+ui-tool-ulid-copy-batch = Copy all
+ui-tool-ulid-help =
+    ULID Generator
+
+    Generates 128-bit lexicographically sortable identifiers.
+
+    Format: 26 characters in Crockford base32 (no I, L, O, U).
+
+    Structure:
+    - First 10 chars: 48-bit Unix timestamp in milliseconds
+    - Last 16 chars: 80 bits of cryptographically random data
+
+    ULIDs generated in order sort in order. Useful as primary keys in distributed systems.
+ui-tool-crontab-name = Crontab Builder
+ui-tool-crontab-description = Crontab expression builder with human-readable preview
+ui-tool-crontab-title = Crontab Builder
+ui-tool-crontab-presets = Quick presets
+ui-tool-crontab-preset-every-minute = Every minute
+ui-tool-crontab-preset-every-hour = Every hour
+ui-tool-crontab-preset-daily-midnight = Daily midnight
+ui-tool-crontab-preset-weekdays-9am = Weekdays 9am
+ui-tool-crontab-preset-weekly-sunday = Weekly Sunday
+ui-tool-crontab-preset-monthly-1st = Monthly 1st
+ui-tool-crontab-minute = Minute
+ui-tool-crontab-hour = Hour
+ui-tool-crontab-day-of-month = Day of Month
+ui-tool-crontab-month = Month
+ui-tool-crontab-day-of-week = Day of Week
+ui-tool-crontab-every-minute = Every minute (*)
+ui-tool-crontab-every-5-min = Every 5 minutes (*/5)
+ui-tool-crontab-every-15-min = Every 15 minutes (*/15)
+ui-tool-crontab-every-30-min = Every 30 minutes (*/30)
+ui-tool-crontab-every-hour = Every hour (*)
+ui-tool-crontab-every-day = Every day (*)
+ui-tool-crontab-every-month = Every month (*)
+ui-tool-crontab-every-day-of-week = Every day (*)
+ui-tool-crontab-month-1 = Jan
+ui-tool-crontab-month-2 = Feb
+ui-tool-crontab-month-3 = Mar
+ui-tool-crontab-month-4 = Apr
+ui-tool-crontab-month-5 = May
+ui-tool-crontab-month-6 = Jun
+ui-tool-crontab-month-7 = Jul
+ui-tool-crontab-month-8 = Aug
+ui-tool-crontab-month-9 = Sep
+ui-tool-crontab-month-10 = Oct
+ui-tool-crontab-month-11 = Nov
+ui-tool-crontab-month-12 = Dec
+ui-tool-crontab-day-abbr-0 = Sun
+ui-tool-crontab-day-abbr-1 = Mon
+ui-tool-crontab-day-abbr-2 = Tue
+ui-tool-crontab-day-abbr-3 = Wed
+ui-tool-crontab-day-abbr-4 = Thu
+ui-tool-crontab-day-abbr-5 = Fri
+ui-tool-crontab-day-abbr-6 = Sat
+ui-tool-crontab-day-0 = Sunday
+ui-tool-crontab-day-1 = Monday
+ui-tool-crontab-day-2 = Tuesday
+ui-tool-crontab-day-3 = Wednesday
+ui-tool-crontab-day-4 = Thursday
+ui-tool-crontab-day-5 = Friday
+ui-tool-crontab-day-6 = Saturday
+ui-tool-crontab-expression = Cron Expression
+ui-tool-crontab-copy = Copy
+ui-tool-crontab-manual-edit = Manual edit (5-field cron expression)
+ui-tool-crontab-placeholder = { "* * * * *" }
+ui-tool-crontab-next-runs = Next 5 executions
+ui-tool-crontab-desc-every-minute = Runs every minute
+ui-tool-crontab-desc-every-hour = Runs at the start of every hour
+ui-tool-crontab-desc-every-day = Runs daily at midnight
+ui-tool-crontab-desc-every-n-min = Runs every { $interval } minutes
+ui-tool-crontab-desc-daily-at = Runs daily at { $time }
+ui-tool-crontab-desc-weekly-at = Runs every { $day } at { $time }
+ui-tool-crontab-desc-monthly-at = Runs on the { $day }th of every month at { $time }
+ui-tool-crontab-desc-custom = Custom schedule: { $expression }
+ui-tool-crontab-error-field-count = A cron expression must have exactly 5 fields separated by spaces
+ui-tool-crontab-error-invalid-field = Invalid characters in field "{ $field }": { $value }
+ui-tool-crontab-error-out-of-range = Field "{ $field }" values must be between { $min } and { $max }
+ui-tool-crontab-help =
+    Crontab Builder
+
+    Builds cron expressions with a human-readable preview.
+
+    Usage:
+    Configure minute, hour, day, month, and weekday fields. The next scheduled execution times are displayed.
+ui-tool-sshconfig-name = SSH Config Generator
+ui-tool-sshconfig-description = SSH client configuration file generator
+ui-tool-sshconfig-title = SSH Config Generator
+ui-tool-sshconfig-host-alias = Host alias
+ui-tool-sshconfig-host-name = HostName
+ui-tool-sshconfig-user = User
+ui-tool-sshconfig-port = Port
+ui-tool-sshconfig-identity-file = IdentityFile
+ui-tool-sshconfig-proxy-jump = ProxyJump
+ui-tool-sshconfig-forward-agent = ForwardAgent
+ui-tool-sshconfig-alive-interval = ServerAliveInterval
+ui-tool-sshconfig-generate = Generate
+ui-tool-sshconfig-generate-all = Generate All from Heimdall
+ui-tool-sshconfig-copy = Copy
+ui-tool-sshconfig-error-host-required = HostName is required.
+ui-tool-sshconfig-generate-all-hint =
+    Open this tool from a session context to pre-fill fields.
+    Use the form above to generate config blocks manually for each host.
+ui-tool-sshconfig-empty = Configure options above to generate an SSH config block
+ui-tool-sshconfig-help =
+    SSH Config Generator
+
+    Generates SSH client configuration files.
+
+    Usage:
+    Configure host entries with hostname, user, port, key file, and proxy settings. Export to ~/.ssh/config format.
 ui-tool-json-name = JSON Formatter
 ui-tool-json-description = JSON formatter, validator, and minifier
 ui-tool-json-title = JSON Formatter
