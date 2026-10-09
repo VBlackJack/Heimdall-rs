@@ -30,7 +30,7 @@ use heimdall_core::profile::{CitrixProfile, ProfileId};
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, ProfileTab, Shell};
 use heimdall_ui::status_bar::status_text;
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
@@ -128,17 +128,29 @@ fn a_citrix_form_asks_for_its_storefront_and_application_not_a_server() {
         "Citrix Workspace",
         "StoreFront URL",
         "Application name",
+        "Name the session as the tree lists it.",
+    ] {
+        ui.find(label).expect(label);
+    }
+    for absent in ["Server *", "Password", "Username", "Network"] {
+        assert!(ui.find(absent).is_err(), "{absent}");
+    }
+    drop(ui);
+    // The ICA file and the boxes are the C# Options tab's.
+    let _ = shell.update(Message::ProfileTab(ProfileTab::Options));
+    let mut ui = common::simulator(
+        settings(),
+        Size::new(WINDOW.width, TALL_HEIGHT),
+        shell.view(),
+    );
+    for label in [
         "Advanced Citrix options",
         "ICA file path",
         "Provide either a StoreFront URL + application name, or a direct ICA file path.",
         "Seamless mode",
         "Use SSO (Kerberos)",
-        "Name the session as the tree lists it.",
     ] {
         ui.find(label).expect(label);
-    }
-    for absent in ["Server *", "Password", "Username", "Gateway routing"] {
-        assert!(ui.find(absent).is_err(), "{absent}");
     }
 }
 

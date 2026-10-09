@@ -104,8 +104,7 @@ pub(crate) fn reason(failure: &Unreached) -> String {
 pub fn view<'a>(draft: &'a ProfileDraft, gateways: &'a [SshGateway]) -> Element<'a, Message> {
     let running = draft.address_test == AddressTest::Running;
     let mut controls = row![
-        button(text(fl!("ui-address-test-button")).size(font_size::CAPTION))
-            .style(styles::secondary)
+        crate::dialog_parts::action(fl!("ui-address-test-button"), styles::secondary)
             .on_press_maybe(
                 (!running && draft.test_target().is_some())
                     .then_some(Message::App(AppMessage::TestAddress))
@@ -126,9 +125,12 @@ pub fn view<'a>(draft: &'a ProfileDraft, gateways: &'a [SshGateway]) -> Element<
             .find(|gateway| &gateway.id == id)
             .map(|gateway| gateway.name.as_str())
     });
-    // The hint beside the button, as one line: the form stays as short as it can.
-    controls = controls.push(text(fl!("ui-address-test-hint")).size(font_size::CAPTION));
-    let mut content = column![controls].spacing(spacing::XS);
+    // The hint under the button, as the C# dialog's.
+    let mut content = column![
+        controls,
+        crate::dialog_parts::hint(fl!("ui-address-test-hint"))
+    ]
+    .spacing(spacing::XS);
     if let Some((said, tone)) = chip(&draft.address_test, gateway) {
         let said = text(said).size(font_size::CAPTION);
         content = content.push(match tone {

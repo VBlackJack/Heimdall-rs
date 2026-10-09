@@ -492,6 +492,45 @@ pub fn card(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// A dialog, as the C# dialog windows: the window's background, rounded as `CornerRadiusXl`,
+/// its edge the border colour.
+pub fn dialog(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        border: outline(brushes.edge, radius::XL),
+        ..BoxStyle::default()
+    }
+}
+
+/// The C# `ThemedTabControlStyle` frame: a card rounded as `CornerRadiusXl`, outlined in the
+/// border colour, its headers on the window's background above it.
+pub fn tab_frame(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        border: outline(brushes.edge, radius::XL),
+        ..BoxStyle::default()
+    }
+}
+
+/// The header strip of a [`tab_frame`]: the window's background, rounded at the top.
+pub fn tab_headers(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(Brushes::of(theme).surface)),
+        border: Border {
+            radius: Radius {
+                top_left: radius::XL,
+                top_right: radius::XL,
+                bottom_right: 0.0,
+                bottom_left: 0.0,
+            },
+            ..Border::default()
+        },
+        ..BoxStyle::default()
+    }
+}
+
 /// A box drawn as a field, as the C# breadcrumb takes the path box's look: a card outlined
 /// in the secondary text.
 pub fn field_box(theme: &Theme) -> BoxStyle {

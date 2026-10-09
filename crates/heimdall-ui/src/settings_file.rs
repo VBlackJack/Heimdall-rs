@@ -23,9 +23,10 @@ use std::pin::Pin;
 
 use heimdall_app::{Message as AppMessage, SettingsTransferMessage};
 use heimdall_core::settings::{SETTINGS_EXPORT_FILE_NAME, SettingValue, SettingsImport};
-use iced::widget::{Column, button, column, row, text};
+use iced::widget::{Column, column, text};
 use iced::{Element, Task, window};
 
+use crate::dialog_parts::{self, Severity};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -159,43 +160,30 @@ pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
             .size(font_size::CAPTION),
         );
     }
-    column![
-        text(fl!("ui-dialog-settings-import-title")).size(font_size::TITLE),
-        text(fl!(
-            "ui-dialog-settings-import-body",
-            count = read.changes.len()
-        )),
-        styles::scroll(lines).height(CHANGES_HEIGHT),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-settings-import-confirm")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
+    dialog_parts::choice(
+        Severity::Warning,
+        fl!("ui-dialog-settings-import-title"),
+        column![
+            dialog_parts::body(fl!(
+                "ui-dialog-settings-import-body",
+                count = read.changes.len()
+            )),
+            styles::scroll(lines).height(CHANGES_HEIGHT),
         ]
         .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+        fl!("ui-dialog-cancel-button"),
+        fl!("ui-dialog-settings-import-confirm"),
+    )
 }
 
 /// Whether the `count` settings naming folders of this computer's user go into the file,
 /// as the C# asks: left out, or included.
 pub fn export_question<'a>(count: usize) -> Element<'a, Message> {
-    column![
-        text(fl!("ui-dialog-settings-export-title")).size(font_size::TITLE),
-        text(fl!("ui-dialog-settings-export-paths", count = count)),
-        row![
-            button(text(fl!("ui-dialog-settings-export-without")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-settings-export-with")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+    dialog_parts::choice(
+        Severity::Info,
+        fl!("ui-dialog-settings-export-title"),
+        dialog_parts::body(fl!("ui-dialog-settings-export-paths", count = count)),
+        fl!("ui-dialog-settings-export-without"),
+        fl!("ui-dialog-settings-export-with"),
+    )
 }

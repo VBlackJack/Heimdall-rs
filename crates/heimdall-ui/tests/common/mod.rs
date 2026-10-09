@@ -24,7 +24,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use heimdall_app::Message as AppMessage;
 use heimdall_ui::shell::Message;
-use iced::mouse::{Button, Event as MouseEvent};
+use iced::mouse::{Button, Event as MouseEvent, ScrollDelta};
 use iced::{Element, Settings, Size};
 use iced_test::simulator::Simulator;
 
@@ -104,6 +104,23 @@ pub fn simulator<'a>(
         ui: Simulator::with_size(settings, size, view),
         _turn: turn,
     }
+}
+
+/// Scrolls the profile form's page, as the wheel does, until the text `label` is in its
+/// middle: the form is as high as the C# dialog, whatever the window.
+pub fn reveal(ui: &mut Simulator<'_, Message>, label: &str) {
+    let page = ui
+        .find(heimdall_ui::shell::profile_page_id())
+        .expect("the form's page");
+    let shown = page.visible_bounds().expect("the page in view");
+    let target = ui.find(label).expect(label).bounds();
+    ui.point_at(shown.center());
+    let _ = ui.simulate([iced::Event::Mouse(MouseEvent::WheelScrolled {
+        delta: ScrollDelta::Pixels {
+            x: 0.0,
+            y: shown.center_y() - target.center_y(),
+        },
+    })]);
 }
 
 /// Windows a double click is tried in. iced tells a double click by the real time between

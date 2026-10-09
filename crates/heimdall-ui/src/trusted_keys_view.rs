@@ -505,19 +505,11 @@ pub fn forget_server_question<'a>(key: &TrustedKey, count: usize) -> Element<'a,
 /// A question before forgetting: its `title` and `body`, then the answers `keep` and
 /// `forget`.
 fn question<'a>(title: String, body: String, keep: String, forget: String) -> Element<'a, Message> {
-    column![
-        text(title).size(font_size::TITLE),
-        text(body),
-        row![
-            button(text(keep))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(forget))
-                .style(styles::danger)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+    crate::dialog_parts::choice(
+        crate::dialog_parts::Severity::Danger,
+        title,
+        crate::dialog_parts::body(body),
+        keep,
+        forget,
+    )
 }
