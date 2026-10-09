@@ -114,6 +114,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         username: None,
         key_path: None,
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
@@ -1333,4 +1334,71 @@ fn the_gateway_dialog_browses_for_its_key_and_the_path_picked_fills_it() {
     let mut ui = tall_simulator(&shell);
     ui.find("/home/me/.ssh/bastion")
         .expect("the key path shown");
+}
+
+#[test]
+fn the_tunnel_port_card_shows_through_a_gateway_and_its_box_frees_the_field() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    show(&mut shell, ProfileTab::Network);
+    assert!(
+        tall_simulator(&shell).find("Local tunnel port").is_err(),
+        "no gateway"
+    );
+    let _ = shell.update(app(AppMessage::NewGateway));
+    for (field, value) in [
+        (ProfileField::Name, "bastion"),
+        (ProfileField::Host, "bastion.lab"),
+        (ProfileField::Username, "jump"),
+    ] {
+        let _ = shell.update(app(AppMessage::GatewayField {
+            field,
+            value: value.to_owned(),
+        }));
+    }
+    let _ = shell.update(Message::SaveGatewayForm);
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "Local tunnel port",
+            "Heimdall uses this local port to reach the remote service through the SSH tunnel.",
+            "Choose the tunnel port automatically",
+            "Auto (33890)",
+            "Manual local port",
+            "Used when the desktop opens in Remote Desktop Connection. A desktop in a tab \
+             opens no port: the connection stays inside Heimdall.",
+        ] {
+            ui.find(label).expect(label);
+        }
+        ui.click("Choose the tunnel port automatically")
+            .expect("the box");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ProfileToggle {
+                toggle: ProfileToggle::AutoTunnelPort,
+                on: false
+            })
+        )));
+    }
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::AutoTunnelPort,
+        on: false,
+    }));
+    {
+        let mut ui = tall_simulator(&shell);
+        assert!(ui.find("Auto (33890)").is_err(), "a port is chosen");
+        ui.find("If the port is taken when the session starts, the system chooses another one.")
+            .expect("what a port taken does");
+        ui.click("33890").expect("the field, typed into now");
+        ui.typewrite("1");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ProfileField {
+                field: ProfileField::LocalTunnelPort,
+                ..
+            })
+        )));
+    }
 }

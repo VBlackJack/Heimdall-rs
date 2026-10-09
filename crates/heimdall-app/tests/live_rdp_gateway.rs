@@ -67,6 +67,7 @@ fn request(
             // The lab's xrdp offers TLS without Network Level Authentication.
             allow_tls_only: true,
             gateway: None,
+            local_tunnel_port: None,
             redirect_clipboard: true,
             redirect_drives: false,
             options: heimdall_core::profile::RdpOptions::default(),
@@ -95,6 +96,7 @@ fn request(
             username: Some("gateway".to_owned()),
             key_path: Some(keys.join("gateway")),
             gateway: None,
+            local_tunnel_port: None,
             vault_entry: None,
             forwards: heimdall_core::profile::Forwards::default(),
             post_connect: heimdall_core::post_connect::PostConnect::default(),

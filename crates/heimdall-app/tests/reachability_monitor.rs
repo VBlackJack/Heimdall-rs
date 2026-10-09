@@ -36,6 +36,7 @@ fn ssh(id: &str, gateway: Option<&str>) -> SshProfile {
         username: None,
         key_path: None,
         gateway: gateway.map(ProfileId::new),
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),

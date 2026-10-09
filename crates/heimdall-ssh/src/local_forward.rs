@@ -21,7 +21,8 @@
 //! [`start`] listens on the loopback address, on a port the system picks, and [`start_on`] on
 //! a port the user chose, for as long as the [`LocalForward`] returned lives: every connection
 //! it carries ends with it. [`start_limited`] carries fewer clients at once, for a forward made
-//! for one program alone.
+//! for one program alone, and [`start_preferred`] does too, on a profile's own port when it
+//! can be had, else on one the system picks, as the C# `TunnelManager.AllocatePort`.
 //!
 //! A client that is not on the loopback address is refused, whatever the listener: only a
 //! program of this computer goes the gateway's way.
@@ -97,6 +98,45 @@ pub async fn start_limited<O: Opener>(
     limit: usize,
 ) -> io::Result<LocalForward> {
     listen(opener, (host, port), None, limit).await
+}
+
+/// Starts a forward as [`start_limited`] does, on port `preferred` of the loopback address
+/// when given and free, as the C# `TunnelManager.AllocatePort`: a port taken, or refused by
+/// the system, is said in the log and one the system picks is taken instead, never a launch
+/// refused for it.
+///
+/// # Errors
+///
+/// No port of the loopback address could be taken.
+pub async fn start_preferred<O: Opener>(
+    opener: Arc<O>,
+    host: String,
+    port: u16,
+    preferred: Option<u16>,
+    limit: usize,
+) -> io::Result<LocalForward> {
+    let destination = (host, port);
+    if let Some(preferred) = preferred {
+        match listen(
+            Arc::clone(&opener),
+            destination.clone(),
+            Some(preferred),
+            limit,
+        )
+        .await
+        {
+            Ok(forward) => return Ok(forward),
+            Err(error) if port_unavailable(&error) => log::info!(
+                "the preferred local port {preferred} is held by another program; using one \
+                 the system picks"
+            ),
+            Err(error) => log::warn!(
+                "the preferred local port {preferred} could not be taken ({error}); using one \
+                 the system picks"
+            ),
+        }
+    }
+    listen(opener, destination, None, limit).await
 }
 
 /// Listens on port `local` of the loopback address, or on one the system picks, carrying at
@@ -388,6 +428,125 @@ mod tests {
             .expect("closed in time");
         assert!(matches!(refused, Ok(0) | Err(_)), "{refused:?}");
         assert_eq!(gateway.asked.lock().expect("asked").len(), 1);
+    }
+
+    /// A port the system has just freed, chosen as a user would choose one.
+    async fn free_port() -> u16 {
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("probe")
+            .local_addr()
+            .expect("address")
+            .port()
+    }
+
+    /// Whether a forward of `limit` 1 carries its first client and refuses a second.
+    async fn carries_one_client_only(forward: &LocalForward, gateway: &FakeGateway) {
+        let mut first = TcpStream::connect(forward.address()).await.expect("first");
+        first.write_all(b"x").await.expect("write");
+        let _far = far(gateway).await;
+        let mut second = TcpStream::connect(forward.address()).await.expect("second");
+        let mut read = [0; 1];
+        let refused = tokio::time::timeout(Duration::from_secs(5), second.read(&mut read))
+            .await
+            .expect("closed in time");
+        assert!(matches!(refused, Ok(0) | Err(_)), "{refused:?}");
+        assert_eq!(gateway.asked.lock().expect("asked").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_preferred_port_that_is_free_is_the_one_listened_on() {
+        let free = free_port().await;
+        let gateway = Arc::new(FakeGateway::default());
+        let forward = start_preferred(
+            Arc::clone(&gateway),
+            "web.lab".to_owned(),
+            22,
+            Some(free),
+            1,
+        )
+        .await
+        .expect("start");
+        assert_eq!(
+            forward.address(),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, free)),
+            "on the loopback address, on the port preferred"
+        );
+        carries_one_client_only(&forward, &gateway).await;
+    }
+
+    #[tokio::test]
+    async fn no_preferred_port_takes_one_the_system_picks() {
+        let forward = start_preferred(
+            Arc::new(FakeGateway::default()),
+            "dc.lab".to_owned(),
+            5985,
+            None,
+            MAX_CLIENTS,
+        )
+        .await
+        .expect("start");
+        assert!(forward.address().ip().is_loopback());
+        assert_ne!(forward.address().port(), 0);
+    }
+
+    /// Records what is logged, for the fallback's line.
+    struct Recorder;
+
+    static RECORDED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    impl log::Log for Recorder {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            RECORDED.lock().expect("recorded").push(format!(
+                "{} {}",
+                record.level(),
+                record.args()
+            ));
+        }
+
+        fn flush(&self) {}
+    }
+
+    static RECORDER: Recorder = Recorder;
+
+    #[tokio::test]
+    async fn a_preferred_port_held_elsewhere_falls_back_to_one_the_system_picks_and_says_so() {
+        // The only test of this binary that sets a logger.
+        let recording = log::set_logger(&RECORDER).is_ok();
+        if recording {
+            log::set_max_level(log::LevelFilter::Info);
+        }
+        let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("held");
+        let taken = held.local_addr().expect("address").port();
+        let gateway = Arc::new(FakeGateway::default());
+        let forward = start_preferred(
+            Arc::clone(&gateway),
+            "web.lab".to_owned(),
+            22,
+            Some(taken),
+            1,
+        )
+        .await
+        .expect("fell back, not refused");
+        assert!(forward.address().ip().is_loopback());
+        assert_ne!(forward.address().port(), taken, "not the port held");
+        assert_ne!(forward.address().port(), 0);
+        assert!(recording, "the logger is this test's");
+        let recorded = RECORDED.lock().expect("recorded").clone();
+        assert!(
+            recorded.iter().any(|line| line.starts_with("INFO")
+                && line.contains(&format!("preferred local port {taken} is held"))),
+            "{recorded:?}"
+        );
+        // The limit holds on the port it fell back to.
+        carries_one_client_only(&forward, &gateway).await;
+        drop(held);
     }
 
     #[tokio::test]

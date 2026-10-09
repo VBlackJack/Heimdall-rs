@@ -61,6 +61,7 @@ impl ProfileTab {
             ProfileField::SocksPort
             | ProfileField::RemoteBindPort
             | ProfileField::RemoteLocalPort
+            | ProfileField::LocalTunnelPort
             | ProfileField::RdGateway => Self::Network,
             ProfileField::Group
             | ProfileField::Tags

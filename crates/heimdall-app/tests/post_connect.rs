@@ -49,6 +49,7 @@ fn profile(id: &str, post_connect: PostConnect) -> SshProfile {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect,

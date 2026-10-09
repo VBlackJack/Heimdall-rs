@@ -246,6 +246,7 @@ fn a_network_tool_would_inherit_the_selected_session_host() {
         username: None,
         key_path: None,
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),

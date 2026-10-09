@@ -401,6 +401,9 @@ pub fn skip_reason(reason: &SkipReason) -> String {
         SkipReason::InvalidPort(port) => {
             fl!("ui-import-skip-invalid-port", port = port.to_string())
         }
+        SkipReason::InvalidLocalTunnelPort(port) => {
+            fl!("ui-import-skip-invalid-local-port", port = port.to_string())
+        }
         SkipReason::UnsafeLocalCommand => fl!("ui-import-skip-unsafe-local"),
         SkipReason::MissingUsername => fl!("ui-import-skip-missing-username"),
         SkipReason::UnknownIdentityMode => fl!("ui-import-skip-unknown-identity"),
@@ -471,6 +474,8 @@ pub fn draft_error(error: DraftError) -> String {
         DraftError::ArgumentsInvalid => fl!("ui-profile-error-local-arguments"),
         DraftError::RemoteBindPortInvalid => fl!("ui-profile-error-remote-bind-port"),
         DraftError::RemoteLocalPortInvalid => fl!("ui-profile-error-remote-local-port"),
+        DraftError::TunnelPortMissing => fl!("ui-profile-error-tunnel-port-missing"),
+        DraftError::TunnelPortInvalid => fl!("ui-profile-error-tunnel-port"),
     }
 }
 
@@ -756,6 +761,7 @@ mod tests {
     #[test]
     fn skip_reasons_carry_their_value() {
         assert!(skip_reason(&SkipReason::InvalidPort(70000)).contains("70000"));
+        assert!(skip_reason(&SkipReason::InvalidLocalTunnelPort(70000)).contains("70000"));
         assert!(skip_reason(&SkipReason::NotSsh("RDP".to_owned())).contains("RDP"));
     }
 

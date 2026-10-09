@@ -46,6 +46,7 @@ fn app(dir: &Path) -> App {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
@@ -68,6 +69,7 @@ fn app(dir: &Path) -> App {
         skip_certificate_check: false,
         username: None,
         gateway: None,
+        local_tunnel_port: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

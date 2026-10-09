@@ -280,6 +280,7 @@ mod tests {
             skip_certificate_check: false,
             username: None,
             gateway: None,
+            local_tunnel_port: None,
         }
     }
 

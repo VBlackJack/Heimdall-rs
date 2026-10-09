@@ -1087,6 +1087,7 @@ pub fn profile(port: u16, key: Option<&str>) -> SshProfile {
         username: Some(USER.to_owned()),
         key_path: key.map(client_key_path),
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),

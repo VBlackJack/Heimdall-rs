@@ -43,6 +43,7 @@ fn app(dir: &Path) -> App {
         username: None,
         key_path: None,
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),

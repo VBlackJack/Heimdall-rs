@@ -904,6 +904,7 @@ pub fn plan<S: BuildHasher>(
                 .filter(|path| !path.trim().is_empty())
                 .map(PathBuf::from),
             gateway,
+            local_tunnel_port: None,
             vault_entry: None,
             forwards: Forwards::default(),
             post_connect: PostConnect::default(),

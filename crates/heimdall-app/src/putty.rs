@@ -392,6 +392,7 @@ mod tests {
             username: Some("ops".to_owned()),
             key_path: None,
             gateway: None,
+            local_tunnel_port: None,
             vault_entry: None,
             forwards: Forwards::default(),
             post_connect: PostConnect::default(),

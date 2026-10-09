@@ -165,6 +165,7 @@ impl GatewayDraft {
             | ProfileField::SocksPort
             | ProfileField::RemoteBindPort
             | ProfileField::RemoteLocalPort
+            | ProfileField::LocalTunnelPort
             | ProfileField::RdGateway
             | ProfileField::LocalProgram
             | ProfileField::LocalArguments
@@ -196,6 +197,7 @@ impl GatewayDraft {
             | ProfileField::SocksPort
             | ProfileField::RemoteBindPort
             | ProfileField::RemoteLocalPort
+            | ProfileField::LocalTunnelPort
             | ProfileField::RdGateway
             | ProfileField::LocalProgram
             | ProfileField::LocalArguments
