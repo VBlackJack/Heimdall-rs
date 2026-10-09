@@ -18,7 +18,9 @@
 //! pinned with their names once accepted, listed, forgotten one key or one server at a
 //! time; and once forgotten, the next connection asks again.
 
-use std::net::{Ipv4Addr, TcpListener};
+#[path = "support/ftp_server.rs"]
+mod ftp_server;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -33,7 +35,6 @@ use heimdall_rdp::{CertificateHash, Fingerprint, KnownRdpHosts, Verdict};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use tokio_stream::StreamExt as _;
-use unftp_sbe_fs::Filesystem;
 
 /// Longest wait for the test server, or for one event.
 const STEP: Duration = Duration::from_secs(20);
@@ -52,34 +53,11 @@ fn other_pin() -> Fingerprint {
 /// Serves `root` over explicit FTPS, with a fresh self-signed certificate for `localhost`
 /// written in `keys`; returns the port.
 async fn serve(root: &Path, keys: &Path) -> u16 {
-    let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("free port")
-        .local_addr()
-        .expect("address")
-        .port();
-    let home = root.to_owned();
     let issued = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("cert");
     let (cert, key) = (keys.join("cert.pem"), keys.join("key.pem"));
     std::fs::write(&cert, issued.cert.pem()).expect("cert file");
     std::fs::write(&key, issued.signing_key.serialize_pem()).expect("key file");
-    let server = libunftp::ServerBuilder::new(Box::new(move || {
-        Filesystem::new(home.clone()).expect("root")
-    }))
-    .ftps(cert, key)
-    .build()
-    .expect("server");
-    tokio::spawn(server.listen(format!("127.0.0.1:{port}")));
-    tokio::time::timeout(STEP, async {
-        while tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-            .await
-            .is_err()
-        {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("started");
-    port
+    ftp_server::serve(root, Some((cert, key))).await
 }
 
 /// The anonymous FTPS profile "files", on `host:port`.
