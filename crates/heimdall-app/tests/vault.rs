@@ -622,8 +622,8 @@ async fn a_password_that_could_not_be_saved_says_so_and_is_not_used() {
 }
 
 /// A vault holding a password for RDP profile `nla` as `CORP\admin` on `dc.lab:3389`, and
-/// the application over it with RDP profiles `nla` and `tls` (without NLA) on that server,
-/// both in domain `domain`.
+/// the application over it with RDP profiles `nla`, `tls` (without NLA) and `mstsc` (set to
+/// Remote Desktop Connection) on that server, all in domain `domain`.
 async fn rdp_vault(dir: &Path, domain: &str) -> App {
     use heimdall_core::credentials::{
         CredentialProtocol, Endpoint, SavedPassword, encode, password_entry,
@@ -633,7 +633,7 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
     let mut vault =
         sealvault::Vault::create(dir.join(heimdall_app::VAULT_FILE_NAME), MASTER.as_bytes())
             .expect("vault");
-    for id in ["nla", "tls"] {
+    for id in ["nla", "tls", "mstsc"] {
         let saved = SavedPassword {
             endpoint: Endpoint {
                 protocol: CredentialProtocol::Rdp,
@@ -668,7 +668,9 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
         auto_reconnect: true,
     };
     let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
-    store.merge_rdp([rdp("nla", false), rdp("tls", true)]);
+    let mut mstsc = rdp("mstsc", false);
+    mstsc.extras.external = true;
+    store.merge_rdp([rdp("nla", false), rdp("tls", true), mstsc]);
     store.save().expect("save");
     drop(store);
     let mut app = app(dir, "a.lab", &SystemCredentials::memory());
@@ -677,7 +679,12 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
 }
 
 fn rdp_answer(app: &mut App, id: &str) -> Option<String> {
-    let effects = app.update(Message::OpenRdp(ProfileId::new(id)));
+    rdp_answer_to(app, Message::OpenRdp(ProfileId::new(id)))
+}
+
+/// The password the vault gives the RDP tab `open` opens.
+fn rdp_answer_to(app: &mut App, open: Message) -> Option<String> {
+    let effects = app.update(open);
     let [Effect::ConnectRdp { tab, attempt, .. }] = effects.as_slice() else {
         panic!("expected ConnectRdp, got {effects:?}");
     };
@@ -707,6 +714,23 @@ async fn an_rdp_password_goes_to_its_domain_account_and_never_without_nla() {
         rdp_answer(&mut app, "nla"),
         None,
         "the profile moved to another domain: another account"
+    );
+}
+
+#[tokio::test]
+async fn a_one_time_embedded_connection_takes_its_password_from_the_vault() {
+    use heimdall_core::profile::RdpMode;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = rdp_vault(dir.path(), "CORP").await;
+    let once = Message::OpenRdpWith {
+        id: ProfileId::new("mstsc"),
+        mode: RdpMode::Embedded,
+    };
+    assert_eq!(
+        rdp_answer_to(&mut app, once).as_deref(),
+        Some("rdp password"),
+        "as a plain connection's"
     );
 }
 

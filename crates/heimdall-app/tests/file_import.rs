@@ -316,7 +316,8 @@ fn an_imported_gateway_with_the_address_of_a_saved_one_is_that_one_its_profiles_
         summary.gateways,
         Reconciliation {
             created: 2,
-            merged: 1
+            merged: 1,
+            orphans: 0
         },
         "as the C# summary counts them"
     );
@@ -357,7 +358,8 @@ fn an_imported_gateway_with_the_address_of_a_saved_one_is_that_one_its_profiles_
         summary.gateways,
         Reconciliation {
             created: 0,
-            merged: 3
+            merged: 3,
+            orphans: 0
         }
     );
     assert_eq!(
@@ -405,4 +407,68 @@ fn an_imported_gateway_whose_identifier_names_another_saved_one_gets_one_of_its_
         .find(|profile| profile.id.as_str() == "db")
         .expect("db");
     assert_eq!(db.gateway.as_ref(), Some(&bastion.id), "rewired to it");
+}
+
+/// An export from a build without gateways: its profiles name bastions the file does not
+/// hold, one of them saved on this machine.
+const WITHOUT_GATEWAYS: &str = r#"{"schemaVersion": 2,
+    "servers": [
+        {"id": "db", "displayName": "DB", "remoteServer": "db.internal",
+         "connectionType": "SSH", "sshGatewayId": "saved"},
+        {"id": "dc", "displayName": "DC", "remoteServer": "dc.internal",
+         "connectionType": "RDP", "sshGatewayId": "gone"}]}"#;
+
+#[test]
+fn a_profile_whose_gateway_is_missing_is_imported_naming_it_and_counted_as_the_csharp_does() {
+    use heimdall_core::import::gateways::Reconciliation;
+    use heimdall_core::profile::{ProfileId, SshGateway};
+    use heimdall_core::store::{ProfileStore, RouteError};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge_gateways([SshGateway {
+        id: ProfileId::new("saved"),
+        name: "Bastion".to_owned(),
+        host: "bastion.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        parent: None,
+    }]);
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    read(&mut app, "export.json", WITHOUT_GATEWAYS, None);
+    app.update(Message::ConfirmDialog);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(summary.merged.added, 2, "neither left out");
+    assert!(summary.skipped.is_empty(), "{:?}", summary.skipped);
+    assert_eq!(
+        summary.gateways,
+        Reconciliation {
+            created: 0,
+            merged: 0,
+            orphans: 1
+        },
+        "the gateway saved here resolves; the other is counted"
+    );
+
+    let saved = ProfileStore::open(&profiles_file).expect("saved");
+    assert_eq!(
+        saved.ssh_profiles()[0].gateway,
+        Some(ProfileId::new("saved"))
+    );
+    let dc = &saved.rdp_profiles()[0];
+    assert_eq!(
+        dc.gateway,
+        Some(ProfileId::new("gone")),
+        "kept, as the C# keeps it, never connected direct"
+    );
+    assert_eq!(
+        saved.route(dc.gateway.as_ref()),
+        Err(RouteError::MissingGateway(ProfileId::new("gone"))),
+        "connecting says the gateway is missing"
+    );
 }

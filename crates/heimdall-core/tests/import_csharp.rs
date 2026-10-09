@@ -109,17 +109,25 @@ fn an_rdp_profile_goes_through_its_gateway_unless_direct() {
            {"id": "port", "remoteServer": "h", "connectionType": "RDP", "remotePort": 0}"#,
     );
     let report = import(&json, None).expect("valid JSON");
-    let kept: Vec<(&str, Option<&str>)> = report
+    let kept: Vec<(&str, Option<&str>, Option<&str>)> = report
         .rdp
         .iter()
-        .map(|p| (p.id.as_str(), p.extras.rd_gateway()))
+        .map(|p| {
+            (
+                p.id.as_str(),
+                p.gateway.as_ref().map(ProfileId::as_str),
+                p.extras.rd_gateway(),
+            )
+        })
         .collect();
     assert_eq!(
         kept,
         [
-            ("direct", None),
-            ("rdg", Some("rdg.lab")),
-            ("rdg-blank", None)
+            // Its gateway is not in the file: imported naming it all the same, as the C#.
+            ("tunnel", Some("g"), None),
+            ("direct", None, None),
+            ("rdg", None, Some("rdg.lab")),
+            ("rdg-blank", None, None)
         ],
         "a Remote Desktop Gateway is kept, for the client that goes through it"
     );
@@ -130,11 +138,7 @@ fn an_rdp_profile_goes_through_its_gateway_unless_direct() {
         .collect();
     assert_eq!(
         reasons,
-        vec![
-            // Its gateway is not in the settings, which this import has none of.
-            ("tunnel".to_owned(), SkipReason::MissingGateway),
-            ("port".to_owned(), SkipReason::InvalidPort(0)),
-        ]
+        vec![("port".to_owned(), SkipReason::InvalidPort(0))]
     );
 }
 
@@ -154,13 +158,16 @@ fn every_skip_reason_is_reported() {
         .into_iter()
         .map(|skipped| (skipped.id, skipped.reason))
         .collect();
-    assert!(report.profiles.is_empty());
+    let imported: Vec<&str> = report.profiles.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(
+        imported,
+        ["gw"],
+        "a gateway the file does not hold is no reason to leave a profile out"
+    );
     assert_eq!(
         reasons,
         vec![
             ("serial".to_owned(), SkipReason::NotSsh("Serial".to_owned())),
-            // Its gateway is not in the settings, which this import has none of.
-            ("gw".to_owned(), SkipReason::MissingGateway),
             ("nohost".to_owned(), SkipReason::MissingHost),
             (String::new(), SkipReason::MissingId),
             ("port0".to_owned(), SkipReason::InvalidPort(0)),
@@ -266,10 +273,13 @@ fn gateways_are_imported_with_their_parents_and_profiles_keep_theirs() {
 }
 
 #[test]
-fn a_gateway_whose_parents_are_missing_or_loop_is_left_out_and_so_are_its_profiles() {
+fn a_gateway_whose_parents_are_missing_or_loop_is_kept_with_its_profiles_for_the_reconciler() {
+    use heimdall_core::import::gateways::{Reconciliation, reconcile};
+
     let json = servers(
         r#"{"id": "a", "remoteServer": "a.lab", "connectionType": "SSH", "sshGatewayId": "orphan"},
-           {"id": "b", "remoteServer": "b.lab", "connectionType": "SSH", "sshGatewayId": "one"}"#,
+           {"id": "b", "remoteServer": "b.lab", "connectionType": "SSH", "sshGatewayId": "one"},
+           {"id": "c", "remoteServer": "c.lab", "connectionType": "SSH", "sshGatewayId": "nohost"}"#,
     );
     let gateways = r#"{"sshGateways": [
         {"id": "orphan", "host": "o.lab", "parentGatewayId": "nowhere"},
@@ -277,9 +287,7 @@ fn a_gateway_whose_parents_are_missing_or_loop_is_left_out_and_so_are_its_profil
         {"id": "two", "host": "2.lab", "parentGatewayId": "one"},
         {"id": "", "host": "x.lab"},
         {"id": "nohost", "host": " "}]}"#;
-    let report = import(&json, Some(gateways)).expect("valid JSON");
-    assert!(report.gateways.is_empty(), "{:?}", report.gateways);
-    assert!(report.profiles.is_empty());
+    let mut report = import(&json, Some(gateways)).expect("valid JSON");
     let reasons: Vec<(&str, &SkipReason)> = report
         .skipped
         .iter()
@@ -288,15 +296,72 @@ fn a_gateway_whose_parents_are_missing_or_loop_is_left_out_and_so_are_its_profil
     assert_eq!(
         reasons,
         [
-            ("a", &SkipReason::MissingGateway),
-            ("b", &SkipReason::MissingGateway),
             ("", &SkipReason::MissingId),
-            ("nohost", &SkipReason::MissingHost),
-            ("orphan", &SkipReason::MissingGateway),
-            ("one", &SkipReason::GatewayLoop),
-            ("two", &SkipReason::GatewayLoop),
-        ]
+            ("nohost", &SkipReason::MissingHost)
+        ],
+        "only a gateway that cannot be used is left out"
     );
+
+    // As the C# `GatewayImportReconciler`: every profile imported, a missing parent and the
+    // parent closing the loop cleared, the profile naming a gateway left out keeping it.
+    let counts = reconcile(&mut report, &[], &mut || ProfileId::new("fresh"));
+    assert_eq!(
+        counts,
+        Reconciliation {
+            created: 3,
+            merged: 0,
+            orphans: 3
+        }
+    );
+    let parents: Vec<(&str, Option<&str>)> = report
+        .gateways
+        .iter()
+        .map(|g| (g.id.as_str(), g.parent.as_ref().map(ProfileId::as_str)))
+        .collect();
+    assert_eq!(
+        parents,
+        [("orphan", None), ("one", None), ("two", Some("one"))],
+        "the first gateway of the loop loses its parent, as the C# BreakParentLoops"
+    );
+    let through: Vec<(&str, Option<&str>)> = report
+        .profiles
+        .iter()
+        .map(|p| (p.id.as_str(), p.gateway.as_ref().map(ProfileId::as_str)))
+        .collect();
+    assert_eq!(
+        through,
+        [
+            ("a", Some("orphan")),
+            ("b", Some("one")),
+            ("c", Some("nohost"))
+        ],
+        "the reference the import cannot resolve kept, as the C# keeps it"
+    );
+}
+
+#[test]
+fn a_profile_naming_a_gateway_already_saved_resolves_to_it_and_is_no_orphan() {
+    use heimdall_core::import::gateways::reconcile;
+    use heimdall_core::profile::SshGateway;
+
+    let json = servers(
+        r#"{"id": "a", "remoteServer": "a.lab", "connectionType": "SSH", "sshGatewayId": "saved"},
+           {"id": "w", "remoteServer": "w.lab", "connectionType": "WINRM", "sshGatewayId": "gone"}"#,
+    );
+    let mut report = import(&json, None).expect("valid JSON");
+    let saved = SshGateway {
+        id: ProfileId::new("saved"),
+        name: "Bastion".to_owned(),
+        host: "bastion.lab".to_owned(),
+        port: DEFAULT_SSH_PORT,
+        username: None,
+        key_path: None,
+        parent: None,
+    };
+    let counts = reconcile(&mut report, &[saved], &mut || ProfileId::new("fresh"));
+    assert_eq!(counts.orphans, 1, "the WinRM profile's gateway alone");
+    assert_eq!(report.profiles[0].gateway, Some(ProfileId::new("saved")));
+    assert_eq!(report.winrm[0].gateway, Some(ProfileId::new("gone")));
 }
 
 #[test]

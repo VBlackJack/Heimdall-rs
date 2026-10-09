@@ -426,7 +426,11 @@ ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-paste-truncated = Preview is truncated. The full clipboard content will be pasted if you continue.
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
-ui-dialog-import-gateways = SSH gateways: { $created } created, { $merged } merged.
+ui-dialog-import-gateways = SSH gateways: { $created } created, { $merged } merged, { $orphans ->
+    [one] { $orphans } orphan reference
+   *[other] { $orphans } orphan references
+}.
+ui-dialog-import-gateways-orphans-action = Some imported sessions still reference missing SSH gateways. Re-export from a build that includes gateways, or recreate/reassign the gateway in Settings before connecting.
 ui-dialog-import-skipped = Left out:
 ui-dialog-import-host-keys = Trusted SSH servers carried over: { $keys ->
     [one] { $keys } key
@@ -519,6 +523,7 @@ ui-import-skip-missing-id = has no identifier
 ui-import-skip-invalid-port = invalid port { $port }
 
 ui-tab-files-title = { $name } (files)
+ui-tab-rdp-forced-embedded-title = { $name } (forced embedded)
 
 ui-files-local-title = This computer
 ui-files-remote-title = Server
@@ -651,14 +656,16 @@ ui-dialog-run-script-body = { $name } runs in a new tab with the command below, 
 ui-error-remote-forward = The SSH gateway would not listen on its port { $port } for the remote forward: forwarding is off on it, or the port is taken there.
 ui-error-proxy-port = The SOCKS proxy could not open local port { $port }: another program may be using it. ({ $detail })
 ui-error-jump-refused = The SSH gateway would not connect onward to { $target }: forwarding is off on it, or that host cannot be reached from it.
-ui-import-skip-missing-gateway = goes through an SSH gateway that is not in the file, or that was left out
-ui-import-skip-gateway-loop = its SSH gateway is reached through itself, by way of its parents
 ui-import-skip-missing-username = logs in with an account it does not name
 ui-import-skip-unknown-identity = logs in with an identity mode Heimdall does not know
 ui-error-hostkey-changed-at = The host key of { $target } is not the one recorded: the connection may be intercepted. Recorded: { $recorded }. Presented: { $offered }.
 ui-error-gateway-missing = The SSH gateway { $id } this profile goes through is not in the profiles.
 ui-error-gateway-loop = The SSH gateway { $id } is reached through itself, by way of its parents.
 ui-tree-connect = Connect
+ui-tree-connect-with = Connect with...
+ui-tree-connect-with-tooltip = Override the profile's RDP mode for this connection only.
+ui-tree-connect-embedded = Connect (embedded)
+ui-tree-connect-external-mstsc = Connect (external mstsc)
 ui-tree-connect-as = Connect as...
 ui-tree-edit = Edit
 ui-tree-duplicate = Duplicate
@@ -975,6 +982,10 @@ ui-profile-rdp-full-screen = Open in fullscreen
 ui-profile-rdp-mstsc-only = External client (mstsc.exe) only
 ui-settings-rdp-defaults = RDP Defaults
 ui-settings-rdp-defaults-hint = The options of every RDP server that uses the global defaults.
+ui-settings-rdp-default-mode = Default RDP mode
+ui-settings-rdp-default-mode-embedded = Embedded
+ui-settings-rdp-default-mode-external = External
+ui-settings-rdp-default-mode-hint = Embedded: RDP client runs inside Heimdall. External: opens mstsc.exe in a separate window.
 ui-settings-rdp-auto-reconnect = Auto-reconnect
 ui-settings-rdp-multi-monitor = Multi-monitor
 ui-settings-rdp-audio-capture = Audio capture (microphone)
@@ -1952,6 +1963,8 @@ ui-dialog-reset-all-title = Reset all settings?
 ui-dialog-reset-all-body = Restore every Settings tab to factory defaults? Text typed and not applied yet is discarded. On the Security tab this turns off the external credential provider and the Windows Hello requirement on connect, and resets the Windows Hello grace period, the auto-lock delay and disconnect on lock. Your language, theme, sessions, SSH gateways, master password, PIN and Windows Hello enrolment are kept. The change is saved at once.
 ui-dialog-apply-ssh-mode-title = Apply to all saved SSH sessions?
 ui-dialog-apply-ssh-mode-body = { $changes } of { $total } saved SSH sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
+ui-dialog-apply-rdp-mode-title = Apply to all saved RDP sessions?
+ui-dialog-apply-rdp-mode-body = { $changes } of { $total } saved RDP sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
 ui-settings-tab-about = About
 ui-about-version = Version { $version }
 ui-about-tagline = Secure RDP/SSH/SFTP connection manager

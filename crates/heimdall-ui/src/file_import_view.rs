@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use heimdall_app::{FileKind, ImportFile, PendingImport};
+use heimdall_app::{FileKind, ImportFile, PendingImport, text_codec};
 use heimdall_core::import::foreign::FileWarning;
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
 
@@ -88,24 +88,30 @@ pub fn is_rdp(path: &Path) -> bool {
 }
 
 /// The file at `path` read, with the `settings.json` beside it when it is a `servers.json`;
-/// or why it could not be read. A file larger than [`MAX_FILE_BYTES`] is not read.
+/// or why it could not be read. A file larger than [`MAX_FILE_BYTES`] is not read. A
+/// `MobaXterm` file without a byte order mark is read in Windows-1252, as the C# reads it
+/// (`SettingsViewModel.cs:3023-3026`); any other must be UTF-8.
 ///
 /// # Errors
 ///
-/// The path and why, when the file is too large or cannot be read as UTF-8 text.
+/// The path and why, when the file is too large or cannot be read as text.
 pub async fn read(path: PathBuf) -> Result<ImportFile, String> {
-    let size = tokio::fs::metadata(&path)
-        .await
-        .map_err(|error| format!("{}: {error}", path.display()))?
-        .len();
+    let unreadable = |error: std::io::Error| format!("{}: {error}", path.display());
+    let size = tokio::fs::metadata(&path).await.map_err(unreadable)?.len();
     if size > MAX_FILE_BYTES {
         return Err(fl!("ui-import-file-too-large", size = size.to_string()));
     }
-    let text = crate::sessions_view::read_file(&path).await?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // Its extension alone tells a `MobaXterm` file.
+    let text = if FileKind::of(&name, "") == FileKind::MobaXterm {
+        let bytes = tokio::fs::read(&path).await.map_err(unreadable)?;
+        text_codec::decode_windows_1252_fallback(&bytes)
+    } else {
+        crate::sessions_view::read_file(&path).await?
+    };
     // As the application's own import: a `servers.json` takes its settings with it.
     let settings = if name.eq_ignore_ascii_case(LEGACY_SERVERS_FILE_NAME) {
         match path.parent() {

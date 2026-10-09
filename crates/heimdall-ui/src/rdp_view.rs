@@ -25,6 +25,7 @@ use std::pin::Pin;
 
 use heimdall_app::{
     Dialog, Message as AppMessage, RDP_EXTENSION, RdpMessage, RdpNames, RdpPreview, RdpRow,
+    text_codec,
 };
 use heimdall_core::import::rdp_file::{Conflict, MAX_FILE_BYTES, Refusal};
 use iced::widget::{Column, button, checkbox, column, container, pick_list, row, text};
@@ -98,7 +99,8 @@ pub async fn read_picked(pick: Pick) -> Option<Vec<(PathBuf, Result<String, Stri
 }
 
 /// Each file's text, or its path and why it could not be read: a file bigger than the C#
-/// limit is not read at all.
+/// limit is not read at all. The text is decoded as the C# `File.ReadAllTextAsync` decodes
+/// it (`RdpImportService.cs:156`): mstsc saves a file in UTF-16LE with its byte order mark.
 pub async fn read_all(paths: Vec<PathBuf>) -> Vec<(PathBuf, Result<String, String>)> {
     let mut read = Vec::with_capacity(paths.len());
     for path in paths {
@@ -117,9 +119,11 @@ async fn read_file(path: &Path) -> Result<String, String> {
     if size > MAX_FILE_BYTES {
         return Err(reason(&format_args!("{size} > {MAX_FILE_BYTES} bytes")));
     }
-    tokio::fs::read_to_string(path)
+    let bytes = tokio::fs::read(path)
         .await
-        .map_err(|error| reason(&error))
+        .map_err(|error| reason(&error))?;
+    text_codec::decode_as_read_all_text(&bytes)
+        .map_err(|undecodable| reason(&format_args!("{undecodable:?}")))
 }
 
 fn app(message: RdpMessage) -> Message {

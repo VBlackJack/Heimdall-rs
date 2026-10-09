@@ -19,7 +19,7 @@
 
 use std::path::PathBuf;
 
-use heimdall_core::profile::{RdpDefaults, SshMode};
+use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
     auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
@@ -98,6 +98,10 @@ pub enum SettingsMessage {
     SshTmoutResetInterval(u32),
     /// The RDP options profiles following the application's take.
     RdpDefaults(RdpDefaults),
+    /// Where the desktop of a new RDP profile opens.
+    RdpDefaultMode(RdpMode),
+    /// The default RDP mode written into every RDP profile, asked first as the C# asks.
+    ApplyRdpModeToAll,
     /// The computer kept from sleeping while a session is open, or not.
     PreventSleep(bool),
     /// The tunnels panel starts collapsed, or open.
@@ -206,6 +210,10 @@ impl App {
                 self.ask_apply_ssh_mode();
                 Vec::new()
             }
+            SettingsMessage::ApplyRdpModeToAll => {
+                self.ask_apply_rdp_mode();
+                Vec::new()
+            }
             _ => self.apply_settings(message),
         }
     }
@@ -237,6 +245,36 @@ impl App {
             return Vec::new();
         }
         self.apply_settings(&SettingsMessage::SshDefaultMode(mode))
+    }
+
+    /// Asks before the default RDP mode is written into every RDP profile, saying how many
+    /// change of how many, as the C# `ApplyRdpModeToAll` (`SettingsViewModel.cs:1627-1638`,
+    /// through `ApplyModeToAllAsync` at 1661-1689); nothing is asked when none would, as the
+    /// C# logs "no changes needed" and stops.
+    fn ask_apply_rdp_mode(&mut self) {
+        let mode = self.settings.rdp_default_mode;
+        let (changes, total) = self.store.rdp_mode_changes(mode);
+        if changes > 0 {
+            self.dialog = Some(Dialog::ConfirmApplyRdpMode {
+                mode,
+                changes,
+                total,
+            });
+        }
+    }
+
+    /// `mode` written into every RDP profile, as the user agreed to: one save, after which
+    /// it is the default too, as the C# saves it in the same gesture. A save that fails
+    /// leaves every profile as it was, and says why.
+    pub(super) fn confirm_apply_rdp_mode(&mut self, mode: RdpMode) -> Vec<Effect> {
+        if let Err(error) = self.store.apply(|store| store.set_rdp_modes(mode)) {
+            self.dialog = Some(Dialog::save_failed(&error));
+            return Vec::new();
+        }
+        if self.settings.rdp_default_mode == mode {
+            return Vec::new();
+        }
+        self.apply_settings(&SettingsMessage::RdpDefaultMode(mode))
     }
 
     /// The RDP settings reset, as the user agreed to.
@@ -323,12 +361,14 @@ impl App {
         true
     }
 
-    /// Sets what `message` changes of `PuTTY`, the default SSH mode and the X server.
-    fn set_external_ssh(&mut self, message: &SettingsMessage) {
+    /// Sets what `message` changes of `PuTTY`, the default SSH and RDP modes and the X
+    /// server.
+    fn set_external_clients(&mut self, message: &SettingsMessage) {
         let settings = &mut self.settings;
         match message {
             SettingsMessage::PuttyPath(path) => path.trim().clone_into(&mut settings.putty_path),
             SettingsMessage::SshDefaultMode(mode) => settings.ssh_default_mode = *mode,
+            SettingsMessage::RdpDefaultMode(mode) => settings.rdp_default_mode = *mode,
             SettingsMessage::X11ServerPath(path) => {
                 path.trim().clone_into(&mut settings.x11_server_path);
             }
@@ -377,8 +417,9 @@ impl App {
             }
             SettingsMessage::PuttyPath(_)
             | SettingsMessage::SshDefaultMode(_)
+            | SettingsMessage::RdpDefaultMode(_)
             | SettingsMessage::X11ServerPath(_)
-            | SettingsMessage::X11AutoStart(_) => self.set_external_ssh(message),
+            | SettingsMessage::X11AutoStart(_) => self.set_external_clients(message),
             SettingsMessage::SftpBrowser(sftp) => self.settings.sftp_browser = *sftp,
             SettingsMessage::TerminalFontSize(size) => {
                 if !terminal_font_size_accepted(*size) {
@@ -451,7 +492,9 @@ impl App {
                 // connection reaches.
                 self.agent_chip = super::agent_chip::AgentChip::Unknown;
             }
-            SettingsMessage::TrustedKeys(_) | SettingsMessage::ApplySshModeToAll => {}
+            SettingsMessage::TrustedKeys(_)
+            | SettingsMessage::ApplySshModeToAll
+            | SettingsMessage::ApplyRdpModeToAll => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings = before;

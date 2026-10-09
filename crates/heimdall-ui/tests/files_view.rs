@@ -229,11 +229,21 @@ async fn the_tree_menu_opens_a_files_tab_through_connect_as_sftp() {
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
     {
         let mut ui = simulator(&shell);
+        assert!(
+            ui.find("Connect with...").is_err(),
+            "the RDP modes are an RDP profile's"
+        );
         ui.click("Connect as...").expect("connect as");
         assert!(ui.into_messages().any(|message| matches!(
             &message,
             Message::OpenTreeMenu(TreeMenu::ConnectAs(asked)) if *asked == id
         )));
+    }
+    // Asked for all the same, an SSH profile's is not drawn.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::ConnectWith(id.clone())));
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Connect (embedded)").is_err());
     }
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::ConnectAs(id.clone())));
     let mut ui = simulator(&shell);

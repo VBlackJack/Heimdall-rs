@@ -51,18 +51,103 @@ fn a_file_saved_by_mstsc_gives_its_settings_and_nothing_secret() {
         Resolution::FitWindow,
         "size keys not carried"
     );
+    assert!(!profile.extras.multi_monitor, "use multimon 0");
+    assert!(profile.extras.compression);
     assert_eq!(
         file.not_carried,
-        [
-            "screen mode id",
-            "use multimon",
-            "desktopwidth",
-            "desktopheight",
-            "compression"
-        ]
+        ["screen mode id", "desktopwidth", "desktopheight"],
+        "no field for them, as in the C#"
     );
     assert_eq!(file.unknown, 1, "kdcproxyname");
     assert!(Patch::of(&file).expect("patch").is_partial(&file));
+    assert!(!profile.follow_defaults, "its own settings in use");
+}
+
+#[test]
+fn every_key_the_profile_holds_is_carried_as_the_csharp_maps_it() {
+    let on = profile_of(
+        "full address:s:srv\naudiocapturemode:i:1\nredirectprinters:i:1\n\
+         redirectsmartcards:i:1\nredirectcomports:i:1\nusbdevicestoredirect:s:*\n\
+         camerastoredirect:s:*\ncompression:i:0\nbitmapcachepersistenable:i:0\n\
+         autoreconnection enabled:i:0\nuse multimon:i:1\nauthentication level:i:1\n",
+    );
+    let extras = &on.extras;
+    assert!(extras.microphone && extras.redirect_printers && extras.redirect_smart_cards);
+    assert!(extras.redirect_com_ports && extras.redirect_usb && extras.redirect_webcam);
+    assert!(
+        !extras.compression && !extras.bitmap_caching,
+        "on by default, off here"
+    );
+    assert!(!on.auto_reconnect);
+    assert!(extras.multi_monitor);
+    assert!(extras.strict_server_authentication);
+    assert!(!on.follow_defaults);
+
+    let empty = "full address:s:srv\nusbdevicestoredirect:s:\ncamerastoredirect:s: \n";
+    let file = parse(empty);
+    assert!(
+        !Patch::of(&file).expect("patch").is_partial(&file),
+        "all carried"
+    );
+    let off = profile_of(empty);
+    assert!(
+        !off.extras.redirect_usb && !off.extras.redirect_webcam,
+        "an empty list shares nothing"
+    );
+    let named = profile_of("full address:s:srv\nusbdevicestoredirect:s:{6bdd1fc6-810f}\n");
+    assert!(named.extras.redirect_usb, "one device named: the switch on");
+}
+
+#[test]
+fn authentication_level_sets_strict_server_authentication_and_never_nla() {
+    let strict = |level: &str| {
+        let profile = profile_of(&format!(
+            "full address:s:srv\nauthentication level:i:{level}\n"
+        ));
+        (
+            profile.extras.strict_server_authentication,
+            profile.allow_tls_only,
+        )
+    };
+    assert_eq!(strict("1"), (true, false));
+    assert_eq!(
+        strict("0"),
+        (false, false),
+        "NLA is enablecredsspsupport's alone"
+    );
+    assert_eq!(strict("2"), (false, false), "a warning only");
+    let mut existing = profile_of("full address:s:srv\nauthentication level:i:1\n");
+    Patch::of(&parse("full address:s:srv\nauthentication level:i:3\n"))
+        .expect("patch")
+        .apply(&mut existing);
+    assert!(
+        existing.extras.strict_server_authentication,
+        "outside 0 to 2: left as it was"
+    );
+}
+
+#[test]
+fn a_file_naming_only_its_address_and_account_keeps_following_the_global_defaults() {
+    let file = "full address:s:srv\nusername:s:ops\ndomain:s:LAB\nadministrative session:i:1\n";
+    assert!(
+        profile_of(file).follow_defaults,
+        "as the C# RdpUseGlobalDefaults of a new profile"
+    );
+    let mut existing = profile_of("full address:s:old\n");
+    Patch::of(&parse("full address:s:srv\nredirectprinters:i:1\n"))
+        .expect("patch")
+        .apply(&mut existing);
+    assert!(
+        !existing.follow_defaults,
+        "a replaced profile stops following them, or the printers would not be shared"
+    );
+}
+
+#[test]
+fn a_not_carried_key_of_the_wrong_type_is_unknown_as_in_the_csharp() {
+    let file = parse("full address:s:srv\nscreen mode id:s:2\n");
+    assert!(file.not_carried.is_empty());
+    assert_eq!(file.unknown, 1);
 }
 
 #[test]

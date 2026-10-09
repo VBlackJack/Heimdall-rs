@@ -27,7 +27,7 @@ use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, Provide
 use crate::lockout::{LOCKOUT_DURATION, Lockout};
 use crate::pin::PinHash;
 use crate::profile::{
-    ProfileId, RESOLUTION_PRESETS, RdpDefaults, SshMode, preset_fits, resolution_preset,
+    ProfileId, RESOLUTION_PRESETS, RdpDefaults, RdpMode, SshMode, preset_fits, resolution_preset,
     resolution_text,
 };
 use crate::store::{StoreError, write_atomic};
@@ -583,6 +583,11 @@ pub struct Settings {
     pub ssh_tmout_reset_interval: u32,
     /// The RDP options profiles following the application's take.
     pub rdp_defaults: RdpDefaults,
+    /// Where the desktop of a new RDP profile opens, as the C# `RdpDefaultMode`
+    /// (`AppSettings.cs:241`): in a tab unless chosen. Only the profile form starts with it,
+    /// as the C# "Add server" (`ServerListViewModel.cs:1531`); "Reset RDP defaults" puts it
+    /// back, as the C# `ApplyRdpDefaults` (`SettingsViewModel.cs:2659`).
+    pub rdp_default_mode: RdpMode,
     /// The program a server's file is edited with, as the C# `ExternalEditorPath`; empty
     /// takes the system's own text editor.
     pub external_editor: String,
@@ -1081,6 +1086,7 @@ impl Default for Settings {
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
             ssh_tmout_reset_interval: SSH_TMOUT_RESET_INTERVAL_DEFAULT,
             rdp_defaults: RdpDefaults::default(),
+            rdp_default_mode: RdpMode::default(),
             external_editor: String::new(),
             putty_path: String::new(),
             ssh_default_mode: SshMode::default(),
@@ -1213,6 +1219,9 @@ struct RdpSessionSection {
     /// One `WIDTHxHEIGHT` per preset.
     #[serde(default)]
     resolution_presets: Option<Vec<String>>,
+    /// The C# name of the default RDP mode; absent is the C# default, `Embedded`.
+    #[serde(default)]
+    default_mode: Option<String>,
 }
 
 /// Absent flags are the C# defaults.
@@ -1482,14 +1491,15 @@ impl Settings {
     }
 
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults": the options
-    /// profiles following the application take, the auto-reconnect attempts and the
-    /// resolution presets. Nothing else changes, and no profile.
+    /// profiles following the application take, the auto-reconnect attempts, the
+    /// resolution presets and the default RDP mode. Nothing else changes, and no profile.
     pub fn reset_rdp(&mut self) {
         let defaults = Self::default();
         self.rdp_defaults = defaults.rdp_defaults;
         self.rdp_auto_reconnect_attempts = defaults.rdp_auto_reconnect_attempts;
         self.rdp_connect_timeout = defaults.rdp_connect_timeout;
         self.rdp_resolution_presets = defaults.rdp_resolution_presets;
+        self.rdp_default_mode = defaults.rdp_default_mode;
     }
 
     /// Every setting back to its default, as the C# "Reset defaults"
@@ -1685,6 +1695,12 @@ impl Settings {
                 .map(CtrlKTerminal::named)
                 .unwrap_or_default(),
             rdp_defaults: file.rdp,
+            rdp_default_mode: file
+                .rdp_session
+                .default_mode
+                .as_deref()
+                .map(RdpMode::named)
+                .unwrap_or_default(),
             sftp_browser: file.files.sftp_browser(),
             external_editor: file.files.external_editor.trim().to_owned(),
             putty_path: file.ssh.putty_path.trim().to_owned(),
@@ -1873,6 +1889,7 @@ impl Settings {
                         .map(resolution_text)
                         .collect(),
                 ),
+                default_mode: Some(self.rdp_default_mode.name().to_owned()),
             },
             files: FilesSection {
                 external_editor: self.external_editor.clone(),

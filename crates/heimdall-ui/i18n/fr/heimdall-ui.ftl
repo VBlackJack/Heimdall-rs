@@ -349,7 +349,11 @@ ui-dialog-import-gateways = Passerelles SSH : { $created ->
 }, { $merged ->
     [one] { $merged } fusionnée
    *[other] { $merged } fusionnées
+}, { $orphans ->
+    [one] { $orphans } référence orpheline
+   *[other] { $orphans } références orphelines
 }.
+ui-dialog-import-gateways-orphans-action = Certaines sessions importées référencent encore des passerelles SSH manquantes. Réexportez depuis un build qui embarque les passerelles, ou recréez/réassignez la passerelle dans les Paramètres avant de vous connecter.
 ui-dialog-import-skipped = Écartés :
 ui-dialog-import-skipped-item = { $name } : { $reason }
 ui-dialog-import-failed-title = L'import n'a pas pu s'exécuter
@@ -390,6 +394,7 @@ ui-import-skip-missing-id = n'a pas d'identifiant
 ui-import-skip-invalid-port = port invalide { $port }
 
 ui-tab-files-title = { $name } (fichiers)
+ui-tab-rdp-forced-embedded-title = { $name } (forcé intégré)
 
 ui-files-local-title = Cet ordinateur
 ui-files-remote-title = Serveur
@@ -503,14 +508,16 @@ ui-dialog-run-script-body = { $name } se lance dans un nouvel onglet avec la com
 ui-error-remote-forward = La passerelle SSH n'a pas voulu écouter sur son port { $port } pour la redirection distante : la redirection y est désactivée, ou le port y est déjà pris.
 ui-error-proxy-port = Le proxy SOCKS n'a pas pu ouvrir le port local { $port } : un autre programme l'utilise peut-être. ({ $detail })
 ui-error-jump-refused = La passerelle SSH n'a pas voulu se connecter à { $target } : la redirection y est désactivée, ou cet hôte n'est pas joignable depuis elle.
-ui-import-skip-missing-gateway = passe par une passerelle SSH absente du fichier, ou écartée
-ui-import-skip-gateway-loop = sa passerelle SSH est atteinte par elle-même, via ses parents
 ui-import-skip-missing-username = se connecte avec un compte qu'il ne nomme pas
 ui-import-skip-unknown-identity = se connecte avec un mode d'identité que Heimdall ne connaît pas
 ui-error-hostkey-changed-at = La clé d'hôte de { $target } n'est pas celle enregistrée : la connexion est peut-être interceptée. Enregistrée : { $recorded }. Présentée : { $offered }.
 ui-error-gateway-missing = La passerelle SSH { $id } par laquelle passe ce profil n'est pas dans les profils.
 ui-error-gateway-loop = La passerelle SSH { $id } est atteinte par elle-même, via ses parents.
 ui-tree-connect = Connecter
+ui-tree-connect-with = Se connecter en mode...
+ui-tree-connect-with-tooltip = Forcer le mode RDP pour cette connexion uniquement, sans modifier le profil.
+ui-tree-connect-embedded = Se connecter (intégré)
+ui-tree-connect-external-mstsc = Se connecter (mstsc externe)
 ui-tree-connect-as = Se connecter avec un autre protocole...
 ui-tree-edit = Modifier
 ui-tree-duplicate = Dupliquer
@@ -855,6 +862,10 @@ ui-profile-rdp-full-screen = Ouvrir en plein écran
 ui-profile-rdp-mstsc-only = Client externe (mstsc.exe) uniquement
 ui-settings-rdp-defaults = Paramètres RDP
 ui-settings-rdp-defaults-hint = Les options de tout serveur RDP qui utilise les valeurs par défaut globales.
+ui-settings-rdp-default-mode = Mode RDP par défaut
+ui-settings-rdp-default-mode-embedded = Intégré
+ui-settings-rdp-default-mode-external = Externe
+ui-settings-rdp-default-mode-hint = Intégré : client RDP dans Heimdall. Externe : ouvre mstsc.exe dans une fenêtre séparée.
 ui-profile-toggle-admin = Session administrateur (/admin)
 ui-profile-audio = Mode audio
 ui-profile-audio-off = Désactivé
@@ -1772,6 +1783,8 @@ ui-dialog-reset-all-title = Réinitialiser tous les réglages ?
 ui-dialog-reset-all-body = Restaurer tous les onglets des Paramètres aux valeurs d'usine ? Le texte saisi et pas encore appliqué est perdu. Dans l'onglet Sécurité, cela désactive le fournisseur d'identifiants externe et l'exigence Windows Hello à la connexion, et réinitialise le délai de grâce Windows Hello, le délai de verrouillage automatique et la déconnexion au verrouillage. Votre langue, votre thème, vos sessions, passerelles SSH, mot de passe maître, code PIN et inscription Windows Hello sont conservés. Le changement est enregistré aussitôt.
 ui-dialog-apply-ssh-mode-title = Appliquer à toutes les sessions SSH enregistrées ?
 ui-dialog-apply-ssh-mode-body = { $changes } des { $total } sessions SSH enregistrées passeront en mode { $mode }, et { $mode } devient le mode par défaut des nouvelles sessions. Action irréversible.
+ui-dialog-apply-rdp-mode-title = Appliquer à toutes les sessions RDP enregistrées ?
+ui-dialog-apply-rdp-mode-body = { $changes } des { $total } sessions RDP enregistrées passeront en mode { $mode }, et { $mode } devient le mode par défaut des nouvelles sessions. Action irréversible.
 ui-settings-tab-about = À propos
 ui-about-version = Version { $version }
 ui-about-tagline = Gestionnaire de connexions sécurisé RDP/SSH/SFTP

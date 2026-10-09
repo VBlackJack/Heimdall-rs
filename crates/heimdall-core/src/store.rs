@@ -29,8 +29,8 @@ use crate::folder::{self, FolderColor, FolderError};
 use crate::metadata::{Environment, MacAddress, ProfileMetadata, ProfileOrigin};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
-    CitrixProfile, FtpProfile, LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway,
-    SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    CitrixProfile, FtpProfile, LocalApproval, LocalProfile, ProfileId, RdpMode, RdpProfile,
+    SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 
 /// Format version written into the profile file.
@@ -874,6 +874,32 @@ impl ProfileStore {
         for profile in &mut self.ssh {
             if !profile.sftp && profile.ssh_mode != mode {
                 profile.ssh_mode = mode;
+                changed += 1;
+            }
+        }
+        changed
+    }
+
+    /// The RDP profiles that are not in `mode`, and the RDP profiles there are, as the C#
+    /// "Apply to all" counts them (`SettingsViewModel.cs:1671-1675`): every saved RDP
+    /// session.
+    #[must_use]
+    pub fn rdp_mode_changes(&self, mode: RdpMode) -> (usize, usize) {
+        let changes = self
+            .rdp
+            .iter()
+            .filter(|profile| RdpMode::of(profile.extras.external) != mode)
+            .count();
+        (changes, self.rdp.len())
+    }
+
+    /// Sets `mode` on every RDP profile, as the C# "Apply to all" rewrites every saved RDP
+    /// session (`SettingsViewModel.cs:1690-1708`). How many changed.
+    pub fn set_rdp_modes(&mut self, mode: RdpMode) -> usize {
+        let mut changed = 0;
+        for profile in &mut self.rdp {
+            if RdpMode::of(profile.extras.external) != mode {
+                profile.extras.external = mode.is_external();
                 changed += 1;
             }
         }

@@ -271,6 +271,14 @@ pub enum Message {
     OpenFiles(ProfileId),
     /// Open an RDP tab for a saved RDP profile.
     OpenRdp(ProfileId),
+    /// Open a saved RDP profile in `mode` this once, as the C# profile menu's "Connect
+    /// with" (`ContextMenuFactory.cs:266-283`): the profile is not changed.
+    OpenRdpWith {
+        /// The profile.
+        id: ProfileId,
+        /// Where its desktop opens this time.
+        mode: heimdall_core::profile::RdpMode,
+    },
     /// Open a Telnet tab for a saved Telnet profile.
     OpenTelnet(ProfileId),
     /// Open a VNC tab for a saved VNC profile.
@@ -879,6 +887,7 @@ impl fmt::Debug for Message {
             Self::OpenProfile(id) => write!(f, "OpenProfile({id})"),
             Self::OpenFiles(id) => write!(f, "OpenFiles({id})"),
             Self::OpenRdp(id) => write!(f, "OpenRdp({id})"),
+            Self::OpenRdpWith { id, mode } => write!(f, "OpenRdpWith({id}, {mode:?})"),
             Self::OpenTelnet(id) => write!(f, "OpenTelnet({id})"),
             // The arguments may carry anything: only the program is shown.
             Self::OpenLocal(shell) => write!(f, "OpenLocal({:?})", shell.program),
@@ -2083,6 +2092,10 @@ pub struct Tab {
     /// A local shell run as administrator in a window of its own: what the tab shows in
     /// place of a terminal.
     pub elevated: Option<ElevatedPane>,
+    /// The RDP mode the profile menu's "Connect with" chose for this session alone, as the
+    /// C# tab's `RdpModeOverride`: its title says so, and Reconnect keeps it
+    /// (`SessionCoordinator.cs:1014-1027`, 1481); `None`, as its profile says.
+    pub rdp_mode_override: Option<heimdall_core::profile::RdpMode>,
 }
 
 impl fmt::Debug for Tab {
@@ -2237,6 +2250,7 @@ impl Tab {
             working_directory: None,
             local_browser_closed: false,
             elevated: None,
+            rdp_mode_override: None,
             dropped: false,
             connected_at: None,
             lasted: None,
@@ -2571,6 +2585,16 @@ pub enum Dialog {
         /// SSH profiles that change.
         changes: usize,
         /// SSH profiles there are.
+        total: usize,
+    },
+    /// The default RDP mode written into every RDP profile, as the C# "Apply to all saved
+    /// sessions" of the RDP tab asks, with the size of the rewrite.
+    ConfirmApplyRdpMode {
+        /// The mode written.
+        mode: heimdall_core::profile::RdpMode,
+        /// RDP profiles that change.
+        changes: usize,
+        /// RDP profiles there are.
         total: usize,
     },
     /// A macro's name and inputs, edited, as the C# macro editor.
@@ -3344,6 +3368,7 @@ impl App {
             message @ (Message::OpenProfile(_)
             | Message::OpenFiles(_)
             | Message::OpenRdp(_)
+            | Message::OpenRdpWith { .. }
             | Message::OpenTelnet(_)
             | Message::OpenVnc(_)
             | Message::OpenFtp(_)
@@ -3650,6 +3675,7 @@ impl App {
             Message::OpenProfile(id) => self.open_profile(&id, Purpose::Shell),
             Message::OpenFiles(id) => self.open_profile(&id, Purpose::Files),
             Message::OpenRdp(id) => self.open_rdp(&id),
+            Message::OpenRdpWith { id, mode } => self.open_rdp_with(&id, mode),
             Message::OpenTelnet(id) => self.open_telnet(&id),
             Message::OpenVnc(id) => self.open_vnc(&id),
             Message::OpenFtp(id) => self.open_ftp(&id),
@@ -4660,6 +4686,7 @@ impl App {
             Some(Dialog::ConfirmResetAllSettings) => self.confirm_reset_all_settings(),
             Some(Dialog::ConfirmVaultHelloEnrolAgain) => self.enrol_vault_hello_again(),
             Some(Dialog::ConfirmApplySshMode { mode, .. }) => self.confirm_apply_ssh_mode(mode),
+            Some(Dialog::ConfirmApplyRdpMode { mode, .. }) => self.confirm_apply_rdp_mode(mode),
             Some(Dialog::EditMacro(draft)) => {
                 self.save_edited_macro(*draft);
                 Vec::new()
