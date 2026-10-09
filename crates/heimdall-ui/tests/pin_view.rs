@@ -295,3 +295,27 @@ fn a_new_pin_refused_says_why() {
     }
     assert_eq!(shell.app().settings().pin, None);
 }
+
+#[test]
+fn the_pin_dialog_is_laid_out_as_the_csharp_one_title_centred_buttons_at_the_bottom_right() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = gated(dir.path());
+    let mut ui = simulator(&shell);
+    let title = ui.find("Enter PIN").expect("title").bounds();
+    let field = ui.find(field(0)).expect("field").bounds();
+    let cancel = ui.find("Cancel").expect("Cancel").bounds();
+    let unlock = ui.find("Unlock").expect("Unlock").bounds();
+    assert!(
+        (title.center_x() - field.center_x()).abs() < 2.0,
+        "centred over the field: {title:?} {field:?}"
+    );
+    assert!(
+        cancel.y > field.y + field.height && unlock.y > field.y + field.height,
+        "under the field"
+    );
+    assert!(cancel.x < unlock.x, "Cancel, then Unlock");
+    assert!(
+        unlock.x > field.center_x(),
+        "at the right: {unlock:?} {field:?}"
+    );
+}

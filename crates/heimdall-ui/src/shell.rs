@@ -192,6 +192,15 @@ const TAB_HEADING_PADDING: [f32; 2] = [6.0, 10.0];
 /// Thickness of a selected tab's underline, as the C#'s.
 const TAB_UNDERLINE: f32 = 3.0;
 
+/// Height of a tab's error badge, and its least width, as the C# `MinWidth` and `Height`.
+const ERROR_BADGE_SIDE: f32 = 18.0;
+
+/// Space on each side of the count in a tab's error badge, as the C# badge's padding.
+const ERROR_BADGE_PADDING_X: f32 = 5.0;
+
+/// Space between a tab's name and its error badge, as the C# badge's left margin.
+const ERROR_BADGE_GAP: f32 = 6.0;
+
 /// Side of a tab's close button, as the C#'s 20 by 20.
 const TAB_CLOSE_SIDE: f32 = 20.0;
 
@@ -1410,6 +1419,9 @@ pub struct Shell {
     settings_tab: SettingsTab,
     /// The profile form's tab shown, General each time the form opens.
     profile_tab: ProfileTab,
+    /// Whether a save of the open profile form was refused: from then on, as the C# server
+    /// dialog, each tab's header counts the fields left to fix on it.
+    profile_refused: bool,
     /// What the Settings page's search holds: while it holds a word, the rows it finds are
     /// shown in place of the tab.
     settings_search: String,
@@ -1668,6 +1680,7 @@ impl Shell {
             host_key_search: String::new(),
             settings_tab: SettingsTab::default(),
             profile_tab: ProfileTab::default(),
+            profile_refused: false,
             settings_search: String::new(),
             settings_highlight: None,
             certificate_search: String::new(),
@@ -2534,6 +2547,7 @@ impl Shell {
         // edited from it keeps its tab for its return.
         if !self.profile_form_open() {
             self.profile_tab = ProfileTab::General;
+            self.profile_refused = false;
         }
         // The previous run's sessions, offered once nothing else is asked and the window is
         // open to the user.
@@ -2855,6 +2869,7 @@ impl Shell {
             bulk_password: &self.bulk_password,
             passwords: self.password_store(),
             profile_tab: self.profile_tab,
+            profile_refused: self.profile_refused,
         }
     }
 
@@ -3564,6 +3579,7 @@ impl Shell {
         // A form refused shows the tab holding the field to fix.
         if let Some(DialogFocus::FormError(DialogForm::Profile, error)) = next {
             self.profile_tab = ProfileTab::holding(error.field());
+            self.profile_refused = true;
         }
         self.dialog_focus = next;
         if next.is_none() {
@@ -5045,7 +5061,7 @@ impl Shell {
 
     /// The tree's rows, searched and filtered, and what it says when none passes.
     fn tree_list(&self) -> Column<'_, Message> {
-        let mut list = Column::new().spacing(2.0);
+        let mut list = Column::new().spacing(tree_view::ROW_GAP);
         if self.app.profile_summaries().is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
         }
@@ -7389,7 +7405,8 @@ fn host_key_card<'a>(
     };
     center(card(
         column![
-            text(heading).size(font_size::TITLE),
+            // As the C# `HostKeyPromptDialog`: the warning's icon beside its title.
+            dialog_parts::header(Severity::Warning, dialog_parts::title(heading)),
             body,
             row![
                 text(label).font(iced::Font::MONOSPACE).width(Length::Fill),
@@ -7400,21 +7417,14 @@ fn host_key_card<'a>(
             .spacing(spacing::SM)
             .align_y(iced::alignment::Vertical::Center),
             row![
-                button(text(reject))
-                    .style(styles::secondary)
-                    .on_press(Message::App(AppMessage::HostKeyDecision {
-                        tab,
-                        accept: false
-                    })),
-                button(text(once))
-                    .style(styles::secondary)
+                dialog_parts::action(reject, styles::secondary).on_press(Message::App(
+                    AppMessage::HostKeyDecision { tab, accept: false }
+                )),
+                dialog_parts::action(once, styles::secondary)
                     .on_press(Message::App(AppMessage::HostKeyTrustOnce(tab))),
-                button(text(accept))
-                    .style(styles::primary)
-                    .on_press(Message::App(AppMessage::HostKeyDecision {
-                        tab,
-                        accept: true
-                    })),
+                dialog_parts::action(accept, styles::primary).on_press(Message::App(
+                    AppMessage::HostKeyDecision { tab, accept: true }
+                )),
             ]
             .spacing(spacing::SM)
             .wrap(),
@@ -7535,7 +7545,6 @@ fn form_card<'a>(content: impl Into<Element<'a, Message>>, height: f32) -> Eleme
         .into()
 }
 
-/// The report of an import: counts, and the profiles left out with their reason.
 /// The files read for the `.rdp` import, with the words it writes into names.
 fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message {
     Message::App(AppMessage::Rdp(heimdall_app::RdpMessage::Read {
@@ -7586,18 +7595,20 @@ fn settings_tabs<'a>(shown: SettingsTab) -> Element<'a, Message> {
         shown,
         SettingsTab::label,
         Message::SettingsTab,
+        |_| 0,
     )
     .into()
 }
 
 /// Headers of tabs, as the C# `TabControl` of `ThemedTabItemStyle`: each its `label` over a
-/// line, the one `shown` a card, its name semi-bold over the accent's line; a click sends
-/// `show`.
+/// line, the one `shown` a card, its name semi-bold over the accent's line, and how many
+/// fields its `errors` are on it in a badge beside its name; a click sends `show`.
 fn tab_strip<'a, T: Copy + PartialEq>(
     tabs: impl IntoIterator<Item = T>,
     shown: T,
     label: fn(T) -> String,
     show: fn(T) -> Message,
+    errors: impl Fn(T) -> usize,
 ) -> iced::widget::Row<'a, Message> {
     tabs.into_iter().fold(row![].spacing(TAB_GAP), |tabs, tab| {
         let selected = tab == shown;
@@ -7607,10 +7618,15 @@ fn tab_strip<'a, T: Copy + PartialEq>(
         } else {
             name
         };
+        let count = errors(tab);
+        let header = row![name]
+            .push((count > 0).then(|| error_badge(count)))
+            .spacing(ERROR_BADGE_GAP)
+            .align_y(iced::Alignment::Center);
         tabs.push(
             button(
                 column![
-                    name,
+                    header,
                     container(iced::widget::space())
                         .width(Length::Fill)
                         .height(TAB_UNDERLINE)
@@ -7624,6 +7640,25 @@ fn tab_strip<'a, T: Copy + PartialEq>(
             .on_press(show(tab)),
         )
     })
+}
+
+/// How many fields of a tab are to fix, as the C# server dialog's badge on its header: the
+/// count, small, on the error colour, in a pill at least as wide as it is high.
+fn error_badge<'a>(count: usize) -> Element<'a, Message> {
+    container(
+        column![
+            text(count.to_string())
+                .size(font_size::BADGE)
+                .wrapping(text::Wrapping::None),
+            // Never narrower than it is high, wider when its count is.
+            iced::widget::space().width(ERROR_BADGE_SIDE - 2.0 * ERROR_BADGE_PADDING_X),
+        ]
+        .align_x(iced::Alignment::Center),
+    )
+    .center_y(ERROR_BADGE_SIDE)
+    .padding([0.0, ERROR_BADGE_PADDING_X])
+    .style(styles::error_badge)
+    .into()
 }
 
 /// The open dialog of "Import Sessions", held by the window, then the file read; a `.rdp`
@@ -8134,39 +8169,25 @@ fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
                 Dialog::ConfirmCitrixImport(scan) => crate::citrix_import_view::question(scan),
                 _ => return column![].into(),
             };
-            column![
-                text(title).size(font_size::TITLE),
-                text(body),
-                row![
-                    button(text(fl!("ui-dialog-cancel-button")))
-                        .style(styles::secondary)
-                        .on_press(Message::App(AppMessage::DismissDialog)),
-                    button(text(action))
-                        .style(styles::primary)
-                        .on_press(Message::App(AppMessage::ConfirmDialog)),
-                ]
-                .spacing(spacing::SM),
-            ]
-            .spacing(spacing::SM)
-            .into()
+            // As the C# `ShowConfirm` before an import reads the file.
+            dialog_parts::question(Severity::Info, title, body, action)
         }
         _ => column![].into(),
     }
 }
 
+/// The report of an import, as the C# message after it: what was added, updated and left as
+/// it was, the profiles left out and why, the settings dropped, the host keys carried.
 fn import_report<'a>(
     summary: &'a heimdall_app::ImportSummary,
     ok: iced::widget::Button<'a, Message>,
 ) -> Element<'a, Message> {
-    let mut content = column![
-        text(fl!("ui-dialog-import-title")).size(font_size::TITLE),
-        text(fl!(
-            "ui-dialog-import-counts",
-            added = summary.merged.added,
-            updated = summary.merged.updated,
-            unchanged = summary.merged.unchanged
-        )),
-    ]
+    let mut content = column![dialog_parts::body(fl!(
+        "ui-dialog-import-counts",
+        added = summary.merged.added,
+        updated = summary.merged.updated,
+        unchanged = summary.merged.unchanged
+    ))]
     .spacing(spacing::SM);
     // The file's gateways on a line of their own, as the C# summary says them.
     let gateways = summary.gateways;
@@ -8249,7 +8270,13 @@ fn import_report<'a>(
     {
         content = content.push(text(line).size(font_size::CAPTION));
     }
-    content.push(ok).into()
+    // As the C# `ShowInfo` after an import.
+    dialog_parts::message(
+        Severity::Info,
+        fl!("ui-dialog-import-title"),
+        content,
+        dialog_parts::buttons([ok]),
+    )
 }
 
 /// What the dialogs show that the window holds.
@@ -8280,6 +8307,8 @@ struct Forms<'a> {
     monitors: &'a [crate::rdp_options::Monitor],
     /// The profile form's tab shown.
     profile_tab: ProfileTab,
+    /// Whether a save of the profile form was refused, its tabs counting what to fix.
+    profile_refused: bool,
 }
 
 /// Whether a password typed now can be saved.
@@ -8914,7 +8943,7 @@ fn gateway_dialog<'a>(
     } else {
         fl!("ui-gateway-add-title")
     };
-    let mut form = column![text(title).size(font_size::TITLE)].spacing(spacing::SM);
+    let mut form = Column::new().spacing(spacing::SM);
     for field in GATEWAY_FIELDS {
         let label = match field {
             ProfileField::Name => fl!("ui-gateway-field-name"),
@@ -8925,7 +8954,7 @@ fn gateway_dialog<'a>(
         };
         form = form.push(
             column![
-                text(label).size(font_size::CAPTION),
+                dialog_parts::dialog_label(label),
                 text_input("", draft.value(field))
                     .style(styles::text_input)
                     .id(gateway_field_id(field))
@@ -8951,26 +8980,24 @@ fn gateway_dialog<'a>(
         .push(parent_gateway(draft, forms))
         .push(crate::route_test_view::card(draft, forms.gateways));
     if let Some(error) = error {
-        form = form.push(text(texts::draft_error(error)).style(text::danger));
+        form = form.push(dialog_parts::error(texts::draft_error(error)));
     }
     // What is tested is what is saved: not while the test runs.
     let testing = matches!(
         draft.route_test,
         heimdall_app::gateway_draft::RouteTest::Running(_)
     );
-    form.push(
-        row![
-            iced::widget::space::horizontal(),
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-profile-save-button")))
-                .style(styles::primary)
-                .on_press_maybe((!testing).then_some(Message::SaveGatewayForm)),
-        ]
-        .spacing(spacing::SM),
+    dialog_parts::form(
+        dialog_parts::title(title),
+        form,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::confirm(
+                fl!("ui-profile-save-button"),
+                (!testing).then_some(Message::SaveGatewayForm),
+            ),
+        ]),
     )
-    .into()
 }
 
 /// The gateway's password, as the session form's: an empty field, "Password saved" and
@@ -8988,7 +9015,7 @@ fn gateway_password<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Column<'a, M
     }
     form = form.push(
         column![
-            text(fl!("ui-gateway-field-password")).size(font_size::CAPTION),
+            dialog_parts::dialog_label(fl!("ui-gateway-field-password")),
             password
         ]
         .spacing(spacing::XS),
@@ -9014,7 +9041,7 @@ fn gateway_password<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Column<'a, M
             form = form.push(text(fl!("ui-profile-password-no-store")).size(font_size::CAPTION));
         }
     }
-    form = form.push(text(fl!("ui-gateway-password-hint")).size(font_size::CAPTION));
+    form = form.push(dialog_parts::hint(fl!("ui-gateway-password-hint")));
     form
 }
 
@@ -9426,10 +9453,22 @@ fn profile_form<'a>(
         ProfileTab::Network => network_section(draft, forms.gateways),
         ProfileTab::Info => info_tab(draft).into(),
     };
+    // Once a save was refused, what is left to fix, as the C# counts it on each tab; a
+    // refusal the form alone cannot see, a password with no account, until a field changes.
+    let mut errors = if forms.profile_refused {
+        draft.errors()
+    } else {
+        Vec::new()
+    };
+    if let Some(error) =
+        error.filter(|error| !errors.iter().any(|known| known.field() == error.field()))
+    {
+        errors.push(error);
+    }
     column![
         text(title).size(font_size::TITLE).font(styles::SEMIBOLD),
         protocol_line(draft.protocol, adding),
-        tab_control(&tabs, shown, page),
+        tab_control(&tabs, shown, page, &errors),
         form_footer(draft, error),
     ]
     .spacing(spacing::MD)
@@ -9481,12 +9520,14 @@ fn tab_control<'a>(
     tabs: &[ProfileTab],
     shown: ProfileTab,
     page: Element<'a, Message>,
+    errors: &[DraftError],
 ) -> Element<'a, Message> {
     let headers = tab_strip(
         tabs.iter().copied(),
         shown,
         ProfileTab::label,
         Message::ProfileTab,
+        |tab| tab.error_count(errors),
     );
     container(column![
         container(headers)
@@ -9662,32 +9703,36 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     };
     let (label, placeholder) = if action == NameAction::Permissions {
         (
-            Some(text(fl!("ui-dialog-permissions-label"))),
+            Some(dialog_parts::prompt(fl!("ui-dialog-permissions-label"))),
             fl!("ui-dialog-permissions-placeholder"),
         )
     } else {
         (None, fl!("ui-dialog-name-placeholder"))
     };
-    column![
-        text(title).size(font_size::TITLE),
-        column![].push(label),
-        text_input(&placeholder, value)
-            .style(styles::text_input)
-            .id(name_field_id())
-            .on_input(|value| Message::App(AppMessage::Files(FilesMessage::NameEdited(value))))
-            .on_submit(Message::App(AppMessage::ConfirmDialog)),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(confirm))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+    dialog_parts::form(
+        dialog_parts::title(title),
+        column![]
+            .push(label)
+            .push(
+                text_input(&placeholder, value)
+                    .style(styles::text_input)
+                    .id(name_field_id())
+                    .on_input(|value| {
+                        Message::App(AppMessage::Files(FilesMessage::NameEdited(value)))
+                    })
+                    .on_submit(Message::App(AppMessage::ConfirmDialog)),
+            )
+            .spacing(spacing::MD),
+        confirm_buttons(confirm),
+    )
+}
+
+/// Cancel, then `confirm` in the accent sending `ConfirmDialog`, at a dialog's bottom right.
+fn confirm_buttons<'a>(confirm: String) -> iced::widget::Row<'a, Message> {
+    dialog_parts::buttons([
+        dialog_parts::cancel(),
+        dialog_parts::confirm(confirm, Some(Message::App(AppMessage::ConfirmDialog))),
+    ])
 }
 
 /// A new name for a profile, its present one written in.
@@ -9716,8 +9761,8 @@ fn bulk_edit_dialog(
     };
     let placeholder = if mixed { mixed_hint } else { String::new() };
     let mut body = column![
-        text(header).size(font_size::TITLE),
-        text(label),
+        dialog_parts::section(header, None),
+        dialog_parts::dialog_label(label),
         text_input(&placeholder, value)
             .style(styles::text_input)
             .id(name_field_id())
@@ -9728,26 +9773,13 @@ fn bulk_edit_dialog(
     ]
     .spacing(spacing::SM);
     if let Some(refused) = refused {
-        body = body.push(
-            text(match refused {
-                BulkRefusal::Port => fl!("ui-bulk-port-invalid"),
-                BulkRefusal::Username => fl!("ui-bulk-username-invalid"),
-            })
-            .style(text::danger),
-        );
+        body = body.push(dialog_parts::error(match refused {
+            BulkRefusal::Port => fl!("ui-bulk-port-invalid"),
+            BulkRefusal::Username => fl!("ui-bulk-username-invalid"),
+        }));
     }
-    body.push(
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-ok-button")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
-    )
-    .into()
+    body.push(confirm_buttons(fl!("ui-dialog-ok-button")))
+        .into()
 }
 
 /// One password for `count` profiles, as the C# bulk password dialog asks it: for how
@@ -9761,9 +9793,11 @@ fn bulk_password_dialog(
 ) -> Element<'_, Message> {
     use heimdall_app::BulkPasswordRefusal;
 
-    let mut body =
-        column![text(fl!("ui-bulk-password-header", count = count)).size(font_size::TITLE)]
-            .spacing(spacing::SM);
+    let mut body = column![dialog_parts::section(
+        fl!("ui-bulk-password-header", count = count),
+        None
+    )]
+    .spacing(spacing::SM);
     let lines = [
         (
             skipped.winrm,
@@ -9783,7 +9817,7 @@ fn bulk_password_dialog(
     ];
     for (skipped, line) in lines {
         if skipped > 0 {
-            body = body.push(text(line).size(font_size::CAPTION));
+            body = body.push(dialog_parts::hint(line));
         }
     }
     let labels = [
@@ -9802,28 +9836,21 @@ fn bulk_password_dialog(
             } else {
                 Message::SubmitBulkPassword
             });
-        body = body.push(column![text(label).size(font_size::CAPTION), input].spacing(spacing::XS));
+        body = body.push(column![dialog_parts::dialog_label(label), input].spacing(spacing::XS));
     }
     if let Some(refused) = refused {
-        body = body.push(
-            text(match refused {
-                BulkPasswordRefusal::Control => fl!("ui-bulk-password-control"),
-                BulkPasswordRefusal::Mismatch => fl!("ui-bulk-password-mismatch"),
-            })
-            .style(text::danger),
-        );
+        body = body.push(dialog_parts::error(match refused {
+            BulkPasswordRefusal::Control => fl!("ui-bulk-password-control"),
+            BulkPasswordRefusal::Mismatch => fl!("ui-bulk-password-mismatch"),
+        }));
     }
-    body.push(
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-ok-button")))
-                .style(styles::primary)
-                .on_press_maybe((!fields[0].is_empty()).then_some(Message::SubmitBulkPassword)),
-        ]
-        .spacing(spacing::SM),
-    )
+    body.push(dialog_parts::buttons([
+        dialog_parts::cancel(),
+        dialog_parts::confirm(
+            fl!("ui-dialog-ok-button"),
+            (!fields[0].is_empty()).then_some(Message::SubmitBulkPassword),
+        ),
+    ]))
     .into()
 }
 
@@ -9832,8 +9859,8 @@ fn bulk_password_field_id(index: usize) -> iced::widget::Id {
 }
 
 fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
-    column![
-        text(fl!("ui-tree-rename-title")).size(font_size::TITLE),
+    dialog_parts::form(
+        dialog_parts::title(fl!("ui-tree-rename-title")),
         text_input(&fl!("ui-dialog-name-placeholder"), value)
             .style(styles::text_input)
             .id(name_field_id())
@@ -9843,30 +9870,13 @@ fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
                 )))
             })
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-rename-confirm")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+        confirm_buttons(fl!("ui-dialog-rename-confirm")),
+    )
 }
 
 /// The dialogs about the tree: a folder's name, its deletion, connecting all it holds, a
 /// profile's name.
 fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
-    let buttons = |action: String| {
-        dialog_parts::buttons([
-            dialog_parts::cancel(),
-            dialog_parts::action(action, styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ])
-    };
     let (severity, title, body, action) = match dialog {
         Dialog::FolderName {
             naming,
@@ -9884,8 +9894,7 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
                 ),
             };
             let mut content = column![
-                text(title).size(font_size::TITLE),
-                text(fl!("ui-folder-name-field")),
+                dialog_parts::prompt(fl!("ui-folder-name-field")),
                 text_input(&fl!("ui-dialog-name-placeholder"), value)
                     .style(styles::text_input)
                     .id(name_field_id())
@@ -9896,15 +9905,16 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
             ]
             .spacing(spacing::SM);
             if let Some(error) = error {
-                content = content.push(
-                    text(match error {
-                        FolderError::Collision => fl!("ui-folder-error-collision"),
-                        _ => fl!("ui-folder-error-invalid"),
-                    })
-                    .style(text::danger),
-                );
+                content = content.push(dialog_parts::error(match error {
+                    FolderError::Collision => fl!("ui-folder-error-collision"),
+                    _ => fl!("ui-folder-error-invalid"),
+                }));
             }
-            return content.push(buttons(action)).into();
+            return dialog_parts::form(
+                dialog_parts::title(title),
+                content,
+                confirm_buttons(action),
+            );
         }
         Dialog::ConfirmDeleteFolder { name, count, .. } => (
             Severity::Danger,
@@ -10042,21 +10052,25 @@ fn paste_dialog<'a>(
     command: Option<&'static str>,
     preview: &'a PastePreview,
 ) -> Element<'a, Message> {
-    let (title, body, action) = match command {
+    // As the C# dialog: the warning's icon, or the error's with the title in its colour and
+    // Paste red when the command can destroy.
+    let (severity, title, body, action, style) = match command {
         Some(command) => (
-            text(fl!("ui-dialog-paste-dangerous-title"))
-                .size(font_size::TITLE)
-                .style(text::danger),
+            Severity::Error,
+            dialog_parts::title(fl!("ui-dialog-paste-dangerous-title")).style(text::danger),
             fl!(
                 "ui-dialog-paste-dangerous-body",
                 command = command.to_string()
             ),
             fl!("ui-dialog-paste-dangerous-confirm"),
+            styles::danger as fn(&Theme, button::Status) -> button::Style,
         ),
         None => (
-            text(fl!("ui-dialog-paste-title")).size(font_size::TITLE),
+            Severity::Warning,
+            dialog_parts::title(fl!("ui-dialog-paste-title")),
             fl!("ui-dialog-paste-body", count = lines),
             fl!("ui-dialog-paste-confirm"),
+            styles::primary as fn(&Theme, button::Status) -> button::Style,
         ),
     };
     let shown = styles::scroll(
@@ -10071,7 +10085,6 @@ fn paste_dialog<'a>(
     .width(Length::Fill)
     .height(Length::Shrink);
     let mut content = column![
-        title,
         text(body),
         container(shown)
             .max_height(PASTE_PREVIEW_HEIGHT)
@@ -10080,25 +10093,21 @@ fn paste_dialog<'a>(
     ]
     .spacing(spacing::SM);
     if preview.truncated {
-        content = content.push(
-            text(fl!("ui-dialog-paste-truncated"))
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-        );
+        content = content.push(dialog_parts::hint(fl!("ui-dialog-paste-truncated")).font(
+            iced::Font {
+                style: iced::font::Style::Italic,
+                ..crate::UI_FONT
+            },
+        ));
     }
-    content
-        .push(
-            row![
-                button(text(fl!("ui-dialog-cancel-button")))
-                    .style(styles::secondary)
-                    .on_press(Message::App(AppMessage::DismissDialog)),
-                button(text(action))
-                    .style(styles::danger)
-                    .on_press(Message::App(AppMessage::ConfirmDialog)),
-            ]
-            .spacing(spacing::SM),
-        )
-        .into()
+    dialog_parts::form(
+        dialog_parts::header(severity, title),
+        content,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(action, style).on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]),
+    )
 }
 
 /// "Reconnecting (attempt 2/20)...", as the C# countdown says it.
@@ -10158,107 +10167,93 @@ fn countdown_bar<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
     .into()
 }
 
-/// A name for a tab, as the C# "Rename Tab" asks it: the present one written in, an empty
-/// one giving the tab its own title back.
-/// The C# "Custom resolution" of an RDP tab: the size typed as `WIDTHxHEIGHT`.
-/// sudo's question: its password, typed hidden, kept for the tab once sudo takes it.
+/// sudo's question, as the C# `PasswordInputDialog`: its password, typed hidden, kept for the
+/// tab once sudo takes it.
 fn sudo_password_dialog<'a>(name: &str, typed: &'a str) -> Element<'a, Message> {
-    column![
-        text(fl!("ui-dialog-sudo-title")).size(font_size::TITLE),
-        text(fl!("ui-dialog-sudo-body", name = name)),
-        text_input("", typed)
-            .style(styles::text_input)
-            .id(name_field_id())
-            .secure(true)
-            .on_input(Message::SudoPasswordEdited)
-            .on_submit(Message::SudoPasswordConfirm),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-ok-button")))
-                .style(styles::primary)
-                .on_press(Message::SudoPasswordConfirm),
+    dialog_parts::form(
+        dialog_parts::title(fl!("ui-dialog-sudo-title")),
+        column![
+            dialog_parts::prompt(fl!("ui-dialog-sudo-body", name = name)),
+            text_input("", typed)
+                .style(styles::text_input)
+                .id(name_field_id())
+                .secure(true)
+                .on_input(Message::SudoPasswordEdited)
+                .on_submit(Message::SudoPasswordConfirm),
         ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+        .spacing(spacing::MD),
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::confirm(
+                fl!("ui-dialog-ok-button"),
+                Some(Message::SudoPasswordConfirm),
+            ),
+        ]),
+    )
 }
 
-fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
-    column![
-        text(fl!("ui-resolution-custom-title")).size(font_size::TITLE),
-        text(fl!("ui-resolution-custom-prompt")),
-        text_input("", value)
-            .style(styles::text_input)
-            .id(name_field_id())
-            .on_input(|value| {
-                Message::App(AppMessage::TabMenu(TabMenuMessage::ResolutionEdited(value)))
-            })
-            .on_submit(Message::App(AppMessage::ConfirmDialog)),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-ok-button")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
+/// One line typed under its `prompt` and `title`, as the C# `InputDialog`: `field`, then
+/// Cancel and `confirm`.
+fn input_dialog<'a>(
+    title: String,
+    prompt: impl Into<Element<'a, Message>>,
+    field: iced::widget::TextInput<'a, Message>,
+    confirm: String,
+) -> Element<'a, Message> {
+    dialog_parts::form(
+        dialog_parts::title(title),
+        column![
+            prompt.into(),
+            field
+                .style(styles::text_input)
+                .id(name_field_id())
+                .on_submit(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+        .spacing(spacing::MD),
+        confirm_buttons(confirm),
+    )
+}
+
+/// The C# "Custom resolution" of an RDP tab: the size typed as `WIDTHxHEIGHT`.
+fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
+    input_dialog(
+        fl!("ui-resolution-custom-title"),
+        dialog_parts::prompt(fl!("ui-resolution-custom-prompt")),
+        text_input("", value).on_input(|value| {
+            Message::App(AppMessage::TabMenu(TabMenuMessage::ResolutionEdited(value)))
+        }),
+        fl!("ui-dialog-ok-button"),
+    )
 }
 
 /// The name of the macro just recorded, of `count` inputs, asked before it is kept.
 fn save_macro_dialog(value: &str, count: usize) -> Element<'_, Message> {
-    column![
-        text(fl!("ui-dialog-save-macro-title")).size(font_size::TITLE),
-        text(fl!("ui-dialog-save-macro-prompt", count = count)),
-        text(fl!("ui-dialog-save-macro-warning")).size(font_size::CAPTION),
-        text_input(&fl!("ui-dialog-name-placeholder"), value)
-            .style(styles::text_input)
-            .id(name_field_id())
-            .on_input(|value| Message::App(AppMessage::Macro(
-                heimdall_app::MacroMessage::NameEdited(value)
-            )))
-            .on_submit(Message::App(AppMessage::ConfirmDialog)),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-save-macro-confirm")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
+    input_dialog(
+        fl!("ui-dialog-save-macro-title"),
+        column![
+            dialog_parts::prompt(fl!("ui-dialog-save-macro-prompt", count = count)),
+            dialog_parts::hint(fl!("ui-dialog-save-macro-warning")),
         ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+        .spacing(spacing::XS),
+        text_input(&fl!("ui-dialog-name-placeholder"), value).on_input(|value| {
+            Message::App(AppMessage::Macro(heimdall_app::MacroMessage::NameEdited(
+                value,
+            )))
+        }),
+        fl!("ui-dialog-save-macro-confirm"),
+    )
 }
 
+/// A name for a tab, as the C# "Rename Tab" asks it: the present one written in, an empty
+/// one giving the tab its own title back.
 fn rename_tab_dialog(value: &str) -> Element<'_, Message> {
-    column![
-        text(fl!("ui-dialog-rename-tab-title")).size(font_size::TITLE),
-        text(fl!("ui-dialog-rename-tab-prompt")),
+    input_dialog(
+        fl!("ui-dialog-rename-tab-title"),
+        dialog_parts::prompt(fl!("ui-dialog-rename-tab-prompt")),
         text_input(&fl!("ui-dialog-name-placeholder"), value)
-            .style(styles::text_input)
-            .id(name_field_id())
-            .on_input(|value| Message::App(AppMessage::TabMenu(TabMenuMessage::NameEdited(value))))
-            .on_submit(Message::App(AppMessage::ConfirmDialog)),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-rename-confirm")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .into()
+            .on_input(|value| Message::App(AppMessage::TabMenu(TabMenuMessage::NameEdited(value)))),
+        fl!("ui-dialog-rename-confirm"),
+    )
 }
 
 /// The command a local profile would run, shown whole before it does: nothing cut, every
@@ -10304,8 +10299,7 @@ fn command_question<'a>(
     rereads: bool,
 ) -> Element<'a, Message> {
     let mut body = column![
-        text(title).size(font_size::TITLE),
-        text(intro),
+        dialog_parts::body(intro),
         container(
             styles::scroll(
                 text(command)
@@ -10320,32 +10314,32 @@ fn command_question<'a>(
     ]
     .spacing(spacing::SM);
     if let Some(folder) = folder {
-        body = body.push(text(fl!("ui-dialog-local-folder", folder = folder)));
+        body = body.push(dialog_parts::body(fl!(
+            "ui-dialog-local-folder",
+            folder = folder
+        )));
     }
     if rereads {
-        body = body.push(text(fl!("ui-dialog-local-rereads")).style(text::danger));
+        body = body.push(dialog_parts::error(fl!("ui-dialog-local-rereads")));
     }
-    body.push(
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-local-confirm")))
-                .style(styles::danger)
+    dialog_parts::message(
+        Severity::Warning,
+        title,
+        body,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(fl!("ui-dialog-local-confirm"), styles::danger)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
+        ]),
     )
-    .into()
 }
 
 /// The C# question about an imported profile's post-connect commands, with the commands
 /// shown: Yes types them and remembers the choice, No opens the shell without them.
 fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Message> {
     let count = confirmation.commands.len();
-    column![
-        text(fl!("ui-dialog-post-connect-title")).size(font_size::TITLE),
-        text(fl!(
+    let body = column![
+        dialog_parts::body(fl!(
             "ui-dialog-post-connect-body",
             name = confirmation.name.as_str(),
             count = count
@@ -10361,18 +10355,20 @@ fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Me
         .max_height(LOCAL_COMMAND_HEIGHT)
         .padding(spacing::MD)
         .style(container::rounded_box),
-        row![
-            button(text(fl!("ui-dialog-post-connect-skip")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::SkipPostConnect)),
-            button(text(fl!("ui-dialog-post-connect-run")))
-                .style(styles::danger)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
     ]
-    .spacing(spacing::SM)
-    .into()
+    .spacing(spacing::SM);
+    // As the C# `ShowConfirm` of the warning's severity.
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-post-connect-title"),
+        body,
+        dialog_parts::buttons([
+            dialog_parts::action(fl!("ui-dialog-post-connect-skip"), styles::secondary)
+                .on_press(Message::App(AppMessage::SkipPostConnect)),
+            dialog_parts::action(fl!("ui-dialog-post-connect-run"), styles::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]),
+    )
 }
 
 /// The count of a tab's running post-connect steps, as the C# tab shows it; its tooltip says
@@ -11060,16 +11056,27 @@ fn vault_field_id(index: usize) -> iced::widget::Id {
     iced::widget::Id::from(format!("vault-field-{index}"))
 }
 
-/// The vault's dialogs, as the C# Heimdall's: the master password asked at start, the lock
-/// screen, and the master password enabled, changed or disabled.
-fn vault_dialog<'a>(
-    dialog: &'a VaultDialog,
-    fields: &'a [Zeroizing<String>; 3],
-) -> Element<'a, Message> {
+/// What a vault dialog says: its title, what it explains, its fields' labels, its action
+/// and what it says while the action runs.
+struct VaultTexts {
+    /// Its title.
+    title: String,
+    /// What it explains under its title, if anything.
+    body: Option<String>,
+    /// Its fields' labels, in order.
+    labels: Vec<String>,
+    /// Its main button's label.
+    action: String,
+    /// What it says while the action runs.
+    busy: String,
+}
+
+/// What the vault dialog of `mode` says, as the C# dialog of each.
+fn vault_texts(mode: VaultMode) -> VaultTexts {
     let master = || fl!("ui-vault-field-master");
     let new = || fl!("ui-vault-field-new");
     let confirm = || fl!("ui-vault-field-confirm");
-    let (title, body, labels, action, busy) = match dialog.mode {
+    let (title, body, labels, action, busy) = match mode {
         VaultMode::Unlock => (
             fl!("ui-vault-unlock-title"),
             None,
@@ -11106,6 +11113,28 @@ fn vault_dialog<'a>(
             fl!("ui-vault-disable-busy"),
         ),
     };
+    VaultTexts {
+        title,
+        body,
+        labels,
+        action,
+        busy,
+    }
+}
+
+/// The vault's dialogs, as the C# Heimdall's: the master password asked at start, the lock
+/// screen, and the master password enabled, changed or disabled.
+fn vault_dialog<'a>(
+    dialog: &'a VaultDialog,
+    fields: &'a [Zeroizing<String>; 3],
+) -> Element<'a, Message> {
+    let VaultTexts {
+        title,
+        body,
+        labels,
+        action,
+        busy,
+    } = vault_texts(dialog.mode);
     // The new master password's field: its strength is said as it is typed, and the
     // confirmation follows it.
     let new_field = match dialog.mode {
@@ -11114,9 +11143,21 @@ fn vault_dialog<'a>(
         VaultMode::Unlock | VaultMode::Locked | VaultMode::Disable => None,
     };
     let count = labels.len();
-    let mut form = column![text(title).size(font_size::TITLE)].spacing(spacing::SM);
+    // As the C#: the unlock prompt centred, the rest at the left.
+    let title = if matches!(dialog.mode, VaultMode::Unlock | VaultMode::Locked) {
+        dialog_parts::centred_title(title)
+    } else {
+        dialog_parts::title(title)
+    };
+    let mut form = Column::new().spacing(spacing::SM);
     if let Some(body) = body {
-        form = form.push(text(body));
+        // Disabling says what it costs on a warning's card, the others explain in a caption.
+        let said: Element<'a, Message> = if dialog.mode == VaultMode::Disable {
+            dialog_parts::warning_card(body)
+        } else {
+            dialog_parts::hint(body).into()
+        };
+        form = form.push(said);
     }
     for (index, label) in labels.into_iter().enumerate() {
         let mut input = text_input("", fields[index].as_str())
@@ -11132,41 +11173,42 @@ fn vault_dialog<'a>(
                     Message::SubmitVault
                 });
         }
-        form = form.push(column![text(label).size(font_size::CAPTION), input].spacing(spacing::XS));
+        form = form.push(dialog_parts::field(label, input));
         if new_field == Some(index) {
-            form = form.push(text(policy_line(fields[index].as_str())).size(font_size::CAPTION));
+            form = form.push(dialog_parts::hint(policy_line(fields[index].as_str())));
         }
     }
     if let Some(problem) = &dialog.problem {
-        form = form.push(text(vault_problem(problem)).style(text::danger));
+        // A lockout on a warning's card, as the C# dialog; a refusal in the error colour.
+        let said: Element<'a, Message> = match problem {
+            VaultProblem::LockedOut { .. } => dialog_parts::warning_card(vault_problem(problem)),
+            _ => dialog_parts::error(vault_problem(problem)).into(),
+        };
+        form = form.push(said);
     }
     if dialog.busy {
-        form = form.push(text(busy).size(font_size::CAPTION));
+        form = form.push(dialog_parts::note(busy));
     }
     // As in C#: a new password is taken once it follows the rules and is typed twice alike.
     let ready = new_field.is_none_or(|index| {
         master_password_problem(fields[index].as_str()).is_none()
             && fields[index].as_str() == fields[index + 1].as_str()
     });
-    let mut buttons = row![iced::widget::space::horizontal()].spacing(spacing::SM);
+    let mut buttons = Vec::new();
     // The lock screen has no Cancel; the one asked at start quits.
     if dialog.mode != VaultMode::Locked {
-        buttons = buttons.push(
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-        );
+        buttons.push(dialog_parts::cancel());
     }
     // Locked out, no try is taken until the minutes said are over.
     let locked_out = matches!(
         dialog.problem,
         Some(VaultProblem::LockedOut { until }) if until > std::time::SystemTime::now()
     );
-    buttons =
-        buttons.push(button(text(action)).style(styles::primary).on_press_maybe(
-            (!dialog.busy && ready && !locked_out).then_some(Message::SubmitVault),
-        ));
-    form.push(buttons).into()
+    buttons.push(dialog_parts::confirm(
+        action,
+        (!dialog.busy && ready && !locked_out).then_some(Message::SubmitVault),
+    ));
+    dialog_parts::form(title, form, dialog_parts::buttons(buttons))
 }
 
 /// The PIN's dialogs, as the C# Heimdall's: the PIN asked at start, and the one setting,
@@ -11192,7 +11234,7 @@ fn pin_dialog<'a>(
         }
     };
     let count = labels.len();
-    let mut form = column![text(title).size(font_size::TITLE)].spacing(spacing::SM);
+    let mut form = Column::new().spacing(spacing::MD);
     for (index, label) in labels.into_iter().enumerate() {
         let input = text_input("", fields[index].as_str())
             .style(styles::text_input)
@@ -11204,37 +11246,44 @@ fn pin_dialog<'a>(
             } else {
                 Message::SubmitPin
             });
-        form = form.push(column![text(label).size(font_size::CAPTION), input].spacing(spacing::XS));
+        // As the C# PIN dialogs: the label in the secondary text above its box.
+        form = form.push(column![dialog_parts::dialog_label(label), input].spacing(PIN_LABEL_GAP));
     }
     if let Some(problem) = &dialog.problem {
-        form = form.push(text(pin_problem_text(problem)).style(text::danger));
+        // A lockout on a warning's card, as the C# dialog; a refusal in the error colour.
+        let said: Element<'a, Message> = match problem {
+            PinFailure::LockedOut { .. } => dialog_parts::warning_card(pin_problem_text(problem)),
+            _ => dialog_parts::error(pin_problem_text(problem)).into(),
+        };
+        form = form.push(said);
     }
     // Locked out, no try is taken until the minutes said are over.
     let open = !matches!(
         dialog.problem,
         Some(PinFailure::LockedOut { until }) if until > std::time::SystemTime::now()
     );
-    let mut buttons = row![iced::widget::space::horizontal()].spacing(spacing::SM);
+    let mut buttons = Vec::new();
     if dialog.mode == (PinMode::Setup { current: true }) {
-        buttons = buttons.push(
-            button(text(fl!("ui-pin-remove-button")))
-                .style(styles::secondary)
+        buttons.push(
+            dialog_parts::action(fl!("ui-pin-remove-button"), styles::secondary)
                 .on_press_maybe(open.then_some(Message::RemovePin)),
         );
     }
-    buttons = buttons
-        .push(
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-        )
-        .push(
-            button(text(action))
-                .style(styles::primary)
-                .on_press_maybe(open.then_some(Message::SubmitPin)),
-        );
-    form.push(buttons).into()
+    buttons.push(dialog_parts::cancel());
+    buttons.push(dialog_parts::confirm(
+        action,
+        open.then_some(Message::SubmitPin),
+    ));
+    // As the C# PIN dialogs, the title centred.
+    dialog_parts::form(
+        dialog_parts::centred_title(title),
+        form,
+        dialog_parts::buttons(buttons),
+    )
 }
+
+/// Space between a PIN's label and its box, as the C# label's bottom margin.
+const PIN_LABEL_GAP: f32 = 6.0;
 
 fn pin_problem_text(problem: &PinFailure) -> String {
     match problem {

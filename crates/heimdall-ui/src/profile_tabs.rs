@@ -18,7 +18,7 @@
 //! basics and the credentials, Options the protocol's options, Network the gateway routing,
 //! Info the organization and the metadata.
 
-use heimdall_app::profile_draft::{DraftProtocol, ProfileField};
+use heimdall_app::profile_draft::{DraftError, DraftProtocol, ProfileField};
 
 use crate::i18n::fl;
 
@@ -78,6 +78,16 @@ impl ProfileTab {
         }
     }
 
+    /// How many of `errors` are on this tab, as the C# `GeneralTabErrorCount`,
+    /// `OptionsTabErrorCount` and `NetworkTabErrorCount` count them.
+    #[must_use]
+    pub fn error_count(self, errors: &[DraftError]) -> usize {
+        errors
+            .iter()
+            .filter(|error| Self::holding(error.field()) == self)
+            .count()
+    }
+
     /// Its name, as the C# tab's header.
     #[must_use]
     pub fn label(self) -> String {
@@ -104,6 +114,22 @@ mod tests {
             );
             assert_eq!(ProfileTab::of(protocol)[0], ProfileTab::General);
         }
+    }
+
+    #[test]
+    fn each_tab_counts_the_errors_on_its_own_fields() {
+        let errors = [
+            DraftError::NameMissing,
+            DraftError::PortInvalid,
+            DraftError::FixedWidthInvalid,
+            DraftError::SocksPortInvalid,
+            DraftError::RdGatewayInvalid,
+        ];
+        assert_eq!(ProfileTab::General.error_count(&errors), 2);
+        assert_eq!(ProfileTab::Options.error_count(&errors), 1);
+        assert_eq!(ProfileTab::Network.error_count(&errors), 2);
+        assert_eq!(ProfileTab::Info.error_count(&errors), 0);
+        assert_eq!(ProfileTab::General.error_count(&[]), 0);
     }
 
     #[test]
