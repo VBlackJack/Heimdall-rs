@@ -148,7 +148,6 @@ impl fmt::Debug for SshKeyMessage {
 }
 
 /// What an update asks of its tab.
-#[derive(Debug)]
 pub enum Outcome {
     /// Nothing more.
     Done,
@@ -160,6 +159,21 @@ pub enum Outcome {
     AskSave(SshSave, String),
     /// This key written at this path.
     Write(SshSave, PathBuf, Zeroizing<String>),
+}
+
+impl fmt::Debug for Outcome {
+    /// What is copied, the passphrase and the keys are never written out.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Done => f.write_str("Done"),
+            Self::Copy(slot, _) => write!(f, "Copy({slot:?}, ..)"),
+            Self::Generate(generation, algorithm, ..) => {
+                write!(f, "Generate({generation}, {algorithm:?}, ..)")
+            }
+            Self::AskSave(save, name) => write!(f, "AskSave({save:?}, {name})"),
+            Self::Write(save, path, _) => write!(f, "Write({save:?}, {}, ..)", path.display()),
+        }
+    }
 }
 
 impl Outcome {
@@ -518,6 +532,27 @@ impl SshKeyPane {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_outcome_never_writes_out_its_secrets() {
+        let generate = Outcome::Generate(
+            1,
+            SshKeyAlgorithm::Ed25519,
+            "me".to_owned(),
+            Zeroizing::new("s3cret".to_owned()),
+        );
+        let write = Outcome::Write(
+            SshSave::Private,
+            PathBuf::from("k"),
+            Zeroizing::new("PRIVATE".to_owned()),
+        );
+        let copy = Outcome::Copy(CopySlot::SshPrivate, "PRIVATE".to_owned());
+        let shown = format!("{generate:?} {write:?} {copy:?}");
+        assert!(
+            !shown.contains("s3cret") && !shown.contains("PRIVATE"),
+            "{shown}"
+        );
+    }
 
     fn made(pane: &mut SshKeyPane) {
         let Outcome::Generate(generation, algorithm, comment, passphrase) =

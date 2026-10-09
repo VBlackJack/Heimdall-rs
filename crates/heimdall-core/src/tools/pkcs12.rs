@@ -218,26 +218,36 @@ fn derive_key(
     length: usize,
 ) -> Zeroizing<Vec<u8>> {
     let diversifier = [id; BLOCK_BYTES];
-    let mut input = fill_blocks(salt);
-    input.extend_from_slice(&fill_blocks(&bmp_password(password)));
-    let mut output = Zeroizing::new(Vec::with_capacity(length));
+    let salt_blocks = fill_blocks(salt);
+    let password_blocks = fill_blocks(&bmp_password(password));
+    // Made at its size at once: a vector that grows leaves its old buffer unwiped.
+    let mut input = Zeroizing::new(Vec::with_capacity(
+        salt_blocks.len() + password_blocks.len(),
+    ));
+    input.extend_from_slice(&salt_blocks);
+    input.extend_from_slice(&password_blocks);
+    let mut output = Zeroizing::new(Vec::with_capacity(length.div_ceil(HASH_BYTES) * HASH_BYTES));
     while output.len() < length {
-        let mut block = Sha256::new()
-            .chain_update(diversifier)
-            .chain_update(&*input)
-            .finalize();
+        let mut block: Zeroizing<[u8; HASH_BYTES]> = Zeroizing::new(
+            Sha256::new()
+                .chain_update(diversifier)
+                .chain_update(&*input)
+                .finalize()
+                .into(),
+        );
         for _ in 1..iterations {
-            block = Sha256::digest(block);
+            *block = Sha256::digest(*block).into();
         }
-        output.extend_from_slice(&block);
+        output.extend_from_slice(&*block);
         if output.len() >= length {
             break;
         }
         // B, the block repeated to v bytes, plus one, added to each v-byte block of I.
-        let repeated: Vec<u8> = block.iter().copied().cycle().take(BLOCK_BYTES).collect();
+        let repeated: Zeroizing<Vec<u8>> =
+            Zeroizing::new(block.iter().copied().cycle().take(BLOCK_BYTES).collect());
         for chunk in input.chunks_mut(BLOCK_BYTES) {
             let mut carry = 1_u16;
-            for (byte, add) in chunk.iter_mut().zip(&repeated).rev() {
+            for (byte, add) in chunk.iter_mut().zip(repeated.iter()).rev() {
                 let sum = u16::from(*byte) + u16::from(*add) + carry;
                 *byte = sum.to_le_bytes()[0];
                 carry = sum >> 8;

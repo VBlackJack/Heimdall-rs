@@ -25,7 +25,9 @@
 //! and encipher keys, serves and authenticates TLS, and carries its alternative names; a CA
 //! says it is one and signs certificates and revocation lists, both critical.
 //!
-//! Private keys are secrets: held in memory wiped when dropped, never written out by `Debug`.
+//! Private keys are secrets: their PKCS#8 and PEM held in memory wiped when dropped, the
+//! signing key pairs wiped once the certificates are signed, never written out by `Debug`.
+//! The key ring parses for signing is its own and is not wiped by ring.
 
 use std::fmt;
 use std::net::IpAddr;
@@ -37,7 +39,7 @@ use rcgen::{
 };
 use rsa::pkcs8::EncodePrivateKey as _;
 use sha2::{Digest as _, Sha256};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
 
 use super::pkcs8_pem::{self, PemError};
 use super::pkcs12::{self, PfxError};
@@ -384,9 +386,11 @@ pub fn generate_self_signed(
     options: &CertificateOptions,
     now: u64,
 ) -> Result<SelfSignedCertificate, CertificateError> {
-    let (key, der) = new_key(options.key_bits)?;
+    let (mut key, der) = new_key(options.key_bits)?;
     let params = leaf_params(options, now, SELF_SIGNED_SERIAL_LENGTH)?;
-    let certificate = params.self_signed(&key)?;
+    let certificate = params.self_signed(&key);
+    key.zeroize();
+    let certificate = certificate?;
     let leaf = issued(&certificate, der)?;
     let fingerprint = fingerprint_sha256(&leaf.cert_der);
     Ok(SelfSignedCertificate { leaf, fingerprint })
@@ -403,7 +407,7 @@ pub fn generate_ca_leaf(
     ca_validity_days: u32,
     now: u64,
 ) -> Result<CaLeafCertificates, CertificateError> {
-    let (ca_key, ca_der) = new_key(options.key_bits)?;
+    let (mut ca_key, ca_der) = new_key(options.key_bits)?;
     let ca_cn = format!("{}{CA_NAME_SUFFIX}", options.cn);
     let mut ca_params = base_params(options, &ca_cn, now, u64::from(ca_validity_days))?;
     ca_params.serial_number = Some(new_serial(SELF_SIGNED_SERIAL_LENGTH)?);
@@ -414,10 +418,15 @@ pub fn generate_ca_leaf(
     usage.set_criticality(true);
     ca_params.custom_extensions = vec![constraints, usage];
     let ca_certificate = ca_params.self_signed(&ca_key)?;
-    let issuer = Issuer::new(ca_params, ca_key);
-    let (leaf_key, leaf_der) = new_key(options.key_bits)?;
-    let leaf_params = leaf_params(options, now, SERIAL_NUMBER_LENGTH)?;
-    let leaf_certificate = leaf_params.signed_by(&leaf_key, &issuer)?;
+    let signed = new_key(options.key_bits).and_then(|(mut leaf_key, leaf_der)| {
+        let issuer = Issuer::from_params(&ca_params, &ca_key);
+        let signed = leaf_params(options, now, SERIAL_NUMBER_LENGTH)
+            .and_then(|params| Ok(params.signed_by(&leaf_key, &issuer)?));
+        leaf_key.zeroize();
+        Ok((signed?, leaf_der))
+    });
+    ca_key.zeroize();
+    let (leaf_certificate, leaf_der) = signed?;
     let leaf = issued(&leaf_certificate, leaf_der)?;
     let fingerprint = fingerprint_sha256(&leaf.cert_der);
     Ok(CaLeafCertificates {

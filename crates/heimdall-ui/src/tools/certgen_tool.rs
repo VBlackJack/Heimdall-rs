@@ -234,7 +234,6 @@ impl fmt::Debug for CertGenMessage {
 }
 
 /// What an update asks of its tab.
-#[derive(Debug)]
 pub enum Outcome {
     /// Nothing more.
     Done,
@@ -248,6 +247,24 @@ pub enum Outcome {
     AskSave(CertSave),
     /// These bytes written at this path, readable by the user alone when `private`.
     Write(PathBuf, Zeroizing<Vec<u8>>, bool),
+}
+
+impl fmt::Debug for Outcome {
+    /// What is copied and the bytes written are never written out.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Done => f.write_str("Done"),
+            Self::Copy(slot, _) => write!(f, "Copy({slot:?}, ..)"),
+            Self::Focus(_) => f.write_str("Focus(..)"),
+            Self::Generate(generation, _, mode) => {
+                write!(f, "Generate({generation}, .., {mode:?})")
+            }
+            Self::AskSave(save) => write!(f, "AskSave({save:?})"),
+            Self::Write(path, _, private) => {
+                write!(f, "Write({}, .., {private})", path.display())
+            }
+        }
+    }
 }
 
 impl Outcome {
@@ -810,6 +827,10 @@ impl CertGenPane {
 
     /// The fingerprint, the certificates, the keys and the export buttons, as the C#'s
     /// panels shown once something is made.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one panel per certificate and key, as the C#"
+    )]
     fn results<'a>(
         &'a self,
         send: impl Fn(CertGenMessage) -> Message + Copy + 'a,
@@ -930,6 +951,21 @@ impl CertGenPane {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_outcome_never_writes_out_its_secrets() {
+        let write = Outcome::Write(
+            PathBuf::from("c.pfx"),
+            Zeroizing::new(b"PRIVATE".to_vec()),
+            true,
+        );
+        let copy = Outcome::Copy(CopySlot::CertKey, "PRIVATE".to_owned());
+        let shown = format!("{write:?} {copy:?}");
+        assert!(
+            !shown.contains("PRIVATE") && !shown.contains("80, 82"),
+            "{shown}"
+        );
+    }
 
     fn made(pane: &mut CertGenPane) {
         let Outcome::Generate(generation, options, mode) = pane.update(CertGenMessage::Generate)

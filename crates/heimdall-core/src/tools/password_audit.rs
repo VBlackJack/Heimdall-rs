@@ -21,7 +21,10 @@
 //! a hundred.
 //!
 //! Lengths are counted in UTF-16 units and characters compared as UTF-16 units, as the C#
-//! `string` counts and compares them.
+//! `string` counts and compares them. The copies of the password the analysis makes are
+//! wiped when dropped.
+
+use zeroize::Zeroizing;
 
 /// The policies, in the order of the C# policy box (`PolicyKeys`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
@@ -444,15 +447,18 @@ pub fn is_common(password: &str) -> bool {
     if listed(password) {
         return true;
     }
-    let normalized: String = password
-        .chars()
-        .map(|character| {
-            LEET_UNDONE
-                .iter()
-                .find(|(leet, _)| *leet == character)
-                .map_or(character, |(_, plain)| *plain)
-        })
-        .collect();
+    // The copies of the password made here are wiped when dropped.
+    let normalized: Zeroizing<String> = Zeroizing::new(
+        password
+            .chars()
+            .map(|character| {
+                LEET_UNDONE
+                    .iter()
+                    .find(|(leet, _)| *leet == character)
+                    .map_or(character, |(_, plain)| *plain)
+            })
+            .collect(),
+    );
     listed(&normalized)
 }
 
@@ -488,8 +494,8 @@ fn has_repeat(units: &[u16]) -> bool {
 /// repeat, in that order, each once.
 #[must_use]
 pub fn patterns(password: &str) -> Vec<Pattern> {
-    let lower = password.to_lowercase();
-    let units: Vec<u16> = lower.encode_utf16().collect();
+    let lower = Zeroizing::new(password.to_lowercase());
+    let units: Zeroizing<Vec<u16>> = Zeroizing::new(lower.encode_utf16().collect());
     let mut found = Vec::new();
     if KEYBOARD_PATTERNS
         .iter()

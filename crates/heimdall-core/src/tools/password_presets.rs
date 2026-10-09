@@ -25,6 +25,7 @@
 //! vault's or the Windows account's key; that sealing is not ported, and a sealed C# file is
 //! not read (the tool starts on its defaults, as the C# does on a file it cannot unseal).
 
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -82,7 +83,7 @@ fn default_case_blocks() -> String {
 
 /// A preset, every setting of the tool under a name, as the C# `PasswordPreset`: its
 /// properties named and defaulted as the C# writes and reads them.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 #[expect(
     clippy::struct_excessive_bools,
@@ -176,6 +177,17 @@ pub struct PasswordPreset {
     pub special_positions: String,
     #[serde(default = "one")]
     pub batch_count: i32,
+}
+
+impl fmt::Debug for PasswordPreset {
+    /// The leet base word, typed by the user, is never written out.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PasswordPreset")
+            .field("name", &self.name)
+            .field("mode", &self.mode)
+            .field("leet_base_word", &"..")
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for PasswordPreset {

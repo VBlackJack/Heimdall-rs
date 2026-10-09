@@ -54,6 +54,9 @@ const ED25519_PKCS8_PREFIX: [u8; 16] = [
     0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
 ];
 
+/// A carriage return, which a key brought from elsewhere may end its lines with.
+const CARRIAGE_RETURN: char = '\r';
+
 /// What ends every line of a key file, as the C# `SshKeyFileWriter.LineFeed`.
 const LINE_FEED: &str = "\n";
 
@@ -273,6 +276,11 @@ pub fn write_public_key(path: &Path, line: &str) -> io::Result<()> {
 ///
 /// The write's error.
 pub fn write_private_key(path: &Path, private_key_pem: &str) -> io::Result<()> {
+    // The PEM made here already ends its lines with line feeds: it is written as it is,
+    // without a copy; only a key brought with other line breaks is copied, and wiped.
+    if !private_key_pem.contains(CARRIAGE_RETURN) {
+        return private_file::write_private(path, private_key_pem.as_bytes());
+    }
     let text = Zeroizing::new(normalize_line_endings(private_key_pem));
     private_file::write_private(path, text.as_bytes())
 }

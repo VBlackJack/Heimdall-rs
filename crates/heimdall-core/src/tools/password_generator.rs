@@ -100,6 +100,91 @@ const SHORT_PASSWORD: usize = 8;
 /// One chance in four of upper-casing a letter under mixed case, as the C#'s `GetInt32(4)`.
 const MIXED_CASE_ODDS: usize = 4;
 
+/// The longest separator, as the C# `MaxLength="4"` of both separator boxes.
+pub const MAXIMUM_SEPARATOR_LENGTH: usize = 4;
+
+/// The longest leet base word, as the C# `MaxLength="32"`.
+pub const MAXIMUM_LEET_WORD_LENGTH: usize = 32;
+
+/// The longest custom specials, as the C# `MaxLength="64"`.
+pub const MAXIMUM_CUSTOM_SPECIALS_LENGTH: usize = 64;
+
+/// The positions kept of a list read, more than any count of extras asks for.
+const MAXIMUM_POSITIONS: usize = MAXIMUM_SYLLABLE_EXTRAS + MAXIMUM_LEET_EXTRAS;
+
+/// `text` cut to its first `limit` characters.
+fn cut(text: String, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        text
+    } else {
+        text.chars().take(limit).collect()
+    }
+}
+
+/// A positions list kept to its first [`MAXIMUM_POSITIONS`] entries.
+fn cut_positions(text: String) -> String {
+    let positions = rules::parse_positions(&text);
+    if positions.len() <= MAXIMUM_POSITIONS {
+        text
+    } else {
+        rules::format_positions(&positions[..MAXIMUM_POSITIONS])
+    }
+}
+
+/// `setting` held to what its control can ask for, as the C# sliders, boxes and lists hold
+/// their values: a preset read from disk asks for no more than the tool's own controls.
+fn bounded(setting: Setting) -> Setting {
+    match setting {
+        Setting::Length(value) => Setting::Length(value.clamp(MINIMUM_LENGTH, MAXIMUM_LENGTH)),
+        Setting::SyllableLength(value) => {
+            Setting::SyllableLength(value.clamp(MINIMUM_SYLLABLE_LENGTH, MAXIMUM_SYLLABLE_LENGTH))
+        }
+        Setting::SyllableDigits(value) => {
+            Setting::SyllableDigits(value.min(MAXIMUM_SYLLABLE_EXTRAS))
+        }
+        Setting::SyllableSpecials(value) => {
+            Setting::SyllableSpecials(value.min(MAXIMUM_SYLLABLE_EXTRAS))
+        }
+        Setting::PassphraseWordCount(value) => Setting::PassphraseWordCount(
+            value.clamp(MINIMUM_PASSPHRASE_WORDS, MAXIMUM_PASSPHRASE_WORDS),
+        ),
+        Setting::PassphraseDigits(value) => {
+            Setting::PassphraseDigits(value.min(MAXIMUM_LEET_EXTRAS))
+        }
+        Setting::PassphraseSpecials(value) => {
+            Setting::PassphraseSpecials(value.min(MAXIMUM_LEET_EXTRAS))
+        }
+        Setting::PassphraseLanguage(value) => Setting::PassphraseLanguage(
+            value.min(password_wordlists::PASSPHRASE_LANGUAGES.len() - 1),
+        ),
+        Setting::LeetDigits(value) => Setting::LeetDigits(value.min(MAXIMUM_LEET_EXTRAS)),
+        Setting::LeetSpecials(value) => Setting::LeetSpecials(value.min(MAXIMUM_LEET_EXTRAS)),
+        Setting::EntropyFloor(value) => {
+            Setting::EntropyFloor(value.min(ENTROPY_FLOOR_CHOICES.len() - 1))
+        }
+        Setting::ClipboardClearIndex(value) => {
+            Setting::ClipboardClearIndex(value.min(CLIPBOARD_CLEAR_CHOICES.len() - 1))
+        }
+        Setting::BatchCount(value) => {
+            Setting::BatchCount(value.clamp(MINIMUM_BATCH_COUNT, MAXIMUM_BATCH_COUNT))
+        }
+        Setting::SyllableSeparator(text) => {
+            Setting::SyllableSeparator(cut(text, MAXIMUM_SEPARATOR_LENGTH))
+        }
+        Setting::PassphraseSeparator(text) => {
+            Setting::PassphraseSeparator(cut(text, MAXIMUM_SEPARATOR_LENGTH))
+        }
+        Setting::LeetBaseWord(text) => Setting::LeetBaseWord(cut(text, MAXIMUM_LEET_WORD_LENGTH)),
+        Setting::CustomSpecials(text) => {
+            Setting::CustomSpecials(cut(text, MAXIMUM_CUSTOM_SPECIALS_LENGTH))
+        }
+        Setting::CaseBlocks(text) => Setting::CaseBlocks(rules::sanitize_case_blocks(&text)),
+        Setting::DigitPositions(text) => Setting::DigitPositions(cut_positions(text)),
+        Setting::SpecialPositions(text) => Setting::SpecialPositions(cut_positions(text)),
+        other => other,
+    }
+}
+
 /// The generator's four modes, as the C# `GeneratorMode`; its index is kept in presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum GeneratorMode {
@@ -904,7 +989,7 @@ impl PasswordGenerator {
     )]
     pub fn set(&mut self, setting: Setting) {
         let s = &mut self.settings;
-        match setting {
+        match bounded(setting) {
             Setting::Mode(value) => {
                 if changed!(s.mode, value) {
                     self.regenerate_if_ready();
@@ -1347,7 +1432,9 @@ impl PasswordGenerator {
             pp_specials: int(s.passphrase_specials),
             pp_case: s.passphrase_case.index(),
             pp_placement: s.passphrase_placement.index(),
-            leet_base_word: s.leet_base_word.clone(),
+            // The word typed is never written to disk: the C# sealed the file, this one is
+            // only restricted to its owner.
+            leet_base_word: String::new(),
             leet_random_word: s.leet_random_word,
             leet_full_substitution: s.leet_full_substitution,
             leet_digits: int(s.leet_digits),
@@ -1917,6 +2004,8 @@ impl PasswordGenerator {
         let separator_length = utf16_length(&separator);
         let mut groups: Vec<Zeroizing<String>> = Vec::new();
         let (mut written, mut cvc_count) = (0, 0);
+        // The coins tossed between an open and a closed syllable: what CVC is worth.
+        let mut tosses = 0_usize;
         while written < portion {
             let cost = if groups.is_empty() {
                 0
@@ -1929,7 +2018,9 @@ impl PasswordGenerator {
             }
             let consonant = *self.random.pick(consonants)?;
             let vowel = *self.random.pick(vowels)?;
-            if cvc && remaining >= 3 && self.random.below(2)? == 0 {
+            let coin = cvc && remaining >= 3;
+            tosses += usize::from(coin);
+            if coin && self.random.below(2)? == 0 {
                 let ending = *self.random.pick(&endings)?;
                 groups.push(Zeroizing::new(format!("{consonant}{vowel}{ending}")));
                 written += cost + 3;
@@ -1975,9 +2066,9 @@ impl PasswordGenerator {
         let closed_pool = as_f64(consonants.len() * vowels.len() * endings.len());
         let mut entropy = open_pool.log2() * as_f64(groups.len() - cvc_count)
             + closed_pool.log2() * as_f64(cvc_count);
-        if cvc {
-            entropy += as_f64(groups.len());
-        }
+        // A bit per coin actually tossed, where the C# counted one per syllable, tossed or
+        // not: the last syllables, with no room for a third letter, toss none.
+        entropy += as_f64(tosses);
         entropy += rules::extras_bits(digit_count, special_count, symbols.len());
         if case == CaseMode::Mixed {
             entropy += as_f64(groups.len());

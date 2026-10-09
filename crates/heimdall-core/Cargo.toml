@@ -22,8 +22,9 @@ getrandom = { workspace = true, features = ["sys_rng"] }
 hmac.workspace = true
 md-5.workspace = true
 pkcs8.workspace = true
-# rcgen: the Certificate Generator's certificates, signed through ring.
-rcgen.workspace = true
+# rcgen: the Certificate Generator's certificates, signed through ring; zeroize: its key
+# pairs wiped, through the zeroize crate already in the tree.
+rcgen = { workspace = true, features = ["zeroize"] }
 regex.workspace = true
 roxmltree.workspace = true
 rsa.workspace = true

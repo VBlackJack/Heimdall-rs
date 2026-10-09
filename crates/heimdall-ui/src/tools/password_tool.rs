@@ -403,7 +403,6 @@ impl fmt::Debug for PasswordMessage {
 }
 
 /// What an update asks of its tab.
-#[derive(Debug)]
 pub enum Outcome {
     /// Nothing more.
     Done,
@@ -420,6 +419,21 @@ pub enum Outcome {
     AskExport,
     /// This batch written at this path.
     Write(PathBuf, Zeroizing<String>),
+}
+
+impl fmt::Debug for Outcome {
+    /// The passwords copied and written are never written out.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Done => f.write_str("Done"),
+            Self::Copy(slot, _, timer) => write!(f, "Copy({slot:?}, .., {timer:?})"),
+            Self::Tick(timer) => write!(f, "Tick({timer})"),
+            Self::ReadClipboard(timer) => write!(f, "ReadClipboard({timer})"),
+            Self::ClearClipboard(timer) => write!(f, "ClearClipboard({timer})"),
+            Self::AskExport => f.write_str("AskExport"),
+            Self::Write(path, _) => write!(f, "Write({}, ..)", path.display()),
+        }
+    }
 }
 
 impl Outcome {
@@ -1548,6 +1562,10 @@ impl PasswordPane {
     }
 
     /// Row 4: the case blocks, as the C# `PanelCaseBlocks`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one button per block and per shortcut, as the C#"
+    )]
     fn case_blocks_panel<'a>(
         &'a self,
         send: impl Fn(PasswordMessage) -> Message + Copy + 'a,
@@ -2004,6 +2022,14 @@ fn floor_search_text(found: FloorSearchNotice) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_outcome_never_writes_out_its_passwords() {
+        let write = Outcome::Write(PathBuf::from("b.txt"), Zeroizing::new("hunter2".to_owned()));
+        let copy = Outcome::Copy(CopySlot::PasswordMain, "hunter2".to_owned(), Some(1));
+        let shown = format!("{write:?} {copy:?}");
+        assert!(!shown.contains("hunter2"), "{shown}");
+    }
 
     fn pane() -> PasswordPane {
         PasswordPane::new(None)

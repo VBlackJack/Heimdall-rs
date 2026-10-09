@@ -161,13 +161,51 @@ fn every_class_ticked_appears_in_every_random_password() {
 }
 
 #[test]
-fn a_length_too_short_for_the_promise_says_so() {
-    // As the C# ALengthTooShortForThePromise_SaysSoInsteadOfPretending.
+fn a_length_below_the_slider_is_held_to_it_and_keeps_the_promise() {
+    // The C# slider holds the length to 4..128, and four characters hold the four classes.
     let mut generator = generator();
     generator.set(Setting::Length(3));
-    assert!(generator.notices().contains(&Notice::ClassesNotPromised));
-    let expected = 92_f64.log2() * 3.0;
-    assert!((generator.last_entropy_bits() - expected).abs() < 1e-9);
+    assert_eq!(generator.settings().length, MINIMUM_LENGTH);
+    assert_eq!(generator.password().chars().count(), 4);
+    assert!(!generator.notices().contains(&Notice::ClassesNotPromised));
+}
+
+#[test]
+fn a_hostile_presets_file_is_held_to_the_controls_and_opens_at_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(password_presets::PRESETS_FILE_NAME);
+    let huge = i32::MAX;
+    let settings = format!(
+        "{{\"Mode\":2,\"Length\":{huge},\"SylLength\":{huge},\"SylLengthIncludesExtras\":true,         \"SylDigits\":{huge},\"SylSpecials\":{huge},\"PpWordCount\":{huge},\"PpDigits\":{huge},         \"PpSpecials\":{huge},\"PpLanguage\":{huge},\"LeetDigits\":{huge},\"LeetSpecials\":{huge},         \"EntropyFloor\":{huge},\"BatchCount\":{huge},\"PpSeparator\":\"{sep}\",         \"LeetBaseWord\":\"{word}\",\"CustomSpecials\":\"{specials}\",         \"DigitPositions\":\"{positions}\"}}",
+        sep = "-".repeat(10_000),
+        word = "a".repeat(10_000),
+        specials = "!".repeat(10_000),
+        positions = "50,".repeat(10_000),
+    );
+    std::fs::write(
+        &path,
+        format!("{{\"RememberSettings\":true,\"Settings\":{settings}}}"),
+    )
+    .expect("written");
+    let generator = PasswordGenerator::new(Some(path), "en");
+    let s = generator.settings();
+    assert_eq!(s.length, MAXIMUM_LENGTH);
+    assert_eq!(s.syllable_length, MAXIMUM_SYLLABLE_LENGTH);
+    assert_eq!(s.syllable_digits, MAXIMUM_SYLLABLE_EXTRAS);
+    assert_eq!(s.passphrase_word_count, MAXIMUM_PASSPHRASE_WORDS);
+    assert_eq!(s.passphrase_digits, MAXIMUM_LEET_EXTRAS);
+    assert_eq!(s.passphrase_language, 3);
+    assert_eq!(s.leet_specials, MAXIMUM_LEET_EXTRAS);
+    assert_eq!(s.entropy_floor, ENTROPY_FLOOR_CHOICES.len() - 1);
+    assert_eq!(s.batch_count, MAXIMUM_BATCH_COUNT);
+    assert_eq!(s.passphrase_separator.len(), MAXIMUM_SEPARATOR_LENGTH);
+    assert_eq!(s.leet_base_word.len(), MAXIMUM_LEET_WORD_LENGTH);
+    assert_eq!(s.custom_specials.len(), MAXIMUM_CUSTOM_SPECIALS_LENGTH);
+    assert!(
+        generator.password().len() < 200,
+        "a passphrase of eight words at most"
+    );
+    assert_eq!(generator.batch().len(), MAXIMUM_BATCH_COUNT);
 }
 
 #[test]
@@ -737,6 +775,18 @@ fn presets_are_saved_by_mode_and_the_settings_remembered_only_when_asked() {
         !written.contains(reopened.password()),
         "no password on disk"
     );
+
+    // Nor the leet word typed, which the C# sealed with the file.
+    generator.set(Setting::LeetBaseWord("hunter".to_owned()));
+    generator.save_preset("Leet");
+    generator.persist_settings_if_remembering();
+    let written = std::fs::read_to_string(&path).expect("read");
+    assert!(!written.contains("hunter"), "{written}");
+    let preset = generator.snapshot("x");
+    assert!(preset.leet_base_word.is_empty());
+    let mut typed = preset.clone();
+    typed.leet_base_word = "hunter".to_owned();
+    assert!(!format!("{typed:?}").contains("hunter"));
 }
 
 #[test]
@@ -791,4 +841,51 @@ fn passwords_are_never_written_out() {
     assert!(!shown.contains(generator.password()), "{shown}");
     assert!(!shown.contains("secretword"));
     assert!(!format!("{:?}", Setting::LeetBaseWord("secretword".to_owned())).contains("secret"));
+}
+
+#[test]
+fn closed_syllables_are_worth_a_bit_per_coin_actually_tossed() {
+    let mut generator = generator();
+    with(
+        &mut generator,
+        vec![
+            Setting::Mode(GeneratorMode::Syllable),
+            Setting::SyllableLength(8),
+            Setting::SyllableDigits(0),
+            Setting::SyllableSpecials(0),
+            Setting::SyllableCase(CaseMode::Lower),
+            Setting::SyllableCvc(true),
+        ],
+    );
+    let (open_bits, closed_bits) = (114_f64.log2(), (114.0 * 12.0_f64).log2());
+    for _ in 0..50 {
+        generator.generate();
+        let groups: Vec<usize> = generator
+            .syllable_structure()
+            .split(" \u{b7} ")
+            .map(str::len)
+            .collect();
+        // Replayed as the generator builds them: a coin is tossed while three letters fit.
+        let mut written = 0;
+        let mut expected = 0.0;
+        for length in &groups {
+            let tossed = 8 - written >= 3;
+            expected += if *length == 3 { closed_bits } else { open_bits };
+            expected += if tossed { 1.0 } else { 0.0 };
+            written += length;
+        }
+        // A last syllable of three may also be an open one and the letter left over.
+        let leftover = if groups.last() == Some(&3) {
+            expected - closed_bits + open_bits
+        } else {
+            expected
+        };
+        if groups.iter().all(|length| *length == 2 || *length == 3) && written == 8 {
+            let bits = generator.last_entropy_bits();
+            assert!(
+                (bits - expected).abs() < 1e-9 || (bits - leftover).abs() < 1e-9,
+                "{groups:?}: {bits} against {expected} or {leftover}"
+            );
+        }
+    }
 }
