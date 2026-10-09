@@ -70,6 +70,7 @@ fn request(port: u16, known_hosts: std::path::PathBuf) -> ConnectRequest {
             x11_forwarding: false,
         },
         options,
+        x11: None,
         cancel: CancellationToken::new(),
     }
 }
