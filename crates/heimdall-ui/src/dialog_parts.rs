@@ -17,17 +17,21 @@
 //! The parts the window's dialogs are built of, as the C# draws them. A form's section
 //! heading, label and hint follow `Themes/DialogCommonStyles.xaml`; a question or a report
 //! follows `Views/Dialogs/MessageDialog.xaml`: an icon of its severity beside a semi-bold
-//! title, the message in the secondary text, the buttons at the bottom right.
+//! title, the message in the secondary text, the buttons at the bottom right. A dialog that
+//! asks for something to be typed or chosen follows the C# input, vault, PIN and import
+//! dialogs: a semi-bold title, what it is about in the secondary text, its fields labelled
+//! above them, why what was typed is refused in the error colour, the buttons at the bottom
+//! right.
 
 use heimdall_app::Message as AppMessage;
-use iced::widget::{Button, Row, Text, button, column, row, space, text};
-use iced::{Alignment, Element};
+use iced::widget::{Button, Column, Row, Text, button, column, container, row, space, text};
+use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
-use crate::tokens::{font_size, spacing};
+use crate::tokens::{font_size, radius, spacing};
 
 /// Padding of a dialog's button, as the C# `MessageDialog` sets it: 6 above and below, 16
 /// on the sides.
@@ -35,6 +39,9 @@ pub const BUTTON_PADDING: [f32; 2] = [6.0, 16.0];
 
 /// Side of a message's icon, as the C# glyph at `FontSizeHeadline`.
 const ICON_SIDE: f32 = font_size::HEADLINE;
+
+/// Space inside a warning's card, above and below then on its sides, as the C# `Padding`.
+const WARNING_CARD_PADDING: [f32; 2] = [8.0, 12.0];
 
 /// Gap between a section's title and its description, as the C# title's bottom margin and
 /// the description's top one.
@@ -88,6 +95,12 @@ pub fn label<'a>(label: String) -> Text<'a> {
         .style(text::secondary)
 }
 
+/// A field's label, above it, as the C# `DialogLabelStyle` of the bulk edit dialogs: in the
+/// secondary text.
+pub fn dialog_label<'a>(label: String) -> Text<'a> {
+    text(label).size(font_size::BODY).style(text::secondary)
+}
+
 /// A hint under a field, as the C# `DialogHintTextStyle`: small, in the secondary text.
 pub fn hint<'a>(hint: String) -> Text<'a> {
     text(hint).size(font_size::CAPTION).style(text::secondary)
@@ -127,19 +140,98 @@ pub fn message<'a>(
     body: impl Into<Element<'a, Message>>,
     buttons: Row<'a, Message>,
 ) -> Element<'a, Message> {
-    let (icon, tint) = severity.icon();
-    column![
-        row![
-            icons::icon(icon, tint, ICON_SIDE),
+    form(
+        header(
+            severity,
             text(title).size(font_size::SUBTITLE).font(styles::SEMIBOLD),
-        ]
-        .spacing(spacing::MD)
-        .align_y(Alignment::Center),
-        body.into(),
+        ),
+        body,
         buttons,
-    ]
-    .spacing(spacing::MD)
-    .into()
+    )
+}
+
+/// The icon of `severity` beside `title`, as the C# `MessageDialog` and the dialogs that
+/// warn, `PasteConfirmDialog` and `HostKeyPromptDialog`, head themselves.
+pub fn header(severity: Severity, title: Text<'_>) -> Row<'_, Message> {
+    let (icon, tint) = severity.icon();
+    row![icons::icon(icon, tint, ICON_SIDE), title]
+        .spacing(spacing::MD)
+        .align_y(Alignment::Center)
+}
+
+/// A dialog: its `heading`, its `body` under it, then its `buttons`.
+pub fn form<'a>(
+    heading: impl Into<Element<'a, Message>>,
+    body: impl Into<Element<'a, Message>>,
+    buttons: Row<'a, Message>,
+) -> Element<'a, Message> {
+    column![heading.into(), body.into(), buttons]
+        .spacing(spacing::MD)
+        .into()
+}
+
+/// A dialog's title, as the C# input, vault and PIN dialogs': `FontSizeTitle`, semi-bold.
+pub fn title<'a>(title: String) -> Text<'a> {
+    text(title).size(font_size::TITLE).font(styles::SEMIBOLD)
+}
+
+/// The title of a dialog over a list to choose from, as the C# import previews, file
+/// conflict and restore dialogs set theirs: `FontSizeBodyLarge`, semi-bold.
+pub fn list_title<'a>(title: String) -> Text<'a> {
+    text(title)
+        .size(font_size::BODY_LARGE)
+        .font(styles::SEMIBOLD)
+}
+
+/// [`title`] centred, as the C# vault unlock and PIN dialogs set theirs.
+pub fn centred_title<'a>(title: String) -> Text<'a> {
+    self::title(title).width(Length::Fill).center()
+}
+
+/// What a dialog asks to be typed, above its field, as the C# `InputDialog` and
+/// `PasswordInputDialog` prompt: `FontSizeBodyLarge`, in the text's colour.
+pub fn prompt<'a>(prompt: String) -> Text<'a> {
+    text(prompt).size(font_size::BODY_LARGE)
+}
+
+/// What a dialog is about, under its title, as the C# summaries and explanations: in the
+/// secondary text.
+pub fn note<'a>(note: String) -> Text<'a> {
+    text(note).size(font_size::BODY).style(text::secondary)
+}
+
+/// Why what was typed is refused, as the C# dialogs' `ErrorMessage`: in the error colour.
+pub fn error<'a>(error: String) -> Text<'a> {
+    text(error).size(font_size::BODY).style(text::danger)
+}
+
+/// What holds a dialog back, as the C# vault and PIN dialogs show a lockout or what
+/// disabling the master password does: in the warning colour, on a card.
+pub fn warning_card<'a>(warning: String) -> Element<'a, Message> {
+    container(text(warning).size(font_size::BODY).style(text::warning))
+        .padding(WARNING_CARD_PADDING)
+        .width(Length::Fill)
+        .style(|theme: &iced::Theme| container::Style {
+            background: Some(theme.extended_palette().background.weak.color.into()),
+            border: iced::Border {
+                radius: radius::SM.into(),
+                ..iced::Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// A field under its label, as the C# vault, PIN and password dialogs lay them out: the
+/// label small, in the secondary text, above it.
+pub fn field<'a>(label: String, input: impl Into<Element<'a, Message>>) -> Column<'a, Message> {
+    column![hint(label), input.into()].spacing(spacing::XS)
+}
+
+/// The main button of a dialog, in the accent: `label`, sending `message`, or faded while
+/// there is none.
+pub fn confirm<'a>(label: String, message: Option<Message>) -> Button<'a, Message> {
+    action(label, styles::primary).on_press_maybe(message)
 }
 
 /// A message's text, as the C# `MessageText`: a little larger than the window's, in the

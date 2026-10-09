@@ -272,3 +272,53 @@ fn an_interval_out_of_the_csharp_range_is_refused() {
     let _ = app.update(Message::Settings(SettingsMessage::UpdateInterval(8760)));
     assert_eq!(saved(dir.path()).updates.interval_hours, 8760);
 }
+
+#[test]
+fn offer_it_again_forgets_the_release_skipped_and_the_next_look_offers_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = released(dir.path());
+    let newer = || UpdateMessage::Checked(Outcome::Latest(tag("v2026.101001")));
+    let _ = update(&mut app, newer());
+    let _ = update(&mut app, UpdateMessage::Skip);
+    assert_eq!(
+        app.settings().update_check.skipped.as_deref(),
+        Some("v2026.101001")
+    );
+
+    // As the C# `ClearSkippedVersion`: forgotten, and saved so.
+    assert!(update(&mut app, UpdateMessage::ClearSkipped).is_empty());
+    assert_eq!(app.settings().update_check.skipped, None);
+    assert_eq!(saved(dir.path()).update_check.skipped, None);
+    let _ = update(&mut app, newer());
+    assert_eq!(
+        app.update_offer(false),
+        Some(tag("v2026.101001")),
+        "offered again"
+    );
+    // Nothing skipped: nothing to forget, nothing written.
+    let _ = update(&mut app, UpdateMessage::ClearSkipped);
+    assert_eq!(app.settings().update_check.skipped, None);
+}
+
+#[test]
+fn a_release_tag_says_its_build_date_as_the_csharp_derives_it_from_its_version() {
+    assert_eq!(tag("v2026.100901").date().as_deref(), Some("2026-10-09"));
+    assert_eq!(tag("v2024.022903").date().as_deref(), Some("2024-02-29"));
+    assert_eq!(tag("v2026.123101").date().as_deref(), Some("2026-12-31"));
+    // No such day: no date, as the C# `DateOnly` refuses it.
+    for no_date in [
+        "v2025.022901",
+        "v2026.130101",
+        "v2026.000101",
+        "v2026.100001",
+        "v2026.043101",
+    ] {
+        assert_eq!(tag(no_date).date(), None, "{no_date}");
+    }
+    assert_eq!(tag("v2000.022901").date().as_deref(), Some("2000-02-29"));
+    assert_eq!(
+        tag("v2100.022901").date(),
+        None,
+        "a century not a leap year"
+    );
+}

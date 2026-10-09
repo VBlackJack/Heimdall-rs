@@ -1095,6 +1095,53 @@ fn the_multi_monitor_picker_shows_the_screens_as_listed_not_as_drawn() {
 }
 
 #[test]
+fn a_refused_save_counts_the_fields_to_fix_on_each_tab_header_as_the_csharp_badges() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let set = |shell: &mut Shell, field, value: &str| {
+        let _ = shell.update(app(AppMessage::ProfileField {
+            field,
+            value: value.to_owned(),
+        }));
+    };
+    set(&mut shell, ProfileField::Host, "dc.lab:3389");
+    set(&mut shell, ProfileField::RdGateway, "https://rdg.lab:443");
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("2").is_err(), "nothing counted before a save");
+    }
+    let _ = shell.update(Message::SaveProfileForm);
+    snapshot(&shell, "profile-error-badges.png");
+    // The name missing and the port in the address on General, the RD Gateway on Network.
+    let badge_beside = |ui: &mut common::Drawn<'_>, tab: &str, count: &str| {
+        let header = ui.find(tab).expect(tab).bounds();
+        let badge = ui.find(count).expect(count).bounds();
+        assert!(
+            badge.x > header.x + header.width && (badge.center_y() - header.center_y()).abs() < 4.0,
+            "{count} beside {tab}: {header:?} {badge:?}"
+        );
+    };
+    {
+        let mut ui = simulator(&shell);
+        badge_beside(&mut ui, "General", "2");
+        badge_beside(&mut ui, "Network", "1");
+    }
+    // Fixed, a field leaves its tab's count, the others stay until fixed in turn.
+    set(&mut shell, ProfileField::Name, "dc");
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("2").is_err(), "one left on General");
+        badge_beside(&mut ui, "General", "1");
+    }
+    set(&mut shell, ProfileField::Host, "dc.lab");
+    set(&mut shell, ProfileField::RdGateway, "rdg.lab");
+    let mut ui = simulator(&shell);
+    assert!(ui.find("1").is_err(), "nothing left to fix");
+}
+
+#[test]
 fn an_rd_gateway_that_is_no_host_name_is_refused_with_the_csharp_reason() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
@@ -1228,4 +1275,62 @@ fn an_ssh_form_chooses_putty_and_x11_forwarding_with_its_warning() {
     for absent in ["SSH mode", "Enable X11 forwarding"] {
         assert!(ui.find(absent).is_err(), "{absent}");
     }
+}
+
+/// What is said of hardware acceleration, which neither client honours yet.
+const HARDWARE_UNSUPPORTED: &str = "Not supported yet: the built-in client has no such switch, \
+    and Remote Desktop Connection (mstsc.exe) reads no setting for it from its .rdp file.";
+
+#[test]
+fn hardware_acceleration_is_kept_and_said_not_supported_yet_in_either_session_mode() {
+    use heimdall_app::profile_draft::ProfileChoice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
+    show(&mut shell, ProfileTab::Options);
+    for external in [false, true] {
+        let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::External(
+            external,
+        ))));
+        let mut ui = tall_simulator(&shell);
+        let tick = ui
+            .find("Use hardware-accelerated rendering")
+            .expect("the box, kept");
+        let said = ui.find(HARDWARE_UNSUPPORTED).expect("said under it");
+        assert!(said.bounds().y > tick.bounds().y, "external: {external}");
+        // Not said to be Remote Desktop Connection's: it reads no such key either.
+        let next = ui.find("Automatically reconnect").expect("the next box");
+        assert!(next.bounds().y > said.bounds().y);
+    }
+}
+
+#[test]
+fn the_gateway_dialog_browses_for_its_key_and_the_path_picked_fills_it() {
+    use heimdall_ui::browse::BrowseTarget;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewGateway));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.click("Browse...")
+            .expect("beside the key, as the C# dialog");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::Browse(BrowseTarget::GatewayKey)))
+        );
+    }
+    let _ = shell.update(Message::Browsed(
+        BrowseTarget::GatewayKey,
+        "/home/me/.ssh/bastion".to_owned(),
+    ));
+    let mut ui = tall_simulator(&shell);
+    ui.find("/home/me/.ssh/bastion")
+        .expect("the key path shown");
 }

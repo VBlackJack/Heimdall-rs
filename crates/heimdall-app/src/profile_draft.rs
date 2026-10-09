@@ -1079,27 +1079,37 @@ impl ProfileDraft {
             ..self.rdp_options
         };
         if options.resolution == Resolution::Fixed {
-            let side = |typed: &str, max: u16, error: DraftError| {
-                typed
-                    .trim()
-                    .parse::<u16>()
-                    .ok()
-                    .filter(|side| (FIXED_SIDE_MIN..=max).contains(side))
-                    .ok_or(error)
-            };
-            let width = side(
-                &self.fixed_width,
-                FIXED_WIDTH_MAX,
-                DraftError::FixedWidthInvalid,
-            )?;
-            let height = side(
-                &self.fixed_height,
-                FIXED_HEIGHT_MAX,
-                DraftError::FixedHeightInvalid,
-            )?;
+            let width = self.fixed_width()?;
+            let height = self.fixed_height()?;
             (options.fixed_width, options.fixed_height) = fixed_desktop(width, height);
         }
         Ok(options)
+    }
+
+    /// The fixed width typed.
+    ///
+    /// # Errors
+    ///
+    /// [`DraftError::FixedWidthInvalid`] for anything but a number within the C# limits.
+    fn fixed_width(&self) -> Result<u16, DraftError> {
+        fixed_side(
+            &self.fixed_width,
+            FIXED_WIDTH_MAX,
+            DraftError::FixedWidthInvalid,
+        )
+    }
+
+    /// The fixed height typed.
+    ///
+    /// # Errors
+    ///
+    /// [`DraftError::FixedHeightInvalid`] for anything but a number within the C# limits.
+    fn fixed_height(&self) -> Result<u16, DraftError> {
+        fixed_side(
+            &self.fixed_height,
+            FIXED_HEIGHT_MAX,
+            DraftError::FixedHeightInvalid,
+        )
     }
 
     /// Whether the external client spans the monitors, as it reads the profile: always in the
@@ -1167,25 +1177,99 @@ impl ProfileDraft {
     ///
     /// A shown port that is not a number from 0 to 65535.
     fn saved_forwards(&self) -> Result<Forwards, DraftError> {
-        let port = |field: ProfileField, error: DraftError| match self.value(field).trim() {
+        Ok(Forwards {
+            socks_port: self.forward_port(ProfileField::SocksPort)?,
+            remote_bind_port: self.forward_port(ProfileField::RemoteBindPort)?,
+            remote_local_port: self.forward_port(ProfileField::RemoteLocalPort)?,
+        })
+    }
+
+    /// The port typed in `field`, one of [`Self::FORWARD_FIELDS`]; 0 or empty is none.
+    ///
+    /// # Errors
+    ///
+    /// The field's own error for a shown port that is not a number from 0 to 65535.
+    fn forward_port(&self, field: ProfileField) -> Result<Option<u16>, DraftError> {
+        let error = match field {
+            ProfileField::RemoteBindPort => DraftError::RemoteBindPortInvalid,
+            ProfileField::RemoteLocalPort => DraftError::RemoteLocalPortInvalid,
+            _ => DraftError::SocksPortInvalid,
+        };
+        match self.value(field).trim() {
             "" => Ok(None),
             typed => match typed.parse::<u16>() {
                 Ok(port) => Ok(Some(port).filter(|port| *port != 0)),
                 Err(_) if self.shows(field) => Err(error),
                 Err(_) => Ok(None),
             },
-        };
-        Ok(Forwards {
-            socks_port: port(ProfileField::SocksPort, DraftError::SocksPortInvalid)?,
-            remote_bind_port: port(
-                ProfileField::RemoteBindPort,
-                DraftError::RemoteBindPortInvalid,
-            )?,
-            remote_local_port: port(
-                ProfileField::RemoteLocalPort,
-                DraftError::RemoteLocalPortInvalid,
-            )?,
-        })
+        }
+    }
+
+    /// Every reason the form cannot be saved, one per field to fix, in form order: what the
+    /// C# server dialog counts on each tab's header once a save is refused. The first is
+    /// the one [`Self::to_saved`], then [`Self::metadata`], give.
+    #[must_use]
+    pub fn errors(&self) -> Vec<DraftError> {
+        let serverless = self.protocol.is_serverless();
+        let mut errors: Vec<DraftError> = [
+            self.name
+                .trim()
+                .is_empty()
+                .then_some(DraftError::NameMissing),
+            self.has_control_character()
+                .then_some(DraftError::ControlCharacter),
+            (!serverless).then(|| host(&self.host).err()).flatten(),
+            (!serverless).then(|| self.typed_port().err()).flatten(),
+            self.checked_username().err(),
+            self.domain
+                .trim()
+                .chars()
+                .any(|c| c.is_whitespace() || c == '"')
+                .then_some(DraftError::DomainInvalid),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let forwards = Self::FORWARD_FIELDS
+            .into_iter()
+            .filter_map(|field| self.forward_port(field).err());
+        match self.protocol {
+            DraftProtocol::Ssh | DraftProtocol::Sftp => errors.extend(forwards),
+            DraftProtocol::Rdp => {
+                errors.extend(self.saved_rd_gateway().err());
+                if self.rdp_options.resolution == Resolution::Fixed {
+                    errors.extend(self.fixed_width().err());
+                    errors.extend(self.fixed_height().err());
+                }
+                errors.extend(forwards);
+            }
+            DraftProtocol::WinRm => {
+                if self.is_on(ProfileToggle::StoredCredential)
+                    && self.checked_username().is_ok_and(str::is_empty)
+                {
+                    errors.push(DraftError::UsernameMissing);
+                }
+            }
+            DraftProtocol::Local => {
+                if local_draft::arguments_of(&self.local_arguments).is_none() {
+                    errors.push(DraftError::ArgumentsInvalid);
+                }
+            }
+            DraftProtocol::Vnc
+            | DraftProtocol::Telnet
+            | DraftProtocol::Ftp
+            | DraftProtocol::Citrix => {}
+        }
+        errors.extend(self.metadata().err());
+        // One per field, as the C# keeps one error per box.
+        let mut fields = Vec::new();
+        errors.retain(|error| {
+            let field = error.field();
+            let first = !fields.contains(&field);
+            fields.push(field);
+            first
+        });
+        errors
     }
 
     /// The post-connect steps saved, of an SSH form: approved by the store, which the user
@@ -1647,6 +1731,20 @@ fn port_text(port: Option<u16>) -> String {
     port.map(|port| port.to_string()).unwrap_or_default()
 }
 
+/// A side of a fixed RDP desktop typed: a number from the C# minimum to `max`.
+///
+/// # Errors
+///
+/// `error` for anything else.
+fn fixed_side(typed: &str, max: u16, error: DraftError) -> Result<u16, DraftError> {
+    typed
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|side| (FIXED_SIDE_MIN..=max).contains(side))
+        .ok_or(error)
+}
+
 /// The address as saved: trimmed, and an IPv6 address without the brackets it may have
 /// been typed with.
 pub(crate) fn host(typed: &str) -> Result<String, DraftError> {
@@ -1934,6 +2032,66 @@ mod tests {
             !telnet.shows(ProfileField::SocksPort),
             "never through a gateway"
         );
+    }
+
+    #[test]
+    fn every_field_to_fix_is_listed_once_in_form_order_the_first_being_the_one_save_refuses() {
+        let mut form = rdp_form();
+        assert!(form.errors().is_empty(), "a form that saves");
+        form.name = "  ".to_owned();
+        form.host = "user@dc.lab".to_owned();
+        form.port = "99999".to_owned();
+        form.rd_gateway = "https://rdg".to_owned();
+        form.rdp_options.resolution = Resolution::Fixed;
+        form.fixed_width = "10".to_owned();
+        form.fixed_height = "tall".to_owned();
+        form.gateway = Some(ProfileId::new("gw"));
+        form.set(ProfileField::SocksPort, "proxy".to_owned());
+        form.mac_address = "not a mac".to_owned();
+        let errors = form.errors();
+        assert_eq!(
+            errors,
+            vec![
+                DraftError::NameMissing,
+                DraftError::HostHasUser,
+                DraftError::PortInvalid,
+                DraftError::RdGatewayInvalid,
+                DraftError::FixedWidthInvalid,
+                DraftError::FixedHeightInvalid,
+                DraftError::SocksPortInvalid,
+                DraftError::MacAddressInvalid,
+            ]
+        );
+        assert_eq!(form.to_saved(id()).err(), errors.first().copied());
+
+        // A name both empty and holding a control character is one box to fix.
+        let mut ssh = draft("web.lab", "22");
+        ssh.name = String::new();
+        ssh.group = "a\u{7}b".to_owned();
+        assert_eq!(ssh.errors(), vec![DraftError::NameMissing]);
+
+        // What only one protocol checks is checked for it alone.
+        let mut winrm = ProfileDraft::new_for(DraftProtocol::WinRm);
+        winrm.name = "dc".to_owned();
+        winrm.host = "dc.lab".to_owned();
+        winrm.toggle(ProfileToggle::StoredCredential, true);
+        assert_eq!(winrm.errors(), vec![DraftError::UsernameMissing]);
+        assert_eq!(
+            winrm.to_saved(id()).err(),
+            Some(DraftError::UsernameMissing)
+        );
+        // Windows takes an argument line as written: only a POSIX shell's quoting can be
+        // left open.
+        if cfg!(not(windows)) {
+            let mut local = ProfileDraft::new_for(DraftProtocol::Local);
+            local.name = "shell".to_owned();
+            local.local_arguments = "\"open".to_owned();
+            assert_eq!(local.errors(), vec![DraftError::ArgumentsInvalid]);
+            assert_eq!(
+                local.to_saved(id()).err(),
+                Some(DraftError::ArgumentsInvalid)
+            );
+        }
     }
 
     #[test]

@@ -221,9 +221,9 @@ pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
         entries = entries.push(entry_card(index, count, entry));
     }
     let mut page = column![
-        text(fl!("ui-macro-editor-title")).size(font_size::TITLE),
+        crate::dialog_parts::title(fl!("ui-macro-editor-title")),
         row![
-            text(fl!("ui-macro-editor-name")),
+            crate::dialog_parts::dialog_label(fl!("ui-macro-editor-name")),
             text_input("", &edited.name)
                 .style(styles::text_input)
                 .on_input(|typed| draft(MacroEdit::Name(typed)))
@@ -231,7 +231,7 @@ pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
         ]
         .spacing(spacing::SM)
         .align_y(Alignment::Center),
-        text(fl!("ui-macro-editor-input-hint")).size(font_size::CAPTION),
+        crate::dialog_parts::hint(fl!("ui-macro-editor-input-hint")),
         styles::scroll(entries).height(ENTRIES_HEIGHT),
         row![
             button(text(fl!("ui-macro-editor-add-expect")))
@@ -245,13 +245,12 @@ pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
     ]
     .spacing(spacing::SM);
     if let Some(problem) = &edited.problem {
-        page = page.push(text(problem_text(problem)).style(text::danger));
+        page = page.push(crate::dialog_parts::error(problem_text(problem)));
     }
     let mut actions = row![].spacing(spacing::SM);
     if let Some(original) = &edited.original {
         actions = actions.push(
-            button(text(fl!("ui-macro-editor-delete-macro")))
-                .style(styles::danger)
+            crate::dialog_parts::action(fl!("ui-macro-editor-delete-macro"), styles::danger)
                 .on_press(Message::App(AppMessage::Macro(MacroMessage::AskDelete(
                     original.clone(),
                 )))),
@@ -260,16 +259,11 @@ pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
     page.push(
         actions
             .push(iced::widget::space::horizontal())
-            .push(
-                button(text(fl!("ui-dialog-cancel-button")))
-                    .style(styles::secondary)
-                    .on_press(Message::App(AppMessage::DismissDialog)),
-            )
-            .push(
-                button(text(fl!("ui-dialog-save-macro-confirm")))
-                    .style(styles::primary)
-                    .on_press(Message::App(AppMessage::ConfirmDialog)),
-            ),
+            .push(crate::dialog_parts::cancel())
+            .push(crate::dialog_parts::confirm(
+                fl!("ui-dialog-save-macro-confirm"),
+                Some(Message::App(AppMessage::ConfirmDialog)),
+            )),
     )
     .into()
 }

@@ -534,7 +534,7 @@ const SCREENS: [Monitor; 2] = [
 ];
 
 /// The boxes only Remote Desktop Connection honours, by their C# label.
-const EXTERNAL_ONLY: [(&str, RdpSwitch); 11] = [
+const EXTERNAL_ONLY: [(&str, RdpSwitch); 10] = [
     ("Capture local microphone", RdpSwitch::Microphone),
     ("Redirect printers", RdpSwitch::Printers),
     ("Redirect COM ports", RdpSwitch::ComPorts),
@@ -546,16 +546,17 @@ const EXTERNAL_ONLY: [(&str, RdpSwitch); 11] = [
         RdpSwitch::BitmapCaching,
     ),
     ("Enable RDP compression", RdpSwitch::Compression),
-    (
-        "Use hardware-accelerated rendering",
-        RdpSwitch::HardwareAcceleration,
-    ),
     ("Avoid UDP transport probing", RdpSwitch::DisableUdp),
     ("Open in fullscreen", RdpSwitch::FullScreen),
 ];
 
 /// What the form says beside an option only Remote Desktop Connection honours.
 const EXTERNAL_ONLY_NOTE: &str = "External client (mstsc.exe) only";
+
+/// The box neither client honours yet, and what is said under it whatever the mode.
+const HARDWARE_ACCELERATION: &str = "Use hardware-accelerated rendering";
+const NOT_SUPPORTED_NOTE: &str = "Not supported yet: the built-in client has no such switch, \
+    and Remote Desktop Connection (mstsc.exe) reads no setting for it from its .rdp file.";
 
 /// The boxes the global defaults decide while the profile follows them.
 const DECIDED_BY_DEFAULTS: [&str; 18] = [
@@ -661,7 +662,10 @@ fn each_option_of_the_external_client_is_a_box_said_to_be_its_own_while_the_prof
             );
         }
     }
-    for (label, switch) in EXTERNAL_ONLY {
+    for (label, switch) in EXTERNAL_ONLY
+        .into_iter()
+        .chain([(HARDWARE_ACCELERATION, RdpSwitch::HardwareAcceleration)])
+    {
         let on = !switch.is_on(&draft.rdp_extras);
         let expected = format!(
             "{:?}",
@@ -678,6 +682,24 @@ fn each_option_of_the_external_client_is_a_box_said_to_be_its_own_while_the_prof
     for opened_outside in [&external, &through_gateway] {
         let mut ui = groups(opened_outside, &SCREENS);
         assert!(every(&mut ui, EXTERNAL_ONLY_NOTE).is_empty());
+    }
+    // Hardware acceleration, which Remote Desktop Connection reads no key for either: said
+    // not supported yet under its box, in a tab or outside, never said to be its own.
+    for opened in [&draft, &external, &through_gateway] {
+        let mut ui = groups(opened, &SCREENS);
+        let tick = ui
+            .find(HARDWARE_ACCELERATION)
+            .expect("the box, kept")
+            .bounds();
+        let notes = every(&mut ui, NOT_SUPPORTED_NOTE);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].y > tick.y, "under the box");
+        assert!(
+            every(&mut ui, EXTERNAL_ONLY_NOTE)
+                .iter()
+                .all(|note| (note.center_y() - tick.center_y()).abs() >= SAME_ROW),
+            "not beside it"
+        );
     }
 }
 

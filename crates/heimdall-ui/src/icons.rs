@@ -119,6 +119,8 @@ pub enum Icon {
     NewFolder,
     /// The `FavoriteStar` glyph: a star, the bookmarks.
     FavoriteStar,
+    /// The `FavoriteStarFill` glyph: the star filled, a session marked as a favourite.
+    FavoriteStarFill,
     /// The `Admin` glyph: a shield, browsing as root.
     Admin,
     /// The `UpdateRestore` glyph: an arrow turning back, a setting reset.
@@ -127,11 +129,21 @@ pub enum Icon {
     Warning,
     /// The `ErrorBadge` glyph: a circle with a cross, a report of a failure.
     ErrorBadge,
+    /// The `CommandPrompt` glyph: a window with a prompt, a script of a file list.
+    CommandPrompt,
+    /// The `Setting` glyph: a gear, a configuration file of a file list.
+    Setting,
+    /// The `Package` glyph: a box, an archive of a file list.
+    Package,
+    /// The `Zoom` glyph: a magnifier, an executable of a file list.
+    Zoom,
+    /// The `Photo2` glyph: a picture, an image of a file list.
+    Photo,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 36] = [
+    pub const ALL: [Self; 42] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -164,10 +176,16 @@ impl Icon {
         Self::Info,
         Self::NewFolder,
         Self::FavoriteStar,
+        Self::FavoriteStarFill,
         Self::Admin,
         Self::Restore,
         Self::Warning,
         Self::ErrorBadge,
+        Self::CommandPrompt,
+        Self::Setting,
+        Self::Package,
+        Self::Zoom,
+        Self::Photo,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -187,6 +205,7 @@ impl Icon {
     }
 
     /// Its path data, as the C# holds it.
+    #[expect(clippy::too_many_lines, reason = "one path per icon")]
     const fn data(self) -> &'static str {
         match self {
             Self::Rdp => {
@@ -271,7 +290,7 @@ impl Icon {
             Self::NewFolder => {
                 "M1.5,3.5 L6,3.5 L7.5,5 L14.5,5 L14.5,13 L1.5,13 Z M8,7 L8,11 M6,9 L10,9"
             }
-            Self::FavoriteStar => {
+            Self::FavoriteStar | Self::FavoriteStarFill => {
                 "M8,1.5 L9.65,5.73 L14.18,5.99 L10.66,8.87 L11.82,13.26 L8,10.8 L4.18,13.26 \
                  L5.34,8.87 L1.82,5.99 L6.35,5.73 Z"
             }
@@ -282,13 +301,34 @@ impl Icon {
             Self::Restore => "M2.5,8 A5.5,5.5 0 1 0 4.1,4.1 M4,1 L4,4.5 L7.5,4.5",
             Self::Warning => "M8,1.5 L14.5,13.5 L1.5,13.5 Z M8,5.5 L8,9.5 M8,11 L8,12",
             Self::ErrorBadge => {
-                "M8,1.5 A6.5,6.5 0 1 1 8,14.5 A6.5,6.5 0 1 1 8,1.5 Z M5.5,5.5 L10.5,10.5                  M10.5,5.5 L5.5,10.5"
+                "M8,1.5 A6.5,6.5 0 1 1 8,14.5 A6.5,6.5 0 1 1 8,1.5 Z M5.5,5.5 L10.5,10.5 \
+                 M10.5,5.5 L5.5,10.5"
+            }
+            Self::CommandPrompt => {
+                "M1.5,2.5 L14.5,2.5 L14.5,13.5 L1.5,13.5 Z M1.5,4.5 L14.5,4.5 \
+                 M4,7 L6.5,9 L4,11 M8,11 L11.5,11"
+            }
+            Self::Setting => {
+                "M3,8 A5,5 0 1 1 13,8 A5,5 0 1 1 3,8 Z M6,8 A2,2 0 1 1 10,8 A2,2 0 1 1 6,8 Z \
+                 M8,1.5 L8,3 M8,13 L8,14.5 M1.5,8 L3,8 M13,8 L14.5,8 \
+                 M3.4,3.4 L4.46,4.46 M11.54,11.54 L12.6,12.6 \
+                 M12.6,3.4 L11.54,4.46 M4.46,11.54 L3.4,12.6"
+            }
+            Self::Package => {
+                "M1.5,4.5 L8,1.5 L14.5,4.5 L14.5,11.5 L8,14.5 L1.5,11.5 Z \
+                 M1.5,4.5 L8,7.5 L14.5,4.5 M8,7.5 L8,14.5"
+            }
+            Self::Zoom => "M2,6.5 A4.5,4.5 0 1 1 11,6.5 A4.5,4.5 0 1 1 2,6.5 Z M9.7,9.7 L14.5,14.5",
+            Self::Photo => {
+                "M1.5,2.5 L14.5,2.5 L14.5,13.5 L1.5,13.5 Z M1.5,11 L5.5,7 L9,10.5 L11,8.5 \
+                 L14.5,12 M10,5 A1,1 0 1 1 12,5 A1,1 0 1 1 10,5 Z"
             }
         }
     }
 
     /// Width of its line when it is stroked, as the expander's arrow and the chrome's
-    /// glyphs; `None` when it is filled, as every geometry of the C# and the dots of More.
+    /// glyphs; `None` when it is filled, as every geometry of the C#, the dots of More and
+    /// the favourite's star.
     const fn stroke(self) -> Option<f32> {
         match self {
             Self::ChevronRight | Self::ChevronDown => Some(STROKE_WIDTH),
@@ -314,7 +354,12 @@ impl Icon {
             | Self::Admin
             | Self::Restore
             | Self::Warning
-            | Self::ErrorBadge => Some(GLYPH_STROKE_WIDTH),
+            | Self::ErrorBadge
+            | Self::CommandPrompt
+            | Self::Setting
+            | Self::Package
+            | Self::Zoom
+            | Self::Photo => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
     }
@@ -337,8 +382,42 @@ pub enum Tint {
     Accent,
     /// The C# `WarningBrush`: a question that warns.
     Warning,
+    /// A colour of the theme's palette: a file's, by what it holds.
+    Hue(Hue),
     /// A colour of its own: a folder's.
     Own(Color),
+}
+
+/// A colour of the theme's palette, as the C# `*Color` keys a brush is made of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hue {
+    /// `GreenColor`.
+    Green,
+    /// `CyanColor`.
+    Cyan,
+    /// `CommentColor`.
+    Comment,
+    /// `OrangeColor`.
+    Orange,
+    /// `PinkColor`.
+    Pink,
+    /// `YellowColor`.
+    Yellow,
+}
+
+impl Hue {
+    /// The colour it is in `theme`.
+    fn color(self, theme: &Theme) -> Color {
+        let colors = crate::themes::colors_of(theme);
+        match self {
+            Self::Green => colors.green,
+            Self::Cyan => colors.cyan,
+            Self::Comment => colors.comment,
+            Self::Orange => colors.orange,
+            Self::Pink => colors.pink,
+            Self::Yellow => colors.yellow,
+        }
+    }
 }
 
 impl Tint {
@@ -352,6 +431,7 @@ impl Tint {
             Self::Danger => theme.extended_palette().danger.base.color,
             Self::Accent => theme.palette().primary,
             Self::Warning => theme.extended_palette().warning.base.color,
+            Self::Hue(hue) => hue.color(theme),
             Self::Own(color) => color,
         }
     }
@@ -1025,6 +1105,13 @@ mod tests {
     }
 
     #[test]
+    fn the_favourites_star_is_the_bookmarks_star_filled_as_the_csharp_glyph() {
+        assert_eq!(Icon::FavoriteStarFill.data(), Icon::FavoriteStar.data());
+        assert!(Icon::FavoriteStarFill.stroke().is_none(), "filled");
+        assert!(Icon::FavoriteStar.stroke().is_some(), "outlined");
+    }
+
+    #[test]
     fn every_protocol_has_its_own_icon() {
         for kind in ProfileKind::ALL {
             let icon = Icon::of(kind);
@@ -1176,6 +1263,16 @@ mod tests {
             assert_eq!(protocol_color(&theme, kind), expected, "{kind:?}");
         }
         assert_eq!(Tint::Info.color(&theme), colors.cyan, "the C# InfoBrush");
+        for (hue, expected) in [
+            (Hue::Green, colors.green),
+            (Hue::Cyan, colors.cyan),
+            (Hue::Comment, colors.comment),
+            (Hue::Orange, colors.orange),
+            (Hue::Pink, colors.pink),
+            (Hue::Yellow, colors.yellow),
+        ] {
+            assert_eq!(Tint::Hue(hue).color(&theme), expected, "{hue:?}");
+        }
         let red = crate::themes::theme(AppTheme::Magellan, Accent::Red);
         assert_eq!(
             protocol_color(&red, ProfileKind::Local),

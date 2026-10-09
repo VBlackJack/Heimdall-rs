@@ -1560,6 +1560,113 @@ fn the_default_ssh_mode_is_embedded_kept_by_its_csharp_name_and_travels() {
 }
 
 #[test]
+fn the_last_gateway_used_is_kept_on_this_computer_and_never_exported_nor_imported() {
+    use heimdall_core::profile::ProfileId;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.last_used_gateway, None,
+        "none until a profile is saved"
+    );
+    settings.last_used_gateway = Some(ProfileId::new("gw-bastion"));
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+    // Blank in a file edited by hand: none.
+    let read = written(
+        dir.path(),
+        "version = 1
+[profile_form]
+last_used_gateway = \"  \"
+",
+    );
+    assert_eq!(read.last_used_gateway, None);
+
+    // As the C# settings transfer leaves `LastUsedGatewayId` behind: the gateways do not
+    // travel, so neither does the one last used.
+    let (text, _) = settings.export(None, true);
+    assert!(!text.contains("gw-bastion"), "{text}");
+    assert!(!text.contains("profile_form"), "{text}");
+    let forged = format!("{text}\n[settings.profile_form]\nlast_used_gateway = \"gw-elsewhere\"\n");
+    let imported = settings.import(&forged).expect("read");
+    assert_eq!(
+        imported.settings.last_used_gateway,
+        Some(ProfileId::new("gw-bastion")),
+        "a file cannot set it"
+    );
+    assert!(imported.changes.is_empty(), "{:?}", imported.changes);
+}
+
+#[test]
+fn reset_all_puts_every_preference_back_and_keeps_what_the_csharp_keeps() {
+    use heimdall_core::credential_provider::ProviderSettings;
+    use heimdall_core::profile::ProfileId;
+    use heimdall_core::settings::{Language, UpdateCheck};
+
+    let now = SystemTime::now();
+    let mut settings = Settings {
+        // Kept: the language, the theme and the accent, as the C#.
+        language: Some(Language::French),
+        theme: AppTheme::Tarn,
+        accent: Accent::Orange,
+        // Kept: state, not preferences.
+        pin: Some(PinHash::new("2468").expect("pin")),
+        vault_last_master_unlock: Some(now),
+        update_check: UpdateCheck {
+            last_check: Some(now),
+            skipped: Some("v2026.100901".to_owned()),
+        },
+        last_used_gateway: Some(ProfileId::new("gw")),
+        // Kept: no C# Settings panel edits them.
+        broadcast_scope: BroadcastScope::AllTabs,
+        show_gateway_badge: false,
+        // Reset: preferences of every tab.
+        color_scheme: ColorScheme::Nord,
+        session_logging: true,
+        ssh_keep_alive_interval: 45,
+        putty_path: "C:/Tools/putty.exe".to_owned(),
+        external_editor: "C:/Tools/edit.exe".to_owned(),
+        prevent_sleep: false,
+        auto_lock_idle_minutes: 15,
+        disconnect_on_lock: true,
+        credential_provider: ProviderSettings {
+            enabled: true,
+            command: "pass show {Title}".to_owned(),
+            ..ProviderSettings::default()
+        },
+        ..Settings::default()
+    };
+    settings.windows_hello.require_on_connect = true;
+    settings.windows_hello.grace_minutes = 30;
+    settings.rdp_defaults.compression = !settings.rdp_defaults.compression;
+    settings.pin_unlock.register_failure(now);
+    settings.vault_unlock.register_failure(now);
+    let before = settings.clone();
+
+    settings.reset_all();
+
+    let kept = Settings {
+        language: before.language,
+        theme: before.theme,
+        accent: before.accent,
+        pin: before.pin.clone(),
+        pin_unlock: before.pin_unlock,
+        vault_unlock: before.vault_unlock,
+        vault_last_master_unlock: before.vault_last_master_unlock,
+        update_check: before.update_check.clone(),
+        last_used_gateway: before.last_used_gateway.clone(),
+        broadcast_scope: before.broadcast_scope,
+        show_gateway_badge: before.show_gateway_badge,
+        ..Settings::default()
+    };
+    assert_eq!(settings, kept);
+    assert_eq!(settings.pin_unlock.failures(), 1, "the wrong tries stay");
+    assert!(!settings.credential_provider.enabled, "the provider is off");
+    assert!(!settings.windows_hello.require_on_connect);
+}
+
+#[test]
 fn the_default_rdp_mode_is_embedded_kept_by_its_csharp_name_reset_and_travels() {
     use heimdall_core::profile::RdpMode;
 

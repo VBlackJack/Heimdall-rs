@@ -526,6 +526,11 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::RdpFilesTooLarge
             | Notice::RdpFilesSaveEnded(_)) => desktop_notice(notice),
             Notice::WinRmCertificateSkipped => fl!("ui-status-winrm-certificate-skipped"),
+            Notice::FtpCleartext { host, port } => fl!(
+                "ui-status-ftp-cleartext",
+                host = host.as_str(),
+                port = port.to_string()
+            ),
             notice @ (Notice::CitrixLaunching
             | Notice::CitrixLaunched(_)
             | Notice::CitrixRefused(_)) => citrix_notice(notice),
