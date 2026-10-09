@@ -29,6 +29,7 @@ use russh::keys::{Algorithm, HashAlg, PublicKey};
 use thiserror::Error;
 
 use crate::pins::Pins;
+use crate::trust_files::{self, TrustLock};
 
 /// Characters refused in a host name: they carry meaning in a `known_hosts` line, and could
 /// otherwise add or alter entries.
@@ -189,12 +190,24 @@ impl KnownHosts {
             })
     }
 
-    /// Records `key` for `host` on `port`, creating the file and its directory if needed.
+    /// Records `key` for `host` on `port`, creating the file and its directory if needed;
+    /// one writer of the trust files at a time.
     ///
     /// # Errors
     ///
     /// Returns [`KnownHostsError`] for an unsafe host name or a failed write.
     pub fn learn(&self, host: &str, port: u16, key: &PublicKey) -> Result<(), KnownHostsError> {
+        self.learn_locked(&trust_files::lock(), host, port, key)
+    }
+
+    /// [`Self::learn`], the lock of the trust files held by the caller.
+    pub(crate) fn learn_locked(
+        &self,
+        _lock: &TrustLock,
+        host: &str,
+        port: u16,
+        key: &PublicKey,
+    ) -> Result<(), KnownHostsError> {
         let host = validate_host(host)?;
         if let Some(dir) = self.path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
             fs::create_dir_all(dir).map_err(|_| KnownHostsError::WriteFailed {
@@ -211,7 +224,8 @@ impl KnownHosts {
     /// Forgets the keys recorded for `host` on `port`, as they are written when learnt:
     /// the host's own lines go, and its name leaves a line it shares with other hosts;
     /// every other line stays as it is. Whether something was removed. The next connection
-    /// asks about the server again.
+    /// asks about the server again. The file is rewritten whole through a file beside it,
+    /// as the C# `HostKeyStore` saves its own: a failed write leaves it as it was.
     ///
     /// # Errors
     ///
@@ -220,8 +234,9 @@ impl KnownHosts {
     /// Otherwise an unsafe host name, or a file that cannot be read or written.
     pub fn forget(&self, host: &str, port: u16) -> Result<bool, KnownHostsError> {
         let host = validate_host(host)?;
+        let lock = trust_files::lock();
         // A fingerprint pinned for the server goes with its keys.
-        let unpinned = Pins::beside(&self.path).unpin(&host, port)?;
+        let unpinned = Pins::beside(&self.path).unpin_locked(&lock, &host, port)?;
         let wanted = if port == DEFAULT_SSH_PORT {
             host.clone()
         } else {
@@ -254,8 +269,10 @@ impl KnownHosts {
             if !rewritten.is_empty() {
                 rewritten.push('\n');
             }
-            fs::write(&self.path, rewritten).map_err(|_| KnownHostsError::WriteFailed {
-                path: self.path.clone(),
+            trust_files::replace(&self.path, &rewritten).map_err(|_| {
+                KnownHostsError::WriteFailed {
+                    path: self.path.clone(),
+                }
             })?;
         }
         if !self.recorded(&host, port)?.is_empty() {

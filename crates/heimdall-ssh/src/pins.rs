@@ -28,6 +28,7 @@ use heimdall_core::import::csharp::TrustedHostKey;
 use russh::keys::PublicKey;
 
 use crate::known_hosts::{KnownHosts, KnownHostsError, fingerprint, validate_host};
+use crate::trust_files::{self, TrustLock};
 
 /// Added to the `known_hosts` file name for the file of pins.
 const PINS_SUFFIX: &str = ".pins";
@@ -121,12 +122,23 @@ impl Pins {
     }
 
     /// Pins `pin` for `host` on `port`; whether it was added: not when it is no
-    /// fingerprint, or is there already.
+    /// fingerprint, or is there already. One writer of the trust files at a time.
     ///
     /// # Errors
     ///
     /// An unsafe host name, or a file that cannot be read or written.
     pub fn pin(&self, host: &str, port: u16, pin: &str) -> Result<bool, KnownHostsError> {
+        self.pin_locked(&trust_files::lock(), host, port, pin)
+    }
+
+    /// [`Self::pin`], the lock of the trust files held by the caller.
+    pub(crate) fn pin_locked(
+        &self,
+        _lock: &TrustLock,
+        host: &str,
+        port: u16,
+        pin: &str,
+    ) -> Result<bool, KnownHostsError> {
         if !is_fingerprint(pin) || self.pinned(host, port)?.iter().any(|known| known == pin) {
             return Ok(false);
         }
@@ -137,12 +149,23 @@ impl Pins {
         Ok(true)
     }
 
-    /// Drops the pins of `host` on `port`; whether there were any.
+    /// Drops the pins of `host` on `port`; whether there were any. One writer of the trust
+    /// files at a time.
     ///
     /// # Errors
     ///
     /// An unsafe host name, or a file that cannot be read or written.
     pub fn unpin(&self, host: &str, port: u16) -> Result<bool, KnownHostsError> {
+        self.unpin_locked(&trust_files::lock(), host, port)
+    }
+
+    /// [`Self::unpin`], the lock of the trust files held by the caller.
+    pub(crate) fn unpin_locked(
+        &self,
+        _lock: &TrustLock,
+        host: &str,
+        port: u16,
+    ) -> Result<bool, KnownHostsError> {
         let wanted = pattern(&validate_host(host)?, port);
         let lines = self.lines()?;
         let kept: Vec<_> = lines
@@ -201,13 +224,9 @@ impl Pins {
             .collect())
     }
 
+    /// Rewrites the file whole through a file beside it: a failed write leaves it as it
+    /// was.
     fn write(&self, lines: &[(String, String)]) -> Result<(), KnownHostsError> {
-        let failed = || KnownHostsError::WriteFailed {
-            path: self.path.clone(),
-        };
-        if let Some(dir) = self.path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-            fs::create_dir_all(dir).map_err(|_| failed())?;
-        }
         let mut text = String::new();
         for (name, pin) in lines {
             text.push_str(name);
@@ -215,8 +234,32 @@ impl Pins {
             text.push_str(pin);
             text.push('\n');
         }
-        fs::write(&self.path, text).map_err(|_| failed())
+        trust_files::replace(&self.path, &text).map_err(|_| KnownHostsError::WriteFailed {
+            path: self.path.clone(),
+        })
     }
+}
+
+/// Records in full a key whose fingerprint is pinned for `host` on `port`, and drops the
+/// pin: from now on the server is checked against its whole key, as a connection does when
+/// it first meets that key. A pin that cannot be dropped is said and stays: the key
+/// recorded is the one checked, and the pin trusts that key and no other.
+///
+/// # Errors
+///
+/// The key cannot be recorded: the pin stays, and still trusts that key alone.
+pub(crate) fn record_in_full(
+    lock: &TrustLock,
+    known_hosts: &KnownHosts,
+    host: &str,
+    port: u16,
+    key: &PublicKey,
+) -> Result<(), KnownHostsError> {
+    known_hosts.learn_locked(lock, host, port, key)?;
+    if let Err(error) = Pins::beside(known_hosts.path()).unpin_locked(lock, host, port) {
+        log::warn!("the pin of a server recorded in full stays: {error}");
+    }
+    Ok(())
 }
 
 /// What carrying the C# trust over did.
@@ -233,6 +276,8 @@ pub struct Carried {
 /// Carries the C# trust over into `known_hosts` and its pins. A server already trusted
 /// here is left as it is: never replaced, never added to. A key kept in full is recorded
 /// when its fingerprint is the one the C# trusted; otherwise the fingerprint is pinned.
+/// Read and written under one lock of the trust files, no other writer between a server's
+/// check and its write.
 ///
 /// # Errors
 ///
@@ -242,6 +287,7 @@ pub fn carry_over(
     trusted: &[TrustedHostKey],
 ) -> Result<Carried, KnownHostsError> {
     let pins = Pins::beside(known_hosts.path());
+    let lock = trust_files::lock();
     let mut carried = Carried::default();
     for entry in trusted {
         let Ok(host) = validate_host(&entry.host) else {
@@ -261,9 +307,9 @@ pub fn carry_over(
             .and_then(|bytes| PublicKey::from_bytes(&bytes).ok())
             .filter(|key| fingerprint(key) == entry.fingerprint);
         if let Some(key) = key {
-            known_hosts.learn(&host, entry.port, &key)?;
+            known_hosts.learn_locked(&lock, &host, entry.port, &key)?;
             carried.keys += 1;
-        } else if pins.pin(&host, entry.port, &entry.fingerprint)? {
+        } else if pins.pin_locked(&lock, &host, entry.port, &entry.fingerprint)? {
             carried.pins += 1;
         } else {
             carried.left += 1;

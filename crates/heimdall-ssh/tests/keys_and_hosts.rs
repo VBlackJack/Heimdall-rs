@@ -321,3 +321,74 @@ fn the_keys_trusted_are_listed_per_host_and_port_in_the_order_of_the_file() {
     );
     assert_eq!(entry("web.lab", 22, &ed25519).algorithm, "ssh-ed25519");
 }
+
+#[test]
+fn concurrent_writers_lose_no_key_and_no_pin_while_another_host_is_forgotten_over_and_over() {
+    const WRITERS: usize = 6;
+    const SERVERS_PER_WRITER: usize = 15;
+    const FORGOTTEN_ROUNDS: usize = 40;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("known_hosts");
+    let key = host_public_key("host-ed25519");
+    let print = heimdall_ssh::fingerprint(&key);
+    std::thread::scope(|scope| {
+        for writer in 0..WRITERS {
+            let (path, key, print) = (&path, &key, &print);
+            scope.spawn(move || {
+                let hosts = KnownHosts::new(path);
+                let pins = heimdall_ssh::Pins::beside(path);
+                for server in 0..SERVERS_PER_WRITER {
+                    hosts
+                        .learn(&format!("key-{writer}-{server}.lab"), 22, key)
+                        .expect("learn");
+                    assert!(
+                        pins.pin(&format!("pin-{writer}-{server}.lab"), 22, print)
+                            .expect("pin")
+                    );
+                }
+            });
+        }
+        // Each forget rewrites both files whole: a line written between its read and its
+        // write would be lost without the lock.
+        let (path, key) = (&path, &key);
+        scope.spawn(move || {
+            let hosts = KnownHosts::new(path);
+            let pins = heimdall_ssh::Pins::beside(path);
+            for _ in 0..FORGOTTEN_ROUNDS {
+                hosts.learn("gone.lab", 22, key).expect("learn");
+                pins.pin("gone.lab", 2222, &heimdall_ssh::fingerprint(key))
+                    .expect("pin");
+                hosts.forget("gone.lab", 22).expect("forget");
+                hosts.forget("gone.lab", 2222).expect("forget");
+            }
+        });
+    });
+
+    let hosts = KnownHosts::new(&path);
+    let pins = heimdall_ssh::Pins::beside(&path);
+    for writer in 0..WRITERS {
+        for server in 0..SERVERS_PER_WRITER {
+            let name = format!("key-{writer}-{server}.lab");
+            assert_eq!(
+                hosts.recorded(&name, 22).expect("read").len(),
+                1,
+                "{name} recorded once"
+            );
+            let name = format!("pin-{writer}-{server}.lab");
+            assert_eq!(
+                pins.pinned(&name, 22).expect("read"),
+                slice::from_ref(&print),
+                "{name} pinned"
+            );
+        }
+    }
+    assert!(hosts.recorded("gone.lab", 22).expect("read").is_empty());
+    assert!(pins.pinned("gone.lab", 2222).expect("read").is_empty());
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("listed")
+        .map(|entry| entry.expect("entry").file_name())
+        .filter(|name| name.to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(left.is_empty(), "no file left beside them: {left:?}");
+}
