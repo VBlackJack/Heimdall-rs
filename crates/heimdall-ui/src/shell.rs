@@ -42,6 +42,7 @@ use heimdall_app::session_log::{
 };
 use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::tunnel_driver::tunnel_events;
+use heimdall_app::update_check::{Failure as UpdateFailure, GitHubSource, Outcome};
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
@@ -1828,6 +1829,48 @@ impl Shell {
         crate::themes::syntax(self.app.settings().theme)
     }
 
+    /// The application's own timers: the sessions kept alive, the servers checked, the
+    /// look for a newer release.
+    fn background_ticks(&self) -> Vec<Subscription<Message>> {
+        let mut ticks = Vec::new();
+        if let Some(interval) = self.app.tmout_reset_interval() {
+            ticks.push(
+                iced::time::every(interval).map(|_| Message::App(AppMessage::TmoutResetTick)),
+            );
+        }
+        // Every server checked in the background, as the C# session health monitor.
+        if let Some(interval) = self.app.reachability_interval() {
+            ticks.push(
+                iced::time::every(interval).map(|_| Message::App(AppMessage::ReachabilityTick)),
+            );
+        }
+        // The look for a newer release, a while after start then hourly, as the C# banner's.
+        if let Some(interval) = self.app.update_tick_interval() {
+            ticks.push(
+                iced::time::every(interval)
+                    .map(|_| Message::App(AppMessage::Update(heimdall_app::UpdateMessage::Tick))),
+            );
+        }
+        // The servers whose health panel is shown, asked as the C# asks them.
+        if self.app.polls_health() {
+            ticks.push(
+                iced::time::every(heimdall_app::server_health::HEALTH_INTERVAL)
+                    .map(|_| Message::App(AppMessage::HealthTick)),
+            );
+        }
+        // The Citrix tabs' clients, looked at as the C# health check looks at its session.
+        if self.app.polls_citrix() {
+            ticks.push(
+                iced::time::every(heimdall_app::citrix_session::HEALTH_INTERVAL)
+                    .map(|_| Message::App(AppMessage::CitrixTick)),
+            );
+        }
+        if let Some(interval) = self.app.anti_idle_interval() {
+            ticks.push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
+        }
+        ticks
+    }
+
     /// Window events and shortcuts.
     pub fn subscription(&self) -> Subscription<Message> {
         // The main window's events only: another window's keys, moves and closing are not
@@ -1897,35 +1940,7 @@ impl Shell {
         {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
-        if let Some(interval) = self.app.tmout_reset_interval() {
-            subscriptions.push(
-                iced::time::every(interval).map(|_| Message::App(AppMessage::TmoutResetTick)),
-            );
-        }
-        // Every server checked in the background, as the C# session health monitor.
-        if let Some(interval) = self.app.reachability_interval() {
-            subscriptions.push(
-                iced::time::every(interval).map(|_| Message::App(AppMessage::ReachabilityTick)),
-            );
-        }
-        // The servers whose health panel is shown, asked as the C# asks them.
-        if self.app.polls_health() {
-            subscriptions.push(
-                iced::time::every(heimdall_app::server_health::HEALTH_INTERVAL)
-                    .map(|_| Message::App(AppMessage::HealthTick)),
-            );
-        }
-        // The Citrix tabs' clients, looked at as the C# health check looks at its session.
-        if self.app.polls_citrix() {
-            subscriptions.push(
-                iced::time::every(heimdall_app::citrix_session::HEALTH_INTERVAL)
-                    .map(|_| Message::App(AppMessage::CitrixTick)),
-            );
-        }
-        if let Some(interval) = self.app.anti_idle_interval() {
-            subscriptions
-                .push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
-        }
+        subscriptions.extend(self.background_ticks());
         // The idle time measured while the workspace can lock by itself, as the C# idle
         // timer. Where it is not the computer's, the window's own input is always counted:
         // counted only once a threshold is set, the time before would count as idle, and
@@ -3651,6 +3666,24 @@ impl Shell {
                 }
             })
             .discard(),
+            Effect::CheckForUpdate => Task::future(async {
+                // The system's certificates and proxy, then the request: each waits on the
+                // system or the network, off the UI thread.
+                let outcome = tokio::task::spawn_blocking(|| {
+                    heimdall_app::update_check::check(
+                        &GitHubSource::new(),
+                        std::time::SystemTime::now(),
+                    )
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    log::warn!("the update check stopped: {error}");
+                    Outcome::Failed(UpdateFailure::NetworkUnreachable)
+                });
+                Message::App(AppMessage::Update(heimdall_app::UpdateMessage::Checked(
+                    outcome,
+                )))
+            }),
             Effect::LaunchCitrix { tab, name, launch } => {
                 crate::citrix_view::launch(tab, name, launch)
             }
@@ -3949,7 +3982,18 @@ impl Shell {
             // Full screen is the session's: no tree, no tabs.
             self.content()
         } else {
-            column![self.navigation(), self.shown_page(), self.status_bar()].into()
+            // The banner's place is kept while it is hidden: the page under it keeps its
+            // place in the tree, and with it the state of its widgets.
+            let banner = self
+                .update_banner()
+                .unwrap_or_else(|| iced::widget::space().height(0.0).into());
+            column![
+                self.navigation(),
+                banner,
+                self.shown_page(),
+                self.status_bar()
+            ]
+            .into()
         };
         // Always a stack with the window first: a tree of one shape keeps the state of the
         // widgets under a dialog, such as how far a list is scrolled.
@@ -4028,6 +4072,36 @@ impl Shell {
         container(CursorTracker::new(layers, self.cursor.clone()))
             .id(main_area_id())
             .into()
+    }
+
+    /// The banner of a newer release, as the C# one under its navigation: the version, then
+    /// "View release", "Later" and "Skip this version". Never in full screen.
+    fn update_banner(&self) -> Option<Element<'_, Message>> {
+        let release = self.app.update_offer(self.fullscreen)?;
+        let send = |message| Message::App(AppMessage::Update(message));
+        Some(
+            container(
+                row![
+                    text(fl!("ui-update-banner-text", version = release.to_string())),
+                    iced::widget::space::horizontal(),
+                    button(text(fl!("ui-update-banner-view-release")))
+                        .style(styles::primary)
+                        .on_press(send(heimdall_app::UpdateMessage::ViewRelease)),
+                    button(text(fl!("ui-update-banner-later")))
+                        .style(styles::secondary)
+                        .on_press(send(heimdall_app::UpdateMessage::Later)),
+                    button(text(fl!("ui-update-banner-skip")))
+                        .style(styles::subtle)
+                        .on_press(send(heimdall_app::UpdateMessage::Skip)),
+                ]
+                .spacing(spacing::SM)
+                .align_y(iced::Alignment::Center),
+            )
+            .padding([spacing::MD, spacing::LG])
+            .width(Length::Fill)
+            .style(styles::strip)
+            .into(),
+        )
     }
 
     /// A terminal tab's Macros menu; `None` once the tab takes none.

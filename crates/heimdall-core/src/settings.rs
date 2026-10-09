@@ -613,6 +613,11 @@ pub struct Settings {
     /// The tree's rows show the gateway a profile goes through, as the C#
     /// `ShowGatewayBadge`: on. A view choice of the tree's filter menu, kept across runs.
     pub show_gateway_badge: bool,
+    /// Whether, and how often, a newer release is looked for.
+    pub updates: Updates,
+    /// The last look for a newer release and the release skipped, kept across runs on
+    /// this computer as the C# `UpdateLastCheckUtc` and `UpdateSkippedVersion`.
+    pub update_check: UpdateCheck,
 }
 
 /// The SFTP browser's settings, as the C# `SftpBrowserEnabled`, `SftpAutoOpenOnSsh` and
@@ -740,6 +745,51 @@ pub const REACHABILITY_PROBES_MAX: u32 = 50;
 #[must_use]
 pub fn reachability_probes_accepted(count: u32) -> bool {
     (REACHABILITY_PROBES_MIN..=REACHABILITY_PROBES_MAX).contains(&count)
+}
+
+/// The look for a newer release, as the C# `UpdateCheckEnabled` and
+/// `UpdateCheckIntervalHours`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Updates {
+    /// A newer release is looked for by itself: on, as the C#.
+    pub enabled: bool,
+    /// Hours between two looks, within [`UPDATE_INTERVAL_HOURS_MIN`] and
+    /// [`UPDATE_INTERVAL_HOURS_MAX`].
+    pub interval_hours: u32,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_hours: UPDATE_INTERVAL_HOURS_DEFAULT,
+        }
+    }
+}
+
+/// Hours between two looks for a newer release by default, as the C#.
+pub const UPDATE_INTERVAL_HOURS_DEFAULT: u32 = 24;
+
+/// Shortest interval accepted, in hours, as the C# setting's range.
+pub const UPDATE_INTERVAL_HOURS_MIN: u32 = 1;
+
+/// Longest interval accepted, in hours: a year, as the C# setting's range.
+pub const UPDATE_INTERVAL_HOURS_MAX: u32 = 8760;
+
+/// Whether `hours` is an update interval the settings accept.
+#[must_use]
+pub fn update_interval_accepted(hours: u32) -> bool {
+    (UPDATE_INTERVAL_HOURS_MIN..=UPDATE_INTERVAL_HOURS_MAX).contains(&hours)
+}
+
+/// What this computer remembers of the looks for a newer release: not a preference, so an
+/// export leaves it behind.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpdateCheck {
+    /// When the last look got an answer; `None` before the first one.
+    pub last_check: Option<SystemTime>,
+    /// The release tag the user chose to skip, as the release names it: `v2026.100901`.
+    pub skipped: Option<String>,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -968,6 +1018,8 @@ impl Default for Settings {
             reachability: Reachability::default(),
             sftp_browser: SftpBrowser::default(),
             show_gateway_badge: true,
+            updates: Updates::default(),
+            update_check: UpdateCheck::default(),
         }
     }
 }
@@ -999,6 +1051,29 @@ struct SettingsFile {
     files: FilesSection,
     #[serde(default)]
     reachability: ReachabilitySection,
+    #[serde(default)]
+    updates: UpdatesSection,
+    #[serde(default)]
+    update_check: UpdateCheckSection,
+}
+
+/// Absent values are the C# defaults.
+#[derive(Serialize, Deserialize, Default)]
+struct UpdatesSection {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    interval_hours: Option<u32>,
+}
+
+/// This computer's own: never exported.
+#[derive(Serialize, Deserialize, Default)]
+struct UpdateCheckSection {
+    /// Seconds since 1970, UTC.
+    #[serde(default)]
+    last_check: Option<u64>,
+    #[serde(default)]
+    skipped: Option<String>,
 }
 
 /// Absent values are the C# defaults.
@@ -1476,6 +1551,21 @@ impl Settings {
             ),
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
             show_gateway_badge: file.general.show_gateway_badge.unwrap_or(true),
+            updates: Updates {
+                enabled: file.updates.enabled.unwrap_or(true),
+                interval_hours: within(
+                    file.updates.interval_hours,
+                    update_interval_accepted,
+                    UPDATE_INTERVAL_HOURS_DEFAULT,
+                ),
+            },
+            update_check: UpdateCheck {
+                last_check: file.update_check.last_check.map(from_epoch),
+                skipped: file
+                    .update_check
+                    .skipped
+                    .filter(|tag| !tag.trim().is_empty()),
+            },
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -1624,11 +1714,19 @@ impl Settings {
                 timeout: Some(self.reachability.timeout),
                 probes: Some(self.reachability.probes),
             },
+            updates: UpdatesSection {
+                enabled: Some(self.updates.enabled),
+                interval_hours: Some(self.updates.interval_hours),
+            },
+            update_check: UpdateCheckSection {
+                last_check: self.update_check.last_check.map(to_epoch),
+                skipped: self.update_check.skipped.clone(),
+            },
         }
     }
 
     /// The sections of the settings file that travel, as a table: every preference, none of
-    /// the PIN and the master password's tries.
+    /// the PIN, the master password's tries or the last look for a newer release.
     fn transferable(&self) -> toml::Table {
         toml::Table::try_from(self.file())
             .unwrap_or_default()
@@ -1638,7 +1736,8 @@ impl Settings {
     }
 
     /// The portable settings file, as the C# "Export settings": every preference, nothing
-    /// secret and nothing of this computer's PIN or lockouts. A value naming a path under
+    /// secret and nothing of this computer's PIN, lockouts or update checks. A value naming
+    /// a path under
     /// `home` belongs to this computer's user and stays behind unless `with_home`; how many
     /// stayed is returned with the text.
     #[must_use]
@@ -1739,7 +1838,7 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 10] = [
+const TRANSFERRED: [&str; 11] = [
     "terminal",
     "session_log",
     "general",
@@ -1750,6 +1849,7 @@ const TRANSFERRED: [&str; 10] = [
     "rdp_session",
     "files",
     "reachability",
+    "updates",
 ];
 
 /// The name a portable settings file is offered under.
@@ -1844,9 +1944,9 @@ fn changes(before: &toml::Table, after: &toml::Table) -> Vec<SettingChange> {
 mod transfer_tests {
     use super::{Settings, TRANSFERRED};
 
-    /// The sections that never travel: this computer's PIN and lockouts, and the file's own
-    /// version.
-    const HELD_BACK: [&str; 3] = ["version", "vault_unlock", "pin"];
+    /// The sections that never travel: this computer's PIN and lockouts, its last look for a
+    /// newer release, and the file's own version.
+    const HELD_BACK: [&str; 4] = ["version", "vault_unlock", "pin", "update_check"];
 
     #[test]
     fn every_section_of_the_settings_file_travels_or_is_held_back() {

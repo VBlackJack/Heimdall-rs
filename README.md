@@ -63,6 +63,10 @@ end of its log (`%LOCALAPPDATA%\Heimdall-rs\data\logs\heimdall.log`) once it clo
 
 Both take a log level as their argument, `error` to `trace`: `run-debug.bat trace`.
 
+A published release is compiled with `HEIMDALL_RELEASE` set to its release tag, such as
+`v2026.100901`: the update check compares it with the latest release on GitHub and offers
+a newer one. A build without it, such as `cargo run` or the two scripts, never checks.
+
 ```bash
 cargo test --workspace
 ```

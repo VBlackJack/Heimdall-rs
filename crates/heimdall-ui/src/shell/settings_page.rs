@@ -24,7 +24,11 @@
 //! walk. Every choice applies at once, so the C# Ctrl+S, which saves the panel's pending
 //! edits, has nothing to save.
 
-use heimdall_app::{Effect, Message as AppMessage, PinMessage, VaultStatus, search_folded};
+use heimdall_app::update_check::{Failure, minutes_to_wait};
+use heimdall_app::{
+    Effect, Message as AppMessage, PinMessage, UpdateMessage, UpdateStatus, VaultStatus,
+    search_folded,
+};
 use heimdall_core::profile::{RdpDefaults, SshMode};
 use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
@@ -73,6 +77,9 @@ const POSTURE_RISKY_MARK: &str = "!";
 
 /// Between the items of a default made of several, as the C# words a list.
 const DEFAULT_LIST_SEPARATOR: &str = ", ";
+
+/// The version of this build's package, shown when it is no release.
+const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A default SSH mode in the Settings page's list, named as the C# Settings tab names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +149,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
     Some(match card {
         SettingsCard::Appearance => fl!("ui-settings-appearance"),
         SettingsCard::Behavior => fl!("ui-settings-behavior"),
+        SettingsCard::Updates => fl!("ui-settings-updates"),
         SettingsCard::Reachability => fl!("ui-settings-reachability"),
         SettingsCard::Terminal => fl!("ui-settings-terminal"),
         SettingsCard::SessionLogging => fl!("ui-settings-session-logging"),
@@ -186,6 +194,8 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep"),
         SettingRow::MaxSessions => fl!("ui-settings-max-sessions"),
+        SettingRow::UpdateChecks => fl!("ui-settings-updates-enabled"),
+        SettingRow::UpdateVersion => fl!("ui-settings-updates-current-version"),
         SettingRow::Reachability => fl!("ui-settings-reachability-enabled"),
         SettingRow::FontSize => fl!("ui-settings-font-size"),
         SettingRow::FontFamily => fl!("ui-settings-font-family"),
@@ -282,6 +292,7 @@ fn row_choices(row: SettingRow) -> Vec<String> {
             .map(|a| AgentChoice(a).to_string())
             .to_vec(),
         SettingRow::MaxSessions => vec![SessionsChoice(0).to_string()],
+        SettingRow::UpdateVersion => vec![fl!("ui-settings-updates-check-now")],
         // The modes, and the button beside them, which the C# search finds as well.
         SettingRow::SshDefaultMode => SshMode::ALL
             .map(|mode| DefaultSshModeChoice(mode).to_string())
@@ -408,6 +419,7 @@ fn posture_label(key: PostureKey) -> String {
         PostureKey::Vault => fl!("ui-settings-posture-label-vault"),
         PostureKey::AutoLock => fl!("ui-settings-posture-label-auto-lock"),
         PostureKey::DisconnectOnLock => fl!("ui-settings-posture-label-disconnect-on-lock"),
+        PostureKey::UpdateChecks => fl!("ui-settings-posture-label-update-checks"),
     }
 }
 
@@ -434,9 +446,48 @@ fn posture_warning(key: PostureKey) -> Option<String> {
         PostureKey::SessionTranscripts => Some(fl!("ui-settings-posture-warning-transcripts")),
         PostureKey::PowerShellExecutionPolicy => Some(fl!("ui-settings-posture-warning-ps-policy")),
         PostureKey::AutoLock => Some(fl!("ui-settings-posture-warning-auto-lock")),
+        PostureKey::UpdateChecks => Some(fl!("ui-settings-posture-warning-update-checks")),
         PostureKey::RdpStrictServerAuthentication
         | PostureKey::Vault
         | PostureKey::DisconnectOnLock => None,
+    }
+}
+
+/// What the last "Check now" found, worded as the C# Settings page words it.
+fn update_status_text(status: UpdateStatus) -> String {
+    match status {
+        UpdateStatus::Checking => fl!("ui-settings-updates-checking"),
+        UpdateStatus::UpToDate => fl!("ui-settings-updates-up-to-date"),
+        UpdateStatus::Available(release) => {
+            fl!(
+                "ui-settings-updates-available",
+                version = release.to_string()
+            )
+        }
+        UpdateStatus::NeedsRelease => fl!("ui-settings-updates-unknown-version"),
+        UpdateStatus::Failed(failure) => update_failure_text(failure),
+    }
+}
+
+/// Why a look got no answer, by what the user would do about it, as the C# says it.
+fn update_failure_text(failure: Failure) -> String {
+    match failure {
+        Failure::NetworkUnreachable => fl!("ui-settings-updates-failed-network"),
+        Failure::SecureChannel => fl!("ui-settings-updates-failed-secure-channel"),
+        Failure::ProxyRefused => fl!("ui-settings-updates-failed-proxy"),
+        // A wait is said only when the server said it, never guessed.
+        Failure::RateLimited { retry_after } => match retry_after.map(minutes_to_wait) {
+            None => fl!("ui-settings-updates-failed-rate-limited"),
+            Some(1) => fl!("ui-settings-updates-failed-rate-limited-minute"),
+            Some(minutes) => fl!(
+                "ui-settings-updates-failed-rate-limited-minutes",
+                minutes = minutes
+            ),
+        },
+        Failure::AccessDenied => fl!("ui-settings-updates-failed-access-denied"),
+        Failure::SourceUnavailable => fl!("ui-settings-updates-failed-unavailable"),
+        Failure::MalformedResponse => fl!("ui-settings-updates-failed-malformed"),
+        Failure::TimedOut => fl!("ui-settings-updates-failed-timed-out"),
     }
 }
 
@@ -842,8 +893,49 @@ impl Shell {
             | SettingRow::RdpResolutionPresets
             | SettingRow::RdpResetAll => self.list_card_row(row),
             SettingRow::Pin | SettingRow::Vault | SettingRow::Provider => self.security_row(row),
+            SettingRow::UpdateVersion => self.update_version_row(),
             _ => self.choice_row(row),
         }
+    }
+
+    /// The version running, as the C# Updates card shows it, then "Check now" and what it
+    /// found; the button waits while a look runs.
+    fn update_version_row(&self) -> Element<'_, Message> {
+        let version = self.app.running_release().map_or_else(
+            || {
+                fl!(
+                    "ui-settings-updates-development-build",
+                    version = PACKAGE_VERSION
+                )
+            },
+            |release| release.to_string(),
+        );
+        let status = self.app.update_status();
+        let mut check = button(text(fl!("ui-settings-updates-check-now"))).style(styles::secondary);
+        if status != Some(UpdateStatus::Checking) {
+            check = check.on_press(Message::App(AppMessage::Update(UpdateMessage::CheckNow)));
+        }
+        let mut body = column![
+            text(row_label(SettingRow::UpdateVersion))
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+            text(version),
+            check,
+        ]
+        .spacing(spacing::SM);
+        if let Some(status) = status {
+            let style: fn(&Theme) -> text::Style = if matches!(status, UpdateStatus::Failed(_)) {
+                text::warning
+            } else {
+                text::secondary
+            };
+            body = body.push(
+                text(update_status_text(status))
+                    .size(font_size::CAPTION)
+                    .style(style),
+            );
+        }
+        body.into()
     }
 
     /// A box ticked on or off, what is said of it under it; one hanging from another box is

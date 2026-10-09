@@ -127,6 +127,9 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 toml = "1.1.6"
 # unicode-normalization: accents folded out of the tree's search, as the C# FormD fold.
 unicode-normalization = "0.1.25"
+# ureq: the update check's one request to GitHub's releases; rustls on ring, the system's
+# certificates, no webpki-roots. Approved by Julien Bombled on 2026-10-08.
+ureq = { version = "3.4.2", default-features = false, features = ["rustls-no-provider"] }
 x509-cert = "0.3.0"
 zeroize = "1.9.0"
 

@@ -72,6 +72,11 @@ une fois fermée :
 Les deux prennent un niveau de journal en argument, de `error` à `trace` :
 `run-debug.bat trace`.
 
+Une release publiée est compilée avec `HEIMDALL_RELEASE` réglé sur son tag, par exemple
+`v2026.100901` : la vérification des mises à jour le compare à la dernière release publiée
+sur GitHub et propose une version plus récente. Une compilation sans elle, comme
+`cargo run` ou les deux scripts, ne vérifie jamais.
+
 ```bash
 cargo test --workspace
 ```
