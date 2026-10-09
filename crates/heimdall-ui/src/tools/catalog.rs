@@ -60,6 +60,22 @@ const CARD_ICON_ALPHA: f32 = 0.12;
 /// Room between a card's icon and its text, as the C#'s.
 const CARD_ICON_GAP: f32 = 10.0;
 
+/// Height of a card's line of text, in sizes of its font, said outright so that the room
+/// kept for its lines is theirs exactly.
+const CARD_LINE_HEIGHT: f32 = 1.3;
+
+/// Room for a card's name: one line, as the C#'s.
+const CARD_NAME_HEIGHT: f32 = font_size::BODY * CARD_LINE_HEIGHT;
+
+/// Lines a card's description is drawn on. The C# trims it to one line with an ellipsis,
+/// which iced cannot draw: it wraps here, at word boundaries, and what does not fit is left
+/// to the card's tooltip, as the C# leaves it.
+pub const CARD_DESCRIPTION_LINES: f32 = 2.0;
+
+/// Room for a card's description.
+const CARD_DESCRIPTION_HEIGHT: f32 =
+    font_size::SMALL_CAPTION * CARD_LINE_HEIGHT * CARD_DESCRIPTION_LINES;
+
 /// Side of a card's pin, as the C# glyph's size.
 const PIN_SIDE: f32 = 12.0;
 
@@ -431,6 +447,12 @@ pub fn page<'a>(app: &App, search: &str) -> Element<'a, Message> {
     .into()
 }
 
+/// The identifier of `tool`'s card.
+#[must_use]
+pub fn card_id(tool: ToolId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("tool-card-{}", tool.code()))
+}
+
 /// The identifier of the pin of `tool`'s card.
 #[must_use]
 pub fn pin_id(tool: ToolId) -> iced::widget::Id {
@@ -550,7 +572,9 @@ fn cards<'a>(app: &App, tools: &[ToolId], gap: f32) -> Element<'a, Message> {
 }
 
 /// A tool's card, as the C# `CreateToolsTabCard`: its icon on its category's colour, its
-/// name and description; pressed, the tool opens; its pin at its top right pins or unpins it.
+/// name on one line and its description on [`CARD_DESCRIPTION_LINES`], each cut at a word
+/// boundary when it is longer, and whole in the card's tooltip, as the C#'s; pressed, the
+/// tool opens; its pin at its top right pins or unpins it.
 fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
     let category = tool.category();
     let icon = container(icons::icon(
@@ -569,17 +593,26 @@ fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
         row![
             icon,
             column![
-                text(super::label(tool))
-                    .size(font_size::BODY)
-                    .font(styles::SEMIBOLD)
-                    .wrapping(text::Wrapping::None),
-                text(super::description(tool))
-                    .size(font_size::SMALL_CAPTION)
-                    .style(text::secondary)
-                    .wrapping(text::Wrapping::None),
+                container(
+                    text(super::label(tool))
+                        .size(font_size::BODY)
+                        .font(styles::SEMIBOLD)
+                        .line_height(text::LineHeight::Relative(CARD_LINE_HEIGHT))
+                        .wrapping(text::Wrapping::WordOrGlyph),
+                )
+                .height(CARD_NAME_HEIGHT)
+                .clip(true),
+                container(
+                    text(super::description(tool))
+                        .size(font_size::SMALL_CAPTION)
+                        .style(text::secondary)
+                        .line_height(text::LineHeight::Relative(CARD_LINE_HEIGHT))
+                        .wrapping(text::Wrapping::WordOrGlyph),
+                )
+                .height(CARD_DESCRIPTION_HEIGHT)
+                .clip(true),
             ]
-            .width(Length::Fill)
-            .clip(true),
+            .width(Length::Fill),
         ]
         .spacing(CARD_ICON_GAP)
         .padding(iced::Padding {
@@ -592,6 +625,15 @@ fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
     .padding(CARD_PADDING)
     .style(styles::tool_card)
     .on_press(Message::OpenTool(tool));
+    // The whole description, as the C# card's tooltip.
+    let launch = tooltip(
+        container(launch).id(card_id(tool)),
+        container(text(super::description(tool)).size(font_size::CAPTION))
+            .max_width(CARD_WIDTH)
+            .padding(spacing::XS),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box);
     let (glyph, tint, opacity, tip) = if favorite {
         (
             Icon::FavoriteStarFill,

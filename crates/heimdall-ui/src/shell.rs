@@ -6912,7 +6912,8 @@ impl Shell {
     #[expect(clippy::too_many_lines, reason = "one arm per state of a tab")]
     fn tab_page<'a>(&'a self, tab: &'a Tab, focused: bool) -> Element<'a, Message> {
         if let TabProfile::Tool(tool) = tab.profile {
-            return crate::tools::view(tab.id, tool, self.tools.get(tab.id));
+            let theme = self.theme();
+            return crate::tools::view(tab.id, tool, self.tools.get(tab.id), &theme);
         }
         // A Citrix application's window is Citrix's own: its tab shows its status alone.
         if let (TabProfile::Citrix(profile), Some(pane)) = (&tab.profile, tab.citrix.as_deref()) {

@@ -2316,6 +2316,165 @@ ui-tool-uuid-help =
 
     Utilisation :
     Cliquez sur Générer pour créer des UUID. Supporte v4 (aléatoire) avec plusieurs options de format (standard, majuscules, sans tirets, URN).
+ui-tool-json-name = Formateur JSON
+ui-tool-json-description = Formateur, validateur et minifieur JSON
+ui-tool-json-title = Formateur JSON
+ui-tool-json-input = JSON en entrée
+ui-tool-json-output = Sortie
+ui-tool-json-prettify = Embellir
+ui-tool-json-minify = Minifier
+ui-tool-json-copy = Copier la sortie
+ui-tool-json-placeholder = coller le JSON ici
+ui-tool-json-empty = Collez du JSON et appuyez sur Embellir ou Minifier.
+ui-tool-json-processing = Traitement en cours...
+ui-tool-json-status-prettified =
+    { $count ->
+        [one] Embelli ({ $count } caractère)
+       *[other] Embelli ({ $count } caractères)
+    }
+ui-tool-json-status-minified =
+    { $count ->
+        [one] Minifié ({ $count } caractère)
+       *[other] Minifié ({ $count } caractères)
+    }
+ui-tool-json-status-error = JSON invalide : { $error }
+ui-tool-json-status-error-at = Erreur à la ligne { $line }, position { $column } : { $error }
+ui-tool-json-too-large = L'entrée dépasse la limite de 5 Mo.
+ui-tool-json-help =
+    Formateur JSON
+
+    Formate (embellit) ou minifie les données JSON.
+
+    Utilisation :
+    1. Collez ou tapez du JSON dans le champ de saisie
+    2. Cliquez sur Embellir pour formater avec indentation
+    3. Cliquez sur Minifier pour compacter en une seule ligne
+    4. Copiez le résultat dans le presse-papiers
+
+    Fonctionnalités :
+    - Validation syntaxique avec messages d'erreur
+    - Traite les gros documents JSON (jusqu'à 5 Mo)
+    - Préserve les caractères Unicode
+
+    Clavier :
+    - Ctrl+Entrée : Embellir
+    - Ctrl+Maj+Entrée : Minifier
+
+    Exemples :
+    - { "{" }"nom":"valeur"{ "}" } → Formaté avec indentation 2 espaces
+    - Collez des réponses API pour un formatage rapide
+ui-tool-regex-name = Testeur Regex
+ui-tool-regex-description = Testeur d'expressions régulières avec mise en évidence des correspondances
+ui-tool-regex-title = Testeur Regex
+ui-tool-regex-pattern = Expression
+ui-tool-regex-pattern-placeholder = expression régulière
+ui-tool-regex-ignore-case = Ignorer la casse
+ui-tool-regex-multiline = Multiligne
+ui-tool-regex-singleline = Monoligne
+ui-tool-regex-test-text = Texte de test
+ui-tool-regex-test-placeholder = chaîne de test
+ui-tool-regex-matches = Correspondances
+ui-tool-regex-copy = Copier les correspondances
+ui-tool-regex-count =
+    { $count ->
+        [one] { $count } correspondance
+       *[other] { $count } correspondances
+    }
+ui-tool-regex-match-entry = { "[" }{ $number }] Index { $index } : "{ $value }"
+ui-tool-regex-group-entry = { "  " }Groupe { $number } : "{ $value }"
+ui-tool-regex-status-valid = Expression valide
+ui-tool-regex-status-invalid = Expression invalide : { $error }
+ui-tool-regex-status-timeout = Expiration de l'évaluation regex (protection ReDoS)
+ui-tool-regex-unsupported-variable-lookbehind = Expression invalide : une assertion arrière de longueur variable n'est pas prise en charge par ce moteur
+ui-tool-regex-unsupported-balancing-group = Expression invalide : les groupes d'équilibrage (?<ouvre-ferme>...) ne sont pas pris en charge par ce moteur
+ui-tool-regex-truncated = Affichage des { $shown } premiers résultats sur { $total }
+ui-tool-regex-empty = Saisissez une expression régulière et une chaîne de test ci-dessus
+ui-tool-regex-help =
+    Testeur d'Expressions Régulières
+
+    Teste les expressions régulières sur du texte avec correspondance en temps réel.
+
+    Utilisation :
+    1. Entrez un pattern regex
+    2. Entrez le texte de test
+    3. Les correspondances sont surlignées et listées automatiquement
+
+    Options :
+    - Ignorer la casse : correspondance insensible à la casse
+    - Multiligne : ^ et $ correspondent aux limites de ligne
+    - Monoligne : . correspond aux retours à la ligne
+
+    Fonctionnalités :
+    - Surlignage en temps réel des correspondances
+    - Liste numérotée avec détails des groupes de capture
+    - Compteur de correspondances
+    - Copier toutes les correspondances
+
+    Exemples :
+    - \b\w+@\w+\.\w+\b - Adresses email
+    - \d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" } - Adresses IPv4
+    - ^#.*$ (Multiligne) - Lignes de commentaire
+
+    Moteur :
+    - Les assertions avant et arrière, les références arrière, les groupes atomiques et les conditionnelles sont pris en charge.
+    - Non pris en charge : assertion arrière de longueur variable, groupes d'équilibrage.
+    - Un test qui dure plus d'une seconde s'arrête (protection ReDoS).
+ui-tool-diff-name = Comparaison de texte
+ui-tool-diff-description = Comparateur de texte côte à côte avec visualisation des différences
+ui-tool-diff-title = Comparaison de texte
+ui-tool-diff-original = Original
+ui-tool-diff-modified = Modifié
+ui-tool-diff-original-placeholder = texte original
+ui-tool-diff-modified-placeholder = texte modifié
+ui-tool-diff-output = Résultat du diff
+ui-tool-diff-compare = Comparer
+ui-tool-diff-swap = Échanger
+ui-tool-diff-clear = Effacer
+ui-tool-diff-copy = Copier le diff
+ui-tool-diff-ignore-whitespace = Ignorer les espaces
+ui-tool-diff-ignore-case = Ignorer la casse
+ui-tool-diff-auto-compare = Comparaison auto
+ui-tool-diff-stats = +{ $added } ajouts, -{ $removed } suppressions, { $unchanged } inchangées
+ui-tool-diff-status-done =
+    { $count ->
+        [one] Diff terminé : { $count } ligne
+       *[other] Diff terminé : { $count } lignes
+    }
+ui-tool-diff-status-too-large = L'entrée dépasse { $max } lignes. Veuillez réduire la taille du texte.
+ui-tool-diff-comparing = Comparaison...
+ui-tool-diff-original-header = --- original
+ui-tool-diff-modified-header = +++ modifié
+ui-tool-diff-empty = Saisissez un texte original et modifié, puis comparez.
+ui-tool-diff-help =
+    Comparaison de Texte
+
+    Compare deux textes côte à côte et surligne les différences.
+
+    Utilisation :
+    Collez du texte dans les deux panneaux. Les ajouts, suppressions et modifications sont codés par couleur.
+ui-tool-textcase-name = Convertisseur de casse
+ui-tool-textcase-description = Convertisseur de casse (majuscules, minuscules, camelCase, snake_case, kebab-case)
+ui-tool-textcase-title = Convertisseur de casse
+ui-tool-textcase-input = Texte d'entrée
+ui-tool-textcase-placeholder = texte à convertir
+ui-tool-textcase-conversions = Conversions
+ui-tool-textcase-output = Sortie
+ui-tool-textcase-copy = Copier
+ui-tool-textcase-camel = camelCase
+ui-tool-textcase-pascal = PascalCase
+ui-tool-textcase-snake = snake_case
+ui-tool-textcase-kebab = kebab-case
+ui-tool-textcase-upper = MAJUSCULES
+ui-tool-textcase-lower = minuscules
+ui-tool-textcase-title-case = Casse De Titre
+ui-tool-textcase-constant = CONSTANTE_CASE
+ui-tool-textcase-empty = Saisissez du texte et choisissez une conversion.
+ui-tool-textcase-help =
+    Convertisseur de Casse
+
+    Convertit le texte entre plusieurs formats de casse.
+
+    Formats supportés : MAJUSCULES, minuscules, Casse Titre, camelCase, PascalCase, snake_case, kebab-case, CONSTANT_CASE, et plus.
 ui-tunnels-page-title = Tunnels actifs
 ui-import-dropped-rd-gateway = par une passerelle Bureau à distance
 ui-error-rd-gateway = Ce serveur se joint par la passerelle Bureau à distance { $gateway }, que le client intégré ne sait pas encore traverser.
