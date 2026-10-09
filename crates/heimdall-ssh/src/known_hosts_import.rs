@@ -32,6 +32,7 @@ use std::net::Ipv6Addr;
 
 use russh::keys::{Algorithm, PublicKey};
 
+use crate::host_key_details::{self, Change, HostKeySource};
 use crate::known_hosts::{
     KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
 };
@@ -295,20 +296,23 @@ pub fn trusting(
 
 /// Trusts `key` for `host` on `port` as [`trusting`] decides, against what `store` records
 /// and pins for the server at that moment: read and written under the lock of the trust
-/// files, no other writer between the check and the write. What was decided.
+/// files, no other writer between the check and the write. What was decided. A key
+/// recorded has its details kept beside the store, from `source` and trusted now, the time
+/// it was first trusted kept when known.
 ///
 /// # Errors
 ///
 /// [`KnownHostsError`] when the store or its pins cannot be read, or the key cannot be
-/// recorded.
+/// recorded. Details that cannot be written are said in the log only.
 pub fn trust(
     store: &KnownHosts,
     host: &str,
     port: u16,
     key: &PublicKey,
     other: OtherAlgorithm,
+    source: HostKeySource,
 ) -> Result<Trusting, KnownHostsError> {
-    trust_locked(&trust_files::lock(), store, host, port, key, other)
+    trust_locked(&trust_files::lock(), store, host, port, key, other, source)
 }
 
 /// [`trust`], the lock of the trust files held by the caller.
@@ -319,14 +323,27 @@ pub(crate) fn trust_locked(
     port: u16,
     key: &PublicKey,
     other: OtherAlgorithm,
+    source: HostKeySource,
 ) -> Result<Trusting, KnownHostsError> {
     let pinned = Pins::beside(store.path()).pinned(host, port)?;
     let decided = trusting(&store.recorded(host, port)?, &pinned, key, other);
     match decided {
         Trusting::Learn => store.learn_locked(lock, host, port, key)?,
         Trusting::LearnPinned => pins::record_in_full(lock, store, host, port, key)?,
-        Trusting::Recorded | Trusting::Conflict(_) => {}
+        Trusting::Recorded | Trusting::Conflict(_) => return Ok(decided),
     }
+    let host = validate_host(host)?;
+    host_key_details::record(
+        lock,
+        store,
+        &[Change::Trusted {
+            host: &host,
+            port,
+            fingerprint: &fingerprint(key),
+            source,
+            now: host_key_details::now(),
+        }],
+    );
     Ok(decided)
 }
 
@@ -422,6 +439,7 @@ pub fn import(
                 candidate.port,
                 &candidate.key,
                 OtherAlgorithm::Adds,
+                HostKeySource::Imported,
             )? {
                 Trusting::Learn | Trusting::LearnPinned => done.imported += 1,
                 Trusting::Recorded => done.existing += 1,

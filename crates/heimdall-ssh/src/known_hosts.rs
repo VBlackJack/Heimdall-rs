@@ -28,6 +28,7 @@ use russh::keys::known_hosts::{known_host_keys_path, learn_known_hosts_path};
 use russh::keys::{Algorithm, HashAlg, PublicKey};
 use thiserror::Error;
 
+use crate::host_key_details::{self, Change, DetailsFile, HostKeyDetails};
 use crate::pins::Pins;
 use crate::trust_files::{self, TrustLock};
 
@@ -235,10 +236,23 @@ impl KnownHosts {
     pub fn forget(&self, host: &str, port: u16) -> Result<bool, KnownHostsError> {
         let host = validate_host(host)?;
         let lock = trust_files::lock();
+        let forgotten = self.forget_locked(&lock, &host, port);
+        // The details of its keys go with them, whatever became of the file.
+        host_key_details::record(&lock, self, &[Change::Forget { host: &host, port }]);
+        forgotten
+    }
+
+    /// [`Self::forget`], `host` checked and the lock of the trust files held by the caller.
+    fn forget_locked(
+        &self,
+        lock: &TrustLock,
+        host: &str,
+        port: u16,
+    ) -> Result<bool, KnownHostsError> {
         // A fingerprint pinned for the server goes with its keys.
-        let unpinned = Pins::beside(&self.path).unpin_locked(&lock, &host, port)?;
+        let unpinned = Pins::beside(&self.path).unpin_locked(lock, host, port)?;
         let wanted = if port == DEFAULT_SSH_PORT {
-            host.clone()
+            host.to_owned()
         } else {
             format!("[{host}]:{port}")
         };
@@ -275,7 +289,7 @@ impl KnownHosts {
                 }
             })?;
         }
-        if !self.recorded(&host, port)?.is_empty() {
+        if !self.recorded(host, port)?.is_empty() {
             return Err(KnownHostsError::NotForgotten {
                 path: self.path.clone(),
             });
@@ -297,18 +311,44 @@ pub struct KnownHostEntry {
     pub algorithm: String,
     /// SHA-256 fingerprint, `SHA256:...`.
     pub fingerprint: String,
+    /// The key in base64, its SSH wire form as `known_hosts` writes it; `None` for a
+    /// fingerprint pinned without its key.
+    pub public_key: Option<String>,
+    /// Where it came from, when it was first trusted and last seen, as kept beside the
+    /// file: unknown when nothing is kept for it.
+    pub details: HostKeyDetails,
 }
 
 impl KnownHosts {
     /// The keys the file trusts, one per host named plainly, in the order of the file, then
-    /// the fingerprints pinned, their algorithm unknown. A hashed or wildcard pattern names
-    /// no host that can be shown, and a line whose key cannot be read trusts nothing: both
-    /// are left out.
+    /// the fingerprints pinned, their algorithm unknown; each with the details kept beside
+    /// the file for its host, port and fingerprint, unknown when none are. A hashed or
+    /// wildcard pattern names no host that can be shown, and a line whose key cannot be
+    /// read trusts nothing: both are left out.
     ///
     /// # Errors
     ///
-    /// The file exists and cannot be read.
+    /// The file exists and cannot be read. Details that cannot be read are unknown.
     pub fn entries(&self) -> Result<Vec<KnownHostEntry>, KnownHostsError> {
+        let mut entries = self.listed()?;
+        if entries.is_empty() {
+            return Ok(entries);
+        }
+        let details = DetailsFile::beside(&self.path).details();
+        for entry in &mut entries {
+            if let Some(found) = details.get(&(
+                entry.host.to_ascii_lowercase(),
+                entry.port,
+                entry.fingerprint.clone(),
+            )) {
+                entry.details = *found;
+            }
+        }
+        Ok(entries)
+    }
+
+    /// [`Self::entries`] without their details: what decides which details are kept.
+    pub(crate) fn listed(&self) -> Result<Vec<KnownHostEntry>, KnownHostsError> {
         let pinned = Pins::beside(&self.path)
             .all()?
             .into_iter()
@@ -317,6 +357,8 @@ impl KnownHosts {
                 port,
                 algorithm: String::new(),
                 fingerprint: pin,
+                public_key: None,
+                details: HostKeyDetails::default(),
             });
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
@@ -337,15 +379,20 @@ impl KnownHosts {
             let Some((patterns, key)) = line.split_once(char::is_whitespace) else {
                 continue;
             };
-            let Ok(key) = PublicKey::from_openssh(key.trim()) else {
+            let key = key.trim();
+            let Ok(parsed) = PublicKey::from_openssh(key) else {
                 continue;
             };
+            // The base64 of the key as the file writes it, after its type.
+            let blob = key.split_whitespace().nth(1).map(str::to_owned);
             for (host, port) in patterns.split(',').filter_map(plain_host) {
                 entries.push(KnownHostEntry {
                     host,
                     port,
-                    algorithm: key.algorithm().to_string(),
-                    fingerprint: fingerprint(&key),
+                    algorithm: parsed.algorithm().to_string(),
+                    fingerprint: fingerprint(&parsed),
+                    public_key: blob.clone(),
+                    details: HostKeyDetails::default(),
                 });
             }
         }

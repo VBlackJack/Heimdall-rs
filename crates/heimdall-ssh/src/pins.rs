@@ -24,9 +24,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use heimdall_core::import::csharp::TrustedHostKey;
+use heimdall_core::import::csharp::{TrustedHostKey, TrustedHostKeySource};
 use russh::keys::PublicKey;
 
+use crate::host_key_details::{self, Change, HostKeySource, unix_seconds};
 use crate::known_hosts::{KnownHosts, KnownHostsError, fingerprint, validate_host};
 use crate::trust_files::{self, TrustLock};
 
@@ -276,8 +277,9 @@ pub struct Carried {
 /// Carries the C# trust over into `known_hosts` and its pins. A server already trusted
 /// here is left as it is: never replaced, never added to. A key kept in full is recorded
 /// when its fingerprint is the one the C# trusted; otherwise the fingerprint is pinned.
-/// Read and written under one lock of the trust files, no other writer between a server's
-/// check and its write.
+/// What the C# knew of each key carried, its source and its dates, is kept beside them, a
+/// source the C# calls `Factory` unknown here. Read and written under one lock of the trust
+/// files, no other writer between a server's check and its write.
 ///
 /// # Errors
 ///
@@ -289,6 +291,52 @@ pub fn carry_over(
     let pins = Pins::beside(known_hosts.path());
     let lock = trust_files::lock();
     let mut carried = Carried::default();
+    let mut details = Vec::new();
+    let result = carry_each(
+        &lock,
+        known_hosts,
+        &pins,
+        trusted,
+        &mut carried,
+        &mut details,
+    );
+    let changes: Vec<Change<'_>> = details
+        .iter()
+        .map(|(host, port, entry)| Change::Carried {
+            host,
+            port: *port,
+            fingerprint: &entry.fingerprint,
+            source: source_of(entry.source),
+            first: entry.first_seen.and_then(unix_seconds),
+            last: entry.last_seen.and_then(unix_seconds),
+        })
+        .collect();
+    if !changes.is_empty() {
+        host_key_details::record(&lock, known_hosts, &changes);
+    }
+    result.map(|()| carried)
+}
+
+/// The source of a key carried from the C#: a key it shipped with is one whose origin is
+/// not known here.
+fn source_of(source: TrustedHostKeySource) -> HostKeySource {
+    match source {
+        TrustedHostKeySource::UserConfirmed => HostKeySource::User,
+        TrustedHostKeySource::ImportedKnownHosts => HostKeySource::Imported,
+        TrustedHostKeySource::Unknown => HostKeySource::Unknown,
+    }
+}
+
+/// [`carry_over`] of each entry, under `lock`: what was carried counted in `carried`, and
+/// each server carried, with its entry, pushed onto `details`.
+fn carry_each<'a>(
+    lock: &TrustLock,
+    known_hosts: &KnownHosts,
+    pins: &Pins,
+    trusted: &'a [TrustedHostKey],
+    carried: &mut Carried,
+    details: &mut Vec<(String, u16, &'a TrustedHostKey)>,
+) -> Result<(), KnownHostsError> {
     for entry in trusted {
         let Ok(host) = validate_host(&entry.host) else {
             carried.left += 1;
@@ -307,19 +355,21 @@ pub fn carry_over(
             .and_then(|bytes| PublicKey::from_bytes(&bytes).ok())
             .filter(|key| fingerprint(key) == entry.fingerprint);
         if let Some(key) = key {
-            known_hosts.learn_locked(&lock, &host, entry.port, &key)?;
+            known_hosts.learn_locked(lock, &host, entry.port, &key)?;
             carried.keys += 1;
-        } else if pins.pin_locked(&lock, &host, entry.port, &entry.fingerprint)? {
+        } else if pins.pin_locked(lock, &host, entry.port, &entry.fingerprint)? {
             carried.pins += 1;
         } else {
             carried.left += 1;
+            continue;
         }
+        details.push((host, entry.port, entry));
     }
-    Ok(carried)
+    Ok(())
 }
 
 /// `host` on `port` as `known_hosts` writes it: `host`, or `[host]:port`.
-fn pattern(host: &str, port: u16) -> String {
+pub(crate) fn pattern(host: &str, port: u16) -> String {
     if port == DEFAULT_SSH_PORT {
         host.to_owned()
     } else {
@@ -348,6 +398,9 @@ mod tests {
             port,
             fingerprint: fingerprint.to_owned(),
             key,
+            source: TrustedHostKeySource::Unknown,
+            first_seen: None,
+            last_seen: None,
         }
     }
 
@@ -413,6 +466,61 @@ mod tests {
             PinVerdict::Differs {
                 pinned: pinned[0].clone()
             }
+        );
+    }
+
+    #[test]
+    fn the_csharp_dates_and_source_are_carried_and_a_factory_key_is_unknown() {
+        use crate::host_key_details::{HostKeyDetails, HostKeySource};
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let dir = tempfile::tempdir().expect("dir");
+        let known = KnownHosts::new(dir.path().join("known_hosts"));
+        known.learn("mine.lab", 22, &key(OTHER)).expect("own entry");
+        let print = fingerprint(&key(KEY));
+        let at = |seconds| Some(UNIX_EPOCH + Duration::from_secs(seconds));
+        let dated = |host: &str, wire: Option<String>, source| TrustedHostKey {
+            source,
+            first_seen: at(1_000),
+            last_seen: at(2_000),
+            ..trusted(host, 22, &print, wire)
+        };
+        carry_over(
+            &known,
+            &[
+                dated(
+                    "full.lab",
+                    Some(wire(&key(KEY))),
+                    TrustedHostKeySource::UserConfirmed,
+                ),
+                dated("bare.lab", None, TrustedHostKeySource::ImportedKnownHosts),
+                // The C# `Factory` source maps to unknown: its dates stay.
+                dated("factory.lab", None, TrustedHostKeySource::Unknown),
+                // Already trusted here: its details are not the C#'s.
+                dated("mine.lab", None, TrustedHostKeySource::UserConfirmed),
+            ],
+        )
+        .expect("carried");
+        let listed = known.entries().expect("listed");
+        let of = |host: &str| {
+            listed
+                .iter()
+                .find(|entry| entry.host == host)
+                .map(|entry| entry.details)
+                .expect(host)
+        };
+        let carried = |source| HostKeyDetails {
+            source,
+            first_seen: at(1_000),
+            last_seen: at(2_000),
+        };
+        assert_eq!(of("full.lab"), carried(HostKeySource::User));
+        assert_eq!(of("bare.lab"), carried(HostKeySource::Imported), "a pin");
+        assert_eq!(of("factory.lab"), carried(HostKeySource::Unknown));
+        assert_eq!(of("mine.lab"), HostKeyDetails::default(), "left as it was");
+        assert_eq!(
+            source_of(TrustedHostKeySource::Unknown),
+            HostKeySource::Unknown
         );
     }
 

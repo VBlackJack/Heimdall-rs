@@ -344,6 +344,9 @@ fn a_pin_carried_over_while_the_gateway_s_key_is_asked_about_refuses_it_as_a_cha
             port: 22,
             fingerprint: pinned.clone(),
             key: None,
+            source: heimdall_core::import::csharp::TrustedHostKeySource::Unknown,
+            first_seen: None,
+            last_seen: None,
         }],
     )
     .expect("carried over");

@@ -309,6 +309,13 @@ fn the_keys_trusted_are_listed_per_host_and_port_in_the_order_of_the_file() {
         port,
         algorithm: key.algorithm().to_string(),
         fingerprint: fingerprint(key),
+        public_key: key
+            .to_openssh()
+            .expect("openssh")
+            .split_whitespace()
+            .nth(1)
+            .map(str::to_owned),
+        details: heimdall_ssh::HostKeyDetails::default(),
     };
     assert_eq!(
         hosts.entries().expect("read"),

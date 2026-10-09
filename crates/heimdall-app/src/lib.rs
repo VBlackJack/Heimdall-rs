@@ -103,8 +103,8 @@ pub use app::{
     TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
     UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard,
     VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    VaultTicket, WHEEL_LINES, bulk_password_refusal, master_password_problem, open_vault,
-    search_folded, should_auto_lock,
+    VaultTicket, WHEEL_LINES, bulk_password_refusal, local_date_time, master_password_problem,
+    open_vault, search_folded, should_auto_lock,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};

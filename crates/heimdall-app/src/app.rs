@@ -38,8 +38,8 @@ use heimdall_core::store::{MergeReport, ProfileStore, StoreError};
 use heimdall_core::winrm_diagnostic::{Diagnostic, EarlyOutput};
 use heimdall_ssh::known_hosts_import::{self, OtherAlgorithm, Trusting};
 use heimdall_ssh::{
-    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
-    Secret, TerminalSize, fingerprint,
+    AgentSource, ConnectOptions, HostKeySource, KeyboardInteractivePrompt, KnownHosts, PublicKey,
+    RunTrust, Secret, TerminalSize, fingerprint,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, FindDirection, GridSize, Key, KeyLocation, KeyPress,
@@ -192,7 +192,7 @@ pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary, search_folded};
 pub use tree_drag::{DropTarget, OrganizationChange};
 pub use tree_filter::{FilterMessage, TreeFilter};
-pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
+pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage, local_date_time};
 pub use tunnels::TunnelMessage;
 pub use updates::{UpdateMessage, UpdateStatus};
 use vault::VaultState;
@@ -2814,6 +2814,8 @@ pub enum Dialog {
     },
     /// Forget a key trusted for a server?
     ForgetTrustedKey(TrustedKey),
+    /// All that is known of an SSH host key, as the C# "Trusted host key details".
+    TrustedHostKeyDetails(Box<heimdall_ssh::KnownHostEntry>),
     /// Forget every certificate trusted for the server of this one?
     ForgetTrustedServer {
         /// A certificate of the server.
@@ -4129,6 +4131,7 @@ impl App {
                 port,
                 &key,
                 OtherAlgorithm::Conflicts,
+                HostKeySource::User,
             ) {
                 Ok(Trusting::Recorded) => Ok(()),
                 Ok(Trusting::Learn | Trusting::LearnPinned) => {
@@ -4761,6 +4764,7 @@ impl App {
             }
             Some(
                 Dialog::ImportDone(_)
+                | Dialog::TrustedHostKeyDetails(_)
                 | Dialog::FileProperties(_)
                 | Dialog::LocalFileProperties(_)
                 | Dialog::ImportFailed { .. }

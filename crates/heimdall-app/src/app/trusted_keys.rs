@@ -20,6 +20,7 @@
 //! asks about, listed and forgotten the same way.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use heimdall_core::profile::display_address;
 use heimdall_rdp::{KnownRdpHost, KnownRdpHosts};
@@ -33,9 +34,17 @@ const OPENSSH_FOLDER: &str = ".ssh";
 /// The file of the keys OpenSSH trusts, in that folder.
 const OPENSSH_KNOWN_HOSTS: &str = "known_hosts";
 
-/// The format of the C# "Trusted since" column: the day and the minute, as its general
-/// format, in an order every language reads.
+/// The format of the C# "Trusted since", "First seen" and "Last seen" columns: the day and
+/// the minute, as its general format, in an order every language reads.
 const TRUSTED_SINCE_FORMAT: &str = "%Y-%m-%d %H:%M";
+
+/// `time` in this computer's time, as the C# lists of trusted keys show a date.
+#[must_use]
+pub fn local_date_time(time: SystemTime) -> String {
+    chrono::DateTime::<chrono::Local>::from(time)
+        .format(TRUSTED_SINCE_FORMAT)
+        .to_string()
+}
 
 /// A key trusted for a server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,11 +89,9 @@ impl TrustedKey {
     pub fn trusted_since(&self) -> Option<String> {
         match self {
             Self::Ssh(_) => None,
-            Self::Rdp(entry) | Self::Ftps(entry) | Self::Vnc(entry) => entry.trusted.map(|time| {
-                chrono::DateTime::<chrono::Local>::from(time)
-                    .format(TRUSTED_SINCE_FORMAT)
-                    .to_string()
-            }),
+            Self::Rdp(entry) | Self::Ftps(entry) | Self::Vnc(entry) => {
+                entry.trusted.map(local_date_time)
+            }
         }
     }
 }
@@ -133,6 +140,8 @@ pub enum TrustedKeysMessage {
     Refresh,
     /// Copy the whole fingerprint of a key.
     CopyFingerprint(TrustedKey),
+    /// Show all that is known of an SSH host key, as the C# "Details" dialog.
+    ShowDetails(KnownHostEntry),
     /// Ask whether to forget a key.
     RequestForget(TrustedKey),
     /// Ask whether to forget every certificate trusted for the server of a certificate: an
@@ -163,6 +172,10 @@ impl App {
             TrustedKeysMessage::CopyFingerprint(key) => {
                 self.tell(Notice::FingerprintCopied(key.address()));
                 vec![Effect::WriteClipboard(key.fingerprint())]
+            }
+            TrustedKeysMessage::ShowDetails(entry) => {
+                self.dialog = Some(Dialog::TrustedHostKeyDetails(Box::new(entry.clone())));
+                Vec::new()
             }
             TrustedKeysMessage::RequestForget(key) => {
                 self.dialog = Some(Dialog::ForgetTrustedKey(key.clone()));

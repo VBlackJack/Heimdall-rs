@@ -1492,7 +1492,7 @@ fn what_a_profile_turned_on_that_has_no_equivalent_is_said_not_silently_dropped(
 
 #[test]
 fn the_trusted_ssh_servers_of_settings_are_read_with_their_keys_when_kept() {
-    use heimdall_core::import::csharp::TrustedHostKey;
+    use heimdall_core::import::csharp::{TrustedHostKey, TrustedHostKeySource};
     let pinned = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     let other = "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
     let settings_json = format!(
@@ -1520,6 +1520,9 @@ fn the_trusted_ssh_servers_of_settings_are_read_with_their_keys_when_kept() {
         port,
         fingerprint: fingerprint.to_owned(),
         key: key.map(str::to_owned),
+        source: TrustedHostKeySource::Unknown,
+        first_seen: None,
+        last_seen: None,
     };
     assert_eq!(
         report.host_keys,
@@ -1532,6 +1535,61 @@ fn the_trusted_ssh_servers_of_settings_are_read_with_their_keys_when_kept() {
             entry("jump.lab", DEFAULT_SSH_PORT, other, None),
         ]
     );
+}
+
+#[test]
+fn a_trusted_server_s_dates_and_source_are_carried_as_the_csharp_wrote_them() {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use heimdall_core::import::csharp::TrustedHostKeySource;
+    let print = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let settings_json = format!(
+        r#"{{
+            "trustedHostKeysV2": {{
+                "user.lab:22": {{"fingerprint": "{print}", "source": "UserConfirmed",
+                    "firstSeen": "2026-03-15T13:00:30.1234567+01:00",
+                    "lastSeen": "2026-09-27T19:15:03+00:00"}},
+                "imported.lab:22": {{"fingerprint": "{print}", "source": 2,
+                    "firstSeen": "0001-01-01T00:00:00+00:00", "lastSeen": "not a date"}},
+                "factory.lab:22": {{"fingerprint": "{print}", "source": "Factory",
+                    "firstSeen": 12}},
+                "odd.lab:22": {{"fingerprint": "{print}", "source": {{"weird": true}}}}
+            }}
+        }}"#
+    );
+    let report = import(&servers(""), Some(&settings_json)).expect("valid JSON");
+    let of = |host: &str| {
+        report
+            .host_keys
+            .iter()
+            .find(|entry| entry.host == host)
+            .expect(host)
+    };
+    let user = of("user.lab");
+    assert_eq!(user.source, TrustedHostKeySource::UserConfirmed);
+    assert_eq!(
+        user.first_seen,
+        Some(UNIX_EPOCH + Duration::from_secs(1_773_576_030)),
+        "2026-03-15 12:00:30 UTC"
+    );
+    assert_eq!(
+        user.last_seen,
+        Some(UNIX_EPOCH + Duration::from_secs(1_790_536_503))
+    );
+    let imported = of("imported.lab");
+    assert_eq!(imported.source, TrustedHostKeySource::ImportedKnownHosts);
+    assert_eq!(
+        (imported.first_seen, imported.last_seen),
+        (None, None),
+        "MinValue and a text that is no date are unknown"
+    );
+    assert_eq!(
+        of("factory.lab").source,
+        TrustedHostKeySource::Unknown,
+        "no factory keys here"
+    );
+    assert_eq!(of("factory.lab").first_seen, None);
+    assert_eq!(of("odd.lab").source, TrustedHostKeySource::Unknown);
 }
 
 #[test]

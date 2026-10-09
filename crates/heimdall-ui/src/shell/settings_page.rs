@@ -1562,6 +1562,7 @@ impl Shell {
             SettingRow::HostKeys => container(crate::trusted_keys_view::host_keys(
                 keys,
                 &self.host_key_search,
+                self.host_key_sort,
             ))
             .max_width(SETTINGS_WIDTH)
             .into(),

@@ -77,6 +77,87 @@ impl UtcTime {
     }
 }
 
+/// Seconds in an hour.
+const HOUR_SECONDS: i64 = 3600;
+
+/// Seconds in a minute.
+const MINUTE_SECONDS: i64 = 60;
+
+/// The moment `text` names in the ISO 8601 form .NET writes a `DateTimeOffset` in:
+/// `2026-03-15T12:00:30.1234567+01:00`, or `Z` for UTC; the fraction of a second dropped.
+/// `None` for any other text, and for a moment before 1970, `DateTimeOffset.MinValue`
+/// among them, which the C# writes for a date it does not know.
+#[must_use]
+pub fn parse_iso(text: &str) -> Option<SystemTime> {
+    let text = text.trim();
+    let (date, rest) = text.split_once(['T', 't'])?;
+    let mut fields = date.split('-');
+    let year = number(fields.next()?, 4)?;
+    let month = number(fields.next()?, 2)?;
+    let day = number(fields.next()?, 2)?;
+    if fields.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let (time, offset) = rest.split_at(rest.find(['Z', 'z', '+', '-'])?);
+    let time = time.split_once('.').map_or(time, |(whole, fraction)| {
+        if fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+            whole
+        } else {
+            ""
+        }
+    });
+    let mut fields = time.split(':');
+    let hour = number(fields.next()?, 2)?;
+    let minute = number(fields.next()?, 2)?;
+    let second = number(fields.next()?, 2)?;
+    if fields.next().is_some() || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let offset = match offset {
+        "Z" | "z" => 0,
+        signed => {
+            let (sign, hours_minutes) = signed.split_at(1);
+            let (hours, minutes) = hours_minutes.split_once(':')?;
+            let (hours, minutes) = (number(hours, 2)?, number(minutes, 2)?);
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            let magnitude = hours * HOUR_SECONDS + minutes * MINUTE_SECONDS;
+            if sign == "-" { -magnitude } else { magnitude }
+        }
+    };
+    let seconds = days_from_civil(year, month, day) * DAY_SECONDS_SIGNED
+        + hour * HOUR_SECONDS
+        + minute * MINUTE_SECONDS
+        + second
+        - offset;
+    let seconds = u64::try_from(seconds).ok()?;
+    Some(UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+}
+
+/// Seconds in a day, signed, for moments counted from 1970 either way.
+const DAY_SECONDS_SIGNED: i64 = 86_400;
+
+/// `text` as a number of exactly `digits` decimal digits.
+fn number(text: &str, digits: usize) -> Option<i64> {
+    (text.len() == digits && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| text.parse().ok())
+        .flatten()
+}
+
+/// Days from 1970-01-01 to the calendar date given, by Howard Hinnant's
+/// `days_from_civil`.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    // Counted from 0000-03-01, so a leap day ends its year.
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year.rem_euclid(400);
+    let month_from_march = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_from_march + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 /// The calendar date `days` after 1970-01-01, by Howard Hinnant's `civil_from_days`.
 fn civil_date(days: u64) -> (u64, u64, u64) {
     // Counted from 0000-03-01, so a leap day ends its year.
@@ -122,6 +203,44 @@ mod tests {
             UtcTime::of(UNIX_EPOCH - Duration::from_secs(1)).iso(),
             "1970-01-01T00:00:00Z"
         );
+    }
+
+    #[test]
+    fn a_dotnet_date_time_offset_is_read_to_the_second_its_offset_applied() {
+        let read = |text: &str| parse_iso(text).map(|time| UtcTime::of(time).iso());
+        assert_eq!(
+            read("2026-09-27T19:15:03Z").as_deref(),
+            Some("2026-09-27T19:15:03Z")
+        );
+        assert_eq!(
+            read("2026-09-27T21:15:03.1234567+02:00").as_deref(),
+            Some("2026-09-27T19:15:03Z"),
+            "the offset applied, the fraction dropped"
+        );
+        assert_eq!(
+            read("2000-02-29T23:30:00-01:00").as_deref(),
+            Some("2000-03-01T00:30:00Z"),
+            "a leap day, west of UTC"
+        );
+        assert_eq!(
+            parse_iso("1970-01-01T00:00:00+00:00"),
+            Some(UNIX_EPOCH),
+            "the epoch itself"
+        );
+        for refused in [
+            "0001-01-01T00:00:00+00:00",
+            "1969-12-31T23:59:59Z",
+            "2026-09-27T19:15:03",
+            "2026-09-27 19:15:03Z",
+            "2026-13-01T00:00:00Z",
+            "2026-09-27T24:00:00Z",
+            "2026-09-27T19:15:03.12a+00:00",
+            "2026-09-27T19:15:03+0200",
+            "26-09-27T19:15:03Z",
+            "",
+        ] {
+            assert_eq!(parse_iso(refused), None, "{refused}");
+        }
     }
 
     #[test]

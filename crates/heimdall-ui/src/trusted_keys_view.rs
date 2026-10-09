@@ -15,12 +15,19 @@
  */
 
 //! The keys trusted for servers on the Settings page, as the C# Host keys and Certificates
-//! pages list them: searched, copied, forgotten after a question. The FTPS certificates, which
-//! the C# lists nowhere, are listed as the RDP ones.
+//! pages list them: searched, copied, forgotten after a question; an SSH host key sorted by
+//! any of its columns and shown whole in its details. The FTPS certificates, which the C#
+//! lists nowhere, are listed as the RDP ones.
 
-use heimdall_app::{Message as AppMessage, SettingsMessage, TrustedKey, TrustedKeysMessage};
+use std::cmp::Ordering;
+use std::time::SystemTime;
+
+use heimdall_app::{
+    Message as AppMessage, SettingsMessage, TrustedKey, TrustedKeysMessage, local_date_time,
+};
 use heimdall_core::profile::display_address;
 use heimdall_rdp::KnownRdpHost;
+use heimdall_ssh::{HostKeySource, KnownHostEntry};
 use iced::widget::{Column, button, column, container, row, text, text_input, tooltip};
 use iced::{Alignment, Element, Length};
 
@@ -33,8 +40,14 @@ use crate::tokens::{font_size, spacing};
 const SSH_FINGERPRINT_SHOWN: usize = 16;
 /// Characters of an RDP fingerprint shown before the ellipsis.
 const RDP_FINGERPRINT_SHOWN: usize = 20;
-/// Share of a host key row the copy and remove buttons take.
-const ACTIONS_PORTION: u16 = 4;
+/// Share of a host key row the details, copy and remove buttons take.
+const ACTIONS_PORTION: u16 = 5;
+/// Share of a host key row its server takes, and its fingerprint.
+const HOST_PORTION: u16 = 3;
+/// Share of a host key row its algorithm, its source, and each of its dates take.
+const DETAIL_PORTION: u16 = 2;
+/// Width of the labels of the details of a host key.
+const DETAILS_LABEL_WIDTH: f32 = 140.0;
 /// Share of a certificate row its server takes.
 const SERVER_PORTION: u16 = 3;
 /// Share of a certificate row its fingerprint takes.
@@ -47,6 +60,163 @@ const TRUSTED_PORTION: u16 = 2;
 const FORGET_PORTION: u16 = 2;
 /// What stands for the rest of a fingerprint cut short.
 const ELLIPSIS: &str = "...";
+
+/// A column of the trusted SSH host keys, as the C# `TrustedHostKeySortColumn`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKeyColumn {
+    /// The server, `host:port`.
+    HostPort,
+    /// The key's algorithm.
+    Algorithm,
+    /// Where the key came from.
+    Source,
+    /// When it was first trusted.
+    FirstSeen,
+    /// When a server last presented it.
+    LastSeen,
+    /// Its fingerprint.
+    Fingerprint,
+}
+
+impl HostKeyColumn {
+    /// Every column, in the order the list shows them.
+    const ALL: [Self; 6] = [
+        Self::HostPort,
+        Self::Algorithm,
+        Self::Source,
+        Self::FirstSeen,
+        Self::LastSeen,
+        Self::Fingerprint,
+    ];
+
+    /// Its header.
+    fn title(self) -> String {
+        match self {
+            Self::HostPort => fl!("ui-trusted-host-keys-host"),
+            Self::Algorithm => fl!("ui-trusted-host-keys-algorithm"),
+            Self::Source => fl!("ui-trusted-host-keys-source"),
+            Self::FirstSeen => fl!("ui-trusted-host-keys-first-seen"),
+            Self::LastSeen => fl!("ui-trusted-host-keys-last-seen"),
+            Self::Fingerprint => fl!("ui-trusted-host-keys-fingerprint"),
+        }
+    }
+
+    /// Its share of a row.
+    fn portion(self) -> u16 {
+        match self {
+            Self::HostPort | Self::Fingerprint => HOST_PORTION,
+            Self::Algorithm | Self::Source | Self::FirstSeen | Self::LastSeen => DETAIL_PORTION,
+        }
+    }
+}
+
+/// How the trusted SSH host keys are sorted: by one column, one way. Held by the window and
+/// never saved, as the C# list holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostKeySort {
+    /// The column sorted by.
+    pub column: HostKeyColumn,
+    /// Smallest first.
+    pub ascending: bool,
+}
+
+impl Default for HostKeySort {
+    /// The C# default: the key last seen first.
+    fn default() -> Self {
+        Self {
+            column: HostKeyColumn::LastSeen,
+            ascending: false,
+        }
+    }
+}
+
+impl HostKeySort {
+    /// The sort after a click on the header of `column`, as the C# `SortBy`: the other way
+    /// on the column sorted by; another column ascending for the server, the algorithm and
+    /// the source, descending for the dates and the fingerprint.
+    #[must_use]
+    pub fn clicked(self, column: HostKeyColumn) -> Self {
+        if self.column == column {
+            return Self {
+                column,
+                ascending: !self.ascending,
+            };
+        }
+        Self {
+            column,
+            ascending: matches!(
+                column,
+                HostKeyColumn::HostPort | HostKeyColumn::Algorithm | HostKeyColumn::Source
+            ),
+        }
+    }
+}
+
+/// The keys of `keys` whose server, `host:port`, holds `search`, whatever the case, as the C#
+/// search; in the order `sort` gives, keys that tie in the order of their file.
+#[must_use]
+pub fn sorted<'a>(
+    keys: &'a [KnownHostEntry],
+    search: &str,
+    sort: HostKeySort,
+) -> Vec<&'a KnownHostEntry> {
+    let mut found: Vec<&KnownHostEntry> = keys
+        .iter()
+        .filter(|entry| matches(&display_address(&entry.host, entry.port), search))
+        .collect();
+    // As the C# `StringComparer.OrdinalIgnoreCase`: compared in upper case.
+    let folded = |text: &str| text.to_uppercase();
+    // The words shown for each source, read once for the whole sort.
+    let sources = [
+        HostKeySource::User,
+        HostKeySource::Imported,
+        HostKeySource::Unknown,
+    ]
+    .map(|source| (source, folded(&source_name(source))));
+    let source_word = |source: HostKeySource| {
+        sources
+            .iter()
+            .find(|(known, _)| *known == source)
+            .map(|(_, word)| word.as_str())
+    };
+    let order = |a: &KnownHostEntry, b: &KnownHostEntry| -> Ordering {
+        match sort.column {
+            HostKeyColumn::HostPort => folded(&display_address(&a.host, a.port))
+                .cmp(&folded(&display_address(&b.host, b.port))),
+            HostKeyColumn::Algorithm => folded(&a.algorithm).cmp(&folded(&b.algorithm)),
+            HostKeyColumn::Source => {
+                source_word(a.details.source).cmp(&source_word(b.details.source))
+            }
+            // A date not known is the oldest, as the C# `DateTimeOffset.MinValue`.
+            HostKeyColumn::FirstSeen => a.details.first_seen.cmp(&b.details.first_seen),
+            HostKeyColumn::LastSeen => a.details.last_seen.cmp(&b.details.last_seen),
+            HostKeyColumn::Fingerprint => a.fingerprint.cmp(&b.fingerprint),
+        }
+    };
+    found.sort_by(|a, b| {
+        let ordering = order(a, b);
+        if sort.ascending {
+            ordering
+        } else {
+            ordering.reverse()
+        }
+    });
+    found
+}
+
+/// Where a key came from, in the C# words.
+fn source_name(source: HostKeySource) -> String {
+    match source {
+        HostKeySource::User => fl!("ui-trusted-host-keys-source-user"),
+        HostKeySource::Imported => fl!("ui-trusted-host-keys-source-imported"),
+        HostKeySource::Unknown => fl!("ui-trusted-host-keys-source-unknown"),
+    }
+}
+
+/// A date of a key, in this computer's time, or the C# word for one not known.
+fn date_text(time: Option<SystemTime>) -> String {
+    time.map_or_else(|| fl!("ui-trusted-host-keys-date-unknown"), local_date_time)
+}
 
 /// Which list a search box filters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,46 +320,51 @@ fn matches(candidate: &str, typed: &str) -> bool {
         .contains(&typed.trim().to_lowercase())
 }
 
-/// The trusted SSH host keys, `search` typed: host and port, algorithm, fingerprint, and a
-/// copy and a remove button per key.
-pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> Element<'a, Message> {
+/// The trusted SSH host keys, `search` typed and in the order of `sort`, in the C# columns:
+/// server, algorithm, source, first and last seen, fingerprint; each header sorts by its
+/// column; a details, a copy and a remove button per key.
+pub fn host_keys<'a>(
+    keys: &'a heimdall_app::TrustedKeys,
+    search: &'a str,
+    sort: HostKeySort,
+) -> Element<'a, Message> {
     let body: Element<'a, Message> = if keys.ssh.is_empty() {
         empty(
             fl!("ui-trusted-host-keys-empty-title"),
             fl!("ui-trusted-host-keys-empty-body"),
         )
     } else {
-        let mut rows = Column::new().spacing(spacing::XS).push(
-            row![
-                header(fl!("ui-trusted-host-keys-host"), 3),
-                header(fl!("ui-trusted-host-keys-algorithm"), 2),
-                header(fl!("ui-trusted-host-keys-fingerprint"), 3),
-                // Room for both buttons, whatever the language: "Copier l'empreinte" is long.
-                header(String::new(), ACTIONS_PORTION),
-            ]
-            .spacing(spacing::SM),
-        );
-        for entry in &keys.ssh {
+        let mut headers = row![].spacing(spacing::SM);
+        for column in HostKeyColumn::ALL {
+            headers = headers.push(sort_header(column, sort));
+        }
+        // Room for the three buttons, whatever the language: "Copier l'empreinte" is long.
+        let headers = headers.push(header(String::new(), ACTIONS_PORTION));
+        let mut rows = Column::new().spacing(spacing::XS).push(headers);
+        for entry in sorted(&keys.ssh, search, sort) {
             let address = display_address(&entry.host, entry.port);
-            if !matches(&address, search) {
-                continue;
-            }
             let key = TrustedKey::Ssh(entry.clone());
+            let caption = |value: String| -> Element<'a, Message> {
+                text(value).size(font_size::CAPTION).into()
+            };
             rows = rows.push(
                 row![
-                    cell(text(address).size(font_size::CAPTION).into(), 3),
-                    cell(
-                        text(entry.algorithm.clone())
-                            .size(font_size::CAPTION)
-                            .into(),
-                        2
-                    ),
+                    cell(caption(address), HOST_PORTION),
+                    cell(caption(entry.algorithm.clone()), DETAIL_PORTION),
+                    cell(caption(source_name(entry.details.source)), DETAIL_PORTION),
+                    cell(caption(date_text(entry.details.first_seen)), DETAIL_PORTION),
+                    cell(caption(date_text(entry.details.last_seen)), DETAIL_PORTION),
                     cell(
                         fingerprint_cell(&entry.fingerprint, SSH_FINGERPRINT_SHOWN),
-                        3
+                        HOST_PORTION
                     ),
                     cell(
                         row![
+                            small_button(
+                                fl!("ui-trusted-host-keys-details"),
+                                trusted(TrustedKeysMessage::ShowDetails(entry.clone())),
+                                styles::secondary,
+                            ),
                             small_button(
                                 fl!("ui-trusted-host-keys-copy"),
                                 trusted(TrustedKeysMessage::CopyFingerprint(key.clone())),
@@ -426,6 +601,76 @@ pub fn unreadable<'a>(keys: &heimdall_app::TrustedKeys) -> Option<Element<'a, Me
             .style(text::danger)
             .into(),
     )
+}
+
+/// The header of `column`, a button that sorts by it, marked when the list is sorted by it.
+fn sort_header<'a>(column: HostKeyColumn, sort: HostKeySort) -> Element<'a, Message> {
+    let title = column.title();
+    let title = match (sort.column == column, sort.ascending) {
+        (false, _) => title,
+        (true, true) => fl!("ui-files-sorted-ascending", column = title),
+        (true, false) => fl!("ui-files-sorted-descending", column = title),
+    };
+    container(
+        button(text(title).size(font_size::CAPTION).style(text::secondary))
+            .style(styles::subtle)
+            .padding(0)
+            .on_press(Message::HostKeySort(column)),
+    )
+    .width(Length::FillPortion(column.portion()))
+    .into()
+}
+
+/// All that is known of the SSH host key `entry`, as the C# "Trusted host key details"
+/// dialog shows it: its server, algorithm, source, dates, whole fingerprint and the base64
+/// of its key, then Close.
+pub fn details(entry: &KnownHostEntry) -> Element<'_, Message> {
+    let public_key = entry
+        .public_key
+        .clone()
+        .unwrap_or_else(|| fl!("ui-trusted-host-key-details-public-key-unavailable"));
+    let lines = [
+        (
+            HostKeyColumn::HostPort.title(),
+            display_address(&entry.host, entry.port),
+        ),
+        (HostKeyColumn::Algorithm.title(), entry.algorithm.clone()),
+        (
+            HostKeyColumn::Source.title(),
+            source_name(entry.details.source),
+        ),
+        (
+            HostKeyColumn::FirstSeen.title(),
+            date_text(entry.details.first_seen),
+        ),
+        (
+            HostKeyColumn::LastSeen.title(),
+            date_text(entry.details.last_seen),
+        ),
+        (
+            HostKeyColumn::Fingerprint.title(),
+            entry.fingerprint.clone(),
+        ),
+        (fl!("ui-trusted-host-key-details-public-key"), public_key),
+    ];
+    let mut content =
+        column![text(fl!("ui-trusted-host-key-details-title")).size(font_size::SUBTITLE)]
+            .spacing(spacing::SM);
+    for (label, value) in lines {
+        content = content.push(
+            row![
+                text(label)
+                    .size(font_size::CAPTION)
+                    .width(DETAILS_LABEL_WIDTH),
+                text(value).width(Length::Fill)
+            ]
+            .spacing(spacing::SM),
+        );
+    }
+    let close =
+        crate::dialog_parts::action(fl!("ui-trusted-host-key-details-close"), styles::primary)
+            .on_press(Message::App(AppMessage::DismissDialog));
+    content.push(crate::dialog_parts::buttons([close])).into()
 }
 
 fn header<'a>(label: String, portion: u16) -> Element<'a, Message> {
