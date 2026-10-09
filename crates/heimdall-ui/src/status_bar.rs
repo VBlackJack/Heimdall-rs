@@ -248,9 +248,23 @@ fn rdp_external_notice(notice: &Notice) -> String {
             name = server_text(name),
             gateway = server_text(gateway)
         ),
+        Notice::RdpExternalLaunchedThrough { name, gateway } => fl!(
+            "ui-status-rdp-external-launched-through",
+            name = server_text(name),
+            gateway = server_text(gateway)
+        ),
         Notice::RdpExternalRefused(refusal) => match refusal {
             ExternalRefusal::NotWindows => fl!("ui-status-rdp-external-not-windows"),
-            ExternalRefusal::SshGateway => fl!("ui-status-rdp-external-ssh-gateway"),
+            ExternalRefusal::Gateway(error) => fl!(
+                "ui-status-rdp-external-gateway",
+                reason = crate::texts::error(error)
+            ),
+            ExternalRefusal::Forward(reason) => {
+                fl!(
+                    "ui-status-rdp-external-forward",
+                    reason = server_text(reason)
+                )
+            }
             ExternalRefusal::NotFound => fl!("ui-status-rdp-external-not-found"),
             ExternalRefusal::NotWritten(reason) => fl!(
                 "ui-status-rdp-external-not-written",
@@ -535,9 +549,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             notice @ (Notice::CitrixLaunching
             | Notice::CitrixLaunched(_)
             | Notice::CitrixRefused(_)) => citrix_notice(notice),
-            notice @ (Notice::RdpExternalLaunched { .. } | Notice::RdpExternalRefused(_)) => {
-                rdp_external_notice(notice)
-            }
+            notice @ (Notice::RdpExternalLaunched { .. }
+            | Notice::RdpExternalLaunchedThrough { .. }
+            | Notice::RdpExternalRefused(_)) => rdp_external_notice(notice),
             notice @ (Notice::PuttyLaunched(_)
             | Notice::PuttyLaunchedThrough { .. }
             | Notice::PuttyRefused(_)
@@ -718,6 +732,27 @@ mod tests {
             "{gateway}"
         );
         assert_eq!(
+            said(Notice::RdpExternalLaunchedThrough {
+                name: named("dc"),
+                gateway: named("bastion"),
+            }),
+            "External client launched: dc opened in Remote Desktop Connection through the SSH gateway bastion."
+        );
+        assert_eq!(
+            said(Notice::RdpExternalRefused(ExternalRefusal::Gateway(
+                heimdall_app::UiError::Cancelled
+            )))
+            .split_once(':')
+            .map(|(head, _)| head),
+            Some("Remote Desktop Connection was not opened, its SSH gateway not reached")
+        );
+        assert!(
+            said(Notice::RdpExternalRefused(ExternalRefusal::Forward(named(
+                "address in use"
+            ))))
+            .ends_with("address in use")
+        );
+        assert_eq!(
             said(Notice::RdpExternalRefused(ExternalRefusal::NotStarted(
                 named("denied")
             ))),
@@ -725,7 +760,6 @@ mod tests {
         );
         for refusal in [
             ExternalRefusal::NotWindows,
-            ExternalRefusal::SshGateway,
             ExternalRefusal::NotFound,
             ExternalRefusal::NotWritten(named("full")),
         ] {

@@ -231,9 +231,9 @@ impl App {
     /// Opens saved RDP profile `id` in `mode` this once, as the C# "Connect with"
     /// (`ServerListViewModel.cs:835-854`, `RdpHandler.cs:662-675`): the profile is not
     /// changed, and everything else is as a plain connection, the Windows Hello gate passed
-    /// already. Remote Desktop Connection is still refused behind an SSH gateway, and an RD
-    /// Gateway, which the built-in client does not go through, still opens there. The tab
-    /// opened keeps `mode` for its Reconnect, as the C# tab keeps it.
+    /// already. Remote Desktop Connection goes through an SSH gateway as a plain connection
+    /// does, and an RD Gateway, which the built-in client does not go through, still opens
+    /// there. The tab opened keeps `mode` for its Reconnect, as the C# tab keeps it.
     pub(super) fn open_rdp_with(&mut self, id: &ProfileId, mode: RdpMode) -> Vec<Effect> {
         let Some(mut profile) = self.rdp_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();

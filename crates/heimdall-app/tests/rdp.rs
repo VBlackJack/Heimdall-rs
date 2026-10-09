@@ -1239,7 +1239,7 @@ fn full_screen_opens_remote_desktop_connection_full_screen_and_leaves_a_tab_as_i
 }
 
 #[test]
-fn an_external_profile_through_an_ssh_gateway_is_refused_not_sent_straight() {
+fn an_external_profile_through_a_gateway_gone_is_refused_with_its_reason_not_sent_straight() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app_with(dir.path(), |profile| {
         profile.extras.external = true;
@@ -1250,7 +1250,11 @@ fn an_external_profile_through_an_ssh_gateway_is_refused_not_sent_straight() {
     assert!(app.tabs.is_empty());
     assert_eq!(
         app.notice(),
-        Some(&Notice::RdpExternalRefused(ExternalRefusal::SshGateway))
+        Some(&Notice::RdpExternalRefused(ExternalRefusal::Gateway(
+            UiError::Route(heimdall_core::store::RouteError::MissingGateway(
+                ProfileId::new("bastion")
+            ))
+        )))
     );
 }
 

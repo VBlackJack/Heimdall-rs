@@ -421,6 +421,13 @@ pub enum Notice {
         /// The RD Gateway the built-in client does not go through.
         gateway: Option<String>,
     },
+    /// An RDP profile opened in Remote Desktop Connection through its SSH gateway.
+    RdpExternalLaunchedThrough {
+        /// The profile's name.
+        name: String,
+        /// The SSH gateway's name.
+        gateway: String,
+    },
     /// An RDP profile did not open in Remote Desktop Connection, for this reason.
     RdpExternalRefused(crate::rdp_external::ExternalRefusal),
     /// The SSH profile of this name opened in `PuTTY`.
