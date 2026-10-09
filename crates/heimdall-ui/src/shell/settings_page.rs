@@ -30,7 +30,7 @@ use heimdall_app::{
     Effect, Message as AppMessage, PinMessage, UpdateMessage, UpdateStatus, VaultHelloMessage,
     VaultHelloStatus, VaultStatus, search_folded,
 };
-use heimdall_core::profile::{RdpDefaults, SshMode};
+use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
     Language, MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
@@ -104,6 +104,25 @@ pub(super) fn ssh_mode_name(mode: SshMode) -> String {
     match mode {
         SshMode::Embedded => fl!("ui-settings-ssh-default-mode-embedded"),
         SshMode::External => fl!("ui-settings-ssh-default-mode-external"),
+    }
+}
+
+/// A default RDP mode in the Settings page's list, named as the C# RDP tab names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DefaultRdpModeChoice(RdpMode);
+
+impl std::fmt::Display for DefaultRdpModeChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&rdp_mode_name(self.0))
+    }
+}
+
+/// The name of `mode`, as the C# RDP tab and its "Apply to all" question say it
+/// (`SettingsViewModel.cs:1647-1650`).
+pub(super) fn rdp_mode_name(mode: RdpMode) -> String {
+    match mode {
+        RdpMode::Embedded => fl!("ui-settings-rdp-default-mode-embedded"),
+        RdpMode::External => fl!("ui-settings-rdp-default-mode-external"),
     }
 }
 
@@ -246,6 +265,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-title"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-title"),
         SettingRow::VncCertificates => fl!("ui-trusted-vnc-certificates-title"),
+        SettingRow::RdpDefaultMode => fl!("ui-settings-rdp-default-mode"),
         SettingRow::RdpDefaults => fl!("ui-settings-rdp-defaults"),
         SettingRow::RdpAutoReconnectAttempts => fl!("ui-settings-rdp-auto-reconnect-attempts"),
         SettingRow::RdpConnectTimeout => fl!("ui-settings-rdp-connect-timeout"),
@@ -283,6 +303,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-hint"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-hint"),
         SettingRow::VncCertificates => fl!("ui-trusted-vnc-certificates-hint"),
+        SettingRow::RdpDefaultMode => fl!("ui-settings-rdp-default-mode-hint"),
         SettingRow::RdpDefaults => fl!("ui-settings-rdp-defaults-hint"),
         SettingRow::RdpResolutionPresets => fl!("ui-settings-rdp-resolution-presets-hint"),
         SettingRow::RdpResetAll => fl!("ui-settings-rdp-reset-defaults-tooltip"),
@@ -322,6 +343,11 @@ fn row_choices(row: SettingRow) -> Vec<String> {
         // The modes, and the button beside them, which the C# search finds as well.
         SettingRow::SshDefaultMode => SshMode::ALL
             .map(|mode| DefaultSshModeChoice(mode).to_string())
+            .into_iter()
+            .chain([fl!("ui-settings-apply-mode-to-all")])
+            .collect(),
+        SettingRow::RdpDefaultMode => RdpMode::ALL
+            .map(|mode| DefaultRdpModeChoice(mode).to_string())
             .into_iter()
             .chain([fl!("ui-settings-apply-mode-to-all")])
             .collect(),
@@ -880,6 +906,9 @@ impl Shell {
                 DefaultSshModeChoice(defaults.ssh_default_mode).to_string()
             }
             SettingRow::X11ServerPath => or_empty(&defaults.x11_server_path),
+            SettingRow::RdpDefaultMode => {
+                DefaultRdpModeChoice(defaults.rdp_default_mode).to_string()
+            }
             SettingRow::RdpDefaults => {
                 rdp_changes(&self.app.settings().rdp_defaults, &defaults.rdp_defaults)
             }
@@ -936,6 +965,7 @@ impl Shell {
             SettingRow::SessionLogDirectory | SettingRow::ExternalEditor => self.path_row(row),
             SettingRow::PuttyPath | SettingRow::X11ServerPath => self.tool_path_row(row),
             SettingRow::SshDefaultMode => self.ssh_default_mode_row(),
+            SettingRow::RdpDefaultMode => self.rdp_default_mode_row(),
             SettingRow::HostKeys
             | SettingRow::FtpsCertificates
             | SettingRow::VncCertificates
@@ -1347,6 +1377,37 @@ impl Shell {
                     .align_y(iced::Alignment::Center),
             ),
             text(fl!("ui-settings-ssh-default-mode-hint")).size(font_size::CAPTION),
+        ]
+        .spacing(spacing::SM)
+        .into()
+    }
+
+    /// The default RDP mode's list, and "Apply to all saved sessions" beside it, as the C#
+    /// row (`MainWindow.xaml:3356-3375`); what is said of it under them.
+    fn rdp_default_mode_row(&self) -> Element<'_, Message> {
+        let modes = pick_list(
+            RdpMode::ALL.map(DefaultRdpModeChoice).to_vec(),
+            Some(DefaultRdpModeChoice(self.app.settings().rdp_default_mode)),
+            |DefaultRdpModeChoice(mode)| send(SettingsMessage::RdpDefaultMode(mode)),
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu);
+        let apply = tooltip(
+            button(text(fl!("ui-settings-apply-mode-to-all")).size(font_size::CAPTION))
+                .style(styles::secondary)
+                .on_press(send(SettingsMessage::ApplyRdpModeToAll)),
+            text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box);
+        column![
+            labelled(
+                row_label(SettingRow::RdpDefaultMode),
+                row![modes, apply]
+                    .spacing(spacing::SM)
+                    .align_y(iced::Alignment::Center),
+            ),
+            text(fl!("ui-settings-rdp-default-mode-hint")).size(font_size::CAPTION),
         ]
         .spacing(spacing::SM)
         .into()

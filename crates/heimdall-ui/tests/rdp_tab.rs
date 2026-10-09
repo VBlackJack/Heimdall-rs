@@ -1021,6 +1021,66 @@ fn an_rdp_profile_connects_as_the_other_protocols() {
 }
 
 #[test]
+fn an_rdp_profile_connects_with_a_mode_this_once_and_its_tab_says_so() {
+    use heimdall_core::profile::RdpMode;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let id = ProfileId::new("dc");
+    // As the C# menu: "Connect with..." right under Connect, for an RDP profile.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Connect with...").expect("connect with");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::ConnectWith(asked)) if *asked == id
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::ConnectWith(id.clone())));
+    for (label, mode) in [
+        ("Connect (embedded)", RdpMode::Embedded),
+        ("Connect (external mstsc)", RdpMode::External),
+    ] {
+        let mut ui = simulator(&shell);
+        ui.click(label).expect(label);
+        assert!(
+            ui.into_messages().any(|message| matches!(
+                &message,
+                Message::MenuChoice(AppMessage::OpenRdpWith { id: asked, mode: chosen })
+                    if *asked == id && *chosen == mode
+            )),
+            "{label}"
+        );
+    }
+
+    let _ = shell.update(Message::MenuChoice(AppMessage::OpenRdpWith {
+        id: id.clone(),
+        mode: RdpMode::Embedded,
+    }));
+    assert_eq!(shell.app().tabs.len(), 1);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Domain controller (forced embedded)")
+            .expect("the C# title suffix");
+    }
+    // A name the user gives replaces it, as the C# custom title.
+    let tab = shell.app().tabs[0].id;
+    let _ = shell.update(Message::App(AppMessage::TabMenu(
+        heimdall_app::TabMenuMessage::Rename(tab),
+    )));
+    let _ = shell.update(Message::App(AppMessage::TabMenu(
+        heimdall_app::TabMenuMessage::NameEdited("Primary".to_owned()),
+    )));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert_eq!(shell.app().tabs[0].custom_title.as_deref(), Some("Primary"));
+    let mut ui = simulator(&shell);
+    ui.find("Primary").expect("the name given");
+    assert!(ui.find("Primary (forced embedded)").is_err());
+}
+
+#[test]
 fn an_rdp_tab_s_menu_offers_the_csharp_resolution_menu() {
     use heimdall_ui::tree_view::TreeMenu;
 

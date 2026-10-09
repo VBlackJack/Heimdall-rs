@@ -860,3 +860,101 @@ fn the_default_ssh_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
         "a reset changes no profile"
     );
 }
+
+#[test]
+fn the_default_rdp_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
+    use heimdall_core::profile::{ProfileId, RdpMode, RdpProfile};
+    use heimdall_core::store::ProfileStore;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge_rdp([RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
+        id: ProfileId::new("dc"),
+        name: "dc".to_owned(),
+        group: None,
+        host: "dc.lab".to_owned(),
+        port: 3389,
+        username: None,
+        domain: None,
+        allow_tls_only: false,
+        gateway: None,
+        redirect_clipboard: true,
+        redirect_drives: false,
+        options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
+        follow_defaults: false,
+        several_servers: false,
+        anti_idle: false,
+        auto_reconnect: true,
+    }]);
+    store.save().expect("save");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("default rdp mode"),
+        [SettingRow::RdpDefaultMode]
+    );
+    assert_eq!(
+        shell.settings_found("apply to all"),
+        [SettingRow::SshDefaultMode, SettingRow::RdpDefaultMode],
+        "each protocol's button"
+    );
+    assert!(
+        shell
+            .settings_found("mstsc.exe")
+            .contains(&SettingRow::RdpDefaultMode),
+        "by what is said of it"
+    );
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Rdp));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Default RDP mode",
+            "Embedded: RDP client runs inside Heimdall. External: opens mstsc.exe in a separate \
+             window.",
+            "Apply to all saved sessions",
+        ] {
+            ui.find(said).expect(said);
+        }
+        assert!(ui.find("Modified").is_err(), "the default");
+    }
+
+    change(
+        &mut shell,
+        SettingsMessage::RdpDefaultMode(RdpMode::External),
+    );
+    assert_eq!(
+        shell.settings_found("modified"),
+        [SettingRow::RdpDefaultMode]
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Apply to all saved sessions").expect("the button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Settings(SettingsMessage::ApplyRdpModeToAll))
+        )));
+    }
+    change(&mut shell, SettingsMessage::ApplyRdpModeToAll);
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Apply to all saved RDP sessions?",
+            "1 of 1 saved RDP sessions will switch to the External mode, and External becomes \
+             the default for new sessions. This cannot be undone.",
+        ] {
+            ui.find(said).expect(said);
+        }
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert!(shell.app().rdp_profiles()[0].extras.external);
+
+    let _ = shell.update(Message::ResetSetting(SettingRow::RdpDefaultMode));
+    assert_eq!(shell.app().settings().rdp_default_mode, RdpMode::Embedded);
+    assert!(
+        shell.app().rdp_profiles()[0].extras.external,
+        "a reset changes no profile"
+    );
+}

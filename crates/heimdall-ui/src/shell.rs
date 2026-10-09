@@ -3233,6 +3233,7 @@ impl Shell {
         let at = match (&menu, &self.menu) {
             (
                 TreeMenu::ConnectAs(_)
+                | TreeMenu::ConnectWith(_)
                 | TreeMenu::OpenInSplit(_)
                 | TreeMenu::MoveFolder(_)
                 | TreeMenu::FolderColor(_)
@@ -4420,6 +4421,12 @@ impl Shell {
             )
         } else if let TreeMenu::GatewaySelection = menu {
             tree_view::gateway_selection_entries(self.app.gateways())
+        } else if let TreeMenu::ConnectWith(id) = menu {
+            // Only while the session is saved, and an RDP one.
+            if self.app.profile_summary(id)?.kind != heimdall_app::ProfileKind::Rdp {
+                return None;
+            }
+            tree_view::connect_with_entries(id)
         } else if let TreeMenu::OpenInSplit(id) = menu {
             // Only while the session is saved and a tab is shown to split.
             self.app.profile_summary(id)?;
@@ -4462,6 +4469,7 @@ impl Shell {
                 | TreeMenu::Filter
                 | TreeMenu::Tab(_)
                 | TreeMenu::Pane(_)
+                | TreeMenu::ConnectWith(_)
                 | TreeMenu::OpenInSplit(_)
                 | TreeMenu::SplitAxis(_)
                 | TreeMenu::MergeWith(_)
@@ -6431,12 +6439,22 @@ impl Shell {
         )
     }
 
-    /// The title of `tab`, as its tab and its pane's header name it: a Files tab says so.
+    /// The title of `tab`, as its tab and its pane's header name it: a Files tab says so,
+    /// and a desktop "Connect with" opened embedded this once, as the C# title suffix, which
+    /// a name the user gave replaces (`SessionTabViewModel.cs:255-269`). Remote Desktop
+    /// Connection opens no tab to name.
     fn tab_name(tab: &Tab) -> String {
-        if tab.files.is_some() && tab.custom_title.is_none() {
+        let name = if tab.files.is_some() && tab.custom_title.is_none() {
             fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
         } else {
             tab_label(tab.display_title())
+        };
+        if tab.custom_title.is_none()
+            && tab.rdp_mode_override == Some(heimdall_core::profile::RdpMode::Embedded)
+        {
+            fl!("ui-tab-rdp-forced-embedded-title", name = name)
+        } else {
+            name
         }
     }
 
@@ -11384,8 +11402,8 @@ fn with_unsaved(body: Option<String>, unsaved: usize) -> String {
 
 /// The title, text and action of a plain question: leaving the window with sessions live,
 /// broadcasting input to every tab, recording every session, resetting the RDP settings,
-/// writing the default SSH mode into every SSH profile, deleting profiles or folders,
-/// terminating a Citrix session.
+/// writing the default SSH or RDP mode into every profile of its protocol, deleting
+/// profiles or folders, terminating a Citrix session.
 fn plain_question(dialog: &Dialog) -> (String, String, String) {
     match dialog {
         Dialog::ConfirmCitrixTerminate { force, .. } => {
@@ -11438,6 +11456,20 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             fl!(
                 "ui-dialog-apply-ssh-mode-body",
                 mode = settings_page::ssh_mode_name(*mode),
+                changes = (*changes),
+                total = (*total)
+            ),
+            fl!("ui-settings-apply-mode-to-all"),
+        ),
+        Dialog::ConfirmApplyRdpMode {
+            mode,
+            changes,
+            total,
+        } => (
+            fl!("ui-dialog-apply-rdp-mode-title"),
+            fl!(
+                "ui-dialog-apply-rdp-mode-body",
+                mode = settings_page::rdp_mode_name(*mode),
                 changes = (*changes),
                 total = (*total)
             ),
@@ -11529,6 +11561,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmResetRdpDefaults
         | Dialog::ConfirmVaultHelloEnrolAgain
         | Dialog::ConfirmApplySshMode { .. }
+        | Dialog::ConfirmApplyRdpMode { .. }
         | Dialog::ConfirmDeleteMacro(_)
         | Dialog::ConfirmDeleteGateway { .. }
         | Dialog::ConfirmDeleteProfile { .. }

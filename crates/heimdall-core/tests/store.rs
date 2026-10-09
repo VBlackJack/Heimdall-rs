@@ -1113,3 +1113,31 @@ fn every_ssh_shell_takes_a_mode_and_sftp_profiles_keep_theirs() {
     assert_eq!(store.set_ssh_modes(SshMode::External), 0, "already so");
     assert_eq!(store.ssh_mode_changes(SshMode::External), (0, 2));
 }
+
+#[test]
+fn every_rdp_profile_takes_a_mode() {
+    use heimdall_core::profile::RdpMode;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut store = ProfileStore::open(dir.path().join(PROFILES_FILE_NAME)).expect("opens");
+    let set = |id: &str, external: bool| {
+        let mut profile = rdp(id);
+        profile.extras.external = external;
+        profile
+    };
+    store.merge_rdp([set("a", false), set("b", true), set("c", false)]);
+    // An SSH profile is not counted.
+    store.merge([profile("s", "s.lab")]);
+    assert_eq!(store.rdp_mode_changes(RdpMode::External), (2, 3));
+    assert_eq!(store.rdp_mode_changes(RdpMode::Embedded), (1, 3));
+    assert_eq!(store.set_rdp_modes(RdpMode::External), 2);
+    let modes: Vec<bool> = store
+        .rdp_profiles()
+        .iter()
+        .map(|profile| profile.extras.external)
+        .collect();
+    assert_eq!(modes, [true, true, true]);
+    assert_eq!(store.set_rdp_modes(RdpMode::External), 0, "already so");
+    assert_eq!(store.rdp_mode_changes(RdpMode::External), (0, 3));
+    assert!(store.ssh_profiles()[0].ssh_mode.is_embedded(), "SSH untouched");
+}

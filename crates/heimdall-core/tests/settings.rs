@@ -1558,3 +1558,60 @@ fn the_default_ssh_mode_is_embedded_kept_by_its_csharp_name_and_travels() {
             .any(|change| change.key == "ssh.default_mode")
     );
 }
+
+#[test]
+fn the_default_rdp_mode_is_embedded_kept_by_its_csharp_name_reset_and_travels() {
+    use heimdall_core::profile::RdpMode;
+
+    let dir = tempfile::tempdir().expect("dir");
+    assert_eq!(Settings::default().rdp_default_mode, RdpMode::Embedded);
+    // Written before it was: the C# default.
+    let older = written(
+        dir.path(),
+        "version = 1\n[rdp_session]\nconnect_timeout = 30\n",
+    );
+    assert_eq!(older.rdp_default_mode, RdpMode::Embedded);
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let chosen = Settings {
+        rdp_default_mode: RdpMode::External,
+        ..Settings::default()
+    };
+    chosen.save(&path).expect("saved");
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(
+        text.contains("[rdp_session]") && text.contains("default_mode = \"External\""),
+        "{text}"
+    );
+    let read = Settings::load(&path).expect("read");
+    assert_eq!(read.rdp_default_mode, RdpMode::External);
+    assert_eq!(
+        read.ssh_default_mode,
+        Settings::default().ssh_default_mode,
+        "its own"
+    );
+    // Whatever its case; a name not known is the default.
+    let cased = written(
+        dir.path(),
+        "version = 1\n[rdp_session]\ndefault_mode = \"external\"\n",
+    );
+    assert_eq!(cased.rdp_default_mode, RdpMode::External);
+    let unknown = written(
+        dir.path(),
+        "version = 1\n[rdp_session]\ndefault_mode = \"Inline\"\n",
+    );
+    assert_eq!(unknown.rdp_default_mode, RdpMode::Embedded);
+    // "Reset RDP defaults" puts it back, as the C# `ApplyRdpDefaults`.
+    let mut reset = chosen.clone();
+    reset.reset_rdp();
+    assert_eq!(reset.rdp_default_mode, RdpMode::Embedded);
+    // It travels with an export.
+    let (exported, _) = chosen.export(None, false);
+    let imported = Settings::default().import(&exported).expect("read");
+    assert_eq!(imported.settings.rdp_default_mode, RdpMode::External);
+    assert!(
+        imported
+            .changes
+            .iter()
+            .any(|change| change.key == "rdp_session.default_mode")
+    );
+}
