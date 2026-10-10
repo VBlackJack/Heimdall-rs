@@ -30,6 +30,7 @@ pub mod connect;
 pub mod drives;
 mod frames;
 mod kdc;
+mod keep_alive;
 pub mod known_hosts;
 mod reason;
 pub mod session;
@@ -48,6 +49,7 @@ pub use connect::{
     connect_through, desktop_scale_factor, given,
 };
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
+pub use keep_alive::DEFAULT_KEEP_ALIVE;
 pub use known_hosts::{CertificateVerdict, KnownRdpHost, KnownRdpHosts, Verdict};
 pub use reason::{Ending, Refusal, error_info_description};
 pub use session::{CloseReason, Framebuffer, LocalClipboard, RdpEvent, RdpSession};

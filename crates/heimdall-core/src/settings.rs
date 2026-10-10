@@ -571,6 +571,10 @@ pub struct Settings {
     /// turns the wait off, else within [`RDP_RESIZE_ENABLE_DELAY_MIN_MS`] and
     /// [`RDP_RESIZE_ENABLE_DELAY_MAX_MS`]. A profile may set its own.
     pub rdp_resize_enable_delay_ms: u32,
+    /// Milliseconds between two keep-alives of an embedded RDP connection, as the C#
+    /// `RdpKeepAliveIntervalMs`: within [`RDP_KEEP_ALIVE_INTERVAL_MIN_MS`] and
+    /// [`RDP_KEEP_ALIVE_INTERVAL_MAX_MS`].
+    pub rdp_keep_alive_interval_ms: u32,
     /// An embedded RDP session opens only while Credential Guard runs on this computer, as
     /// the C# `RequireCredentialGuard`: off unless chosen. Remote Desktop Connection's own
     /// window is not concerned.
@@ -1038,6 +1042,20 @@ pub const RDP_RESIZE_ENABLE_DELAY_MIN_MS: u32 = 1_000;
 /// Most milliseconds accepted, as the C# range's.
 pub const RDP_RESIZE_ENABLE_DELAY_MAX_MS: u32 = 60_000;
 
+/// Milliseconds between two keep-alives of an RDP connection by default, as the C#
+/// `RdpKeepAliveIntervalMs`.
+pub const RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS: u32 = 60_000;
+/// Fewest milliseconds between two RDP keep-alives accepted, as the C# range's.
+pub const RDP_KEEP_ALIVE_INTERVAL_MIN_MS: u32 = 5_000;
+/// Most milliseconds between two RDP keep-alives accepted, as the C# range's.
+pub const RDP_KEEP_ALIVE_INTERVAL_MAX_MS: u32 = 300_000;
+
+/// Whether `ms` is an RDP keep-alive interval the settings accept.
+#[must_use]
+pub fn rdp_keep_alive_interval_accepted(ms: u32) -> bool {
+    (RDP_KEEP_ALIVE_INTERVAL_MIN_MS..=RDP_KEEP_ALIVE_INTERVAL_MAX_MS).contains(&ms)
+}
+
 /// Whether `ms` is a wait after connecting the settings and a profile accept: 0 for none, or
 /// within the C# range.
 #[must_use]
@@ -1187,6 +1205,7 @@ impl Default for Settings {
             rdp_auto_reconnect_attempts: RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
             rdp_connect_timeout: RDP_CONNECT_TIMEOUT_DEFAULT,
             rdp_resize_enable_delay_ms: RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
+            rdp_keep_alive_interval_ms: RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
             require_credential_guard: false,
             rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
@@ -1408,6 +1427,9 @@ struct RdpSessionSection {
     /// Milliseconds, 0 for no wait.
     #[serde(default)]
     resize_enable_delay_ms: Option<u32>,
+    /// Milliseconds.
+    #[serde(default)]
+    keep_alive_interval_ms: Option<u32>,
     /// One `WIDTHxHEIGHT` per preset.
     #[serde(default)]
     resolution_presets: Option<Vec<String>>,
@@ -1426,6 +1448,7 @@ impl RdpSessionSection {
             auto_reconnect_attempts: Some(settings.rdp_auto_reconnect_attempts),
             connect_timeout: Some(settings.rdp_connect_timeout),
             resize_enable_delay_ms: Some(settings.rdp_resize_enable_delay_ms),
+            keep_alive_interval_ms: Some(settings.rdp_keep_alive_interval_ms),
             resolution_presets: Some(
                 settings
                     .rdp_resolution_presets
@@ -1737,6 +1760,7 @@ impl Settings {
         self.rdp_auto_reconnect_attempts = defaults.rdp_auto_reconnect_attempts;
         self.rdp_connect_timeout = defaults.rdp_connect_timeout;
         self.rdp_resize_enable_delay_ms = defaults.rdp_resize_enable_delay_ms;
+        self.rdp_keep_alive_interval_ms = defaults.rdp_keep_alive_interval_ms;
         self.rdp_resolution_presets = defaults.rdp_resolution_presets;
         self.rdp_default_mode = defaults.rdp_default_mode;
     }
@@ -1888,6 +1912,11 @@ impl Settings {
                 file.rdp_session.resize_enable_delay_ms,
                 rdp_resize_enable_delay_accepted,
                 RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
+            ),
+            rdp_keep_alive_interval_ms: within(
+                file.rdp_session.keep_alive_interval_ms,
+                rdp_keep_alive_interval_accepted,
+                RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
             ),
             require_credential_guard: file
                 .rdp_session

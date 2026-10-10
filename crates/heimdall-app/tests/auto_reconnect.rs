@@ -634,6 +634,50 @@ fn the_settings_choose_how_long_a_desktop_may_take_to_log_on() {
 }
 
 #[test]
+fn the_settings_choose_how_often_a_desktop_connection_is_kept_alive() {
+    use heimdall_app::SettingsMessage;
+    use heimdall_core::settings::{
+        RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS, RDP_KEEP_ALIVE_INTERVAL_MAX_MS,
+        RDP_KEEP_ALIVE_INTERVAL_MIN_MS,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let keep_alive = |app: &mut App| {
+        let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+        let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+            panic!("one connection: {effects:?}");
+        };
+        request.keep_alive
+    };
+    assert_eq!(
+        keep_alive(&mut app),
+        Duration::from_millis(u64::from(RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS)),
+        "the C# default"
+    );
+    for refused in [
+        RDP_KEEP_ALIVE_INTERVAL_MIN_MS - 1,
+        RDP_KEEP_ALIVE_INTERVAL_MAX_MS + 1,
+    ] {
+        app.update(Message::Settings(SettingsMessage::RdpKeepAliveInterval(
+            refused,
+        )));
+        assert_eq!(
+            app.settings().rdp_keep_alive_interval_ms,
+            RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
+            "{refused}: out of the range, kept"
+        );
+    }
+    app.update(Message::Settings(SettingsMessage::RdpKeepAliveInterval(
+        RDP_KEEP_ALIVE_INTERVAL_MIN_MS,
+    )));
+    assert_eq!(
+        keep_alive(&mut app),
+        Duration::from_millis(u64::from(RDP_KEEP_ALIVE_INTERVAL_MIN_MS))
+    );
+}
+
+#[test]
 fn the_session_bars_disconnect_asks_then_ends_the_desktop_and_keeps_the_tab() {
     use heimdall_app::Dialog;
 

@@ -138,6 +138,7 @@ fn config(known_hosts: &std::path::Path) -> RdpConfig {
         security: Security::Nla,
         known_hosts: KnownRdpHosts::new(known_hosts),
         accepted: Some(pin),
+        keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
         timeouts: Timeouts {
             connect: WAIT,
             handshake: WAIT,

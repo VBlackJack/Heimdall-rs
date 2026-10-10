@@ -55,6 +55,7 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         security,
         known_hosts: KnownRdpHosts::new(known),
         accepted: None,
+        keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
         timeouts: Timeouts::default(),
         // The channel negotiated with a real server must not break the session.
         clipboard: true,

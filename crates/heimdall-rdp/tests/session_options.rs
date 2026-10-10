@@ -203,6 +203,7 @@ async fn sent_in(options: RdpOptions, time_zone: Option<TimeZone>) -> Sent {
         security: Security::NlaOrTls,
         known_hosts: KnownRdpHosts::new(&known),
         accepted: None,
+        keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
         timeouts: Timeouts {
             connect: WAIT,
             handshake: WAIT,

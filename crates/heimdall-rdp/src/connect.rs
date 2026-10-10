@@ -196,6 +196,12 @@ pub struct RdpConfig {
     pub accepted: Option<AcceptedCertificate>,
     /// Phase timeouts.
     pub timeouts: Timeouts,
+    /// Time without anything sent to the server before the session sends it an RDP
+    /// keep-alive, as the C# Heimdall gives mstsc its `KeepAliveInterval`: an idle
+    /// connection is not dropped by a firewall or a NAT on the way, and a dead one is
+    /// noticed. It is a Client Synchronize PDU (MS-RDPBCGR 2.2.1.14), so the same through
+    /// an SSH tunnel; zero sends none.
+    pub keep_alive: Duration,
     /// Share the clipboard with the server, text only: its copies reach this side, and this
     /// side's text is offered to it.
     pub clipboard: bool,
@@ -385,6 +391,8 @@ pub struct RdpConnection {
     pub result: ConnectionResult,
     /// The desktop scale factor asked for, kept for each later resize.
     pub(crate) desktop_scale: u32,
+    /// Time without anything sent before an RDP keep-alive, as [`RdpConfig::keep_alive`].
+    pub(crate) keep_alive: Duration,
 }
 
 /// How the bytes reach the server: the stream once open, and the address this side reports
@@ -643,6 +651,7 @@ pub async fn connect_over(
         clipboard,
         result,
         desktop_scale: config.desktop_scale,
+        keep_alive: config.keep_alive,
     })
 }
 
@@ -1105,6 +1114,7 @@ mod tests {
             known_hosts: KnownRdpHosts::new(known),
             accepted: None,
             timeouts: Timeouts::default(),
+            keep_alive: crate::keep_alive::DEFAULT_KEEP_ALIVE,
             clipboard: false,
             drives: Vec::new(),
             trusted_for_run: Vec::new(),

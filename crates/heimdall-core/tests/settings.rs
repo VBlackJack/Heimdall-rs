@@ -1276,6 +1276,73 @@ fn the_rdp_connection_timeout_is_kept_within_the_csharp_range_and_reset_with_rdp
 }
 
 #[test]
+fn the_rdp_keep_alive_interval_is_the_csharp_default_kept_within_its_range_and_reset_with_rdp() {
+    use heimdall_core::settings::{
+        RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS, RDP_KEEP_ALIVE_INTERVAL_MAX_MS,
+        RDP_KEEP_ALIVE_INTERVAL_MIN_MS, rdp_keep_alive_interval_accepted,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.rdp_keep_alive_interval_ms, 60_000,
+        "the C# 60 000 ms"
+    );
+    assert_eq!(RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS, 60_000);
+    assert_eq!(
+        (
+            RDP_KEEP_ALIVE_INTERVAL_MIN_MS,
+            RDP_KEEP_ALIVE_INTERVAL_MAX_MS
+        ),
+        (5_000, 300_000),
+        "the C# range"
+    );
+    for (ms, accepted) in [
+        (0, false),
+        (4_999, false),
+        (5_000, true),
+        (300_000, true),
+        (300_001, false),
+    ] {
+        assert_eq!(rdp_keep_alive_interval_accepted(ms), accepted, "{ms}");
+    }
+
+    settings.rdp_keep_alive_interval_ms = 15_000;
+    settings.save(&path).expect("save");
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(text.contains("keep_alive_interval_ms = 15000"), "{text}");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+
+    // Edited by hand out of the range: the default.
+    for written in [4_000, 301_000] {
+        std::fs::write(
+            &path,
+            format!(
+                "version = 1
+[rdp_session]
+keep_alive_interval_ms = {written}
+"
+            ),
+        )
+        .expect("write");
+        assert_eq!(
+            Settings::load(&path)
+                .expect("load")
+                .rdp_keep_alive_interval_ms,
+            RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
+            "{written}"
+        );
+    }
+
+    settings.reset_rdp();
+    assert_eq!(
+        settings.rdp_keep_alive_interval_ms, RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
+        "reset with RDP, as the C# ApplyRdpDefaults"
+    );
+}
+
+#[test]
 fn the_sessions_limit_is_none_by_default_and_kept_within_the_csharp_range() {
     use heimdall_core::settings::{MAX_SESSIONS_MAX, max_sessions_accepted};
 

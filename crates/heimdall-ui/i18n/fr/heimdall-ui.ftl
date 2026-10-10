@@ -3641,6 +3641,8 @@ ui-rdp-letterbox-hint = Fixe { $width }x{ $height } - redimensionnez la fenêtre
 ui-settings-rdp-connect-timeout = Délai du watchdog de connexion RDP (0 = désactivé)
 ui-settings-rdp-resize-delay = Délai de stabilisation de la résolution après connexion (0 = désactivé)
 ui-settings-rdp-resize-delay-refused = Le délai de redimensionnement RDP doit être nul ou compris entre { $min } et { $max } ms.
+ui-settings-rdp-keep-alive-interval = Intervalle de maintien de session
+ui-settings-rdp-keep-alive-interval-refused = L'intervalle de maintien de connexion RDP doit être compris entre { $min } et { $max } ms.
 ui-settings-rdp-connect-timeout-off = Désactivé
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Rendre le clavier depuis un bureau distant

@@ -73,6 +73,7 @@ async fn a_server_without_nla_is_refused_before_any_password_question() {
             desktop: DEFAULT_DESKTOP,
             desktop_scale: 100,
             logon_timeout: None,
+            keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
             route: Vec::new(),
             ssh: heimdall_ssh::ConnectOptions::new(dir.path().join("known_hosts")),
             cancel: CancellationToken::new(),

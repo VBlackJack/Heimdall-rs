@@ -178,8 +178,18 @@ fn the_search_finds_rows_by_name_hint_heading_or_choice_on_every_tab_whatever_th
         SettingsCard::RdpSession,
         "beside the watchdog"
     );
+    assert_eq!(
+        shell.settings_found("session keep-alive"),
+        [SettingRow::RdpKeepAlive],
+        "the C# RDP Behavior card's keep-alive"
+    );
+    assert_eq!(
+        SettingRow::RdpKeepAlive.card(),
+        SettingsCard::RdpSession,
+        "last of the card, as in the C#"
+    );
 
-    let _ = shell.update(Message::SettingsSearch("keep-alive".to_owned()));
+    let _ = shell.update(Message::SettingsSearch("ssh keep-alive".to_owned()));
     let mut ui = simulator(&shell);
     for said in ["Results: 1", "SSH", "Session", "SSH keep-alive interval"] {
         ui.find(said).expect(said);
@@ -910,8 +920,9 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         );
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
-    // The last row added, the welcome tour's button, holds no path.
-    assert_eq!(SettingRow::ALL.len(), 63, "no row added");
+    // The last rows added, the welcome tour's button and the RDP keep-alive interval, hold
+    // no path.
+    assert_eq!(SettingRow::ALL.len(), 64, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
