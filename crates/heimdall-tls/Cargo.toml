@@ -14,7 +14,9 @@ publish.workspace = true
 
 [dependencies]
 log.workspace = true
-ring.workspace = true
+# sealvault: a certificate's SHA-256 fingerprint. TLS itself runs on tokio-rustls's ring
+# provider.
+sealvault.workspace = true
 rustls-native-certs.workspace = true
 tokio-rustls.workspace = true
 

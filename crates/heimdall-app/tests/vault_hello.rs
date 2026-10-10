@@ -127,8 +127,7 @@ impl KeyCredentials for Fake {
             if hello.randomised {
                 signed.push(u8::try_from(hello.prompts % 256).expect("a byte"));
             }
-            let digest = ring::digest::digest(&ring::digest::SHA256, &signed);
-            Ok(Zeroizing::new(digest.as_ref().to_vec()))
+            Ok(Zeroizing::new(sealvault::hash::sha256(&signed).to_vec()))
         })
     }
 

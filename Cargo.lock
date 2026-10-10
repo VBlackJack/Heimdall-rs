@@ -2351,7 +2351,6 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 name = "heimdall-app"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "chrono",
  "heimdall-core",
  "heimdall-files",
@@ -2366,7 +2365,6 @@ dependencies = [
  "log",
  "rcgen",
  "regex",
- "ring",
  "russh",
  "rustls-native-certs",
  "sealvault",
@@ -2390,23 +2388,21 @@ dependencies = [
 name = "heimdall-core"
 version = "0.1.0"
 dependencies = [
- "argon2",
  "data-encoding",
  "directories",
  "fancy-regex 0.19.2",
  "getrandom 0.4.3",
  "hmac",
- "md-5 0.11.0",
  "pkcs8",
  "rcgen",
  "regex",
  "roxmltree 0.21.1",
  "rsa",
+ "sealvault",
  "serde",
  "serde_json",
  "sha1 0.11.0",
  "sha2 0.11.0",
- "sha3 0.12.0",
  "similar",
  "ssh-key",
  "tempfile",
@@ -2425,7 +2421,7 @@ dependencies = [
  "heimdall-tls",
  "libunftp",
  "rcgen",
- "ring",
+ "sealvault",
  "suppaftp",
  "tempfile",
  "thiserror 2.0.21",
@@ -2464,9 +2460,9 @@ dependencies = [
  "ironrdp-core",
  "ironrdp-tokio",
  "log",
- "ring",
  "rustix 1.1.5",
  "rustls-native-certs",
+ "sealvault",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2507,11 +2503,10 @@ name = "heimdall-ssh"
 version = "0.1.0"
 dependencies = [
  "data-encoding",
- "getrandom 0.4.3",
  "heimdall-core",
  "log",
  "russh",
- "subtle",
+ "sealvault",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2538,8 +2533,8 @@ version = "0.1.0"
 dependencies = [
  "log",
  "rcgen",
- "ring",
  "rustls-native-certs",
+ "sealvault",
  "tokio-rustls",
 ]
 
@@ -5941,6 +5936,7 @@ dependencies = [
  "argon2",
  "des",
  "getrandom 0.4.3",
+ "hkdf",
  "hmac",
  "md-5 0.11.0",
  "sha1 0.11.0",

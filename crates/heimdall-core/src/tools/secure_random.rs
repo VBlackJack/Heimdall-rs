@@ -63,7 +63,7 @@ impl SecureRandom {
     /// Four bytes of the system's generator; `None` when it cannot be read.
     fn next_u32(&mut self) -> Option<u32> {
         if self.next + DRAW_BYTES > POOL_BYTES {
-            getrandom::fill(self.pool.as_mut()).ok()?;
+            sealvault::random::fill(self.pool.as_mut()).ok()?;
             self.next = 0;
         }
         let mut bytes = [0; DRAW_BYTES];
@@ -101,7 +101,7 @@ impl SecureRandom {
 
     /// `bytes` filled from the system's generator; `false` when it cannot be read.
     pub fn fill(&mut self, bytes: &mut [u8]) -> bool {
-        getrandom::fill(bytes).is_ok()
+        sealvault::random::fill(bytes).is_ok()
     }
 }
 

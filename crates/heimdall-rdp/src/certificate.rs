@@ -23,7 +23,7 @@ use std::str::FromStr;
 use std::time::SystemTime;
 
 use data_encoding::BASE64_NOPAD;
-use ring::digest::{SHA256, SHA256_OUTPUT_LEN, digest};
+use sealvault::hash::{SHA256_LEN as SHA256_OUTPUT_LEN, sha256};
 use x509_cert::Certificate;
 use x509_cert::der::asn1::ObjectIdentifier;
 use x509_cert::der::{Decode as _, Encode as _};
@@ -90,9 +90,7 @@ impl CertificateHash {
     /// The hash of the DER certificate `der`.
     #[must_use]
     pub fn of(der: &[u8]) -> Self {
-        let mut hash = [0; SHA256_OUTPUT_LEN];
-        hash.copy_from_slice(digest(&SHA256, der).as_ref());
-        Self(hash)
+        Self(sha256(der))
     }
 
     /// As the C# shows a thumbprint (`CertificateFingerprint.ComputeSha256`): `SHA256:`,
@@ -151,8 +149,7 @@ impl ServerCertificate {
         let certificate = Certificate::from_der(der).map_err(|_| CertificateError)?;
         let info = certificate.tbs_certificate().subject_public_key_info();
         let spki = info.to_der().map_err(|_| CertificateError)?;
-        let hash = digest(&SHA256, &spki);
-        let fingerprint = Fingerprint(hash.as_ref().try_into().map_err(|_| CertificateError)?);
+        let fingerprint = Fingerprint(sha256(&spki));
         let public_key = info
             .subject_public_key
             .as_bytes()

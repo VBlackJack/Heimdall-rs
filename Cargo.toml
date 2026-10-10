@@ -102,6 +102,9 @@ sha1 = { version = "0.11.0", default-features = false }
 sha2 = { version = "0.11.0", default-features = false }
 sha3 = { version = "0.12.0", default-features = false }
 hmac = "0.13.0"
+# hkdf: HKDF-SHA256 in sealvault::kdf, for the Windows Hello envelope; already in the tree
+# through russh, at this version.
+hkdf = "0.13.0"
 suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-rustls-ring"] }
 # rfd: the system's open, save and folder dialogs on Windows and macOS, as the C#
 # OpenFileDialog and SaveFileDialog. Not built on Linux: there heimdall-ui speaks to the

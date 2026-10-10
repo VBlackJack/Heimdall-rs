@@ -26,7 +26,9 @@ ironrdp.workspace = true
 ironrdp-core.workspace = true
 ironrdp-tokio.workspace = true
 log.workspace = true
-ring.workspace = true
+# sealvault: certificate, public key and clipboard SHA-256 fingerprints. TLS itself runs on
+# tokio-rustls's ring provider.
+sealvault.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 # The system's certificates, for strict server authentication.
