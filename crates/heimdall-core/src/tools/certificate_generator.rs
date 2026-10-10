@@ -29,7 +29,8 @@
 //! `pkcs12`); this module is the C#'s options, names, dates and results around them.
 //!
 //! Private keys are secrets: their PKCS#8 and PEM held in memory wiped when dropped, the
-//! signing keys wiped once the certificates are signed, never written out by `Debug`.
+//! signing keys' PKCS#8 copies wiped once the certificates are signed, never written out by
+//! `Debug`. The key ring parses for signing is its own and is not wiped by ring.
 
 use std::fmt;
 use std::net::IpAddr;
@@ -69,7 +70,7 @@ const NONZERO_FIRST_BYTE: u8 = 0x01;
 const SECONDS_PER_DAY: u64 = 86_400;
 
 /// The last second an X.509 time can say, 9999-12-31 23:59:59 UTC.
-const LAST_X509_SECOND: u64 = 253_402_300_799;
+const LAST_X509_SECOND: u64 = cert::LAST_X509_SECOND;
 
 /// What separates the alternative names typed, as the C# `SanParser`.
 const SAN_SEPARATOR: char = ',';

@@ -5944,6 +5944,7 @@ dependencies = [
  "subtle",
  "tempfile",
  "thiserror 2.0.21",
+ "x509-cert 0.3.0",
  "zeroize",
 ]
 

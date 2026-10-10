@@ -38,5 +38,9 @@ thiserror.workspace = true
 # derive: zeroize_derive is already in the tree, enabled by another crate.
 zeroize = { workspace = true, features = ["derive"] }
 
+[dev-dependencies]
+# x509-cert: the certificates cert makes, read back to check their key and signature.
+x509-cert.workspace = true
+
 [lints]
 workspace = true

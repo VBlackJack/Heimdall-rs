@@ -54,6 +54,16 @@ const CA_KEY_USAGE: &[u8] = &[0x03, 0x02, 0x01, 0x06];
 /// The year X.509 times are counted from here, as Unix seconds count.
 const EPOCH_YEAR: i32 = 1970;
 
+/// The last second an X.509 time can say, 9999-12-31 23:59:59 UTC (RFC 5280 section
+/// 4.1.2.5): no certificate is valid past it.
+pub const LAST_X509_SECOND: u64 = 253_402_300_799;
+
+/// The most bytes of a serial number (RFC 5280 section 4.1.2.2).
+pub const MAX_SERIAL_LEN: usize = 20;
+
+/// The sign bit of a serial number's first byte: set, the DER integer would be negative.
+const SIGN_BIT: u8 = 0x80;
+
 /// A subject's name: written country first, then organisation, then common name, as .NET
 /// encodes `CN=..., O=..., C=...`. A country that is printable ASCII is a
 /// `PrintableString`, as RFC 5280 asks; anything else UTF-8.
@@ -100,7 +110,9 @@ pub struct Spec {
     pub profile: Profile,
 }
 
-/// An RSA key that signs certificates, made from its PKCS#8, wiped when dropped.
+/// An RSA key that signs certificates, made from its PKCS#8. Dropping it clears the copy
+/// of the PKCS#8 rcgen keeps; the key ring parses from it for signing is ring's own and is
+/// not wiped by ring.
 pub struct SigningKey(KeyPair);
 
 impl fmt::Debug for SigningKey {
@@ -142,21 +154,49 @@ pub fn self_signed(spec: &Spec, key: &SigningKey) -> Result<Vec<u8>, Error> {
 ///
 /// # Errors
 ///
-/// [`Error::Encoding`] when a name, a date or the signature cannot be made.
+/// [`Error::Encoding`] when `issuer` is not an [`Profile::Authority`], or a name, a date or
+/// the signature cannot be made.
 pub fn signed_by(
     spec: &Spec,
     key: &SigningKey,
     issuer: &Spec,
     issuer_key: &SigningKey,
 ) -> Result<Vec<u8>, Error> {
+    if issuer.profile != Profile::Authority {
+        return Err(Error::Encoding("the issuer is not an authority".to_owned()));
+    }
     let issuer_params = params(issuer)?;
     let issuer = Issuer::from_params(&issuer_params, &issuer_key.0);
     let certificate = params(spec)?.signed_by(&key.0, &issuer).map_err(encoding)?;
     Ok(certificate.der().to_vec())
 }
 
-/// rcgen's parameters for `spec`.
+/// What is wrong with `spec`'s serial number and validity, before anything is signed: a
+/// serial that is empty, zero, negative or past [`MAX_SERIAL_LEN`] bytes; a validity that
+/// ends before it starts or past [`LAST_X509_SECOND`].
+fn check(spec: &Spec) -> Result<(), Error> {
+    let refused = |why: &str| Err(Error::Encoding(why.to_owned()));
+    if spec.serial.is_empty() || spec.serial.len() > MAX_SERIAL_LEN {
+        return refused("a serial number of 1 to 20 bytes");
+    }
+    if spec.serial.iter().all(|byte| *byte == 0) {
+        return refused("a serial number that is not zero");
+    }
+    if spec.serial[0] & SIGN_BIT != 0 {
+        return refused("a positive serial number");
+    }
+    if spec.not_after < spec.not_before {
+        return refused("a validity that ends after it starts");
+    }
+    if spec.not_after > LAST_X509_SECOND {
+        return refused("a validity that ends by the year 9999");
+    }
+    Ok(())
+}
+
+/// rcgen's parameters for `spec`, once [`check`]ed.
 fn params(spec: &Spec) -> Result<CertificateParams, Error> {
+    check(spec)?;
     let epoch = rcgen::date_time_ymd(EPOCH_YEAR, 1, 1);
     let mut params = CertificateParams::default();
     params.not_before = epoch + Duration::from_secs(spec.not_before);
@@ -224,7 +264,16 @@ fn encoding(error: impl fmt::Display) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{AltName, Name, Profile, SigningKey, Spec, self_signed, signed_by};
+    use rsa::pkcs1::EncodeRsaPublicKey as _;
+    use rsa::pkcs8::DecodePrivateKey as _;
+    use x509_cert::Certificate;
+    use x509_cert::der::{Decode as _, Encode as _};
+
+    use super::{
+        AltName, LAST_X509_SECOND, MAX_SERIAL_LEN, Name, Profile, SigningKey, Spec, self_signed,
+        signed_by,
+    };
+    use crate::Error;
     use crate::keys::KeyPair;
 
     /// Bits of the test keys.
@@ -281,6 +330,98 @@ mod tests {
         let leaf = spec("server.local", Profile::TlsLeaf(Vec::new()));
         let der = signed_by(&leaf, &leaf_key, &authority, &ca_key).expect("signed");
         assert_eq!(der[0], 0x30);
+    }
+
+    #[test]
+    fn a_leaf_carries_its_own_key_and_the_authority_signs_it() {
+        let (ca_pair, ca_key) = key();
+        let (leaf_pair, leaf_key) = key();
+        let authority = spec("server.local CA", Profile::Authority);
+        let leaf = spec("server.local", Profile::TlsLeaf(Vec::new()));
+        let der = signed_by(&leaf, &leaf_key, &authority, &ca_key).expect("signed");
+        let certificate = Certificate::from_der(&der).expect("X.509");
+        let tbs = certificate.tbs_certificate();
+        // The leaf's public key is the leaf key's, not the authority's.
+        let leaf_public = rsa::RsaPrivateKey::from_pkcs8_der(leaf_pair.pkcs8_der())
+            .expect("PKCS#8")
+            .to_public_key()
+            .to_pkcs1_der()
+            .expect("PKCS#1");
+        assert_eq!(
+            tbs.subject_public_key_info().subject_public_key.raw_bytes(),
+            leaf_public.as_bytes()
+        );
+        // Its signature is the authority key's.
+        let ca_public = rsa::RsaPrivateKey::from_pkcs8_der(ca_pair.pkcs8_der())
+            .expect("PKCS#8")
+            .to_public_key();
+        let verifying = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(ca_public);
+        let signature = rsa::pkcs1v15::Signature::try_from(certificate.signature().raw_bytes())
+            .expect("a signature");
+        rsa::signature::Verifier::verify(&verifying, &tbs.to_der().expect("TBS"), &signature)
+            .expect("signed by the authority");
+        let leaf_verifying = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(
+            rsa::RsaPrivateKey::from_pkcs8_der(leaf_pair.pkcs8_der())
+                .expect("PKCS#8")
+                .to_public_key(),
+        );
+        assert!(
+            rsa::signature::Verifier::verify(
+                &leaf_verifying,
+                &tbs.to_der().expect("TBS"),
+                &signature
+            )
+            .is_err(),
+            "not by the leaf's own key"
+        );
+    }
+
+    #[test]
+    fn only_an_authority_signs_a_leaf() {
+        let (_, key) = key();
+        let leaf = spec("server.local", Profile::TlsLeaf(Vec::new()));
+        assert!(matches!(
+            signed_by(&leaf, &key, &leaf, &key),
+            Err(Error::Encoding(_))
+        ));
+    }
+
+    #[test]
+    fn a_serial_or_validity_rfc_5280_refuses_is_refused_before_signing() {
+        let (_, key) = key();
+        let refused = |change: fn(&mut Spec)| {
+            let mut leaf = spec("server.local", Profile::TlsLeaf(Vec::new()));
+            change(&mut leaf);
+            matches!(self_signed(&leaf, &key), Err(Error::Encoding(_)))
+        };
+        assert!(refused(|spec| spec.serial.clear()), "empty");
+        assert!(refused(|spec| spec.serial = vec![0; 4]), "zero");
+        assert!(refused(|spec| spec.serial = vec![0x80, 1]), "negative");
+        assert!(
+            refused(|spec| spec.serial = vec![1; MAX_SERIAL_LEN + 1]),
+            "past 20 bytes"
+        );
+        assert!(
+            refused(|spec| spec.not_after = spec.not_before - 1),
+            "ends before it starts"
+        );
+        assert!(
+            refused(|spec| spec.not_after = LAST_X509_SECOND + 1),
+            "past 9999"
+        );
+        assert!(refused(|spec| spec.not_after = u64::MAX), "no overflow");
+        assert!(
+            !refused(|spec| spec.serial = vec![1; MAX_SERIAL_LEN]),
+            "20 bytes"
+        );
+        assert!(
+            !refused(|spec| spec.not_after = LAST_X509_SECOND),
+            "the last second"
+        );
+        assert!(
+            !refused(|spec| spec.not_after = spec.not_before),
+            "one second"
+        );
     }
 
     #[test]
