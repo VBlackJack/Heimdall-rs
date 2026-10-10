@@ -226,6 +226,11 @@ pub enum Notice {
     DetachSplitRefused,
     /// An image of the session shown was copied to the clipboard, as the C# says it.
     ScreenshotCopied,
+    /// These keys of the session bar's menu were sent to the remote desktop, as the C#
+    /// toast says it.
+    KeysSent(crate::desktop::SpecialKeys),
+    /// The keys of the session bar's menu could not be sent.
+    KeysNotSent,
     /// No image of the session shown could be copied.
     ScreenshotFailed,
     /// This folder was created.

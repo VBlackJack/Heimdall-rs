@@ -217,6 +217,7 @@ async fn sent_in(options: RdpOptions, time_zone: Option<TimeZone>) -> Sent {
         kerberos: false,
         time_zone,
         desktop_scale: 150,
+        progress: None,
     };
     let (client, server) = tokio::io::duplex(1 << 16);
     let server = tokio::spawn(serve(server));

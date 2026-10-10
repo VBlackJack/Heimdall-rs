@@ -77,7 +77,7 @@ fn rdp_reason(tab: Option<&Tab>) -> &'static str {
         return RDP_UNKNOWN;
     };
     let ending = match (&tab.end_reason, &tab.phase) {
-        (Some(ending), _) | (None, Phase::Failed(UiError::RdpEnded { ending })) => ending,
+        (Some(ending), _) | (None, Phase::Failed(UiError::RdpEnded { ending, .. })) => ending,
         (None, Phase::Failed(UiError::ConnectionLost | UiError::Network { .. })) => {
             return "RDP_NETWORK_ERROR";
         }

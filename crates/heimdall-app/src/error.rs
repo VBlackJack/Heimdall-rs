@@ -123,11 +123,15 @@ pub enum UiError {
     RdpRefused {
         /// Why.
         refusal: heimdall_rdp::Refusal,
+        /// The NTSTATUS it refused the logon with, when it gave one.
+        status: Option<u32>,
     },
     /// The RDP server ended the connection before its session started, and why.
     RdpEnded {
         /// Why.
         ending: heimdall_rdp::Ending,
+        /// The code of its Set Error Info PDU, when known.
+        code: Option<u32>,
     },
     /// An RDP session or connection failed in the protocol.
     RdpProtocol {
@@ -166,6 +170,8 @@ pub enum UiError {
     SecurityRefused {
         /// What the server selected, in the library's words.
         detail: String,
+        /// The failure code of its RDP Negotiation Failure, when it sent one.
+        code: Option<u32>,
     },
     /// The server's key is not the recorded one: possible interception.
     HostKeyChanged {
@@ -318,8 +324,10 @@ pub enum NetworkFailure {
     Reset,
     /// Nothing answered in time.
     TimedOut,
-    /// No route to the host, or its name could not be resolved.
+    /// No route to the host.
     Unreachable,
+    /// The host's name could not be resolved.
+    NotResolved,
     /// Anything else: its message says.
     Other,
 }
@@ -347,7 +355,7 @@ impl NetworkFailure {
                 .is_some_and(|code| cfg!(windows) && WINDOWS_NAME_NOT_FOUND.contains(&code))
                 || error.to_string().starts_with(LOOKUP_FAILED) =>
             {
-                Self::Unreachable
+                Self::NotResolved
             }
             _ => Self::Other,
         }
@@ -523,7 +531,7 @@ mod tests {
             NetworkFailure::of(&io::Error::other(
                 "failed to lookup address information: Name or service not known"
             )),
-            NetworkFailure::Unreachable,
+            NetworkFailure::NotResolved,
             "a name that did not resolve"
         );
         assert_eq!(
@@ -532,12 +540,12 @@ mod tests {
         );
         let windows_no_host = NetworkFailure::of(&io::Error::from_raw_os_error(11001));
         if cfg!(windows) {
-            assert_eq!(windows_no_host, NetworkFailure::Unreachable);
+            assert_eq!(windows_no_host, NetworkFailure::NotResolved);
         }
     }
 
     #[test]
-    fn a_closed_port_is_refused_and_an_unknown_name_unreachable() {
+    fn a_closed_port_is_refused_and_an_unknown_name_not_resolved() {
         let refused = TcpStream::connect((Ipv4Addr::LOCALHOST, CLOSED_PORT)).expect_err("closed");
         assert!(matches!(
             UiError::network(&refused),
@@ -550,7 +558,7 @@ mod tests {
         let unknown = TcpStream::connect(("heimdall-test.invalid", 22)).expect_err("no such name");
         assert_eq!(
             NetworkFailure::of(&unknown),
-            NetworkFailure::Unreachable,
+            NetworkFailure::NotResolved,
             "{unknown}"
         );
     }
