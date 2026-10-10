@@ -94,7 +94,10 @@ impl VaultError {
     fn from_crypto(error: Error) -> Self {
         match error {
             Error::Randomness(reason) => Self::Randomness(reason),
-            Error::KeyLength { .. } | Error::Unauthentic | Error::KdfParameters => Self::Unreadable,
+            Error::KeyLength { .. }
+            | Error::Unauthentic
+            | Error::KdfParameters
+            | Error::Encoding(_) => Self::Unreadable,
         }
     }
 }

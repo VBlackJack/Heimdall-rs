@@ -18,13 +18,18 @@ argon2.workspace = true
 # des: legacy::vnc_des only; zeroize wipes its key schedule on drop (cipher/zeroize is
 # already in the tree through aes-gcm).
 des = { workspace = true, features = ["zeroize"] }
-getrandom.workspace = true
+# sys_rng: the rand_core traits the RSA generation's watched generator implements.
+getrandom = { workspace = true, features = ["sys_rng"] }
 hkdf.workspace = true
 hmac.workspace = true
 md-5.workspace = true
+# pkcs8, rsa, ssh-key: keys::KeyPair, its PKCS#8 and PEM, PBES2, and its OpenSSH form.
+pkcs8.workspace = true
+rsa.workspace = true
 sha1.workspace = true
 sha2.workspace = true
 sha3.workspace = true
+ssh-key.workspace = true
 subtle.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

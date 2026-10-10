@@ -38,4 +38,8 @@ pub enum Error {
     /// Key derivation parameters the algorithm refuses.
     #[error("the key derivation parameters are refused")]
     KdfParameters,
+    /// A key, certificate or container that could not be made, encoded or read, as the
+    /// library underneath said it.
+    #[error("{0}")]
+    Encoding(String),
 }

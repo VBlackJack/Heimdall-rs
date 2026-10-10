@@ -42,7 +42,6 @@ pub mod pkcs8_pem;
 pub mod posix_mode;
 pub mod private_file;
 pub mod regex_engine;
-mod rsa_keys;
 pub mod secure_random;
 pub mod ssh_config;
 pub mod ssh_key_generator;

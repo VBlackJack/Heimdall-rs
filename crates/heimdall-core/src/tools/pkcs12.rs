@@ -106,7 +106,7 @@ pub fn build(
         data_content_info(&sequence(&[key_bag])),
     ]);
     let mut mac_salt = [0_u8; SALT_BYTES];
-    getrandom::fill(&mut mac_salt).map_err(|_| PfxError::Randomness)?;
+    sealvault::random::fill(&mut mac_salt).map_err(|_| PfxError::Randomness)?;
     let mac = auth_safe_mac(&auth_safe, password, &mac_salt, PFX_ITERATIONS);
     let mac_data = sequence(&[
         sequence(&[
@@ -131,8 +131,8 @@ fn shrouded_key_bag(
 ) -> Result<Vec<u8>, PfxError> {
     let mut salt = Zeroizing::new([0_u8; SALT_BYTES]);
     let mut iv = [0_u8; SALT_BYTES];
-    getrandom::fill(salt.as_mut()).map_err(|_| PfxError::Randomness)?;
-    getrandom::fill(&mut iv).map_err(|_| PfxError::Randomness)?;
+    sealvault::random::fill(salt.as_mut()).map_err(|_| PfxError::Randomness)?;
+    sealvault::random::fill(&mut iv).map_err(|_| PfxError::Randomness)?;
     let encoding = |error: &dyn std::fmt::Display| PfxError::Encoding(error.to_string());
     let parameters =
         pbes2::Parameters::generate_pbkdf2_sha256_aes256cbc(PFX_ITERATIONS, &*salt, iv)

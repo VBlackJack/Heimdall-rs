@@ -28,9 +28,7 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
-use rsa::pkcs8::EncodePrivateKey as _;
-use ssh_key::public::{Ed25519PublicKey, KeyData, RsaPublicKey};
-use ssh_key::{HashAlg, PublicKey};
+use sealvault::keys::KeyPair;
 use zeroize::Zeroizing;
 
 use super::pkcs8_pem::{self, PemError};
@@ -44,15 +42,6 @@ pub const RSA_2048_BITS: usize = 2048;
 
 /// Bits of an RSA key of the second size, as the C# `Rsa4096KeySize`.
 pub const RSA_4096_BITS: usize = 4096;
-
-/// Bytes of an Ed25519 seed.
-const ED25519_SEED_BYTES: usize = 32;
-
-/// The PKCS#8 encoding of an Ed25519 key before its 32-byte seed, as RFC 8410 writes it:
-/// version 0, the algorithm 1.3.101.112, the seed in an octet string inside the octet string.
-const ED25519_PKCS8_PREFIX: [u8; 16] = [
-    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
-];
 
 /// A carriage return, which a key brought from elsewhere may end its lines with.
 const CARRIAGE_RETURN: char = '\r';
@@ -140,6 +129,15 @@ pub enum SshKeyError {
     Encoding(String),
 }
 
+impl From<sealvault::Error> for SshKeyError {
+    fn from(error: sealvault::Error) -> Self {
+        match error {
+            sealvault::Error::Randomness(_) => Self::Randomness,
+            other => Self::Encoding(other.to_string()),
+        }
+    }
+}
+
 impl From<PemError> for SshKeyError {
     fn from(error: PemError) -> Self {
         match error {
@@ -183,68 +181,23 @@ pub fn generate(
     comment: &str,
     passphrase: &str,
 ) -> Result<GeneratedSshKey, SshKeyError> {
-    generate_with_rounds(algorithm, comment, passphrase, PBE_ITERATION_COUNT)
-}
-
-/// [`generate`] with `rounds` of PBKDF2, for a test that does not wait for 600,000.
-///
-/// # Errors
-///
-/// As [`generate`].
-pub fn generate_with_rounds(
-    algorithm: SshKeyAlgorithm,
-    comment: &str,
-    passphrase: &str,
-    rounds: u32,
-) -> Result<GeneratedSshKey, SshKeyError> {
-    let (key_data, pkcs8_der) = match algorithm {
-        SshKeyAlgorithm::Rsa2048 => rsa_key(RSA_2048_BITS)?,
-        SshKeyAlgorithm::Rsa4096 => rsa_key(RSA_4096_BITS)?,
-        SshKeyAlgorithm::Ed25519 => ed25519_key()?,
+    let pair = match algorithm {
+        SshKeyAlgorithm::Rsa2048 => KeyPair::rsa(RSA_2048_BITS)?,
+        SshKeyAlgorithm::Rsa4096 => KeyPair::rsa(RSA_4096_BITS)?,
+        SshKeyAlgorithm::Ed25519 => KeyPair::ed25519()?,
     };
-    let public = PublicKey::new(key_data, comment.trim().to_owned());
-    let public_key = public
-        .to_openssh()
-        .map_err(|error| SshKeyError::Encoding(error.to_string()))?;
+    let public_key = pair.openssh_public(comment.trim())?;
     let private_key_pem = if passphrase.is_empty() {
-        pkcs8_pem::private_key_pem(&pkcs8_der)?
+        pkcs8_pem::private_key_pem(pair.pkcs8_der())?
     } else {
-        pkcs8_pem::encrypted_private_key_pem(&pkcs8_der, passphrase, rounds)?
+        pkcs8_pem::encrypted_private_key_pem(pair.pkcs8_der(), passphrase, PBE_ITERATION_COUNT)?
     };
     Ok(GeneratedSshKey {
         public_key,
         private_key_pem,
-        fingerprint: public.fingerprint(HashAlg::Sha256).to_string(),
+        fingerprint: pair.openssh_fingerprint(),
         algorithm,
     })
-}
-
-/// An RSA key of `bits`: its public half for OpenSSH, its PKCS#8 DER.
-fn rsa_key(bits: usize) -> Result<(KeyData, Zeroizing<Vec<u8>>), SshKeyError> {
-    let key = super::rsa_keys::generate(bits).map_err(SshKeyError::Encoding)?;
-    let public = RsaPublicKey::try_from(&key.to_public_key())
-        .map_err(|error| SshKeyError::Encoding(error.to_string()))?;
-    let der = key
-        .to_pkcs8_der()
-        .map_err(|error| SshKeyError::Encoding(error.to_string()))?;
-    Ok((
-        KeyData::Rsa(public),
-        Zeroizing::new(der.as_bytes().to_vec()),
-    ))
-}
-
-/// An Ed25519 key drawn from the system's generator: its public half, its PKCS#8 DER.
-fn ed25519_key() -> Result<(KeyData, Zeroizing<Vec<u8>>), SshKeyError> {
-    let mut seed = Zeroizing::new([0_u8; ED25519_SEED_BYTES]);
-    getrandom::fill(seed.as_mut()).map_err(|_| SshKeyError::Randomness)?;
-    let pair = ssh_key::private::Ed25519Keypair::from_seed(&seed);
-    let public: Ed25519PublicKey = pair.public;
-    let mut der = Zeroizing::new(Vec::with_capacity(
-        ED25519_PKCS8_PREFIX.len() + ED25519_SEED_BYTES,
-    ));
-    der.extend_from_slice(&ED25519_PKCS8_PREFIX);
-    der.extend_from_slice(seed.as_ref());
-    Ok((KeyData::Ed25519(public), der))
 }
 
 /// `text` with its line breaks made line feeds, as the C# `NormalizeLineEndings`.
@@ -290,8 +243,18 @@ mod tests {
     use pkcs8::der::Decode as _;
     use rsa::pkcs8::DecodePrivateKey as _;
     use rsa::traits::PublicKeyParts as _;
+    use ssh_key::public::{KeyData, RsaPublicKey};
+    use ssh_key::{HashAlg, PublicKey};
 
     use super::*;
+
+    /// The PKCS#8 encoding of an Ed25519 key before its 32-byte seed, as RFC 8410 writes it:
+    /// version 0, the algorithm 1.3.101.112, the seed in an octet string inside the octet
+    /// string.
+    const ED25519_PKCS8_PREFIX: [u8; 16] = [
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04,
+        0x20,
+    ];
 
     /// The private key's DER, read back from its PEM, decrypted with `passphrase` if any.
     fn private_der(pem: &str, passphrase: Option<&str>) -> Vec<u8> {
@@ -378,8 +341,7 @@ mod tests {
 
     #[test]
     fn a_passphrase_encrypts_the_private_key_with_pbes2_aes_256_cbc() {
-        let key = generate_with_rounds(SshKeyAlgorithm::Ed25519, "c", "correct horse", 1000)
-            .expect("made");
+        let key = generate(SshKeyAlgorithm::Ed25519, "c", "correct horse").expect("made");
         assert!(
             key.private_key_pem
                 .starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----\n")

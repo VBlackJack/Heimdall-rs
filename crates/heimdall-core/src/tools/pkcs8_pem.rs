@@ -18,10 +18,7 @@
 //! `ExportEncryptedPkcs8PrivateKeyPem` with PBES2 (PBKDF2-HMAC-SHA256 and AES-256-CBC), and
 //! `ExportCertificatePem`, lines of 64 characters ended by a line feed.
 
-use pkcs8::der::pem::{self, LineEnding};
-use pkcs8::der::{Decode as _, EncodePem as _};
-use pkcs8::pkcs5::pbes2;
-use pkcs8::{EncryptedPrivateKeyInfoRef, PrivateKeyInfoRef};
+use sealvault::keys;
 use zeroize::Zeroizing;
 
 /// The label of a private key in PKCS#8.
@@ -29,12 +26,6 @@ const PRIVATE_KEY_LABEL: &str = "PRIVATE KEY";
 
 /// The label of a certificate.
 const CERTIFICATE_LABEL: &str = "CERTIFICATE";
-
-/// Bytes of salt for PBKDF2, as .NET draws them.
-const SALT_BYTES: usize = 16;
-
-/// Bytes of an AES-CBC initialisation vector.
-const IV_BYTES: usize = 16;
 
 /// Why a key could not be written.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -47,15 +38,22 @@ pub enum PemError {
     Encoding(String),
 }
 
+impl From<sealvault::Error> for PemError {
+    fn from(error: sealvault::Error) -> Self {
+        match error {
+            sealvault::Error::Randomness(_) => Self::Randomness,
+            other => Self::Encoding(other.to_string()),
+        }
+    }
+}
+
 /// The PKCS#8 `der` of a private key in PEM, as .NET's `ExportPkcs8PrivateKeyPem`.
 ///
 /// # Errors
 ///
 /// [`PemError::Encoding`] when it cannot be written.
 pub fn private_key_pem(der: &[u8]) -> Result<Zeroizing<String>, PemError> {
-    pem::encode_string(PRIVATE_KEY_LABEL, LineEnding::LF, der)
-        .map(Zeroizing::new)
-        .map_err(|error| PemError::Encoding(error.to_string()))
+    Ok(Zeroizing::new(keys::pem(PRIVATE_KEY_LABEL, der)?))
 }
 
 /// The PKCS#8 `der` of a private key encrypted with `passphrase`, in PEM, as .NET's
@@ -71,26 +69,11 @@ pub fn encrypted_private_key_pem(
     passphrase: &str,
     iterations: u32,
 ) -> Result<Zeroizing<String>, PemError> {
-    // The key is checked to be PKCS#8 before it is encrypted.
-    PrivateKeyInfoRef::from_der(der).map_err(|error| PemError::Encoding(error.to_string()))?;
-    let mut salt = Zeroizing::new([0_u8; SALT_BYTES]);
-    let mut iv = [0_u8; IV_BYTES];
-    getrandom::fill(salt.as_mut()).map_err(|_| PemError::Randomness)?;
-    getrandom::fill(&mut iv).map_err(|_| PemError::Randomness)?;
-    let parameters = pbes2::Parameters::generate_pbkdf2_sha256_aes256cbc(iterations, &*salt, iv)
-        .map_err(|error| PemError::Encoding(error.to_string()))?;
-    let encrypted = parameters
-        .encrypt(passphrase.as_bytes(), der)
-        .map_err(|error| PemError::Encoding(error.to_string()))?;
-    let data = pkcs8::der::asn1::OctetStringRef::new(&encrypted)
-        .map_err(|error| PemError::Encoding(error.to_string()))?;
-    EncryptedPrivateKeyInfoRef {
-        encryption_algorithm: parameters.into(),
-        encrypted_data: data,
-    }
-    .to_pem(LineEnding::LF)
-    .map(Zeroizing::new)
-    .map_err(|error| PemError::Encoding(error.to_string()))
+    Ok(keys::encrypted_pkcs8_pem(
+        der,
+        passphrase.as_bytes(),
+        iterations,
+    )?)
 }
 
 /// The DER of a certificate in PEM, as .NET's `ExportCertificatePem`.
@@ -99,12 +82,16 @@ pub fn encrypted_private_key_pem(
 ///
 /// [`PemError::Encoding`] when it cannot be written.
 pub fn certificate_pem(der: &[u8]) -> Result<String, PemError> {
-    pem::encode_string(CERTIFICATE_LABEL, LineEnding::LF, der)
-        .map_err(|error| PemError::Encoding(error.to_string()))
+    Ok(keys::pem(CERTIFICATE_LABEL, der)?)
 }
 
 #[cfg(test)]
 mod tests {
+    use pkcs8::EncryptedPrivateKeyInfoRef;
+    use pkcs8::der::Decode as _;
+    use pkcs8::der::pem;
+    use pkcs8::pkcs5::pbes2;
+
     use super::*;
 
     /// An Ed25519 key of RFC 8410, section 10.3.
@@ -128,14 +115,15 @@ mod tests {
 
     #[test]
     fn an_encrypted_key_reads_back_with_its_passphrase_only() {
-        let pem = encrypted_private_key_pem(&ED25519_PKCS8, "s3cret", 1000).expect("written");
+        let rounds = sealvault::keys::PBKDF2_MIN_ITERATIONS;
+        let pem = encrypted_private_key_pem(&ED25519_PKCS8, "s3cret", rounds).expect("written");
         assert!(pem.starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----\n"));
         let (label, der) = pem::decode_vec(pem.as_bytes()).expect("pem");
         assert_eq!(label, "ENCRYPTED PRIVATE KEY");
         let info = EncryptedPrivateKeyInfoRef::from_der(&der).expect("der");
         let scheme = info.encryption_algorithm.pbes2().expect("PBES2");
         let kdf = scheme.kdf.pbkdf2().expect("PBKDF2");
-        assert_eq!(kdf.iteration_count, 1000);
+        assert_eq!(kdf.iteration_count, rounds);
         assert!(matches!(
             scheme.encryption,
             pbes2::EncryptionScheme::Aes256Cbc { .. }

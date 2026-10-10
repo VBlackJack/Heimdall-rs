@@ -24,6 +24,7 @@
 //! - [`mac`]: HMAC, computed or verified in constant time.
 //! - [`aead`]: AES-256-GCM, each sealing spending a fresh random nonce.
 //! - [`kdf`]: derived keys, by Argon2id from passwords and HKDF-SHA256 from random secrets.
+//! - [`keys`]: RSA and Ed25519 key pairs, PKCS#8 in PEM, plain or under PBES2.
 //! - [`random`]: the operating system's generator.
 //! - [`compare`]: equality of secrets in constant time.
 //! - [`secret`]: the owned secrets the others hand out, wiped when dropped.
@@ -39,6 +40,7 @@ pub mod aead;
 pub mod compare;
 pub mod hash;
 pub mod kdf;
+pub mod keys;
 pub mod legacy;
 pub mod mac;
 pub mod random;
