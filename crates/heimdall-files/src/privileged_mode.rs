@@ -37,7 +37,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::privileged::{Sudo, SudoScript, hex, prelude};
-use crate::server_copy::{Unquotable, quote};
+use crate::server_copy::{TOKEN_LEN, Unquotable, quote};
 use crate::{ItemKind, RemoteItem, Special};
 
 /// Exit status: the entry is no longer the one confirmed, or is gone; it was left as it is.
@@ -197,7 +197,7 @@ fn as_root(
 pub fn list_script(
     folder: &[u8],
     password: Option<&[u8]>,
-    token: [u8; 16],
+    token: [u8; TOKEN_LEN],
     sudo: Sudo<'_>,
 ) -> Result<SudoScript, Unquotable> {
     let token = hex(&token);
@@ -222,7 +222,7 @@ pub fn remove_script(
     target: &[u8],
     (kind, inode): (ItemKind, u64),
     password: Option<&[u8]>,
-    token: [u8; 16],
+    token: [u8; TOKEN_LEN],
     sudo: Sudo<'_>,
 ) -> Result<SudoScript, Unquotable> {
     let token = hex(&token);
@@ -252,7 +252,7 @@ pub fn chmod_script(
     target: &[u8],
     mode: u32,
     password: Option<&[u8]>,
-    token: [u8; 16],
+    token: [u8; TOKEN_LEN],
     sudo: Sudo<'_>,
 ) -> Result<SudoScript, Unquotable> {
     let token = hex(&token);

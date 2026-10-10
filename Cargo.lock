@@ -2425,7 +2425,7 @@ dependencies = [
  "heimdall-tls",
  "libunftp",
  "rcgen",
- "ring",
+ "sealvault",
  "suppaftp",
  "tempfile",
  "thiserror 2.0.21",
