@@ -135,12 +135,13 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
         name,
         framebuffer,
         input,
+        cursor,
         tls,
     } = event
     {
         let view_only = matches!(&tab.profile, TabProfile::Vnc(profile) if profile.view_only);
         tab.phase = Phase::Connected;
-        let mut pane = DesktopPane::vnc(framebuffer, input, view_only);
+        let mut pane = DesktopPane::vnc(framebuffer, (input, cursor), view_only);
         // Shown on its bar, as the C# session title: the server's words, made safe.
         let name = crate::text::server_text(name.trim());
         pane.desktop_name = (!name.is_empty()).then_some(name);

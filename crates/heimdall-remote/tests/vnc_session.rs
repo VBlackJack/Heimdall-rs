@@ -45,8 +45,8 @@ const RESPONSE: [u8; 16] = [
 ];
 
 /// What the client sends between `ServerInit` and the first update: `SetPixelFormat` (20),
-/// `SetEncodings` of 11 (4 + 44) and a `FramebufferUpdateRequest` (10).
-const OPENING_REQUESTS: usize = 20 + 48 + 10;
+/// `SetEncodings` of 16 (4 + 64) and a `FramebufferUpdateRequest` (10).
+const OPENING_REQUESTS: usize = 20 + 4 + 16 * 4 + 10;
 /// An incremental `FramebufferUpdateRequest`.
 const UPDATE_REQUEST: usize = 10;
 
@@ -72,6 +72,16 @@ async fn read_exactly(stream: &mut TcpStream, count: usize) -> Vec<u8> {
         .expect("in time")
         .expect("read");
     bytes
+}
+
+/// The encodings asked with these quality `levels`, in noVNC's order: `CopyRect`, Tight,
+/// `TightPNG`, ZRLE, Hextile, RRE, Raw; the levels; then the pseudo-encodings, QEMU's extended
+/// key event and the Cursor among them.
+fn asked(levels: &[i32]) -> Vec<i32> {
+    let mut encodings = vec![1, 7, -260, 16, 5, 2, 0];
+    encodings.extend_from_slice(levels);
+    encodings.extend_from_slice(&[-223, -224, -258, -308, -307, EXTENDED_CLIPBOARD, -239]);
+    encodings
 }
 
 /// `SetEncodings` of `encodings`.
@@ -172,9 +182,9 @@ async fn tight_is_asked_first_and_a_new_quality_asks_its_levels_then_the_whole_d
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.expect("accepted");
         let opening = serve_handshake(&mut stream).await;
-        // Best: 10 encodings, then the request; Balanced: 11, then the request.
-        let best = read_exactly(&mut stream, 4 + 40 + 10).await;
-        let balanced = read_exactly(&mut stream, 4 + 44 + 10).await;
+        // Best: 15 encodings, then the request; Balanced: 16, then the request.
+        let best = read_exactly(&mut stream, 4 + 15 * 4 + 10).await;
+        let balanced = read_exactly(&mut stream, 4 + 16 * 4 + 10).await;
         (opening, best, balanced)
     });
     let cancel = CancellationToken::new();
@@ -194,55 +204,81 @@ async fn tight_is_asked_first_and_a_new_quality_asks_its_levels_then_the_whole_d
         .set_quality(Quality::Balanced)
         .expect("balanced");
     let (opening, best, balanced) = server.await.expect("server");
-    // Tight, ZRLE, CopyRect, Raw, the pseudo-encodings, compression 6 and JPEG quality 6:
-    // the C# default "Performance".
+    // JPEG quality 6 and compression 6: the C# default "Performance".
     assert_eq!(
-        opening[20..68],
-        set_encodings(&[
-            7,
-            16,
-            1,
-            0,
-            -223,
-            -224,
-            -308,
-            -307,
-            EXTENDED_CLIPBOARD,
-            -250,
-            -26
-        ])
+        opening[20..OPENING_REQUESTS - 10],
+        set_encodings(&asked(&[-26, -250]))
     );
     // Best: compression 0 and no JPEG quality level, so a Tight server sends no JPEG.
-    let mut expected = set_encodings(&[
-        7,
-        16,
-        1,
-        0,
-        -223,
-        -224,
-        -308,
-        -307,
-        EXTENDED_CLIPBOARD,
-        -256,
-    ]);
+    let mut expected = set_encodings(&asked(&[-256]));
     expected.extend_from_slice(&FULL_UPDATE_REQUEST);
     assert_eq!(best, expected);
-    // Balanced: compression 3, JPEG quality 7.
-    let mut expected = set_encodings(&[
-        7,
-        16,
-        1,
-        0,
-        -223,
-        -224,
-        -308,
-        -307,
-        EXTENDED_CLIPBOARD,
-        -253,
-        -25,
-    ]);
+    // Balanced: JPEG quality 7, compression 3.
+    let mut expected = set_encodings(&asked(&[-25, -253]));
     expected.extend_from_slice(&FULL_UPDATE_REQUEST);
     assert_eq!(balanced, expected);
+}
+
+#[tokio::test]
+async fn the_server_s_cursor_is_shared_and_keys_go_with_scancodes_once_it_takes_them() {
+    let (listener, port) = listener().await;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_handshake(&mut stream).await;
+        // A key before the server says it takes scancodes: a plain key event.
+        let plain = read_exactly(&mut stream, 8).await;
+        // One update: QEMU's extended key events, then a 2 by 1 cursor pointing at 1,0, its
+        // left pixel red and shown, its right one masked.
+        let mut update = vec![0, 0, 0, 2];
+        update.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        update.extend_from_slice(&(-258_i32).to_be_bytes());
+        update.extend_from_slice(&[0, 1, 0, 0, 0, 2, 0, 1]);
+        update.extend_from_slice(&(-239_i32).to_be_bytes());
+        update.extend_from_slice(&[255, 0, 0, 0, 0, 0, 255, 0]);
+        update.push(0b1000_0000);
+        stream.write_all(&update).await.expect("update");
+        let request = read_exactly(&mut stream, UPDATE_REQUEST).await;
+        // The same key again: QEMU's message, keysym and keycode.
+        let extended = read_exactly(&mut stream, 12).await;
+        (plain, request, extended)
+    });
+    let cancel = CancellationToken::new();
+    let connection = connect(
+        &config(port, SecurityPolicy::default()),
+        given_password(Zeroizing::new("Secret12".to_owned())),
+        &cancel,
+    )
+    .await
+    .expect("connected");
+    let mut session = start(connection, cancel);
+    assert_eq!(session.cursor.read(|changes, _| changes), 0, "none yet");
+    // AltGr: ISO_Level3_Shift, XT 0xE038.
+    session
+        .input
+        .key_with_scancode(Some(0xfe03), Some(0xe038), true)
+        .expect("key");
+    assert_eq!(next_event(&mut session).await, VncEvent::CursorChanged);
+    let (changes, shape) = session
+        .cursor
+        .read(|changes, shape| (changes, shape.clone()));
+    assert_eq!(changes, 1);
+    assert_eq!(
+        (shape.width(), shape.height(), shape.hotspot()),
+        (2, 1, (1, 0))
+    );
+    assert_eq!(shape.rgba(), [255, 0, 0, 255, 0, 0, 255, 0]);
+    session
+        .input
+        .key_with_scancode(Some(0xfe03), Some(0xe038), true)
+        .expect("key");
+    let (plain, request, extended) = server.await.expect("server");
+    assert_eq!(plain, [4, 1, 0, 0, 0, 0, 0xfe, 0x03]);
+    assert_eq!(request, [3, 1, 0, 0, 0, 0, 0, 4, 0, 2]);
+    assert_eq!(
+        extended,
+        [255, 0, 0, 1, 0, 0, 0xfe, 0x03, 0, 0, 0, 0xb8],
+        "0xE038 sent as 0x38 with its top bit"
+    );
 }
 
 #[tokio::test]

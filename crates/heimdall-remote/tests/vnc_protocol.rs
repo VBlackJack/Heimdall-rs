@@ -71,27 +71,27 @@ fn server_init(width: u16, height: u16, name: &[u8]) -> Vec<u8> {
     bytes
 }
 
+/// The encodings asked with these quality `levels`, in noVNC's order (`rfb.js`
+/// `_sendEncodings`): `CopyRect`, Tight, `TightPNG` (-260), ZRLE, Hextile (5), RRE (2), Raw; the
+/// levels, JPEG quality first; then `DesktopSize`, `LastRect`, QEMU's extended key event
+/// (-258), the extended desktop size, the desktop name, the Extended Clipboard and the Cursor
+/// (-239).
+fn asked(levels: &[i32]) -> Vec<i32> {
+    let mut encodings = vec![1, 7, -260, 16, 5, 2, 0];
+    encodings.extend_from_slice(levels);
+    encodings.extend_from_slice(&[-223, -224, -258, -308, -307, EXTENDED_CLIPBOARD, -239]);
+    encodings
+}
+
 /// What the client sends once the session opens on a `width` by `height` desktop.
 fn opening_requests(width: u16, height: u16) -> Vec<u8> {
     let mut bytes = vec![
         // SetPixelFormat: 32 bits, depth 24, little-endian, true colour, red lowest.
         0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0,
     ];
-    // Tight first, ZRLE, CopyRect, Raw, the pseudo-encodings; then compression level 6
-    // (-256 + 6) and JPEG quality 6 (-32 + 6), noVNC's, the C# default "Performance".
-    bytes.extend(set_encodings(&[
-        7,
-        16,
-        1,
-        0,
-        -223,
-        -224,
-        -308,
-        -307,
-        EXTENDED_CLIPBOARD,
-        -250,
-        -26,
-    ]));
+    // JPEG quality 6 (-32 + 6) and compression level 6 (-256 + 6), noVNC's, the C# default
+    // "Performance".
+    bytes.extend(set_encodings(&asked(&[-26, -250])));
     bytes.extend_from_slice(&full_request(false, width, height));
     bytes
 }
@@ -479,38 +479,15 @@ fn a_quality_asks_its_levels_again_then_the_whole_desktop() {
     let mut rfb = opened(4, 2);
     // Best: compression 0 (-256) and no JPEG quality at all.
     rfb.set_quality(Quality::Best);
-    let mut expected = set_encodings(&[
-        7,
-        16,
-        1,
-        0,
-        -223,
-        -224,
-        -308,
-        -307,
-        EXTENDED_CLIPBOARD,
-        -256,
-    ]);
+    let mut expected = set_encodings(&asked(&[-256]));
     expected.extend(full_request(false, 4, 2));
     assert_eq!(rfb.take_output(), expected);
     // The quality asked already: nothing.
     rfb.set_quality(Quality::Best);
     assert!(rfb.take_output().is_empty());
-    // Low bandwidth: compression 9 (-247), JPEG quality 3 (-29).
+    // Low bandwidth: JPEG quality 3 (-29), compression 9 (-247).
     rfb.set_quality(Quality::LowBandwidth);
-    let mut expected = set_encodings(&[
-        7,
-        16,
-        1,
-        0,
-        -223,
-        -224,
-        -308,
-        -307,
-        EXTENDED_CLIPBOARD,
-        -247,
-        -29,
-    ]);
+    let mut expected = set_encodings(&asked(&[-29, -247]));
     expected.extend(full_request(false, 4, 2));
     assert_eq!(rfb.take_output(), expected);
     assert_eq!(rfb.quality(), Quality::LowBandwidth);
@@ -527,22 +504,10 @@ fn a_quality_chosen_before_the_session_opens_is_asked_first() {
     let _ = rfb.take_output();
     rfb.receive(&server_init(4, 2, b"desk")).expect("init");
     let output = rfb.take_output();
-    // Balanced: compression 3 (-253), JPEG quality 7 (-25), after the pixel format.
+    // Balanced: JPEG quality 7 (-25), compression 3 (-253), after the pixel format.
     assert_eq!(
         output[20..output.len() - 10],
-        set_encodings(&[
-            7,
-            16,
-            1,
-            0,
-            -223,
-            -224,
-            -308,
-            -307,
-            EXTENDED_CLIPBOARD,
-            -253,
-            -25
-        ])
+        set_encodings(&asked(&[-25, -253]))
     );
 }
 
@@ -577,7 +542,8 @@ fn tight_rectangles_are_drawn_whole_even_fed_byte_by_byte() {
     assert_eq!(pixel(rfb.screen(), 2, 0), [0, 0, 255, 255]);
     assert_eq!(rfb.take_output(), full_request(true, 3, 1));
 
-    // TightPNG was not asked for: refused, as a rectangle outside the desktop is.
+    // A PNG image in plain Tight, not TightPNG: refused, as a rectangle outside the desktop
+    // is.
     let mut rfb = opened(3, 1);
     let mut bytes = update(1);
     bytes.extend(rect_header(0, 0, 1, 1, 7));
@@ -1516,4 +1482,239 @@ fn a_malformed_extended_clipboard_is_a_protocol_error() {
             "{what}"
         );
     }
+}
+
+/// Feeds `bytes` one at a time, as a server cutting them anywhere would: the events of all.
+fn fed_byte_by_byte(rfb: &mut Rfb, bytes: &[u8]) -> Vec<RfbEvent> {
+    let mut events = Vec::new();
+    for byte in bytes {
+        events.extend(rfb.receive(std::slice::from_ref(byte)).expect("fed"));
+    }
+    events
+}
+
+#[test]
+fn hextile_rre_and_tight_png_rectangles_are_drawn_whole_even_fed_byte_by_byte() {
+    let mut rfb = opened(4, 3);
+    let mut bytes = update(3);
+    // Hextile, 4 by 2: one tile, a blue background, a red foreground subrectangle at 1,1 of
+    // 2 by 1.
+    bytes.extend(rect_header(0, 0, 4, 2, 5));
+    bytes.extend_from_slice(&[
+        0x02 | 0x04 | 0x08,
+        0,
+        0,
+        255,
+        0,
+        255,
+        0,
+        0,
+        0,
+        1,
+        0x11,
+        0x10,
+    ]);
+    // RRE, 2 by 1 at 2,2: a green background, a white subrectangle at 1,0.
+    bytes.extend(rect_header(2, 2, 2, 1, 2));
+    bytes.extend_from_slice(&[
+        0, 0, 0, 1, 0, 255, 0, 0, 255, 255, 255, 0, 0, 1, 0, 0, 0, 1, 0, 1,
+    ]);
+    // TightPNG, 1 by 1 at 0,2: a grey PNG.
+    let image = GREY_77_PNG;
+    bytes.extend(rect_header(0, 2, 1, 1, -260));
+    bytes.push(0xa0);
+    bytes.push(u8::try_from(image.len()).expect("a short image"));
+    bytes.extend_from_slice(&image);
+    let events = fed_byte_by_byte(&mut rfb, &bytes);
+    let rect = |x, y, width, height| Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    assert_eq!(
+        events,
+        [
+            RfbEvent::Updated(rect(0, 0, 4, 2)),
+            RfbEvent::Updated(rect(2, 2, 2, 1)),
+            RfbEvent::Updated(rect(0, 2, 1, 1)),
+        ]
+    );
+    let screen = rfb.screen();
+    assert_eq!(pixel(screen, 0, 0), [0, 0, 255, 255]);
+    assert_eq!(pixel(screen, 1, 1), [255, 0, 0, 255]);
+    assert_eq!(pixel(screen, 2, 1), [255, 0, 0, 255]);
+    assert_eq!(pixel(screen, 3, 1), [0, 0, 255, 255]);
+    assert_eq!(pixel(screen, 2, 2), [0, 255, 0, 255]);
+    assert_eq!(pixel(screen, 3, 2), [255, 255, 255, 255]);
+    assert_eq!(pixel(screen, 0, 2), [77, 77, 77, 255]);
+    assert_eq!(rfb.take_output(), full_request(true, 4, 3));
+}
+
+/// A 1 by 1 PNG of grey 77, 8 bits, unfiltered: written once with Python's zlib and
+/// `zlib.crc32`, IHDR, IDAT and IEND, as a server's encoder would.
+const GREY_77_PNG: [u8; 67] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00, 0x00, 0x3a, 0x7e, 0x9b,
+    0x55, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf0, 0x05, 0x00, 0x00,
+    0x4f, 0x00, 0x4e, 0x69, 0x8b, 0x01, 0x6c, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+    0x42, 0x60, 0x82,
+];
+
+/// A malformed rectangle: what is wrong, its encoding, its size and its bytes.
+type Malformed = (&'static str, i32, (u16, u16), Vec<u8>);
+
+#[test]
+fn malformed_hextile_rre_tight_png_and_cursor_rectangles_are_protocol_errors() {
+    let cases: [Malformed; 7] = [
+        ("Hextile flags past 30", 5, (2, 2), vec![31]),
+        (
+            "a Hextile subrectangle outside its tile",
+            5,
+            (2, 2),
+            vec![0x08, 1, 0x11, 0x10],
+        ),
+        (
+            "an RRE subrectangle outside its rectangle",
+            2,
+            (2, 2),
+            vec![0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 2, 0, 1],
+        ),
+        (
+            "more RRE subrectangles than pixels",
+            2,
+            (2, 2),
+            vec![0, 0, 0, 5, 0, 0, 0, 0],
+        ),
+        (
+            "basic compression in TightPNG",
+            -260,
+            (1, 1),
+            vec![0x00, 1, 2, 3],
+        ),
+        ("not a PNG", -260, (1, 1), vec![0xa0, 3, 1, 2, 3]),
+        ("a cursor past its bound", -239, (257, 1), Vec::new()),
+    ];
+    for (what, encoding, (width, height), body) in cases {
+        let mut rfb = opened(600, 4);
+        let mut bytes = update(1);
+        bytes.extend(rect_header(0, 0, width, height, encoding));
+        bytes.extend(body);
+        assert!(
+            matches!(rfb.receive(&bytes), Err(RfbError::Protocol(_))),
+            "{what}"
+        );
+    }
+    // A Hextile or RRE rectangle outside the desktop, refused before its bytes.
+    for encoding in [5, 2] {
+        let mut rfb = opened(2, 2);
+        let mut bytes = update(1);
+        bytes.extend(rect_header(1, 1, 2, 2, encoding));
+        assert!(matches!(rfb.receive(&bytes), Err(RfbError::Protocol(_))));
+    }
+}
+
+#[test]
+fn the_cursor_is_decoded_with_its_mask_and_an_empty_one_hides_it() {
+    let mut rfb = opened(4, 4);
+    let mut bytes = update(2);
+    // 3 by 2, pointing at 2,1: rows "red shown, green masked, blue shown" and "all masked".
+    bytes.extend(rect_header(2, 1, 3, 2, -239));
+    bytes.extend_from_slice(&[255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0]);
+    bytes.extend_from_slice(&[1; 12]);
+    bytes.extend_from_slice(&[0b1010_0000, 0]);
+    // An empty one: hidden.
+    bytes.extend(rect_header(0, 0, 0, 0, -239));
+    let events = fed_byte_by_byte(&mut rfb, &bytes);
+    let [RfbEvent::Cursor(shape), RfbEvent::Cursor(empty)] = events.as_slice() else {
+        panic!("{events:?}");
+    };
+    assert_eq!(
+        (shape.width(), shape.height(), shape.hotspot()),
+        (3, 2, (2, 1))
+    );
+    assert_eq!(
+        shape.rgba()[..12],
+        [255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255]
+    );
+    assert!(shape.rgba()[12..].chunks(4).all(|pixel| pixel[3] == 0));
+    assert!(!shape.is_invisible());
+    assert!(empty.is_invisible());
+    assert_eq!((empty.width(), empty.height()), (0, 0));
+    // The desktop is untouched, and the update ends as any other.
+    assert_eq!(pixel(rfb.screen(), 2, 1), [0, 0, 0, 255]);
+    assert_eq!(rfb.take_output(), full_request(true, 4, 4));
+}
+
+/// A key given, by keysym and scancode, down or up, and the bytes it sends.
+type KeySent = (Option<u32>, Option<u16>, bool, Vec<u8>);
+
+/// QEMU's extended key event: message 255, subtype 0, down, the keysym and the keycode.
+fn qemu_key(down: bool, keysym: u32, keycode: u32) -> Vec<u8> {
+    let mut bytes = vec![255, 0, 0, u8::from(down)];
+    bytes.extend_from_slice(&keysym.to_be_bytes());
+    bytes.extend_from_slice(&keycode.to_be_bytes());
+    bytes
+}
+
+#[test]
+fn keys_go_with_their_scancode_once_the_server_takes_them_and_plainly_before() {
+    let mut rfb = opened(2, 2);
+    // Before the server says it takes scancodes: the keysym alone, nothing without one.
+    rfb.key_with_scancode(Some(0x61), Some(0x1e), true);
+    rfb.key_with_scancode(None, Some(0x1e), true);
+    assert_eq!(rfb.take_output(), [4, 1, 0, 0, 0, 0, 0, 0x61]);
+    assert!(!rfb.takes_scancodes());
+
+    // The server echoes QEMU's pseudo-encoding as an empty rectangle.
+    let mut bytes = update(1);
+    bytes.extend(rect_header(0, 0, 0, 0, -258));
+    assert!(rfb.receive(&bytes).expect("update").is_empty());
+    assert!(rfb.takes_scancodes());
+    let _ = rfb.take_output();
+
+    let keys: [KeySent; 7] = [
+        // A letter: 'a' at KeyA.
+        (Some(0x61), Some(0x1e), true, qemu_key(true, 0x61, 0x1e)),
+        // AltGr: ISO_Level3_Shift at the extended 0x38, sent as 0xB8.
+        (
+            Some(0xfe03),
+            Some(0xe038),
+            true,
+            qemu_key(true, 0xfe03, 0xb8),
+        ),
+        // Numpad 7 with Num Lock: KP_7 at 0x47.
+        (
+            Some(0xffb7),
+            Some(0x47),
+            false,
+            qemu_key(false, 0xffb7, 0x47),
+        ),
+        // Numpad Enter: the extended 0x1C, sent as 0x9C.
+        (
+            Some(0xff8d),
+            Some(0xe01c),
+            true,
+            qemu_key(true, 0xff8d, 0x9c),
+        ),
+        // F1 and F17, the latter extended.
+        (Some(0xffbe), Some(0x3b), true, qemu_key(true, 0xffbe, 0x3b)),
+        (
+            Some(0xffce),
+            Some(0xe003),
+            true,
+            qemu_key(true, 0xffce, 0x83),
+        ),
+        // A key nothing types: the scancode alone, keysym 0.
+        (None, Some(0x56), true, qemu_key(true, 0, 0x56)),
+    ];
+    for (keysym, scancode, down, expected) in keys {
+        rfb.key_with_scancode(keysym, scancode, down);
+        assert_eq!(rfb.take_output(), expected, "{keysym:?} {scancode:?}");
+    }
+    // No scancode known: a plain key event still; neither: nothing.
+    rfb.key_with_scancode(Some(0x20ac), None, true);
+    assert_eq!(rfb.take_output(), [4, 1, 0, 0, 0, 0, 0x20, 0xac]);
+    rfb.key_with_scancode(None, None, true);
+    assert!(rfb.take_output().is_empty());
 }

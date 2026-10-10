@@ -34,6 +34,7 @@ use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+use super::cursor::RemoteCursor;
 use super::protocol::{Quality, Rfb, RfbError, RfbEvent, SecurityPolicy};
 use super::screen::{Rect, Screen};
 use super::security::Security;
@@ -339,15 +340,28 @@ pub enum VncEvent {
     CutText(String),
     /// The desktop's new name: untrusted text.
     Renamed(String),
+    /// The server's pointer shape changed: [`VncSession::cursor`] holds it.
+    CursorChanged,
     /// The session ended. Last event.
     Closed(CloseReason),
 }
 
 enum Command {
-    Key { keysym: u32, down: bool },
-    Pointer { buttons: u8, x: u16, y: u16 },
+    Key {
+        keysym: Option<u32>,
+        scancode: Option<u16>,
+        down: bool,
+    },
+    Pointer {
+        buttons: u8,
+        x: u16,
+        y: u16,
+    },
     CutText(String),
-    Resize { width: u16, height: u16 },
+    Resize {
+        width: u16,
+        height: u16,
+    },
     Quality(Quality),
     Close,
 }
@@ -379,7 +393,27 @@ impl VncInput {
     ///
     /// [`SessionEnded`].
     pub fn key(&self, keysym: u32, down: bool) -> Result<(), SessionEnded> {
-        self.send(Command::Key { keysym, down })
+        self.key_with_scancode(Some(keysym), None, down)
+    }
+
+    /// Presses or releases a key by what it types, an X11 `keysym`, and where it is, its XT
+    /// `scancode` (an extended one as `0xE0xx`): both go once the server takes scancodes,
+    /// as noVNC sends them; else the keysym alone, and nothing without one.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionEnded`].
+    pub fn key_with_scancode(
+        &self,
+        keysym: Option<u32>,
+        scancode: Option<u16>,
+        down: bool,
+    ) -> Result<(), SessionEnded> {
+        self.send(Command::Key {
+            keysym,
+            scancode,
+            down,
+        })
     }
 
     /// Moves the pointer with `buttons` held: buttons 1 to 8 as bits 0 to 7.
@@ -446,6 +480,8 @@ pub struct VncSession {
     pub framebuffer: Framebuffer,
     /// Where input goes.
     pub input: VncInput,
+    /// The server's pointer shape, to draw where the pointer is.
+    pub cursor: RemoteCursor,
     /// What the session reports, ending with [`VncEvent::Closed`].
     pub events: mpsc::Receiver<VncEvent>,
 }
@@ -459,15 +495,17 @@ pub fn start(connection: VncConnection, cancel: CancellationToken) -> VncSession
     let (commands, commands_received) = mpsc::unbounded_channel();
     let (events_sent, events) = mpsc::channel(EVENT_QUEUE);
     let resizable = Arc::new(AtomicBool::new(connection.rfb.can_resize()));
+    let cursor = RemoteCursor::default();
     tokio::spawn(run(
         connection,
-        framebuffer.clone(),
+        (framebuffer.clone(), cursor.clone()),
         commands_received,
         events_sent,
         (cancel, resizable.clone()),
     ));
     VncSession {
         framebuffer,
+        cursor,
         input: VncInput {
             commands,
             resizable,
@@ -478,7 +516,7 @@ pub fn start(connection: VncConnection, cancel: CancellationToken) -> VncSession
 
 async fn run(
     connection: VncConnection,
-    framebuffer: Framebuffer,
+    (framebuffer, cursor): (Framebuffer, RemoteCursor),
     mut commands: mpsc::UnboundedReceiver<Command>,
     events: mpsc::Sender<VncEvent>,
     (cancel, resizable): (CancellationToken, Arc<AtomicBool>),
@@ -501,7 +539,7 @@ async fn run(
                         Ok(0) => break CloseReason::Server,
                         Ok(read) => {
                             if let Err(reason) =
-                                receive(&mut rfb, &buffer[..read], &framebuffer, &events, &cancel).await
+                                receive(&mut rfb, &buffer[..read], (&framebuffer, &cursor), &events, &cancel).await
                             {
                                 break reason;
                             }
@@ -516,7 +554,11 @@ async fn run(
         };
         if let Some(command) = command {
             match command {
-                Command::Key { keysym, down } => rfb.key(keysym, down),
+                Command::Key {
+                    keysym,
+                    scancode,
+                    down,
+                } => rfb.key_with_scancode(keysym, scancode, down),
                 Command::Pointer {
                     buttons,
                     mut x,
@@ -581,7 +623,7 @@ async fn run(
 async fn receive(
     rfb: &mut Rfb,
     bytes: &[u8],
-    framebuffer: &Framebuffer,
+    (framebuffer, cursor): (&Framebuffer, &RemoteCursor),
     events: &mpsc::Sender<VncEvent>,
     cancel: &CancellationToken,
 ) -> Result<(), CloseReason> {
@@ -601,6 +643,10 @@ async fn receive(
             RfbEvent::Bell => VncEvent::Bell,
             RfbEvent::ServerCutText(text) => VncEvent::CutText(text),
             RfbEvent::Renamed(name) => VncEvent::Renamed(name),
+            RfbEvent::Cursor(shape) => {
+                cursor.set(shape);
+                VncEvent::CursorChanged
+            }
             // Only during the handshake.
             RfbEvent::PasswordRequired | RfbEvent::StartTls | RfbEvent::Connected { .. } => {
                 continue;

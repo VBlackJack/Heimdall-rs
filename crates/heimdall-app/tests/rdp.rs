@@ -346,6 +346,7 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
         tab,
         inputs: vec![DesktopInput::Key {
             scancode: Some(Scancode::from_u8(false, 0x1E)),
+            xt: Some(0x1E),
             keysym: Some(u32::from(b'a')),
             pressed: true,
         }],
@@ -678,11 +679,13 @@ fn every_key_combination_releases_what_it_pressed_modifiers_last() {
             "{keys:?}: named for RDP and VNC alike"
         );
     }
-    // The Windows key is Super_L for VNC, the extended 0x5B for RDP.
+    // The Windows key is Super_L for VNC, the extended 0x5B for RDP, 0xE05B in XT terms for
+    // a VNC server that takes scancodes.
     assert_eq!(
         SpecialKeys::Windows.inputs()[0],
         DesktopInput::Key {
             scancode: Some(heimdall_rdp::Scancode::from_u8(true, 0x5B)),
+            xt: Some(0xE05B),
             keysym: Some(0xFFEB),
             pressed: true,
         }
