@@ -31,6 +31,15 @@ pub struct KdfParams {
 }
 
 impl KdfParams {
+    /// The least any derivation may cost: 19 MiB, 2 passes, 1 lane, OWASP's minimum for
+    /// Argon2id (Password Storage Cheat Sheet) and the argon2 crate's default, which the
+    /// application PIN's hash uses. [`argon2id`] refuses anything cheaper.
+    pub const MINIMUM: Self = Self {
+        memory_kib: 19 * 1024,
+        iterations: 2,
+        lanes: 1,
+    };
+
     /// The least a vault may ask for: 64 MiB, 3 passes, 1 lane. What a new vault gets.
     pub const FLOOR: Self = Self {
         memory_kib: 64 * 1024,
@@ -38,35 +47,52 @@ impl KdfParams {
         lanes: 1,
     };
 
-    /// The most a vault may ask for: beyond, a file could make opening it exhaust the
-    /// machine.
+    /// The most any derivation may cost, and so the most a vault may ask for: beyond, a file
+    /// or a caller could make it exhaust the machine. [`argon2id`] refuses anything dearer.
     pub const CEILING: Self = Self {
         memory_kib: 4 * 1024 * 1024,
         iterations: 64,
         lanes: 16,
     };
 
-    /// Whether each value lies between [`KdfParams::FLOOR`] and [`KdfParams::CEILING`].
+    /// Whether each value lies between [`KdfParams::FLOOR`] and [`KdfParams::CEILING`]: the
+    /// vault's own, stricter, bounds.
     #[must_use]
     pub fn is_acceptable(&self) -> bool {
-        (Self::FLOOR.memory_kib..=Self::CEILING.memory_kib).contains(&self.memory_kib)
-            && (Self::FLOOR.iterations..=Self::CEILING.iterations).contains(&self.iterations)
-            && (Self::FLOOR.lanes..=Self::CEILING.lanes).contains(&self.lanes)
+        self.lies_between(&Self::FLOOR, &Self::CEILING)
+    }
+
+    /// Whether each value lies between [`KdfParams::MINIMUM`] and [`KdfParams::CEILING`]:
+    /// what [`argon2id`] accepts.
+    #[must_use]
+    pub fn is_within_bounds(&self) -> bool {
+        self.lies_between(&Self::MINIMUM, &Self::CEILING)
+    }
+
+    fn lies_between(&self, low: &Self, high: &Self) -> bool {
+        (low.memory_kib..=high.memory_kib).contains(&self.memory_kib)
+            && (low.iterations..=high.iterations).contains(&self.iterations)
+            && (low.lanes..=high.lanes).contains(&self.lanes)
     }
 }
 
 /// The key of `N` bytes that `password` gives under `params` and `salt`, by Argon2id
-/// version 0x13 with neither secret nor associated data. The cost is the caller's to bound
-/// before calling: [`KdfParams::is_acceptable`] for a cost read from a file.
+/// version 0x13 with neither secret nor associated data. A cost outside
+/// [`KdfParams::MINIMUM`] and [`KdfParams::CEILING`] is refused before anything is
+/// allocated; a vault checks its stricter [`KdfParams::is_acceptable`] first.
 ///
 /// # Errors
 ///
-/// [`Error::KdfParameters`] when Argon2id refuses `params`, the salt or the length.
+/// [`Error::KdfParameters`] for a cost out of bounds, or when Argon2id refuses `params`,
+/// the salt or the length.
 pub fn argon2id<const N: usize>(
     password: &[u8],
     salt: &[u8],
     params: &KdfParams,
 ) -> Result<SecretKey<N>, Error> {
+    if !params.is_within_bounds() {
+        return Err(Error::KdfParameters);
+    }
     let argon = argon2::Argon2::new(
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
@@ -86,47 +112,71 @@ mod tests {
     use crate::Error;
     use crate::test_hex::hex;
 
-    /// A cost small enough for a unit test.
-    const CHEAP: KdfParams = KdfParams {
-        memory_kib: 32,
-        iterations: 3,
-        lanes: 4,
-    };
+    /// Salt of the tests that need any valid one.
+    const SALT: &[u8] = b"saltsaltsaltsalt";
 
-    /// Argon2id of the password 32 bytes of 0x01 and the salt 16 bytes of 0x02 at
-    /// [`CHEAP`], 32 bytes: the inputs of RFC 9106 section 5.3 without its secret and
-    /// associated data, which this API does not take. Computed outside this crate by
-    /// OpenSSL's Argon2id (Python `cryptography` 46), which gives the RFC's own tag
-    /// `0d640df5...e01e659` when the secret and associated data are added back.
-    const EXPECTED: &str = "03aab965c12001c9d7d0d2de33192c0494b684bb148196d73c1df1acaf6d0c2e";
+    /// Argon2id of the password 32 bytes of 0x01 and the salt 16 bytes of 0x02 (the inputs
+    /// of RFC 9106 section 5.3, without its secret and associated data, which this API does
+    /// not take) at [`KdfParams::MINIMUM`], 32 bytes. Computed outside this crate by
+    /// OpenSSL's Argon2id (Python `cryptography` 46), which also gives the RFC's own tag
+    /// `0d640df5...e01e659` on the RFC's full inputs and cost.
+    const EXPECTED: &str = "551d2b516a3d92963b2cd1e8fdc1725129e15824dfb6c8d9bb8a599ffcabfc1c";
 
     #[test]
     fn the_derivation_matches_the_reference_implementation() {
-        let key = argon2id::<32>(&[0x01; 32], &[0x02; 16], &CHEAP).expect("derived");
+        let key = argon2id::<32>(&[0x01; 32], &[0x02; 16], &KdfParams::MINIMUM).expect("derived");
         assert_eq!(key.as_bytes().to_vec(), hex(EXPECTED));
     }
 
     #[test]
     fn the_same_inputs_give_the_same_key_and_another_salt_another() {
-        let first = argon2id::<32>(b"pw", b"saltsaltsaltsalt", &CHEAP).expect("derived");
-        let again = argon2id::<32>(b"pw", b"saltsaltsaltsalt", &CHEAP).expect("derived");
-        let other = argon2id::<32>(b"pw", b"saltsaltsaltsalT", &CHEAP).expect("derived");
+        let first = argon2id::<32>(b"pw", SALT, &KdfParams::MINIMUM).expect("derived");
+        let again = argon2id::<32>(b"pw", SALT, &KdfParams::MINIMUM).expect("derived");
+        let other =
+            argon2id::<32>(b"pw", b"saltsaltsaltsalT", &KdfParams::MINIMUM).expect("derived");
         assert_eq!(first.as_bytes(), again.as_bytes());
         assert_ne!(first.as_bytes(), other.as_bytes());
     }
 
     #[test]
-    fn parameters_argon2_refuses_are_an_error() {
-        let no_lane = KdfParams { lanes: 0, ..CHEAP };
+    fn a_cost_below_the_minimum_or_above_the_ceiling_is_refused_before_deriving() {
+        let refused = |change: fn(&mut KdfParams), from: KdfParams| {
+            let mut params = from;
+            change(&mut params);
+            argon2id::<32>(b"pw", SALT, &params).err() == Some(Error::KdfParameters)
+        };
+        assert!(refused(|p| p.memory_kib -= 1, KdfParams::MINIMUM));
+        assert!(refused(|p| p.iterations -= 1, KdfParams::MINIMUM));
+        assert!(refused(|p| p.lanes = 0, KdfParams::MINIMUM));
+        // Above the ceiling: refused at once, nothing is allocated.
+        assert!(refused(|p| p.memory_kib += 1, KdfParams::CEILING));
+        assert!(refused(|p| p.iterations += 1, KdfParams::CEILING));
+        assert!(refused(|p| p.lanes += 1, KdfParams::CEILING));
+        assert!(refused(|p| p.memory_kib = u32::MAX, KdfParams::MINIMUM));
+    }
+
+    #[test]
+    fn a_salt_argon2_refuses_is_an_error() {
         assert_eq!(
-            argon2id::<32>(b"pw", b"saltsaltsaltsalt", &no_lane).err(),
-            Some(Error::KdfParameters)
-        );
-        assert_eq!(
-            argon2id::<32>(b"pw", b"short", &CHEAP).err(),
+            argon2id::<32>(b"pw", b"short", &KdfParams::MINIMUM).err(),
             Some(Error::KdfParameters),
             "a salt under 8 bytes"
         );
+    }
+
+    #[test]
+    fn the_bounds_nest_the_minimum_under_the_vault_floor() {
+        assert!(KdfParams::MINIMUM.is_within_bounds());
+        assert!(!KdfParams::MINIMUM.is_acceptable(), "too cheap for a vault");
+        assert!(KdfParams::FLOOR.is_within_bounds());
+        assert!(KdfParams::CEILING.is_within_bounds());
+        // The argon2 crate's default cost, the application PIN's, stays derivable.
+        let pin = KdfParams {
+            memory_kib: 19_456,
+            iterations: 2,
+            lanes: 1,
+        };
+        assert!(pin.is_within_bounds());
     }
 
     #[test]

@@ -62,13 +62,19 @@ fn hashes_macs_and_derivations_are_reachable() {
         b"data",
         tag.as_bytes()
     ));
+    let derived: SecretKey<16> =
+        kdf::argon2id(b"pw", b"saltsalt", &KdfParams::MINIMUM).expect("derived");
+    assert_ne!(derived.as_bytes(), &[0; 16]);
     let cheap = KdfParams {
         memory_kib: 8,
         iterations: 1,
         lanes: 1,
     };
-    let derived: SecretKey<16> = kdf::argon2id(b"pw", b"saltsalt", &cheap).expect("derived");
-    assert_ne!(derived.as_bytes(), &[0; 16]);
+    assert_eq!(
+        kdf::argon2id::<16>(b"pw", b"saltsalt", &cheap).err(),
+        Some(Error::KdfParameters),
+        "below the minimum"
+    );
 }
 
 #[test]

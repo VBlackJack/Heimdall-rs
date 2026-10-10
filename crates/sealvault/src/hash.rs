@@ -24,6 +24,8 @@ use std::fmt;
 
 use sha2::Digest as _;
 
+use crate::compare;
+
 /// Bytes of the longest digest, SHA-512's.
 pub const MAX_OUTPUT_LEN: usize = 64;
 
@@ -76,8 +78,9 @@ impl Algorithm {
     }
 }
 
-/// A computed digest. Not a secret: it may be shown, compared and copied.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// A computed digest. It may be shown and copied; it has no `==`, so that the digest of a
+/// secret is never compared in variable time by accident: [`Digest::ct_eq`] compares.
+#[derive(Clone, Copy)]
 pub struct Digest {
     bytes: [u8; MAX_OUTPUT_LEN],
     len: usize,
@@ -97,6 +100,12 @@ impl Digest {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.len]
+    }
+
+    /// Whether `other` holds the same bytes, compared in constant time.
+    #[must_use]
+    pub fn ct_eq(&self, other: &Self) -> bool {
+        compare::equal(self.as_bytes(), other.as_bytes())
     }
 }
 
@@ -262,12 +271,22 @@ mod tests {
             hasher.update(b"a");
             hasher.update(b"");
             hasher.update(b"bc");
-            assert_eq!(
-                hasher.finalize(),
-                digest(algorithm, b"abc"),
+            assert!(
+                hasher.finalize().ct_eq(&digest(algorithm, b"abc")),
                 "{algorithm:?}"
             );
         }
+    }
+
+    #[test]
+    fn digests_compare_by_their_bytes_only() {
+        let abc = digest(Algorithm::Sha256, b"abc");
+        assert!(abc.ct_eq(&digest(Algorithm::Sha256, b"abc")));
+        assert!(!abc.ct_eq(&digest(Algorithm::Sha256, b"abd")));
+        assert!(
+            !abc.ct_eq(&digest(Algorithm::Sha512, b"abc")),
+            "another length"
+        );
     }
 
     #[test]

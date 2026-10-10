@@ -16,6 +16,11 @@
 
 //! A vault file written by the first release of the format, before the cryptography moved
 //! behind the crate's modules: it must open, byte for byte, with every later build.
+//!
+//! Written by the vault code of master at 6df92ae (`Vault::create`, two `set`, `save`),
+//! the build before the move. This file's two tests, run unchanged against master's code at
+//! d4cdbf9, pass there too: the old code reads what this fixture holds, and this build reads
+//! what the old code wrote.
 
 use std::fs;
 

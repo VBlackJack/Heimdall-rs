@@ -76,9 +76,12 @@ impl fmt::Debug for SecretBytes {
 
 impl Drop for SecretBytes {
     fn drop(&mut self) {
-        self.zeroize();
+        // The contents first, where the probe can still see them, then the whole
+        // allocation, spare capacity included, and the length.
+        self.0.as_mut_slice().zeroize();
         #[cfg(test)]
-        drop_probe::record(self.0.is_empty());
+        drop_probe::record(self.0.iter().all(|byte| *byte == 0));
+        self.zeroize();
     }
 }
 
@@ -192,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn secret_bytes_are_wiped_and_emptied_when_dropped() {
+    fn secret_bytes_are_all_zeros_when_their_drop_wipes_them() {
         drop_probe::take();
         drop(SecretBytes::from_slice(b"hunter2"));
         assert_eq!(drop_probe::take(), Some(true));

@@ -375,11 +375,10 @@ mod tests {
     fn a_file_asking_for_a_weak_derivation_is_refused() {
         let dir = tempfile::tempdir().expect("dir");
         let path = dir.path().join("weak.svlt");
-        let weak = KdfParams {
-            memory_kib: 1024,
-            iterations: 1,
-            lanes: 1,
-        };
+        // Derivable at all, but under the vault's floor: sealed properly, so only the
+        // floor check can refuse it.
+        let weak = KdfParams::MINIMUM;
+        assert!(!weak.is_acceptable());
         Vault::create_with(path.clone(), b"pw", weak).expect("written");
         assert!(matches!(
             Vault::open(&path, b"pw"),
