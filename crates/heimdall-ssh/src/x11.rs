@@ -542,7 +542,7 @@ mod tests {
 
     use super::{
         AUTH_DATA_LIMIT, ByteOrder, COOKIE_LENGTH, Cookie, MIT_MAGIC_COOKIE, Refusal,
-        SETUP_TIMEOUT, Setup, Target, X11Display, X11Grant, padded, read_checked, read_setup, same,
+        SETUP_TIMEOUT, Setup, Target, X11Display, X11Grant, padded, read_checked, read_setup,
     };
     use zeroize::Zeroizing;
 
@@ -664,9 +664,9 @@ mod tests {
     #[test]
     fn padding_and_comparison() {
         assert_eq!([0, 1, 4, 5, 18].map(padded), [0, 4, 4, 8, 20]);
-        assert!(same(&[1, 2], &[1, 2]));
-        assert!(!same(&[1, 2], &[1, 3]));
-        assert!(!same(&[1, 2], &[1, 2, 3]));
+        assert!(sealvault::compare::equal(&[1, 2], &[1, 2]));
+        assert!(!sealvault::compare::equal(&[1, 2], &[1, 3]));
+        assert!(!sealvault::compare::equal(&[1, 2], &[1, 2, 3]));
     }
 
     #[test]
