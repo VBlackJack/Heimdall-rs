@@ -1421,7 +1421,7 @@ impl Shell {
     fn font_family_row(&self) -> Element<'_, Message> {
         let chosen = &self.app.settings().terminal_font_family;
         let mut offered: Vec<FontChoice> =
-            crate::terminal_view::font::available(crate::terminal_view::font::installed)
+            crate::terminal_view::font::available(crate::terminal_view::font::installed())
                 .into_iter()
                 .map(|family| FontChoice(family.to_owned()))
                 .collect();

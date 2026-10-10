@@ -4410,13 +4410,23 @@ impl App {
             return vec![Effect::OpenUrl(url)];
         }
         match input.action {
+            // As xterm.js: Shift+click moves the free end of the selection there, the
+            // place first clicked kept, unless the program tracks the mouse (Shift then only
+            // gets past it); Alt+drag selects a rectangle.
             MouseAction::Press(MouseButton::Left) => {
-                let kind = match input.clicks {
-                    2 => SelectionKind::Word,
-                    3.. => SelectionKind::Line,
-                    _ => SelectionKind::Simple,
-                };
-                tab.terminal.begin_selection(input.at, kind);
+                let tracked =
+                    tab.phase == Phase::Connected && is_reported(&mode, Modifiers::default());
+                if input.modifiers.shift && !tracked && tab.terminal.has_selection() {
+                    tab.terminal.extend_selection(input.at);
+                } else {
+                    let kind = match input.clicks {
+                        2 => SelectionKind::Word,
+                        3.. => SelectionKind::Line,
+                        _ if input.modifiers.alt => SelectionKind::Block,
+                        _ => SelectionKind::Simple,
+                    };
+                    tab.terminal.begin_selection(input.at, kind);
+                }
                 tab.selecting = true;
             }
             MouseAction::Motion {
