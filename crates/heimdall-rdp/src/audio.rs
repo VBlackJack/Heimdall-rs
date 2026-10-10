@@ -217,7 +217,7 @@ fn speakers(feed: &QueueSink, started: &std::sync::mpsc::Sender<bool>) {
         let data = feed.clone();
         device
             .build_output_stream(
-                &config,
+                config,
                 move |out: &mut [f32], _| data.take(out),
                 |error| log::warn!("sound output failed: {error}"),
                 None,
