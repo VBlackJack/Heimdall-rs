@@ -45,14 +45,22 @@ pub fn launchable_url(url: &str) -> Option<String> {
 /// The browser could not be started.
 pub fn open_url(url: &str) -> io::Result<()> {
     let mut command = if cfg!(windows) {
-        // The protocol handler, given the address alone: no shell reads it.
-        let mut command = std::process::Command::new("rundll32.exe");
-        command.arg("url.dll,FileProtocolHandler");
+        // The protocol handler, given the address alone: no shell reads it. By its whole
+        // path in the system folder, never one of the same name found first elsewhere.
+        let rundll = heimdall_core::paths::system_program(heimdall_core::paths::RUNDLL_PROGRAM)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    heimdall_core::paths::SYSTEM_FOLDER_UNKNOWN,
+                )
+            })?;
+        let mut command = std::process::Command::new(rundll);
+        command.arg(crate::external_edit::FILE_HANDLER_ENTRY);
         command
     } else if cfg!(target_os = "macos") {
-        std::process::Command::new("/usr/bin/open")
+        std::process::Command::new(crate::external_edit::MAC_OPEN_PROGRAM)
     } else {
-        std::process::Command::new("xdg-open")
+        std::process::Command::new(crate::external_edit::XDG_OPEN_PROGRAM)
     };
     command
         .arg(url)
