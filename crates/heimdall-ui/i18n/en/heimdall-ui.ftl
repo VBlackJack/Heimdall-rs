@@ -1202,7 +1202,7 @@ ui-split-max-panes-reached = Maximum number of panes reached ({ $max }).
 ui-status-detach-split-refused = A split tab cannot be moved to its own window. Unsplit it first.
 ui-split-menu = Split...
 ui-split-session-tooltip = Split session view
-ui-split-palette-hint = Search server to split with...
+ui-split-palette-hint = Search server or pick active session to split with...
 ui-split-drop-to-split = Drop to split
 ui-tab-drag-detach-hint = Release to detach to a window
 ui-split-open-in-split = Open in split
@@ -1294,12 +1294,23 @@ ui-dialog-delete-selection-body = Are you sure you want to delete { $count ->
    *[other] { $count } selected items
 }?
 
-## Quick Connect, as the C# Ctrl+K palette without its tools.
-ui-palette-placeholder = Search host or IP... (Ctrl+K)
+## Quick Connect, as the C# Ctrl+K palette.
+ui-palette-placeholder = Search host, IP, or tool... (Ctrl+K)
 ui-palette-ssh-to = [SSH] Connect to { $target }
 ui-palette-rdp-to = [RDP] Connect to { $target }
 ui-palette-quick-connect = Quick Connect
-ui-palette-nothing = No session matches, and this is no host to connect to.
+ui-palette-nothing = No results found. Try a host, ssh user@host, or tools.
+ui-palette-mode-split = Split Mode
+# The C# hints and no-result text also give a tool with its argument
+# (ping 1.1.1.1): that example comes back with the network tools.
+ui-palette-hints = Enter = open · Ctrl+Enter = split · tools = all tools · Esc = close
+ui-palette-servers = Servers
+ui-palette-active-sessions = Active Sessions
+ui-palette-recent-tools = Recent Tools
+ui-palette-merge-session = ↔ { $title }
+ui-palette-merge-detail = Active session - merge without reconnecting
+ui-palette-account = · { $account }
+ui-palette-tool-badge = TOOL
 
 ## The status bar, as the C# one.
 ui-status-ready = Ready. Select a session to get started.

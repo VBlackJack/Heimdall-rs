@@ -26,9 +26,11 @@ use heimdall_app::files::{EntryKind, RemoteEntry, Side};
 use heimdall_app::split::{
     Axis, DEFAULT_RATIO, MAX_PANES, MAX_RATIO, MIN_RATIO, Placement, SplitMessage,
 };
+use heimdall_app::tools::ToolId;
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, FilesMessage, InputSink, Message,
-    Notice, Phase, TabGroup, TabId, TabMenuMessage, TunnelMessage, UiError,
+    Notice, Phase, QuickGroup, QuickResult, QuickRow, TabGroup, TabId, TabMenuMessage, ToolWords,
+    ToolsMessage, TunnelMessage, UiError,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -1122,6 +1124,44 @@ fn the_splits_remembered_are_read_back_at_the_next_start() {
     );
 }
 
+/// The names of the tools, as the window gives them: here their identifiers.
+fn words(tool: ToolId) -> ToolWords {
+    ToolWords {
+        name: tool.code().to_owned(),
+        category: format!("{:?}", tool.category()),
+    }
+}
+
+/// The palette's lines for `query`, opened from `split`'s "Split..." when it says.
+fn rows(app: &App, query: &str, split: Option<TabId>) -> Vec<QuickRow> {
+    app.quick_results_in(query, split, &words)
+}
+
+/// The profiles among `rows`, by identifier.
+fn profiles(rows: &[QuickRow]) -> Vec<String> {
+    rows.iter()
+        .filter_map(|row| match &row.result {
+            QuickResult::Profile(profile) => Some(profile.id.as_str().to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The open sessions among `rows`, to merge.
+fn sessions(rows: &[QuickRow]) -> Vec<TabId> {
+    rows.iter()
+        .filter_map(|row| match row.result {
+            QuickResult::Session { tab, .. } => Some(tab),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The first profile `query` finds.
+fn found(app: &App, query: &str) -> QuickResult {
+    app.quick_results(query).into_iter().next().expect("found")
+}
+
 #[test]
 fn split_mode_quick_connect_offers_the_profiles_last_split_with_first() {
     let dir = tempfile::tempdir().expect("dir");
@@ -1130,30 +1170,202 @@ fn split_mode_quick_connect_offers_the_profiles_last_split_with_first() {
     let (c, _) = open(&mut app, "c");
     merge(&mut app, a, c, Axis::SideBySide, Placement::Second);
     split(&mut app, SplitMessage::Unsplit(a));
-    let names = |results: Vec<heimdall_app::QuickResult>| -> Vec<String> {
-        results
-            .into_iter()
-            .map(|result| match result {
-                heimdall_app::QuickResult::Profile(profile) => profile.id.as_str().to_owned(),
-                other => panic!("a profile: {other:?}"),
-            })
-            .collect()
-    };
-    assert_eq!(names(app.quick_results_in("", Some(a))), ["c", "a", "b"]);
+    assert_eq!(profiles(&rows(&app, "", Some(a))), ["c", "a", "b"]);
+    let plain: Vec<String> = app
+        .quick_results("")
+        .into_iter()
+        .map(|result| match result {
+            QuickResult::Profile(profile) => profile.id.as_str().to_owned(),
+            other => panic!("a profile: {other:?}"),
+        })
+        .collect();
     assert_eq!(
-        names(app.quick_results_in("", None)),
-        names(app.quick_results("")),
+        profiles(&rows(&app, "", None)),
+        plain,
         "not in split mode: as before"
     );
     assert_eq!(
-        names(app.quick_results_in("server b", Some(a))),
-        names(app.quick_results("server b")),
+        profiles(&rows(&app, "server b", Some(a))),
+        ["b"],
         "something typed: as scored"
     );
     let (b, _) = open(&mut app, "b");
     assert_eq!(
-        names(app.quick_results_in("", Some(b))),
-        names(app.quick_results("")),
+        profiles(&rows(&app, "", Some(b))),
+        plain,
         "b was split with nothing"
     );
+}
+
+#[test]
+fn split_mode_lists_the_sessions_open_first_and_merges_one_without_reconnecting() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (b, _) = open(&mut app, "b");
+    let (c, _) = open(&mut app, "c");
+    let lines = rows(&app, "", Some(a));
+    // The other tabs, in the strip's order, first and in their own section, as the C#.
+    assert_eq!(sessions(&lines), [b, c], "not the tab split itself");
+    assert!(
+        lines[..2]
+            .iter()
+            .all(|row| row.group == QuickGroup::ActiveSessions),
+        "{lines:?}"
+    );
+    assert!(matches!(
+        &lines[0].result,
+        QuickResult::Session { title, kind: heimdall_app::ProfileKind::Ssh, .. }
+            if title == "server b"
+    ));
+    assert!(
+        sessions(&rows(&app, "server", Some(a))).is_empty(),
+        "only when nothing is typed, as the C#"
+    );
+    assert!(
+        sessions(&rows(&app, "", None)).is_empty(),
+        "only in split mode"
+    );
+
+    // Chosen: merged into the tab split, as placed, nothing opened anew.
+    let tabs = app.tabs.len();
+    let message = app.quick_open(lines[0].result.clone(), Some((a, Axis::Stacked)), false);
+    let effects = app.update(message);
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Connect { .. })),
+        "no reconnection: {effects:?}"
+    );
+    assert_eq!(app.tabs.len(), tabs);
+    assert_eq!(layout(&app, a).leaves(), [a, b]);
+    assert_eq!(layout(&app, a).axis(), Some(Axis::Stacked));
+    assert_eq!(strip(&app), [a, c]);
+
+    // A tab split already offers none, nor is it offered.
+    assert!(sessions(&rows(&app, "", Some(a))).is_empty());
+    assert!(sessions(&rows(&app, "", Some(c))).is_empty());
+}
+
+#[test]
+fn ctrl_enter_opens_a_session_as_a_split_of_the_tab_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (c, _) = open(&mut app, "c");
+    app.update(Message::SelectTab(a));
+    let message = app.quick_open(found(&app, "server b"), None, true);
+    assert!(
+        matches!(
+            &message,
+            Message::Split(SplitMessage::QuickConnect { host, axis: Axis::SideBySide, .. })
+                if *host == a
+        ),
+        "side by side, as the C# Vertical: {message:?}"
+    );
+    let effects = app.update(message);
+    assert!(
+        matches!(effects.as_slice(), [Effect::Connect { .. }, ..]),
+        "{effects:?}"
+    );
+    let [host, b] = layout(&app, a).leaves()[..] else {
+        panic!("two panes");
+    };
+    assert_eq!(host, a);
+    assert_eq!(name(&app, b), "server b");
+    assert_eq!(strip(&app), [a, c]);
+    assert_eq!(app.active, Some(b));
+
+    // In split mode too, it is the tab shown that is split, as the C# reads the active
+    // session.
+    app.update(Message::SelectTab(c));
+    let message = app.quick_open(found(&app, "server a"), Some((a, Axis::Stacked)), true);
+    assert!(matches!(
+        message,
+        Message::Split(SplitMessage::QuickConnect { host, axis: Axis::SideBySide, .. })
+            if host == c
+    ));
+
+    // Two panes already: said, and nothing opens, as the C#.
+    app.update(Message::SelectTab(a));
+    let before = app.tabs.len();
+    let message = app.quick_open(found(&app, "server c"), None, true);
+    assert!(app.update(message).is_empty());
+    assert_eq!(app.tabs.len(), before);
+    assert_eq!(app.notice(), Some(&Notice::SplitMaxPanesReached(MAX_PANES)));
+}
+
+#[test]
+fn ctrl_enter_opens_as_usual_with_no_tab_a_tool_s_tab_or_a_host_typed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+
+    // No tab shown: a tab of its own.
+    let message = app.quick_open(found(&app, "server a"), None, true);
+    assert!(matches!(
+        message,
+        Message::QuickConnect(QuickResult::Profile(_))
+    ));
+    app.update(message);
+    assert_eq!(app.tabs.len(), 1);
+    assert!(app.tabs[0].layout.is_none());
+
+    // A host typed: never split, as the C# `ConnectAdHocAsync`.
+    let typed = found(&app, "root@db.lab");
+    assert!(matches!(typed, QuickResult::Ssh { .. }));
+    let message = app.quick_open(typed, None, true);
+    assert!(matches!(
+        message,
+        Message::QuickConnect(QuickResult::Ssh { .. })
+    ));
+    app.update(message);
+    assert_eq!(app.tabs.len(), 2);
+    assert!(app.tabs.iter().all(|tab| tab.layout.is_none()));
+
+    // A tool's tab shown: neither split nor merged, the session opens in a tab.
+    app.update(Message::Tools(ToolsMessage::Open {
+        tool: ToolId::Uuid,
+        title: "UUID".to_owned(),
+    }));
+    let message = app.quick_open(found(&app, "server b"), None, true);
+    assert!(matches!(
+        message,
+        Message::QuickConnect(QuickResult::Profile(_))
+    ));
+    app.update(message);
+    assert_eq!(app.tabs.len(), 4);
+    assert!(app.tabs.iter().all(|tab| tab.layout.is_none()));
+
+    // A tool chosen opens in its tab, Ctrl or not, as the C# with no split for a tool here.
+    for beside in [false, true] {
+        let message = app.quick_open(
+            QuickResult::Tool {
+                tool: ToolId::Hash,
+                name: "Hash".to_owned(),
+            },
+            None,
+            beside,
+        );
+        assert!(matches!(
+            message,
+            Message::Tools(ToolsMessage::Open { tool: ToolId::Hash, ref title }) if title == "Hash"
+        ));
+    }
+}
+
+#[test]
+fn enter_in_split_mode_still_merges_what_is_opened_into_the_tab_split() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let message = app.quick_open(found(&app, "server b"), Some((a, Axis::Stacked)), false);
+    assert!(matches!(
+        message,
+        Message::Split(SplitMessage::QuickConnect { host, axis: Axis::Stacked, .. }) if host == a
+    ));
+    let message = app.quick_open(found(&app, "server b"), None, false);
+    assert!(matches!(
+        message,
+        Message::QuickConnect(QuickResult::Profile(_))
+    ));
 }

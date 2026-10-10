@@ -266,6 +266,23 @@ pub fn subtle(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     }
 }
 
+/// A line of Quick Connect's results, as the C# palette's `ListBoxItem`: nothing behind it
+/// but the highlight under the pointer; once `chosen`, a card outlined in the accent, as the
+/// C# selected item with the keyboard on it.
+pub fn palette_row(chosen: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
+    move |theme, status| {
+        let brushes = Brushes::of(theme);
+        if chosen {
+            let lit = brushes.button(Some(brushes.card), brushes.text, brushes.focus);
+            return match status {
+                ButtonStatus::Disabled => faded(&lit),
+                _ => lit,
+            };
+        }
+        subtle(theme, status)
+    }
+}
+
 /// A tab's close button, as the C# tab's: a secondary button, faded while `quiet`, on a
 /// tab neither selected nor under the pointer.
 pub fn close_mark(quiet: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
