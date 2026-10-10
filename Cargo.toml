@@ -60,7 +60,7 @@ iced_test = "0.14.0"
 # through iced's font database, at the same version.
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 # two-face: the syntaxes iced's highlighter colours with, to name the one a file is shown in.
-two-face = { version = "0.4.5", default-features = false, features = ["syntect-default-fancy"] }
+two-face = { version = "0.5.2", default-features = false, features = ["syntect-default-fancy"] }
 log = { version = "0.4.34", features = ["std"] }
 # libunftp, unftp-sbe-fs: an FTP server in the Files tests only; ring, as the workspace.
 libunftp = { version = "0.23.1", default-features = false, features = ["ring"] }
