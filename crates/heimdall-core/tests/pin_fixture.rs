@@ -19,9 +19,11 @@
 //!
 //! The salt and hash were computed outside this crate, by OpenSSL's Argon2id (Python
 //! `cryptography` 46) at the argon2 crate's default cost (19456 KiB, 2 passes, 1 lane,
-//! version 0x13, 32 bytes), the cost `PinHash` has always used. This file's test, run
-//! against master at 9d12109, before the PIN's cryptography moved into sealvault, passes
-//! there too.
+//! version 0x13, 32 bytes), the cost `PinHash` has always used.
+//!
+//! Proof that master's code verifies it: this file, copied unchanged into a checkout of
+//! master at 9d12109, before the PIN's cryptography moved into sealvault, passes there
+//! with `cargo test -p heimdall-core --locked --test pin_fixture` (1 passed).
 
 use heimdall_core::pin::PinHash;
 
