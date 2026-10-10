@@ -39,7 +39,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use ring::digest::{SHA256, SHA256_OUTPUT_LEN, digest};
+use sealvault::hash::{SHA256_LEN as SHA256_OUTPUT_LEN, sha256};
 
 use ironrdp::cliprdr::CliprdrClient;
 use ironrdp::cliprdr::pdu::{ClipboardFormatId, FileContentsRequest, FileContentsResponse};
@@ -398,9 +398,7 @@ impl Held {
 
 /// SHA-256 of `bytes`, so the text or image itself is not kept.
 fn fingerprint(bytes: &[u8]) -> [u8; SHA256_OUTPUT_LEN] {
-    let mut seen = [0; SHA256_OUTPUT_LEN];
-    seen.copy_from_slice(digest(&SHA256, bytes).as_ref());
-    seen
+    sha256(bytes)
 }
 
 /// Files walked for the offer numbered `generation`.

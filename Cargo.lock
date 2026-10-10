@@ -2464,9 +2464,9 @@ dependencies = [
  "ironrdp-core",
  "ironrdp-tokio",
  "log",
- "ring",
  "rustix 1.1.5",
  "rustls-native-certs",
+ "sealvault",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2538,8 +2538,8 @@ version = "0.1.0"
 dependencies = [
  "log",
  "rcgen",
- "ring",
  "rustls-native-certs",
+ "sealvault",
  "tokio-rustls",
 ]
 
