@@ -355,8 +355,7 @@ mod tests {
 
     #[test]
     fn a_passphrase_encrypts_the_private_key_with_pbes2_aes_256_cbc() {
-        let key = generate_with_rounds(SshKeyAlgorithm::Ed25519, "c", "correct horse", 1000)
-            .expect("made");
+        let key = generate(SshKeyAlgorithm::Ed25519, "c", "correct horse").expect("made");
         assert!(
             key.private_key_pem
                 .starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----\n")

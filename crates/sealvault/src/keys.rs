@@ -40,7 +40,7 @@ use zeroize::Zeroizing;
 use crate::Error;
 use crate::hash::SHA256_LEN;
 use crate::random;
-use crate::secret::SecretBytes;
+use crate::secret::{SecretBytes, SecretKey};
 
 /// Bytes of an Ed25519 seed.
 const ED25519_SEED_LEN: usize = 32;
@@ -50,6 +50,10 @@ const ED25519_SEED_LEN: usize = 32;
 const ED25519_PKCS8_PREFIX: [u8; 16] = [
     0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
 ];
+
+/// The fewest PBKDF2-HMAC-SHA256 rounds a key is encrypted with: OWASP's minimum for that
+/// function (Password Storage Cheat Sheet), and what the SSH Key Generator uses.
+pub const PBKDF2_MIN_ITERATIONS: u32 = 600_000;
 
 /// Bytes of PBKDF2 salt, as .NET draws them.
 const PBES2_SALT_LEN: usize = 16;
@@ -117,17 +121,24 @@ impl KeyPair {
     ///
     /// [`Error::Randomness`].
     pub fn ed25519() -> Result<Self, Error> {
-        let seed: Zeroizing<[u8; ED25519_SEED_LEN]> = Zeroizing::new(random::array()?);
-        let pair = ssh_key::private::Ed25519Keypair::from_seed(&seed);
+        // Drawn straight into its wiped home on the heap: no copy of the seed is left.
+        let seed: SecretKey<ED25519_SEED_LEN> = random::secret_key()?;
+        Ok(Self::ed25519_from_seed(&seed))
+    }
+
+    /// The Ed25519 key of `seed` (RFC 8032), its PKCS#8 that of RFC 8410.
+    fn ed25519_from_seed(seed: &SecretKey<ED25519_SEED_LEN>) -> Self {
+        let pair = ssh_key::private::Ed25519Keypair::from_seed(seed.as_bytes());
         let public: Ed25519PublicKey = pair.public;
+        // Sized once, so that no reallocation leaves a copy of the seed behind.
         let mut der = Vec::with_capacity(ED25519_PKCS8_PREFIX.len() + ED25519_SEED_LEN);
         der.extend_from_slice(&ED25519_PKCS8_PREFIX);
-        der.extend_from_slice(seed.as_ref());
-        Ok(Self {
+        der.extend_from_slice(seed.as_bytes());
+        Self {
             algorithm: KeyAlgorithm::Ed25519,
             pkcs8: SecretBytes::new(der),
             public: KeyData::Ed25519(public),
-        })
+        }
     }
 
     /// The algorithm.
@@ -179,6 +190,7 @@ pub fn pem(label: &str, der: &[u8]) -> Result<String, Error> {
 ///
 /// # Errors
 ///
+/// [`Error::KdfParameters`] for fewer than [`PBKDF2_MIN_ITERATIONS`] rounds;
 /// [`Error::Randomness`] without a salt or vector; [`Error::Encoding`] when `der` is not
 /// PKCS#8 or the result cannot be written.
 pub fn encrypted_pkcs8_pem(
@@ -186,9 +198,13 @@ pub fn encrypted_pkcs8_pem(
     passphrase: &[u8],
     iterations: u32,
 ) -> Result<Zeroizing<String>, Error> {
+    if iterations < PBKDF2_MIN_ITERATIONS {
+        return Err(Error::KdfParameters);
+    }
     // The key is checked to be PKCS#8 before it is encrypted.
     PrivateKeyInfoRef::from_der(der).map_err(encoding)?;
-    let salt: Zeroizing<[u8; PBES2_SALT_LEN]> = Zeroizing::new(random::array()?);
+    let mut salt = Zeroizing::new([0; PBES2_SALT_LEN]);
+    random::fill(salt.as_mut())?;
     let iv: [u8; PBES2_IV_LEN] = random::array()?;
     let parameters = pbes2::Parameters::generate_pbkdf2_sha256_aes256cbc(iterations, &*salt, iv)
         .map_err(encoding)?;
@@ -269,10 +285,11 @@ mod tests {
     use rsa::traits::PublicKeyParts as _;
 
     use super::{
-        ED25519_PKCS8_PREFIX, GENERATOR_FAILED, KeyAlgorithm, KeyPair, Watched,
-        encrypted_pkcs8_pem, pem,
+        ED25519_PKCS8_PREFIX, GENERATOR_FAILED, KeyAlgorithm, KeyPair, PBKDF2_MIN_ITERATIONS,
+        Watched, encrypted_pkcs8_pem, pem,
     };
     use crate::Error;
+    use crate::secret::SecretKey;
 
     /// Bits of the RSA keys the tests make: the smallest the generators offer.
     const RSA_BITS: usize = 2048;
@@ -344,12 +361,16 @@ mod tests {
 
     #[test]
     fn an_encrypted_key_reads_back_with_its_passphrase_only() {
-        let text = encrypted_pkcs8_pem(&ED25519_PKCS8, b"s3cret", 1000).expect("written");
+        let text =
+            encrypted_pkcs8_pem(&ED25519_PKCS8, b"s3cret", PBKDF2_MIN_ITERATIONS).expect("written");
         let (label, der) = der_pem::decode_vec(text.as_bytes()).expect("pem");
         assert_eq!(label, "ENCRYPTED PRIVATE KEY");
         let info = EncryptedPrivateKeyInfoRef::from_der(&der).expect("der");
         let scheme = info.encryption_algorithm.pbes2().expect("PBES2");
-        assert_eq!(scheme.kdf.pbkdf2().expect("PBKDF2").iteration_count, 1000);
+        assert_eq!(
+            scheme.kdf.pbkdf2().expect("PBKDF2").iteration_count,
+            PBKDF2_MIN_ITERATIONS
+        );
         assert!(matches!(
             scheme.encryption,
             pbes2::EncryptionScheme::Aes256Cbc { .. }
@@ -360,8 +381,39 @@ mod tests {
         );
         assert!(info.decrypt("wrong").is_err());
         assert!(matches!(
-            encrypted_pkcs8_pem(b"not PKCS#8", b"s3cret", 1000),
+            encrypted_pkcs8_pem(b"not PKCS#8", b"s3cret", PBKDF2_MIN_ITERATIONS),
             Err(Error::Encoding(_))
         ));
+    }
+
+    #[test]
+    fn fewer_rounds_than_the_minimum_are_refused() {
+        assert_eq!(
+            encrypted_pkcs8_pem(&ED25519_PKCS8, b"s3cret", PBKDF2_MIN_ITERATIONS - 1).err(),
+            Some(Error::KdfParameters)
+        );
+        assert_eq!(
+            encrypted_pkcs8_pem(&ED25519_PKCS8, b"s3cret", 1).err(),
+            Some(Error::KdfParameters)
+        );
+    }
+
+    /// The Ed25519 key of RFC 8410 section 10.3, as OpenSSH 9.9p1 prints it: its public line
+    /// from `ssh-keygen -y`, its fingerprint from `ssh-keygen -lf`.
+    #[test]
+    fn the_rfc_8410_key_gives_the_line_and_fingerprint_openssh_gives() {
+        let seed: [u8; 32] = ED25519_PKCS8[ED25519_PKCS8_PREFIX.len()..]
+            .try_into()
+            .expect("a seed");
+        let pair = KeyPair::ed25519_from_seed(&SecretKey::from_array(&seed));
+        assert_eq!(pair.pkcs8_der(), ED25519_PKCS8);
+        assert_eq!(
+            pair.openssh_public("").expect("line"),
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBm/RAlphM3+hUG6wWfcO5bIUIaqMLa2ywxcOK1wMWbh"
+        );
+        assert_eq!(
+            pair.openssh_fingerprint(),
+            "SHA256:ebCT4wkJOqO5AIlHG03cHvn3Cr3ZZEEh8m81duHhR3Q"
+        );
     }
 }

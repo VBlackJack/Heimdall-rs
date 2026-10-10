@@ -23,7 +23,6 @@ pkcs8.workspace = true
 rcgen = { workspace = true, features = ["zeroize"] }
 regex.workspace = true
 roxmltree.workspace = true
-rsa.workspace = true
 # sealvault: the Hash, HMAC, JWT and TOTP tools' digests and MACs, the PIN's hash, and the
 # generators' randomness.
 sealvault.workspace = true
@@ -38,8 +37,9 @@ toml.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-# rsa, ssh-key, x509-cert: the keys and certificates generated read back by the tests with
-# independent parsers, as they were read before the generation moved into sealvault.
+# rsa, ssh-key, x509-cert: the keys and certificates generated read back by the tests, a
+# round-trip through the same crates that made them, as before the generation moved into
+# sealvault.
 rsa.workspace = true
 ssh-key.workspace = true
 x509-cert.workspace = true

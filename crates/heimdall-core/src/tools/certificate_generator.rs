@@ -217,6 +217,15 @@ pub enum CertificateError {
     Failed(String),
 }
 
+/// A failure of sealvault said as the C# says it: a generator that could not be read says
+/// only that.
+fn failed(error: sealvault::Error) -> CertificateError {
+    match error {
+        sealvault::Error::Randomness(reason) => CertificateError::Failed(reason),
+        other => CertificateError::Failed(other.to_string()),
+    }
+}
+
 impl From<PemError> for CertificateError {
     fn from(error: PemError) -> Self {
         Self::Failed(error.to_string())
@@ -278,8 +287,7 @@ pub struct CaLeafCertificates {
 
 /// An RSA key of `bits`, as rcgen signs with it and as its PKCS#8 DER.
 fn new_key(bits: usize) -> Result<(KeyPair, Zeroizing<Vec<u8>>), CertificateError> {
-    let key = sealvault::keys::KeyPair::rsa(bits)
-        .map_err(|error| CertificateError::Failed(error.to_string()))?;
+    let key = sealvault::keys::KeyPair::rsa(bits).map_err(failed)?;
     let der = Zeroizing::new(key.pkcs8_der().to_vec());
     let pair = KeyPair::from_pkcs8_der_and_sign_algo(&der.as_slice().into(), &PKCS_RSA_SHA256)?;
     Ok((pair, der))
@@ -288,8 +296,7 @@ fn new_key(bits: usize) -> Result<(KeyPair, Zeroizing<Vec<u8>>), CertificateErro
 /// A positive serial number of `length` random bytes, as the C# `NewPositiveSerial`.
 fn new_serial(length: usize) -> Result<SerialNumber, CertificateError> {
     let mut serial = vec![0_u8; length];
-    sealvault::random::fill(&mut serial)
-        .map_err(|error| CertificateError::Failed(error.to_string()))?;
+    sealvault::random::fill(&mut serial).map_err(failed)?;
     if let Some(first) = serial.first_mut() {
         *first &= POSITIVE_MSB_MASK;
         if *first == 0 {

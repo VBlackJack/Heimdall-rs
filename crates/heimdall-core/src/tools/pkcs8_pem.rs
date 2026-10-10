@@ -115,14 +115,15 @@ mod tests {
 
     #[test]
     fn an_encrypted_key_reads_back_with_its_passphrase_only() {
-        let pem = encrypted_private_key_pem(&ED25519_PKCS8, "s3cret", 1000).expect("written");
+        let rounds = sealvault::keys::PBKDF2_MIN_ITERATIONS;
+        let pem = encrypted_private_key_pem(&ED25519_PKCS8, "s3cret", rounds).expect("written");
         assert!(pem.starts_with("-----BEGIN ENCRYPTED PRIVATE KEY-----\n"));
         let (label, der) = pem::decode_vec(pem.as_bytes()).expect("pem");
         assert_eq!(label, "ENCRYPTED PRIVATE KEY");
         let info = EncryptedPrivateKeyInfoRef::from_der(&der).expect("der");
         let scheme = info.encryption_algorithm.pbes2().expect("PBES2");
         let kdf = scheme.kdf.pbkdf2().expect("PBKDF2");
-        assert_eq!(kdf.iteration_count, 1000);
+        assert_eq!(kdf.iteration_count, rounds);
         assert!(matches!(
             scheme.encryption,
             pbes2::EncryptionScheme::Aes256Cbc { .. }
