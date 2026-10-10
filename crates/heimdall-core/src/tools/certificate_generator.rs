@@ -37,8 +37,6 @@ use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, DnValue,
     ExtendedKeyUsagePurpose, Issuer, KeyPair, PKCS_RSA_SHA256, SanType, SerialNumber,
 };
-use rsa::pkcs8::EncodePrivateKey as _;
-use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
 
 use super::pkcs8_pem::{self, PemError};
@@ -206,7 +204,7 @@ fn distinguished_name(cn: &str, org: &str, country: &str) -> DistinguishedName {
 /// hexadecimal separated by colons, as the C# `CertificateFingerprint.ComputeSha256`.
 #[must_use]
 pub fn fingerprint_sha256(der: &[u8]) -> String {
-    let hash = Sha256::digest(der);
+    let hash = sealvault::hash::sha256(der);
     let bytes: Vec<String> = hash.iter().map(|byte| format!("{byte:02X}")).collect();
     format!("{FINGERPRINT_PREFIX}{}", bytes.join(FINGERPRINT_SEPARATOR))
 }
@@ -280,13 +278,9 @@ pub struct CaLeafCertificates {
 
 /// An RSA key of `bits`, as rcgen signs with it and as its PKCS#8 DER.
 fn new_key(bits: usize) -> Result<(KeyPair, Zeroizing<Vec<u8>>), CertificateError> {
-    let key = super::rsa_keys::generate(bits).map_err(CertificateError::Failed)?;
-    let der = Zeroizing::new(
-        key.to_pkcs8_der()
-            .map_err(|error| CertificateError::Failed(error.to_string()))?
-            .as_bytes()
-            .to_vec(),
-    );
+    let key = sealvault::keys::KeyPair::rsa(bits)
+        .map_err(|error| CertificateError::Failed(error.to_string()))?;
+    let der = Zeroizing::new(key.pkcs8_der().to_vec());
     let pair = KeyPair::from_pkcs8_der_and_sign_algo(&der.as_slice().into(), &PKCS_RSA_SHA256)?;
     Ok((pair, der))
 }
@@ -294,7 +288,8 @@ fn new_key(bits: usize) -> Result<(KeyPair, Zeroizing<Vec<u8>>), CertificateErro
 /// A positive serial number of `length` random bytes, as the C# `NewPositiveSerial`.
 fn new_serial(length: usize) -> Result<SerialNumber, CertificateError> {
     let mut serial = vec![0_u8; length];
-    getrandom::fill(&mut serial).map_err(|error| CertificateError::Failed(error.to_string()))?;
+    sealvault::random::fill(&mut serial)
+        .map_err(|error| CertificateError::Failed(error.to_string()))?;
     if let Some(first) = serial.first_mut() {
         *first &= POSITIVE_MSB_MASK;
         if *first == 0 {
@@ -450,6 +445,7 @@ pub fn build_pfx(leaf: &IssuedCertificate, password: &str) -> Result<Vec<u8>, Ce
 mod tests {
     use rsa::pkcs8::DecodePrivateKey as _;
     use rsa::traits::PublicKeyParts as _;
+    use sha2::Sha256;
     use x509_cert::Certificate;
     use x509_cert::der::{Decode as _, DecodePem as _, Encode as _};
     use x509_cert::ext::pkix::name::GeneralName;
