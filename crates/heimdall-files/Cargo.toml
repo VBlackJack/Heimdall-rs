@@ -14,7 +14,8 @@ publish.workspace = true
 
 [dependencies]
 heimdall-sftp.workspace = true
-ring.workspace = true
+# sealvault: the copy script's random token.
+sealvault.workspace = true
 suppaftp.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true

@@ -22,10 +22,7 @@ use heimdall_files::privileged::{Sudo, replace_script};
 const TOKEN: [u8; 16] = [0x5a; 16];
 
 fn sha256(data: &[u8]) -> [u8; 32] {
-    let digest = ring::digest::digest(&ring::digest::SHA256, data);
-    let mut out = [0; 32];
-    out.copy_from_slice(digest.as_ref());
-    out
+    sealvault::hash::sha256(data)
 }
 
 #[test]
