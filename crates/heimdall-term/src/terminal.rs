@@ -30,7 +30,9 @@ use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{Config, Osc52, Term, point_to_viewport, viewport_to_point};
-use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, StdSyncHandler};
+use alacritty_terminal::vte::ansi::{
+    Color, CursorShape, CursorStyle as AnsiCursorStyle, NamedColor, Processor, StdSyncHandler,
+};
 
 use crate::mode::InputMode;
 use crate::palette::{Palette, Rgb, dim};
@@ -46,6 +48,20 @@ pub const MIN_ROWS: usize = 1;
 
 /// Slot of the cursor colour among the emulator's colours.
 const CURSOR_COLOR_SLOT: usize = NamedColor::Cursor as usize;
+
+/// The cursor until the application asks for another, as the C# terminal's xterm.js options
+/// (`cursorStyle: 'block'`, `cursorBlink`): a blinking block.
+const DEFAULT_CURSOR: AnsiCursorStyle = AnsiCursorStyle {
+    shape: CursorShape::Block,
+    blinking: true,
+};
+
+/// What ends each line of a block selection copied, as xterm.js joins them: CR LF on
+/// Windows, LF elsewhere.
+const BLOCK_LINE_BREAK: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+/// The no-break space, which xterm.js copies as a plain space.
+const NO_BREAK_SPACE: char = '\u{a0}';
 
 /// Size of the grid in character cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,6 +492,7 @@ impl Terminal {
             scrolling_history: config.scrollback_lines,
             kitty_keyboard: false,
             osc52: config.clipboard.osc52(),
+            default_cursor_style: DEFAULT_CURSOR,
             ..Config::default()
         };
         Self {
@@ -695,11 +712,80 @@ impl Terminal {
         self.term.selection = None;
     }
 
-    /// Selected text, wrapped lines joined, tabs restored. Text the application hid
-    /// (SGR 8) is included: alacritty's selection does not filter it.
+    /// Whether a selection was started, even one still empty (a click not dragged): a
+    /// Shift+click extends it, as in xterm.js.
+    #[must_use]
+    pub fn has_selection(&self) -> bool {
+        self.term.selection.is_some()
+    }
+
+    /// Selected text, wrapped lines joined, tabs restored; a block selection as
+    /// [`Self::block_text`] makes it. Text the application hid (SGR 8) is included:
+    /// alacritty's selection does not filter it.
     #[must_use]
     pub fn selected_text(&self) -> Option<String> {
-        self.term.selection_to_string()
+        match self.term.selection.as_ref()?.ty {
+            SelectionType::Block => self.block_text(),
+            _ => self.term.selection_to_string(),
+        }
+    }
+
+    /// The text of a block selection as xterm.js copies one (`SelectionService.selectionText`
+    /// in column mode): the columns of the block from each line, the blanks after the last
+    /// character dropped, no-break spaces as spaces, lines joined by [`BLOCK_LINE_BREAK`]. A
+    /// wide character starting in the block is taken whole, its right half past the block or
+    /// not; the right half of one starting before it is a space; a tab is the spaces it moved
+    /// over.
+    fn block_text(&self) -> Option<String> {
+        let range = self.term.selection.as_ref()?.to_range(&self.term)?;
+        let grid = self.term.grid();
+        let right = range
+            .end
+            .column
+            .0
+            .min(self.term.columns().saturating_sub(1));
+        let lines: Vec<String> = (range.start.line.0..=range.end.line.0)
+            .map(|line| {
+                let row = &grid[Line(line)];
+                let mut text = String::new();
+                let mut col = range.start.column.0;
+                while col <= right {
+                    let cell = &row[Column(col)];
+                    let blank = cell.c == '\t'
+                        || cell
+                            .flags
+                            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
+                    if blank {
+                        text.push(' ');
+                    } else {
+                        text.push(cell.c);
+                        text.extend(cell.zerowidth().into_iter().flatten());
+                    }
+                    col += if cell.flags.contains(Flags::WIDE_CHAR) {
+                        2
+                    } else {
+                        1
+                    };
+                }
+                text.trim_end_matches(' ').replace(NO_BREAK_SPACE, " ")
+            })
+            .collect();
+        Some(lines.join(BLOCK_LINE_BREAK))
+    }
+
+    /// Where the cursor is in the grid, line (negative in the history) and column: its
+    /// blinking starts over when it moves, as in xterm.js.
+    #[must_use]
+    pub fn cursor_position(&self) -> (i32, usize) {
+        let point = self.term.grid().cursor.point;
+        (point.line.0, point.column.0)
+    }
+
+    /// Whether the cursor blinks: it does unless the application asked for a steady one
+    /// (DECSCUSR, or DECRST 12), as xterm.js with `cursorBlink` on.
+    #[must_use]
+    pub fn cursor_blinks(&self) -> bool {
+        self.term.cursor_style().blinking
     }
 
     /// Where the text at `at`, in view, leads when an application tied an address to it

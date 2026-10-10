@@ -21,6 +21,7 @@
 //! A canvas has none of these in iced 0.14, and keys through a global subscription can be
 //! dropped when its queue is full.
 
+pub mod blink;
 pub mod font;
 pub mod keys;
 pub mod metrics;
@@ -43,11 +44,13 @@ use iced::advanced::{Clipboard, Renderer as _, Shell, Widget};
 use iced::font::{Family, Style, Weight};
 use iced::keyboard;
 use iced::mouse;
+use iced::window;
 use iced::{
     Background, Border, Color, Element, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme,
     alignment,
 };
 
+use crate::terminal_view::blink::CursorBlink;
 use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
     Shortcut, Zoom, committed_text, key_input, shortcut, window_shortcut,
@@ -98,6 +101,12 @@ struct State {
     modifiers: keyboard::Modifiers,
     preedit: Option<String>,
     screen: RefCell<Option<Screen>>,
+    /// The window lost the focus: the cursor is drawn hollow, and steady, as xterm.js draws
+    /// it in a terminal without the focus.
+    window_unfocused: bool,
+    blink: CursorBlink,
+    /// The time of the frame being drawn, as iced gives it.
+    frame: Option<Instant>,
 }
 
 /// The terminal of one tab.
@@ -265,6 +274,22 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 grid,
                 cell: self.metrics.pixels(),
             }));
+        }
+        match event {
+            Event::Window(window::Event::Focused) => state.window_unfocused = false,
+            Event::Window(window::Event::Unfocused) => state.window_unfocused = true,
+            Event::Window(window::Event::RedrawRequested(now)) => {
+                state.frame = Some(*now);
+                state.blink.observe(
+                    *now,
+                    self.terminal.cursor_position(),
+                    !state.window_unfocused && self.terminal.cursor_blinks(),
+                );
+                if let Some(next) = state.blink.next_change(*now) {
+                    shell.request_redraw_at(next);
+                }
+            }
+            _ => {}
         }
         if !self.interactive {
             state.held = None;
@@ -515,8 +540,15 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 );
             }
         }
-        if let Some(cursor) = screen.cursor {
-            self.cursor(renderer, bounds, screen, cursor, state.focused);
+        let shown = state.frame.is_none_or(|now| state.blink.visible(now));
+        if let Some(cursor) = screen.cursor.filter(|_| shown) {
+            self.cursor(
+                renderer,
+                bounds,
+                screen,
+                cursor,
+                state.focused && !state.window_unfocused,
+            );
         }
     }
 

@@ -26,7 +26,9 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshGateway, SshProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_ssh::{AgentSource, AuthMethod, PasswordQuestion, Secret};
+use heimdall_ssh::{
+    AgentSource, AuthMethod, KnownHosts, PasswordQuestion, Pins, PublicKey, Secret, fingerprint,
+};
 use heimdall_term::GridSize;
 
 fn id(value: &str) -> ProfileId {
@@ -146,6 +148,130 @@ fn cancelling_the_gateway_dialog_returns_to_the_form_as_it_was() {
     app.update(Message::NewGateway);
     app.update(Message::DismissDialog);
     assert!(app.dialog.is_none());
+}
+
+const HOST_KEY: &str = include_str!("../../heimdall-ssh/tests/fixtures/hostkeys/host-ed25519.pub");
+
+fn save_gateway(app: &mut App) {
+    app.update(Message::SaveGateway {
+        password: None,
+        passphrase: None,
+    });
+}
+
+/// "Host Key Fingerprint" of the gateway dialog open.
+fn shown_fingerprint(app: &App) -> String {
+    let Some(Dialog::EditGateway { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    draft.trusted_fingerprint.clone()
+}
+
+/// The trust files beside `known_hosts`, as their bytes, `None` for one absent.
+fn trust_files(dir: &Path) -> Vec<Option<Vec<u8>>> {
+    ["known_hosts", "known_hosts.pins"]
+        .iter()
+        .map(|name| std::fs::read(dir.join(name)).ok())
+        .collect()
+}
+
+#[test]
+fn the_host_key_fingerprint_shows_the_pin_or_the_recorded_key_and_is_never_saved() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(
+        dir.path(),
+        None,
+        vec![
+            gateway("bare", None),
+            gateway("pinned", None),
+            gateway("full", None),
+        ],
+    );
+    let known = KnownHosts::new(dir.path().join("known_hosts"));
+    let pinned = format!("SHA256:{}", "A".repeat(43));
+    assert!(
+        Pins::beside(known.path())
+            .pin("pinned.lab", 22, &pinned)
+            .expect("pinned")
+    );
+    let key = PublicKey::from_openssh(HOST_KEY.trim()).expect("key");
+    known.learn("full.lab", 22, &key).expect("learnt");
+
+    // Nothing trusted: empty, the C# hint under it says when it fills.
+    app.update(Message::EditGateway(id("bare")));
+    assert_eq!(shown_fingerprint(&app), "");
+    app.update(Message::DismissDialog);
+    app.update(Message::NewGateway);
+    assert_eq!(shown_fingerprint(&app), "", "a new gateway");
+    app.update(Message::DismissDialog);
+    app.update(Message::EditGateway(id("pinned")));
+    assert_eq!(shown_fingerprint(&app), pinned, "the pin");
+    app.update(Message::DismissDialog);
+    app.update(Message::EditGateway(id("full")));
+    assert_eq!(
+        shown_fingerprint(&app),
+        fingerprint(&key),
+        "the key recorded"
+    );
+
+    // Saved, renamed or moved to another host, the trust files stay as they were.
+    let before = trust_files(dir.path());
+    gateway_field(&mut app, ProfileField::Name, "renamed");
+    gateway_field(&mut app, ProfileField::Host, "elsewhere.lab");
+    save_gateway(&mut app);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    app.update(Message::EditGateway(id("pinned")));
+    save_gateway(&mut app);
+    app.update(Message::NewGateway);
+    fill_gateway(&mut app, "added");
+    save_gateway(&mut app);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert_eq!(trust_files(dir.path()), before, "never touched");
+}
+
+#[test]
+fn the_parent_picker_offers_neither_descendants_nor_a_chain_too_deep() {
+    let dir = tempfile::tempdir().expect("dir");
+    // a <- b <- c <- d <- e: five deep; f on its own, with g below it.
+    let mut app = app(
+        dir.path(),
+        None,
+        vec![
+            gateway("a", None),
+            gateway("b", Some("a")),
+            gateway("c", Some("b")),
+            gateway("d", Some("c")),
+            gateway("e", Some("d")),
+            gateway("f", None),
+            gateway("g", Some("f")),
+        ],
+    );
+    let offered = |editing: Option<&str>| -> Vec<String> {
+        let editing = editing.map(id);
+        heimdall_core::gateway_parents::parent_options(app.gateways(), editing.as_ref())
+            .into_iter()
+            .map(|gateway| gateway.id.as_str().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        offered(Some("b")),
+        ["a", "f"],
+        "neither itself, nor below it, nor g: b to e would be six deep under f"
+    );
+    assert_eq!(
+        offered(Some("f")),
+        ["a", "b", "c"],
+        "f and g need room for two"
+    );
+    assert_eq!(offered(None), ["a", "b", "c", "d", "f", "g"], "not under e");
+    // Saving still refuses a loop, should one be chosen another way.
+    app.update(Message::EditGateway(id("a")));
+    app.update(Message::ChooseParentGateway(Some(id("e"))));
+    save_gateway(&mut app);
+    let Some(Dialog::EditGateway { error, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(*error, Some(DraftError::GatewayLoop));
 }
 
 #[test]
