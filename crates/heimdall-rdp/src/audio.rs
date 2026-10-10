@@ -21,6 +21,10 @@
 //! the server names the one it sends by its place in that list; with one, it is always 0.
 //! Servers speaking the audio channel before its version 8 (xrdp) send waves `ironrdp-rdpsnd`
 //! does not read yet: they stay silent.
+//!
+//! The sound card is reached through cpal only with the `audio` feature: without it, this
+//! build has no sound card to play on, [`AVAILABLE`] says so, [`local_speakers`] gives none,
+//! and the connection asks the server for no sound to play here.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -39,6 +43,10 @@ const BITS_PER_SAMPLE: u16 = 16;
 const BYTES_PER_SAMPLE: u16 = BITS_PER_SAMPLE / 8;
 /// The loudest volume the server can ask, per channel.
 const FULL_VOLUME: f32 = 65_535.0;
+
+/// Whether this build can play the server's sound on this computer: built with the `audio`
+/// feature, which brings the sound card through cpal.
+pub const AVAILABLE: bool = cfg!(feature = "audio");
 
 /// Where the samples go: the sound card, or a test's record.
 pub trait AudioSink: Send + std::fmt::Debug {
@@ -190,6 +198,7 @@ impl AudioSink for QueueSink {
 /// The server's sound played on the default output of this computer, from a thread of its
 /// own that holds the sound card's stream. `None` when there is no sound card to play on:
 /// the session goes on silent.
+#[cfg(feature = "audio")]
 #[must_use]
 pub fn local_speakers() -> Option<SoundBackend<QueueSink>> {
     let sink = QueueSink::new();
@@ -202,8 +211,25 @@ pub fn local_speakers() -> Option<SoundBackend<QueueSink>> {
     opened.recv().ok()?.then(|| SoundBackend::new(sink))
 }
 
+/// Always `None`: this build has no sound card to play on, without the `audio` feature.
+#[cfg(not(feature = "audio"))]
+#[must_use]
+pub fn local_speakers() -> Option<SoundBackend<QueueSink>> {
+    None
+}
+
+/// How often the sound card's thread looks whether the session still holds the queue.
+#[cfg(feature = "audio")]
+const HOLDER_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Holders of the queue while the session plays: the sound card's thread and the stream's
+/// callback; one more is the session's.
+#[cfg(feature = "audio")]
+const PLAYER_HOLDERS: usize = 2;
+
 /// Opens the default output at the format offered and plays `feed` until it is the last
 /// holder of the queue; says on `started` whether it could open.
+#[cfg(feature = "audio")]
 fn speakers(feed: &QueueSink, started: &std::sync::mpsc::Sender<bool>) {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -230,8 +256,8 @@ fn speakers(feed: &QueueSink, started: &std::sync::mpsc::Sender<bool>) {
     };
     let _ = started.send(true);
     // Played until the session drops its end of the queue.
-    while Arc::strong_count(&feed.waiting) > 2 {
-        std::thread::sleep(std::time::Duration::from_millis(200));
+    while Arc::strong_count(&feed.waiting) > PLAYER_HOLDERS {
+        std::thread::sleep(HOLDER_POLL);
     }
     drop(stream);
 }
@@ -326,5 +352,12 @@ mod tests {
         // Three over, rounded up to two frames: four dropped, a left sample first.
         assert_eq!(waiting.samples.len(), MOST_WAITING - 1);
         assert_eq!(waiting.samples.front(), Some(&0), "a left sample first");
+    }
+
+    #[cfg(not(feature = "audio"))]
+    #[test]
+    fn without_the_audio_feature_no_speakers_are_ever_given() {
+        const { assert!(!AVAILABLE) };
+        assert!(local_speakers().is_none());
     }
 }

@@ -785,3 +785,47 @@ fn the_monitors_spanned_are_ticked_among_the_screens_and_those_not_connected_are
             .any(|message| format!("{message:?}") == expected)
     );
 }
+
+/// What the form says under the audio list, while it says Local playback, in a build
+/// without the `audio` feature.
+const LOCAL_PLAYBACK_NOTE: &str =
+    "Local playback is not available in this build: the built-in client plays no sound.";
+
+#[test]
+fn local_playback_in_a_tab_is_said_unavailable_only_in_a_build_without_sound() {
+    let expected = usize::from(!heimdall_rdp::audio::AVAILABLE);
+    let mut local = own_options();
+    local.choose(ProfileChoice::Audio(AudioPlayback::Local));
+    {
+        let mut ui = groups(&local, &SCREENS);
+        let notes = every(&mut ui, LOCAL_PLAYBACK_NOTE);
+        assert_eq!(notes.len(), expected, "in a tab");
+        let list = ui.find("Audio mode").expect("the list").bounds();
+        assert!(notes.iter().all(|note| note.y > list.y), "under the list");
+    }
+    // Remote Desktop Connection plays the sound itself; another mode asks nothing here.
+    let mut external = local.clone();
+    external.choose(ProfileChoice::External(true));
+    let mut on_server = own_options();
+    on_server.choose(ProfileChoice::Audio(AudioPlayback::OnServer));
+    for silent in [&external, &on_server] {
+        let mut ui = groups(silent, &SCREENS);
+        assert!(every(&mut ui, LOCAL_PLAYBACK_NOTE).is_empty());
+    }
+    // The settings say it too: a profile following them opens in a tab.
+    for (audio, notes) in [
+        (AudioPlayback::Local, expected),
+        (AudioPlayback::OnServer, 0),
+        (AudioPlayback::Off, 0),
+    ] {
+        let mut ui = rdp_settings(RdpDefaults {
+            audio,
+            ..RdpDefaults::default()
+        });
+        assert_eq!(
+            every(&mut ui, LOCAL_PLAYBACK_NOTE).len(),
+            notes,
+            "{audio:?}"
+        );
+    }
+}

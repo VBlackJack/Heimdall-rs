@@ -1046,6 +1046,7 @@ ui-profile-audio = Audio mode
 ui-profile-audio-off = Disabled
 ui-profile-audio-local = Local playback
 ui-profile-audio-on-server = Remote playback
+ui-profile-audio-local-unavailable = Local playback is not available in this build: the built-in client plays no sound.
 ui-profile-color-depth = Color depth
 ui-profile-color-16 = 16-bit
 ui-profile-color-24 = 24-bit

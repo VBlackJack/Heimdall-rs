@@ -920,6 +920,7 @@ ui-profile-audio = Modo de audio
 ui-profile-audio-off = Desactivado
 ui-profile-audio-local = Reproducción local
 ui-profile-audio-on-server = Reproducción remota
+ui-profile-audio-local-unavailable = Reproducción local no disponible en esta compilación: el cliente integrado no reproduce ningún sonido.
 ui-profile-color-depth = Profundidad de color
 ui-profile-color-16 = 16 bits
 ui-profile-color-24 = 24 bits

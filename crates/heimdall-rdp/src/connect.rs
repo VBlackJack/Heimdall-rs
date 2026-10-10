@@ -496,14 +496,27 @@ async fn connect_in_place(
 /// device one. The sound is played here when the profile asks and this computer can; else
 /// the channel declines it. The device channel announces the shared drives, maybe none.
 fn attach_sound_and_drives(connector: &mut ClientConnector, config: &RdpConfig) {
-    let speakers = (config.options.audio == AudioPlayback::Local)
-        .then(crate::audio::local_speakers)
-        .flatten()
-        .map(|backend| Box::new(backend) as Box<dyn RdpsndClientHandler>);
-    if let Some((sound, devices)) = sound_and_devices(speakers, &config.drives) {
+    if let Some((sound, devices)) =
+        sound_and_devices(speakers(config.options.audio), &config.drives)
+    {
         connector.attach_static_channel(sound);
         connector.attach_static_channel(devices);
     }
+}
+
+/// Whether the server's sound is played here: the profile asks it, and this build can play
+/// it, built with the `audio` feature. Else the server is told not to send it here.
+fn played_here(audio: AudioPlayback) -> bool {
+    audio == AudioPlayback::Local && crate::audio::AVAILABLE
+}
+
+/// The speakers the sound channel plays on, when `audio` is played here and this computer
+/// has a sound card to play on.
+fn speakers(audio: AudioPlayback) -> Option<Box<dyn RdpsndClientHandler>> {
+    played_here(audio)
+        .then(crate::audio::local_speakers)
+        .flatten()
+        .map(|backend| Box::new(backend) as Box<dyn RdpsndClientHandler>)
 }
 
 /// The sound and device channels, as a pair or not at all: none when there is neither
@@ -863,8 +876,9 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         enable_server_pointer: false,
         request_data: Some(NegoRequestData::cookie(NEGOTIATION_COOKIE.to_owned())),
         autologon: false,
-        // Played here when the profile asks; else kept on the server, or not played at all.
-        enable_audio_playback: config.options.audio == AudioPlayback::Local,
+        // Played here when the profile asks and this build can; else kept on the server, or
+        // not played at all.
+        enable_audio_playback: played_here(config.options.audio),
         remote_console_audio: config.options.audio == AudioPlayback::OnServer,
         console_session: config.options.admin_session,
         compression_type: None,
@@ -1243,5 +1257,60 @@ mod tests {
     #[test]
     fn neither_sound_nor_drive_opens_neither_channel() {
         assert!(sound_and_devices(None, &[]).is_none());
+    }
+
+    #[test]
+    fn sound_kept_on_the_server_or_off_opens_no_sound_channel_and_asks_none_here() {
+        for audio in [AudioPlayback::OnServer, AudioPlayback::Off] {
+            assert!(speakers(audio).is_none(), "{audio:?}");
+            assert!(
+                sound_and_devices(speakers(audio), &[]).is_none(),
+                "{audio:?}"
+            );
+            let config = RdpConfig {
+                options: RdpOptions {
+                    audio,
+                    ..RdpOptions::default()
+                },
+                ..pinned_by(std::path::Path::new("known_rdp_hosts"))
+            };
+            assert!(
+                !connector_config(&config).enable_audio_playback,
+                "{audio:?}"
+            );
+        }
+    }
+
+    #[cfg(not(feature = "audio"))]
+    #[test]
+    fn without_the_audio_feature_local_playback_opens_no_sound_channel_and_asks_none_here() {
+        // The server then keeps no sound for this computer: neither the sound channel nor
+        // the device one it needs is offered, and the client info says no playback here.
+        assert!(!played_here(AudioPlayback::Local));
+        assert!(speakers(AudioPlayback::Local).is_none());
+        assert!(sound_and_devices(speakers(AudioPlayback::Local), &[]).is_none());
+        let config = RdpConfig {
+            options: RdpOptions {
+                audio: AudioPlayback::Local,
+                ..RdpOptions::default()
+            },
+            ..pinned_by(std::path::Path::new("known_rdp_hosts"))
+        };
+        assert!(!connector_config(&config).enable_audio_playback);
+        assert!(!connector_config(&config).remote_console_audio);
+    }
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn with_the_audio_feature_local_playback_is_asked_here() {
+        assert!(played_here(AudioPlayback::Local));
+        let config = RdpConfig {
+            options: RdpOptions {
+                audio: AudioPlayback::Local,
+                ..RdpOptions::default()
+            },
+            ..pinned_by(std::path::Path::new("known_rdp_hosts"))
+        };
+        assert!(connector_config(&config).enable_audio_playback);
     }
 }

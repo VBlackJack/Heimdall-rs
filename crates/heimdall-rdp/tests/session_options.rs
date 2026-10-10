@@ -293,6 +293,7 @@ async fn sound_kept_on_the_server_is_asked_for_and_never_played_here() {
     assert!(flags.contains(ClientInfoFlags::NO_AUDIO_PLAYBACK));
 }
 
+#[cfg(feature = "audio")]
 #[tokio::test]
 async fn sound_played_here_is_asked_for_and_not_kept_on_the_server() {
     let sent = sent_with(RdpOptions {
@@ -302,6 +303,21 @@ async fn sound_played_here_is_asked_for_and_not_kept_on_the_server() {
     .await;
     let flags = sent.info.client_info.flags;
     assert!(!flags.contains(ClientInfoFlags::NO_AUDIO_PLAYBACK));
+    assert!(!flags.contains(ClientInfoFlags::REMOTE_CONSOLE_AUDIO));
+}
+
+/// Built without the `audio` feature, this computer cannot play the sound: the server is
+/// told so, rather than sending it to a client that drops it.
+#[cfg(not(feature = "audio"))]
+#[tokio::test]
+async fn sound_played_here_without_the_audio_feature_is_asked_for_nowhere() {
+    let sent = sent_with(RdpOptions {
+        audio: AudioPlayback::Local,
+        ..RdpOptions::default()
+    })
+    .await;
+    let flags = sent.info.client_info.flags;
+    assert!(flags.contains(ClientInfoFlags::NO_AUDIO_PLAYBACK));
     assert!(!flags.contains(ClientInfoFlags::REMOTE_CONSOLE_AUDIO));
 }
 

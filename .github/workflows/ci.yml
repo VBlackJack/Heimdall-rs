@@ -34,6 +34,8 @@ jobs:
         timeout-minutes: 10
         run: |
           sudo apt-get update
+          # libasound2-dev: only for the clippy run with the audio feature below; the default
+          # Linux build links no sound library.
           sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libfontconfig-dev openssh-sftp-server libasound2-dev
           # The SFTP tests against OpenSSH's server must run here, not skip.
           echo "HEIMDALL_REQUIRE_SFTP_SERVER=1" >> "$GITHUB_ENV"
@@ -54,6 +56,12 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # Sound is off by default on Linux, on by default on Windows: the Linux job also lints
+      # the build that asks for it, so the code behind the feature keeps compiling here.
+      - name: Clippy with the audio feature
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-targets --locked --features heimdall-ui/audio -- -D warnings
 
       - name: Tests
         run: cargo test --workspace --locked

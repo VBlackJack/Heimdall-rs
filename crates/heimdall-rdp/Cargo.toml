@@ -12,8 +12,14 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# audio: the server's sound played on this computer, through cpal. Off by default: on Linux
+# cpal links the system's ALSA library (libasound, through alsa-sys); the application turns
+# it on for Windows only, where cpal speaks to WASAPI through system DLLs alone.
+audio = ["dep:cpal"]
+
 [dependencies]
-cpal.workspace = true
+cpal = { workspace = true, optional = true }
 data-encoding.workspace = true
 heimdall-core.workspace = true
 ironrdp.workspace = true
