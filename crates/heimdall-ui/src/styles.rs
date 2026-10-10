@@ -670,6 +670,31 @@ pub fn rule(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// A dot of the welcome tour's step indicator, as the C# ellipses
+/// (`MainWindow.xaml:5697-5713`): the accent for the step shown, the disabled text colour for
+/// the others.
+pub fn step_dot(shown: bool) -> impl Fn(&Theme) -> BoxStyle {
+    move |theme| {
+        let brushes = Brushes::of(theme);
+        let color = if shown {
+            brushes.accent
+        } else {
+            Color {
+                a: brushes.secondary.a * OPACITY_DISABLED,
+                ..brushes.secondary
+            }
+        };
+        BoxStyle {
+            background: Some(Background::Color(color)),
+            border: Border {
+                radius: Radius::from(radius::SM),
+                ..Border::default()
+            },
+            ..BoxStyle::default()
+        }
+    }
+}
+
 /// A dialog, as the C# dialog windows: the window's background, rounded as `CornerRadiusXl`,
 /// its edge the border colour.
 pub fn dialog(theme: &Theme) -> BoxStyle {
