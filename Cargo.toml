@@ -90,7 +90,8 @@ similar = { version = "3.2.0", default-features = false, features = ["std"] }
 # tree through the build of a dependency.
 shlex = "2.0.1"
 # suppaftp: FTP and explicit FTPS for the Files tab; tokio and rustls on ring, as the workspace.
-# subtle: the X11 cookie compared in constant time; already in the tree through russh.
+# subtle: secrets compared in constant time (sealvault::compare, the X11 cookie); already in
+# the tree through russh.
 subtle = { version = "2.6.1", default-features = false }
 # md-5, sha1, sha2, sha3, hmac: the Hash, HMAC, TOTP and JWT tools' digests and MACs, as the
 # C# computes them with .NET's; all already in the tree through russh, ssh-key and sspi, at
@@ -126,7 +127,8 @@ windows = { version = "0.62.2", features = [
     "Storage_Streams",
 ] }
 tempfile = "3.27.0"
-# des: VNC Authentication only, a DES challenge the protocol mandates.
+# des: VNC Authentication only, a DES challenge the protocol mandates; reached only through
+# sealvault::legacy::vnc_des.
 des = "0.9.0"
 # flate2: the zlib stream of VNC ZRLE, pure Rust backend.
 flate2 = "1.1.10"

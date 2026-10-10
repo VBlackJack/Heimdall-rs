@@ -15,22 +15,24 @@
  */
 
 //! VNC Authentication (RFC 6143 7.2.2): the challenge encrypted with DES, keyed by the
-//! password. And the Plain authentication of `VeNCrypt`: a user name and a password as they
+//! password, computed by `sealvault::legacy::vnc_des`, the one place the DES it mandates is
+//! allowed. And the Plain authentication of `VeNCrypt`: a user name and a password as they
 //! are, sent here only inside TLS, once the server's certificate is trusted.
 //!
 //! VNC Authentication is weak by design and the client cannot fix it: the key is the password
 //! cut to 8 bytes, the server is not authenticated, and a recorded exchange can be
 //! brute-forced offline. It is spoken because most VNC servers offer nothing better.
 
-use des::Des;
-use des::cipher::{Array, BlockCipherEncrypt, KeyInit};
 use zeroize::Zeroizing;
 
 /// Length of the challenge and of the response.
-pub const CHALLENGE_LENGTH: usize = 16;
+pub use sealvault::legacy::vnc_des::CHALLENGE_LEN as CHALLENGE_LENGTH;
 
 /// Bytes of the password that count; the rest is ignored by the protocol.
-pub const PASSWORD_BYTES: usize = 8;
+pub use sealvault::legacy::vnc_des::PASSWORD_BYTES;
+
+/// The response to a challenge for a password.
+pub use sealvault::legacy::vnc_des::response;
 
 /// Longest Plain user name sent, in bytes.
 pub const MAX_PLAIN_USERNAME: usize = 1024;
@@ -86,43 +88,25 @@ pub fn plain(username: &[u8], password: &[u8]) -> Result<Zeroizing<Vec<u8>>, Too
     Ok(sent)
 }
 
-/// The response to `challenge` for `password`.
-#[must_use]
-pub fn response(password: &[u8], challenge: &[u8; CHALLENGE_LENGTH]) -> [u8; CHALLENGE_LENGTH] {
-    // The password cut or padded with zeros to 8 bytes, each byte's bits in reverse order:
-    // the historical VNC key schedule.
-    let mut key = Zeroizing::new([0; PASSWORD_BYTES]);
-    for (slot, byte) in key.iter_mut().zip(password) {
-        *slot = byte.reverse_bits();
-    }
-    let cipher = Des::new(&Array::from(*key));
-    let mut response = *challenge;
-    for block in response.as_chunks_mut::<PASSWORD_BYTES>().0 {
-        let mut array = Array::from(*block);
-        cipher.encrypt_block(&mut array);
-        block.copy_from_slice(&array);
-    }
-    response
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Computed outside this crate: `openssl enc -des-ecb -nopad` with the key bit-reversed
-    /// by hand, over the challenge 00 11 22 .. ff.
-    const CHALLENGE: [u8; 16] = [
+    /// The RFB vector, as sealvault's own tests check it: `openssl enc -des-ecb -nopad` with
+    /// the key bit-reversed by hand, over the challenge 00 11 22 .. ff.
+    const CHALLENGE: [u8; CHALLENGE_LENGTH] = [
         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
         0xff,
     ];
-    const EXPECTED: [u8; 16] = [
+    const EXPECTED: [u8; CHALLENGE_LENGTH] = [
         0xee, 0xe9, 0x81, 0xe2, 0x74, 0x19, 0x66, 0x45, 0xd7, 0x10, 0xe9, 0xd9, 0x1f, 0xf5, 0xf5,
         0xe8,
     ];
 
     #[test]
-    fn the_response_matches_an_independent_computation() {
+    fn the_response_spoken_is_sealvaults_vnc_response() {
         assert_eq!(response(b"Secret12", &CHALLENGE), EXPECTED);
+        assert_eq!(PASSWORD_BYTES, 8);
     }
 
     #[test]
@@ -145,11 +129,5 @@ mod tests {
         assert_eq!(plain(&past, b"").err(), Some(TooLong::Username));
         let past = vec![b'p'; MAX_PLAIN_PASSWORD + 1];
         assert_eq!(plain(b"admin", &past).err(), Some(TooLong::Password));
-    }
-
-    #[test]
-    fn only_the_first_eight_bytes_of_the_password_count() {
-        assert_eq!(response(b"Secret12 and more", &CHALLENGE), EXPECTED);
-        assert_ne!(response(b"Secret1", &CHALLENGE), EXPECTED);
     }
 }
