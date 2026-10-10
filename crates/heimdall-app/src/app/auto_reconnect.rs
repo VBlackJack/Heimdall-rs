@@ -49,6 +49,9 @@ pub struct Retry {
     pub max: u32,
     /// When it starts.
     pub due: Instant,
+    /// When the session dropped, the first attempt's wait began: the C# "elapsed" counts
+    /// from it, across the attempts.
+    pub since: Instant,
 }
 
 /// Whether a session of `purpose` that failed with `error` may come back by itself: for
@@ -109,8 +112,15 @@ impl App {
             tab.retry = None;
             return Vec::new();
         };
-        let due = Instant::now() + delay(attempt);
-        tab.retry = Some(Retry { attempt, max, due });
+        let now = Instant::now();
+        let due = now + delay(attempt);
+        let since = tab.retry.map_or(now, |retry| retry.since);
+        tab.retry = Some(Retry {
+            attempt,
+            max,
+            due,
+            since,
+        });
         vec![Effect::RetryAt {
             tab: tab_id,
             attempt: tab.attempt,

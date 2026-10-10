@@ -506,6 +506,12 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::DetachSplitRefused => fl!("ui-status-detach-split-refused"),
             Notice::ScreenshotCopied => fl!("ui-status-screenshot-copied"),
             Notice::ScreenshotFailed => fl!("ui-status-screenshot-failed"),
+            // As the C# toast after its Send keys menu.
+            Notice::KeysSent(keys) => fl!(
+                "ui-status-keys-sent",
+                keys = crate::texts::special_keys(*keys)
+            ),
+            Notice::KeysNotSent => fl!("ui-status-keys-not-sent"),
             Notice::FingerprintCopied(server) => {
                 fl!("ui-status-fingerprint-copied", server = server.as_str())
             }

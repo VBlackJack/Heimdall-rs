@@ -43,12 +43,12 @@ pub use clipboard::{MAX_IMAGE_BYTES, MAX_REMOTE_TEXT_BYTES};
 pub use clipboard_files::{CopyRefusal, MAX_COPY_BYTES, MAX_COPY_ENTRIES};
 pub use clipboard_save::{SaveEnd, SaveRefusal};
 pub use connect::{
-    AcceptedCertificate, AskCredentials, Credentials, DESKTOP_SCALE_FACTORS, Opening, RdpConfig,
-    RdpConnection, RdpError, Security, Timeouts, Transport, connect, connect_over, connect_through,
-    desktop_scale_factor, given,
+    AcceptedCertificate, AskCredentials, Credentials, DESKTOP_SCALE_FACTORS, Opening, Progress,
+    RdpConfig, RdpConnection, RdpError, Security, Step, Timeouts, Transport, connect, connect_over,
+    connect_through, desktop_scale_factor, given,
 };
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 pub use known_hosts::{CertificateVerdict, KnownRdpHost, KnownRdpHosts, Verdict};
-pub use reason::{Ending, Refusal};
+pub use reason::{Ending, Refusal, error_info_description};
 pub use session::{CloseReason, Framebuffer, LocalClipboard, RdpEvent, RdpSession};
 pub use time_zone::{TimeZone, Transition};

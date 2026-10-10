@@ -147,6 +147,8 @@ pub enum ConnectionEvent {
         /// FTPS prompt shows them; for an RDP server only when its certificate is renewed.
         details: Option<Box<CertificateDetails>>,
     },
+    /// The RDP connection came this far, before its session opened.
+    RdpStep(heimdall_rdp::Step),
     /// The RDP session is open.
     RdpReady {
         /// The desktop, drawn by the UI.
@@ -301,6 +303,7 @@ impl fmt::Debug for ConnectionEvent {
                 .field("port", port)
                 .field("fingerprint", &fingerprint.to_string())
                 .finish(),
+            Self::RdpStep(step) => f.debug_tuple("RdpStep").field(step).finish(),
             Self::RdpReady { .. } => f.write_str("RdpReady"),
             // What was copied can be a password: never shown.
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),

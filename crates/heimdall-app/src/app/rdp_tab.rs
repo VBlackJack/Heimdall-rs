@@ -24,7 +24,7 @@ use heimdall_rdp::{AcceptedCertificate, CertificateHash, Fingerprint, KnownRdpHo
 use tokio_util::sync::CancellationToken;
 
 use super::{App, CertificateContext, Effect, KeyTrust, Phase, Tab, TabProfile};
-use crate::desktop::{DesktopInput, DesktopPane};
+use crate::desktop::{DesktopInput, DesktopPane, SpecialKeys};
 use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::event::ConnectionEvent;
@@ -312,6 +312,7 @@ impl App {
         tab.attempt = attempt;
         tab.cancel = cancel.clone();
         tab.phase = Phase::Connecting;
+        tab.rdp_step = None;
         tab.desktop = None;
         let chosen = tab.desktop_sizing;
         // A size the server could not take live is asked as the connection opens.
@@ -477,8 +478,26 @@ impl App {
         }
         // The desktop exists only while the session is connected.
         if let Some(pane) = self.tab(tab_id).and_then(|tab| tab.desktop.as_ref()) {
-            pane.send(inputs);
+            let _ = pane.send(inputs);
         }
+    }
+
+    /// The keys of the session bar's menu sent to `tab_id`'s desktop, then said in the
+    /// status bar as the C# toast says it: sent, or not.
+    pub(super) fn send_keys(&mut self, tab_id: TabId, keys: SpecialKeys) {
+        // A dialog owns the input: what is meant for it must not reach the server.
+        if self.dialog.is_some() {
+            return;
+        }
+        let sent = self
+            .tab(tab_id)
+            .and_then(|tab| tab.desktop.as_ref())
+            .is_some_and(|pane| pane.send(&keys.inputs()));
+        self.tell(if sent {
+            super::Notice::KeysSent(keys)
+        } else {
+            super::Notice::KeysNotSent
+        });
     }
 
     /// How often the sessions asking for anti-idle keys get one; `None` when none does or
@@ -505,7 +524,7 @@ impl App {
         let inputs = crate::desktop::anti_idle_inputs();
         for pane in self.tabs.iter().filter(|tab| anti_idle(tab)) {
             if let Some(pane) = pane.desktop.as_ref() {
-                pane.send(&inputs);
+                let _ = pane.send(&inputs);
             }
         }
     }

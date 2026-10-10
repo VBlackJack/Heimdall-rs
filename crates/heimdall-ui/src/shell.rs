@@ -21,7 +21,7 @@
 //! what the user is typing into a question, and runs effects.
 
 use heimdall_core::settings::{AgentPreference, CtrlKTerminal, CtrlVPaste, ExecutionPolicy};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -67,7 +67,7 @@ use heimdall_app::{
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
-use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway, SshMode, display_address};
+use heimdall_core::profile::{ProfileId, SshGateway, SshMode, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{AppTheme, BroadcastScope, ColorScheme};
 use heimdall_ssh::{AgentSource, Secret};
@@ -724,6 +724,10 @@ pub enum Message {
     },
     /// Copy the report of a tab's failure, as the C# card's "Copy error".
     CopyError(TabId),
+    /// Open or close the "Diagnostic details" of a tab's failure, as the C# card's expander.
+    ToggleFailureDetails(TabId),
+    /// Show the redirections a desktop does not share, as the C# "+N" badge does.
+    ShowDisabledRedirections(TabId),
     /// Copy the anonymized report of tab's failure: no server, account nor message.
     CopyAnonymousError(TabId),
     /// A second passed while a tab waits to open again: its countdown is drawn anew.
@@ -1010,6 +1014,12 @@ impl fmt::Debug for Message {
                 write!(f, "SplitPalette({}, {axis:?})", host.value())
             }
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
+            Self::ToggleFailureDetails(tab) => {
+                write!(f, "ToggleFailureDetails({})", tab.value())
+            }
+            Self::ShowDisabledRedirections(tab) => {
+                write!(f, "ShowDisabledRedirections({})", tab.value())
+            }
             Self::CopyAnonymousError(tab) => write!(f, "CopyAnonymousError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
             Self::IdleTick => f.write_str("IdleTick"),
@@ -1496,6 +1506,12 @@ pub struct Shell {
     focus_next: Option<iced::widget::Id>,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
     desktop_fit: HashMap<TabId, (bool, Option<(u16, u16)>)>,
+    /// The failures whose "Diagnostic details" are open.
+    failure_details_open: HashSet<TabId>,
+    /// The desktops whose bar shows the redirections they do not share too.
+    redirections_shown: HashSet<TabId>,
+    /// The letterbox hint of each desktop.
+    letterbox_hints: HashMap<TabId, crate::rdp_status::LetterboxHint>,
     /// What the tree's search holds: the profiles it finds are shown.
     search: String,
     /// What the tool tabs hold, by tab.
@@ -1560,40 +1576,6 @@ impl Destination {
             Self::About => fl!("ui-nav-about"),
         }
     }
-}
-
-/// What an RDP session shares, as the C# session bar's indicators: the clipboard, the
-/// drives, the sound played here; each says what it is when pointed at.
-fn redirection_badges<'a>(profile: &RdpProfile) -> Vec<Element<'a, Message>> {
-    [
-        (
-            profile.redirect_clipboard,
-            fl!("ui-desktop-shares-clipboard"),
-            fl!("ui-desktop-shares-clipboard-tooltip"),
-        ),
-        (
-            profile.redirect_drives,
-            fl!("ui-desktop-shares-drives"),
-            fl!("ui-desktop-shares-drives-tooltip"),
-        ),
-        (
-            profile.options.audio == heimdall_core::profile::AudioPlayback::Local,
-            fl!("ui-desktop-shares-audio"),
-            fl!("ui-desktop-shares-audio-tooltip"),
-        ),
-    ]
-    .into_iter()
-    .filter(|(on, _, _)| *on)
-    .map(|(_, label, tip)| {
-        tooltip(
-            text(label).size(font_size::CAPTION).style(text::secondary),
-            text(tip).size(font_size::CAPTION),
-            tooltip::Position::Bottom,
-        )
-        .style(container::rounded_box)
-        .into()
-    })
-    .collect()
 }
 
 /// The application's name, at the head of the navigation: a name, not translated.
@@ -1760,6 +1742,9 @@ impl Shell {
             files_hovered: false,
             drops: crate::drop_batch::DropBatches::default(),
             desktop_fit: HashMap::new(),
+            failure_details_open: HashSet::new(),
+            redirections_shown: HashSet::new(),
+            letterbox_hints: HashMap::new(),
             search: String::new(),
             tools: crate::tools::ToolPanes::default(),
             tools_filter: String::new(),
@@ -2110,6 +2095,7 @@ impl Shell {
         if locked_out
             || self.app.tabs.iter().any(|tab| tab.retry.is_some())
             || self.app.undo_offer().is_some()
+            || self.letterbox_shown(std::time::Instant::now())
         {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
@@ -2401,6 +2387,7 @@ impl Shell {
             Message::InFloating(window, message) => return self.in_floating(window, *message),
             message => message,
         };
+        self.observe_letterboxes(std::time::Instant::now());
         // A click on another row of the tree ends a rename made in place, kept, as the C#
         // editor losing the focus.
         if self.inline_rename().is_some()
@@ -2569,6 +2556,16 @@ impl Shell {
             Message::Browse(target) => return self.browse(target),
             Message::Browsed(target, path) => self.browsed(target, path),
             Message::CopyError(tab) => return self.copy_error(tab),
+            Message::ToggleFailureDetails(tab) => {
+                if !self.failure_details_open.remove(&tab) {
+                    self.failure_details_open.insert(tab);
+                }
+                Vec::new()
+            }
+            Message::ShowDisabledRedirections(tab) => {
+                self.redirections_shown.insert(tab);
+                Vec::new()
+            }
             Message::CopyAnonymousError(tab) => {
                 return self
                     .anonymous_report(tab, std::time::SystemTime::now())
@@ -4888,10 +4885,14 @@ impl Shell {
                     ))
                     .size(font_size::CAPTION)
                     .style(text::secondary)),
+            ]
+            // The C# header's health, phase and time elapsed, for an RDP session.
+            .push(rdp_status(tab))
+            .push(
                 button(text(fl!("ui-connect-cancel-button")))
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-            ]
+            )
             .spacing(spacing::SM),
         ))
         .into()
@@ -6528,6 +6529,11 @@ impl Shell {
             .endpoint()
             .map(|(host, port)| format!("{} ({host}:{port})", tab.profile.name()));
         let route = self.app.tab_route(tab);
+        // The error as its card says it, then its diagnostic details, as the C# copies them.
+        let mut said = vec![failure_text(tab, error)];
+        if let Some(details) = failure_details(tab, error) {
+            said.extend(details.report_lines());
+        }
         Some(report::error_report(
             self.app.tab_kind(tab).label(),
             server.as_deref(),
@@ -6535,9 +6541,43 @@ impl Shell {
                 route: &route,
                 lasted: tab.session_lasted(),
             },
-            &texts::error(error),
+            &said.join(
+                "
+",
+            ),
             now,
         ))
+    }
+
+    /// What each RDP desktop's letterbox hint sees at `now`, as the C# looks again at each
+    /// layout of its desktop.
+    fn observe_letterboxes(&mut self, now: std::time::Instant) {
+        let seen: Vec<LetterboxSeen> = self
+            .app
+            .tabs
+            .iter()
+            .filter(|tab| tab.purpose == Purpose::Rdp)
+            .filter_map(|tab| {
+                let pane = tab.desktop.as_deref()?;
+                let fixed = pane.fixed_size();
+                let fit = self.fits(tab);
+                let boxed = crate::rdp_status::letterboxed(fixed, pane.tab_size(), fit);
+                Some((tab.id, fixed, fit, boxed))
+            })
+            .collect();
+        self.letterbox_hints
+            .retain(|id, _| seen.iter().any(|(tab, ..)| tab == id));
+        for (tab, fixed, fit, boxed) in seen {
+            self.letterbox_hints
+                .entry(tab)
+                .or_default()
+                .observe(fixed, fit, boxed, now);
+        }
+    }
+
+    /// Whether a letterbox hint shows at `now`: the window is drawn again until it goes.
+    fn letterbox_shown(&self, now: std::time::Instant) -> bool {
+        self.letterbox_hints.values().any(|hint| hint.visible(now))
     }
 
     /// The anonymized report of tab `id`'s failure at `now`: when, how many gateways, how
@@ -7067,7 +7107,14 @@ impl Shell {
                 } else {
                     fl!("ui-session-closed")
                 };
-                let mut ended = column![text(said)].spacing(spacing::SM);
+                let mut ended = column![
+                    row![]
+                        .push(rdp_status(tab))
+                        .push(text(said))
+                        .spacing(spacing::SM)
+                        .align_y(iced::Alignment::Center)
+                ]
+                .spacing(spacing::SM);
                 if let Some(reason) = tab.end_reason.as_ref().and_then(texts::rdp_ending) {
                     ended = ended.push(text(reason));
                 }
@@ -7112,7 +7159,9 @@ impl Shell {
             {
                 self.dropped_page(tab, error, focused)
             }
-            Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
+            Phase::Failed(_) if let Some(retry) = tab.retry => {
+                countdown_card(tab.id, retry, rdp_status(tab))
+            }
             Phase::Failed(error) => self.failure_card(tab, error),
         }
     }
@@ -7220,20 +7269,79 @@ impl Shell {
         .then(|| fl!("ui-certificate-owner-tab", tab = tab.display_title()))
     }
 
-    /// A failed session's card: the error, and its ways out.
+    /// A failed session's card: the error, an RDP one's health and "Diagnostic details" as
+    /// the C# card shows them, and its ways out.
     fn failure_card<'a>(&'a self, tab: &'a Tab, error: &'a UiError) -> Element<'a, Message> {
+        let title = text(fl!("ui-session-failed-title")).size(font_size::TITLE);
+        let mut body = column![if tab.purpose == Purpose::Rdp {
+            Element::from(
+                row![
+                    crate::rdp_status::health_dot(crate::rdp_status::Health::of(tab)),
+                    title
+                ]
+                .spacing(spacing::SM)
+                .align_y(iced::Alignment::Center),
+            )
+        } else {
+            title.into()
+        }]
+        .spacing(spacing::SM)
+        .push(text(failure_text(tab, error)));
+        if let Some(details) = failure_details(tab, error) {
+            body = body.push(self.failure_details(tab.id, &details));
+        }
+        // Buttons go to the next line whole when a translation is long, never cut.
         center(card(
-            column![
-                text(fl!("ui-session-failed-title")).size(font_size::TITLE),
-                text(texts::error(error)),
-                // Buttons go to the next line whole when a translation is long, never cut.
+            body.push(
                 self.failure_actions(tab, error)
                     .wrap()
                     .vertical_spacing(spacing::SM),
-            ]
-            .spacing(spacing::SM),
+            ),
         ))
         .into()
+    }
+
+    /// The C# card's "Diagnostic details" expander of tab `id`'s failure: its header, then
+    /// once open the stage, the code and the detail, label beside value.
+    fn failure_details<'a>(
+        &self,
+        id: TabId,
+        details: &crate::rdp_diagnostic::Details,
+    ) -> Element<'a, Message> {
+        let open = self.failure_details_open.contains(&id);
+        let header = button(
+            row![
+                icons::icon(
+                    if open {
+                        Icon::ChevronDown
+                    } else {
+                        Icon::ChevronRight
+                    },
+                    Tint::Secondary,
+                    FAILURE_DETAILS_CHEVRON,
+                ),
+                text(fl!("ui-failure-details-header")).size(font_size::CAPTION),
+            ]
+            .spacing(spacing::XS)
+            .align_y(iced::Alignment::Center),
+        )
+        .style(styles::subtle)
+        .on_press(Message::ToggleFailureDetails(id));
+        let mut section = column![header].spacing(spacing::XS);
+        if open {
+            let mut labels = column![].spacing(spacing::XS);
+            let mut values = column![].spacing(spacing::XS);
+            for (label, value) in details.rows() {
+                labels = labels.push(text(label).size(font_size::CAPTION).style(text::secondary));
+                values = values.push(text(value).size(font_size::CAPTION));
+            }
+            section = section.push(
+                row![labels, values]
+                    .spacing(spacing::MD)
+                    .padding([0.0, spacing::SM]),
+            );
+        }
+        section.into()
     }
 
     /// The ways out of a failed session: those of [`Self::session_actions`], and the way
@@ -7463,7 +7571,35 @@ impl Shell {
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
         let bar = self.desktop_bar_end(tab, pane, bar);
-        column![bar, view].spacing(spacing::XS).into()
+        // A fixed size that does not fill the tab says so for a while, at the bottom right of
+        // the desktop, as the C# letterbox hint.
+        let hint = pane
+            .fixed_size()
+            .filter(|_| {
+                self.letterbox_hints
+                    .get(&tab_id)
+                    .is_some_and(|hint| hint.visible(std::time::Instant::now()))
+            })
+            .map(|(width, height)| {
+                container(crate::rdp_status::letterbox_badge(width, height))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .align_y(iced::alignment::Vertical::Bottom)
+                    .padding(iced::Padding {
+                        right: spacing::MD,
+                        bottom: spacing::MD,
+                        ..iced::Padding::ZERO
+                    })
+            });
+        let view: Element<'a, Message> = match hint {
+            Some(hint) => stack![view, hint].into(),
+            None => view.into(),
+        };
+        // Whole on a narrow tab: what does not fit goes to a line of its own, never cut.
+        column![bar.wrap().vertical_spacing(spacing::XS), view]
+            .spacing(spacing::XS)
+            .into()
     }
 
     /// The end of a desktop's session bar: the resolution menu, the anti-idle badge, saving
@@ -7516,6 +7652,8 @@ impl Shell {
                 .style(container::rounded_box),
             );
         }
+        // The C# header's health dot and phase stepper.
+        bar = bar.push(rdp_status(tab));
         // Shown while the session gets anti-idle keys; a click stops them, as the C# badge.
         if self.app.anti_idle_on(tab_id) {
             bar = bar.push(
@@ -7550,7 +7688,11 @@ impl Shell {
             bar = bar.push(control);
         }
         if let TabProfile::Rdp(profile) = &tab.profile {
-            bar = bar.extend(redirection_badges(profile));
+            bar = bar.extend(crate::rdp_status::redirection_controls(
+                tab_id,
+                profile,
+                self.redirections_shown.contains(&tab_id),
+            ));
         }
         if let Some(name) = &pane.desktop_name {
             bar = bar.push(
@@ -10601,6 +10743,36 @@ fn paste_dialog<'a>(
 }
 
 /// "Reconnecting (attempt 2/20)...", as the C# countdown says it.
+/// What a desktop's letterbox hint sees: its tab, its fixed size, whether fitted, whether
+/// letterboxed.
+type LetterboxSeen = (TabId, Option<(u16, u16)>, bool, bool);
+
+/// Side of the "Diagnostic details" expander's arrow.
+const FAILURE_DETAILS_CHEVRON: f32 = 10.0;
+
+/// The sentence of `tab`'s failure `error`: for an RDP connection, the C# text of its cause
+/// when the C# has one; else as any session's.
+fn failure_text(tab: &Tab, error: &UiError) -> String {
+    (tab.purpose == Purpose::Rdp)
+        .then(|| texts::rdp_error(error))
+        .flatten()
+        .unwrap_or_else(|| texts::error(error))
+}
+
+/// The diagnostic details of `tab`'s failure `error`, for an RDP connection.
+fn failure_details(tab: &Tab, error: &UiError) -> Option<crate::rdp_diagnostic::Details> {
+    (tab.purpose == Purpose::Rdp)
+        .then(|| crate::rdp_diagnostic::of(error, tab.dropped()))
+        .flatten()
+}
+
+/// The health, the phase and the time elapsed of `tab`'s RDP session, as the C# session
+/// header shows them; nothing for another protocol.
+fn rdp_status<'a>(tab: &Tab) -> Option<Element<'a, Message>> {
+    (tab.purpose == Purpose::Rdp)
+        .then(|| crate::rdp_status::status(tab, std::time::Instant::now()).into())
+}
+
 fn reconnecting(retry: Retry) -> String {
     fl!(
         "ui-session-reconnecting",
@@ -10625,8 +10797,13 @@ fn cancel_retry_button<'a>(tab: TabId) -> iced::widget::Button<'a, Message> {
         .on_press(Message::App(AppMessage::CancelAutoReconnect(tab)))
 }
 
-/// A session waiting to open again by itself: which attempt, in how long, and Cancel.
-fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
+/// A session waiting to open again by itself: which attempt, in how long, an RDP session's
+/// health and time elapsed, and Cancel.
+fn countdown_card(
+    tab: TabId,
+    retry: Retry,
+    status: Option<Element<'_, Message>>,
+) -> Element<'_, Message> {
     center(card(
         column![
             text(reconnecting(retry)).size(font_size::TITLE),
@@ -10634,8 +10811,9 @@ fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
                 "ui-session-reconnecting-in",
                 seconds = seconds_left(retry)
             )),
-            cancel_retry_button(tab),
         ]
+        .push(status)
+        .push(cancel_retry_button(tab))
         .spacing(spacing::SM),
     ))
     .into()
@@ -11498,18 +11676,7 @@ impl fmt::Display for SchemeChoice {
 
 impl fmt::Display for KeysChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&match self.0 {
-            SpecialKeys::CtrlAltDel => fl!("ui-desktop-keys-ctrl-alt-del"),
-            SpecialKeys::Windows => fl!("ui-desktop-keys-windows"),
-            SpecialKeys::AltTab => fl!("ui-desktop-keys-alt-tab"),
-            SpecialKeys::CtrlEsc => fl!("ui-desktop-keys-ctrl-esc"),
-            SpecialKeys::Escape => fl!("ui-desktop-keys-escape"),
-            SpecialKeys::PrintScreen => fl!("ui-desktop-keys-print-screen"),
-            SpecialKeys::F11 => fl!("ui-desktop-keys-f11"),
-            SpecialKeys::WinL => fl!("ui-desktop-keys-win-l"),
-            SpecialKeys::WinD => fl!("ui-desktop-keys-win-d"),
-            SpecialKeys::WinE => fl!("ui-desktop-keys-win-e"),
-        })
+        f.write_str(&texts::special_keys(self.0))
     }
 }
 

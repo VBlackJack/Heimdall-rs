@@ -793,15 +793,13 @@ impl DesktopPane {
         }
     }
 
-    /// Sends `inputs` to the session, in the protocol's terms. A closed session drops its
-    /// receiver: the input then goes nowhere, as it should.
-    pub(crate) fn send(&self, inputs: &[DesktopInput]) {
+    /// Sends `inputs` to the session, in the protocol's terms: whether they went. A closed
+    /// session drops its receiver: the input then goes nowhere, as it should.
+    pub(crate) fn send(&self, inputs: &[DesktopInput]) -> bool {
         match &self.sink {
             DesktopSink::Rdp { input, .. } => {
                 let operations = rdp_operations(inputs);
-                if !operations.is_empty() {
-                    let _ = input.send(operations);
-                }
+                operations.is_empty() || input.send(operations).is_ok()
             }
             DesktopSink::Vnc(sink) => sink.send(inputs),
         }
@@ -835,10 +833,11 @@ fn vnc_button(button: PointerButton) -> Option<u8> {
 impl VncSink {
     /// Sends `inputs`. VNC reports the pointer whole each time: position and every button
     /// held. A wheel notch is a press and a release of buttons 4 to 7; a key goes by keysym
-    /// and XT scancode, the session sending what the server takes, as noVNC.
-    fn send(&self, inputs: &[DesktopInput]) {
+    /// and XT scancode, the session sending what the server takes, as noVNC. Nothing goes
+    /// from a view-only session: whether they went.
+    fn send(&self, inputs: &[DesktopInput]) -> bool {
         if self.view_only {
-            return;
+            return false;
         }
         for input in inputs {
             match *input {
@@ -869,6 +868,7 @@ impl VncSink {
                 }
             }
         }
+        true
     }
 
     fn pointer(&self, x: u16, y: u16) {
