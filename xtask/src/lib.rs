@@ -16,5 +16,6 @@
 
 //! Developer tooling for the Heimdall-rs workspace.
 
+pub mod crypto_deps;
 pub mod legacy_locales;
 pub mod typography;
