@@ -181,20 +181,6 @@ pub fn generate(
     comment: &str,
     passphrase: &str,
 ) -> Result<GeneratedSshKey, SshKeyError> {
-    generate_with_rounds(algorithm, comment, passphrase, PBE_ITERATION_COUNT)
-}
-
-/// [`generate`] with `rounds` of PBKDF2, for a test that does not wait for 600,000.
-///
-/// # Errors
-///
-/// As [`generate`].
-pub fn generate_with_rounds(
-    algorithm: SshKeyAlgorithm,
-    comment: &str,
-    passphrase: &str,
-    rounds: u32,
-) -> Result<GeneratedSshKey, SshKeyError> {
     let pair = match algorithm {
         SshKeyAlgorithm::Rsa2048 => KeyPair::rsa(RSA_2048_BITS)?,
         SshKeyAlgorithm::Rsa4096 => KeyPair::rsa(RSA_4096_BITS)?,
@@ -204,7 +190,7 @@ pub fn generate_with_rounds(
     let private_key_pem = if passphrase.is_empty() {
         pkcs8_pem::private_key_pem(pair.pkcs8_der())?
     } else {
-        pkcs8_pem::encrypted_private_key_pem(pair.pkcs8_der(), passphrase, rounds)?
+        pkcs8_pem::encrypted_private_key_pem(pair.pkcs8_der(), passphrase, PBE_ITERATION_COUNT)?
     };
     Ok(GeneratedSshKey {
         public_key,
