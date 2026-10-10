@@ -53,6 +53,7 @@ pub mod legacy_migration_view;
 pub mod local_form;
 mod logging;
 mod macros_view;
+pub mod onboarding;
 pub mod palette;
 pub mod post_connect_form;
 pub mod presets_editor;

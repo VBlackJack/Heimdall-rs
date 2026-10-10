@@ -5144,6 +5144,52 @@ fn ctrl_shift_a_in_a_terminal_is_left_to_the_window_and_never_sent() {
     );
 }
 
+/// Ctrl+Shift+F11, as the C# `FullscreenShortcutRouter`: full screen over an embedded session,
+/// listed with the window's keys, and never sent to the session.
+#[test]
+fn ctrl_shift_f11_in_a_terminal_is_left_to_the_window_and_never_sent() {
+    use iced::keyboard::key::{Code, Named, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    let ctrl_shift_f11 = iced::Event::Keyboard(Event::KeyPressed {
+        key: Key::Named(Named::F11),
+        modified_key: Key::Named(Named::F11),
+        physical_key: Physical::Code(Code::F11),
+        location: Location::Standard,
+        modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+        text: None,
+        repeat: false,
+    });
+    {
+        let mut ui = simulator(&shell);
+        let statuses = ui.simulate([ctrl_shift_f11]);
+        assert_eq!(statuses, [event::Status::Ignored], "the window's");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { .. }))),
+            "nothing sent to the session"
+        );
+    }
+    // What the window does with it: full screen, then back, as F11.
+    let _ = shell.update(Message::ToggleFullscreen);
+    simulator(&shell)
+        .find("Exit fullscreen")
+        .expect("full screen");
+    let _ = shell.update(Message::ToggleFullscreen);
+    assert!(simulator(&shell).find("Exit fullscreen").is_err());
+
+    // Listed in the F1 help, as the C# `HelpShortcutsContent` lists it.
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Help));
+    let mut ui = simulator(&shell);
+    ui.find("Ctrl+Shift+F11").expect("the key");
+    ui.find("Toggle fullscreen over embedded sessions")
+        .expect("what it does");
+}
+
 #[test]
 fn windows_high_contrast_is_followed_and_high_contrast_can_be_chosen_by_hand() {
     use heimdall_app::SettingsMessage;

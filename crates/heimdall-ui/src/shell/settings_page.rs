@@ -191,6 +191,21 @@ fn send(message: SettingsMessage) -> Message {
     Message::App(AppMessage::Settings(message))
 }
 
+/// The C# "Welcome tour" card (`MainWindow.xaml:2715-2745`): what it does, then "Show the tour
+/// again", the only way back into the tour once it was finished or skipped.
+fn onboarding_row<'a>() -> Element<'a, Message> {
+    column![
+        text(fl!("ui-settings-onboarding-hint"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+        button(text(row_label(SettingRow::Onboarding)))
+            .style(styles::secondary)
+            .on_press(Message::ReplayTour),
+    ]
+    .spacing(spacing::MD)
+    .into()
+}
+
 /// The heading over `card`, when it has one of its own.
 fn card_heading(card: SettingsCard) -> Option<String> {
     Some(match card {
@@ -198,6 +213,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::Behavior => fl!("ui-settings-behavior"),
         SettingsCard::Updates => fl!("ui-settings-updates"),
         SettingsCard::Reachability => fl!("ui-settings-reachability"),
+        SettingsCard::Onboarding => fl!("ui-settings-onboarding"),
         SettingsCard::Terminal => fl!("ui-settings-terminal"),
         SettingsCard::SessionLogging => fl!("ui-settings-session-logging"),
         SettingsCard::Macros => fl!("ui-macros-menu"),
@@ -246,6 +262,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::UpdateVersion => fl!("ui-settings-updates-current-version"),
         SettingRow::LegacyMigration => fl!("ui-settings-legacy-migration"),
         SettingRow::Reachability => fl!("ui-settings-reachability-enabled"),
+        SettingRow::Onboarding => fl!("ui-settings-onboarding-replay"),
         SettingRow::FontSize => fl!("ui-settings-font-size"),
         SettingRow::FontFamily => fl!("ui-settings-font-family"),
         SettingRow::ColorScheme => fl!("ui-settings-color-scheme"),
@@ -300,6 +317,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel-hint"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep-hint"),
         SettingRow::Reachability => fl!("ui-settings-reachability-hint"),
+        SettingRow::Onboarding => fl!("ui-settings-onboarding-hint"),
         SettingRow::PowerShellPolicy => fl!("ui-settings-powershell-policy-hint"),
         SettingRow::SessionLogging => fl!("ui-settings-session-logging-warning"),
         SettingRow::SessionLogDirectory => fl!("ui-settings-session-log-directory-hint"),
@@ -1057,6 +1075,7 @@ impl Shell {
             SettingRow::Pin | SettingRow::Vault | SettingRow::Provider => self.security_row(row),
             SettingRow::UpdateVersion => self.update_version_row(),
             SettingRow::LegacyMigration => self.legacy_migration_row(),
+            SettingRow::Onboarding => onboarding_row(),
             _ => self.choice_row(row),
         }
     }

@@ -45,8 +45,9 @@ zeroize.workspace = true
 x509-cert.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-# The current user's SID and the system folder, for the folders' access.
-winsafe.workspace = true
+# The current user's SID and the system folder, for the folders' access; shell: the known
+# folders (local application data, Program Files, Windows), never read from the environment.
+winsafe = { workspace = true, features = ["shell"] }
 
 [lints]
 workspace = true
