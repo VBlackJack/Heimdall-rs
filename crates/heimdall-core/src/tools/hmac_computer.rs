@@ -19,10 +19,7 @@
 //! SHA-384, SHA-512, SHA-1 or MD5, written in lower-case hexadecimal or in Base64.
 
 use data_encoding::{BASE64, HEXLOWER};
-use hmac::{Hmac, KeyInit, Mac};
-use md5::Md5;
-use sha1::Sha1;
-use sha2::{Sha256, Sha384, Sha512};
+use sealvault::mac;
 
 use super::hash_computer::HashAlgorithm;
 
@@ -72,21 +69,8 @@ pub const fn display_name(kind: HashAlgorithm) -> Option<&'static str> {
 ///
 /// [`UnsupportedHmac`] over SHA3-256.
 pub fn compute(kind: HashAlgorithm, key: &[u8], data: &[u8]) -> Result<Vec<u8>, UnsupportedHmac> {
-    Ok(match kind {
-        HashAlgorithm::Md5 => mac::<Hmac<Md5>>(key, data),
-        HashAlgorithm::Sha1 => mac::<Hmac<Sha1>>(key, data),
-        HashAlgorithm::Sha256 => mac::<Hmac<Sha256>>(key, data),
-        HashAlgorithm::Sha384 => mac::<Hmac<Sha384>>(key, data),
-        HashAlgorithm::Sha512 => mac::<Hmac<Sha512>>(key, data),
-        HashAlgorithm::Sha3_256 => return Err(UnsupportedHmac(kind)),
-    })
-}
-
-/// The code of `data` under `key` by the MAC `M`.
-fn mac<M: Mac + KeyInit>(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut mac = <M as KeyInit>::new_from_slice(key).expect("an HMAC takes a key of any length");
-    Mac::update(&mut mac, data);
-    mac.finalize().into_bytes().to_vec()
+    let algorithm = mac::Algorithm::over(kind.sealed()).ok_or(UnsupportedHmac(kind))?;
+    Ok(mac::compute(algorithm, key, data).as_bytes().to_vec())
 }
 
 /// `code` written as `format` says, as the C# `HmacComputer.Format` (`HmacComputer.cs:45-61`).
