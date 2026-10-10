@@ -139,6 +139,8 @@ png = "0.18.1"
 polling = "3.11.0"
 # rustix: hanging up and killing a local shell's process group (Unix).
 rustix = { version = "1.1.5", features = ["process"] }
+# socket2: TCP keep-alives of an RDP connection; already in the tree through tokio.
+socket2 = "0.6.5"
 thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util"] }
 # ring only: the workspace already carries it through russh, and no aws-lc build.

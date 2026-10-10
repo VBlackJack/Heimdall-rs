@@ -63,7 +63,8 @@ pub enum SettingsCard {
     SshTrusted,
     /// The default RDP mode and the RDP options profiles following the application's take.
     RdpDefaults,
-    /// The RDP auto-reconnect attempts and the logon watchdog.
+    /// The RDP auto-reconnect attempts, the logon watchdog, the wait after connecting and
+    /// the keep-alive interval.
     RdpSession,
     /// The sizes the RDP Resolution menus offer.
     RdpPresets,
@@ -251,6 +252,8 @@ pub enum SettingRow {
     RdpConnectTimeout,
     /// Milliseconds an RDP desktop following its tab waits after connecting.
     RdpResizeDelay,
+    /// Milliseconds between two keep-alives of an embedded RDP connection.
+    RdpKeepAlive,
     /// The sizes the RDP Resolution menus offer.
     RdpResolutionPresets,
     /// "Reset RDP defaults".
@@ -281,7 +284,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 62] = [
+    pub const ALL: [Self; 63] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -331,6 +334,7 @@ impl SettingRow {
         Self::RdpAutoReconnectAttempts,
         Self::RdpConnectTimeout,
         Self::RdpResizeDelay,
+        Self::RdpKeepAlive,
         Self::RdpResolutionPresets,
         Self::RdpResetAll,
         Self::Certificates,
@@ -392,9 +396,11 @@ impl SettingRow {
             | Self::VncCertificates => SettingsCard::SshTrusted,
             // At the top of the C# "RDP defaults" card (`MainWindow.xaml:3356-3375`).
             Self::RdpDefaultMode | Self::RdpDefaults => SettingsCard::RdpDefaults,
-            Self::RdpAutoReconnectAttempts | Self::RdpConnectTimeout | Self::RdpResizeDelay => {
-                SettingsCard::RdpSession
-            }
+            // The keep-alive last, as in the C# RDP Behavior card.
+            Self::RdpAutoReconnectAttempts
+            | Self::RdpConnectTimeout
+            | Self::RdpResizeDelay
+            | Self::RdpKeepAlive => SettingsCard::RdpSession,
             Self::RdpResolutionPresets => SettingsCard::RdpPresets,
             Self::RdpResetAll => SettingsCard::RdpReset,
             Self::Certificates => SettingsCard::RdpTrusted,
@@ -435,6 +441,7 @@ impl SettingRow {
             Self::WindowsHelloGrace => SessionField::WindowsHelloGrace,
             Self::VaultHelloMaxDays => SessionField::VaultHelloMaxDays,
             Self::RdpResizeDelay => SessionField::RdpResizeDelay,
+            Self::RdpKeepAlive => SessionField::RdpKeepAlive,
             _ => return None,
         })
     }

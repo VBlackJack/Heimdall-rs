@@ -87,6 +87,7 @@ fn request(
         desktop: DEFAULT_DESKTOP,
         desktop_scale: 100,
         logon_timeout: None,
+        keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
         route: vec![SshProfile {
             id: ProfileId::new("gw"),
             name: "gw".to_owned(),

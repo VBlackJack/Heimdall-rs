@@ -84,6 +84,10 @@ pub const MAX_DESKTOP_SIDE: u16 = 8192;
 /// Function keys of the keyboard the server is told about.
 const FUNCTION_KEYS: u32 = 12;
 
+/// Time between two keep-alives of a connection by default, as mstsc's `KeepAliveInterval`
+/// the C# Heimdall sets (`RdpSessionState.DefaultKeepAliveIntervalMs`).
+pub const DEFAULT_KEEP_ALIVE: Duration = Duration::from_secs(60);
+
 /// A byte stream an RDP connection runs over.
 pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
 
@@ -196,6 +200,11 @@ pub struct RdpConfig {
     pub accepted: Option<AcceptedCertificate>,
     /// Phase timeouts.
     pub timeouts: Timeouts,
+    /// Time without traffic before a TCP keep-alive is sent, then between two of them, as
+    /// the C# Heimdall gives mstsc its `KeepAliveInterval`: an idle connection is not dropped
+    /// by a firewall or a NAT on the way, and a dead one is noticed. Only for the TCP
+    /// connection [`connect`] opens: through a tunnel, the SSH keep-alives keep the way.
+    pub keep_alive: Duration,
     /// Share the clipboard with the server, text only: its copies reach this side, and this
     /// side's text is offered to it.
     pub clipboard: bool,
@@ -406,13 +415,31 @@ pub async fn connect(
 ) -> Result<RdpConnection, RdpError> {
     let host = config.host.clone();
     let port = config.port;
+    let every = config.keep_alive;
     let tcp: Opening = Box::pin(async move {
         let tcp = TcpStream::connect((host.as_str(), port)).await?;
+        // A connection without keep-alives still works: only an idle one may be dropped.
+        if let Err(error) = keep_alive(&tcp, every) {
+            log::warn!("RDP keep-alives not set on the connection to {host}:{port}: {error}");
+        }
         let local = tcp.local_addr()?;
         Ok((Box::new(tcp) as Box<dyn Transport>, local))
     });
     let limit = config.timeouts.connect;
     connect_through(config, credentials, cancel, tcp, Some(limit)).await
+}
+
+/// Turns TCP keep-alives on for `tcp`: the first sent after `every` without traffic, the
+/// next ones `every` apart while unanswered.
+///
+/// # Errors
+///
+/// The system refused the socket options.
+pub fn keep_alive(tcp: &TcpStream, every: Duration) -> io::Result<()> {
+    let keep_alive = socket2::TcpKeepalive::new()
+        .with_time(every)
+        .with_interval(every);
+    socket2::SockRef::from(tcp).set_tcp_keepalive(&keep_alive)
 }
 
 /// [`connect`], with the stream opened by `opening` instead of a TCP connection of its own:
@@ -1105,6 +1132,7 @@ mod tests {
             known_hosts: KnownRdpHosts::new(known),
             accepted: None,
             timeouts: Timeouts::default(),
+            keep_alive: DEFAULT_KEEP_ALIVE,
             clipboard: false,
             drives: Vec::new(),
             trusted_for_run: Vec::new(),
@@ -1113,6 +1141,26 @@ mod tests {
             time_zone: None,
             desktop_scale: 100,
             progress: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_keep_alives_are_turned_on_at_the_interval_asked() {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("listen");
+        let tcp = TcpStream::connect(listener.local_addr().expect("address"))
+            .await
+            .expect("connect");
+        let socket = socket2::SockRef::from(&tcp);
+        assert!(!socket.keepalive().expect("read"), "off until asked");
+        let every = Duration::from_secs(17);
+        keep_alive(&tcp, every).expect("set");
+        assert!(socket.keepalive().expect("read"), "on");
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(socket.tcp_keepalive_time().expect("read"), every);
+            assert_eq!(socket.tcp_keepalive_interval().expect("read"), every);
         }
     }
 

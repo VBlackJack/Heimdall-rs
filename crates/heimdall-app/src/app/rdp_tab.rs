@@ -210,6 +210,9 @@ impl App {
                 0 => None,
                 seconds => Some(std::time::Duration::from_secs(u64::from(seconds))),
             },
+            keep_alive: std::time::Duration::from_millis(u64::from(
+                self.settings.rdp_keep_alive_interval_ms,
+            )),
             route: route.iter().map(SshGateway::as_hop).collect(),
             ssh,
             cancel,

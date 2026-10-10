@@ -60,6 +60,10 @@ const SYSTEM_FOLDER: &str = "System32";
 /// The variables naming the Windows folder, in the order they are read.
 const WINDOWS_FOLDER_VARIABLES: [&str; 2] = ["SystemRoot", "windir"];
 
+/// Each side of the automatic size is a multiple of this, as the C# `RdpDisplayResolver`
+/// snaps it (`WidthSnapMultiplePx`).
+const AUTO_SIDE_STEP: u16 = 4;
+
 /// `screen mode id` of a window.
 const SCREEN_WINDOWED: u8 = 1;
 /// `screen mode id` of the full screen.
@@ -115,11 +119,52 @@ struct Display {
     single_monitor_said: bool,
 }
 
-/// How `profile`'s desktop is shown. The automatic mode takes the default size, the screen's
-/// working area being unknown here; the monitors are spanned in the multi-monitor mode, or
-/// when the profile asks for it outside the automatic mode, as the C# reads
-/// `RdpMultiMonitor` for a profile saved before its resolution modes.
-fn display(profile: &RdpProfile) -> Display {
+/// The size Remote Desktop Connection opens at in the automatic mode, as the C#
+/// `RdpDisplayResolver.ResolveExternalAutoWindowedSize`: the primary screen's working area,
+/// in physical pixels, or the default size when it is unknown or empty; each side brought
+/// down to a multiple of 4, and never below 4.
+#[must_use]
+pub fn auto_desktop(working_area: Option<(u32, u32)>) -> (u16, u16) {
+    let (width, height) = working_area
+        .filter(|&(width, height)| width > 0 && height > 0)
+        .unwrap_or((
+            u32::from(DEFAULT_FIXED_SIZE.0),
+            u32::from(DEFAULT_FIXED_SIZE.1),
+        ));
+    let snap = |side: u32| {
+        let side = u16::try_from(side).unwrap_or(u16::MAX);
+        (side - side % AUTO_SIDE_STEP).max(AUTO_SIDE_STEP)
+    };
+    (snap(width), snap(height))
+}
+
+/// The primary screen's working area, the screen without the taskbar, in physical pixels
+/// (winit makes the process aware of each monitor's DPI before any window opens), as the C#
+/// `WindowWorkingAreaProvider.GetPrimaryWorkingAreaPhysicalPx`; `None` when it cannot be
+/// read.
+#[cfg(windows)]
+fn primary_working_area() -> Option<(u32, u32)> {
+    use winsafe::{self as w, co};
+    // The primary screen is the one holding the origin of the desktop.
+    let primary = w::HMONITOR::MonitorFromPoint(w::POINT::default(), co::MONITOR::DEFAULTTOPRIMARY);
+    let work = primary.GetMonitorInfo().ok()?.rcWork;
+    Some((
+        u32::try_from(work.right - work.left).ok()?,
+        u32::try_from(work.bottom - work.top).ok()?,
+    ))
+}
+
+/// No screen but Windows' is read: Remote Desktop Connection is Windows' own.
+#[cfg(not(windows))]
+fn primary_working_area() -> Option<(u32, u32)> {
+    None
+}
+
+/// How `profile`'s desktop is shown. The automatic mode takes `working_area` (see
+/// [`auto_desktop`]); the monitors are spanned in the multi-monitor mode, or when the profile
+/// asks for it outside the automatic mode, as the C# reads `RdpMultiMonitor` for a profile
+/// saved before its resolution modes.
+fn display(profile: &RdpProfile, working_area: Option<(u32, u32)>) -> Display {
     let extras = &profile.extras;
     let screen_mode = |smart_sizing: bool| {
         if extras.full_screen || smart_sizing {
@@ -138,7 +183,7 @@ fn display(profile: &RdpProfile) -> Display {
     let options = &profile.options;
     match options.resolution {
         Resolution::Auto => Display {
-            size: DEFAULT_FIXED_SIZE,
+            size: auto_desktop(working_area),
             smart_sizing: true,
             multi_monitor: false,
             screen_mode: SCREEN_WINDOWED,
@@ -189,7 +234,7 @@ fn full_address(host: &str, port: u16) -> String {
 /// the performance options and the RD Gateway. Never a password.
 #[must_use]
 pub fn rdp_file(profile: &RdpProfile) -> String {
-    rdp_file_to(profile, &profile.host, profile.port)
+    rdp_file_to(profile, &profile.host, profile.port, primary_working_area())
 }
 
 /// The `.rdp` file `profile` opens with when its server is reached through the forward
@@ -197,12 +242,23 @@ pub fn rdp_file(profile: &RdpProfile) -> String {
 /// Gateway, when the profile names one, written as [`rdp_file`] writes it, as the C# does.
 #[must_use]
 pub fn rdp_file_through(profile: &RdpProfile, forward: SocketAddr) -> String {
-    rdp_file_to(profile, &forward.ip().to_string(), forward.port())
+    rdp_file_to(
+        profile,
+        &forward.ip().to_string(),
+        forward.port(),
+        primary_working_area(),
+    )
 }
 
-/// The `.rdp` file `profile` opens with, its address `host:port`.
-fn rdp_file_to(profile: &RdpProfile, host: &str, port: u16) -> String {
-    let display = display(profile);
+/// The `.rdp` file `profile` opens with, its address `host:port`, the automatic mode sized
+/// for `working_area`.
+fn rdp_file_to(
+    profile: &RdpProfile,
+    host: &str,
+    port: u16,
+    working_area: Option<(u32, u32)>,
+) -> String {
+    let display = display(profile, working_area);
     let options = &profile.options;
     let extras = &profile.extras;
     let mut file = String::new();
@@ -639,7 +695,8 @@ mod tests {
         profile.domain = Some("  ".to_owned());
         profile.options.resolution = Resolution::Auto;
         profile.extras.multi_monitor = true;
-        let file = rdp_file(&profile);
+        // The working area unknown: the default size.
+        let file = rdp_file_to(&profile, &profile.host, profile.port, None);
         let lines = lines(&file);
         for expected in [
             "full address:s:rds.lab:3390",
@@ -665,6 +722,55 @@ mod tests {
             "no account named: {lines:?}"
         );
         assert!(!lines.iter().any(|line| line.starts_with("administrative")));
+    }
+
+    #[test]
+    fn the_automatic_size_is_the_working_area_brought_down_to_a_multiple_of_4() {
+        assert_eq!(auto_desktop(Some((2560, 1400))), (2560, 1400));
+        assert_eq!(
+            auto_desktop(Some((1366, 738))),
+            (1364, 736),
+            "each side snapped down, as the C# SnapDimension"
+        );
+        assert_eq!(auto_desktop(Some((3, 2))), (4, 4), "never below 4");
+        assert_eq!(
+            auto_desktop(Some((70_000, 1000))),
+            (u16::MAX - u16::MAX % 4, 1000),
+            "held within the file's numbers"
+        );
+    }
+
+    #[test]
+    fn the_automatic_size_falls_back_to_the_default_without_a_working_area() {
+        assert_eq!(auto_desktop(None), DEFAULT_FIXED_SIZE);
+        for empty in [(0, 1040), (1920, 0), (0, 0)] {
+            assert_eq!(auto_desktop(Some(empty)), DEFAULT_FIXED_SIZE, "{empty:?}");
+        }
+    }
+
+    #[test]
+    fn the_automatic_mode_opens_at_the_working_area_and_the_other_modes_do_not() {
+        let mut profile = profile();
+        profile.options.resolution = Resolution::Auto;
+        let area = Some((2560, 1392));
+        let file = rdp_file_to(&profile, &profile.host, profile.port, area);
+        let said = lines(&file);
+        assert!(said.contains(&"desktopwidth:i:2560"), "{said:?}");
+        assert!(said.contains(&"desktopheight:i:1392"), "{said:?}");
+        assert!(said.contains(&"screen mode id:i:1"), "windowed");
+        assert!(said.contains(&"smart sizing:i:1"));
+
+        for resolution in [
+            Resolution::FitWindow,
+            Resolution::SmartSizing,
+            Resolution::MultiMonitor,
+        ] {
+            profile.options.resolution = resolution;
+            let file = rdp_file_to(&profile, &profile.host, profile.port, area);
+            let said = lines(&file);
+            assert!(said.contains(&"desktopwidth:i:1920"), "{resolution:?}");
+            assert!(said.contains(&"desktopheight:i:1080"), "{resolution:?}");
+        }
     }
 
     #[test]
