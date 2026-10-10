@@ -175,6 +175,44 @@ mod tests {
         assert_eq!(drag_files(1, &[]), Err(DragError::Empty));
     }
 
+    /// The `[lints]` table of a manifest; the workspace's own when `workspace`.
+    fn lints(manifest: &str, workspace: bool) -> toml::Table {
+        let table: toml::Table = manifest.parse().expect("a manifest");
+        let holder = if workspace {
+            table["workspace"].as_table().expect("a workspace").clone()
+        } else {
+            table
+        };
+        holder["lints"].as_table().expect("a lints table").clone()
+    }
+
+    #[test]
+    fn the_lints_are_the_workspace_s_but_for_unsafe_code() {
+        let workspace = lints(include_str!("../../../Cargo.toml"), true);
+        let mut own = lints(include_str!("../Cargo.toml"), false);
+        let mut expected = workspace;
+        // Denied rather than forbidden, so that the shell's module can allow it.
+        assert_eq!(
+            expected["rust"]["unsafe_code"].as_str(),
+            Some("forbid"),
+            "the workspace forbids unsafe code"
+        );
+        expected["rust"]
+            .as_table_mut()
+            .expect("rust lints")
+            .insert("unsafe_code".to_owned(), "deny".into());
+        // Every unsafe block explained.
+        let added = own["clippy"]
+            .as_table_mut()
+            .expect("clippy lints")
+            .remove("undocumented_unsafe_blocks");
+        assert_eq!(added.as_ref().and_then(toml::Value::as_str), Some("deny"));
+        assert_eq!(
+            own, expected,
+            "a lint added to the workspace is added here too"
+        );
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn elsewhere_than_windows_dragging_out_is_unsupported() {

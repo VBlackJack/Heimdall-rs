@@ -24,6 +24,10 @@
 //! drag loop dispatches the window's messages while it runs; the window library queues the
 //! events they raise until its handler returns, and nothing here is touched by them: the
 //! paths, the identifier lists and the interfaces are this call's own locals.
+//!
+//! While the loop runs, the window is not redrawn: winit, inside its handler, answers a
+//! paint message by asking for another (winit 0.30 `event_loop.rs`, `WM_PAINT`), so the
+//! thread may stay busy until the drag ends.
 
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -53,9 +57,9 @@ struct IdList(*mut ITEMIDLIST);
 
 impl Drop for IdList {
     fn drop(&mut self) {
-        // SAFETY: the pointer is the list `SHParseDisplayName` allocated and handed over,
-        // never null (made only on its success), owned by this value alone and freed once,
-        // here; nothing reads it afterwards.
+        // SAFETY: the pointer is a list `SHParseDisplayName` allocated and handed over,
+        // never null (an `IdList` is made only of a non-null one), owned by this value
+        // alone and freed once, here; nothing reads it afterwards.
         unsafe { ILFree(Some(self.0.cast_const())) };
     }
 }
@@ -103,14 +107,13 @@ fn id_list(path: &Path) -> Result<IdList, DragError> {
             None,
         )
     };
+    // Owned before the answer is read: a list written despite a failure is freed too.
+    let owned = (!list.is_null()).then_some(IdList(list));
     parsed.map_err(|error| shell_error(&error))?;
-    if list.is_null() {
-        return Err(DragError::Shell {
-            code: windows::Win32::Foundation::E_UNEXPECTED.0,
-            message: String::new(),
-        });
-    }
-    Ok(IdList(list))
+    owned.ok_or_else(|| DragError::Shell {
+        code: windows::Win32::Foundation::E_UNEXPECTED.0,
+        message: String::new(),
+    })
 }
 
 /// The shell's data object of `paths`, all in one folder: the same Explorer drags, file

@@ -795,9 +795,15 @@ pub enum Message {
     FilesDragEnd,
     /// The pointer left the window, that press held.
     FilesDragLeft,
-    /// The entries of a local pane dragged out of the window by the system: how the drag
-    /// ended, or why there was none.
-    FilesDraggedOut(Result<heimdall_dragout::DragOutcome, heimdall_dragout::DragError>),
+    /// The entries of a local pane dragged out of the window by the system, in the drag of
+    /// this number: how it ended, or why there was none.
+    FilesDraggedOut(
+        u64,
+        Result<heimdall_dragout::DragOutcome, heimdall_dragout::DragError>,
+    ),
+    /// The drag out of this number ended a while ago: the files dropped from now on are
+    /// taken, its own included.
+    FilesDragOutSettled(u64),
     /// The pointer is over a row of the tree, where a drag would drop.
     TreeHover(heimdall_app::DropTarget),
     /// The pointer left that row.
@@ -1039,7 +1045,10 @@ impl fmt::Debug for Message {
             Self::FilesDragMoved(_) => f.write_str("FilesDragMoved"),
             Self::FilesDragEnd => f.write_str("FilesDragEnd"),
             Self::FilesDragLeft => f.write_str("FilesDragLeft"),
-            Self::FilesDraggedOut(result) => write!(f, "FilesDraggedOut({result:?})"),
+            Self::FilesDraggedOut(round, result) => {
+                write!(f, "FilesDraggedOut({round}, {result:?})")
+            }
+            Self::FilesDragOutSettled(round) => write!(f, "FilesDragOutSettled({round})"),
             Self::TreeHover(target) => write!(f, "TreeHover({target:?})"),
             Self::TreeHoverLeft(target) => write!(f, "TreeHoverLeft({target:?})"),
             Self::TreeDragMoved(_) => f.write_str("TreeDragMoved"),
@@ -1400,9 +1409,9 @@ pub struct Shell {
     files_drag: Option<crate::files_drag::FilesDrag>,
     /// The tab's own window that press was in; `None` for the main window.
     files_drag_window: Option<window::Id>,
-    /// The entries last dragged out of the window, until the next press: dropped back on
-    /// it, they are not taken.
-    dragged_out: crate::files_drag::DraggedOut,
+    /// The entries of the drag out of the window, while it lasts and a moment after:
+    /// dropped back on one of its windows, they are not taken.
+    dragged_out: crate::files_drag::DragOutGuard,
     /// The tab under the pointer.
     tab_hover: Option<TabId>,
     /// A press on a tab, a drag once the pointer moves.
@@ -1722,7 +1731,7 @@ impl Shell {
             files_hover_window: None,
             files_drag: None,
             files_drag_window: None,
-            dragged_out: crate::files_drag::DraggedOut::default(),
+            dragged_out: crate::files_drag::DragOutGuard::default(),
             tab_hover: None,
             tab_drag: None,
             tab_drop_area: None,
@@ -2613,7 +2622,11 @@ impl Shell {
             }
             Message::FilesDragLeft => return self.drag_out(),
             Message::FilesDragMoved(at) if self.drag_leaves(at) => return self.drag_out(),
-            Message::FilesDraggedOut(result) => self.drag_out_ended(&result),
+            Message::FilesDraggedOut(round, result) => return self.drag_out_ended(round, &result),
+            Message::FilesDragOutSettled(round) => {
+                self.dragged_out.settled(round);
+                Vec::new()
+            }
             message @ (Message::FilesHover(_)
             | Message::FilesHoverLeft(_)
             | Message::PointerPressed
@@ -5502,7 +5515,7 @@ impl Shell {
     /// A drop's files all come on the hash generator: the first hashed, as the C#
     /// `OnDrop` takes `files[0]`.
     fn hash_drop_gathered(&mut self, place: crate::drop_batch::DropPlace) -> Task<Message> {
-        let first = self.take_drop(place).into_iter().next();
+        let first = self.drops.take(place).into_iter().next();
         match (self.hash_drop_target(), first) {
             (Some(tab), Some(path)) => self.tools.update(
                 tab,
@@ -5522,7 +5535,7 @@ impl Shell {
                 Vec::new()
             }
             Message::DropGathered(place) => {
-                let paths = self.take_drop(place);
+                let paths = self.drops.take(place);
                 if paths.is_empty() {
                     return Vec::new();
                 }

@@ -459,6 +459,9 @@ pub struct Pane<P, E> {
     pub home: Option<P>,
     /// How the listing on its way was asked for.
     navigation: Option<Navigation<P>>,
+    /// The folder the entries shown were listed from, once one was: the folder shown, but
+    /// while another folder's listing is on its way, or after it failed, the one before.
+    listed: Option<P>,
     /// The type-ahead going on over its entries shown.
     search: TypeAhead,
 }
@@ -507,6 +510,7 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
     /// `path` was listed: the history follows how it was asked for, and the first folder
     /// shown is Home.
     pub(crate) fn arrived(&mut self, path: &P) {
+        self.listed = Some(path.clone());
         match self.navigation.take() {
             Some(Navigation::Away(left)) if left != *path => {
                 self.history.push(left);
@@ -569,8 +573,17 @@ impl<P, E> Pane<P, E> {
             history: Vec::new(),
             home: None,
             navigation: None,
+            listed: None,
             search: TypeAhead::default(),
         }
+    }
+
+    /// The folder the entries shown are in: the one they were listed from, which is not
+    /// the folder shown while another's listing is on its way or after it failed; the
+    /// folder shown before any listing.
+    #[must_use]
+    pub fn entries_folder(&self) -> &P {
+        self.listed.as_ref().unwrap_or(&self.path)
     }
 
     /// Whether Back has a folder to go to.
@@ -2480,6 +2493,29 @@ mod tests {
         pane.show(vec![file("x", 50, 0, 0o644, 0), file("y", 5, 0, 0o644, 0)]);
         assert_eq!(labels(&pane.entries), ["y", "x"], "listed again, by size");
         assert_eq!(pane.selected, None);
+    }
+
+    #[test]
+    fn the_entries_stay_in_the_folder_listed_while_another_is_on_its_way() {
+        let (first, second) = (
+            std::path::PathBuf::from("first"),
+            std::path::PathBuf::from("second"),
+        );
+        let mut pane: Pane<std::path::PathBuf, RemoteEntry> = Pane::new(first.clone());
+        assert_eq!(
+            pane.entries_folder(),
+            &first,
+            "the folder shown, before any listing"
+        );
+        pane.arrived(&first);
+        pane.leave();
+        pane.path = second.clone();
+        assert_eq!(pane.entries_folder(), &first, "the other one on its way");
+        pane.not_arrived();
+        assert_eq!(pane.entries_folder(), &first, "nor after it failed");
+        pane.leave();
+        pane.arrived(&second);
+        assert_eq!(pane.entries_folder(), &second, "listed");
     }
 
     fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {

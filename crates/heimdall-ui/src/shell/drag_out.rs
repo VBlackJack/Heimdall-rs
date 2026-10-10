@@ -22,18 +22,27 @@
 //! system: the shell's drag loop runs on the event loop's thread, through
 //! [`window::run`], until the files are dropped or the drag given up. That loop takes the
 //! release, which the window never sees: the press is forgotten when the pointer leaves,
-//! so that nothing follows the pointer until the next press. The files dropped back on one
-//! of the application's windows are not taken.
+//! so that nothing follows the pointer until the next press.
+//!
+//! The files dropped back on one of the application's windows during the drag are not
+//! taken, nor for [`files_drag::DRAG_OUT_SETTLE`] after its end: the end comes as the
+//! result of a task and those files as window events held by winit during the drag, then
+//! carried as a subscription's messages, two roads with no order between them. Any drop
+//! after that is taken, the same files dragged back from Explorer included.
+//!
+//! While the drag loop runs, winit is inside its event handler: it holds the window's
+//! events, and a paint message it answers by asking for another (winit 0.30
+//! `event_loop.rs`, `WM_PAINT`). The window is not redrawn during a drag held still, and
+//! its thread may stay busy until the drag ends.
 
 use std::path::PathBuf;
 
 use heimdall_app::files::Side;
-use heimdall_app::{Effect, FilesMessage, Message as AppMessage, TabId};
+use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
 use heimdall_dragout::{DragError, DragOutcome};
 use iced::{Point, Task, window};
 
 use super::{Message, Shell, main_window_task};
-use crate::drop_batch::DropPlace;
 use crate::files_drag;
 
 impl Shell {
@@ -81,7 +90,7 @@ impl Shell {
             effects.into_iter().map(|effect| self.run(effect)).collect();
         let paths = self.local_chosen_paths(from.tab);
         if !paths.is_empty() {
-            self.dragged_out.arm(&paths);
+            let round = self.dragged_out.start(&paths);
             let drag = move |id: window::Id| {
                 let paths = paths.clone();
                 window::run(id, move |window| files_drag::drag_out(window, &paths))
@@ -90,18 +99,24 @@ impl Shell {
                 Some(id) => drag(id),
                 None => main_window_task(self.main_window).and_then(drag),
             };
-            tasks.push(task.map(Message::FilesDraggedOut));
+            tasks.push(task.map(move |result| Message::FilesDraggedOut(round, result)));
         }
         Task::batch(tasks)
     }
 
-    /// The system's drag of a local pane's entries ended, `result`: its failure said in
-    /// the status bar. The press it started from was forgotten when it started.
+    /// The system's drag `round` of a local pane's entries ended, `result`: its failure
+    /// said in the status bar; its files dropped back still not taken for
+    /// [`files_drag::DRAG_OUT_SETTLE`]. The press it started from was forgotten when it
+    /// started.
     pub(super) fn drag_out_ended(
         &mut self,
+        round: u64,
         result: &Result<DragOutcome, DragError>,
-    ) -> Vec<Effect> {
-        match result {
+    ) -> Task<Message> {
+        let settle = Task::perform(tokio::time::sleep(files_drag::DRAG_OUT_SETTLE), move |()| {
+            Message::FilesDragOutSettled(round)
+        });
+        let effects = match result {
             Ok(outcome) => {
                 log::debug!("files dragged out: {outcome:?}");
                 Vec::new()
@@ -112,18 +127,11 @@ impl Shell {
                     self.app.update(AppMessage::DragOutFailed(failure))
                 })
             }
-        }
-    }
-
-    /// The files of the drop on `place` that ended; none when they are the entries just
-    /// dragged out of the window, dropped back on it.
-    pub(super) fn take_drop(&mut self, place: DropPlace) -> Vec<PathBuf> {
-        let paths = self.drops.take(place);
-        if self.dragged_out.is_own(&paths) {
-            log::debug!("files dragged out and dropped back: not taken");
-            return Vec::new();
-        }
-        paths
+        };
+        let mut tasks: Vec<Task<Message>> =
+            effects.into_iter().map(|effect| self.run(effect)).collect();
+        tasks.push(settle);
+        Task::batch(tasks)
     }
 
     /// The indices of the entries chosen in the local pane of Files tab `tab`.
@@ -135,17 +143,20 @@ impl Shell {
             .unwrap_or_default()
     }
 
-    /// The full paths of the entries chosen in the local pane of Files tab `tab`.
+    /// The full paths of the entries chosen in the local pane of Files tab `tab`, in the
+    /// folder they were listed from: while another folder's listing is on its way, the
+    /// entries shown are still that folder's.
     fn local_chosen_paths(&self, tab: TabId) -> Vec<PathBuf> {
         let Some(files) = self.app.tab(tab).and_then(|tab| tab.files.as_deref()) else {
             return Vec::new();
         };
+        let folder = files.local.entries_folder();
         files
             .local
             .chosen()
             .into_iter()
             .filter_map(|index| files.local.entries.get(index))
-            .map(|entry| files.local.path.join(&entry.name))
+            .map(|entry| folder.join(&entry.name))
             .collect()
     }
 }

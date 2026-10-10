@@ -27,6 +27,8 @@ windows = { workspace = true, features = [
 
 [dev-dependencies]
 tempfile.workspace = true
+# The lints below read back and compared with the workspace's.
+toml.workspace = true
 
 # The workspace's lints, copied rather than inherited: a crate takes all of them or none, and
 # this one needs unsafe code, which the workspace forbids. It is denied here instead, and

@@ -23,6 +23,7 @@
 //! (`LocalFileBrowserView.xaml.cs:612-630`); the server's entries do not, as in the C#.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use heimdall_app::files::{DragOutFailure, Side};
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
@@ -145,32 +146,51 @@ pub fn take_out(drag: &mut Option<FilesDrag>) -> Option<Spot> {
         .map(|drag| drag.from)
 }
 
-/// The entries last dragged out of the window, until the next press. The system's drag
-/// can end back on one of the application's windows, which then takes the files as dropped
-/// from Explorer: those are not taken, as the C# local list refuses files dropped on it.
+/// How long, once the system's drag has ended, the files it dropped back on one of the
+/// application's windows may still come. Its end and those files reach the window by two
+/// roads that keep no order between them: the end as the result of a task, the files as
+/// window events the window library held during the drag and hands on after it, then
+/// carried as a subscription's messages. Both come within milliseconds; a drop the user
+/// makes afterwards, from Explorer, takes seconds.
+pub const DRAG_OUT_SETTLE: Duration = Duration::from_millis(500);
+
+/// The entries of a drag out of the window, while it lasts and for [`DRAG_OUT_SETTLE`]
+/// after: the system's drag can end back on one of the application's windows, which then
+/// takes the files as dropped from Explorer; those are not taken, as the C# local list
+/// refuses files dropped on it. Any drop after, of the same files included, is taken.
 #[derive(Debug, Default)]
-pub struct DraggedOut {
-    /// The paths dragged, as compared.
-    paths: Option<Vec<PathBuf>>,
+pub struct DragOutGuard {
+    /// The paths dragged, as compared; empty when no drag is guarded.
+    paths: Vec<PathBuf>,
+    /// The number of the last drag started, so that a late end of an earlier one does not
+    /// end it.
+    round: u64,
 }
 
-impl DraggedOut {
-    /// `paths` are being dragged out.
-    pub fn arm(&mut self, paths: &[PathBuf]) {
-        self.paths = Some(compared(paths));
+impl DragOutGuard {
+    /// `paths` start being dragged out: the number of this drag.
+    pub fn start(&mut self, paths: &[PathBuf]) -> u64 {
+        self.round = self.round.wrapping_add(1);
+        self.paths = compared(paths);
+        self.round
+    }
+
+    /// The drag `round` ended [`DRAG_OUT_SETTLE`] ago: from now on, every drop is taken.
+    pub fn settled(&mut self, round: u64) {
+        if round == self.round {
+            self.paths.clear();
+        }
     }
 
     /// A press: whatever is dropped from now on comes from elsewhere.
     pub fn clear(&mut self) {
-        self.paths = None;
+        self.paths.clear();
     }
 
-    /// Whether `dropped` are the entries dragged out, whatever their order.
+    /// Whether `dropped`, one file of a drop, is one of the entries of the drag guarded.
     #[must_use]
-    pub fn is_own(&self, dropped: &[PathBuf]) -> bool {
-        self.paths
-            .as_ref()
-            .is_some_and(|own| *own == compared(dropped))
+    pub fn swallows(&self, dropped: &Path) -> bool {
+        self.paths.contains(&path_compared(dropped))
     }
 }
 
@@ -260,31 +280,50 @@ mod tests {
     }
 
     #[test]
-    fn the_entries_dragged_out_are_known_back_until_the_next_press() {
+    fn the_entries_dragged_out_are_known_back_while_the_drag_settles() {
         let folder = std::env::temp_dir().join("folder");
-        let (a, b) = (folder.join("a.txt"), folder.join("b.txt"));
-        let mut dragged = DraggedOut::default();
+        let (a, b, c) = (folder.join("a.txt"), folder.join("b.txt"), folder.join("c"));
+        let mut guard = DragOutGuard::default();
+        assert!(!guard.swallows(&a), "nothing dragged yet");
+        let round = guard.start(&[a.clone(), b.clone()]);
+        assert!(guard.swallows(&a) && guard.swallows(&b), "in flight");
+        assert!(!guard.swallows(&c), "only its own files");
+        // Its end, and its files dropped back after it, in either order: still swallowed
+        // until it settled.
+        assert!(guard.swallows(&b));
+        guard.settled(round);
         assert!(
-            !dragged.is_own(std::slice::from_ref(&a)),
-            "nothing dragged yet"
+            !guard.swallows(&a) && !guard.swallows(&b),
+            "settled: the same files dropped from Explorer later are taken"
         );
-        dragged.arm(&[a.clone(), b.clone()]);
-        assert!(dragged.is_own(&[b.clone(), a.clone()]), "in any order");
+    }
+
+    #[test]
+    fn a_press_ends_the_guard_and_a_late_end_spares_a_newer_drag() {
+        let folder = std::env::temp_dir().join("folder");
+        let a = folder.join("a.txt");
+        let mut guard = DragOutGuard::default();
+        guard.start(std::slice::from_ref(&a));
+        guard.clear();
+        assert!(!guard.swallows(&a), "a press forgets them");
+
+        let first = guard.start(std::slice::from_ref(&a));
+        let second = guard.start(std::slice::from_ref(&a));
+        guard.settled(first);
         assert!(
-            !dragged.is_own(std::slice::from_ref(&a)),
-            "not a part of them"
+            guard.swallows(&a),
+            "the end of the first drag leaves the second"
         );
-        assert!(!dragged.is_own(&[a.clone(), b.clone(), folder.join("c")]));
-        dragged.clear();
-        assert!(!dragged.is_own(&[a, b]), "a press forgets them");
+        guard.settled(second);
+        assert!(!guard.swallows(&a));
     }
 
     #[cfg(windows)]
     #[test]
     fn on_windows_the_entries_dragged_out_are_known_whatever_their_case() {
-        let mut dragged = DraggedOut::default();
-        dragged.arm(&[PathBuf::from(r"C:\Users\Me\notes.md")]);
-        assert!(dragged.is_own(&[PathBuf::from(r"c:\users\me\NOTES.md")]));
+        let mut guard = DragOutGuard::default();
+        guard.start(&[PathBuf::from(r"C:\Users\Me\notes.md")]);
+        assert!(guard.swallows(Path::new(r"c:\users\me\NOTES.md")));
     }
 
     #[test]
