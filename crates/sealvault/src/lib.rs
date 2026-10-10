@@ -23,8 +23,10 @@
 //! - [`hash`]: SHA-2, SHA3-256, and MD5 and SHA-1 for interoperability only.
 //! - [`mac`]: HMAC, computed or verified in constant time.
 //! - [`aead`]: AES-256-GCM, each sealing spending a fresh random nonce.
+//! - [`cert`]: X.509 certificates, a TLS leaf and its authority, RSA and SHA-256.
 //! - [`kdf`]: derived keys, by Argon2id from passwords and HKDF-SHA256 from random secrets.
 //! - [`keys`]: RSA and Ed25519 key pairs, PKCS#8 in PEM, plain or under PBES2.
+//! - [`pkcs12`]: a PFX of one certificate and its key.
 //! - [`random`]: the operating system's generator.
 //! - [`compare`]: equality of secrets in constant time.
 //! - [`secret`]: the owned secrets the others hand out, wiped when dropped.
@@ -37,12 +39,14 @@
 //! secrets briefly.
 
 pub mod aead;
+pub mod cert;
 pub mod compare;
 pub mod hash;
 pub mod kdf;
 pub mod keys;
 pub mod legacy;
 pub mod mac;
+pub mod pkcs12;
 pub mod random;
 pub mod secret;
 

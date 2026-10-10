@@ -15,8 +15,7 @@
  */
 
 //! A PFX (PKCS #12, RFC 7292) holding one certificate and its private key, as the C#
-//! `CertificateGenerator.BuildPfx` exports one (`CertificateGenerator.cs:124-144`) through
-//! .NET's `X509Certificate2.Export(Pfx, password)`.
+//! Heimdall exports one through .NET's `X509Certificate2.Export(Pfx, password)`.
 //!
 //! The file is written as OpenSSL 3 writes one by default: the key in a shrouded key bag,
 //! encrypted with PBES2 (PBKDF2-HMAC-SHA256 and AES-256-CBC), the certificate in a bag of
@@ -25,18 +24,18 @@
 //! makes from the password. An empty password is a password like any other, as the C#
 //! allows it.
 
-use hmac::{Hmac, KeyInit as _, Mac as _};
-use pkcs8::der::Encode as _;
-use pkcs8::der::asn1::OctetStringRef;
-use pkcs8::pkcs5::pbes2;
-use sha1::Sha1;
-use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
+
+use crate::Error;
+use crate::hash::{self, SHA256_LEN};
+use crate::keys;
+use crate::mac;
+use crate::random;
 
 /// Rounds of PBKDF2 for the key and of the MAC derivation, OpenSSL's `PKCS12_DEFAULT_ITER`.
 pub const PFX_ITERATIONS: u32 = 2048;
 
-/// Bytes of each salt and of the AES vector.
+/// Bytes of the MAC's salt.
 const SALT_BYTES: usize = 16;
 
 /// The PFX version, 3.
@@ -72,41 +71,30 @@ const OID_SHA256: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01
 const MAC_KEY_ID: u8 = 3;
 
 /// SHA-256's output, the `u` of RFC 7292 appendix B.
-const HASH_BYTES: usize = 32;
+const HASH_BYTES: usize = SHA256_LEN;
 
 /// SHA-256's block, the `v` of RFC 7292 appendix B.
 const BLOCK_BYTES: usize = 64;
-
-/// Why no PFX was written.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum PfxError {
-    /// The system's generator could not be read.
-    #[error("the system's random generator could not be read")]
-    Randomness,
-    /// The key could not be encrypted or encoded.
-    #[error("{0}")]
-    Encoding(String),
-}
 
 /// A PFX holding `certificate_der` and `private_key_pkcs8`, sealed with `password`.
 ///
 /// # Errors
 ///
-/// [`PfxError`] when the system's generator cannot be read or the key not encrypted.
+/// [`Error::Randomness`] when the system's generator cannot be read; [`Error::Encoding`]
+/// when the key is not PKCS#8 or cannot be encrypted.
 pub fn build(
     certificate_der: &[u8],
     private_key_pkcs8: &[u8],
     password: &str,
-) -> Result<Vec<u8>, PfxError> {
-    let key_id = Sha1::digest(certificate_der);
-    let key_bag = shrouded_key_bag(private_key_pkcs8, password, &key_id)?;
-    let cert_bag = certificate_bag(certificate_der, &key_id);
+) -> Result<Vec<u8>, Error> {
+    let key_id = hash::digest(hash::Algorithm::Sha1, certificate_der);
+    let key_bag = shrouded_key_bag(private_key_pkcs8, password, key_id.as_bytes())?;
+    let cert_bag = certificate_bag(certificate_der, key_id.as_bytes());
     let auth_safe = sequence(&[
         data_content_info(&sequence(&[cert_bag])),
         data_content_info(&sequence(&[key_bag])),
     ]);
-    let mut mac_salt = [0_u8; SALT_BYTES];
-    sealvault::random::fill(&mut mac_salt).map_err(|_| PfxError::Randomness)?;
+    let mac_salt: [u8; SALT_BYTES] = random::array()?;
     let mac = auth_safe_mac(&auth_safe, password, &mac_salt, PFX_ITERATIONS);
     let mac_data = sequence(&[
         sequence(&[
@@ -123,29 +111,16 @@ pub fn build(
     ]))
 }
 
-/// The key bag: the key encrypted with PBES2, tagged with `key_id`.
+/// The key bag: the key encrypted with PBES2 (PBKDF2-HMAC-SHA256 over [`PFX_ITERATIONS`]
+/// rounds, AES-256-CBC), tagged with `key_id`.
 fn shrouded_key_bag(
     private_key_pkcs8: &[u8],
     password: &str,
     key_id: &[u8],
-) -> Result<Vec<u8>, PfxError> {
-    let mut salt = Zeroizing::new([0_u8; SALT_BYTES]);
-    let mut iv = [0_u8; SALT_BYTES];
-    sealvault::random::fill(salt.as_mut()).map_err(|_| PfxError::Randomness)?;
-    sealvault::random::fill(&mut iv).map_err(|_| PfxError::Randomness)?;
-    let encoding = |error: &dyn std::fmt::Display| PfxError::Encoding(error.to_string());
-    let parameters =
-        pbes2::Parameters::generate_pbkdf2_sha256_aes256cbc(PFX_ITERATIONS, &*salt, iv)
-            .map_err(|error| encoding(&error))?;
-    let encrypted = parameters
-        .encrypt(password.as_bytes(), private_key_pkcs8)
-        .map_err(|error| encoding(&error))?;
-    let info = pkcs8::EncryptedPrivateKeyInfoRef {
-        encryption_algorithm: parameters.into(),
-        encrypted_data: OctetStringRef::new(&encrypted).map_err(|error| encoding(&error))?,
-    }
-    .to_der()
-    .map_err(|error| encoding(&error))?;
+) -> Result<Vec<u8>, Error> {
+    // OpenSSL's count, as the C#'s .NET export writes a PFX: below sealvault's PBKDF2 floor
+    // for a key file, kept for the PFX readers it was made for.
+    let info = keys::pbes2_encrypt(private_key_pkcs8, password.as_bytes(), PFX_ITERATIONS)?;
     Ok(safe_bag(OID_SHROUDED_KEY_BAG, &info, key_id))
 }
 
@@ -182,9 +157,9 @@ fn data_content_info(content: &[u8]) -> Vec<u8> {
 /// The HMAC-SHA256 of `auth_safe` under the key RFC 7292 derives from `password`.
 fn auth_safe_mac(auth_safe: &[u8], password: &str, salt: &[u8], iterations: u32) -> Vec<u8> {
     let key = derive_key(password, salt, iterations, MAC_KEY_ID, HASH_BYTES);
-    let mut mac = <Hmac<Sha256>>::new_from_slice(&key).expect("HMAC takes a key of any size");
-    mac.update(auth_safe);
-    mac.finalize().into_bytes().to_vec()
+    mac::compute(mac::Algorithm::HmacSha256, &key, auth_safe)
+        .as_bytes()
+        .to_vec()
 }
 
 /// `password` as RFC 7292 appendix B.1 hands it to the derivation: big-endian UTF-16,
@@ -228,15 +203,13 @@ fn derive_key(
     input.extend_from_slice(&password_blocks);
     let mut output = Zeroizing::new(Vec::with_capacity(length.div_ceil(HASH_BYTES) * HASH_BYTES));
     while output.len() < length {
-        let mut block: Zeroizing<[u8; HASH_BYTES]> = Zeroizing::new(
-            Sha256::new()
-                .chain_update(diversifier)
-                .chain_update(&*input)
-                .finalize()
-                .into(),
-        );
+        let mut first = hash::Hasher::new(hash::Algorithm::Sha256);
+        first.update(&diversifier);
+        first.update(&input);
+        let mut block: Zeroizing<[u8; HASH_BYTES]> = Zeroizing::new([0; HASH_BYTES]);
+        block.copy_from_slice(first.finalize().as_bytes());
         for _ in 1..iterations {
-            *block = Sha256::digest(*block).into();
+            *block = hash::sha256(&*block);
         }
         output.extend_from_slice(&*block);
         if output.len() >= length {
@@ -403,7 +376,7 @@ pub(crate) mod tests {
         input.extend(salt.iter().copied().cycle().take(64));
         let bmp = bmp_password("secret");
         input.extend(bmp.iter().copied().cycle().take(64));
-        assert_eq!(key.as_slice(), Sha256::digest(&input).as_slice());
+        assert_eq!(key.as_slice(), hash::sha256(&input).as_slice());
         assert_eq!(
             bmp.as_slice(),
             [0, b's', 0, b'e', 0, b'c', 0, b'r', 0, b'e', 0, b't', 0, 0]
@@ -428,5 +401,30 @@ pub(crate) mod tests {
         let empty = build(&certificate, &key, "").expect("built");
         assert!(open(&empty, "").is_some(), "an empty password is one");
         assert!(open(&empty, "secret").is_none());
+    }
+
+    #[test]
+    fn a_pfx_of_an_issued_certificate_opens_with_its_password_only() {
+        use crate::cert::{self, Name, Profile, SigningKey, Spec};
+        use crate::keys::KeyPair;
+        let pair = KeyPair::rsa(2048).expect("made");
+        let key = SigningKey::rsa_sha256(pair.pkcs8_der()).expect("RSA");
+        let spec = Spec {
+            subject: Name {
+                common_name: "server.local".to_owned(),
+                organization: None,
+                country: None,
+            },
+            not_before: 1_767_323_045,
+            not_after: 1_767_323_045 + 86_400,
+            serial: vec![1],
+            profile: Profile::TlsLeaf(Vec::new()),
+        };
+        let certificate = cert::self_signed(&spec, &key).expect("signed");
+        let pfx = build(&certificate, pair.pkcs8_der(), "secret").expect("built");
+        let (opened_certificate, opened_key) = open(&pfx, "secret").expect("opened");
+        assert_eq!(opened_certificate, certificate);
+        assert_eq!(opened_key, pair.pkcs8_der());
+        assert!(open(&pfx, "").is_none());
     }
 }

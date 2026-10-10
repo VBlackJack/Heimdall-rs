@@ -37,7 +37,6 @@ pub mod password_generator;
 pub mod password_presets;
 pub mod password_rules;
 pub mod password_wordlists;
-pub mod pkcs12;
 pub mod pkcs8_pem;
 pub mod posix_mode;
 pub mod private_file;

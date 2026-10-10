@@ -16,11 +16,6 @@ publish.workspace = true
 data-encoding.workspace = true
 directories.workspace = true
 fancy-regex.workspace = true
-hmac.workspace = true
-pkcs8.workspace = true
-# rcgen: the Certificate Generator's certificates, signed through ring; zeroize: its key
-# pairs wiped, through the zeroize crate already in the tree.
-rcgen = { workspace = true, features = ["zeroize"] }
 regex.workspace = true
 roxmltree.workspace = true
 # sealvault: the Hash, HMAC, JWT and TOTP tools' digests and MACs, the PIN's hash, and the
@@ -28,8 +23,6 @@ roxmltree.workspace = true
 sealvault.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha1.workspace = true
-sha2.workspace = true
 similar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
@@ -37,10 +30,12 @@ toml.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-# rsa, ssh-key, x509-cert: the keys and certificates generated read back by the tests, a
-# round-trip through the same crates that made them, as before the generation moved into
-# sealvault.
+# pkcs8, rsa, sha2, ssh-key, x509-cert: the keys and certificates generated read back by
+# the tests, a round-trip through the same crates that made them, and the CA's signature
+# on its leaf verified, as before the generation moved into sealvault.
+pkcs8.workspace = true
 rsa.workspace = true
+sha2.workspace = true
 ssh-key.workspace = true
 x509-cert.workspace = true
 

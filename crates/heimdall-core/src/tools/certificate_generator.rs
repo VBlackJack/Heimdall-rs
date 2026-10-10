@@ -25,22 +25,21 @@
 //! and encipher keys, serves and authenticates TLS, and carries its alternative names; a CA
 //! says it is one and signs certificates and revocation lists, both critical.
 //!
+//! The keys, the certificates and the PFX are made by sealvault (`keys`, `cert`,
+//! `pkcs12`); this module is the C#'s options, names, dates and results around them.
+//!
 //! Private keys are secrets: their PKCS#8 and PEM held in memory wiped when dropped, the
-//! signing key pairs wiped once the certificates are signed, never written out by `Debug`.
-//! The key ring parses for signing is its own and is not wiped by ring.
+//! signing keys' PKCS#8 copies wiped once the certificates are signed, never written out by
+//! `Debug`. The key ring parses for signing is its own and is not wiped by ring.
 
 use std::fmt;
 use std::net::IpAddr;
-use std::time::Duration;
 
-use rcgen::{
-    CertificateParams, CustomExtension, DistinguishedName, DnType, DnValue,
-    ExtendedKeyUsagePurpose, Issuer, KeyPair, PKCS_RSA_SHA256, SanType, SerialNumber,
-};
-use zeroize::{Zeroize as _, Zeroizing};
+use sealvault::cert::{self, AltName, Name, Profile, SigningKey, Spec};
+use sealvault::keys::KeyPair;
+use zeroize::Zeroizing;
 
 use super::pkcs8_pem::{self, PemError};
-use super::pkcs12::{self, PfxError};
 
 /// Bits of an RSA key of the first size, as the C# `Rsa2048KeySize`.
 pub const RSA_2048_BITS: usize = 2048;
@@ -71,7 +70,7 @@ const NONZERO_FIRST_BYTE: u8 = 0x01;
 const SECONDS_PER_DAY: u64 = 86_400;
 
 /// The last second an X.509 time can say, 9999-12-31 23:59:59 UTC.
-const LAST_X509_SECOND: u64 = 253_402_300_799;
+const LAST_X509_SECOND: u64 = cert::LAST_X509_SECOND;
 
 /// What separates the alternative names typed, as the C# `SanParser`.
 const SAN_SEPARATOR: char = ',';
@@ -87,22 +86,6 @@ const FINGERPRINT_SEPARATOR: &str = ":";
 
 /// What separates the parts of a distinguished name said, as the C# `string.Join(", ")`.
 const NAME_SEPARATOR: &str = ", ";
-
-/// OIDs of the extensions written as the C# writes them.
-const OID_BASIC_CONSTRAINTS: &[u64] = &[2, 5, 29, 19];
-const OID_KEY_USAGE: &[u64] = &[2, 5, 29, 15];
-
-/// `BasicConstraints` of a leaf, `cA` false: an empty sequence.
-const LEAF_BASIC_CONSTRAINTS: &[u8] = &[0x30, 0x00];
-
-/// `BasicConstraints` of a CA: `cA` true, no path length.
-const CA_BASIC_CONSTRAINTS: &[u8] = &[0x30, 0x03, 0x01, 0x01, 0xff];
-
-/// `KeyUsage` of a leaf: `digitalSignature` and `keyEncipherment`.
-const LEAF_KEY_USAGE: &[u8] = &[0x03, 0x02, 0x05, 0xa0];
-
-/// `KeyUsage` of a CA: `keyCertSign` and `cRLSign`.
-const CA_KEY_USAGE: &[u8] = &[0x03, 0x02, 0x01, 0x06];
 
 /// The kind of certificate made, as the C# `CertificateMode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -182,22 +165,14 @@ pub fn distinguished_name_text(cn: &str, org: &str, country: &str) -> String {
     parts.join(NAME_SEPARATOR)
 }
 
-/// The subject as the C# encodes it: .NET reads `CN=..., O=..., C=...` most specific first
-/// and writes it the other way round, the country first.
-fn distinguished_name(cn: &str, org: &str, country: &str) -> DistinguishedName {
-    let mut name = DistinguishedName::new();
-    if !country.trim().is_empty() {
-        let value = rcgen::string::PrintableString::try_from(country.to_owned()).map_or_else(
-            |_| DnValue::Utf8String(country.to_owned()),
-            DnValue::PrintableString,
-        );
-        name.push(DnType::CountryName, value);
+/// The subject as the C# names it, the organisation and the country left out when blank.
+fn subject(cn: &str, org: &str, country: &str) -> Name {
+    let present = |value: &str| (!value.trim().is_empty()).then(|| value.to_owned());
+    Name {
+        common_name: cn.to_owned(),
+        organization: present(org),
+        country: present(country),
     }
-    if !org.trim().is_empty() {
-        name.push(DnType::OrganizationName, org);
-    }
-    name.push(DnType::CommonName, cn);
-    name
 }
 
 /// The SHA-256 fingerprint of a certificate's `der`, `SHA256:` then its bytes in upper-case
@@ -232,15 +207,9 @@ impl From<PemError> for CertificateError {
     }
 }
 
-impl From<PfxError> for CertificateError {
-    fn from(error: PfxError) -> Self {
-        Self::Failed(error.to_string())
-    }
-}
-
-impl From<rcgen::Error> for CertificateError {
-    fn from(error: rcgen::Error) -> Self {
-        Self::Failed(error.to_string())
+impl From<sealvault::Error> for CertificateError {
+    fn from(error: sealvault::Error) -> Self {
+        failed(error)
     }
 }
 
@@ -285,16 +254,15 @@ pub struct CaLeafCertificates {
     pub fingerprint: String,
 }
 
-/// An RSA key of `bits`, as rcgen signs with it and as its PKCS#8 DER.
-fn new_key(bits: usize) -> Result<(KeyPair, Zeroizing<Vec<u8>>), CertificateError> {
-    let key = sealvault::keys::KeyPair::rsa(bits).map_err(failed)?;
-    let der = Zeroizing::new(key.pkcs8_der().to_vec());
-    let pair = KeyPair::from_pkcs8_der_and_sign_algo(&der.as_slice().into(), &PKCS_RSA_SHA256)?;
-    Ok((pair, der))
+/// An RSA key of `bits`, as it signs and as its PKCS#8 DER.
+fn new_key(bits: usize) -> Result<(SigningKey, Zeroizing<Vec<u8>>), CertificateError> {
+    let pair = KeyPair::rsa(bits).map_err(failed)?;
+    let der = Zeroizing::new(pair.pkcs8_der().to_vec());
+    Ok((SigningKey::rsa_sha256(&der).map_err(failed)?, der))
 }
 
 /// A positive serial number of `length` random bytes, as the C# `NewPositiveSerial`.
-fn new_serial(length: usize) -> Result<SerialNumber, CertificateError> {
+fn new_serial(length: usize) -> Result<Vec<u8>, CertificateError> {
     let mut serial = vec![0_u8; length];
     sealvault::random::fill(&mut serial).map_err(failed)?;
     if let Some(first) = serial.first_mut() {
@@ -303,16 +271,19 @@ fn new_serial(length: usize) -> Result<SerialNumber, CertificateError> {
             *first = NONZERO_FIRST_BYTE;
         }
     }
-    Ok(SerialNumber::from_slice(&serial))
+    Ok(serial)
 }
 
-/// The parameters of a certificate named `cn`, valid `days` from `now` (Unix seconds).
-fn base_params(
+/// A certificate named `cn`, valid `days` from `now` (Unix seconds), with a serial of
+/// `serial_length` bytes, for `profile`.
+fn spec(
     options: &CertificateOptions,
     cn: &str,
     now: u64,
     days: u64,
-) -> Result<CertificateParams, CertificateError> {
+    serial_length: usize,
+    profile: Profile,
+) -> Result<Spec, CertificateError> {
     let end = days
         .checked_mul(SECONDS_PER_DAY)
         .and_then(|span| now.checked_add(span))
@@ -320,56 +291,47 @@ fn base_params(
         .ok_or_else(|| {
             CertificateError::Failed("The validity ends past the year 9999.".to_owned())
         })?;
-    let epoch = rcgen::date_time_ymd(1970, 1, 1);
-    let mut params = CertificateParams::default();
-    params.not_before = epoch + Duration::from_secs(now);
-    params.not_after = epoch + Duration::from_secs(end);
-    params.distinguished_name = distinguished_name(cn, &options.org, &options.country);
-    params.key_identifier_method = rcgen::KeyIdMethod::PreSpecified(Vec::new());
-    Ok(params)
+    Ok(Spec {
+        subject: subject(cn, &options.org, &options.country),
+        not_before: now,
+        not_after: end,
+        serial: new_serial(serial_length)?,
+        profile,
+    })
 }
 
-/// The parameters of a leaf, as the C# requests one: not a CA, signature and key
-/// encipherment, server and client authentication, its alternative names.
-fn leaf_params(
+/// A leaf, as the C# requests one: not a CA, signature and key encipherment, server and
+/// client authentication, its alternative names: an IP address where one parses, a DNS
+/// name otherwise, as the C# `AddSans`.
+fn leaf_spec(
     options: &CertificateOptions,
     now: u64,
     serial_length: usize,
-) -> Result<CertificateParams, CertificateError> {
+) -> Result<Spec, CertificateError> {
     let days = u64::try_from(options.validity_days).unwrap_or_default();
-    let mut params = base_params(options, &options.cn, now, days)?;
-    params.serial_number = Some(new_serial(serial_length)?);
-    let mut constraints =
-        CustomExtension::from_oid_content(OID_BASIC_CONSTRAINTS, LEAF_BASIC_CONSTRAINTS.to_vec());
-    constraints.set_criticality(false);
-    let mut usage = CustomExtension::from_oid_content(OID_KEY_USAGE, LEAF_KEY_USAGE.to_vec());
-    usage.set_criticality(false);
-    params.custom_extensions = vec![constraints, usage];
-    params.extended_key_usages = vec![
-        ExtendedKeyUsagePurpose::ServerAuth,
-        ExtendedKeyUsagePurpose::ClientAuth,
-    ];
-    params.subject_alt_names = subject_alt_names(&options.sans)?;
-    Ok(params)
-}
-
-/// The alternative names: an IP address where one parses, a DNS name otherwise, as the C#
-/// `AddSans`.
-fn subject_alt_names(sans: &[String]) -> Result<Vec<SanType>, CertificateError> {
-    sans.iter()
-        .map(|name| match name.parse::<IpAddr>() {
-            Ok(address) => Ok(SanType::IpAddress(address)),
-            Err(_) => Ok(SanType::DnsName(name.clone().try_into()?)),
+    let names = options
+        .sans
+        .iter()
+        .map(|name| {
+            name.parse::<IpAddr>()
+                .map_or_else(|_| AltName::Dns(name.clone()), AltName::Ip)
         })
-        .collect()
+        .collect();
+    spec(
+        options,
+        &options.cn,
+        now,
+        days,
+        serial_length,
+        Profile::TlsLeaf(names),
+    )
 }
 
 /// A certificate's PEM and DER, with its key's.
 fn issued(
-    certificate: &rcgen::Certificate,
+    cert_der: Vec<u8>,
     key_pkcs8: Zeroizing<Vec<u8>>,
 ) -> Result<IssuedCertificate, CertificateError> {
-    let cert_der = certificate.der().to_vec();
     Ok(IssuedCertificate {
         cert_pem: pkcs8_pem::certificate_pem(&cert_der)?,
         key_pem: pkcs8_pem::private_key_pem(&key_pkcs8)?,
@@ -388,12 +350,11 @@ pub fn generate_self_signed(
     options: &CertificateOptions,
     now: u64,
 ) -> Result<SelfSignedCertificate, CertificateError> {
-    let (mut key, der) = new_key(options.key_bits)?;
-    let params = leaf_params(options, now, SELF_SIGNED_SERIAL_LENGTH)?;
-    let certificate = params.self_signed(&key);
-    key.zeroize();
-    let certificate = certificate?;
-    let leaf = issued(&certificate, der)?;
+    let (key, der) = new_key(options.key_bits)?;
+    let leaf_spec = leaf_spec(options, now, SELF_SIGNED_SERIAL_LENGTH)?;
+    let certificate = cert::self_signed(&leaf_spec, &key)?;
+    drop(key);
+    let leaf = issued(certificate, der)?;
     let fingerprint = fingerprint_sha256(&leaf.cert_der);
     Ok(SelfSignedCertificate { leaf, fingerprint })
 }
@@ -409,30 +370,25 @@ pub fn generate_ca_leaf(
     ca_validity_days: u32,
     now: u64,
 ) -> Result<CaLeafCertificates, CertificateError> {
-    let (mut ca_key, ca_der) = new_key(options.key_bits)?;
+    let (ca_key, ca_der) = new_key(options.key_bits)?;
     let ca_cn = format!("{}{CA_NAME_SUFFIX}", options.cn);
-    let mut ca_params = base_params(options, &ca_cn, now, u64::from(ca_validity_days))?;
-    ca_params.serial_number = Some(new_serial(SELF_SIGNED_SERIAL_LENGTH)?);
-    let mut constraints =
-        CustomExtension::from_oid_content(OID_BASIC_CONSTRAINTS, CA_BASIC_CONSTRAINTS.to_vec());
-    constraints.set_criticality(true);
-    let mut usage = CustomExtension::from_oid_content(OID_KEY_USAGE, CA_KEY_USAGE.to_vec());
-    usage.set_criticality(true);
-    ca_params.custom_extensions = vec![constraints, usage];
-    let ca_certificate = ca_params.self_signed(&ca_key)?;
-    let signed = new_key(options.key_bits).and_then(|(mut leaf_key, leaf_der)| {
-        let issuer = Issuer::from_params(&ca_params, &ca_key);
-        let signed = leaf_params(options, now, SERIAL_NUMBER_LENGTH)
-            .and_then(|params| Ok(params.signed_by(&leaf_key, &issuer)?));
-        leaf_key.zeroize();
-        Ok((signed?, leaf_der))
-    });
-    ca_key.zeroize();
-    let (leaf_certificate, leaf_der) = signed?;
-    let leaf = issued(&leaf_certificate, leaf_der)?;
+    let ca_spec = spec(
+        options,
+        &ca_cn,
+        now,
+        u64::from(ca_validity_days),
+        SELF_SIGNED_SERIAL_LENGTH,
+        Profile::Authority,
+    )?;
+    let ca_certificate = cert::self_signed(&ca_spec, &ca_key)?;
+    let (leaf_key, leaf_der) = new_key(options.key_bits)?;
+    let leaf_spec = leaf_spec(options, now, SERIAL_NUMBER_LENGTH)?;
+    let leaf_certificate = cert::signed_by(&leaf_spec, &leaf_key, &ca_spec, &ca_key)?;
+    drop((ca_key, leaf_key));
+    let leaf = issued(leaf_certificate, leaf_der)?;
     let fingerprint = fingerprint_sha256(&leaf.cert_der);
     Ok(CaLeafCertificates {
-        ca: issued(&ca_certificate, ca_der)?,
+        ca: issued(ca_certificate, ca_der)?,
         leaf,
         fingerprint,
     })
@@ -445,7 +401,11 @@ pub fn generate_ca_leaf(
 ///
 /// [`CertificateError`] when the key cannot be encrypted.
 pub fn build_pfx(leaf: &IssuedCertificate, password: &str) -> Result<Vec<u8>, CertificateError> {
-    Ok(pkcs12::build(&leaf.cert_der, &leaf.key_pkcs8, password)?)
+    Ok(sealvault::pkcs12::build(
+        &leaf.cert_der,
+        &leaf.key_pkcs8,
+        password,
+    )?)
 }
 
 #[cfg(test)]
@@ -736,13 +696,18 @@ mod tests {
     #[test]
     fn a_pfx_holds_the_leaf_and_its_key_under_its_password() {
         let made = generate_ca_leaf(&options(&[]), CA_VALIDITY_DAYS, FIXED_NOW).expect("made");
+        // What the PFX holds is checked by sealvault's own pkcs12 tests, which open it.
         let pfx = build_pfx(&made.leaf, "secret").expect("pfx");
-        let (certificate, key) = super::pkcs12::tests::open(&pfx, "secret").expect("opened");
-        assert_eq!(certificate, made.leaf.cert_der);
-        assert_eq!(key, made.leaf.key_pkcs8.as_slice());
-        assert!(super::pkcs12::tests::open(&pfx, "").is_none());
-        let empty = build_pfx(&made.leaf, "").expect("pfx");
-        assert!(super::pkcs12::tests::open(&empty, "").is_some());
+        assert_eq!(pfx[0], 0x30, "a DER SEQUENCE");
+        assert_ne!(
+            pfx,
+            build_pfx(&made.leaf, "secret").expect("pfx"),
+            "fresh salts"
+        );
+        assert!(
+            build_pfx(&made.leaf, "").is_ok(),
+            "an empty password is one"
+        );
     }
 
     #[test]
