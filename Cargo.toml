@@ -51,7 +51,7 @@ ironrdp = { version = "0.17.0", features = ["connector", "session", "graphics", 
 ironrdp-core = "0.2.1"
 ironrdp-tokio = "0.10.0"
 # cpal: an RDP server's sound played on this computer (WASAPI, ALSA, Core Audio).
-cpal = "0.17.3"
+cpal = "0.18.2"
 iced = "0.14.0"
 # iced_renderer: the renderer iced picks at run time, which iced keeps private.
 iced_renderer = "0.14.0"
@@ -81,8 +81,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 # fancy-regex: the Regex Tester tool's engine, with .NET's look-arounds, backreferences,
 # atomic groups and conditionals; already in the tree through two-face. Approved by Julien
-# Bombled on 2026-10-09.
-fancy-regex = "0.16.2"
+# Bombled on 2026-10-09. Its default features but "variable-lookbehinds" (default since 0.19):
+# the tool refuses a look-behind whose length varies, and names it to the user.
+fancy-regex = { version = "0.19.2", default-features = false, features = ["unicode", "perf", "std"] }
 # similar: the Text Diff tool's lines compared (Myers); approved by Julien Bombled on
 # 2026-10-09. The algorithms only: no text or Unicode helpers.
 similar = { version = "3.2.0", default-features = false, features = ["std"] }
@@ -103,7 +104,8 @@ sha3 = { version = "0.12.0", default-features = false }
 hmac = "0.13.0"
 suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-rustls-ring"] }
 # rfd: the system's save dialog for "Export Sessions", as the C# SaveFileDialog; on Linux
-# through the desktop portal (zbus, already in the tree), no GTK.
+# through the desktop portal, no GTK: rfd loads libdbus-1.so.3 at run time (dlopen), then
+# falls back on zenity (see docs/native-libraries.md).
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 # clipboard-win: the files copied in Explorer (CF_HDROP), read on Windows for "Paste from
 # Explorer" and the RDP file copy; already in the tree through iced's clipboard.

@@ -56,6 +56,9 @@ Wayland, X11 et fontconfig. L'exécution demande aussi `libxkbcommon-x11` et un
 pilote Vulkan ou OpenGL, par exemple Mesa. Sous Windows, la compilation demande
 les outils MSVC.
 
+Les bibliothèques C que le binaire lie ou charge à l'exécution sous Linux, et dans quels
+cas, sont recensées dans [Bibliothèques natives](docs/fr/native-libraries.md).
+
 ```bash
 cargo run --package heimdall-ui
 ```
