@@ -51,6 +51,9 @@ On Linux, the build needs the development packages of xkbcommon, Wayland, X11
 and fontconfig. Running it also needs `libxkbcommon-x11` and a Vulkan or OpenGL
 driver, such as Mesa. On Windows, the build needs the MSVC build tools.
 
+The C libraries the binary links or loads at run time on Linux, and when, are listed in
+[Native libraries](docs/native-libraries.md).
+
 ```bash
 cargo run --package heimdall-ui
 ```

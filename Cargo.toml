@@ -102,7 +102,8 @@ sha3 = { version = "0.12.0", default-features = false }
 hmac = "0.13.0"
 suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-rustls-ring"] }
 # rfd: the system's save dialog for "Export Sessions", as the C# SaveFileDialog; on Linux
-# through the desktop portal (zbus, already in the tree), no GTK.
+# through the desktop portal, no GTK: rfd loads libdbus-1.so.3 at run time (dlopen), then
+# falls back on zenity (see docs/native-libraries.md).
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 # clipboard-win: the files copied in Explorer (CF_HDROP), read on Windows for "Paste from
 # Explorer" and the RDP file copy; already in the tree through iced's clipboard.
