@@ -307,12 +307,13 @@ fn shell(program: &Path, arguments: &LocalArguments) -> io::Result<Shell> {
     }
 }
 
-/// The shell run when none is named: Windows `PowerShell` by its full path.
+/// The shell run when none is named: Windows `PowerShell` by its full path, under the
+/// Windows folder Windows says, never the one the environment names.
 #[cfg(windows)]
 fn default_program() -> io::Result<PathBuf> {
-    let root = std::env::var_os("SystemRoot")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "SystemRoot is not set"))?;
-    Ok(program::default_shell(Path::new(&root)))
+    let root = heimdall_core::paths::system_root()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the Windows folder is unknown"))?;
+    Ok(program::default_shell(&root))
 }
 
 /// The shell run when none is named: `$SHELL` when it is a full path, as a terminal opens it,

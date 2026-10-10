@@ -52,7 +52,7 @@ pub struct ModuleRoots {
 
 impl ModuleRoots {
     /// The folders of the current user and machine: under Documents, Program Files and the
-    /// system folder.
+    /// Windows folder, all as Windows says where they are, never as the environment names them.
     #[cfg(windows)]
     #[must_use]
     pub fn for_current_user() -> Self {
@@ -60,8 +60,10 @@ impl ModuleRoots {
             dirs.document_dir()
                 .map(|dir| dir.to_string_lossy().into_owned())
         });
-        let program_files = std::env::var("ProgramFiles").ok();
-        let system_root = std::env::var("SystemRoot").ok();
+        let folder =
+            |path: Option<std::path::PathBuf>| path.map(|path| path.to_string_lossy().into_owned());
+        let program_files = folder(heimdall_core::paths::program_files());
+        let system_root = folder(heimdall_core::paths::system_root());
         let under = |base: &Option<String>, rest: &str| {
             base.as_ref()
                 .map(|base| format!("{}\\{rest}", trimmed(base)))

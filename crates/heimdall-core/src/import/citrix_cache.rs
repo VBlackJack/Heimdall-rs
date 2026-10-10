@@ -27,10 +27,8 @@ use std::path::{Path, PathBuf};
 use roxmltree::{Document, Node};
 use zeroize::Zeroizing;
 
-/// The variable naming this account's local application data folder.
-const LOCAL_APP_DATA: &str = "LOCALAPPDATA";
-
 /// The cache's folder under the local application data, as the C#.
+#[cfg(windows)]
 const CACHE_FOLDER: [&str; 2] = ["Citrix", "SelfService"];
 
 /// The end of a cache file's name, compared without case as Windows matches `*_Cache.xml`.
@@ -111,11 +109,16 @@ pub struct CacheScan {
     pub warnings: Vec<CacheWarning>,
 }
 
-/// Where this account's cache is: `%LocalAppData%\Citrix\SelfService`.
+/// Where this account's cache is: `Citrix\SelfService` under the local application data
+/// folder Windows says, never the one the environment names. `None` off Windows, where
+/// Citrix Workspace keeps no such cache.
 #[must_use]
 pub fn cache_folder() -> Option<PathBuf> {
-    let root = PathBuf::from(std::env::var_os(LOCAL_APP_DATA)?);
-    Some(CACHE_FOLDER.iter().fold(root, |path, part| path.join(part)))
+    #[cfg(windows)]
+    return crate::paths::local_app_data()
+        .map(|root| CACHE_FOLDER.iter().fold(root, |path, part| path.join(part)));
+    #[cfg(not(windows))]
+    return None;
 }
 
 /// Scans this account's cache.

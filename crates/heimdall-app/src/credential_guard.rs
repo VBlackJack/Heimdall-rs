@@ -133,7 +133,7 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotWindows => f.write_str("not Windows"),
-            Self::NoSystemFolder => f.write_str("the system folder is unknown"),
+            Self::NoSystemFolder => f.write_str(heimdall_core::paths::SYSTEM_FOLDER_UNKNOWN),
             Self::NotStarted(detail) => write!(f, "PowerShell did not start: {detail}"),
             Self::TimedOut => write!(f, "no answer within {} seconds", CHECK_TIME_LIMIT.as_secs()),
             Self::Exited(Some(code)) => write!(f, "PowerShell ended with code {code}"),
