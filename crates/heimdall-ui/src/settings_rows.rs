@@ -41,6 +41,8 @@ pub enum SettingsCard {
     Updates,
     /// The background check of every server.
     Reachability,
+    /// "Show the tour again", as the C# "Welcome tour" card.
+    Onboarding,
     /// The terminals' text and colours, Ctrl+V and the `PowerShell` policy.
     Terminal,
     /// The session transcripts.
@@ -86,11 +88,12 @@ pub enum SettingsCard {
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::Appearance,
         Self::Behavior,
         Self::Updates,
         Self::Reachability,
+        Self::Onboarding,
         Self::Terminal,
         Self::SessionLogging,
         Self::Macros,
@@ -117,9 +120,11 @@ impl SettingsCard {
     #[must_use]
     pub fn tab(self) -> SettingsTab {
         match self {
-            Self::Appearance | Self::Behavior | Self::Updates | Self::Reachability => {
-                SettingsTab::General
-            }
+            Self::Appearance
+            | Self::Behavior
+            | Self::Updates
+            | Self::Reachability
+            | Self::Onboarding => SettingsTab::General,
             Self::Terminal | Self::SessionLogging | Self::Macros => SettingsTab::Terminal,
             Self::SshReconnect
             | Self::SshSession
@@ -182,6 +187,8 @@ pub enum SettingRow {
     ReachabilityTimeout,
     /// Servers checked at once.
     ReachabilityProbes,
+    /// "Show the tour again", which shows the welcome tour from its first step.
+    Onboarding,
     /// The size of the terminals' text.
     FontSize,
     /// The family of the terminals' text.
@@ -284,7 +291,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 63] = [
+    pub const ALL: [Self; 64] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -299,6 +306,7 @@ impl SettingRow {
         Self::ReachabilityInterval,
         Self::ReachabilityTimeout,
         Self::ReachabilityProbes,
+        Self::Onboarding,
         Self::FontSize,
         Self::FontFamily,
         Self::ColorScheme,
@@ -366,6 +374,8 @@ impl SettingRow {
             | Self::ReachabilityInterval
             | Self::ReachabilityTimeout
             | Self::ReachabilityProbes => SettingsCard::Reachability,
+            // The last card of the C# General tab (`MainWindow.xaml:2715-2745`).
+            Self::Onboarding => SettingsCard::Onboarding,
             Self::FontSize
             | Self::FontFamily
             | Self::ColorScheme
@@ -489,6 +499,7 @@ impl SettingRow {
             Self::Language
                 | Self::UpdateVersion
                 | Self::LegacyMigration
+                | Self::Onboarding
                 | Self::Macros
                 | Self::HostKeys
                 | Self::FtpsCertificates

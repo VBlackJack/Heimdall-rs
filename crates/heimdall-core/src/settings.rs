@@ -664,6 +664,10 @@ pub struct Settings {
     /// `LegacyMigrationDeclined*` (`AppSettings.cs:65-66`). This computer's own: never
     /// exported, and kept by a reset.
     pub legacy_migration: LegacyMigration,
+    /// The welcome tour was finished or skipped, as the C# `OnboardingCompleted`
+    /// (`AppSettings.cs:354`): off until then, and the tour shows at start while it is off.
+    /// This computer's own: never exported, and kept by a reset.
+    pub onboarding_completed: bool,
 }
 
 /// The offer to migrate from the legacy PowerShell Heimdall (`RDPManager`) the user declined,
@@ -1232,6 +1236,7 @@ impl Default for Settings {
             last_used_gateway: None,
             tools: ToolsSettings::default(),
             legacy_migration: LegacyMigration::default(),
+            onboarding_completed: false,
         }
     }
 }
@@ -1275,6 +1280,16 @@ struct SettingsFile {
     tools: ToolsSection,
     #[serde(default)]
     legacy_migration: LegacyMigrationSection,
+    #[serde(default)]
+    onboarding: OnboardingSection,
+}
+
+/// This computer's own: never exported.
+#[derive(Serialize, Deserialize, Default)]
+struct OnboardingSection {
+    /// Absent, from a file written before it, is the C# default: the tour not seen.
+    #[serde(default)]
+    completed: bool,
 }
 
 /// This computer's own: never exported.
@@ -1756,7 +1771,8 @@ impl Settings {
     /// back; the PIN and the lockouts, which are state, not preferences; the release skipped
     /// and the last look for one; and what no C# Settings panel edits (the tree's gateway
     /// badge, the broadcast scope, the gateway a new profile starts on, the Tools area's pins,
-    /// tab and folded categories, which the C# resets but its tab). The gateways, the
+    /// tab and folded categories, which the C# resets but its tab, and the welcome tour seen).
+    /// The gateways, the
     /// profiles, the master password, the Windows Hello enrolment, the macros and the
     /// credential provider's unlock secret are kept elsewhere and are not touched.
     pub fn reset_all(&mut self) {
@@ -1774,6 +1790,7 @@ impl Settings {
             last_used_gateway: self.last_used_gateway.take(),
             tools: std::mem::take(&mut self.tools),
             legacy_migration: std::mem::take(&mut self.legacy_migration),
+            onboarding_completed: self.onboarding_completed,
             ..Self::default()
         };
         *self = kept;
@@ -2023,6 +2040,7 @@ impl Settings {
                 .map(ProfileId::new),
             tools: file.tools.settings(),
             legacy_migration: file.legacy_migration.settings(),
+            onboarding_completed: file.onboarding.completed,
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -2167,6 +2185,9 @@ impl Settings {
             profile_form: ProfileFormSection::of(self.last_used_gateway.as_ref()),
             tools: ToolsSection::of(&self.tools),
             legacy_migration: LegacyMigrationSection::of(&self.legacy_migration),
+            onboarding: OnboardingSection {
+                completed: self.onboarding_completed,
+            },
         }
     }
 
@@ -2392,8 +2413,8 @@ mod transfer_tests {
 
     /// The sections that never travel: this computer's PIN and lockouts, its last look for a
     /// newer release, the gateway its profile form starts on, the legacy migration it
-    /// declined, and the file's own version.
-    const HELD_BACK: [&str; 7] = [
+    /// declined, the welcome tour it saw, and the file's own version.
+    const HELD_BACK: [&str; 8] = [
         "version",
         "vault_unlock",
         "pin",
@@ -2401,6 +2422,7 @@ mod transfer_tests {
         "profile_form",
         "tools",
         "legacy_migration",
+        "onboarding",
     ];
 
     #[test]

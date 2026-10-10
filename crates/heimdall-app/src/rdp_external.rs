@@ -55,10 +55,6 @@ pub const STALE_AFTER: Duration = Duration::from_secs(60);
 
 /// Remote Desktop Connection's program, in the system folder.
 const MSTSC: &str = "mstsc.exe";
-/// The system folder, under the Windows folder.
-const SYSTEM_FOLDER: &str = "System32";
-/// The variables naming the Windows folder, in the order they are read.
-const WINDOWS_FOLDER_VARIABLES: [&str; 2] = ["SystemRoot", "windir"];
 
 /// Each side of the automatic size is a multiple of this, as the C# `RdpDisplayResolver`
 /// snaps it (`WidthSnapMultiplePx`).
@@ -477,14 +473,11 @@ pub fn sweep_stale() {
     }
 }
 
-/// `mstsc.exe` in the system folder, named by its whole path, never looked for in the
-/// current folder, as the C# `MstscRdpExternalClientLauncher`.
+/// `mstsc.exe` in the system folder Windows says, never the one the environment names,
+/// named by its whole path, never looked for in the current folder, as the C#
+/// `MstscRdpExternalClientLauncher`. `None` off Windows.
 fn mstsc() -> Option<PathBuf> {
-    WINDOWS_FOLDER_VARIABLES
-        .iter()
-        .filter_map(std::env::var_os)
-        .map(|windows| PathBuf::from(windows).join(SYSTEM_FOLDER).join(MSTSC))
-        .find(|program| program.is_file())
+    heimdall_core::paths::system_program(MSTSC).filter(|program| program.is_file())
 }
 
 /// Remote Desktop Connection started, and its end to wait for.

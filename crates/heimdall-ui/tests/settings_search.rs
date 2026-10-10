@@ -920,8 +920,9 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         );
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
-    // The last row added, the RDP keep-alive interval, holds no path.
-    assert_eq!(SettingRow::ALL.len(), 63, "no row added");
+    // The last rows added, the welcome tour's button and the RDP keep-alive interval, hold
+    // no path.
+    assert_eq!(SettingRow::ALL.len(), 64, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(

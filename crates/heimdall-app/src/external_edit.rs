@@ -113,7 +113,7 @@ const INTERPRETERS: &[&str] = &["node", "perl", "php", "py", "python", "ruby"];
 pub fn editor(setting: &str) -> Result<Editor, EditorRefused> {
     let setting = setting.trim().trim_matches('"');
     if setting.is_empty() {
-        return Ok(system_editor());
+        return system_editor();
     }
     let named = expanded(setting);
     let program =
@@ -147,11 +147,13 @@ pub fn editor(setting: &str) -> Result<Editor, EditorRefused> {
 }
 
 /// The system's own text editor: Notepad, as the C# default; on macOS the text editor
-/// `open -t` names; elsewhere what `xdg-open` picks for the file.
-fn system_editor() -> Editor {
-    if cfg!(windows) {
+/// `open -t` names; elsewhere what `xdg-open` picks for the file. Notepad is refused as not
+/// found when Windows does not say where its system folder is.
+fn system_editor() -> Result<Editor, EditorRefused> {
+    Ok(if cfg!(windows) {
         Editor {
-            program: system_program(NOTEPAD_PROGRAM),
+            program: system_program(NOTEPAD_PROGRAM)
+                .map_err(|_| EditorRefused::NotFound(NOTEPAD_PROGRAM.to_owned()))?,
             arguments: Vec::new(),
         }
     } else if cfg!(target_os = "macos") {
@@ -164,7 +166,7 @@ fn system_editor() -> Editor {
             program: PathBuf::from("xdg-open"),
             arguments: Vec::new(),
         }
-    }
+    })
 }
 
 /// `setting` with its `%NAME%` variables replaced, as the C# default `%windir%` is written;
@@ -587,11 +589,18 @@ pub async fn send_anyway(client: &RemoteSession, session: &EditSession) -> EditC
 /// What the system said when it could not start.
 pub fn open_folder(folder: &Path) -> io::Result<()> {
     let manager = if cfg!(windows) {
-        "explorer.exe"
+        heimdall_core::paths::windows_program(heimdall_core::paths::EXPLORER_PROGRAM).ok_or_else(
+            || {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    heimdall_core::paths::WINDOWS_FOLDER_UNKNOWN,
+                )
+            },
+        )?
     } else if cfg!(target_os = "macos") {
-        "/usr/bin/open"
+        PathBuf::from(MAC_OPEN_PROGRAM)
     } else {
-        "xdg-open"
+        PathBuf::from(XDG_OPEN_PROGRAM)
     };
     std::process::Command::new(manager)
         .arg(folder)
@@ -620,7 +629,8 @@ pub fn open_with_default(file: &Path) -> io::Result<()> {
         ));
     }
     let mut command = if cfg!(windows) {
-        let mut command = std::process::Command::new(system_program(RUNDLL_PROGRAM));
+        let mut command =
+            std::process::Command::new(system_program(heimdall_core::paths::RUNDLL_PROGRAM)?);
         command.arg(FILE_HANDLER_ENTRY);
         command
     } else if cfg!(target_os = "macos") {
@@ -657,7 +667,7 @@ pub fn open_with_chooser(file: &Path) -> io::Result<()> {
     if !cfg!(windows) {
         return Err(io::Error::from(io::ErrorKind::Unsupported));
     }
-    std::process::Command::new(system_program(RUNDLL_PROGRAM))
+    std::process::Command::new(system_program(heimdall_core::paths::RUNDLL_PROGRAM)?)
         .arg(OPEN_WITH_ENTRY)
         .arg(file)
         .stdin(std::process::Stdio::null())
@@ -669,29 +679,27 @@ pub fn open_with_chooser(file: &Path) -> io::Result<()> {
 
 /// The system's own text editor on Windows, as the C# default.
 const NOTEPAD_PROGRAM: &str = "notepad.exe";
-/// The Windows program that calls a library's entry point.
-const RUNDLL_PROGRAM: &str = "rundll32.exe";
 /// The shell's entry point opening a file or an address with its default program.
-const FILE_HANDLER_ENTRY: &str = "url.dll,FileProtocolHandler";
+pub(crate) const FILE_HANDLER_ENTRY: &str = "url.dll,FileProtocolHandler";
 /// The shell's entry point showing its "Open with" chooser for a file, as the C# calls it.
 const OPEN_WITH_ENTRY: &str = "shell32.dll,OpenAs_RunDLL";
 /// What opens a file with its default program on macOS.
-const MAC_OPEN_PROGRAM: &str = "/usr/bin/open";
+pub(crate) const MAC_OPEN_PROGRAM: &str = "/usr/bin/open";
 /// What opens a file with its default program on other Unix desktops.
-const XDG_OPEN_PROGRAM: &str = "xdg-open";
-/// Windows' folder of its own programs, under its own folder.
-const SYSTEM_FOLDER: &str = "system32";
-/// Windows' own folder, when the environment does not say.
-const DEFAULT_WINDOWS_FOLDER: &str = r"C:\Windows";
-
-/// Windows program `name` in Windows' own folder of programs: never one of the same name
-/// found first somewhere else.
-fn system_program(name: &str) -> PathBuf {
-    std::env::var_os("WINDIR")
-        .or_else(|| std::env::var_os("SystemRoot"))
-        .map_or_else(|| PathBuf::from(DEFAULT_WINDOWS_FOLDER), PathBuf::from)
-        .join(SYSTEM_FOLDER)
-        .join(name)
+pub(crate) const XDG_OPEN_PROGRAM: &str = "xdg-open";
+/// Windows program `name` in the system folder Windows says, never the one the environment
+/// names: never one of the same name found first somewhere else.
+///
+/// # Errors
+///
+/// [`io::ErrorKind::NotFound`] when Windows does not say where its system folder is.
+fn system_program(name: &str) -> io::Result<PathBuf> {
+    heimdall_core::paths::system_program(name).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            heimdall_core::paths::SYSTEM_FOLDER_UNKNOWN,
+        )
+    })
 }
 
 impl EditSession {

@@ -372,6 +372,26 @@ fn drop_layer<'a>() -> Element<'a, Message> {
     )
 }
 
+/// The welcome tour's card over the window, veiled as under a dialog: what is under it is
+/// neither hovered nor clicked, as the C# overlay's scrim takes the pointer.
+fn tour_layer<'a>(tour: &crate::onboarding::Tour) -> Element<'a, Message> {
+    opaque(
+        container(crate::onboarding::card(tour))
+            .center(Length::Fill)
+            .padding(spacing::LG)
+            .style(|_: &Theme| container::Style {
+                background: Some(
+                    Color {
+                        a: VEIL_ALPHA,
+                        ..Color::BLACK
+                    }
+                    .into(),
+                ),
+                ..container::Style::default()
+            }),
+    )
+}
+
 /// Gives `window` the focus, restored first when it is minimized.
 fn focus_window(window: window::Id) -> Task<Message> {
     window::is_minimized(window).then(move |minimized| {
@@ -443,6 +463,15 @@ fn sidebar_drag_event(
     }
 }
 
+/// Whether `physical` with `modifiers` toggles the window's full screen, as the C#
+/// `FullscreenShortcutRouter`: F11 alone, which a desktop keeps from its server, or
+/// Ctrl+Shift+F11, full screen over an embedded session, which neither a terminal nor a
+/// desktop passes on.
+fn toggles_fullscreen(physical: keyboard::key::Physical, modifiers: keyboard::Modifiers) -> bool {
+    (physical == keyboard::key::Physical::Code(keyboard::key::Code::F11) && modifiers.is_empty())
+        || crate::terminal_view::keys::is_fullscreen_key(physical, modifiers)
+}
+
 fn window_event(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Message> {
     match event {
         iced::Event::Window(window::Event::CloseRequested) => {
@@ -494,14 +523,13 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         } else {
             Message::DialogKey { confirm: false }
         }),
-        // F11 whatever took it: the window's full screen, as in the C# Heimdall. A desktop
-        // keeps it from its server.
+        // F11 and Ctrl+Shift+F11 whatever took them: the window's full screen.
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
-            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::F11),
+            physical_key,
             modifiers,
             repeat: false,
             ..
-        }) if modifiers.is_empty() => Some(Message::ToggleFullscreen),
+        }) if toggles_fullscreen(physical_key, modifiers) => Some(Message::ToggleFullscreen),
         // Ctrl+L even when a terminal took it: the session gets it too, as a shell's clear.
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
@@ -608,6 +636,10 @@ pub enum Message {
     TrustedSearch(TrustedList, String),
     /// The header of a column of the trusted SSH host keys clicked: sorted by it.
     HostKeySort(HostKeyColumn),
+    /// A press on the welcome tour's card, or Enter or Escape while it is shown.
+    Tour(crate::onboarding::TourMessage),
+    /// The Settings page's "Show the tour again": the welcome tour from its first step.
+    ReplayTour,
     /// A language chosen on the Settings page.
     LanguageChosen(Language),
     /// F11: the window full screen, showing the session only, or back.
@@ -965,6 +997,8 @@ impl fmt::Debug for Message {
             Self::ManageGateways => f.write_str("ManageGateways"),
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
             Self::HostKeySort(column) => write!(f, "HostKeySort({column:?})"),
+            Self::Tour(message) => write!(f, "Tour({message:?})"),
+            Self::ReplayTour => f.write_str("ReplayTour"),
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::WindowOpened(_) => f.write_str("WindowOpened"),
@@ -1520,6 +1554,11 @@ pub struct Shell {
     tools_filter: String,
     /// What the Tools page's search holds.
     tools_search: String,
+    /// The welcome tour shown over the window.
+    tour: Option<crate::onboarding::Tour>,
+    /// The welcome tour waits to be shown at the first start: until the PIN and the master
+    /// password are given, and no dialog is open.
+    tour_pending: bool,
 }
 
 /// What the content area shows.
@@ -1649,6 +1688,7 @@ impl Shell {
         }
         // Transcripts past their retention, removed beside the start, as the C# does.
         shell.app.prune_transcripts();
+        shell.offer_tour_on_first_run();
         shell
     }
 
@@ -1749,6 +1789,8 @@ impl Shell {
             tools: crate::tools::ToolPanes::default(),
             tools_filter: String::new(),
             tools_search: String::new(),
+            tour: None,
+            tour_pending: false,
         }
         .with_tool_panes()
     }
@@ -2411,6 +2453,10 @@ impl Shell {
         {
             return Task::none();
         }
+        // Enter and Escape are the welcome tour's while it is shown and nothing over it.
+        if let Some(tour) = self.tour_key(&message) {
+            return self.update(Message::Tour(tour));
+        }
         // Escape no widget took leaves full screen when there is nothing else to close, as
         // the C# Heimdall's.
         if matches!(message, Message::EscapeUntaken) {
@@ -2548,6 +2594,11 @@ impl Shell {
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
             Message::MenuChoice(message) => self.closing_menu(message),
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
+            Message::Tour(message) => self.tour_message(message),
+            Message::ReplayTour => {
+                self.start_tour();
+                Vec::new()
+            }
             Message::SplitPalette { host, axis } => {
                 self.open_palette(Some((host, axis)));
                 Vec::new()
@@ -2694,6 +2745,11 @@ impl Shell {
             // and the master password already given.
             self.app.offer_legacy_migration();
             self.app.offer_restore();
+            // The welcome tour of a first start, once nothing else is asked.
+            if self.tour_pending && self.app.dialog.is_none() {
+                self.tour_pending = false;
+                self.start_tour();
+            }
             // The servers' first background check, once their tree can be seen.
             for effect in self.app.start_reachability() {
                 tasks.push(self.run(effect));
@@ -3450,6 +3506,96 @@ impl Shell {
         }
         self.menu = Some((menu, at));
         self.menu_window = window;
+    }
+
+    /// The welcome tour at a first start, as the C# `MainWindow` shows it once loaded while
+    /// `OnboardingCompleted` is off: at once when the window is free, else once the PIN and
+    /// the master password are given and no dialog is open.
+    pub fn offer_tour_on_first_run(&mut self) {
+        if self.app.onboarding_completed() {
+            return;
+        }
+        if self.gated() || self.app.dialog.is_some() {
+            self.tour_pending = true;
+        } else {
+            self.start_tour();
+        }
+    }
+
+    /// The welcome tour shown, if it is.
+    #[must_use]
+    pub fn tour(&self) -> Option<&crate::onboarding::Tour> {
+        self.tour.as_ref()
+    }
+
+    /// The welcome tour from its first step, as the C# `Start`, its page shown.
+    fn start_tour(&mut self) {
+        self.tour = Some(crate::onboarding::Tour::new());
+        self.show_tour_step();
+    }
+
+    /// The page the tour's step speaks of shown first, as the C# `ApplyOnboardingStep`
+    /// navigates before it measures.
+    fn show_tour_step(&mut self) {
+        if self
+            .tour
+            .as_ref()
+            .is_some_and(|tour| tour.step().shows_sessions())
+        {
+            self.menu = None;
+            self.page = Page::Tab;
+        }
+    }
+
+    /// Next and Skip on the tour's card: the next step, or the tour's end recorded.
+    fn tour_message(&mut self, message: crate::onboarding::TourMessage) -> Vec<Effect> {
+        let Some(tour) = self.tour.as_mut() else {
+            return Vec::new();
+        };
+        if message == crate::onboarding::TourMessage::Next && tour.advance() {
+            self.show_tour_step();
+            return Vec::new();
+        }
+        self.finish_tour()
+    }
+
+    /// The tour's end, after its last step, Skip or Escape, as the C# `CompleteAsync`:
+    /// recorded as seen, then the Sessions page and the sidebar's sessions shown, where a new
+    /// user has something to do (`MainWindow.xaml.cs:2643-2667`). An end that cannot be saved
+    /// leaves the tour open with what went wrong.
+    fn finish_tour(&mut self) -> Vec<Effect> {
+        if !self.app.complete_onboarding() {
+            if let Some(tour) = self.tour.as_mut() {
+                tour.set_save_failed(true);
+            }
+            return Vec::new();
+        }
+        self.tour = None;
+        self.menu = None;
+        self.page = Page::Tab;
+        self.app
+            .update(AppMessage::Tools(ToolsMessage::ShowSidebarTab(
+                SidebarTab::Sessions,
+            )))
+    }
+
+    /// What `message` is to the welcome tour: Enter its Next and Escape its Skip, while it is
+    /// shown and no dialog, menu or Quick Connect is over it, as the C# overlay's key binding.
+    fn tour_key(&self, message: &Message) -> Option<crate::onboarding::TourMessage> {
+        let free = self.tour.is_some()
+            && !self.gated()
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && self.menu.is_none();
+        match message {
+            Message::DialogKey { confirm: true } if free => {
+                Some(crate::onboarding::TourMessage::Next)
+            }
+            Message::DialogKey { confirm: false } | Message::EscapeUntaken if free => {
+                Some(crate::onboarding::TourMessage::Skip)
+            }
+            _ => None,
+        }
     }
 
     /// Whether Escape leaves full screen: in it, with no dialog, menu, Quick Connect, search
@@ -4408,6 +4554,10 @@ impl Shell {
                 .width(Length::Fill)
                 .align_x(iced::alignment::Horizontal::Right),
             );
+        }
+        // Under a dialog, which stays answerable, as the C# dialogs open over its overlay.
+        if let Some(tour) = self.tour.as_ref().filter(|_| !locked) {
+            layers = layers.push(tour_layer(tour));
         }
         if let Some(layer) = self.dialog_layer(locked) {
             layers = layers.push(layer);
@@ -12569,6 +12719,36 @@ mod tests {
                 Some(Message::ToggleFullscreen)
             ),
             "Ctrl+F11 is the session's"
+        );
+        // Ctrl+Shift+F11 toggles it too, whoever took it, as the C# `FullscreenShortcutRouter`.
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        for status in [event::Status::Captured, event::Status::Ignored] {
+            assert!(matches!(
+                window_event(f11(both, false), status, window::Id::unique()),
+                Some(Message::ToggleFullscreen)
+            ));
+        }
+        assert!(
+            !matches!(
+                window_event(
+                    f11(both, true),
+                    event::Status::Ignored,
+                    window::Id::unique()
+                ),
+                Some(Message::ToggleFullscreen)
+            ),
+            "held down, it switches once"
+        );
+        assert!(
+            !matches!(
+                window_event(
+                    f11(both | Modifiers::ALT, false),
+                    event::Status::Ignored,
+                    window::Id::unique()
+                ),
+                Some(Message::ToggleFullscreen)
+            ),
+            "Ctrl+Alt+Shift+F11 is the session's"
         );
     }
 

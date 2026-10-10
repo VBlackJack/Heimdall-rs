@@ -108,6 +108,7 @@ mod local_tab;
 mod macro_editor;
 mod macros;
 mod mstsc_launch;
+mod onboarding;
 mod pin;
 mod post_connect;
 mod profile_import;
