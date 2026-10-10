@@ -29,7 +29,7 @@ use heimdall_rdp::{
     CertificateHash, CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation,
     SaveEnd,
 };
-use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
+use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, RemoteCursor, VncInput};
 use heimdall_tls::ValidationIssue;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -190,6 +190,8 @@ pub enum ConnectionEvent {
         framebuffer: VncFramebuffer,
         /// Where keyboard and mouse input goes.
         input: VncInput,
+        /// The server's pointer shape, drawn where the pointer is.
+        cursor: RemoteCursor,
         /// The TLS version the session is encrypted with, as "TLS 1.3"; `None` in clear.
         tls: Option<&'static str>,
     },

@@ -19,12 +19,13 @@
 //!
 //! Versions 3.3, 3.7 and 3.8; security None and VNC Authentication, directly or inside
 //! Tight or `VeNCrypt`, and the X509 subtypes of `VeNCrypt`, whose TLS the caller starts when
-//! told to; encodings Tight, ZRLE, `CopyRect` and Raw, with the
-//! `DesktopSize` and `LastRect` pseudo-encodings and the Tight compression and JPEG quality
-//! levels, and the Extended Clipboard pseudo-encoding for text in UTF-8. A message is read
-//! once it is whole; whatever the server announces (a name, a
-//! clipboard, a rectangle, a list of security types) is bounded before anything is
-//! allocated for it.
+//! told to; encodings `CopyRect`, Tight, `TightPNG`, ZRLE, Hextile, RRE and Raw, asked in
+//! noVNC's order, with the `DesktopSize` and `LastRect` pseudo-encodings, the Tight
+//! compression and JPEG quality levels, the Extended Clipboard pseudo-encoding for text in
+//! UTF-8, the Cursor pseudo-encoding for the server's pointer shape, and QEMU's extended key
+//! events, keys sent with their scancode once the server takes them. A message is read once
+//! it is whole; whatever the server announces (a name, a clipboard, a rectangle, a cursor, a
+//! list of security types) is bounded before anything is allocated for it.
 
 use zeroize::Zeroizing;
 
@@ -33,6 +34,9 @@ use super::clipboard::{
     self, ACTION_NOTIFY, ACTION_PROVIDE, ACTION_REQUEST, FORMAT_TEXT, Incoming,
     MAX_EXTENDED_CUT_TEXT, PSEUDO_EXTENDED_CLIPBOARD, ServerCaps,
 };
+use super::cursor::{self, Cursor};
+use super::hextile::Hextile;
+use super::rre;
 use super::screen::{MAX_SIDE, PIXEL_BYTES, Rect, Screen};
 use super::security::{
     self, Authentication, MAX_TIGHT_AUTH_TYPES, MAX_TIGHT_INIT_CAPABILITIES, MAX_TIGHT_TUNNELS,
@@ -47,13 +51,20 @@ use super::zrle::Zrle;
 /// Length of the version message.
 const VERSION_LENGTH: usize = 12;
 
-/// Encodings.
+/// Encodings, as noVNC's `encodings.js` numbers them.
 const ENCODING_RAW: i32 = 0;
 const ENCODING_COPY_RECT: i32 = 1;
+const ENCODING_RRE: i32 = 2;
+const ENCODING_HEXTILE: i32 = 5;
 const ENCODING_TIGHT: i32 = 7;
 const ENCODING_ZRLE: i32 = 16;
+const ENCODING_TIGHT_PNG: i32 = -260;
 const PSEUDO_DESKTOP_SIZE: i32 = -223;
 const PSEUDO_LAST_RECT: i32 = -224;
+/// The server's pointer shape, drawn by the client.
+const PSEUDO_CURSOR: i32 = -239;
+/// The server takes keys with their scancode: it says so with a rectangle of this encoding.
+const PSEUDO_QEMU_EXTENDED_KEY_EVENT: i32 = -258;
 /// The server says its screens, and takes a size asked of it: noVNC's "remote resizing".
 const PSEUDO_EXTENDED_DESKTOP_SIZE: i32 = -308;
 /// The server says its desktop's new name, as noVNC asks it: the name live, not only the
@@ -66,17 +77,30 @@ const PSEUDO_COMPRESS_LEVEL_0: i32 = -256;
 /// sends no JPEG.
 const PSEUDO_QUALITY_LEVEL_0: i32 = -32;
 
-/// Encodings asked for, preferred first; the levels of the quality chosen follow them.
-const ENCODINGS: [i32; 9] = [
-    ENCODING_TIGHT,
-    ENCODING_ZRLE,
+/// Encodings asked for, preferred first, in noVNC's order (`_sendEncodings`); the levels of
+/// the quality chosen follow them, then [`PSEUDO_ENCODINGS`]. noVNC's JPEG encoding is not
+/// asked: this client reads only the JPEG images inside Tight.
+const ENCODINGS: [i32; 7] = [
     ENCODING_COPY_RECT,
+    ENCODING_TIGHT,
+    ENCODING_TIGHT_PNG,
+    ENCODING_ZRLE,
+    ENCODING_HEXTILE,
+    ENCODING_RRE,
     ENCODING_RAW,
+];
+
+/// Pseudo-encodings asked for after the levels, in noVNC's order, less those it asks and
+/// this client does not read (LED state, XVP, fences, continuous updates, the `VMware`
+/// cursor).
+const PSEUDO_ENCODINGS: [i32; 7] = [
     PSEUDO_DESKTOP_SIZE,
     PSEUDO_LAST_RECT,
+    PSEUDO_QEMU_EXTENDED_KEY_EVENT,
     PSEUDO_EXTENDED_DESKTOP_SIZE,
     PSEUDO_DESKTOP_NAME,
     PSEUDO_EXTENDED_CLIPBOARD,
+    PSEUDO_CURSOR,
 ];
 
 /// Bytes of one screen of an extended desktop size: identifier, place, size and flags.
@@ -96,6 +120,17 @@ const KEY_EVENT: u8 = 4;
 const POINTER_EVENT: u8 = 5;
 const CLIENT_CUT_TEXT: u8 = 6;
 const SET_DESKTOP_SIZE: u8 = 251;
+/// QEMU's client message, and its extended key event.
+const QEMU_CLIENT_MESSAGE: u8 = 255;
+const QEMU_EXTENDED_KEY_EVENT: u8 = 0;
+
+/// A scancode of the extended set is this prefix and a byte; QEMU takes it as that byte with
+/// its top bit set, as noVNC's `getRFBkeycode` sends it.
+const SCANCODE_EXTENDED_PREFIX: u16 = 0xe0;
+const SCANCODE_PREFIX_SHIFT: u16 = 8;
+const SCANCODE_LOW: u16 = 0xff;
+const SCANCODE_EXTENDED_LIMIT: u16 = 0x7f;
+const QEMU_EXTENDED_BIT: u16 = 0x80;
 
 /// Longest server text kept: a failure reason or the desktop's name.
 const MAX_TEXT: usize = 4096;
@@ -166,7 +201,8 @@ impl Quality {
         }
     }
 
-    /// The encodings asked at this quality, preferred first, then its levels.
+    /// The encodings asked at this quality, preferred first, then its levels, JPEG quality
+    /// before compression as noVNC asks them, then the pseudo-encodings.
     fn encodings(self) -> Vec<i32> {
         let compression = PSEUDO_COMPRESS_LEVEL_0 + i32::from(self.compression_level());
         let jpeg = self
@@ -174,8 +210,9 @@ impl Quality {
             .map(|level| PSEUDO_QUALITY_LEVEL_0 + i32::from(level));
         ENCODINGS
             .into_iter()
-            .chain(std::iter::once(compression))
             .chain(jpeg)
+            .chain(std::iter::once(compression))
+            .chain(PSEUDO_ENCODINGS)
             .collect()
     }
 }
@@ -243,6 +280,8 @@ pub enum RfbEvent {
     ServerCutText(String),
     /// The desktop's new name, as the server gives it: untrusted.
     Renamed(String),
+    /// The server's pointer shape changed; an invisible one hides it.
+    Cursor(Cursor),
 }
 
 /// Why the session cannot go on.
@@ -343,6 +382,10 @@ pub struct Rfb {
     screen: Screen,
     zrle: Zrle,
     tight: Tight,
+    tight_png: Tight,
+    hextile: Hextile,
+    /// The server takes keys with their scancode, as it said with QEMU's pseudo-encoding.
+    qemu_keys: bool,
     /// The quality asked of the server.
     quality: Quality,
     /// The first screen the server said, by its identifier and flags, once it says its
@@ -496,6 +539,9 @@ impl Rfb {
             screen: Screen::new(0, 0),
             zrle: Zrle::new(),
             tight: Tight::new(),
+            tight_png: Tight::new_png(),
+            hextile: Hextile::new(),
+            qemu_keys: false,
             quality: Quality::default(),
             layout: None,
             clipboard_caps: None,
@@ -664,6 +710,39 @@ impl Rfb {
         self.output
             .extend_from_slice(&[KEY_EVENT, u8::from(down), 0, 0]);
         self.output.extend_from_slice(&keysym.to_be_bytes());
+    }
+
+    /// Reports a key by what it types, an X11 `keysym`, and where it is, its XT `scancode`
+    /// (an extended one as `0xE0xx`), as noVNC's `sendKey`: QEMU's extended key event with
+    /// both once the server takes it and the scancode is known, the keysym then 0 when
+    /// unknown; else a plain key event, nothing without a keysym.
+    pub fn key_with_scancode(&mut self, keysym: Option<u32>, scancode: Option<u16>, down: bool) {
+        match scancode.filter(|code| *code != 0) {
+            Some(scancode) if self.qemu_keys => {
+                self.output.extend_from_slice(&[
+                    QEMU_CLIENT_MESSAGE,
+                    QEMU_EXTENDED_KEY_EVENT,
+                    0,
+                    u8::from(down),
+                ]);
+                self.output
+                    .extend_from_slice(&keysym.unwrap_or(0).to_be_bytes());
+                self.output
+                    .extend_from_slice(&qemu_keycode(scancode).to_be_bytes());
+            }
+            _ => {
+                if let Some(keysym) = keysym.filter(|keysym| *keysym != 0) {
+                    self.key(keysym, down);
+                }
+            }
+        }
+    }
+
+    /// Whether the server takes keys with their scancode: it said so with QEMU's
+    /// pseudo-encoding.
+    #[must_use]
+    pub fn takes_scancodes(&self) -> bool {
+        self.qemu_keys
     }
 
     /// Reports the pointer: buttons 1 to 8 as bits 0 to 7 of `buttons`.
@@ -1235,12 +1314,20 @@ impl Rfb {
                 self.screen.copy((from_x, from_y), rect);
                 events.push(RfbEvent::Updated(rect));
             }
-            ENCODING_TIGHT => {
-                if !self.tight_rect(reader, rect)? {
+            ENCODING_TIGHT | ENCODING_TIGHT_PNG | ENCODING_HEXTILE | ENCODING_RRE => {
+                if !self.lengthless_rect(reader, rect, encoding)? {
                     return Ok(Step::More);
                 }
                 events.push(RfbEvent::Updated(rect));
             }
+            PSEUDO_CURSOR => {
+                let (pixels, mask) = cursor::sizes(rect).map_err(RfbError::Protocol)?;
+                let (Some(pixels), Some(mask)) = (reader.take(pixels), reader.take(mask)) else {
+                    return Ok(Step::More);
+                };
+                events.push(RfbEvent::Cursor(cursor::decode(rect, pixels, mask)));
+            }
+            PSEUDO_QEMU_EXTENDED_KEY_EVENT => self.qemu_keys = true,
             ENCODING_ZRLE => {
                 self.check_inside(rect)?;
                 let Some(size) = reader.u32() else {
@@ -1289,6 +1376,26 @@ impl Rfb {
         Ok(Step::Done(reader.at))
     }
 
+    /// A rectangle of Tight, `TightPNG`, Hextile or RRE, which carry no length of their own:
+    /// drawn once all of it is there, `false` until then.
+    fn lengthless_rect(
+        &mut self,
+        reader: &mut Reader<'_>,
+        rect: Rect,
+        encoding: i32,
+    ) -> Result<bool, RfbError> {
+        self.check_inside(rect)?;
+        let screen = &mut self.screen;
+        match encoding {
+            ENCODING_TIGHT => whole(reader, |data| self.tight.decode(data, rect, screen)),
+            ENCODING_TIGHT_PNG => whole(reader, |data| self.tight_png.decode(data, rect, screen)),
+            ENCODING_HEXTILE => whole(reader, |data| self.hextile.decode(data, rect, screen)),
+            _ => whole(reader, |data| {
+                rre::decode(data, rect, screen, MAX_COMPRESSED_RECT)
+            }),
+        }
+    }
+
     /// An extended desktop size: the x is why it came, the y whether a size asked was taken
     /// (0), the size the desktop's; then its screens. `false` until all of it is there.
     fn extended_desktop_size(
@@ -1319,20 +1426,6 @@ impl Rfb {
             });
         }
         Ok(true)
-    }
-
-    /// A Tight rectangle, drawn once all of it is there; `false` until then.
-    fn tight_rect(&mut self, reader: &mut Reader<'_>, rect: Rect) -> Result<bool, RfbError> {
-        self.check_inside(rect)?;
-        let unread = &reader.data[reader.at..];
-        let Some(taken) = self
-            .tight
-            .decode(unread, rect, &mut self.screen)
-            .map_err(RfbError::Protocol)?
-        else {
-            return Ok(false);
-        };
-        Ok(reader.take(taken).is_some())
     }
 
     /// `SetEncodings`: those asked at the quality chosen.
@@ -1376,6 +1469,32 @@ impl Rfb {
                 self.screen.height()
             )))
         }
+    }
+}
+
+/// A rectangle carrying no length of its own, drawn by `decode` from the unread bytes once
+/// all of it is there: `decode` gives the bytes it took, `None` until then. `false` until
+/// then.
+fn whole(
+    reader: &mut Reader<'_>,
+    decode: impl FnOnce(&[u8]) -> Result<Option<usize>, String>,
+) -> Result<bool, RfbError> {
+    let unread = &reader.data[reader.at..];
+    let Some(taken) = decode(unread).map_err(RfbError::Protocol)? else {
+        return Ok(false);
+    };
+    Ok(reader.take(taken).is_some())
+}
+
+/// The keycode QEMU's extended key event carries for an XT `scancode`, as noVNC's
+/// `getRFBkeycode`: an extended one below `0xE07F` as its low byte with the top bit set, any
+/// other as it is.
+fn qemu_keycode(scancode: u16) -> u32 {
+    let (prefix, low) = (scancode >> SCANCODE_PREFIX_SHIFT, scancode & SCANCODE_LOW);
+    if prefix == SCANCODE_EXTENDED_PREFIX && low < SCANCODE_EXTENDED_LIMIT {
+        u32::from(low | QEMU_EXTENDED_BIT)
+    } else {
+        u32::from(scancode)
     }
 }
 

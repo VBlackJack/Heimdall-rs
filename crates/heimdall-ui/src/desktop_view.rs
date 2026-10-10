@@ -23,6 +23,10 @@
 //! - Fit to window: nothing is asked; the whole desktop is drawn as large as the tab allows
 //!   with its proportions, never larger than itself, centred. For a server that keeps its
 //!   size, as a VNC one does.
+//!
+//! A VNC server's pointer shape is drawn here where the pointer is, the system's own hidden
+//! over the desktop, as noVNC does; noVNC's dot stands for a shape nothing of which shows, as
+//! the C# Heimdall asks it with `showDotCursor`.
 
 use std::cell::RefCell;
 
@@ -42,11 +46,16 @@ use iced_renderer::wgpu::primitive::Renderer as _;
 use crate::desktop_texture::Desktop;
 use crate::keysym::keysym;
 use crate::terminal_view::keys::{WindowShortcut, window_shortcut};
+use crate::xt_scancode::xt_scancode;
 
 pub use scancodes::scancode;
 
 /// Wheel units of one notch, as Windows counts them.
 const WHEEL_NOTCH: f32 = 120.0;
+
+/// A VNC server's pointer shape, ready to draw: the count of changes it shows, its picture,
+/// its size and its hotspot.
+type CursorPicture = (u64, image::Handle, (u16, u16), (u16, u16));
 
 /// Per-widget state kept by iced between frames.
 #[derive(Default)]
@@ -54,6 +63,8 @@ struct State {
     tab: Option<TabId>,
     /// The picture last built, and the generation it shows.
     picture: RefCell<Option<(u64, image::Handle)>>,
+    /// The server's pointer shape last built.
+    cursor: RefCell<Option<CursorPicture>>,
     /// The size last asked of the server for the desktop, so a change is asked once.
     reported: Option<(u16, u16)>,
     /// The size last reported for the tab, asked or kept only, so a change is said once.
@@ -192,7 +203,8 @@ impl<'a, M> DesktopView<'a, M> {
         }
     }
 
-    /// A key went down or up: sent by position (RDP) and by what it types (VNC).
+    /// A key went down or up: sent by position (RDP, and VNC servers that take scancodes)
+    /// and by what it types (VNC).
     fn key(
         &self,
         held: &mut Vec<(Physical, u32)>,
@@ -217,13 +229,15 @@ impl<'a, M> DesktopView<'a, M> {
                 .or_else(|| keysym(key, location))
         };
         let code = scancode(physical_key);
-        if code.is_none() && keysym.is_none() {
+        let xt = xt_scancode(physical_key);
+        if code.is_none() && xt.is_none() && keysym.is_none() {
             return;
         }
         self.send(
             shell,
             vec![DesktopInput::Key {
                 scancode: code,
+                xt,
                 keysym,
                 pressed,
             }],
@@ -407,12 +421,72 @@ impl<M: Clone> DesktopView<'_, M> {
         }
     }
 
+    /// Draws a VNC server's pointer shape where the pointer is over `bounds`, as noVNC: one
+    /// of its pixels per physical pixel, its hotspot on the pointer, the dot for a shape
+    /// nothing of which shows. Nothing while a dialog is over the desktop.
+    fn draw_cursor(
+        &self,
+        state: &State,
+        renderer: &mut iced::Renderer,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) {
+        let (Some(remote), Some(position), true) = (
+            self.pane.cursor.as_ref(),
+            cursor.position_over(bounds),
+            self.interactive,
+        ) else {
+            return;
+        };
+        let mut picture = state.cursor.borrow_mut();
+        let changes = remote.read(|changes, _| changes);
+        if picture.as_ref().is_none_or(|(shown, ..)| *shown != changes) {
+            *picture = Some(remote.read(|changes, shape| {
+                let shown = shape.shown();
+                let size = (shown.width(), shown.height());
+                let handle = image::Handle::from_rgba(
+                    u32::from(size.0),
+                    u32::from(size.1),
+                    shown.rgba().to_vec(),
+                );
+                (changes, handle, size, shown.hotspot())
+            }));
+        }
+        let Some((_, handle, size, hotspot)) = picture.as_ref() else {
+            return;
+        };
+        let scale = 1.0 / self.density;
+        let area = Rectangle::new(
+            iced::Point::new(
+                position.x - f32::from(hotspot.0) * scale,
+                position.y - f32::from(hotspot.1) * scale,
+            ),
+            Size::new(f32::from(size.0) * scale, f32::from(size.1) * scale),
+        );
+        // A layer of its own, over the desktop's.
+        renderer.with_layer(bounds, |renderer| {
+            renderer.draw_image(
+                image::Image {
+                    handle: handle.clone(),
+                    filter_method: FilterMethod::Nearest,
+                    rotation: Radians(0.0),
+                    border_radius: iced::border::Radius::default(),
+                    opacity: 1.0,
+                    snap: true,
+                },
+                area,
+                bounds,
+            );
+        });
+    }
+
     /// Every key `held` let go on the server, so none stays down there.
     fn release_held(&self, held: &mut Vec<(Physical, u32)>, shell: &mut Shell<'_, M>) {
         let releases: Vec<DesktopInput> = held
             .drain(..)
             .map(|(physical, keysym)| DesktopInput::Key {
                 scancode: scancode(physical),
+                xt: xt_scancode(physical),
                 keysym: Some(keysym),
                 pressed: false,
             })
@@ -495,6 +569,15 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             self.release_held(&mut state.held, shell);
             return;
         }
+        if self.pane.cursor.is_some()
+            && matches!(
+                event,
+                Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft)
+            )
+        {
+            // The server's pointer shape follows the pointer, and goes when it leaves.
+            shell.request_redraw();
+        }
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position_over(bounds) {
@@ -555,10 +638,35 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
         _theme: &Theme,
         _style: &renderer::Style,
         layout: Layout<'_>,
-        _cursor: mouse::Cursor,
+        cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
+        let state = tree.state.downcast_ref::<State>();
+        self.draw_desktop(state, renderer, bounds);
+        self.draw_cursor(state, renderer, bounds, cursor);
+    }
+
+    fn mouse_interaction(
+        &self,
+        _tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        // The server's pointer shape is drawn instead, as noVNC hides the system's.
+        if self.interactive && self.pane.cursor.is_some() && cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Hidden
+        } else {
+            mouse::Interaction::default()
+        }
+    }
+}
+
+impl<M> DesktopView<'_, M> {
+    /// Draws the desktop in `bounds`.
+    fn draw_desktop(&self, state: &State, renderer: &mut iced::Renderer, bounds: Rectangle) {
         let size = self
             .pane
             .framebuffer
@@ -574,7 +682,6 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             renderer.with_layer(bounds, |renderer| renderer.draw_primitive(area, desktop));
             return;
         }
-        let state = tree.state.downcast_ref::<State>();
         let mut picture = state.picture.borrow_mut();
         let current = picture
             .as_ref()
@@ -605,17 +712,6 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             area,
             bounds,
         );
-    }
-
-    fn mouse_interaction(
-        &self,
-        _tree: &Tree,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
-        _viewport: &Rectangle,
-        _renderer: &iced::Renderer,
-    ) -> mouse::Interaction {
-        mouse::Interaction::default()
     }
 }
 

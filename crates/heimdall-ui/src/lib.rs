@@ -90,6 +90,7 @@ mod tree_row;
 pub mod tree_view;
 pub mod trusted_keys_view;
 pub mod tunnels_view;
+pub mod xt_scancode;
 
 use heimdall_core::paths;
 use iced::{Font, Pixels, Size, window};

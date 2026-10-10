@@ -25,7 +25,7 @@ use heimdall_core::profile::DesktopSizing;
 use heimdall_rdp::{
     LocalClipboard, MouseButton, MousePosition, Operation, Scancode, WheelRotations,
 };
-use heimdall_remote::vnc::{Quality, VncInput};
+use heimdall_remote::vnc::{Quality, RemoteCursor, VncInput};
 use tokio::sync::{mpsc, watch};
 use zeroize::Zeroizing;
 
@@ -99,10 +99,14 @@ pub enum DesktopInput {
         units: i16,
     },
     /// A key went down or up. The view gives what it knows of it: where it is (a PC/AT set 1
-    /// scancode) and what it types (an X11 keysym).
+    /// scancode for RDP, an XT one for VNC as noVNC's table has it) and what it types (an X11
+    /// keysym).
     Key {
-        /// By its position, whatever its label.
+        /// By its position, whatever its label, for RDP.
         scancode: Option<Scancode>,
+        /// By its position, as noVNC's `xtscancodes.js` names it (an extended one as
+        /// `0xE0xx`), for VNC servers that take scancodes.
+        xt: Option<u16>,
         /// By what it types.
         keysym: Option<u32>,
         /// Down, or up.
@@ -198,10 +202,19 @@ pub fn anti_idle_inputs() -> Vec<DesktopInput> {
     typed(&[SHIFT])
 }
 
+/// The prefix of an extended XT scancode, `0xE0xx`.
+const XT_EXTENDED: u16 = 0xe000;
+
 /// `keys` down in order, then up in reverse.
 fn typed(keys: &[KeyNames]) -> Vec<DesktopInput> {
     let key = |((extended, value), keysym): KeyNames, pressed| DesktopInput::Key {
         scancode: Some(Scancode::from_u8(extended, value)),
+        // Set 1 is XT's: the same code, the extended prefix in its high byte.
+        xt: Some(if extended {
+            XT_EXTENDED | u16::from(value)
+        } else {
+            u16::from(value)
+        }),
         keysym: Some(keysym),
         pressed,
     };
@@ -266,6 +279,9 @@ pub struct DesktopPane {
     /// The TLS version a VNC session is encrypted with, as "TLS 1.3"; `None` in clear. Said
     /// on the session bar.
     pub tls: Option<&'static str>,
+    /// A VNC server's pointer shape, drawn by the view where the pointer is, as noVNC; `None`
+    /// for RDP, whose server draws it.
+    pub cursor: Option<RemoteCursor>,
     /// The server's clipboard holds files to save here.
     remote_files: bool,
     /// Saving the server's files, from the folder asked for until it ends.
@@ -321,6 +337,7 @@ impl DesktopPane {
             anti_idle: false,
             desktop_name: None,
             tls: None,
+            cursor: None,
             remote_files: false,
             save: None,
         }
@@ -745,10 +762,11 @@ impl DesktopPane {
             .is_some_and(|clipboard| clipboard.send(LocalClipboard::Files(paths)).is_ok())
     }
 
-    /// The desktop of a VNC session; `view_only` sends it nothing.
+    /// The desktop of a VNC session, and its server's pointer shape; `view_only` sends it
+    /// nothing.
     pub(crate) fn vnc(
         framebuffer: heimdall_remote::vnc::Framebuffer,
-        input: VncInput,
+        (input, cursor): (VncInput, RemoteCursor),
         view_only: bool,
     ) -> Self {
         Self {
@@ -771,6 +789,7 @@ impl DesktopPane {
             anti_idle: false,
             desktop_name: None,
             tls: None,
+            cursor: Some(cursor),
         }
     }
 
@@ -815,8 +834,8 @@ fn vnc_button(button: PointerButton) -> Option<u8> {
 
 impl VncSink {
     /// Sends `inputs`. VNC reports the pointer whole each time: position and every button
-    /// held. A wheel notch is a press and a release of buttons 4 to 7; a key goes by keysym,
-    /// and one the view could not name is dropped.
+    /// held. A wheel notch is a press and a release of buttons 4 to 7; a key goes by keysym
+    /// and XT scancode, the session sending what the server takes, as noVNC.
     fn send(&self, inputs: &[DesktopInput]) {
         if self.view_only {
             return;
@@ -841,13 +860,13 @@ impl VncSink {
                 }
                 DesktopInput::Wheel { vertical, units } => self.wheel(vertical, units),
                 DesktopInput::Key {
-                    keysym: Some(keysym),
+                    keysym,
+                    xt,
                     pressed,
                     ..
                 } => {
-                    let _ = self.input.key(keysym, pressed);
+                    let _ = self.input.key_with_scancode(keysym, xt, pressed);
                 }
-                DesktopInput::Key { keysym: None, .. } => {}
             }
         }
     }
@@ -1151,16 +1170,19 @@ mod tests {
         let operations = rdp_operations(&[
             DesktopInput::Key {
                 scancode: Some(enter),
+                xt: None,
                 keysym: Some(0xff0d),
                 pressed: true,
             },
             DesktopInput::Key {
                 scancode: None,
+                xt: None,
                 keysym: Some(0x20ac),
                 pressed: true,
             },
             DesktopInput::Key {
                 scancode: Some(enter),
+                xt: None,
                 keysym: None,
                 pressed: false,
             },

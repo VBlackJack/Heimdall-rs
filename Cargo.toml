@@ -133,7 +133,8 @@ flate2 = "1.1.10"
 # zune-jpeg: the JPEG rectangles of VNC Tight, decoded in pure Rust.
 zune-jpeg = "0.5.15"
 getrandom = "0.4.3"
-# png: reading test snapshots back, pixel by pixel.
+# png: the images of VNC TightPNG, decoded in pure Rust; and reading test snapshots back,
+# pixel by pixel.
 png = "0.18.1"
 # polling: the ConPTY pipes of a local shell post to it (Windows).
 polling = "3.11.0"
