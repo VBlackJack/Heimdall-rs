@@ -32,6 +32,8 @@ const ICA_EXTENSION: &str = "ica";
 const STOREBROWSE: &str = "storebrowse.exe";
 /// Citrix Workspace's self-service launcher, the C# fallback.
 const SELF_SERVICE: &str = "SelfService.exe";
+/// The variable listing the folders a launcher is looked for in last.
+const PATH_VARIABLE: &str = "PATH";
 
 /// `storebrowse.exe`'s command with single sign-on, and without.
 const STOREBROWSE_SSO: &str = "-S";
@@ -261,26 +263,55 @@ pub fn launcher_arguments(launcher: &Path, app: &str, url: &str, sso: bool) -> O
     Some(arguments)
 }
 
+/// The Program Files folders, 32-bit first, as Windows says where they are: never those the
+/// environment names. The 32-bit one is the only one on a 32-bit Windows. `None` off Windows.
+fn program_files_folders() -> Option<(PathBuf, PathBuf)> {
+    #[cfg(windows)]
+    return both_or_either(
+        heimdall_core::paths::program_files_x86(),
+        heimdall_core::paths::program_files(),
+    );
+    #[cfg(not(windows))]
+    return None;
+}
+
+/// The 32-bit and native Program Files folders, each standing for the other when only one is
+/// known: one known is still searched, never skipped for the `PATH`.
+#[must_use]
+pub fn both_or_either(x86: Option<PathBuf>, native: Option<PathBuf>) -> Option<(PathBuf, PathBuf)> {
+    match (x86, native) {
+        (Some(x86), Some(native)) => Some((x86, native)),
+        (Some(one), None) | (None, Some(one)) => Some((one.clone(), one)),
+        (None, None) => None,
+    }
+}
+
 /// The first of `candidates`, given the Program Files folders, that is there; else one of
 /// `names` on the `PATH`.
 fn find_program(candidates: fn(&Path, &Path) -> Vec<PathBuf>, names: &[&str]) -> Option<PathBuf> {
-    let folder = |name: &str| std::env::var_os(name).map(PathBuf::from);
-    let (x86, native) = (
-        folder("ProgramFiles(x86)").or_else(|| folder("ProgramFiles")),
-        folder("ProgramFiles"),
-    );
-    if let (Some(x86), Some(native)) = (x86, native)
+    if let Some((x86, native)) = program_files_folders()
         && let Some(found) = candidates(&x86, &native)
             .into_iter()
             .find(|path| path.is_file())
     {
         return Some(found);
     }
-    let path = std::env::var_os("PATH")?;
+    let path = std::env::var_os(PATH_VARIABLE)?;
+    on_path(names, &path, Path::is_file)
+}
+
+/// The first of `names` that `exists` in a folder of `path`, a `PATH` value: a relative
+/// entry is skipped, so that nothing is found from the current folder.
+pub fn on_path(
+    names: &[&str],
+    path: &std::ffi::OsStr,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
     names.iter().find_map(|name| {
-        std::env::split_paths(&path)
+        std::env::split_paths(path)
+            .filter(|folder| folder.is_absolute())
             .map(|folder| folder.join(name))
-            .find(|candidate| candidate.is_file())
+            .find(|candidate| exists(candidate))
     })
 }
 
@@ -314,12 +345,21 @@ fn command(launch: &CitrixLaunch) -> Result<std::process::Command, CitrixRefusal
         CitrixLaunch::CacheLine(line) => cache_command(line)?,
         CitrixLaunch::IcaFile(path) => {
             let mut command = if cfg!(windows) {
-                // The file's own program, given the path alone: no shell reads it.
-                let mut command = std::process::Command::new("rundll32.exe");
-                command.arg("url.dll,FileProtocolHandler");
+                // The file's own program, given the path alone: no shell reads it. By its
+                // whole path in the system folder, never one of the same name found first
+                // elsewhere.
+                let rundll =
+                    heimdall_core::paths::system_program(heimdall_core::paths::RUNDLL_PROGRAM)
+                        .ok_or_else(|| {
+                            CitrixRefusal::NotStarted(
+                                heimdall_core::paths::SYSTEM_FOLDER_UNKNOWN.to_owned(),
+                            )
+                        })?;
+                let mut command = std::process::Command::new(rundll);
+                command.arg(crate::external_edit::FILE_HANDLER_ENTRY);
                 command
             } else {
-                std::process::Command::new("xdg-open")
+                std::process::Command::new(crate::external_edit::XDG_OPEN_PROGRAM)
             };
             command.arg(path);
             command
@@ -512,5 +552,38 @@ mod tests {
             ))
         );
         assert_eq!(candidates.len(), 8);
+    }
+
+    #[test]
+    fn one_program_files_folder_known_is_still_searched() {
+        let x86 = PathBuf::from("X86");
+        let native = PathBuf::from("PF");
+        assert_eq!(
+            both_or_either(Some(x86.clone()), Some(native.clone())),
+            Some((x86.clone(), native.clone()))
+        );
+        assert_eq!(
+            both_or_either(Some(x86.clone()), None),
+            Some((x86.clone(), x86))
+        );
+        assert_eq!(
+            both_or_either(None, Some(native.clone())),
+            Some((native.clone(), native))
+        );
+        assert_eq!(both_or_either(None, None), None);
+    }
+
+    #[test]
+    fn a_relative_path_entry_is_never_searched() {
+        let absolute = std::env::temp_dir();
+        let path =
+            std::env::join_paths([PathBuf::from("relative"), absolute.clone()]).expect("path");
+        let everywhere = |_: &Path| true;
+        assert_eq!(
+            on_path(&[SELF_SERVICE], &path, everywhere),
+            Some(absolute.join(SELF_SERVICE))
+        );
+        let only_relative = std::env::join_paths([PathBuf::from("relative")]).expect("path");
+        assert_eq!(on_path(&[SELF_SERVICE], &only_relative, everywhere), None);
     }
 }

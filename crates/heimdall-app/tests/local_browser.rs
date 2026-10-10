@@ -1503,8 +1503,11 @@ fn expected_run(name: &str, folder: &Path) -> (LocalShell, String, bool) {
     let (program, arguments, command, rereads) = match ScriptKind::of(name) {
         #[cfg(windows)]
         Some(ScriptKind::PowerShell) => {
-            let root = std::env::var("SystemRoot").expect("SystemRoot");
-            let program = format!(r"{root}\System32\WindowsPowerShell\v1.0\powershell.exe");
+            let root = heimdall_core::paths::system_root().expect("Windows folder");
+            let program = format!(
+                r"{}\System32\WindowsPowerShell\v1.0\powershell.exe",
+                root.display()
+            );
             let command = format!("\"{program}\" -NoLogo -NoExit -File \"{path}\"");
             let arguments = ["-NoLogo", "-NoExit", "-File", path.as_str()]
                 .map(str::to_owned)
@@ -1513,8 +1516,10 @@ fn expected_run(name: &str, folder: &Path) -> (LocalShell, String, bool) {
         }
         #[cfg(windows)]
         Some(ScriptKind::Batch) => {
-            let root = std::env::var("SystemRoot").expect("SystemRoot");
-            let program = format!(r"{root}\System32\cmd.exe");
+            let program = heimdall_core::paths::system_program("cmd.exe")
+                .expect("system folder")
+                .to_string_lossy()
+                .into_owned();
             let line = format!("/s /k \"\"{path}\"\"");
             let command = format!("\"{program}\" {line}");
             (program, LocalArguments::WindowsLine(line), command, true)
