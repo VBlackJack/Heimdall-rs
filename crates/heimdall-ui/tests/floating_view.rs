@@ -622,7 +622,7 @@ fn ctrl_k_in_the_window_opens_quick_connect_in_the_main_window_and_sends_nothing
     use iced::keyboard::key::{Code, Physical};
     use iced::keyboard::{Event, Key, Location, Modifiers as Held};
 
-    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    const FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
     let dir = tempfile::tempdir().expect("dir");
     let Connected {
         mut shell,

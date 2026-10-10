@@ -389,3 +389,41 @@ fn the_grace_out_of_the_csharp_range_is_refused() {
     ));
     assert_eq!(app.settings().windows_hello.grace_minutes, 1440);
 }
+
+#[test]
+fn ctrl_enter_in_quick_connect_waits_for_windows_hello_then_splits_the_tab_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = gated(dir.path(), 0);
+    assert!(asked(&open(&mut app, "a")));
+    assert_eq!(
+        connects(&app.update(Message::WindowsHello(Ok(())))).len(),
+        1
+    );
+    let shown = app.tabs[0].id;
+    let b = QuickResult::Profile(
+        app.profile_summary(&ProfileId::new("b"))
+            .expect("saved profile"),
+    );
+    let message = app.quick_open(b.clone(), None, true);
+    assert!(asked(&app.update(message)), "asked again: no grace");
+    assert_eq!(app.tabs.len(), 1, "nothing opens before the answer");
+    let effects = app.update(Message::WindowsHello(Ok(())));
+    assert_eq!(connects(&effects).len(), 1, "{effects:?}");
+    let layout = app.tabs[0].layout.clone().expect("split");
+    assert_eq!(layout.leaves().len(), 2);
+    assert_eq!(layout.leaves()[0], shown, "a split of the tab shown");
+
+    // Refused: nothing opens, nothing is merged.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = gated(dir.path(), 0);
+    open(&mut app, "a");
+    app.update(Message::WindowsHello(Ok(())));
+    let message = app.quick_open(b, None, true);
+    assert!(asked(&app.update(message)));
+    assert!(
+        app.update(Message::WindowsHello(Err(HelloRefusal::Cancelled)))
+            .is_empty()
+    );
+    assert_eq!(app.tabs.len(), 1);
+    assert!(app.tabs[0].layout.is_none());
+}

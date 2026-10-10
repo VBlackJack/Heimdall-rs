@@ -182,7 +182,7 @@ pub use profile_import::{
 pub use profile_menu::ProfileMenuMessage;
 pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use provider_connect::{ProviderAnswer, ProviderRequest};
-pub use quick_connect::QuickResult;
+pub use quick_connect::{QuickGroup, QuickResult, QuickRow, ToolWords};
 pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow};
 use rdp_tab::ResizeFallback;
 pub use resolution::ResolutionChoice;

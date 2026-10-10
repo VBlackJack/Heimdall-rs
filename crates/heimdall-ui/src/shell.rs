@@ -61,7 +61,7 @@ use heimdall_app::{
     master_password_problem, open_vault, server_text,
 };
 use heimdall_app::{
-    LegacyMigrationMessage, ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello,
+    LegacyMigrationMessage, QuickRow, ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello,
     windows_hello,
 };
 use heimdall_core::folder::FolderError;
@@ -838,6 +838,9 @@ pub enum Message {
     PaletteQuery(String),
     /// Open Quick Connect's result at this place.
     PaletteChoose(usize),
+    /// Enter in Quick Connect: the result chosen opened, as a split of the tab shown when
+    /// Ctrl is held, as the C# Ctrl+Enter.
+    PaletteSubmit,
     /// Close Quick Connect.
     PaletteClose,
     /// The text of the search bar over `tab`'s terminal changed.
@@ -1057,6 +1060,7 @@ impl fmt::Debug for Message {
             } => write!(f, "SplitReleased({}, {divider}, {ratio})", host.value()),
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
+            Self::PaletteSubmit => f.write_str("PaletteSubmit"),
             Self::PaletteClose => f.write_str("PaletteClose"),
             Self::FinderQuery { tab, .. } => write!(f, "FinderQuery({tab:?}, ..)"),
             Self::FinderFind { tab, direction } => write!(f, "FinderFind({tab:?}, {direction:?})"),
@@ -2615,6 +2619,7 @@ impl Shell {
             | Message::FilesDragEnd) => self.files_drag_message(&message),
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
+            | Message::PaletteSubmit
             | Message::PaletteClose) => self.palette_message(message),
             message @ (Message::FinderQuery { .. }
             | Message::FinderFind { .. }
@@ -4416,13 +4421,11 @@ impl Shell {
             .filter(|(menu, _)| !locked && !self.menu_in_floating(menu))
             .and_then(|(menu, at)| Some((self.open_menu_entries(menu)?, *at)));
         if let Some(palette) = self.palette.as_ref().filter(|_| !locked) {
-            let results = self
-                .app
-                .quick_results_in(&palette.query, palette.split.map(|(host, _)| host));
+            let rows = self.palette_rows(palette);
             // At the top, as the C# palette; a click beside it closes it.
             layers = layers.push(opaque(
                 mouse_area(
-                    container(crate::palette::view(palette, &results))
+                    container(crate::palette::view(palette, &rows, &self.theme()))
                         .center_x(Length::Fill)
                         .padding(PALETTE_TOP)
                         .height(Length::Fill),
@@ -5682,34 +5685,40 @@ impl Shell {
                 }
                 Vec::new()
             }
-            Message::PaletteChoose(index) => {
-                let Some(palette) = self.palette.take() else {
-                    return Vec::new();
-                };
-                if let Some(result) = self
-                    .app
-                    .quick_results_in(&palette.query, palette.split.map(|(host, _)| host))
-                    .into_iter()
-                    .nth(index)
-                {
-                    // In split mode, merged into the tab its "Split..." was chosen from.
-                    self.app.update(match palette.split {
-                        Some((host, axis)) => {
-                            AppMessage::Split(SplitMessage::QuickConnect { host, axis, result })
-                        }
-                        None => AppMessage::QuickConnect(result),
-                    })
-                } else {
-                    // Nothing there: the palette stays for another search.
-                    self.palette = Some(palette);
-                    Vec::new()
-                }
+            Message::PaletteChoose(index) => self.palette_open(index, false),
+            Message::PaletteSubmit => {
+                let chosen = self.palette.as_ref().map_or(0, |palette| palette.chosen);
+                self.palette_open(chosen, self.modifiers == keyboard::Modifiers::CTRL)
             }
             _ => {
                 self.palette = None;
                 Vec::new()
             }
         }
+    }
+
+    /// Quick Connect's lines, as the core finds them for what `palette` has typed.
+    fn palette_rows(&self, palette: &Palette) -> Vec<QuickRow> {
+        self.app.quick_results_in(
+            &palette.query,
+            palette.split.map(|(host, _)| host),
+            &crate::palette::tool_words,
+        )
+    }
+
+    /// Opens Quick Connect's result at `index`, closing it, as the C# routes it: with
+    /// Ctrl+Enter when `beside`, as a split of the tab shown; nothing there, the palette
+    /// stays for another search.
+    fn palette_open(&mut self, index: usize, beside: bool) -> Vec<Effect> {
+        let Some(palette) = self.palette.take() else {
+            return Vec::new();
+        };
+        let Some(row) = self.palette_rows(&palette).into_iter().nth(index) else {
+            self.palette = Some(palette);
+            return Vec::new();
+        };
+        let message = self.app.quick_open(row.result, palette.split, beside);
+        self.app.update(message)
     }
 
     /// Ctrl+K or Ctrl+Shift+K, as the C# palette's: Quick Connect opened over whatever has
@@ -5737,18 +5746,12 @@ impl Shell {
     /// A key while Quick Connect is open: the arrows move its choice within its results,
     /// Enter opens the one chosen, the others are nobody's; `None` while it is closed.
     fn palette_key(&mut self, key: FilesKey) -> Option<Vec<Effect>> {
+        let count = self.palette_rows(self.palette.as_ref()?).len();
         let palette = self.palette.as_mut()?;
-        let count = self
-            .app
-            .quick_results_in(&palette.query, palette.split.map(|(host, _)| host))
-            .len();
         match key {
             FilesKey::Previous => palette.chosen = palette.chosen.saturating_sub(1),
             FilesKey::Next if palette.chosen + 1 < count => palette.chosen += 1,
-            FilesKey::Open => {
-                let chosen = palette.chosen;
-                return Some(self.palette_message(Message::PaletteChoose(chosen)));
-            }
+            FilesKey::Open => return Some(self.palette_message(Message::PaletteSubmit)),
             _ => {}
         }
         Some(Vec::new())
