@@ -82,7 +82,7 @@ serde_json = "1.0.151"
 # fancy-regex: the Regex Tester tool's engine, with .NET's look-arounds, backreferences,
 # atomic groups and conditionals; already in the tree through two-face. Approved by Julien
 # Bombled on 2026-10-09.
-fancy-regex = "0.16.2"
+fancy-regex = "0.19.2"
 # similar: the Text Diff tool's lines compared (Myers); approved by Julien Bombled on
 # 2026-10-09. The algorithms only: no text or Unicode helpers.
 similar = { version = "3.2.0", default-features = false, features = ["std"] }
