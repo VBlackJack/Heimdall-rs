@@ -1609,7 +1609,8 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     use heimdall_ui::shell::TreeShortcut;
     use heimdall_ui::tree_view::TreeMenu;
 
-    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    const FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
+    const HINTS: &str = "Enter = open · Ctrl+Enter = split · tools = all tools · Esc = close";
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     assert!(simulator(&shell).find(FIELD).is_err(), "closed at first");
@@ -1625,8 +1626,11 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     snapshot(&shell, "quick-connect.png");
     {
         let mut ui = simulator(&shell);
-        for name in ["SSH  server a", "SSH  server b", "SSH  server c"] {
-            ui.find(name).expect(name);
+        // Each with its address and account, under its folder, the hints under them.
+        for line in [
+            "a.lab:22", "b.lab:22", "c.lab:22", "· admin", "Servers", HINTS,
+        ] {
+            ui.find(line).expect(line);
         }
         ui.click(FIELD).expect("its field");
         ui.typewrite("b");
@@ -1638,15 +1642,15 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     let _ = shell.update(Message::PaletteQuery("B.LAB".to_owned()));
     {
         let mut ui = simulator(&shell);
-        ui.find("SSH  server b").expect("found by its host");
-        assert!(ui.find("SSH  server a").is_err(), "filtered out");
+        ui.find("b.lab:22").expect("found by its host");
+        assert!(ui.find("a.lab:22").is_err(), "filtered out");
     }
     // Enter opens the one chosen, and closes the palette.
     let _ = shell.update(Message::DialogKey { confirm: true });
     assert_eq!(shell.app().tabs.len(), 1);
     assert_eq!(shell.app().tabs[0].title, "server b");
     assert!(
-        simulator(&shell).find("SSH  server b").is_err(),
+        simulator(&shell).find("b.lab:22").is_err(),
         "closed: the tree names it alone"
     );
 
@@ -1660,9 +1664,10 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
     let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
     {
+        // Each with its protocol's badge; what is typed is lit in their names.
         let mut ui = simulator(&shell);
-        ui.find("[SSH] Connect to jump.lab").expect("SSH");
-        ui.click("[RDP] Connect to jump.lab").expect("RDP");
+        ui.find("SSH").expect("SSH");
+        ui.click("RDP").expect("RDP");
         assert!(
             ui.into_messages()
                 .any(|message| matches!(message, Message::PaletteChoose(1)))
@@ -1685,12 +1690,12 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
     let _ = shell.update(Message::PaletteQuery("no such thing".to_owned()));
     simulator(&shell)
-        .find("No session matches, and this is no host to connect to.")
+        .find("No results found. Try a host, ssh user@host, or tools.")
         .expect("says so");
     let _ = shell.update(Message::PaletteChoose(0));
     assert_eq!(shell.app().tabs.len(), 2);
     simulator(&shell)
-        .find("No session matches, and this is no host to connect to.")
+        .find("No results found. Try a host, ssh user@host, or tools.")
         .expect("still open");
     // A new search chooses its first again.
     let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
@@ -4518,7 +4523,7 @@ fn ctrl_k_in_a_terminal_opens_quick_connect_unless_the_settings_send_it_to_the_s
     use iced::keyboard::key::{Code, Physical};
     use iced::keyboard::{Event, Key, Location, Modifiers};
 
-    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    const FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
     let pressed = |typed: &str, modifiers: Modifiers| {
         iced::Event::Keyboard(Event::KeyPressed {
             key: Key::Character(typed.into()),

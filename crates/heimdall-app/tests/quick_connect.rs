@@ -19,8 +19,10 @@
 
 use std::path::Path;
 
+use heimdall_app::tools::{ToolCategory, ToolId};
 use heimdall_app::{
-    App, AppConfig, ConnectionEvent, Effect, Message, Purpose, QuickResult, UiError,
+    App, AppConfig, ConnectionEvent, Effect, Message, Purpose, QuickGroup, QuickResult, ToolWords,
+    ToolsMessage, UiError,
 };
 use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -386,4 +388,125 @@ fn a_session_is_found_by_its_environment_and_its_tags_too() {
         ["Mail"],
         "by its environment, as the C# palette"
     );
+}
+
+/// The names of the tools, as the window gives them: here their identifiers.
+fn words(tool: ToolId) -> ToolWords {
+    ToolWords {
+        name: tool.code().to_owned(),
+        category: format!("{:?}", tool.category()),
+    }
+}
+
+/// What each line of the palette shows for `query`: its section and its name.
+fn lines(app: &App, query: &str) -> Vec<(QuickGroup, String)> {
+    app.quick_results_in(query, None, &words)
+        .into_iter()
+        .map(|row| {
+            let name = match row.result {
+                QuickResult::Profile(profile) => profile.name,
+                QuickResult::Tool { name, .. } => name,
+                other => format!("{other:?}"),
+            };
+            (row.group, name)
+        })
+        .collect()
+}
+
+fn folder(name: &str) -> QuickGroup {
+    QuickGroup::Folder(name.to_owned())
+}
+
+#[test]
+fn the_palette_shows_the_sessions_by_folder_then_the_tools_used_lately() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    for (tool, title) in [(ToolId::Hash, "HASH"), (ToolId::JsonFormatter, "JSON")] {
+        app.update(Message::Tools(ToolsMessage::Open {
+            tool,
+            title: title.to_owned(),
+        }));
+    }
+    // By name, each folder together in the order it first comes, as the C# grouped list;
+    // a session in no folder under "Servers".
+    assert_eq!(
+        lines(&app, ""),
+        [
+            (folder("Production"), "Database".to_owned()),
+            (folder("Production"), "webserver".to_owned()),
+            (folder("Windows"), "Domain controller".to_owned()),
+            (QuickGroup::Servers, "Mail".to_owned()),
+            (QuickGroup::RecentTools, "JSON".to_owned()),
+            (QuickGroup::RecentTools, "HASH".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn the_tools_are_found_with_the_sessions_a_command_word_first() {
+    let dir = tempfile::tempdir().expect("dir");
+    let app = app_with(dir.path(), vec![ssh("u", "uuid box", "u.lab", Some("Lab"))]);
+    // A tool's command word typed whole comes first, as the C# `ToolExactAliasScore`.
+    assert_eq!(
+        lines(&app, "uuid"),
+        [
+            (
+                QuickGroup::Category(ToolCategory::System),
+                "UUID".to_owned()
+            ),
+            (folder("Lab"), "uuid box".to_owned()),
+        ]
+    );
+    // Its other words find it too: "guid" is the UUID generator's.
+    assert_eq!(
+        lines(&app, "guid")[0],
+        (
+            QuickGroup::Category(ToolCategory::System),
+            "UUID".to_owned()
+        )
+    );
+    // By its category's name, by half.
+    assert!(
+        lines(&app, "Encoding")
+            .iter()
+            .all(|(group, _)| *group == QuickGroup::Category(ToolCategory::Encoding)),
+        "the encoding tools"
+    );
+    // "tools" lists every one, by category.
+    let all = lines(&app, "Tools");
+    assert_eq!(all.len(), ToolId::ALL.len());
+    assert_eq!(
+        all[0],
+        (
+            QuickGroup::Category(ToolCategory::Network),
+            "SUBNET".to_owned()
+        )
+    );
+    // A host found nowhere is offered under Quick Connect.
+    assert_eq!(
+        lines(&app, "jump.lab")
+            .into_iter()
+            .map(|(group, _)| group)
+            .collect::<Vec<_>>(),
+        [QuickGroup::QuickConnect, QuickGroup::QuickConnect]
+    );
+    // The sessions alone are still found as before.
+    assert_eq!(names(&app.quick_results("uuid")), ["uuid box"]);
+}
+
+#[test]
+fn a_tool_chosen_opens_in_its_tab_named_as_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let row = app
+        .quick_results_in("chmod", None, &words)
+        .into_iter()
+        .next()
+        .expect("found");
+    let message = app.quick_open(row.result, None, false);
+    app.update(message);
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.tabs[0].tool(), Some(ToolId::Chmod));
+    assert_eq!(app.tabs[0].title, "CHMOD");
+    assert_eq!(app.recent_tools(), [ToolId::Chmod], "used lately");
 }

@@ -490,3 +490,41 @@ async fn a_desktop_saved_nowhere_is_refused_by_its_attempt() {
         Some(ConnectionEvent::Failed(UiError::CredentialGuardRequired))
     ));
 }
+
+/// Profile `id` as Quick Connect offers it.
+fn offered(app: &App, id: &str) -> QuickResult {
+    QuickResult::Profile(
+        app.profile_summary(&ProfileId::new(id))
+            .expect("saved profile"),
+    )
+}
+
+#[test]
+fn ctrl_enter_in_quick_connect_holds_an_embedded_desktop_then_splits_or_refuses() {
+    for (status, opens) in [(Status::Active, true), (Status::Inactive, false)] {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut app = required(dir.path());
+        // An SSH tab shown, which the gate does not hold.
+        let effects = app.update(Message::OpenProfile(ProfileId::new("b")));
+        assert_eq!(app.tabs.len(), 1, "{effects:?}");
+        let shown = app.tabs[0].id;
+        let message = app.quick_open(offered(&app, "a"), None, true);
+        assert!(
+            app.update(message).is_empty(),
+            "{status:?}: waits for the check"
+        );
+        assert_eq!(app.tabs.len(), 1, "{status:?}: nothing opens before it");
+        let effects = app.update(Message::CredentialGuard(status.clone()));
+        if opens {
+            assert_eq!(connects(&effects).len(), 1, "{effects:?}");
+            let layout = app.tabs[0].layout.clone().expect("split");
+            assert_eq!(layout.leaves().len(), 2);
+            assert_eq!(layout.leaves()[0], shown, "a split of the tab shown");
+        } else {
+            assert!(effects.is_empty(), "{effects:?}");
+            assert_eq!(app.tabs.len(), 1, "refused");
+            assert!(app.tabs[0].layout.is_none(), "nothing merged");
+            assert_eq!(app.notice(), Some(&Notice::CredentialGuardRequired));
+        }
+    }
+}

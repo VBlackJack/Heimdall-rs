@@ -35,7 +35,7 @@ use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, Shell, TreeShortcut};
 use heimdall_ui::split_view::{self, DIVIDER, NUDGE};
 use heimdall_ui::tab_drag;
 use heimdall_ui::terminal_view::FONTS;
@@ -1071,4 +1071,66 @@ fn the_pane_shortcuts_move_the_keyboard_and_terminals_leave_them_to_the_window()
         })
         .collect();
     assert_eq!(keys, [left], "typing follows the keyboard");
+}
+
+/// Quick Connect's hints, as the C# palette's foot.
+const PALETTE_HINTS: &str = "Enter = open · Ctrl+Enter = split · tools = all tools · Esc = close";
+
+#[test]
+fn split_mode_says_so_and_lists_the_sessions_open_to_merge_without_reconnecting() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    let _ = shell.update(Message::SplitPalette {
+        host: left,
+        axis: Axis::Stacked,
+    });
+    {
+        let mut ui = sized(&shell, TALL_WINDOW);
+        for line in [
+            "Split Mode",
+            "Search server or pick active session to split with...",
+            "Active Sessions",
+            "↔ right pane",
+            "Active session - merge without reconnecting",
+            PALETTE_HINTS,
+        ] {
+            ui.find(line).expect(line);
+        }
+        assert!(ui.find("↔ left pane").is_err(), "not the tab split");
+    }
+    let _ = shell.update(Message::PaletteChoose(0));
+    let layout = layout_of(&shell, left).expect("split");
+    assert_eq!(layout.leaves(), [left, right]);
+    assert_eq!(layout.axis(), Some(Axis::Stacked));
+    assert_eq!(shell.app().tabs.len(), 2, "merged, nothing opened anew");
+
+    // Outside split mode, no mode label.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let mut ui = sized(&shell, TALL_WINDOW);
+    ui.find(PALETTE_HINTS).expect("the hints");
+    assert!(ui.find("Split Mode").is_err());
+}
+
+#[test]
+fn ctrl_enter_in_quick_connect_opens_the_session_as_a_split_of_the_tab_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::PaletteQuery("server c".to_owned()));
+    let _ = shell.update(Message::Modifiers(keyboard::Modifiers::CTRL));
+    let _ = shell.update(Message::PaletteSubmit);
+    let _ = shell.update(Message::Modifiers(keyboard::Modifiers::empty()));
+    let leaves = layout_of(&shell, left).expect("split").leaves();
+    assert_eq!(leaves.len(), 2);
+    assert_eq!(leaves[0], left, "the tab shown, first");
+    assert_eq!(shell.app().tabs.len(), 3);
+    let strip: Vec<TabId> = shell.app().strip().iter().map(|tab| tab.id).collect();
+    assert_eq!(strip, [left, right], "the new session in the split");
+
+    // Enter alone: a tab of its own.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::PaletteQuery("server a".to_owned()));
+    let _ = shell.update(Message::PaletteSubmit);
+    assert_eq!(shell.app().tabs.len(), 4);
+    assert_eq!(shell.app().strip().len(), 3, "on the strip");
 }

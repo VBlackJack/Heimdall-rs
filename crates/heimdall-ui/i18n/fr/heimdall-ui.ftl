@@ -1069,7 +1069,7 @@ ui-split-max-panes-reached = Nombre maximum de panneaux atteint ({ $max }).
 ui-status-detach-split-refused = Un onglet divisé ne peut pas être déplacé dans sa propre fenêtre. Annulez d'abord la division.
 ui-split-menu = Diviser...
 ui-split-session-tooltip = Diviser la vue de session
-ui-split-palette-hint = Rechercher un serveur avec lequel diviser...
+ui-split-palette-hint = Rechercher un serveur ou choisir une session active...
 ui-split-drop-to-split = Déposer pour diviser
 ui-tab-drag-detach-hint = Relâcher pour détacher dans une fenêtre
 ui-split-open-in-split = Ouvrir dans une division
@@ -1155,11 +1155,20 @@ ui-dialog-delete-selection-body = Êtes-vous sûr de vouloir supprimer { $count 
    *[other] { $count } éléments sélectionnés
 } ?
 
-ui-palette-placeholder = Rechercher un hôte ou une IP... (Ctrl+K)
+ui-palette-placeholder = Rechercher un hôte, une IP ou un outil... (Ctrl+K)
 ui-palette-ssh-to = [SSH] Connexion vers { $target }
 ui-palette-rdp-to = [RDP] Connexion vers { $target }
 ui-palette-quick-connect = Connexion rapide
-ui-palette-nothing = Aucune session ne correspond, et ce n'est pas un hôte auquel se connecter.
+ui-palette-nothing = Aucun résultat. Essayez un hôte, ssh user@host ou tools.
+ui-palette-mode-split = Mode division
+ui-palette-hints = Entrée = ouvrir · Ctrl+Entrée = scinder · tools = tous les outils · Échap = fermer
+ui-palette-servers = Serveurs
+ui-palette-active-sessions = Sessions actives
+ui-palette-recent-tools = Outils récents
+ui-palette-merge-session = ↔ { $title }
+ui-palette-merge-detail = Session active - fusionner sans reconnecter
+ui-palette-account = · { $account }
+ui-palette-tool-badge = TOOL
 
 ui-status-ready = Prêt. Sélectionnez une session pour commencer.
 ui-status-connected = Connecté à : { $name }
