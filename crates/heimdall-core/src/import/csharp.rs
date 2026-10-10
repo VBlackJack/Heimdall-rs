@@ -42,7 +42,8 @@ use crate::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
     DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, Forwards, FtpProfile, LocalArguments,
     LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution,
-    SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT, SUGGESTED_WINRM_TUNNEL_PORT, SshGateway,
+    SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 use crate::settings::rdp_resize_enable_delay_accepted;
 
@@ -115,6 +116,9 @@ pub enum SkipReason {
     MissingId,
     /// Its port is outside 1 to 65535; carries the value found.
     InvalidPort(i64),
+    /// Its local tunnel port, the C# `localPort`, is above 65535; carries the value found.
+    /// Zero or less is the automatic choice, as the C# reads it.
+    InvalidLocalTunnelPort(i64),
     /// A `WinRM` profile logging in with an account it does not name.
     MissingUsername,
     /// A `WinRM` identity mode the C# Heimdall does not define.
@@ -541,6 +545,9 @@ struct LegacyServer {
     citrix_launch_command_line: Option<String>,
     /// The SOCKS5 proxy's local port; 0 opens none.
     socks_proxy_port: Option<i64>,
+    /// The port of this computer a program is pointed at through the gateway; zero or
+    /// less, or the suggested port of the profile's type, lets the system choose.
+    local_port: Option<i64>,
     /// The post-connect sequence; a null entry is dropped, as the C# migration does.
     #[serde(default)]
     post_connect_steps: Vec<Option<LegacyStep>>,
@@ -588,6 +595,58 @@ struct LegacySettings {
     trusted_host_keys: HashMap<String, String>,
     #[serde(flatten)]
     rdp_defaults: LegacyRdpDefaults,
+    /// The suggested local tunnel port of an RDP profile, the C# `DefaultRdpTunnelPort`.
+    default_rdp_tunnel_port: Option<i64>,
+    /// The suggested local tunnel port of an SSH profile, the C# `DefaultSshTunnelPort`.
+    default_ssh_tunnel_port: Option<i64>,
+}
+
+/// The local tunnel port each type of profile is suggested, as the C#
+/// `GetSuggestedTunnelPort` reads it: a profile on it lets the system choose.
+#[derive(Debug, Clone, Copy)]
+struct SuggestedTunnelPorts {
+    rdp: u16,
+    ssh: u16,
+    winrm: u16,
+}
+
+impl SuggestedTunnelPorts {
+    /// The ports `settings` gives, each one it does not, or gives out of range, the C#
+    /// default, as the C# `SettingRange` brings it back.
+    fn of(settings: &LegacySettings) -> Self {
+        let port = |value: Option<i64>, default: u16| {
+            value
+                .and_then(|value| u16::try_from(value).ok())
+                .filter(|port| *port != 0)
+                .unwrap_or(default)
+        };
+        Self {
+            rdp: port(settings.default_rdp_tunnel_port, SUGGESTED_RDP_TUNNEL_PORT),
+            ssh: port(settings.default_ssh_tunnel_port, SUGGESTED_SSH_TUNNEL_PORT),
+            // A constant in the C# too, `DefaultPorts.WinRmTunnel`.
+            winrm: SUGGESTED_WINRM_TUNNEL_PORT,
+        }
+    }
+}
+
+/// The local tunnel port of `server`, whose type is suggested `suggested`: `None`, the
+/// automatic choice, for zero or less or the suggested port, as the C#
+/// `ShouldUseOsAssignedLocalPort` reads them.
+///
+/// # Errors
+///
+/// [`SkipReason::InvalidLocalTunnelPort`] above 65535, as the C# `ImportedProfileValidator`
+/// refuses it.
+fn local_tunnel_port_of(server: &LegacyServer, suggested: u16) -> Result<Option<u16>, SkipReason> {
+    match server.local_port {
+        None => Ok(None),
+        Some(value) if value <= 0 => Ok(None),
+        Some(value) => {
+            let port =
+                u16::try_from(value).map_err(|_| SkipReason::InvalidLocalTunnelPort(value))?;
+            Ok(Some(port).filter(|port| *port != suggested))
+        }
+    }
 }
 
 /// The RDP choices of `settings.json`, which a profile on the global defaults takes, as
@@ -970,6 +1029,7 @@ pub fn import(
         folder_colors: folder_colors(&settings.group_defaults),
         ..ImportReport::default()
     };
+    let suggested = SuggestedTunnelPorts::of(&settings);
     // The document's gateways, then the settings' ones: an identifier seen twice is the
     // first one's.
     let mut legacy_gateways = std::mem::take(&mut servers.gateways);
@@ -992,9 +1052,10 @@ pub fn import(
             .connection_type
             .eq_ignore_ascii_case(WINRM_CONNECTION_TYPE)
         {
-            convert_winrm(&server).map(|profile| report.winrm.push(profile))
+            convert_winrm(&server, suggested.winrm).map(|profile| report.winrm.push(profile))
         } else if server.connection_type == RDP_CONNECTION_TYPE {
-            convert_rdp(&server, &settings.rdp_defaults).map(|profile| report.rdp.push(profile))
+            convert_rdp(&server, &settings.rdp_defaults, suggested.rdp)
+                .map(|profile| report.rdp.push(profile))
         } else if server
             .connection_type
             .eq_ignore_ascii_case(TELNET_CONNECTION_TYPE)
@@ -1016,7 +1077,7 @@ pub fn import(
         {
             convert_citrix(&server).map(|profile| report.citrix.push(profile))
         } else {
-            convert(&server).map(|profile| report.profiles.push(profile))
+            convert(&server, suggested.ssh).map(|profile| report.profiles.push(profile))
         };
         match converted {
             Ok(()) => {
@@ -1257,7 +1318,7 @@ fn non_empty(value: Option<&String>) -> Option<String> {
 /// An SSH or SFTP profile, through the gateway it names. One the file does not hold is kept,
 /// as the C# keeps it (`GatewayImportReconciler.cs:123-139`): the import is not refused for
 /// it, [`super::gateways::reconcile`] counts it, and connecting says it is missing.
-fn convert(server: &LegacyServer) -> Result<SshProfile, SkipReason> {
+fn convert(server: &LegacyServer, suggested_tunnel_port: u16) -> Result<SshProfile, SkipReason> {
     let sftp = server.connection_type == SFTP_CONNECTION_TYPE;
     if server.connection_type != SSH_CONNECTION_TYPE && !sftp {
         return Err(SkipReason::NotSsh(server.connection_type.clone()));
@@ -1289,6 +1350,7 @@ fn convert(server: &LegacyServer) -> Result<SshProfile, SkipReason> {
         username: non_empty(server.ssh_username.as_ref()),
         key_path: non_empty(server.ssh_key_path.as_ref()).map(PathBuf::from),
         gateway,
+        local_tunnel_port: local_tunnel_port_of(server, suggested_tunnel_port)?,
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
         forwards: forwards_of(server)?,
         post_connect: PostConnect {
@@ -1390,6 +1452,7 @@ fn forwards_of(server: &LegacyServer) -> Result<Forwards, SkipReason> {
 fn convert_rdp(
     server: &LegacyServer,
     defaults: &LegacyRdpDefaults,
+    suggested_tunnel_port: u16,
 ) -> Result<RdpProfile, SkipReason> {
     if server.id.is_empty() {
         return Err(SkipReason::MissingId);
@@ -1421,6 +1484,7 @@ fn convert_rdp(
         domain: non_empty(server.rdp_domain.as_ref()),
         allow_tls_only: !choices.nla,
         gateway,
+        local_tunnel_port: local_tunnel_port_of(server, suggested_tunnel_port)?,
         redirect_clipboard: choices.clipboard,
         redirect_drives: choices.drives,
         options: RdpOptions {
@@ -1727,7 +1791,10 @@ fn routed_gateway(server: &LegacyServer) -> Option<ProfileId> {
 
 /// A `WinRM` profile as `WinRmHandler` connects it, through its SSH gateway when it names one.
 /// One over HTTPS keeps it: connecting then says why the C# refuses it, as the C# does.
-fn convert_winrm(server: &LegacyServer) -> Result<WinRmProfile, SkipReason> {
+fn convert_winrm(
+    server: &LegacyServer,
+    suggested_tunnel_port: u16,
+) -> Result<WinRmProfile, SkipReason> {
     if server.id.is_empty() {
         return Err(SkipReason::MissingId);
     }
@@ -1765,6 +1832,7 @@ fn convert_winrm(server: &LegacyServer) -> Result<WinRmProfile, SkipReason> {
         skip_certificate_check: server.win_rm_use_ssl && server.win_rm_skip_certificate_check,
         username,
         gateway: routed_gateway(server),
+        local_tunnel_port: local_tunnel_port_of(server, suggested_tunnel_port)?,
     })
 }
 

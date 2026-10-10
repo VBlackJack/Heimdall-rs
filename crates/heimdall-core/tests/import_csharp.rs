@@ -1863,3 +1863,126 @@ fn an_rdp_profile_s_own_wait_after_connecting_is_kept_and_one_out_of_range_dropp
         ]
     );
 }
+
+/// The local tunnel port imported for `local_port` written as a JSON number, on a profile of
+/// `connection_type`, with `settings_json`; `Err` with the reason when the profile is
+/// refused.
+fn imported_local_port(
+    connection_type: &str,
+    local_port: &str,
+    settings_json: Option<&str>,
+) -> Result<Option<u16>, SkipReason> {
+    let json = servers(&format!(
+        r#"{{"id": "a", "remoteServer": "h", "connectionType": "{connection_type}",
+            "sshGatewayId": "gw", "localPort": {local_port}}}"#
+    ));
+    let report = import(&json, settings_json).expect("valid JSON");
+    if let Some(skipped) = report.skipped.into_iter().next() {
+        return Err(skipped.reason);
+    }
+    Ok(report
+        .profiles
+        .first()
+        .map(|profile| profile.local_tunnel_port)
+        .or_else(|| report.rdp.first().map(|profile| profile.local_tunnel_port))
+        .or_else(|| {
+            report
+                .winrm
+                .first()
+                .map(|profile| profile.local_tunnel_port)
+        })
+        .expect("one profile"))
+}
+
+#[test]
+fn the_local_tunnel_port_is_read_as_the_csharp_reads_it() {
+    // Zero or less, or the type's suggested port: the automatic choice. Above 65535: the
+    // profile refused, as the C# `ImportedProfileValidator` refuses it.
+    for (kind, value, expected) in [
+        ("RDP", "0", Ok(None)),
+        ("RDP", "-1", Ok(None)),
+        ("RDP", "33890", Ok(None)),
+        ("RDP", "2222", Ok(Some(2222))),
+        ("RDP", "40000", Ok(Some(40000))),
+        (
+            "RDP",
+            "70000",
+            Err(SkipReason::InvalidLocalTunnelPort(70000)),
+        ),
+        ("SSH", "2222", Ok(None)),
+        ("SSH", "33890", Ok(Some(33890))),
+        ("SSH", "40000", Ok(Some(40000))),
+        ("SFTP", "2222", Ok(None)),
+        ("SSH", "-1", Ok(None)),
+        (
+            "SSH",
+            "70000",
+            Err(SkipReason::InvalidLocalTunnelPort(70000)),
+        ),
+        ("WINRM", "59850", Ok(None)),
+        ("WINRM", "0", Ok(None)),
+        ("WINRM", "40000", Ok(Some(40000))),
+        (
+            "WINRM",
+            "70000",
+            Err(SkipReason::InvalidLocalTunnelPort(70000)),
+        ),
+    ] {
+        assert_eq!(
+            imported_local_port(kind, value, None),
+            expected,
+            "{kind} {value}"
+        );
+    }
+}
+
+#[test]
+fn an_absent_local_tunnel_port_is_the_automatic_choice() {
+    for kind in ["RDP", "SSH", "WINRM"] {
+        let json = servers(&format!(
+            r#"{{"id": "a", "remoteServer": "h", "connectionType": "{kind}"}}"#
+        ));
+        let report = import(&json, None).expect("valid JSON");
+        assert!(report.skipped.is_empty(), "{kind}");
+        assert!(
+            report
+                .profiles
+                .iter()
+                .all(|p| p.local_tunnel_port.is_none())
+                && report.rdp.iter().all(|p| p.local_tunnel_port.is_none())
+                && report.winrm.iter().all(|p| p.local_tunnel_port.is_none()),
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn the_suggested_tunnel_ports_of_the_csharp_settings_are_the_automatic_choice() {
+    let settings = r#"{"defaultRdpTunnelPort": 40000, "defaultSshTunnelPort": 40022}"#;
+    assert_eq!(
+        imported_local_port("RDP", "40000", Some(settings)),
+        Ok(None)
+    );
+    assert_eq!(
+        imported_local_port("RDP", "33890", Some(settings)),
+        Ok(Some(33890)),
+        "no longer the suggested one: chosen"
+    );
+    assert_eq!(
+        imported_local_port("SSH", "40022", Some(settings)),
+        Ok(None)
+    );
+    assert_eq!(
+        imported_local_port("SSH", "2222", Some(settings)),
+        Ok(Some(2222))
+    );
+    // A constant in the C#, whatever the settings.
+    assert_eq!(
+        imported_local_port("WINRM", "59850", Some(settings)),
+        Ok(None)
+    );
+    // Out of range in the settings: the C# default, as its `SettingRange` brings it back.
+    let wrong = r#"{"defaultRdpTunnelPort": 0, "defaultSshTunnelPort": 70000}"#;
+    assert_eq!(imported_local_port("RDP", "33890", Some(wrong)), Ok(None));
+    assert_eq!(imported_local_port("SSH", "2222", Some(wrong)), Ok(None));
+}

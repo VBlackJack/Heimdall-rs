@@ -53,6 +53,7 @@ fn app(dir: &Path) -> App {
         domain: Some("LAB".to_owned()),
         allow_tls_only: false,
         gateway: None,
+        local_tunnel_port: None,
         redirect_clipboard: true,
         redirect_drives: false,
         // No wait after connecting: each size reaches the session at once here; the wait
@@ -80,6 +81,7 @@ fn app(dir: &Path) -> App {
         domain: None,
         allow_tls_only: false,
         gateway: None,
+        local_tunnel_port: None,
         redirect_clipboard: true,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),

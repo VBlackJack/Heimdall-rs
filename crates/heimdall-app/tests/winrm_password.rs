@@ -69,6 +69,7 @@ fn profile(name: &str, username: Option<&str>, gateway: Option<&str>) -> WinRmPr
         skip_certificate_check: false,
         username: username.map(str::to_owned),
         gateway: gateway.map(id),
+        local_tunnel_port: None,
     }
 }
 
