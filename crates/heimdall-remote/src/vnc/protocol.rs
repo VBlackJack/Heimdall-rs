@@ -1389,7 +1389,9 @@ impl Rfb {
         match encoding {
             ENCODING_TIGHT => whole(reader, |data| self.tight.decode(data, rect, screen)),
             ENCODING_TIGHT_PNG => whole(reader, |data| self.tight_png.decode(data, rect, screen)),
-            ENCODING_HEXTILE => whole(reader, |data| self.hextile.decode(data, rect, screen)),
+            ENCODING_HEXTILE => whole(reader, |data| {
+                self.hextile.decode(data, rect, screen, MAX_COMPRESSED_RECT)
+            }),
             _ => whole(reader, |data| {
                 rre::decode(data, rect, screen, MAX_COMPRESSED_RECT)
             }),
@@ -1474,16 +1476,22 @@ impl Rfb {
 
 /// A rectangle carrying no length of its own, drawn by `decode` from the unread bytes once
 /// all of it is there: `decode` gives the bytes it took, `None` until then. `false` until
-/// then.
+/// then; a decoder claiming more bytes than there are is a protocol error, not a wait.
 fn whole(
     reader: &mut Reader<'_>,
     decode: impl FnOnce(&[u8]) -> Result<Option<usize>, String>,
 ) -> Result<bool, RfbError> {
     let unread = &reader.data[reader.at..];
+    let available = unread.len();
     let Some(taken) = decode(unread).map_err(RfbError::Protocol)? else {
         return Ok(false);
     };
-    Ok(reader.take(taken).is_some())
+    if reader.take(taken).is_none() {
+        return Err(RfbError::Protocol(format!(
+            "a rectangle decoder took {taken} bytes of {available} there are"
+        )));
+    }
+    Ok(true)
 }
 
 /// The keycode QEMU's extended key event carries for an XT `scancode`, as noVNC's

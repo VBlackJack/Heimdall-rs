@@ -122,9 +122,24 @@ enum Transparency {
 }
 
 /// Decodes `data`, a PNG image that must be `width` by `height`, to RGBA pixels, rows left
-/// to right, top to bottom. The image is refused before its data is read when IHDR gives
-/// another size; its data never inflates past the rows of that size.
+/// to right, top to bottom.
+#[cfg(test)]
 pub(crate) fn decode(data: &[u8], width: u16, height: u16) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    decode_with(data, width, height, |rgba| out.extend_from_slice(&rgba))?;
+    Ok(out)
+}
+
+/// Decodes `data`, a PNG image that must be `width` by `height`, giving `put` its RGBA
+/// pixels, rows left to right, top to bottom. The image is refused before its data is read
+/// when IHDR gives another size; its data never inflates past the rows of that size; and
+/// `put` sees no pixel of an image refused.
+pub(crate) fn decode_with(
+    data: &[u8],
+    width: u16,
+    height: u16,
+    put: impl FnMut([u8; PIXEL_BYTES]),
+) -> Result<(), String> {
     let rest = data
         .strip_prefix(&SIGNATURE)
         .ok_or_else(|| "it has no PNG signature".to_owned())?;
@@ -201,7 +216,13 @@ pub(crate) fn decode(data: &[u8], width: u16, height: u16) -> Result<Vec<u8>, St
         .ok_or_else(|| "its image is too large".to_owned())?;
     let mut raw = inflate(&compressed, size)?;
     unfilter(&mut raw, stride, pixel)?;
-    to_rgba(&raw, &header, palette.unwrap_or_default(), &transparency)
+    to_rgba(
+        &raw,
+        &header,
+        palette.unwrap_or_default(),
+        &transparency,
+        put,
+    )
 }
 
 /// Reads IHDR's data, and checks the image is `width` by `height` and of a kind read here.
@@ -327,15 +348,20 @@ impl<'a> Chunks<'a> {
     }
 }
 
+/// Bytes the inflated data grows by at most at once: it takes room as it proves itself, not
+/// its whole size at the first byte.
+const INFLATE_STEP: usize = 64 * 1024;
+
 /// Inflates the zlib stream `compressed` to exactly `size` bytes, and not one more.
 fn inflate(compressed: &[u8], size: usize) -> Result<Vec<u8>, String> {
     let mut stream = Decompress::new(true);
     let consumed = |stream: &Decompress| {
         usize::try_from(stream.total_in()).map_err(|_| "its image data is too large".to_owned())
     };
-    // One byte past the size: data inflating further is caught, never kept.
-    let mut out = Vec::with_capacity(size + 1);
+    let mut out = Vec::new();
     loop {
+        // Up to one byte past the size: data inflating further is caught, never kept.
+        out.reserve_exact((size + 1 - out.len()).min(INFLATE_STEP));
         let before = (consumed(&stream)?, out.len());
         let status = stream
             .decompress_vec(&compressed[before.0..], &mut out, FlushDecompress::Finish)
@@ -431,20 +457,32 @@ fn paeth(left: u8, above: u8, corner: u8) -> u8 {
     }
 }
 
-/// The unfiltered rows `raw` as RGBA pixels.
+/// The unfiltered rows `raw` given to `put` as RGBA pixels; every palette index checked
+/// before the first.
 fn to_rgba(
     raw: &[u8],
     header: &Header,
     palette: &[u8],
     transparency: &Transparency,
-) -> Result<Vec<u8>, String> {
+    mut put: impl FnMut([u8; PIXEL_BYTES]),
+) -> Result<(), String> {
     let pixel = header.pixel_bytes();
     let line = header.width * pixel + 1;
+    if header.colour == PALETTE {
+        let entries = palette.len() / PALETTE_ENTRY_BYTES;
+        for row in raw.chunks_exact(line) {
+            if let Some(index) = row[1..]
+                .iter()
+                .find(|&&index| usize::from(index) >= entries)
+            {
+                return Err(format!("a pixel at palette index {index}, past its PLTE"));
+            }
+        }
+    }
     let keyed = |channels: [u8; 3]| match transparency {
         Transparency::Key(key) if channels.map(u16::from) == *key => TRANSPARENT,
         _ => OPAQUE,
     };
-    let mut out = Vec::with_capacity(header.width * header.height * PIXEL_BYTES);
     for row in raw.chunks_exact(line) {
         for bytes in row[1..].chunks_exact(pixel) {
             let rgba = match (header.colour, bytes) {
@@ -470,10 +508,10 @@ fn to_rgba(
                 }
                 _ => return Err("its pixels do not match its colour type".to_owned()),
             };
-            out.extend_from_slice(&rgba);
+            put(rgba);
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 /// The CRC-32 table, one entry per byte value.

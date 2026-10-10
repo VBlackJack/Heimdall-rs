@@ -20,8 +20,12 @@
 //! foreground and subrectangles, the colours kept from tile to tile.
 //!
 //! The rectangle is measured whole before anything is drawn, so one cut between two reads
-//! leaves the colours kept as they were.
+//! leaves the colours kept as they were. The measure goes on from the last whole tile at the
+//! next read, never from the first again, and stops at `limit` bytes; each tile's
+//! subrectangles are checked inside it, and together never fill more than
+//! [`MAX_FILL_FACTOR`] times the rectangle's pixels.
 
+use super::rre::MAX_FILL_FACTOR;
 use super::screen::{PIXEL_BYTES, Rect, Screen};
 
 /// Side of a tile.
@@ -44,11 +48,26 @@ const NIBBLE: u8 = 0x0f;
 /// Bytes of a subrectangle's place and size.
 const SUBRECT_BYTES: usize = 2;
 
-/// The decoder of one connection: the colours a tile leaves to the next, and its flags.
+/// The decoder of one connection: the colours a tile leaves to the next, and its flags; how
+/// far the rectangle waited for is measured.
 pub(crate) struct Hextile {
     background: [u8; 3],
     foreground: [u8; 3],
     last_flags: u8,
+    measured: Option<Measured>,
+    /// Tiles looked at by the measure, whole or not: its work, for the tests.
+    #[cfg(test)]
+    tiles_looked_at: usize,
+}
+
+/// A rectangle measured up to a tile: the tiles before it whole, their bytes and the pixels
+/// their subrectangles fill.
+#[derive(Clone, Copy)]
+struct Measured {
+    rect: Rect,
+    tile: usize,
+    bytes: usize,
+    filled: usize,
 }
 
 /// A tile: where it is on the desktop, and its size.
@@ -67,19 +86,25 @@ impl Hextile {
             background: [0; 3],
             foreground: [0; 3],
             last_flags: 0,
+            measured: None,
+            #[cfg(test)]
+            tiles_looked_at: 0,
         }
     }
 
     /// Draws `rect`, coded at the start of `data`, onto `screen`: the bytes it took, or
-    /// `None` when more are needed, nothing changed. The caller checked that `rect` lies
-    /// inside it.
+    /// `None` when more are needed, nothing changed. A rectangle past `limit` bytes is
+    /// refused as soon as its measure passes it. The caller checked that `rect` lies inside
+    /// `screen`, and gives the same rectangle again, its bytes from the same start, until it
+    /// is drawn.
     pub(crate) fn decode(
         &mut self,
         data: &[u8],
         rect: Rect,
         screen: &mut Screen,
+        limit: usize,
     ) -> Result<Option<usize>, String> {
-        let Some(length) = measure(data, rect)? else {
+        let Some(length) = self.measure(data, rect, limit)? else {
             return Ok(None);
         };
         let mut at = 0;
@@ -149,17 +174,31 @@ impl Tile {
 
 /// The tiles of `rect`, rows of them top to bottom, each left to right.
 fn tiles(rect: Rect) -> impl Iterator<Item = Tile> {
-    let rows = (0..rect.height).step_by(usize::from(TILE));
-    rows.flat_map(move |dy| {
-        (0..rect.width)
-            .step_by(usize::from(TILE))
-            .map(move |dx| Tile {
-                x: rect.x + dx,
-                y: rect.y + dy,
-                width: TILE.min(rect.width - dx),
-                height: TILE.min(rect.height - dy),
-            })
-    })
+    (0..tile_count(rect)).map(move |index| tile_at(rect, index))
+}
+
+/// Tiles across `rect`.
+fn tile_columns(rect: Rect) -> usize {
+    usize::from(rect.width.div_ceil(TILE))
+}
+
+/// Tiles of `rect` in all.
+fn tile_count(rect: Rect) -> usize {
+    tile_columns(rect) * usize::from(rect.height.div_ceil(TILE))
+}
+
+/// The tile of `rect` at `index`, counted rows first; `index` is below [`tile_count`].
+fn tile_at(rect: Rect, index: usize) -> Tile {
+    let columns = tile_columns(rect).max(1);
+    // Both fit: a rectangle of 16-bit sides is at most 4096 tiles across and down.
+    let dx = u16::try_from(index % columns).unwrap_or(0) * TILE;
+    let dy = u16::try_from(index / columns).unwrap_or(0) * TILE;
+    Tile {
+        x: rect.x + dx,
+        y: rect.y + dy,
+        width: TILE.min(rect.width - dx),
+        height: TILE.min(rect.height - dy),
+    }
 }
 
 fn tile_area(tile: Tile) -> usize {
@@ -192,47 +231,96 @@ fn subrect(tile: Tile, place: u8, size: u8) -> Result<Rect, String> {
     })
 }
 
-/// The bytes of the whole rectangle at the start of `data`, its flags checked; `None` when
-/// more are needed.
-fn measure(data: &[u8], rect: Rect) -> Result<Option<usize>, String> {
-    let mut at = 0;
-    for tile in tiles(rect) {
-        let Some(&flags) = data.get(at) else {
-            return Ok(None);
+impl Hextile {
+    /// The bytes of the whole rectangle at the start of `data`, its flags and subrectangles
+    /// checked; `None` when more are needed, the tiles whole so far kept for the next call.
+    fn measure(&mut self, data: &[u8], rect: Rect, limit: usize) -> Result<Option<usize>, String> {
+        let mut measured = match self.measured.take() {
+            Some(measured) if measured.rect == rect && measured.bytes <= data.len() => measured,
+            _ => Measured {
+                rect,
+                tile: 0,
+                bytes: 0,
+                filled: 0,
+            },
         };
-        if flags > MAX_FLAGS {
-            return Err(format!("an illegal Hextile tile of flags {flags}"));
-        }
-        at += 1;
-        if flags & RAW != 0 {
-            at += tile_area(tile) * PIXEL_BYTES;
-            continue;
-        }
-        if flags & BACKGROUND != 0 {
-            at += PIXEL_BYTES;
-        }
-        if flags & FOREGROUND != 0 {
-            at += PIXEL_BYTES;
-        }
-        if flags & ANY_SUBRECTS != 0 {
-            let Some(&count) = data.get(at) else {
+        let budget = rect.area().saturating_mul(MAX_FILL_FACTOR);
+        while measured.tile < tile_count(rect) {
+            #[cfg(test)]
+            {
+                self.tiles_looked_at += 1;
+            }
+            let tile = tile_at(rect, measured.tile);
+            let Some((bytes, filled)) = measure_tile(&data[measured.bytes..], tile)? else {
+                self.measured = Some(measured);
                 return Ok(None);
             };
-            at += 1;
-            let each = if flags & SUBRECTS_COLOURED != 0 {
-                PIXEL_BYTES + SUBRECT_BYTES
-            } else {
-                SUBRECT_BYTES
-            };
-            at += usize::from(count) * each;
+            measured.bytes += bytes;
+            measured.filled += filled;
+            if measured.bytes > limit {
+                return Err(format!("a Hextile rectangle past {limit} bytes"));
+            }
+            if measured.filled > budget {
+                return Err(format!(
+                    "Hextile subrectangles filling past {MAX_FILL_FACTOR} times their {}x{} \
+                     rectangle",
+                    rect.width, rect.height
+                ));
+            }
+            measured.tile += 1;
         }
+        Ok(Some(measured.bytes))
     }
-    Ok((at <= data.len()).then_some(at))
+}
+
+/// The bytes of `tile` at the start of `data`, and the pixels its subrectangles fill, its
+/// flags and subrectangles checked; `None` when more are needed.
+fn measure_tile(data: &[u8], tile: Tile) -> Result<Option<(usize, usize)>, String> {
+    let Some(&flags) = data.first() else {
+        return Ok(None);
+    };
+    if flags > MAX_FLAGS {
+        return Err(format!("an illegal Hextile tile of flags {flags}"));
+    }
+    let mut at = 1;
+    if flags & RAW != 0 {
+        at += tile_area(tile) * PIXEL_BYTES;
+        return Ok((at <= data.len()).then_some((at, 0)));
+    }
+    if flags & BACKGROUND != 0 {
+        at += PIXEL_BYTES;
+    }
+    if flags & FOREGROUND != 0 {
+        at += PIXEL_BYTES;
+    }
+    if flags & ANY_SUBRECTS == 0 {
+        return Ok((at <= data.len()).then_some((at, 0)));
+    }
+    let Some(&count) = data.get(at) else {
+        return Ok(None);
+    };
+    at += 1;
+    let colour = if flags & SUBRECTS_COLOURED != 0 {
+        PIXEL_BYTES
+    } else {
+        0
+    };
+    let each = colour + SUBRECT_BYTES;
+    let Some(subrects) = data.get(at..at + usize::from(count) * each) else {
+        return Ok(None);
+    };
+    let mut filled = 0;
+    for bytes in subrects.chunks_exact(each) {
+        filled += subrect(tile, bytes[colour], bytes[colour + 1])?.area();
+    }
+    Ok(Some((at + subrects.len(), filled)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LIMIT: usize = 1 << 20;
 
     fn rgb_at(screen: &Screen, x: usize, y: usize) -> [u8; 3] {
         let at = (y * usize::from(screen.width()) + x) * PIXEL_BYTES;
@@ -284,14 +372,14 @@ mod tests {
         let mut decoder = Hextile::new();
         for cut in 0..data.len() {
             assert_eq!(
-                decoder.decode(&data[..cut], area, &mut screen),
+                decoder.decode(&data[..cut], area, &mut screen, LIMIT),
                 Ok(None),
                 "cut at {cut}"
             );
         }
         assert_eq!(screen, Screen::new(20, 2));
         assert_eq!(
-            decoder.decode(&data, area, &mut screen),
+            decoder.decode(&data, area, &mut screen, LIMIT),
             Ok(Some(data.len()))
         );
         assert_eq!(rgb_at(&screen, 0, 0), [255, 0, 0]);
@@ -311,7 +399,7 @@ mod tests {
         data.extend_from_slice(&GREEN);
         data.extend_from_slice(&[0x31, 0x00]); // at 3,1, 1 by 1
         assert_eq!(
-            decoder.decode(&data, area, &mut screen),
+            decoder.decode(&data, area, &mut screen, LIMIT),
             Ok(Some(data.len()))
         );
         assert_eq!(rgb_at(&screen, 19, 1), [0, 255, 0]);
@@ -332,16 +420,16 @@ mod tests {
         data.extend_from_slice(&RED);
         data.extend_from_slice(&GREEN);
         assert_eq!(
-            decoder.decode(&data, area, &mut screen),
+            decoder.decode(&data, area, &mut screen, LIMIT),
             Ok(Some(data.len()))
         );
         assert_eq!(rgb_at(&screen, 0, 0), [255, 0, 0]);
         assert_eq!(rgb_at(&screen, 1, 0), [0, 255, 0]);
         // Blank right after a raw tile: noVNC ignores it.
-        assert_eq!(decoder.decode(&[0], area, &mut screen), Ok(Some(1)));
+        assert_eq!(decoder.decode(&[0], area, &mut screen, LIMIT), Ok(Some(1)));
         assert_eq!(rgb_at(&screen, 1, 0), [0, 255, 0]);
         // A second blank fills with the background, black.
-        assert_eq!(decoder.decode(&[0], area, &mut screen), Ok(Some(1)));
+        assert_eq!(decoder.decode(&[0], area, &mut screen, LIMIT), Ok(Some(1)));
         assert_eq!(rgb_at(&screen, 1, 0), [0, 0, 0]);
     }
 
@@ -355,10 +443,119 @@ mod tests {
             height: 4,
         };
         let mut decoder = Hextile::new();
-        assert!(decoder.decode(&[31], area, &mut screen).is_err());
-        assert!(decoder.decode(&[0xff], area, &mut screen).is_err());
+        assert!(decoder.decode(&[31], area, &mut screen, LIMIT).is_err());
+        assert!(decoder.decode(&[0xff], area, &mut screen, LIMIT).is_err());
         // At 3,3, 2 by 1: past the 4 by 4 tile.
         let data = [ANY_SUBRECTS, 1, 0x33, 0x10];
-        assert!(decoder.decode(&data, area, &mut screen).is_err());
+        assert!(decoder.decode(&data, area, &mut screen, LIMIT).is_err());
+    }
+
+    /// A rectangle of `columns` by `rows` tiles of 16, each a blue background and
+    /// `subrects` foreground subrectangles of one pixel, at 0,0.
+    fn tiles_of_subrects(columns: u16, rows: u16, subrects: u8) -> (Rect, Vec<u8>) {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: columns * TILE,
+            height: rows * TILE,
+        };
+        let mut data = Vec::new();
+        for _ in 0..usize::from(columns) * usize::from(rows) {
+            data.push(BACKGROUND | ANY_SUBRECTS);
+            data.extend_from_slice(&BLUE);
+            data.push(subrects);
+            for _ in 0..subrects {
+                data.extend_from_slice(&[0x00, 0x00]);
+            }
+        }
+        (area, data)
+    }
+
+    #[test]
+    fn a_rectangle_fed_byte_by_byte_is_measured_once_tile_by_tile() {
+        let (area, data) = tiles_of_subrects(4, 3, 2);
+        let mut whole = Screen::new(64, 48);
+        assert_eq!(
+            Hextile::new().decode(&data, area, &mut whole, LIMIT),
+            Ok(Some(data.len()))
+        );
+        let mut screen = Screen::new(64, 48);
+        let mut decoder = Hextile::new();
+        for cut in 0..data.len() {
+            assert_eq!(
+                decoder.decode(&data[..cut], area, &mut screen, LIMIT),
+                Ok(None),
+                "cut at {cut}"
+            );
+        }
+        assert_eq!(
+            decoder.decode(&data, area, &mut screen, LIMIT),
+            Ok(Some(data.len()))
+        );
+        assert_eq!(screen, whole);
+        // Each call looks at the tiles that became whole, and one more at most: never every
+        // tile from the first again.
+        let calls = data.len() + 1;
+        assert!(
+            decoder.tiles_looked_at <= tile_count(area) + calls,
+            "{} tiles looked at in {calls} calls",
+            decoder.tiles_looked_at
+        );
+        // A rectangle drawn leaves the next one measured afresh.
+        assert_eq!(
+            decoder.decode(&data, area, &mut screen, LIMIT),
+            Ok(Some(data.len()))
+        );
+    }
+
+    #[test]
+    fn a_rectangle_past_its_byte_limit_is_refused_once_measured_past_it() {
+        let (area, data) = tiles_of_subrects(4, 4, 1);
+        let mut screen = Screen::new(64, 64);
+        let tile_bytes = data.len() / 16;
+        let limit = 3 * tile_bytes;
+        // Three tiles fit; the fourth passes the limit, refused though more are to come.
+        assert_eq!(
+            Hextile::new().decode(&data[..limit], area, &mut screen, limit),
+            Ok(None)
+        );
+        assert!(
+            Hextile::new()
+                .decode(&data[..4 * tile_bytes], area, &mut screen, limit)
+                .is_err()
+        );
+        assert_eq!(screen, Screen::new(64, 64), "nothing drawn");
+    }
+
+    #[test]
+    fn subrectangles_filling_past_the_budget_are_refused() {
+        // One 16 by 16 tile of subrectangles each the whole tile: four fill four times the
+        // rectangle, five are past it.
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 16,
+            height: 16,
+        };
+        let tile = |count: u8| {
+            let mut data = vec![ANY_SUBRECTS, count];
+            for _ in 0..count {
+                data.extend_from_slice(&[0x00, 0xff]);
+            }
+            data
+        };
+        let mut screen = Screen::new(16, 16);
+        let four = tile(4);
+        assert_eq!(
+            Hextile::new().decode(&four, area, &mut screen, LIMIT),
+            Ok(Some(four.len()))
+        );
+        let mut screen = Screen::new(16, 16);
+        assert!(
+            Hextile::new()
+                .decode(&tile(5), area, &mut screen, LIMIT)
+                .is_err()
+        );
+        assert_eq!(screen, Screen::new(16, 16), "nothing drawn");
     }
 }

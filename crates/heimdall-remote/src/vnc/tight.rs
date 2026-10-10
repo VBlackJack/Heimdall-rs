@@ -483,17 +483,14 @@ fn jpeg(image: &[u8], rect: Rect, screen: &mut Screen) -> Result<(), String> {
 /// does; one of another size is refused before its pixels are decoded, and its data never
 /// inflates past the rectangle's size.
 fn png(image: &[u8], rect: Rect, screen: &mut Screen) -> Result<(), String> {
-    let pixels = png::decode(image, rect.width, rect.height)
-        .map_err(|error| format!("a TightPNG image does not decode: {error}"))?;
-    let mut pixels = pixels.as_chunks::<PIXEL_BYTES>().0.iter();
-    for y in rect.y..rect.y + rect.height {
-        for x in rect.x..rect.x + rect.width {
-            if let Some(rgba) = pixels.next() {
-                screen.blend(x, y, *rgba);
-            }
+    let mut places = (rect.y..rect.y + rect.height)
+        .flat_map(|y| (rect.x..rect.x + rect.width).map(move |x| (x, y)));
+    png::decode_with(image, rect.width, rect.height, |rgba| {
+        if let Some((x, y)) = places.next() {
+            screen.blend(x, y, rgba);
         }
-    }
-    Ok(())
+    })
+    .map_err(|error| format!("a TightPNG image does not decode: {error}"))
 }
 
 #[cfg(test)]

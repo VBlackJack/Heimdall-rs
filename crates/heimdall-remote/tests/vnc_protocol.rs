@@ -1593,7 +1593,7 @@ fn malformed_hextile_rre_tight_png_and_cursor_rectangles_are_protocol_errors() {
             vec![0x00, 1, 2, 3],
         ),
         ("not a PNG", -260, (1, 1), vec![0xa0, 3, 1, 2, 3]),
-        ("a cursor past its bound", -239, (513, 1), Vec::new()),
+        ("a cursor past its bound", -239, (257, 1), Vec::new()),
     ];
     for (what, encoding, (width, height), body) in cases {
         let mut rfb = opened(600, 4);

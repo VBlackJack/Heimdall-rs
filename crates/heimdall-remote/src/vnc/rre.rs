@@ -18,7 +18,9 @@
 //! background, then each subrectangle's colour, place and size, within the rectangle.
 //!
 //! The rectangle is read whole before anything is drawn. Its count is bounded twice: never
-//! more subrectangles than the rectangle has pixels, never more bytes than `limit`.
+//! more subrectangles than the rectangle has pixels, never more bytes than `limit`; and the
+//! pixels its subrectangles fill, together, never more than [`MAX_FILL_FACTOR`] times its
+//! own, so a few bytes cannot make the client paint the desktop over and over.
 
 use super::screen::{PIXEL_BYTES, Rect, Screen};
 
@@ -27,6 +29,10 @@ const HEADER_BYTES: usize = 4 + PIXEL_BYTES;
 
 /// Bytes of a subrectangle: its colour, then x, y, width and height of 16 bits each.
 const SUBRECT_BYTES: usize = PIXEL_BYTES + 4 * 2;
+
+/// Pixels the subrectangles of a rectangle may fill together, as a multiple of its own: a
+/// server's subrectangles hardly overlap, and past this they only repaint.
+pub(crate) const MAX_FILL_FACTOR: usize = 4;
 
 /// Draws the RRE rectangle `rect`, coded at the start of `data`, onto `screen`: the bytes it
 /// took, or `None` when more are needed, nothing changed. The caller checked that `rect`
@@ -53,8 +59,12 @@ pub(crate) fn decode(
     let Some(subrects) = data.get(HEADER_BYTES..length) else {
         return Ok(None);
     };
-    screen.fill(rect, [header[4], header[5], header[6]]);
-    for subrect in subrects.as_chunks::<SUBRECT_BYTES>().0 {
+    let subrects = subrects.as_chunks::<SUBRECT_BYTES>().0;
+    // Every subrectangle checked, and their pixels counted, before anything is drawn.
+    let budget = rect.area().saturating_mul(MAX_FILL_FACTOR);
+    let mut filled: usize = 0;
+    let mut places = Vec::with_capacity(subrects.len());
+    for subrect in subrects {
         let field = |at: usize| u16::from_be_bytes([subrect[at], subrect[at + 1]]);
         let (x, y, width, height) = (
             field(PIXEL_BYTES),
@@ -70,15 +80,23 @@ pub(crate) fn decode(
                 rect.width, rect.height
             ));
         }
-        screen.fill(
-            Rect {
-                x: rect.x + x,
-                y: rect.y + y,
-                width,
-                height,
-            },
-            [subrect[0], subrect[1], subrect[2]],
-        );
+        filled = filled.saturating_add(usize::from(width) * usize::from(height));
+        if filled > budget {
+            return Err(format!(
+                "RRE subrectangles filling past {MAX_FILL_FACTOR} times their {}x{} rectangle",
+                rect.width, rect.height
+            ));
+        }
+        places.push(Rect {
+            x: rect.x + x,
+            y: rect.y + y,
+            width,
+            height,
+        });
+    }
+    screen.fill(rect, [header[4], header[5], header[6]]);
+    for (subrect, place) in subrects.iter().zip(places) {
+        screen.fill(place, [subrect[0], subrect[1], subrect[2]]);
     }
     Ok(Some(length))
 }
@@ -158,6 +176,32 @@ mod tests {
         assert!(decode(&data, area, &mut screen, LIMIT).is_err());
         let data = [0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0];
         assert!(decode(&data, area, &mut screen, LIMIT).is_err());
+        // Each inside, but four of the whole rectangle fill four times its pixels, and a
+        // fifth is past that; nothing drawn.
+        let mut data = vec![0, 0, 0, 4, 9, 9, 9, 0];
+        for _ in 0..4 {
+            data.extend(subrect([1, 2, 3, 0], 0, 0, 2, 2));
+        }
+        assert!(decode(&data, area, &mut screen, LIMIT).is_ok());
+        let mut screen = Screen::new(4, 4);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 3,
+            height: 2,
+        };
+        let mut data = vec![0, 0, 0, 5, 9, 9, 9, 0];
+        for _ in 0..5 {
+            data.extend(subrect([1, 2, 3, 0], 0, 0, 3, 2));
+        }
+        assert!(decode(&data, area, &mut screen, LIMIT).is_err());
+        assert_eq!(screen, Screen::new(4, 4), "nothing drawn");
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
         // Within the pixels but past the bytes allowed.
         let data = [0, 0, 0, 4, 0, 0, 0, 0];
         assert!(decode(&data, area, &mut screen, HEADER_BYTES + SUBRECT_BYTES).is_err());

@@ -25,7 +25,7 @@ use super::screen::{PIXEL_BYTES, Rect};
 
 /// Widest and tallest cursor accepted, in pixels: bounds what a server can make the client
 /// wait for and keep. Cursors are 256 at most on the systems a server runs.
-pub const MAX_CURSOR_SIDE: u16 = 512;
+pub const MAX_CURSOR_SIDE: u16 = 256;
 
 /// Bits of a mask byte.
 const MASK_BITS: usize = 8;
