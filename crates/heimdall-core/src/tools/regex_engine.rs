@@ -151,10 +151,16 @@ pub fn test_within(
         return RegexTest::EmptyPattern;
     }
     let started = Instant::now();
+    // Refused before it is read: `fancy-regex` takes `open-close` for a group's name.
+    if has_balancing_group(pattern) {
+        return RegexTest::InvalidPattern(InvalidPattern::Unsupported(
+            DotnetConstruct::BalancingGroup,
+        ));
+    }
     // The pattern read by `fancy-regex` first: it says what is wrong with it, as .NET would.
     let fancy = match fancy_builder(pattern, options).build() {
         Ok(regex) => regex,
-        Err(error) => return RegexTest::InvalidPattern(refusal(pattern, &error)),
+        Err(error) => return RegexTest::InvalidPattern(refusal(&error)),
     };
     let names: Vec<Option<String>> = fancy
         .capture_names()
@@ -358,14 +364,16 @@ fn found_match(
     }
 }
 
-/// Why `pattern` was refused: the .NET construct it uses that the engine lacks, if one,
-/// else what the engine says.
-fn refusal(pattern: &str, error: &Error) -> InvalidPattern {
-    if matches!(error, Error::CompileError(CompileError::LookBehindNotConst)) {
+/// Why the engine refused a pattern: a look-behind whose length varies, else what the
+/// engine says.
+fn refusal(error: &Error) -> InvalidPattern {
+    // Without the engine's "variable-lookbehinds" feature, a look-behind it could have read
+    // says the feature is missing, one it could not says its size is not constant.
+    if matches!(error, Error::CompileError(compile) if matches!(
+        **compile,
+        CompileError::LookBehindNotConst | CompileError::VariableLookBehindRequiresFeature
+    )) {
         return InvalidPattern::Unsupported(DotnetConstruct::VariableLookBehind);
-    }
-    if has_balancing_group(pattern) {
-        return InvalidPattern::Unsupported(DotnetConstruct::BalancingGroup);
     }
     let said = error.to_string();
     // The `regex` crate under it draws the pattern and points under it before its
