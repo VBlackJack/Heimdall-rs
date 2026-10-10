@@ -56,12 +56,9 @@ impl ModuleRoots {
     #[cfg(windows)]
     #[must_use]
     pub fn for_current_user() -> Self {
-        let documents = directories::UserDirs::new().and_then(|dirs| {
-            dirs.document_dir()
-                .map(|dir| dir.to_string_lossy().into_owned())
-        });
         let folder =
             |path: Option<std::path::PathBuf>| path.map(|path| path.to_string_lossy().into_owned());
+        let documents = folder(heimdall_core::paths::documents());
         let program_files = folder(heimdall_core::paths::program_files());
         let system_root = folder(heimdall_core::paths::system_root());
         let under = |base: &Option<String>, rest: &str| {

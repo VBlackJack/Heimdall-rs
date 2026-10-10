@@ -21,10 +21,8 @@ tokio = { workspace = true, features = ["signal"] }
 rustix.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-# The Documents folder, where PowerShell keeps a user's modules.
-directories.workspace = true
-# The Windows and Program Files folders as Windows says where they are, never as the
-# environment names them: where PowerShell and its modules are.
+# The Documents, Windows and Program Files folders as Windows says where they are, never as
+# the environment names them: where PowerShell and its modules are.
 heimdall-core.workspace = true
 polling.workspace = true
 

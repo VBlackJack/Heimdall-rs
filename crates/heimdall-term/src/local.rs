@@ -311,8 +311,12 @@ fn shell(program: &Path, arguments: &LocalArguments) -> io::Result<Shell> {
 /// Windows folder Windows says, never the one the environment names.
 #[cfg(windows)]
 fn default_program() -> io::Result<PathBuf> {
-    let root = heimdall_core::paths::system_root()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the Windows folder is unknown"))?;
+    let root = heimdall_core::paths::system_root().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            heimdall_core::paths::WINDOWS_FOLDER_UNKNOWN,
+        )
+    })?;
     Ok(program::default_shell(&root))
 }
 

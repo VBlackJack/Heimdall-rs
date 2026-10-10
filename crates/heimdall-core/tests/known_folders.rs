@@ -68,6 +68,10 @@ mod windows {
     fn folders() -> Vec<(&'static str, Option<PathBuf>)> {
         vec![
             ("local_app_data", paths::local_app_data()),
+            ("roaming_app_data", paths::roaming_app_data()),
+            ("documents", paths::documents()),
+            ("config_dir", paths::config_dir()),
+            ("data_dir", paths::data_dir()),
             ("program_files", paths::program_files()),
             ("program_files_x86", paths::program_files_x86()),
             ("system_root", paths::system_root()),
@@ -113,8 +117,13 @@ mod windows {
         let planted = tempfile::tempdir().expect("planted folder");
         // A planted profile with the folders Windows looks for in one, so that a folder
         // expanded from the environment would be found there, not refused.
-        std::fs::create_dir_all(planted.path().join("AppData").join("Local"))
-            .expect("planted profile");
+        for folder in [
+            planted.path().join("AppData").join("Local"),
+            planted.path().join("AppData").join("Roaming"),
+            planted.path().join("Documents"),
+        ] {
+            std::fs::create_dir_all(folder).expect("planted profile");
+        }
         let mut command = Command::new(std::env::current_exe().expect("test program"));
         command
             .args([PROBE_TEST, "--exact", "--nocapture", "--test-threads=1"])
@@ -146,7 +155,12 @@ mod windows {
         for (name, folder) in folders() {
             if matches!(
                 name,
-                "citrix_cache" | "legacy_data_dir" | "rundll" | "explorer"
+                "citrix_cache"
+                    | "legacy_data_dir"
+                    | "config_dir"
+                    | "data_dir"
+                    | "rundll"
+                    | "explorer"
             ) {
                 continue;
             }
@@ -188,6 +202,24 @@ mod windows {
                 .join(paths::EXPLORER_PROGRAM)
         );
         assert!(explorer.is_file(), "{}", explorer.display());
+    }
+
+    /// Laid out as the `directories` crate lays them out, read here where nothing is planted:
+    /// the files of an earlier version are where they were.
+    #[test]
+    fn the_folders_are_where_the_directories_crate_puts_them() {
+        let project = directories::ProjectDirs::from("", "", paths::APPLICATION).expect("project");
+        assert_eq!(paths::config_dir().as_deref(), Some(project.config_dir()));
+        assert_eq!(paths::data_dir().as_deref(), Some(project.data_local_dir()));
+        let base = directories::BaseDirs::new().expect("base");
+        assert_eq!(paths::home_dir().as_deref(), Some(base.home_dir()));
+        assert_eq!(
+            paths::local_app_data().as_deref(),
+            Some(base.data_local_dir())
+        );
+        assert_eq!(paths::roaming_app_data().as_deref(), Some(base.data_dir()));
+        let user = directories::UserDirs::new().expect("user");
+        assert_eq!(paths::documents().as_deref(), user.document_dir());
     }
 
     #[test]

@@ -2564,7 +2564,6 @@ name = "heimdall-term"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
- "directories",
  "heimdall-core",
  "polling",
  "rustix 1.1.5",

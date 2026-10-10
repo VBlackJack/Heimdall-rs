@@ -184,7 +184,10 @@ pub fn detection_command(system_dir: &std::path::Path) -> std::process::Command 
     command
         .args(POWERSHELL_SWITCHES)
         .arg(POWERSHELL_COMMAND_SWITCH)
-        .arg(DETECTION_SCRIPT);
+        .arg(DETECTION_SCRIPT)
+        // `Get-CimInstance` loads its module from this path: an inherited one could name
+        // modules planted by whoever started Heimdall. Windows PowerShell builds its own.
+        .env_remove(heimdall_term::local::module_path::VARIABLE);
     command
 }
 
@@ -410,6 +413,12 @@ mod tests {
                 "-Command",
                 DETECTION_SCRIPT
             ]
+        );
+        assert!(
+            command.get_envs().any(|(name, value)| name
+                == heimdall_term::local::module_path::VARIABLE
+                && value.is_none()),
+            "the inherited module path is removed"
         );
         assert_eq!(
             DETECTION_SCRIPT,
