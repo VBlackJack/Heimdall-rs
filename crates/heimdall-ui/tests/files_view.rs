@@ -2192,3 +2192,129 @@ async fn a_dropped_files_tab_keeps_its_listing_in_sight_read_only() {
     assert!(ui.find("The connection failed").is_err(), "no card over it");
     ui.find("Reconnect").expect("its way out");
 }
+
+#[tokio::test]
+async fn a_press_on_a_local_entry_is_taken_out_of_the_window_a_remote_one_is_not() {
+    use heimdall_ui::files_drag::{FilesDrag, Spot, take_out};
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, tab) = files_tab(dir.path()).await;
+    let local = Spot {
+        tab,
+        side: Side::Local,
+        index: Some(1),
+    };
+    let mut drag = Some(FilesDrag::pressed(local, Point::ORIGIN));
+    assert_eq!(take_out(&mut drag), Some(local));
+    assert_eq!(
+        drag, None,
+        "nothing follows the pointer until the next press"
+    );
+    assert_eq!(take_out(&mut drag), None);
+
+    let remote = FilesDrag::pressed(
+        Spot {
+            side: Side::Remote,
+            ..local
+        },
+        Point::ORIGIN,
+    );
+    let mut drag = Some(remote.clone());
+    assert_eq!(take_out(&mut drag), None);
+    assert_eq!(
+        drag,
+        Some(remote),
+        "the server's entries are not dragged out"
+    );
+}
+
+/// On Windows, where the system drags files out: the window forgets the press; the files
+/// dropped back on it during the drag, or after its end came but before it settled, are not
+/// uploaded; any drop after that is, the same files dragged back from Explorer included.
+#[cfg(windows)]
+#[tokio::test]
+async fn local_entries_dragged_out_of_the_window_are_not_taken_back() {
+    use heimdall_ui::files_drag::Spot;
+    use iced::Point;
+
+    /// The first drag out of a window: its number.
+    const FIRST_DRAG: u64 = 1;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let notes = dir.path().join("notes.md");
+    std::fs::write(&notes, b"x").expect("written");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let transfers = |shell: &Shell| {
+        shell
+            .app()
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .map_or(0, |files| files.transfers.len())
+    };
+    let drop_back = |shell: &mut Shell| {
+        let _ = shell.update(Message::FileDropped(notes.clone()));
+        let _ = shell.update(Message::DropGathered(DropPlace::Main));
+    };
+    // Pressed on this computer's notes, moved, then out of the window.
+    let _ = shell.update(Message::FilesHover(Spot {
+        tab,
+        side: Side::Local,
+        index: Some(1),
+    }));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::FilesDragMoved(Point::new(30.0, 30.0)));
+    let _ = shell.update(Message::FilesDragLeft);
+    // The system's drag took the release: a late one moves nothing.
+    let _ = shell.update(Message::FilesHover(Spot {
+        tab,
+        side: Side::Remote,
+        index: None,
+    }));
+    let _ = shell.update(Message::FilesDragEnd);
+    assert_eq!(transfers(&shell), 0, "the press was forgotten");
+
+    // Dropped back on the window during the drag: not uploaded.
+    drop_back(&mut shell);
+    assert_eq!(transfers(&shell), 0, "its own files are not taken back");
+
+    // Its end, cancelled, says nothing; its files coming after it, before it settled, are
+    // still its own: the two reach the window in no set order.
+    let _ = shell.update(Message::FilesDraggedOut(
+        FIRST_DRAG,
+        Ok(heimdall_dragout::DragOutcome::Cancelled),
+    ));
+    assert_eq!(shell.app().notice(), None);
+    drop_back(&mut shell);
+    assert_eq!(transfers(&shell), 0, "not settled yet");
+
+    // The end of another drag settles nothing; this one's, once settled, lets any drop in.
+    let _ = shell.update(Message::FilesDragOutSettled(FIRST_DRAG + 1));
+    drop_back(&mut shell);
+    assert_eq!(transfers(&shell), 0);
+    let _ = shell.update(Message::FilesDragOutSettled(FIRST_DRAG));
+    drop_back(&mut shell);
+    assert_eq!(
+        transfers(&shell),
+        1,
+        "dragged back from Explorer, without a click"
+    );
+}
+
+#[tokio::test]
+async fn a_drag_out_that_failed_is_said() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, _tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::FilesDraggedOut(
+        1,
+        Err(heimdall_dragout::DragError::SeveralFolders),
+    ));
+    assert_eq!(
+        shell.app().notice(),
+        Some(&heimdall_app::Notice::DragOutFailed(
+            heimdall_app::files::DragOutFailure::SeveralFolders
+        ))
+    );
+}

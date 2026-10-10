@@ -149,6 +149,7 @@ impl Shell {
     /// A press in the tab's own window `window`, showing Files tab `tab`: on one of its
     /// entries, the start of a drag of it, followed in that window.
     fn press_in_floating(&mut self, window: window::Id, tab: TabId) {
+        self.dragged_out.clear();
         if self.gated() {
             return;
         }

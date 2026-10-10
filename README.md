@@ -40,6 +40,7 @@ embedded web engine.
 | `heimdall-twinshell` | Command library |
 | `heimdall-remote` | VNC, Telnet, serial |
 | `heimdall-tls` | Server certificate check of FTPS and VNC over TLS |
+| `heimdall-dragout` | Local files dragged out to Explorer, the only unsafe code (Windows shell calls) |
 | `heimdall-ui` | The desktop application |
 | `xtask` | Developer tooling |
 

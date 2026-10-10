@@ -43,6 +43,7 @@ embarqué.
 | `heimdall-twinshell` | Bibliothèque de commandes |
 | `heimdall-remote` | VNC, Telnet, série |
 | `heimdall-tls` | Vérification du certificat serveur de FTPS et de VNC sur TLS |
+| `heimdall-dragout` | Fichiers locaux glissés vers l'Explorateur, seul code unsafe (appels au shell Windows) |
 | `heimdall-ui` | L'application de bureau |
 | `xtask` | Outillage de développement |
 

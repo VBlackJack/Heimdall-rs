@@ -202,7 +202,8 @@ impl App {
         let Some(entry) = files.local.entries.get(index) else {
             return Vec::new();
         };
-        let file = files.local.path.join(&entry.name);
+        // The folder the entry was listed from: another may be on its way.
+        let file = files.local.entries_folder().join(&entry.name);
         let name = entry.name.to_string_lossy().into_owned();
         let kind = entry.kind;
         if !matches!(kind, EntryKind::File | EntryKind::Link) {

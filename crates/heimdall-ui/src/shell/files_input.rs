@@ -46,10 +46,15 @@ impl Shell {
     }
 
     /// `path` dropped on `place`: gathered with the other files of its drop, whose end is
-    /// waited for when it is the first.
+    /// waited for when it is the first. One of the entries of a drag out of the window,
+    /// dropped back while it lasts or settles, is not taken.
     pub(super) fn file_dropped(&mut self, place: DropPlace, path: PathBuf) -> Task<Message> {
         if place == DropPlace::Main {
             self.files_hovered = false;
+        }
+        if self.dragged_out.swallows(&path) {
+            log::debug!("a file dragged out and dropped back: not taken");
+            return Task::none();
         }
         if self.drops.add(place, path) {
             drop_batch::gather(place)

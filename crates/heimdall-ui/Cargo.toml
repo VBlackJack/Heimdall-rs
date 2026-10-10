@@ -23,6 +23,8 @@ path = "src/lib.rs"
 [dependencies]
 heimdall-app.workspace = true
 heimdall-core.workspace = true
+# Local files dragged out of the window to Explorer (Windows; unsupported elsewhere).
+heimdall-dragout.workspace = true
 heimdall-files.workspace = true
 heimdall-rdp.workspace = true
 heimdall-ssh.workspace = true
