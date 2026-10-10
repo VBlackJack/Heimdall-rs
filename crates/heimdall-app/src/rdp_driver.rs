@@ -70,7 +70,7 @@ pub struct RdpRequest {
     pub desktop_scale: u32,
     /// How long logging on may take; `None` for no limit.
     pub logon_timeout: Option<std::time::Duration>,
-    /// Time between two TCP keep-alives of the connection, as the settings'
+    /// Time without anything sent before an RDP keep-alive of the session, as the settings'
     /// `rdp_keep_alive_interval_ms`.
     pub keep_alive: std::time::Duration,
     /// The SSH gateways the server is reached through, nearest first, each as the hop it

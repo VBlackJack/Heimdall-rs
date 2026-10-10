@@ -2506,7 +2506,6 @@ dependencies = [
  "ring",
  "rustix 1.1.5",
  "rustls-native-certs",
- "socket2",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

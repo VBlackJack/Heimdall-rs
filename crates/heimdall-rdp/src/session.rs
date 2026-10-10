@@ -50,6 +50,7 @@ use crate::clipboard_files::{COPY_LIMITS, CopyRefusal, Entry, FileList};
 use crate::clipboard_save::{Command, Download, SaveEnd, SaveStep, Writer};
 use crate::connect::{ClipboardLink, MAX_DESKTOP_SIDE, RdpConnection, Upgraded};
 use crate::frames::FrameReader;
+use crate::keep_alive::{self, KeepAlive};
 use crate::reason::{self, Ending};
 
 /// Events queued before the session waits for the receiver.
@@ -219,6 +220,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         clipboard,
         result,
         desktop_scale,
+        keep_alive,
     } = connection;
     let framebuffer = Framebuffer::new(result.desktop_size.width, result.desktop_size.height);
     let (events, event_receiver) = mpsc::channel(EVENT_QUEUE);
@@ -238,6 +240,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         settle: None,
         waiting_since: None,
         desktop_scale,
+        keep_alive: KeepAlive::new(keep_alive),
         reader: FrameReader::new(read_half, leftover),
         writer: write_half,
     };
@@ -729,7 +732,8 @@ fn offer_files(channel: &mut CliprdrClient, files: Option<Arc<[Entry]>>) {
     }
 }
 
-/// Waits until `deadline`; the caller polls it only when there is one.
+/// Waits until `deadline`: a size settled, a keep-alive due. The caller polls it only when
+/// there is one.
 async fn sleep_until_settled(deadline: Option<Instant>) {
     if let Some(deadline) = deadline {
         tokio::time::sleep_until(deadline).await;
@@ -777,6 +781,8 @@ struct Running {
     settle: Option<Instant>,
     /// Since when a size waits for the display channel to open.
     waiting_since: Option<Instant>,
+    /// When the next keep-alive is due: every frame sent puts it back.
+    keep_alive: KeepAlive,
     reader: FrameReader<ReadHalf<Upgraded>>,
     writer: WriteHalf<Upgraded>,
 }
@@ -807,6 +813,7 @@ impl Running {
         cancel: CancellationToken,
     ) -> Result<CloseReason, String> {
         let activation = result.activation_factory;
+        let user_channel_id = result.user_channel_id;
         let mut stage = ActiveStageBuilder {
             static_channels: result.static_channels,
             user_channel_id: result.user_channel_id,
@@ -819,6 +826,8 @@ impl Running {
         }
         .build();
         let mut keys = Database::new();
+        // The connection sequence ended with the activation.
+        self.keep_alive.activated(Instant::now());
         loop {
             let outputs = tokio::select! {
                 () = cancel.cancelled() => {
@@ -851,6 +860,11 @@ impl Running {
                 () = sleep_until_settled(self.settle), if self.settle.is_some() => {
                     self.settle = None;
                     self.ask_for_size(&mut stage).await?;
+                    Vec::new()
+                }
+                () = sleep_until_settled(self.keep_alive.due()), if self.keep_alive.due().is_some() => {
+                    let frame = keep_alive::frame(&stage, user_channel_id)?;
+                    self.send(&frame).await?;
                     Vec::new()
                 }
                 Some(operations) = self.input.recv() => {
@@ -894,7 +908,9 @@ impl Running {
                         });
                     }
                     ActiveStageOutput::DeactivateAll => {
+                        self.keep_alive.deactivated();
                         self.reactivate(&activation, &mut stage).await?;
+                        self.keep_alive.activated(Instant::now());
                         if self.wanted.is_none() && self.asked.is_some() {
                             self.wanted = self.asked;
                             self.settle = Some(Instant::now() + RESIZE_SETTLE);
@@ -1177,7 +1193,12 @@ impl Running {
             .write_all(frame)
             .await
             .map_err(|error| error.to_string())?;
-        self.writer.flush().await.map_err(|error| error.to_string())
+        self.writer
+            .flush()
+            .await
+            .map_err(|error| error.to_string())?;
+        self.keep_alive.sent(Instant::now());
+        Ok(())
     }
 
     async fn answer(&mut self, outputs: Vec<ActiveStageOutput>) -> Result<(), String> {
