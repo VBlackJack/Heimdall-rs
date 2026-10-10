@@ -31,6 +31,7 @@ use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use heimdall_core::profile::{AudioPlayback, RdpOptions};
@@ -215,6 +216,48 @@ pub struct RdpConfig {
     /// The desktop scale factor asked for, in percent, as the C# Heimdall maps the screen's
     /// (see [`desktop_scale_factor`]): 100 draws the remote desktop at its own size.
     pub desktop_scale: u32,
+    /// Told how far the connection has come, as the C# session header's phase stepper
+    /// shows it; `None` when nobody follows it.
+    pub progress: Option<Progress>,
+}
+
+/// How far a connection has come, past its opening: what the C# session header's phase
+/// stepper calls Connecting, then Loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// The server answered: the security exchange, TLS, the certificate and the logon.
+    Connecting,
+    /// Logged on: the session is being set up, until its desktop shows.
+    Loading,
+}
+
+/// Where a connection reports its [`Step`]s, called from the connection's own task.
+#[derive(Clone)]
+pub struct Progress(Arc<dyn Fn(Step) + Send + Sync>);
+
+impl Progress {
+    /// Reports each step to `report`.
+    pub fn new(report: impl Fn(Step) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(report))
+    }
+
+    /// Tells `step`.
+    fn report(&self, step: Step) {
+        (self.0)(step);
+    }
+}
+
+impl std::fmt::Debug for Progress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Progress")
+    }
+}
+
+/// Tells `step` to whoever follows `config`'s connection.
+fn report(config: &RdpConfig, step: Step) {
+    if let Some(progress) = &config.progress {
+        progress.report(step);
+    }
 }
 
 /// The desktop scale factors a server is offered, in percent, as the C# `RdpDisplayHelper`
@@ -252,8 +295,14 @@ pub enum RdpError {
     #[error("cancelled")]
     Cancelled,
     /// The server does not accept Network Level Authentication, or refused the request.
-    #[error("the server refused the security requested: {0}")]
-    Negotiation(String),
+    #[error("the server refused the security requested: {detail}")]
+    Negotiation {
+        /// What the server answered, in `IronRDP`'s words.
+        detail: String,
+        /// The failure code of its RDP Negotiation Failure (MS-RDPBCGR 2.2.1.2.2), when it
+        /// sent one.
+        code: Option<u32>,
+    },
     /// The TLS handshake failed, a forged certificate included.
     #[error("TLS failed: {0}")]
     Tls(#[source] io::Error),
@@ -290,11 +339,21 @@ pub enum RdpError {
     #[error("known RDP servers: {0}")]
     KnownHosts(#[source] io::Error),
     /// The server refused the logon, and why.
-    #[error("the server refused the logon: {0:?}")]
-    Authentication(Refusal),
+    #[error("the server refused the logon: {refusal:?}")]
+    Authentication {
+        /// Why.
+        refusal: Refusal,
+        /// The NTSTATUS the server refused it with, when it gave one.
+        status: Option<u32>,
+    },
     /// The server ended the connection before its session started, and why.
-    #[error("the server ended the connection: {0:?}")]
-    Ended(Ending),
+    #[error("the server ended the connection: {ending:?}")]
+    Ended {
+        /// Why.
+        ending: Ending,
+        /// The code of its Set Error Info PDU (MS-RDPBCGR 2.2.5.1.1), when known.
+        code: Option<u32>,
+    },
     /// The server asked for a desktop larger than [`MAX_DESKTOP_SIDE`].
     #[error("the server asked for a {width}x{height} desktop")]
     DesktopTooLarge {
@@ -477,6 +536,7 @@ pub async fn connect_over(
     credentials: AskCredentials,
     cancel: &CancellationToken,
 ) -> Result<RdpConnection, RdpError> {
+    report(config, Step::Connecting);
     // Display Control lets the desktop follow the size of the tab showing it.
     let mut connector = ClientConnector::new(connector_config(config), client_addr)
         .with_static_channel(
@@ -507,7 +567,10 @@ pub async fn connect_over(
     .map_err(|error| match error.kind() {
         // Before TLS, a stated reason is the negotiation failing: the server wants a
         // security protocol that was not offered.
-        ConnectorErrorKind::Reason(reason) => RdpError::Negotiation(reason.clone()),
+        ConnectorErrorKind::Reason(reason) => RdpError::Negotiation {
+            detail: reason.clone(),
+            code: None,
+        },
         _ => failure(&error),
     })?;
     let (stream, leftover) = framed.into_inner();
@@ -560,6 +623,7 @@ pub async fn connect_over(
         finalize(
             connector,
             &mut framed,
+            config,
             config.kerberos,
             connector::ServerName::new(config.host.clone()),
             certificate.public_key,
@@ -848,13 +912,25 @@ fn failure(error: &ConnectorError) -> RdpError {
     if let ConnectorErrorKind::Reason(text) = error.kind()
         && let Some(ending) = reason::ending_in_failure(text)
     {
-        return RdpError::Ended(ending);
+        return RdpError::Ended {
+            ending,
+            code: reason::error_info_code(text),
+        };
     }
     match error.kind() {
-        ConnectorErrorKind::Credssp(error) => RdpError::Authentication(Refusal::of(error)),
+        ConnectorErrorKind::Credssp(error) => RdpError::Authentication {
+            refusal: Refusal::of(error),
+            status: reason::status(error),
+        },
         // Early User Authorization: the account may not open a session there.
-        ConnectorErrorKind::AccessDenied => RdpError::Authentication(Refusal::BadCredentials),
-        ConnectorErrorKind::Negotiation(failure) => RdpError::Negotiation(failure.to_string()),
+        ConnectorErrorKind::AccessDenied => RdpError::Authentication {
+            refusal: Refusal::BadCredentials,
+            status: None,
+        },
+        ConnectorErrorKind::Negotiation(failure) => RdpError::Negotiation {
+            detail: failure.to_string(),
+            code: Some(u32::from(failure.code())),
+        },
 
         _ => {
             let mut source = std::error::Error::source(error);
@@ -876,6 +952,7 @@ fn failure(error: &ConnectorError) -> RdpError {
 async fn finalize<S: FramedRead + FramedWrite>(
     mut connector: ClientConnector,
     framed: &mut Framed<S>,
+    config: &RdpConfig,
     kerberos: bool,
     server_name: connector::ServerName,
     server_public_key: Vec<u8>,
@@ -892,6 +969,9 @@ async fn finalize<S: FramedRead + FramedWrite>(
         )
         .await?;
     }
+    // Logged on: what is left sets the session up, as the C# Loading phase after its
+    // login completes.
+    report(config, Step::Loading);
     loop {
         ironrdp_tokio::single_sequence_step(framed, &mut connector, &mut buf).await?;
         if let ClientConnectorState::Connected { result } = connector.state {
@@ -1032,6 +1112,7 @@ mod tests {
             kerberos: false,
             time_zone: None,
             desktop_scale: 100,
+            progress: None,
         }
     }
 

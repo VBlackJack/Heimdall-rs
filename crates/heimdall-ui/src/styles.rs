@@ -357,6 +357,40 @@ pub fn strip(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// A segment of the C# connection phase stepper: the accent once its phase is reached, the
+/// disabled text before it.
+pub fn phase_segment(theme: &Theme, lit: bool) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    let colour = if lit {
+        brushes.accent
+    } else {
+        Color {
+            a: brushes.secondary.a * crate::tokens::OPACITY_DISABLED,
+            ..brushes.secondary
+        }
+    };
+    BoxStyle {
+        background: Some(Background::Color(colour)),
+        border: Border {
+            radius: radius::XS.into(),
+            ..Border::default()
+        },
+        ..BoxStyle::default()
+    }
+}
+
+/// The C# letterbox hint's badge over a desktop: the border colour, small corners.
+pub fn letterbox_hint(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(Brushes::of(theme).edge)),
+        border: Border {
+            radius: radius::SM.into(),
+            ..Border::default()
+        },
+        ..BoxStyle::default()
+    }
+}
+
 /// A small round mark in the accent, as the C# dot on the filter button while a filter
 /// leaves sessions out.
 pub fn accent_dot(theme: &Theme) -> BoxStyle {
