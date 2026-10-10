@@ -85,6 +85,18 @@ impl Side {
     }
 }
 
+/// Why entries of the local pane could not be dragged out of the window, to Explorer or
+/// another application.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DragOutFailure {
+    /// They are not all in one folder, as the system drags them.
+    SeveralFolders,
+    /// This system, or this window, has no drag out.
+    Unavailable,
+    /// The system refused, in its own words.
+    Refused(String),
+}
+
 /// What a key does in a Files tab; the pane it acts on is the one with the focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilesKey {

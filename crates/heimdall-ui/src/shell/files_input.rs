@@ -62,7 +62,7 @@ impl Shell {
     /// Files tab's server in one transfer. Nothing for a tab that is no Files tab, nor one
     /// without its session, nor behind the lock.
     pub(super) fn floating_drop_gathered(&mut self, window: window::Id) -> Task<Message> {
-        let paths = self.drops.take(DropPlace::Floating(window));
+        let paths = self.take_drop(DropPlace::Floating(window));
         let Some(tab) = self
             .floating_tab_of(window)
             .filter(|tab| tab.files.is_some() && takes_drops(tab))

@@ -267,6 +267,8 @@ pub enum Notice {
     },
     /// "Paste from Explorer" found no files copied.
     ExplorerHoldsNoFiles,
+    /// Entries of the local pane could not be dragged out of the window, for this reason.
+    DragOutFailed(crate::files::DragOutFailure),
     /// The entries cut or copied were pasted.
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.

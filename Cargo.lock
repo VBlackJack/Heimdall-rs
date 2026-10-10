@@ -2457,6 +2457,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "heimdall-dragout"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.21",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "heimdall-files"
 version = "0.1.0"
 dependencies = [
@@ -2594,6 +2603,7 @@ dependencies = [
  "clipboard-win",
  "heimdall-app",
  "heimdall-core",
+ "heimdall-dragout",
  "heimdall-files",
  "heimdall-i18n",
  "heimdall-rdp",

@@ -597,6 +597,8 @@ pub enum Message {
         /// Text, if the clipboard held any.
         text: Option<String>,
     },
+    /// Entries of a local pane could not be dragged out of the window, for this reason.
+    DragOutFailed(crate::files::DragOutFailure),
     /// The session shown was copied to the clipboard as an image, or could not be.
     ScreenshotTaken {
         /// Whether it is on the clipboard.
@@ -1033,6 +1035,7 @@ impl fmt::Debug for Message {
             Self::PasteRequest(tab) => write!(f, "PasteRequest({})", tab.value()),
             Self::ClipboardText { tab, .. } => write!(f, "ClipboardText({}, ..)", tab.value()),
             Self::ScreenshotTaken { copied } => write!(f, "ScreenshotTaken({copied})"),
+            Self::DragOutFailed(failure) => write!(f, "DragOutFailed({failure:?})"),
             Self::ClipboardFiles { tab, paths } => {
                 write!(f, "ClipboardFiles({}, {})", tab.value(), paths.len())
             }
@@ -3566,6 +3569,10 @@ impl App {
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
+            Message::DragOutFailed(failure) => {
+                self.tell(Notice::DragOutFailed(failure));
+                Vec::new()
+            }
             Message::ScreenshotTaken { copied } => {
                 self.tell(if copied {
                     Notice::ScreenshotCopied

@@ -1,0 +1,39 @@
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+
+[package]
+name = "heimdall-dragout"
+description = "Local files dragged out of the window to Explorer or another application, through the Windows shell."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# The shell's own data object and drag loop: COM calls only, no COM object written here.
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# The workspace's lints, copied rather than inherited: a crate takes all of them or none, and
+# this one needs unsafe code, which the workspace forbids. It is denied here instead, and
+# allowed only in the module calling the shell, each block of it explained.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"

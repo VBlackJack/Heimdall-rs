@@ -82,6 +82,7 @@ use iced::{
 };
 use zeroize::Zeroizing;
 
+mod drag_out;
 mod files_input;
 mod floating_files;
 mod floating_find;
@@ -792,6 +793,11 @@ pub enum Message {
     FilesDragMoved(Point),
     /// That press is let go.
     FilesDragEnd,
+    /// The pointer left the window, that press held.
+    FilesDragLeft,
+    /// The entries of a local pane dragged out of the window by the system: how the drag
+    /// ended, or why there was none.
+    FilesDraggedOut(Result<heimdall_dragout::DragOutcome, heimdall_dragout::DragError>),
     /// The pointer is over a row of the tree, where a drag would drop.
     TreeHover(heimdall_app::DropTarget),
     /// The pointer left that row.
@@ -1032,6 +1038,8 @@ impl fmt::Debug for Message {
             Self::TabDropArea(area) => write!(f, "TabDropArea({area:?})"),
             Self::FilesDragMoved(_) => f.write_str("FilesDragMoved"),
             Self::FilesDragEnd => f.write_str("FilesDragEnd"),
+            Self::FilesDragLeft => f.write_str("FilesDragLeft"),
+            Self::FilesDraggedOut(result) => write!(f, "FilesDraggedOut({result:?})"),
             Self::TreeHover(target) => write!(f, "TreeHover({target:?})"),
             Self::TreeHoverLeft(target) => write!(f, "TreeHoverLeft({target:?})"),
             Self::TreeDragMoved(_) => f.write_str("TreeDragMoved"),
@@ -1392,6 +1400,9 @@ pub struct Shell {
     files_drag: Option<crate::files_drag::FilesDrag>,
     /// The tab's own window that press was in; `None` for the main window.
     files_drag_window: Option<window::Id>,
+    /// The entries last dragged out of the window, until the next press: dropped back on
+    /// it, they are not taken.
+    dragged_out: crate::files_drag::DraggedOut,
     /// The tab under the pointer.
     tab_hover: Option<TabId>,
     /// A press on a tab, a drag once the pointer moves.
@@ -1711,6 +1722,7 @@ impl Shell {
             files_hover_window: None,
             files_drag: None,
             files_drag_window: None,
+            dragged_out: crate::files_drag::DraggedOut::default(),
             tab_hover: None,
             tab_drag: None,
             tab_drop_area: None,
@@ -2599,6 +2611,9 @@ impl Shell {
             message @ (Message::SplitDragged { .. } | Message::SplitReleased { .. }) => {
                 self.split_drag_message(&message)
             }
+            Message::FilesDragLeft => return self.drag_out(),
+            Message::FilesDragMoved(at) if self.drag_leaves(at) => return self.drag_out(),
+            Message::FilesDraggedOut(result) => self.drag_out_ended(&result),
             message @ (Message::FilesHover(_)
             | Message::FilesHoverLeft(_)
             | Message::PointerPressed
@@ -5487,7 +5502,7 @@ impl Shell {
     /// A drop's files all come on the hash generator: the first hashed, as the C#
     /// `OnDrop` takes `files[0]`.
     fn hash_drop_gathered(&mut self, place: crate::drop_batch::DropPlace) -> Task<Message> {
-        let first = self.drops.take(place).into_iter().next();
+        let first = self.take_drop(place).into_iter().next();
         match (self.hash_drop_target(), first) {
             (Some(tab), Some(path)) => self.tools.update(
                 tab,
@@ -5507,7 +5522,7 @@ impl Shell {
                 Vec::new()
             }
             Message::DropGathered(place) => {
-                let paths = self.drops.take(place);
+                let paths = self.take_drop(place);
                 if paths.is_empty() {
                     return Vec::new();
                 }
@@ -5907,6 +5922,7 @@ impl Shell {
                 }
             }
             Message::PointerPressed => {
+                self.dragged_out.clear();
                 self.tab_drop_area = None;
                 self.tab_drag = self
                     .tab_hover
