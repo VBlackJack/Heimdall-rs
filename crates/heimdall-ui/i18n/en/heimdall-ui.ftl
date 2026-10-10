@@ -688,6 +688,7 @@ ui-import-skip-unknown-identity = logs in with an identity mode Heimdall does no
 ui-error-hostkey-changed-at = The host key of { $target } is not the one recorded: the connection may be intercepted. Recorded: { $recorded }. Presented: { $offered }.
 ui-error-gateway-missing = The SSH gateway { $id } this profile goes through is not in the profiles.
 ui-error-gateway-loop = The SSH gateway { $id } is reached through itself, by way of its parents.
+ui-error-gateway-too-deep = Maximum gateway chain depth exceeded. Reduce the number of chained gateways.
 ui-tree-connect = Connect
 ui-tree-connect-with = Connect with...
 ui-tree-connect-with-tooltip = Override the profile's RDP mode for this connection only.
@@ -1176,6 +1177,8 @@ ui-gateway-password-hint = Used for SSH password authentication. Leave blank if 
 ui-gateway-field-parent = Parent Gateway
 ui-gateway-parent-none = None (direct connection)
 ui-gateway-error-loop = A gateway cannot be reached through itself.
+ui-gateway-field-host-key-fingerprint = Host Key Fingerprint
+ui-gateway-host-key-fingerprint-hint = Auto-populated after the first connection. Used to verify server identity and prevent host key spoofing.
 ui-tree-gateway-via = via { $name }
 ui-tree-gateway-missing = gateway missing
 

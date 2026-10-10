@@ -547,6 +547,7 @@ ui-import-skip-unknown-identity = se connecte avec un mode d'identité que Heimd
 ui-error-hostkey-changed-at = La clé d'hôte de { $target } n'est pas celle enregistrée : la connexion est peut-être interceptée. Enregistrée : { $recorded }. Présentée : { $offered }.
 ui-error-gateway-missing = La passerelle SSH { $id } par laquelle passe ce profil n'est pas dans les profils.
 ui-error-gateway-loop = La passerelle SSH { $id } est atteinte par elle-même, via ses parents.
+ui-error-gateway-too-deep = Profondeur maximale de la chaîne de passerelles dépassée. Réduisez le nombre de passerelles chaînées.
 ui-tree-connect = Connecter
 ui-tree-connect-with = Se connecter en mode...
 ui-tree-connect-with-tooltip = Forcer le mode RDP pour cette connexion uniquement, sans modifier le profil.
@@ -1044,6 +1045,8 @@ ui-gateway-password-hint = Utilisé pour l'authentification par mot de passe SSH
 ui-gateway-field-parent = Passerelle parente
 ui-gateway-parent-none = Aucune (connexion directe)
 ui-gateway-error-loop = Une passerelle ne peut pas être atteinte par elle-même.
+ui-gateway-field-host-key-fingerprint = Empreinte de la clé hôte
+ui-gateway-host-key-fingerprint-hint = Renseigné automatiquement après la première connexion. Utilisé pour vérifier l'identité du serveur et prévenir l'usurpation de clé hôte.
 ui-tree-gateway-via = via { $name }
 ui-tree-gateway-missing = passerelle manquante
 

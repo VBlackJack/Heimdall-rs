@@ -1227,6 +1227,157 @@ fn releasing_a_selection_copies_it_and_a_bare_click_copies_nothing() {
     assert!(clipboard_asks(&effects).is_empty());
 }
 
+/// A press of the left button at `row`, `col`, on the right half of the cell or not, with
+/// `modifiers` held.
+fn press_with(row: usize, col: usize, right_half: bool, modifiers: Modifiers) -> PointerInput {
+    let mut input = pointer(MouseAction::Press(MouseButton::Left), row, col);
+    input.at.right_half = right_half;
+    input.modifiers = modifiers;
+    input
+}
+
+/// A drag with the left button held to `row`, `col`, on the right half of the cell, with
+/// `modifiers` held.
+fn drag_to(row: usize, col: usize, modifiers: Modifiers) -> PointerInput {
+    let mut input = pointer(
+        MouseAction::Motion {
+            held: Some(MouseButton::Left),
+        },
+        row,
+        col,
+    );
+    input.at.right_half = true;
+    input.modifiers = modifiers;
+    input
+}
+
+/// Releases the left button at `row`, `col`: what it copies.
+fn release_copies(app: &mut App, tab: TabId, row: usize, col: usize) -> Vec<ClipboardAsk> {
+    release_with(app, tab, row, col, Modifiers::default())
+}
+
+/// Releases the left button at `row`, `col` with `modifiers` held: what it copies.
+fn release_with(
+    app: &mut App,
+    tab: TabId,
+    row: usize,
+    col: usize,
+    modifiers: Modifiers,
+) -> Vec<ClipboardAsk> {
+    let mut input = pointer(MouseAction::Release(MouseButton::Left), row, col);
+    input.modifiers = modifiers;
+    let effects = app.update(Message::Pointer { tab, input });
+    clipboard_asks(&effects)
+}
+
+const SHIFT: Modifiers = Modifiers {
+    shift: true,
+    ctrl: false,
+    alt: false,
+};
+
+const ALT: Modifiers = Modifiers {
+    shift: false,
+    ctrl: false,
+    alt: true,
+};
+
+#[test]
+fn a_shift_click_extends_the_selection_either_way_from_where_it_started() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, _sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"hello world");
+
+    // A bare click: nothing copied, but the place the selection starts from.
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 2, false, Modifiers::default()),
+    });
+    assert!(release_copies(&mut app, tab, 0, 2).is_empty());
+    // Shift+click after it, then before it: from the place first clicked each time.
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 6, true, SHIFT),
+    });
+    assert_eq!(
+        release_copies(&mut app, tab, 0, 6),
+        [ClipboardAsk::Write("llo w".to_owned())]
+    );
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 0, false, SHIFT),
+    });
+    assert_eq!(
+        release_copies(&mut app, tab, 0, 0),
+        [ClipboardAsk::Write("he".to_owned())]
+    );
+}
+
+#[test]
+fn a_shift_click_starts_a_new_selection_when_the_program_tracks_the_mouse() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"hello world");
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 2, false, Modifiers::default()),
+    });
+    release_copies(&mut app, tab, 0, 2);
+    output(&mut app, tab, attempt, b"\x1b[?1000h");
+    let written = sink.written().len();
+
+    // Shift gets past the program, as in xterm.js, and selects anew.
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 6, false, SHIFT),
+    });
+    app.update(Message::Pointer {
+        tab,
+        input: drag_to(0, 8, SHIFT),
+    });
+    assert_eq!(
+        release_with(&mut app, tab, 0, 8, SHIFT),
+        [ClipboardAsk::Write("wor".to_owned())]
+    );
+    assert_eq!(sink.written().len(), written, "nothing reported");
+}
+
+#[test]
+fn an_alt_drag_selects_and_copies_a_rectangle() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, _sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"abcd\r\nefgh\r\nij");
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 1, false, ALT),
+    });
+    app.update(Message::Pointer {
+        tab,
+        input: drag_to(2, 2, ALT),
+    });
+    let lines = if cfg!(windows) { "\r\n" } else { "\n" };
+    assert_eq!(
+        release_copies(&mut app, tab, 2, 2),
+        [ClipboardAsk::Write(["bc", "fg", "j"].join(lines))]
+    );
+    // Without Alt, the same drag runs along the lines.
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 1, false, Modifiers::default()),
+    });
+    app.update(Message::Pointer {
+        tab,
+        input: drag_to(1, 2, Modifiers::default()),
+    });
+    assert_eq!(
+        release_copies(&mut app, tab, 1, 2),
+        [ClipboardAsk::Write("bcd\nefg".to_owned())]
+    );
+}
+
 #[test]
 fn a_right_click_pastes_unless_the_program_tracks_the_mouse() {
     let dir = tempfile::tempdir().expect("temp dir");

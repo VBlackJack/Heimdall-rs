@@ -529,7 +529,13 @@ fn a_pin_and_its_wrong_tries_are_kept_across_runs() {
         0,
         "the master password's are apart"
     );
-    let text = std::fs::read_to_string(&path).expect("text");
+    // The salt and the hash are random text that can hold the digits by chance: only the
+    // rest of the file is looked at.
+    let saved = read.pin.as_ref().expect("pin");
+    let text = std::fs::read_to_string(&path)
+        .expect("text")
+        .replace(saved.salt(), "")
+        .replace(saved.hash(), "");
     assert!(!text.contains("2468"), "{text}");
 }
 
