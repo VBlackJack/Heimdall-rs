@@ -1520,13 +1520,7 @@ fn hextile_rre_and_tight_png_rectangles_are_drawn_whole_even_fed_byte_by_byte() 
         0, 0, 0, 1, 0, 255, 0, 0, 255, 255, 255, 0, 0, 1, 0, 0, 0, 1, 0, 1,
     ]);
     // TightPNG, 1 by 1 at 0,2: a grey PNG.
-    let mut image = Vec::new();
-    let mut encoder = png::Encoder::new(&mut image, 1, 1);
-    encoder.set_color(png::ColorType::Grayscale);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().expect("header");
-    writer.write_image_data(&[77]).expect("data");
-    writer.finish().expect("finished");
+    let image = GREY_77_PNG;
     bytes.extend(rect_header(0, 2, 1, 1, -260));
     bytes.push(0xa0);
     bytes.push(u8::try_from(image.len()).expect("a short image"));
@@ -1556,6 +1550,16 @@ fn hextile_rre_and_tight_png_rectangles_are_drawn_whole_even_fed_byte_by_byte() 
     assert_eq!(pixel(screen, 0, 2), [77, 77, 77, 255]);
     assert_eq!(rfb.take_output(), full_request(true, 4, 3));
 }
+
+/// A 1 by 1 PNG of grey 77, 8 bits, unfiltered: written once with Python's zlib and
+/// `zlib.crc32`, IHDR, IDAT and IEND, as a server's encoder would.
+const GREY_77_PNG: [u8; 67] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00, 0x00, 0x3a, 0x7e, 0x9b,
+    0x55, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf0, 0x05, 0x00, 0x00,
+    0x4f, 0x00, 0x4e, 0x69, 0x8b, 0x01, 0x6c, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+    0x42, 0x60, 0x82,
+];
 
 /// A malformed rectangle: what is wrong, its encoding, its size and its bytes.
 type Malformed = (&'static str, i32, (u16, u16), Vec<u8>);

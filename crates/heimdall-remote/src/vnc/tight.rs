@@ -23,7 +23,8 @@
 //!
 //! `TightPNG` (encoding -260) is read by a decoder of its own, as noVNC's `TightPNGDecoder`:
 //! the same fills and JPEG images, PNG images in place of basic compression, which it
-//! refuses. Plain Tight refuses PNG images.
+//! refuses. Plain Tight refuses PNG images. Those images are read by our own PNG decoder,
+//! `super::png`.
 //!
 //! A rectangle carries no length of its own: it is read whole before anything is decoded,
 //! so one cut between two reads leaves the streams as they were.
@@ -34,7 +35,8 @@ use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 
-use super::screen::{Rect, Screen};
+use super::png;
+use super::screen::{PIXEL_BYTES, Rect, Screen};
 
 /// Bytes of a Tight pixel.
 const TPIXEL: usize = 3;
@@ -93,19 +95,8 @@ const JPEG_SLACK: usize = 64 * 1024;
 
 /// PNG data allowed per pixel of its rectangle, plus room for its chunks: an RGBA image
 /// stored without compression, and more.
-const PNG_BYTES_PER_PIXEL: usize = 2 * PNG_RGBA;
+const PNG_BYTES_PER_PIXEL: usize = 2 * PIXEL_BYTES;
 const PNG_SLACK: usize = 64 * 1024;
-
-/// Memory the PNG decoder may take per pixel of its rectangle, beyond the image itself:
-/// rows of up to 16 bits a channel, and room for its tables.
-const PNG_DECODER_BYTES_PER_PIXEL: usize = 4 * PNG_RGBA;
-const PNG_DECODER_SLACK: usize = 1 << 20;
-
-/// Channels of a PNG pixel once read to 8 bits: grey, grey and alpha, RGB, RGBA.
-const PNG_GREY: usize = 1;
-const PNG_GREY_ALPHA: usize = 2;
-const PNG_RGB: usize = 3;
-const PNG_RGBA: usize = 4;
 
 /// The decoder of one connection.
 pub(crate) struct Tight {
@@ -489,49 +480,17 @@ fn jpeg(image: &[u8], rect: Rect, screen: &mut Screen) -> Result<(), String> {
 }
 
 /// Draws a PNG image the size of `rect`, its alpha laid over what is there as noVNC's canvas
-/// does; one of another size is refused before its pixels are decoded, and the decoder's
-/// memory is bounded by the rectangle's size.
+/// does; one of another size is refused before its pixels are decoded, and its data never
+/// inflates past the rectangle's size.
 fn png(image: &[u8], rect: Rect, screen: &mut Screen) -> Result<(), String> {
-    let fault = |error: png::DecodingError| format!("a TightPNG image does not decode: {error}");
-    let limits = png::Limits {
-        bytes: rect.area() * PNG_DECODER_BYTES_PER_PIXEL + PNG_DECODER_SLACK,
-    };
-    let mut decoder = png::Decoder::new_with_limits(std::io::Cursor::new(image), limits);
-    decoder.set_transformations(png::Transformations::normalize_to_color8());
-    let header = decoder.read_header_info().map_err(fault)?;
-    let size = (header.width, header.height);
-    if size != (u32::from(rect.width), u32::from(rect.height)) {
-        return Err(format!(
-            "a TightPNG image of {}x{} for a {}x{} rectangle",
-            size.0, size.1, rect.width, rect.height
-        ));
-    }
-    let mut reader = decoder.read_info().map_err(fault)?;
-    let length = reader
-        .output_buffer_size()
-        .ok_or_else(|| "a TightPNG image too large to decode".to_owned())?;
-    let mut pixels = vec![0; length];
-    let info = reader.next_frame(&mut pixels).map_err(fault)?;
-    let channels = match (info.color_type, info.bit_depth) {
-        (png::ColorType::Grayscale, png::BitDepth::Eight) => PNG_GREY,
-        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => PNG_GREY_ALPHA,
-        (png::ColorType::Rgb, png::BitDepth::Eight) => PNG_RGB,
-        (png::ColorType::Rgba, png::BitDepth::Eight) => PNG_RGBA,
-        other => return Err(format!("a TightPNG image of {other:?}")),
-    };
-    let row = usize::from(rect.width) * channels;
-    if info.line_size < row || pixels.len() < info.line_size * usize::from(rect.height) {
-        return Err("a TightPNG image decodes short of its rectangle".to_owned());
-    }
-    for (dy, line) in (0..rect.height).zip(pixels.chunks_exact(info.line_size)) {
-        for (dx, pixel) in (0..rect.width).zip(line[..row].chunks_exact(channels)) {
-            let rgba = match channels {
-                PNG_GREY => [pixel[0], pixel[0], pixel[0], u8::MAX],
-                PNG_GREY_ALPHA => [pixel[0], pixel[0], pixel[0], pixel[1]],
-                PNG_RGB => [pixel[0], pixel[1], pixel[2], u8::MAX],
-                _ => [pixel[0], pixel[1], pixel[2], pixel[3]],
-            };
-            screen.blend(rect.x + dx, rect.y + dy, rgba);
+    let pixels = png::decode(image, rect.width, rect.height)
+        .map_err(|error| format!("a TightPNG image does not decode: {error}"))?;
+    let mut pixels = pixels.as_chunks::<PIXEL_BYTES>().0.iter();
+    for y in rect.y..rect.y + rect.height {
+        for x in rect.x..rect.x + rect.width {
+            if let Some(rgba) = pixels.next() {
+                screen.blend(x, y, *rgba);
+            }
         }
     }
     Ok(())
@@ -844,15 +803,8 @@ mod tests {
 
     /// A `width` by `height` PNG of `colour` type from `data`, as a server's encoder writes
     /// it.
-    fn png_image(width: u32, height: u32, colour: png::ColorType, data: &[u8]) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut encoder = png::Encoder::new(&mut out, width, height);
-        encoder.set_color(colour);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().expect("header");
-        writer.write_image_data(data).expect("data");
-        writer.finish().expect("finished");
-        out
+    fn png_image(width: u32, height: u32, colour: u8, data: &[u8]) -> Vec<u8> {
+        png::encoder::Image::new(width, height, colour, data).encode()
     }
 
     /// A `TightPNG` rectangle of `image`.
@@ -865,12 +817,7 @@ mod tests {
 
     #[test]
     fn tight_png_draws_its_images_even_cut_and_refuses_basic_compression() {
-        let image = png_image(
-            2,
-            2,
-            png::ColorType::Rgb,
-            &[255, 0, 0, 0, 255, 0, 0, 0, 255, 1, 2, 3],
-        );
+        let image = png_image(2, 2, png::RGB, &[255, 0, 0, 0, 255, 0, 0, 0, 255, 1, 2, 3]);
         let bytes = png_rect(&image);
         let mut client = Tight::new_png();
         let mut screen = Screen::new(2, 2);
@@ -903,14 +850,14 @@ mod tests {
         let image = png_image(
             3,
             1,
-            png::ColorType::Rgba,
+            png::RGBA,
             &[9, 9, 9, 0, 255, 0, 0, 255, 0, 0, 255, 128],
         );
         client
             .decode(&png_rect(&image), rect(3, 1), &mut screen)
             .expect("decoded");
         assert_eq!(colours(&screen), [[100, 100, 100], RED, [50, 50, 178]]);
-        let grey = png_image(3, 1, png::ColorType::Grayscale, &[0, 128, 255]);
+        let grey = png_image(3, 1, png::GREY, &[0, 128, 255]);
         client
             .decode(&png_rect(&grey), rect(3, 1), &mut screen)
             .expect("decoded");
@@ -923,7 +870,7 @@ mod tests {
             let mut screen = Screen::new(width, height);
             Tight::new_png().decode(bytes, rect(width, height), &mut screen)
         };
-        let image = png_image(2, 1, png::ColorType::Rgb, &[1, 2, 3, 4, 5, 6]);
+        let image = png_image(2, 1, png::RGB, &[1, 2, 3, 4, 5, 6]);
         // Another size than its rectangle, either way.
         assert!(decode(&png_rect(&image), 1, 1).is_err());
         assert!(decode(&png_rect(&image), 4, 1).is_err());

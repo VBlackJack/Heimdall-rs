@@ -26,6 +26,7 @@ mod auth;
 mod clipboard;
 mod cursor;
 mod hextile;
+mod png;
 mod protocol;
 mod rre;
 mod screen;

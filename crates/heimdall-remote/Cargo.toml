@@ -15,7 +15,6 @@ publish.workspace = true
 [dependencies]
 des.workspace = true
 flate2.workspace = true
-png.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true

@@ -2522,7 +2522,6 @@ dependencies = [
  "des",
  "flate2",
  "heimdall-tls",
- "png",
  "rcgen",
  "thiserror 2.0.21",
  "tokio",
