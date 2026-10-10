@@ -29,7 +29,7 @@
 //!   Output (2.2.11.3) PDUs;
 //! - the server does not answer it: its own Synchronize PDU (2.2.1.19) answers the Confirm
 //!   Active PDU (3.3.5.3.13.2), not this one;
-//! - xrdp takes it as a no-op at any time (`xrdp_rdp_process_data_sync`), and the FreeRDP
+//! - xrdp takes it as a no-op at any time (`xrdp_rdp_process_data_sync`), and the `FreeRDP`
 //!   server reads it in any state of an active connection;
 //! - the Persistent Key List PDU (2.2.1.17) and the Font List PDU (2.2.1.18) belong to the
 //!   connection finalization only.

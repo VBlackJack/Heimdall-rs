@@ -826,7 +826,6 @@ impl Running {
         }
         .build();
         let mut keys = Database::new();
-        // The connection sequence ended with the activation.
         self.keep_alive.activated(Instant::now());
         loop {
             let outputs = tokio::select! {
@@ -863,8 +862,7 @@ impl Running {
                     Vec::new()
                 }
                 () = sleep_until_settled(self.keep_alive.due()), if self.keep_alive.due().is_some() => {
-                    let frame = keep_alive::frame(&stage, user_channel_id)?;
-                    self.send(&frame).await?;
+                    self.send(&keep_alive::frame(&stage, user_channel_id)?).await?;
                     Vec::new()
                 }
                 Some(operations) = self.input.recv() => {
@@ -908,13 +906,7 @@ impl Running {
                         });
                     }
                     ActiveStageOutput::DeactivateAll => {
-                        self.keep_alive.deactivated();
-                        self.reactivate(&activation, &mut stage).await?;
-                        self.keep_alive.activated(Instant::now());
-                        if self.wanted.is_none() && self.asked.is_some() {
-                            self.wanted = self.asked;
-                            self.settle = Some(Instant::now() + RESIZE_SETTLE);
-                        }
+                        self.reactivated(&activation, &mut stage).await?;
                     }
                     _ => {}
                 }
@@ -1206,6 +1198,23 @@ impl Running {
             if let ActiveStageOutput::ResponseFrame(frame) = output {
                 self.send(&frame).await?;
             }
+        }
+        Ok(())
+    }
+
+    /// Runs the Deactivation-Reactivation Sequence the server started, without keep-alives
+    /// meanwhile, then asks again for the size asked before it.
+    async fn reactivated(
+        &mut self,
+        activation: &ConnectionActivationFactory,
+        stage: &mut ActiveStage,
+    ) -> Result<(), String> {
+        self.keep_alive.deactivated();
+        self.reactivate(activation, stage).await?;
+        self.keep_alive.activated(Instant::now());
+        if self.wanted.is_none() && self.asked.is_some() {
+            self.wanted = self.asked;
+            self.settle = Some(Instant::now() + RESIZE_SETTLE);
         }
         Ok(())
     }
