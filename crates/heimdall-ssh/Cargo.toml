@@ -14,11 +14,11 @@ publish.workspace = true
 
 [dependencies]
 data-encoding.workspace = true
-getrandom.workspace = true
 heimdall-core.workspace = true
 log.workspace = true
 russh.workspace = true
-subtle.workspace = true
+# sealvault: the fake X11 cookie, drawn and compared in constant time.
+sealvault.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
