@@ -8289,8 +8289,12 @@ fn pick_sessions_file(main: Option<window::Id>) -> Task<Message> {
         };
         pick.then(|pick| {
             Task::future(pick).then(|picked| {
-                let Some(path) = picked.map(|file| file.path().to_owned()) else {
-                    return Task::none();
+                let path = match picked {
+                    Ok(Some(path)) => path,
+                    Ok(None) => return Task::none(),
+                    Err(unavailable) => {
+                        return Task::done(crate::file_dialog::failed(&unavailable));
+                    }
                 };
                 if crate::file_import_view::is_rdp(&path) {
                     Task::perform(crate::rdp_view::read_all(vec![path]), rdp_read)
@@ -8320,8 +8324,9 @@ fn pick_rdp(main: Option<window::Id>) -> Task<Message> {
         };
         pick.then(|pick| {
             Task::future(crate::rdp_view::read_picked(pick)).then(|read| match read {
-                Some(files) => Task::done(rdp_read(files)),
-                None => Task::none(),
+                Ok(Some(files)) => Task::done(rdp_read(files)),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
             })
         })
     })
@@ -8408,30 +8413,26 @@ fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, 
 /// The folder dialog of "Save copied files...", held by the window: the folder picked
 /// goes to the session of `tab`.
 fn pick_save_folder(tab: TabId, main: Option<window::Id>) -> Task<Message> {
-    type PickFolder =
-        std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>;
     let title = fl!("ui-desktop-save-files");
     main_window_task(main).then(move |id| {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                Box::pin(
-                    rfd::AsyncFileDialog::new()
-                        .set_title(title)
-                        .set_parent(&window)
-                        .pick_folder(),
-                ) as PickFolder
+                crate::file_dialog::FileDialog::new()
+                    .set_title(title)
+                    .set_parent(window)
+                    .pick_folder()
             }),
             None => Task::done(
-                Box::pin(rfd::AsyncFileDialog::new().set_title(title).pick_folder()) as PickFolder,
+                crate::file_dialog::FileDialog::new()
+                    .set_title(title)
+                    .pick_folder(),
             ),
         };
         pick.then(move |pick| {
-            Task::future(pick).map(move |picked| {
-                Message::App(AppMessage::SaveFolderPicked {
-                    tab,
-                    folder: picked.map(|folder| folder.path().to_owned()),
-                })
+            Task::future(pick).map(move |picked| match picked {
+                Ok(folder) => Message::App(AppMessage::SaveFolderPicked { tab, folder }),
+                Err(unavailable) => crate::file_dialog::failed(&unavailable),
             })
         })
     })
@@ -8606,27 +8607,24 @@ fn pick_uploads(tab: TabId, main: Option<window::Id>) -> Task<Message> {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                Box::pin(
-                    rfd::AsyncFileDialog::new()
-                        .set_title(title)
-                        .set_parent(&window)
-                        .pick_files(),
-                ) as crate::rdp_view::Pick
+                crate::file_dialog::FileDialog::new()
+                    .set_title(title)
+                    .set_parent(window)
+                    .pick_files()
             }),
             None => Task::done(
-                Box::pin(rfd::AsyncFileDialog::new().set_title(title).pick_files())
-                    as crate::rdp_view::Pick,
+                crate::file_dialog::FileDialog::new()
+                    .set_title(title)
+                    .pick_files(),
             ),
         };
         pick.then(move |pick| {
             Task::future(pick).then(move |picked| match picked {
-                Some(files) => Task::done(Message::App(AppMessage::Files(
-                    FilesMessage::UploadPicked {
-                        tab,
-                        paths: files.iter().map(|file| file.path().to_owned()).collect(),
-                    },
+                Ok(Some(paths)) => Task::done(Message::App(AppMessage::Files(
+                    FilesMessage::UploadPicked { tab, paths },
                 ))),
-                None => Task::none(),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
             })
         })
     })
@@ -9297,7 +9295,7 @@ fn key_field(draft: &ProfileDraft) -> Element<'_, Message> {
 /// path picked fills the field; nothing when none is picked.
 fn pick_key_file(main: Option<window::Id>) -> Task<Message> {
     let dialog = || {
-        let mut dialog = rfd::AsyncFileDialog::new()
+        let mut dialog = crate::file_dialog::FileDialog::new()
             .set_title(fl!("ui-profile-browse-key-title"))
             .add_filter(fl!("ui-profile-browse-key-all"), &["*"])
             .add_filter(fl!("ui-profile-browse-key-ppk"), &["ppk"])
@@ -9312,20 +9310,17 @@ fn pick_key_file(main: Option<window::Id>) -> Task<Message> {
     };
     main_window_task(main).then(move |id| {
         let pick = match id {
-            Some(id) => window::run(id, move |window| {
-                let pick: crate::sessions_view::Pick =
-                    Box::pin(dialog().set_parent(&window).pick_file());
-                pick
-            }),
-            None => Task::done(Box::pin(dialog().pick_file()) as crate::sessions_view::Pick),
+            Some(id) => window::run(id, move |window| dialog().set_parent(window).pick_file()),
+            None => Task::done(dialog().pick_file()),
         };
         pick.then(|pick| {
             Task::future(pick).then(|picked| match picked {
-                Some(file) => Task::done(Message::App(AppMessage::ProfileField {
+                Ok(Some(path)) => Task::done(Message::App(AppMessage::ProfileField {
                     field: ProfileField::KeyPath,
-                    value: file.path().display().to_string(),
+                    value: path.display().to_string(),
                 })),
-                None => Task::none(),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
             })
         })
     })

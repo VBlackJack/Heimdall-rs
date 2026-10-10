@@ -18,9 +18,7 @@
 //! open dialog, from `~/.ssh`, then its preview, a row per server to tick, what was read
 //! differently or left out below, then what was imported.
 
-use std::future::Future;
-use std::path::Path;
-use std::pin::Pin;
+use std::path::{Path, PathBuf};
 
 use heimdall_app::{
     Dialog, Message as AppMessage, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
@@ -31,6 +29,7 @@ use heimdall_core::paths;
 use iced::widget::{Column, checkbox, column, container, row, text};
 use iced::{Element, Length, Theme};
 
+use crate::file_dialog::{self, FileDialog};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -49,13 +48,13 @@ const DIAGNOSTICS_HEIGHT: f32 = 130.0;
 const COLUMNS: [f32; 8] = [50.0, 130.0, 160.0, 55.0, 100.0, 130.0, 250.0, 85.0];
 
 /// The file the user picks in the open dialog, once it closes; `None` when cancelled.
-pub type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
+pub type Pick = file_dialog::Pick<PathBuf>;
 
 /// Opens the system's open dialog titled `title`, in `~/.ssh` offering `config`, over
 /// `parent` when there is one, as the C# `OpenFileDialog`.
 #[must_use]
 pub fn pick(title: String, parent: Option<&dyn iced::window::Window>) -> Pick {
-    let mut dialog = rfd::AsyncFileDialog::new()
+    let mut dialog = FileDialog::new()
         .set_title(title)
         .set_file_name(CONFIG_FILE_NAME);
     if let Some(folder) = paths::home_dir()
@@ -65,15 +64,19 @@ pub fn pick(title: String, parent: Option<&dyn iced::window::Window>) -> Pick {
         dialog = dialog.set_directory(folder);
     }
     if let Some(parent) = parent {
-        dialog = dialog.set_parent(&parent);
+        dialog = dialog.set_parent(parent);
     }
-    Box::pin(dialog.pick_file())
+    dialog.pick_file()
 }
 
-/// The picked file's text, or why it could not be read; `None` when none was picked.
+/// The picked file's text, or why it could not be read, or why no dialog could be shown;
+/// `None` when none was picked.
 pub async fn read(pick: Pick) -> Option<Result<String, String>> {
-    let file = pick.await?;
-    Some(read_file(file.path()).await)
+    match pick.await {
+        Ok(Some(path)) => Some(read_file(&path).await),
+        Ok(None) => None,
+        Err(unavailable) => Some(Err(unavailable.message())),
+    }
 }
 
 /// The text of `path`, or its path and why it could not be read.

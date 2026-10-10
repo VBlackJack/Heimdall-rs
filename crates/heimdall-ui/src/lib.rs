@@ -36,6 +36,7 @@ pub mod drop_batch;
 pub mod editor_history;
 mod editor_syntax;
 pub mod export_file;
+pub mod file_dialog;
 pub mod file_import_view;
 pub mod files_drag;
 mod files_view;

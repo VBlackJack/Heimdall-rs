@@ -18,15 +18,13 @@
 //! the system's dialogs held by the window, and the question showing what an import
 //! changes, as the C# preview lists it.
 
-use std::future::Future;
-use std::pin::Pin;
-
 use heimdall_app::{Message as AppMessage, SettingsTransferMessage};
 use heimdall_core::settings::{SETTINGS_EXPORT_FILE_NAME, SettingValue, SettingsImport};
 use iced::widget::{Column, column, text};
 use iced::{Element, Task, window};
 
 use crate::dialog_parts::{self, Severity};
+use crate::file_dialog::{FileDialog, Pick};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -41,16 +39,13 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Tallest the list of changes grows before it scrolls, in logical pixels.
 const CHANGES_HEIGHT: f32 = 280.0;
 
-/// The file picked in a dialog, once it closes; `None` when cancelled.
-type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
-
 /// A dialog of settings files titled `title`, over `parent` when there is one.
-fn dialog(title: String, parent: Option<&dyn window::Window>) -> rfd::AsyncFileDialog {
-    let mut dialog = rfd::AsyncFileDialog::new()
+fn dialog(title: String, parent: Option<&dyn window::Window>) -> FileDialog {
+    let mut dialog = FileDialog::new()
         .set_title(title)
         .add_filter(fl!("ui-settings-file-filter"), &[EXTENSION]);
     if let Some(parent) = parent {
-        dialog = dialog.set_parent(&parent);
+        dialog = dialog.set_parent(parent);
     }
     dialog
 }
@@ -58,8 +53,8 @@ fn dialog(title: String, parent: Option<&dyn window::Window>) -> rfd::AsyncFileD
 /// `pick`, opened over the main window, `main`, when there is one.
 fn over_window(
     main: Option<window::Id>,
-    pick: fn(Option<&dyn window::Window>) -> Pick,
-) -> Task<Pick> {
+    pick: fn(Option<&dyn window::Window>) -> Pick<std::path::PathBuf>,
+) -> Task<Pick<std::path::PathBuf>> {
     crate::shell::main_window_task(main).then(move |id| match id {
         Some(id) => window::run(id, move |window| pick(Some(window))),
         None => Task::done(pick(None)),
@@ -70,17 +65,14 @@ fn over_window(
 /// `document` there; nothing when no file is picked.
 pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
     over_window(main, |parent| {
-        Box::pin(
-            dialog(fl!("ui-dialog-settings-export-title"), parent)
-                .set_file_name(SETTINGS_EXPORT_FILE_NAME)
-                .save_file(),
-        )
+        dialog(fl!("ui-dialog-settings-export-title"), parent)
+            .set_file_name(SETTINGS_EXPORT_FILE_NAME)
+            .save_file()
     })
     .then(move |pick| {
         let document = document.clone();
         Task::future(pick).then(move |picked| match picked {
-            Some(file) => {
-                let path = file.path().to_owned();
+            Ok(Some(path)) => {
                 let document = document.clone();
                 Task::perform(
                     async move { tokio::fs::write(path, document).await },
@@ -93,7 +85,10 @@ pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
                     },
                 )
             }
-            None => Task::none(),
+            Ok(None) => Task::none(),
+            Err(unavailable) => Task::done(Message::App(AppMessage::SettingsTransfer(
+                SettingsTransferMessage::Written(Err(unavailable.message())),
+            ))),
         })
     })
 }
@@ -102,16 +97,19 @@ pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
 /// nothing when none is picked.
 pub fn pick(main: Option<window::Id>) -> Task<Message> {
     over_window(main, |parent| {
-        Box::pin(dialog(fl!("ui-dialog-settings-import-title"), parent).pick_file())
+        dialog(fl!("ui-dialog-settings-import-title"), parent).pick_file()
     })
     .then(|pick| {
         Task::future(pick).then(|picked| match picked {
-            Some(file) => Task::perform(read(file.path().to_owned()), |read| {
+            Ok(Some(path)) => Task::perform(read(path), |read| {
                 Message::App(AppMessage::SettingsTransfer(SettingsTransferMessage::Read(
                     read,
                 )))
             }),
-            None => Task::none(),
+            Ok(None) => Task::none(),
+            Err(unavailable) => Task::done(Message::App(AppMessage::SettingsTransfer(
+                SettingsTransferMessage::Read(Err(unavailable.message())),
+            ))),
         })
     })
 }

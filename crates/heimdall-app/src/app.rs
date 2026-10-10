@@ -600,6 +600,9 @@ pub enum Message {
         /// Text, if the clipboard held any.
         text: Option<String>,
     },
+    /// No file dialog could be shown, or its answer could not be used: what the user is
+    /// told, in their language.
+    FileDialogFailed(String),
     /// The session shown was copied to the clipboard as an image, or could not be.
     ScreenshotTaken {
         /// Whether it is on the clipboard.
@@ -1037,6 +1040,7 @@ impl fmt::Debug for Message {
             Self::Copy(tab) => write!(f, "Copy({})", tab.value()),
             Self::PasteRequest(tab) => write!(f, "PasteRequest({})", tab.value()),
             Self::ClipboardText { tab, .. } => write!(f, "ClipboardText({}, ..)", tab.value()),
+            Self::FileDialogFailed(_) => f.write_str("FileDialogFailed"),
             Self::ScreenshotTaken { copied } => write!(f, "ScreenshotTaken({copied})"),
             Self::ClipboardFiles { tab, paths } => {
                 write!(f, "ClipboardFiles({}, {})", tab.value(), paths.len())
@@ -3603,6 +3607,10 @@ impl App {
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
+            Message::FileDialogFailed(said) => {
+                self.tell(Notice::FileDialogFailed(said));
+                Vec::new()
+            }
             Message::ScreenshotTaken { copied } => {
                 self.tell(if copied {
                     Notice::ScreenshotCopied

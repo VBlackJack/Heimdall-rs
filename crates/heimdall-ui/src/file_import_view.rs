@@ -65,7 +65,7 @@ pub fn pick(parent: Option<&dyn iced::window::Window>) -> Pick {
         .chain(&[RDP_EXTENSION])
         .copied()
         .collect();
-    let mut dialog = rfd::AsyncFileDialog::new()
+    let mut dialog = crate::file_dialog::FileDialog::new()
         .set_title(fl!("ui-import-file-title"))
         .add_filter(fl!("ui-import-file-filter-all"), &all)
         .add_filter(fl!("ui-import-file-filter-json"), &JSON_EXTENSIONS)
@@ -75,9 +75,9 @@ pub fn pick(parent: Option<&dyn iced::window::Window>) -> Pick {
         .add_filter(fl!("ui-import-file-filter-rdp"), &[RDP_EXTENSION])
         .add_filter(fl!("ui-import-file-filter-any"), &ANY_EXTENSION);
     if let Some(parent) = parent {
-        dialog = dialog.set_parent(&parent);
+        dialog = dialog.set_parent(parent);
     }
-    Box::pin(dialog.pick_file())
+    dialog.pick_file()
 }
 
 /// Whether `path` is a Remote Desktop file, which the `.rdp` import reads.

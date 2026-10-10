@@ -8,7 +8,7 @@ it, and what happens when it is missing. It is written for deployment on hardene
 has to be known in advance.
 
 The binary is pure Rust except for the libraries below. It brings no GTK, no libdbus
-link, no OpenSSL, no fontconfig or FreeType library: D-Bus is spoken by `zbus`, TLS by
+(neither linked nor opened), no OpenSSL, no fontconfig or FreeType library: D-Bus is spoken by `zbus`, TLS by
 `rustls` on `ring`, fonts are parsed by `fontdb` and `ttf-parser`.
 
 Inventory taken from `Cargo.lock` at commit `c6c8463` (`master`, 2026-10-10), target
@@ -22,7 +22,7 @@ Inventory taken from `Cargo.lock` at commit `c6c8463` (`master`, 2026-10-10), ta
 | Linked: in `DT_NEEDED`, the binary does not start without them | `libc.so.6`, `libm.so.6`, `libgcc_s.so.1`, `ld-linux-x86-64.so.2` (glibc and the GCC runtime), `libasound.so.2` (ALSA) |
 | `dlopen`, required in a Wayland session | `libwayland-client.so.0`, `libxkbcommon.so.0` |
 | `dlopen`, required in an X11 session | `libX11.so.6`, `libX11-xcb.so.1`, `libXcursor.so.1`, `libXi.so.6`, `libxcb.so.1`, `libxkbcommon.so.0`, `libxkbcommon-x11.so.0` |
-| `dlopen`, optional with a fallback | `libvulkan.so.1`, `libEGL.so.1`, `libwayland-egl.so.1`, `libdbus-1.so.3` |
+| `dlopen`, optional with a fallback | `libvulkan.so.1`, `libEGL.so.1`, `libwayland-egl.so.1` |
 | `dlopen` that never loads from disk | `librenderdoc.so` (attached only when already loaded) |
 
 The three ways a library is reached:
@@ -130,18 +130,20 @@ Two environment variables choose the path on a host:
 
 | Function | Crate | Library | How | What happens if absent |
 |---|---|---|---|---|
-| Save and open dialogs | `rfd` 0.17.2, feature `xdg-portal` (no GTK) | `libdbus-1.so.3` | dlopen, optional | `rfd` runs the `zenity` program instead; without it, the dialog does not appear |
+| Open, save and folder dialogs | Heimdall's own `FileChooser` client (`heimdall-ui`, `file_dialog::portal`) over `zbus` 5.19.0 | none | Pure Rust D-Bus to `xdg-desktop-portal` | Without a session bus or a portal, the dialog does not open and the status bar says why; no program is started in its place |
 | Saved passwords (Secret Service) | `zbus-secret-service-keyring-store` 1.0.1, `secret-service` 5.2.0 (feature `crypto-rust`), `zbus` 5.19.0 | none | Pure Rust D-Bus and cryptography | - |
 | Light or dark theme | `mundy` 0.2.3, through iced's `linux-theme-detection` | none | Pure Rust D-Bus (`zbus`) | - |
 | System fonts | `fontdb` 0.23.0 with `fontconfig-parser` | none | Reads the fontconfig files, not the library | - |
 | Language | `sys-locale` 0.3.2 | none | Reads the environment | - |
 | Certificate store | `rustls-native-certs` 0.8.4, `openssl-probe` 0.2.1 | none | Reads the certificate files, no OpenSSL | - |
 
-`rfd` is the only crate here that reaches `libdbus`: its portal backend talks to
-`xdg-desktop-portal` through `libdbus-1.so.3`, opened with `dlopen` (`ffi.rs` line 199),
-not through `zbus`. A host without `libdbus-1.so.3` (unusual: systemd depends on it) gets
-the `zenity` fallback. The file dialog itself is drawn by the desktop's portal
-(`xdg-desktop-portal-gtk`, `-gnome` or `-kde`), in another process.
+No crate here reaches `libdbus`. The file dialogs call the `FileChooser` interface of
+`xdg-desktop-portal` over the session bus through `zbus`, in Rust, as the theme detection
+and the keyring do. `rfd`, which opens `libdbus-1.so.3` with `dlopen` for its portal
+backend and falls back on starting `zenity`, is built on Windows and macOS only: the Linux
+binary does not contain it (`cargo tree -i rfd --target x86_64-unknown-linux-gnu` finds
+nothing). The dialog itself is drawn by the desktop's portal (`xdg-desktop-portal-gtk`,
+`-gnome` or `-kde`), in another process.
 
 ## 6. Audio
 
@@ -166,7 +168,6 @@ Not libraries, but processes a dependency may start on Linux:
 
 | Program | Started by | When |
 |---|---|---|
-| `zenity` | `rfd` 0.17.2 | File dialog, only when `libdbus-1.so.3` cannot be opened or the portal fails |
 | `gsettings`, `dbus-send`, `fc-match` | `sctk-adwaita` 0.10.1 | Wayland session with client-side decorations: title font and theme lookup; absent programs fall back to defaults |
 
 ## Search paths baked at build time
@@ -233,7 +234,7 @@ macOS is out of scope.
 
 The tables come from the sources of the locked crate versions, not from their
 documentation. After a dependency bump touching `winit`, `wgpu`, `softbuffer`, `cpal`,
-`rfd`, `x11rb`, `wayland-*` or `xkbcommon-dl`:
+`zbus`, `x11rb`, `wayland-*` or `xkbcommon-dl`:
 
 1. Search the new sources for `dlopen`, `libloading`, `dlib`, `#[link(` and
    `cargo:rustc-link-lib`.
@@ -259,8 +260,6 @@ Line numbers in the crate sources of the cargo registry, at the locked versions:
 | `khronos-egl` 6.0.0 | `src/lib.rs:2493` | `libEGL.so.1`, dlopen |
 | `wgpu-hal` 27.0.4 | `src/gles/egl.rs:156,185,196` | X11 and Wayland libraries opened for EGL |
 | `wgpu-hal` 27.0.4 | `src/auxil/renderdoc.rs:45-55` | `librenderdoc.so` with `RTLD_NOLOAD` |
-| `rfd` 0.17.2 | `src/backend/xdg_desktop_portal/portal/ffi.rs:199` | `libdbus-1.so.3`, dlopen |
-| `rfd` 0.17.2 | `src/backend/linux/zenity.rs:41` | `zenity` fallback |
 | `alsa-sys` 0.4.0 | `build.rs:7` | `pkg-config` probe of `alsa`, dynamic link |
 | `iced_renderer` 0.14.0 | `src/fallback.rs:278` | `ICED_BACKEND` |
 | `iced_tiny_skia` 0.14.1 | `Cargo.toml`, features `x11`, `wayland` | `softbuffer/x11-dlopen`, `softbuffer/wayland-dlopen` |

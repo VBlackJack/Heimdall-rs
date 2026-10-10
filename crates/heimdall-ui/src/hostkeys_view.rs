@@ -69,7 +69,7 @@ pub fn app(message: HostKeysMessage) -> Message {
 /// there is one, as the C# `OpenFileDialog`.
 #[must_use]
 pub fn pick(parent: Option<&dyn iced::window::Window>) -> Pick {
-    let mut dialog = rfd::AsyncFileDialog::new()
+    let mut dialog = crate::file_dialog::FileDialog::new()
         .set_title(fl!("ui-hostkeys-pick-title"))
         .set_file_name(KNOWN_HOSTS_FILE_NAME);
     if let Some(folder) = paths::home_dir()
@@ -79,15 +79,19 @@ pub fn pick(parent: Option<&dyn iced::window::Window>) -> Pick {
         dialog = dialog.set_directory(folder);
     }
     if let Some(parent) = parent {
-        dialog = dialog.set_parent(&parent);
+        dialog = dialog.set_parent(parent);
     }
-    Box::pin(dialog.pick_file())
+    dialog.pick_file()
 }
 
-/// The picked file's text, or why it could not be read; `None` when none was picked.
+/// The picked file's text, or why it could not be read, or why no dialog could be shown;
+/// `None` when none was picked.
 pub async fn read(pick: Pick) -> Option<Result<String, String>> {
-    let file = pick.await?;
-    Some(read_file(file.path()).await)
+    match pick.await {
+        Ok(Some(path)) => Some(read_file(&path).await),
+        Ok(None) => None,
+        Err(unavailable) => Some(Err(unavailable.message())),
+    }
 }
 
 /// The text of `path`, or why it could not be read: a file larger than the C# limit is
