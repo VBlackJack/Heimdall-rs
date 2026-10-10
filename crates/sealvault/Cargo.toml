@@ -25,6 +25,8 @@ hmac.workspace = true
 md-5.workspace = true
 # pkcs8, rsa, ssh-key: keys::KeyPair, its PKCS#8 and PEM, PBES2, and its OpenSSH form.
 pkcs8.workspace = true
+# rcgen: cert's certificates, signed through ring; zeroize: its signing keys wiped.
+rcgen = { workspace = true, features = ["zeroize"] }
 rsa.workspace = true
 sha1.workspace = true
 sha2.workspace = true

@@ -28,7 +28,7 @@ use std::fmt;
 
 use getrandom::rand_core::{TryCryptoRng, TryRng};
 use pkcs8::der::Decode as _;
-use pkcs8::der::EncodePem as _;
+use pkcs8::der::Encode as _;
 use pkcs8::der::pem::LineEnding;
 use pkcs8::pkcs5::pbes2;
 use pkcs8::{EncryptedPrivateKeyInfoRef, PrivateKeyInfoRef};
@@ -183,8 +183,10 @@ pub fn pem(label: &str, der: &[u8]) -> Result<String, Error> {
     pkcs8::der::pem::encode_string(label, LineEnding::LF, der).map_err(encoding)
 }
 
-/// The PKCS#8 `der` encrypted with `passphrase` and written in PEM, as .NET's
-/// `ExportEncryptedPkcs8PrivateKeyPem` with `PbeParameters(Aes256Cbc, SHA256, iterations)`:
+/// The label of an encrypted PKCS#8 key in PEM (RFC 7468).
+const ENCRYPTED_PRIVATE_KEY_LABEL: &str = "ENCRYPTED PRIVATE KEY";
+
+/// The PKCS#8 `der` encrypted with `passphrase`, as an `EncryptedPrivateKeyInfo` in DER:
 /// PBES2, PBKDF2-HMAC-SHA256 over `iterations` rounds and a random salt, AES-256-CBC under
 /// a random vector.
 ///
@@ -193,14 +195,24 @@ pub fn pem(label: &str, der: &[u8]) -> Result<String, Error> {
 /// [`Error::KdfParameters`] for fewer than [`PBKDF2_MIN_ITERATIONS`] rounds;
 /// [`Error::Randomness`] without a salt or vector; [`Error::Encoding`] when `der` is not
 /// PKCS#8 or the result cannot be written.
-pub fn encrypted_pkcs8_pem(
+pub fn encrypted_pkcs8_der(
     der: &[u8],
     passphrase: &[u8],
     iterations: u32,
-) -> Result<Zeroizing<String>, Error> {
+) -> Result<Vec<u8>, Error> {
     if iterations < PBKDF2_MIN_ITERATIONS {
         return Err(Error::KdfParameters);
     }
+    pbes2_encrypt(der, passphrase, iterations)
+}
+
+/// [`encrypted_pkcs8_der`] without the floor on `iterations`, for a format whose count is
+/// fixed by its interoperability: the PFX's key bag, at OpenSSL's 2048.
+pub(crate) fn pbes2_encrypt(
+    der: &[u8],
+    passphrase: &[u8],
+    iterations: u32,
+) -> Result<Vec<u8>, Error> {
     // The key is checked to be PKCS#8 before it is encrypted.
     PrivateKeyInfoRef::from_der(der).map_err(encoding)?;
     let mut salt = Zeroizing::new([0; PBES2_SALT_LEN]);
@@ -214,9 +226,23 @@ pub fn encrypted_pkcs8_pem(
         encryption_algorithm: parameters.into(),
         encrypted_data: data,
     }
-    .to_pem(LineEnding::LF)
-    .map(Zeroizing::new)
+    .to_der()
     .map_err(encoding)
+}
+
+/// [`encrypted_pkcs8_der`] written in PEM, as .NET's `ExportEncryptedPkcs8PrivateKeyPem`
+/// with `PbeParameters(Aes256Cbc, SHA256, iterations)`.
+///
+/// # Errors
+///
+/// As [`encrypted_pkcs8_der`].
+pub fn encrypted_pkcs8_pem(
+    der: &[u8],
+    passphrase: &[u8],
+    iterations: u32,
+) -> Result<Zeroizing<String>, Error> {
+    let encrypted = encrypted_pkcs8_der(der, passphrase, iterations)?;
+    pem(ENCRYPTED_PRIVATE_KEY_LABEL, &encrypted).map(Zeroizing::new)
 }
 
 /// A library's failure, said.
