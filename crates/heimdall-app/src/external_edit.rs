@@ -357,11 +357,8 @@ pub struct EditSession {
 
 /// SHA-256 of `data`.
 #[must_use]
-pub fn hash(data: &[u8]) -> [u8; 32] {
-    let digest = ring::digest::digest(&ring::digest::SHA256, data);
-    let mut out = [0; 32];
-    out.copy_from_slice(digest.as_ref());
-    out
+pub fn hash(data: &[u8]) -> [u8; sealvault::hash::SHA256_LEN] {
+    sealvault::hash::sha256(data)
 }
 
 /// Copies the server's `remote` file into a new folder of the user's own under `base`,

@@ -22,13 +22,11 @@ heimdall-sftp.workspace = true
 heimdall-ssh.workspace = true
 heimdall-term.workspace = true
 heimdall-tls.workspace = true
+# sealvault: the Windows Hello envelope (AES-256-GCM, HKDF-SHA256), the hash an edited file
+# is compared by, and the RDCMan import's fingerprint.
 sealvault.workspace = true
-# The Windows Hello envelope's wrapping of the vault's data key, as sealvault wraps it.
-aes-gcm.workspace = true
 shlex.workspace = true
 log.workspace = true
-# The hash an edited file is compared by.
-ring.workspace = true
 regex.workspace = true
 chrono.workspace = true
 # process: the external credential provider's commands.

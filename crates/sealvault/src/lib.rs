@@ -23,7 +23,7 @@
 //! - [`hash`]: SHA-2, SHA3-256, and MD5 and SHA-1 for interoperability only.
 //! - [`mac`]: HMAC, computed or verified in constant time.
 //! - [`aead`]: AES-256-GCM, each sealing spending a fresh random nonce.
-//! - [`kdf`]: keys derived from passwords, by Argon2id.
+//! - [`kdf`]: derived keys, by Argon2id from passwords and HKDF-SHA256 from random secrets.
 //! - [`random`]: the operating system's generator.
 //! - [`compare`]: equality of secrets in constant time.
 //! - [`secret`]: the owned secrets the others hand out, wiped when dropped.

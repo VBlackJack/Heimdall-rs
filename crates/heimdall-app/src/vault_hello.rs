@@ -45,11 +45,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use aes_gcm::Aes256Gcm;
-use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload};
-use ring::rand::{SecureRandom, SystemRandom};
-use ring::{digest, hkdf};
-use sealvault::{DATA_KEY_LEN, Vault};
+use sealvault::aead::{self, FreshNonce};
+use sealvault::secret::SecretKey;
+use sealvault::{DATA_KEY_LEN, Vault, hash, kdf, random};
 use zeroize::Zeroizing;
 
 use crate::OpenedVault;
@@ -74,13 +72,13 @@ const CREDENTIAL_NAME_PREFIX: &str = "Heimdall.VaultHello.";
 const VAULT_ID_LEN: usize = 16;
 
 /// Bytes of a SHA-256 hash.
-const HASH_LEN: usize = 32;
+const HASH_LEN: usize = hash::SHA256_LEN;
 
 /// Bytes of an AES-GCM nonce.
-const NONCE_LEN: usize = 12;
+const NONCE_LEN: usize = aead::NONCE_LEN;
 
 /// Bytes of an AES-GCM tag.
-const TAG_LEN: usize = 16;
+const TAG_LEN: usize = aead::TAG_LEN;
 
 /// Bytes of the wrapped data key and its tag.
 const WRAPPED_LEN: usize = DATA_KEY_LEN + TAG_LEN;
@@ -332,8 +330,7 @@ impl Reader<'_> {
 #[must_use]
 pub fn entry_name(vault_path: &Path) -> String {
     let path = vault_path.to_string_lossy();
-    let hash = digest::digest(&digest::SHA256, path.as_bytes());
-    format!("{ENTRY_PREFIX}{}", hex_lower(hash.as_ref()))
+    format!("{ENTRY_PREFIX}{}", hex_lower(&sha256(path.as_bytes())))
 }
 
 /// Whether the master password must be typed before Windows Hello unlocks again, as the C#
@@ -381,6 +378,7 @@ pub fn enrol(
     };
     let name = credential_name(&vault_id);
     let public_key = platform.create(&name)?;
+    let nonce = FreshNonce::random().map_err(|_| no_randomness())?;
     let mut envelope = Envelope {
         vault_id,
         public_key_hash: sha256(&public_key),
@@ -389,17 +387,13 @@ pub fn enrol(
         enrolled_at: now
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |since| since.as_secs()),
-        nonce: random()?,
+        nonce: nonce.bytes(),
         wrapped: [0; WRAPPED_LEN],
     };
     let signature = platform.sign(&name, &envelope.challenge)?;
     let wrapping_key = derive(&signature, &envelope.salt)?;
-    let wrapped = seal(
-        &wrapping_key,
-        &envelope.nonce,
-        data_key,
-        &envelope.authenticated(),
-    )?;
+    let wrapped = aead::seal(&wrapping_key, nonce, data_key, &envelope.authenticated())
+        .map_err(|_| HelloFailure::CryptoFailure)?;
     envelope.wrapped = wrapped
         .as_slice()
         .try_into()
@@ -430,19 +424,16 @@ pub fn unlock(
     }
     let signature = platform.sign(&name, &envelope.challenge)?;
     let wrapping_key = derive(&signature, &envelope.salt)?;
-    let data_key = open_sealed(
+    let unwrapped = aead::open(
         &wrapping_key,
         &envelope.nonce,
         &envelope.wrapped,
         &envelope.authenticated(),
-    )?;
-    if data_key.len() != DATA_KEY_LEN {
-        return Err(HelloFailure::CryptoFailure);
-    }
-    let mut key = Box::new(Zeroizing::new([0; DATA_KEY_LEN]));
-    key.copy_from_slice(&data_key);
-    let data_key = key;
-    let vault = Vault::open_with_data_key(vault_path, &data_key).map_err(|error| {
+    )
+    .map_err(|_| HelloFailure::CryptoFailure)?;
+    let data_key = SecretKey::<DATA_KEY_LEN>::from_slice(unwrapped.as_bytes())
+        .map_err(|_| HelloFailure::CryptoFailure)?;
+    let vault = Vault::open_with_data_key(vault_path, data_key.as_bytes()).map_err(|error| {
         log::warn!("the vault did not open with the key Windows Hello unwrapped: {error}");
         HelloFailure::CryptoFailure
     })?;
@@ -536,76 +527,26 @@ fn hex_upper(bytes: &[u8]) -> String {
 }
 
 fn sha256(bytes: &[u8]) -> [u8; HASH_LEN] {
-    let mut hash = [0; HASH_LEN];
-    hash.copy_from_slice(digest::digest(&digest::SHA256, bytes).as_ref());
-    hash
+    hash::sha256(bytes)
+}
+
+/// The failure of a random draw, said once in the log.
+fn no_randomness() -> HelloFailure {
+    log::warn!("no random bytes for Windows Hello");
+    HelloFailure::Unavailable
 }
 
 fn random<const N: usize>() -> Result<[u8; N], HelloFailure> {
-    let mut bytes = [0; N];
-    SystemRandom::new().fill(&mut bytes).map_err(|_| {
-        log::warn!("no random bytes for Windows Hello");
-        HelloFailure::Unavailable
-    })?;
-    Ok(bytes)
+    random::array().map_err(|_| no_randomness())
 }
 
 /// The key that wraps the data key, from the signature and the salt, as the C#
 /// `DeriveHelloKek`: HKDF-SHA256, the salt as HKDF's, [`HKDF_INFO`], 32 bytes.
-fn derive(
-    signature: &[u8],
-    salt: &[u8; SALT_LEN],
-) -> Result<Box<Zeroizing<[u8; DATA_KEY_LEN]>>, HelloFailure> {
+fn derive(signature: &[u8], salt: &[u8; SALT_LEN]) -> Result<aead::Key, HelloFailure> {
     if signature.is_empty() {
         return Err(HelloFailure::CryptoFailure);
     }
-    let pseudorandom = hkdf::Salt::new(hkdf::HKDF_SHA256, salt).extract(signature);
-    let info = [HKDF_INFO];
-    let expanded = pseudorandom
-        .expand(&info, hkdf::HKDF_SHA256)
-        .map_err(|_| HelloFailure::CryptoFailure)?;
-    let mut key = Box::new(Zeroizing::new([0; DATA_KEY_LEN]));
-    expanded
-        .fill(key.as_mut_slice())
-        .map_err(|_| HelloFailure::CryptoFailure)?;
-    Ok(key)
-}
-
-fn seal(
-    key: &[u8; DATA_KEY_LEN],
-    nonce: &[u8; NONCE_LEN],
-    plain: &[u8],
-    authenticated: &[u8],
-) -> Result<Vec<u8>, HelloFailure> {
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| HelloFailure::CryptoFailure)?;
-    cipher
-        .encrypt(
-            &Nonce::<Aes256Gcm>::from(*nonce),
-            Payload {
-                msg: plain,
-                aad: authenticated,
-            },
-        )
-        .map_err(|_| HelloFailure::CryptoFailure)
-}
-
-fn open_sealed(
-    key: &[u8; DATA_KEY_LEN],
-    nonce: &[u8; NONCE_LEN],
-    sealed: &[u8],
-    authenticated: &[u8],
-) -> Result<Zeroizing<Vec<u8>>, HelloFailure> {
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| HelloFailure::CryptoFailure)?;
-    cipher
-        .decrypt(
-            &Nonce::<Aes256Gcm>::from(*nonce),
-            Payload {
-                msg: sealed,
-                aad: authenticated,
-            },
-        )
-        .map(Zeroizing::new)
-        .map_err(|_| HelloFailure::CryptoFailure)
+    kdf::hkdf_sha256(signature, salt, HKDF_INFO).map_err(|_| HelloFailure::CryptoFailure)
 }
 
 /// What `tpmtool getdeviceinformation` printed says of a TPM 2.0, as the C#
@@ -933,15 +874,13 @@ mod tests {
         let signature = [7_u8; 256];
         let salt = [9_u8; SALT_LEN];
         let key = derive(&signature, &salt).expect("derived");
-        let prk = ring::hmac::sign(
-            &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &salt),
-            &signature,
-        );
-        let block = ring::hmac::sign(
-            &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, prk.as_ref()),
+        let prk = sealvault::mac::compute(sealvault::mac::Algorithm::HmacSha256, &salt, &signature);
+        let block = sealvault::mac::compute(
+            sealvault::mac::Algorithm::HmacSha256,
+            prk.as_bytes(),
             &[HKDF_INFO, &[1]].concat(),
         );
-        assert_eq!(key.as_slice(), block.as_ref());
+        assert_eq!(key.as_bytes().as_slice(), block.as_bytes());
         assert!(
             derive(&[], &salt).is_err(),
             "an empty signature, as the C# refuses it"

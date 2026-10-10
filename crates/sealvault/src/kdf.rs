@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-//! Keys derived from passwords: Argon2id (RFC 9106), version 0x13.
+//! Derived keys: from passwords by Argon2id (RFC 9106), version 0x13; from secrets that
+//! are already random (a signature, a shared secret) by HKDF-SHA256 (RFC 5869).
 
 use crate::Error;
 use crate::secret::SecretKey;
@@ -106,9 +107,34 @@ pub fn argon2id<const N: usize>(
     Ok(key)
 }
 
+/// Bytes HKDF-SHA256 can give at most: 255 blocks of SHA-256.
+pub const HKDF_SHA256_MAX_LEN: usize = 255 * crate::hash::SHA256_LEN;
+
+/// The key of `N` bytes HKDF-SHA256 (RFC 5869) gives from the input keying material `ikm`,
+/// `salt` and `info`: extract, then expand. For a secret that is already random; a
+/// password goes through [`argon2id`] instead.
+///
+/// # Errors
+///
+/// [`Error::KeyLength`] when `N` is past [`HKDF_SHA256_MAX_LEN`].
+pub fn hkdf_sha256<const N: usize>(
+    ikm: &[u8],
+    salt: &[u8],
+    info: &[u8],
+) -> Result<SecretKey<N>, Error> {
+    let mut key = SecretKey::zeroed();
+    hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm)
+        .expand(info, key.as_mut_bytes())
+        .map_err(|_| Error::KeyLength {
+            expected: HKDF_SHA256_MAX_LEN,
+            actual: N,
+        })?;
+    Ok(key)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{KdfParams, argon2id};
+    use super::{HKDF_SHA256_MAX_LEN, KdfParams, argon2id, hkdf_sha256};
     use crate::Error;
     use crate::test_hex::hex;
 
@@ -161,6 +187,46 @@ mod tests {
             argon2id::<32>(b"pw", b"short", &KdfParams::MINIMUM).err(),
             Some(Error::KdfParameters),
             "a salt under 8 bytes"
+        );
+    }
+
+    /// RFC 5869 appendix A.1: the basic test case with SHA-256.
+    #[test]
+    fn hkdf_meets_rfc_5869_test_case_1() {
+        let salt: Vec<u8> = (0x00..=0x0c).collect();
+        let info: Vec<u8> = (0xf0..=0xf9).collect();
+        let okm = hkdf_sha256::<42>(&[0x0b; 22], &salt, &info).expect("derived");
+        assert_eq!(
+            okm.as_bytes().to_vec(),
+            hex(
+                "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf\
+                 34007208d5b887185865"
+            )
+        );
+    }
+
+    /// RFC 5869 appendix A.3: an empty salt and an empty info.
+    #[test]
+    fn hkdf_meets_rfc_5869_test_case_3() {
+        let okm = hkdf_sha256::<42>(&[0x0b; 22], &[], &[]).expect("derived");
+        assert_eq!(
+            okm.as_bytes().to_vec(),
+            hex(
+                "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d\
+                 9d201395faa4b61a96c8"
+            )
+        );
+    }
+
+    #[test]
+    fn hkdf_refuses_more_than_255_blocks() {
+        assert!(hkdf_sha256::<HKDF_SHA256_MAX_LEN>(b"ikm", b"salt", b"info").is_ok());
+        assert_eq!(
+            hkdf_sha256::<{ HKDF_SHA256_MAX_LEN + 1 }>(b"ikm", b"salt", b"info").err(),
+            Some(Error::KeyLength {
+                expected: HKDF_SHA256_MAX_LEN,
+                actual: HKDF_SHA256_MAX_LEN + 1
+            })
         );
     }
 
