@@ -66,6 +66,7 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         kerberos: false,
         time_zone: None,
         desktop_scale: 100,
+        progress: None,
     }
 }
 
@@ -83,7 +84,7 @@ async fn a_server_without_nla_is_refused_when_nla_is_required() {
     )
     .await;
     assert!(
-        matches!(outcome, Err(RdpError::Negotiation(_))),
+        matches!(outcome, Err(RdpError::Negotiation { .. })),
         "{:?}",
         outcome.map(|_| ())
     );

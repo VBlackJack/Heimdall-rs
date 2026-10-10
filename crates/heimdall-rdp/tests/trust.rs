@@ -183,6 +183,7 @@ fn config(known_hosts: &Path, accepted: Option<AcceptedCertificate>, port: u16) 
         kerberos: true,
         time_zone: None,
         desktop_scale: 100,
+        progress: None,
     }
 }
 

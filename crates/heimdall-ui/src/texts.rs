@@ -55,7 +55,7 @@ pub fn rdp_refusal(refusal: RdpRefusal) -> String {
         RdpRefusal::ClockSkew => fl!("ui-rdp-reason-clock-skew"),
         RdpRefusal::SecurityError => fl!("ui-rdp-reason-security-error"),
     };
-    with_severity(refusal.is_account_issue(), &reason)
+    with_severity(Severity::of_account(refusal.is_account_issue()), &reason)
 }
 
 /// Why an RDP server ended a session, as the C# says it. Nothing for a logoff: the C# says
@@ -71,21 +71,105 @@ pub fn rdp_ending(ending: &Ending) -> Option<String> {
             return Some(fl!("ui-session-closed-reason", reason = words.as_str()));
         }
     };
-    Some(with_severity(ending.is_account_issue(), &reason))
+    Some(with_severity(
+        Severity::of_account(ending.is_account_issue()),
+        &reason,
+    ))
 }
 
-/// `reason` after the C# severity word: a warning for the account, an error otherwise.
-fn with_severity(account: bool, reason: &str) -> String {
-    let severity = if account {
-        fl!("ui-rdp-severity-warning")
-    } else {
-        fl!("ui-rdp-severity-error")
+/// The failure code an RDP server sends when it requires Network Level Authentication with
+/// `CredSSP` (MS-RDPBCGR `HYBRID_REQUIRED_BY_SERVER`).
+const HYBRID_REQUIRED_BY_SERVER: u32 = 5;
+
+/// What a failure of an RDP connection is, as the C# `RdpDisconnect*` text of its cause says
+/// it, after its severity word; `None` when the C# has no text of its own for the cause, and
+/// [`error`] says it.
+///
+/// Each cause is the one of the C# code named: a refused connection is `SocketConnectFailed`
+/// (516), a name not resolved `DnsLookupFailed` (260), a connection that timed out
+/// `ConnectionTimeout` (264), one reset or lost `SocketClosed` (2308), a phase over its limit
+/// the C# connect watchdog's `ConnectTimeout`, a server requiring `CredSSP`
+/// `NlaNotSupported` (2825), a gateway that could not reach the server
+/// `GatewayTargetUnreachable`.
+#[must_use]
+pub fn rdp_error(error: &UiError) -> Option<String> {
+    let (severity, reason) = match error {
+        UiError::Network { failure, .. } => (
+            Severity::Notice,
+            match failure {
+                NetworkFailure::Refused => fl!("ui-rdp-reason-socket-connect-failed"),
+                NetworkFailure::NotResolved => fl!("ui-rdp-reason-dns-lookup-failed"),
+                NetworkFailure::TimedOut => fl!("ui-rdp-reason-connection-timeout"),
+                NetworkFailure::Reset => fl!("ui-rdp-reason-socket-closed"),
+                NetworkFailure::Unreachable | NetworkFailure::Other => return None,
+            },
+        ),
+        UiError::ConnectionLost => (Severity::Notice, fl!("ui-rdp-reason-socket-closed")),
+        UiError::Timeout => (Severity::Notice, fl!("ui-rdp-reason-connect-timeout")),
+        UiError::SecurityRefused {
+            code: Some(HYBRID_REQUIRED_BY_SERVER),
+            ..
+        } => (Severity::Error, fl!("ui-rdp-reason-nla-not-supported")),
+        UiError::JumpRefused { host, port } => (
+            Severity::Notice,
+            fl!(
+                "ui-rdp-reason-gateway-target-unreachable",
+                target = display_address(&server_text(host), *port)
+            ),
+        ),
+        _ => return None,
+    };
+    Some(with_severity(severity, &reason))
+}
+
+/// The C# severity word of an RDP failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Severity {
+    /// A cause that may pass by itself: the network.
+    Notice,
+    /// The account, the user's to fix.
+    Warning,
+    /// Anything else.
+    Error,
+}
+
+impl Severity {
+    /// A warning for the account, an error otherwise.
+    fn of_account(account: bool) -> Self {
+        if account { Self::Warning } else { Self::Error }
+    }
+}
+
+/// `reason` after the C# severity word.
+fn with_severity(severity: Severity, reason: &str) -> String {
+    let severity = match severity {
+        Severity::Notice => fl!("ui-rdp-severity-notice"),
+        Severity::Warning => fl!("ui-rdp-severity-warning"),
+        Severity::Error => fl!("ui-rdp-severity-error"),
     };
     fl!(
         "ui-rdp-reason-with-severity",
         severity = severity,
         reason = reason
     )
+}
+
+/// The name of the keys of the session bar's "Send keys" menu.
+#[must_use]
+pub fn special_keys(keys: heimdall_app::SpecialKeys) -> String {
+    use heimdall_app::SpecialKeys;
+    match keys {
+        SpecialKeys::CtrlAltDel => fl!("ui-desktop-keys-ctrl-alt-del"),
+        SpecialKeys::Windows => fl!("ui-desktop-keys-windows"),
+        SpecialKeys::AltTab => fl!("ui-desktop-keys-alt-tab"),
+        SpecialKeys::CtrlEsc => fl!("ui-desktop-keys-ctrl-esc"),
+        SpecialKeys::Escape => fl!("ui-desktop-keys-escape"),
+        SpecialKeys::PrintScreen => fl!("ui-desktop-keys-print-screen"),
+        SpecialKeys::F11 => fl!("ui-desktop-keys-f11"),
+        SpecialKeys::WinL => fl!("ui-desktop-keys-win-l"),
+        SpecialKeys::WinD => fl!("ui-desktop-keys-win-d"),
+        SpecialKeys::WinE => fl!("ui-desktop-keys-win-e"),
+    }
 }
 
 /// What a `WinRM` session's first output said went wrong, as the C# says it.
@@ -158,15 +242,17 @@ pub fn error(error: &UiError) -> String {
             NetworkFailure::Refused => fl!("ui-error-network-refused"),
             NetworkFailure::Reset => fl!("ui-error-network-reset"),
             NetworkFailure::TimedOut => fl!("ui-error-network-timed-out"),
-            NetworkFailure::Unreachable => fl!("ui-error-network-unreachable"),
+            NetworkFailure::Unreachable | NetworkFailure::NotResolved => {
+                fl!("ui-error-network-unreachable")
+            }
             NetworkFailure::Other => fl!("ui-error-network", detail = server_text(detail)),
         },
         UiError::Timeout => fl!("ui-error-timeout"),
         UiError::LocalPortUnavailable { port } => {
             fl!("ui-error-local-port-unavailable", port = (*port))
         }
-        UiError::RdpRefused { refusal } => rdp_refusal(*refusal),
-        UiError::RdpEnded { ending } => {
+        UiError::RdpRefused { refusal, .. } => rdp_refusal(*refusal),
+        UiError::RdpEnded { ending, .. } => {
             rdp_ending(ending).unwrap_or_else(|| fl!("ui-rdp-session-closed"))
         }
         UiError::RdpProtocol { detail } => {
@@ -190,7 +276,7 @@ pub fn error(error: &UiError) -> String {
                 offered = server_text(offered)
             )
         }
-        UiError::SecurityRefused { detail } => {
+        UiError::SecurityRefused { detail, .. } => {
             fl!("ui-error-security-refused", detail = server_text(detail))
         }
         UiError::LocalShell { detail } => {
@@ -638,20 +724,23 @@ mod tests {
 
         assert_eq!(
             error(&UiError::RdpRefused {
-                refusal: Refusal::PasswordExpired
+                refusal: Refusal::PasswordExpired,
+                status: None,
             }),
             "Warning: The password has expired and must be changed before connecting."
         );
         assert_eq!(
             error(&UiError::RdpRefused {
-                refusal: Refusal::AccountDisabled
+                refusal: Refusal::AccountDisabled,
+                status: None,
             }),
             "Error: The account is disabled on the remote computer. Ask your administrator to \
              enable it, then try connecting again."
         );
         assert!(
             error(&UiError::RdpRefused {
-                refusal: Refusal::BadCredentials
+                refusal: Refusal::BadCredentials,
+                status: None,
             })
             .starts_with("Warning: The credentials were not accepted.")
         );
@@ -663,15 +752,96 @@ mod tests {
 
         assert_eq!(
             error(&UiError::RdpEnded {
-                ending: Ending::Logoff
+                ending: Ending::Logoff,
+                code: None,
             }),
             "The Remote Desktop session has ended."
         );
         assert!(
             error(&UiError::RdpEnded {
-                ending: Ending::License
+                ending: Ending::License,
+                code: None,
             })
             .starts_with("Error: A Remote Desktop licensing error blocked the session.")
+        );
+    }
+
+    #[test]
+    fn each_rdp_cause_the_csharp_words_is_said_as_its_rdp_disconnect_text() {
+        use heimdall_app::NetworkFailure;
+
+        use super::rdp_error;
+
+        let network = |failure| {
+            rdp_error(&UiError::Network {
+                failure,
+                detail: "os detail".to_owned(),
+            })
+        };
+        // 516, 260, 264 and 2308, as notices: the C# transient severity.
+        assert_eq!(
+            network(NetworkFailure::Refused).as_deref(),
+            Some(
+                "Notice: Could not connect to the remote computer. It may be turned off, not on \
+                 the network, or Remote Desktop may be disabled."
+            )
+        );
+        assert_eq!(
+            network(NetworkFailure::NotResolved).as_deref(),
+            Some(
+                "Notice: Could not resolve the remote computer name. Check the hostname for \
+                 typos and verify your DNS settings or VPN connection."
+            )
+        );
+        assert_eq!(
+            network(NetworkFailure::TimedOut).as_deref(),
+            Some(
+                "Notice: The connection timed out. Verify that the remote host is reachable and \
+                 that no firewall is blocking the Remote Desktop port (default 3389)."
+            )
+        );
+        let lost = Some(
+            "Notice: The network connection was lost. Check your network connection or VPN and \
+             try reconnecting."
+                .to_owned(),
+        );
+        assert_eq!(network(NetworkFailure::Reset), lost);
+        assert_eq!(rdp_error(&UiError::ConnectionLost), lost);
+        // The C# connect watchdog's.
+        assert!(rdp_error(&UiError::Timeout).is_some_and(|said| {
+            said.starts_with("Notice: The connection timed out while starting the session.")
+        }));
+        // 2825: the server requires CredSSP.
+        assert!(
+            rdp_error(&UiError::SecurityRefused {
+                detail: "server requires Enhanced RDP Security with CredSSP".to_owned(),
+                code: Some(5),
+            })
+            .is_some_and(|said| said.starts_with(
+                "Error: The remote computer requires Network Level Authentication, which this \
+                 connection is not using."
+            ))
+        );
+        assert_eq!(
+            rdp_error(&UiError::JumpRefused {
+                host: "dc.lab".to_owned(),
+                port: 3389,
+            })
+            .as_deref(),
+            Some(
+                "Notice: The gateway could not reach dc.lab:3389. The target host or its RDP \
+                 port is unreachable from the SSH gateway."
+            )
+        );
+        // No C# text of its own: said as any session's.
+        assert_eq!(network(NetworkFailure::Unreachable), None);
+        assert_eq!(network(NetworkFailure::Other), None);
+        assert_eq!(
+            rdp_error(&UiError::SecurityRefused {
+                detail: "server only supports Standard RDP Security".to_owned(),
+                code: Some(2),
+            }),
+            None
         );
     }
 

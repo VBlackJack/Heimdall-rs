@@ -2068,6 +2068,8 @@ pub struct Tab {
     pub custom_title: Option<String>,
     /// Why the server ended the session, when it said.
     pub end_reason: Option<heimdall_rdp::Ending>,
+    /// How far an RDP connection on its way has come, as it last said.
+    pub rdp_step: Option<heimdall_rdp::Step>,
     /// The session waiting to open again by itself, after it dropped.
     pub retry: Option<Retry>,
     /// The desktop size the user chose from the tab's "Resolution" menu, kept for the
@@ -2301,6 +2303,7 @@ impl Tab {
             title: profile.name().to_owned(),
             custom_title: None,
             end_reason: None,
+            rdp_step: None,
             retry: None,
             desktop_sizing: None,
             desktop_aspect: match &profile {
@@ -3790,7 +3793,7 @@ impl App {
                 }
             }
             Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),
-            Message::SendKeys { tab, keys } => self.desktop_input(tab, &keys.inputs()),
+            Message::SendKeys { tab, keys } => self.send_keys(tab, keys),
             Message::VncQuality { tab, quality } => {
                 if let Some(pane) = self
                     .tab_mut(tab)
@@ -4118,6 +4121,10 @@ impl App {
             }
             ConnectionEvent::DesktopResizeRefused { width, height } => {
                 self.resize_refused(tab_id, (width, height))
+            }
+            ConnectionEvent::RdpStep(step) => {
+                tab.rdp_step = Some(step);
+                Vec::new()
             }
             event @ (ConnectionEvent::UnknownRdpCertificate { .. }
             | ConnectionEvent::RdpReady { .. }
