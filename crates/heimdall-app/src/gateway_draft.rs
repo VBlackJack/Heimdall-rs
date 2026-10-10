@@ -15,7 +15,8 @@
  */
 
 //! An SSH gateway as typed into its dialog, the C# Heimdall's gateway dialog: name, host,
-//! port, username, key, and the gateway it is reached through.
+//! port, username, key, and the gateway it is reached through; then, read only, the
+//! fingerprint its host key is trusted by.
 
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -57,6 +58,10 @@ pub struct GatewayDraft {
     pub clear_password: bool,
     /// The key passphrase saved for the gateway, as the dialog shows it.
     pub passphrase: SavedSecret,
+    /// "Host Key Fingerprint", read only as in the C# dialog: what the trust files held for
+    /// the gateway's host and port when the dialog opened, empty when nothing. Never saved:
+    /// the trust files are its one source.
+    pub trusted_fingerprint: String,
     /// "Test route": the destination to reach through the gateway, as typed; empty tests
     /// the gateways only.
     pub target_host: String,
@@ -117,6 +122,7 @@ impl Default for GatewayDraft {
             password_saved: false,
             clear_password: false,
             passphrase: SavedSecret::Absent,
+            trusted_fingerprint: String::new(),
             target_host: String::new(),
             target_port: DEFAULT_SSH_PORT.to_string(),
             route_test: RouteTest::Idle,
@@ -293,6 +299,14 @@ impl GatewayDraft {
             parent,
         })
     }
+
+    /// The dialog showing `trusted`, the fingerprint the trust files hold for the gateway's
+    /// host and port, or nothing.
+    #[must_use]
+    pub fn with_trusted_fingerprint(mut self, trusted: Option<String>) -> Self {
+        self.trusted_fingerprint = trusted.unwrap_or_default();
+        self
+    }
 }
 
 #[cfg(test)]
@@ -347,6 +361,21 @@ mod tests {
         assert_eq!(
             check(|f| f.username = "two words".to_owned()),
             Some(DraftError::UsernameInvalid)
+        );
+    }
+
+    #[test]
+    fn the_fingerprint_shown_is_never_part_of_the_gateway_saved() {
+        let shown = format!("SHA256:{}", "A".repeat(43));
+        let opened = draft().with_trusted_fingerprint(Some(shown.clone()));
+        assert_eq!(opened.trusted_fingerprint, shown);
+        assert_eq!(
+            opened.to_gateway(ProfileId::new("g")),
+            draft().to_gateway(ProfileId::new("g"))
+        );
+        assert_eq!(
+            draft().with_trusted_fingerprint(None).trusted_fingerprint,
+            ""
         );
     }
 
