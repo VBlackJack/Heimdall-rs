@@ -23,6 +23,11 @@
 //! While a profile follows the global defaults, the options they decide are greyed and out
 //! of reach, their values the profile's own, as the C# greys them. What only Remote Desktop
 //! Connection honours says so while the profile opens in a tab.
+//!
+//! Local playback stays in the audio list in every build: Remote Desktop Connection plays
+//! the sound here on its own, and the value is carried to and from the C#. A build without
+//! the `audio` feature says under the list, while it is chosen for a tab, that the built-in
+//! client plays no sound.
 
 use heimdall_app::profile_draft::{ProfileChoice, ProfileDraft, ProfileField, ProfileToggle};
 use heimdall_app::{Message as AppMessage, SettingsMessage};
@@ -243,8 +248,9 @@ pub fn draws(toggle: ProfileToggle) -> bool {
     )
 }
 
-/// The C# "Display & Audio" tab of `draft`: the audio mode and colour depth, then the
-/// resolution card, its fields drawn by `field`, with the monitors among `monitors`.
+/// The C# "Display & Audio" tab of `draft`: the audio mode and colour depth, what this
+/// build cannot play while the profile opens in a tab, then the resolution card, its fields
+/// drawn by `field`, with the monitors among `monitors`.
 pub fn display_audio<'a>(
     draft: &'a ProfileDraft,
     monitors: &[Monitor],
@@ -253,10 +259,23 @@ pub fn display_audio<'a>(
     column![
         group(fl!("ui-profile-rdp-tab-display-audio")),
         view(draft.rdp_options, following(draft)),
-        resolution(draft, monitors, field),
     ]
+    .extend(local_playback_note(draft.rdp_options.audio).filter(|_| opens_in_tab(draft)))
+    .push(resolution(draft, monitors, field))
     .spacing(spacing::SM)
     .into()
+}
+
+/// Under the audio list, while it says Local playback, that this build plays no sound:
+/// built without the `audio` feature, the built-in client has no sound card to play on, and
+/// asks the server for no sound here.
+fn local_playback_note<'a>(audio: AudioPlayback) -> Option<Element<'a, Message>> {
+    (audio == AudioPlayback::Local && !heimdall_rdp::audio::AVAILABLE).then(|| {
+        text(fl!("ui-profile-audio-local-unavailable"))
+            .size(font_size::CAPTION)
+            .style(text::secondary)
+            .into()
+    })
 }
 
 /// The C# "Devices" tab of `draft`: what this computer shares with the server.
@@ -638,6 +657,7 @@ pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
             }),
         ),
     ]
+    .extend(local_playback_note(defaults.audio))
     .spacing(spacing::SM);
     for switch in switches() {
         let mut tick = checkbox((switch.get)(&defaults))

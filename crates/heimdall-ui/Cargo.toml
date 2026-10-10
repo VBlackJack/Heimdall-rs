@@ -20,6 +20,12 @@ path = "src/main.rs"
 [lib]
 path = "src/lib.rs"
 
+[features]
+# audio: the RDP server's sound played on this computer. On by default on Windows, below,
+# where it needs nothing but the system's WASAPI; elsewhere asked with `--features audio`,
+# which links the system's sound library (ALSA on Linux).
+audio = ["heimdall-rdp/audio"]
+
 [dependencies]
 heimdall-app.workspace = true
 heimdall-core.workspace = true
@@ -48,6 +54,8 @@ two-face.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# audio: the RDP server's sound, through WASAPI.
+heimdall-rdp = { workspace = true, features = ["audio"] }
 # The files copied in Explorer, which iced's clipboard does not read.
 clipboard-win.workspace = true
 # The screens the window is put back on.
