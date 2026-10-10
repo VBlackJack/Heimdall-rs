@@ -328,6 +328,10 @@ pub enum Notice {
     NoteOpened(String),
     /// A note could not be written or opened, for this reason.
     NoteFailed(String),
+    /// The legacy migration declined can be offered again at the next start.
+    LegacyMigrationReoffered,
+    /// The legacy migration declined could not be forgotten: nothing changed.
+    LegacyMigrationReofferFailed,
     /// The settings were exported.
     SettingsExported,
     /// The settings could not be exported, for this reason.

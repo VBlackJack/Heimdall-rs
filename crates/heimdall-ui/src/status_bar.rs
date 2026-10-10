@@ -374,6 +374,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::MacroDeleted(_)
             | Notice::MacroEnded { .. }) => crate::macros_view::notice(notice),
             Notice::NoteOpened(name) => fl!("ui-status-note-opened", name = server_text(name)),
+            Notice::LegacyMigrationReoffered => fl!("ui-status-legacy-migration-reoffered"),
+            Notice::LegacyMigrationReofferFailed => {
+                fl!("ui-status-legacy-migration-reoffer-failed")
+            }
             Notice::NoteFailed(reason) => {
                 fl!("ui-status-note-failed", reason = server_text(reason))
             }

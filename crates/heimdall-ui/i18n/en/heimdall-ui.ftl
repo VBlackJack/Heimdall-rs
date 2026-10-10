@@ -3592,3 +3592,43 @@ ui-settings-rdp-resize-delay-refused = RDP resize delay must be zero or between 
 ui-settings-rdp-connect-timeout-off = Off
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Give the keyboard back from a remote desktop
+
+## The migration from the legacy PowerShell Heimdall, as the C# says it.
+ui-legacy-migration-title = Legacy Migration
+ui-legacy-migration-offer = A legacy Heimdall installation was detected in { $path }, holding { $profiles ->
+    [one] { $profiles } server
+   *[other] { $profiles } servers
+} and { $gateways ->
+    [one] { $gateways } SSH gateway
+   *[other] { $gateways } SSH gateways
+}. Would you like to import your servers and settings?
+ui-legacy-migration-import = Import
+ui-legacy-migration-decline = Do not import
+ui-legacy-migration-success = { $count ->
+    [one] { $count } server imported successfully.
+   *[other] { $count } servers imported successfully.
+}
+ui-legacy-migration-partial = Migration completed with skipped profiles: { $examined } examined, { $imported } imported, { $skipped } skipped.
+ui-legacy-migration-partial-item = #{ $index } - { $name }: { $reason }
+ui-legacy-migration-unnamed = Unnamed profile
+ui-legacy-migration-invalid-field = invalid legacy field value
+ui-legacy-migration-omitted = { $count ->
+    [one] { $count } additional skipped profile not shown.
+   *[other] { $count } additional skipped profiles not shown.
+}
+ui-legacy-migration-projects = { $count ->
+    [one] { $count } project was not imported: Heimdall has no projects.
+   *[other] { $count } projects were not imported: Heimdall has no projects.
+}
+ui-legacy-migration-secrets = Passwords, passphrases, the PIN and program paths of the legacy version are not imported: Heimdall asks for each password again at the next connection.
+ui-legacy-migration-key-paths = { $count ->
+    [one] { $count } key path was left out: it was not a file on a local drive (network, device or relative path). Choose the key again in the profile or gateway.
+   *[other] { $count } key paths were left out: they were not files on a local drive (network, device or relative paths). Choose the keys again in the profiles or gateways.
+}
+ui-legacy-migration-settings-not-saved = The settings of the legacy version could not be saved. See the log for details.
+ui-settings-legacy-migration = Legacy migration
+ui-settings-legacy-migration-description = Allow the legacy migration offer to appear again at the next startup if the legacy source is still available and the current server inventory is empty.
+ui-settings-legacy-migration-reoffer = Offer legacy migration at next startup
+ui-settings-legacy-migration-unavailable = This becomes available only after you decline a migration offer at startup.
+ui-status-legacy-migration-reoffered = The legacy migration offer can appear again at the next startup. No migration was started now.
+ui-status-legacy-migration-reoffer-failed = The legacy migration preference could not be saved. The existing startup behavior was not changed.

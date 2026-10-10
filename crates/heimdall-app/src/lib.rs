@@ -59,6 +59,7 @@ pub mod putty_driver;
 pub mod putty_store;
 pub mod rdp_driver;
 pub mod rdp_external;
+pub mod rdpmanager;
 pub mod reachability;
 pub mod route_test;
 pub mod script_shell;
@@ -115,6 +116,7 @@ pub use app::{
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
+pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,

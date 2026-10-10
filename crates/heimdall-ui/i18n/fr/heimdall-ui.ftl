@@ -3628,3 +3628,52 @@ ui-tree-filter-result-count = { $shown } / { $total ->
 ui-tree-selection-count = { $count } sessions sélectionnées
 ui-tree-selection-move = Déplacer
 ui-tree-selection-more = Autres actions
+
+## La migration depuis l'ancien Heimdall PowerShell, comme le C# la formule.
+ui-legacy-migration-title = Migration
+ui-legacy-migration-offer = Une installation Heimdall existante a été détectée dans { $path }, avec { $profiles ->
+    [one] { $profiles } serveur
+   *[other] { $profiles } serveurs
+} et { $gateways ->
+    [one] { $gateways } passerelle SSH
+   *[other] { $gateways } passerelles SSH
+}. Souhaitez-vous importer vos serveurs et paramètres ?
+ui-legacy-migration-import = Importer
+ui-legacy-migration-decline = Ne pas importer
+ui-legacy-migration-success = { $count ->
+    [one] { $count } serveur importé avec succès.
+   *[other] { $count } serveurs importés avec succès.
+}
+ui-legacy-migration-partial = Migration terminée avec des profils ignorés : { $examined ->
+    [one] { $examined } examiné
+   *[other] { $examined } examinés
+}, { $imported ->
+    [one] { $imported } importé
+   *[other] { $imported } importés
+}, { $skipped ->
+    [one] { $skipped } ignoré
+   *[other] { $skipped } ignorés
+}.
+ui-legacy-migration-partial-item = # { $index } - { $name } : { $reason }
+ui-legacy-migration-unnamed = Profil sans nom
+ui-legacy-migration-invalid-field = valeur de champ hérité invalide
+ui-legacy-migration-omitted = { $count ->
+    [one] { $count } autre profil ignoré non affiché.
+   *[other] { $count } autres profils ignorés non affichés.
+}
+ui-legacy-migration-projects = { $count ->
+    [one] { $count } projet n'a pas été importé : Heimdall n'a pas de projets.
+   *[other] { $count } projets n'ont pas été importés : Heimdall n'a pas de projets.
+}
+ui-legacy-migration-secrets = Les mots de passe, les phrases secrètes, le PIN et les chemins de programmes de l'ancienne version ne sont pas importés : Heimdall redemande chaque mot de passe à la prochaine connexion.
+ui-legacy-migration-key-paths = { $count ->
+    [one] { $count } chemin de clé a été écarté : ce n'était pas un fichier sur un lecteur local (chemin réseau, de périphérique ou relatif). Choisissez de nouveau la clé dans le profil ou la passerelle.
+   *[other] { $count } chemins de clé ont été écartés : ce n'étaient pas des fichiers sur un lecteur local (chemins réseau, de périphérique ou relatifs). Choisissez de nouveau les clés dans les profils ou les passerelles.
+}
+ui-legacy-migration-settings-not-saved = Les paramètres de l'ancienne version n'ont pas pu être enregistrés. Consultez le journal pour plus de détails.
+ui-settings-legacy-migration = Migration de l'ancienne version
+ui-settings-legacy-migration-description = Autorise la proposition de migration de l'ancienne version au prochain démarrage si la source est toujours disponible et si l'inventaire actuel des serveurs est vide.
+ui-settings-legacy-migration-reoffer = Reproposer la migration au prochain démarrage
+ui-settings-legacy-migration-unavailable = Disponible uniquement après avoir refusé une proposition de migration au démarrage.
+ui-status-legacy-migration-reoffered = La proposition de migration pourra réapparaître au prochain démarrage. Aucune migration n'a été lancée maintenant.
+ui-status-legacy-migration-reoffer-failed = La préférence de migration de l'ancienne version n'a pas pu être enregistrée. Le comportement actuel au démarrage n'a pas été modifié.

@@ -31,8 +31,8 @@ use heimdall_app::profile_draft::ProfileField;
 use heimdall_app::update_check::{Failure, ReleaseTag, minutes_to_wait};
 use heimdall_app::windows_hello;
 use heimdall_app::{
-    Dialog, Effect, Message as AppMessage, PinMessage, ProviderMessage, UpdateMessage,
-    UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus, search_folded,
+    Dialog, Effect, LegacyMigrationMessage, Message as AppMessage, PinMessage, ProviderMessage,
+    UpdateMessage, UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus, search_folded,
 };
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
@@ -244,6 +244,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::MaxSessions => fl!("ui-settings-max-sessions"),
         SettingRow::UpdateChecks => fl!("ui-settings-updates-enabled"),
         SettingRow::UpdateVersion => fl!("ui-settings-updates-current-version"),
+        SettingRow::LegacyMigration => fl!("ui-settings-legacy-migration"),
         SettingRow::Reachability => fl!("ui-settings-reachability-enabled"),
         SettingRow::FontSize => fl!("ui-settings-font-size"),
         SettingRow::FontFamily => fl!("ui-settings-font-family"),
@@ -349,6 +350,11 @@ fn row_choices(row: SettingRow) -> Vec<String> {
             .to_vec(),
         SettingRow::MaxSessions => vec![SessionsChoice(0).to_string()],
         SettingRow::UpdateVersion => vec![fl!("ui-settings-updates-check-now")],
+        // The button and what it says, which the C# search finds.
+        SettingRow::LegacyMigration => vec![
+            fl!("ui-settings-legacy-migration-reoffer"),
+            fl!("ui-settings-legacy-migration-description"),
+        ],
         // The modes, and the button beside them, which the C# search finds as well.
         SettingRow::SshDefaultMode => SshMode::ALL
             .map(|mode| DefaultSshModeChoice(mode).to_string())
@@ -1050,6 +1056,7 @@ impl Shell {
             | SettingRow::RdpResetAll => self.list_card_row(row),
             SettingRow::Pin | SettingRow::Vault | SettingRow::Provider => self.security_row(row),
             SettingRow::UpdateVersion => self.update_version_row(),
+            SettingRow::LegacyMigration => self.legacy_migration_row(),
             _ => self.choice_row(row),
         }
     }
@@ -1120,6 +1127,36 @@ impl Shell {
                 ]
                 .spacing(spacing::MD)
                 .align_y(iced::Alignment::Center),
+            );
+        }
+        body.into()
+    }
+
+    /// The C# "Legacy migration" section of the Updates card (`MainWindow.xaml:2653-2677`):
+    /// what it does, then "Offer legacy migration at next startup", which can be pressed only
+    /// once an offer was declined, said under it until then.
+    fn legacy_migration_row(&self) -> Element<'_, Message> {
+        let declined = self.app.settings().legacy_migration.has_decline();
+        let mut offer =
+            button(text(fl!("ui-settings-legacy-migration-reoffer"))).style(styles::secondary);
+        if declined {
+            offer = offer.on_press(Message::App(AppMessage::LegacyMigration(
+                LegacyMigrationMessage::OfferAgain,
+            )));
+        }
+        let mut body = column![
+            text(row_label(SettingRow::LegacyMigration))
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+            text(fl!("ui-settings-legacy-migration-description")).style(text::secondary),
+            offer,
+        ]
+        .spacing(spacing::SM);
+        if !declined {
+            body = body.push(
+                text(fl!("ui-settings-legacy-migration-unavailable"))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
             );
         }
         body.into()

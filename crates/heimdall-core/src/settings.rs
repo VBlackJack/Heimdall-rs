@@ -656,6 +656,43 @@ pub struct Settings {
     pub last_used_gateway: Option<ProfileId>,
     /// The Tools area's own state: the tools pinned, the sidebar's tab and its categories.
     pub tools: ToolsSettings,
+    /// The offer to migrate from the legacy PowerShell Heimdall last declined, as the C#
+    /// `LegacyMigrationDeclined*` (`AppSettings.cs:65-66`). This computer's own: never
+    /// exported, and kept by a reset.
+    pub legacy_migration: LegacyMigration,
+}
+
+/// The offer to migrate from the legacy PowerShell Heimdall (`RDPManager`) the user declined,
+/// as the C# `LegacyMigrationDecisionPolicy`: the version of the offer, and the fingerprint
+/// of the files it offered. A newer offer, or the same folder with other files, is offered
+/// again.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LegacyMigration {
+    /// The version of the offer declined; 0 when none was.
+    pub declined_offer_version: u32,
+    /// The fingerprint of the legacy files of the offer declined, upper-case hexadecimal.
+    pub declined_source_fingerprint: Option<String>,
+}
+
+impl LegacyMigration {
+    /// Whether the offer of `version` for the files of `fingerprint` is made, as the C#
+    /// `ShouldOffer`: unless that very offer was declined.
+    #[must_use]
+    pub fn should_offer(&self, version: u32, fingerprint: &str) -> bool {
+        self.declined_offer_version < version
+            || self.declined_source_fingerprint.as_deref() != Some(fingerprint)
+    }
+
+    /// Whether an offer was declined, as the C# `HasDeclineMarker`: what the Settings
+    /// page's "Offer legacy migration at next startup" undoes.
+    #[must_use]
+    pub fn has_decline(&self) -> bool {
+        self.declined_offer_version > 0
+            || self
+                .declined_source_fingerprint
+                .as_deref()
+                .is_some_and(|fingerprint| !fingerprint.trim().is_empty())
+    }
 }
 
 /// What the Tools area keeps across runs on this computer, as the C# `FavoriteToolIds`,
@@ -1175,6 +1212,7 @@ impl Default for Settings {
             windows_hello: WindowsHello::default(),
             last_used_gateway: None,
             tools: ToolsSettings::default(),
+            legacy_migration: LegacyMigration::default(),
         }
     }
 }
@@ -1216,6 +1254,35 @@ struct SettingsFile {
     profile_form: ProfileFormSection,
     #[serde(default)]
     tools: ToolsSection,
+    #[serde(default)]
+    legacy_migration: LegacyMigrationSection,
+}
+
+/// This computer's own: never exported.
+#[derive(Serialize, Deserialize, Default)]
+struct LegacyMigrationSection {
+    #[serde(default)]
+    declined_offer_version: u32,
+    #[serde(default)]
+    declined_source_fingerprint: Option<String>,
+}
+
+impl LegacyMigrationSection {
+    fn of(declined: &LegacyMigration) -> Self {
+        Self {
+            declined_offer_version: declined.declined_offer_version,
+            declined_source_fingerprint: declined.declined_source_fingerprint.clone(),
+        }
+    }
+
+    fn settings(self) -> LegacyMigration {
+        LegacyMigration {
+            declined_offer_version: self.declined_offer_version,
+            declined_source_fingerprint: self
+                .declined_source_fingerprint
+                .filter(|fingerprint| !fingerprint.trim().is_empty()),
+        }
+    }
 }
 
 /// This computer's own: never exported.
@@ -1682,6 +1749,7 @@ impl Settings {
             update_check: std::mem::take(&mut self.update_check),
             last_used_gateway: self.last_used_gateway.take(),
             tools: std::mem::take(&mut self.tools),
+            legacy_migration: std::mem::take(&mut self.legacy_migration),
             ..Self::default()
         };
         *self = kept;
@@ -1925,6 +1993,7 @@ impl Settings {
                 .filter(|id| !id.trim().is_empty())
                 .map(ProfileId::new),
             tools: file.tools.settings(),
+            legacy_migration: file.legacy_migration.settings(),
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -2068,6 +2137,7 @@ impl Settings {
             },
             profile_form: ProfileFormSection::of(self.last_used_gateway.as_ref()),
             tools: ToolsSection::of(&self.tools),
+            legacy_migration: LegacyMigrationSection::of(&self.legacy_migration),
         }
     }
 
@@ -2292,14 +2362,16 @@ mod transfer_tests {
     use super::{Settings, TRANSFERRED};
 
     /// The sections that never travel: this computer's PIN and lockouts, its last look for a
-    /// newer release, the gateway its profile form starts on, and the file's own version.
-    const HELD_BACK: [&str; 6] = [
+    /// newer release, the gateway its profile form starts on, the legacy migration it
+    /// declined, and the file's own version.
+    const HELD_BACK: [&str; 7] = [
         "version",
         "vault_unlock",
         "pin",
         "update_check",
         "profile_form",
         "tools",
+        "legacy_migration",
     ];
 
     #[test]

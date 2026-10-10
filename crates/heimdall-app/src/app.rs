@@ -101,6 +101,7 @@ mod hello_gate;
 mod hostkeys_import;
 mod idle_lock;
 mod keep_alive;
+mod legacy_migration;
 mod local_browser;
 mod local_menu;
 mod local_tab;
@@ -169,6 +170,7 @@ pub use gateway_overview::{
 };
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
 pub use idle_lock::{IDLE_POLL, should_auto_lock};
+pub use legacy_migration::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use local_tab::{ElevatedPane, ElevatedState, LocalConfirmation};
 pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
@@ -874,6 +876,8 @@ pub enum Message {
     /// The Credential Guard check of [`Effect::CheckCredentialGuard`] answered: the embedded
     /// RDP sessions waiting open, or are refused.
     CredentialGuard(crate::credential_guard::Status),
+    /// About the migration from the legacy PowerShell Heimdall.
+    LegacyMigration(LegacyMigrationMessage),
     /// A change from the Settings page.
     Settings(SettingsMessage),
     /// A step of the terminal macros.
@@ -1138,6 +1142,12 @@ impl fmt::Debug for Message {
             }
             Self::WindowsHello(answer) => write!(f, "WindowsHello({answer:?})"),
             Self::CredentialGuard(status) => write!(f, "CredentialGuard({status:?})"),
+            Self::LegacyMigration(LegacyMigrationMessage::Found(offer)) => {
+                write!(f, "LegacyMigration(Found({}))", offer.is_some())
+            }
+            Self::LegacyMigration(LegacyMigrationMessage::OfferAgain) => {
+                f.write_str("LegacyMigration(OfferAgain)")
+            }
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             // What a macro types is not logged.
             Self::Macro(MacroMessage::NameEdited(_)) => f.write_str("Macro(NameEdited)"),
@@ -1347,6 +1357,10 @@ pub enum Effect {
         /// Heimdall-rs's own.
         store: PathBuf,
     },
+    /// Look for the legacy PowerShell Heimdall walking up from this folder, the program's,
+    /// off the UI thread, with [`crate::rdpmanager::detect`]; answered with
+    /// [`LegacyMigrationMessage::Found`].
+    FindLegacyInstallation(PathBuf),
     /// Launch a Citrix application outside Heimdall, off the UI thread, the client's
     /// processes listed first; answered with [`Message::CitrixLaunched`].
     LaunchCitrix {
@@ -1849,6 +1863,7 @@ impl fmt::Debug for Effect {
             Self::VerifyWindowsHello => f.write_str("VerifyWindowsHello"),
             Self::CheckCredentialGuard(_) => f.write_str("CheckCredentialGuard"),
             Self::SyncKnownHosts { .. } => f.write_str("SyncKnownHosts(..)"),
+            Self::FindLegacyInstallation(_) => f.write_str("FindLegacyInstallation(..)"),
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
                 write!(f, "ProbeCitrix({}, {lists})", tab.value())
@@ -2652,6 +2667,11 @@ pub enum Dialog {
     /// Enrol Windows Hello again once the master password opened the vault, its credential
     /// having been found gone, as the C# "Re-enable Windows Hello unlock?".
     ConfirmVaultHelloEnrolAgain,
+    /// Migrate the legacy PowerShell Heimdall found at start, as the C# asks: declined, not
+    /// asked again for the same files.
+    LegacyMigrationOffer(Box<crate::rdpmanager::Offer>),
+    /// What the migration from the legacy PowerShell Heimdall did.
+    LegacyMigrationDone(Box<LegacyMigrationDone>),
     /// The default SSH mode written into every SSH profile, as the C# "Apply to all saved
     /// sessions" asks, with the size of the rewrite.
     ConfirmApplySshMode {
@@ -3146,6 +3166,8 @@ pub struct App {
     /// The user's OpenSSH `known_hosts` was looked at for an import at startup: never
     /// again in this run.
     known_hosts_synced: bool,
+    /// The migration from the legacy PowerShell Heimdall offered at start.
+    legacy_migration: legacy_migration::LegacyMigrationState,
     /// Windows Hello asked before a connection.
     hello: hello_gate::HelloGate,
     /// Tunnels being opened or open, with what stops them.
@@ -3228,6 +3250,33 @@ impl fmt::Debug for App {
     }
 }
 
+/// The files kept beside the profiles that are not settings: the macros, the Files tabs'
+/// state and the split layouts; what cannot be read starts empty and is logged.
+fn side_files(
+    profiles_file: &std::path::Path,
+) -> (
+    heimdall_core::macros::Macros,
+    heimdall_core::files_state::FilesState,
+    heimdall_core::split_layouts::SplitLayouts,
+) {
+    let macros =
+        heimdall_core::macros::Macros::load(&heimdall_core::macros::macros_path(profiles_file))
+            .unwrap_or_else(|error| {
+                log::warn!("macros not read: {error}");
+                heimdall_core::macros::Macros::default()
+            });
+    let files_state = heimdall_core::files_state::FilesState::open(
+        profiles_file.with_file_name(heimdall_core::files_state::FILES_STATE_FILE_NAME),
+    );
+    let (split_layouts, unread) = heimdall_core::split_layouts::SplitLayouts::open(
+        &heimdall_core::split_layouts::split_layouts_path(profiles_file),
+    );
+    if let Some(error) = unread {
+        log::warn!("split layouts not read: {error}");
+    }
+    (macros, files_state, split_layouts)
+}
+
 impl App {
     /// The file the profiles are kept in; the settings and the trusted keys are beside it.
     #[must_use]
@@ -3255,24 +3304,7 @@ impl App {
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
         let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
         let tunnels_panel = !settings.collapse_tunnels_panel;
-        let macros = heimdall_core::macros::Macros::load(&heimdall_core::macros::macros_path(
-            &config.profiles_file,
-        ))
-        .unwrap_or_else(|error| {
-            log::warn!("macros not read: {error}");
-            heimdall_core::macros::Macros::default()
-        });
-        let files_state = heimdall_core::files_state::FilesState::open(
-            config
-                .profiles_file
-                .with_file_name(heimdall_core::files_state::FILES_STATE_FILE_NAME),
-        );
-        let (split_layouts, unread) = heimdall_core::split_layouts::SplitLayouts::open(
-            &heimdall_core::split_layouts::split_layouts_path(&config.profiles_file),
-        );
-        if let Some(error) = unread {
-            log::warn!("split layouts not read: {error}");
-        }
+        let (macros, files_state, split_layouts) = side_files(&config.profiles_file);
         let mut app = Self {
             settings,
             settings_file,
@@ -3312,6 +3344,7 @@ impl App {
             updates: updates::Updates::new(crate::update_check::running_release()),
             credential_guard: credential_guard_gate::CredentialGuardGate::default(),
             known_hosts_synced: false,
+            legacy_migration: legacy_migration::LegacyMigrationState::default(),
             hello: hello_gate::HelloGate::default(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
@@ -3678,6 +3711,7 @@ impl App {
             Message::CredentialProvided(answer) => self.provider_answered(*answer),
             Message::WindowsHello(answer) => self.hello_answered(answer),
             Message::CredentialGuard(status) => self.credential_guard_answered(status),
+            Message::LegacyMigration(message) => self.legacy_migration_message(message),
         }
     }
 
@@ -3832,6 +3866,8 @@ impl App {
             }) => effects = self.sudo_mode_off(tab),
             // "Don't restore": answered, the snapshot goes.
             Some(Dialog::RestoreSessions(_)) => self.forget_snapshot(),
+            // "Do not import": not asked again for the same files.
+            Some(Dialog::LegacyMigrationOffer(offer)) => self.decline_legacy_migration(&offer),
             _ => {}
         }
         self.pending_paste = None;
@@ -4801,6 +4837,10 @@ impl App {
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
             Some(Dialog::ConfirmResetAllSettings) => self.confirm_reset_all_settings(),
             Some(Dialog::ConfirmVaultHelloEnrolAgain) => self.enrol_vault_hello_again(),
+            Some(Dialog::LegacyMigrationOffer(offer)) => {
+                self.migrate_legacy(*offer);
+                Vec::new()
+            }
             Some(Dialog::ConfirmApplySshMode { mode, .. }) => self.confirm_apply_ssh_mode(mode),
             Some(Dialog::ConfirmApplyRdpMode { mode, .. }) => self.confirm_apply_rdp_mode(mode),
             Some(Dialog::EditMacro(draft)) => {
@@ -4874,6 +4914,7 @@ impl App {
             }
             Some(
                 Dialog::ImportDone(_)
+                | Dialog::LegacyMigrationDone(_)
                 | Dialog::TrustedHostKeyDetails(_)
                 | Dialog::FileProperties(_)
                 | Dialog::LocalFileProperties(_)

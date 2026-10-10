@@ -138,6 +138,8 @@ pub struct Skipped {
     pub name: String,
     /// Why it was left out.
     pub reason: SkipReason,
+    /// Its place in the file's list of servers, from 1; `None` for a gateway.
+    pub position: Option<usize>,
 }
 
 /// Result of an import.
@@ -811,11 +813,16 @@ impl RdpChoices {
 
     /// The C# audio mode: not played, played here, or played on the server.
     fn audio(&self) -> AudioPlayback {
-        match self.audio_mode {
-            CSHARP_AUDIO_LOCAL => AudioPlayback::Local,
-            CSHARP_AUDIO_ON_SERVER => AudioPlayback::OnServer,
-            _ => AudioPlayback::Off,
-        }
+        audio_playback(self.audio_mode)
+    }
+}
+
+/// The C# audio mode `mode`: played here, played on the server, else not played.
+pub(super) fn audio_playback(mode: i64) -> AudioPlayback {
+    match mode {
+        CSHARP_AUDIO_LOCAL => AudioPlayback::Local,
+        CSHARP_AUDIO_ON_SERVER => AudioPlayback::OnServer,
+        _ => AudioPlayback::Off,
     }
 }
 
@@ -1040,7 +1047,7 @@ pub fn import(
         }
     }
     let (gateways, skipped_gateways) = convert_gateways(&legacy_gateways);
-    for mut server in servers.servers {
+    for (index, mut server) in servers.servers.into_iter().enumerate() {
         resolve_group_defaults(server.group.as_deref(), &settings.group_defaults)
             .apply_to(&mut server);
         let converted = if server
@@ -1106,6 +1113,7 @@ pub fn import(
                 id: server.id,
                 name: server.display_name,
                 reason,
+                position: Some(index + 1),
             }),
         }
     }
@@ -1221,6 +1229,7 @@ fn convert_gateways(legacy: &[LegacyGateway]) -> (Vec<SshGateway>, Vec<Skipped>)
                 id: gateway.id.clone(),
                 name: gateway.name.clone(),
                 reason,
+                position: None,
             }),
         }
     }
