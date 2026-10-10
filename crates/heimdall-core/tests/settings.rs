@@ -1973,6 +1973,59 @@ fn a_declined_legacy_migration_is_kept_on_this_computer_never_exported_nor_impor
 }
 
 #[test]
+fn the_welcome_tour_seen_is_kept_on_this_computer_never_exported_nor_imported() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(!settings.onboarding_completed, "not seen on a first run");
+    settings.onboarding_completed = true;
+    settings.save(&path).expect("save");
+    let read = Settings::load(&path).expect("load");
+    assert_eq!(read, settings, "read back");
+    assert!(read.onboarding_completed);
+
+    // As the C# settings transfer leaves `OnboardingCompleted` behind: no panel edits it.
+    let (text, _) = settings.export(None, true);
+    assert!(!text.contains("onboarding"), "{text}");
+    let forged = format!(
+        "{text}
+[settings.onboarding]
+completed = true
+"
+    );
+    let imported = Settings::default().import(&forged).expect("read");
+    assert!(
+        !imported.settings.onboarding_completed,
+        "a file cannot set it"
+    );
+
+    // A reset keeps it: it is no preference, and the tour is not shown again for it.
+    let mut reset = settings.clone();
+    reset.reset_all();
+    assert!(reset.onboarding_completed);
+
+    // A file written before it: the tour not seen.
+    assert!(
+        !written(
+            dir.path(),
+            "version = 1
+"
+        )
+        .onboarding_completed
+    );
+    assert!(
+        written(
+            dir.path(),
+            "version = 1
+[onboarding]
+completed = true
+"
+        )
+        .onboarding_completed
+    );
+}
+
+#[test]
 fn the_local_tunnel_port_is_the_profile_s_never_a_setting() {
     // The C# `DefaultRdpTunnelPort` and `DefaultSshTunnelPort` only say, at import, which
     // port a C# profile left to the automatic choice: the settings written or exported hold

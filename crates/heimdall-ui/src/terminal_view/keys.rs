@@ -229,6 +229,19 @@ pub fn is_search_key(
         && letter(key, physical) == Some('f')
 }
 
+/// Whether `physical` with `modifiers` is Ctrl+Shift+F11, which toggles the window's full
+/// screen over an embedded session as in the C# Heimdall (`FullscreenShortcutRouter.cs:48-51`):
+/// the window's wherever the keyboard is, and never the session's. F11 alone is the window's
+/// as well, but a terminal still passes it on to its programs.
+#[must_use]
+pub fn is_fullscreen_key(physical: Physical, modifiers: keyboard::Modifiers) -> bool {
+    physical == Physical::Code(Code::F11)
+        && modifiers.control()
+        && modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+}
+
 /// The letter of Ctrl+letter, `key` with `modifiers`, whatever the keyboard's layout: Ctrl
 /// alone held, without Shift or Alt.
 #[must_use]
