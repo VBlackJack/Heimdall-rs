@@ -111,7 +111,7 @@ pub struct NoRandomness;
 /// [`NoRandomness`] when the system gives no random bytes.
 pub fn generate(version: UuidVersion) -> Result<Uuid, NoRandomness> {
     let mut bytes = [0_u8; UUID_BYTES];
-    getrandom::fill(&mut bytes).map_err(|_| NoRandomness)?;
+    sealvault::random::fill(&mut bytes).map_err(|_| NoRandomness)?;
     let version_bits = match version {
         // As .NET's `Guid.NewGuid`: random but its version and variant.
         UuidVersion::V4 => VERSION_4,

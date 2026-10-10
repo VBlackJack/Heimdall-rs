@@ -100,7 +100,7 @@ fn create_temporary(target: &Path) -> io::Result<(PathBuf, File)> {
     let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
     for _ in 0..TEMPORARY_TRIES {
         let mut random = [0_u8; TEMPORARY_RANDOM_BYTES];
-        getrandom::fill(&mut random).map_err(io::Error::other)?;
+        sealvault::random::fill(&mut random).map_err(io::Error::other)?;
         let mut file_name = OsString::from(TEMPORARY_PREFIX);
         file_name.push(name);
         file_name.push(".");
