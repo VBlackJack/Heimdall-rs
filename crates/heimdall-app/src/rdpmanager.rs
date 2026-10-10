@@ -92,7 +92,7 @@ impl std::fmt::Display for OfferProblem {
 /// 64-bit signed integer and its bytes; upper-case hexadecimal.
 #[must_use]
 pub fn fingerprint(settings: &[u8], servers: &[u8]) -> String {
-    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut context = sealvault::hash::Hasher::new(sealvault::hash::Algorithm::Sha256);
     context.update(FINGERPRINT_DOMAIN);
     for bytes in [settings, servers] {
         let length = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
@@ -100,8 +100,8 @@ pub fn fingerprint(settings: &[u8], servers: &[u8]) -> String {
         context.update(bytes);
     }
     context
-        .finish()
-        .as_ref()
+        .finalize()
+        .as_bytes()
         .iter()
         .fold(String::new(), |mut hex, byte| {
             // Writing to a string does not fail.

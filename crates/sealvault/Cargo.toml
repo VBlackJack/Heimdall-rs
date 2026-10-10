@@ -19,6 +19,7 @@ argon2.workspace = true
 # already in the tree through aes-gcm).
 des = { workspace = true, features = ["zeroize"] }
 getrandom.workspace = true
+hkdf.workspace = true
 hmac.workspace = true
 md-5.workspace = true
 sha1.workspace = true
