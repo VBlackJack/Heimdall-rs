@@ -118,18 +118,26 @@ async fn run(
         Ok(gateway) => gateway,
         Err(error) => return report_failure(error, &events, &target).await,
     };
-    let forward =
-        match local_forward::start(Arc::new(gateway), profile.host.clone(), profile.port).await {
-            Ok(forward) => forward,
-            Err(error) => {
-                log::warn!("the WinRM forward to {target} could not listen: {error}");
-                let failed = UiError::LocalShell {
-                    detail: error.to_string(),
-                };
-                let _ = events.send(ConnectionEvent::Failed(failed)).await;
-                return;
-            }
-        };
+    // On the profile's own port when it has one and it is free, as the C# `AllocatePort`.
+    let opened = local_forward::start_preferred(
+        Arc::new(gateway),
+        profile.host.clone(),
+        profile.port,
+        profile.local_tunnel_port,
+        local_forward::MAX_CLIENTS,
+    )
+    .await;
+    let forward = match opened {
+        Ok(forward) => forward,
+        Err(error) => {
+            log::warn!("the WinRM forward to {target} could not listen: {error}");
+            let failed = UiError::LocalShell {
+                detail: error.to_string(),
+            };
+            let _ = events.send(ConnectionEvent::Failed(failed)).await;
+            return;
+        }
+    };
     log::info!(
         "WinRM to {target} through its gateway, forwarded at {}",
         forward.address()

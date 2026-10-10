@@ -61,6 +61,7 @@ fn profile(options: heimdall_core::profile::RdpOptions) -> RdpProfile {
         domain: None,
         allow_tls_only: false,
         gateway: None,
+        local_tunnel_port: None,
         redirect_clipboard: true,
         redirect_drives: false,
         options,

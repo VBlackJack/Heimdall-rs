@@ -36,6 +36,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         username: Some("admin".to_owned()),
         key_path: Some(PathBuf::from("/keys/admin")),
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
@@ -255,6 +256,7 @@ fn rdp(id: &str) -> RdpProfile {
         domain: Some("LAB".to_owned()),
         allow_tls_only: false,
         gateway: None,
+        local_tunnel_port: None,
         redirect_clipboard: true,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
@@ -678,6 +680,7 @@ fn winrm(id: &str) -> WinRmProfile {
         skip_certificate_check: true,
         username: Some("LAB\\admin".to_owned()),
         gateway: None,
+        local_tunnel_port: None,
     }
 }
 

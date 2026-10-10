@@ -38,6 +38,7 @@ fn own(follow_defaults: bool) -> RdpProfile {
         domain: None,
         allow_tls_only: true,
         gateway: None,
+        local_tunnel_port: None,
         redirect_clipboard: false,
         redirect_drives: true,
         vault_entry: None,

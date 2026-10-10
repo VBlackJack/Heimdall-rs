@@ -8939,6 +8939,7 @@ fn labelled_field(
         ProfileField::RemoteLocalPort => {
             (fl!("ui-profile-remote-local-port"), PORT_OFF.to_string())
         }
+        ProfileField::LocalTunnelPort => (fl!("ui-profile-tunnel-port-manual"), String::new()),
         ProfileField::RdGateway => (
             fl!("ui-profile-field-rd-gateway"),
             fl!("ui-profile-rd-gateway-placeholder"),
@@ -9087,6 +9088,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::Sso => fl!("ui-profile-toggle-sso"),
         ProfileToggle::Favorite => fl!("ui-profile-toggle-favorite"),
         ProfileToggle::RunAsAdministrator => fl!("ui-profile-local-run-as-admin"),
+        ProfileToggle::AutoTunnelPort => fl!("ui-profile-tunnel-port-auto-toggle"),
     }
 }
 
@@ -9269,6 +9271,9 @@ fn network_section<'a>(
             );
         }
     }
+    if draft.shows(ProfileField::LocalTunnelPort) {
+        section_column = tunnel_port_card(draft, section_column);
+    }
     if draft.shows(ProfileField::SocksPort) {
         section_column = forward_cards(draft, section_column);
     }
@@ -9280,6 +9285,70 @@ fn network_section<'a>(
         ));
     }
     section_column.into()
+}
+
+/// The C# "Local tunnel port" card, shown only through a gateway: "Choose the tunnel port
+/// automatically", then the port, which can be typed only once that box is cleared. Said
+/// under it: which sessions use it, a session in a tab opening none, and that a port taken
+/// gives way to one the system chooses.
+fn tunnel_port_card<'a>(
+    draft: &'a ProfileDraft,
+    column: Column<'a, Message>,
+) -> Column<'a, Message> {
+    let field = ProfileField::LocalTunnelPort;
+    let automatic = draft.is_on(ProfileToggle::AutoTunnelPort);
+    let mut input = text_input("", draft.value(field))
+        .style(styles::text_input)
+        .id(profile_field_id(field));
+    if !automatic {
+        input = input
+            .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
+            .on_submit(Message::SaveProfileForm);
+    }
+    let mut column = column
+        .push(section(
+            fl!("ui-profile-tunnel-port-title"),
+            Some(fl!("ui-profile-tunnel-port-desc")),
+        ))
+        .push(toggle_box(
+            draft,
+            ProfileToggle::AutoTunnelPort,
+            toggle_label(ProfileToggle::AutoTunnelPort),
+        ));
+    if automatic {
+        column = column.push(
+            text(fl!(
+                "ui-profile-tunnel-port-auto",
+                port = draft.value(field).to_owned()
+            ))
+            .size(font_size::CAPTION),
+        );
+    }
+    column = column.push(
+        container(
+            column![
+                dialog_parts::label(fl!("ui-profile-tunnel-port-manual")),
+                input
+            ]
+            .spacing(spacing::XS),
+        )
+        .width(PORT_FIELD_WIDTH),
+    );
+    // A session in a tab carries its channel inside the application: only the program
+    // started on this computer listens on the port.
+    match draft.protocol {
+        DraftProtocol::Ssh | DraftProtocol::Sftp => {
+            column = column.push(dialog_parts::hint(fl!("ui-profile-tunnel-port-ssh-hint")));
+        }
+        DraftProtocol::Rdp => {
+            column = column.push(dialog_parts::hint(fl!("ui-profile-tunnel-port-rdp-hint")));
+        }
+        _ => {}
+    }
+    if !automatic {
+        column = column.push(dialog_parts::hint(fl!("ui-profile-tunnel-port-busy-hint")));
+    }
+    column
 }
 
 /// A port typed in a forward's field, when it opens one.
@@ -12235,6 +12304,7 @@ mod tests {
                 domain: None,
                 allow_tls_only: false,
                 gateway: None,
+                local_tunnel_port: None,
                 redirect_clipboard: true,
                 redirect_drives: false,
                 options,

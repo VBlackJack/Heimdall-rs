@@ -539,6 +539,7 @@ mod tests {
             domain: Some("LAB".to_owned()),
             allow_tls_only: false,
             gateway: None,
+            local_tunnel_port: None,
             redirect_clipboard: true,
             redirect_drives: false,
             vault_entry: None,

@@ -48,6 +48,7 @@ fn web() -> SshProfile {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
@@ -77,6 +78,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         domain: None,
         allow_tls_only: false,
         gateway: None,
+        local_tunnel_port: None,
         redirect_clipboard: true,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
@@ -134,6 +136,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         skip_certificate_check: false,
         username: None,
         gateway: None,
+        local_tunnel_port: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

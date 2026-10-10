@@ -1971,3 +1971,19 @@ fn a_declined_legacy_migration_is_kept_on_this_computer_never_exported_nor_impor
     );
     assert_eq!(blank.legacy_migration, LegacyMigration::default());
 }
+
+#[test]
+fn the_local_tunnel_port_is_the_profile_s_never_a_setting() {
+    // The C# `DefaultRdpTunnelPort` and `DefaultSshTunnelPort` only say, at import, which
+    // port a C# profile left to the automatic choice: the settings written or exported hold
+    // none of them.
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    Settings::default().save(&path).expect("saved");
+    let text = std::fs::read_to_string(&path).expect("text");
+    let (exported, _) = Settings::default().export(None, false);
+    for written in [text, exported] {
+        assert!(!written.contains("tunnel_port"), "{written}");
+        assert!(!written.contains("TunnelPort"), "{written}");
+    }
+}

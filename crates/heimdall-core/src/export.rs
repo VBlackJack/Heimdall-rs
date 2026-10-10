@@ -28,8 +28,9 @@ use crate::metadata::ProfileOrigin;
 use crate::post_connect::{OnFailure, PostConnectStep};
 use crate::profile::{
     Aspect, AudioPlayback, CitrixProfile, Forwards, FtpProfile, LocalArguments, LocalProfile,
-    RdpDefaults, RdpProfile, Resolution, SshGateway, SshMode, SshProfile, TelnetProfile,
-    VncProfile, WinRmProfile,
+    RdpDefaults, RdpProfile, Resolution, SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT,
+    SUGGESTED_WINRM_TUNNEL_PORT, SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile,
+    WinRmProfile,
 };
 use crate::store::ProfileStore;
 
@@ -96,6 +97,11 @@ struct Entry {
     vault_entry_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ssh_gateway_id: Option<String>,
+    /// The local tunnel port, written for the profiles that have one: the port chosen, else
+    /// the C# suggested port of the type, which the C# reads as the automatic choice. Never
+    /// 0, which the C# import refuses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ssh_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -376,6 +382,11 @@ fn ssh(profile: &SshProfile) -> Entry {
     let server = Entry {
         vault_entry_name: profile.vault_entry.clone(),
         ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
+        local_port: Some(
+            profile
+                .local_tunnel_port
+                .unwrap_or(SUGGESTED_SSH_TUNNEL_PORT),
+        ),
         ssh_port: Some(profile.port),
         ssh_username: profile.username.clone(),
         ssh_key_path: profile
@@ -416,6 +427,11 @@ fn rdp(profile: &RdpProfile) -> Entry {
     let server = Entry {
         vault_entry_name: profile.vault_entry.clone(),
         ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
+        local_port: Some(
+            profile
+                .local_tunnel_port
+                .unwrap_or(SUGGESTED_RDP_TUNNEL_PORT),
+        ),
         rdp: Some(RdpKeys {
             remote_port: profile.port,
             rdp_username: profile.username.clone(),
@@ -580,6 +596,11 @@ fn local(profile: &LocalProfile, windows_line: &dyn Fn(&LocalArguments) -> Strin
 fn winrm(profile: &WinRmProfile) -> Entry {
     Entry {
         ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
+        local_port: Some(
+            profile
+                .local_tunnel_port
+                .unwrap_or(SUGGESTED_WINRM_TUNNEL_PORT),
+        ),
         win_rm_port: Some(profile.port),
         win_rm_username: profile.username.clone(),
         win_rm_use_ssl: profile.use_ssl,

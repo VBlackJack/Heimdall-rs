@@ -18,10 +18,11 @@
 //! mode with a tunnel. The route to the gateway comes first, its questions asked as a
 //! tunnel's. Then the server's host key is probed through the gateway and checked against
 //! the application's own `known_hosts` for the server's own host and port. Then a forward
-//! listens on this computer's loopback address, on a port the system picks, and `PuTTY` is
-//! pointed at it, told to accept the server's key alone.
+//! listens on this computer's loopback address, on the profile's own port when it has one
+//! and it is free, else on one the system picks, as the C# `TunnelManager.AllocatePort`, and
+//! `PuTTY` is pointed at it, told to accept the server's key alone.
 //!
-//! `PuTTY` keeps the keys it saw by host and port, and the forward's port changes each time.
+//! `PuTTY` keeps the keys it saw by host and port, and the forward's port may change each time.
 //! Given `-hostkey`, it accepts that key without reading its cache or writing to it, so it
 //! never asks about `127.0.0.1` and its cache does not grow a row per port.
 //!
@@ -164,10 +165,11 @@ async fn run<S>(
             return;
         }
     };
-    let opened = local_forward::start_limited(
+    let opened = local_forward::start_preferred(
         Arc::clone(&gateway),
         profile.host.clone(),
         profile.port,
+        profile.local_tunnel_port,
         PUTTY_CLIENTS,
     )
     .await;

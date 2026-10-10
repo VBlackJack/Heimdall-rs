@@ -50,6 +50,7 @@ fn app_with(dir: &Path, options: RdpOptions) -> App {
         domain: None,
         allow_tls_only: false,
         gateway: None,
+        local_tunnel_port: None,
         redirect_clipboard: true,
         redirect_drives: false,
         options,

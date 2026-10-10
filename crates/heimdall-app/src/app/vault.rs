@@ -1534,6 +1534,7 @@ mod tests {
             domain: domain.map(str::to_owned),
             allow_tls_only: false,
             gateway: None,
+            local_tunnel_port: None,
             redirect_clipboard: false,
             redirect_drives: false,
             options: heimdall_core::profile::RdpOptions::default(),
