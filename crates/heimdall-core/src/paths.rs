@@ -18,9 +18,11 @@
 
 use std::path::PathBuf;
 
+#[cfg(not(windows))]
 use directories::{BaseDirs, ProjectDirs};
 
 /// Reverse-domain qualifier of the application directories; empty, as for a personal project.
+#[cfg(not(windows))]
 const QUALIFIER: &str = "";
 
 /// Organisation part of the application directories; empty, as for a personal project.
@@ -48,10 +50,33 @@ pub const LEGACY_SERVERS_FILE_NAME: &str = "servers.json";
 /// Name of the file holding the C# Heimdall's settings, group defaults included.
 pub const LEGACY_SETTINGS_FILE_NAME: &str = "settings.json";
 
-/// Configuration directory of Heimdall-rs; `None` when the platform reports no home.
+/// Name of the configuration folder inside the application's roaming folder, as the
+/// `directories` crate lays it out on Windows.
+#[cfg(windows)]
+const CONFIG_DIR_NAME: &str = "config";
+
+/// Name of the data folder inside the application's local folder, as the `directories`
+/// crate lays it out on Windows.
+#[cfg(windows)]
+const DATA_DIR_NAME: &str = "data";
+
+/// The application's folder under an application data folder, as the `directories` crate
+/// joins it on Windows: the organisation, then the application.
+#[cfg(windows)]
+fn application_path() -> PathBuf {
+    PathBuf::from_iter([ORGANIZATION, APPLICATION])
+}
+
+/// Configuration directory of Heimdall-rs; `None` when the platform reports no home. On
+/// Windows, under the roaming application data folder Windows says, never one the
+/// environment moves, laid out as the `directories` crate lays it out.
 #[must_use]
 pub fn config_dir() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION).map(|dirs| dirs.config_dir().to_owned())
+    #[cfg(windows)]
+    return roaming_app_data().map(|dir| dir.join(application_path()).join(CONFIG_DIR_NAME));
+    #[cfg(not(windows))]
+    return ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.config_dir().to_owned());
 }
 
 /// Path of the profile file.
@@ -67,11 +92,16 @@ pub fn known_hosts_file() -> Option<PathBuf> {
 }
 
 /// Local data directory of Heimdall-rs: local to the machine, never roamed. The logs and
-/// the files being edited are in it.
+/// the files being edited are in it. On Windows, under the local application data folder
+/// Windows says, never one the environment moves, laid out as the `directories` crate lays
+/// it out.
 #[must_use]
 pub fn data_dir() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|dirs| dirs.data_local_dir().to_owned())
+    #[cfg(windows)]
+    return local_app_data().map(|dir| dir.join(application_path()).join(DATA_DIR_NAME));
+    #[cfg(not(windows))]
+    return ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.data_local_dir().to_owned());
 }
 
 /// Directory of the log file and crash reports: local to the machine, never roamed.
@@ -90,9 +120,13 @@ pub fn edit_dir() -> Option<PathBuf> {
 }
 
 /// The user's home folder, where a Files tab starts; `None` when the platform reports none.
+/// On Windows, the profile folder Windows says, never the one `USERPROFILE` names.
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {
-    BaseDirs::new().map(|dirs| dirs.home_dir().to_owned())
+    #[cfg(windows)]
+    return known_folder(&winsafe::co::KNOWNFOLDERID::Profile);
+    #[cfg(not(windows))]
+    return BaseDirs::new().map(|dirs| dirs.home_dir().to_owned());
 }
 
 /// The folder OpenSSH keeps its files in, under the home folder.
@@ -111,11 +145,15 @@ pub fn openssh_known_hosts() -> Option<PathBuf> {
 
 /// Data directory of the C# Heimdall on this machine, when the platform has one.
 ///
-/// Only meaningful on Windows, where the C# Heimdall runs; the path is returned whether or
+/// Only meaningful on Windows, where the C# Heimdall runs, under the local application data
+/// folder Windows says, never the one `LOCALAPPDATA` names; the path is returned whether or
 /// not it exists.
 #[must_use]
 pub fn legacy_data_dir() -> Option<PathBuf> {
-    BaseDirs::new().map(|dirs| dirs.data_local_dir().join(LEGACY_APPLICATION_DIR))
+    #[cfg(windows)]
+    return local_app_data().map(|dir| dir.join(LEGACY_APPLICATION_DIR));
+    #[cfg(not(windows))]
+    return BaseDirs::new().map(|dirs| dirs.data_local_dir().join(LEGACY_APPLICATION_DIR));
 }
 
 /// Windows' system folder, as Windows says where it is: never read from the environment,
@@ -128,4 +166,111 @@ pub fn system_dir() -> Option<PathBuf> {
         .ok()
         .map(PathBuf::from)
         .filter(|folder| folder.is_absolute())
+}
+
+/// Folder `id` as Windows says where it is, for the current user: never read from the
+/// environment, which whoever starts Heimdall sets. `None` when Windows does not say, or says
+/// a relative path.
+///
+/// The user's token is named rather than left out: left out, Windows expands the folders
+/// under the profile with this process's `USERPROFILE`, so a planted one moved them.
+#[cfg(windows)]
+fn known_folder(id: &winsafe::co::KNOWNFOLDERID) -> Option<PathBuf> {
+    let token = winsafe::HPROCESS::GetCurrentProcess()
+        .OpenProcessToken(winsafe::co::TOKEN::QUERY | winsafe::co::TOKEN::IMPERSONATE)
+        .ok()?;
+    winsafe::SHGetKnownFolderPath(id, winsafe::co::KF::DEFAULT, Some(&token))
+        .ok()
+        .map(PathBuf::from)
+        .filter(|folder| folder.is_absolute())
+}
+
+/// The current user's local application data folder, never roamed, as Windows says where it
+/// is: never read from `LOCALAPPDATA`. `None` when Windows does not say.
+#[cfg(windows)]
+#[must_use]
+pub fn local_app_data() -> Option<PathBuf> {
+    known_folder(&winsafe::co::KNOWNFOLDERID::LocalAppData)
+}
+
+/// The current user's roaming application data folder, as Windows says where it is: never
+/// read from `APPDATA`. `None` when Windows does not say.
+#[cfg(windows)]
+#[must_use]
+pub fn roaming_app_data() -> Option<PathBuf> {
+    known_folder(&winsafe::co::KNOWNFOLDERID::RoamingAppData)
+}
+
+/// The current user's Documents folder, as Windows says where it is: never one the
+/// environment moves. `None` when Windows does not say.
+#[cfg(windows)]
+#[must_use]
+pub fn documents() -> Option<PathBuf> {
+    known_folder(&winsafe::co::KNOWNFOLDERID::Documents)
+}
+
+/// The Program Files folder of this process's architecture, as Windows says where it is:
+/// never read from `ProgramFiles`. `None` when Windows does not say.
+#[cfg(windows)]
+#[must_use]
+pub fn program_files() -> Option<PathBuf> {
+    known_folder(&winsafe::co::KNOWNFOLDERID::ProgramFiles)
+}
+
+/// The Program Files folder of 32-bit programs, as Windows says where it is: never read from
+/// `ProgramFiles(x86)`. The only Program Files folder on a 32-bit Windows. `None` when
+/// Windows does not say.
+#[cfg(windows)]
+#[must_use]
+pub fn program_files_x86() -> Option<PathBuf> {
+    known_folder(&winsafe::co::KNOWNFOLDERID::ProgramFilesX86)
+}
+
+/// Windows' own folder, the parent of its system folder, as Windows says where it is: never
+/// read from `SystemRoot` or `windir`. `None` when Windows does not say.
+#[cfg(windows)]
+#[must_use]
+pub fn system_root() -> Option<PathBuf> {
+    known_folder(&winsafe::co::KNOWNFOLDERID::Windows)
+}
+
+/// Windows' program that calls a library's entry point, in the system folder.
+pub const RUNDLL_PROGRAM: &str = "rundll32.exe";
+
+/// Windows' file manager, in the Windows folder.
+pub const EXPLORER_PROGRAM: &str = "explorer.exe";
+
+/// Why a program of Windows was not started: Windows did not say where its system folder is.
+pub const SYSTEM_FOLDER_UNKNOWN: &str = "the system folder is unknown";
+
+/// Why a program of Windows was not started: Windows did not say where its own folder is.
+pub const WINDOWS_FOLDER_UNKNOWN: &str = "the Windows folder is unknown";
+
+/// Program `name` in Windows' system folder, by its whole path, as Windows says where that
+/// is: never one of the same name found first beside Heimdall, in the current folder, on
+/// the `PATH` or under a folder the environment names. `None` when Windows does not say,
+/// and off Windows.
+#[must_use]
+pub fn system_program(name: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    return system_dir().map(|folder| folder.join(name));
+    #[cfg(not(windows))]
+    return {
+        let _ = name;
+        None
+    };
+}
+
+/// Program `name` in Windows' own folder, by its whole path, as Windows says where that is,
+/// as [`system_program`] for the system folder. `None` when Windows does not say, and off
+/// Windows.
+#[must_use]
+pub fn windows_program(name: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    return system_root().map(|folder| folder.join(name));
+    #[cfg(not(windows))]
+    return {
+        let _ = name;
+        None
+    };
 }

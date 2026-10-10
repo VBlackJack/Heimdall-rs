@@ -88,6 +88,8 @@ pub enum Action {
     FilesPath,
     FilesSwitchPane,
     FullScreen,
+    /// Ctrl+Shift+F11: full screen over an embedded session, which never gets the key.
+    FullScreenOverSessions,
     /// Ctrl+Alt+Home: the keyboard back from a remote desktop.
     ReleaseDesktop,
     Settings,
@@ -160,6 +162,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
         Group::Window,
         &[
             ("F11", Action::FullScreen),
+            ("Ctrl+Shift+F11", Action::FullScreenOverSessions),
             ("Ctrl+Alt+Home", Action::ReleaseDesktop),
             ("Ctrl+,", Action::Settings),
             ("Ctrl+Shift+S", Action::Screenshot),
@@ -220,6 +223,7 @@ pub fn action_text(action: Action) -> String {
         Action::FilesPath => fl!("ui-shortcuts-files-path"),
         Action::FilesSwitchPane => fl!("ui-shortcuts-files-switch-pane"),
         Action::FullScreen => fl!("ui-shortcuts-full-screen"),
+        Action::FullScreenOverSessions => fl!("ui-shortcuts-full-screen-over-sessions"),
         Action::ReleaseDesktop => fl!("ui-shortcuts-release-desktop"),
         Action::Settings => fl!("ui-shortcuts-settings"),
         Action::Screenshot => fl!("ui-shortcuts-screenshot"),
@@ -288,6 +292,6 @@ mod tests {
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
 
-        assert_eq!(actions.len(), 42, "every action listed");
+        assert_eq!(actions.len(), 43, "every action listed");
     }
 }
