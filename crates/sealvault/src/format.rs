@@ -32,17 +32,12 @@
 //!
 //! The sealed body follows, its tag last.
 
-/// Bytes of a key.
-pub const KEY_LEN: usize = 32;
-
-/// Bytes of a nonce.
-pub const NONCE_LEN: usize = 12;
+use crate::aead::TAG_LEN;
+pub use crate::aead::{KEY_LEN, NONCE_LEN};
+use crate::kdf::KdfParams;
 
 /// Bytes of a salt.
 pub const SALT_LEN: usize = 16;
-
-/// Bytes of an AES-GCM tag.
-const TAG_LEN: usize = 16;
 
 /// Bytes of the wrapped data key.
 const WRAPPED_LEN: usize = KEY_LEN + TAG_LEN;
@@ -58,42 +53,6 @@ const WRAP_PREFIX_LEN: usize = 4 + 2 + 1 + 4 + 4 + 4 + SALT_LEN + 1 + NONCE_LEN;
 
 /// Bytes of the whole header.
 pub const HEADER_LEN: usize = WRAP_PREFIX_LEN + WRAPPED_LEN + NONCE_LEN;
-
-/// The cost of Argon2id, as the file states it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KdfParams {
-    /// Memory, in KiB.
-    pub memory_kib: u32,
-    /// Passes over the memory.
-    pub iterations: u32,
-    /// Parallel lanes.
-    pub lanes: u32,
-}
-
-impl KdfParams {
-    /// The least a vault may ask for: 64 MiB, 3 passes, 1 lane. What a new vault gets.
-    pub const FLOOR: Self = Self {
-        memory_kib: 64 * 1024,
-        iterations: 3,
-        lanes: 1,
-    };
-
-    /// The most a vault may ask for: beyond, a file could make opening it exhaust the
-    /// machine.
-    pub const CEILING: Self = Self {
-        memory_kib: 4 * 1024 * 1024,
-        iterations: 64,
-        lanes: 16,
-    };
-
-    /// Whether each value lies between [`KdfParams::FLOOR`] and [`KdfParams::CEILING`].
-    #[must_use]
-    pub fn is_acceptable(&self) -> bool {
-        (Self::FLOOR.memory_kib..=Self::CEILING.memory_kib).contains(&self.memory_kib)
-            && (Self::FLOOR.iterations..=Self::CEILING.iterations).contains(&self.iterations)
-            && (Self::FLOOR.lanes..=Self::CEILING.lanes).contains(&self.lanes)
-    }
-}
 
 /// A parsed header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,27 +181,5 @@ mod tests {
             changed[index] ^= 1;
             assert!(Header::parse(&changed).is_none(), "byte {index}");
         }
-    }
-
-    #[test]
-    fn costs_outside_the_floor_and_ceiling_are_refused() {
-        assert!(KdfParams::FLOOR.is_acceptable());
-        assert!(KdfParams::CEILING.is_acceptable());
-        let below = |change: fn(&mut KdfParams)| {
-            let mut params = KdfParams::FLOOR;
-            change(&mut params);
-            params.is_acceptable()
-        };
-        assert!(!below(|p| p.memory_kib -= 1));
-        assert!(!below(|p| p.iterations -= 1));
-        assert!(!below(|p| p.lanes = 0));
-        let above = |change: fn(&mut KdfParams)| {
-            let mut params = KdfParams::CEILING;
-            change(&mut params);
-            params.is_acceptable()
-        };
-        assert!(!above(|p| p.memory_kib += 1));
-        assert!(!above(|p| p.iterations += 1));
-        assert!(!above(|p| p.lanes += 1));
     }
 }

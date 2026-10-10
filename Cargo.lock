@@ -2480,10 +2480,10 @@ dependencies = [
 name = "heimdall-remote"
 version = "0.1.0"
 dependencies = [
- "des",
  "flate2",
  "heimdall-tls",
  "rcgen",
+ "sealvault",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
@@ -5938,7 +5938,14 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "des",
  "getrandom 0.4.3",
+ "hmac",
+ "md-5 0.11.0",
+ "sha1 0.11.0",
+ "sha2 0.11.0",
+ "sha3 0.12.0",
+ "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "zeroize",

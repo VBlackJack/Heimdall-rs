@@ -13,8 +13,9 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-des.workspace = true
 flate2.workspace = true
+# sealvault: VNC Authentication's DES response, from its legacy module.
+sealvault.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
