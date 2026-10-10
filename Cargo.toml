@@ -51,7 +51,7 @@ ironrdp = { version = "0.17.0", features = ["connector", "session", "graphics", 
 ironrdp-core = "0.2.1"
 ironrdp-tokio = "0.10.0"
 # cpal: an RDP server's sound played on this computer (WASAPI, ALSA, Core Audio).
-cpal = "0.17.3"
+cpal = "0.18.2"
 iced = "0.14.0"
 # iced_renderer: the renderer iced picks at run time, which iced keeps private.
 iced_renderer = "0.14.0"
