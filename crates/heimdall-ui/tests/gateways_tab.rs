@@ -58,6 +58,7 @@ fn shell(dir: &Path) -> Shell {
         username: None,
         key_path: None,
         gateway: Some(ProfileId::new(gateway)),
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),

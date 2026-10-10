@@ -90,6 +90,7 @@ fn profile(gateway: &str) -> WinRmProfile {
         skip_certificate_check: false,
         username: Some(r"LAB\admin".to_owned()),
         gateway: Some(ProfileId::new(gateway)),
+        local_tunnel_port: None,
     }
 }
 

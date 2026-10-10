@@ -269,6 +269,7 @@ fn a_session_through_a_gateway_says_so_on_its_tab_and_is_a_row_of_its_own_in_the
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: Some(ProfileId::new("bastion")),
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),

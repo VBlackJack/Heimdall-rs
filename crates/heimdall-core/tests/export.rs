@@ -62,6 +62,7 @@ fn ssh() -> Vec<SshProfile> {
         username: Some("ops".to_owned()),
         key_path: Some(PathBuf::from(r"C:\keys\web")),
         gateway: Some(ProfileId::new("inner")),
+        local_tunnel_port: Some(40022),
         vault_entry: Some("Web/Ops".to_owned()),
         forwards: Forwards {
             socks_port: Some(1080),
@@ -98,6 +99,7 @@ fn ssh() -> Vec<SshProfile> {
         username: None,
         key_path: None,
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: Forwards::default(),
         post_connect: PostConnect::default(),
@@ -125,6 +127,7 @@ fn rdp() -> Vec<RdpProfile> {
             domain: Some("LAB".to_owned()),
             allow_tls_only: true,
             gateway: Some(ProfileId::new("edge")),
+            local_tunnel_port: Some(40389),
             redirect_clipboard: false,
             redirect_drives: true,
             options: RdpOptions {
@@ -173,6 +176,7 @@ fn rdp() -> Vec<RdpProfile> {
             domain: None,
             allow_tls_only: false,
             gateway: None,
+            local_tunnel_port: None,
             redirect_clipboard: true,
             redirect_drives: false,
             options: RdpOptions {
@@ -271,6 +275,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
             skip_certificate_check: true,
             username: Some(r"LAB\admin".to_owned()),
             gateway: None,
+            local_tunnel_port: None,
         },
         WinRmProfile {
             id: ProfileId::new("ps-me"),
@@ -283,6 +288,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
             username: None,
             // Through a gateway, HTTP only.
             gateway: Some(ProfileId::new("edge")),
+            local_tunnel_port: Some(45985),
         },
     ]);
     // What two of them say of their servers.
@@ -496,4 +502,35 @@ fn a_gateway_in_both_the_document_and_the_settings_is_the_documents() {
     .expect("reads");
     let hosts: Vec<&str> = report.gateways.iter().map(|g| g.host.as_str()).collect();
     assert_eq!(hosts, ["new.lab", "o.lab"]);
+}
+
+#[test]
+fn the_local_tunnel_port_is_always_written_never_0() {
+    let dir = tempfile::tempdir().expect("dir");
+    let text = export::csharp(&store(dir.path()), &line, &RdpDefaults::default());
+    let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let servers = document["servers"].as_array().expect("servers");
+    let local_port = |id: &str| {
+        servers
+            .iter()
+            .find(|server| server["id"] == id)
+            .unwrap_or_else(|| panic!("{id}"))
+            .get("localPort")
+            .cloned()
+    };
+    // A port chosen, as it is; the automatic choice, as the C# suggested port of the type,
+    // which the C# reads as automatic.
+    for (id, port) in [
+        ("web", 40022),
+        ("files", 2222),
+        ("dc", 40389),
+        ("ps", 59850),
+        ("ps-me", 45985),
+    ] {
+        assert_eq!(local_port(id), Some(serde_json::json!(port)), "{id}");
+    }
+    // The protocols no gateway carries have none.
+    for id in ["switch", "screen", "ftp", "mail", "tool"] {
+        assert_eq!(local_port(id), None, "{id}");
+    }
 }

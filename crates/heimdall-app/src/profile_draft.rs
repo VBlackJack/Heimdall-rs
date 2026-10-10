@@ -27,7 +27,8 @@ use heimdall_core::profile::{
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
     DesktopSizing, Experience, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards,
     FtpProfile, LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile,
-    RdpSwitch, Resolution, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    RdpSwitch, Resolution, SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT,
+    SUGGESTED_WINRM_TUNNEL_PORT, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
     fixed_desktop,
 };
 use heimdall_core::settings::rdp_resize_enable_delay_accepted;
@@ -90,6 +91,9 @@ pub enum ProfileField {
     RemoteBindPort,
     /// The local port of the remote forward.
     RemoteLocalPort,
+    /// The port of this computer a program started here is pointed at through the gateway,
+    /// as the C# "Manual local port"; disabled while the port is chosen automatically.
+    LocalTunnelPort,
     /// RDP: the Remote Desktop Gateway the server is reached through, as the C# "RD Gateway
     /// server"; empty goes straight to it.
     RdGateway,
@@ -107,7 +111,7 @@ pub enum ProfileField {
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -125,6 +129,7 @@ impl ProfileField {
         Self::SocksPort,
         Self::RemoteBindPort,
         Self::RemoteLocalPort,
+        Self::LocalTunnelPort,
         Self::RdGateway,
         Self::LocalProgram,
         Self::LocalArguments,
@@ -215,6 +220,8 @@ impl DraftProtocol {
             ProfileField::SocksPort
             | ProfileField::RemoteBindPort
             | ProfileField::RemoteLocalPort => self.routes_through_gateway() && self != Self::WinRm,
+            // The C# shows it for every protocol a gateway carries.
+            ProfileField::LocalTunnelPort => self.routes_through_gateway(),
         }
     }
 
@@ -239,6 +246,18 @@ impl DraftProtocol {
     #[must_use]
     pub fn routes_through_gateway(self) -> bool {
         matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm)
+    }
+
+    /// The local tunnel port the C# suggests for the protocol, which stands for the
+    /// automatic choice: `None` for a protocol no gateway carries.
+    #[must_use]
+    pub fn suggested_tunnel_port(self) -> Option<u16> {
+        match self {
+            Self::Ssh | Self::Sftp => Some(SUGGESTED_SSH_TUNNEL_PORT),
+            Self::Rdp => Some(SUGGESTED_RDP_TUNNEL_PORT),
+            Self::WinRm => Some(SUGGESTED_WINRM_TUNNEL_PORT),
+            Self::Vnc | Self::Telnet | Self::Ftp | Self::Citrix | Self::Local => None,
+        }
     }
 
     /// Whether the protocol's profiles name a key file, whose passphrase can be saved.
@@ -321,6 +340,10 @@ pub enum ProfileToggle {
     /// Local shell: run as administrator, in a window of its own that Windows opens through
     /// its elevation prompt, never in a tab. Drawn by the local shell's own card.
     RunAsAdministrator,
+    /// Through a gateway: the system chooses the local tunnel port, as the C# "Choose the
+    /// tunnel port automatically", ticked unless a port is chosen. Drawn by the tunnel port's
+    /// own card.
+    AutoTunnelPort,
 }
 
 impl ProfileToggle {
@@ -533,6 +556,35 @@ pub struct ProfileDraft {
     pub session_logging: Option<bool>,
     /// SSH: where the shell opens, in a tab or in `PuTTY`.
     pub ssh_mode: SshMode,
+    /// Through a gateway: how the local tunnel port is chosen, as the C# "Choose the tunnel
+    /// port automatically".
+    pub tunnel_port_choice: TunnelPortChoice,
+    /// The local tunnel port, as typed; while the system chooses, the protocol's suggested
+    /// port, as the C# dialog shows it.
+    pub local_tunnel_port: String,
+}
+
+/// How a form's local tunnel port is chosen, as the C# "Choose the tunnel port
+/// automatically" box.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TunnelPortChoice {
+    /// The system chooses, the box ticked: a new profile's choice.
+    #[default]
+    Automatic,
+    /// The port typed, the box cleared.
+    Manual,
+}
+
+impl TunnelPortChoice {
+    /// The choice of a profile saved with `port`: none is the automatic one.
+    #[must_use]
+    pub fn of(port: Option<u16>) -> Self {
+        if port.is_some() {
+            Self::Manual
+        } else {
+            Self::Automatic
+        }
+    }
 }
 
 /// The form's "Test address", as the C# chip.
@@ -606,6 +658,12 @@ pub enum DraftError {
     MacAddressInvalid,
     /// The Remote Desktop Gateway is neither a host name nor an IPv4 address.
     RdGatewayInvalid,
+    /// A local tunnel port is to be chosen but none is typed, or 0 or less, as the C#
+    /// `ValidationTunnelPortRequired`.
+    TunnelPortMissing,
+    /// The local tunnel port typed is not a number from 1 to 65535, as the C#
+    /// `ValidationLocalPortRange`.
+    TunnelPortInvalid,
 }
 
 impl DraftError {
@@ -631,6 +689,7 @@ impl DraftError {
             Self::ArgumentsInvalid => ProfileField::LocalArguments,
             Self::MacAddressInvalid => ProfileField::MacAddress,
             Self::RdGatewayInvalid => ProfileField::RdGateway,
+            Self::TunnelPortMissing | Self::TunnelPortInvalid => ProfileField::LocalTunnelPort,
         }
     }
 }
@@ -674,6 +733,11 @@ impl ProfileDraft {
             protocol_chosen: true,
             session_logging: profile.session_logging,
             ssh_mode: profile.ssh_mode,
+            tunnel_port_choice: TunnelPortChoice::of(profile.local_tunnel_port),
+            local_tunnel_port: profile
+                .local_tunnel_port
+                .unwrap_or(SUGGESTED_SSH_TUNNEL_PORT)
+                .to_string(),
             ..Self::default()
         }
     }
@@ -855,6 +919,11 @@ impl ProfileDraft {
                 .resize_enable_delay_ms
                 .map(|ms| ms.to_string())
                 .unwrap_or_default(),
+            tunnel_port_choice: TunnelPortChoice::of(profile.local_tunnel_port),
+            local_tunnel_port: profile
+                .local_tunnel_port
+                .unwrap_or(SUGGESTED_RDP_TUNNEL_PORT)
+                .to_string(),
             ..Self::default()
         }
     }
@@ -911,6 +980,11 @@ impl ProfileDraft {
             protocol_chosen: true,
             gateway: profile.gateway.clone(),
             toggles,
+            tunnel_port_choice: TunnelPortChoice::of(profile.local_tunnel_port),
+            local_tunnel_port: profile
+                .local_tunnel_port
+                .unwrap_or(SUGGESTED_WINRM_TUNNEL_PORT)
+                .to_string(),
             ..Self::default()
         }
     }
@@ -961,6 +1035,10 @@ impl ProfileDraft {
             ..Self::default()
         };
         draft.port = draft.default_port().to_string();
+        draft.local_tunnel_port = protocol
+            .suggested_tunnel_port()
+            .map(|port| port.to_string())
+            .unwrap_or_default();
         draft
     }
 
@@ -1017,12 +1095,19 @@ impl ProfileDraft {
     /// Whether `toggle` is ticked.
     #[must_use]
     pub fn is_on(&self, toggle: ProfileToggle) -> bool {
+        if toggle == ProfileToggle::AutoTunnelPort {
+            return self.tunnel_port_choice == TunnelPortChoice::Automatic;
+        }
         self.toggles.contains(&toggle)
     }
 
     /// Ticks or clears `toggle`. As in the C# dialog, "Use SSL" moves a `WinRM` port still
     /// on the other transport's default to its own default; a port typed by hand stays.
     pub fn toggle(&mut self, toggle: ProfileToggle, on: bool) {
+        if toggle == ProfileToggle::AutoTunnelPort {
+            self.choose_tunnel_port_automatically(on);
+            return;
+        }
         let before = self.default_port();
         self.toggles.retain(|ticked| *ticked != toggle);
         if on {
@@ -1031,6 +1116,51 @@ impl ProfileDraft {
         let port = self.port.trim();
         if toggle == ProfileToggle::UseSsl && (port.is_empty() || port == before.to_string()) {
             self.port = self.default_port().to_string();
+        }
+    }
+
+    /// Ticks or clears "Choose the tunnel port automatically". Ticked, the field shows the
+    /// protocol's suggested port again, as the C# `OnUseAutomaticTunnelPortChanged`; cleared,
+    /// it keeps what it shows, to be changed.
+    fn choose_tunnel_port_automatically(&mut self, on: bool) {
+        self.tunnel_port_choice = if on {
+            TunnelPortChoice::Automatic
+        } else {
+            TunnelPortChoice::Manual
+        };
+        let suggested = self.protocol.suggested_tunnel_port();
+        if on || self.local_tunnel_port.trim().is_empty() {
+            self.local_tunnel_port = suggested.map(|port| port.to_string()).unwrap_or_default();
+        }
+    }
+
+    /// The local tunnel port saved: `None` lets the system choose, as the C# reads a port
+    /// set to the automatic choice, or to the protocol's suggested port. Checked only where
+    /// it is shown; hidden, without a gateway, a port typed that does not read is dropped,
+    /// as it could not be used, and one that reads is kept, as the C# keeps `LocalPort`.
+    ///
+    /// # Errors
+    ///
+    /// [`DraftError::TunnelPortMissing`] for none, or 0 or less, typed;
+    /// [`DraftError::TunnelPortInvalid`] for anything else but a number from 1 to 65535.
+    fn saved_local_tunnel_port(&self) -> Result<Option<u16>, DraftError> {
+        if self.tunnel_port_choice == TunnelPortChoice::Automatic {
+            return Ok(None);
+        }
+        let shown = self.shows(ProfileField::LocalTunnelPort);
+        let typed = self.local_tunnel_port.trim();
+        let port = match typed.parse::<i64>() {
+            Ok(value) if value <= 0 => Err(DraftError::TunnelPortMissing),
+            Ok(value) => u16::try_from(value).map_err(|_| DraftError::TunnelPortInvalid),
+            Err(_) if typed.is_empty() => Err(DraftError::TunnelPortMissing),
+            Err(_) => Err(DraftError::TunnelPortInvalid),
+        };
+        match port {
+            Ok(port) => {
+                Ok(Some(port).filter(|port| Some(*port) != self.protocol.suggested_tunnel_port()))
+            }
+            Err(error) if shown => Err(error),
+            Err(_) => Ok(None),
         }
     }
 
@@ -1191,7 +1321,8 @@ impl ProfileDraft {
                 && field == ProfileField::Username
                 && !self.is_on(ProfileToggle::StoredCredential))
             && !(fixed_size && self.rdp_options.resolution != Resolution::Fixed)
-            && !(Self::FORWARD_FIELDS.contains(&field) && self.routed_gateway().is_none())
+            && !((Self::FORWARD_FIELDS.contains(&field) || field == ProfileField::LocalTunnelPort)
+                && self.routed_gateway().is_none())
     }
 
     /// Whether the form shows a password field: a `WinRM` profile's only with a stored
@@ -1274,8 +1405,12 @@ impl ProfileDraft {
         let forwards = Self::FORWARD_FIELDS
             .into_iter()
             .filter_map(|field| self.forward_port(field).err());
+        let tunnel_port = self.saved_local_tunnel_port().err();
         match self.protocol {
-            DraftProtocol::Ssh | DraftProtocol::Sftp => errors.extend(forwards),
+            DraftProtocol::Ssh | DraftProtocol::Sftp => {
+                errors.extend(forwards);
+                errors.extend(tunnel_port);
+            }
             DraftProtocol::Rdp => {
                 errors.extend(self.saved_rd_gateway().err());
                 if self.rdp_options.resolution == Resolution::Fixed {
@@ -1284,6 +1419,7 @@ impl ProfileDraft {
                 }
                 errors.extend(self.resize_delay().err());
                 errors.extend(forwards);
+                errors.extend(tunnel_port);
             }
             DraftProtocol::WinRm => {
                 if self.is_on(ProfileToggle::StoredCredential)
@@ -1291,6 +1427,7 @@ impl ProfileDraft {
                 {
                     errors.push(DraftError::UsernameMissing);
                 }
+                errors.extend(tunnel_port);
             }
             DraftProtocol::Local => {
                 if local_draft::arguments_of(&self.local_arguments).is_none() {
@@ -1556,6 +1693,7 @@ impl ProfileDraft {
                 username: optional(username),
                 key_path: optional(key_path).map(PathBuf::from),
                 gateway: self.routed_gateway(),
+                local_tunnel_port: self.saved_local_tunnel_port()?,
                 vault_entry: optional(vault_entry),
                 forwards: self.saved_forwards()?,
                 post_connect: self.saved_post_connect(),
@@ -1584,6 +1722,7 @@ impl ProfileDraft {
                 domain: optional(domain),
                 allow_tls_only: !self.is_on(ProfileToggle::Nla),
                 gateway: self.routed_gateway(),
+                local_tunnel_port: self.saved_local_tunnel_port()?,
                 redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
                 redirect_drives: self.is_on(ProfileToggle::RedirectDrives),
                 options: self.saved_rdp_options()?,
@@ -1623,6 +1762,7 @@ impl ProfileDraft {
                         && self.is_on(ProfileToggle::SkipCertificateCheck),
                     username: stored.then(|| username.to_owned()),
                     gateway: self.routed_gateway(),
+                    local_tunnel_port: self.saved_local_tunnel_port()?,
                 })
             }
             DraftProtocol::Local => self.saved_local(id, name, group)?,
@@ -1672,6 +1812,7 @@ impl ProfileDraft {
             ProfileField::SocksPort => &self.socks_port,
             ProfileField::RemoteBindPort => &self.remote_bind_port,
             ProfileField::RemoteLocalPort => &self.remote_local_port,
+            ProfileField::LocalTunnelPort => &self.local_tunnel_port,
             ProfileField::RdGateway => &self.rd_gateway,
             ProfileField::LocalProgram => &self.local_program,
             ProfileField::LocalArguments => &self.local_arguments,
@@ -1705,6 +1846,7 @@ impl ProfileDraft {
             ProfileField::SocksPort => &mut self.socks_port,
             ProfileField::RemoteBindPort => &mut self.remote_bind_port,
             ProfileField::RemoteLocalPort => &mut self.remote_local_port,
+            ProfileField::LocalTunnelPort => &mut self.local_tunnel_port,
             ProfileField::RdGateway => &mut self.rd_gateway,
             ProfileField::LocalProgram => &mut self.local_program,
             ProfileField::LocalArguments => &mut self.local_arguments,
@@ -1756,6 +1898,7 @@ impl ProfileDraft {
             username: optional(username),
             key_path: optional(key_path).map(PathBuf::from),
             gateway: self.gateway.clone(),
+            local_tunnel_port: self.saved_local_tunnel_port()?,
             vault_entry: optional(self.vault_entry.trim()),
             forwards: self.saved_forwards()?,
             post_connect: self.saved_post_connect(),
@@ -1957,6 +2100,7 @@ mod tests {
             username: None,
             key_path: None,
             gateway: None,
+            local_tunnel_port: None,
             vault_entry: None,
             forwards: heimdall_core::profile::Forwards::default(),
             post_connect: heimdall_core::post_connect::PostConnect::default(),
@@ -2527,6 +2671,7 @@ mod tests {
             domain: None,
             allow_tls_only: false,
             gateway: None,
+            local_tunnel_port: None,
             redirect_clipboard: true,
             redirect_drives: false,
             vault_entry: None,
@@ -2740,6 +2885,7 @@ mod tests {
             domain: Some("CORP".to_owned()),
             allow_tls_only: true,
             gateway: Some(ProfileId::new("gw")),
+            local_tunnel_port: None,
             redirect_clipboard: false,
             redirect_drives: false,
             options: heimdall_core::profile::RdpOptions::default(),
@@ -2804,6 +2950,7 @@ mod tests {
             skip_certificate_check: true,
             username: Some("LAB\\admin".to_owned()),
             gateway: None,
+            local_tunnel_port: None,
         };
         assert_eq!(
             ProfileDraft::from_winrm(&winrm).to_saved(id()),
@@ -3040,5 +3187,169 @@ mod tests {
         form.rdp_options.resolution = Resolution::Fixed;
         assert!(!form.shows(ProfileField::ResizeDelay), "a size of its own");
         assert!(!ProfileDraft::new_for(DraftProtocol::Ssh).shows(ProfileField::ResizeDelay));
+    }
+
+    /// A new form for `protocol`, named and addressed, through gateway "gw".
+    fn routed(protocol: DraftProtocol) -> ProfileDraft {
+        let mut form = ProfileDraft::new_for(protocol);
+        form.name = "far".to_owned();
+        form.host = "far.lab".to_owned();
+        form.choose_gateway(ProfileId::new("gw"));
+        form
+    }
+
+    /// The local tunnel port `form` saves.
+    fn saved_port(form: &ProfileDraft) -> Result<Option<u16>, DraftError> {
+        Ok(match form.to_saved(id())? {
+            DraftProfile::Ssh(profile) => profile.local_tunnel_port,
+            DraftProfile::Rdp(profile) => profile.local_tunnel_port,
+            DraftProfile::WinRm(profile) => profile.local_tunnel_port,
+            other => panic!("{other:?}"),
+        })
+    }
+
+    #[test]
+    fn the_tunnel_port_is_shown_only_through_a_gateway_for_the_three_types() {
+        for protocol in DraftProtocol::ALL {
+            let mut form = ProfileDraft::new_for(protocol);
+            assert!(!form.shows(ProfileField::LocalTunnelPort), "{protocol:?}");
+            form.choose_gateway(ProfileId::new("gw"));
+            assert_eq!(
+                form.shows(ProfileField::LocalTunnelPort),
+                matches!(
+                    protocol,
+                    DraftProtocol::Ssh
+                        | DraftProtocol::Sftp
+                        | DraftProtocol::Rdp
+                        | DraftProtocol::WinRm
+                ),
+                "{protocol:?}"
+            );
+            form.toggle(ProfileToggle::DirectConnection, true);
+            assert!(!form.shows(ProfileField::LocalTunnelPort), "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn a_new_form_chooses_automatically_showing_the_suggested_port() {
+        for (protocol, suggested) in [
+            (DraftProtocol::Rdp, "33890"),
+            (DraftProtocol::Ssh, "2222"),
+            (DraftProtocol::Sftp, "2222"),
+            (DraftProtocol::WinRm, "59850"),
+        ] {
+            let form = routed(protocol);
+            assert!(form.is_on(ProfileToggle::AutoTunnelPort), "{protocol:?}");
+            assert_eq!(form.value(ProfileField::LocalTunnelPort), suggested);
+            assert_eq!(saved_port(&form), Ok(None), "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn a_port_chosen_is_saved_and_shown_again() {
+        let mut form = routed(DraftProtocol::Rdp);
+        form.toggle(ProfileToggle::AutoTunnelPort, false);
+        assert!(!form.is_on(ProfileToggle::AutoTunnelPort));
+        assert_eq!(
+            form.value(ProfileField::LocalTunnelPort),
+            "33890",
+            "the suggested port, to be changed"
+        );
+        form.set(ProfileField::LocalTunnelPort, " 40000 ".to_owned());
+        assert_eq!(saved_port(&form), Ok(Some(40000)));
+        let DraftProfile::Rdp(profile) = form.to_saved(id()).expect("valid") else {
+            panic!("RDP");
+        };
+        let again = ProfileDraft::from_rdp(&profile);
+        assert!(!again.is_on(ProfileToggle::AutoTunnelPort));
+        assert_eq!(again.value(ProfileField::LocalTunnelPort), "40000");
+        assert_eq!(again.to_saved(id()), Ok(DraftProfile::Rdp(profile)));
+
+        // Ticked again: the system chooses, the suggested port shown.
+        form.toggle(ProfileToggle::AutoTunnelPort, true);
+        assert_eq!(form.value(ProfileField::LocalTunnelPort), "33890");
+        assert_eq!(saved_port(&form), Ok(None));
+    }
+
+    #[test]
+    fn the_suggested_port_chosen_by_hand_is_the_automatic_choice_as_the_csharp_reads_it() {
+        for (protocol, suggested) in [
+            (DraftProtocol::Rdp, "33890"),
+            (DraftProtocol::Ssh, "2222"),
+            (DraftProtocol::WinRm, "59850"),
+        ] {
+            let mut form = routed(protocol);
+            form.toggle(ProfileToggle::AutoTunnelPort, false);
+            form.set(ProfileField::LocalTunnelPort, suggested.to_owned());
+            assert_eq!(saved_port(&form), Ok(None), "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn a_port_chosen_is_checked_with_the_csharp_messages() {
+        for protocol in [DraftProtocol::Ssh, DraftProtocol::Rdp, DraftProtocol::WinRm] {
+            for (typed, expected) in [
+                ("", Err(DraftError::TunnelPortMissing)),
+                ("0", Err(DraftError::TunnelPortMissing)),
+                ("-3", Err(DraftError::TunnelPortMissing)),
+                ("65536", Err(DraftError::TunnelPortInvalid)),
+                ("70000", Err(DraftError::TunnelPortInvalid)),
+                ("port", Err(DraftError::TunnelPortInvalid)),
+                ("1", Ok(Some(1))),
+                ("65535", Ok(Some(65535))),
+            ] {
+                let mut form = routed(protocol);
+                form.toggle(ProfileToggle::AutoTunnelPort, false);
+                form.set(ProfileField::LocalTunnelPort, typed.to_owned());
+                assert_eq!(saved_port(&form), expected, "{protocol:?} {typed:?}");
+                let listed = form.errors();
+                match expected {
+                    Err(error) => {
+                        assert!(listed.contains(&error), "{protocol:?} {typed:?}");
+                        assert_eq!(error.field(), ProfileField::LocalTunnelPort);
+                    }
+                    Ok(_) => assert!(listed.is_empty(), "{protocol:?} {typed:?} {listed:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn without_a_gateway_a_port_that_does_not_read_is_dropped_one_that_does_kept() {
+        let mut form = routed(DraftProtocol::WinRm);
+        form.toggle(ProfileToggle::AutoTunnelPort, false);
+        form.set(ProfileField::LocalTunnelPort, "70000".to_owned());
+        form.toggle(ProfileToggle::DirectConnection, true);
+        assert!(form.errors().is_empty());
+        assert_eq!(saved_port(&form), Ok(None));
+        form.set(ProfileField::LocalTunnelPort, "40000".to_owned());
+        assert_eq!(
+            saved_port(&form),
+            Ok(Some(40000)),
+            "kept, as the C# keeps it"
+        );
+    }
+
+    #[test]
+    fn ssh_and_winrm_profiles_keep_their_port_through_the_form() {
+        let mut ssh = routed(DraftProtocol::Ssh);
+        ssh.toggle(ProfileToggle::AutoTunnelPort, false);
+        ssh.set(ProfileField::LocalTunnelPort, "40022".to_owned());
+        let DraftProfile::Ssh(profile) = ssh.to_saved(id()).expect("valid") else {
+            panic!("SSH");
+        };
+        assert_eq!(profile.local_tunnel_port, Some(40022));
+        let again = ProfileDraft::from_profile(&profile);
+        assert_eq!(again.to_saved(id()), Ok(DraftProfile::Ssh(profile)));
+
+        let mut winrm = routed(DraftProtocol::WinRm);
+        winrm.toggle(ProfileToggle::AutoTunnelPort, false);
+        winrm.set(ProfileField::LocalTunnelPort, "45985".to_owned());
+        let DraftProfile::WinRm(profile) = winrm.to_saved(id()).expect("valid") else {
+            panic!("WinRM");
+        };
+        assert_eq!(profile.local_tunnel_port, Some(45985));
+        let again = ProfileDraft::from_winrm(&profile);
+        assert_eq!(again.to_saved(id()), Ok(DraftProfile::WinRm(profile)));
     }
 }

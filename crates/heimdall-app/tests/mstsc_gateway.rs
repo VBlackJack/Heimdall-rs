@@ -85,6 +85,7 @@ fn rdp_profile(host: &str, port: u16, gateway: Option<&str>) -> RdpProfile {
         domain: None,
         allow_tls_only: false,
         gateway: gateway.map(ProfileId::new),
+        local_tunnel_port: None,
         redirect_clipboard: true,
         redirect_drives: false,
         options: RdpOptions::default(),

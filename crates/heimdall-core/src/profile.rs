@@ -41,6 +41,17 @@ pub const DEFAULT_WINRM_HTTPS_PORT: u16 = 5986;
 /// Port a VNC server listens on unless a profile says otherwise: display 0.
 pub const DEFAULT_VNC_PORT: u16 = 5900;
 
+/// The local tunnel port the C# suggests for an RDP profile, `DefaultPorts.RdpTunnel`: a
+/// profile on it lets the system choose, as the C# `ShouldUseOsAssignedLocalPort`.
+pub const SUGGESTED_RDP_TUNNEL_PORT: u16 = 33890;
+
+/// The local tunnel port the C# suggests for an SSH or SFTP profile,
+/// `DefaultPorts.SshTunnel`.
+pub const SUGGESTED_SSH_TUNNEL_PORT: u16 = 2222;
+
+/// The local tunnel port the C# suggests for a `WinRM` profile, `DefaultPorts.WinRmTunnel`.
+pub const SUGGESTED_WINRM_TUNNEL_PORT: u16 = 59850;
+
 /// Stable identifier of a profile.
 ///
 /// A profile imported from the C# Heimdall keeps the identifier it had there, so a second
@@ -98,6 +109,12 @@ pub struct SshProfile {
     /// The SSH gateway the server is reached through, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<ProfileId>,
+    /// The port of this computer `PuTTY` is pointed at through the gateway, as the C#
+    /// `LocalPort`; `None` lets the system choose, as the C# "Choose the tunnel port
+    /// automatically". A shell or files in a tab open no port: their channels stay in the
+    /// application.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_tunnel_port: Option<u16>,
     /// The profile's entry in the external password manager, for `{Title}`; `None` uses
     /// its name, as the C# `VaultEntryName`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -297,6 +314,7 @@ impl SshGateway {
             username: self.username.clone(),
             key_path: self.key_path.clone(),
             gateway: None,
+            local_tunnel_port: None,
             vault_entry: None,
             forwards: Forwards::default(),
             post_connect: PostConnect::default(),
@@ -345,6 +363,12 @@ pub struct RdpProfile {
     /// in a tunnel the gateway opens to the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<ProfileId>,
+    /// The port of this computer Remote Desktop Connection is pointed at through the
+    /// gateway, as the C# `LocalPort`; `None` lets the system choose, as the C# "Choose the
+    /// tunnel port automatically". A desktop in a tab opens no port: its channel stays in
+    /// the application.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_tunnel_port: Option<u16>,
     /// Share the clipboard with the server, text only. On unless turned off, as in the C#
     /// Heimdall and in the Windows client: written down only when off.
     #[serde(default = "shared", skip_serializing_if = "is_shared")]
@@ -1255,6 +1279,10 @@ pub struct WinRmProfile {
     /// only, through a forward of this computer's loopback address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<ProfileId>,
+    /// The port of that forward, as the C# `LocalPort`; `None` lets the system choose, as
+    /// the C# "Choose the tunnel port automatically".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_tunnel_port: Option<u16>,
 }
 
 /// Port of an FTP server when a profile names none, as the C# `DefaultPorts.Ftp`.

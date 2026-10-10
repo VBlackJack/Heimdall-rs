@@ -17,10 +17,11 @@
 //! An RDP profile opened in Remote Desktop Connection through its SSH gateway, as the C#
 //! `RdpHandler` external mode with a tunnel (`RdpHandler.cs`, `SetupTunnelIfNeededAsync`).
 //! The route to the gateway comes first, its questions asked as a tunnel's. Then a forward
-//! listens on this computer's loopback address, on a port the system picks, as the C#
-//! `TunnelService` does for a profile on the suggested tunnel port, and carries what comes
-//! to it to the server's host and port, as the gateway reaches them. The `.rdp` file names
-//! the forward, and `mstsc.exe` is started on it.
+//! listens on this computer's loopback address, on the profile's own port when it has one and
+//! it is free, else on one the system picks, as the C# `TunnelService` and
+//! `TunnelManager.AllocatePort` do, and carries what comes to it to the server's host and
+//! port, as the gateway reaches them. The `.rdp` file names the forward, and `mstsc.exe` is
+//! started on it.
 //!
 //! The forward and the gateway live as long as `mstsc.exe` does: a task waits for it to
 //! exit, then releases both, as the C# releases its tunnel on the process's `Exited`.
@@ -149,10 +150,11 @@ async fn run<S>(
     };
     // Nothing more is asked on the way: the route's events end here.
     drop(route);
-    let opened = local_forward::start_limited(
+    let opened = local_forward::start_preferred(
         Arc::clone(&gateway),
         profile.host.clone(),
         profile.port,
+        profile.local_tunnel_port,
         MSTSC_CLIENTS,
     )
     .await;
@@ -168,9 +170,12 @@ async fn run<S>(
         }
     };
     let address = forward.address();
-    // As the C# `TunnelService`: a profile on the suggested tunnel port takes the one the
-    // system assigns.
-    log::info!("Using OS-assigned tunnel port: {address} for {target}");
+    // As the C# `TunnelService` says which it took.
+    if profile.local_tunnel_port == Some(address.port()) {
+        log::info!("Allocated tunnel port: {address} for {target}");
+    } else {
+        log::info!("Using OS-assigned tunnel port: {address} for {target}");
+    }
     let content = rdp_external::rdp_file_through(&profile, address);
     let outcome = tokio::task::spawn_blocking(move || starter(&content))
         .await

@@ -53,6 +53,7 @@ fn ssh(name: &str, host: &str, port: u16, username: Option<&str>) -> SshProfile 
         username: username.map(str::to_owned),
         key_path: None,
         gateway: None,
+        local_tunnel_port: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
@@ -88,6 +89,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         domain: Some("CORP".to_owned()),
         allow_tls_only: false,
         gateway: None,
+        local_tunnel_port: None,
         redirect_clipboard: false,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
@@ -131,6 +133,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         skip_certificate_check: false,
         username: Some("admin".to_owned()),
         gateway: None,
+        local_tunnel_port: None,
     }]);
     store.merge_winrm([WinRmProfile {
         id: id("winrm-current"),
@@ -142,6 +145,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         skip_certificate_check: false,
         username: None,
         gateway: None,
+        local_tunnel_port: None,
     }]);
     store.merge_telnet([TelnetProfile {
         id: id("telnet"),
