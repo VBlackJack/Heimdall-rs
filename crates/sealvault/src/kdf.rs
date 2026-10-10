@@ -114,22 +114,29 @@ pub const HKDF_SHA256_MAX_LEN: usize = 255 * crate::hash::SHA256_LEN;
 /// `salt` and `info`: extract, then expand. For a secret that is already random; a
 /// password goes through [`argon2id`] instead.
 ///
-/// # Errors
+/// `N` past [`HKDF_SHA256_MAX_LEN`] does not compile:
 ///
-/// [`Error::KeyLength`] when `N` is past [`HKDF_SHA256_MAX_LEN`].
-pub fn hkdf_sha256<const N: usize>(
-    ikm: &[u8],
-    salt: &[u8],
-    info: &[u8],
-) -> Result<SecretKey<N>, Error> {
+/// ```compile_fail
+/// let _ = sealvault::kdf::hkdf_sha256::<{ 255 * 32 + 1 }>(b"ikm", b"salt", b"info");
+/// ```
+///
+/// # Panics
+///
+/// Never: the only failure of the expansion, a length past 255 blocks, is refused at
+/// compile time.
+#[must_use]
+pub fn hkdf_sha256<const N: usize>(ikm: &[u8], salt: &[u8], info: &[u8]) -> SecretKey<N> {
+    const {
+        assert!(
+            N <= HKDF_SHA256_MAX_LEN,
+            "HKDF-SHA256 gives at most 255 blocks"
+        );
+    };
     let mut key = SecretKey::zeroed();
     hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm)
         .expand(info, key.as_mut_bytes())
-        .map_err(|_| Error::KeyLength {
-            expected: HKDF_SHA256_MAX_LEN,
-            actual: N,
-        })?;
-    Ok(key)
+        .expect("a length within 255 blocks, checked at compile time");
+    key
 }
 
 #[cfg(test)]
@@ -195,7 +202,7 @@ mod tests {
     fn hkdf_meets_rfc_5869_test_case_1() {
         let salt: Vec<u8> = (0x00..=0x0c).collect();
         let info: Vec<u8> = (0xf0..=0xf9).collect();
-        let okm = hkdf_sha256::<42>(&[0x0b; 22], &salt, &info).expect("derived");
+        let okm = hkdf_sha256::<42>(&[0x0b; 22], &salt, &info);
         assert_eq!(
             okm.as_bytes().to_vec(),
             hex(
@@ -208,7 +215,7 @@ mod tests {
     /// RFC 5869 appendix A.3: an empty salt and an empty info.
     #[test]
     fn hkdf_meets_rfc_5869_test_case_3() {
-        let okm = hkdf_sha256::<42>(&[0x0b; 22], &[], &[]).expect("derived");
+        let okm = hkdf_sha256::<42>(&[0x0b; 22], &[], &[]);
         assert_eq!(
             okm.as_bytes().to_vec(),
             hex(
@@ -218,15 +225,17 @@ mod tests {
         );
     }
 
+    /// One past the bound does not compile: the doctest on `hkdf_sha256` checks it.
     #[test]
-    fn hkdf_refuses_more_than_255_blocks() {
-        assert!(hkdf_sha256::<HKDF_SHA256_MAX_LEN>(b"ikm", b"salt", b"info").is_ok());
-        assert_eq!(
-            hkdf_sha256::<{ HKDF_SHA256_MAX_LEN + 1 }>(b"ikm", b"salt", b"info").err(),
-            Some(Error::KeyLength {
-                expected: HKDF_SHA256_MAX_LEN,
-                actual: HKDF_SHA256_MAX_LEN + 1
-            })
+    fn hkdf_gives_up_to_255_blocks() {
+        let key = hkdf_sha256::<HKDF_SHA256_MAX_LEN>(b"ikm", b"salt", b"info");
+        let block = crate::hash::SHA256_LEN;
+        assert_eq!(key.as_bytes().len(), HKDF_SHA256_MAX_LEN);
+        assert!(
+            key.as_bytes()[HKDF_SHA256_MAX_LEN - block..]
+                .iter()
+                .any(|byte| *byte != 0),
+            "the last block is filled"
         );
     }
 

@@ -546,7 +546,7 @@ fn derive(signature: &[u8], salt: &[u8; SALT_LEN]) -> Result<aead::Key, HelloFai
     if signature.is_empty() {
         return Err(HelloFailure::CryptoFailure);
     }
-    kdf::hkdf_sha256(signature, salt, HKDF_INFO).map_err(|_| HelloFailure::CryptoFailure)
+    Ok(kdf::hkdf_sha256(signature, salt, HKDF_INFO))
 }
 
 /// What `tpmtool getdeviceinformation` printed says of a TPM 2.0, as the C#
@@ -884,6 +884,63 @@ mod tests {
         assert!(
             derive(&[], &salt).is_err(),
             "an empty signature, as the C# refuses it"
+        );
+    }
+
+    /// A credential that signs as the fixture's does: the SHA-256 of a private part and the
+    /// challenge.
+    struct Signer(&'static [u8]);
+
+    impl KeyCredentials for Signer {
+        fn enrolment_available(&self) -> bool {
+            true
+        }
+
+        fn create(&self, _name: &str) -> Result<Vec<u8>, HelloFailure> {
+            Ok(b"public key".to_vec())
+        }
+
+        fn open(&self, _name: &str) -> Result<Vec<u8>, HelloFailure> {
+            Ok(b"public key".to_vec())
+        }
+
+        fn sign(&self, _name: &str, challenge: &[u8]) -> Result<Zeroizing<Vec<u8>>, HelloFailure> {
+            Ok(Zeroizing::new(
+                sha256(&[self.0, challenge].concat()).to_vec(),
+            ))
+        }
+
+        fn delete(&self, _name: &str) {}
+    }
+
+    #[test]
+    fn another_signature_fails_the_wrapping_tag_before_any_vault_is_read() {
+        let data_key = [7_u8; DATA_KEY_LEN];
+        let envelope = enrol(
+            &Signer(b"enrolled"),
+            &data_key,
+            None,
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("enrolled");
+        let unwrap = |signer: &Signer| {
+            let signature = signer.sign("", &envelope.challenge).expect("signed");
+            let key = derive(&signature, &envelope.salt).expect("derived");
+            aead::open(
+                &key,
+                &envelope.nonce,
+                &envelope.wrapped,
+                &envelope.authenticated(),
+            )
+        };
+        assert_eq!(
+            unwrap(&Signer(b"enrolled")).expect("unwrapped").as_bytes(),
+            data_key
+        );
+        assert_eq!(
+            unwrap(&Signer(b"another")).err(),
+            Some(sealvault::Error::Unauthentic),
+            "the tag refuses it: no vault is opened with a wrong key"
         );
     }
 

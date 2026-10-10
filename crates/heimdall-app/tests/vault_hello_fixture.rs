@@ -19,8 +19,13 @@
 //!
 //! The envelope was written by `vault_hello::enrol` of master at 9d12109 (aes-gcm, ring's
 //! HKDF and random generator), with [`Fixed`] as the credential, over the data key of
-//! sealvault's own format fixture, enrolled at [`ENROLLED_AT`]. This file's tests, run
-//! unchanged against that same master code, pass there too.
+//! sealvault's own format fixture, enrolled at [`ENROLLED_AT`].
+//!
+//! Proof that master's code reads it: this file, copied unchanged into a checkout of
+//! 9d12109, passes there with
+//! `cargo test -p heimdall-app --locked --test vault_hello_fixture` (3 passed: the
+//! envelope reads back, unwraps the key and opens the vault, and another signature
+//! unwraps nothing).
 
 use std::fs;
 use std::time::{Duration, SystemTime};
