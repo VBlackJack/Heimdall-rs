@@ -25,10 +25,10 @@ pkcs8.workspace = true
 rcgen = { workspace = true, features = ["zeroize"] }
 regex.workspace = true
 roxmltree.workspace = true
+rsa.workspace = true
 # sealvault: the Hash, HMAC, JWT and TOTP tools' digests and MACs, the PIN's hash, and the
 # generators' randomness.
 sealvault.workspace = true
-rsa.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
