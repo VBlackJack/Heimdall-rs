@@ -31,8 +31,10 @@ use std::os::raw::c_ulong;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
-use iced::futures::StreamExt;
+use iced::futures::future::{Either, select};
+use iced::futures::{FutureExt, StreamExt};
 use iced::window::raw_window_handle::RawWindowHandle;
 use zbus::message::Type;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
@@ -350,13 +352,21 @@ pub fn parse_response<S: BuildHasher>(
 ///
 /// Why no dialog was shown, or why its answer cannot be used.
 pub async fn choose(request: Request, mode: Mode) -> Result<Option<Vec<PathBuf>>, Unavailable> {
-    let connection = Connection::session()
+    let no_bus = |error: zbus::Error| Unavailable::NoSessionBus(error.to_string());
+    let connection = zbus::connection::Builder::session()
+        .map_err(no_bus)?
+        .method_timeout(CALL_TIMEOUT)
+        .build()
         .await
-        .map_err(|error| Unavailable::NoSessionBus(error.to_string()))?;
+        .map_err(no_bus)?;
     choose_on(&connection, &request, mode).await
 }
 
 /// The dialog of `request` shown as `mode` by the portal on `connection`.
+///
+/// It waits for the user as long as they take, and no longer than the portal lives: the
+/// answer stops being waited for when the connection closes or, on a bus, when the portal
+/// that took the request leaves it.
 ///
 /// # Errors
 ///
@@ -400,26 +410,170 @@ pub async fn choose_on(
         // A portal older than 0.9, which does not name requests after their token.
         responses = self::responses(connection, Some(&handle)).await?;
     }
-    while let Some(message) = responses.next().await {
-        // A read that fails is the bus gone: the portal can no longer answer.
-        let message = message.map_err(|error| match error {
-            zbus::Error::InputOutput(_) => Unavailable::Closed,
-            other => Unavailable::Failed(other.to_string()),
-        })?;
+    let pending = Taken {
+        handle,
+        portal: portal.clone(),
+    };
+    // The portal that took the request, watched until it answers: if it leaves the bus, no
+    // answer will come. Watched first, then asked about, so that leaving in between is seen.
+    let mut departures = match &portal {
+        Some(portal) => {
+            let departures = departures(connection, portal).await?;
+            if !has_owner(connection, portal).await? {
+                return pending
+                    .queued(&mut responses)
+                    .unwrap_or(Err(Unavailable::Closed));
+            }
+            Some(departures)
+        }
+        None => None,
+    };
+    loop {
+        let message = match departures.as_mut() {
+            None => responses.next().await,
+            Some(departures) => match select(responses.next(), departures.next()).await {
+                Either::Left((message, _)) => message,
+                Either::Right((departure, _)) => {
+                    if departure.is_none_or(|departure| has_left(departure, portal.as_deref())) {
+                        // An answer sent just before leaving is already queued: it counts.
+                        return pending
+                            .queued(&mut responses)
+                            .unwrap_or(Err(Unavailable::Closed));
+                    }
+                    continue;
+                }
+            },
+        };
+        let Some(message) = message else {
+            return Err(Unavailable::Closed);
+        };
+        if let Some(answer) = pending.answer(message) {
+            return answer;
+        }
+    }
+}
+
+/// How long a call to the bus or the portal may take to be answered: the D-Bus default. The
+/// dialog's own answer, which waits for the user, is not bounded by it.
+const CALL_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// The bus itself, which says when a name leaves it.
+const BUS_NAME: &str = "org.freedesktop.DBus";
+
+/// The object and interface of the bus.
+const BUS_PATH: &str = "/org/freedesktop/DBus";
+const BUS_INTERFACE: &str = "org.freedesktop.DBus";
+
+/// The signal of a name that changed owner, and the method asking whether one has one.
+const NAME_OWNER_CHANGED: &str = "NameOwnerChanged";
+const NAME_HAS_OWNER: &str = "NameHasOwner";
+
+/// A request taken by the portal: where its answer comes, and from whom.
+struct Taken {
+    /// The request's object.
+    handle: OwnedObjectPath,
+    /// The unique name of the portal that took it; none peer to peer.
+    portal: Option<String>,
+}
+
+impl Taken {
+    /// The dialog's answer when `message` is this request's `Response` from its portal;
+    /// `None` for any other message.
+    fn answer(
+        &self,
+        message: zbus::Result<zbus::Message>,
+    ) -> Option<Result<Option<Vec<PathBuf>>, Unavailable>> {
+        // A read that fails is the connection gone: the portal can no longer answer.
+        let message = match message {
+            Ok(message) => message,
+            Err(zbus::Error::InputOutput(_)) => return Some(Err(Unavailable::Closed)),
+            Err(other) => return Some(Err(Unavailable::Failed(other.to_string()))),
+        };
         let header = message.header();
         let on_request =
-            header.path().map(zbus::zvariant::ObjectPath::as_str) == Some(handle.as_str());
-        let from_portal = header.sender().map(ToString::to_string) == portal;
+            header.path().map(zbus::zvariant::ObjectPath::as_str) == Some(self.handle.as_str());
+        let from_portal = header.sender().map(ToString::to_string) == self.portal;
         if !on_request || !from_portal {
-            continue;
+            return None;
         }
-        let (code, results): (u32, HashMap<String, OwnedValue>) = message
-            .body()
-            .deserialize()
-            .map_err(|error| Unavailable::Failed(error.to_string()))?;
-        return parse_response(code, &results);
+        Some(
+            message
+                .body()
+                .deserialize::<(u32, HashMap<String, OwnedValue>)>()
+                .map_err(|error| Unavailable::Failed(error.to_string()))
+                .and_then(|(code, results)| parse_response(code, &results)),
+        )
     }
-    Err(Unavailable::Closed)
+
+    /// The answer already received in `responses`, without waiting for another.
+    fn queued(
+        &self,
+        responses: &mut MessageStream,
+    ) -> Option<Result<Option<Vec<PathBuf>>, Unavailable>> {
+        while let Some(Some(message)) = responses.next().now_or_never() {
+            if let Some(answer) = self.answer(message) {
+                return Some(answer);
+            }
+        }
+        None
+    }
+}
+
+/// The bus's `NameOwnerChanged` signals about `portal` on `connection`.
+async fn departures(connection: &Connection, portal: &str) -> Result<MessageStream, Unavailable> {
+    let failed = |error: zbus::Error| Unavailable::Failed(error.to_string());
+    let rule = MatchRule::builder()
+        .msg_type(Type::Signal)
+        .sender(BUS_NAME)
+        .map_err(failed)?
+        .path(BUS_PATH)
+        .map_err(failed)?
+        .interface(BUS_INTERFACE)
+        .map_err(failed)?
+        .member(NAME_OWNER_CHANGED)
+        .map_err(failed)?
+        .arg(0, portal)
+        .map_err(failed)?
+        .build();
+    MessageStream::for_match_rule(rule, connection, None)
+        .await
+        .map_err(failed)
+}
+
+/// Whether `portal` is still on the bus of `connection`.
+async fn has_owner(connection: &Connection, portal: &str) -> Result<bool, Unavailable> {
+    let failed = |error: zbus::Error| Unavailable::Failed(error.to_string());
+    connection
+        .call_method(
+            Some(BUS_NAME),
+            BUS_PATH,
+            Some(BUS_INTERFACE),
+            NAME_HAS_OWNER,
+            &(portal,),
+        )
+        .await
+        .map_err(failed)?
+        .body()
+        .deserialize::<bool>()
+        .map_err(failed)
+}
+
+/// Whether `departure` says, from the bus itself, that `portal` left it. A unique name never
+/// changes owner but to none. A failed read is the connection gone, and the portal with it.
+fn has_left(departure: zbus::Result<zbus::Message>, portal: Option<&str>) -> bool {
+    let Ok(departure) = departure else {
+        return true;
+    };
+    let from_bus = departure
+        .header()
+        .sender()
+        .map(zbus::names::UniqueName::as_str)
+        == Some(BUS_NAME);
+    let gone = departure
+        .body()
+        .deserialize::<(String, String, String)>()
+        .is_ok_and(|(name, _, new_owner)| Some(name.as_str()) == portal && new_owner.is_empty());
+    from_bus && gone
 }
 
 /// The `Response` signals of requests on `connection`, of the request at `path` when known.

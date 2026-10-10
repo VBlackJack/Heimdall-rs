@@ -18,8 +18,10 @@
 //! portal on a private peer-to-peer D-Bus connection, without a bus daemon.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use iced::futures::StreamExt;
 use zbus::connection::Builder;
@@ -245,14 +247,41 @@ fn one_place_that_is_not_local_refuses_the_whole_answer() {
     );
 }
 
+/// Longest an end-to-end test may take: each finishes in milliseconds, and one that hangs
+/// fails here instead of holding the test run.
+const E2E_LIMIT: Duration = Duration::from_secs(5);
+
+/// The unique name the fake portal answers as, when it says one.
+const FAKE_PORTAL_NAME: &str = ":1.7";
+
+/// `work`, failing the test when it takes longer than [`E2E_LIMIT`].
+async fn bounded<T>(work: impl Future<Output = T>) -> T {
+    tokio::time::timeout(E2E_LIMIT, work)
+        .await
+        .expect("the request finished in time")
+}
+
 /// What the fake portal does with the request it takes.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum Answer {
     /// Answers on the request's path with this code and these URIs, after a decoy answer
-    /// on another path, which must be ignored.
-    Respond(u32, Vec<&'static str>),
+    /// on another path, which must be ignored. Peer to peer, without a sender.
+    Respond(u32, &'static [&'static str]),
     /// Refuses the call with this D-Bus error.
     Refuse(&'static str),
+    /// Takes the request, then closes the connection without answering it.
+    CloseAfterTaking,
+    /// Closes the connection without even replying to the call.
+    CloseBeforeReplying,
+    /// Takes the request as [`FAKE_PORTAL_NAME`], as on a bus, says whether that name still
+    /// has an owner when asked, then answers first or not and leaves the bus. A forged
+    /// departure, not sent by the bus, comes before anything and must be ignored.
+    Leave {
+        /// Whether the name still has an owner when asked.
+        owner: bool,
+        /// Whether the dialog answered before the portal left.
+        answer_first: bool,
+    },
 }
 
 /// What the fake portal was asked.
@@ -271,8 +300,10 @@ impl Asked {
     }
 }
 
-/// A client and a server connected peer to peer over a socket pair: no bus daemon.
-async fn peers() -> (Connection, Connection) {
+/// A client and a server connected peer to peer over a socket pair: no bus daemon. The
+/// server's messages are listened to from here: a connection drops what arrives while no
+/// one listens, so a call sent before the fake portal listens would never be answered.
+async fn peers() -> (Connection, Connection, MessageStream) {
     let (client, server) = UnixStream::pair().expect("a socket pair");
     let guid = Guid::generate();
     let server = Builder::async_io_unix_stream(server)
@@ -282,23 +313,113 @@ async fn peers() -> (Connection, Connection) {
         .build();
     let client = Builder::async_io_unix_stream(client).p2p().build();
     let (client, server) = tokio::join!(client, server);
-    (
-        client.expect("the client connects"),
-        server.expect("the server accepts"),
-    )
+    let server = server.expect("the server accepts");
+    let messages = MessageStream::from(&server);
+    (client.expect("the client connects"), server, messages)
 }
 
-/// The fake portal: takes one call to the `FileChooser` on `server`, answers it as
-/// `answer` says, and tells what it was asked.
-async fn fake_portal(server: Connection, answer: Answer) -> Asked {
-    let mut messages = MessageStream::from(&server);
+/// A signal on `path` of `interface`, `member` and `body`, sent as `sender`.
+async fn emit_as<B>(
+    server: &Connection,
+    sender: &str,
+    path: &str,
+    (interface, member): (&str, &str),
+    body: &B,
+) where
+    B: zbus::export::serde::Serialize + zbus::zvariant::DynamicType,
+{
+    let signal = zbus::Message::signal(path, interface, member)
+        .expect("a signal")
+        .sender(sender)
+        .expect("a sender")
+        .build(body)
+        .expect("a body");
+    server.send(&signal).await.expect("the signal sent");
+}
+
+/// The answer of `code` with `uris` to the request at `handle`, sent as `sender` or as no
+/// one.
+async fn respond(
+    server: &Connection,
+    sender: Option<&str>,
+    handle: &OwnedObjectPath,
+    code: u32,
+    uris: &[&str],
+) {
+    let body = (code, results(uris));
+    match sender {
+        Some(sender) => {
+            emit_as(
+                server,
+                sender,
+                handle.as_str(),
+                (REQUEST_INTERFACE, RESPONSE_MEMBER),
+                &body,
+            )
+            .await;
+        }
+        None => server
+            .emit_signal(
+                None::<&str>,
+                handle,
+                REQUEST_INTERFACE,
+                RESPONSE_MEMBER,
+                &body,
+            )
+            .await
+            .expect("the answer sent"),
+    }
+}
+
+/// The bus saying `name` left it, as `sender`.
+async fn departure(server: &Connection, sender: &str, name: &str) {
+    emit_as(
+        server,
+        sender,
+        BUS_PATH,
+        (BUS_INTERFACE, NAME_OWNER_CHANGED),
+        &(name, name, ""),
+    )
+    .await;
+}
+
+/// The fake portal: takes one call to the `FileChooser` among `messages` of `server`,
+/// answers it as `answer` says, and tells what it was asked.
+async fn fake_portal(server: Connection, mut messages: MessageStream, answer: Answer) -> Asked {
+    let mut asked = None;
+    let mut handle = None;
     while let Some(message) = messages.next().await {
         let message = message.expect("a message");
         let header = message.header();
-        if message.message_type() != Type::MethodCall
-            || header.interface().map(zbus::names::InterfaceName::as_str)
-                != Some(FILE_CHOOSER_INTERFACE)
-        {
+        if message.message_type() != Type::MethodCall {
+            continue;
+        }
+        let interface = header.interface().map(zbus::names::InterfaceName::as_str);
+        if interface == Some(BUS_INTERFACE) {
+            // Only a portal that leaves is asked whether it is still there.
+            let Answer::Leave {
+                owner,
+                answer_first,
+            } = answer
+            else {
+                panic!("asked about the bus without a bus");
+            };
+            server.reply(&header, &owner).await.expect("the owner sent");
+            let handle: &OwnedObjectPath = handle.as_ref().expect("the request taken");
+            if answer_first {
+                respond(
+                    &server,
+                    Some(FAKE_PORTAL_NAME),
+                    handle,
+                    RESPONSE_SUCCESS,
+                    &["file:///kept"],
+                )
+                .await;
+            }
+            departure(&server, BUS_NAME, FAKE_PORTAL_NAME).await;
+            return asked.expect("the request taken");
+        }
+        if interface != Some(FILE_CHOOSER_INTERFACE) {
             continue;
         }
         let method = header.member().expect("a method").to_string();
@@ -307,67 +428,72 @@ async fn fake_portal(server: Connection, answer: Answer) -> Asked {
                 .body()
                 .deserialize()
                 .expect("the FileChooser arguments");
-        let asked = Asked {
+        let call = Asked {
             method,
             parent_window,
             title,
             options,
         };
+        let token: String = call.option(OPTION_HANDLE_TOKEN).expect("a handle token");
+        let path = request_path(FAKE_PORTAL_NAME, &token).expect("a request path");
         match answer {
             Answer::Refuse(error) => {
                 server
                     .reply_error(&header, error, &("no such interface",))
                     .await
                     .expect("the error sent");
+                return call;
+            }
+            Answer::CloseBeforeReplying => {
+                server.close().await.expect("closed");
+                return call;
+            }
+            Answer::CloseAfterTaking => {
+                server.reply(&header, &path).await.expect("the handle sent");
+                server.close().await.expect("closed");
+                return call;
             }
             Answer::Respond(code, uris) => {
-                let token: String = asked.option(OPTION_HANDLE_TOKEN).expect("a handle token");
-                let handle = request_path(":1.7", &token).expect("a request path");
-                server
-                    .reply(&header, &handle)
-                    .await
-                    .expect("the handle sent");
+                server.reply(&header, &path).await.expect("the handle sent");
                 let decoy = OwnedObjectPath::try_from(format!("{REQUEST_PATH_PREFIX}/1_7/other"))
                     .expect("a path");
-                server
-                    .emit_signal(
-                        None::<&str>,
-                        &decoy,
-                        REQUEST_INTERFACE,
-                        RESPONSE_MEMBER,
-                        &(RESPONSE_SUCCESS, results(&["file:///decoy"])),
-                    )
-                    .await
-                    .expect("the decoy sent");
-                server
-                    .emit_signal(
-                        None::<&str>,
-                        &handle,
-                        REQUEST_INTERFACE,
-                        RESPONSE_MEMBER,
-                        &(code, results(&uris)),
-                    )
-                    .await
-                    .expect("the answer sent");
+                respond(&server, None, &decoy, RESPONSE_SUCCESS, &["file:///decoy"]).await;
+                respond(&server, None, &path, code, uris).await;
+                return call;
+            }
+            Answer::Leave { .. } => {
+                let reply = zbus::Message::method_return(&header)
+                    .expect("a reply")
+                    .sender(FAKE_PORTAL_NAME)
+                    .expect("a sender")
+                    .build(&path)
+                    .expect("a body");
+                server.send(&reply).await.expect("the handle sent");
+                // Forged: said by the portal, not by the bus.
+                departure(&server, FAKE_PORTAL_NAME, FAKE_PORTAL_NAME).await;
+                asked = Some(call);
+                handle = Some(path);
             }
         }
-        return asked;
     }
     panic!("the client went away before calling");
 }
 
 /// `request` shown as `mode` by a fake portal answering as `answer`: the outcome, and what
-/// the portal was asked.
+/// the portal was asked; both within [`E2E_LIMIT`].
 async fn run(
     request: Request,
     mode: Mode,
     answer: Answer,
 ) -> (Result<Option<Vec<PathBuf>>, Unavailable>, Asked) {
-    let (client, server) = peers().await;
-    let portal = tokio::spawn(fake_portal(server, answer));
-    let outcome = choose_on(&client, &request, mode).await;
-    let asked = portal.await.expect("the fake portal ran");
-    (outcome, asked)
+    bounded(async {
+        let (client, server, messages) = peers().await;
+        let portal = tokio::spawn(fake_portal(server, messages, answer));
+        let outcome = choose_on(&client, &request, mode).await;
+        let asked = portal.await.expect("the fake portal ran");
+        (outcome, asked)
+    })
+    .await
 }
 
 fn open_request() -> Request {
@@ -388,7 +514,7 @@ async fn open_file_sends_its_options_and_reads_the_answer() {
     let (outcome, asked) = run(
         open_request(),
         Mode::OpenFile,
-        Answer::Respond(RESPONSE_SUCCESS, vec!["file:///home/me/My%20File.json"]),
+        Answer::Respond(RESPONSE_SUCCESS, &["file:///home/me/My%20File.json"]),
     )
     .await;
     assert_eq!(
@@ -419,7 +545,7 @@ async fn open_files_and_folder_ask_for_what_they_pick() {
     let (outcome, asked) = run(
         Request::default(),
         Mode::OpenFiles,
-        Answer::Respond(RESPONSE_SUCCESS, vec!["file:///a.rdp", "file:///b.rdp"]),
+        Answer::Respond(RESPONSE_SUCCESS, &["file:///a.rdp", "file:///b.rdp"]),
     )
     .await;
     assert_eq!(
@@ -433,7 +559,7 @@ async fn open_files_and_folder_ask_for_what_they_pick() {
     let (outcome, asked) = run(
         Request::default(),
         Mode::OpenFolder,
-        Answer::Respond(RESPONSE_SUCCESS, vec!["file:///home/me/logs"]),
+        Answer::Respond(RESPONSE_SUCCESS, &["file:///home/me/logs"]),
     )
     .await;
     assert_eq!(outcome, Ok(Some(vec![PathBuf::from("/home/me/logs")])));
@@ -446,7 +572,7 @@ async fn save_file_offers_its_name() {
     let (outcome, asked) = run(
         open_request(),
         Mode::Save,
-        Answer::Respond(RESPONSE_SUCCESS, vec!["file:///home/me/export.json"]),
+        Answer::Respond(RESPONSE_SUCCESS, &["file:///home/me/export.json"]),
     )
     .await;
     assert_eq!(
@@ -466,7 +592,7 @@ async fn a_cancelled_dialog_picks_nothing() {
     let (outcome, _) = run(
         open_request(),
         Mode::Save,
-        Answer::Respond(RESPONSE_CANCELLED, Vec::new()),
+        Answer::Respond(RESPONSE_CANCELLED, &[]),
     )
     .await;
     assert_eq!(outcome, Ok(None));
@@ -474,12 +600,7 @@ async fn a_cancelled_dialog_picks_nothing() {
 
 #[tokio::test]
 async fn a_dialog_ended_otherwise_says_so() {
-    let (outcome, _) = run(
-        open_request(),
-        Mode::OpenFile,
-        Answer::Respond(2, Vec::new()),
-    )
-    .await;
+    let (outcome, _) = run(open_request(), Mode::OpenFile, Answer::Respond(2, &[])).await;
     assert_eq!(outcome, Err(Unavailable::Ended(2)));
 }
 
@@ -488,7 +609,7 @@ async fn a_remote_place_is_refused() {
     let (outcome, _) = run(
         open_request(),
         Mode::OpenFile,
-        Answer::Respond(RESPONSE_SUCCESS, vec!["sftp://host/etc/passwd"]),
+        Answer::Respond(RESPONSE_SUCCESS, &["sftp://host/etc/passwd"]),
     )
     .await;
     assert_eq!(
@@ -527,22 +648,57 @@ async fn another_refusal_is_a_failure() {
 
 #[tokio::test]
 async fn a_portal_gone_before_answering_is_closed() {
-    let (client, server) = peers().await;
-    let portal = tokio::spawn(async move {
-        let mut messages = MessageStream::from(&server);
-        while let Some(Ok(message)) = messages.next().await {
-            if message.message_type() == Type::MethodCall {
-                let handle = request_path(":1.7", "gone").expect("a path");
-                server
-                    .reply(&message.header(), &handle)
-                    .await
-                    .expect("the handle sent");
-                break;
-            }
-        }
-        server.close().await.expect("closed");
-    });
-    let outcome = choose_on(&client, &open_request(), Mode::OpenFile).await;
-    portal.await.expect("the fake portal ran");
+    let (outcome, _) = run(open_request(), Mode::OpenFile, Answer::CloseAfterTaking).await;
     assert_eq!(outcome, Err(Unavailable::Closed));
+}
+
+#[tokio::test]
+async fn a_portal_gone_before_replying_fails_the_call() {
+    let (outcome, _) = run(open_request(), Mode::OpenFile, Answer::CloseBeforeReplying).await;
+    assert!(
+        matches!(outcome, Err(Unavailable::Failed(_))),
+        "{outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_portal_leaving_the_bus_before_answering_is_closed() {
+    let (outcome, _) = run(
+        open_request(),
+        Mode::OpenFile,
+        Answer::Leave {
+            owner: true,
+            answer_first: false,
+        },
+    )
+    .await;
+    assert_eq!(outcome, Err(Unavailable::Closed));
+}
+
+#[tokio::test]
+async fn a_portal_gone_before_it_is_watched_is_closed() {
+    let (outcome, _) = run(
+        open_request(),
+        Mode::OpenFile,
+        Answer::Leave {
+            owner: false,
+            answer_first: false,
+        },
+    )
+    .await;
+    assert_eq!(outcome, Err(Unavailable::Closed));
+}
+
+#[tokio::test]
+async fn an_answer_sent_before_leaving_the_bus_is_read() {
+    let (outcome, _) = run(
+        open_request(),
+        Mode::OpenFile,
+        Answer::Leave {
+            owner: true,
+            answer_first: true,
+        },
+    )
+    .await;
+    assert_eq!(outcome, Ok(Some(vec![PathBuf::from("/kept")])));
 }
