@@ -547,6 +547,7 @@ ui-import-skip-unknown-identity = inicia sesión con un modo de identidad que He
 ui-error-hostkey-changed-at = La clave de host de { $target } no es la registrada: la conexión podría estar interceptada. Registrada: { $recorded }. Presentada: { $offered }.
 ui-error-gateway-missing = La pasarela SSH { $id } por la que pasa este perfil no está en los perfiles.
 ui-error-gateway-loop = La pasarela SSH { $id } se alcanza a través de sí misma, por sus padres.
+ui-error-gateway-too-deep = Se superó la profundidad máxima de la cadena de pasarelas. Reduce el número de pasarelas encadenadas.
 ui-tree-connect = Conectar
 ui-tree-connect-with = Conectar con...
 ui-tree-connect-with-tooltip = Anular el modo RDP del perfil solo para esta conexión.
@@ -1044,6 +1045,8 @@ ui-gateway-password-hint = Usado para la autenticación SSH por contraseña. Dé
 ui-gateway-field-parent = Pasarela principal
 ui-gateway-parent-none = Ninguna (conexión directa)
 ui-gateway-error-loop = Una pasarela no puede alcanzarse a través de sí misma.
+ui-gateway-field-host-key-fingerprint = Huella de la clave de host
+ui-gateway-host-key-fingerprint-hint = Se rellena automáticamente tras la primera conexión. Se usa para verificar la identidad del servidor y evitar la suplantación de clave de host.
 ui-tree-gateway-via = vía { $name }
 ui-tree-gateway-missing = falta la pasarela
 

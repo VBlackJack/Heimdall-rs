@@ -9455,6 +9455,7 @@ fn gateway_dialog<'a>(
             forms,
         ))
         .push(parent_gateway(draft, forms))
+        .push(host_key_fingerprint(draft))
         .push(crate::route_test_view::card(draft, forms.gateways));
     if let Some(error) = error {
         form = form.push(dialog_parts::error(texts::draft_error(error)));
@@ -9590,15 +9591,15 @@ fn typed_secret(field: &mut Zeroizing<String>) -> Option<Secret> {
     (!typed.is_empty()).then(|| Secret::new(typed))
 }
 
-/// The gateway this one is reached through: none, or another saved gateway.
+/// The gateway this one is reached through: none, or a saved gateway the C#
+/// `GatewayParentEligibility` offers, neither itself nor one reached through it, nor one
+/// making a chain too deep to connect; the parent it has stays offered.
 fn parent_gateway<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Element<'a, Message> {
     let mut form = Column::new();
     let mut parents = vec![ParentChoice::None];
     parents.extend(
-        forms
-            .gateways
-            .iter()
-            .filter(|gateway| Some(&gateway.id) != draft.editing.as_ref())
+        heimdall_core::gateway_parents::parent_options(forms.gateways, draft.editing.as_ref())
+            .into_iter()
             .map(|gateway| ParentChoice::Gateway(gateway_choice(gateway))),
     );
     let selected = parents
@@ -9625,6 +9626,22 @@ fn parent_gateway<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Element<'a, Me
         .spacing(spacing::XS),
     );
     form.into()
+}
+
+/// The fingerprint the gateway's host key is trusted by, under the parent and read only as
+/// in the C# dialog (`GatewayDialog.xaml:176-186`, `IsReadOnly`, `OneWay`), then its hint:
+/// the pin of the gateway's host and port, or the key recorded for them. A field without an
+/// input message, which iced still lets the user select and copy from.
+fn host_key_fingerprint(draft: &GatewayDraft) -> Element<'_, Message> {
+    column![
+        dialog_parts::dialog_label(fl!("ui-gateway-field-host-key-fingerprint")),
+        text_input("", &draft.trusted_fingerprint)
+            .style(styles::text_input)
+            .id(iced::widget::Id::new("gateway-host-key-fingerprint")),
+        dialog_parts::hint(fl!("ui-gateway-host-key-fingerprint-hint")),
+    ]
+    .spacing(spacing::XS)
+    .into()
 }
 
 fn gateway_field_id(field: ProfileField) -> iced::widget::Id {

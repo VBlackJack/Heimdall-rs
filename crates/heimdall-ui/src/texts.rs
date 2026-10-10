@@ -221,6 +221,8 @@ pub fn error(error: &UiError) -> String {
         UiError::Route(RouteError::Loop(id)) => {
             fl!("ui-error-gateway-loop", id = server_text(id.as_str()))
         }
+        // The C# `ErrorSshChainDepthExceeded`, which names no gateway.
+        UiError::Route(RouteError::TooDeep(_)) => fl!("ui-error-gateway-too-deep"),
         UiError::PinnedCertificateInvalid {
             target,
             fingerprint,

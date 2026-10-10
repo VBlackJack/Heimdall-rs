@@ -17,6 +17,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use heimdall_core::gateway_parents::MAX_GATEWAY_CHAIN_DEPTH;
 use heimdall_core::paths::PROFILES_FILE_NAME;
 use heimdall_core::profile::{
     Forwards, LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile,
@@ -530,6 +531,32 @@ fn a_route_through_a_missing_gateway_or_a_loop_is_refused() {
         store.route(Some(&ProfileId::new("one"))),
         Err(RouteError::Loop(_))
     ));
+}
+
+#[test]
+fn a_route_deeper_than_five_gateways_is_refused_as_the_csharp_does() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut store = ProfileStore::open(dir.path().join(PROFILES_FILE_NAME)).expect("opens");
+    // g1 <- g2 <- ... <- g6.
+    let mut chain = vec![gateway("g1", None)];
+    for level in 2..=MAX_GATEWAY_CHAIN_DEPTH + 1 {
+        chain.push(gateway(
+            &format!("g{level}"),
+            Some(&format!("g{}", level - 1)),
+        ));
+    }
+    store.merge_gateways(chain);
+    let deepest_allowed = ProfileId::new(format!("g{MAX_GATEWAY_CHAIN_DEPTH}"));
+    assert_eq!(
+        store.route(Some(&deepest_allowed)).expect("five").len(),
+        MAX_GATEWAY_CHAIN_DEPTH
+    );
+    let too_deep = ProfileId::new(format!("g{}", MAX_GATEWAY_CHAIN_DEPTH + 1));
+    assert_eq!(
+        store.route(Some(&too_deep)),
+        Err(RouteError::TooDeep(ProfileId::new("g1"))),
+        "the gateway one too many"
+    );
 }
 
 #[test]

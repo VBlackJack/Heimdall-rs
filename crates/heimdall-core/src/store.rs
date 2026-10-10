@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::folder::{self, FolderColor, FolderError};
+use crate::gateway_parents::MAX_GATEWAY_CHAIN_DEPTH;
 use crate::metadata::{Environment, MacAddress, ProfileMetadata, ProfileOrigin};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
@@ -248,6 +249,10 @@ pub enum RouteError {
     /// A gateway is reached through itself.
     #[error("the SSH gateway {0} is reached through itself")]
     Loop(ProfileId),
+    /// The chain is deeper than [`MAX_GATEWAY_CHAIN_DEPTH`] gateways, as the C#
+    /// `GatewayChainResolver` refuses it; carries the gateway that would be one too many.
+    #[error("the SSH gateway {0} makes a chain deeper than {MAX_GATEWAY_CHAIN_DEPTH} gateways")]
+    TooDeep(ProfileId),
 }
 
 impl ProfileStore {
@@ -429,13 +434,17 @@ impl ProfileStore {
     ///
     /// # Errors
     ///
-    /// [`RouteError`] when a gateway on the way is not in the store, or comes back.
+    /// [`RouteError`] when a gateway on the way is not in the store, or comes back, or when
+    /// there are more than [`MAX_GATEWAY_CHAIN_DEPTH`] of them, as the C# refuses at connect.
     pub fn route(&self, gateway: Option<&ProfileId>) -> Result<Vec<SshGateway>, RouteError> {
         let mut route = Vec::new();
         let mut next = gateway;
         while let Some(id) = next {
             if route.iter().any(|seen: &SshGateway| &seen.id == id) {
                 return Err(RouteError::Loop(id.clone()));
+            }
+            if route.len() >= MAX_GATEWAY_CHAIN_DEPTH {
+                return Err(RouteError::TooDeep(id.clone()));
             }
             let found = self
                 .gateways
