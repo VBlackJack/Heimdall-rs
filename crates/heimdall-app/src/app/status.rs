@@ -233,6 +233,9 @@ pub enum Notice {
     KeysNotSent,
     /// No image of the session shown could be copied.
     ScreenshotFailed,
+    /// No file dialog could be shown, or its answer could not be used: what the user is
+    /// told, in their language.
+    FileDialogFailed(String),
     /// This folder was created.
     FolderCreated(String),
     /// The full path of an entry of a Files tab was copied, as the C# says it.

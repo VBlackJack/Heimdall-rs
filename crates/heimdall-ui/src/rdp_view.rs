@@ -19,9 +19,7 @@
 //! then what was imported.
 
 use std::fmt;
-use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 
 use heimdall_app::{
     Dialog, Message as AppMessage, RDP_EXTENSION, RdpMessage, RdpNames, RdpPreview, RdpRow,
@@ -31,6 +29,7 @@ use heimdall_core::import::rdp_file::{Conflict, MAX_FILE_BYTES, Refusal};
 use iced::widget::{Column, button, checkbox, column, container, pick_list, row, text};
 use iced::{Element, Length};
 
+use crate::file_dialog::{self, FileDialog, Picked};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -77,25 +76,30 @@ pub fn names() -> RdpNames {
 }
 
 /// The files the user picks in the open dialog, once it closes; none when cancelled.
-pub type Pick = Pin<Box<dyn Future<Output = Option<Vec<rfd::FileHandle>>> + Send>>;
+pub type Pick = file_dialog::Pick<Vec<PathBuf>>;
 
 /// Opens the system's open dialog for `.rdp` files, several at once, over `parent`.
 #[must_use]
 pub fn pick(title: String, filter: String, parent: Option<&dyn iced::window::Window>) -> Pick {
-    let mut dialog = rfd::AsyncFileDialog::new()
+    let mut dialog = FileDialog::new()
         .set_title(title)
         .add_filter(filter, &[RDP_EXTENSION]);
     if let Some(parent) = parent {
-        dialog = dialog.set_parent(&parent);
+        dialog = dialog.set_parent(parent);
     }
-    Box::pin(dialog.pick_files())
+    dialog.pick_files()
 }
 
 /// The picked files read; `None` when none was picked.
-pub async fn read_picked(pick: Pick) -> Option<Vec<(PathBuf, Result<String, String>)>> {
-    let files = pick.await?;
-    let paths: Vec<PathBuf> = files.iter().map(|file| file.path().to_owned()).collect();
-    Some(read_all(paths).await)
+///
+/// # Errors
+///
+/// Why no dialog could be shown.
+pub async fn read_picked(pick: Pick) -> Picked<Vec<(PathBuf, Result<String, String>)>> {
+    match pick.await? {
+        Some(paths) => Ok(Some(read_all(paths).await)),
+        None => Ok(None),
+    }
 }
 
 /// Each file's text, or its path and why it could not be read: a file bigger than the C#

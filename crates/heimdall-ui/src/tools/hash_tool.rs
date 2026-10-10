@@ -20,9 +20,7 @@
 //! from the window with its progress shown, the text box disabled until the file is
 //! cleared; each digest copied or saved; a hash pasted checked against them all.
 
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 
 use heimdall_app::TabId;
 use heimdall_core::tools::hash_computer::{
@@ -35,6 +33,7 @@ use iced::{Alignment, Element, Length, Task, window};
 
 use super::crypto_parts::{self, Tone};
 use super::{CopySlot, ToolMessage, ToolPane};
+use crate::file_dialog::{self, FileDialog};
 use crate::i18n::fl;
 use crate::shell::{Message, main_window_task};
 use crate::styles;
@@ -74,7 +73,7 @@ const TEXT_EXTENSION: &str = "txt";
 const ANY_EXTENSION: &str = "*";
 
 /// The file the user picks in a file dialog, once it closes; `None` when cancelled.
-type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
+type Pick = file_dialog::Pick<PathBuf>;
 
 /// What the file line says, as the C# `FileStatusKind` (`HashGeneratorViewModel.cs:543-552`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -564,19 +563,17 @@ impl HashPane {
 fn pick_file(tab: TabId, main: Option<window::Id>) -> Task<Message> {
     let filter = fl!("ui-tool-hash-all-files");
     main_window_task(main).then(move |id| {
-        let dialog = rfd::AsyncFileDialog::new().add_filter(filter.clone(), &[ANY_EXTENSION]);
+        let dialog = FileDialog::new().add_filter(filter.clone(), &[ANY_EXTENSION]);
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                Box::pin(dialog.clone().set_parent(&window).pick_file()) as Pick
+                dialog.clone().set_parent(window).pick_file()
             }),
-            None => Task::done(Box::pin(dialog.pick_file()) as Pick),
+            None => Task::done(dialog.pick_file()),
         };
-        pick.then(move |pick| {
-            Task::perform(pick, move |file| {
-                Message::Tool(
-                    tab,
-                    ToolMessage::Hash(HashMessage::Picked(file.map(|file| file.path().to_owned()))),
-                )
+        pick.then(move |pick: Pick| {
+            Task::perform(pick, move |picked| match picked {
+                Ok(path) => Message::Tool(tab, ToolMessage::Hash(HashMessage::Picked(path))),
+                Err(unavailable) => file_dialog::failed(&unavailable),
             })
         })
     })
@@ -589,25 +586,20 @@ fn pick_save(tab: TabId, kind: HashAlgorithm, main: Option<window::Id>) -> Task<
     let all_filter = fl!("ui-tool-hash-all-files");
     let name = format!("{}.{TEXT_EXTENSION}", kind.display_name());
     main_window_task(main).then(move |id| {
-        let dialog = rfd::AsyncFileDialog::new()
+        let dialog = FileDialog::new()
             .set_file_name(name.clone())
             .add_filter(text_filter.clone(), &[TEXT_EXTENSION])
             .add_filter(all_filter.clone(), &[ANY_EXTENSION]);
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                Box::pin(dialog.clone().set_parent(&window).save_file()) as Pick
+                dialog.clone().set_parent(window).save_file()
             }),
-            None => Task::done(Box::pin(dialog.save_file()) as Pick),
+            None => Task::done(dialog.save_file()),
         };
-        pick.then(move |pick| {
-            Task::perform(pick, move |file| {
-                Message::Tool(
-                    tab,
-                    ToolMessage::Hash(HashMessage::SaveTo(
-                        kind,
-                        file.map(|file| file.path().to_owned()),
-                    )),
-                )
+        pick.then(move |pick: Pick| {
+            Task::perform(pick, move |picked| match picked {
+                Ok(path) => Message::Tool(tab, ToolMessage::Hash(HashMessage::SaveTo(kind, path))),
+                Err(unavailable) => file_dialog::failed(&unavailable),
             })
         })
     })

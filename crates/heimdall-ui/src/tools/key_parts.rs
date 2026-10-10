@@ -18,13 +18,12 @@
 //! card of a section, a label before its field, the system's save dialog held by the main
 //! window, the work that takes seconds run off the window's thread.
 
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 
 use iced::widget::{Column, column, container, row, text};
 use iced::{Alignment, Element, Length, Task, window};
 
+use crate::file_dialog::{self, FileDialog, Pick};
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
@@ -34,9 +33,6 @@ pub const LABEL_WIDTH: f32 = 140.0;
 
 /// Padding of a section's card, as the C# `PaddingSectionCard`.
 const CARD_PADDING: f32 = 12.0;
-
-/// The place picked in a save dialog, once it closes; `None` when cancelled.
-type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
 
 /// A section's card holding `content`, as the C# `Border` of `CardBrush`.
 pub fn card(content: Column<'_, Message>) -> Element<'_, Message> {
@@ -92,23 +88,22 @@ pub fn ask_save(
         let dialog = {
             let (title, file_name, filter) = (title.clone(), file_name.clone(), filter.clone());
             move || {
-                rfd::AsyncFileDialog::new()
+                FileDialog::new()
                     .set_title(title)
                     .set_file_name(file_name)
                     .add_filter(filter, extensions)
             }
         };
         let pick = match id {
-            Some(id) => window::run(id, move |window| {
-                Box::pin(dialog().set_parent(&window).save_file()) as Pick
-            }),
-            None => Task::done(Box::pin(dialog().save_file()) as Pick),
+            Some(id) => window::run(id, move |window| dialog().set_parent(window).save_file()),
+            None => Task::done(dialog().save_file()),
         };
         let done = done.clone();
-        pick.then(move |pick| {
+        pick.then(move |pick: Pick<PathBuf>| {
             let done = done.clone();
-            Task::perform(pick, move |file| {
-                done(file.map(|file| file.path().to_owned()))
+            Task::perform(pick, move |picked| match picked {
+                Ok(path) => done(path),
+                Err(unavailable) => file_dialog::failed(&unavailable),
             })
         })
     })

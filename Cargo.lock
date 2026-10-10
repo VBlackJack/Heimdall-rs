@@ -2579,6 +2579,7 @@ dependencies = [
  "ttf-parser",
  "two-face 0.5.2+bat-0.26.1",
  "winsafe",
+ "zbus",
  "zeroize",
 ]
 

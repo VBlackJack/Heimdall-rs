@@ -8,9 +8,9 @@ déploiement sur des postes durcis (recommandations de l'ANSSI, systèmes de typ
 où chaque objet partagé qu'un programme projette en mémoire doit être connu à l'avance.
 
 Le binaire est entièrement en Rust, hormis les bibliothèques ci-dessous. Il n'apporte ni
-GTK, ni liaison à libdbus, ni OpenSSL, ni bibliothèque fontconfig ou FreeType : D-Bus est
-parlé par `zbus`, TLS par `rustls` sur `ring`, les polices sont lues par `fontdb` et
-`ttf-parser`.
+GTK, ni libdbus (ni liée, ni ouverte), ni OpenSSL, ni bibliothèque fontconfig ou
+FreeType : D-Bus est parlé par `zbus`, TLS par `rustls` sur `ring`, les polices sont
+lues par `fontdb` et `ttf-parser`.
 
 Inventaire établi depuis le `Cargo.lock` du commit `c6c8463` (`master`, 2026-10-10), cible
 `x86_64-unknown-linux-gnu`, profil de publication. Une mise à jour de dépendance peut le
@@ -23,7 +23,7 @@ changer : voir [Garder cette page exacte](#garder-cette-page-exacte).
 | Liées : dans `DT_NEEDED`, le binaire ne démarre pas sans elles | `libc.so.6`, `libm.so.6`, `libgcc_s.so.1`, `ld-linux-x86-64.so.2` (glibc et le support d'exécution de GCC), `libasound.so.2` (ALSA) |
 | `dlopen`, requises dans une session Wayland | `libwayland-client.so.0`, `libxkbcommon.so.0` |
 | `dlopen`, requises dans une session X11 | `libX11.so.6`, `libX11-xcb.so.1`, `libXcursor.so.1`, `libXi.so.6`, `libxcb.so.1`, `libxkbcommon.so.0`, `libxkbcommon-x11.so.0` |
-| `dlopen`, facultatives avec repli | `libvulkan.so.1`, `libEGL.so.1`, `libwayland-egl.so.1`, `libdbus-1.so.3` |
+| `dlopen`, facultatives avec repli | `libvulkan.so.1`, `libEGL.so.1`, `libwayland-egl.so.1` |
 | `dlopen` qui ne charge jamais depuis le disque | `librenderdoc.so` (rattachée seulement si elle est déjà chargée) |
 
 Les trois façons d'atteindre une bibliothèque :
@@ -134,18 +134,20 @@ Deux variables d'environnement choisissent le chemin sur un poste :
 
 | Fonction | Crate | Bibliothèque | Comment | Si elle manque |
 |---|---|---|---|---|
-| Dialogues d'enregistrement et d'ouverture | `rfd` 0.17.2, fonctionnalité `xdg-portal` (sans GTK) | `libdbus-1.so.3` | dlopen, facultative | `rfd` lance à la place le programme `zenity` ; sans lui, le dialogue n'apparaît pas |
+| Dialogues d'ouverture, d'enregistrement et de dossier | Client `FileChooser` propre à Heimdall (`heimdall-ui`, `file_dialog::portal`) sur `zbus` 5.19.0 | aucune | D-Bus en Rust vers `xdg-desktop-portal` | Sans bus de session ni portail, le dialogue ne s'ouvre pas et la barre d'état dit pourquoi ; aucun programme n'est lancé à sa place |
 | Mots de passe enregistrés (Secret Service) | `zbus-secret-service-keyring-store` 1.0.1, `secret-service` 5.2.0 (fonctionnalité `crypto-rust`), `zbus` 5.19.0 | aucune | D-Bus et cryptographie en Rust | - |
 | Thème clair ou sombre | `mundy` 0.2.3, via `linux-theme-detection` d'iced | aucune | D-Bus en Rust (`zbus`) | - |
 | Polices du système | `fontdb` 0.23.0 avec `fontconfig-parser` | aucune | Lit les fichiers de fontconfig, pas la bibliothèque | - |
 | Langue | `sys-locale` 0.3.2 | aucune | Lit l'environnement | - |
 | Magasin de certificats | `rustls-native-certs` 0.8.4, `openssl-probe` 0.2.1 | aucune | Lit les fichiers de certificats, sans OpenSSL | - |
 
-`rfd` est la seule crate ici qui atteint `libdbus` : son moteur de portail parle à
-`xdg-desktop-portal` via `libdbus-1.so.3`, ouverte par `dlopen` (`ffi.rs` ligne 199), et
-non via `zbus`. Un poste sans `libdbus-1.so.3` (inhabituel : systemd en dépend) obtient le
-repli `zenity`. Le dialogue lui-même est dessiné par le portail du bureau
-(`xdg-desktop-portal-gtk`, `-gnome` ou `-kde`), dans un autre processus.
+Aucune crate ici n'atteint `libdbus`. Les dialogues de fichier appellent l'interface
+`FileChooser` de `xdg-desktop-portal` sur le bus de session via `zbus`, en Rust, comme la
+détection du thème et le trousseau. `rfd`, qui ouvre `libdbus-1.so.3` par `dlopen` pour son
+moteur de portail et se replie sur le lancement de `zenity`, n'est construit que sous
+Windows et macOS : le binaire Linux ne le contient pas (`cargo tree -i rfd --target
+x86_64-unknown-linux-gnu` ne trouve rien). Le dialogue lui-même est dessiné par le portail
+du bureau (`xdg-desktop-portal-gtk`, `-gnome` ou `-kde`), dans un autre processus.
 
 ## 6. Son
 
@@ -171,7 +173,6 @@ Pas des bibliothèques, mais des processus qu'une dépendance peut lancer sous L
 
 | Programme | Lancé par | Quand |
 |---|---|---|
-| `zenity` | `rfd` 0.17.2 | Dialogue de fichier, seulement quand `libdbus-1.so.3` ne s'ouvre pas ou que le portail échoue |
 | `gsettings`, `dbus-send`, `fc-match` | `sctk-adwaita` 0.10.1 | Session Wayland avec décorations côté client : recherche de la police du titre et du thème ; un programme absent laisse les valeurs par défaut |
 
 ## Chemins de recherche figés à la compilation
@@ -241,7 +242,7 @@ macOS est hors du champ.
 
 Les tableaux viennent des sources des versions verrouillées des crates, pas de leur
 documentation. Après une mise à jour de dépendance touchant `winit`, `wgpu`, `softbuffer`,
-`cpal`, `rfd`, `x11rb`, `wayland-*` ou `xkbcommon-dl` :
+`cpal`, `zbus`, `x11rb`, `wayland-*` ou `xkbcommon-dl` :
 
 1. Chercher dans les nouvelles sources `dlopen`, `libloading`, `dlib`, `#[link(` et
    `cargo:rustc-link-lib`.
@@ -268,8 +269,6 @@ Numéros de ligne dans les sources des crates du registre cargo, aux versions ve
 | `khronos-egl` 6.0.0 | `src/lib.rs:2493` | `libEGL.so.1`, dlopen |
 | `wgpu-hal` 27.0.4 | `src/gles/egl.rs:156,185,196` | bibliothèques X11 et Wayland ouvertes pour EGL |
 | `wgpu-hal` 27.0.4 | `src/auxil/renderdoc.rs:45-55` | `librenderdoc.so` avec `RTLD_NOLOAD` |
-| `rfd` 0.17.2 | `src/backend/xdg_desktop_portal/portal/ffi.rs:199` | `libdbus-1.so.3`, dlopen |
-| `rfd` 0.17.2 | `src/backend/linux/zenity.rs:41` | repli `zenity` |
 | `alsa-sys` 0.4.0 | `build.rs:7` | sonde `pkg-config` de `alsa`, liaison dynamique |
 | `iced_renderer` 0.14.0 | `src/fallback.rs:278` | `ICED_BACKEND` |
 | `iced_tiny_skia` 0.14.1 | `Cargo.toml`, fonctionnalités `x11`, `wayland` | `softbuffer/x11-dlopen`, `softbuffer/wayland-dlopen` |
