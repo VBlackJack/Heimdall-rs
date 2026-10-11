@@ -217,15 +217,29 @@ async fn run(host: String, port: u16, ssh: bool, budget: Duration) -> Result<Rea
                 banner,
             })
         }
-        Err(heimdall_net::Failure::Failed { address, error, .. }) => Err(Unreached::TcpFailed {
+        Err(failure) => Err(unreached(&failure)),
+    }
+}
+
+/// Why no address answered, as the test tells it: a refusal or other failure an address gave
+/// says more than the time running out on another, as when they were dialled in turn (an
+/// IPv6 address that never answers and an IPv4 one that refuses is a refusal).
+fn unreached(failure: &heimdall_net::Failure) -> Unreached {
+    if let Some((address, error)) = failure.telling_failure() {
+        return Unreached::TcpFailed {
             address: address.ip().to_string(),
             detail: error.to_string(),
             kind: error.kind(),
-        }),
-        Err(heimdall_net::Failure::TimedOut { address, .. }) => {
-            Err(Unreached::TcpTimeout(address.ip().to_string()))
+        };
+    }
+    match failure {
+        heimdall_net::Failure::TimedOut { address, .. } => {
+            Unreached::TcpTimeout(address.ip().to_string())
         }
-        Err(heimdall_net::Failure::NoAddress) => Err(Unreached::DnsNoResults),
+        // Every failure of all is told above: only no address at all is left.
+        heimdall_net::Failure::NoAddress | heimdall_net::Failure::Failed { .. } => {
+            Unreached::DnsNoResults
+        }
     }
 }
 
@@ -330,6 +344,40 @@ mod tests {
                     if address == "127.0.0.1"
             ),
             "{failed:?}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_told_over_another_address_running_out_of_time() {
+        let v6: SocketAddr = "[2001:db8::1]:3389".parse().expect("address");
+        let v4: SocketAddr = "192.0.2.1:3389".parse().expect("address");
+        let refused = heimdall_net::Failure::TimedOut {
+            address: v6,
+            failed: vec![heimdall_net::Attempt {
+                address: v4,
+                error: std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+            }],
+        };
+        assert!(
+            matches!(
+                unreached(&refused),
+                Unreached::TcpFailed { ref address, kind, .. }
+                    if address == "192.0.2.1" && kind == std::io::ErrorKind::ConnectionRefused
+            ),
+            "{:?}",
+            unreached(&refused)
+        );
+        let no_route = heimdall_net::Failure::TimedOut {
+            address: v4,
+            failed: vec![heimdall_net::Attempt {
+                address: v6,
+                error: std::io::Error::from(std::io::ErrorKind::NetworkUnreachable),
+            }],
+        };
+        assert_eq!(
+            unreached(&no_route),
+            Unreached::TcpTimeout("192.0.2.1".to_owned()),
+            "no IPv6 route says less than IPv4 not answering"
         );
     }
 
