@@ -2589,3 +2589,112 @@ async fn a_run_says_where_it_is_can_be_stopped_and_sums_up_what_failed() {
         }))
     );
 }
+
+#[tokio::test]
+async fn the_server_pane_alone_asks_for_files_to_upload_or_a_folder_to_download_into() {
+    use heimdall_app::files::TransferState;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    files(&mut app, FilesMessage::ToggleLocal { tab });
+    // As the C# SFTP pane: no local pane to send from, the files are asked for.
+    assert!(matches!(
+        key(&mut app, tab, FilesKey::Upload).as_slice(),
+        [Effect::PickUploads { tab: asked }] if *asked == tab
+    ));
+    assert!(
+        key(&mut app, tab, FilesKey::Download).is_empty(),
+        "nothing chosen on the server: nothing asked"
+    );
+    select(&mut app, tab, Side::Remote, 1);
+    let asked = key(&mut app, tab, FilesKey::Download);
+    let [Effect::PickDownloadFolder { tab: asked, start }] = asked.as_slice() else {
+        panic!("{asked:?}");
+    };
+    assert_eq!(*asked, tab);
+    let first = start.clone();
+
+    // A folder the picker gives exists.
+    let picked = dir.path().join("picked");
+    std::fs::create_dir(&picked).expect("picked");
+    let effects = files(
+        &mut app,
+        FilesMessage::DownloadFolderPicked {
+            tab,
+            folder: picked.clone(),
+        },
+    );
+    let request = plan_request(&effects);
+    assert_eq!(request.direction, Direction::Download);
+    assert_eq!(request.roots[0].root.local, picked.join("a.txt"));
+    // A large folder's walk says how far it got while the transfer is prepared.
+    let rows = request.rows.clone();
+    files(
+        &mut app,
+        FilesMessage::Scanning {
+            tab,
+            rows,
+            entries: 25,
+        },
+    );
+    let pane = app.tab(tab).and_then(|found| found.files.as_ref()).expect("files");
+    let preparing = pane
+        .transfers
+        .iter()
+        .find(|transfer| transfer.state == TransferState::Preparing)
+        .expect("being planned");
+    assert_eq!(preparing.scanned, Some(25));
+
+    // The next picker opens where that download went, as the C# remembers it.
+    let again = files(&mut app, FilesMessage::PickDownloadFolder { tab });
+    assert!(
+        matches!(again.as_slice(), [Effect::PickDownloadFolder { start, .. }] if start.as_deref() == Some(picked.as_path())),
+        "{again:?}, first {first:?}"
+    );
+}
+
+#[test]
+fn a_full_local_disk_is_told_apart_as_the_csharp() {
+    let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
+    assert_eq!(FilesError::local(&full), FilesError::LocalDiskFull);
+    let other = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    assert!(matches!(FilesError::local(&other), FilesError::Local { .. }));
+    assert_eq!(
+        heimdall_files::RemoteError::local(&full),
+        heimdall_files::RemoteError::LocalDiskFull
+    );
+}
+
+/// A download's walk of a large folder says how far it got every 25 entries, as the C#
+/// `ReportDownloadScan`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_download_walk_reports_its_entries_every_25() {
+    use tokio_util::sync::CancellationToken;
+
+    let Some((_server, client)) = common::start().await else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let folder = dir.path().join("folder");
+    std::fs::create_dir(&folder).expect("folder");
+    for index in 0..60 {
+        std::fs::write(folder.join(format!("file{index}")), b"x").expect("file");
+    }
+    let client = RemoteSession::Sftp(client);
+    let root = heimdall_files::Root {
+        remote: common::remote(&folder),
+        local: dir.path().join("copy"),
+        kind: Kind::Folder,
+        stamp: heimdall_files::Stamp::default(),
+    };
+    let mut reports = Vec::new();
+    common::step(client.plan_download_reporting(
+        std::slice::from_ref(&root),
+        &CancellationToken::new(),
+        &mut |entries| reports.push(entries),
+    ))
+    .await
+    .expect("planned");
+    assert_eq!(reports, [25, 50]);
+}

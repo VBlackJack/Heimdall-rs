@@ -447,6 +447,8 @@ ui-files-new-folder-button = Nouveau dossier
 ui-files-new-folder-tooltip = Créer un nouveau dossier
 ui-files-download-button = Télécharger
 ui-files-upload-button = Envoyer
+ui-files-upload-files-tooltip = Envoyer des fichiers
+ui-files-download-selected-tooltip = Télécharger la sélection (Ctrl+Maj+D)
 ui-files-loading = Chargement...
 ui-files-empty = Dossier vide
 ui-files-cancel-button = Annuler
@@ -474,6 +476,7 @@ ui-files-error-unsupported = le serveur ne prend pas en charge cette opération
 ui-files-error-failure = l'opération a échoué
 ui-files-error-session = La session SFTP est terminée.
 ui-files-error-local = Cet ordinateur a refusé : { $detail }
+ui-files-error-local-disk-full = Le disque local est plein. Libérez de l'espace puis réessayez.
 ui-files-error-unsafe-name = Le nom du serveur "{ $name }" n'est pas utilisable ici : { $reason }.
 ui-files-error-not-a-file = Seuls les fichiers et les dossiers peuvent être transférés, pas les liens ni les fichiers spéciaux.
 ui-files-error-too-large = Le dossier contient trop d'éléments pour être parcouru.
@@ -1389,7 +1392,13 @@ ui-files-sudo-off = Mode sudo désactivé
 ui-files-item-count = { $count } éléments
 ui-files-item-count-filtered = { $shown }/{ $count } éléments
 
-ui-files-drop-overlay = Déposer les fichiers pour envoyer
+## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
+ui-files-drop-items = { $count ->
+    [one] { $count } élément
+   *[other] { $count } éléments
+}
+ui-files-drop-overlay-target = Envoyer { $items } vers { $folder }
+ui-files-drop-overlay-queued = Ajouter { $items } à la file d'attente vers { $folder }
 
 ui-trusted-host-keys-title = Clés d'hôtes approuvées
 ui-trusted-host-keys-hint = Contrôler les clés d'hôtes SSH que Heimdall approuve pour les prochaines connexions.
@@ -1779,6 +1788,7 @@ ui-status-keys-sent = { $keys } envoyé à la session distante
 ui-status-keys-not-sent = Impossible d'envoyer les touches à la session distante.
 ui-files-state-queued = En attente
 ui-files-state-preparing = Préparation du transfert...
+ui-files-state-scanning = Analyse des dossiers : { $count } entrées trouvées...
 ui-files-retry-button = Réessayer
 ui-files-clear-finished-button = Effacer les terminés
 ui-files-error-interrupted = Le transfert s'est interrompu de façon inattendue.

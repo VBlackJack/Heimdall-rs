@@ -49,16 +49,17 @@ impl Shell {
             return Task::none();
         };
         match event {
+            // winit says each file of the drag in turn: they are counted.
             FloatEvent::FilesHovered(over) => {
                 if let Some(floating) = self.floating.get_mut(&window) {
-                    floating.hovered = over;
+                    floating.hovered = if over { floating.hovered + 1 } else { 0 };
                 }
                 Task::none()
             }
             // Gathered with the rest of its drop: sent on once they all came.
             FloatEvent::FileDropped(path) => {
                 if let Some(floating) = self.floating.get_mut(&window) {
-                    floating.hovered = false;
+                    floating.hovered = 0;
                 }
                 self.file_dropped(DropPlace::Floating(window), path)
             }

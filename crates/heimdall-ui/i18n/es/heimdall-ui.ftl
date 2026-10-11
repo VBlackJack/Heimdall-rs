@@ -447,6 +447,8 @@ ui-files-new-folder-button = Nueva carpeta
 ui-files-new-folder-tooltip = Crear nueva carpeta
 ui-files-download-button = Descargar
 ui-files-upload-button = Enviar
+ui-files-upload-files-tooltip = Subir archivos
+ui-files-download-selected-tooltip = Descargar la selección (Ctrl+Mayús+D)
 ui-files-loading = Cargando...
 ui-files-empty = Carpeta vacía
 ui-files-cancel-button = Cancelar
@@ -474,6 +476,7 @@ ui-files-error-unsupported = el servidor no admite esta operación
 ui-files-error-failure = la operación falló
 ui-files-error-session = La sesión SFTP terminó.
 ui-files-error-local = Este equipo lo rechazó: { $detail }
+ui-files-error-local-disk-full = El disco local está lleno. Libere espacio e inténtelo de nuevo.
 ui-files-error-unsafe-name = El nombre del servidor "{ $name }" no se puede usar aquí: { $reason }.
 ui-files-error-not-a-file = Solo se pueden transferir archivos y carpetas, no enlaces ni archivos especiales.
 ui-files-error-too-large = La carpeta contiene demasiados elementos para recorrerla.
@@ -1386,7 +1389,13 @@ ui-files-sudo-off = Modo sudo desactivado
 ui-files-item-count = { $count } elementos
 ui-files-item-count-filtered = { $shown }/{ $count } elementos
 
-ui-files-drop-overlay = Suelta archivos para subirlos
+## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
+ui-files-drop-items = { $count ->
+    [one] { $count } elemento
+   *[other] { $count } elementos
+}
+ui-files-drop-overlay-target = Subir { $items } a { $folder }
+ui-files-drop-overlay-queued = Añadir { $items } a la cola hacia { $folder }
 
 ui-trusted-host-keys-title = Claves de host de confianza
 ui-trusted-host-keys-hint = Revisa las claves de host SSH en las que Heimdall confía para futuras conexiones.
@@ -1776,6 +1785,7 @@ ui-status-keys-sent = { $keys } enviado al remoto
 ui-status-keys-not-sent = No se pudieron enviar las teclas a la sesión remota.
 ui-files-state-queued = En cola
 ui-files-state-preparing = Preparando la transferencia...
+ui-files-state-scanning = Analizando carpetas: { $count } entradas encontradas...
 ui-files-retry-button = Reintentar
 ui-files-clear-finished-button = Borrar finalizadas
 ui-files-error-interrupted = La transferencia se detuvo de forma inesperada.

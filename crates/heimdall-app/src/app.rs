@@ -1566,6 +1566,15 @@ pub enum Effect {
         /// Tab.
         tab: TabId,
     },
+    /// Ask the user for a folder of this computer to download the server's selection into,
+    /// then send [`FilesMessage::DownloadFolderPicked`], as the C# "Download" of the SFTP
+    /// pane without a local one.
+    PickDownloadFolder {
+        /// Tab.
+        tab: TabId,
+        /// Where the picker opens: the folder the last download went to.
+        start: Option<PathBuf>,
+    },
     /// Ask the server of a shell tab how it is, then send [`Message::HealthRead`].
     ReadHealth {
         /// Tab.
@@ -1914,6 +1923,9 @@ impl fmt::Debug for Effect {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
             Self::PickUploads { tab } => write!(f, "PickUploads({})", tab.value()),
+            Self::PickDownloadFolder { tab, .. } => {
+                write!(f, "PickDownloadFolder({})", tab.value())
+            }
             Self::PickSaveFolder { tab } => write!(f, "PickSaveFolder({})", tab.value()),
             Self::ReadExplorerFiles { tab } => write!(f, "ReadExplorerFiles({})", tab.value()),
             Self::StartEdit { tab, remote, .. } => {

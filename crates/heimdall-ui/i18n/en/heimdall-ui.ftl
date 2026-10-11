@@ -571,6 +571,8 @@ ui-files-new-folder-button = New folder
 ui-files-new-folder-tooltip = Create new folder
 ui-files-download-button = Download
 ui-files-upload-button = Upload
+ui-files-upload-files-tooltip = Upload files
+ui-files-download-selected-tooltip = Download the selected entries (Ctrl+Shift+D)
 ui-files-loading = Loading...
 ui-files-empty = Empty folder
 ui-files-cancel-button = Cancel
@@ -598,6 +600,7 @@ ui-files-error-unsupported = the server does not support this operation
 ui-files-error-failure = the operation failed
 ui-files-error-session = The SFTP session ended.
 ui-files-error-local = This computer refused: { $detail }
+ui-files-error-local-disk-full = The local disk is full. Free some space and try again.
 ui-files-error-unsafe-name = The server's name "{ $name }" cannot be used here: { $reason }.
 ui-files-error-not-a-file = Only files and folders can be transferred, not links or special files.
 ui-files-error-is-link = The permissions of a symbolic link cannot be changed: the server would change those of what it points to.
@@ -1562,8 +1565,13 @@ ui-files-sudo-off = Sudo mode disabled
 ui-files-item-count = { $count } items
 ui-files-item-count-filtered = { $shown }/{ $count } items
 
-## Files dropped from Explorer on a Files tab, as the C# one.
-ui-files-drop-overlay = Drop files to upload
+## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
+ui-files-drop-items = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+}
+ui-files-drop-overlay-target = Upload { $items } to { $folder }
+ui-files-drop-overlay-queued = Add { $items } to the queue for { $folder }
 
 ## The keys trusted for servers, on the Settings page, as the C# Host keys and Certificates pages.
 ui-trusted-host-keys-title = Trusted host keys
@@ -1954,6 +1962,7 @@ ui-status-keys-sent = { $keys } sent to remote
 ui-status-keys-not-sent = Could not send keys to the remote session.
 ui-files-state-queued = Queued
 ui-files-state-preparing = Preparing transfer...
+ui-files-state-scanning = Scanning folders: { $count } entries found...
 ui-files-retry-button = Retry
 ui-files-clear-finished-button = Clear finished
 ui-files-error-interrupted = The transfer stopped unexpectedly.

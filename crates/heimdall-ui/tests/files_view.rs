@@ -1247,14 +1247,22 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;
     let mut shell = Shell::with_app(core);
-    assert!(simulator(&shell).find("Drop files to upload").is_err());
+    // As the C# overlay: how many items go to which folder of the server.
+    let said = "Upload 1 item to /home/admin";
+    assert!(simulator(&shell).find(said).is_err());
     let _ = shell.update(Message::FilesHovered(true));
     snapshot(&shell, "files-drop.png");
+    simulator(&shell).find(said).expect("said while dragged");
+    let _ = shell.update(Message::FilesHovered(true));
     simulator(&shell)
-        .find("Drop files to upload")
-        .expect("said while dragged");
+        .find("Upload 2 items to /home/admin")
+        .expect("each file of the drag counted");
     let _ = shell.update(Message::FilesHovered(false));
-    assert!(simulator(&shell).find("Drop files to upload").is_err());
+    assert!(
+        simulator(&shell)
+            .find("Upload 2 items to /home/admin")
+            .is_err()
+    );
 
     let dropped = dir.path().join("dropped.txt");
     std::fs::write(&dropped, b"x").expect("written");
@@ -1276,7 +1284,7 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
     };
     assert!(transfers(&shell).is_empty(), "gathered until the drop ends");
     assert!(
-        simulator(&shell).find("Drop files to upload").is_err(),
+        simulator(&shell).find(said).is_err(),
         "dropped: no longer said"
     );
     let _ = shell.update(Message::DropGathered(DropPlace::Main));
@@ -1292,11 +1300,21 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
     // Its end said again, the drop is not sent twice.
     let _ = shell.update(Message::DropGathered(DropPlace::Main));
     assert_eq!(transfers(&shell).len(), 2);
+    // Behind a transfer under way, the C# says the drop joins the queue.
+    let _ = shell.update(Message::FilesHovered(true));
+    simulator(&shell)
+        .find("Add 1 item to the queue for /home/admin")
+        .expect("queued behind the upload being prepared");
+    let _ = shell.update(Message::FilesHovered(false));
 
     // Not while the Settings page shows.
     let _ = shell.update(Message::ShowSettings);
     let _ = shell.update(Message::FilesHovered(true));
-    assert!(simulator(&shell).find("Drop files to upload").is_err());
+    assert!(
+        simulator(&shell)
+            .find("Add 1 item to the queue for /home/admin")
+            .is_err()
+    );
     let _ = shell.update(Message::FileDropped(dir.path().join("gone again")));
     let _ = shell.update(Message::DropGathered(DropPlace::Main));
     assert_eq!(transfers(&shell).len(), 2, "nothing more");
@@ -2447,4 +2465,130 @@ async fn columns_wider_than_the_pane_scroll_sideways_with_their_header() {
         "scrolled: {header_seen:?} of {:?}",
         header.bounds()
     );
+}
+
+#[tokio::test]
+async fn the_filter_has_a_clear_button_while_it_holds_something_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let clear = tool_id(tab, Side::Remote, PaneTool::ClearFilter);
+    assert!(
+        simulator(&shell).find(clear.clone()).is_err(),
+        "nothing to clear"
+    );
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Filter {
+        tab,
+        side: Side::Remote,
+        text: "LOG".to_owned(),
+    })));
+    let mut ui = simulator(&shell);
+    ui.click(clear).expect("the C# FilterClearButton");
+    assert!(
+        files_messages(ui).iter().any(|message| matches!(
+            message,
+            FilesMessage::Filter { side: Side::Remote, text, .. } if text.is_empty()
+        )),
+        "the filter emptied"
+    );
+}
+
+#[tokio::test]
+async fn the_server_pane_alone_has_upload_and_download_as_the_csharp_sftp_toolbar() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::ToggleLocal {
+        tab,
+    })));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Upload").expect("the C# BtnUpload");
+        assert!(matches!(
+            files_messages(ui).as_slice(),
+            [FilesMessage::UploadHere { tab: asked }] if *asked == tab
+        ));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Download").expect("the C# BtnDownload");
+        assert!(
+            files_messages(ui).is_empty(),
+            "nothing selected: nothing to download"
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Select {
+        tab,
+        side: Side::Remote,
+        index: 1,
+    })));
+    let mut ui = simulator(&shell);
+    ui.click("Download").expect("offered");
+    assert!(matches!(
+        files_messages(ui).as_slice(),
+        [FilesMessage::PickDownloadFolder { tab: asked }] if *asked == tab
+    ));
+}
+
+#[tokio::test]
+async fn a_download_being_planned_says_how_many_entries_its_walk_found_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, tab) = files_tab(dir.path()).await;
+    let planning = core.update(AppMessage::Files(FilesMessage::Open {
+        tab,
+        side: Side::Remote,
+        index: 1,
+    }));
+    let [Effect::PlanTransfer { request, .. }] = planning.as_slice() else {
+        panic!("{planning:?}")
+    };
+    let rows = request.rows.clone();
+    let mut shell = Shell::with_app(core);
+    simulator(&shell)
+        .find("Preparing transfer...")
+        .expect("before the first report");
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Scanning {
+        tab,
+        rows,
+        entries: 50,
+    })));
+    simulator(&shell)
+        .find("Scanning folders: 50 entries found...")
+        .expect("the C# status");
+}
+
+#[tokio::test]
+async fn a_full_local_disk_is_said_in_the_csharp_words() {
+    use heimdall_app::files::FilesError;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, tab) = files_tab(dir.path()).await;
+    let planning = core.update(AppMessage::Files(FilesMessage::Open {
+        tab,
+        side: Side::Remote,
+        index: 1,
+    }));
+    let [Effect::PlanTransfer { request, .. }] = planning.as_slice() else {
+        panic!("{planning:?}")
+    };
+    let result = plan_transfer((**request).clone()).await.map(Box::new);
+    let effects = core.update(AppMessage::Files(FilesMessage::Planned {
+        tab,
+        request: request.clone(),
+        result,
+    }));
+    let [Effect::Transfer { id, .. }] = effects.as_slice() else {
+        panic!("{effects:?}")
+    };
+    core.update(AppMessage::Files(FilesMessage::TransferEvent {
+        tab,
+        id: *id,
+        event: TransferEvent::Finished(TransferState::Failed(FilesError::local(
+            &std::io::Error::from(std::io::ErrorKind::StorageFull),
+        ))),
+    }));
+    let shell = Shell::with_app(core);
+    simulator(&shell)
+        .find("Failed: The local disk is full. Free some space and try again.")
+        .expect("the C# SftpErrorLocalDiskFull");
 }
