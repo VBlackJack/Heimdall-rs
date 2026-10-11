@@ -27,7 +27,10 @@
 //! Windows Hello or Credential Guard check that would ask, a server key or certificate not
 //! trusted yet fail it, said in the status bar and the log and recorded as its last
 //! outcome; a tab that fails before connecting is closed, and a task failing
-//! [`scheduled::MAX_CONSECUTIVE_FAILURES`] times in a row is turned off. Its tabs keep their
+//! [`scheduled::MAX_CONSECUTIVE_FAILURES`] times in a row is turned off. A session that
+//! connected and dropped or ended later is no failure of the task, which ran: it counts
+//! toward nothing, and its tab, left for the user to see, is closed when the task runs
+//! again. Its tabs keep their
 //! origin for their whole life: they never reconnect by themselves. A task due while the
 //! workspace is locked waits for the unlock, as an auto-reconnect does, then runs once; one
 //! due while a tab it opened is still open is skipped.
@@ -138,11 +141,35 @@ impl Scheduler {
     }
 }
 
-/// `text` for a log line: its control characters shown as `?`, so that a name read from a
-/// file cannot forge or break the line.
+/// `text` for a log line: its control characters and its invisible format characters
+/// (bidirectional embeddings, overrides and isolates, zero-width characters and marks, the
+/// byte order mark) shown as `?`, so that a name read from a file can neither forge or
+/// break the line nor make it read other than it is.
 fn logged(text: &str) -> String {
     text.chars()
-        .map(|c| if c.is_control() { '?' } else { c })
+        .map(|c| {
+            if c.is_control() || is_format(c) {
+                '?'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// Whether `c` is an invisible character that changes how a line reads.
+fn is_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}'
+    )
+}
+
+/// The name of `dialog`'s kind, for the log: never what it holds.
+fn dialog_kind(dialog: &super::Dialog) -> String {
+    format!("{dialog:?}")
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect()
 }
 
@@ -328,6 +355,30 @@ impl App {
         })
     }
 
+    /// Closes the panes task `id` opened whose session ended or failed, its SFTP pane among
+    /// them, before it runs again: a task on a server that ends its sessions keeps one tab,
+    /// never one more each run. Only those panes: a pane the user put in their split stays.
+    fn close_finished(&mut self, id: &str) {
+        let finished: Vec<TabId> = self
+            .scheduler
+            .origins
+            .iter()
+            .filter(|origin| origin.task == id)
+            .map(|origin| origin.tab)
+            .filter(|tab| {
+                self.tab(*tab)
+                    .is_some_and(|tab| matches!(tab.phase, Phase::Failed(_) | Phase::Closed { .. }))
+            })
+            .collect();
+        for tab in finished {
+            self.close_pane(tab);
+        }
+        let open: Vec<TabId> = self.tabs.iter().map(|tab| tab.id).collect();
+        self.scheduler
+            .origins
+            .retain(|origin| open.contains(&origin.tab));
+    }
+
     /// Runs task `id` at `now`: held while locked or while a dialog is open, skipped while a
     /// tab it opened is open, failed when its profile is not found, refused when a schedule
     /// never opens it; else its profile opens as any saved profile does, unattended.
@@ -354,6 +405,7 @@ impl App {
             );
             return Vec::new();
         }
+        self.close_finished(id);
         let summaries = self.profile_summaries();
         let resolved = scheduled::resolve(
             task.server_id.as_ref().map(ProfileId::as_str),
@@ -442,14 +494,16 @@ impl App {
         if self.dialog.is_some() {
             // Never expected of a profile not refused; a dialog a schedule raised would wait
             // for the user, and hold every task behind it: closed, the session with it.
+            let kind = self.dialog.as_ref().map(dialog_kind).unwrap_or_default();
             log::warn!(
-                "scheduled task '{}' (id={}) raised a dialog: closed, and the session with it",
+                "scheduled task '{}' (id={}) raised a dialog ({kind}): closed, and the session \
+                 with it",
                 logged(&task.server_name),
                 logged(&task.id)
             );
             self.dialog = None;
             if let Some(tab) = opened {
-                self.close_tab(tab);
+                self.close_pane(tab);
             }
             self.scheduled_failed(task, FailureKind::ConfirmationRequired, Some(now));
             return effects;
@@ -576,7 +630,7 @@ impl App {
     pub(super) fn after_scheduled_event(&mut self) {
         for tab in std::mem::take(&mut self.scheduler.closing) {
             if self.tab(tab).is_some() {
-                self.close_tab(tab);
+                self.close_pane(tab);
             }
         }
         if let Some(notice) = self.scheduler.pending.take() {
@@ -706,6 +760,27 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_cannot_hide_how_a_log_line_reads() {
+        for invisible in [
+            '\u{200B}', '\u{200D}', '\u{200F}', '\u{202A}', '\u{202E}', '\u{2066}', '\u{2069}',
+            '\u{FEFF}',
+        ] {
+            assert_eq!(logged(&format!("a{invisible}b")), "a?b", "{invisible:?}");
+        }
+        assert_eq!(
+            logged("Serveur \u{2010}"),
+            "Serveur \u{2010}",
+            "a visible hyphen stays"
+        );
+    }
+
+    #[test]
+    fn a_dialog_is_logged_by_its_kind_alone() {
+        let dialog = super::super::Dialog::ExportDone { count: 3 };
+        assert_eq!(dialog_kind(&dialog), "ExportDone");
+    }
 
     #[test]
     fn a_name_cannot_forge_or_break_a_log_line() {

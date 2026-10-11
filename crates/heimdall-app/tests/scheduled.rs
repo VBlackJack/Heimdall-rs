@@ -22,6 +22,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use heimdall_app::split::{Axis, Placement, SplitMessage};
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, Notice, Phase, QuestionId,
     QuestionKind, ScheduledNotice, SettingsMessage, SystemCredentials, TabId, UiError, VaultStatus,
@@ -747,4 +748,63 @@ async fn a_lock_while_a_scheduled_tab_connects_defers_the_task() {
     assert!(app.tab(opened.0).is_none(), "closed");
     let effects = submit(&mut app, MASTER, false).await;
     connected(&effects);
+}
+
+#[test]
+fn a_task_on_a_server_that_ends_its_sessions_keeps_one_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut every_minute = task("t", Some("a"), "server a", due);
+    every_minute.schedule = Schedule::Interval { minutes: 1 };
+    let mut app = app(dir.path(), vec![every_minute]);
+    app.update(Message::Settings(SettingsMessage::SftpBrowser(
+        heimdall_core::settings::SftpBrowser {
+            auto_open_on_ssh: false,
+            ..heimdall_core::settings::SftpBrowser::default()
+        },
+    )));
+    let mut at = due;
+    for ending in [
+        ConnectionEvent::Closed { exit_status: None },
+        ConnectionEvent::Failed(UiError::ConnectionLost),
+        ConnectionEvent::Closed {
+            exit_status: Some(0),
+        },
+    ] {
+        let opened = connected(&app.scheduled_tick_at(at, &UTC));
+        assert_eq!(app.tabs.len(), 1, "the one before closed first");
+        event(&mut app, opened, up());
+        event(&mut app, opened, ending);
+        assert!(
+            app.tab(opened.0).is_some(),
+            "left to be seen until the next run"
+        );
+        at += MINUTE;
+    }
+    let task = find(&app, "t");
+    assert_eq!(task.last_outcome, Some(Outcome::Ran));
+    assert_eq!(
+        task.failures, 0,
+        "a session that ended after connecting is no failure"
+    );
+    assert!(task.enabled);
+}
+
+#[test]
+fn a_failed_scheduled_tab_closes_alone_never_the_panes_put_beside_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut app = app(dir.path(), vec![task("t", Some("a"), "server a", due)]);
+    let mine = connected(&app.update(Message::OpenProfile(ProfileId::new("b"))));
+    let opened = connected(&app.scheduled_tick_at(due, &UTC));
+    app.update(Message::Split(SplitMessage::Merge {
+        host: opened.0,
+        tab: mine.0,
+        axis: Axis::SideBySide,
+        placement: Placement::Second,
+    }));
+    assert_eq!(app.panes_of(opened.0), [opened.0, mine.0]);
+    event(&mut app, opened, ConnectionEvent::Failed(UiError::Timeout));
+    assert!(app.tab(opened.0).is_none(), "the scheduled pane closed");
+    assert!(app.tab(mine.0).is_some(), "the user's pane stays");
 }
