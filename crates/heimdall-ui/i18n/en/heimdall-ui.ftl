@@ -546,6 +546,9 @@ ui-dialog-save-failed-title = Save Error
 ui-dialog-save-failed-body = Failed to save: { $detail }
 ui-dialog-store-changed-title = Profiles not saved
 ui-dialog-store-changed-body = The profile file was changed by another program or another Heimdall since it was read, so this change was not saved and the file was left as it is. Reopen Heimdall to load the current file, then make the change again.
+ui-dialog-config-recovered-title = Configuration restored
+ui-dialog-config-recovered-body = { $documents } could not be read and was loaded from its last good copy. Changes saved after that copy was made may be missing.
+ui-dialog-config-recovered-separator = {", "}
 ui-dialog-detail = Detail: { $detail }
 
 ui-import-skip-not-ssh = not an SSH profile ({ $kind })

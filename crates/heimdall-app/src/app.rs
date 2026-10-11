@@ -2913,6 +2913,13 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// The profile or settings files named were unreadable at start and were read from
+    /// their last good copy, as the C# `ConfigRecoveredFromBackupMessage` says: what was
+    /// saved after that copy may be missing.
+    ConfigRecovered {
+        /// The files' names, in the order read.
+        documents: Vec<String>,
+    },
     /// A change could not be saved, as the C# `EditorSaveErrorMessage` says.
     StoreError {
         /// Technical detail.
@@ -3318,7 +3325,7 @@ impl App {
             ),
         };
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
-        let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
+        let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog, &store);
         let tunnels_panel = !settings.collapse_tunnels_panel;
         let (macros, files_state, split_layouts) = side_files(&config.profiles_file);
         let mut app = Self {
@@ -4969,6 +4976,7 @@ impl App {
                 | Dialog::StoreUnreadable { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::StoreChanged { .. }
+                | Dialog::ConfigRecovered { .. }
                 | Dialog::PasswordSaveFailed { .. }
                 | Dialog::Shortcuts
                 // Confirmed before: see `confirm_dialog`.

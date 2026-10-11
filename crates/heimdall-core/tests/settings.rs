@@ -19,6 +19,7 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use heimdall_core::last_good_copy::backup_path;
 use heimdall_core::lockout::{LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS};
 use heimdall_core::pin::PinHash;
 use heimdall_core::settings::{
@@ -214,6 +215,34 @@ fn a_newer_or_broken_file_is_refused_not_guessed() {
     ));
     std::fs::write(&path, "version = 1\n").expect("written");
     assert!(Settings::load(&path).is_ok(), "the current version");
+}
+
+#[test]
+fn settings_left_unreadable_are_read_from_their_last_good_copy() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings {
+        color_scheme: ColorScheme::Nord,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("first save");
+    settings.color_scheme = ColorScheme::Monokai;
+    settings.save(&path).expect("second save, the first kept");
+    std::fs::write(&path, "").expect("emptied");
+    let (read, recovered) = Settings::load_recovering(&path).expect("read from the copy");
+    assert!(recovered, "said, for the application to tell the user");
+    assert_eq!(read.color_scheme, ColorScheme::Nord, "the last good copy");
+    read.save(&path).expect("the damaged file replaced");
+    let (again, recovered) = Settings::load_recovering(&path).expect("reads");
+    assert!(!recovered);
+    assert_eq!(again.color_scheme, ColorScheme::Nord);
+    assert_eq!(
+        Settings::load(&backup_path(&path))
+            .expect("the copy reads")
+            .color_scheme,
+        ColorScheme::Nord,
+        "the emptied file never replaced the good copy"
+    );
 }
 
 #[test]

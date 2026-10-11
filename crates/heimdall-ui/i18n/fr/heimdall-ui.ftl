@@ -424,6 +424,9 @@ ui-dialog-save-failed-title = Erreur de sauvegarde
 ui-dialog-save-failed-body = Échec de la sauvegarde : { $detail }
 ui-dialog-store-changed-title = Profils non enregistrés
 ui-dialog-store-changed-body = Le fichier des profils a été modifié par un autre programme ou un autre Heimdall depuis sa lecture : ce changement n'a donc pas été enregistré et le fichier est resté tel quel. Rouvrez Heimdall pour charger le fichier actuel, puis refaites le changement.
+ui-dialog-config-recovered-title = Configuration restaurée
+ui-dialog-config-recovered-body = { $documents } était illisible et a été chargé depuis sa dernière copie valide. Les changements enregistrés après cette copie peuvent manquer.
+ui-dialog-config-recovered-separator = {", "}
 ui-dialog-detail = Détail : { $detail }
 
 ui-import-skip-not-ssh = pas un profil SSH ({ $kind })

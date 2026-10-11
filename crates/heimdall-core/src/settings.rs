@@ -16,8 +16,6 @@
 
 //! The settings of Heimdall-rs, beside its profiles: what the Settings page changes.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -30,7 +28,8 @@ use crate::profile::{
     ProfileId, RESOLUTION_PRESETS, RdpDefaults, RdpMode, SshMode, preset_fits, resolution_preset,
     resolution_text,
 };
-use crate::store::{StoreError, write_atomic};
+use crate::last_good_copy::Document;
+use crate::store::StoreError;
 
 mod sensitive;
 
@@ -1783,9 +1782,22 @@ impl Settings {
     /// Returns [`StoreError`] when the file exists and cannot be read, does not parse, or has
     /// a newer format version.
     pub fn load(path: &Path) -> Result<Self, StoreError> {
-        let text = match fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
+        Self::load_recovering(path).map(|(settings, _)| settings)
+    }
+
+    /// Reads the settings at `path` as [`Self::load`] does, a file that is not readable read
+    /// from its last good copy when there is one, as the C# `ConfigManager` reads
+    /// `settings.json`; with whether it was, for the application to say so. The next save
+    /// replaces the damaged file.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load`].
+    pub fn load_recovering(path: &Path) -> Result<(Self, bool), StoreError> {
+        let (text, recovered) = match crate::last_good_copy::read_document(path) {
+            Ok(Document::Read(text)) => (text, false),
+            Ok(Document::Recovered(text)) => (text, true),
+            Ok(Document::Missing) => return Ok((Self::default(), false)),
             Err(source) => {
                 return Err(StoreError::Io {
                     path: path.to_owned(),
@@ -1804,7 +1816,7 @@ impl Settings {
                 expected: SETTINGS_FILE_VERSION,
             });
         }
-        Ok(Self::from_file(file))
+        Ok((Self::from_file(file), recovered))
     }
 
     /// The settings `file` says; a value out of its range is the default.
@@ -2071,14 +2083,15 @@ impl Settings {
             .map_or_else(|| chosen.clone(), |base| base.join(&chosen))
     }
 
-    /// Writes the settings to `path`, through a temporary file.
+    /// Writes the settings to `path`, through a temporary file, the file it replaces kept
+    /// as its last good copy when readable, as the C# `ConfigManager` keeps one.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when serialisation or any file operation fails.
     pub fn save(&self, path: &Path) -> Result<(), StoreError> {
         let text = toml::to_string_pretty(&self.file())?;
-        write_atomic(path, &text)
+        crate::last_good_copy::write_keeping_copy(path, &text)
     }
 
     /// The settings as their file holds them.

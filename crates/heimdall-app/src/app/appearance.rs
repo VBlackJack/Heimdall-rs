@@ -20,6 +20,7 @@
 use std::path::PathBuf;
 
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
+use heimdall_core::store::ProfileStore;
 use heimdall_core::settings::{
     Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
     auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
@@ -162,23 +163,40 @@ pub fn palette(scheme: ColorScheme) -> Palette {
 }
 
 /// The settings beside the profiles of `config`, the file they are saved to, and the
-/// dialog to show at start: `dialog`, or else the reason the settings could not be read.
-/// Unreadable, the defaults are used and saved beside the file, never over it.
+/// dialog to show at start: `dialog`, or else the reason the settings could not be read, or
+/// else the files of `store` and the settings read from their last good copy, as the C# says
+/// it at start. Unreadable with no usable copy, the defaults are used and saved beside the
+/// file, never over it.
 pub(super) fn load_settings(
     config: &AppConfig,
     dialog: Option<Dialog>,
+    store: &ProfileStore,
 ) -> (Settings, PathBuf, Option<Dialog>) {
     let path = settings_path(&config.profiles_file);
-    match Settings::load(&path) {
-        Ok(settings) => (settings, path, dialog),
+    let (settings, file, settings_recovered, dialog) = match Settings::load_recovering(&path) {
+        Ok((settings, recovered)) => (settings, path, recovered, dialog),
         Err(error) => (
             Settings::default(),
             path.with_extension(RECOVERY_EXTENSION),
+            false,
             dialog.or(Some(Dialog::StoreUnreadable {
                 detail: error.to_string(),
             })),
         ),
-    }
+    };
+    let documents: Vec<String> = [
+        (store.recovered_from_backup(), store.path()),
+        (settings_recovered, file.as_path()),
+    ]
+    .into_iter()
+    .filter(|(recovered, _)| *recovered)
+    .filter_map(|(_, path)| path.file_name())
+    .map(|name| name.to_string_lossy().into_owned())
+    .collect();
+    let dialog = dialog.or_else(|| {
+        (!documents.is_empty()).then_some(Dialog::ConfigRecovered { documents })
+    });
+    (settings, file, dialog)
 }
 
 impl App {

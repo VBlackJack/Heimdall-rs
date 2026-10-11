@@ -5244,3 +5244,29 @@ fn tab_moves_between_fields_on_the_settings_page_and_in_a_dialog_but_a_tab_keeps
     let _ = shell.update(Message::DialogKey { confirm: false });
     assert!(shell.app().dialog.is_none(), "Escape closes it");
 }
+
+#[test]
+fn a_file_read_from_its_last_good_copy_is_said_at_start_in_the_csharp_words() {
+    let dir = tempfile::tempdir().expect("dir");
+    // Saved twice: the first file is kept as the last good copy.
+    drop(app(dir.path()));
+    drop(app(dir.path()));
+    std::fs::write(dir.path().join("profiles.toml"), "").expect("emptied");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Configuration restored").expect("the C# title");
+    ui.find(
+        "profiles.toml could not be read and was loaded from its last good copy. Changes saved \
+         after that copy was made may be missing.",
+    )
+    .expect("the C# message");
+    ui.find("server a").expect("the profiles of the copy");
+}

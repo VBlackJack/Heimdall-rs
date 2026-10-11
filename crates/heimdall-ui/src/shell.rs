@@ -8786,6 +8786,13 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
             fl!("ui-dialog-store-changed-title"),
             vec![text(fl!("ui-dialog-store-changed-body")), detail(technical)],
         ),
+        Dialog::ConfigRecovered { documents } => (
+            fl!("ui-dialog-config-recovered-title"),
+            vec![text(fl!(
+                "ui-dialog-config-recovered-body",
+                documents = documents.join(&fl!("ui-dialog-config-recovered-separator"))
+            ))],
+        ),
         other => {
             let (title, lines) = crate::rdp_view::report_lines(other)
                 .map(|lines| (fl!("ui-rdp-title"), lines))
@@ -8802,7 +8809,7 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. } => Severity::Error,
-        Dialog::StoreChanged { .. } => Severity::Warning,
+        Dialog::StoreChanged { .. } | Dialog::ConfigRecovered { .. } => Severity::Warning,
         _ => Severity::Info,
     };
     dialog_parts::message(
@@ -12529,7 +12536,8 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. }
-        | Dialog::StoreChanged { .. } => report(dialog, ok_button()),
+        | Dialog::StoreChanged { .. }
+        | Dialog::ConfigRecovered { .. } => report(dialog, ok_button()),
         Dialog::SessionsPreview(_)
         | Dialog::RdpPreview(_)
         | Dialog::HostKeysPreview(_)

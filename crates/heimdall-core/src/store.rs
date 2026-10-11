@@ -27,6 +27,7 @@ use thiserror::Error;
 
 use crate::folder::{self, FolderColor, FolderError};
 use crate::gateway_parents::MAX_GATEWAY_CHAIN_DEPTH;
+use crate::last_good_copy::{self, Document};
 use crate::metadata::{Environment, MacAddress, ProfileMetadata, ProfileOrigin};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
@@ -229,6 +230,8 @@ pub struct ProfileStore {
     /// What the file held when last read or written here, for a change made outside to be
     /// kept rather than overwritten.
     on_disk: OnDisk,
+    /// The file was unreadable and its last good copy was read instead.
+    recovered: bool,
 }
 
 /// What removing a gateway changed.
@@ -277,10 +280,14 @@ impl ProfileStore {
             metadata: BTreeMap::new(),
             folder_colors: BTreeMap::new(),
             on_disk: OnDisk::Unknown,
+            recovered: false,
         }
     }
 
-    /// Opens the store at `path`; a missing file is an empty store.
+    /// Opens the store at `path`; a missing file is an empty store. A file that is not
+    /// readable is read from its last good copy when there is one, as the C# `ConfigManager`
+    /// reads `servers.json`: [`Self::recovered_from_backup`] then says so, and the next save
+    /// replaces the damaged file.
     ///
     /// # Errors
     ///
@@ -288,9 +295,10 @@ impl ProfileStore {
     /// another format version.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let path = path.into();
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+        let (text, recovered) = match last_good_copy::read_document(&path) {
+            Ok(Document::Read(text)) => (text, false),
+            Ok(Document::Recovered(text)) => (text, true),
+            Ok(Document::Missing) => {
                 return Ok(Self {
                     on_disk: OnDisk::Absent,
                     ..Self::empty(path)
@@ -347,8 +355,21 @@ impl ProfileStore {
                     (!path.is_empty()).then_some((path, color))
                 })
                 .collect(),
-            on_disk: OnDisk::Text(text),
+            // The damaged file is not what the store holds: the next save replaces it.
+            on_disk: if recovered {
+                OnDisk::Unknown
+            } else {
+                OnDisk::Text(text)
+            },
+            recovered,
         })
+    }
+
+    /// Whether the file was unreadable when opened and its last good copy was read instead,
+    /// as the C# `DocumentsRecoveredFromBackup` says it.
+    #[must_use]
+    pub fn recovered_from_backup(&self) -> bool {
+        self.recovered
     }
 
     /// File this store reads and writes.
@@ -1160,7 +1181,7 @@ impl ProfileStore {
                 .map(|(path, color)| (path.clone(), color.name().to_owned()))
                 .collect(),
         })?;
-        write_atomic(&self.path, &text)?;
+        last_good_copy::write_keeping_copy(&self.path, &text)?;
         Ok(text)
     }
 }
