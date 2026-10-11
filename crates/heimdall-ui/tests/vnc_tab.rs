@@ -15,7 +15,7 @@
  */
 
 //! VNC in the window, drawn headless: the profile in the sidebar opens a VNC tab, whose
-//! tab menu carries the C# toolbar's controls and asks the server for the quality chosen.
+//! toolbar over the desktop, as the C# noVNC page's, asks the server for the quality chosen.
 
 mod common;
 
@@ -31,11 +31,11 @@ use heimdall_core::profile::{ProfileId, VncProfile};
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, SessionButton, Shell, VncScaling, session_button_id};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::tree_view::TreeMenu;
 use iced::futures::StreamExt as _;
-use iced::{Settings, Size};
+use iced::{Point, Settings, Size, mouse};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -129,19 +129,41 @@ fn tall(shell: &Shell) -> common::Drawn<'_> {
     common::simulator(settings(), TALL_WINDOW, shell.view())
 }
 
-/// What a click on the last text `label` sends: an open menu's entry.
-fn menu_click(shell: &Shell, label: &str) -> Vec<Message> {
+/// Clicks at `point`, as a user does.
+fn click_at(ui: &mut common::Drawn<'_>, point: Point) {
+    ui.point_at(point);
+    let _ = ui.simulate([
+        iced::Event::Mouse(mouse::Event::CursorMoved { position: point }),
+        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+        iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+    ]);
+}
+
+/// What the overlay's list `list` of `tab` sends once opened and its line `line` (from 0)
+/// clicked. iced draws a pick list's text without showing it to the simulator: its lines,
+/// each as tall as the closed list, open below it.
+fn pick(shell: &Shell, tab: TabId, list: SessionButton, line: f32) -> Vec<Message> {
     let mut ui = tall(shell);
-    common::click_last(&mut ui, label);
+    let bounds = ui
+        .find(session_button_id(tab, list))
+        .expect("the overlay's list")
+        .bounds();
+    let x = bounds.center_x();
+    click_at(&mut ui, Point::new(x, bounds.center_y()));
+    click_at(
+        &mut ui,
+        Point::new(x, bounds.y + bounds.height * (1.5 + line)),
+    );
     ui.into_messages().collect()
 }
 
-/// What the "Quality" menu, the C# toolbar's, sends once its entry `label` is clicked.
-fn choose(shell: &Shell, label: &str) -> Option<(TabId, VncQuality)> {
-    menu_click(shell, label)
+/// What the overlay's "Quality", the C# noVNC toolbar's, sends once its line `line` is
+/// clicked.
+fn choose(shell: &Shell, tab: TabId, line: f32) -> Option<(TabId, VncQuality)> {
+    pick(shell, tab, SessionButton::Quality, line)
         .into_iter()
         .find_map(|message| match message {
-            Message::MenuChoice(AppMessage::VncQuality { tab, quality }) => Some((tab, quality)),
+            Message::App(AppMessage::VncQuality { tab, quality }) => Some((tab, quality)),
             _ => None,
         })
 }
@@ -252,23 +274,18 @@ async fn the_quality_menu_offers_the_csharp_four_from_performance_and_asks_the_s
         .and_then(|found| found.desktop.as_deref())
         .and_then(DesktopPane::vnc_quality);
     assert_eq!(quality, Some(VncQuality::Performance));
-    // The tab menu's "Quality", the C# toolbar's: its four lines, in the C# order, each
-    // sent for this tab.
-    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
-    assert!(menu_click(&shell, "Quality").iter().any(|message| matches!(
-        message,
-        Message::OpenTreeMenu(TreeMenu::VncQuality(opened)) if *opened == tab
-    )));
-    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::VncQuality(tab)));
-    let lines = ["Best Quality", "Balanced", "Performance", "Low Bandwidth"];
-    assert_in_order(&shell, &lines);
-    let chosen: Vec<_> = lines.into_iter().map(|line| choose(&shell, line)).collect();
+    // The overlay's "Quality", the C# noVNC toolbar's: its four lines, in the C# order,
+    // each sent for this tab.
+    let chosen: Vec<_> = [0.0, 1.0, 2.0, 3.0]
+        .into_iter()
+        .map(|line| choose(&shell, tab, line))
+        .collect();
     assert_eq!(
         chosen,
         VncQuality::ALL.map(|quality| Some((tab, quality))),
         "the menu's lines"
     );
-    let _ = shell.update(Message::MenuChoice(AppMessage::VncQuality {
+    let _ = shell.update(Message::App(AppMessage::VncQuality {
         tab,
         quality: VncQuality::LowBandwidth,
     }));
@@ -304,17 +321,12 @@ async fn the_quality_menu_offers_the_csharp_four_from_performance_and_asks_the_s
 }
 
 /// The entries of a connected VNC tab's menu, as the C# `SessionTabContextMenuFactory` builds
-/// it for a saved profile not split, the C# toolbar's controls in the block of its
-/// Resolution: Send keys, the scaling, the quality and the clipboard.
-const VNC_TAB_MENU: [&str; 19] = [
+/// it for a saved profile not split: no Resolution, which is RDP's.
+const VNC_TAB_MENU: [&str; 15] = [
     "Disconnect",
     "Rename tab",
     "Reset title",
     "Pin tab",
-    "Send keys",
-    "Fit to Window",
-    "Quality",
-    "Send clipboard",
     "Fullscreen (F11)",
     "Reconnect Session",
     "Duplicate Session",
@@ -329,7 +341,7 @@ const VNC_TAB_MENU: [&str; 19] = [
 ];
 
 #[tokio::test]
-async fn right_clicking_a_vnc_tab_offers_the_toolbar_s_actions_in_the_csharp_order() {
+async fn a_vnc_tab_has_the_csharp_header_menu_and_toolbar_over_its_desktop() {
     use heimdall_app::TabMenuMessage;
 
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
@@ -348,16 +360,81 @@ async fn right_clicking_a_vnc_tab_offers_the_toolbar_s_actions_in_the_csharp_ord
     let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
     {
         let mut ui = tall(&shell);
-        // No toolbar under the tab: its header, as the C# one, the encryption said.
-        for gone in [
-            "Send clipboard",
+        // The C# VNC header: name, state, Split and Disconnect; none of the RDP header's
+        // buttons, and no bar under it.
+        assert_eq!(
+            common::all_bounds(&mut ui, "vnc tab").len(),
+            2,
+            "strip and header"
+        );
+        ui.find("Connected").expect("the state");
+        ui.find("Not encrypted: this desktop and what you type cross the network in clear.")
+            .expect("the clear connection said");
+        for absent in [
             "Send keys",
             "Fit to Window",
             "Fullscreen (F11)",
+            "Send clipboard",
         ] {
-            assert!(ui.find(gone).is_err(), "{gone} is on screen");
+            assert!(ui.find(absent).is_err(), "{absent} is on screen");
         }
-        ui.find("Disconnect").expect("the header's button");
+        assert!(
+            ui.find(session_button_id(tab, SessionButton::SendKeys))
+                .is_err()
+        );
+        ui.click("Disconnect").expect("the header's button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::DisconnectDesktop(closed)) if closed == tab
+        )));
+    }
+    // The C# noVNC toolbar, over the desktop's top right corner: Clipboard, Scaling mode,
+    // Quality, each sending what the bar sent.
+    {
+        let mut ui = tall(&shell);
+        let clipboard = ui.find("Clipboard").expect("the overlay's button").bounds();
+        let scaling = ui
+            .find(session_button_id(tab, SessionButton::Scaling))
+            .expect("the scaling mode")
+            .bounds();
+        let quality = ui
+            .find(session_button_id(tab, SessionButton::Quality))
+            .expect("the quality")
+            .bounds();
+        assert!(clipboard.x < scaling.x && scaling.x < quality.x);
+        ui.click("Clipboard").expect("the overlay's button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::SendClipboard(sent)) if sent == tab
+        )));
+    }
+    // A server that cannot resize its desktop offers Scale and No Scaling, as noVNC.
+    let scaled: Vec<VncScaling> = [0.0, 1.0]
+        .into_iter()
+        .filter_map(|line| {
+            pick(&shell, tab, SessionButton::Scaling, line)
+                .into_iter()
+                .find_map(|message| match message {
+                    Message::VncScaling { tab: to, scaling } if to == tab => Some(scaling),
+                    _ => None,
+                })
+        })
+        .collect();
+    let can_resize = shell
+        .app()
+        .tab(tab)
+        .and_then(|found| found.desktop.as_deref())
+        .and_then(DesktopPane::vnc_remote_resize)
+        .is_some();
+    let expected = if can_resize {
+        vec![VncScaling::RemoteResize, VncScaling::Scale]
+    } else {
+        vec![VncScaling::Scale, VncScaling::NoScaling]
+    };
+    assert_eq!(scaled, expected);
+    // The tab menu, as the C# builds it.
+    {
+        let mut ui = tall(&shell);
         common::right_click(&mut ui, "vnc tab");
         assert!(ui.into_messages().any(|message| matches!(
             message,
@@ -366,39 +443,8 @@ async fn right_clicking_a_vnc_tab_offers_the_toolbar_s_actions_in_the_csharp_ord
     }
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
     assert_in_order(&shell, &VNC_TAB_MENU);
-    // Each sends what the toolbar sent, or opens its menu.
-    assert!(
-        menu_click(&shell, "Send clipboard")
-            .iter()
-            .any(|message| matches!(
-                message,
-                Message::MenuChoice(AppMessage::SendClipboard(sent)) if *sent == tab
-            ))
-    );
-    assert!(
-        menu_click(&shell, "Fit to Window")
-            .iter()
-            .any(|message| matches!(
-                message,
-                Message::DesktopFit { tab: fitted, .. } if *fitted == tab
-            ))
-    );
-    assert!(
-        menu_click(&shell, "Send keys")
-            .iter()
-            .any(|message| matches!(
-                message,
-                Message::OpenTreeMenu(TreeMenu::SendKeys(opened)) if *opened == tab
-            ))
-    );
-    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::SendKeys(tab)));
-    assert!(
-        menu_click(&shell, "Ctrl+Alt+Del")
-            .iter()
-            .any(|message| matches!(
-                message,
-                Message::MenuChoice(AppMessage::SendKeys { tab: to, keys })
-                    if *to == tab && *keys == heimdall_app::SpecialKeys::CtrlAltDel
-            ))
-    );
+    let mut ui = tall(&shell);
+    for absent in ["Resolution", "Send keys", "Quality", "Send clipboard"] {
+        assert!(ui.find(absent).is_err(), "{absent} in the tab menu");
+    }
 }

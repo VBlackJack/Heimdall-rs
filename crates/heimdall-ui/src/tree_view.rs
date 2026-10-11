@@ -29,7 +29,6 @@ use heimdall_app::{
     HostKeysMessage, Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind,
     ProfileMenuMessage, ProfileSummary, RdpMessage, ResolutionChoice, SelectionMessage,
     SessionState, SessionsMessage, SpecialKeys, TabGroup, TabId, TabMenuMessage, TreeFilter,
-    VncQuality,
 };
 use heimdall_core::folder::FolderColor;
 use heimdall_core::profile::{ProfileId, RdpMode, Resolution, fixed_desktop};
@@ -119,8 +118,6 @@ pub enum TreeMenu {
     Resolution(TabId),
     /// A remote desktop tab's "Send keys" menu, as the C# session header's.
     SendKeys(TabId),
-    /// A VNC tab's "Quality" menu, as the C# toolbar's.
-    VncQuality(TabId),
     /// A terminal tab's macros: record, play, stop.
     Macros(TabId),
     /// The notes a session's menu writes about it, as the C# Notes submenu.
@@ -1426,8 +1423,6 @@ pub struct TabMenuState {
     pub health: Option<bool>,
     /// It is pinned.
     pub pinned: bool,
-    /// A VNC desktop resized to the tab, or not; `None` for one that cannot be.
-    pub vnc_resize: Option<bool>,
     /// Its session is saved nowhere, and can be saved as a profile.
     pub saveable: bool,
     /// It takes terminal macros.
@@ -1443,21 +1438,6 @@ pub struct TabMenuState {
     pub detach_secondary: bool,
     /// What it offers of a split.
     pub split: SplitEntries,
-    /// The remote desktop it shows, whose session actions the menu carries; `None` for any
-    /// other tab.
-    pub desktop: Option<DesktopEntries>,
-}
-
-/// What a remote desktop tab's menu offers of its session: the keys sent, how it is shown,
-/// and VNC's quality and clipboard, which the C# session header and toolbar carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DesktopEntries {
-    /// The desktop is scaled into the tab.
-    pub fit: bool,
-    /// The quality a VNC server is asked for; `None` for RDP.
-    pub quality: Option<VncQuality>,
-    /// This computer's clipboard can be sent: a VNC session's, on a click only.
-    pub clipboard: bool,
 }
 
 /// What a tab's menu offers of a split, as the C# one.
@@ -1553,6 +1533,8 @@ pub struct ResolutionMenuState {
     pub aspect: heimdall_app::Aspect,
     /// The desktop settles after connecting: "Skip stabilization" is offered.
     pub stabilizing: bool,
+    /// The desktop is scaled into the tab, as the C# header menu's "Fit to Window".
+    pub fit: bool,
 }
 
 impl ResolutionMenuState {
@@ -1571,6 +1553,20 @@ impl ResolutionMenuState {
                 label = fl!("ui-resolution-active-mode"),
                 mode = mode_name(self.mode)
             ),
+        }
+    }
+
+    /// The session header's button tip: "Change resolution - Fixed (1920x1080)", as the C#.
+    #[must_use]
+    pub fn tooltip(&self) -> String {
+        match self.fixed {
+            Some((width, height)) => fl!(
+                "ui-resolution-tooltip-size",
+                mode = mode_name(self.mode),
+                width = width,
+                height = height
+            ),
+            None => fl!("ui-resolution-tooltip", mode = mode_name(self.mode)),
         }
     }
 
@@ -1652,6 +1648,17 @@ pub fn resolution_entries<'a>(
             ))
             .push(separator());
     }
+    // The C# session header menu's "Fit to Window": the desktop scaled into the tab.
+    entries = entries
+        .push(checked_message(
+            fl!("ui-desktop-fit-window"),
+            state.fit,
+            Message::DesktopFit {
+                tab,
+                fit: !state.fit,
+            },
+        ))
+        .push(separator());
     entries = entries.push(checked_entry(
         fl!("ui-resolution-match-window"),
         state.fixed.is_none() && state.aspect == heimdall_app::Aspect::Stretch,
@@ -1782,25 +1789,11 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             menu(TabMenuMessage::Pin(tab)),
         ));
     }
-    if let Some(on) = state.vnc_resize {
-        entries = entries.push(separator()).push(checked_entry(
-            fl!("ui-tab-menu-vnc-remote-resize"),
-            on,
-            AppMessage::TabMenu(TabMenuMessage::VncRemoteResize(tab)),
-        ));
-    }
     if state.resolution {
         entries = entries.push(separator()).push(submenu(
             fl!("ui-resolution-menu"),
             TreeMenu::Resolution(tab),
         ));
-    }
-    if let Some(desktop) = &state.desktop {
-        // In the block of the resolution, or of VNC's resizing, when there is one.
-        if state.vnc_resize.is_none() && !state.resolution {
-            entries = entries.push(separator());
-        }
-        entries = desktop_entries(entries, tab, *desktop);
     }
     if state.macros {
         entries = entries
@@ -1849,42 +1842,6 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     menu_card(split_entries(entries, tab, state.split)).into()
 }
 
-/// A remote desktop's session entries, the C# session header's controls in its tab's menu:
-/// "Send keys", how the desktop is shown, then VNC's quality and clipboard, as the C#
-/// toolbar orders them.
-fn desktop_entries(
-    entries: Column<'_, Message>,
-    tab: TabId,
-    desktop: DesktopEntries,
-) -> Column<'_, Message> {
-    let mut entries = entries
-        .push(submenu(
-            fl!("ui-desktop-send-keys"),
-            TreeMenu::SendKeys(tab),
-        ))
-        .push(checked_message(
-            fl!("ui-desktop-fit-window"),
-            desktop.fit,
-            Message::DesktopFit {
-                tab,
-                fit: !desktop.fit,
-            },
-        ));
-    if desktop.quality.is_some() {
-        entries = entries.push(submenu(
-            fl!("ui-session-vnc-quality"),
-            TreeMenu::VncQuality(tab),
-        ));
-    }
-    if desktop.clipboard {
-        entries = entries.push(entry(
-            fl!("ui-desktop-send-clipboard"),
-            Some(AppMessage::SendClipboard(tab)),
-        ));
-    }
-    entries
-}
-
 /// The keys of the "Send keys" menu, in the C# session header's groups and order.
 const SEND_KEYS_GROUPS: [&[SpecialKeys]; 4] = [
     &[SpecialKeys::CtrlAltDel],
@@ -1919,23 +1876,6 @@ pub fn send_keys_entries<'a>(tab: TabId) -> Element<'a, Message> {
         fl!("ui-desktop-shortcuts"),
         Some(AppMessage::ShowShortcuts),
     ));
-    menu_card(entries).into()
-}
-
-/// A VNC desktop's "Quality" menu, as the C# toolbar's: the four in its order, the one
-/// asked for checked.
-#[must_use]
-pub fn vnc_quality_entries<'a>(tab: TabId, current: VncQuality) -> Element<'a, Message> {
-    let entries = column![]
-        .spacing(0.0)
-        .width(MENU_WIDTH)
-        .extend(VncQuality::ALL.map(|quality| {
-            checked_entry(
-                crate::texts::vnc_quality(quality),
-                quality == current,
-                AppMessage::VncQuality { tab, quality },
-            )
-        }));
     menu_card(entries).into()
 }
 

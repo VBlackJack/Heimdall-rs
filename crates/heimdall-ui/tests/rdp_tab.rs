@@ -30,7 +30,7 @@ use heimdall_core::store::ProfileStore;
 use heimdall_rdp::{Ending, Framebuffer};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, SessionButton, Shell, session_button_id};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Point, Settings, Size, Theme, mouse};
 
@@ -2052,16 +2052,13 @@ fn assert_in_order(shell: &Shell, labels: &[&str]) {
 }
 
 /// The entries of a connected RDP tab's menu, as the C# `SessionTabContextMenuFactory` builds
-/// it for a saved profile not split: the session bar's Resolution, Send keys and scaling in
-/// the block of the C# Resolution, Fullscreen after it.
-const RDP_TAB_MENU: [&str; 18] = [
+/// it for a saved profile not split.
+const RDP_TAB_MENU: [&str; 16] = [
     "Disconnect",
     "Rename tab",
     "Reset title",
     "Pin tab",
     "Resolution",
-    "Send keys",
-    "Fit to Window",
     "Fullscreen (F11)",
     "Reconnect Session",
     "Duplicate Session",
@@ -2089,31 +2086,86 @@ const SEND_KEYS_MENU: [(&str, heimdall_app::SpecialKeys); 10] = [
     ("Win+E (file explorer)", heimdall_app::SpecialKeys::WinE),
 ];
 
+/// Where the session header's button `button` of `tab` is drawn.
+fn header_button(shell: &Shell, tab: TabId, button: SessionButton) -> iced::Rectangle {
+    let mut ui = tall(shell);
+    ui.find(session_button_id(tab, button))
+        .expect("the header's button")
+        .bounds()
+}
+
+/// What a click on the session header's button `button` of `tab` sends.
+fn header_click(shell: &Shell, tab: TabId, button: SessionButton) -> Vec<Message> {
+    let mut ui = tall(shell);
+    ui.click(session_button_id(tab, button))
+        .expect("the header's button");
+    ui.into_messages().collect()
+}
+
 #[test]
-fn an_rdp_tab_has_no_session_bar_its_header_keeps_the_csharp_controls_and_indicators() {
+fn an_rdp_tab_s_header_has_the_csharp_buttons_and_indicators_and_no_bar_under_it() {
+    use heimdall_ui::tree_view::TreeMenu;
+
     let dir = tempfile::tempdir().expect("dir");
     let (shell, tab, _received) = renamed(dir.path());
-    let mut ui = tall(&shell);
-    // The session bar's controls are the tab menu's now.
-    for gone in [
-        "Send keys",
-        "Keyboard shortcuts...",
-        "Match window",
-        "Fit to Window",
-        "Fullscreen (F11)",
-        "Resolution",
-    ] {
-        assert!(ui.find(gone).is_err(), "{gone} is on screen");
+    {
+        let mut ui = tall(&shell);
+        // No bar of lists and words under the tab.
+        for gone in [
+            "Send keys",
+            "Keyboard shortcuts...",
+            "Match window",
+            "Fit to Window",
+            "Fullscreen (F11)",
+            "Resolution",
+        ] {
+            assert!(ui.find(gone).is_err(), "{gone} is on screen");
+        }
+        // The C# session header: name, state, indicators.
+        assert_eq!(
+            common::all_bounds(&mut ui, "rdp tab").len(),
+            2,
+            "strip and header"
+        );
+        ui.find("Connected").expect("the state");
+        ui.find("Clipboard").expect("the redirections");
+        ui.find("+7").expect("the redirections not shared");
     }
-    // The C# session header: name, state, indicators and Disconnect.
-    assert_eq!(
-        common::all_bounds(&mut ui, "rdp tab").len(),
-        2,
-        "strip and header"
+    // At the right, as the C# docks them: Resolution, Split, Send keys, Fullscreen, then
+    // Disconnect.
+    let resolution = header_button(&shell, tab, SessionButton::Resolution);
+    let send_keys = header_button(&shell, tab, SessionButton::SendKeys);
+    let fullscreen = header_button(&shell, tab, SessionButton::Fullscreen);
+    let disconnect = {
+        let mut ui = tall(&shell);
+        ui.find("Disconnect").expect("the header's button").bounds()
+    };
+    assert!(
+        resolution.x < send_keys.x && send_keys.x < fullscreen.x && fullscreen.x < disconnect.x,
+        "{resolution:?} {send_keys:?} {fullscreen:?} {disconnect:?}"
     );
-    ui.find("Connected").expect("the state");
-    ui.find("Clipboard").expect("the redirections");
-    ui.find("+7").expect("the redirections not shared");
+    assert!(
+        header_click(&shell, tab, SessionButton::Resolution)
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::OpenTreeMenu(TreeMenu::Resolution(opened)) if *opened == tab
+            ))
+    );
+    assert!(
+        header_click(&shell, tab, SessionButton::SendKeys)
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::OpenTreeMenu(TreeMenu::SendKeys(opened)) if *opened == tab
+            ))
+    );
+    assert!(
+        header_click(&shell, tab, SessionButton::Fullscreen)
+            .iter()
+            .any(|message| matches!(message, Message::ToggleFullscreen))
+    );
+    let mut ui = tall(&shell);
     ui.click("Disconnect").expect("the header's button");
     assert!(
         ui.into_messages().any(|message| matches!(
@@ -2126,7 +2178,7 @@ fn an_rdp_tab_has_no_session_bar_its_header_keeps_the_csharp_controls_and_indica
 }
 
 #[test]
-fn right_clicking_an_rdp_tab_offers_the_session_actions_in_the_csharp_order() {
+fn right_clicking_an_rdp_tab_offers_the_csharp_tab_menu() {
     use heimdall_ui::tree_view::TreeMenu;
 
     let dir = tempfile::tempdir().expect("dir");
@@ -2142,14 +2194,13 @@ fn right_clicking_an_rdp_tab_offers_the_session_actions_in_the_csharp_order() {
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
     snapshot(&shell, "rdp-tab-menu.png");
     assert_in_order(&shell, &RDP_TAB_MENU);
-    // The session bar's controls, each sending what the bar sent, or opening its menu.
-    let fit = |messages: &[Message]| {
-        messages.iter().find_map(|message| match message {
-            Message::DesktopFit { tab: fitted, fit } if *fitted == tab => Some(*fit),
-            _ => None,
-        })
-    };
-    let first = fit(&menu_click(&shell, "Fit to Window")).expect("the bar's scaling");
+    {
+        // The header's own: not in the C# tab menu.
+        let mut ui = tall(&shell);
+        for absent in ["Send keys", "Fit to Window", "Quality"] {
+            assert!(ui.find(absent).is_err(), "{absent} in the tab menu");
+        }
+    }
     assert!(
         menu_click(&shell, "Resolution")
             .iter()
@@ -2171,17 +2222,18 @@ fn right_clicking_an_rdp_tab_offers_the_session_actions_in_the_csharp_order() {
                 Message::MenuChoice(AppMessage::RequestCloseTab(closed)) if *closed == tab
             ))
     );
-    assert!(
-        menu_click(&shell, "Send keys")
-            .iter()
-            .any(|message| matches!(
-                message,
-                Message::OpenTreeMenu(TreeMenu::SendKeys(opened)) if *opened == tab
-            ))
-    );
-    // Checked once chosen, and chosen back.
+    // The resolution menu, the C# header's, scales the desktop into the tab, as the bar's
+    // "Fit to Window" did; checked once chosen, and chosen back.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
+    let fit = |messages: &[Message]| {
+        messages.iter().find_map(|message| match message {
+            Message::DesktopFit { tab: fitted, fit } if *fitted == tab => Some(*fit),
+            _ => None,
+        })
+    };
+    let first = fit(&menu_click(&shell, "Fit to Window")).expect("the bar's scaling");
     let _ = shell.update(Message::DesktopFit { tab, fit: first });
-    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
     assert_eq!(fit(&menu_click(&shell, "Fit to Window")), Some(!first));
 }
 

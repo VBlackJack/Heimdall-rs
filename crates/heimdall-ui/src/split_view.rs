@@ -705,6 +705,12 @@ pub struct Heading<'a> {
     pub state: String,
     /// What follows its state: it is recorded, a macro, a bell.
     pub badges: Vec<Element<'a, Message>>,
+    /// The session's own buttons before the split button, as the C# RDP header's
+    /// Resolution.
+    pub before_split: Vec<Element<'a, Message>>,
+    /// Those after it, before Disconnect, as the C# RDP header's Send keys, Fullscreen and
+    /// health dot.
+    pub after_split: Vec<Element<'a, Message>>,
 }
 
 /// What a session header's buttons and its right click send.
@@ -752,6 +758,8 @@ pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'
         route,
         state,
         badges,
+        before_split,
+        after_split,
         ..
     } = heading;
     let tip = |content: Element<'static, Message>, said: String| {
@@ -833,13 +841,13 @@ pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'
         container(
             // The buttons first served, as the C# docks them right: what names the pane
             // takes the room left, and is cut at its edge.
-            row![
-                container(named).width(Length::Fill).clip(true),
-                split,
-                disconnect
-            ]
-            .spacing(spacing::XS)
-            .align_y(iced::Alignment::Center),
+            row![container(named).width(Length::Fill).clip(true)]
+                .extend(before_split)
+                .push(split)
+                .extend(after_split)
+                .push(disconnect)
+                .spacing(spacing::XS)
+                .align_y(iced::Alignment::Center),
         )
         .padding(HEADER_PADDING)
         .width(Length::Fill)

@@ -115,8 +115,7 @@ use crate::terminal_view::keys::{
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
 use crate::tree_view::{
-    self, CursorSpot, CursorTracker, DesktopEntries, SplitEntries, TabMenuState, TranscriptEntry,
-    TreeMenu,
+    self, CursorSpot, CursorTracker, SplitEntries, TabMenuState, TranscriptEntry, TreeMenu,
 };
 use crate::trusted_keys_view::{HostKeyColumn, HostKeySort, TrustedList};
 use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, SplitMessage};
@@ -663,6 +662,13 @@ pub enum Message {
         /// Fit to window rather than match it.
         fit: bool,
     },
+    /// How a VNC desktop is shown, from its overlay's "Scaling mode", as the C# noVNC page.
+    VncScaling {
+        /// Tab.
+        tab: TabId,
+        /// The mode chosen.
+        scaling: VncScaling,
+    },
     /// The tree's search changed.
     Search(String),
     /// The search emptied and every filter off, as the C# "Reset all filters".
@@ -1009,6 +1015,9 @@ impl fmt::Debug for Message {
             Self::BringForward => f.write_str("BringForward"),
             Self::Rescaled(scale) => write!(f, "Rescaled({scale})"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
+            Self::VncScaling { tab, scaling } => {
+                write!(f, "VncScaling({}, {scaling:?})", tab.value())
+            }
             Self::Search(_) => f.write_str("Search(..)"),
             Self::ResetTreeFilters => f.write_str("ResetTreeFilters"),
             Self::FocusSearch => f.write_str("FocusSearch"),
@@ -2592,6 +2601,7 @@ impl Shell {
             | Message::CloseTreeMenu
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
             Message::MenuChoice(message) => self.closing_menu(message),
+            Message::VncScaling { tab, scaling } => self.vnc_scaling(tab, scaling),
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::Tour(message) => self.tour_message(message),
             Message::ReplayTour => {
@@ -4699,10 +4709,6 @@ impl Shell {
             // Only while its desktop is shown.
             shown_desktop(self.app.tab(tab)?)?;
             tree_view::send_keys_entries(tab)
-        } else if let TreeMenu::VncQuality(tab) = *menu {
-            // Only while its VNC desktop is shown.
-            let quality = shown_desktop(self.app.tab(tab)?)?.vnc_quality()?;
-            tree_view::vnc_quality_entries(tab, quality)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
             tree_view::resolution_entries(
@@ -4853,7 +4859,6 @@ impl Shell {
                 | TreeMenu::FilesBookmarksRemove(_)
                 | TreeMenu::Resolution(_)
                 | TreeMenu::SendKeys(_)
-                | TreeMenu::VncQuality(_)
                 | TreeMenu::Macros(_)
                 | TreeMenu::Notes(_)
                 | TreeMenu::Tool(_)
@@ -6776,10 +6781,6 @@ impl Shell {
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
-            vnc_resize: tab
-                .desktop
-                .as_ref()
-                .and_then(|pane| pane.vnc_remote_resize()),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
             pane: false,
@@ -6801,11 +6802,6 @@ impl Shell {
             } else {
                 TranscriptEntry::Absent
             },
-            desktop: shown_desktop(tab).map(|pane| DesktopEntries {
-                fit: self.fits(tab),
-                quality: pane.vnc_quality(),
-                clipboard: tab.purpose == Purpose::Vnc && pane.accepts_clipboard(),
-            }),
         })
     }
 
@@ -7137,9 +7133,12 @@ impl Shell {
                 let focused = active == Some(tab.id);
                 let mut badges = tab_badges(tab, focused);
                 badges.extend(transcript_mark(tab));
-                // A desktop's indicators, on its pane's header as on the C# session header.
+                // A desktop's indicators and buttons, on its pane's header as on the C#
+                // session header.
+                let (mut before_split, mut after_split) = (Vec::new(), Vec::new());
                 if let Some(pane) = shown_desktop(tab) {
                     badges.extend(self.desktop_indicators(tab, pane));
+                    (before_split, after_split) = self.desktop_buttons(tab);
                 }
                 split_view::pane(
                     split_view::Heading {
@@ -7151,6 +7150,8 @@ impl Shell {
                         route: self.route_text(tab),
                         state: crate::floating_view::state_text(SessionState::of(tab)),
                         badges,
+                        before_split,
+                        after_split,
                     },
                     self.tab_page(tab, focused),
                     focused,
@@ -7654,6 +7655,7 @@ impl Shell {
             shown: pane.tab_size(),
             aspect: pane.aspect,
             stabilizing: pane.stabilizing_until().is_some(),
+            fit: self.fits(tab),
         })
     }
 
@@ -7676,9 +7678,11 @@ impl Shell {
     }
 
     /// A remote desktop under its header, as the C# session's: its name, address, state and
-    /// indicators, the split button and Disconnect; the session's other actions are its tab's
-    /// menu's. In a split, its pane's header is its own; in full screen, none, as the C# puts
-    /// its header away. In a tab's own window, which has no tab to right click, its bar.
+    /// indicators at the left; at the right an RDP session's Resolution, Split, Send keys,
+    /// Fullscreen and health dot, then Disconnect. In a split, its pane's header carries them;
+    /// in full screen, none, as the C# puts its header away. In a tab's own window, its bar.
+    /// A VNC desktop has its clipboard, scaling and quality over its top right corner, as the
+    /// C# noVNC page.
     fn desktop<'a>(
         &'a self,
         tab: &'a Tab,
@@ -7713,10 +7717,10 @@ impl Shell {
                         ..iced::Padding::ZERO
                     })
             });
-        let view: Element<'a, Message> = match hint {
-            Some(hint) => stack![view, hint].into(),
-            None => view.into(),
-        };
+        let view: Element<'a, Message> = stack![view]
+            .push(hint)
+            .push(vnc_overlay(tab, pane, fit))
+            .into();
         let top: Option<Element<'a, Message>> = if self.app.is_floating(tab_id) {
             // Whole on a narrow window: what does not fit goes to a line of its own.
             Some(
@@ -7739,6 +7743,7 @@ impl Shell {
         let mut badges = tab_badges(tab, true);
         badges.extend(transcript_mark(tab));
         badges.extend(self.desktop_indicators(tab, pane));
+        let (before_split, after_split) = self.desktop_buttons(tab);
         split_view::session_header(
             split_view::Heading {
                 tab: tab.id,
@@ -7749,6 +7754,8 @@ impl Shell {
                 route: self.route_text(tab),
                 state: crate::floating_view::state_text(SessionState::of(tab)),
                 badges,
+                before_split,
+                after_split,
             },
             split_view::HeaderActions {
                 split: Message::OpenTreeMenu(TreeMenu::SplitAxis(tab.id)),
@@ -7758,8 +7765,74 @@ impl Shell {
         )
     }
 
-    /// A desktop's bar in a tab's own window, which has no tab menu: the keys sent, how it is
-    /// shown, Disconnect, VNC's clipboard and quality, then its indicators.
+    /// An RDP session header's buttons, as the C# `SessionHeaderBar` docks them: Resolution
+    /// before the split button; Send keys, Fullscreen and the health dot after it. None for
+    /// VNC, whose C# header has none of them.
+    fn desktop_buttons<'a>(
+        &self,
+        tab: &Tab,
+    ) -> (Vec<Element<'a, Message>>, Vec<Element<'a, Message>>) {
+        if tab.purpose != Purpose::Rdp {
+            return (Vec::new(), Vec::new());
+        }
+        let tab_id = tab.id;
+        let tip = |content: Element<'a, Message>, said: String| -> Element<'a, Message> {
+            tooltip(
+                content,
+                text(said).size(font_size::CAPTION),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+            .into()
+        };
+        let icon = |icon, button: SessionButton, message| -> Element<'a, Message> {
+            container(
+                crate::icons::button(icon)
+                    .style(styles::subtle)
+                    .on_press(message),
+            )
+            .id(session_button_id(tab_id, button))
+            .into()
+        };
+        // Its tip names the mode, as the C# button's.
+        let before = self
+            .resolution_state(tab)
+            .map(|state| {
+                tip(
+                    icon(
+                        crate::icons::Icon::Resolution,
+                        SessionButton::Resolution,
+                        Message::OpenTreeMenu(TreeMenu::Resolution(tab_id)),
+                    ),
+                    state.tooltip(),
+                )
+            })
+            .into_iter()
+            .collect();
+        let after = vec![
+            tip(
+                icon(
+                    crate::icons::Icon::Keyboard,
+                    SessionButton::SendKeys,
+                    Message::OpenTreeMenu(TreeMenu::SendKeys(tab_id)),
+                ),
+                fl!("ui-desktop-send-keys-tooltip"),
+            ),
+            tip(
+                icon(
+                    crate::icons::Icon::FullScreen,
+                    SessionButton::Fullscreen,
+                    Message::ToggleFullscreen,
+                ),
+                fl!("ui-desktop-fullscreen-tooltip"),
+            ),
+            crate::rdp_status::health_dot(crate::rdp_status::Health::of(tab)),
+        ];
+        (before, after)
+    }
+
+    /// A desktop's bar in a tab's own window, which has no tab menu nor the main window's
+    /// menus: the keys sent, how an RDP desktop is shown, Disconnect, then its indicators.
     fn floating_desktop_bar<'a>(
         &'a self,
         tab: &'a Tab,
@@ -7767,21 +7840,6 @@ impl Shell {
         fit: bool,
     ) -> iced::widget::Row<'a, Message> {
         let tab_id = tab.id;
-        let mode = pick_list(
-            [DesktopMode::Match, DesktopMode::Fit],
-            Some(if fit {
-                DesktopMode::Fit
-            } else {
-                DesktopMode::Match
-            }),
-            move |mode| Message::DesktopFit {
-                tab: tab_id,
-                fit: mode == DesktopMode::Fit,
-            },
-        )
-        .style(styles::pick_list)
-        .menu_style(styles::menu)
-        .text_size(font_size::CAPTION);
         let send_keys = pick_list(
             SpecialKeys::ALL.map(KeysChoice).to_vec(),
             None::<KeysChoice>,
@@ -7791,14 +7849,6 @@ impl Shell {
         .menu_style(styles::menu)
         .placeholder(fl!("ui-desktop-send-keys"))
         .text_size(font_size::CAPTION);
-        let disconnect = tooltip(
-            button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
-            text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
-            tooltip::Position::Bottom,
-        )
-        .style(container::rounded_box);
         let mut bar = row![
             // Beside it: below, it would cover the menu's first entry.
             tooltip(
@@ -7811,34 +7861,47 @@ impl Shell {
             button(text(fl!("ui-desktop-shortcuts")).size(font_size::CAPTION))
                 .style(styles::subtle)
                 .on_press(Message::App(AppMessage::ShowShortcuts)),
-            mode,
-            disconnect,
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
-        // VNC carries the clipboard in clear: sent on a click only, as the C# Heimdall's
-        // noVNC "sync" does. RDP shares it by itself when its profile says so.
-        if tab.purpose == Purpose::Vnc && pane.accepts_clipboard() {
+        // A VNC desktop's scaling is its overlay's.
+        if tab.purpose == Purpose::Rdp {
             bar = bar.push(
-                tooltip(
-                    button(text(fl!("ui-desktop-send-clipboard")).size(font_size::CAPTION))
-                        .style(styles::secondary)
-                        .on_press(Message::App(AppMessage::SendClipboard(tab_id))),
-                    text(fl!("ui-desktop-send-clipboard-tooltip")).size(font_size::CAPTION),
-                    tooltip::Position::Right,
+                pick_list(
+                    [DesktopMode::Match, DesktopMode::Fit],
+                    Some(if fit {
+                        DesktopMode::Fit
+                    } else {
+                        DesktopMode::Match
+                    }),
+                    move |mode| Message::DesktopFit {
+                        tab: tab_id,
+                        fit: mode == DesktopMode::Fit,
+                    },
                 )
-                .style(container::rounded_box),
+                .style(styles::pick_list)
+                .menu_style(styles::menu)
+                .text_size(font_size::CAPTION),
             );
         }
-        if let Some(control) = vnc_quality_control(pane, tab_id) {
-            bar = bar.push(control);
-        }
-        bar.extend(self.desktop_indicators(tab, pane))
+        bar.push(
+            tooltip(
+                button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
+                    .style(styles::secondary)
+                    .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
+                text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box),
+        )
+        .push(rdp_status(tab))
+        .extend(self.desktop_indicators(tab, pane))
     }
 
-    /// What a desktop's header shows of its session, as the C# session header: the countdown
-    /// while it settles, the health dot and the phase stepper, the anti-idle badge, the
-    /// server's copied files, the redirections, the desktop's name and VNC's encryption.
+    /// What a desktop's header shows of its session after its state, in the C# header's
+    /// order: the countdown while it settles, the phase stepper while it connects, the
+    /// anti-idle badge, the redirections; then the server's copied files, the desktop's name
+    /// and VNC's encryption.
     fn desktop_indicators<'a>(
         &self,
         tab: &'a Tab,
@@ -7865,8 +7928,11 @@ impl Shell {
                 .into(),
             );
         }
-        // The C# header's health dot and phase stepper.
-        shown.extend(rdp_status(tab));
+        if tab.purpose == Purpose::Rdp {
+            shown.extend(crate::rdp_status::stepper(
+                crate::rdp_status::ConnectPhase::of(tab),
+            ));
+        }
         // Shown while the session gets anti-idle keys; a click stops them, as the C# badge.
         if self.app.anti_idle_on(tab_id) {
             shown.push(
@@ -7881,7 +7947,6 @@ impl Shell {
                 .into(),
             );
         }
-        shown.extend(save_files_control(pane, tab_id));
         if let TabProfile::Rdp(profile) = &tab.profile {
             shown.extend(crate::rdp_status::redirection_controls(
                 tab_id,
@@ -7889,6 +7954,7 @@ impl Shell {
                 self.redirections_shown.contains(&tab_id),
             ));
         }
+        shown.extend(save_files_control(pane, tab_id));
         if let Some(name) = &pane.desktop_name {
             shown.push(
                 text(name.as_str())
@@ -7913,6 +7979,28 @@ impl Shell {
             );
         }
         shown
+    }
+
+    /// A VNC desktop shown as `scaling` asks: resized by its server to the tab, or not, then
+    /// scaled into the tab or drawn pixel for pixel.
+    fn vnc_scaling(&mut self, tab: TabId, scaling: VncScaling) -> Vec<Effect> {
+        let remote = scaling == VncScaling::RemoteResize;
+        let resized = self
+            .app
+            .tab(tab)
+            .and_then(|found| found.desktop.as_deref())
+            .and_then(DesktopPane::vnc_remote_resize);
+        let effects = if resized.is_some_and(|on| on != remote) {
+            self.app
+                .update(AppMessage::TabMenu(TabMenuMessage::VncRemoteResize(tab)))
+        } else {
+            Vec::new()
+        };
+        let _ = self.view_message(&Message::DesktopFit {
+            tab,
+            fit: scaling == VncScaling::Scale,
+        });
+        effects
     }
 
     fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
@@ -8489,6 +8577,80 @@ fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, 
             tooltip::Position::Bottom,
         )
         .style(container::rounded_box)
+        .into(),
+    )
+}
+
+/// A VNC desktop's controls over its top right corner, as the C# noVNC page's toolbar:
+/// Clipboard, the scaling mode and the quality; `None` for RDP.
+fn vnc_overlay<'a>(tab: &Tab, pane: &'a DesktopPane, fit: bool) -> Option<Element<'a, Message>> {
+    if tab.purpose != Purpose::Vnc {
+        return None;
+    }
+    let tab_id = tab.id;
+    let tip = |content: Element<'a, Message>, said: String| -> Element<'a, Message> {
+        tooltip(
+            content,
+            text(said).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
+        .into()
+    };
+    let mut controls = row![].spacing(spacing::XS).align_y(iced::Alignment::Center);
+    // The clipboard crosses in clear: sent on a click only, as the C# "Clipboard" does.
+    if pane.accepts_clipboard() {
+        controls = controls.push(tip(
+            button(text(fl!("ui-vnc-clipboard")).size(font_size::CAPTION))
+                .style(styles::secondary)
+                .on_press(Message::App(AppMessage::SendClipboard(tab_id)))
+                .into(),
+            fl!("ui-vnc-clipboard-tooltip"),
+        ));
+    }
+    let resized = pane.vnc_remote_resize();
+    let current = match (resized, fit) {
+        (Some(true), _) => VncScaling::RemoteResize,
+        (_, true) => VncScaling::Scale,
+        (_, false) => VncScaling::NoScaling,
+    };
+    // Remote resizing only for a server that can.
+    let modes: Vec<VncScaling> = resized
+        .map(|_| VncScaling::RemoteResize)
+        .into_iter()
+        .chain([VncScaling::Scale, VncScaling::NoScaling])
+        .collect();
+    controls = controls.push(tip(
+        container(
+            pick_list(modes, Some(current), move |scaling| Message::VncScaling {
+                tab: tab_id,
+                scaling,
+            })
+            .style(styles::pick_list)
+            .menu_style(styles::menu)
+            .text_size(font_size::CAPTION),
+        )
+        .id(session_button_id(tab_id, SessionButton::Scaling))
+        .into(),
+        fl!("ui-vnc-scaling-tooltip"),
+    ));
+    if let Some(quality) = vnc_quality_control(pane, tab_id) {
+        controls =
+            controls.push(container(quality).id(session_button_id(tab_id, SessionButton::Quality)));
+    }
+    Some(
+        container(
+            container(controls)
+                .padding([spacing::XS, spacing::SM])
+                .style(container::rounded_box),
+        )
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Right)
+        .padding(iced::Padding {
+            top: spacing::XS,
+            right: spacing::MD,
+            ..iced::Padding::ZERO
+        })
         .into(),
     )
 }
@@ -11673,6 +11835,57 @@ impl fmt::Display for DesktopMode {
             Self::Fit => fl!("ui-desktop-fit-window"),
         })
     }
+}
+
+/// How a VNC desktop is shown, as the C# noVNC page's "Scaling mode" names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VncScaling {
+    /// The server's desktop resized to the tab.
+    RemoteResize,
+    /// The desktop scaled into the tab.
+    Scale,
+    /// The desktop drawn pixel for pixel.
+    NoScaling,
+}
+
+impl fmt::Display for VncScaling {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self {
+            Self::RemoteResize => fl!("ui-vnc-scaling-remote-resize"),
+            Self::Scale => fl!("ui-vnc-scaling-scale"),
+            Self::NoScaling => fl!("ui-vnc-scaling-none"),
+        })
+    }
+}
+
+/// A control of a remote desktop's session: a button of the C# RDP header, or a list of
+/// the C# noVNC toolbar over a VNC desktop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionButton {
+    /// The resolution menu.
+    Resolution,
+    /// The "Send keys" menu.
+    SendKeys,
+    /// Full screen.
+    Fullscreen,
+    /// VNC's scaling mode.
+    Scaling,
+    /// VNC's quality.
+    Quality,
+}
+
+/// Widget identifier of the session header's button `button` of tab `tab`: an icon, found
+/// by it alone.
+#[must_use]
+pub fn session_button_id(tab: TabId, button: SessionButton) -> iced::widget::Id {
+    let name = match button {
+        SessionButton::Resolution => "resolution",
+        SessionButton::SendKeys => "send-keys",
+        SessionButton::Fullscreen => "fullscreen",
+        SessionButton::Scaling => "scaling",
+        SessionButton::Quality => "quality",
+    };
+    iced::widget::Id::from(format!("session-{name}-{}", tab.value()))
 }
 
 /// A key combination in the desktop's menu, by the C# Heimdall's name for it.
