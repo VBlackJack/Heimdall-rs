@@ -186,7 +186,12 @@ fn an_accepted_certificate_reconnects_with_that_certificate_and_a_refused_one_en
             certificate: whole(),
         },
     );
-    assert!(matches!(&app.tabs[0].phase, Phase::HostKey { fingerprint, .. } if fingerprint == KEY));
+    // The fingerprint compared is the pin's, the whole certificate's thumbprint, as the
+    // C# prompt shows it; the key is said apart.
+    assert!(
+        matches!(&app.tabs[0].phase, Phase::HostKey { fingerprint, .. } if *fingerprint == whole().thumbprint())
+    );
+    assert_eq!(app.tabs[0].certificate_key(), Some(key()));
     let effects = app.update(Message::HostKeyDecision { tab, accept: true });
     let [
         Effect::ConnectRdp {
@@ -1009,7 +1014,7 @@ fn the_certificate_question_counts_the_other_certificates_and_names_the_route() 
     // Its fingerprint can be copied, as the C# prompt's Copy.
     let effects = app.update(Message::CopyHostKeyFingerprint(tab));
     assert!(
-        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if text == KEY),
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if *text == whole().thumbprint()),
         "{effects:?}"
     );
     assert_eq!(

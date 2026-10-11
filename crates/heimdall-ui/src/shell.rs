@@ -7230,8 +7230,11 @@ impl Shell {
                 tab.id,
                 (host, *port),
                 (fingerprint, tab.host_key_algorithm()),
-                tab.asks_about_certificate()
-                    .then(|| (tab.profile.name(), tab.certificate_context.as_ref())),
+                tab.asks_about_certificate().then(|| CertificateAsked {
+                    name: tab.profile.name(),
+                    context: tab.certificate_context.as_ref(),
+                    key: tab.certificate_key(),
+                }),
                 self.certificate_owner(tab),
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
@@ -7978,18 +7981,39 @@ fn shows_terminal(tab: &Tab) -> bool {
 /// `certificate` names the profile, an RDP or FTPS server's own certificate, with the other
 /// certificates already trusted for the name and the gateways on the way. Either can be
 /// trusted for this run only, never recorded, and its fingerprint copied.
+/// What a certificate question shows beside the fingerprint of the certificate.
+struct CertificateAsked<'a> {
+    /// The profile's name.
+    name: &'a str,
+    /// The subject, the details, the certificates already trusted and the route.
+    context: Option<&'a CertificateContext>,
+    /// The certificate's key, said apart from the certificate's own fingerprint.
+    key: Option<heimdall_rdp::Fingerprint>,
+}
+
 fn host_key_card<'a>(
     tab: TabId,
     (host, port): (&'a str, u16),
     (fingerprint, algorithm): (&'a str, Option<String>),
-    certificate: Option<(&'a str, Option<&'a CertificateContext>)>,
+    certificate: Option<CertificateAsked<'a>>,
     owner: Option<String>,
 ) -> Element<'a, Message> {
     let port = port.to_string();
+    // The certificate's key, under its own name: not what an answer trusts.
+    let key_line = certificate.as_ref().and_then(|asked| asked.key).map(|key| {
+        text(fl!(
+            "ui-certificate-key-fingerprint",
+            fingerprint = key.to_string()
+        ))
+        .size(font_size::CAPTION)
+        .style(text::secondary)
+        .font(iced::Font::MONOSPACE)
+    });
     let (heading, body, label, [reject, once, accept]) = match certificate {
-        Some((name, context)) => (
+        Some(asked) => (
             fl!("ui-certificate-title"),
-            certificate_body(name, host, &port, context).push(owner.map(text)),
+            certificate_body(asked.name, host, &port, asked.context).push(owner.map(text)),
+            // The whole certificate's, as the C# thumbprint: what an answer trusts.
             fl!("ui-certificate-fingerprint", fingerprint = fingerprint),
             [
                 fl!("ui-certificate-refuse-button"),
@@ -8029,6 +8053,9 @@ fn host_key_card<'a>(
             ]
             .spacing(spacing::SM)
             .align_y(iced::alignment::Vertical::Center),
+        ]
+        .push(key_line)
+        .push(
             row![
                 dialog_parts::action(reject, styles::secondary).on_press(Message::App(
                     AppMessage::HostKeyDecision { tab, accept: false }
@@ -8041,7 +8068,7 @@ fn host_key_card<'a>(
             ]
             .spacing(spacing::SM)
             .wrap(),
-        ]
+        )
         .spacing(spacing::SM),
     ))
     .into()

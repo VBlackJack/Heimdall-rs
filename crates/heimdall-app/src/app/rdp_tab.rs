@@ -76,10 +76,12 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
             tab.retry = None;
             tab.prompts.clear();
             tab.pending_rdp_key = Some((fingerprint, certificate));
+            // The fingerprint the user compares is the pin's, the whole certificate's, as
+            // the C# prompt shows its thumbprint; the key's is said apart, under its name.
             tab.phase = Phase::HostKey {
                 host,
                 port,
-                fingerprint: fingerprint.to_string(),
+                fingerprint: certificate.thumbprint(),
             };
         }
         ConnectionEvent::RdpReady {
