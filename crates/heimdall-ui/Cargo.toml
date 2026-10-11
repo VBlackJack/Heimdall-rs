@@ -25,6 +25,11 @@ path = "src/lib.rs"
 # where it needs nothing but the system's WASAPI; elsewhere asked with `--features audio`,
 # which links the system's sound library (ALSA on Linux).
 audio = ["heimdall-rdp/audio"]
+# test-data-dir: `--data-dir <full path>` roots every per-user folder in a scratch folder and
+# the saved passwords in a namespace of it, for automated UI tests of a debug build. Off by
+# default and never in a release build, where it does not compile; xtask's guard refuses a
+# manifest or workflow that turns it on.
+test-data-dir = ["heimdall-app/test-data-dir", "heimdall-core/test-data-dir"]
 
 [dependencies]
 heimdall-app.workspace = true

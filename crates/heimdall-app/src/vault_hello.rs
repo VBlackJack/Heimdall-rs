@@ -769,6 +769,13 @@ mod system {
 
     impl KeyCredentials for SystemKeyCredentials {
         fn enrolment_available(&self) -> bool {
+            // A key credential is the user's own, outside any folder: a test data folder
+            // never creates one.
+            #[cfg(feature = "test-data-dir")]
+            if heimdall_core::paths::test_data_dir().is_some() {
+                log::info!("Windows Hello vault enrollment is off under a test data folder.");
+                return false;
+            }
             let supported = answered(
                 within!(
                     KeyCredentialManager::IsSupportedAsync(),

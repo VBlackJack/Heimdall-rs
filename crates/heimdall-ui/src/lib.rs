@@ -84,6 +84,8 @@ pub mod status_bar;
 mod styles;
 pub mod tab_drag;
 pub mod terminal_view;
+#[cfg(feature = "test-data-dir")]
+pub mod test_data;
 mod texts;
 pub mod themes;
 pub mod tokens;
@@ -146,6 +148,13 @@ pub(crate) fn window_icon() -> Option<window::Icon> {
 ///
 /// When the window or the graphics backend cannot start.
 pub fn run() -> iced::Result {
+    // A test build never starts on the user's own folders: without its scratch folder, it
+    // stops before anything is read or written.
+    #[cfg(feature = "test-data-dir")]
+    if let Err(error) = test_data::ensure_set() {
+        eprintln!("{error}");
+        std::process::exit(test_data::REFUSED_EXIT_CODE);
+    }
     // The folders restricted to the user, the Administrators and SYSTEM before anything is
     // written in them, as the C# `AclEnforcer`; here, not beside the start, so that no file
     // is made with the wider access first. A folder left as it was is said once the log is

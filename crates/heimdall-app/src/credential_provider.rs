@@ -167,6 +167,7 @@ pub async fn ask(
 /// [`ProviderFailure::Empty`] when there is no such credential, or its password is empty;
 /// [`ProviderFailure::Launch`] when the store cannot be read, or away from Windows.
 pub async fn from_credential_manager(target: String) -> Result<Provided, ProviderFailure> {
+    let target = heimdall_core::paths::credential_target(&target);
     let read = tokio::task::spawn_blocking(move || heimdall_keyring::read_generic(&target))
         .await
         .map_err(|error| ProviderFailure::Launch(error.to_string()))?;

@@ -23,7 +23,7 @@
 use heimdall_core::settings::{AgentPreference, CtrlKTerminal, CtrlVPaste, ExecutionPolicy};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use heimdall_app::files::{
     EntryKind, FilesError, FilesKey, Side, list_local, list_remote, plan_transfer,
@@ -1321,7 +1321,9 @@ fn config() -> AppConfig {
         agent: AgentSource::Auto(AgentPreference::default()),
         initial_grid: INITIAL_GRID,
         files_start: paths::home_dir().unwrap_or_else(|| PathBuf::from(".")),
-        system_credentials: SystemCredentials::keyring(CREDENTIAL_SERVICE),
+        system_credentials: SystemCredentials::keyring(&paths::credential_service(
+            CREDENTIAL_SERVICE,
+        )),
     }
 }
 
@@ -1864,9 +1866,19 @@ impl Shell {
     }
 
     /// The title of the window `window`: a tab's own window's as the C# names it, the main
-    /// window's as [`Self::title`], the application's name for any other.
+    /// window's as [`Self::title`], the application's name for any other; in a test build,
+    /// followed by its test data folder.
     #[must_use]
     pub fn window_title(&self, window: window::Id) -> String {
+        #[cfg(feature = "test-data-dir")]
+        return crate::test_data::titled(self.own_window_title(window));
+        #[cfg(not(feature = "test-data-dir"))]
+        return self.own_window_title(window);
+    }
+
+    /// The title of the window `window`, as [`Self::window_title`] says it before a test
+    /// data folder.
+    fn own_window_title(&self, window: window::Id) -> String {
         if let Some(tab) = self.floating_tab_of(window) {
             return fl!("ui-window-title-detached", tab = tab.display_title());
         }
@@ -1886,10 +1898,7 @@ impl Shell {
     pub fn start_tasks(&mut self) -> Task<Message> {
         let mut effects = self.app.warm_credential_guard();
         effects.extend(self.app.sync_known_hosts_at_startup());
-        let program_folder = std::env::current_exe()
-            .ok()
-            .and_then(|program| program.parent().map(Path::to_path_buf));
-        effects.extend(self.app.look_for_legacy_installation(program_folder));
+        effects.extend(self.app.look_for_legacy_installation(paths::program_dir()));
         let tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         Task::batch(tasks)
