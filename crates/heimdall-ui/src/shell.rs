@@ -273,11 +273,13 @@ const FONT_SIZE_FIELD_WIDTH: f32 = 80.0;
 /// Room above Quick Connect.
 const PALETTE_TOP: f32 = 80.0;
 
-/// Longest tab title shown, in characters.
-const MAX_TAB_TITLE_CHARS: usize = 32;
+/// Widest a tab's title grows before it ends with an ellipsis, as the C# tab title's
+/// `MaxWidth`.
+const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
 
-/// Marks a cut title; three ASCII dots, as everywhere in the project.
-const ELLIPSIS: &str = "...";
+/// How long the pointer rests on the tree's search before its tooltip shows: the system's
+/// hover time, WPF's default for the C# box.
+const SEARCH_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Opacity of the veil behind a dialog.
 const VEIL_ALPHA: f32 = 0.6;
@@ -1186,19 +1188,6 @@ fn target(host: &str, port: u16, user: Option<&str>) -> String {
         Some(user) if !user.is_empty() => format!("{user}@{address}"),
         _ => address,
     }
-}
-
-/// A tab title cut to [`MAX_TAB_TITLE_CHARS`], so one long server title cannot take the
-/// whole tab bar.
-fn tab_label(title: &str) -> String {
-    if title.chars().count() <= MAX_TAB_TITLE_CHARS {
-        return title.to_owned();
-    }
-    let kept: String = title
-        .chars()
-        .take(MAX_TAB_TITLE_CHARS - ELLIPSIS.len())
-        .collect();
-    format!("{kept}{ELLIPSIS}")
 }
 
 /// Widget identifier of a tab of the sidebar's "Sessions | Tools".
@@ -5572,9 +5561,13 @@ impl Shell {
                 Message::SearchDown,
             ),
             text(fl!("ui-tree-search-tooltip")).size(font_size::CAPTION),
-            tooltip::Position::Bottom,
+            // Above the box: under it, it hid the filters and their reset.
+            tooltip::Position::Top,
         )
+        .delay(SEARCH_TOOLTIP_DELAY)
         .style(container::rounded_box);
+        // Put away by the click that starts typing, as a WPF tooltip by its control's click.
+        let field = crate::press_tooltip::hide_on_press(field);
         let clear = (!self.search.is_empty()).then(|| {
             container(
                 tooltip(
@@ -6843,6 +6836,7 @@ impl Shell {
         // Where a dragged tab goes, outlined as the C# drop target.
         let target = dragging.and_then(|drag| drag.onto(self.tab_hover)) == Some(tab);
         container(area)
+            .id(tab_id(tab))
             .style(move |theme: &Theme| container::Style {
                 border: iced::Border {
                     color: if target {
@@ -6894,9 +6888,9 @@ impl Shell {
     /// Connection opens no tab to name.
     fn tab_name(tab: &Tab) -> String {
         let name = if tab.files.is_some() && tab.custom_title.is_none() {
-            fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
+            fl!("ui-tab-files-title", name = tab.display_title())
         } else {
-            tab_label(tab.display_title())
+            tab.display_title().to_owned()
         };
         if tab.custom_title.is_none()
             && tab.rdp_mode_override == Some(heimdall_core::profile::RdpMode::Embedded)
@@ -6929,11 +6923,13 @@ impl Shell {
                 .style(container::rounded_box),
             );
         }
+        // One long server title cannot take the whole strip: it ends with an ellipsis.
         label = label.push(
-            text(Self::tab_name(tab))
+            crate::ellipsis::text(Self::tab_name(tab))
                 .size(font_size::BODY)
                 .font(styles::SEMIBOLD)
-                .style(text::base),
+                .style(text::base)
+                .max_width(TAB_TITLE_MAX_WIDTH),
         );
         // While it connects, as the C# tab's busy dot.
         let state = SessionState::of(tab);
@@ -6994,14 +6990,17 @@ impl Shell {
         self.tab_title(tab, active).push(transcript_mark(tab))
     }
 
+    /// The tabs' strip, as the C# one: on one row that scrolls sideways once the tabs pass
+    /// its width, the tab shown kept in view.
     fn tab_bar(&self) -> Element<'_, Message> {
-        let mut tabs = row![]
+        let mut strip = row![]
             .spacing(TAB_GAP)
             .padding(TAB_STRIP_PADDING)
             .align_y(iced::Alignment::Center);
+        let mut tabs = row![].spacing(TAB_GAP).align_y(iced::Alignment::Center);
         // The sidebar hidden, a way to show it again, as the C# button where it was.
         if self.sidebar_hidden {
-            tabs = tabs.push(
+            strip = strip.push(
                 tooltip(
                     container(
                         icons::button(Icon::ChevronRight)
@@ -7046,7 +7045,13 @@ impl Shell {
             let label = self.tab_heading(tab, active).push(close);
             tabs = tabs.push(self.tab_button(tab.id, label, active));
         }
-        tabs.wrap().into()
+        strip
+            .push(crate::tab_scroller::tab_scroller(
+                tabs,
+                tab_strip_id(),
+                shown.map(tab_id),
+            ))
+            .into()
     }
 
     /// A Files tab's page: its integrated editor when a file is open in it, else its lists,
@@ -11897,6 +11902,18 @@ pub fn sidebar_toggle_id() -> iced::widget::Id {
 #[must_use]
 pub fn tree_add_id() -> iced::widget::Id {
     iced::widget::Id::new("tree-add")
+}
+
+/// Widget identifier of tab `tab` on the strip.
+#[must_use]
+pub fn tab_id(tab: TabId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("tab-{}", tab.value()))
+}
+
+/// Widget identifier of the row of tabs, which scrolls sideways.
+#[must_use]
+pub fn tab_strip_id() -> iced::widget::Id {
+    iced::widget::Id::new("tab-strip")
 }
 
 /// Widget identifier of the close button of tab `tab` on the strip, which shows a glyph
