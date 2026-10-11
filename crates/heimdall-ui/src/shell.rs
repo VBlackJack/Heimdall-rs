@@ -8891,6 +8891,54 @@ fn import_severity(summary: &heimdall_app::ImportSummary) -> Severity {
     }
 }
 
+/// What the migration of this computer's C# store carried over besides the profiles: its
+/// trusted SSH servers and its scheduled connections, or why they could not be.
+fn migration_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, Message>> {
+    let mut lines = Vec::new();
+    match &summary.host_keys {
+        Some(Ok(carried)) if carried.keys + carried.pins > 0 => lines.push(
+            text(fl!(
+                "ui-dialog-import-host-keys",
+                keys = carried.keys,
+                pins = carried.pins
+            ))
+            .size(font_size::CAPTION)
+            .into(),
+        ),
+        Some(Err(detail)) => lines.push(
+            text(fl!(
+                "ui-dialog-import-host-keys-failed",
+                detail = detail.as_str()
+            ))
+            .size(font_size::CAPTION)
+            .style(text::danger)
+            .into(),
+        ),
+        _ => {}
+    }
+    match &summary.scheduled {
+        Some(Ok(count)) => {
+            let count = *count;
+            lines.push(
+                text(fl!("ui-dialog-import-scheduled", count = count))
+                    .size(font_size::CAPTION)
+                    .into(),
+            );
+        }
+        Some(Err(detail)) => lines.push(
+            text(fl!(
+                "ui-dialog-import-scheduled-failed",
+                detail = detail.as_str()
+            ))
+            .size(font_size::CAPTION)
+            .style(text::danger)
+            .into(),
+        ),
+        None => {}
+    }
+    lines
+}
+
 fn import_report<'a>(
     summary: &'a heimdall_app::ImportSummary,
     ok: iced::widget::Button<'a, Message>,
@@ -8954,28 +9002,8 @@ fn import_report<'a>(
             .push(text(fl!("ui-dialog-import-dropped")))
             .push(container(styles::scroll(dropped)).max_height(SKIPPED_LIST_HEIGHT));
     }
-    match &summary.host_keys {
-        Some(Ok(carried)) if carried.keys + carried.pins > 0 => {
-            content = content.push(
-                text(fl!(
-                    "ui-dialog-import-host-keys",
-                    keys = carried.keys,
-                    pins = carried.pins
-                ))
-                .size(font_size::CAPTION),
-            );
-        }
-        Some(Err(detail)) => {
-            content = content.push(
-                text(fl!(
-                    "ui-dialog-import-host-keys-failed",
-                    detail = detail.as_str()
-                ))
-                .size(font_size::CAPTION)
-                .style(text::danger),
-            );
-        }
-        _ => {}
+    for line in migration_lines(summary) {
+        content = content.push(line);
     }
     // What the file said, and for `MobaXterm` that its passwords must be entered again.
     for line in crate::file_import_view::warning_lines(&summary.warnings)

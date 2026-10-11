@@ -3716,6 +3716,40 @@ printf '\u{001B}[2J'\u{0009}echo",
 }
 
 #[test]
+fn a_migration_says_how_many_scheduled_connections_it_carried_over() {
+    use heimdall_core::import::csharp::Dropped;
+    let summary = |scheduled| heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport::default(),
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        scheduled,
+        gateways: heimdall_core::import::gateways::Reconciliation::default(),
+        actions: None,
+        dropped: vec![("web".to_owned(), vec![Dropped::ScheduledTime])],
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Some(Ok(2)))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Scheduled connections carried over: 2")
+        .expect("counted");
+    ui.find("web: scheduled connection time unreadable, now 08:00")
+        .expect("the time it runs at said");
+
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Some(Err(
+        "disk full".to_owned()
+    )))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("The scheduled connections could not be carried over: disk full")
+        .expect("why not");
+}
+
+#[test]
 fn an_import_says_which_settings_it_left_out_of_which_profile() {
     use heimdall_core::import::csharp::Dropped;
     let dir = tempfile::tempdir().expect("dir");
@@ -3730,6 +3764,7 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
         actions: None,
         dropped: vec![(
@@ -3764,6 +3799,7 @@ fn an_import_counts_the_gateways_it_created_and_merged_as_the_csharp_summary() {
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 2,
             merged: 1,
@@ -3799,6 +3835,7 @@ fn an_import_with_orphan_gateway_references_counts_them_and_says_what_to_do_as_t
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 0,
             merged: 0,

@@ -3399,6 +3399,7 @@ ui-import-dropped-command-library-links = { $count ->
    *[other] { $count } étapes post-connexion liées à la bibliothèque de commandes, importées sans leur lien
 }
 ui-import-dropped-elevation = élévation "{ $mode }", désormais exécutée en administrateur dans sa propre fenêtre
+ui-import-dropped-scheduled-time = heure de connexion planifiée illisible, désormais { $time }
 ui-import-elevation-auto = Auto (gsudo, puis fenêtre externe en fallback)
 ui-import-elevation-gsudo = gsudo uniquement (terminal intégré)
 ui-import-elevation-runas = Fenêtre externe (compatible AdminByRequest)
@@ -3467,6 +3468,8 @@ ui-dialog-import-host-keys = Serveurs SSH de confiance repris : { $keys ->
    *[other] { $pins } empreintes
 }.
 ui-dialog-import-host-keys-failed = Les serveurs SSH de confiance n'ont pas pu être repris : { $detail }
+ui-dialog-import-scheduled = Connexions planifiées reprises : { $count }
+ui-dialog-import-scheduled-failed = Les connexions planifiées n'ont pas pu être reprises : { $detail }
 ui-dialog-paste-dangerous-body = Le texte contient { $command }, une commande qui peut détruire des données ou arrêter la machine. Vérifiez-le avant qu'il n'atteigne le shell.
 ui-dialog-paste-dangerous-confirm = Coller quand même
 ui-dialog-paste-truncated = L'aperçu est tronqué. Le contenu complet du presse-papiers sera collé si vous continuez.

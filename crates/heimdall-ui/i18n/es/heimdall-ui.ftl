@@ -3393,6 +3393,7 @@ ui-import-dropped-command-library-links = { $count ->
    *[other] { $count } pasos posteriores a la conexión vinculados a la biblioteca de comandos, importados sin sus vínculos
 }
 ui-import-dropped-elevation = elevación "{ $mode }", ahora se ejecuta como administrador en su propia ventana
+ui-import-dropped-scheduled-time = hora de conexión programada ilegible, ahora { $time }
 ui-import-elevation-auto = Automática (gsudo, después recurre a ventana externa)
 ui-import-elevation-gsudo = Solo gsudo (terminal incrustada)
 ui-import-elevation-runas = Ventana externa (compatible con AdminByRequest)
@@ -3461,6 +3462,8 @@ ui-dialog-import-host-keys = Servidores SSH de confianza transferidos: { $keys -
    *[other] { $pins } huellas
 }.
 ui-dialog-import-host-keys-failed = No se pudieron transferir los servidores SSH de confianza: { $detail }
+ui-dialog-import-scheduled = Conexiones programadas transferidas: { $count }
+ui-dialog-import-scheduled-failed = No se pudieron transferir las conexiones programadas: { $detail }
 ui-dialog-paste-dangerous-body = El texto contiene { $command }, un comando que puede destruir datos o detener la máquina. Revíselo antes de que llegue al shell.
 ui-dialog-paste-dangerous-confirm = Pegar de todos modos
 ui-dialog-paste-truncated = La vista previa está truncada. Se pegará el contenido completo del portapapeles si continúas.

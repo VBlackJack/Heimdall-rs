@@ -470,6 +470,8 @@ ui-dialog-import-host-keys = Trusted SSH servers carried over: { $keys ->
    *[other] { $pins } fingerprints
 }.
 ui-dialog-import-host-keys-failed = The trusted SSH servers could not be carried over: { $detail }
+ui-dialog-import-scheduled = Scheduled connections carried over: { $count }
+ui-dialog-import-scheduled-failed = The scheduled connections could not be carried over: { $detail }
 ui-dialog-import-skipped-item = { $name }: { $reason }
 ui-dialog-import-dropped = Imported with settings the built-in client does not use yet:
 ui-dialog-import-dropped-item = { $name }: { $settings }
@@ -494,6 +496,7 @@ ui-import-dropped-command-library-links = { $count ->
    *[other] { $count } post-connect steps linked to the Command Library, imported without their links
 }
 ui-import-dropped-elevation = elevation "{ $mode }", now run as administrator in its own window
+ui-import-dropped-scheduled-time = scheduled connection time unreadable, now { $time }
 ui-import-elevation-auto = Auto (gsudo, then external window fallback)
 ui-import-elevation-gsudo = gsudo only (embedded terminal)
 ui-import-elevation-runas = External window (AdminByRequest compatible)

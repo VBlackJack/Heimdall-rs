@@ -32,7 +32,7 @@
 
 use std::fmt;
 
-use heimdall_core::import::csharp::{self, ImportReport};
+use heimdall_core::import::csharp::{self, Dropped, ImportReport};
 use heimdall_core::import::foreign::{FileWarning, Parsed};
 use heimdall_core::import::gateways;
 use heimdall_core::import::{mobaxterm, mremoteng, rdcman};
@@ -302,6 +302,7 @@ impl App {
                     .map(|dropped| (server_text(&dropped.name), dropped.settings))
                     .collect(),
                 host_keys: None,
+                scheduled: None,
                 gateways: reconciled,
                 actions: None,
             }),
@@ -343,6 +344,12 @@ fn distrust(report: &mut ImportReport) {
     // Servers trusted elsewhere are not trusted here: only this computer's own C# store
     // carries its trust over.
     report.host_keys.clear();
+    // Nor are connections opened unattended on another machine's schedule, as the C# never
+    // exports them; and what was said of their times goes with them.
+    report.scheduled.clear();
+    report
+        .dropped
+        .retain(|dropped| !dropped.settings.contains(&Dropped::ScheduledTime));
     for profile in &mut report.winrm {
         profile.skip_certificate_check = false;
     }
