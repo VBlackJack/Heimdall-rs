@@ -79,7 +79,6 @@ pub mod tunnel;
 pub mod tunnel_driver;
 pub mod type_ahead;
 pub mod update_check;
-mod update_transport;
 pub mod vault_hello;
 pub mod vnc_driver;
 pub mod wake_on_lan;
