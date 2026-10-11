@@ -193,11 +193,18 @@ pub enum Icon {
     ToolSshConfig,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
+    /// The `Resolution` glyph (`E740`): a screen with its corners, an RDP session's
+    /// resolution menu.
+    Resolution,
+    /// The `Keyboard` glyph (`E92E`): a keyboard, a remote desktop's "Send keys" menu.
+    Keyboard,
+    /// The `FullScreen` glyph (`E1D9`): four corners pointing out, full screen.
+    FullScreen,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 67] = [
+    pub const ALL: [Self; 70] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -265,6 +272,9 @@ impl Icon {
         Self::ToolCrontab,
         Self::ToolSshConfig,
         Self::Monitor,
+        Self::Resolution,
+        Self::Keyboard,
+        Self::FullScreen,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -488,6 +498,15 @@ impl Icon {
                  M5.5,8.5 L7.5,10.5 L11,6.5"
             }
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
+            Self::Resolution => {
+                "M1.5,2.5 L14.5,2.5 L14.5,11.5 L1.5,11.5 Z M5.5,14 L10.5,14                  M4,7 L4,5 L6,5 M12,7 L12,9 L10,9"
+            }
+            Self::Keyboard => {
+                "M1.5,4.5 L14.5,4.5 L14.5,12 L1.5,12 Z M3.5,6.5 L4.5,6.5 M6,6.5 L7,6.5                  M8.5,6.5 L9.5,6.5 M11,6.5 L12,6.5 M3.5,8.5 L4.5,8.5 M11,8.5 L12,8.5                  M5,10 L11,10"
+            }
+            Self::FullScreen => {
+                "M1.5,5.5 L1.5,1.5 L5.5,1.5 M10.5,1.5 L14.5,1.5 L14.5,5.5                  M14.5,10.5 L14.5,14.5 L10.5,14.5 M5.5,14.5 L1.5,14.5 L1.5,10.5"
+            }
         }
     }
 
@@ -550,7 +569,10 @@ impl Icon {
             | Self::ToolDateTime
             | Self::ToolCrontab
             | Self::ToolSshConfig
-            | Self::Monitor => Some(GLYPH_STROKE_WIDTH),
+            | Self::Monitor
+            | Self::Resolution
+            | Self::Keyboard
+            | Self::FullScreen => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
     }

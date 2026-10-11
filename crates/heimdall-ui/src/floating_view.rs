@@ -253,6 +253,7 @@ pub fn floating_message_allowed(message: &Message, tab: &Tab) -> bool {
         | Message::Submit(named)
         | Message::Decline(named)
         | Message::DesktopFit { tab: named, .. }
+        | Message::VncScaling { tab: named, .. }
         | Message::CopyError(named)
         | Message::CopyAnonymousError(named)
         // Its Files pane's path bar opened, its columns resized, its menus opened, and its
