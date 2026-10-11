@@ -612,10 +612,17 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
     )));
     snapshot(&shell, "files-columns.png");
     {
-        // Narrow: the last columns give way, the name stays readable.
+        // Narrow: every column kept, as the C#'s, the last ones past the pane's edge.
         let mut ui = simulator(&shell);
         ui.click("run.sh").expect("the name, clickable");
-        assert!(ui.find("Owner").is_err(), "given way");
+        let owner = ui.find("Owner").expect("kept");
+        assert!(
+            owner
+                .visible_bounds()
+                .is_none_or(|seen| seen.width < owner.bounds().width),
+            "past the edge until scrolled: {:?}",
+            owner.visible_bounds()
+        );
     }
     {
         let settings = Settings {
@@ -2072,12 +2079,6 @@ const COLUMN_GAP: f32 = 8.0;
 /// Width of a window wide enough for every column of the server's pane.
 const WIDE_WINDOW: Size = Size::new(1800.0, 800.0);
 
-/// Least width of the owner column, as the Files tab keeps it.
-const OWNER_LEAST: f32 = 30.0;
-
-/// Width of the owner column until resized.
-const OWNER_DEFAULT: f32 = 55.0;
-
 /// Least width of the modification time column.
 const MODIFIED_LEAST: f32 = 60.0;
 
@@ -2270,7 +2271,7 @@ async fn a_separator_dragged_resizes_its_columns_live_and_the_cells_follow_the_h
 }
 
 #[tokio::test]
-async fn a_separator_dragged_keeps_both_columns_at_their_least_width() {
+async fn a_separator_dragged_widens_its_column_past_the_pane_and_keeps_it_at_its_least() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = columns_shell(dir.path()).await;
     let (owner, width) = {
@@ -2291,14 +2292,19 @@ async fn a_separator_dragged_keeps_both_columns_at_their_least_width() {
         let _ = shell.update(message);
     }
     {
+        // As a WPF column: the one on the left widens, the owner keeps its width and moves
+        // along, past the pane.
         let mut ui = wide(&shell);
-        let gained = OWNER_DEFAULT - OWNER_LEAST;
         assert_near(
             bounds_of(&mut ui, "Owner").x,
-            owner + gained,
-            "the owner kept at its least",
+            owner + 500.0,
+            "the owner moved along",
         );
-        assert_near(permissions_width(&mut ui), width + gained, "what it gave");
+        assert_near(
+            permissions_width(&mut ui),
+            width + 500.0,
+            "the left one widened",
+        );
     }
     // The modification time's separator: it gives the permissions its room, down to its
     // least.
@@ -2389,4 +2395,56 @@ async fn a_dropped_files_tab_keeps_its_listing_in_sight_read_only() {
         .expect("the failure said");
     assert!(ui.find("The connection failed").is_err(), "no card over it");
     ui.find("Reconnect").expect("its way out");
+}
+
+/// How far a wheel turned sideways moves a list, in logical pixels.
+const SIDEWAYS: f32 = 200.0;
+
+#[tokio::test]
+async fn columns_wider_than_the_pane_scroll_sideways_with_their_header() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = columns_shell(dir.path()).await;
+    let mut ui = simulator(&shell);
+    let (header, cell) = (
+        ui.find("Owner").expect("the header"),
+        ui.find("1000").expect("its cell"),
+    );
+    assert_near(
+        header.bounds().x,
+        cell.bounds().x,
+        "the cell under its header",
+    );
+    assert!(
+        header
+            .visible_bounds()
+            .is_none_or(|seen| seen.width < header.bounds().width),
+        "past the pane's edge"
+    );
+    // Turned sideways over the rows.
+    let row = ui.find("run.sh").expect("the row").bounds().center();
+    ui.point_at(row);
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Pixels {
+            x: -SIDEWAYS,
+            y: 0.0,
+        },
+    })]);
+    let (header, cell) = (
+        ui.find("Owner").expect("the header"),
+        ui.find("1000").expect("its cell"),
+    );
+    let (Some(header_seen), Some(cell_seen)) = (header.visible_bounds(), cell.visible_bounds())
+    else {
+        panic!(
+            "both in sight once scrolled: {:?} {:?}",
+            header.visible_bounds(),
+            cell.visible_bounds()
+        );
+    };
+    assert_near(header_seen.x, cell_seen.x, "the header moved with the rows");
+    assert!(
+        header_seen.x < header.bounds().x - EDGE_TOLERANCE,
+        "scrolled: {header_seen:?} of {:?}",
+        header.bounds()
+    );
 }
