@@ -19,7 +19,9 @@
 //! changes, as the C# preview lists it.
 
 use heimdall_app::{Message as AppMessage, SettingsTransferMessage};
-use heimdall_core::settings::{SETTINGS_EXPORT_FILE_NAME, SettingValue, SettingsImport};
+use heimdall_core::settings::{
+    SETTINGS_EXPORT_FILE_NAME, SettingChange, SettingValue, SettingsImport,
+};
 use iced::widget::{Column, column, text};
 use iced::{Element, Task, window};
 
@@ -38,6 +40,13 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 /// Tallest the list of changes grows before it scrolls, in logical pixels.
 const CHANGES_HEIGHT: f32 = 280.0;
+
+/// Settings the file holds but does not import named before summing up the rest, as the
+/// C# `SettingsImportPreview.MaxLines`.
+const MAX_IGNORED_SHOWN: usize = 20;
+
+/// Between the names of the settings not imported, as the C# preview's list separator.
+const LIST_SEPARATOR: &str = ", ";
 
 /// A dialog of settings files titled `title`, over `parent` when there is one.
 fn dialog(title: String, parent: Option<&dyn window::Window>) -> FileDialog {
@@ -143,32 +152,91 @@ fn shown(value: Option<&SettingValue>) -> String {
     }
 }
 
-/// What importing `read` changes, each setting with its value now and the file's, then
-/// Cancel and Import.
-pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
-    let mut lines = Column::new().spacing(2.0);
-    for change in &read.changes {
-        lines = lines.push(
-            text(fl!(
-                "ui-dialog-settings-import-line",
-                key = change.key.as_str(),
-                before = shown(change.before.as_ref()),
-                after = shown(change.after.as_ref())
-            ))
-            .size(font_size::CAPTION),
-        );
+/// One change: the setting, its value now and the file's.
+fn change_line(change: &SettingChange) -> String {
+    fl!(
+        "ui-dialog-settings-import-line",
+        key = change.key.as_str(),
+        before = shown(change.before.as_ref()),
+        after = shown(change.after.as_ref())
+    )
+}
+
+/// The changes `changes`, one line each.
+fn change_lines<'a, 'b>(changes: impl Iterator<Item = &'b SettingChange>) -> Column<'a, Message> {
+    changes.fold(Column::new().spacing(2.0), |lines, change| {
+        lines.push(text(change_line(change)).size(font_size::CAPTION))
+    })
+}
+
+/// The changes deciding what runs on this computer, under the C# warning, on a warning
+/// card; `None` when there is none.
+fn sensitive_part(read: &SettingsImport) -> Option<Element<'_, Message>> {
+    read.sensitive().next()?;
+    Some(dialog_parts::warning_panel(
+        column![
+            text(fl!("ui-dialog-settings-import-sensitive"))
+                .size(font_size::BODY)
+                .style(text::warning),
+            change_lines(read.sensitive()),
+        ]
+        .spacing(spacing::XS),
+    ))
+}
+
+/// The settings the file holds but does not import, named, the first
+/// [`MAX_IGNORED_SHOWN`] of them; `None` when there is none.
+fn ignored_part(read: &SettingsImport) -> Option<Element<'_, Message>> {
+    if read.ignored.is_empty() {
+        return None;
     }
+    let mut names = read
+        .ignored
+        .iter()
+        .take(MAX_IGNORED_SHOWN)
+        .map(|name| heimdall_app::server_text(name))
+        .collect::<Vec<_>>()
+        .join(LIST_SEPARATOR);
+    let rest = read.ignored.len().saturating_sub(MAX_IGNORED_SHOWN);
+    if rest > 0 {
+        names.push_str(LIST_SEPARATOR);
+        names.push_str(&fl!("ui-dialog-settings-import-more", count = rest));
+    }
+    Some(
+        column![
+            dialog_parts::note(fl!(
+                "ui-dialog-settings-import-ignored",
+                count = read.ignored.len()
+            )),
+            text(names).size(font_size::CAPTION),
+        ]
+        .spacing(spacing::XS)
+        .into(),
+    )
+}
+
+/// What importing `read` changes, as the C# preview: the changes deciding what runs on
+/// this computer first, under its warning, then the others, each setting with its value
+/// now and the file's; what the file holds that is not imported; then Cancel and Import.
+pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
+    let body = column![]
+        .push(sensitive_part(read))
+        .push(dialog_parts::body(fl!(
+            "ui-dialog-settings-import-body",
+            count = read.changes.len()
+        )))
+        .push(
+            read.benign()
+                .next()
+                .is_some()
+                .then(|| styles::scroll(change_lines(read.benign())).height(CHANGES_HEIGHT)),
+        )
+        .push(ignored_part(read))
+        .spacing(spacing::SM);
     dialog_parts::choice(
         Severity::Warning,
         fl!("ui-dialog-settings-import-title"),
-        column![
-            dialog_parts::body(fl!(
-                "ui-dialog-settings-import-body",
-                count = read.changes.len()
-            )),
-            styles::scroll(lines).height(CHANGES_HEIGHT),
-        ]
-        .spacing(spacing::SM),
+        body,
         fl!("ui-dialog-cancel-button"),
         fl!("ui-dialog-settings-import-confirm"),
     )

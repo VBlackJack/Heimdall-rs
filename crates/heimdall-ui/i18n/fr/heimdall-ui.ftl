@@ -2111,6 +2111,15 @@ ui-dialog-settings-import-body = { $count ->
    *[other] { $count } paramètres vont changer :
 }
 ui-dialog-settings-import-line = { $key } : { $before } -> { $after }
+ui-dialog-settings-import-sensitive = Vérifiez d'abord ceux-ci : ils décident de ce que Heimdall exécute sur cet ordinateur.
+ui-dialog-settings-import-more = { $count ->
+    [one] et { $count } autre
+   *[other] et { $count } autres
+}
+ui-dialog-settings-import-ignored = { $count ->
+    [one] Le fichier contient aussi { $count } paramètre que cette version n'importe pas. Il est laissé de côté :
+   *[other] Le fichier contient aussi { $count } paramètres que cette version n'importe pas. Ils sont laissés de côté :
+}
 ui-dialog-settings-import-confirm = Importer
 ui-settings-value-on = Activé
 ui-settings-value-off = Désactivé

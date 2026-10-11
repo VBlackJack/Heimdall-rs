@@ -32,6 +32,10 @@ use crate::profile::{
 };
 use crate::store::{StoreError, write_atomic};
 
+mod sensitive;
+
+pub use sensitive::Sensitivity;
+
 /// Name of the settings file, beside the profile file.
 pub const SETTINGS_FILE_NAME: &str = "settings.toml";
 
@@ -2240,18 +2244,20 @@ impl Settings {
             return Err(TransferError::NotSettings);
         };
         let mut merged = toml::Table::try_from(self.file()).unwrap_or_default();
+        let mut ignored = Vec::new();
         for (section, values) in incoming {
             let toml::Value::Table(values) = values else {
+                ignored.push(section.clone());
                 continue;
             };
-            if !TRANSFERRED.contains(&section.as_str()) {
-                continue;
-            }
             let target = merged
                 .entry(section.clone())
                 .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-            if let toml::Value::Table(target) = target {
-                for (key, value) in values {
+            for (key, value) in values {
+                // Unknown, or this computer's own: not taken, and said so.
+                if !sensitive::carried(section, key) {
+                    ignored.push(format!("{section}.{key}"));
+                } else if let toml::Value::Table(target) = target {
                     target.insert(key.clone(), value.clone());
                 }
             }
@@ -2259,7 +2265,11 @@ impl Settings {
         let file: SettingsFile = merged.try_into().map_err(|_| TransferError::NotSettings)?;
         let settings = Self::from_file(file);
         let changes = changes(&self.transferable(), &settings.transferable());
-        Ok(SettingsImport { settings, changes })
+        Ok(SettingsImport {
+            settings,
+            changes,
+            ignored,
+        })
     }
 }
 
@@ -2300,6 +2310,27 @@ pub struct SettingsImport {
     pub settings: Settings,
     /// Each setting the file changes, in the file's order of sections and keys.
     pub changes: Vec<SettingChange>,
+    /// Each setting the file holds that is not imported, as `section.key`: one this version
+    /// does not know, or one that stays on this computer, such as the PIN. Said in the
+    /// preview rather than dropped unseen.
+    pub ignored: Vec<String>,
+}
+
+impl SettingsImport {
+    /// The changes shown first, each with why, as the C# preview lists them before the
+    /// others: every one of them, whatever the file's order.
+    pub fn sensitive(&self) -> impl Iterator<Item = &SettingChange> {
+        self.changes
+            .iter()
+            .filter(|change| change.sensitivity.is_some())
+    }
+
+    /// The other changes, in the file's order.
+    pub fn benign(&self) -> impl Iterator<Item = &SettingChange> {
+        self.changes
+            .iter()
+            .filter(|change| change.sensitivity.is_none())
+    }
 }
 
 /// One setting a portable settings file changes.
@@ -2311,6 +2342,8 @@ pub struct SettingChange {
     pub before: Option<SettingValue>,
     /// Its value from the file; `None` when it has none.
     pub after: Option<SettingValue>,
+    /// Why it is shown first; `None` for a setting shown among the others.
+    pub sensitivity: Option<Sensitivity>,
 }
 
 /// A setting's value, as a change shows it.
@@ -2371,6 +2404,7 @@ fn changes(before: &toml::Table, after: &toml::Table) -> Vec<SettingChange> {
                     key: format!("{section}.{key}"),
                     before: old.map(SettingValue::of),
                     after: new.map(SettingValue::of),
+                    sensitivity: sensitive::sensitivity(section, key),
                 });
             }
         }
