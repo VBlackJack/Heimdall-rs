@@ -26,7 +26,6 @@ use std::io;
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -177,7 +176,7 @@ pub async fn connect(
         () = cancel.cancelled() => return Err(TelnetError::Cancelled),
         connected = tokio::time::timeout(
             config.connect_timeout,
-            TcpStream::connect((config.host.as_str(), config.port)),
+            heimdall_net::connect(&config.host, config.port),
         ) => connected
             .map_err(|_| TelnetError::Timeout)?
             .map_err(TelnetError::Network)?,

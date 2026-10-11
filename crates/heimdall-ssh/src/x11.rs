@@ -45,7 +45,6 @@ use data_encoding::HEXLOWER;
 use russh::client::Msg;
 use russh::{Channel, ChannelStream};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
-use tokio::net::TcpStream;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zeroize::Zeroizing;
 
@@ -485,9 +484,7 @@ pub(crate) async fn carry(
     let message = setup.encode(&grant.real);
     let unanswered = match &grant.target {
         Target::Tcp(host, port) => {
-            match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host.as_str(), *port)))
-                .await
-            {
+            match tokio::time::timeout(CONNECT_TIMEOUT, heimdall_net::connect(host, *port)).await {
                 Ok(Ok(near)) => {
                     relay(near, far, &message).await;
                     None

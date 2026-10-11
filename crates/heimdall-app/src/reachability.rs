@@ -15,9 +15,9 @@
  */
 
 //! "Test address", as the C# profile dialog's: does the address answer on its port, from this
-//! computer? The name is looked up, then every address it gives is dialled in turn within one
-//! budget; for SSH, the server's banner is read too. Nothing is sent: no credential is ever
-//! checked, and no key is asked about.
+//! computer? The name is looked up, then every address it gives is raced within one budget,
+//! as every connection is (`heimdall_net`); for SSH, the server's banner is read too. Nothing
+//! is sent: no credential is ever checked, and no key is asked about.
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -199,43 +199,34 @@ async fn run(host: String, port: u16, ssh: bool, budget: Duration) -> Result<Rea
         return Err(Unreached::DnsNoResults);
     }
     let started = Instant::now();
-    let mut last = None;
     // Every address the name gives, not just the first, as the C#: a host whose IPv6
-    // address comes first may answer on its IPv4 one. The budget is shared out among the
-    // addresses left, so trying more never makes the user wait longer.
-    for (index, address) in addresses.iter().enumerate() {
-        let Some(remaining) = budget.checked_sub(started.elapsed()) else {
-            break;
-        };
-        let left = u32::try_from(addresses.len() - index).unwrap_or(u32::MAX);
-        let attempt = remaining / left;
-        match tokio::time::timeout(attempt, TcpStream::connect(address)).await {
-            Ok(Ok(stream)) => {
-                let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                let banner = if ssh {
-                    banner(stream, budget).await
-                } else {
-                    None
-                };
-                return Ok(Reached {
-                    address: address.ip().to_string(),
-                    millis,
-                    banner,
-                });
-            }
-            Ok(Err(error)) => {
-                last = Some(Unreached::TcpFailed {
-                    address: address.ip().to_string(),
-                    detail: error.to_string(),
-                    kind: error.kind(),
-                });
-            }
-            Err(_) => last = Some(Unreached::TcpTimeout(address.ip().to_string())),
+    // address comes first may answer on its IPv4 one. Raced rather than dialled in turn, as
+    // every connection is (`heimdall_net`): an address that does not answer delays the next
+    // by a quarter of a second, not by its share of the budget.
+    match heimdall_net::connect_addresses(&addresses, Some(budget)).await {
+        Ok(connected) => {
+            let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let banner = if ssh {
+                banner(connected.stream, budget).await
+            } else {
+                None
+            };
+            Ok(Reached {
+                address: connected.address.ip().to_string(),
+                millis,
+                banner,
+            })
         }
+        Err(heimdall_net::Failure::Failed { address, error, .. }) => Err(Unreached::TcpFailed {
+            address: address.ip().to_string(),
+            detail: error.to_string(),
+            kind: error.kind(),
+        }),
+        Err(heimdall_net::Failure::TimedOut { address, .. }) => {
+            Err(Unreached::TcpTimeout(address.ip().to_string()))
+        }
+        Err(heimdall_net::Failure::NoAddress) => Err(Unreached::DnsNoResults),
     }
-    // Only ends without a verdict when the budget ran out before an address was tried: the
-    // first one timing out says the same.
-    Err(last.unwrap_or_else(|| Unreached::TcpTimeout(addresses[0].ip().to_string())))
 }
 
 /// The SSH server's identification line on `stream`, read within `budget`: the first line

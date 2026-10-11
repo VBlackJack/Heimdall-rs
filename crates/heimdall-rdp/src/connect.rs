@@ -51,7 +51,6 @@ use ironrdp::pdu::rdp::capability_sets::{MajorPlatformType, client_codecs_capabi
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp_tokio::{Framed, FramedRead, FramedWrite, MovableTokioFramed};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_util::sync::CancellationToken;
@@ -407,7 +406,7 @@ pub async fn connect(
     let host = config.host.clone();
     let port = config.port;
     let tcp: Opening = Box::pin(async move {
-        let tcp = TcpStream::connect((host.as_str(), port)).await?;
+        let tcp = heimdall_net::connect(&host, port).await?;
         let local = tcp.local_addr()?;
         Ok((Box::new(tcp) as Box<dyn Transport>, local))
     });

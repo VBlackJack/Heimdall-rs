@@ -552,7 +552,7 @@ impl GitHubSource {
             .tls_config(tls())
             .build();
         Self {
-            agent: ureq::Agent::new_with_config(config),
+            agent: crate::update_transport::agent(config),
         }
     }
 }
@@ -918,7 +918,7 @@ mod tests {
             let _ = tls.read(&mut byte);
         });
 
-        let agent = ureq::Agent::new_with_config(
+        let agent = crate::update_transport::agent(
             ureq::Agent::config_builder()
                 .proxy(None)
                 .timeout_global(Some(REQUEST_TIMEOUT))
