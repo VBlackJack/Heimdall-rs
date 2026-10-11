@@ -506,27 +506,17 @@ fn the_workspace_lock_travels_with_an_export_without_the_lockout() {
 }
 
 #[test]
-fn a_new_installation_is_in_english_and_a_language_chosen_is_written_and_read_back() {
+fn a_language_is_written_once_chosen_and_one_not_offered_follows_the_desktop() {
     use heimdall_core::settings::Language;
 
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
-    // A new installation starts in English, as the C# `DefaultLocale`.
-    assert_eq!(
-        Settings::load(&path).expect("no file yet").language,
-        Some(Language::English)
-    );
-    let following = Settings {
-        language: None,
-        ..Settings::default()
-    };
-    following.save(&path).expect("saved");
+    Settings::default().save(&path).expect("saved");
     let text = std::fs::read_to_string(&path).expect("read");
     assert!(
         !text.contains("language"),
         "not chosen, not written: {text}"
     );
-    // A file written without one goes on following the desktop: never rewritten.
     assert_eq!(Settings::load(&path).expect("read").language, None);
     for language in Language::ALL {
         let settings = Settings {

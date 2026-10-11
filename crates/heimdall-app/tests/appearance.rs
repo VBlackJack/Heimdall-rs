@@ -171,11 +171,7 @@ fn a_language_chosen_is_kept_for_the_next_run() {
 
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
-    assert_eq!(
-        app.settings().language,
-        Some(Language::English),
-        "English until chosen, as the C# `DefaultLocale`"
-    );
+    assert_eq!(app.settings().language, None, "the desktop's until chosen");
     app.update(Message::Settings(SettingsMessage::Language(
         Language::Spanish,
     )));

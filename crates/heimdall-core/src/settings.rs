@@ -530,8 +530,7 @@ pub struct Settings {
     /// empty; [`TERMINAL_FONT_FAMILY_DEFAULT`] unless chosen. One the computer lacks is
     /// drawn in the default, said where it is chosen.
     pub terminal_font_family: String,
-    /// The language chosen; `None` follows the desktop's. English for a new installation, as
-    /// the C# `DefaultLocale`; `None` only for a settings file written without one.
+    /// The language chosen; `None` follows the desktop's.
     pub language: Option<Language>,
     /// The window's theme, as the C# `DefaultTheme`: Drakul unless chosen.
     pub theme: AppTheme,
@@ -1181,9 +1180,9 @@ impl Default for Settings {
             session_log_retention_days: SESSION_LOG_RETENTION_DAYS_DEFAULT,
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
             terminal_font_family: TERMINAL_FONT_FAMILY_DEFAULT.to_owned(),
-            // A new installation starts in English, as the C# `DefaultLocale`
-            // (`AppSettings.cs:48`); a settings file without one follows the desktop.
-            language: Some(Language::English),
+            // Deliberately not the C# `DefaultLocale` "en": a new installation follows the
+            // desktop's language until one is chosen.
+            language: None,
             theme: AppTheme::default(),
             accent: Accent::default(),
             vault_unlock: Lockout::default(),
