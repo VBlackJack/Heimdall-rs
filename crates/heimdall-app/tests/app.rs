@@ -1154,14 +1154,21 @@ fn the_csharp_scheduled_connections_are_carried_over_timed_from_now() {
     );
     assert!(tasks.tasks()[1].next_run.is_some_and(|next| next > before));
 
+    assert_eq!(
+        app.scheduled_tasks(),
+        tasks.tasks(),
+        "the running list is the one written"
+    );
+
     // Carried over again: each in place of the one of its identifier.
     app.update(Message::DismissDialog);
     app.update(Message::ImportLegacy);
     assert_eq!(ScheduledTasks::load(&path).expect("read").tasks().len(), 2);
+    assert_eq!(app.scheduled_tasks().len(), 2);
 
-    // A file there that does not read is left as it is, and said.
+    // A file there that did not read at the start is left as it is, and said.
     std::fs::write(&path, "task = [").expect("corrupt");
-    app.update(Message::DismissDialog);
+    let mut app = App::new(config);
     app.update(Message::ImportLegacy);
     let Some(Dialog::ImportDone(summary)) = &app.dialog else {
         panic!("expected ImportDone, got {:?}", app.dialog);

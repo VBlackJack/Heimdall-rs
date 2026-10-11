@@ -215,6 +215,13 @@ pub enum FailureKind {
     NameAmbiguous,
     /// The profile's credentials are not stored, or could not be read without asking.
     CredentialUnavailable,
+    /// Windows Hello or Credential Guard would have had to be asked.
+    VerificationRequired,
+    /// The server's key or certificate is not trusted yet: the user decides it, never a
+    /// schedule.
+    ConfirmationRequired,
+    /// The most sessions the settings allow are open.
+    SessionLimit,
     /// The connection did not open.
     ConnectionFailed,
 }

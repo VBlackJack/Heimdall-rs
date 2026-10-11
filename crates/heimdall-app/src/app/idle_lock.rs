@@ -99,13 +99,15 @@ impl App {
     }
 
     /// The auto-reconnects that waited for the unlock, attempted now: those of a tab closed
-    /// or reconnected meanwhile do nothing.
+    /// or reconnected meanwhile do nothing. Then the scheduled connections held, run once.
     pub(super) fn resume_reconnects(&mut self) -> Vec<Effect> {
         let waiting = std::mem::take(&mut self.deferred_reconnects);
-        waiting
+        let mut effects: Vec<Effect> = waiting
             .into_iter()
             .flat_map(|(tab, attempt)| self.retry_message(&Message::AutoReconnect { tab, attempt }))
-            .collect()
+            .collect();
+        effects.extend(self.resume_scheduled());
+        effects
     }
 }
 

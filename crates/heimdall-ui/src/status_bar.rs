@@ -338,6 +338,26 @@ fn desktop_notice(notice: &Notice) -> String {
     }
 }
 
+/// What the status bar says of a scheduled connection.
+fn scheduled_notice(notice: &heimdall_app::ScheduledNotice) -> String {
+    use heimdall_app::ScheduledNotice;
+    match notice {
+        ScheduledNotice::Triggered(name) => {
+            fl!("ui-status-scheduled-triggered", name = server_text(name))
+        }
+        ScheduledNotice::Failed { name, failure } => fl!(
+            "ui-status-scheduled-failed",
+            reason = crate::texts::scheduled_failure(*failure, name)
+        ),
+        ScheduledNotice::Refused(name) => {
+            fl!("ui-status-scheduled-refused", name = server_text(name))
+        }
+        ScheduledNotice::Deferred(name) => {
+            fl!("ui-status-scheduled-deferred", name = server_text(name))
+        }
+    }
+}
+
 /// What the left of the bar says; `targets` the tabs marked for broadcast input.
 #[must_use]
 #[expect(clippy::too_many_lines, reason = "one arm per notice")]
@@ -541,6 +561,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 HelloRefusal::Cancelled => fl!("ui-status-windows-hello-cancelled"),
             },
             Notice::CredentialGuardRequired => fl!("ui-status-credential-guard-required"),
+            Notice::Scheduled(notice) => scheduled_notice(notice),
             Notice::VaultHelloEnrolAgainFailed => fl!("ui-status-vault-hello-enrol-again-failed"),
             Notice::LinkNotAFolder(name) => {
                 fl!("ui-status-link-not-a-folder", name = name.as_str())
@@ -720,6 +741,52 @@ mod tests {
                 total: 4
             }),
             "Deletion cancelled: 1 of 4 items deleted."
+        );
+    }
+
+    #[test]
+    fn a_scheduled_connection_says_the_server_it_opens_and_why_it_did_not() {
+        use heimdall_app::ScheduledNotice;
+        use heimdall_core::scheduled::FailureKind;
+
+        let said = |notice: ScheduledNotice| {
+            status_text(&SessionStatus::Ready, Some(&Notice::Scheduled(notice)), 0)
+        };
+        assert_eq!(
+            said(ScheduledNotice::Triggered(named("web"))),
+            "Scheduled task triggered. Connecting to web..."
+        );
+        let failed = |failure| {
+            said(ScheduledNotice::Failed {
+                name: named("web"),
+                failure,
+            })
+        };
+        assert_eq!(
+            failed(FailureKind::ProfileNotFound),
+            "Scheduled task error: Server \"web\" not found"
+        );
+        assert_eq!(
+            failed(FailureKind::NameNotFound),
+            failed(FailureKind::ProfileNotFound)
+        );
+        for failure in [
+            FailureKind::NameAmbiguous,
+            FailureKind::CredentialUnavailable,
+            FailureKind::VerificationRequired,
+            FailureKind::ConfirmationRequired,
+            FailureKind::SessionLimit,
+            FailureKind::ConnectionFailed,
+        ] {
+            assert!(
+                failed(failure).starts_with("Scheduled task error: "),
+                "{failure:?}"
+            );
+        }
+        assert!(said(ScheduledNotice::Refused(named("Tool"))).contains("\"Tool\""));
+        assert_eq!(
+            said(ScheduledNotice::Deferred(named("web"))),
+            "The scheduled connection to web waits for the workspace to be unlocked"
         );
     }
 

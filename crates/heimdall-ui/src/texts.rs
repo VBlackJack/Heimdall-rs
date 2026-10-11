@@ -25,6 +25,7 @@ use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
 use heimdall_core::import::csharp::{Dropped, LegacyElevation, SkipReason};
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
+use heimdall_core::scheduled::FailureKind;
 use heimdall_core::settings::{RDP_RESIZE_ENABLE_DELAY_MAX_MS, RDP_RESIZE_ENABLE_DELAY_MIN_MS};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
@@ -417,6 +418,29 @@ pub fn auth_method(method: AuthMethod) -> String {
         AuthMethod::KeyFile => fl!("ui-auth-method-key-file"),
         AuthMethod::KeyboardInteractive => fl!("ui-auth-method-keyboard-interactive"),
         AuthMethod::Password => fl!("ui-auth-method-password"),
+    }
+}
+
+/// Why a scheduled connection did not open the profile named `name`.
+#[must_use]
+pub fn scheduled_failure(failure: FailureKind, name: &str) -> String {
+    let name = server_text(name);
+    match failure {
+        FailureKind::ProfileNotFound | FailureKind::NameNotFound => {
+            fl!("ui-scheduled-failure-not-found", name = name)
+        }
+        FailureKind::NameAmbiguous => fl!("ui-scheduled-failure-name-ambiguous", name = name),
+        FailureKind::CredentialUnavailable => {
+            fl!("ui-scheduled-failure-credential-unavailable", name = name)
+        }
+        FailureKind::VerificationRequired => {
+            fl!("ui-scheduled-failure-verification-required", name = name)
+        }
+        FailureKind::ConfirmationRequired => {
+            fl!("ui-scheduled-failure-confirmation-required", name = name)
+        }
+        FailureKind::SessionLimit => fl!("ui-scheduled-failure-session-limit"),
+        FailureKind::ConnectionFailed => fl!("ui-scheduled-failure-connection-failed", name = name),
     }
 }
 
