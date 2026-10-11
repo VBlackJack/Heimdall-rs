@@ -43,6 +43,7 @@ mod files_view;
 pub mod finder;
 pub mod floating_view;
 mod gateways_view;
+mod headed_list;
 mod health_view;
 pub mod hostkeys_view;
 pub mod i18n;

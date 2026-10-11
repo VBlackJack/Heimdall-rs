@@ -15,11 +15,12 @@
  */
 
 //! The header row of a list in columns, as the C# `GridView` header: its cells laid out at
-//! the widths given, a separator in the gap after each column but the last.
+//! the widths given, a separator in the gap after each column, the last included.
 //!
-//! A separator is dragged to resize the column on its left, the one on its right giving or
-//! taking the room, so the separator stays under the pointer and the row keeps its width;
-//! each column keeps its least width. The widths follow live, each move sent; a double
+//! A separator is dragged to resize the column on its left, as a WPF `GridView` column's
+//! gripper: the columns after it move along, so the separator stays under the pointer and
+//! the row grows or shrinks, a list wider than its pane then scrolling sideways; each column
+//! keeps its least width. The widths follow live, each move sent; a double
 //! click fits the column on the left to its widest cell, as the C# header's grip does. A
 //! press on a separator is never a press on a cell: a header sorting on a click does not
 //! sort.
@@ -41,15 +42,15 @@ pub const SEPARATOR_GRIP: f32 = 8.0;
 const SEPARATOR_LINE: f32 = 1.0;
 
 /// Where the middle of each separator is, from the row's left edge: in the gap after each
-/// column of `widths` but the last, the first column starting at `inset`.
+/// column of `widths`, the last included, the first column starting at `inset`.
 #[must_use]
 pub fn separators(widths: &[f32], inset: f32, spacing: f32) -> Vec<f32> {
     let mut x = inset;
     let mut middles = Vec::with_capacity(widths.len().saturating_sub(1));
     for (index, width) in widths.iter().enumerate() {
         x += width;
+        middles.push(x + spacing / 2.0);
         if index + 1 < widths.len() {
-            middles.push(x + spacing / 2.0);
             x += spacing;
         }
     }
@@ -64,22 +65,17 @@ pub fn separator_at(middles: &[f32], x: f32) -> Option<usize> {
         .position(|middle| (x - middle).abs() <= SEPARATOR_GRIP / 2.0)
 }
 
-/// `widths` once `separator` moved by `delta`: the column on its left takes `delta`, the one
-/// on its right gives it. Neither is made narrower than its width in `least`, nor, already
-/// narrower, any narrower still.
+/// `widths` once `separator` moved by `delta`: the column on its left takes `delta`, the
+/// others keep their widths, as a WPF `GridView` column resized. It is not made narrower than
+/// its width in `least`, nor, already narrower, any narrower still.
 #[must_use]
 pub fn dragged(widths: &[f32], least: &[f32], separator: usize, delta: f32) -> Vec<f32> {
     let mut moved = widths.to_vec();
-    let (Some(left), Some(right)) = (widths.get(separator), widths.get(separator + 1)) else {
+    let Some(width) = widths.get(separator).copied() else {
         return moved;
     };
-    let least_of = |index: usize| least.get(index).copied().unwrap_or(0.0);
-    // The most the left column can give, then take, each kept at its least.
-    let shrink = (least_of(separator) - left).min(0.0);
-    let grow = (right - least_of(separator + 1)).max(0.0);
-    let delta = delta.clamp(shrink, grow);
-    moved[separator] = left + delta;
-    moved[separator + 1] = right - delta;
+    let least = least.get(separator).copied().unwrap_or(0.0).min(width);
+    moved[separator] = (width + delta).max(least);
     moved
 }
 
@@ -496,13 +492,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_separator_sits_in_the_middle_of_the_gap_after_each_column_but_the_last() {
+    fn a_separator_sits_in_the_middle_of_the_gap_after_each_column_the_last_included() {
         assert_eq!(
             separators(&[100.0, 50.0, 30.0], 10.0, 8.0),
-            [114.0, 172.0],
-            "10 + 100 + 4, then 10 + 100 + 8 + 50 + 4"
+            [114.0, 172.0, 210.0],
+            "10 + 100 + 4, then 10 + 100 + 8 + 50 + 4, then 10 + 100 + 8 + 50 + 8 + 30 + 4"
         );
-        assert!(separators(&[100.0], 10.0, 8.0).is_empty(), "one column");
+        assert_eq!(separators(&[100.0], 10.0, 8.0), [114.0], "one column");
         assert!(separators(&[], 10.0, 8.0).is_empty());
     }
 
@@ -520,28 +516,28 @@ mod tests {
     }
 
     #[test]
-    fn a_dragged_separator_gives_its_left_column_what_the_right_one_gives_up() {
+    fn a_dragged_separator_resizes_its_left_column_alone() {
         let widths = [300.0, 90.0, 130.0];
         let least = [160.0, 40.0, 60.0];
-        assert_eq!(dragged(&widths, &least, 1, 20.0), [300.0, 110.0, 110.0]);
-        assert_eq!(dragged(&widths, &least, 1, -30.0), [300.0, 60.0, 160.0]);
-        assert_eq!(dragged(&widths, &least, 0, 25.0), [325.0, 65.0, 130.0]);
+        assert_eq!(dragged(&widths, &least, 1, 20.0), [300.0, 110.0, 130.0]);
+        assert_eq!(dragged(&widths, &least, 1, -30.0), [300.0, 60.0, 130.0]);
+        assert_eq!(dragged(&widths, &least, 0, 500.0), [800.0, 90.0, 130.0]);
         assert_eq!(
             dragged(&widths, &least, 2, 10.0),
-            widths,
-            "no column after the last"
+            [300.0, 90.0, 140.0],
+            "the last one too"
         );
+        assert_eq!(dragged(&widths, &least, 3, 10.0), widths, "no such column");
     }
 
     #[test]
-    fn a_dragged_separator_keeps_both_columns_at_their_least() {
+    fn a_dragged_separator_keeps_its_column_at_its_least() {
         let widths = [300.0, 90.0, 130.0];
         let least = [160.0, 40.0, 60.0];
-        assert_eq!(dragged(&widths, &least, 1, -500.0), [300.0, 40.0, 180.0]);
-        assert_eq!(dragged(&widths, &least, 1, 500.0), [300.0, 160.0, 60.0]);
-        assert_eq!(dragged(&widths, &least, 0, -500.0), [160.0, 230.0, 130.0]);
-        // A column narrower than its least, the pane being narrow, is not made narrower.
+        assert_eq!(dragged(&widths, &least, 1, -500.0), [300.0, 40.0, 130.0]);
+        assert_eq!(dragged(&widths, &least, 0, -500.0), [160.0, 90.0, 130.0]);
+        // A column narrower than its least is not made narrower.
         assert_eq!(dragged(&[120.0, 90.0], &least, 0, -10.0), [120.0, 90.0]);
-        assert_eq!(dragged(&[120.0, 90.0], &least, 0, 10.0), [130.0, 80.0]);
+        assert_eq!(dragged(&[120.0, 90.0], &least, 0, 10.0), [130.0, 90.0]);
     }
 }
