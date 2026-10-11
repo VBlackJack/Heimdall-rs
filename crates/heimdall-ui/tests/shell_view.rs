@@ -522,6 +522,9 @@ fn keyboard_named(named: Named) -> iced::keyboard::Key {
     iced::keyboard::Key::Named(named)
 }
 
+/// Widest a tab's title is drawn, as the C# tab title's `MaxWidth`.
+const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
+
 #[test]
 fn a_long_server_title_is_cut_in_its_tab() {
     let dir = tempfile::tempdir().expect("dir");
@@ -534,8 +537,12 @@ fn a_long_server_title_is_cut_in_its_tab() {
         event: ConnectionEvent::Output(std::mem::take(&mut core_title).into_bytes()),
     }));
     let mut ui = simulator(&shell);
-    let shown = format!("{}...", "w".repeat(29));
-    ui.find(shown.as_str()).expect("cut to 32 characters");
+    let title = "w".repeat(100);
+    let shown = ui.find(title.as_str()).expect("the tab's title").bounds();
+    assert!(
+        shown.width <= TAB_TITLE_MAX_WIDTH,
+        "ended with an ellipsis at the C# MaxWidth: {shown:?}"
+    );
 }
 
 #[test]
