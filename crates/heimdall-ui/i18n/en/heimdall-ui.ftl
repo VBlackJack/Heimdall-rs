@@ -359,6 +359,7 @@ ui-certificate-title = Unrecognised Server Certificate
 ui-certificate-body = "{ $name }" answered at { $host }:{ $port }, presenting a certificate this profile has never approved.
 ui-certificate-caution = Heimdall cannot tell whether this is the machine you expect. Approve it only if you recognise the fingerprint below, or if you know that several machines answer to this name.
 ui-certificate-fingerprint = SHA-256 fingerprint: { $fingerprint }
+ui-certificate-key-fingerprint = Public key SHA-256: { $fingerprint }
 ui-certificate-trust-button = Trust this certificate
 ui-certificate-trust-once-button = Just this once
 ui-certificate-refuse-button = Do not connect

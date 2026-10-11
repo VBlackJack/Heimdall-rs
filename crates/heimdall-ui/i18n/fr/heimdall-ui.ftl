@@ -285,6 +285,7 @@ ui-certificate-title = Certificat de serveur non reconnu
 ui-certificate-body = "{ $name }" a répondu sur { $host }:{ $port } avec un certificat que ce profil n'a jamais approuvé.
 ui-certificate-caution = Heimdall ne peut pas savoir si c'est la machine attendue. Approuvez-le seulement si vous reconnaissez l'empreinte ci-dessous, ou si vous savez que plusieurs machines répondent à ce nom.
 ui-certificate-fingerprint = Empreinte SHA-256 : { $fingerprint }
+ui-certificate-key-fingerprint = Clé publique SHA-256 : { $fingerprint }
 ui-certificate-trust-button = Approuver ce certificat
 ui-certificate-trust-once-button = Juste cette fois
 ui-certificate-refuse-button = Ne pas se connecter
