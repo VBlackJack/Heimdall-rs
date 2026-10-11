@@ -705,22 +705,62 @@ pub struct Heading<'a> {
     pub state: String,
     /// What follows its state: it is recorded, a macro, a bell.
     pub badges: Vec<Element<'a, Message>>,
+    /// The session's own buttons before the split button, as the C# RDP header's
+    /// Resolution.
+    pub before_split: Vec<Element<'a, Message>>,
+    /// Those after it, before Disconnect, as the C# RDP header's Send keys, Fullscreen and
+    /// health dot.
+    pub after_split: Vec<Element<'a, Message>>,
+}
+
+/// What a session header's buttons and its right click send.
+pub struct HeaderActions {
+    /// The split button's.
+    pub split: Message,
+    /// Disconnect's.
+    pub disconnect: Message,
+    /// The menu a right click opens.
+    pub menu: TreeMenu,
+}
+
+impl HeaderActions {
+    /// A pane's in a split: the split button puts the split back into tabs as the C#'s does
+    /// in a split, Disconnect closes that pane alone, a right click opens the pane's menu.
+    fn pane(tab: TabId, host: TabId) -> Self {
+        Self {
+            split: Message::App(AppMessage::Split(
+                heimdall_app::split::SplitMessage::Unsplit(host),
+            )),
+            disconnect: Message::App(AppMessage::Split(
+                heimdall_app::split::SplitMessage::ClosePane(tab),
+            )),
+            menu: TreeMenu::Pane(tab),
+        }
+    }
 }
 
 /// A pane's header, as the C# session header: `heading`'s marks, name, address and state
-/// at the left; at the right the split button, which puts the split back into tabs as the
-/// C#'s does in a split, and Disconnect, which closes that pane alone. A right click opens
-/// the pane's menu.
+/// at the left; at the right the split button and Disconnect, each as a pane's.
 fn header(heading: Heading<'_>) -> Element<'_, Message> {
+    let actions = HeaderActions::pane(heading.tab, heading.host);
+    session_header(heading, actions)
+}
+
+/// A session's header, as the C# one: `heading`'s marks, name, address and state at the
+/// left; at the right the split button and Disconnect, sending what `actions` says, as its
+/// right click does.
+#[must_use]
+pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'_, Message> {
     let Heading {
-        tab,
-        host,
         marks,
         name,
         detail,
         route,
         state,
         badges,
+        before_split,
+        after_split,
+        ..
     } = heading;
     let tip = |content: Element<'static, Message>, said: String| {
         tooltip(
@@ -781,9 +821,7 @@ fn header(heading: Heading<'_>) -> Element<'_, Message> {
     let split = tip(
         crate::icons::button(crate::icons::Icon::Split)
             .style(styles::subtle)
-            .on_press(Message::App(AppMessage::Split(
-                heimdall_app::split::SplitMessage::Unsplit(host),
-            )))
+            .on_press(actions.split)
             .into(),
         fl!("ui-split-session-tooltip"),
     );
@@ -795,9 +833,7 @@ fn header(heading: Heading<'_>) -> Element<'_, Message> {
         )
         .style(styles::secondary)
         .padding(DISCONNECT_PADDING)
-        .on_press(Message::App(AppMessage::Split(
-            heimdall_app::split::SplitMessage::ClosePane(tab),
-        )))
+        .on_press(actions.disconnect)
         .into(),
         fl!("ui-desktop-disconnect-tooltip"),
     );
@@ -805,19 +841,19 @@ fn header(heading: Heading<'_>) -> Element<'_, Message> {
         container(
             // The buttons first served, as the C# docks them right: what names the pane
             // takes the room left, and is cut at its edge.
-            row![
-                container(named).width(Length::Fill).clip(true),
-                split,
-                disconnect
-            ]
-            .spacing(spacing::XS)
-            .align_y(iced::Alignment::Center),
+            row![container(named).width(Length::Fill).clip(true)]
+                .extend(before_split)
+                .push(split)
+                .extend(after_split)
+                .push(disconnect)
+                .spacing(spacing::XS)
+                .align_y(iced::Alignment::Center),
         )
         .padding(HEADER_PADDING)
         .width(Length::Fill)
         .style(styles::strip),
     )
-    .on_right_press(Message::OpenTreeMenu(TreeMenu::Pane(tab)))
+    .on_right_press(Message::OpenTreeMenu(actions.menu))
     .into()
 }
 

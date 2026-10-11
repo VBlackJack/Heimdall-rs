@@ -14,6 +14,8 @@ publish.workspace = true
 
 [dependencies]
 flate2.workspace = true
+# heimdall-net: every TCP connection to a host by name, Happy Eyeballs.
+heimdall-net.workspace = true
 # sealvault: VNC Authentication's DES response, from its legacy module.
 sealvault.workspace = true
 thiserror.workspace = true

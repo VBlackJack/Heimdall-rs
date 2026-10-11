@@ -22,6 +22,8 @@ audio = ["dep:cpal"]
 cpal = { workspace = true, optional = true }
 data-encoding.workspace = true
 heimdall-core.workspace = true
+# heimdall-net: every TCP connection to a host by name, Happy Eyeballs.
+heimdall-net.workspace = true
 ironrdp.workspace = true
 ironrdp-core.workspace = true
 ironrdp-tokio.workspace = true

@@ -126,8 +126,7 @@ impl App {
 pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
     if let ConnectionEvent::DesktopRenamed(name) = &event {
         if let Some(pane) = tab.desktop.as_deref_mut() {
-            let name = crate::text::server_text(name.trim());
-            pane.desktop_name = (!name.is_empty()).then_some(name);
+            pane.desktop_name = desktop_title(name);
         }
         return;
     }
@@ -143,9 +142,61 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
         tab.phase = Phase::Connected;
         let mut pane = DesktopPane::vnc(framebuffer, (input, cursor), view_only);
         // Shown on its bar, as the C# session title: the server's words, made safe.
-        let name = crate::text::server_text(name.trim());
-        pane.desktop_name = (!name.is_empty()).then_some(name);
+        pane.desktop_name = desktop_title(&name);
         pane.tls = tls;
         tab.desktop = Some(Box::new(pane));
+    }
+}
+
+/// The desktop name `name` the server gave, as its bar shows it: made safe, without an empty
+/// pair of parentheses at its end, and nothing when nothing is left.
+///
+/// The `vncserver` scripts name a desktop "host:display (user)" from the user in their
+/// environment; a server started without one, as in a container, sends "host:1 ()". The C#
+/// shows the name as given; the empty parentheses tell nothing, so they go, and a name that
+/// says something inside them keeps them.
+fn desktop_title(name: &str) -> Option<String> {
+    let name = crate::text::server_text(name);
+    let mut title = name.trim();
+    if let Some(inside) = title.strip_suffix(')')
+        && let Some(open) = inside.rfind('(')
+        && inside[open + 1..].trim().is_empty()
+    {
+        title = inside[..open].trim_end();
+    }
+    (!title.is_empty()).then(|| title.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::desktop_title;
+
+    #[test]
+    fn empty_parentheses_after_the_desktop_name_are_dropped() {
+        assert_eq!(
+            desktop_title("vnc.heimdall.test:1 ()").as_deref(),
+            Some("vnc.heimdall.test:1")
+        );
+        assert_eq!(desktop_title("lab:2 (  ) ").as_deref(), Some("lab:2"));
+    }
+
+    #[test]
+    fn a_name_that_says_something_is_shown_as_the_server_gave_it() {
+        assert_eq!(
+            desktop_title("vnc.heimdall.test:1 (julien)").as_deref(),
+            Some("vnc.heimdall.test:1 (julien)")
+        );
+        assert_eq!(desktop_title("Lab desk").as_deref(), Some("Lab desk"));
+        assert_eq!(
+            desktop_title("(build) agent").as_deref(),
+            Some("(build) agent")
+        );
+    }
+
+    #[test]
+    fn a_name_with_nothing_to_show_shows_nothing() {
+        assert_eq!(desktop_title(""), None);
+        assert_eq!(desktop_title(" () "), None);
+        assert_eq!(desktop_title("\u{7}"), None, "a control character alone");
     }
 }

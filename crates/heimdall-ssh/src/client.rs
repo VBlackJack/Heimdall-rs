@@ -744,7 +744,21 @@ impl Dial {
         });
         let connecting = async {
             match carrier {
-                None => client::connect(config, (host, port), handler).await,
+                None => {
+                    // Raced over every address the name gives, as every connection is
+                    // (`heimdall_net`), then handed to russh as its own connect would.
+                    let socket = heimdall_net::connect(host, port)
+                        .await
+                        .map_err(|error| HandlerError::Russh(russh::Error::from(error)))?;
+                    if config.nodelay
+                        && let Err(error) = socket.set_nodelay(true)
+                    {
+                        log::warn!(
+                            "TCP_NODELAY not set on the connection to {host}:{port}: {error}"
+                        );
+                    }
+                    client::connect_stream(config, socket, handler).await
+                }
                 Some(carrier) => {
                     let channel = carrier
                         .channel_open_direct_tcpip(host, u32::from(port), ORIGINATOR_ADDRESS, 0)

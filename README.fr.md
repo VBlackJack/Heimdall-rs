@@ -36,6 +36,7 @@ embarqué.
 |---|---|
 | `heimdall-core` | Profils de serveurs, réglages, chemins, coffre d'identifiants |
 | `heimdall-i18n` | Langues prises en charge et contrôle de leur complétude |
+| `heimdall-net` | Connexions TCP à un hôte par son nom, Happy Eyeballs (RFC 8305) |
 | `heimdall-ssh` | Sessions SSH, tunnels, rebonds |
 | `heimdall-sftp` | SFTP, FTP et FTPS |
 | `heimdall-term` | Émulation de terminal et pseudo-terminaux locaux |
@@ -47,7 +48,7 @@ embarqué.
 | `xtask` | Outillage de développement |
 
 Seul `heimdall-ui` dépend d'iced. Les crates de protocole ne dépendent que de
-`heimdall-core`.
+`heimdall-core` et `heimdall-net`.
 
 ## Compilation
 

@@ -158,3 +158,44 @@ pub fn double_click_messages<'a>(window: impl Fn() -> Drawn<'a>, label: &str) ->
     }
     messages
 }
+
+/// Where each text `label` is drawn, in the order the window holds them: the window's own
+/// first, then what a menu draws over it.
+pub fn all_bounds(ui: &mut Simulator<'_, Message>, label: &str) -> Vec<iced::Rectangle> {
+    use iced_test::selector::{Candidate, Selector as _, Text};
+
+    let mut found = Vec::new();
+    // Never selected: every match is seen, and the search fails at the end.
+    let _ = ui.find(|candidate: Candidate<'_>| -> Option<Text> {
+        let mut said = label;
+        if let Some(text) = said.select(candidate) {
+            found.push(text.bounds());
+        }
+        None
+    });
+    found
+}
+
+/// Where the last text `label` is drawn: an open menu's entry, drawn over the window.
+pub fn last_bounds(ui: &mut Simulator<'_, Message>, label: &str) -> iced::Rectangle {
+    all_bounds(ui, label)
+        .pop()
+        .unwrap_or_else(|| panic!("{label} is drawn"))
+}
+
+/// Clicks the last text `label`: an open menu's entry rather than the window's own.
+pub fn click_last(ui: &mut Simulator<'_, Message>, label: &str) {
+    let center = last_bounds(ui, label).center();
+    ui.point_at(center);
+    let _ = ui.simulate(iced_test::simulator::click());
+}
+
+/// Right-clicks the first text `label`.
+pub fn right_click(ui: &mut Simulator<'_, Message>, label: &str) {
+    let center = ui.find(label).expect(label).bounds().center();
+    ui.point_at(center);
+    let _ = ui.simulate([
+        iced::Event::Mouse(MouseEvent::ButtonPressed(Button::Right)),
+        iced::Event::Mouse(MouseEvent::ButtonReleased(Button::Right)),
+    ]);
+}

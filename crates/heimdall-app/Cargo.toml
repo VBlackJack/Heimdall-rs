@@ -21,6 +21,8 @@ test-data-dir = ["heimdall-core/test-data-dir"]
 heimdall-core.workspace = true
 heimdall-files.workspace = true
 heimdall-keyring.workspace = true
+# heimdall-net: every TCP connection to a host by name, Happy Eyeballs.
+heimdall-net.workspace = true
 heimdall-rdp.workspace = true
 heimdall-remote.workspace = true
 heimdall-sftp.workspace = true

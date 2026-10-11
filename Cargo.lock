@@ -2355,6 +2355,7 @@ dependencies = [
  "heimdall-core",
  "heimdall-files",
  "heimdall-keyring",
+ "heimdall-net",
  "heimdall-rdp",
  "heimdall-remote",
  "heimdall-sftp",
@@ -2414,6 +2415,7 @@ dependencies = [
 name = "heimdall-files"
 version = "0.1.0"
 dependencies = [
+ "heimdall-net",
  "heimdall-sftp",
  "heimdall-tls",
  "libunftp",
@@ -2447,12 +2449,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "heimdall-net"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "tokio",
+]
+
+[[package]]
 name = "heimdall-rdp"
 version = "0.1.0"
 dependencies = [
  "cpal",
  "data-encoding",
  "heimdall-core",
+ "heimdall-net",
  "ironrdp",
  "ironrdp-core",
  "ironrdp-tokio",
@@ -2474,6 +2485,7 @@ name = "heimdall-remote"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "heimdall-net",
  "heimdall-tls",
  "rcgen",
  "sealvault",
@@ -2501,6 +2513,7 @@ version = "0.1.0"
 dependencies = [
  "data-encoding",
  "heimdall-core",
+ "heimdall-net",
  "log",
  "russh",
  "sealvault",

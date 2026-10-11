@@ -172,6 +172,18 @@ pub fn special_keys(keys: heimdall_app::SpecialKeys) -> String {
     }
 }
 
+/// The name of a VNC quality, as the C# toolbar's menu names it.
+#[must_use]
+pub fn vnc_quality(quality: heimdall_app::VncQuality) -> String {
+    use heimdall_app::VncQuality;
+    match quality {
+        VncQuality::Best => fl!("ui-session-vnc-quality-best"),
+        VncQuality::Balanced => fl!("ui-session-vnc-quality-balanced"),
+        VncQuality::Performance => fl!("ui-session-vnc-quality-performance"),
+        VncQuality::LowBandwidth => fl!("ui-session-vnc-quality-low-bandwidth"),
+    }
+}
+
 /// What a `WinRM` session's first output said went wrong, as the C# says it.
 #[must_use]
 pub fn winrm_diagnostic(found: heimdall_core::winrm_diagnostic::Diagnostic) -> String {
