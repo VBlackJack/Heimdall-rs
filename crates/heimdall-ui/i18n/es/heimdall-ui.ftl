@@ -285,6 +285,7 @@ ui-certificate-title = Certificado de servidor no reconocido
 ui-certificate-body = "{ $name }" respondió en { $host }:{ $port } con un certificado que este perfil nunca ha aprobado.
 ui-certificate-caution = Heimdall no puede saber si es la máquina esperada. Apruébalo solo si reconoces la huella siguiente, o si sabes que varias máquinas responden a este nombre.
 ui-certificate-fingerprint = Huella SHA-256: { $fingerprint }
+ui-certificate-key-fingerprint = Clave pública SHA-256: { $fingerprint }
 ui-certificate-trust-button = Confiar en este certificado
 ui-certificate-trust-once-button = Solo esta vez
 ui-certificate-refuse-button = No conectar
@@ -2106,6 +2107,13 @@ ui-dialog-settings-import-body = { $count ->
    *[other] { $count } ajustes van a cambiar:
 }
 ui-dialog-settings-import-line = { $key }: { $before } -> { $after }
+ui-dialog-settings-import-sensitive = Revise estos primero: deciden lo que Heimdall ejecuta en este equipo.
+ui-dialog-settings-import-weakens = Estos debilitan un control de seguridad:
+ui-dialog-settings-import-more = y { $count } más
+ui-dialog-settings-import-ignored = { $count ->
+    [one] El archivo también contiene { $count } ajuste que esta versión no importa. Se deja fuera:
+   *[other] El archivo también contiene { $count } ajustes que esta versión no importa. Se dejan fuera:
+}
 ui-dialog-settings-import-confirm = Importar
 ui-settings-value-on = Activado
 ui-settings-value-off = Desactivado
@@ -3744,7 +3752,7 @@ ui-status-legacy-migration-reoffer-failed = No se pudo guardar la preferencia de
 ui-onboarding-sessions-title = Conectar a sesiones
 ui-onboarding-sessions-body = Gestiona RDP, SSH, SFTP, VNC y más desde una sola interfaz. Añade tu primera sesión o importa desde MobaXterm, mRemoteNG o RDCMan.
 ui-onboarding-add-title = Añade tu primera sesión
-ui-onboarding-add-body = Este botón crea una sesión, una herramienta, una carpeta o una pasarela SSH. También puedes importar desde MobaXterm, mRemoteNG o RDCMan.
+ui-onboarding-add-body = El botón + en la parte superior de la lista de sesiones crea una sesión, una herramienta, una carpeta o una pasarela SSH. También puedes importar desde MobaXterm, mRemoteNG o RDCMan.
 ui-onboarding-search-title = Encuentra cualquier cosa rápidamente
 ui-onboarding-search-body = Filtra sesiones y herramientas mientras escribes. Coincide con nombres, hosts y etiquetas.
 ui-onboarding-tools-title = Herramientas integradas
@@ -3752,7 +3760,7 @@ ui-onboarding-tools-body = { $count } herramientas de red, seguridad, codificaci
 ui-onboarding-quick-connect-title = Conexión rápida
 ui-onboarding-quick-connect-body = Pulsa Ctrl+K para abrir la paleta de comandos. Escribe un nombre de host, dirección IP o nombre de herramienta para conectar o iniciar al instante.
 ui-onboarding-settings-title = Ajustes, y este recorrido
-ui-onboarding-settings-body = Los valores predeterminados de protocolo, la apariencia y la seguridad están aquí. También el botón que vuelve a mostrar este recorrido, cuando quieras.
+ui-onboarding-settings-body = Los valores predeterminados de protocolo, la apariencia y la seguridad están en la pestaña Ajustes. También el botón Volver a mostrar el recorrido, en Recorrido de bienvenida, cuando quieras.
 ui-onboarding-skip = Omitir
 ui-onboarding-next = Siguiente
 ui-onboarding-get-started = Empezar

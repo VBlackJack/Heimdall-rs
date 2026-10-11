@@ -359,6 +359,7 @@ ui-certificate-title = Unrecognised Server Certificate
 ui-certificate-body = "{ $name }" answered at { $host }:{ $port }, presenting a certificate this profile has never approved.
 ui-certificate-caution = Heimdall cannot tell whether this is the machine you expect. Approve it only if you recognise the fingerprint below, or if you know that several machines answer to this name.
 ui-certificate-fingerprint = SHA-256 fingerprint: { $fingerprint }
+ui-certificate-key-fingerprint = Public key SHA-256: { $fingerprint }
 ui-certificate-trust-button = Trust this certificate
 ui-certificate-trust-once-button = Just this once
 ui-certificate-refuse-button = Do not connect
@@ -2284,6 +2285,13 @@ ui-dialog-settings-import-body = { $count ->
    *[other] { $count } settings will change:
 }
 ui-dialog-settings-import-line = { $key }: { $before } -> { $after }
+ui-dialog-settings-import-sensitive = Check these first: they decide what Heimdall runs on this computer.
+ui-dialog-settings-import-weakens = These weaken a security check:
+ui-dialog-settings-import-more = and { $count } more
+ui-dialog-settings-import-ignored = { $count ->
+    [one] The file also holds { $count } setting this version does not import. It is left out:
+   *[other] The file also holds { $count } settings this version does not import. They are left out:
+}
 ui-dialog-settings-import-confirm = Import
 ui-settings-value-on = On
 ui-settings-value-off = Off
@@ -3704,7 +3712,7 @@ ui-status-legacy-migration-reoffer-failed = The legacy migration preference coul
 ui-onboarding-sessions-title = Connect to Sessions
 ui-onboarding-sessions-body = Manage RDP, SSH, SFTP, VNC and more from a single interface. Add your first session or import from MobaXterm, mRemoteNG, or RDCMan.
 ui-onboarding-add-title = Add your first session
-ui-onboarding-add-body = This button creates a session, a tool, a folder or an SSH gateway. You can also import from MobaXterm, mRemoteNG or RDCMan.
+ui-onboarding-add-body = The + button at the top of the sessions list creates a session, a tool, a folder or an SSH gateway. You can also import from MobaXterm, mRemoteNG or RDCMan.
 ui-onboarding-search-title = Find anything quickly
 ui-onboarding-search-body = Filter sessions and tools as you type. It matches names, hosts and tags.
 ui-onboarding-tools-title = Built-in Tools
@@ -3712,7 +3720,7 @@ ui-onboarding-tools-body = { $count } network, security, encoding and system too
 ui-onboarding-quick-connect-title = Quick Connect
 ui-onboarding-quick-connect-body = Press Ctrl+K to open the Command Palette. Type a hostname, IP address, or tool name to instantly connect or launch.
 ui-onboarding-settings-title = Settings, and this tour
-ui-onboarding-settings-body = Protocol defaults, appearance and security live here. So does the button that shows this tour again, whenever you want it.
+ui-onboarding-settings-body = Protocol defaults, appearance and security live in the Settings tab. So does Show the tour again, under Welcome tour, whenever you want it.
 ui-onboarding-skip = Skip
 ui-onboarding-next = Next
 ui-onboarding-get-started = Get Started

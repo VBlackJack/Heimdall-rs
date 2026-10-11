@@ -2200,6 +2200,13 @@ impl Tab {
             && self.pending_rdp_key.is_some()
     }
 
+    /// The key of the certificate the question asks about, while it is asked: said apart
+    /// from the certificate's own fingerprint, which is what an answer trusts.
+    #[must_use]
+    pub fn certificate_key(&self) -> Option<heimdall_rdp::Fingerprint> {
+        self.pending_rdp_key.map(|(key, _)| key)
+    }
+
     /// What the tab is called: the name the user gave it, else its title.
     #[must_use]
     pub fn display_title(&self) -> &str {

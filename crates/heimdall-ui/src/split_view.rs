@@ -37,7 +37,9 @@ use iced::keyboard::key::Named;
 use iced::widget::{button, column, container, mouse_area, row, text, tooltip};
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard, mouse};
 
+use crate::ellipsis;
 use crate::i18n::fl;
+use crate::priority_row::PriorityRow;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
@@ -70,6 +72,26 @@ const DISCONNECT_PADDING: [f32; 2] = [2.0, 8.0];
 
 /// Space between a pane's name and what follows it, as the C# header's margins.
 const HEADER_GAP: f32 = 8.0;
+
+/// Widest a pane's name grows, as the C# `SessionTitleText`'s `MaxWidth`.
+const TITLE_MAX_WIDTH: f32 = 300.0;
+
+/// Widest what a pane connects to and its route grow, as the C# `EndpointTextBlock`'s and
+/// `GatewayRouteText`'s `MaxWidth`.
+const DETAIL_MAX_WIDTH: f32 = 250.0;
+
+/// Rank of what a pane's header keeps whole while there is room: its marks, state and
+/// badges.
+const RANK_KEPT: u8 = 0;
+
+/// Rank of a pane's name, served after what is kept whole.
+const RANK_TITLE: u8 = 1;
+
+/// Rank of what a pane connects to, served after its name.
+const RANK_DETAIL: u8 = 2;
+
+/// Rank of a pane's route, served last.
+const RANK_ROUTE: u8 = 3;
 
 /// Between a pane's name and its state, as the C# header writes it.
 const STATE_SEPARATOR: &str = " - ";
@@ -732,18 +754,6 @@ pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'
         badges,
         ..
     } = heading;
-    let secondary = |said: String| text(said).size(font_size::CAPTION).style(text::secondary);
-    let named = row(marks)
-        .push(text(name).size(font_size::BODY).font(styles::SEMIBOLD))
-        // The separator against what precedes it, as the C# runs: its own spaces apart.
-        .push(row![
-            row![detail.map(secondary), route.map(secondary)].spacing(HEADER_GAP),
-            secondary(STATE_SEPARATOR.to_owned()),
-            text(state).size(font_size::CAPTION),
-        ])
-        .extend(badges)
-        .spacing(HEADER_GAP)
-        .align_y(iced::Alignment::Center);
     let tip = |content: Element<'static, Message>, said: String| {
         tooltip(
             content,
@@ -752,6 +762,54 @@ pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'
         )
         .style(container::rounded_box)
     };
+    // Each on one line, ended with an ellipsis past its C# `MaxWidth`, the whole of it in its
+    // tooltip, as the C# header's `TextBlock`s.
+    let trimmed = |said: String, widest: f32| {
+        tip(
+            ellipsis::text(said.clone())
+                .size(font_size::CAPTION)
+                .style(text::secondary)
+                .max_width(widest)
+                .into(),
+            said,
+        )
+    };
+    let title = tip(
+        ellipsis::text(name.clone())
+            .size(font_size::BODY)
+            .font(styles::SEMIBOLD)
+            .max_width(TITLE_MAX_WIDTH)
+            .into(),
+        name,
+    );
+    // The marks, the state and the badges served first: a long name, address or route
+    // ends with an ellipsis before the state loses its word.
+    let mut named = PriorityRow::new(HEADER_GAP);
+    for mark in marks {
+        named = named.push(RANK_KEPT, mark);
+    }
+    named = named
+        .push(RANK_TITLE, title)
+        .push_maybe(
+            RANK_DETAIL,
+            detail.map(|detail| trimmed(detail, DETAIL_MAX_WIDTH)),
+        )
+        .push_maybe(
+            RANK_ROUTE,
+            route.map(|route| trimmed(route, DETAIL_MAX_WIDTH)),
+        )
+        // The separator against what precedes it, as the C# runs: its own spaces apart.
+        .push_glued(
+            RANK_KEPT,
+            text(STATE_SEPARATOR)
+                .size(font_size::CAPTION)
+                .style(text::secondary)
+                .wrapping(text::Wrapping::None),
+        )
+        .push_glued(RANK_KEPT, ellipsis::text(state).size(font_size::CAPTION));
+    for badge in badges {
+        named = named.push(RANK_KEPT, badge);
+    }
     let split = tip(
         crate::icons::button(crate::icons::Icon::Split)
             .style(styles::subtle)
@@ -760,18 +818,28 @@ pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'
         fl!("ui-split-session-tooltip"),
     );
     let disconnect = tip(
-        button(text(fl!("ui-tab-menu-disconnect")).size(font_size::CAPTION))
-            .style(styles::secondary)
-            .padding(DISCONNECT_PADDING)
-            .on_press(actions.disconnect)
-            .into(),
+        button(
+            text(fl!("ui-tab-menu-disconnect"))
+                .size(font_size::CAPTION)
+                .wrapping(text::Wrapping::None),
+        )
+        .style(styles::secondary)
+        .padding(DISCONNECT_PADDING)
+        .on_press(actions.disconnect)
+        .into(),
         fl!("ui-desktop-disconnect-tooltip"),
     );
     mouse_area(
         container(
-            row![named, iced::widget::space::horizontal(), split, disconnect]
-                .spacing(spacing::XS)
-                .align_y(iced::Alignment::Center),
+            // The buttons first served, as the C# docks them right: what names the pane
+            // takes the room left, and is cut at its edge.
+            row![
+                container(named).width(Length::Fill).clip(true),
+                split,
+                disconnect
+            ]
+            .spacing(spacing::XS)
+            .align_y(iced::Alignment::Center),
         )
         .padding(HEADER_PADDING)
         .width(Length::Fill)
