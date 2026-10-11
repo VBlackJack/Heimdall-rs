@@ -588,6 +588,21 @@ pub enum FilesMessage {
         /// The folder entry dropped on; `None` for the folder the pane shows.
         into: Option<usize>,
     },
+    /// The entries chosen in pane `from` of tab `from_tab` dragged onto pane `onto` of
+    /// another tab, `tab`, into its folder entry at `into`, or the folder it shows: copied
+    /// there, as the module `files_drop` says.
+    DropAcross {
+        /// The tab dragged from.
+        from_tab: TabId,
+        /// Its pane dragged from.
+        from: Side,
+        /// The tab dropped on.
+        tab: TabId,
+        /// Its pane dropped on.
+        onto: Side,
+        /// The folder entry dropped on; `None` for the folder the pane shows.
+        into: Option<usize>,
+    },
     /// The entry of a delete or a change of permissions being worked on ended.
     BatchStepDone {
         /// Tab.
@@ -826,6 +841,18 @@ impl std::fmt::Debug for FilesMessage {
             } => write!(
                 f,
                 "DropEntries({}, {from:?} onto {onto:?} {into:?})",
+                tab.value()
+            ),
+            Self::DropAcross {
+                from_tab,
+                from,
+                tab,
+                onto,
+                into,
+            } => write!(
+                f,
+                "DropAcross({} {from:?} onto {} {onto:?} {into:?})",
+                from_tab.value(),
                 tab.value()
             ),
             Self::BatchStepDone { tab, result } => {
@@ -1094,6 +1121,13 @@ impl App {
                 onto,
                 into,
             } => self.drop_entries(tab, from, onto, into),
+            FilesMessage::DropAcross {
+                from_tab,
+                from,
+                tab,
+                onto,
+                into,
+            } => self.drop_across((from_tab, from), (tab, onto), into),
             FilesMessage::Copied {
                 tab,
                 results,
@@ -1277,6 +1311,19 @@ impl App {
     /// in one plan: one question for whatever is in the way. What is neither a file nor a
     /// folder is said failed, the others go.
     pub(super) fn upload_paths(&mut self, tab: TabId, paths: &[PathBuf]) -> Vec<Effect> {
+        let Some(folder) = self.files_mut(tab).map(|files| files.remote.path.clone()) else {
+            return Vec::new();
+        };
+        self.upload_paths_into(tab, paths, &folder)
+    }
+
+    /// Uploads `paths` as [`Self::upload_paths`] does, into the server's folder `into`.
+    pub(super) fn upload_paths_into(
+        &mut self,
+        tab: TabId,
+        paths: &[PathBuf],
+        into: &RemotePath,
+    ) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -1302,7 +1349,7 @@ impl App {
                 .flatten();
             roots.push(PlannedRoot {
                 root: Root {
-                    remote: files.remote.path.join(&name_bytes(name)),
+                    remote: into.join(&name_bytes(name)),
                     local: path.clone(),
                     kind: if folder { Kind::Folder } else { Kind::File },
                     stamp: heimdall_files::Stamp {
@@ -1772,7 +1819,7 @@ impl App {
 
     /// Lists the entries picked as waiting, and queues them as one, as the C# job: planned
     /// whole once their turn comes, nothing written before every conflict is answered.
-    fn queue_transfer(
+    pub(super) fn queue_transfer(
         &mut self,
         tab: TabId,
         client: RemoteSession,
@@ -2114,6 +2161,12 @@ impl App {
             TransferEvent::Finished(state) => {
                 let done = state == TransferState::Done;
                 let direction = transfer.direction;
+                // Where a download wrote, which another tab's local pane may show.
+                let written = transfer
+                    .picked
+                    .as_ref()
+                    .filter(|_| direction == Direction::Download)
+                    .and_then(|picked| picked.root.local.parent().map(PathBuf::from));
                 transfer.state = state;
                 // What comes next runs.
                 let mut effects = self.next_turn(tab);
@@ -2126,6 +2179,9 @@ impl App {
                             Direction::Upload => Side::Remote,
                         },
                     ));
+                    if let Some(folder) = written {
+                        effects.extend(self.list_local_elsewhere(tab, &folder));
+                    }
                 }
                 effects
             }
@@ -2568,7 +2624,7 @@ impl App {
 
 /// The selected entry at `index` as a transfer's picked entry. A refusal is recorded as a
 /// failed transfer.
-fn prepare(
+pub(super) fn prepare(
     files: &mut FilesPane,
     direction: Direction,
     index: usize,
@@ -2603,7 +2659,7 @@ fn prepare(
             };
             PlannedRoot {
                 root: Root {
-                    remote: files.remote.path.join(&entry.name),
+                    remote: files.remote.entries_folder().join(&entry.name),
                     local: local_dir.join(&name.name),
                     kind: kind(entry.kind),
                     stamp: heimdall_files::Stamp {
@@ -2628,7 +2684,7 @@ fn prepare(
             PlannedRoot {
                 root: Root {
                     remote: remote_dir.join(&name_bytes(&entry.name)),
-                    local: files.local.path.join(&entry.name),
+                    local: files.local.entries_folder().join(&entry.name),
                     kind: kind(entry.kind),
                     stamp: heimdall_files::Stamp {
                         size: entry.size,
