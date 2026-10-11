@@ -208,7 +208,12 @@ pub fn error<'a>(error: String) -> Text<'a> {
 /// What holds a dialog back, as the C# vault and PIN dialogs show a lockout or what
 /// disabling the master password does: in the warning colour, on a card.
 pub fn warning_card<'a>(warning: String) -> Element<'a, Message> {
-    container(text(warning).size(font_size::BODY).style(text::warning))
+    warning_panel(text(warning).size(font_size::BODY).style(text::warning))
+}
+
+/// `content` on the card of [`warning_card`], for a warning with more than one line.
+pub fn warning_panel<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
         .padding(WARNING_CARD_PADDING)
         .width(Length::Fill)
         .style(|theme: &iced::Theme| container::Style {
