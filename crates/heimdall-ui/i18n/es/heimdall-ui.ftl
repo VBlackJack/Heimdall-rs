@@ -423,6 +423,9 @@ ui-dialog-save-failed-title = Error al guardar
 ui-dialog-save-failed-body = No se pudo guardar: { $detail }
 ui-dialog-store-changed-title = Perfiles no guardados
 ui-dialog-store-changed-body = El archivo de perfiles fue modificado por otro programa u otro Heimdall desde que se leyó, así que este cambio no se guardó y el archivo quedó como estaba. Vuelva a abrir Heimdall para cargar el archivo actual y luego repita el cambio.
+ui-dialog-config-recovered-title = Configuración restaurada
+ui-dialog-config-recovered-body = No se pudo leer { $documents } y se cargó desde su última copia válida. Pueden faltar los cambios guardados después de esa copia.
+ui-dialog-config-recovered-separator = {", "}
 ui-dialog-detail = Detalle: { $detail }
 
 ui-import-skip-not-ssh = no es un perfil SSH ({ $kind })
@@ -443,6 +446,8 @@ ui-files-new-folder-button = Nueva carpeta
 ui-files-new-folder-tooltip = Crear nueva carpeta
 ui-files-download-button = Descargar
 ui-files-upload-button = Enviar
+ui-files-upload-files-tooltip = Subir archivos
+ui-files-download-selected-tooltip = Descargar la selección (Ctrl+Mayús+D)
 ui-files-loading = Cargando...
 ui-files-empty = Carpeta vacía
 ui-files-cancel-button = Cancelar
@@ -470,6 +475,7 @@ ui-files-error-unsupported = el servidor no admite esta operación
 ui-files-error-failure = la operación falló
 ui-files-error-session = La sesión SFTP terminó.
 ui-files-error-local = Este equipo lo rechazó: { $detail }
+ui-files-error-local-disk-full = El disco local está lleno. Libere espacio e inténtelo de nuevo.
 ui-files-error-unsafe-name = El nombre del servidor "{ $name }" no se puede usar aquí: { $reason }.
 ui-files-error-not-a-file = Solo se pueden transferir archivos y carpetas, no enlaces ni archivos especiales.
 ui-files-error-too-large = La carpeta contiene demasiados elementos para recorrerla.
@@ -1382,7 +1388,13 @@ ui-files-sudo-off = Modo sudo desactivado
 ui-files-item-count = { $count } elementos
 ui-files-item-count-filtered = { $shown }/{ $count } elementos
 
-ui-files-drop-overlay = Suelta archivos para subirlos
+## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
+ui-files-drop-items = { $count ->
+    [one] { $count } elemento
+   *[other] { $count } elementos
+}
+ui-files-drop-overlay-target = Subir { $items } a { $folder }
+ui-files-drop-overlay-queued = Añadir { $items } a la cola hacia { $folder }
 
 ui-trusted-host-keys-title = Claves de host de confianza
 ui-trusted-host-keys-hint = Revisa las claves de host SSH en las que Heimdall confía para futuras conexiones.
@@ -1475,6 +1487,8 @@ ui-error-local-port-unavailable = El puerto local { $port } ya está en uso o re
 ## The tunnels panel and its status-bar button, as the C# ones.
 ui-tunnels-header = Túneles ({ $count })
 ui-tunnels-close-all = Cerrar todo
+ui-tunnels-close-selected = Cerrar seleccionados
+ui-tunnels-close-selected-tooltip = Cerrar túnel seleccionado
 ui-tunnels-new = + Nuevo
 ui-tunnels-collapse-tooltip = Contraer el panel de túneles
 ui-tunnels-toggle-tooltip = Mostrar/ocultar el panel de túneles
@@ -1770,6 +1784,7 @@ ui-status-keys-sent = { $keys } enviado al remoto
 ui-status-keys-not-sent = No se pudieron enviar las teclas a la sesión remota.
 ui-files-state-queued = En cola
 ui-files-state-preparing = Preparando la transferencia...
+ui-files-state-scanning = Analizando carpetas: { $count } entradas encontradas...
 ui-files-retry-button = Reintentar
 ui-files-clear-finished-button = Borrar finalizadas
 ui-files-error-interrupted = La transferencia se detuvo de forma inesperada.
@@ -3618,6 +3633,8 @@ ui-tunnels-session-route-local = -
 ui-tunnels-session-route-local-tooltip = Transportado dentro de Heimdall: sin puerto local
 ui-tunnels-close-all-tooltip = Cierra los túneles abiertos a mano; las sesiones a través de una pasarela siguen abiertas
 ui-tab-route-badge = vía
+ui-tab-route-badge-healthy = Túneles activos
+ui-tab-route-badge-unhealthy = Túneles activos - al menos uno no está saludable
 ui-origin-rdp-file = Importado desde archivo RDP
 ui-origin-openssh = Importado desde configuración de OpenSSH
 ui-origin-putty = Importado desde el registro de PuTTY

@@ -1566,6 +1566,15 @@ pub enum Effect {
         /// Tab.
         tab: TabId,
     },
+    /// Ask the user for a folder of this computer to download the server's selection into,
+    /// then send [`FilesMessage::DownloadFolderPicked`], as the C# "Download" of the SFTP
+    /// pane without a local one.
+    PickDownloadFolder {
+        /// Tab.
+        tab: TabId,
+        /// Where the picker opens: the folder the last download went to.
+        start: Option<PathBuf>,
+    },
     /// Ask the server of a shell tab how it is, then send [`Message::HealthRead`].
     ReadHealth {
         /// Tab.
@@ -1914,6 +1923,9 @@ impl fmt::Debug for Effect {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
             Self::PickUploads { tab } => write!(f, "PickUploads({})", tab.value()),
+            Self::PickDownloadFolder { tab, .. } => {
+                write!(f, "PickDownloadFolder({})", tab.value())
+            }
             Self::PickSaveFolder { tab } => write!(f, "PickSaveFolder({})", tab.value()),
             Self::ReadExplorerFiles { tab } => write!(f, "ReadExplorerFiles({})", tab.value()),
             Self::StartEdit { tab, remote, .. } => {
@@ -2916,6 +2928,13 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// The profile or settings files named were unreadable at start and were read from
+    /// their last good copy, as the C# `ConfigRecoveredFromBackupMessage` says: what was
+    /// saved after that copy may be missing.
+    ConfigRecovered {
+        /// The files' names, in the order read.
+        documents: Vec<String>,
+    },
     /// A change could not be saved, as the C# `EditorSaveErrorMessage` says.
     StoreError {
         /// Technical detail.
@@ -3191,6 +3210,9 @@ pub struct App {
     hello: hello_gate::HelloGate,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
+    /// The row selected on the Tunnels page, as the C# grid's `SelectedItem`: what "Close
+    /// Selected" closes.
+    selected_tunnel: Option<crate::tunnel::TunnelId>,
     /// The identifier of the next tunnel.
     next_tunnel: crate::tunnel::TunnelId,
     /// The gateway key the user is asked about for a tunnel.
@@ -3321,7 +3343,7 @@ impl App {
             ),
         };
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
-        let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
+        let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog, &store);
         let tunnels_panel = !settings.collapse_tunnels_panel;
         let (macros, files_state, split_layouts) = side_files(&config.profiles_file);
         let mut app = Self {
@@ -3366,6 +3388,7 @@ impl App {
             legacy_migration: legacy_migration::LegacyMigrationState::default(),
             hello: hello_gate::HelloGate::default(),
             tunnel_runs: Vec::new(),
+            selected_tunnel: None,
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
             putty_routes: Vec::new(),
@@ -4972,6 +4995,7 @@ impl App {
                 | Dialog::StoreUnreadable { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::StoreChanged { .. }
+                | Dialog::ConfigRecovered { .. }
                 | Dialog::PasswordSaveFailed { .. }
                 | Dialog::Shortcuts
                 // Confirmed before: see `confirm_dialog`.

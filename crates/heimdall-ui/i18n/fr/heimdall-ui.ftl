@@ -423,6 +423,9 @@ ui-dialog-save-failed-title = Erreur de sauvegarde
 ui-dialog-save-failed-body = Échec de la sauvegarde : { $detail }
 ui-dialog-store-changed-title = Profils non enregistrés
 ui-dialog-store-changed-body = Le fichier des profils a été modifié par un autre programme ou un autre Heimdall depuis sa lecture : ce changement n'a donc pas été enregistré et le fichier est resté tel quel. Rouvrez Heimdall pour charger le fichier actuel, puis refaites le changement.
+ui-dialog-config-recovered-title = Configuration restaurée
+ui-dialog-config-recovered-body = { $documents } était illisible et a été chargé depuis sa dernière copie valide. Les changements enregistrés après cette copie peuvent manquer.
+ui-dialog-config-recovered-separator = {", "}
 ui-dialog-detail = Détail : { $detail }
 
 ui-import-skip-not-ssh = pas un profil SSH ({ $kind })
@@ -443,6 +446,8 @@ ui-files-new-folder-button = Nouveau dossier
 ui-files-new-folder-tooltip = Créer un nouveau dossier
 ui-files-download-button = Télécharger
 ui-files-upload-button = Envoyer
+ui-files-upload-files-tooltip = Envoyer des fichiers
+ui-files-download-selected-tooltip = Télécharger la sélection (Ctrl+Maj+D)
 ui-files-loading = Chargement...
 ui-files-empty = Dossier vide
 ui-files-cancel-button = Annuler
@@ -470,6 +475,7 @@ ui-files-error-unsupported = le serveur ne prend pas en charge cette opération
 ui-files-error-failure = l'opération a échoué
 ui-files-error-session = La session SFTP est terminée.
 ui-files-error-local = Cet ordinateur a refusé : { $detail }
+ui-files-error-local-disk-full = Le disque local est plein. Libérez de l'espace puis réessayez.
 ui-files-error-unsafe-name = Le nom du serveur "{ $name }" n'est pas utilisable ici : { $reason }.
 ui-files-error-not-a-file = Seuls les fichiers et les dossiers peuvent être transférés, pas les liens ni les fichiers spéciaux.
 ui-files-error-too-large = Le dossier contient trop d'éléments pour être parcouru.
@@ -1385,7 +1391,13 @@ ui-files-sudo-off = Mode sudo désactivé
 ui-files-item-count = { $count } éléments
 ui-files-item-count-filtered = { $shown }/{ $count } éléments
 
-ui-files-drop-overlay = Déposer les fichiers pour envoyer
+## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
+ui-files-drop-items = { $count ->
+    [one] { $count } élément
+   *[other] { $count } éléments
+}
+ui-files-drop-overlay-target = Envoyer { $items } vers { $folder }
+ui-files-drop-overlay-queued = Ajouter { $items } à la file d'attente vers { $folder }
 
 ui-trusted-host-keys-title = Clés d'hôtes approuvées
 ui-trusted-host-keys-hint = Contrôler les clés d'hôtes SSH que Heimdall approuve pour les prochaines connexions.
@@ -1478,6 +1490,8 @@ ui-error-local-port-unavailable = Le port local { $port } est déjà utilisé, o
 ## The tunnels panel and its status-bar button, as the C# ones.
 ui-tunnels-header = Tunnels ({ $count })
 ui-tunnels-close-all = Tout fermer
+ui-tunnels-close-selected = Fermer la sélection
+ui-tunnels-close-selected-tooltip = Fermer le tunnel sélectionné
 ui-tunnels-new = + Nouveau
 ui-tunnels-collapse-tooltip = Réduire le panneau des tunnels
 ui-tunnels-toggle-tooltip = Afficher/masquer le panneau des tunnels
@@ -1773,6 +1787,7 @@ ui-status-keys-sent = { $keys } envoyé à la session distante
 ui-status-keys-not-sent = Impossible d'envoyer les touches à la session distante.
 ui-files-state-queued = En attente
 ui-files-state-preparing = Préparation du transfert...
+ui-files-state-scanning = Analyse des dossiers : { $count } entrées trouvées...
 ui-files-retry-button = Réessayer
 ui-files-clear-finished-button = Effacer les terminés
 ui-files-error-interrupted = Le transfert s'est interrompu de façon inattendue.
@@ -3624,6 +3639,8 @@ ui-tunnels-session-route-local = -
 ui-tunnels-session-route-local-tooltip = Acheminé dans Heimdall : aucun port local
 ui-tunnels-close-all-tooltip = Ferme les tunnels ouverts à la main ; les sessions via une passerelle restent ouvertes
 ui-tab-route-badge = via
+ui-tab-route-badge-healthy = Tunnels actifs
+ui-tab-route-badge-unhealthy = Tunnels actifs - au moins un est en erreur
 ui-origin-rdp-file = Importé depuis un fichier RDP
 ui-origin-openssh = Importé depuis la configuration OpenSSH
 ui-origin-putty = Importé depuis le registre PuTTY

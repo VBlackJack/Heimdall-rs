@@ -25,9 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use heimdall_app::files::{
-    EntryKind, FilesError, FilesKey, Side, list_local, list_remote, plan_transfer,
-};
+use heimdall_app::files::{EntryKind, FilesError, FilesKey, Side, list_local, list_remote};
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::local_events;
@@ -362,11 +360,32 @@ fn takes_drops(tab: &Tab) -> bool {
             .is_some_and(|files| files.client.is_some())
 }
 
-/// "Drop files to upload", over a Files tab while files are dragged over its window.
-fn drop_layer<'a>() -> Element<'a, Message> {
+/// Over a Files tab while `count` files are dragged over its window, as the C#
+/// `DescribeExternalDrop`: how many go to which folder of the server, or join the queue
+/// behind the transfer running.
+fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Element<'a, Message> {
+    let items = fl!("ui-files-drop-items", count = count);
+    let folder = files.remote.path.display();
+    let busy = files
+        .transfers
+        .iter()
+        .any(|transfer| !transfer.state.ended());
+    let said = if busy {
+        fl!(
+            "ui-files-drop-overlay-queued",
+            items = items,
+            folder = folder
+        )
+    } else {
+        fl!(
+            "ui-files-drop-overlay-target",
+            items = items,
+            folder = folder
+        )
+    };
     opaque(
         container(
-            container(text(fl!("ui-files-drop-overlay")).size(font_size::TITLE))
+            container(text(said).size(font_size::TITLE))
                 .padding(spacing::MD)
                 .style(container::bordered_box),
         )
@@ -1532,8 +1551,9 @@ pub struct Shell {
     /// The window's own last key, click or wheel turn: the idle time where the computer's
     /// cannot be read.
     last_input: std::time::Instant,
-    /// Files are dragged over the window.
-    files_hovered: bool,
+    /// How many files dragged from Explorer are over the window: none once they leave or
+    /// drop.
+    files_hovered: usize,
     /// The files of the drops still gathered, by the window they were dropped on.
     drops: crate::drop_batch::DropBatches,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
@@ -1780,7 +1800,7 @@ impl Shell {
             ftps_certificate_search: String::new(),
             vnc_certificate_search: String::new(),
             last_input: std::time::Instant::now(),
-            files_hovered: false,
+            files_hovered: 0,
             drops: crate::drop_batch::DropBatches::default(),
             desktop_fit: HashMap::new(),
             failure_details_open: HashSet::new(),
@@ -1993,8 +2013,12 @@ impl Shell {
             .tab_page(tab, true)
             .map(move |message| Message::InFloating(window, Box::new(message)));
         let mut layers = stack![crate::floating_view::view(heading, body)];
-        if floating.hovered && takes_drops(tab) {
-            layers = layers.push(drop_layer());
+        if let Some(files) = tab
+            .files
+            .as_deref()
+            .filter(|_| floating.hovered > 0 && takes_drops(tab))
+        {
+            layers = layers.push(drop_layer(files, floating.hovered));
         }
         if let Some(menu) = self.floating_menu(tab.id) {
             layers = layers
@@ -4284,6 +4308,9 @@ impl Shell {
             Effect::PickRdpFiles => pick_rdp(main),
             // Held by the window the Files tab is in, as its C# browser's.
             Effect::PickUploads { tab } => pick_uploads(tab, self.owner_of(tab)),
+            Effect::PickDownloadFolder { tab, start } => {
+                pick_download_folder(tab, start, self.owner_of(tab))
+            }
             Effect::ReadExplorerFiles { tab } => read_explorer_files(tab),
             Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
             // Held by the window the desktop is in, as the C# prompts are.
@@ -4942,9 +4969,11 @@ impl Shell {
             ]
             .height(Length::Fill)
             .into(),
-            Page::Tunnels => {
-                crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
-            }
+            Page::Tunnels => crate::tunnels_view::page(
+                &self.app.tunnels,
+                &self.app.session_routes(),
+                self.app.selected_tunnel(),
+            ),
             Page::Tools => crate::tools::catalog::page(&self.app, &self.tools_search),
             Page::About => crate::about_view::view(&self.app),
             Page::Settings { .. } => container(self.content())
@@ -5688,8 +5717,9 @@ impl Shell {
     /// server's folder of the Files tab shown, as the C# tab takes what Explorer drops on it.
     fn drop_message(&mut self, message: &Message) -> Vec<Effect> {
         match *message {
+            // winit says each file of the drag in turn: they are counted.
             Message::FilesHovered(over) => {
-                self.files_hovered = over;
+                self.files_hovered = if over { self.files_hovered + 1 } else { 0 };
                 Vec::new()
             }
             Message::DropGathered(place) => {
@@ -5712,10 +5742,11 @@ impl Shell {
         }
     }
 
-    /// "Drop files to upload" over the Files tab shown while files are dragged over it.
+    /// Where the files dragged over the Files tab shown go, while they are.
     fn drop_overlay(&self) -> Option<Element<'_, Message>> {
-        self.drop_target().filter(|_| self.files_hovered)?;
-        Some(drop_layer())
+        let tab = self.drop_target().filter(|_| self.files_hovered > 0)?;
+        let files = self.app.tab(tab)?.files.as_deref()?;
+        Some(drop_layer(files, self.files_hovered))
     }
 
     /// The transcripts' folder typed, or applied.
@@ -6871,12 +6902,30 @@ impl Shell {
 
     /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
     /// goes straight.
+    /// Its colour says the route's health, as the C# tab's tunnel badge: the success colour
+    /// while the session runs, the warning colour once it failed, ended or waits to open
+    /// again, said in its tooltip above the route.
     fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
         let route = self.route_text(tab)?;
+        let (health, colour): (String, fn(&Theme) -> text::Style) = match self.app.tunnel_badge(tab)
+        {
+            heimdall_app::tunnel::TunnelBadge::Hidden => return None,
+            heimdall_app::tunnel::TunnelBadge::Healthy => {
+                (fl!("ui-tab-route-badge-healthy"), text::success)
+            }
+            heimdall_app::tunnel::TunnelBadge::Unhealthy => {
+                (fl!("ui-tab-route-badge-unhealthy"), text::warning)
+            }
+        };
         Some(
             tooltip(
-                text(fl!("ui-tab-route-badge")).size(font_size::CAPTION),
-                text(route).size(font_size::CAPTION),
+                text(fl!("ui-tab-route-badge"))
+                    .size(font_size::CAPTION)
+                    .style(colour),
+                column![
+                    text(health).size(font_size::CAPTION),
+                    text(route).size(font_size::CAPTION),
+                ],
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
@@ -8875,6 +8924,35 @@ fn pick_uploads(tab: TabId, main: Option<window::Id>) -> Task<Message> {
     })
 }
 
+/// The folder picker of a download from a Files tab without its local pane, held by the
+/// window and opened on `start`, as the C# `PickDownloadFolder`; nothing when it is closed.
+fn pick_download_folder(
+    tab: TabId,
+    start: Option<std::path::PathBuf>,
+    main: Option<window::Id>,
+) -> Task<Message> {
+    let title = fl!("ui-files-download-button");
+    main_window_task(main).then(move |id| {
+        let mut dialog = crate::file_dialog::FileDialog::new().set_title(title.clone());
+        if let Some(start) = &start {
+            dialog = dialog.set_directory(start);
+        }
+        let pick = match id {
+            Some(id) => window::run(id, move |window| dialog.set_parent(window).pick_folder()),
+            None => Task::done(dialog.pick_folder()),
+        };
+        pick.then(move |pick| {
+            Task::future(pick).then(move |picked| match picked {
+                Ok(Some(folder)) => Task::done(Message::App(AppMessage::Files(
+                    FilesMessage::DownloadFolderPicked { tab, folder },
+                ))),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
+            })
+        })
+    })
+}
+
 /// The open dialog of the `known_hosts` import, held by the window, then the file read;
 /// nothing when no file is picked.
 fn pick_known_hosts(main: Option<window::Id>) -> Task<Message> {
@@ -8991,6 +9069,13 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
             fl!("ui-dialog-store-changed-title"),
             vec![text(fl!("ui-dialog-store-changed-body")), detail(technical)],
         ),
+        Dialog::ConfigRecovered { documents } => (
+            fl!("ui-dialog-config-recovered-title"),
+            vec![text(fl!(
+                "ui-dialog-config-recovered-body",
+                documents = documents.join(&fl!("ui-dialog-config-recovered-separator"))
+            ))],
+        ),
         other => {
             let (title, lines) = crate::rdp_view::report_lines(other)
                 .map(|lines| (fl!("ui-rdp-title"), lines))
@@ -9007,7 +9092,7 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. } => Severity::Error,
-        Dialog::StoreChanged { .. } => Severity::Warning,
+        Dialog::StoreChanged { .. } | Dialog::ConfigRecovered { .. } => Severity::Warning,
         _ => Severity::Info,
     };
     dialog_parts::message(
@@ -11702,11 +11787,21 @@ fn files_task(effect: Effect, journal: Option<OperationJournal>) -> Task<Message
         }),
         Effect::PlanTransfer { tab, request } => {
             let planned = (*request).clone();
-            Task::perform(plan_transfer(planned), move |result| {
-                Message::App(AppMessage::Files(FilesMessage::Planned {
-                    tab,
-                    request: request.clone(),
-                    result: result.map(Box::new),
+            // Started inside the task, like a transfer: spawning needs the runtime.
+            let events =
+                stream::once(async move { heimdall_app::files::plan_events(planned) }).flatten();
+            Task::stream(events).map(move |event| {
+                Message::App(AppMessage::Files(match event {
+                    heimdall_app::files::PlanEvent::Scanned(entries) => FilesMessage::Scanning {
+                        tab,
+                        rows: request.rows.clone(),
+                        entries,
+                    },
+                    heimdall_app::files::PlanEvent::Planned(result) => FilesMessage::Planned {
+                        tab,
+                        request: request.clone(),
+                        result: result.map(Box::new),
+                    },
                 }))
             })
         }
@@ -12808,7 +12903,8 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. }
-        | Dialog::StoreChanged { .. } => report(dialog, ok_button()),
+        | Dialog::StoreChanged { .. }
+        | Dialog::ConfigRecovered { .. } => report(dialog, ok_button()),
         Dialog::SessionsPreview(_)
         | Dialog::RdpPreview(_)
         | Dialog::HostKeysPreview(_)

@@ -410,9 +410,7 @@ pub(crate) async fn open_copy(
             let folder = edit_folder(&base).map_err(|_| FilesError::WorkingFolderUnprotected)?;
             sweep(&base, &keep);
             let local = folder.join(&name.name);
-            write_new(&local, &data).map_err(|error| FilesError::Local {
-                detail: error.to_string(),
-            })?;
+            write_new(&local, &data).map_err(|error| FilesError::local(&error))?;
             let modified = std::fs::metadata(&local)
                 .and_then(|found| found.modified())
                 .ok();

@@ -30,6 +30,7 @@ pub mod folder_acl;
 pub mod gateway_parents;
 pub mod import;
 pub mod instance;
+pub mod last_good_copy;
 pub mod lockout;
 pub mod macros;
 pub mod metadata;

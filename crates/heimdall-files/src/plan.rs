@@ -35,6 +35,10 @@ use tokio_util::sync::CancellationToken;
 use crate::conflict::{self, Checked, Choice, Kind, Outcome, PlanError, Planned, Policy, Target};
 use crate::{FolderReport, ItemKind, RemoteError, RemotePath, RemoteSession};
 
+/// How many entries a download's walk finds between two reports of how far it got, as the
+/// C# `ScanReportEveryEntries`.
+pub const SCAN_REPORT_EVERY: usize = 25;
+
 /// A file's size and time of modification, as known: what a conflict shows of either copy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Stamp {
@@ -239,6 +243,23 @@ impl RemoteSession {
         roots: &[Root],
         cancel: &CancellationToken,
     ) -> Result<Plan, RemoteError> {
+        self.plan_download_reporting(roots, cancel, &mut |_| {})
+            .await
+    }
+
+    /// Plans a download as [`Self::plan_download`] does, saying to `scanned` how many
+    /// entries its walk of the server's folders found every [`SCAN_REPORT_EVERY`], as the C#
+    /// `ReportDownloadScan`: a large folder takes a while to walk.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::plan_download`].
+    pub async fn plan_download_reporting(
+        &self,
+        roots: &[Root],
+        cancel: &CancellationToken,
+        scanned: &mut (dyn FnMut(usize) + Send),
+    ) -> Result<Plan, RemoteError> {
         let mut walk = Walk::new(roots.len());
         for (index, root) in roots.iter().enumerate() {
             let target = vec![os_bytes(root.local.file_name().unwrap_or_default())];
@@ -250,7 +271,8 @@ impl RemoteSession {
                 root.stamp,
             );
             if root.kind == Kind::Folder {
-                self.walk_remote(&mut walk, index, root, cancel).await?;
+                self.walk_remote(&mut walk, (index, root), cancel, scanned)
+                    .await?;
             }
         }
         let taken = local_names(&walk.steps).await;
@@ -310,9 +332,7 @@ impl RemoteSession {
                 (Kind::Folder, true) => tokio::fs::create_dir_all(&step.local)
                     .await
                     .map(|()| 0)
-                    .map_err(|e| RemoteError::Local {
-                        detail: e.to_string(),
-                    }),
+                    .map_err(|e| RemoteError::local(&e)),
                 (Kind::Folder, false) => self.ensure_folder(&step.remote).await.map(|()| 0),
                 (Kind::File, true) => {
                     self.download_with(&step.remote, &step.local, step.replace, cancel, |n| {
@@ -356,9 +376,9 @@ impl RemoteSession {
     async fn walk_remote(
         &self,
         walk: &mut Walk,
-        root: usize,
-        top: &Root,
+        (root, top): (usize, &Root),
         cancel: &CancellationToken,
+        scanned: &mut (dyn FnMut(usize) + Send),
     ) -> Result<(), RemoteError> {
         let target = walk
             .steps
@@ -373,6 +393,9 @@ impl RemoteSession {
             let mut names = FolderNames::new(Rules::native());
             for entry in self.list(&remote_dir).await? {
                 walk.visit()?;
+                if walk.visited.is_multiple_of(SCAN_REPORT_EVERY) {
+                    scanned(walk.visited);
+                }
                 let Ok(local) = LocalName::from_remote(&entry.name, Rules::native()) else {
                     walk.leave_out(root);
                     continue;
@@ -543,9 +566,7 @@ async fn walk_local(
     top: &Root,
     cancel: &CancellationToken,
 ) -> Result<(), RemoteError> {
-    let local_error = |e: std::io::Error| RemoteError::Local {
-        detail: e.to_string(),
-    };
+    let local_error = |e: std::io::Error| RemoteError::local(&e);
     let target = walk
         .steps
         .last()

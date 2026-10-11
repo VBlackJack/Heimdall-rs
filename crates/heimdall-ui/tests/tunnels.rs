@@ -307,3 +307,51 @@ fn a_session_through_a_gateway_says_so_on_its_tab_and_is_a_row_of_its_own_in_the
         "{messages:?}"
     );
 }
+
+#[test]
+fn a_row_of_the_tunnels_page_is_selected_by_a_click_and_closed_by_close_selected() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path(), vec![bastion()]);
+    let id = opened_tunnel(&mut shell);
+    let _ = shell.update(Message::Navigate(Destination::Tunnels));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Close Selected").expect("the C# page's button");
+        assert!(
+            ui.into_messages().next().is_none(),
+            "nothing selected: nothing to close"
+        );
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("wiki.lab").expect("the row");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                Message::App(AppMessage::Tunnel(TunnelMessage::Select(selected))) if *selected == id
+            )),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(tunnel(TunnelMessage::Select(id)));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Close Selected").expect("offered");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                Message::App(AppMessage::Tunnel(TunnelMessage::CloseSelected))
+            )),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(tunnel(TunnelMessage::CloseSelected));
+    let mut ui = simulator(&shell);
+    ui.find("No active tunnels").expect("closed");
+    ui.find("Tunnel on port 9443 closed.")
+        .expect("the C# status line");
+}
