@@ -115,7 +115,8 @@ use crate::terminal_view::keys::{
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
 use crate::tree_view::{
-    self, CursorSpot, CursorTracker, SplitEntries, TabMenuState, TranscriptEntry, TreeMenu,
+    self, CursorSpot, CursorTracker, DesktopEntries, SplitEntries, TabMenuState, TranscriptEntry,
+    TreeMenu,
 };
 use crate::trusted_keys_view::{HostKeyColumn, HostKeySort, TrustedList};
 use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, SplitMessage};
@@ -2879,6 +2880,8 @@ impl Shell {
     fn view_message(&mut self, message: &Message) -> Task<Message> {
         match message {
             Message::DesktopFit { tab, fit } => {
+                // Chosen from the tab's menu, which closes.
+                self.menu = None;
                 // Kept for the size the desktop has now: another chosen later makes it stale.
                 let fixed = self
                     .app
@@ -3616,18 +3619,6 @@ impl Shell {
             && self.finder.is_none()
             && self.menu.is_none()
             && self.main_path_editing().is_none()
-    }
-
-    /// Whether the page shown is a remote desktop under its bar, whose bar has its own way
-    /// out of full screen.
-    fn desktop_bar_shown(&self) -> bool {
-        !self.settings_shown()
-            && self.app.active_tab().is_some_and(|tab| {
-                tab.prompts.is_empty()
-                    && matches!(tab.phase, Phase::Connected)
-                    && tab.files.is_none()
-                    && tab.desktop.is_some()
-            })
     }
 
     /// Enter confirms the open dialog, Escape dismisses it. Without a dialog, Enter opens
@@ -4545,9 +4536,9 @@ impl Shell {
         // Always a stack with the window first: a tree of one shape keeps the state of the
         // widgets under a dialog, such as how far a list is scrolled.
         let mut layers = stack![body];
-        // Full screen, a way out the mouse finds, as the C# floating button; a desktop's bar
-        // has its own.
-        if self.fullscreen && !locked && !self.desktop_bar_shown() {
+        // Full screen, a way out the mouse finds, as the C# floating button: a desktop's
+        // header is put away in full screen, as the C# one.
+        if self.fullscreen && !locked {
             layers = layers.push(
                 container(
                     tooltip(
@@ -4715,6 +4706,14 @@ impl Shell {
             // Only while the session is saved.
             self.app.profile_summary(id)?;
             tree_view::notes_entries(id)
+        } else if let TreeMenu::SendKeys(tab) = *menu {
+            // Only while its desktop is shown.
+            shown_desktop(self.app.tab(tab)?)?;
+            tree_view::send_keys_entries(tab)
+        } else if let TreeMenu::VncQuality(tab) = *menu {
+            // Only while its VNC desktop is shown.
+            let quality = shown_desktop(self.app.tab(tab)?)?.vnc_quality()?;
+            tree_view::vnc_quality_entries(tab, quality)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
             tree_view::resolution_entries(
@@ -4864,6 +4863,8 @@ impl Shell {
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_)
                 | TreeMenu::Resolution(_)
+                | TreeMenu::SendKeys(_)
+                | TreeMenu::VncQuality(_)
                 | TreeMenu::Macros(_)
                 | TreeMenu::Notes(_)
                 | TreeMenu::Tool(_)
@@ -6807,6 +6808,11 @@ impl Shell {
             } else {
                 TranscriptEntry::Absent
             },
+            desktop: shown_desktop(tab).map(|pane| DesktopEntries {
+                fit: self.fits(tab),
+                quality: pane.vnc_quality(),
+                clipboard: tab.purpose == Purpose::Vnc && pane.accepts_clipboard(),
+            }),
         })
     }
 
@@ -7126,6 +7132,10 @@ impl Shell {
                 let focused = active == Some(tab.id);
                 let mut badges = tab_badges(tab, focused);
                 badges.extend(transcript_mark(tab));
+                // A desktop's indicators, on its pane's header as on the C# session header.
+                if let Some(pane) = shown_desktop(tab) {
+                    badges.extend(self.desktop_indicators(tab, pane));
+                }
                 split_view::pane(
                     split_view::Heading {
                         tab: tab.id,
@@ -7657,9 +7667,16 @@ impl Shell {
         }
     }
 
-    /// A remote desktop under its bar, as the C# session's: the keys this computer keeps for
-    /// itself, sent from a menu, how the desktop is shown, and full screen.
-    fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane, focused: bool) -> Element<'a, Message> {
+    /// A remote desktop under its header, as the C# session's: its name, address, state and
+    /// indicators, the split button and Disconnect; the session's other actions are its tab's
+    /// menu's. In a split, its pane's header is its own; in full screen, none, as the C# puts
+    /// its header away. In a tab's own window, which has no tab to right click, its bar.
+    fn desktop<'a>(
+        &'a self,
+        tab: &'a Tab,
+        pane: &'a DesktopPane,
+        focused: bool,
+    ) -> Element<'a, Message> {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
             .on_release(Message::ContentRelease)
@@ -7667,68 +7684,6 @@ impl Shell {
             .fit(fit)
             .density(self.density_of(tab.id));
         let tab_id = tab.id;
-        let mode = pick_list(
-            [DesktopMode::Match, DesktopMode::Fit],
-            Some(if fit {
-                DesktopMode::Fit
-            } else {
-                DesktopMode::Match
-            }),
-            move |mode| Message::DesktopFit {
-                tab: tab_id,
-                fit: mode == DesktopMode::Fit,
-            },
-        )
-        .style(styles::pick_list)
-        .menu_style(styles::menu)
-        .text_size(font_size::CAPTION);
-        let send_keys = pick_list(
-            SpecialKeys::ALL.map(KeysChoice).to_vec(),
-            None::<KeysChoice>,
-            move |KeysChoice(keys)| Message::App(AppMessage::SendKeys { tab: tab_id, keys }),
-        )
-        .style(styles::pick_list)
-        .menu_style(styles::menu)
-        .placeholder(fl!("ui-desktop-send-keys"))
-        .text_size(font_size::CAPTION);
-        let fullscreen = button(
-            text(if self.fullscreen {
-                fl!("ui-desktop-exit-fullscreen")
-            } else {
-                fl!("ui-desktop-fullscreen")
-            })
-            .size(font_size::CAPTION),
-        )
-        .style(styles::secondary)
-        .on_press(Message::ToggleFullscreen);
-        let disconnect = tooltip(
-            button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
-            text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
-            tooltip::Position::Bottom,
-        )
-        .style(container::rounded_box);
-        let bar = row![
-            // Beside it: below, it would cover the menu's first entry.
-            tooltip(
-                send_keys,
-                text(fl!("ui-desktop-send-keys-tooltip")).size(font_size::CAPTION),
-                tooltip::Position::Right,
-            )
-            .style(container::rounded_box),
-            // The C# Send keys menu's "Keyboard shortcuts...".
-            button(text(fl!("ui-desktop-shortcuts")).size(font_size::CAPTION))
-                .style(styles::subtle)
-                .on_press(Message::App(AppMessage::ShowShortcuts)),
-            mode,
-        ]
-        // In a tab's own window, the main window's full screen is not the desktop's.
-        .push((!self.app.is_floating(tab_id)).then_some(fullscreen))
-        .push(disconnect)
-        .spacing(spacing::SM)
-        .align_y(iced::Alignment::Center);
-        let bar = self.desktop_bar_end(tab, pane, bar);
         // A fixed size that does not fill the tab says so for a while, at the bottom right of
         // the desktop, as the C# letterbox hint.
         let hint = pane
@@ -7754,80 +7709,105 @@ impl Shell {
             Some(hint) => stack![view, hint].into(),
             None => view.into(),
         };
-        // Whole on a narrow tab: what does not fit goes to a line of its own, never cut.
-        column![bar.wrap().vertical_spacing(spacing::XS), view]
-            .spacing(spacing::XS)
-            .into()
+        let top: Option<Element<'a, Message>> = if self.app.is_floating(tab_id) {
+            // Whole on a narrow window: what does not fit goes to a line of its own.
+            Some(
+                self.floating_desktop_bar(tab, pane, fit)
+                    .wrap()
+                    .vertical_spacing(spacing::XS)
+                    .into(),
+            )
+        } else if self.fullscreen || self.app.in_split(tab_id) {
+            None
+        } else {
+            Some(self.desktop_header(tab, pane))
+        };
+        column![].push(top).push(view).spacing(spacing::XS).into()
     }
 
-    /// The end of a desktop's session bar: the resolution menu, the anti-idle badge, saving
-    /// the server's files, VNC's clipboard and quality, the desktop's name and VNC's warning.
-    fn desktop_bar_end<'a>(
-        &self,
-        tab: &Tab,
+    /// A desktop's header in its tab, as the C# session header: the pane header's, its right
+    /// click the tab's menu, its split button "Split...", its Disconnect the desktop's.
+    fn desktop_header<'a>(&'a self, tab: &'a Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
+        let mut badges = tab_badges(tab, true);
+        badges.extend(transcript_mark(tab));
+        badges.extend(self.desktop_indicators(tab, pane));
+        split_view::session_header(
+            split_view::Heading {
+                tab: tab.id,
+                host: tab.id,
+                marks: self.tab_marks(tab),
+                name: Self::tab_name(tab),
+                detail: tab_endpoint(tab),
+                route: self.route_text(tab),
+                state: crate::floating_view::state_text(SessionState::of(tab)),
+                badges,
+            },
+            split_view::HeaderActions {
+                split: Message::OpenTreeMenu(TreeMenu::SplitAxis(tab.id)),
+                disconnect: Message::App(AppMessage::DisconnectDesktop(tab.id)),
+                menu: TreeMenu::Tab(tab.id),
+            },
+        )
+    }
+
+    /// A desktop's bar in a tab's own window, which has no tab menu: the keys sent, how it is
+    /// shown, Disconnect, VNC's clipboard and quality, then its indicators.
+    fn floating_desktop_bar<'a>(
+        &'a self,
+        tab: &'a Tab,
         pane: &'a DesktopPane,
-        mut bar: iced::widget::Row<'a, Message>,
+        fit: bool,
     ) -> iced::widget::Row<'a, Message> {
         let tab_id = tab.id;
-        // The C# session bar's resolution button: the tab's menu, its tip naming the mode,
-        // in the accent colour while a size of its own is kept. The menus are the main
-        // window's: none from a tab's own window.
-        if let Some(state) = self
-            .resolution_state(tab)
-            .filter(|_| !self.app.is_floating(tab_id))
-        {
-            let style = if state.fixed.is_some() {
-                styles::primary
+        let mode = pick_list(
+            [DesktopMode::Match, DesktopMode::Fit],
+            Some(if fit {
+                DesktopMode::Fit
             } else {
-                styles::secondary
-            };
-            bar = bar.push(
-                tooltip(
-                    button(text(fl!("ui-resolution-menu")).size(font_size::CAPTION))
-                        .style(style)
-                        .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab_id))),
-                    text(state.tooltip()).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .style(container::rounded_box),
-            );
-        }
-        // The C# status line's countdown while the session settles after connecting, its
-        // tip saying how to stop waiting.
-        if let Some(seconds) = pane.stabilization_seconds_left(std::time::Instant::now()) {
-            bar = bar.push(
-                tooltip(
-                    text(fl!("ui-desktop-stabilizing", seconds = seconds))
-                        .size(font_size::CAPTION)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..crate::UI_FONT
-                        })
-                        .style(text::secondary),
-                    text(fl!("ui-desktop-stabilizing-tooltip")).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .style(container::rounded_box),
-            );
-        }
-        // The C# header's health dot and phase stepper.
-        bar = bar.push(rdp_status(tab));
-        // Shown while the session gets anti-idle keys; a click stops them, as the C# badge.
-        if self.app.anti_idle_on(tab_id) {
-            bar = bar.push(
-                tooltip(
-                    button(text(fl!("ui-desktop-anti-idle")).size(font_size::CAPTION))
-                        .style(styles::subtle)
-                        .on_press(Message::App(AppMessage::StopAntiIdle(tab_id))),
-                    text(fl!("ui-desktop-anti-idle-tooltip")).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .style(container::rounded_box),
-            );
-        }
-        if let Some(control) = save_files_control(pane, tab_id) {
-            bar = bar.push(control);
-        }
+                DesktopMode::Match
+            }),
+            move |mode| Message::DesktopFit {
+                tab: tab_id,
+                fit: mode == DesktopMode::Fit,
+            },
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .text_size(font_size::CAPTION);
+        let send_keys = pick_list(
+            SpecialKeys::ALL.map(KeysChoice).to_vec(),
+            None::<KeysChoice>,
+            move |KeysChoice(keys)| Message::App(AppMessage::SendKeys { tab: tab_id, keys }),
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .placeholder(fl!("ui-desktop-send-keys"))
+        .text_size(font_size::CAPTION);
+        let disconnect = tooltip(
+            button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
+                .style(styles::secondary)
+                .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
+            text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box);
+        let mut bar = row![
+            // Beside it: below, it would cover the menu's first entry.
+            tooltip(
+                send_keys,
+                text(fl!("ui-desktop-send-keys-tooltip")).size(font_size::CAPTION),
+                tooltip::Position::Right,
+            )
+            .style(container::rounded_box),
+            // The C# Send keys menu's "Keyboard shortcuts...".
+            button(text(fl!("ui-desktop-shortcuts")).size(font_size::CAPTION))
+                .style(styles::subtle)
+                .on_press(Message::App(AppMessage::ShowShortcuts)),
+            mode,
+            disconnect,
+        ]
+        .spacing(spacing::SM)
+        .align_y(iced::Alignment::Center);
         // VNC carries the clipboard in clear: sent on a click only, as the C# Heimdall's
         // noVNC "sync" does. RDP shares it by itself when its profile says so.
         if tab.purpose == Purpose::Vnc && pane.accepts_clipboard() {
@@ -7845,33 +7825,86 @@ impl Shell {
         if let Some(control) = vnc_quality_control(pane, tab_id) {
             bar = bar.push(control);
         }
+        bar.extend(self.desktop_indicators(tab, pane))
+    }
+
+    /// What a desktop's header shows of its session, as the C# session header: the countdown
+    /// while it settles, the health dot and the phase stepper, the anti-idle badge, the
+    /// server's copied files, the redirections, the desktop's name and VNC's encryption.
+    fn desktop_indicators<'a>(
+        &self,
+        tab: &'a Tab,
+        pane: &'a DesktopPane,
+    ) -> Vec<Element<'a, Message>> {
+        let tab_id = tab.id;
+        let mut shown: Vec<Element<'a, Message>> = Vec::new();
+        // The C# status line's countdown while the session settles after connecting, its
+        // tip saying how to stop waiting.
+        if let Some(seconds) = pane.stabilization_seconds_left(std::time::Instant::now()) {
+            shown.push(
+                tooltip(
+                    text(fl!("ui-desktop-stabilizing", seconds = seconds))
+                        .size(font_size::CAPTION)
+                        .font(iced::Font {
+                            style: iced::font::Style::Italic,
+                            ..crate::UI_FONT
+                        })
+                        .style(text::secondary),
+                    text(fl!("ui-desktop-stabilizing-tooltip")).size(font_size::CAPTION),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box)
+                .into(),
+            );
+        }
+        // The C# header's health dot and phase stepper.
+        shown.extend(rdp_status(tab));
+        // Shown while the session gets anti-idle keys; a click stops them, as the C# badge.
+        if self.app.anti_idle_on(tab_id) {
+            shown.push(
+                tooltip(
+                    button(text(fl!("ui-desktop-anti-idle")).size(font_size::CAPTION))
+                        .style(styles::subtle)
+                        .on_press(Message::App(AppMessage::StopAntiIdle(tab_id))),
+                    text(fl!("ui-desktop-anti-idle-tooltip")).size(font_size::CAPTION),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box)
+                .into(),
+            );
+        }
+        shown.extend(save_files_control(pane, tab_id));
         if let TabProfile::Rdp(profile) = &tab.profile {
-            bar = bar.extend(crate::rdp_status::redirection_controls(
+            shown.extend(crate::rdp_status::redirection_controls(
                 tab_id,
                 profile,
                 self.redirections_shown.contains(&tab_id),
             ));
         }
         if let Some(name) = &pane.desktop_name {
-            bar = bar.push(
+            shown.push(
                 text(name.as_str())
                     .size(font_size::CAPTION)
-                    .style(text::secondary),
+                    .style(text::secondary)
+                    .into(),
             );
         }
         if tab.purpose == Purpose::Vnc {
             // Always in sight: whether the connection is encrypted, its server's certificate
             // trusted, or crosses the network in clear.
-            bar = bar.push(match pane.tls {
-                Some(version) => text(fl!("ui-session-vnc-encrypted", version = version))
-                    .size(font_size::CAPTION)
-                    .style(text::success),
-                None => text(fl!("ui-session-vnc-unencrypted"))
-                    .size(font_size::CAPTION)
-                    .style(text::danger),
-            });
+            shown.push(
+                match pane.tls {
+                    Some(version) => text(fl!("ui-session-vnc-encrypted", version = version))
+                        .size(font_size::CAPTION)
+                        .style(text::success),
+                    None => text(fl!("ui-session-vnc-unencrypted"))
+                        .size(font_size::CAPTION)
+                        .style(text::danger),
+                }
+                .into(),
+            );
         }
-        bar
+        shown
     }
 
     fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
@@ -7963,6 +7996,16 @@ impl Default for Shell {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The remote desktop `tab` shows: connected, with no question asked over it.
+fn shown_desktop(tab: &Tab) -> Option<&DesktopPane> {
+    (tab.prompts.is_empty()
+        && tab.elevated.is_none()
+        && tab.files.is_none()
+        && matches!(tab.phase, Phase::Connected))
+    .then_some(tab.desktop.as_deref())
+    .flatten()
 }
 
 /// Whether `tab` shows a terminal: a session of text, connected or ended.
@@ -11610,12 +11653,7 @@ struct QualityChoice(VncQuality);
 
 impl fmt::Display for QualityChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&match self.0 {
-            VncQuality::Best => fl!("ui-session-vnc-quality-best"),
-            VncQuality::Balanced => fl!("ui-session-vnc-quality-balanced"),
-            VncQuality::Performance => fl!("ui-session-vnc-quality-performance"),
-            VncQuality::LowBandwidth => fl!("ui-session-vnc-quality-low-bandwidth"),
-        })
+        f.write_str(&texts::vnc_quality(self.0))
     }
 }
 

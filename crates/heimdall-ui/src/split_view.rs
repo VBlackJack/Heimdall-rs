@@ -685,20 +685,52 @@ pub struct Heading<'a> {
     pub badges: Vec<Element<'a, Message>>,
 }
 
+/// What a session header's buttons and its right click send.
+pub struct HeaderActions {
+    /// The split button's.
+    pub split: Message,
+    /// Disconnect's.
+    pub disconnect: Message,
+    /// The menu a right click opens.
+    pub menu: TreeMenu,
+}
+
+impl HeaderActions {
+    /// A pane's in a split: the split button puts the split back into tabs as the C#'s does
+    /// in a split, Disconnect closes that pane alone, a right click opens the pane's menu.
+    fn pane(tab: TabId, host: TabId) -> Self {
+        Self {
+            split: Message::App(AppMessage::Split(
+                heimdall_app::split::SplitMessage::Unsplit(host),
+            )),
+            disconnect: Message::App(AppMessage::Split(
+                heimdall_app::split::SplitMessage::ClosePane(tab),
+            )),
+            menu: TreeMenu::Pane(tab),
+        }
+    }
+}
+
 /// A pane's header, as the C# session header: `heading`'s marks, name, address and state
-/// at the left; at the right the split button, which puts the split back into tabs as the
-/// C#'s does in a split, and Disconnect, which closes that pane alone. A right click opens
-/// the pane's menu.
+/// at the left; at the right the split button and Disconnect, each as a pane's.
 fn header(heading: Heading<'_>) -> Element<'_, Message> {
+    let actions = HeaderActions::pane(heading.tab, heading.host);
+    session_header(heading, actions)
+}
+
+/// A session's header, as the C# one: `heading`'s marks, name, address and state at the
+/// left; at the right the split button and Disconnect, sending what `actions` says, as its
+/// right click does.
+#[must_use]
+pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'_, Message> {
     let Heading {
-        tab,
-        host,
         marks,
         name,
         detail,
         route,
         state,
         badges,
+        ..
     } = heading;
     let secondary = |said: String| text(said).size(font_size::CAPTION).style(text::secondary);
     let named = row(marks)
@@ -723,9 +755,7 @@ fn header(heading: Heading<'_>) -> Element<'_, Message> {
     let split = tip(
         crate::icons::button(crate::icons::Icon::Split)
             .style(styles::subtle)
-            .on_press(Message::App(AppMessage::Split(
-                heimdall_app::split::SplitMessage::Unsplit(host),
-            )))
+            .on_press(actions.split)
             .into(),
         fl!("ui-split-session-tooltip"),
     );
@@ -733,9 +763,7 @@ fn header(heading: Heading<'_>) -> Element<'_, Message> {
         button(text(fl!("ui-tab-menu-disconnect")).size(font_size::CAPTION))
             .style(styles::secondary)
             .padding(DISCONNECT_PADDING)
-            .on_press(Message::App(AppMessage::Split(
-                heimdall_app::split::SplitMessage::ClosePane(tab),
-            )))
+            .on_press(actions.disconnect)
             .into(),
         fl!("ui-desktop-disconnect-tooltip"),
     );
@@ -749,7 +777,7 @@ fn header(heading: Heading<'_>) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(styles::strip),
     )
-    .on_right_press(Message::OpenTreeMenu(TreeMenu::Pane(tab)))
+    .on_right_press(Message::OpenTreeMenu(actions.menu))
     .into()
 }
 

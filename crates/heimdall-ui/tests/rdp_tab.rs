@@ -242,7 +242,7 @@ fn a_click_on_the_desktop_moves_and_presses_there() {
 }
 
 /// Height of a point near the desktop's top left corner, below the tab strip as tall as the
-/// C#'s and the session bar, on one line or two.
+/// C#'s and the session header.
 const DESKTOP_CORNER_Y: u32 = 175;
 
 /// The RGBA pixel at logical `(x, y)` of a snapshot of `shell`, and the renderer that drew it.
@@ -569,8 +569,8 @@ fn ctrl_alt_del_from_the_menu_reaches_the_server_pressed_then_released_in_revers
     use heimdall_rdp::{Operation, Scancode};
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, mut received) = connected(dir.path());
-    // The menu is a pick list, which the simulator cannot open: its message is sent here.
-    let _ = shell.update(Message::App(AppMessage::SendKeys {
+    // As the tab menu's "Send keys" sends it.
+    let _ = shell.update(Message::MenuChoice(AppMessage::SendKeys {
         tab,
         keys: heimdall_app::SpecialKeys::CtrlAltDel,
     }));
@@ -661,27 +661,36 @@ fn a_session_asking_for_no_anti_idle_shows_no_badge() {
 
 #[test]
 fn full_screen_shows_the_session_only_and_comes_back() {
+    use heimdall_ui::tree_view::TreeMenu;
+
     let dir = tempfile::tempdir().expect("dir");
-    let (mut shell, _, _received) = connected(dir.path());
+    let (mut shell, tab, _received) = connected(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
     {
         let mut ui = simulator(&shell);
         ui.find("Sessions").expect("the tree");
-        ui.click("Fullscreen (F11)").expect("the button");
+        ui.click("Fullscreen (F11)").expect("the tab menu's entry");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::MenuFullscreen(shown) if shown == tab))
+        );
+    }
+    let _ = shell.update(Message::MenuFullscreen(tab));
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Sessions").is_err(), "no tree in full screen");
+        // The C# header put away, the window's way back in its place.
+        assert!(ui.find("Disconnect").is_err(), "no header in full screen");
+        ui.click("Exit fullscreen").expect("the way back");
         assert!(
             ui.into_messages()
                 .any(|message| matches!(message, Message::ToggleFullscreen))
         );
     }
     let _ = shell.update(Message::ToggleFullscreen);
-    {
-        let mut ui = simulator(&shell);
-        assert!(ui.find("Sessions").is_err(), "no tree in full screen");
-        ui.find("Exit fullscreen (F11)").expect("the way back");
-    }
-    let _ = shell.update(Message::ToggleFullscreen);
     let mut ui = simulator(&shell);
     ui.find("Sessions").expect("the tree again");
-    ui.find("Fullscreen (F11)").expect("the button again");
+    ui.find("Disconnect").expect("the header again");
 }
 
 #[test]
@@ -1217,7 +1226,7 @@ fn a_fixed_desktop_still_tells_the_tab_s_size_without_asking_it_of_the_server() 
 }
 
 #[test]
-fn the_session_bar_opens_the_resolution_menu_which_names_the_profile_s_mode() {
+fn the_tab_menu_opens_the_resolution_menu_which_names_the_profile_s_mode() {
     use heimdall_core::profile::{RdpOptions, Resolution};
     use heimdall_ui::tree_view::TreeMenu;
 
@@ -1229,9 +1238,10 @@ fn the_session_bar_opens_the_resolution_menu_which_names_the_profile_s_mode() {
             ..RdpOptions::default()
         },
     );
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
     {
         let mut ui = simulator(&shell);
-        ui.click("Resolution").expect("on the session bar");
+        ui.click("Resolution").expect("in the tab menu");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::OpenTreeMenu(TreeMenu::Resolution(opened)) if opened == tab
@@ -1335,7 +1345,7 @@ fn ctrl_alt_home_lets_go_of_the_keys_held_and_gives_the_keyboard_back() {
 }
 
 #[test]
-fn the_desktop_bar_shows_what_the_session_shares_and_offers_the_shortcuts() {
+fn the_desktop_header_shows_what_the_session_shares() {
     let dir = tempfile::tempdir().expect("dir");
     let (shell, _, _received) = connected(dir.path());
     let mut ui = simulator(&shell);
@@ -1343,14 +1353,6 @@ fn the_desktop_bar_shows_what_the_session_shares_and_offers_the_shortcuts() {
     ui.find("Clipboard").expect("the clipboard shared");
     assert!(ui.find("Drives").is_err(), "no drive shared");
     assert!(ui.find("Sound").is_err(), "no sound played here");
-    ui.click("Keyboard shortcuts...").expect("the help");
-    let messages: Vec<Message> = ui.into_messages().collect();
-    assert!(
-        messages
-            .iter()
-            .any(|message| matches!(message, Message::App(AppMessage::ShowShortcuts))),
-        "{messages:?}"
-    );
 }
 
 #[test]
@@ -1494,7 +1496,7 @@ fn a_session_that_failed_before_it_connected_reports_no_duration() {
 }
 
 #[test]
-fn a_desktop_settling_counts_down_on_its_bar_and_its_resolution_menu_skips_the_wait() {
+fn a_desktop_settling_counts_down_on_its_header_and_its_resolution_menu_skips_the_wait() {
     use heimdall_ui::tree_view::TreeMenu;
 
     let dir = tempfile::tempdir().expect("dir");
@@ -1885,7 +1887,7 @@ fn a_dropped_desktop_counts_the_seconds_since_it_dropped() {
 }
 
 #[test]
-fn the_desktop_bar_shows_the_redirections_not_shared_behind_their_badge() {
+fn the_desktop_header_shows_the_redirections_not_shared_behind_their_badge() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, _received) = connected(dir.path());
     {
@@ -1903,7 +1905,7 @@ fn the_desktop_bar_shows_the_redirections_not_shared_behind_their_badge() {
     let _ = shell.update(Message::ShowDisabledRedirections(tab));
     let mut ui = simulator(&shell);
     assert!(ui.find("+7").is_err(), "shown: no badge");
-    snapshot(&shell, "rdp-bar.png");
+    snapshot(&shell, "rdp-redirections.png");
 
     let listed = heimdall_ui::rdp_status::redirections(&RdpProfile {
         extras: heimdall_core::profile::RdpExtras {
@@ -1966,10 +1968,10 @@ fn a_fixed_size_smaller_than_the_tab_says_so_at_first() {
 }
 
 #[test]
-fn keys_sent_from_the_bar_are_said_as_the_csharp_toast_and_so_is_a_failure() {
+fn keys_sent_from_the_menu_are_said_as_the_csharp_toast_and_so_is_a_failure() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, received) = connected(dir.path());
-    let _ = shell.update(Message::App(AppMessage::SendKeys {
+    let _ = shell.update(Message::MenuChoice(AppMessage::SendKeys {
         tab,
         keys: heimdall_app::SpecialKeys::CtrlAltDel,
     }));
@@ -1979,11 +1981,233 @@ fn keys_sent_from_the_bar_are_said_as_the_csharp_toast_and_so_is_a_failure() {
     }
     // The session gone, nothing reaches it: said so.
     drop(received);
-    let _ = shell.update(Message::App(AppMessage::SendKeys {
+    let _ = shell.update(Message::MenuChoice(AppMessage::SendKeys {
         tab,
         keys: heimdall_app::SpecialKeys::WinL,
     }));
     let mut ui = simulator(&shell);
     ui.find("Could not send keys to the remote session.")
         .expect("not sent");
+}
+
+/// A window tall enough for a tab's whole menu.
+const TALL_WINDOW: Size = Size::new(1200.0, 1400.0);
+
+fn tall(shell: &Shell) -> common::Drawn<'_> {
+    common::simulator(settings(), TALL_WINDOW, shell.view())
+}
+
+/// A connected RDP tab named "rdp tab", and what its session receives: a name the tree does
+/// not show, so the first text of it is the tab's in the strip.
+fn renamed(
+    dir: &Path,
+) -> (
+    Shell,
+    TabId,
+    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::Operation>>,
+) {
+    use heimdall_app::TabMenuMessage;
+
+    let (mut shell, tab, received) = connected(dir);
+    let _ = shell.update(Message::App(AppMessage::TabMenu(TabMenuMessage::Rename(
+        tab,
+    ))));
+    let _ = shell.update(Message::App(AppMessage::TabMenu(
+        TabMenuMessage::NameEdited("rdp tab".to_owned()),
+    )));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    (shell, tab, received)
+}
+
+/// What a click on the last text `label` sends: an open menu's entry.
+fn menu_click(shell: &Shell, label: &str) -> Vec<Message> {
+    let mut ui = tall(shell);
+    common::click_last(&mut ui, label);
+    ui.into_messages().collect()
+}
+
+/// The tops of the last texts `labels`, an open menu's entries: each below the one before.
+fn assert_in_order(shell: &Shell, labels: &[&str]) {
+    let mut ui = tall(shell);
+    let tops: Vec<f32> = labels
+        .iter()
+        .map(|label| common::last_bounds(&mut ui, label).y)
+        .collect();
+    assert!(
+        tops.windows(2).all(|pair| pair[0] < pair[1]),
+        "{labels:?} at {tops:?}"
+    );
+}
+
+/// The entries of a connected RDP tab's menu, as the C# `SessionTabContextMenuFactory` builds
+/// it for a saved profile not split: the session bar's Resolution, Send keys and scaling in
+/// the block of the C# Resolution, Fullscreen after it.
+const RDP_TAB_MENU: [&str; 18] = [
+    "Disconnect",
+    "Rename tab",
+    "Reset title",
+    "Pin tab",
+    "Resolution",
+    "Send keys",
+    "Fit to Window",
+    "Fullscreen (F11)",
+    "Reconnect Session",
+    "Duplicate Session",
+    "Edit",
+    "Copy hostname",
+    "Copy username",
+    "Reveal in tree",
+    "Detach to Window",
+    "Close others",
+    "Close to the right",
+    "Split...",
+];
+
+/// The keys of the "Send keys" menu, in the C# session header's order.
+const SEND_KEYS_MENU: [(&str, heimdall_app::SpecialKeys); 10] = [
+    ("Ctrl+Alt+Del", heimdall_app::SpecialKeys::CtrlAltDel),
+    ("Windows key", heimdall_app::SpecialKeys::Windows),
+    ("Alt+Tab", heimdall_app::SpecialKeys::AltTab),
+    ("Ctrl+Esc (Start menu)", heimdall_app::SpecialKeys::CtrlEsc),
+    ("Print Screen", heimdall_app::SpecialKeys::PrintScreen),
+    ("Escape", heimdall_app::SpecialKeys::Escape),
+    ("F11", heimdall_app::SpecialKeys::F11),
+    ("Win+L (lock workstation)", heimdall_app::SpecialKeys::WinL),
+    ("Win+D (show desktop)", heimdall_app::SpecialKeys::WinD),
+    ("Win+E (file explorer)", heimdall_app::SpecialKeys::WinE),
+];
+
+#[test]
+fn an_rdp_tab_has_no_session_bar_its_header_keeps_the_csharp_controls_and_indicators() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab, _received) = renamed(dir.path());
+    let mut ui = tall(&shell);
+    // The session bar's controls are the tab menu's now.
+    for gone in [
+        "Send keys",
+        "Keyboard shortcuts...",
+        "Match window",
+        "Fit to Window",
+        "Fullscreen (F11)",
+        "Resolution",
+    ] {
+        assert!(ui.find(gone).is_err(), "{gone} is on screen");
+    }
+    // The C# session header: name, state, indicators and Disconnect.
+    assert_eq!(
+        common::all_bounds(&mut ui, "rdp tab").len(),
+        2,
+        "strip and header"
+    );
+    ui.find("Connected").expect("the state");
+    ui.find("Clipboard").expect("the redirections");
+    ui.find("+7").expect("the redirections not shared");
+    ui.click("Disconnect").expect("the header's button");
+    assert!(
+        ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::DisconnectDesktop(closed)) if closed == tab
+        )),
+        "as the session bar's Disconnect"
+    );
+    snapshot(&shell, "rdp-header.png");
+}
+
+#[test]
+fn right_clicking_an_rdp_tab_offers_the_session_actions_in_the_csharp_order() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _received) = renamed(dir.path());
+    {
+        let mut ui = tall(&shell);
+        common::right_click(&mut ui, "rdp tab");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::OpenTreeMenu(TreeMenu::Tab(opened)) if opened == tab
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    snapshot(&shell, "rdp-tab-menu.png");
+    assert_in_order(&shell, &RDP_TAB_MENU);
+    // The session bar's controls, each sending what the bar sent, or opening its menu.
+    let fit = |messages: &[Message]| {
+        messages.iter().find_map(|message| match message {
+            Message::DesktopFit { tab: fitted, fit } if *fitted == tab => Some(*fit),
+            _ => None,
+        })
+    };
+    let first = fit(&menu_click(&shell, "Fit to Window")).expect("the bar's scaling");
+    assert!(
+        menu_click(&shell, "Resolution")
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::OpenTreeMenu(TreeMenu::Resolution(opened)) if *opened == tab
+            ))
+    );
+    assert!(
+        menu_click(&shell, "Fullscreen (F11)")
+            .iter()
+            .any(|message| matches!(message, Message::MenuFullscreen(shown) if *shown == tab))
+    );
+    assert!(
+        menu_click(&shell, "Disconnect")
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::MenuChoice(AppMessage::RequestCloseTab(closed)) if *closed == tab
+            ))
+    );
+    assert!(
+        menu_click(&shell, "Send keys")
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::OpenTreeMenu(TreeMenu::SendKeys(opened)) if *opened == tab
+            ))
+    );
+    // Checked once chosen, and chosen back.
+    let _ = shell.update(Message::DesktopFit { tab, fit: first });
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    assert_eq!(fit(&menu_click(&shell, "Fit to Window")), Some(!first));
+}
+
+#[test]
+fn the_send_keys_menu_sends_what_the_session_bar_sent_and_offers_the_shortcuts() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _received) = renamed(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::SendKeys(tab)));
+    let mut labels: Vec<&str> = SEND_KEYS_MENU.iter().map(|(label, _)| *label).collect();
+    labels.push("Keyboard shortcuts...");
+    assert_in_order(&shell, &labels);
+    for (label, keys) in SEND_KEYS_MENU {
+        let sent = menu_click(&shell, label);
+        assert!(
+            sent.iter().any(|message| matches!(
+                message,
+                Message::MenuChoice(AppMessage::SendKeys { tab: to, keys: chosen })
+                    if *to == tab && *chosen == keys
+            )),
+            "{label}: {sent:?}"
+        );
+    }
+    assert!(
+        menu_click(&shell, "Keyboard shortcuts...")
+            .iter()
+            .any(|message| matches!(message, Message::MenuChoice(AppMessage::ShowShortcuts)))
+    );
+    // Sent from the menu, as from the bar: the C# toast.
+    let _ = shell.update(Message::MenuChoice(AppMessage::SendKeys {
+        tab,
+        keys: heimdall_app::SpecialKeys::CtrlAltDel,
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Ctrl+Alt+Del sent to remote").expect("sent");
+    assert!(
+        ui.find("Win+L (lock workstation)").is_err(),
+        "the menu closed"
+    );
 }
