@@ -795,7 +795,7 @@ mod tests {
                 name: named("Tool"),
                 refusal: RefusalKind::LocalProgram
             }),
-            "Scheduled task error: a schedule does not open \"Tool\": it is a local shell or              program"
+            "Scheduled task error: a schedule does not open \"Tool\": it is a local shell or program"
         );
         for refusal in [
             RefusalKind::ExternalClient,
