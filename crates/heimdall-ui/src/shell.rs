@@ -4937,7 +4937,11 @@ impl Shell {
             .height(Length::Fill)
             .into(),
             Page::Tunnels => {
-                crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
+                crate::tunnels_view::page(
+                    &self.app.tunnels,
+                    &self.app.session_routes(),
+                    self.app.selected_tunnel(),
+                )
             }
             Page::Tools => crate::tools::catalog::page(&self.app, &self.tools_search),
             Page::About => crate::about_view::view(&self.app),
@@ -6869,12 +6873,30 @@ impl Shell {
 
     /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
     /// goes straight.
+    /// Its colour says the route's health, as the C# tab's tunnel badge: the success colour
+    /// while the session runs, the warning colour once it failed, ended or waits to open
+    /// again, said in its tooltip above the route.
     fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
         let route = self.route_text(tab)?;
+        let (health, colour): (String, fn(&Theme) -> text::Style) = match self.app.tunnel_badge(tab)
+        {
+            heimdall_app::tunnel::TunnelBadge::Hidden => return None,
+            heimdall_app::tunnel::TunnelBadge::Healthy => {
+                (fl!("ui-tab-route-badge-healthy"), text::success)
+            }
+            heimdall_app::tunnel::TunnelBadge::Unhealthy => {
+                (fl!("ui-tab-route-badge-unhealthy"), text::warning)
+            }
+        };
         Some(
             tooltip(
-                text(fl!("ui-tab-route-badge")).size(font_size::CAPTION),
-                text(route).size(font_size::CAPTION),
+                text(fl!("ui-tab-route-badge"))
+                    .size(font_size::CAPTION)
+                    .style(colour),
+                column![
+                    text(health).size(font_size::CAPTION),
+                    text(route).size(font_size::CAPTION),
+                ],
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)

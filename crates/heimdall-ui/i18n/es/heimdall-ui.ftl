@@ -1479,6 +1479,8 @@ ui-error-local-port-unavailable = El puerto local { $port } ya está en uso o re
 ## The tunnels panel and its status-bar button, as the C# ones.
 ui-tunnels-header = Túneles ({ $count })
 ui-tunnels-close-all = Cerrar todo
+ui-tunnels-close-selected = Cerrar seleccionados
+ui-tunnels-close-selected-tooltip = Cerrar túnel seleccionado
 ui-tunnels-new = + Nuevo
 ui-tunnels-collapse-tooltip = Contraer el panel de túneles
 ui-tunnels-toggle-tooltip = Mostrar/ocultar el panel de túneles
@@ -3616,6 +3618,8 @@ ui-tunnels-session-route-local = -
 ui-tunnels-session-route-local-tooltip = Transportado dentro de Heimdall: sin puerto local
 ui-tunnels-close-all-tooltip = Cierra los túneles abiertos a mano; las sesiones a través de una pasarela siguen abiertas
 ui-tab-route-badge = vía
+ui-tab-route-badge-healthy = Túneles activos
+ui-tab-route-badge-unhealthy = Túneles activos - al menos uno no está saludable
 ui-origin-rdp-file = Importado desde archivo RDP
 ui-origin-openssh = Importado desde configuración de OpenSSH
 ui-origin-putty = Importado desde el registro de PuTTY

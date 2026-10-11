@@ -3195,6 +3195,9 @@ pub struct App {
     hello: hello_gate::HelloGate,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
+    /// The row selected on the Tunnels page, as the C# grid's `SelectedItem`: what "Close
+    /// Selected" closes.
+    selected_tunnel: Option<crate::tunnel::TunnelId>,
     /// The identifier of the next tunnel.
     next_tunnel: crate::tunnel::TunnelId,
     /// The gateway key the user is asked about for a tunnel.
@@ -3370,6 +3373,7 @@ impl App {
             legacy_migration: legacy_migration::LegacyMigrationState::default(),
             hello: hello_gate::HelloGate::default(),
             tunnel_runs: Vec::new(),
+            selected_tunnel: None,
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
             putty_routes: Vec::new(),

@@ -20,7 +20,7 @@
 
 use heimdall_app::tunnel::{
     LOCAL_PORT_MIN, PORT_MAX, REMOTE_PORT_MIN, SessionRoute, Tunnel, TunnelField, TunnelForm,
-    TunnelProblem,
+    TunnelId, TunnelProblem,
 };
 use heimdall_app::{Message as AppMessage, Notice, TunnelMessage, server_text};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
@@ -35,6 +35,7 @@ use crate::shell::Message;
 use crate::styles;
 use crate::texts;
 use crate::tokens::{font_size, spacing};
+use crate::tree_row::{Mark, RowChrome};
 use crate::tree_view::TreeMenu;
 
 /// Height of the tunnels panel, within the C# panel's 120 to 300.
@@ -277,7 +278,7 @@ pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, 
     ]
     .spacing(spacing::SM)
     .align_y(Alignment::Center);
-    let body = rows(tunnels, routes, false);
+    let body = rows(tunnels, routes, Place::Panel);
     container(
         column![header, columns(false), rule::horizontal(1), body]
             .spacing(spacing::XS)
@@ -290,15 +291,28 @@ pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, 
     .into()
 }
 
-/// The Tunnels page of the window's navigation, as the C# one: its title, New and Close
-/// All, then every tunnel, the whole height.
-pub fn page<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, Message> {
+/// The Tunnels page of the window's navigation, as the C# one: its title, New, Close
+/// Selected and Close All, then every tunnel, the whole height, a click selecting one as a
+/// row of the C# grid.
+pub fn page<'a>(
+    tunnels: &'a [Tunnel],
+    routes: &[SessionRoute],
+    selected: Option<TunnelId>,
+) -> Element<'a, Message> {
     let header = row![
         text(fl!("ui-tunnels-page-title")).size(font_size::TITLE),
         space::horizontal(),
         button(text(fl!("ui-tunnels-new")))
             .style(styles::primary)
             .on_press(tunnel(TunnelMessage::New)),
+        tooltip(
+            button(text(fl!("ui-tunnels-close-selected")))
+                .style(styles::secondary)
+                .on_press_maybe(selected.map(|_| tunnel(TunnelMessage::CloseSelected))),
+            text(fl!("ui-tunnels-close-selected-tooltip")).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box),
         close_all(
             button(text(fl!("ui-tunnels-close-all")))
                 .style(styles::danger)
@@ -307,7 +321,7 @@ pub fn page<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, M
     ]
     .spacing(spacing::SM)
     .align_y(Alignment::Center);
-    let body = rows(tunnels, routes, true);
+    let body = rows(tunnels, routes, Place::Page { selected });
     // As the C# page's link under the grid.
     let manage = button(text(fl!("ui-tunnels-manage-gateways")))
         .style(styles::subtle)
@@ -342,9 +356,29 @@ fn close_all(button: iced::widget::Button<'_, Message>) -> Element<'_, Message> 
     .into()
 }
 
+/// Where tunnels' rows are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Place {
+    /// The panel under the sessions: no "Started" column, nothing selected.
+    Panel,
+    /// The Tunnels page: the "Started" column, and the row `selected`.
+    Page {
+        /// The tunnel selected, if any.
+        selected: Option<TunnelId>,
+    },
+}
+
+impl Place {
+    /// Whether the "Started" column is drawn: on the page, which has the room.
+    fn started(self) -> bool {
+        matches!(self, Self::Page { .. })
+    }
+}
+
 /// The tunnels opened by hand, then the sessions' routes under their own title: what Close
 /// All closes kept apart from what it leaves.
-fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], started: bool) -> Element<'a, Message> {
+fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], place: Place) -> Element<'a, Message> {
+    let started = place.started();
     let size = if started {
         None
     } else {
@@ -361,7 +395,7 @@ fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], started: bool) -> El
     if tunnels.is_empty() {
         list = list.push(note(fl!("ui-tunnels-empty")));
     }
-    list = list.extend(tunnels.iter().map(|open| tunnel_row(open, started)));
+    list = list.extend(tunnels.iter().map(|open| tunnel_row(open, place)));
     if !routes.is_empty() {
         list = list.push(note(fl!("ui-tunnels-session-routes", count = routes.len())));
         list = list.extend(routes.iter().map(|route| route_row(route, started)));
@@ -420,8 +454,10 @@ fn columns<'a>(started: bool) -> Element<'a, Message> {
 }
 
 /// A tunnel's row: its health dot, gateway, label, local port, remote host and port, and the
-/// button closing it; a right click opens its menu.
-fn tunnel_row(open: &Tunnel, started: bool) -> Element<'_, Message> {
+/// button closing it; a right click opens its menu. On the page a click selects it, as a row
+/// of the C# grid, the row selected marked as a session selected in the tree.
+fn tunnel_row(open: &Tunnel, place: Place) -> Element<'_, Message> {
+    let started = place.started();
     let cell = |value: String| text(value).size(font_size::CAPTION);
     let interrupted = open.interrupted;
     let line = row![
@@ -453,9 +489,22 @@ fn tunnel_row(open: &Tunnel, started: bool) -> Element<'_, Message> {
     )
     .spacing(spacing::SM)
     .align_y(Alignment::Center);
-    mouse_area(line)
-        .on_right_press(Message::OpenTreeMenu(TreeMenu::Tunnel(open.id)))
-        .into()
+    let menu = Message::OpenTreeMenu(TreeMenu::Tunnel(open.id));
+    match place {
+        Place::Panel => mouse_area(line).on_right_press(menu).into(),
+        Place::Page { selected } => {
+            let mark = if selected == Some(open.id) {
+                Mark::Selected
+            } else {
+                Mark::None
+            };
+            mouse_area(RowChrome::new(line, mark))
+                .on_press(tunnel(TunnelMessage::Select(open.id)))
+                .on_right_press(menu)
+                .interaction(iced::mouse::Interaction::Pointer)
+                .into()
+        }
+    }
 }
 
 /// A row's health: a full green dot while the tunnel listens; an empty red ring once its

@@ -1657,6 +1657,8 @@ ui-error-local-port-unavailable = Local port { $port } is already in use, or res
 ## The tunnels panel and its status-bar button, as the C# ones.
 ui-tunnels-header = Tunnels ({ $count })
 ui-tunnels-close-all = Close All
+ui-tunnels-close-selected = Close Selected
+ui-tunnels-close-selected-tooltip = Close selected tunnel
 ui-tunnels-new = + New
 ui-tunnels-collapse-tooltip = Collapse tunnel panel
 ui-tunnels-toggle-tooltip = Toggle tunnel panel
@@ -3630,6 +3632,8 @@ ui-tunnels-session-route-local = -
 ui-tunnels-session-route-local-tooltip = Carried inside Heimdall: no local port
 ui-tunnels-close-all-tooltip = Closes the tunnels opened by hand; sessions through a gateway stay open
 ui-tab-route-badge = via
+ui-tab-route-badge-healthy = Active tunnels
+ui-tab-route-badge-unhealthy = Active tunnels - at least one is unhealthy
 ui-origin-rdp-file = Imported from RDP file
 ui-origin-openssh = Imported from OpenSSH config
 ui-origin-putty = Imported from PuTTY registry
