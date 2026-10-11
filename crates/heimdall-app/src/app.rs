@@ -2543,6 +2543,9 @@ pub struct ImportSummary {
     /// For the migration of this computer's C# store, the trusted SSH servers carried over;
     /// or why they could not be.
     pub host_keys: Option<Result<heimdall_ssh::Carried, String>>,
+    /// For the migration of this computer's C# store, how many scheduled connections were
+    /// carried over; or why they could not be. `None` when it had none.
+    pub scheduled: Option<Result<usize, String>>,
     /// The SSH gateways the file brought, created or found already saved, as the C# summary's
     /// gateway line counts them.
     pub gateways: heimdall_core::import::gateways::Reconciliation,
@@ -5075,8 +5078,10 @@ impl App {
             }
         };
         let host_keys = std::mem::take(&mut report.host_keys);
+        let scheduled = std::mem::take(&mut report.scheduled);
         // Saved before it is kept: a failed save leaves the list as its file is.
         if let Some(mut summary) = self.merge_import(report) {
+            summary.scheduled = self.carry_scheduled(scheduled);
             // This computer's own C# store: its trusted servers are trusted here too.
             summary.host_keys = Some(
                 heimdall_ssh::carry_over(
@@ -5087,6 +5092,42 @@ impl App {
             );
             self.dialog = Some(Dialog::ImportDone(summary));
         }
+    }
+}
+
+impl App {
+    /// Carries the scheduled connections of this computer's C# store into the file beside
+    /// the profiles, each in place of the one of its identifier, each timed from now on this
+    /// computer's clock; how many, or why none could be. `None` when there were none. A file
+    /// there that does not read is left as it is.
+    fn carry_scheduled(
+        &self,
+        tasks: Vec<heimdall_core::scheduled::ScheduledTask>,
+    ) -> Option<Result<usize, String>> {
+        use heimdall_core::scheduled::{self, ScheduledTasks};
+        if tasks.is_empty() {
+            return None;
+        }
+        let now = crate::time_zone::unix_now();
+        let clock = crate::time_zone::SystemClock;
+        let tasks = tasks.into_iter().map(|mut task| {
+            task.next_run = Some(scheduled::next_run(&task.schedule, now, &clock));
+            task
+        });
+        let path = scheduled::scheduled_path(self.profiles_file());
+        let (mut held, unread) = ScheduledTasks::open(&path);
+        let carried = match unread {
+            Some(error) => Err(error.to_string()),
+            None => held
+                .merge(tasks)
+                .map(|count| count.added + count.updated)
+                .map_err(|error| error.to_string()),
+        };
+        match &carried {
+            Ok(count) => log::info!("scheduled connections carried over: {count}"),
+            Err(error) => log::warn!("scheduled connections not carried over: {error}"),
+        }
+        Some(carried)
     }
 }
 

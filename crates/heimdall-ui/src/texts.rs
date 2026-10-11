@@ -453,6 +453,10 @@ pub fn dropped_setting(dropped: Dropped) -> String {
                 LegacyElevation::Unknown => fl!("ui-import-elevation-unknown"),
             }
         ),
+        Dropped::ScheduledTime => fl!(
+            "ui-import-dropped-scheduled-time",
+            time = heimdall_core::scheduled::DEFAULT_TIME_OF_DAY
+        ),
     }
 }
 

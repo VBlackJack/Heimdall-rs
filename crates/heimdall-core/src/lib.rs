@@ -37,6 +37,7 @@ pub mod paths;
 pub mod pin;
 pub mod post_connect;
 pub mod profile;
+pub mod scheduled;
 pub mod session_snapshot;
 pub mod settings;
 pub mod split_layouts;
