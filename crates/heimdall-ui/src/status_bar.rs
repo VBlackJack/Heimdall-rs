@@ -349,9 +349,16 @@ fn scheduled_notice(notice: &heimdall_app::ScheduledNotice) -> String {
             "ui-status-scheduled-failed",
             reason = crate::texts::scheduled_failure(*failure, name)
         ),
-        ScheduledNotice::Refused(name) => {
-            fl!("ui-status-scheduled-refused", name = server_text(name))
-        }
+        ScheduledNotice::Refused { name, refusal } => fl!(
+            "ui-status-scheduled-refused",
+            name = server_text(name),
+            reason = crate::texts::scheduled_refusal(*refusal)
+        ),
+        ScheduledNotice::Suspended { name, failures } => fl!(
+            "ui-status-scheduled-suspended",
+            name = server_text(name),
+            count = (*failures)
+        ),
         ScheduledNotice::Deferred(name) => {
             fl!("ui-status-scheduled-deferred", name = server_text(name))
         }
@@ -747,7 +754,7 @@ mod tests {
     #[test]
     fn a_scheduled_connection_says_the_server_it_opens_and_why_it_did_not() {
         use heimdall_app::ScheduledNotice;
-        use heimdall_core::scheduled::FailureKind;
+        use heimdall_core::scheduled::{FailureKind, RefusalKind};
 
         let said = |notice: ScheduledNotice| {
             status_text(&SessionStatus::Ready, Some(&Notice::Scheduled(notice)), 0)
@@ -783,7 +790,39 @@ mod tests {
                 "{failure:?}"
             );
         }
-        assert!(said(ScheduledNotice::Refused(named("Tool"))).contains("\"Tool\""));
+        assert_eq!(
+            said(ScheduledNotice::Refused {
+                name: named("Tool"),
+                refusal: RefusalKind::LocalProgram
+            }),
+            "Scheduled task error: a schedule does not open \"Tool\": it is a local shell or              program"
+        );
+        for refusal in [
+            RefusalKind::ExternalClient,
+            RefusalKind::RdGateway,
+            RefusalKind::Citrix,
+            RefusalKind::WinRmNoAccount,
+            RefusalKind::WinRmPasswordNotStored,
+            RefusalKind::X11Forwarding,
+            RefusalKind::StepsNotApproved,
+            RefusalKind::FilesBrowserOff,
+        ] {
+            let text = said(ScheduledNotice::Refused {
+                name: named("web"),
+                refusal,
+            });
+            assert!(
+                text.starts_with("Scheduled task error: a schedule does not open \"web\": "),
+                "{text}"
+            );
+        }
+        assert_eq!(
+            said(ScheduledNotice::Suspended {
+                name: named("web"),
+                failures: 3
+            }),
+            "The scheduled task for web was turned off after 3 failures in a row"
+        );
         assert_eq!(
             said(ScheduledNotice::Deferred(named("web"))),
             "The scheduled connection to web waits for the workspace to be unlocked"

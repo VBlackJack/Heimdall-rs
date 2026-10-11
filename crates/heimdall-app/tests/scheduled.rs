@@ -29,7 +29,8 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{LocalArguments, LocalCommand, LocalProfile, ProfileId, SshProfile};
 use heimdall_core::scheduled::{
-    self, FailureKind, FixedOffset, Outcome, Schedule, ScheduledTask, ScheduledTasks,
+    self, FailureKind, FixedOffset, MAX_CONSECUTIVE_FAILURES, Outcome, RefusalKind, Schedule,
+    ScheduledTask, ScheduledTasks,
 };
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::{AgentSource, PasswordQuestion, PublicKey, Secret};
@@ -123,6 +124,7 @@ fn task(id: &str, server_id: Option<&str>, name: &str, next: i64) -> ScheduledTa
         last_run: None,
         next_run: Some(next),
         last_outcome: None,
+        failures: 0,
     }
 }
 
@@ -307,7 +309,7 @@ fn a_question_is_declined_and_fails_the_task_quietly() {
         Some(&failed("server a", FailureKind::CredentialUnavailable))
     );
 
-    // The failure that follows is the attempt's own: the outcome stays.
+    // The failure that follows is the attempt's own: the outcome stays, the tab goes.
     event(
         &mut app,
         opened,
@@ -316,6 +318,10 @@ fn a_question_is_declined_and_fails_the_task_quietly() {
     assert_eq!(
         find(&app, "t").last_outcome,
         Some(Outcome::Failed(FailureKind::CredentialUnavailable))
+    );
+    assert!(
+        app.tab(opened.0).is_none(),
+        "a tab that failed to connect closes"
     );
 }
 
@@ -336,10 +342,9 @@ fn an_unknown_server_key_is_never_asked_about() {
         },
     );
     assert!(effects.is_empty(), "{effects:?}");
-    assert_eq!(
-        app.tab(opened.0).expect("tab").phase,
-        Phase::Failed(UiError::Cancelled),
-        "stopped, not waiting for an answer"
+    assert!(
+        app.tab(opened.0).is_none(),
+        "stopped and closed, not waiting for an answer"
     );
     assert_eq!(
         find(&app, "t").last_outcome,
@@ -358,6 +363,7 @@ fn a_connection_that_fails_is_recorded() {
         find(&app, "t").last_outcome,
         Some(Outcome::Failed(FailureKind::ConnectionFailed))
     );
+    assert!(app.tab(opened.0).is_none(), "closed");
     assert_eq!(
         app.notice(),
         Some(&failed("server a", FailureKind::ConnectionFailed))
@@ -409,12 +415,16 @@ fn a_local_program_is_refused() {
     assert!(effects.is_empty(), "nothing started: {effects:?}");
     assert!(app.tabs.is_empty());
     assert!(app.dialog.is_none(), "nothing asked: {:?}", app.dialog);
-    assert_eq!(find(&app, "t").last_outcome, Some(Outcome::Refused));
+    assert_eq!(
+        find(&app, "t").last_outcome,
+        Some(Outcome::Refused(RefusalKind::LocalProgram))
+    );
     assert_eq!(
         app.notice(),
-        Some(&Notice::Scheduled(ScheduledNotice::Refused(
-            "Tool".to_owned()
-        )))
+        Some(&Notice::Scheduled(ScheduledNotice::Refused {
+            name: "Tool".to_owned(),
+            refusal: RefusalKind::LocalProgram
+        }))
     );
 }
 
@@ -508,4 +518,233 @@ async fn a_task_due_while_locked_waits_for_the_unlock_then_runs_once() {
         app.scheduled_tick_at(due + 2 * MINUTE, &UTC).is_empty(),
         "run once"
     );
+}
+
+/// The application with profile `a` replaced by `changed`, and a task opening it.
+fn with_a(dir: &Path, changed: SshProfile, due: i64) -> App {
+    drop(app(dir, vec![task("t", Some("a"), "server a", due)]));
+    let profiles_file = dir.join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([changed]);
+    store.save().expect("save");
+    App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.to_owned(),
+        system_credentials: SystemCredentials::memory(),
+    })
+}
+
+fn password_question() -> ConnectionEvent {
+    ConnectionEvent::Question {
+        question: QuestionId::fresh(),
+        kind: QuestionKind::Password(PasswordQuestion {
+            host: "a.lab".to_owned(),
+            port: 22,
+            username: "admin".to_owned(),
+            attempt: 1,
+        }),
+    }
+}
+
+fn up() -> ConnectionEvent {
+    ConnectionEvent::Connected {
+        input: Arc::new(NullSink),
+    }
+}
+
+#[test]
+fn a_profile_that_would_start_a_program_or_ask_is_refused_before_anything_opens() {
+    let mut putty = ssh("a", "server a");
+    putty.ssh_mode = heimdall_core::profile::SshMode::External;
+    let mut x11 = ssh("a", "server a");
+    x11.x11_forwarding = true;
+    let mut steps = ssh("a", "server a");
+    steps.post_connect.steps = vec![heimdall_core::post_connect::PostConnectStep::new("uptime")];
+    for (profile, refusal) in [
+        (putty, RefusalKind::ExternalClient),
+        (x11, RefusalKind::X11Forwarding),
+        (steps, RefusalKind::StepsNotApproved),
+    ] {
+        let dir = tempfile::tempdir().expect("dir");
+        let due = tomorrow();
+        let mut app = with_a(dir.path(), profile, due);
+        let effects = app.scheduled_tick_at(due, &UTC);
+        assert!(
+            effects.is_empty(),
+            "{refusal:?}: nothing probed nor started: {effects:?}"
+        );
+        assert!(app.tabs.is_empty(), "{refusal:?}");
+        assert!(app.dialog.is_none(), "{refusal:?}: {:?}", app.dialog);
+        assert_eq!(
+            find(&app, "t").last_outcome,
+            Some(Outcome::Refused(refusal))
+        );
+    }
+}
+
+#[test]
+fn a_scheduled_tab_opens_behind_the_tab_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut app = app(dir.path(), vec![task("t", Some("a"), "server a", due)]);
+    let shown = connected(&app.update(Message::OpenProfile(ProfileId::new("b"))));
+    assert_eq!(app.active, Some(shown.0));
+    let opened = connected(&app.scheduled_tick_at(due, &UTC));
+    assert_ne!(opened.0, shown.0);
+    assert_eq!(app.active, Some(shown.0), "the keyboard stays where it was");
+    assert!(app.is_scheduled_tab(opened.0));
+    assert!(!app.is_scheduled_tab(shown.0));
+}
+
+#[test]
+fn a_task_whose_session_is_still_open_is_skipped() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut app = app(dir.path(), vec![task("t", Some("a"), "server a", due)]);
+    let opened = connected(&app.scheduled_tick_at(due, &UTC));
+    let next = due + i64::from(INTERVAL) * MINUTE;
+    assert!(
+        app.scheduled_tick_at(next, &UTC).is_empty(),
+        "still connecting"
+    );
+    event(&mut app, opened, up());
+    let later = next + i64::from(INTERVAL) * MINUTE;
+    let effects = app.scheduled_tick_at(later, &UTC);
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Connect { .. })),
+        "still connected: {effects:?}"
+    );
+    assert_eq!(find(&app, "t").last_outcome, Some(Outcome::Ran), "kept");
+    assert_eq!(find(&app, "t").last_run, Some(due), "not run again");
+}
+
+#[test]
+fn a_scheduled_tab_never_reconnects_by_itself() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut app = app(dir.path(), vec![task("t", Some("a"), "server a", due)]);
+    app.update(Message::Settings(SettingsMessage::SshAutoReconnect(true)));
+    let opened = connected(&app.scheduled_tick_at(due, &UTC));
+    event(&mut app, opened, up());
+    let effects = event(
+        &mut app,
+        opened,
+        ConnectionEvent::Failed(UiError::ConnectionLost),
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::RetryAt { .. })),
+        "no attempt nobody watches: {effects:?}"
+    );
+    let tab = app
+        .tab(opened.0)
+        .expect("a dropped session stays to be seen");
+    assert!(tab.retry.is_none());
+    assert!(matches!(tab.phase, Phase::Failed(_)));
+    assert!(tab.prompts.is_empty());
+    assert_eq!(find(&app, "t").last_outcome, Some(Outcome::Ran), "it ran");
+}
+
+#[test]
+fn the_sftp_pane_docked_beside_a_scheduled_shell_asks_nothing_either() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut app = app(dir.path(), vec![task("t", Some("a"), "server a", due)]);
+    let opened = connected(&app.scheduled_tick_at(due, &UTC));
+    let pane = connected(&event(&mut app, opened, up()));
+    assert!(
+        app.is_scheduled_tab(pane.0),
+        "the companion keeps the origin"
+    );
+    let effects = event(&mut app, pane, password_question());
+    assert!(
+        matches!(effects.as_slice(), [Effect::Answer { answer: None, .. }]),
+        "declined: {effects:?}"
+    );
+    assert!(app.tab(pane.0).expect("pane").prompts.is_empty());
+    assert_eq!(
+        find(&app, "t").last_outcome,
+        Some(Outcome::Ran),
+        "the pane's outcome is not the task's"
+    );
+}
+
+#[test]
+fn a_task_failing_three_times_in_a_row_is_turned_off() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut app = app(
+        dir.path(),
+        vec![task("t", Some("deleted"), "server a", due)],
+    );
+    let step = i64::from(INTERVAL) * MINUTE;
+    let mut at = due;
+    for _ in 0..MAX_CONSECUTIVE_FAILURES {
+        assert!(app.scheduled_tick_at(at, &UTC).is_empty());
+        at += step;
+    }
+    let task = find(&app, "t");
+    assert!(task.suspended(), "{task:?}");
+    assert_eq!(
+        task.last_outcome,
+        Some(Outcome::Failed(FailureKind::ProfileNotFound))
+    );
+    assert!(saved(dir.path(), "t").suspended(), "written");
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::Scheduled(ScheduledNotice::Suspended {
+            name: "server a".to_owned(),
+            failures: MAX_CONSECUTIVE_FAILURES
+        }))
+    );
+    assert!(!app.schedules_connections());
+    assert!(app.scheduled_tick_at(at, &UTC).is_empty(), "off");
+    assert_eq!(find(&app, "t").failures, MAX_CONSECUTIVE_FAILURES);
+}
+
+#[test]
+fn the_session_limit_fails_a_task_from_the_count_not_a_notice() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut app = app(dir.path(), vec![task("t", Some("a"), "server a", due)]);
+    app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
+    connected(&app.update(Message::OpenProfile(ProfileId::new("b"))));
+    assert!(app.scheduled_tick_at(due, &UTC).is_empty());
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(
+        find(&app, "t").last_outcome,
+        Some(Outcome::Failed(FailureKind::SessionLimit))
+    );
+}
+
+#[tokio::test]
+async fn a_lock_while_a_scheduled_tab_connects_defers_the_task() {
+    let dir = tempfile::tempdir().expect("dir");
+    let due = tomorrow();
+    let mut app = app(dir.path(), vec![task("t", Some("a"), "server a", due)]);
+    app.update(Message::ShowVault);
+    submit(&mut app, MASTER, true).await;
+    let opened = connected(&app.scheduled_tick_at(due, &UTC));
+    app.update(Message::LockVault);
+    let effects = event(&mut app, opened, password_question());
+    assert!(
+        matches!(effects.as_slice(), [Effect::Answer { answer: None, .. }]),
+        "{effects:?}"
+    );
+    assert_eq!(find(&app, "t").last_outcome, Some(Outcome::Deferred));
+    event(
+        &mut app,
+        opened,
+        ConnectionEvent::Failed(UiError::Cancelled),
+    );
+    assert!(app.tab(opened.0).is_none(), "closed");
+    let effects = submit(&mut app, MASTER, false).await;
+    connected(&effects);
 }

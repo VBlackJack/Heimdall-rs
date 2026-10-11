@@ -3958,20 +3958,25 @@ impl App {
     /// said: no limit at 0; this computer's own shells are not counted, nor a session
     /// opening in a tab's place.
     pub(super) fn session_limit_reached(&mut self) -> bool {
+        let Some(max) = self.session_limit_hit() else {
+            return false;
+        };
+        self.tell(Notice::SessionLimitReached(max));
+        true
+    }
+
+    /// The session limit when one more session may not open, without saying it.
+    pub(super) fn session_limit_hit(&self) -> Option<u32> {
         let max = self.settings.max_sessions;
         if max == 0 || self.replacing {
-            return false;
+            return None;
         }
         let open = self
             .tabs
             .iter()
             .filter(|tab| !matches!(tab.profile, TabProfile::Local(_) | TabProfile::Tool(_)))
             .count();
-        let reached = open >= usize::try_from(max).unwrap_or(usize::MAX);
-        if reached {
-            self.tell(Notice::SessionLimitReached(max));
-        }
-        reached
+        (open >= usize::try_from(max).unwrap_or(usize::MAX)).then_some(max)
     }
 
     /// Opens a tab for `profile`, a shell or its files, without asking about its steps:
@@ -4074,7 +4079,7 @@ impl App {
         }
         // A tab a scheduled task opened asks nothing: what is not saved fails it.
         if let Some(effects) = self.unattended_event(tab_id, &event) {
-            self.tell_scheduled();
+            self.after_scheduled_event();
             return effects;
         }
         // No password saved: the external credential provider, when it is to be asked.
@@ -4116,7 +4121,9 @@ impl App {
             self.warn_ftp_cleartext(tab_id);
         }
         if shell_up {
+            let count = self.tabs.len();
             effects.extend(self.dock_sftp(tab_id));
+            self.adopt_companion(tab_id, count);
             effects.extend(self.dock_local_browser(tab_id));
         }
         if let Some((error, was_live)) = failure
@@ -4124,8 +4131,9 @@ impl App {
         {
             effects.extend(self.retry_after(tab_id, &error, was_live));
         }
-        // Said once the tab shows its new state, which a notice is told for.
-        self.tell_scheduled();
+        // Said once the tab shows its new state, which a notice is told for; a scheduled
+        // tab that failed closed.
+        self.after_scheduled_event();
         effects
     }
 

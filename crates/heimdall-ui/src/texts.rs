@@ -25,7 +25,7 @@ use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
 use heimdall_core::import::csharp::{Dropped, LegacyElevation, SkipReason};
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
-use heimdall_core::scheduled::FailureKind;
+use heimdall_core::scheduled::{FailureKind, RefusalKind};
 use heimdall_core::settings::{RDP_RESIZE_ENABLE_DELAY_MAX_MS, RDP_RESIZE_ENABLE_DELAY_MIN_MS};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
@@ -418,6 +418,22 @@ pub fn auth_method(method: AuthMethod) -> String {
         AuthMethod::KeyFile => fl!("ui-auth-method-key-file"),
         AuthMethod::KeyboardInteractive => fl!("ui-auth-method-keyboard-interactive"),
         AuthMethod::Password => fl!("ui-auth-method-password"),
+    }
+}
+
+/// Why a schedule never opens a profile.
+#[must_use]
+pub fn scheduled_refusal(refusal: RefusalKind) -> String {
+    match refusal {
+        RefusalKind::LocalProgram => fl!("ui-scheduled-refusal-local-program"),
+        RefusalKind::ExternalClient => fl!("ui-scheduled-refusal-external-client"),
+        RefusalKind::RdGateway => fl!("ui-scheduled-refusal-rd-gateway"),
+        RefusalKind::Citrix => fl!("ui-scheduled-refusal-citrix"),
+        RefusalKind::WinRmNoAccount => fl!("ui-scheduled-refusal-winrm-no-account"),
+        RefusalKind::WinRmPasswordNotStored => fl!("ui-scheduled-refusal-winrm-password"),
+        RefusalKind::X11Forwarding => fl!("ui-scheduled-refusal-x11"),
+        RefusalKind::StepsNotApproved => fl!("ui-scheduled-refusal-steps"),
+        RefusalKind::FilesBrowserOff => fl!("ui-scheduled-refusal-files-browser"),
     }
 }
 

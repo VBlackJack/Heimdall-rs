@@ -87,6 +87,14 @@ impl App {
         error: &UiError,
         was_live: bool,
     ) -> Vec<Effect> {
+        // A tab a schedule opened never comes back by itself: an attempt nobody watches
+        // could only fail on what it would have to ask.
+        if self.is_scheduled_tab(tab_id) {
+            if let Some(tab) = self.tab_mut(tab_id) {
+                tab.retry = None;
+            }
+            return Vec::new();
+        }
         let ssh_attempts = self
             .settings
             .ssh_auto_reconnect

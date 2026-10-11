@@ -706,6 +706,7 @@ fn scheduled_tasks(
                     .and_then(|since| i64::try_from(since.as_secs()).ok()),
                 next_run: None,
                 last_outcome: None,
+                failures: 0,
             })
         })
         .collect()

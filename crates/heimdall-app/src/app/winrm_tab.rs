@@ -167,7 +167,7 @@ impl App {
 
     /// The password stored for `profile`'s own host, port and account, unless a server
     /// refused it in this run; `None` for the current Windows identity.
-    fn winrm_stored_password(&self, profile: &WinRmProfile) -> Option<Secret> {
+    pub(super) fn winrm_stored_password(&self, profile: &WinRmProfile) -> Option<Secret> {
         let endpoint = winrm::password_endpoint(profile)?;
         self.saved_password_for(&profile.id, &endpoint)
             .filter(|password| !password.expose().is_empty())
