@@ -285,17 +285,31 @@ fn files(message: FilesMessage) -> Message {
     Message::App(AppMessage::Files(message))
 }
 
-/// Narrowest a name is left before a column gives way, or is resized to, in logical pixels.
+/// Narrowest a name is resized to, in logical pixels.
 const NAME_MIN_WIDTH: f32 = 160.0;
 
-/// The widths of a pane's columns besides the name, which takes the rest: dragged on their
-/// header, kept for the session, as the C# list keeps them for the view's life.
+/// Narrowest the name is stretched to fill its pane, as the C# `MinimumNameColumnWidth`:
+/// past it, the columns pass the pane's width and the list scrolls sideways.
+const NAME_FILL_MIN_WIDTH: f32 = 200.0;
+
+/// A name's width set by dragging its separator, and the room it was set in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct NameWidth {
+    width: f32,
+    room: f32,
+}
+
+/// The widths of a pane's columns: dragged on their header, kept for the session, as the C#
+/// list keeps them for the view's life. The name fills the room the others leave, unless it
+/// was dragged in a pane of the same width, as the C# fills it again whenever its list is
+/// resized (`OnFileListSizeChanged`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColumnWidths {
     size: f32,
     modified: f32,
     permissions: f32,
     owner: f32,
+    name: Option<NameWidth>,
 }
 
 impl Default for ColumnWidths {
@@ -305,6 +319,7 @@ impl Default for ColumnWidths {
             modified: MODIFIED_WIDTH,
             permissions: PERMISSIONS_WIDTH,
             owner: OWNER_WIDTH,
+            name: None,
         }
     }
 }
@@ -321,11 +336,20 @@ impl ColumnWidths {
         }
     }
 
-    /// These widths, those of `columns` laid out at `laid`; the name's is the rest, left out.
-    fn resized(mut self, columns: &[SortColumn], laid: &[f32]) -> Self {
+    /// The name's width dragged in a pane whose room is `room`; none when it fills it.
+    fn name_in(self, room: f32) -> Option<f32> {
+        self.name
+            .filter(|name| (name.room - room).abs() < ROOM_TOLERANCE)
+            .map(|name| name.width)
+    }
+
+    /// These widths, those of `columns` laid out at `laid` in a pane whose room is `room`.
+    fn resized(mut self, columns: &[SortColumn], laid: &[f32], room: f32) -> Self {
         for (column, width) in columns.iter().zip(laid.iter().copied()) {
             match column {
-                SortColumn::Name => {}
+                // Kept while the pane keeps its width, as a WPF column keeps it until the C#
+                // stretches it again: a column widened then pushes the others past the edge.
+                SortColumn::Name => self.name = Some(NameWidth { width, room }),
                 SortColumn::Size => self.size = width,
                 SortColumn::Modified => self.modified = width,
                 SortColumn::Permissions => self.permissions = width,
@@ -368,35 +392,35 @@ fn column_min_width(column: SortColumn) -> f32 {
     }
 }
 
-/// The first of `columns` that fit in `width` at `widths` beside a name at least
-/// [`NAME_MIN_WIDTH`] wide: the last ones give way first, the name and the size never.
-fn fitting_columns(columns: &[SortColumn], widths: ColumnWidths, width: f32) -> Vec<SortColumn> {
-    let mut shown = columns.to_vec();
-    let needed = |shown: &[SortColumn]| {
-        shown
-            .iter()
-            .map(|column| {
-                widths
-                    .of(*column)
-                    .map_or(NAME_MIN_WIDTH, |fixed| fixed + spacing::SM)
-            })
-            .sum::<f32>()
-    };
-    while shown.len() > 2 && needed(&shown) > width {
-        shown.pop();
-    }
-    shown
+/// How close two widths are taken for the same, in logical pixels.
+const ROOM_TOLERANCE: f32 = 0.5;
+
+/// The width the name fills in `room` beside `columns` at `widths`: the rest, never less than
+/// [`NAME_FILL_MIN_WIDTH`], as the C# `OnFileListSizeChanged` stretches it.
+fn laid_name(widths: ColumnWidths, columns: &[SortColumn], room: f32) -> f32 {
+    let fixed: f32 = columns.iter().filter_map(|column| widths.of(*column)).sum();
+    let gaps: f32 = columns.iter().skip(1).map(|_| spacing::SM).sum();
+    (room - fixed - gaps).max(NAME_FILL_MIN_WIDTH)
 }
 
-/// The widths `shown` are laid out at in `room`: each its own, the name the rest.
-fn laid_widths(shown: &[SortColumn], widths: ColumnWidths, room: f32) -> Vec<f32> {
-    let fixed: f32 = shown.iter().filter_map(|column| widths.of(*column)).sum();
-    let gaps: f32 = shown.iter().skip(1).map(|_| spacing::SM).sum();
-    let name = (room - fixed - gaps).max(0.0);
-    shown
+/// The widths `columns` are laid out at in `room`: each its own, the name the one dragged in
+/// a pane this wide, else the rest ([`laid_name`]). Every column is shown, as the C# shows
+/// them: past the pane's width, the list scrolls sideways.
+fn laid_widths(columns: &[SortColumn], widths: ColumnWidths, room: f32) -> Vec<f32> {
+    let name = widths
+        .name_in(room)
+        .unwrap_or_else(|| laid_name(widths, columns, room));
+    columns
         .iter()
         .map(|column| widths.of(*column).unwrap_or(name))
         .collect()
+}
+
+/// The width of a row whose cells are laid out at `laid`: its padding, its cells and the gaps
+/// between them, as [`entry_row`] lays it out.
+fn row_width(laid: &[f32]) -> f32 {
+    let gaps: f32 = laid.iter().skip(1).map(|_| spacing::SM).sum();
+    2.0 * ROW_PADDING_X + laid.iter().sum::<f32>() + gaps
 }
 
 /// The size of `column`'s cells; none for the name's, at the window's size.
@@ -638,7 +662,7 @@ fn column_texts<E: Listed>(
 fn headers<'a, E: Listed>(
     (tab, side): (TabId, Side),
     entries: &'a [E],
-    (shown, laid): (&[SortColumn], &[f32]),
+    (shown, laid, room): (&[SortColumn], &[f32], f32),
     (sort, widths): (Sort, ColumnWidths),
 ) -> Element<'a, Message> {
     let cells = shown
@@ -665,7 +689,7 @@ fn headers<'a, E: Listed>(
         .collect();
     let least = shown.iter().copied().map(column_min_width).collect();
     let (fitted, resized) = (shown.to_vec(), shown.to_vec());
-    crate::column_header::ColumnHeader::new(cells, laid.to_vec())
+    let header = crate::column_header::ColumnHeader::new(cells, laid.to_vec())
         .least(least)
         .inset(ROW_PADDING_X)
         .spacing(spacing::SM)
@@ -678,9 +702,10 @@ fn headers<'a, E: Listed>(
         .on_resize(move |laid| Message::FileColumns {
             tab,
             side,
-            widths: widths.resized(&resized, &laid),
-        })
-        .into()
+            widths: widths.resized(&resized, &laid, room),
+        });
+    // As wide as its rows, past the pane when they are.
+    container(header).width(row_width(laid)).into()
 }
 
 /// What a file holds, by its extension, as the C# `FileIconConverter` and
@@ -1345,6 +1370,37 @@ fn path_bar<'a>(
     .into()
 }
 
+/// The rows of a pane, `wide` wide, in a scroller going both ways, as the C# `ListView`: its
+/// vertical scrollbar stays at the pane's edge while the columns scroll sideways under it.
+/// While they pass the pane (`overflowing`), room is kept under the last row for the
+/// horizontal scrollbar, drawn over the rows.
+fn rows_scroller(
+    list: Column<'_, Message>,
+    wide: f32,
+    overflowing: bool,
+    (tab, side): (TabId, Side),
+) -> Element<'_, Message> {
+    let under = if overflowing {
+        styles::SCROLLBAR_WIDTH
+    } else {
+        0.0
+    };
+    let rows = container(list).width(wide).padding(iced::Padding {
+        bottom: under,
+        ..iced::Padding::ZERO
+    });
+    scrollable(rows)
+        .direction(scrollable::Direction::Both {
+            vertical: styles::scrollbar(),
+            horizontal: styles::scrollbar(),
+        })
+        .style(styles::scrollbars)
+        .id(list_id(tab, side))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
 /// A pane, as the C# file browser: its title beside a server's, its toolbar, its path bar,
 /// what it says of itself, its list under the columns' headers, and its footer counting the
 /// entries.
@@ -1376,10 +1432,13 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
     let failed = error.is_some();
-    // The columns that fit beside a name still readable, laid out for the pane's width.
+    // Every column, the name filling the pane's width, less the rows' padding and the
+    // vertical scrollbar, as the C# `OnFileListSizeChanged`.
     let listing = responsive(move |size| {
-        let shown = fitting_columns(columns, widths, size.width);
-        let laid = laid_widths(&shown, widths, size.width - 2.0 * ROW_PADDING_X);
+        let shown = columns;
+        let room = size.width - 2.0 * ROW_PADDING_X - styles::SCROLLBAR_WIDTH;
+        let laid = laid_widths(shown, widths, room);
+        let wide = row_width(&laid);
         let mut list = Column::new();
         if loading {
             list = list.push(text(fl!("ui-files-loading")).size(font_size::CAPTION));
@@ -1390,21 +1449,17 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             let place = (tab, side, index);
             let picked = selected == Some(index) || marked.contains(&index);
             let target = drop == Some(DropHere::Entry(index));
-            list = list.push(entry_row(entry, (&shown, &laid), (picked, target), place));
+            list = list.push(entry_row(entry, (shown, &laid), (picked, target), place));
         }
         // A right click beside the entries: the menu of the folder shown, as the C# list's.
-        let list = mouse_area(
-            styles::scroll(list)
-                .id(list_id(tab, side))
-                .height(Length::Fill),
-        )
-        .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
-            tab,
-            side,
-            index: None,
-        }));
-        let header = headers((tab, side), entries, (&shown, &laid), (sort, widths));
-        column![header, list].spacing(spacing::XS).into()
+        let list = mouse_area(rows_scroller(list, wide, wide > size.width, (tab, side)))
+            .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+                tab,
+                side,
+                index: None,
+            }));
+        let header = headers((tab, side), entries, (shown, &laid, room), (sort, widths));
+        crate::headed_list::headed_list(header, list, spacing::XS).into()
     });
     let mut content = Column::new().spacing(spacing::SM);
     if let Some(title) = title {
@@ -2025,38 +2080,7 @@ mod tests {
     }
 
     #[test]
-    fn the_last_columns_give_way_to_a_readable_name_but_never_the_size() {
-        use SortColumn::{Modified, Name, Owner, Permissions, Size};
-        let widths = ColumnWidths::default();
-        assert_eq!(
-            fitting_columns(REMOTE_COLUMNS, widths, 2000.0),
-            REMOTE_COLUMNS
-        );
-        // Name 160 + size 98 + modified 138 + permissions 98 + owner 63 = 557.
-        assert_eq!(
-            fitting_columns(REMOTE_COLUMNS, widths, 557.0),
-            REMOTE_COLUMNS
-        );
-        assert_eq!(
-            fitting_columns(REMOTE_COLUMNS, widths, 556.0),
-            [Name, Size, Modified, Permissions]
-        );
-        assert_eq!(fitting_columns(REMOTE_COLUMNS, widths, 300.0), [Name, Size]);
-        assert_eq!(
-            fitting_columns(REMOTE_COLUMNS, widths, 10.0),
-            [Name, Size],
-            "never fewer"
-        );
-        let wider = widths.resized(&[Owner], &[155.0]);
-        assert_eq!(
-            fitting_columns(REMOTE_COLUMNS, wider, 600.0),
-            [Name, Size, Modified, Permissions],
-            "the owner widened by 100 gives way sooner"
-        );
-    }
-
-    #[test]
-    fn the_name_takes_the_room_the_other_columns_leave() {
+    fn every_column_is_kept_the_name_filling_the_room_down_to_the_csharp_least() {
         use SortColumn::{Modified, Name, Size};
         let widths = ColumnWidths::default();
         // 500 - size 90 - modified 130 - two gaps of 8.
@@ -2064,19 +2088,27 @@ mod tests {
             laid_widths(&[Name, Size, Modified], widths, 500.0),
             [264.0, 90.0, 130.0]
         );
+        // Too narrow: the name keeps the C# least and the row passes the pane.
         assert_eq!(
             laid_widths(&[Name, Size], widths, 50.0),
-            [0.0, 90.0],
-            "never less than nothing"
+            [NAME_FILL_MIN_WIDTH, 90.0]
         );
+        let laid = laid_widths(REMOTE_COLUMNS, widths, 300.0);
+        assert_eq!(laid.len(), REMOTE_COLUMNS.len(), "none given way");
+        assert!(row_width(&laid) > 300.0, "wider than the pane: it scrolls");
     }
 
     #[test]
-    fn resized_widths_keep_every_column_but_the_name() {
+    fn a_row_is_as_wide_as_its_padding_its_cells_and_their_gaps() {
+        // 2 x 10 + 264 + 90 + 130 + 2 x 8.
+        assert!((row_width(&[264.0, 90.0, 130.0]) - 520.0).abs() < ROOM_TOLERANCE);
+    }
+
+    #[test]
+    fn resized_widths_keep_every_column_and_the_name_while_the_pane_keeps_its_width() {
         use SortColumn::{Modified, Name, Owner, Permissions, Size};
         let widths =
-            ColumnWidths::default().resized(&[Name, Size, Modified], &[400.0, 70.0, 150.0]);
-        assert_eq!(widths.of(Name), None, "the rest, never kept");
+            ColumnWidths::default().resized(&[Name, Size, Modified], &[400.0, 70.0, 150.0], 500.0);
         assert_eq!(widths.of(Size), Some(70.0));
         assert_eq!(widths.of(Modified), Some(150.0));
         assert_eq!(
@@ -2085,6 +2117,17 @@ mod tests {
             "not shown, kept"
         );
         assert_eq!(widths.of(Owner), Some(OWNER_WIDTH));
+        assert_eq!(
+            laid_widths(&[Name, Size, Modified], widths, 500.0),
+            [400.0, 70.0, 150.0],
+            "the name dragged, kept in a pane as wide"
+        );
+        // 600 - 70 - 150 - two gaps of 8.
+        assert_eq!(
+            laid_widths(&[Name, Size, Modified], widths, 600.0),
+            [364.0, 70.0, 150.0],
+            "the pane resized: the name fills it again, as the C#'s"
+        );
         let tab = TabColumns::default().with(Side::Remote, widths);
         assert_eq!(tab.remote, widths);
         assert_eq!(tab.local, ColumnWidths::default(), "each pane its own");

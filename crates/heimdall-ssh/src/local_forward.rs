@@ -292,23 +292,39 @@ mod tests {
         assert_ne!(forward.address().port(), 0);
     }
 
+    /// How many freed ports the test tries: another test running beside it can take the port
+    /// between its probe and the forward's own bind.
+    const PORT_TRIES: usize = 5;
+
     #[tokio::test]
     async fn a_port_chosen_is_listened_on_and_a_taken_one_is_said_unavailable() {
-        // A port the system has just freed, chosen as a user would choose one.
-        let free = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        // A port the system has just freed, chosen as a user would choose one; another one if
+        // a parallel test took it first.
+        let mut started = None;
+        for _ in 0..PORT_TRIES {
+            let free = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("probe")
+                .local_addr()
+                .expect("address")
+                .port();
+            match start_on(
+                Arc::new(FakeGateway::default()),
+                "dc.lab".to_owned(),
+                80,
+                Some(free),
+            )
             .await
-            .expect("probe")
-            .local_addr()
-            .expect("address")
-            .port();
-        let forward = start_on(
-            Arc::new(FakeGateway::default()),
-            "dc.lab".to_owned(),
-            80,
-            Some(free),
-        )
-        .await
-        .expect("start on the port chosen");
+            {
+                Ok(forward) => {
+                    started = Some((free, forward));
+                    break;
+                }
+                Err(error) if port_unavailable(&error) => {}
+                Err(error) => panic!("start on the port chosen: {error:?}"),
+            }
+        }
+        let (free, forward) = started.expect("a freed port taken by this test");
         assert_eq!(
             forward.address(),
             SocketAddr::from((Ipv4Addr::LOCALHOST, free))
