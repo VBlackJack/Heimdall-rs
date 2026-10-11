@@ -7070,8 +7070,7 @@ impl Shell {
                     .map(|(_, side)| side),
                 self.files_drag
                     .as_ref()
-                    .filter(|drag| drag.active)
-                    .and_then(|drag| drag.over),
+                    .and_then(|drag| drag.target(&self.app)),
                 self.file_columns.get(&tab).copied().unwrap_or_default(),
                 notice,
             ),

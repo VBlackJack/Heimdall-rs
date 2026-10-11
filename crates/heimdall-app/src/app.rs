@@ -85,6 +85,7 @@ mod detail;
 mod docked_sftp;
 mod file_import;
 mod files_clipboard;
+mod files_drop;
 mod files_edit;
 mod files_editor;
 mod files_sudo;

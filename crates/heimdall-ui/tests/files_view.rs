@@ -1574,6 +1574,190 @@ async fn an_entry_dragged_onto_the_other_panes_folder_is_sent_into_it() {
     assert_eq!(files.transfers.len(), 1);
 }
 
+/// A second Files tab on the same server as `files_tab`'s, its server's folder listing the
+/// folder `inbox`.
+async fn second_files_tab(core: &mut App, dir: &Path) -> TabId {
+    let (tab, attempt) = match core
+        .update(AppMessage::OpenFiles(ProfileId::new("a")))
+        .as_slice()
+    {
+        [Effect::Connect { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("{other:?}"),
+    };
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::FilesReady {
+            client: idle_client().await,
+            shell: None,
+        },
+    });
+    core.update(AppMessage::Files(FilesMessage::RemoteListed {
+        tab,
+        result: Ok((
+            RemotePath::from("/srv"),
+            vec![remote("inbox", EntryKind::Directory, 0)],
+        )),
+    }));
+    core.update(AppMessage::Files(FilesMessage::LocalListed {
+        tab,
+        result: Ok((
+            PathBuf::from(dir),
+            vec![local("Documents", EntryKind::Directory)],
+        )),
+    }));
+    tab
+}
+
+/// Pressed on entry `index` of pane `side` of `from`, dragged over pane `onto` of `to`, its
+/// entry `into` if any, and let go there; what is lit at the last moment is given back.
+fn drag_across(
+    shell: &mut Shell,
+    (from, side, index): (TabId, Side, usize),
+    (to, onto, into): (TabId, Side, Option<usize>),
+) -> Option<heimdall_ui::files_drag::Spot> {
+    use heimdall_ui::files_drag::{FilesDrag, Spot};
+    use iced::Point;
+
+    let pressed = Spot {
+        tab: from,
+        side,
+        index: Some(index),
+    };
+    let over = Spot {
+        tab: to,
+        side: onto,
+        index: into,
+    };
+    let _ = shell.update(Message::FilesHover(pressed));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::FilesDragMoved(Point::new(40.0, 40.0)));
+    let _ = shell.update(Message::FilesHoverLeft(pressed));
+    let _ = shell.update(Message::FilesHover(over));
+    // What the view lights for the same drag.
+    let mut drag = FilesDrag::pressed(pressed, Point::ORIGIN);
+    drag.moved(Point::new(40.0, 40.0));
+    drag.over = Some(over);
+    let lit = drag.target(shell.app());
+    let _ = shell.update(Message::FilesDragEnd);
+    lit
+}
+
+#[tokio::test]
+async fn files_of_this_computer_dragged_onto_another_tabs_server_folder_are_uploaded_into_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    std::fs::write(dir.path().join("notes.md"), b"notes
+").expect("file");
+    let (mut core, first) = files_tab(dir.path()).await;
+    let second = second_files_tab(&mut core, dir.path()).await;
+    let mut shell = Shell::with_app(core);
+
+    let lit = drag_across(
+        &mut shell,
+        (first, Side::Local, 1),
+        (second, Side::Remote, Some(0)),
+    );
+    assert_eq!(
+        lit.map(|spot| (spot.tab, spot.side, spot.index)),
+        Some((second, Side::Remote, Some(0))),
+        "the folder dropped on is lit"
+    );
+    let transfers = |tab| {
+        shell
+            .app()
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .map(|files| {
+                files
+                    .transfers
+                    .iter()
+                    .map(|transfer| {
+                        let picked = transfer.picked.as_ref().expect("picked");
+                        (
+                            transfer.direction,
+                            picked.root.remote.clone(),
+                            picked.root.local.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .expect("files")
+    };
+    assert_eq!(
+        transfers(second),
+        vec![(
+            Direction::Upload,
+            RemotePath::from("/srv/inbox/notes.md"),
+            dir.path().join("notes.md"),
+        )],
+        "uploaded by the tab dropped on, into the folder dropped on"
+    );
+    assert!(transfers(first).is_empty(), "nothing on the tab dragged from");
+}
+
+#[tokio::test]
+async fn a_servers_entry_dragged_onto_another_tabs_local_list_is_downloaded_by_its_own_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, first) = files_tab(dir.path()).await;
+    let second = second_files_tab(&mut core, dir.path()).await;
+    let mut shell = Shell::with_app(core);
+
+    let lit = drag_across(
+        &mut shell,
+        (first, Side::Remote, 1),
+        (second, Side::Local, None),
+    );
+    assert_eq!(
+        lit.map(|spot| (spot.tab, spot.side, spot.index)),
+        Some((second, Side::Local, None)),
+        "the list dropped on is lit"
+    );
+    let files = shell
+        .app()
+        .tab(first)
+        .and_then(|found| found.files.as_deref())
+        .expect("files");
+    let [transfer] = files.transfers.as_slice() else {
+        panic!("{:?}", files.transfers.len());
+    };
+    assert_eq!(transfer.direction, Direction::Download);
+    let picked = transfer.picked.as_ref().expect("picked");
+    assert_eq!(picked.root.remote, RemotePath::from("/home/admin/backup.tar.gz"));
+    assert_eq!(picked.root.local, dir.path().join("backup.tar.gz"));
+}
+
+#[tokio::test]
+async fn a_drag_between_two_servers_lists_or_two_local_lists_is_refused_and_never_lit() {
+    let dir = tempfile::tempdir().expect("dir");
+    std::fs::write(dir.path().join("notes.md"), b"notes
+").expect("file");
+    let (mut core, first) = files_tab(dir.path()).await;
+    let second = second_files_tab(&mut core, dir.path()).await;
+    let mut shell = Shell::with_app(core);
+
+    let lit = drag_across(
+        &mut shell,
+        (first, Side::Remote, 1),
+        (second, Side::Remote, Some(0)),
+    );
+    assert_eq!(lit, None, "server to server: Copy, then Paste");
+    let lit = drag_across(
+        &mut shell,
+        (first, Side::Local, 1),
+        (second, Side::Local, Some(0)),
+    );
+    assert_eq!(lit, None, "this computer to itself");
+    for tab in [first, second] {
+        let files = shell
+            .app()
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .expect("files");
+        assert!(files.transfers.is_empty(), "{:?}", files.transfers.len());
+    }
+    assert!(!dir.path().join("Documents").join("notes.md").exists());
+}
+
 /// The facts of an SFTP tab: `can_paste` as said, its SSH connection with `over_ssh`, which
 /// it copies and edits on.
 fn sftp_tab(can_paste: bool, over_ssh: bool) -> heimdall_ui::tree_view::FilesTabFacts {
