@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use heimdall_core::profile::DesktopSizing;
 use heimdall_rdp::{
-    LocalClipboard, MouseButton, MousePosition, Operation, Scancode, WheelRotations,
+    LocalClipboard, MouseButton, MousePosition, Operation, RdpInput, Scancode, WheelRotations,
 };
 use heimdall_remote::vnc::{Quality, RemoteCursor, VncInput};
 use tokio::sync::{mpsc, watch};
@@ -227,7 +227,7 @@ fn typed(keys: &[KeyNames]) -> Vec<DesktopInput> {
 /// Where the input of a desktop goes.
 enum DesktopSink {
     Rdp {
-        input: mpsc::UnboundedSender<Vec<Operation>>,
+        input: mpsc::UnboundedSender<Vec<RdpInput>>,
         size: watch::Sender<Option<(u16, u16)>>,
         /// Which of the tab's sizes the server is asked for.
         sizing: DesktopSizing,
@@ -318,7 +318,7 @@ impl DesktopPane {
     /// The desktop of an RDP session.
     pub(crate) fn rdp(
         framebuffer: heimdall_rdp::Framebuffer,
-        input: mpsc::UnboundedSender<Vec<Operation>>,
+        input: mpsc::UnboundedSender<Vec<RdpInput>>,
         (size, sizing): (watch::Sender<Option<(u16, u16)>>, DesktopSizing),
         clipboard: Option<mpsc::UnboundedSender<LocalClipboard>>,
     ) -> Self {
@@ -798,8 +798,8 @@ impl DesktopPane {
     pub(crate) fn send(&self, inputs: &[DesktopInput]) -> bool {
         match &self.sink {
             DesktopSink::Rdp { input, .. } => {
-                let operations = rdp_operations(inputs);
-                operations.is_empty() || input.send(operations).is_ok()
+                let sent = rdp_inputs(inputs);
+                sent.is_empty() || input.send(sent).is_ok()
             }
             DesktopSink::Vnc(sink) => sink.send(inputs),
         }
@@ -911,14 +911,19 @@ fn rdp_button(button: PointerButton) -> MouseButton {
     }
 }
 
-/// `inputs` as RDP operations. A key the view could not place gives none: RDP sends keys by
-/// position.
-fn rdp_operations(inputs: &[DesktopInput]) -> Vec<Operation> {
-    let mut operations = Vec::with_capacity(inputs.len() * 2);
+/// The Pause key in noVNC's XT table, the one key the view gives no RDP scancode: its own
+/// is the `E1` sequence [`RdpInput::Pause`] stands for.
+const XT_PAUSE: u16 = 0xe046;
+
+/// `inputs` as what an RDP session is sent. A key the view could not place gives none: RDP
+/// sends keys by position. Pause is sent whole when pressed, as the Windows client sends it,
+/// and its release gives nothing.
+fn rdp_inputs(inputs: &[DesktopInput]) -> Vec<RdpInput> {
+    let mut sent = Vec::with_capacity(inputs.len() * 2);
     for input in inputs {
         match *input {
             DesktopInput::Move { x, y } => {
-                operations.push(Operation::MouseMove(MousePosition { x, y }));
+                sent.push(Operation::MouseMove(MousePosition { x, y }).into());
             }
             DesktopInput::Button {
                 button,
@@ -926,33 +931,45 @@ fn rdp_operations(inputs: &[DesktopInput]) -> Vec<Operation> {
                 x,
                 y,
             } => {
-                operations.push(Operation::MouseMove(MousePosition { x, y }));
-                operations.push(Operation::MouseButtonPressed(rdp_button(button)));
+                sent.push(Operation::MouseMove(MousePosition { x, y }).into());
+                sent.push(Operation::MouseButtonPressed(rdp_button(button)).into());
             }
             DesktopInput::Button {
                 button,
                 pressed: false,
                 ..
-            } => operations.push(Operation::MouseButtonReleased(rdp_button(button))),
+            } => sent.push(Operation::MouseButtonReleased(rdp_button(button)).into()),
             DesktopInput::Wheel { vertical, units } => {
-                operations.push(Operation::WheelRotations(WheelRotations {
-                    is_vertical: vertical,
-                    rotation_units: units,
-                }));
+                sent.push(
+                    Operation::WheelRotations(WheelRotations {
+                        is_vertical: vertical,
+                        rotation_units: units,
+                    })
+                    .into(),
+                );
             }
             DesktopInput::Key {
                 scancode: Some(code),
                 pressed,
                 ..
-            } => operations.push(if pressed {
-                Operation::KeyPressed(code)
-            } else {
-                Operation::KeyReleased(code)
-            }),
+            } => sent.push(
+                if pressed {
+                    Operation::KeyPressed(code)
+                } else {
+                    Operation::KeyReleased(code)
+                }
+                .into(),
+            ),
+            DesktopInput::Key {
+                scancode: None,
+                xt: Some(XT_PAUSE),
+                pressed: true,
+                ..
+            } => sent.push(RdpInput::Pause),
             DesktopInput::Key { scancode: None, .. } => {}
         }
     }
-    operations
+    sent
 }
 
 #[cfg(test)]
@@ -1137,7 +1154,7 @@ mod tests {
 
     #[test]
     fn a_press_moves_there_first_and_a_release_does_not() {
-        let operations = rdp_operations(&[
+        let operations = rdp_inputs(&[
             DesktopInput::Button {
                 button: PointerButton::Back,
                 pressed: true,
@@ -1155,9 +1172,9 @@ mod tests {
             matches!(
                 operations.as_slice(),
                 [
-                    Operation::MouseMove(MousePosition { x: 3, y: 4 }),
-                    Operation::MouseButtonPressed(MouseButton::X1),
-                    Operation::MouseButtonReleased(MouseButton::X1),
+                    RdpInput::Operation(Operation::MouseMove(MousePosition { x: 3, y: 4 })),
+                    RdpInput::Operation(Operation::MouseButtonPressed(MouseButton::X1)),
+                    RdpInput::Operation(Operation::MouseButtonReleased(MouseButton::X1)),
                 ]
             ),
             "{operations:?}"
@@ -1167,7 +1184,7 @@ mod tests {
     #[test]
     fn keys_go_by_scancode_and_one_without_is_dropped() {
         let enter = Scancode::from_u8(false, 0x1c);
-        let operations = rdp_operations(&[
+        let operations = rdp_inputs(&[
             DesktopInput::Key {
                 scancode: Some(enter),
                 xt: None,
@@ -1190,11 +1207,25 @@ mod tests {
         assert!(
             matches!(
                 operations.as_slice(),
-                [Operation::KeyPressed(pressed), Operation::KeyReleased(released)]
-                    if *pressed == enter && *released == enter
+                [
+                    RdpInput::Operation(Operation::KeyPressed(pressed)),
+                    RdpInput::Operation(Operation::KeyReleased(released)),
+                ] if *pressed == enter && *released == enter
             ),
             "{operations:?}"
         );
+    }
+
+    #[test]
+    fn pause_is_sent_whole_when_pressed_and_its_release_gives_nothing() {
+        let pause = |pressed| DesktopInput::Key {
+            scancode: None,
+            xt: Some(XT_PAUSE),
+            keysym: None,
+            pressed,
+        };
+        let sent = rdp_inputs(&[pause(true), pause(false)]);
+        assert!(matches!(sent.as_slice(), [RdpInput::Pause]), "{sent:?}");
     }
 
     #[test]
@@ -1215,12 +1246,14 @@ mod tests {
             ]
         );
         let f11 = Scancode::from_u8(false, 0x57);
-        let operations = rdp_operations(&SpecialKeys::F11.inputs());
+        let operations = rdp_inputs(&SpecialKeys::F11.inputs());
         assert!(
             matches!(
                 operations.as_slice(),
-                [Operation::KeyPressed(pressed), Operation::KeyReleased(released)]
-                    if *pressed == f11 && *released == f11
+                [
+                    RdpInput::Operation(Operation::KeyPressed(pressed)),
+                    RdpInput::Operation(Operation::KeyReleased(released)),
+                ] if *pressed == f11 && *released == f11
             ),
             "{operations:?}"
         );
@@ -1246,17 +1279,19 @@ mod tests {
 
     #[test]
     fn the_wheel_keeps_its_axis_and_units() {
-        let operations = rdp_operations(&[DesktopInput::Wheel {
+        let operations = rdp_inputs(&[DesktopInput::Wheel {
             vertical: false,
             units: -240,
         }]);
         assert!(
             matches!(
                 operations.as_slice(),
-                [Operation::WheelRotations(WheelRotations {
-                    is_vertical: false,
-                    rotation_units: -240
-                })]
+                [RdpInput::Operation(Operation::WheelRotations(
+                    WheelRotations {
+                        is_vertical: false,
+                        rotation_units: -240
+                    }
+                ))]
             ),
             "{operations:?}"
         );

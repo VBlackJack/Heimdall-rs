@@ -26,7 +26,7 @@ use heimdall_ssh::{
 
 use heimdall_files::RemoteSession;
 use heimdall_rdp::{
-    CertificateHash, CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation,
+    CertificateHash, CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, RdpInput,
     SaveEnd,
 };
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, RemoteCursor, VncInput};
@@ -154,7 +154,7 @@ pub enum ConnectionEvent {
         /// The desktop, drawn by the UI.
         framebuffer: Framebuffer,
         /// Where keyboard and mouse input goes.
-        input: mpsc::UnboundedSender<Vec<Operation>>,
+        input: mpsc::UnboundedSender<Vec<RdpInput>>,
         /// The desktop size the tab wants.
         size: watch::Sender<Option<(u16, u16)>>,
         /// Where this side's clipboard goes, when the clipboard is shared.
