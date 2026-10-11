@@ -20,7 +20,6 @@
 use std::path::PathBuf;
 
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
-use heimdall_core::store::ProfileStore;
 use heimdall_core::settings::{
     Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
     auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
@@ -31,6 +30,7 @@ use heimdall_core::settings::{
     terminal_font_size_accepted, update_interval_accepted, windows_hello_grace_minutes_accepted,
     windows_hello_vault_max_days_accepted,
 };
+use heimdall_core::store::ProfileStore;
 use heimdall_term::Palette;
 
 use super::{App, AppConfig, Dialog, Effect, RECOVERY_EXTENSION, TrustedKeysMessage};
@@ -193,9 +193,8 @@ pub(super) fn load_settings(
     .filter_map(|(_, path)| path.file_name())
     .map(|name| name.to_string_lossy().into_owned())
     .collect();
-    let dialog = dialog.or_else(|| {
-        (!documents.is_empty()).then_some(Dialog::ConfigRecovered { documents })
-    });
+    let dialog =
+        dialog.or_else(|| (!documents.is_empty()).then_some(Dialog::ConfigRecovered { documents }));
     (settings, file, dialog)
 }
 

@@ -22,13 +22,13 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, ProviderSettings};
+use crate::last_good_copy::Document;
 use crate::lockout::{LOCKOUT_DURATION, Lockout};
 use crate::pin::PinHash;
 use crate::profile::{
     ProfileId, RESOLUTION_PRESETS, RdpDefaults, RdpMode, SshMode, preset_fits, resolution_preset,
     resolution_text,
 };
-use crate::last_good_copy::Document;
 use crate::store::StoreError;
 
 mod sensitive;

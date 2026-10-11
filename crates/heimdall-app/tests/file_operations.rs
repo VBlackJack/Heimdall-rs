@@ -2637,7 +2637,10 @@ async fn the_server_pane_alone_asks_for_files_to_upload_or_a_folder_to_download_
             entries: 25,
         },
     );
-    let pane = app.tab(tab).and_then(|found| found.files.as_ref()).expect("files");
+    let pane = app
+        .tab(tab)
+        .and_then(|found| found.files.as_ref())
+        .expect("files");
     let preparing = pane
         .transfers
         .iter()
@@ -2658,7 +2661,10 @@ fn a_full_local_disk_is_told_apart_as_the_csharp() {
     let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
     assert_eq!(FilesError::local(&full), FilesError::LocalDiskFull);
     let other = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-    assert!(matches!(FilesError::local(&other), FilesError::Local { .. }));
+    assert!(matches!(
+        FilesError::local(&other),
+        FilesError::Local { .. }
+    ));
     assert_eq!(
         heimdall_files::RemoteError::local(&full),
         heimdall_files::RemoteError::LocalDiskFull

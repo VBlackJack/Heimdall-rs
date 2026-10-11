@@ -1072,17 +1072,15 @@ fn pane_narrowing<'a>(
             Some(emptied),
         )
     });
-    row![
-        crate::search_keys::SearchKeys::escape_only(
-            text_input(&fl!("ui-files-filter-placeholder"), filter)
-                .style(styles::text_input)
-                .id(field_id(tab, side, PaneField::Filter))
-                .size(font_size::CAPTION)
-                .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
-                .width(FILTER_WIDTH),
-            emptied,
-        ),
-    ]
+    row![crate::search_keys::SearchKeys::escape_only(
+        text_input(&fl!("ui-files-filter-placeholder"), filter)
+            .style(styles::text_input)
+            .id(field_id(tab, side, PaneField::Filter))
+            .size(font_size::CAPTION)
+            .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
+            .width(FILTER_WIDTH),
+        emptied,
+    ),]
     .push(clear)
     .push(
         tooltip(

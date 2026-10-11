@@ -267,7 +267,10 @@ fn a_file_left_unreadable_is_read_from_its_last_good_copy_then_replaced_at_the_n
     store
         .apply(|store| store.merge([profile("db", "db.lab")]))
         .expect("second save");
-    assert!(backup_path(&path).exists(), "the first file kept, as the C# .bak");
+    assert!(
+        backup_path(&path).exists(),
+        "the first file kept, as the C# .bak"
+    );
     // As a power cut mid-save leaves it.
     fs::write(&path, vec![0_u8; 64]).expect("zeroed");
     let mut reopened = ProfileStore::open(&path).expect("read from the copy");
@@ -277,7 +280,11 @@ fn a_file_left_unreadable_is_read_from_its_last_good_copy_then_replaced_at_the_n
         .iter()
         .map(|profile| profile.id.as_str())
         .collect();
-    assert_eq!(ids, ["web"], "the last good copy, not the profile saved after it");
+    assert_eq!(
+        ids,
+        ["web"],
+        "the last good copy, not the profile saved after it"
+    );
     reopened
         .apply(|store| store.merge([profile("app", "app.lab")]))
         .expect("the damaged file is replaced");

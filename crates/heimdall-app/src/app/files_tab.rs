@@ -1857,7 +1857,10 @@ impl App {
         }
         vec![Effect::PickDownloadFolder {
             tab,
-            start: self.files_state.last_download_folder().map(Path::to_path_buf),
+            start: self
+                .files_state
+                .last_download_folder()
+                .map(Path::to_path_buf),
         }]
     }
 

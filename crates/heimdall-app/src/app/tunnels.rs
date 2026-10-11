@@ -668,7 +668,11 @@ impl App {
 /// Whether the route of `tab` through its gateways is interrupted: its session failed,
 /// ended or waits to open again.
 fn route_interrupted(tab: &super::Tab) -> bool {
-    tab.retry.is_some() || matches!(tab.phase, super::Phase::Failed(_) | super::Phase::Closed { .. })
+    tab.retry.is_some()
+        || matches!(
+            tab.phase,
+            super::Phase::Failed(_) | super::Phase::Closed { .. }
+        )
 }
 
 /// Declines `question`: nobody is there to answer it.

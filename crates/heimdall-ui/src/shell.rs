@@ -25,9 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use heimdall_app::files::{
-    EntryKind, FilesError, FilesKey, Side, list_local, list_remote,
-};
+use heimdall_app::files::{EntryKind, FilesError, FilesKey, Side, list_local, list_remote};
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::local_events;
@@ -368,11 +366,22 @@ fn takes_drops(tab: &Tab) -> bool {
 fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Element<'a, Message> {
     let items = fl!("ui-files-drop-items", count = count);
     let folder = files.remote.path.display();
-    let busy = files.transfers.iter().any(|transfer| !transfer.state.ended());
+    let busy = files
+        .transfers
+        .iter()
+        .any(|transfer| !transfer.state.ended());
     let said = if busy {
-        fl!("ui-files-drop-overlay-queued", items = items, folder = folder)
+        fl!(
+            "ui-files-drop-overlay-queued",
+            items = items,
+            folder = folder
+        )
     } else {
-        fl!("ui-files-drop-overlay-target", items = items, folder = folder)
+        fl!(
+            "ui-files-drop-overlay-target",
+            items = items,
+            folder = folder
+        )
     };
     opaque(
         container(
@@ -4960,13 +4969,11 @@ impl Shell {
             ]
             .height(Length::Fill)
             .into(),
-            Page::Tunnels => {
-                crate::tunnels_view::page(
-                    &self.app.tunnels,
-                    &self.app.session_routes(),
-                    self.app.selected_tunnel(),
-                )
-            }
+            Page::Tunnels => crate::tunnels_view::page(
+                &self.app.tunnels,
+                &self.app.session_routes(),
+                self.app.selected_tunnel(),
+            ),
             Page::Tools => crate::tools::catalog::page(&self.app, &self.tools_search),
             Page::About => crate::about_view::view(&self.app),
             Page::Settings { .. } => container(self.content())
