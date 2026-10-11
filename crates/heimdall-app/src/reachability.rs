@@ -15,9 +15,9 @@
  */
 
 //! "Test address", as the C# profile dialog's: does the address answer on its port, from this
-//! computer? The name is looked up, then every address it gives is dialled in turn within one
-//! budget; for SSH, the server's banner is read too. Nothing is sent: no credential is ever
-//! checked, and no key is asked about.
+//! computer? The name is looked up, then every address it gives is raced within one budget,
+//! as every connection is (`heimdall_net`); for SSH, the server's banner is read too. Nothing
+//! is sent: no credential is ever checked, and no key is asked about.
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -199,43 +199,48 @@ async fn run(host: String, port: u16, ssh: bool, budget: Duration) -> Result<Rea
         return Err(Unreached::DnsNoResults);
     }
     let started = Instant::now();
-    let mut last = None;
     // Every address the name gives, not just the first, as the C#: a host whose IPv6
-    // address comes first may answer on its IPv4 one. The budget is shared out among the
-    // addresses left, so trying more never makes the user wait longer.
-    for (index, address) in addresses.iter().enumerate() {
-        let Some(remaining) = budget.checked_sub(started.elapsed()) else {
-            break;
+    // address comes first may answer on its IPv4 one. Raced rather than dialled in turn, as
+    // every connection is (`heimdall_net`): an address that does not answer delays the next
+    // by a quarter of a second, not by its share of the budget.
+    match heimdall_net::connect_addresses(&addresses, Some(budget)).await {
+        Ok(connected) => {
+            let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let banner = if ssh {
+                banner(connected.stream, budget).await
+            } else {
+                None
+            };
+            Ok(Reached {
+                address: connected.address.ip().to_string(),
+                millis,
+                banner,
+            })
+        }
+        Err(failure) => Err(unreached(&failure)),
+    }
+}
+
+/// Why no address answered, as the test tells it: a refusal or other failure an address gave
+/// says more than the time running out on another, as when they were dialled in turn (an
+/// IPv6 address that never answers and an IPv4 one that refuses is a refusal).
+fn unreached(failure: &heimdall_net::Failure) -> Unreached {
+    if let Some((address, error)) = failure.telling_failure() {
+        return Unreached::TcpFailed {
+            address: address.ip().to_string(),
+            detail: error.to_string(),
+            kind: error.kind(),
         };
-        let left = u32::try_from(addresses.len() - index).unwrap_or(u32::MAX);
-        let attempt = remaining / left;
-        match tokio::time::timeout(attempt, TcpStream::connect(address)).await {
-            Ok(Ok(stream)) => {
-                let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                let banner = if ssh {
-                    banner(stream, budget).await
-                } else {
-                    None
-                };
-                return Ok(Reached {
-                    address: address.ip().to_string(),
-                    millis,
-                    banner,
-                });
-            }
-            Ok(Err(error)) => {
-                last = Some(Unreached::TcpFailed {
-                    address: address.ip().to_string(),
-                    detail: error.to_string(),
-                    kind: error.kind(),
-                });
-            }
-            Err(_) => last = Some(Unreached::TcpTimeout(address.ip().to_string())),
+    }
+    match failure {
+        heimdall_net::Failure::TimedOut { address, .. } => {
+            Unreached::TcpTimeout(address.ip().to_string())
+        }
+        // Every failure of all is told above: only no address at all is left.
+        heimdall_net::Failure::NoAddress | heimdall_net::Failure::Failed { .. } => {
+            Unreached::DnsNoResults
         }
     }
-    // Only ends without a verdict when the budget ran out before an address was tried: the
-    // first one timing out says the same.
-    Err(last.unwrap_or_else(|| Unreached::TcpTimeout(addresses[0].ip().to_string())))
 }
 
 /// The SSH server's identification line on `stream`, read within `budget`: the first line
@@ -339,6 +344,40 @@ mod tests {
                     if address == "127.0.0.1"
             ),
             "{failed:?}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_told_over_another_address_running_out_of_time() {
+        let v6: SocketAddr = "[2001:db8::1]:3389".parse().expect("address");
+        let v4: SocketAddr = "192.0.2.1:3389".parse().expect("address");
+        let refused = heimdall_net::Failure::TimedOut {
+            address: v6,
+            failed: vec![heimdall_net::Attempt {
+                address: v4,
+                error: std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+            }],
+        };
+        assert!(
+            matches!(
+                unreached(&refused),
+                Unreached::TcpFailed { ref address, kind, .. }
+                    if address == "192.0.2.1" && kind == std::io::ErrorKind::ConnectionRefused
+            ),
+            "{:?}",
+            unreached(&refused)
+        );
+        let no_route = heimdall_net::Failure::TimedOut {
+            address: v4,
+            failed: vec![heimdall_net::Attempt {
+                address: v6,
+                error: std::io::Error::from(std::io::ErrorKind::NetworkUnreachable),
+            }],
+        };
+        assert_eq!(
+            unreached(&no_route),
+            Unreached::TcpTimeout("192.0.2.1".to_owned()),
+            "no IPv6 route says less than IPv4 not answering"
         );
     }
 

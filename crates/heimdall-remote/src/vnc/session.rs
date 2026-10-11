@@ -26,7 +26,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::ProtocolVersion;
@@ -196,7 +195,7 @@ pub async fn connect(
         () = cancel.cancelled() => return Err(VncError::Cancelled),
         connected = tokio::time::timeout(
             config.connect_timeout,
-            TcpStream::connect((config.host.as_str(), config.port)),
+            heimdall_net::connect(&config.host, config.port),
         ) => connected
             .map_err(|_| VncError::Timeout)?
             .map_err(VncError::Network)?,

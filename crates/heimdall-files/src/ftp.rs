@@ -180,15 +180,22 @@ impl FtpClient {
     ///
     /// [`FtpConnectError`].
     pub async fn connect(target: &FtpTarget) -> Result<Self, FtpConnectError> {
-        let address = (target.host.as_str(), target.port);
-        let mut stream =
-            tokio::time::timeout(target.timeout, AsyncRustlsFtpStream::connect(address))
+        // The control connection raced over every address the name gives, as every
+        // connection is (`heimdall_net`); the server's greeting read within the same time.
+        let opening = async {
+            let socket = heimdall_net::connect(&target.host, target.port)
                 .await
-                .map_err(|_| FtpConnectError::Timeout)?
+                .map_err(FtpConnectError::Network)?;
+            AsyncRustlsFtpStream::connect_with_stream(socket)
+                .await
                 .map_err(|error| match error {
                     FtpError::ConnectionError(source) => FtpConnectError::Network(source),
                     other => FtpConnectError::Protocol(other.to_string()),
-                })?;
+                })
+        };
+        let mut stream = tokio::time::timeout(target.timeout, opening)
+            .await
+            .map_err(|_| FtpConnectError::Timeout)??;
         if let FtpSecurity::Explicit { connector, domain } = &target.security {
             stream = stream
                 .into_secure(AsyncRustlsConnector::from(connector.clone()), domain)

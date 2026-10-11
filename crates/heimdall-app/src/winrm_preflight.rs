@@ -22,7 +22,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::net::TcpStream;
 use tokio_rustls::rustls::pki_types::ServerName;
 
 use crate::error::UiError;
@@ -68,13 +67,17 @@ pub async fn ensure_reachable(host: &str, port: u16, tls: TlsCheck) -> Result<()
     if addresses.is_empty() {
         return Err(unresolved());
     }
-    let stream = tokio::time::timeout(PROBE_TIMEOUT, TcpStream::connect(addresses.as_slice()))
-        .await
-        .map_err(|_| unreachable())?
-        .map_err(|error| {
-            log::warn!("WinRM preflight: {host}:{port} unreachable: {error}");
-            unreachable()
-        })?;
+    let stream = tokio::time::timeout(
+        PROBE_TIMEOUT,
+        heimdall_net::connect_addresses(&addresses, None),
+    )
+    .await
+    .map_err(|_| unreachable())?
+    .map_err(|failure| {
+        log::warn!("WinRM preflight: {host}:{port} unreachable: {failure}");
+        unreachable()
+    })?
+    .stream;
     let skipped = match tls {
         TlsCheck::None => return Ok(()),
         TlsCheck::System => false,

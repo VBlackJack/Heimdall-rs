@@ -33,6 +33,7 @@ embedded web engine.
 |---|---|
 | `heimdall-core` | Server profiles, settings, paths, credential vault |
 | `heimdall-i18n` | Supported languages and the check that keeps them complete |
+| `heimdall-net` | TCP connections to a host by name, Happy Eyeballs (RFC 8305) |
 | `heimdall-ssh` | SSH sessions, tunnels, jump hosts |
 | `heimdall-sftp` | SFTP, FTP and FTPS |
 | `heimdall-term` | Terminal emulation and local pseudo-terminals |
@@ -43,7 +44,8 @@ embedded web engine.
 | `heimdall-ui` | The desktop application |
 | `xtask` | Developer tooling |
 
-Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` only.
+Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` and
+`heimdall-net` only.
 
 ## Build
 
