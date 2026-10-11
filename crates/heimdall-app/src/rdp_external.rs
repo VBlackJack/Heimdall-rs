@@ -349,7 +349,7 @@ fn gateway(file: &mut String, gateway: Option<&str>) {
 /// folder.
 #[must_use]
 pub fn artifact_folder() -> PathBuf {
-    std::env::temp_dir().join(ARTIFACT_FOLDER)
+    heimdall_core::paths::temp_dir().join(ARTIFACT_FOLDER)
 }
 
 /// Writes `content` as a new connection file in `folder`, made or found the user's own: to

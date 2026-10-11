@@ -15,8 +15,18 @@
  */
 
 //! Where Heimdall-rs keeps its files, and where the C# Heimdall keeps its own.
+//!
+//! A build with the `test-data-dir` feature, for automated UI tests only, can root every
+//! per-user folder in one scratch folder ([`use_test_data_dir`]), and files its credentials in
+//! the system's store under a namespace of that folder ([`credential_service`]). The feature
+//! never reaches a release build: it does not compile there, and the workspace's guard
+//! refuses any manifest or workflow that turns it on.
 
+#[cfg(feature = "test-data-dir")]
+use std::path::Path;
 use std::path::PathBuf;
+#[cfg(feature = "test-data-dir")]
+use std::sync::OnceLock;
 
 #[cfg(not(windows))]
 use directories::{BaseDirs, ProjectDirs};
@@ -72,6 +82,10 @@ fn application_path() -> PathBuf {
 /// environment moves, laid out as the `directories` crate lays it out.
 #[must_use]
 pub fn config_dir() -> Option<PathBuf> {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(folder) = test_folder(test_data::CONFIG) {
+        return Some(folder);
+    }
     #[cfg(windows)]
     return roaming_app_data().map(|dir| dir.join(application_path()).join(CONFIG_DIR_NAME));
     #[cfg(not(windows))]
@@ -97,6 +111,10 @@ pub fn known_hosts_file() -> Option<PathBuf> {
 /// it out.
 #[must_use]
 pub fn data_dir() -> Option<PathBuf> {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(folder) = test_folder(test_data::DATA) {
+        return Some(folder);
+    }
     #[cfg(windows)]
     return local_app_data().map(|dir| dir.join(application_path()).join(DATA_DIR_NAME));
     #[cfg(not(windows))]
@@ -123,6 +141,10 @@ pub fn edit_dir() -> Option<PathBuf> {
 /// On Windows, the profile folder Windows says, never the one `USERPROFILE` names.
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(folder) = test_folder(test_data::HOME) {
+        return Some(folder);
+    }
     #[cfg(windows)]
     return known_folder(&winsafe::co::KNOWNFOLDERID::Profile);
     #[cfg(not(windows))]
@@ -150,6 +172,10 @@ pub fn openssh_known_hosts() -> Option<PathBuf> {
 /// not it exists.
 #[must_use]
 pub fn legacy_data_dir() -> Option<PathBuf> {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(folder) = test_folder(test_data::LEGACY) {
+        return Some(folder);
+    }
     #[cfg(windows)]
     return local_app_data().map(|dir| dir.join(LEGACY_APPLICATION_DIR));
     #[cfg(not(windows))]
@@ -190,6 +216,10 @@ fn known_folder(id: &winsafe::co::KNOWNFOLDERID) -> Option<PathBuf> {
 #[cfg(windows)]
 #[must_use]
 pub fn local_app_data() -> Option<PathBuf> {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(folder) = test_folder(test_data::LOCAL_APP_DATA) {
+        return Some(folder);
+    }
     known_folder(&winsafe::co::KNOWNFOLDERID::LocalAppData)
 }
 
@@ -198,6 +228,10 @@ pub fn local_app_data() -> Option<PathBuf> {
 #[cfg(windows)]
 #[must_use]
 pub fn roaming_app_data() -> Option<PathBuf> {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(folder) = test_folder(test_data::ROAMING_APP_DATA) {
+        return Some(folder);
+    }
     known_folder(&winsafe::co::KNOWNFOLDERID::RoamingAppData)
 }
 
@@ -206,6 +240,10 @@ pub fn roaming_app_data() -> Option<PathBuf> {
 #[cfg(windows)]
 #[must_use]
 pub fn documents() -> Option<PathBuf> {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(folder) = test_folder(test_data::DOCUMENTS) {
+        return Some(folder);
+    }
     known_folder(&winsafe::co::KNOWNFOLDERID::Documents)
 }
 
@@ -273,4 +311,221 @@ pub fn windows_program(name: &str) -> Option<PathBuf> {
         let _ = name;
         None
     };
+}
+
+/// The system's temporary folder, where the files handed to another program for a moment
+/// are written (Remote Desktop Connection's connection files).
+#[must_use]
+pub fn temp_dir() -> PathBuf {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(folder) = test_folder(test_data::TEMP) {
+        return folder;
+    }
+    std::env::temp_dir()
+}
+
+/// The folder of this program, where the legacy PowerShell Heimdall is looked for from, as
+/// the C# start looks for it; `None` when it cannot be told, and under a test data folder,
+/// where no installation of the user's may be read.
+#[must_use]
+pub fn program_dir() -> Option<PathBuf> {
+    #[cfg(feature = "test-data-dir")]
+    if test_data_dir().is_some() {
+        return None;
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|program| program.parent().map(std::path::Path::to_path_buf))
+}
+
+/// The name Heimdall-rs files its secrets under in the system's credential store, for the
+/// application's own name `service`: `service` itself, and under a test data folder
+/// `service` followed by that folder's namespace, so that a test never reads, replaces or
+/// removes a real entry.
+#[must_use]
+pub fn credential_service(service: &str) -> String {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(root) = TEST_ROOT.get() {
+        return format!(
+            "{service}{}{}",
+            test_data::NAMESPACE_DIVIDER,
+            root.namespace
+        );
+    }
+    service.to_owned()
+}
+
+/// The target name of a generic credential of Windows Credential Manager a profile names:
+/// `target` itself, and under a test data folder `target` inside that folder's namespace, so
+/// that a test reads only the credentials it made.
+#[must_use]
+pub fn credential_target(target: &str) -> String {
+    #[cfg(feature = "test-data-dir")]
+    if let Some(root) = TEST_ROOT.get() {
+        return format!(
+            "{APPLICATION}{}{}{}{target}",
+            test_data::NAMESPACE_DIVIDER,
+            root.namespace,
+            test_data::TARGET_DIVIDER
+        );
+    }
+    target.to_owned()
+}
+
+/// What a test data folder is laid out as, and how its credentials are named.
+#[cfg(feature = "test-data-dir")]
+pub mod test_data {
+    /// The command-line argument naming the test data folder, followed by its full path.
+    pub const ARGUMENT: &str = "--data-dir";
+
+    /// The configuration folder inside it: profiles, settings, vault, `known_hosts`.
+    pub const CONFIG: &str = "config";
+
+    /// The local data folder inside it: logs, files being edited.
+    pub const DATA: &str = "data";
+
+    /// The C# Heimdall's data folder inside it, the migration's source.
+    pub const LEGACY: &str = "legacy";
+
+    /// The home folder inside it: `.ssh`, `.Xauthority`, `PuTTY`'s sessions, the Files start.
+    pub const HOME: &str = "home";
+
+    /// The local application data folder inside it: the Citrix cache.
+    pub const LOCAL_APP_DATA: &str = "local-app-data";
+
+    /// The roaming application data folder inside it.
+    pub const ROAMING_APP_DATA: &str = "roaming-app-data";
+
+    /// The Documents folder inside it.
+    pub const DOCUMENTS: &str = "documents";
+
+    /// The temporary folder inside it: Remote Desktop Connection's connection files.
+    pub const TEMP: &str = "temp";
+
+    /// Every folder inside it, in the order above.
+    pub const FOLDERS: [&str; 8] = [
+        CONFIG,
+        DATA,
+        LEGACY,
+        HOME,
+        LOCAL_APP_DATA,
+        ROAMING_APP_DATA,
+        DOCUMENTS,
+        TEMP,
+    ];
+
+    /// What joins the application's name and the namespace of a test data folder.
+    pub const NAMESPACE_DIVIDER: &str = "-test-";
+
+    /// What joins a test namespace and a credential target a profile names.
+    pub const TARGET_DIVIDER: &str = "/";
+
+    /// Bytes of the SHA-256 of the folder's path the namespace is named after: 48 bits, so
+    /// that two scratch folders never share one in practice.
+    pub const NAMESPACE_HASH_LEN: usize = 6;
+}
+
+/// The test data folder in use, and the namespace of its credentials.
+#[cfg(feature = "test-data-dir")]
+#[derive(Debug)]
+struct TestRoot {
+    folder: PathBuf,
+    namespace: String,
+}
+
+/// Set once, before any folder is asked, by [`use_test_data_dir`].
+#[cfg(feature = "test-data-dir")]
+static TEST_ROOT: OnceLock<TestRoot> = OnceLock::new();
+
+/// Why a test data folder was refused.
+#[cfg(feature = "test-data-dir")]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TestDataDirError {
+    /// The folder is not a full path.
+    #[error("the test data folder must be a full path: {0}")]
+    NotAbsolute(PathBuf),
+    /// A folder inside it is, holds or sits in one of the user's real Heimdall folders.
+    #[error("the test data folder {0} overlaps the user's real folder {1}")]
+    Overlaps(PathBuf, PathBuf),
+    /// The folder cannot be made or resolved.
+    #[error("the test data folder cannot be used: {0}")]
+    Unusable(String),
+    /// A test data folder is already in use by this process.
+    #[error("a test data folder is already in use")]
+    AlreadySet,
+}
+
+/// Roots every per-user folder of this process in `folder`, made if needed, and files its
+/// credentials under a namespace of `folder`: to be called once, before any folder is asked.
+///
+/// # Errors
+///
+/// [`TestDataDirError`]: a relative path, a folder whose layout would meet the user's real
+/// configuration, data or C# folder, a folder that cannot be made, or a second call.
+#[cfg(feature = "test-data-dir")]
+pub fn use_test_data_dir(folder: &Path) -> Result<(), TestDataDirError> {
+    if !folder.is_absolute() {
+        return Err(TestDataDirError::NotAbsolute(folder.to_owned()));
+    }
+    if TEST_ROOT.get().is_some() {
+        return Err(TestDataDirError::AlreadySet);
+    }
+    let real: Vec<PathBuf> = [config_dir(), data_dir(), legacy_data_dir()]
+        .into_iter()
+        .flatten()
+        .collect();
+    for inside in test_data::FOLDERS.map(|name| folder.join(name)) {
+        if let Some(met) = real.iter().find(|real| overlap(&inside, real)) {
+            return Err(TestDataDirError::Overlaps(folder.to_owned(), met.clone()));
+        }
+    }
+    std::fs::create_dir_all(folder)
+        .and_then(|()| std::fs::canonicalize(folder))
+        .map_err(|error| TestDataDirError::Unusable(format!("{}: {error}", folder.display())))
+        .and_then(|canonical| {
+            TEST_ROOT
+                .set(TestRoot {
+                    folder: folder.to_owned(),
+                    namespace: namespace_of(&canonical),
+                })
+                .map_err(|_| TestDataDirError::AlreadySet)
+        })
+}
+
+/// The test data folder in use, if one is.
+#[cfg(feature = "test-data-dir")]
+#[must_use]
+pub fn test_data_dir() -> Option<&'static Path> {
+    TEST_ROOT.get().map(|root| root.folder.as_path())
+}
+
+/// The folder `name` inside the test data folder, when one is in use.
+#[cfg(feature = "test-data-dir")]
+fn test_folder(name: &str) -> Option<PathBuf> {
+    test_data_dir().map(|root| root.join(name))
+}
+
+/// The namespace of the folder `canonical`: hex of the start of the SHA-256 of its path,
+/// without regard to case on Windows, as Windows compares paths.
+#[cfg(feature = "test-data-dir")]
+fn namespace_of(canonical: &Path) -> String {
+    let text = folded(canonical).to_string_lossy().into_owned();
+    let digest = sealvault::hash::sha256(text.as_bytes());
+    data_encoding::HEXLOWER.encode(&digest[..test_data::NAMESPACE_HASH_LEN])
+}
+
+/// Whether one of `a` and `b` is the other or inside it.
+#[cfg(feature = "test-data-dir")]
+fn overlap(a: &Path, b: &Path) -> bool {
+    let (a, b) = (folded(a), folded(b));
+    a.starts_with(&b) || b.starts_with(&a)
+}
+
+/// `path` as Windows compares it, without regard to case; as it is elsewhere.
+#[cfg(feature = "test-data-dir")]
+fn folded(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    return PathBuf::from(path.to_string_lossy().to_lowercase());
+    #[cfg(not(windows))]
+    return path.to_owned();
 }

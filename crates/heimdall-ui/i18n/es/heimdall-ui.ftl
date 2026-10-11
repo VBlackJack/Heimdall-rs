@@ -4,6 +4,8 @@
 ui-window-title = Heimdall
 ui-window-title-tab = { $tab } - Heimdall
 ui-window-title-detached = { $tab } - Separada
+# A test build's title, its test data folder after it.
+ui-window-title-test-data = { $title } [datos de prueba: { $folder }]
 
 ui-sidebar-title = Sesiones
 ui-sidebar-tools-tab = Herramientas

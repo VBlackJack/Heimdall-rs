@@ -84,6 +84,8 @@ pub mod status_bar;
 mod styles;
 pub mod tab_drag;
 pub mod terminal_view;
+#[cfg(feature = "test-data-dir")]
+pub mod test_data;
 mod texts;
 pub mod themes;
 pub mod tokens;

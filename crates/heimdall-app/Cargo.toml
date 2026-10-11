@@ -12,6 +12,11 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# test-data-dir: the test data folder of heimdall-core, Windows Hello enrolment turned off
+# under it. For automated UI tests of a debug build only, never in a release build.
+test-data-dir = ["heimdall-core/test-data-dir"]
+
 [dependencies]
 heimdall-core.workspace = true
 heimdall-files.workspace = true

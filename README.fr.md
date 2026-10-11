@@ -75,6 +75,10 @@ une fois fermée :
 Les deux prennent un niveau de journal en argument, de `error` à `trace` :
 `run-debug.bat trace`.
 
+Les tests d'interface automatisés lancent une version debug compilée avec la fonctionnalité
+`test-data-dir` sur un dossier jetable, jamais sur les vrais profils, le coffre ou les mots
+de passe enregistrés : voir [Dossier de données de test](docs/fr/test-data-folder.md).
+
 Une release publiée est compilée avec `HEIMDALL_RELEASE` réglé sur son tag, par exemple
 `v2026.100901` : la vérification des mises à jour le compare à la dernière release publiée
 sur GitHub et propose une version plus récente. Une compilation sans elle, comme

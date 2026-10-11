@@ -18,4 +18,5 @@
 
 pub mod crypto_deps;
 pub mod legacy_locales;
+pub mod test_data_dir;
 pub mod typography;

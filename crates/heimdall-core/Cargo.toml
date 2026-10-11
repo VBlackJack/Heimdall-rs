@@ -12,6 +12,13 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# test-data-dir: every per-user folder rooted in one scratch folder and the credentials in a
+# namespace of it, for automated UI tests of a debug build only. Off by default, never in a
+# release build: it does not compile there, and xtask's guard refuses a manifest or workflow
+# that turns it on.
+test-data-dir = []
+
 [dependencies]
 data-encoding.workspace = true
 directories.workspace = true
