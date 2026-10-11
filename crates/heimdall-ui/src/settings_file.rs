@@ -20,7 +20,7 @@
 
 use heimdall_app::{Message as AppMessage, SettingsTransferMessage};
 use heimdall_core::settings::{
-    SETTINGS_EXPORT_FILE_NAME, SettingChange, SettingValue, SettingsImport,
+    SETTINGS_EXPORT_FILE_NAME, Sensitivity, SettingChange, SettingValue, SettingsImport,
 };
 use iced::widget::{Column, column, text};
 use iced::{Element, Task, window};
@@ -169,18 +169,40 @@ fn change_lines<'a, 'b>(changes: impl Iterator<Item = &'b SettingChange>) -> Col
     })
 }
 
-/// The changes deciding what runs on this computer, under the C# warning, on a warning
-/// card; `None` when there is none.
+/// The changes flagged `why`, under `heading`; `None` when there is none.
+fn flagged_group(
+    read: &SettingsImport,
+    why: Sensitivity,
+    heading: String,
+) -> Option<Column<'_, Message>> {
+    read.flagged(why).next()?;
+    Some(
+        column![
+            text(heading).size(font_size::BODY).style(text::warning),
+            change_lines(read.flagged(why)),
+        ]
+        .spacing(spacing::XS),
+    )
+}
+
+/// The changes shown first, on a warning card: those deciding what runs on this computer,
+/// under the C# warning, then those weakening a security check, under their own heading;
+/// `None` when there is none.
 fn sensitive_part(read: &SettingsImport) -> Option<Element<'_, Message>> {
     read.sensitive().next()?;
     Some(dialog_parts::warning_panel(
-        column![
-            text(fl!("ui-dialog-settings-import-sensitive"))
-                .size(font_size::BODY)
-                .style(text::warning),
-            change_lines(read.sensitive()),
-        ]
-        .spacing(spacing::XS),
+        column![]
+            .push(flagged_group(
+                read,
+                Sensitivity::RunsOnThisComputer,
+                fl!("ui-dialog-settings-import-sensitive"),
+            ))
+            .push(flagged_group(
+                read,
+                Sensitivity::WeakensSecurity,
+                fl!("ui-dialog-settings-import-weakens"),
+            ))
+            .spacing(spacing::SM),
     ))
 }
 
@@ -216,7 +238,7 @@ fn ignored_part(read: &SettingsImport) -> Option<Element<'_, Message>> {
 }
 
 /// What importing `read` changes, as the C# preview: the changes deciding what runs on
-/// this computer first, under its warning, then the others, each setting with its value
+/// this computer or weakening a security check first, under their warnings, then the others, each setting with its value
 /// now and the file's; what the file holds that is not imported; then Cancel and Import.
 pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
     let body = column![]

@@ -2325,6 +2325,13 @@ impl SettingsImport {
             .filter(|change| change.sensitivity.is_some())
     }
 
+    /// The changes shown first for `why`, in the file's order.
+    pub fn flagged(&self, why: Sensitivity) -> impl Iterator<Item = &SettingChange> {
+        self.changes
+            .iter()
+            .filter(move |change| change.sensitivity == Some(why))
+    }
+
     /// The other changes, in the file's order.
     pub fn benign(&self) -> impl Iterator<Item = &SettingChange> {
         self.changes
@@ -2404,7 +2411,7 @@ fn changes(before: &toml::Table, after: &toml::Table) -> Vec<SettingChange> {
                     key: format!("{section}.{key}"),
                     before: old.map(SettingValue::of),
                     after: new.map(SettingValue::of),
-                    sensitivity: sensitive::sensitivity(section, key),
+                    sensitivity: sensitive::sensitivity(section, key, old, new),
                 });
             }
         }

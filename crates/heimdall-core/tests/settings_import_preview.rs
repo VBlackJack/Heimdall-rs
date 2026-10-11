@@ -134,3 +134,47 @@ fn a_setting_this_version_does_not_import_is_named_and_the_rest_taken() {
     assert_eq!(read.settings.ssh_keep_alive_interval, 45);
     assert_eq!(read.settings.pin, None, "the PIN stays this computer's");
 }
+
+#[test]
+fn a_change_that_weakens_a_security_check_is_shown_first_and_one_that_tightens_is_not() {
+    use heimdall_core::profile::RdpDefaults;
+
+    let read = read_over_defaults(&Settings {
+        rdp_defaults: RdpDefaults {
+            nla: false,
+            strict_server_authentication: true,
+            ..RdpDefaults::default()
+        },
+        sync_known_hosts_at_startup: true,
+        require_credential_guard: true,
+        ..Settings::default()
+    });
+    assert_eq!(
+        keys(read.flagged(Sensitivity::WeakensSecurity)),
+        ["ssh.sync_known_hosts_at_startup", "rdp.nla"]
+    );
+    assert_eq!(read.flagged(Sensitivity::RunsOnThisComputer).count(), 0);
+    assert_eq!(
+        keys(read.benign()),
+        [
+            "rdp.strict_server_authentication",
+            "rdp_session.require_credential_guard"
+        ]
+    );
+
+    // The same settings back to the defaults: NLA and the known_hosts import tighten, the
+    // strict server check and Credential Guard weaken.
+    let (text, _) = Settings::default().export(None, false);
+    let back = read.settings.import(&text).expect("read");
+    assert_eq!(
+        keys(back.flagged(Sensitivity::WeakensSecurity)),
+        [
+            "rdp.strict_server_authentication",
+            "rdp_session.require_credential_guard"
+        ]
+    );
+    assert_eq!(
+        keys(back.benign()),
+        ["ssh.sync_known_hosts_at_startup", "rdp.nla"]
+    );
+}

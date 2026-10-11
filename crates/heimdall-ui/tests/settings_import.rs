@@ -26,6 +26,7 @@ use std::path::Path;
 use heimdall_app::{
     App, AppConfig, Message as AppMessage, SettingsTransferMessage, SystemCredentials,
 };
+use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{ColorScheme, SETTINGS_FILE_NAME, Settings};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -38,6 +39,9 @@ const WINDOW: Size = Size::new(1200.0, 900.0);
 /// The C# warning above the settings deciding what runs on this computer.
 const SENSITIVE_WARNING: &str =
     "Check these first: they decide what Heimdall runs on this computer.";
+
+/// The heading above the settings weakening a security check.
+const WEAKENS_HEADING: &str = "These weaken a security check:";
 
 /// A program the file points the `PuTTY` path at.
 const PUTTY: &str = "/opt/elsewhere/putty";
@@ -159,4 +163,42 @@ fn cancel_leaves_the_settings_byte_for_byte() {
     assert_eq!(shell.app().dialog, None);
     assert_eq!(shell.app().settings(), &settings);
     assert_eq!(std::fs::read(&path).expect("read"), before);
+}
+
+#[test]
+fn a_weakened_check_is_shown_first_under_its_heading_and_a_tightened_one_is_not() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (text, _) = Settings {
+        rdp_defaults: RdpDefaults {
+            nla: false,
+            strict_server_authentication: true,
+            ..RdpDefaults::default()
+        },
+        ..Settings::default()
+    }
+    .export(None, false);
+    let shell = asked(dir.path(), text);
+    let mut ui = simulator(&shell);
+    ui.find(WEAKENS_HEADING).expect("the heading");
+    ui.find("rdp.nla: On -> Off")
+        .expect("NLA turned off, under it");
+    ui.find("rdp.strict_server_authentication: Off -> On")
+        .expect("the stricter check, among the others");
+    assert!(ui.find(SENSITIVE_WARNING).is_err(), "nothing runs here");
+    drop(ui);
+
+    // Tightening alone: no warning card at all.
+    let dir = tempfile::tempdir().expect("dir");
+    let (text, _) = Settings {
+        rdp_defaults: RdpDefaults {
+            strict_server_authentication: true,
+            ..RdpDefaults::default()
+        },
+        ..Settings::default()
+    }
+    .export(None, false);
+    let shell = asked(dir.path(), text);
+    let mut ui = simulator(&shell);
+    ui.find("1 setting will change:").expect("how many");
+    assert!(ui.find(WEAKENS_HEADING).is_err(), "nothing weakened");
 }

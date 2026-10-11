@@ -2287,6 +2287,7 @@ ui-dialog-settings-import-body = { $count ->
 }
 ui-dialog-settings-import-line = { $key }: { $before } -> { $after }
 ui-dialog-settings-import-sensitive = Check these first: they decide what Heimdall runs on this computer.
+ui-dialog-settings-import-weakens = These weaken a security check:
 ui-dialog-settings-import-more = and { $count } more
 ui-dialog-settings-import-ignored = { $count ->
     [one] The file also holds { $count } setting this version does not import. It is left out:

@@ -2112,6 +2112,7 @@ ui-dialog-settings-import-body = { $count ->
 }
 ui-dialog-settings-import-line = { $key } : { $before } -> { $after }
 ui-dialog-settings-import-sensitive = Vérifiez d'abord ceux-ci : ils décident de ce que Heimdall exécute sur cet ordinateur.
+ui-dialog-settings-import-weakens = Ceux-ci affaiblissent un contrôle de sécurité :
 ui-dialog-settings-import-more = { $count ->
     [one] et { $count } autre
    *[other] et { $count } autres
