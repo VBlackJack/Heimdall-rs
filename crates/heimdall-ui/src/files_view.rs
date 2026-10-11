@@ -20,7 +20,7 @@
 //! between the panes send the selection, a file or a folder, to the other side.
 //!
 //! The keyboard acts on the pane with the focus, drawn with a stronger border: arrows, Home
-//! and End select, Enter opens or sends, Backspace goes back, Tab or Left and Right change
+//! and End select, Enter opens or sends, Backspace goes up, Tab or Left and Right change
 //! pane, F2 renames, Delete deletes and F5 lists again. Tab and Enter reach the tab through
 //! the window, as they act on a dialog first.
 
@@ -182,6 +182,8 @@ pub enum PaneTool {
     Go,
     /// The server's bookmarks.
     Bookmarks,
+    /// The filter emptied, as the C# `FilterClearButton`.
+    ClearFilter,
 }
 
 /// Widget identifier of the button `tool` of `tab`'s pane `side`, which shows a glyph
@@ -195,6 +197,7 @@ pub fn tool_id(tab: TabId, side: Side, tool: PaneTool) -> Id {
         PaneTool::Refresh => "refresh",
         PaneTool::Go => "go",
         PaneTool::Bookmarks => "bookmarks",
+        PaneTool::ClearFilter => "clear-filter",
     };
     Id::from(format!("files-{}-{}-{tool}", tab.value(), side_name(side)))
 }
@@ -268,8 +271,9 @@ pub fn files_key(
         Named::ArrowDown => FilesKey::Next,
         Named::Home => FilesKey::First,
         Named::End => FilesKey::Last,
-        // Back, as the C# Files tab's Backspace; Up stays a button.
-        Named::Backspace => FilesKey::Back,
+        // The parent folder, as the C# `FileBrowserShortcutPolicy` maps Backspace; Back is
+        // Alt+Left.
+        Named::Backspace => FilesKey::Parent,
         Named::ArrowLeft => FilesKey::Focus(Side::Local),
         Named::ArrowRight => FilesKey::Focus(Side::Remote),
         Named::F2 => FilesKey::Rename,
@@ -1059,16 +1063,26 @@ fn pane_narrowing<'a>(
             text: String::new(),
         })
     });
-    row![
-        crate::search_keys::SearchKeys::escape_only(
-            text_input(&fl!("ui-files-filter-placeholder"), filter)
-                .style(styles::text_input)
-                .id(field_id(tab, side, PaneField::Filter))
-                .size(font_size::CAPTION)
-                .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
-                .width(FILTER_WIDTH),
-            emptied,
-        ),
+    // Its clear button while it holds something, as the C# `FilterClearButton`.
+    let clear = emptied.clone().map(|emptied| {
+        glyph_button(
+            Icon::Close,
+            fl!("ui-files-empty-clear-filter"),
+            tool_id(tab, side, PaneTool::ClearFilter),
+            Some(emptied),
+        )
+    });
+    row![crate::search_keys::SearchKeys::escape_only(
+        text_input(&fl!("ui-files-filter-placeholder"), filter)
+            .style(styles::text_input)
+            .id(field_id(tab, side, PaneField::Filter))
+            .size(font_size::CAPTION)
+            .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
+            .width(FILTER_WIDTH),
+        emptied,
+    ),]
+    .push(clear)
+    .push(
         tooltip(
             checkbox(show_hidden)
                 .label(fl!("ui-files-hidden-toggle"))
@@ -1079,7 +1093,7 @@ fn pane_narrowing<'a>(
             tooltip::Position::Bottom,
         )
         .style(container::rounded_box),
-    ]
+    )
     .spacing(spacing::SM)
     .align_y(Alignment::Center)
 }
@@ -1725,7 +1739,11 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
     };
     let state = match &transfer.state {
         TransferState::Queued => fl!("ui-files-state-queued"),
-        TransferState::Preparing => fl!("ui-files-state-preparing"),
+        // A download's walk of a large folder says how far it got, as the C#.
+        TransferState::Preparing => match transfer.scanned {
+            Some(entries) => fl!("ui-files-state-scanning", count = entries),
+            None => fl!("ui-files-state-preparing"),
+        },
         TransferState::Running => running_text(transfer),
         TransferState::Done => fl!("ui-files-state-done"),
         TransferState::Incomplete { skipped } => {
@@ -1922,7 +1940,14 @@ fn panes<'a>(
         return local;
     }
     if files_pane.local_hidden {
-        return column![row![local_toggle(tab, false)], remote]
+        let tools = row![
+            local_toggle(tab, false),
+            iced::widget::space::horizontal(),
+            pick_buttons(tab, files_pane),
+        ]
+        .spacing(spacing::SM)
+        .align_y(Alignment::Center);
+        return column![tools, remote]
             .spacing(spacing::SM)
             .height(Length::Fill)
             .into();
@@ -1949,6 +1974,36 @@ fn local_toggle<'a>(tab: TabId, shown: bool) -> Element<'a, Message> {
     )
     .style(container::rounded_box)
     .into()
+}
+
+/// Upload and Download over the server's pane alone, as the C# SFTP pane's toolbar: no local
+/// pane to send from or to, Upload asks for files and Download for a folder.
+fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
+    let connected = files_pane.client.is_some();
+    let can_download = connected && !files_pane.remote.chosen().is_empty();
+    let action = |label: String, tip: String, message: Option<FilesMessage>| {
+        tooltip(
+            button(text(label).size(font_size::CAPTION))
+                .style(styles::secondary)
+                .on_press_maybe(message.map(files)),
+            text(tip).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
+    };
+    row![
+        action(
+            fl!("ui-files-upload-button"),
+            fl!("ui-files-upload-files-tooltip"),
+            connected.then_some(FilesMessage::UploadHere { tab }),
+        ),
+        action(
+            fl!("ui-files-download-button"),
+            fl!("ui-files-download-selected-tooltip"),
+            can_download.then_some(FilesMessage::PickDownloadFolder { tab }),
+        ),
+    ]
+    .spacing(spacing::SM)
 }
 
 /// Upload and Download, between the panes: each sends the selection of its side.
@@ -2180,7 +2235,8 @@ mod tests {
         assert_eq!(key(&letter("a"), Modifiers::empty()), None);
         assert_eq!(
             key(&named(Named::Backspace), Modifiers::empty()),
-            Some(FilesKey::Back)
+            Some(FilesKey::Parent),
+            "the parent folder, as the C#"
         );
         assert_eq!(
             key(&named(Named::F7), Modifiers::empty()),

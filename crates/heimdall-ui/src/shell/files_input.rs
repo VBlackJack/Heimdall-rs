@@ -49,7 +49,7 @@ impl Shell {
     /// waited for when it is the first.
     pub(super) fn file_dropped(&mut self, place: DropPlace, path: PathBuf) -> Task<Message> {
         if place == DropPlace::Main {
-            self.files_hovered = false;
+            self.files_hovered = 0;
         }
         if self.drops.add(place, path) {
             drop_batch::gather(place)

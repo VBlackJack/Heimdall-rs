@@ -49,7 +49,7 @@ pub use heimdall_sftp::RemotePath;
 pub use heimdall_sftp::local_name::{LocalName, LocalNameError, Rules};
 pub use heimdall_sftp::path::display_bytes;
 pub use heimdall_sftp::transfer::Fingerprint;
-pub use plan::{Plan, Ready, Root, Stamp, Step};
+pub use plan::{Plan, Ready, Root, SCAN_REPORT_EVERY, Stamp, Step};
 
 /// The permission bits of a mode, set-user, set-group and sticky included.
 const PERMISSION_BITS: u32 = 0o7777;
@@ -155,6 +155,8 @@ pub enum RemoteError {
         /// Operating system message.
         detail: String,
     },
+    /// The local disk is full, as the C# `IsLocalDiskFull` tells it apart.
+    LocalDiskFull,
     /// Not a regular file: a link, a device.
     NotAFile,
     /// The file an upload would replace is not a regular file; it was left as it is.
@@ -176,6 +178,21 @@ pub enum RemoteError {
     Changed,
     /// The file is larger than what is read whole.
     FileTooLarge,
+}
+
+impl RemoteError {
+    /// What the local file system said, `error`: a full disk told apart from the rest, as
+    /// the C# `IsLocalDiskFull` tells `ERROR_DISK_FULL` and `ERROR_HANDLE_DISK_FULL` apart.
+    #[must_use]
+    pub fn local(error: &std::io::Error) -> Self {
+        if error.kind() == std::io::ErrorKind::StorageFull {
+            Self::LocalDiskFull
+        } else {
+            Self::Local {
+                detail: error.to_string(),
+            }
+        }
+    }
 }
 
 /// How a folder transfer ended.
@@ -507,9 +524,7 @@ fn sftp_error(error: &SftpError) -> RemoteError {
 fn transfer_error(error: &TransferError) -> RemoteError {
     match error {
         TransferError::Sftp(error) => sftp_error(error),
-        TransferError::Local { source, .. } => RemoteError::Local {
-            detail: source.to_string(),
-        },
+        TransferError::Local { source, .. } => RemoteError::local(source),
         TransferError::NotARegularFile => RemoteError::NotAFile,
         TransferError::DestinationNotAFile => RemoteError::DestinationNotAFile,
         TransferError::ReplaceNotSafe => RemoteError::ReplaceNotSafe,

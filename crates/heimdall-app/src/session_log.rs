@@ -220,7 +220,7 @@ impl ErrorCategory {
                 ..
             }
             | FilesError::SudoPasswordRejected => Self::Permission,
-            FilesError::Local { .. } => Self::Io,
+            FilesError::Local { .. } | FilesError::LocalDiskFull => Self::Io,
             _ => Self::Other,
         }
     }

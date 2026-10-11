@@ -23,6 +23,8 @@ test-data-dir = []
 data-encoding.workspace = true
 directories.workspace = true
 fancy-regex.workspace = true
+# log: a last good copy of the profiles or the settings loaded, or not kept.
+log.workspace = true
 regex.workspace = true
 roxmltree.workspace = true
 # sealvault: the Hash, HMAC, JWT and TOTP tools' digests and MACs, the PIN's hash, and the

@@ -16,7 +16,7 @@
 
 //! What the application decides in a Files tab.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use heimdall_files::conflict::{Choice, Kind};
@@ -213,6 +213,19 @@ pub enum FilesMessage {
         tab: TabId,
         /// The files.
         paths: Vec<PathBuf>,
+    },
+    /// Pick a folder of this computer to download the server's selection into, as the C#
+    /// "Download" of the SFTP pane, which has no local pane to send it to.
+    PickDownloadFolder {
+        /// Tab.
+        tab: TabId,
+    },
+    /// The folder picked to download the server's selection into.
+    DownloadFolderPicked {
+        /// Tab.
+        tab: TabId,
+        /// The folder.
+        folder: PathBuf,
     },
     /// Hold the server's selected entries to be pasted, as the C# "Cut".
     Cut {
@@ -625,6 +638,16 @@ pub enum FilesMessage {
         /// How it went.
         result: Result<(), FilesError>,
     },
+    /// A download's walk, while it is planned, found `entries` so far, as the C# "Scanning
+    /// folders".
+    Scanning {
+        /// Tab.
+        tab: TabId,
+        /// The transfers listing the entries planned.
+        rows: Vec<TransferId>,
+        /// Entries found so far.
+        entries: usize,
+    },
     /// A transfer's plan arrived: every entry it would write, checked against the
     /// destination.
     Planned {
@@ -720,6 +743,10 @@ impl std::fmt::Debug for FilesMessage {
             }
             Self::UploadPicked { tab, paths } => {
                 write!(f, "UploadPicked({}, {})", tab.value(), paths.len())
+            }
+            Self::PickDownloadFolder { tab } => write!(f, "PickDownloadFolder({})", tab.value()),
+            Self::DownloadFolderPicked { tab, .. } => {
+                write!(f, "DownloadFolderPicked({})", tab.value())
             }
             Self::Paste { tab } => write!(f, "Paste({})", tab.value()),
             Self::Copy { tab } => write!(f, "Copy({})", tab.value()),
@@ -865,6 +892,9 @@ impl std::fmt::Debug for FilesMessage {
                 tab.value(),
                 result.is_ok()
             ),
+            Self::Scanning { tab, entries, .. } => {
+                write!(f, "Scanning({}, {entries})", tab.value())
+            }
             Self::Planned { tab, result, .. } => {
                 write!(f, "Planned({}, {})", tab.value(), result.is_ok())
             }
@@ -1156,7 +1186,21 @@ impl App {
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::TypeAhead { tab, text, at } => self.files_type_ahead(tab, &text, at),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
+            FilesMessage::PickDownloadFolder { tab } => self.pick_download_folder(tab),
+            FilesMessage::DownloadFolderPicked { tab, folder } => {
+                self.send_chosen(tab, Direction::Download, Some(folder))
+            }
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
+            FilesMessage::Scanning { tab, rows, entries } => {
+                if let Some(files) = self.files_mut(tab) {
+                    for transfer in files.transfers.iter_mut().filter(|transfer| {
+                        rows.contains(&transfer.id) && transfer.state == TransferState::Preparing
+                    }) {
+                        transfer.scanned = Some(entries);
+                    }
+                }
+                Vec::new()
+            }
             message @ (FilesMessage::Planned { .. }
             | FilesMessage::ConflictChosen { .. }
             | FilesMessage::ConflictAll(_)) => self.plan_message(message),
@@ -1787,6 +1831,47 @@ impl App {
     }
 
     pub(super) fn start_transfer(&mut self, tab: TabId, direction: Direction) -> Vec<Effect> {
+        // This computer's pane hidden, there is nowhere shown to send to or from: the
+        // files or the folder are asked for, as the C# SFTP pane's Upload and Download.
+        let hidden = self
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .is_some_and(|files| files.local_hidden && !files.local_only);
+        match direction {
+            Direction::Upload if hidden => self.upload_here(tab),
+            Direction::Download if hidden => self.pick_download_folder(tab),
+            _ => self.send_chosen(tab, direction, None),
+        }
+    }
+
+    /// The folder to download the server's selection into, asked of the user while
+    /// connected and something is chosen; the picker opens where the last download went, as
+    /// the C# `PickDownloadFolder`.
+    fn pick_download_folder(&self, tab: TabId) -> Vec<Effect> {
+        let ready = self
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .is_some_and(|files| files.client.is_some() && !files.remote.chosen().is_empty());
+        if !ready {
+            return Vec::new();
+        }
+        vec![Effect::PickDownloadFolder {
+            tab,
+            start: self
+                .files_state
+                .last_download_folder()
+                .map(Path::to_path_buf),
+        }]
+    }
+
+    /// Sends the entries chosen on the side `direction` sends from to the other side's
+    /// folder shown, or a download to `folder` when one was picked.
+    fn send_chosen(
+        &mut self,
+        tab: TabId,
+        direction: Direction,
+        folder: Option<PathBuf>,
+    ) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -1797,22 +1882,21 @@ impl App {
             Direction::Download => files.remote.chosen(),
             Direction::Upload => files.local.chosen(),
         };
-        // Where downloads go, kept for the next tab to open on.
-        if direction == Direction::Download && !chosen.is_empty() {
-            let folder = files.local.path.clone();
-            if let Err(error) = self.files_state.set_last_download_folder(&folder) {
-                log::warn!("the download folder was not kept: {error}");
-            }
+        let local = folder.unwrap_or_else(|| files.local.path.clone());
+        // Where downloads go, kept for the next tab to open on and the next folder asked.
+        if direction == Direction::Download
+            && !chosen.is_empty()
+            && let Err(error) = self.files_state.set_last_download_folder(&local)
+        {
+            log::warn!("the download folder was not kept: {error}");
         }
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
+        let into = (local, files.remote.path.clone());
         let roots: Vec<_> = chosen
             .into_iter()
-            .filter_map(|index| {
-                let into = (files.local.path.clone(), files.remote.path.clone());
-                prepare(files, direction, index, &into)
-            })
+            .filter_map(|index| prepare(files, direction, index, &into))
             .collect();
         self.queue_transfer(tab, client, direction, roots)
     }
@@ -1846,6 +1930,7 @@ impl App {
                     rate: crate::files::Rate::default(),
                     state: TransferState::Queued,
                     picked: Some(picked.clone()),
+                    scanned: None,
                     cancel: cancel.clone(),
                 });
                 id
@@ -2833,6 +2918,7 @@ fn failed(direction: Direction, label: String, error: FilesError) -> Transfer {
         rate: crate::files::Rate::default(),
         state: TransferState::Failed(error),
         picked: None,
+        scanned: None,
         cancel: CancellationToken::new(),
     }
 }

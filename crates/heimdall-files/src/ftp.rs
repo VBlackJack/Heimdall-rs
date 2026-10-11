@@ -904,16 +904,12 @@ fn refused(refusal: Refusal) -> RemoteError {
 }
 
 fn local_error(error: &std::io::Error) -> RemoteError {
-    RemoteError::Local {
-        detail: error.to_string(),
-    }
+    RemoteError::local(error)
 }
 
 /// A failure while bytes move: the data connection, or the local file.
 fn transfer_io(error: &std::io::Error) -> RemoteError {
-    RemoteError::Local {
-        detail: error.to_string(),
-    }
+    RemoteError::local(error)
 }
 
 /// The refusal an FTP reply stands for, its text kept as the server's words.
