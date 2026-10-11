@@ -40,8 +40,10 @@ use iced::widget::{
 };
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
+use crate::ellipsis;
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
+use crate::press_tooltip::hide_on_press;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
@@ -159,11 +161,18 @@ const SEMIBOLD: iced::Font = iced::Font {
     ..crate::UI_FONT
 };
 
-/// Widest a gateway badge grows beside a name, as the C# `SessionTreeGatewayBadgeMaxWidth`.
+/// Widest a gateway badge's text grows beside a name, as the C# `SessionTreeGatewayBadgeMaxWidth`.
 const BADGE_MAX_WIDTH: f32 = 140.0;
 
 /// Corner radius of a badge, as the C# `SessionTreeBadgeCornerRadius`.
 const BADGE_RADIUS: f32 = 3.0;
+
+/// Room at the sides of a badge's text, as the C# badge's padding.
+const BADGE_PADDING: f32 = 4.0;
+
+/// How long the pointer rests on a row before its tooltip shows, as the C#
+/// `SessionTreeRowToolTipDelay`.
+const ROW_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Size of a session's state dot, as the C# tree's and tabs'.
 const DOT_SIZE: f32 = 7.0;
@@ -353,8 +362,10 @@ pub fn folder_row<'a>(
             row![
                 container(icons::icon(Icon::Folder, tint, FOLDER_ICON_SIDE))
                     .center_y(ROW_CONTENT_HEIGHT),
-                text(label).size(font_size::BODY).font(SEMIBOLD),
-                iced::widget::space::horizontal(),
+                ellipsis::text(label)
+                    .width(Length::Fill)
+                    .size(font_size::BODY)
+                    .font(SEMIBOLD),
                 text(count.to_string())
                     .size(font_size::SMALL_CAPTION)
                     .style(text::secondary),
@@ -497,14 +508,16 @@ pub fn owned_row(
         ))
         .center_y(ROW_CONTENT_HEIGHT),
         container(profile_dot(state, reach.as_ref())).padding(DOT_HIT_PADDING),
-        column![text(profile.name.clone()).wrapping(text::Wrapping::Glyph)].push(context.map(
-            |context| {
-                text(context)
+        // On one line each, ended with an ellipsis where the badges' room starts, as the
+        // C#'s: the tooltip opens with the whole name.
+        column![ellipsis::text(profile.name.clone()).width(Length::Fill)]
+            .push(context.map(|context| {
+                ellipsis::text(context)
+                    .width(Length::Fill)
                     .size(font_size::SMALL_CAPTION)
                     .style(text::secondary)
-                    .wrapping(text::Wrapping::Glyph)
-            }
-        )),
+            }))
+            .width(Length::Fill),
     ]
     .spacing(spacing::XS)
     .align_y(iced::Alignment::Center);
@@ -537,12 +550,16 @@ pub fn owned_row(
         .interaction(mouse::Interaction::Pointer);
     row![
         iced::widget::space().width(EXPANDER_SIDE + EXPANDER_GAP),
-        tooltip(
-            area,
-            text(row_tooltip(profile, reach.as_ref())).size(font_size::CAPTION),
-            tooltip::Position::Right,
-        )
-        .style(container::rounded_box),
+        // Put away by a click, as the C# tooltip closes when its row is clicked.
+        hide_on_press(
+            tooltip(
+                area,
+                text(row_tooltip(profile, reach.as_ref())).size(font_size::CAPTION),
+                tooltip::Position::Right,
+            )
+            .delay(ROW_TOOLTIP_DELAY)
+            .style(container::rounded_box),
+        ),
     ]
     .into()
 }
@@ -555,15 +572,13 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
         GatewayBadge::Via(name) => fl!("ui-tree-gateway-via", name = name.as_str()),
         GatewayBadge::Missing => fl!("ui-tree-gateway-missing"),
     };
-    // On one line, cut at its edge: a long gateway name must not fold the row.
+    // On one line, ended with an ellipsis: a long gateway name must not fold the row.
     container(
-        text(label)
+        ellipsis::text(label)
             .size(font_size::SMALL_CAPTION)
-            .wrapping(text::Wrapping::None),
+            .max_width(BADGE_MAX_WIDTH),
     )
-    .max_width(BADGE_MAX_WIDTH)
-    .clip(true)
-    .padding([0.0, 4.0])
+    .padding([0.0, BADGE_PADDING])
     .style(move |theme: &Theme| {
         // As the C# badge: the card's background, the info colour's border and the
         // secondary text; the warning colour when the gateway is missing.
@@ -599,7 +614,7 @@ fn origin_badge(origin: heimdall_core::metadata::ProfileOrigin) -> Element<'stat
             .style(text::secondary)
             .wrapping(text::Wrapping::None),
     )
-    .padding([0.0, 4.0])
+    .padding([0.0, BADGE_PADDING])
     .style(|theme: &Theme| container::Style {
         background: Some(theme.extended_palette().background.weak.color.into()),
         border: iced::Border {
@@ -612,8 +627,13 @@ fn origin_badge(origin: heimdall_core::metadata::ProfileOrigin) -> Element<'stat
     .into()
 }
 
+/// What a row's tooltip says: its whole name first, the row ending a long one with an
+/// ellipsis, then what the row does not print, as the C# `RowTooltipText`.
 fn row_tooltip(profile: &ProfileSummary, reach: Option<&Verdict>) -> String {
     let mut lines = Vec::new();
+    if !profile.name.trim().is_empty() {
+        lines.push(profile.name.clone());
+    }
     if let Some((host, _)) = &profile.endpoint {
         lines.push(fl!("ui-tree-tooltip-host", host = host.as_str()));
     }
