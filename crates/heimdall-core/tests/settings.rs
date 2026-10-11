@@ -383,9 +383,19 @@ fn the_broadcast_scope_is_the_current_tab_until_another_is_chosen() {
 fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default() {
     use heimdall_core::settings::{
         TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN,
+        TERMINAL_FONT_SIZE_UNWRITTEN,
     };
 
     let dir = tempfile::tempdir().expect("dir");
+    // A new installation starts at the C#'s 14.
+    assert_eq!(TERMINAL_FONT_SIZE_DEFAULT, 14);
+    assert_eq!(
+        Settings::load(&dir.path().join(SETTINGS_FILE_NAME))
+            .expect("no file yet")
+            .terminal_font_size,
+        TERMINAL_FONT_SIZE_DEFAULT
+    );
+    // A file written before it held a size keeps the one its terminals were drawn at.
     assert_eq!(
         written(
             dir.path(),
@@ -393,7 +403,7 @@ fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default()
 "
         )
         .terminal_font_size,
-        TERMINAL_FONT_SIZE_DEFAULT
+        TERMINAL_FONT_SIZE_UNWRITTEN
     );
     for (size, read) in [
         (TERMINAL_FONT_SIZE_MIN, TERMINAL_FONT_SIZE_MIN),
@@ -496,17 +506,27 @@ fn the_workspace_lock_travels_with_an_export_without_the_lockout() {
 }
 
 #[test]
-fn a_language_is_written_once_chosen_and_one_not_offered_follows_the_desktop() {
+fn a_new_installation_is_in_english_and_a_language_chosen_is_written_and_read_back() {
     use heimdall_core::settings::Language;
 
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
-    Settings::default().save(&path).expect("saved");
+    // A new installation starts in English, as the C# `DefaultLocale`.
+    assert_eq!(
+        Settings::load(&path).expect("no file yet").language,
+        Some(Language::English)
+    );
+    let following = Settings {
+        language: None,
+        ..Settings::default()
+    };
+    following.save(&path).expect("saved");
     let text = std::fs::read_to_string(&path).expect("read");
     assert!(
         !text.contains("language"),
         "not chosen, not written: {text}"
     );
+    // A file written without one goes on following the desktop: never rewritten.
     assert_eq!(Settings::load(&path).expect("read").language, None);
     for language in Language::ALL {
         let settings = Settings {

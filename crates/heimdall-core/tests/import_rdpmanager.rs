@@ -334,7 +334,11 @@ fn the_settings_heimdall_has_are_taken_and_a_value_out_of_range_is_the_default()
     assert_eq!(guarded.theme, AppTheme::default());
     assert_eq!(guarded.rdp_connect_timeout, RDP_CONNECT_TIMEOUT_DEFAULT);
     assert_eq!(guarded.max_sessions, Settings::default().max_sessions);
-    assert_eq!(guarded.language, None, "a language not offered is left");
+    assert_eq!(
+        guarded.language,
+        Settings::default().language,
+        "a language not offered is left"
+    );
 }
 
 #[test]

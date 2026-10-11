@@ -1837,10 +1837,10 @@ fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
     };
     let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON;
     let normal = columns(&shell);
-    assert!(same(shell.font_size(tab), 15.0));
+    assert!(same(shell.font_size(tab), 14.0));
 
     let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
-    assert!(same(shell.font_size(tab), 16.0));
+    assert!(same(shell.font_size(tab), 15.0));
     assert!(columns(&shell) < normal, "larger text, fewer columns");
     for _ in 0..20 {
         let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
@@ -1852,7 +1852,7 @@ fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
     assert!(same(shell.font_size(tab), 8.0), "no smaller than 8");
     assert!(columns(&shell) > normal);
     let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::Reset)));
-    assert!(same(shell.font_size(tab), 15.0));
+    assert!(same(shell.font_size(tab), 14.0));
     assert_eq!(columns(&shell), normal);
 
     // The wheel with Ctrl held zooms instead of scrolling; without it, it scrolls.
@@ -5307,3 +5307,4 @@ fn a_file_read_from_its_last_good_copy_is_said_at_start_in_the_csharp_words() {
     .expect("the C# message");
     ui.find("server a").expect("the profiles of the copy");
 }
+

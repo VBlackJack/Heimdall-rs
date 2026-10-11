@@ -25,9 +25,9 @@ use iced::{Point, Rectangle, Size};
 
 use super::font::FaceMetrics;
 
-/// Terminal font size in logical pixels; 15 makes the embedded font's cell exactly 9 pixels
-/// wide.
-pub const DEFAULT_FONT_SIZE: f32 = 15.0;
+/// Terminal font size in logical pixels before the settings are read: the settings' own
+/// default, the C#'s.
+pub const DEFAULT_FONT_SIZE: f32 = 14.0;
 
 /// Size of one cell.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -139,6 +139,10 @@ mod tests {
 
     use super::{CellMetrics, DEFAULT_FONT_SIZE, FaceMetrics};
 
+    /// The size at which the embedded face's cell is a whole 9 by 19 pixels, which the
+    /// tests below count in.
+    const NINE_BY_NINETEEN: f32 = 15.0;
+
     #[test]
     fn the_default_size_is_the_one_the_settings_start_at() {
         // Two constants, one decision: a terminal drawn before the settings are read, and one
@@ -151,8 +155,8 @@ mod tests {
     }
 
     #[test]
-    fn the_default_cell_is_nine_by_nineteen() {
-        let metrics = CellMetrics::for_size(DEFAULT_FONT_SIZE);
+    fn a_fifteen_pixel_font_makes_a_nine_by_nineteen_cell() {
+        let metrics = CellMetrics::for_size(NINE_BY_NINETEEN);
         assert!((metrics.width - 9.0).abs() < 1e-4);
         assert!((metrics.height - 19.0).abs() < 1e-4);
     }
@@ -176,7 +180,7 @@ mod tests {
 
     #[test]
     fn the_grid_is_what_fits_whole() {
-        let metrics = CellMetrics::default();
+        let metrics = CellMetrics::for_size(NINE_BY_NINETEEN);
         let grid = metrics.grid(Size::new(9.0 * 80.0 + 8.9, 19.0 * 24.0 + 18.0));
         assert_eq!((grid.cols, grid.rows), (80, 24));
         let tiny = metrics.grid(Size::new(0.0, -5.0));
@@ -185,7 +189,7 @@ mod tests {
 
     #[test]
     fn a_point_maps_to_its_cell_and_half() {
-        let metrics = CellMetrics::default();
+        let metrics = CellMetrics::for_size(NINE_BY_NINETEEN);
         let bounds = Rectangle::new(Point::new(100.0, 50.0), Size::new(900.0, 600.0));
         let grid = metrics.grid(bounds.size());
         let left = metrics.cell_at(
@@ -202,7 +206,7 @@ mod tests {
 
     #[test]
     fn the_middle_of_a_cell_belongs_to_its_right_half() {
-        let metrics = CellMetrics::default();
+        let metrics = CellMetrics::for_size(NINE_BY_NINETEEN);
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(900.0, 600.0));
         let grid = metrics.grid(bounds.size());
         let middle = metrics.cell_at(bounds, grid, Point::new(9.0 * 2.0 + 4.5, 0.0));
