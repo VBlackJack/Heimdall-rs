@@ -290,7 +290,10 @@ async fn bench() -> Bench {
         &mut app,
         "to",
         Some(session(to_port).await),
-        (vec![remote_file("inbox", EntryKind::Directory)], listed_local),
+        (
+            vec![remote_file("inbox", EntryKind::Directory)],
+            listed_local,
+        ),
     );
     Bench {
         dir,
@@ -329,7 +332,10 @@ async fn files_of_this_computer_dropped_on_another_tabs_server_are_uploaded_into
         vec![(Direction::Upload, TransferState::Done)],
         "on the tab dropped on, as its own upload"
     );
-    assert!(transfers(app, source).is_empty(), "nothing on the tab dragged from");
+    assert!(
+        transfers(app, source).is_empty(),
+        "nothing on the tab dragged from"
+    );
     assert!(
         bench.local.path().join("notes.txt").exists(),
         "a drop copies"
@@ -379,7 +385,11 @@ async fn a_drop_from_another_tab_uploads_as_a_drop_from_explorer_does() {
         RemotePath::from("/notes.txt"),
         bench.local.path().join("notes.txt"),
     );
-    assert_eq!(queued, vec![one.clone(), one], "the same upload, into the folder shown");
+    assert_eq!(
+        queued,
+        vec![one.clone(), one],
+        "the same upload, into the folder shown"
+    );
 }
 
 #[tokio::test]
@@ -391,7 +401,10 @@ async fn a_name_in_the_way_is_asked_about_as_a_paste_asks() {
     select(app, source, Side::Local, 1);
     let effects = drop_across(app, (source, Side::Local), (target, Side::Remote), None);
     let started = run(app, effects).await;
-    assert!(started.is_empty(), "nothing written before the answer: {started:?}");
+    assert!(
+        started.is_empty(),
+        "nothing written before the answer: {started:?}"
+    );
     let Some(Dialog::FileConflicts { rows, .. }) = &app.dialog else {
         panic!("{:?}", app.dialog);
     };
@@ -440,7 +453,10 @@ async fn a_servers_entries_dropped_on_another_tabs_local_list_are_downloaded_the
         "on the server's tab, as its own download"
     );
     assert!(transfers(app, target).is_empty());
-    assert!(bench.first.path().join("report.txt").exists(), "a drop copies");
+    assert!(
+        bench.first.path().join("report.txt").exists(),
+        "a drop copies"
+    );
     assert!(
         !left
             .iter()
@@ -474,7 +490,14 @@ async fn a_servers_entries_dropped_on_another_server_are_refused() {
     assert!(effects.is_empty(), "{effects:?}");
     assert!(transfers(app, source).is_empty());
     assert!(transfers(app, target).is_empty());
-    assert!(!bench.second.path().join("inbox").join("report.txt").exists());
+    assert!(
+        !bench
+            .second
+            .path()
+            .join("inbox")
+            .join("report.txt")
+            .exists()
+    );
     let _ = &bench.dir;
 }
 

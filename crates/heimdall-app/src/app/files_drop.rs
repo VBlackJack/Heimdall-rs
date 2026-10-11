@@ -49,7 +49,11 @@ impl App {
     /// `onto` of another tab, `tab`: files of this computer on a connected server's list, or
     /// a connected server's entries on a local list.
     #[must_use]
-    pub fn takes_drop_across(&self, (from_tab, from): (TabId, Side), (tab, onto): (TabId, Side)) -> bool {
+    pub fn takes_drop_across(
+        &self,
+        (from_tab, from): (TabId, Side),
+        (tab, onto): (TabId, Side),
+    ) -> bool {
         if from_tab == tab {
             return false;
         }

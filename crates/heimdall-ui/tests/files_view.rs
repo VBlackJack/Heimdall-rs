@@ -1646,8 +1646,12 @@ fn drag_across(
 #[tokio::test]
 async fn files_of_this_computer_dragged_onto_another_tabs_server_folder_are_uploaded_into_it() {
     let dir = tempfile::tempdir().expect("dir");
-    std::fs::write(dir.path().join("notes.md"), b"notes
-").expect("file");
+    std::fs::write(
+        dir.path().join("notes.md"),
+        b"notes
+",
+    )
+    .expect("file");
     let (mut core, first) = files_tab(dir.path()).await;
     let second = second_files_tab(&mut core, dir.path()).await;
     let mut shell = Shell::with_app(core);
@@ -1692,7 +1696,10 @@ async fn files_of_this_computer_dragged_onto_another_tabs_server_folder_are_uplo
         )],
         "uploaded by the tab dropped on, into the folder dropped on"
     );
-    assert!(transfers(first).is_empty(), "nothing on the tab dragged from");
+    assert!(
+        transfers(first).is_empty(),
+        "nothing on the tab dragged from"
+    );
 }
 
 #[tokio::test]
@@ -1722,15 +1729,22 @@ async fn a_servers_entry_dragged_onto_another_tabs_local_list_is_downloaded_by_i
     };
     assert_eq!(transfer.direction, Direction::Download);
     let picked = transfer.picked.as_ref().expect("picked");
-    assert_eq!(picked.root.remote, RemotePath::from("/home/admin/backup.tar.gz"));
+    assert_eq!(
+        picked.root.remote,
+        RemotePath::from("/home/admin/backup.tar.gz")
+    );
     assert_eq!(picked.root.local, dir.path().join("backup.tar.gz"));
 }
 
 #[tokio::test]
 async fn a_drag_between_two_servers_lists_or_two_local_lists_is_refused_and_never_lit() {
     let dir = tempfile::tempdir().expect("dir");
-    std::fs::write(dir.path().join("notes.md"), b"notes
-").expect("file");
+    std::fs::write(
+        dir.path().join("notes.md"),
+        b"notes
+",
+    )
+    .expect("file");
     let (mut core, first) = files_tab(dir.path()).await;
     let second = second_files_tab(&mut core, dir.path()).await;
     let mut shell = Shell::with_app(core);

@@ -105,10 +105,8 @@ impl FilesDrag {
         self.over.filter(|over| {
             self.active
                 && (over.tab == self.from.tab
-                    || app.takes_drop_across(
-                        (self.from.tab, self.from.side),
-                        (over.tab, over.side),
-                    ))
+                    || app
+                        .takes_drop_across((self.from.tab, self.from.side), (over.tab, over.side)))
         })
     }
 }
