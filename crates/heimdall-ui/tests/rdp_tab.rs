@@ -856,6 +856,18 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
     .expect("body");
     ui.find("Subject: CN=dc.lab")
         .expect("the subject, as the C# prompt");
+    // The fingerprint compared is the pin's: the whole certificate's thumbprint, as the C#
+    // prompt shows it, never the key's under that label; the key is said apart.
+    let whole = heimdall_rdp::CertificateHash::of(b"the certificate of dc.lab").thumbprint();
+    ui.find(format!("SHA-256 fingerprint: {whole}").as_str())
+        .expect("the whole certificate's thumbprint");
+    assert!(
+        ui.find("SHA-256 fingerprint: SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            .is_err(),
+        "not the key under the certificate's label"
+    );
+    ui.find("Public key SHA-256: SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        .expect("the key, under its own name");
     ui.click("Just this once").expect("once");
     assert!(ui.into_messages().any(|message| matches!(
         message,
@@ -1987,3 +1999,129 @@ fn keys_sent_from_the_bar_are_said_as_the_csharp_toast_and_so_is_a_failure() {
     ui.find("Could not send keys to the remote session.")
         .expect("not sent");
 }
+
+/// Quick Connect's field, shown once it is open.
+const QUICK_CONNECT_FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
+
+/// A click at `at` as the window takes it: the pointer moved there, then pressed and let
+/// go, each drawn apart; what the window sent is applied, as its loop does. What it sent.
+fn click_at(shell: &mut Shell, at: Point) -> Vec<Message> {
+    let messages: Vec<Message> = {
+        let mut ui = simulator(shell);
+        ui.point_at(at);
+        let _ = ui.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: at,
+        })]);
+        let _ = ui.simulate([iced::Event::Mouse(mouse::Event::ButtonPressed(
+            mouse::Button::Left,
+        ))]);
+        let _ = ui.simulate([iced::Event::Mouse(mouse::Event::ButtonReleased(
+            mouse::Button::Left,
+        ))]);
+        ui.into_messages().collect()
+    };
+    for message in messages.clone() {
+        let _ = shell.update(message);
+    }
+    messages
+}
+
+/// Whether `messages` send the server a button let go.
+fn releases_a_button(messages: &[Message]) -> bool {
+    messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::App(AppMessage::DesktopInput { inputs, .. })
+                if inputs.iter().any(|input| matches!(
+                    input,
+                    DesktopInput::Button { pressed: false, .. }
+                ))
+        )
+    })
+}
+
+#[test]
+fn the_quick_connect_button_opens_quick_connect_over_a_desktop_that_has_the_keyboard() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _tab, _received) = connected(dir.path());
+    // The desktop clicked: it has the keyboard and the pointer.
+    let _ = click_at(&mut shell, Point::new(700.0, 400.0));
+    assert!(
+        simulator(&shell).find(QUICK_CONNECT_FIELD).is_err(),
+        "closed"
+    );
+    let button = {
+        let mut ui = simulator(&shell);
+        ui.find("Quick connect")
+            .expect("the navigation's button")
+            .bounds()
+    };
+    let sent = click_at(&mut shell, button.center());
+    simulator(&shell)
+        .find(QUICK_CONNECT_FIELD)
+        .expect("Quick Connect open, at the first click");
+    assert!(
+        !releases_a_button(&sent),
+        "a press off the desktop sends the server no release"
+    );
+}
+
+#[test]
+fn a_tab_clicked_while_a_desktop_has_the_pointer_is_shown_at_the_first_click() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let open = |core: &mut App| match core
+        .update(AppMessage::OpenRdp(ProfileId::new("dc")))
+        .as_slice()
+    {
+        [Effect::ConnectRdp { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("{other:?}"),
+    };
+    let first = open(&mut core);
+    let second = open(&mut core);
+    let mut receivers = Vec::new();
+    for (tab, attempt) in [first, second] {
+        let (input, received) = tokio::sync::mpsc::unbounded_channel();
+        receivers.push(received);
+        let _ = core.update(AppMessage::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::RdpReady {
+                framebuffer: Framebuffer::new(1280, 800),
+                input,
+                size: tokio::sync::watch::channel(None).0,
+                clipboard: None,
+            },
+        });
+    }
+    let mut shell = Shell::with_app(core);
+    assert_eq!(shell.app().active_tab().map(|tab| tab.id), Some(second.0));
+    // The second's desktop clicked, then the first tab's title, left of its close mark.
+    let pressed = click_at(&mut shell, Point::new(700.0, 400.0));
+    assert!(
+        releases_a_button(&pressed),
+        "the desktop's own click let go"
+    );
+    let close = {
+        let mut ui = simulator(&shell);
+        ui.find(heimdall_ui::shell::tab_close_id(first.0))
+            .expect("the first tab's close mark")
+            .bounds()
+    };
+    let sent = click_at(
+        &mut shell,
+        Point::new(close.x - TAB_TITLE_OFFSET, close.center_y()),
+    );
+    assert_eq!(
+        shell.app().active_tab().map(|tab| tab.id),
+        Some(first.0),
+        "shown at the first click: {sent:?}"
+    );
+    assert!(
+        !releases_a_button(&sent),
+        "a press off the desktop sends the server no release"
+    );
+}
+
+/// How far left of its close mark a tab's title is clicked.
+const TAB_TITLE_OFFSET: f32 = 60.0;

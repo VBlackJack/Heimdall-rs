@@ -72,6 +72,9 @@ struct State {
     /// Keys held, with the keysym sent when each went down: a release sends the same one,
     /// or Shift released first would turn a held `!` into a `1` and leave `!` stuck.
     held: Vec<(Physical, u32)>,
+    /// Buttons pressed on the desktop and not let go yet: only their releases are the
+    /// server's, a press elsewhere in the window never reached it.
+    buttons: Vec<PointerButton>,
 }
 
 /// The desktop of one tab.
@@ -592,6 +595,9 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
                     return;
                 };
                 let (x, y) = self.desktop_point(bounds, position);
+                if !state.buttons.contains(&button) {
+                    state.buttons.push(button);
+                }
                 self.send(
                     shell,
                     vec![DesktopInput::Button {
@@ -604,7 +610,11 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
                 shell.capture_event();
             }
             Event::Mouse(mouse::Event::ButtonReleased(button)) => {
-                if let Some(button) = mouse_button(*button) {
+                let pressed_here = mouse_button(*button).filter(|button| {
+                    let found = state.buttons.iter().position(|held| held == button);
+                    found.map(|index| state.buttons.remove(index)).is_some()
+                });
+                if let Some(button) = pressed_here {
                     // Released where the pointer is, even off the desktop: clamped to it.
                     let (x, y) = cursor
                         .position()

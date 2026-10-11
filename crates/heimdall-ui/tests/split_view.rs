@@ -535,7 +535,8 @@ fn merge_with_lists_the_other_tabs_and_how_to_place_them() {
         "{got:?}"
     );
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::MergeWith(host)));
-    let got = chosen(&shell, LONG);
+    // The strip names it first, ended with an ellipsis; the menu after it.
+    let got = chosen_nth(&shell, LONG, 1);
     assert!(
         matches!(
             got.as_slice(),
