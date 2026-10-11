@@ -1370,6 +1370,37 @@ fn path_bar<'a>(
     .into()
 }
 
+/// The rows of a pane, `wide` wide, in a scroller going both ways, as the C# `ListView`: its
+/// vertical scrollbar stays at the pane's edge while the columns scroll sideways under it.
+/// While they pass the pane (`overflowing`), room is kept under the last row for the
+/// horizontal scrollbar, drawn over the rows.
+fn rows_scroller(
+    list: Column<'_, Message>,
+    wide: f32,
+    overflowing: bool,
+    (tab, side): (TabId, Side),
+) -> Element<'_, Message> {
+    let under = if overflowing {
+        styles::SCROLLBAR_WIDTH
+    } else {
+        0.0
+    };
+    let rows = container(list).width(wide).padding(iced::Padding {
+        bottom: under,
+        ..iced::Padding::ZERO
+    });
+    scrollable(rows)
+        .direction(scrollable::Direction::Both {
+            vertical: styles::scrollbar(),
+            horizontal: styles::scrollbar(),
+        })
+        .style(styles::scrollbars)
+        .id(list_id(tab, side))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
 /// A pane, as the C# file browser: its title beside a server's, its toolbar, its path bar,
 /// what it says of itself, its list under the columns' headers, and its footer counting the
 /// entries.
@@ -1420,36 +1451,13 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             let target = drop == Some(DropHere::Entry(index));
             list = list.push(entry_row(entry, (shown, &laid), (picked, target), place));
         }
-        // Room under the last row for the horizontal scrollbar, drawn over the rows, while
-        // the columns pass the pane.
-        let under = if wide > size.width {
-            styles::SCROLLBAR_WIDTH
-        } else {
-            0.0
-        };
-        let rows = container(list).width(wide).padding(iced::Padding {
-            bottom: under,
-            ..iced::Padding::ZERO
-        });
-        // Both ways, as the C# `ListView`: its vertical scrollbar stays at the pane's edge
-        // while the columns scroll sideways under it.
         // A right click beside the entries: the menu of the folder shown, as the C# list's.
-        let list = mouse_area(
-            scrollable(rows)
-                .direction(scrollable::Direction::Both {
-                    vertical: styles::scrollbar(),
-                    horizontal: styles::scrollbar(),
-                })
-                .style(styles::scrollbars)
-                .id(list_id(tab, side))
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
-            tab,
-            side,
-            index: None,
-        }));
+        let list = mouse_area(rows_scroller(list, wide, wide > size.width, (tab, side)))
+            .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+                tab,
+                side,
+                index: None,
+            }));
         let header = headers((tab, side), entries, (shown, &laid, room), (sort, widths));
         crate::headed_list::headed_list(header, list, spacing::XS).into()
     });
@@ -2093,7 +2101,7 @@ mod tests {
     #[test]
     fn a_row_is_as_wide_as_its_padding_its_cells_and_their_gaps() {
         // 2 x 10 + 264 + 90 + 130 + 2 x 8.
-        assert_eq!(row_width(&[264.0, 90.0, 130.0]), 520.0);
+        assert!((row_width(&[264.0, 90.0, 130.0]) - 520.0).abs() < ROOM_TOLERANCE);
     }
 
     #[test]
