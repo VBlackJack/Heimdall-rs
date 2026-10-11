@@ -742,6 +742,9 @@ pub enum Message {
     SettingsTab(SettingsTab),
     /// Show this tab of the profile form.
     ProfileTab(ProfileTab),
+    /// The RDP profile form's "Refresh" of its monitors, as the C# `RefreshMonitorsCommand`:
+    /// the screens listed again.
+    RefreshMonitors,
     /// The Settings page's search changed: its rows are filtered by what it holds.
     SettingsSearch(String),
     /// "Find modified settings": the search set to the "Modified" marker's word.
@@ -1059,6 +1062,7 @@ impl fmt::Debug for Message {
             Self::SubmitBulkPassword => f.write_str("SubmitBulkPassword"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
             Self::ProfileTab(tab) => write!(f, "ProfileTab({tab:?})"),
+            Self::RefreshMonitors => f.write_str("RefreshMonitors"),
             Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
             Self::FindModifiedSettings => f.write_str("FindModifiedSettings"),
             Self::ResetSetting(row) => write!(f, "ResetSetting({row:?})"),
@@ -2581,6 +2585,10 @@ impl Shell {
             }
             Message::UserInput => {
                 self.last_input = std::time::Instant::now();
+                Vec::new()
+            }
+            Message::RefreshMonitors => {
+                self.relist_monitors();
                 Vec::new()
             }
             Message::MainWindowClosed => return iced::exit(),
@@ -9846,7 +9854,8 @@ fn gateway_choice(gateway: &SshGateway) -> GatewayChoice {
 }
 
 /// A session's gateway routing, as the C# Network tab: connect directly, or through a
-/// gateway chosen, added or edited here; for RDP, then the RD Gateway.
+/// gateway chosen, added or edited here, and the connection path that makes; for RDP, then
+/// the RD Gateway.
 fn network_section<'a>(
     draft: &'a ProfileDraft,
     gateways: &'a [SshGateway],
@@ -9906,6 +9915,7 @@ fn network_section<'a>(
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
     }
+    section_column = section_column.push(crate::connection_path::card(draft, gateways));
     // Said where the SSL box was, as the C# dialog says it; HTTPS asked for, then a gateway
     // chosen, is said to be off.
     if draft.protocol == DraftProtocol::WinRm && draft.routed_gateway().is_some() {

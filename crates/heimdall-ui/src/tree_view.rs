@@ -1451,7 +1451,7 @@ pub enum SplitEntries {
 }
 
 /// A terminal tab's Macros menu: recording started or stopped, the macro typed stopped,
-/// or one of those kept typed.
+/// one of those kept typed, or edited.
 #[must_use]
 pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<'a, Message> {
     let macro_message = |message| Some(AppMessage::Macro(message));
@@ -1498,6 +1498,20 @@ pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<
                     name: name.clone(),
                 })
             }),
+        ));
+    }
+    // The C# "Edit Macro" submenu: each opens the macro editor, whose "Delete macro" deletes
+    // it, as `SessionTabContextMenuFactory.AppendMacroItems` does.
+    if !menu.macros.is_empty() {
+        entries = entries.push(separator());
+    }
+    for name in &menu.macros {
+        entries = entries.push(entry(
+            fl!(
+                "ui-macros-edit-named",
+                name = heimdall_app::server_text(name)
+            ),
+            macro_message(heimdall_app::MacroMessage::Edit(name.clone())),
         ));
     }
     entries.into()

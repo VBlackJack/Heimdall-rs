@@ -5308,3 +5308,41 @@ fn a_file_read_from_its_last_good_copy_is_said_at_start_in_the_csharp_words() {
     ui.find("server a").expect("the profiles of the copy");
 }
 
+#[test]
+fn a_tab_menus_macro_is_edited_from_it_and_deleted_from_its_editor_as_the_csharp_submenu() {
+    use heimdall_app::MacroMessage;
+    use heimdall_core::macros::{MacroEntry, Macros, TerminalMacro, macros_path};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut macros = Macros::default();
+    macros.put(TerminalMacro {
+        name: "deploy".to_owned(),
+        entries: vec![MacroEntry {
+            input: "uptime\r".to_owned(),
+            delay_ms: 0,
+            expect: None,
+        }],
+    });
+    macros
+        .save(&macros_path(&dir.path().join("profiles.toml")))
+        .expect("saved");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Macros(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Play \"deploy\"").expect("played from the menu");
+        ui.click("Edit \"deploy\"").expect("edited from the menu");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::MenuChoice(AppMessage::Macro(MacroMessage::Edit(ref name))) if name == "deploy"
+        )));
+    }
+    let _ = shell.update(Message::MenuChoice(AppMessage::Macro(MacroMessage::Edit(
+        "deploy".to_owned(),
+    ))));
+    let mut ui = simulator(&shell);
+    ui.find("Edit macro").expect("the macro editor");
+    ui.find("Delete macro")
+        .expect("its delete, as the C# editor's");
+}
