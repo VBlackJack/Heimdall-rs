@@ -45,8 +45,12 @@ pub enum ArgumentError {
     NoValue,
     /// The test data folder was named twice.
     Repeated,
+    /// The folder given with the argument in one word is not text.
+    NotText(OsString),
     /// An argument this build does not know.
     Unknown(OsString),
+    /// The application was started before any test data folder was set.
+    NotSet,
     /// The folder was refused.
     Refused(TestDataDirError),
 }
@@ -61,7 +65,16 @@ impl fmt::Display for ArgumentError {
             ),
             Self::NoValue => write!(f, "{argument} needs a full path after it"),
             Self::Repeated => write!(f, "{argument} is given more than once"),
+            Self::NotText(given) => write!(
+                f,
+                "{argument}{VALUE_SEPARATOR} is followed by a folder that is not text: {}",
+                given.to_string_lossy()
+            ),
             Self::Unknown(other) => write!(f, "unknown argument: {}", other.to_string_lossy()),
+            Self::NotSet => write!(
+                f,
+                "a test build starts only once {argument} has set its scratch folder"
+            ),
             Self::Refused(error) => write!(f, "{error}"),
         }
     }
@@ -80,7 +93,17 @@ pub fn folder_from(
     let mut arguments = arguments.into_iter();
     let mut folder = None;
     while let Some(argument) = arguments.next() {
-        let text = argument.to_string_lossy();
+        // Never converted with losses: a folder that is not text would name another one.
+        let Some(text) = argument.to_str() else {
+            let starts = argument
+                .as_encoded_bytes()
+                .starts_with(test_data::ARGUMENT.as_bytes());
+            return Err(if starts {
+                ArgumentError::NotText(argument)
+            } else {
+                ArgumentError::Unknown(argument)
+            });
+        };
         let value = if text == test_data::ARGUMENT {
             arguments.next().ok_or(ArgumentError::NoValue)?
         } else if let Some(value) = text
@@ -110,6 +133,15 @@ pub fn folder_from(
 pub fn init(arguments: impl IntoIterator<Item = OsString>) -> Result<(), ArgumentError> {
     let folder = folder_from(arguments)?;
     paths::use_test_data_dir(&folder).map_err(ArgumentError::Refused)
+}
+
+/// The test data folder this process runs on: the application never starts without one.
+///
+/// # Errors
+///
+/// [`ArgumentError::NotSet`] while none is set.
+pub fn ensure_set() -> Result<&'static std::path::Path, ArgumentError> {
+    paths::test_data_dir().ok_or(ArgumentError::NotSet)
 }
 
 /// `title` with the test data folder said after it, when one is in use, so that a test

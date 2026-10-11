@@ -17,7 +17,17 @@ Une version compilée avec la fonctionnalité `test-data-dir` travaille dans un 
 - Aucun manifeste, workflow ou script de build ne peut l'activer : la garde de
   `xtask/tests/test_data_dir.rs` refuse une fonctionnalité par défaut, une autre
   fonctionnalité ou une déclaration de dépendance qui l'active, et tout workflow ou script qui
-  la nomme ou demande `--all-features`.
+  la nomme ou demande `--all-features`. La seule exception est le job de CI
+  `test-data-dir (debug)`, qui l'analyse et la teste, sans jamais compiler en release ni rien
+  téléverser. La garde refuse aussi un profil release, ou un profil qui en hérite, qui active
+  les assertions de debug.
+- Elle échoue en position fermée : une version avec la fonctionnalité ne connaît aucun
+  dossier de l'utilisateur et range les identifiants sous `Heimdall-rs-test-unset` tant
+  qu'aucun dossier jetable n'est fixé, et l'application s'arrête avant toute lecture quand
+  il n'y en a pas.
+- Seul `heimdall_core::paths` demande où se trouve un dossier : `xtask/tests/folder_sources.rs`
+  refuse `std::env::temp_dir`, `current_exe`, la crate `directories` et les dossiers connus
+  partout ailleurs dans le code de l'application.
 - Ce n'est pas une variable d'environnement : celui qui lance le programme ne peut pas
   déplacer ses dossiers par l'environnement, avec ou sans la fonctionnalité.
 - Une version sans la fonctionnalité ne lit aucun argument de ligne de commande.
@@ -32,10 +42,17 @@ target\debug\heimdall-rs.exe --data-dir C:\Temp\heimdall-ui-test
 ```
 
 Le dossier doit être un chemin complet ; il est créé s'il n'existe pas. `--data-dir=<dossier>`
-est aussi accepté. Une version de test lancée sans `--data-dir`, avec un autre argument, ou
-avec un dossier dont l'arborescence rencontrerait les vrais dossiers de Heimdall-rs ou du
-Heimdall C#, affiche la raison et sort avec le code 2 : elle ne démarre jamais sur les vrais
-dossiers.
+est aussi accepté ; cette forme doit être du texte. Une version de test lancée sans
+`--data-dir`, avec un autre argument, ou avec un dossier refusé affiche la raison et sort
+avec le code 2 : elle ne démarre jamais sur les vrais dossiers.
+
+Le dossier est comparé aux vrais dossiers tels que le système de fichiers les résout : liens
+suivis, `..` résolus, préfixe Windows `\\?\` retiré, sans tenir compte de la casse. Il ne
+peut ni être, ni contenir, ni se trouver dans un dossier de Heimdall-rs ou du Heimdall C#, et
+ne peut ni être ni contenir le dossier personnel, Documents, le dossier temporaire ou un
+dossier de données d'application (il peut s'y trouver, comme
+`C:\Users\<vous>\AppData\Local\Temp\heimdall-ui-test`). Il est vérifié avant d'être créé,
+puis de nouveau une fois créé.
 
 Le titre de chaque fenêtre se termine par `[données de test : <dossier>]`, pour qu'une
 version de test ne soit jamais prise pour la vraie application.
@@ -64,13 +81,18 @@ Les dossiers communs à la machine (le dossier système, le dossier Windows, Pro
 sont pas déplacés : ils contiennent les programmes de Windows, pas les données de
 l'utilisateur.
 
+Seul Heimdall-rs est déplacé. Les programmes qu'il lance (Connexion Bureau à distance,
+PuTTY, les shells locaux, le client Citrix, un éditeur) et ce qu'il lit dans l'environnement
+(l'agent SSH, le presse-papiers, `XAUTHORITY`) voient toujours l'environnement et les fichiers
+du vrai utilisateur.
+
 ## Mots de passe enregistrés
 
 Les mots de passe enregistrés sans mot de passe maître, et l'enveloppe Windows Hello, vont
 dans le magasin d'identifiants du système (Gestionnaire d'identification Windows, Secret
 Service sous Linux). Sous un dossier de données de test, ils sont rangés sous le service
 `Heimdall-rs-test-<hash>`, où `<hash>` est formé de 12 chiffres hexadécimaux du SHA-256 du
-chemin complet du dossier (en minuscules sous Windows). Les vraies entrées, sous
+chemin complet résolu du dossier, en minuscules. Les vraies entrées, sous
 `Heimdall-rs`, ne sont jamais lues, remplacées ni supprimées.
 
 L'identifiant d'un profil lu dans le Gestionnaire d'identification Windows (le fournisseur

@@ -16,7 +16,15 @@ folder instead.
 - No manifest, workflow or build script may turn it on: the guard in
   `xtask/tests/test_data_dir.rs` refuses a default feature, another feature or a dependency
   declaration that enables it, and any workflow or script that names it or asks for
-  `--all-features`.
+  `--all-features`. The one exception is the CI job `test-data-dir (debug)`, which lints and
+  tests with it and may neither build for release nor upload anything. The guard also
+  refuses a release profile, or a profile inheriting it, that turns debug assertions on.
+- It fails closed: a build with the feature knows no per-user folder and files credentials
+  under `Heimdall-rs-test-unset` until a scratch folder is set, and the application stops
+  before reading anything when none is.
+- No code but `heimdall_core::paths` asks where a folder is: `xtask/tests/folder_sources.rs`
+  refuses `std::env::temp_dir`, `current_exe`, the `directories` crate and the known folders
+  anywhere else in the application's code.
 - It is not an environment variable: whoever starts the program cannot move its folders
   through the environment, with or without the feature.
 - A build without the feature reads no command-line argument at all.
@@ -31,9 +39,16 @@ target\debug\heimdall-rs.exe --data-dir C:\Temp\heimdall-ui-test
 ```
 
 The folder must be a full path; it is made if it is not there. `--data-dir=<folder>` is
-accepted too. A test build started without `--data-dir`, with any other argument, or with a
-folder whose layout would meet the real Heimdall-rs or C# Heimdall folders, prints why and
-exits with code 2: it never starts on the real folders.
+accepted too; that form must be text. A test build started without `--data-dir`, with any
+other argument, or with a refused folder prints why and exits with code 2: it never starts
+on the real folders.
+
+The folder is compared with the real folders as the file system resolves them: links
+followed, `..` resolved, Windows' `\\?\` prefix dropped, without regard to case. It may
+neither be, hold nor sit in a Heimdall-rs or C# Heimdall folder, and may neither be nor
+hold the home, Documents, temporary or application data folder (it may sit inside them, as
+`C:\Users\<you>\AppData\Local\Temp\heimdall-ui-test` does). It is checked before it is
+made, and again once made.
 
 Every window's title ends with `[test data: <folder>]`, so a test build is never taken for
 the real application.
@@ -60,12 +75,16 @@ Also under a test data folder:
 Machine-wide folders (the system folder, the Windows folder, Program Files) are not moved:
 they hold Windows' own programs, not the user's data.
 
+Only Heimdall-rs itself is moved. The programs it starts (Remote Desktop Connection, PuTTY,
+local shells, the Citrix client, an editor) and what it reads from the environment (the SSH
+agent, the clipboard, `XAUTHORITY`) still see the real user's environment and files.
+
 ## Saved passwords
 
 Saved passwords without a master password, and the Windows Hello envelope, go to the
 system's credential store (Windows Credential Manager, the Secret Service on Linux). Under a
 test data folder they are filed under the service `Heimdall-rs-test-<hash>`, where `<hash>`
-is 12 hex digits of the SHA-256 of the folder's full path (lower-cased on Windows). The real
+is 12 hex digits of the SHA-256 of the folder's resolved full path, lower-cased. The real
 entries, under `Heimdall-rs`, are never read, replaced or removed.
 
 A profile's credential read from Windows Credential Manager (the "Windows Credential

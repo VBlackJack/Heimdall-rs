@@ -64,6 +64,29 @@ mod with_the_feature {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_is_not_text_is_refused_never_converted() {
+        use std::os::unix::ffi::OsStringExt as _;
+
+        let joined = OsString::from_vec(b"--data-dir=/tmp/\xff".to_vec());
+        assert_eq!(
+            folder_from([joined.clone()]),
+            Err(ArgumentError::NotText(joined))
+        );
+        let other = OsString::from_vec(b"--\xff".to_vec());
+        assert_eq!(
+            folder_from([other.clone()]),
+            Err(ArgumentError::Unknown(other))
+        );
+        // Given as its own word, the folder is taken as the system gives it.
+        let folder = OsString::from_vec(b"/tmp/\xff".to_vec());
+        assert_eq!(
+            folder_from([OsString::from("--data-dir"), folder.clone()]),
+            Ok(PathBuf::from(folder))
+        );
+    }
+
     #[test]
     fn every_title_says_the_test_data_folder() {
         heimdall_ui::i18n::apply(Some(Language::English));

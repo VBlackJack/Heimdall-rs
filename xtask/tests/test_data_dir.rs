@@ -20,7 +20,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use xtask::test_data_dir::{FEATURE, check_manifest, check_script, manifests, scan, scripts};
+use xtask::test_data_dir::{
+    ALLOWED_JOB, FEATURE, check_manifest, check_script, check_workflow, manifests, scan, scripts,
+};
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -32,6 +34,8 @@ fn workspace_root() -> PathBuf {
 #[test]
 fn no_manifest_workflow_or_build_script_turns_the_test_data_folder_on() {
     let result = scan(&workspace_root()).expect("the files are readable");
+    // The positive control: the one job allowed is there, and read as such.
+    assert_eq!(result.allowed_jobs, 1, "one `{ALLOWED_JOB}` job");
     let report: Vec<String> = result
         .findings
         .iter()
@@ -153,12 +157,94 @@ cargo build --release --locked -p heimdall-ui
 cargo build --release --features heimdall-ui/test-data-dir
 cargo clippy --workspace --all-features
 cargo test --workspace --locked
+set CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true
 ";
     assert_eq!(
         check_script(text),
         [
             "line 2: cargo build --release --features heimdall-ui/test-data-dir",
             "line 3: cargo clippy --workspace --all-features",
+            "line 5: set CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true",
+        ]
+    );
+}
+
+#[test]
+fn only_the_named_debug_job_may_build_with_the_feature_and_it_ships_nothing() {
+    let clean = "\
+name: CI
+jobs:
+  check:
+    name: Check
+    steps:
+      - run: cargo build --release --locked -p heimdall-ui
+      - uses: actions/upload-artifact@v7
+  # test-data-dir: named in a comment only
+  test-data-dir:
+    name: test-data-dir (debug)
+    steps:
+      - run: cargo test -p heimdall-ui --locked --features heimdall-ui/test-data-dir
+";
+    assert_eq!(check_workflow(clean), (Vec::<String>::new(), 1));
+
+    let refused = "\
+jobs:
+  check:
+    name: Check
+    steps:
+      - run: cargo test --features heimdall-ui/test-data-dir
+  test-data-dir:
+    name: \"test-data-dir (debug)\"
+    steps:
+      - run: cargo build --release --features heimdall-ui/test-data-dir
+      - uses: actions/upload-artifact@v7
+      - run: cargo clippy --all-features
+  again:
+    name: test-data-dir (debug)
+    env:
+      CARGO_PROFILE_DEV_DEBUG_ASSERTIONS: false
+";
+    let (found, allowed) = check_workflow(refused);
+    assert_eq!(allowed, 2);
+    assert_eq!(
+        found,
+        [
+            "line 5: - run: cargo test --features heimdall-ui/test-data-dir",
+            "line 9: - run: cargo build --release --features heimdall-ui/test-data-dir",
+            "line 10: - uses: actions/upload-artifact@v7",
+            "line 11: - run: cargo clippy --all-features",
+            "line 15: CARGO_PROFILE_DEV_DEBUG_ASSERTIONS: false",
+        ]
+    );
+}
+
+#[test]
+fn a_release_profile_with_debug_assertions_is_caught() {
+    let text = r#"
+[profile.release]
+lto = true
+
+[profile.release.package.heimdall-core]
+debug-assertions = true
+
+[profile.shipping]
+inherits = "release"
+debug-assertions = true
+
+[profile.checked]
+inherits = "dev"
+debug-assertions = true
+
+[profile.dev]
+debug-assertions = true
+"#;
+    let mut found = check_manifest(text).expect("TOML");
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "profile `release` builds a release with debug assertions",
+            "profile `shipping` builds a release with debug assertions",
         ]
     );
 }

@@ -346,10 +346,10 @@ fn gateway(file: &mut String, gateway: Option<&str>) {
 }
 
 /// The folder of the connection files: the application's own, in the system's temporary
-/// folder.
+/// folder; `None` when that folder is unknown.
 #[must_use]
-pub fn artifact_folder() -> PathBuf {
-    heimdall_core::paths::temp_dir().join(ARTIFACT_FOLDER)
+pub fn artifact_folder() -> Option<PathBuf> {
+    heimdall_core::paths::temp_dir().map(|temp| temp.join(ARTIFACT_FOLDER))
 }
 
 /// Writes `content` as a new connection file in `folder`, made or found the user's own: to
@@ -411,7 +411,10 @@ pub fn sweep(folder: &Path, now: SystemTime, older_than: Duration) -> usize {
 
 /// Sweeps the connection files earlier runs left in the application's folder.
 pub fn sweep_stale() {
-    let removed = sweep(&artifact_folder(), SystemTime::now(), STALE_AFTER);
+    let Some(folder) = artifact_folder() else {
+        return;
+    };
+    let removed = sweep(&folder, SystemTime::now(), STALE_AFTER);
     if removed > 0 {
         log::info!("removed {removed} connection file(s) an earlier run left");
     }
@@ -444,7 +447,10 @@ fn prepare(content: &str) -> Result<(std::process::Command, PathBuf), ExternalRe
         return Err(ExternalRefusal::NotWindows);
     }
     let program = mstsc().ok_or(ExternalRefusal::NotFound)?;
-    let file = write_artifact(&artifact_folder(), content)
+    let folder = artifact_folder().ok_or_else(|| {
+        ExternalRefusal::NotWritten(heimdall_core::paths::TEMP_FOLDER_UNKNOWN.to_owned())
+    })?;
+    let file = write_artifact(&folder, content)
         .map_err(|error| ExternalRefusal::NotWritten(error.to_string()))?;
     let mut command = std::process::Command::new(&program);
     if let Some(system) = program.parent() {

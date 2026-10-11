@@ -19,9 +19,12 @@
 //!
 //! No manifest turns it on by default, through another feature, or in a dependency's
 //! features; no workflow or build script names it, or asks for every feature at once. Only
-//! the features that pass it down to the crate below may name it. A release build could not
-//! compile it anyway (`heimdall-core` refuses it without debug assertions): this guard keeps
-//! it out of the commands that build what is shipped.
+//! the features that pass it down to the crate below may name it, and only one CI job,
+//! [`ALLOWED_JOB`], may build with it: in debug, uploading nothing.
+//!
+//! A release build cannot compile it (`heimdall-core` refuses it without debug assertions),
+//! so no release profile may turn debug assertions on, nor any profile inheriting it, and no
+//! script may set them.
 
 use std::fs;
 use std::io;
@@ -43,6 +46,34 @@ pub const SCRIPT_FOLDERS: [&str; 3] = [".github/workflows", "scripts", ".cargo"]
 /// Cargo's own configuration, which can name features through an alias.
 pub const CARGO_CONFIG: [&str; 2] = [".cargo/config.toml", ".cargo/config"];
 
+/// The name of the one CI job that builds with the feature: lints and tests, in debug.
+pub const ALLOWED_JOB: &str = "test-data-dir (debug)";
+
+/// What that job may never do: build for release, upload anything, turn every feature on.
+pub const REFUSED_IN_ALLOWED_JOB: [&str; 3] = ["--release", "upload", ALL_FEATURES];
+
+/// What turns debug assertions on, in a manifest's or cargo's configuration or in the
+/// environment: never written in a workflow or build script.
+pub const DEBUG_ASSERTIONS: [&str; 2] = ["debug-assertions", "DEBUG_ASSERTIONS"];
+
+/// The key of debug assertions in a profile.
+const DEBUG_ASSERTIONS_KEY: &str = "debug-assertions";
+
+/// The profile a release is built with.
+const RELEASE_PROFILE: &str = "release";
+
+/// The key naming the profile a profile inherits from.
+const INHERITS_KEY: &str = "inherits";
+
+/// The line opening the jobs of a workflow.
+const JOBS_LINE: &str = "jobs:";
+
+/// The indentation of a job's key under `jobs:`.
+const JOB_INDENT: usize = 2;
+
+/// The key of a job's displayed name.
+const NAME_KEY: &str = "name:";
+
 /// One place that turns the feature on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
@@ -59,6 +90,8 @@ pub struct Scan {
     pub findings: Vec<Finding>,
     /// Files read.
     pub scanned: Vec<PathBuf>,
+    /// CI jobs named [`ALLOWED_JOB`] found.
+    pub allowed_jobs: usize,
 }
 
 /// Whether the feature `entry` of a feature list or a dependency's features names this
@@ -124,7 +157,31 @@ pub fn check_manifest(text: &str) -> io::Result<Vec<String>> {
             }
         }
     }
+    if let Some(profiles) = document.get("profile").and_then(toml::Value::as_table) {
+        for (name, profile) in profiles {
+            let inherits_release = profile
+                .get(INHERITS_KEY)
+                .and_then(toml::Value::as_str)
+                .is_some_and(|inherited| inherited == RELEASE_PROFILE);
+            if (name == RELEASE_PROFILE || inherits_release) && sets_debug_assertions(profile) {
+                found.push(format!(
+                    "profile `{name}` builds a release with debug assertions"
+                ));
+            }
+        }
+    }
     Ok(found)
+}
+
+/// Whether `value`, a profile or a table inside one (a package's, the build scripts'), turns
+/// debug assertions on anywhere.
+fn sets_debug_assertions(value: &toml::Value) -> bool {
+    value.as_table().is_some_and(|table| {
+        table.iter().any(|(key, inner)| {
+            (key == DEBUG_ASSERTIONS_KEY && inner.as_bool() == Some(true))
+                || sets_debug_assertions(inner)
+        })
+    })
 }
 
 /// The dependency tables of `table`.
@@ -136,16 +193,93 @@ fn collect_dependency_tables<'a>(table: &'a toml::Table, into: &mut Vec<&'a toml
     }
 }
 
-/// What in the workflow or build script `text` turns the feature on: a line naming it, or
-/// asking for every feature.
+/// Whether `line` of a workflow or build script turns the feature or debug assertions on.
+fn refused_line(line: &str) -> bool {
+    line.contains(FEATURE)
+        || line.contains(ALL_FEATURES)
+        || DEBUG_ASSERTIONS.iter().any(|marker| line.contains(marker))
+}
+
+/// A refused line, said with its number.
+fn said(index: usize, line: &str) -> String {
+    format!("line {}: {}", index + 1, line.trim())
+}
+
+/// What in the build script `text` turns the feature on: a line naming it, asking for every
+/// feature, or turning debug assertions on.
 #[must_use]
 pub fn check_script(text: &str) -> Vec<String> {
     text.lines()
         .enumerate()
-        .filter(|(_, line)| line.contains(FEATURE) || line.contains(ALL_FEATURES))
-        .map(|(index, line)| format!("line {}: {}", index + 1, line.trim()))
+        .filter(|(_, line)| refused_line(line))
+        .map(|(index, line)| said(index, line))
         .collect()
 }
+
+/// What in the workflow `text` turns the feature on, as [`check_script`] says it, outside
+/// the job named [`ALLOWED_JOB`]; inside it, what it may never do
+/// ([`REFUSED_IN_ALLOWED_JOB`], debug assertions). Comments are not read. With how many jobs
+/// have that name.
+#[must_use]
+pub fn check_workflow(text: &str) -> (Vec<String>, usize) {
+    let lines: Vec<&str> = text.lines().collect();
+    // Each line's job, by the index of the line opening it.
+    let mut job_of: Vec<Option<usize>> = Vec::with_capacity(lines.len());
+    let mut in_jobs = false;
+    let mut job = None;
+    for (index, line) in lines.iter().enumerate() {
+        let indent = line.len() - line.trim_start().len();
+        let content = line.trim();
+        let significant = !content.is_empty() && !content.starts_with('#');
+        if significant && indent == 0 {
+            in_jobs = content == JOBS_LINE;
+            job = None;
+        } else if in_jobs && significant && indent == JOB_INDENT && content.ends_with(':') {
+            job = Some(index);
+        }
+        job_of.push(job);
+    }
+    let allowed: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(index, line)| {
+            job_of[*index].is_some()
+                && line
+                    .trim()
+                    .strip_prefix(NAME_KEY)
+                    .is_some_and(|name| name.trim().trim_matches(['"', '\'']) == ALLOWED_JOB)
+        })
+        .filter_map(|(index, _)| job_of[index])
+        .collect();
+    let found = lines
+        .iter()
+        .enumerate()
+        // A comment runs nothing.
+        .filter(|(_, line)| !line.trim_start().starts_with('#'))
+        .filter(|(index, line)| {
+            if job_of[*index].is_some_and(|start| allowed.contains(&start)) {
+                REFUSED_IN_ALLOWED_JOB
+                    .iter()
+                    .chain(DEBUG_ASSERTIONS.iter())
+                    .any(|refused| line.contains(refused))
+            } else {
+                refused_line(line)
+            }
+        })
+        .map(|(index, line)| said(index, line))
+        .collect();
+    (found, allowed.len())
+}
+
+/// Whether `path` is a workflow, read by [`check_workflow`].
+fn is_workflow(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| WORKFLOW_EXTENSIONS.contains(&extension))
+}
+
+/// The extensions of a workflow.
+const WORKFLOW_EXTENSIONS: [&str; 2] = ["yml", "yaml"];
 
 /// The manifests of the workspace at `root`: the root's, one per directory under `crates`,
 /// and the `xtask` one.
@@ -240,13 +374,26 @@ pub fn scan(root: &Path) -> io::Result<Scan> {
     }
     for script in scripts(root)? {
         let text = fs::read_to_string(&script)?;
-        for what in check_script(&text) {
-            result.findings.push(Finding {
+        let found = if is_workflow(&script) {
+            let (found, allowed) = check_workflow(&text);
+            result.allowed_jobs += allowed;
+            found
+        } else {
+            check_script(&text)
+        };
+        result
+            .findings
+            .extend(found.into_iter().map(|what| Finding {
                 file: script.clone(),
                 what,
-            });
-        }
+            }));
         result.scanned.push(script);
+    }
+    if result.allowed_jobs > 1 {
+        result.findings.push(Finding {
+            file: root.join(SCRIPT_FOLDERS[0]),
+            what: format!("{} jobs are named `{ALLOWED_JOB}`", result.allowed_jobs),
+        });
     }
     Ok(result)
 }

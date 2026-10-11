@@ -31,7 +31,9 @@ fn no_windows_program_is_named_off_windows() {
     assert_eq!(windows_program(EXPLORER_PROGRAM), None);
 }
 
-#[cfg(windows)]
+// A test build knows no per-user folder before its scratch folder is set: these are the
+// real folders, checked in a normal build.
+#[cfg(all(windows, not(feature = "test-data-dir")))]
 mod windows {
     use std::path::{Path, PathBuf};
     use std::process::Command;
