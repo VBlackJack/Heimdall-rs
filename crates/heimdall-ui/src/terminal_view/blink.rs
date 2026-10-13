@@ -18,8 +18,9 @@
 //! (`CursorBlinkStateManager`): shown and hidden in turn for [`BLINK_INTERVAL`] each. It
 //! starts over, shown, when the cursor moves (so it stays steady while typed text is echoed)
 //! and when the window gets the focus back; it stops, shown, while the window does not have
-//! the focus, or the application asked for a steady cursor. There is no setting: the C# has
-//! none.
+//! the focus, or the application asked for a steady cursor, or Windows asks for reduced
+//! motion (the C# gives xterm.js `cursorBlink` off under `prefers-reduced-motion: reduce`,
+//! `terminal.html`). There is no setting of its own: the C# has none.
 
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,13 @@ pub const BLINK_INTERVAL: Duration = Duration::from_millis(600);
 
 /// Where the cursor is: grid line and column.
 pub type CursorPosition = (i32, usize);
+
+/// Whether the cursor blinks: the window has the focus, the application did not ask for a
+/// steady cursor, and Windows does not ask for reduced motion.
+#[must_use]
+pub const fn blinks(window_focused: bool, application_blinks: bool, reduced_motion: bool) -> bool {
+    window_focused && application_blinks && !reduced_motion
+}
 
 /// The blinking of one terminal's cursor, told the time rather than reading the clock.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -76,7 +84,7 @@ impl CursorBlink {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{BLINK_INTERVAL, CursorBlink};
+    use super::{BLINK_INTERVAL, CursorBlink, blinks};
 
     const AT: (i32, usize) = (3, 7);
 
@@ -134,5 +142,31 @@ mod tests {
             "a whole interval shown first"
         );
         assert!(!blink.visible(back + ms(600)));
+    }
+
+    #[test]
+    fn it_blinks_only_focused_asked_to_and_without_reduced_motion() {
+        assert!(blinks(true, true, false));
+        assert!(!blinks(false, true, false), "the window without the focus");
+        assert!(!blinks(true, false, false), "a steady cursor asked for");
+        assert!(!blinks(true, true, true), "Windows asks for reduced motion");
+        assert!(!blinks(false, false, true));
+    }
+
+    #[test]
+    fn reduced_motion_keeps_the_cursor_shown_and_asks_no_frame() {
+        let start = Instant::now();
+        let mut blink = CursorBlink::default();
+        blink.observe(start, AT, blinks(true, true, true));
+        for later in [0, 600, 900, 1200, 5000] {
+            assert!(blink.visible(start + ms(later)), "{later} ms");
+        }
+        assert_eq!(blink.next_change(start), None);
+        // Turned back on in Windows: it blinks again, shown for a whole interval first.
+        let on = start + ms(5000);
+        blink.observe(on, AT, blinks(true, true, false));
+        assert!(blink.visible(on + ms(599)));
+        assert!(!blink.visible(on + ms(600)));
+        assert_eq!(blink.next_change(on), Some(on + ms(600)));
     }
 }

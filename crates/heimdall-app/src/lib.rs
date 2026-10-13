@@ -61,6 +61,7 @@ pub mod rdp_driver;
 pub mod rdp_external;
 pub mod rdpmanager;
 pub mod reachability;
+pub mod reduced_motion;
 pub mod route_test;
 pub mod scheduled_form;
 pub mod script_shell;

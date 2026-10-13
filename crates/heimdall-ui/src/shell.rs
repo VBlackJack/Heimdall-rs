@@ -799,6 +799,8 @@ pub enum Message {
     IdleTick,
     /// Whether Windows high contrast is on, looked at again: the window follows it.
     SystemHighContrast(bool),
+    /// Whether Windows asks for reduced motion, looked at again: the cursors follow it.
+    SystemReducedMotion(bool),
     /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
     /// cannot be read.
     UserInput,
@@ -1093,6 +1095,7 @@ impl fmt::Debug for Message {
             Self::Tick => f.write_str("Tick"),
             Self::IdleTick => f.write_str("IdleTick"),
             Self::SystemHighContrast(on) => write!(f, "SystemHighContrast({on})"),
+            Self::SystemReducedMotion(on) => write!(f, "SystemReducedMotion({on})"),
             Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1484,6 +1487,8 @@ pub struct Shell {
     sidebar_hidden: bool,
     /// The theme Windows imposes over the one chosen: high contrast, while it is on.
     forced_theme: Option<AppTheme>,
+    /// Windows asks for reduced motion: the terminals' cursors do not blink.
+    reduced_motion: bool,
     /// Where the window's state is kept, and how it was left; none in tests.
     window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
     /// The main window, named once it is asked to open; none in tests, which open none.
@@ -1707,6 +1712,8 @@ impl Shell {
         // Windows high contrast, as it is at start; looked at again while the window runs.
         shell.forced_theme =
             heimdall_app::high_contrast::system_on().then_some(AppTheme::HighContrast);
+        // Windows' reduced motion, likewise.
+        shell.reduced_motion = heimdall_app::reduced_motion::system_on();
         // The tree as it was left.
         shell
             .app
@@ -1778,6 +1785,7 @@ impl Shell {
             tree_drag: None,
             sidebar_hidden: false,
             forced_theme: None,
+            reduced_motion: false,
             window_memory: None,
             main_window: None,
             instance_dir: None,
@@ -2044,6 +2052,12 @@ impl Shell {
         crate::themes::theme(self.theme_shown(), self.app.settings().accent)
     }
 
+    /// Whether Windows asks for reduced motion, as last looked at.
+    #[must_use]
+    pub fn reduced_motion(&self) -> bool {
+        self.reduced_motion
+    }
+
     /// The theme drawn: Windows high contrast's while it is on, else the one chosen.
     #[must_use]
     pub fn theme_shown(&self) -> AppTheme {
@@ -2114,6 +2128,14 @@ impl Shell {
             ticks.push(
                 iced::time::every(heimdall_app::high_contrast::POLL)
                     .map(|_| Message::SystemHighContrast(heimdall_app::high_contrast::system_on())),
+            );
+        }
+        // Windows' animation effects turned on or off while the window is open.
+        if heimdall_app::reduced_motion::WATCHED {
+            ticks.push(
+                iced::time::every(heimdall_app::reduced_motion::POLL).map(|_| {
+                    Message::SystemReducedMotion(heimdall_app::reduced_motion::system_on())
+                }),
             );
         }
         ticks
@@ -2593,6 +2615,10 @@ impl Shell {
                 .update(AppMessage::Idle(crate::idle::idle_time(self.last_input))),
             Message::SystemHighContrast(on) => {
                 self.forced_theme = on.then_some(AppTheme::HighContrast);
+                Vec::new()
+            }
+            Message::SystemReducedMotion(on) => {
+                self.reduced_motion = on;
                 Vec::new()
             }
             Message::UserInput => {
@@ -3481,6 +3507,7 @@ impl Shell {
             .ctrl_v(self.app.settings().ctrl_v_paste)
             .ctrl_k(self.app.settings().ctrl_k_terminal)
             .interactive(interactive)
+            .reduced_motion(self.reduced_motion)
             .font(self.terminal_font())
             .font_size(self.font_size(tab.id))
             .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom)))
