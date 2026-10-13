@@ -28,6 +28,7 @@ pub mod code_editor;
 pub mod column_header;
 pub mod component_versions;
 mod conflicts_view;
+mod connection_path;
 mod desktop_texture;
 pub mod desktop_view;
 mod detail_view;

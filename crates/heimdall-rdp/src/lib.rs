@@ -29,6 +29,7 @@ mod clipboard_save;
 pub mod connect;
 pub mod drives;
 mod frames;
+mod input;
 mod kdc;
 pub mod known_hosts;
 mod reason;
@@ -47,6 +48,7 @@ pub use connect::{
     RdpConfig, RdpConnection, RdpError, Security, Step, Timeouts, Transport, connect, connect_over,
     connect_through, desktop_scale_factor, given,
 };
+pub use input::{RdpInput, fast_path_events};
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 pub use known_hosts::{CertificateVerdict, KnownRdpHost, KnownRdpHosts, Verdict};
 pub use reason::{Ending, Refusal, error_info_description};

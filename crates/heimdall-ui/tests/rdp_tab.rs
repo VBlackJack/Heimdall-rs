@@ -546,7 +546,7 @@ fn connected(
 ) -> (
     Shell,
     TabId,
-    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::Operation>>,
+    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::RdpInput>>,
 ) {
     let (mut shell, tab, attempt) = opened(dir);
     let (input, received) = tokio::sync::mpsc::unbounded_channel();
@@ -566,7 +566,7 @@ fn connected(
 
 #[test]
 fn ctrl_alt_del_from_the_menu_reaches_the_server_pressed_then_released_in_reverse() {
-    use heimdall_rdp::{Operation, Scancode};
+    use heimdall_rdp::{Operation, RdpInput, Scancode};
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, mut received) = connected(dir.path());
     // As the tab menu's "Send keys" sends it.
@@ -586,8 +586,8 @@ fn ctrl_alt_del_from_the_menu_reaches_the_server_pressed_then_released_in_revers
     let keys: Vec<(bool, Scancode)> = operations
         .iter()
         .map(|operation| match operation {
-            Operation::KeyPressed(code) => (true, *code),
-            Operation::KeyReleased(code) => (false, *code),
+            RdpInput::Operation(Operation::KeyPressed(code)) => (true, *code),
+            RdpInput::Operation(Operation::KeyReleased(code)) => (false, *code),
             other => panic!("not a key: {other:?}"),
         })
         .collect();
@@ -2016,7 +2016,7 @@ fn renamed(
 ) -> (
     Shell,
     TabId,
-    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::Operation>>,
+    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::RdpInput>>,
 ) {
     use heimdall_app::TabMenuMessage;
 
@@ -2401,3 +2401,36 @@ fn a_tab_clicked_while_a_desktop_has_the_pointer_is_shown_at_the_first_click() {
 
 /// How far left of its close mark a tab's title is clicked.
 const TAB_TITLE_OFFSET: f32 = 60.0;
+
+#[test]
+fn pause_reaches_the_server_as_its_whole_sequence_once_per_press() {
+    use heimdall_rdp::RdpInput;
+    use iced::keyboard::key::{Code, Named, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, mut received) = connected(dir.path());
+    let release = iced::Event::Keyboard(Event::KeyReleased {
+        key: Key::Named(Named::Pause),
+        modified_key: Key::Named(Named::Pause),
+        physical_key: Physical::Code(Code::Pause),
+        location: Location::Standard,
+        modifiers: Modifiers::default(),
+    });
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        let _ = ui.simulate([
+            modified_press(Key::Named(Named::Pause), Code::Pause, Modifiers::default()),
+            release,
+        ]);
+        ui.into_messages().collect()
+    };
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    let mut sent = Vec::new();
+    while let Ok(batch) = received.try_recv() {
+        sent.extend(batch);
+    }
+    assert!(matches!(sent.as_slice(), [RdpInput::Pause]), "{sent:?}");
+}

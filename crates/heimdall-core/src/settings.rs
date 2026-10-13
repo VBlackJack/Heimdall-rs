@@ -986,8 +986,13 @@ impl Language {
     }
 }
 
-/// Size of the terminals' text unless chosen: the one this terminal was drawn at before.
-pub const TERMINAL_FONT_SIZE_DEFAULT: u16 = 15;
+/// Size of the terminals' text unless chosen, as the C# `DefaultTerminalFontSize`
+/// (`AppSettings.cs:204`): what a new installation starts at, and "Reset" gives back.
+pub const TERMINAL_FONT_SIZE_DEFAULT: u16 = 14;
+
+/// Size of the terminals' text a settings file written before it held one stands for: the
+/// size its terminals were drawn at then, kept, the default having become the C#'s since.
+pub const TERMINAL_FONT_SIZE_UNWRITTEN: u16 = 15;
 /// Smallest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MIN: u16 = 8;
 
@@ -1175,6 +1180,8 @@ impl Default for Settings {
             session_log_retention_days: SESSION_LOG_RETENTION_DAYS_DEFAULT,
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
             terminal_font_family: TERMINAL_FONT_FAMILY_DEFAULT.to_owned(),
+            // Deliberately not the C# `DefaultLocale` "en": a new installation follows the
+            // desktop's language until one is chosen.
             language: None,
             theme: AppTheme::default(),
             accent: Accent::default(),
@@ -1847,12 +1854,13 @@ impl Settings {
                 session_log_retention_days_accepted,
                 SESSION_LOG_RETENTION_DAYS_DEFAULT,
             ),
-            // Out of the range, as the C# load warns and keeps the default.
-            terminal_font_size: file
-                .terminal
-                .font_size
-                .filter(|size| terminal_font_size_accepted(*size))
-                .unwrap_or(TERMINAL_FONT_SIZE_DEFAULT),
+            terminal_font_size: match file.terminal.font_size {
+                // Never written: what the file's terminals were drawn at, not the new default.
+                None => TERMINAL_FONT_SIZE_UNWRITTEN,
+                Some(size) if terminal_font_size_accepted(size) => size,
+                // Out of the range, as the C# load warns and keeps the default.
+                Some(_) => TERMINAL_FONT_SIZE_DEFAULT,
+            },
             terminal_font_family: terminal_font_family(
                 file.terminal.font_family.as_deref().unwrap_or_default(),
             ),

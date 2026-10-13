@@ -383,9 +383,19 @@ fn the_broadcast_scope_is_the_current_tab_until_another_is_chosen() {
 fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default() {
     use heimdall_core::settings::{
         TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN,
+        TERMINAL_FONT_SIZE_UNWRITTEN,
     };
 
     let dir = tempfile::tempdir().expect("dir");
+    // A new installation starts at the C#'s 14.
+    assert_eq!(TERMINAL_FONT_SIZE_DEFAULT, 14);
+    assert_eq!(
+        Settings::load(&dir.path().join(SETTINGS_FILE_NAME))
+            .expect("no file yet")
+            .terminal_font_size,
+        TERMINAL_FONT_SIZE_DEFAULT
+    );
+    // A file written before it held a size keeps the one its terminals were drawn at.
     assert_eq!(
         written(
             dir.path(),
@@ -393,7 +403,7 @@ fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default()
 "
         )
         .terminal_font_size,
-        TERMINAL_FONT_SIZE_DEFAULT
+        TERMINAL_FONT_SIZE_UNWRITTEN
     );
     for (size, read) in [
         (TERMINAL_FONT_SIZE_MIN, TERMINAL_FONT_SIZE_MIN),

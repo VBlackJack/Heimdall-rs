@@ -31,7 +31,7 @@ use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
 use heimdall_rdp::{
     AcceptedCertificate, CertificateHash, Ending, Fingerprint, Framebuffer, KnownRdpHosts,
-    Operation, Scancode,
+    Operation, RdpInput, Scancode,
 };
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -375,7 +375,7 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
     // The key goes to RDP by its position.
     let sent = received.try_recv().expect("sent");
     assert!(
-        matches!(sent.as_slice(), [Operation::KeyPressed(code)] if *code == Scancode::from_u8(false, 0x1E)),
+        matches!(sent.as_slice(), [RdpInput::Operation(Operation::KeyPressed(code))] if *code == Scancode::from_u8(false, 0x1E)),
         "{sent:?}"
     );
 
@@ -451,7 +451,7 @@ fn anti_idle_sends_shift_to_the_sessions_asking_for_it_until_stopped() {
     let shift = Scancode::from_u8(false, 0x2A);
     let sent = web_received.try_recv().expect("shift");
     assert!(
-        matches!(sent.as_slice(), [Operation::KeyPressed(down), Operation::KeyReleased(up)]
+        matches!(sent.as_slice(), [RdpInput::Operation(Operation::KeyPressed(down)), RdpInput::Operation(Operation::KeyReleased(up))]
             if *down == shift && *up == shift),
         "{sent:?}"
     );

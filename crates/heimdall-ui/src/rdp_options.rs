@@ -34,7 +34,9 @@ use heimdall_app::{Message as AppMessage, SettingsMessage};
 use heimdall_core::profile::{
     Aspect, AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, RdpSwitch, Resolution,
 };
-use iced::widget::{checkbox, column, container, opaque, pick_list, row, space, stack, text};
+use iced::widget::{
+    button, checkbox, column, container, opaque, pick_list, row, space, stack, text,
+};
 use iced::{Alignment, Color, Element, Length, Theme};
 
 use crate::i18n::fl;
@@ -391,7 +393,8 @@ pub fn rd_gateway<'a>(draft: &ProfileDraft, field: Element<'a, Message>) -> Elem
 }
 
 /// The C# monitors of `draft` while it spans them: the note, the saved ones not connected
-/// said kept, then each of `monitors` to tick when there are several, as the C# picker.
+/// said kept, then each of `monitors` to tick when there are several, under their title and
+/// its "Refresh", as the C# picker.
 fn spanned<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Option<Element<'a, Message>> {
     if !draft.spans_monitors() {
         return None;
@@ -408,7 +411,16 @@ fn spanned<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Option<Element<'a,
     }
     if monitors.len() >= MULTI_MONITOR_SCREENS {
         card = card
-            .push(text(fl!("ui-profile-rdp-monitors-title")).size(font_size::CAPTION))
+            .push(
+                row![
+                    text(fl!("ui-profile-rdp-monitors-title")).size(font_size::CAPTION),
+                    space::horizontal(),
+                    button(text(fl!("ui-profile-rdp-monitors-refresh")).size(font_size::CAPTION))
+                        .style(styles::subtle)
+                        .on_press(Message::RefreshMonitors),
+                ]
+                .align_y(Alignment::Center),
+            )
             .push(text(fl!("ui-profile-rdp-monitors-caption")).size(font_size::CAPTION));
         for monitor in monitors {
             let index = monitor.index;
@@ -774,8 +786,9 @@ fn choice(choice: ProfileChoice) -> Message {
 
 /// The C# "Resolution profile" card of `draft`: the mode, and in the fixed mode its common
 /// sizes, the width and height drawn by `field`, and whether it is scaled; then the
-/// monitors spanned among `monitors` and the multi-monitor box; then the C# "Display" with
-/// whether the desktop follows the tab, and "Audio" with the microphone.
+/// monitors spanned among `monitors` and the multi-monitor box, and outside the automatic
+/// mode the C# "Switch to Auto"; then the C# "Display" with whether the desktop follows the
+/// tab, and "Audio" with the microphone.
 pub fn resolution<'a>(
     draft: &'a ProfileDraft,
     monitors: &[Monitor],
@@ -856,6 +869,12 @@ pub fn resolution<'a>(
         card = card.push(spanned);
     }
     card.push(multi_monitor(draft, monitors))
+        // As the C# `CanSwitchToAuto`: a way back to the mode a new profile starts in.
+        .push((options.resolution != Resolution::Auto).then(|| {
+            button(text(fl!("ui-profile-resolution-switch-auto")).size(font_size::CAPTION))
+                .style(styles::subtle)
+                .on_press(choice(ProfileChoice::Resolution(Resolution::Auto)))
+        }))
         .push(part(fl!("ui-profile-rdp-display-section")))
         .push(
             checkbox(options.dynamic_resolution)

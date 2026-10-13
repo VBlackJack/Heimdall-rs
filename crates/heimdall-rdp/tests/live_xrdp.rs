@@ -311,9 +311,9 @@ async fn cancelling_the_login_screen_is_a_close_not_a_failure() {
     session
         .input
         .send(vec![
-            Operation::MouseMove(cancel_button),
-            Operation::MouseButtonPressed(MouseButton::Left),
-            Operation::MouseButtonReleased(MouseButton::Left),
+            Operation::MouseMove(cancel_button).into(),
+            Operation::MouseButtonPressed(MouseButton::Left).into(),
+            Operation::MouseButtonReleased(MouseButton::Left).into(),
         ])
         .expect("sent");
     let ended = tokio::time::timeout(FIRST_PICTURE, async {
