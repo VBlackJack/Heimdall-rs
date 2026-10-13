@@ -838,18 +838,36 @@ fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
                 let listed = ListParser::parse_mlsd(line).ok()?;
                 Some((listed, machine_owner(line)))
             } else if let Ok(listed) = ListParser::parse_posix(line) {
-                Some((listed, unix_owner(line)))
+                let owner = Owner {
+                    name: unix_owner(line),
+                    ..Owner::default()
+                };
+                Some((listed, owner))
             } else {
                 // A DOS line names no owner.
-                Some((ListParser::parse_dos(line).ok()?, None))
+                Some((ListParser::parse_dos(line).ok()?, Owner::default()))
             }
         })
         .filter(|(listed, _)| !matches!(listed.name(), "." | ".."))
-        .map(|(listed, owner_name)| RemoteItem {
-            owner_name,
-            ..item(&listed)
+        .map(|(listed, owner)| {
+            let listed = item(&listed);
+            RemoteItem {
+                owner: listed.owner.or(owner.number),
+                owner_name: owner.name,
+                ..listed
+            }
         })
         .collect()
+}
+
+/// What a listing line says of its owner beyond what the parser reads.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Owner {
+    /// A user number the parser does not read: `MLSD`'s `UNIX.owner` given as a number, as
+    /// `ProFTPD` sends it.
+    number: Option<u32>,
+    /// The owner's name.
+    name: Option<String>,
 }
 
 /// The facts of an `MLSD` line naming its owner, the most explicit first: `UNIX.ownername`,
@@ -857,26 +875,36 @@ fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
 const OWNER_FACTS: [&str; 2] = ["unix.ownername", "unix.owner"];
 
 /// The owner's name a `LIST` line in UNIX format gives, as the C# keeps it in
-/// `FtpListItem.RawOwner`: its third field, after the mode and the link count. A number is the owner's
-/// user number, which the parser already reads: no name then.
+/// `FtpListItem.RawOwner`: its third field, after the mode and the link count, the fields
+/// parted by spaces only, as the parser's `([^ ]+)` parts them. A number is the owner's user
+/// number, which the parser already reads: no name then.
 fn unix_owner(line: &str) -> Option<String> {
-    owner_name(line.split_whitespace().nth(2)?)
+    owner_name(line.split(' ').filter(|field| !field.is_empty()).nth(2)?)
 }
 
-/// The owner's name an `MLSD` line gives in its facts, before the space that starts the
-/// name of the entry; facts are named whatever their case.
-fn machine_owner(line: &str) -> Option<String> {
-    let (facts, _) = line.split_once(' ')?;
+/// What an `MLSD` line says of its owner in its facts, before the space that starts the
+/// name of the entry; facts are named whatever their case. Its name, the most explicit
+/// fact first; and `UNIX.owner` as a number, the user number.
+fn machine_owner(line: &str) -> Owner {
+    let Some((facts, _)) = line.split_once(' ') else {
+        return Owner::default();
+    };
     let facts: Vec<(&str, &str)> = facts
         .split(';')
         .filter_map(|fact| fact.split_once('='))
         .collect();
-    OWNER_FACTS.iter().find_map(|wanted| {
+    let value = |wanted: &str| {
         facts
             .iter()
             .find(|(fact, _)| fact.eq_ignore_ascii_case(wanted))
-            .and_then(|(_, value)| owner_name(value))
-    })
+            .map(|(_, value)| *value)
+    };
+    Owner {
+        number: value(OWNER_FACTS[1]).and_then(|said| said.parse().ok()),
+        name: OWNER_FACTS
+            .iter()
+            .find_map(|wanted| value(wanted).and_then(owner_name)),
+    }
 }
 
 /// `said` as an owner's name: none when empty, or a number, which is a user number.
@@ -973,7 +1001,7 @@ mod tests {
     use suppaftp::types::Response;
     use suppaftp::{FtpError, Status};
 
-    use super::{ftp_error, items, machine_owner, unix_owner, walks};
+    use super::{Owner, ftp_error, items, machine_owner, unix_owner, walks};
     use crate::{ItemKind, Refusal, RemoteError};
 
     fn kinds(lines: &[&str], machine: bool) -> Vec<(String, ItemKind)> {
@@ -1070,18 +1098,49 @@ mod tests {
                 "type=file;size=1;unix.owner=bob; b",
                 "type=file;size=1;unix.uid=1001;unix.owner=1001; c",
                 "type=file;size=1; d",
+                // ProFTPD's number, which the parser does not read: the user number.
+                "type=file;UNIX.owner=1000; e",
+                // A ";" in the name is no fact of its owner.
+                "type=file;size=1; f;UNIX.owner=eve;UNIX.ownername=mallory",
+                "type=file;size=1; g;UNIX.owner=7",
             ],
             true,
         );
         assert_eq!(
-            listed,
+            listed[..5],
             [
                 (Some(1000), Some("alice".to_owned())),
                 (None, Some("bob".to_owned())),
                 (Some(1001), None),
                 (None, None),
+                (Some(1000), None),
             ]
         );
+        // Whatever the parser makes of the name itself, no owner is taken from it.
+        assert_eq!(listed[5..], [(None, None), (None, None)]);
+    }
+
+    #[test]
+    fn an_owner_is_never_taken_from_a_line_the_unix_parser_does_not_read() {
+        // An ACL mark after the mode and a device's two numbers: the parser may drop the
+        // line, but never gives it another field's owner.
+        for (line, owner) in [
+            (
+                "-rw-r--r--+  1 julien   staff          12 Sep 29 10:00 acl.txt",
+                "julien",
+            ),
+            (
+                "crw-r--r--   1 root     root       4,   1 Sep 29 10:00 tty1",
+                "root",
+            ),
+        ] {
+            for (_, name) in owners(&[line], false) {
+                assert!(
+                    name.is_none() || name.as_deref() == Some(owner),
+                    "{line}: {name:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1091,12 +1150,27 @@ mod tests {
             Some("julien")
         );
         assert_eq!(unix_owner("-rw-r--r-- 1"), None);
+        // Fields parted by spaces only, as the parser parts them: a tab or a no-break
+        // space stays inside the owner.
+        assert_eq!(
+            unix_owner("-rw-r--r-- 1 a\tb staff 12 Sep 29 10:00 f").as_deref(),
+            Some("a\tb")
+        );
+        assert_eq!(
+            unix_owner("-rw-r--r-- 1 j\u{a0}d staff 12 Sep 29 10:00 f").as_deref(),
+            Some("j\u{a0}d")
+        );
+        assert_eq!(
+            owners(&["-rw-r--r-- 1 a\tb staff 12 Sep 29 10:00 f"], false),
+            [(None, Some("a\tb".to_owned()))],
+            "the parser reads the same line"
+        );
         // The entry's name is never read as a fact, even with a "=" in it.
         assert_eq!(
-            machine_owner("type=file;size=1; unix.owner=eve").as_deref(),
-            None
+            machine_owner("type=file;size=1; unix.owner=eve"),
+            Owner::default()
         );
-        assert_eq!(machine_owner("no-facts"), None);
+        assert_eq!(machine_owner("no-facts"), Owner::default());
     }
 
     #[test]

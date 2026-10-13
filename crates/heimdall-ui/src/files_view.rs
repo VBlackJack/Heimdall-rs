@@ -71,6 +71,10 @@ const PERMISSIONS_WIDTH: f32 = 90.0;
 /// `EmbeddedSftpView.xaml` column's.
 const OWNER_WIDTH: f32 = 90.0;
 
+/// The owner column's cell when the server said no owner, as the C# FTP listing's
+/// (`FtpBrowser.cs` `MapFtpItemToFileInfo`).
+const UNKNOWN_OWNER: &str = "-";
+
 /// Narrowest the size column is resized to, in logical pixels.
 const SIZE_MIN_WIDTH: f32 = 40.0;
 
@@ -448,12 +452,9 @@ fn kind_name(kind: EntryKind) -> String {
     }
 }
 
-/// `line` with what `entry` is, as the C# row's tooltip: its name, its type, its size, when
-/// it changed to the second, and its permissions.
-fn row_tooltip<'a, E: Listed>(
-    line: iced::widget::Button<'a, Message>,
-    entry: &E,
-) -> Element<'a, Message> {
+/// What `entry` is, as the C# row's tooltip says it: its name, its type, its size, when it
+/// changed to the second, its permissions and its owner.
+fn row_tooltip_lines<E: Listed>(entry: &E) -> Vec<String> {
     let mut lines = vec![
         entry.label().to_owned(),
         fl!("ui-files-tooltip-type", kind = kind_name(entry.kind())),
@@ -475,9 +476,17 @@ fn row_tooltip<'a, E: Listed>(
     if !owner.is_empty() {
         lines.push(fl!("ui-files-tooltip-owner", owner = owner));
     }
+    lines
+}
+
+/// `line` with [`row_tooltip_lines`] in its tooltip.
+fn row_tooltip<'a, E: Listed>(
+    line: iced::widget::Button<'a, Message>,
+    entry: &E,
+) -> Element<'a, Message> {
     tooltip(
         line,
-        text(lines.join("\n")).size(font_size::CAPTION),
+        text(row_tooltip_lines(entry).join("\n")).size(font_size::CAPTION),
         tooltip::Position::FollowCursor,
     )
     .delay(ROW_TOOLTIP_DELAY)
@@ -637,7 +646,14 @@ fn cell_text<E: Listed>(entry: &E, column: SortColumn) -> String {
         },
         SortColumn::Modified => entry.modified().map(modified_text).unwrap_or_default(),
         SortColumn::Permissions => entry.permissions().map(symbolic_mode).unwrap_or_default(),
-        SortColumn::Owner => owner_text(entry),
+        SortColumn::Owner => {
+            let owner = owner_text(entry);
+            if owner.is_empty() {
+                UNKNOWN_OWNER.to_owned()
+            } else {
+                owner
+            }
+        }
     }
 }
 
@@ -2099,6 +2115,54 @@ mod tests {
         fn modified(&self) -> Option<SystemTime> {
             None
         }
+    }
+
+    /// An entry of a server's list with only an owner: its number, its name.
+    struct Owned(Option<u32>, Option<&'static str>);
+
+    impl Owned {
+        /// Every owned entry's name.
+        const LABEL: &'static str = "notes.txt";
+    }
+
+    impl Listed for Owned {
+        fn kind(&self) -> EntryKind {
+            EntryKind::File
+        }
+        fn label(&self) -> &str {
+            Self::LABEL
+        }
+        fn size(&self) -> Option<u64> {
+            None
+        }
+        fn modified(&self) -> Option<SystemTime> {
+            None
+        }
+        fn owner(&self) -> Option<u32> {
+            self.0
+        }
+        fn owner_name(&self) -> Option<&str> {
+            self.1
+        }
+    }
+
+    #[test]
+    fn the_owner_column_says_the_name_else_the_number_else_a_dash_as_the_csharp() {
+        let cell = |owned: &Owned| cell_text(owned, SortColumn::Owner);
+        assert_eq!(cell(&Owned(Some(33), Some("www-data"))), "www-data");
+        assert_eq!(cell(&Owned(Some(1000), None)), "1000");
+        assert_eq!(cell(&Owned(None, None)), UNKNOWN_OWNER);
+    }
+
+    #[test]
+    fn the_row_tooltip_says_the_owner_when_there_is_one() {
+        let lines = row_tooltip_lines(&Owned(Some(33), Some("www-data")));
+        assert_eq!(
+            lines.last(),
+            Some(&fl!("ui-files-tooltip-owner", owner = "www-data"))
+        );
+        // Its name and its type only: no owner line, no dash.
+        assert_eq!(row_tooltip_lines(&Owned(None, None)).len(), 2);
     }
 
     #[test]

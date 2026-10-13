@@ -305,16 +305,21 @@ pub fn owner_text<E: Listed>(entry: &E) -> String {
 
 /// How the owner column orders `a` and `b`: those with no name first, by user number, none
 /// before any; then those named, by name whatever its case, then as written, then by
-/// number. A listing gives names or numbers, so each is ordered as it reads.
+/// number. A listing gives names or numbers, so each is ordered as it reads: numbers as
+/// numbers, 33 before 1000, where the C# compared their texts. Nothing is allocated: a sort
+/// compares many times.
 fn owner_order<E: Listed>(a: &E, b: &E) -> std::cmp::Ordering {
-    let name = |entry: &E| {
-        entry
-            .owner_name()
-            .map(|name| (name.to_lowercase(), name.to_owned()))
+    let by_name = match (a.owner_name(), b.owner_name()) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(a), Some(b)) => a
+            .chars()
+            .flat_map(char::to_lowercase)
+            .cmp(b.chars().flat_map(char::to_lowercase))
+            .then_with(|| a.cmp(b)),
     };
-    name(a)
-        .cmp(&name(b))
-        .then_with(|| a.owner().cmp(&b.owner()))
+    by_name.then_with(|| a.owner().cmp(&b.owner()))
 }
 
 impl Listed for RemoteEntry {

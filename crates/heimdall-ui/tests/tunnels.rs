@@ -256,6 +256,40 @@ fn a_long_label_stays_on_one_line_cut_by_its_column_as_a_csharp_grid_cell() {
 }
 
 #[test]
+fn a_text_cell_opens_a_tooltip_under_the_pointer_a_port_cell_none() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path(), vec![bastion()]);
+    opened_tunnel(&mut shell);
+    // The panel's rows light nothing under the pointer: only a tooltip changes the frame.
+    let _ = shell.update(tunnel(TunnelMessage::TogglePanel));
+    let mut ui = simulator(&shell);
+    let theme = iced::Theme::Dark;
+    let moved = |ui: &mut common::Drawn<'_>, at: iced::Point| {
+        ui.point_at(at);
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position: at,
+        })]);
+    };
+    let frame = |ui: &mut common::Drawn<'_>, name: &str| {
+        ui.snapshot(&theme)
+            .expect("drawn")
+            .matches_image(dir.path().join(name))
+            .expect("compared")
+    };
+    let (label, port) = (
+        ui.find("wiki").expect("the label").bounds().center(),
+        ui.find("9443").expect("the local port").bounds().center(),
+    );
+    moved(&mut ui, iced::Point::ORIGIN);
+    assert!(frame(&mut ui, "plain.png"), "the plain window, written");
+    moved(&mut ui, port);
+    assert!(frame(&mut ui, "plain.png"), "a port says nothing more");
+    moved(&mut ui, iced::Point::ORIGIN);
+    moved(&mut ui, label);
+    assert!(!frame(&mut ui, "plain.png"), "the label's tooltip shown");
+}
+
+#[test]
 fn the_tunnels_page_says_when_each_started_and_leads_to_the_gateways() {
     use heimdall_ui::shell::Destination;
 
