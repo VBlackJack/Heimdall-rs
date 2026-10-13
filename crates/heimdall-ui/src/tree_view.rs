@@ -52,9 +52,6 @@ use crate::tree_row::{EDGE_WIDTH, Guided, Mark, RowChrome};
 /// Tallest a "Move to folder" list grows before it scrolls.
 const MOVE_MENU_HEIGHT: f32 = 360.0;
 
-/// Width of a menu.
-const MENU_WIDTH: f32 = 270.0;
-
 /// A menu open in the tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeMenu {
@@ -465,7 +462,7 @@ pub fn folder_color_entries<'a>(path: &str, current: Option<FolderColor>) -> Ele
     };
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .extend(
             FolderColor::ALL
                 .into_iter()
@@ -726,9 +723,11 @@ fn entry<'a>(label: String, message: Option<AppMessage>) -> Element<'a, Message>
         .into()
 }
 
-/// The card every menu is drawn on, so what is under it never shows through.
+/// The card every menu is drawn on, so what is under it never shows through. It fills the
+/// width the menu is given: `menu_fit` makes that the width of its longest entry.
 fn menu_card<'a>(entries: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
     container(entries)
+        .width(Length::Fill)
         .padding(spacing::XS)
         .style(container::rounded_box)
 }
@@ -745,7 +744,7 @@ pub fn menu_entries<'a>(
     connect_as: &[ConnectAs],
     (editable, splittable): (bool, bool),
 ) -> Element<'a, Message> {
-    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    let mut entries = column![].spacing(0.0).width(Length::Fill);
     match (menu, profile) {
         (TreeMenu::Profile(_), Some(profile)) => {
             entries = profile_entries(entries, profile, connect_as, (editable, splittable));
@@ -827,7 +826,7 @@ pub fn filter_entries<'a>(filter: &TreeFilter, badge: bool) -> Element<'a, Messa
         container(text(fl!("ui-tree-filter-protocols")).size(font_size::BODY_LARGE))
             .padding(spacing::XS)
     ]
-    .width(MENU_WIDTH);
+    .width(Length::Fill);
     for kind in ProfileKind::ALL {
         entries = entries.push(filter_box(
             kind.label().to_owned(),
@@ -948,7 +947,7 @@ pub fn open_in_split_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
     };
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(entry(fl!("ui-split-horizontal"), open(Axis::Stacked)))
         .push(entry(fl!("ui-split-vertical"), open(Axis::SideBySide)));
     menu_card(entries).into()
@@ -973,7 +972,7 @@ fn connect_with_entry<'a>(id: &ProfileId) -> Element<'a, Message> {
 /// embedded, then Remote Desktop Connection. The profile is not changed.
 #[must_use]
 pub fn connect_with_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
-    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    let mut entries = column![].spacing(0.0).width(Length::Fill);
     for mode in RdpMode::ALL {
         let label = match mode {
             RdpMode::Embedded => fl!("ui-tree-connect-embedded"),
@@ -1064,7 +1063,7 @@ fn profile_entries<'a>(
 #[must_use]
 pub fn notes_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
     use heimdall_app::notes::NoteTemplate;
-    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    let mut entries = column![].spacing(0.0).width(Length::Fill);
     for template in NoteTemplate::ALL {
         let label = match template {
             NoteTemplate::Blank => fl!("ui-notes-new"),
@@ -1254,7 +1253,7 @@ pub fn files_entry_menu<'a>(
         ),
     ]
     .spacing(0.0)
-    .width(MENU_WIDTH);
+    .width(Length::Fill);
     menu_card(entries).into()
 }
 
@@ -1357,7 +1356,7 @@ pub fn files_bookmarks_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a,
         separator(),
     ]
     .spacing(0.0)
-    .width(MENU_WIDTH);
+    .width(Length::Fill);
     if bookmarks.is_empty() {
         entries = entries.push(entry(fl!("ui-files-bookmarks-empty"), None));
     }
@@ -1379,7 +1378,7 @@ pub fn files_bookmarks_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a,
 /// Which of a Files tab's bookmarks to take off, as the C# "Remove a bookmark".
 #[must_use]
 pub fn files_bookmarks_remove_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a, Message> {
-    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    let mut entries = column![].spacing(0.0).width(Length::Fill);
     for (index, path) in bookmarks.iter().enumerate() {
         entries = entries.push(entry(
             path.clone(),
@@ -1465,7 +1464,7 @@ pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<
         separator(),
     ]
     .spacing(0.0)
-    .width(MENU_WIDTH);
+    .width(Length::Fill);
     entries = entries.push(match (menu.recording, &menu.playing) {
         (Some(count), _) => entry(
             fl!("ui-macros-stop-recording", count = count),
@@ -1652,7 +1651,7 @@ pub fn resolution_entries<'a>(
         separator(),
     ]
     .spacing(0.0)
-    .width(MENU_WIDTH);
+    .width(Length::Fill);
     // Under the header while the session settles, as the C# menu's.
     if state.stabilizing {
         entries = entries
@@ -1778,7 +1777,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     let menu = |message| Some(AppMessage::TabMenu(message));
     let mut entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(entry(
             fl!("ui-tab-menu-disconnect"),
             Some(disconnect(state)),
@@ -1876,7 +1875,7 @@ const SEND_KEYS_GROUPS: [&[SpecialKeys]; 4] = [
 /// their groups, then "Keyboard shortcuts...".
 #[must_use]
 pub fn send_keys_entries<'a>(tab: TabId) -> Element<'a, Message> {
-    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    let mut entries = column![].spacing(0.0).width(Length::Fill);
     for group in SEND_KEYS_GROUPS {
         for &keys in group {
             entries = entries.push(entry(
@@ -1997,7 +1996,7 @@ pub fn split_axis_entries<'a>(host: TabId) -> Element<'a, Message> {
     };
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(split(fl!("ui-split-horizontal"), Axis::Stacked))
         .push(split(fl!("ui-split-vertical"), Axis::SideBySide));
     menu_card(entries).into()
@@ -2006,7 +2005,7 @@ pub fn split_axis_entries<'a>(host: TabId) -> Element<'a, Message> {
 /// "Merge with...": the tabs `host` can be merged with, each by its title, opening how.
 #[must_use]
 pub fn merge_with_entries<'a>(host: TabId, tabs: &[(TabId, String)]) -> Element<'a, Message> {
-    let entries = column![].spacing(0.0).width(MENU_WIDTH).extend(
+    let entries = column![].spacing(0.0).width(Length::Fill).extend(
         tabs.iter()
             .map(|(tab, title)| submenu(title.clone(), TreeMenu::MergeAxis { host, tab: *tab })),
     );
@@ -2027,7 +2026,7 @@ pub fn merge_axis_entries<'a>(host: TabId, tab: TabId) -> Element<'a, Message> {
     };
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(entry(fl!("ui-split-horizontal"), merge(Axis::Stacked)))
         .push(entry(fl!("ui-split-vertical"), merge(Axis::SideBySide)));
     menu_card(entries).into()
@@ -2039,7 +2038,7 @@ pub fn tunnel_menu_entries<'a>(
     interrupted: bool,
 ) -> Element<'a, Message> {
     let tunnel = |message| Some(AppMessage::Tunnel(message));
-    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    let mut entries = column![].spacing(0.0).width(Length::Fill);
     // An interrupted tunnel is opened again from its row, as it was asked for.
     if interrupted {
         entries = entries.push(entry(
@@ -2075,7 +2074,7 @@ pub fn tool_menu_entries<'a>(
     } else {
         fl!("ui-tree-favorite-add")
     };
-    let entries = column![].spacing(0.0).width(MENU_WIDTH).push(entry(
+    let entries = column![].spacing(0.0).width(Length::Fill).push(entry(
         label,
         Some(AppMessage::Tools(
             heimdall_app::ToolsMessage::ToggleFavorite(tool),
@@ -2090,7 +2089,7 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
     let folder = |message| Some(AppMessage::Folder(message));
     let mut entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(entry(
             fl!("ui-folder-connect-all", count = connectable),
             (connectable > 0)
@@ -2154,7 +2153,7 @@ pub fn move_profile_entries<'a>(
 ) -> Element<'a, Message> {
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .extend(targets.iter().map(|(to, other)| {
             let label = to.clone().unwrap_or_else(|| fl!("ui-sidebar-group-none"));
             entry(
@@ -2194,7 +2193,7 @@ pub fn selection_menu_entries<'a>(
     let selection = |message| Some(AppMessage::Selection(message));
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(entry(fl!("ui-selection-count", count = count), None))
         .push(separator())
         .push(entry(
@@ -2241,7 +2240,7 @@ pub fn edit_selection_entries<'a>(
     let edit = |field| Some(AppMessage::Selection(SelectionMessage::Edit(field)));
     let mut entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(entry(fl!("ui-selection-edit-port"), edit(BulkField::Port)))
         .push(entry(
             fl!("ui-selection-edit-username", count = usernames),
@@ -2279,7 +2278,7 @@ pub fn gateway_selection_entries<'a>(
     let set = |gateway| Some(AppMessage::Selection(SelectionMessage::SetGateway(gateway)));
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(entry(fl!("ui-selection-gateway-direct"), set(None)))
         .push(separator())
         .extend(gateways.iter().map(|gateway| {
@@ -2298,7 +2297,7 @@ pub fn gateway_selection_entries<'a>(
 pub fn move_selection_entries<'a>(folders: &[String]) -> Element<'a, Message> {
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .push(entry(
             fl!("ui-sidebar-group-none"),
             Some(AppMessage::Selection(SelectionMessage::Move(None))),
@@ -2322,7 +2321,7 @@ pub fn move_selection_entries<'a>(folders: &[String]) -> Element<'a, Message> {
 pub fn move_folder_entries<'a>(path: &str, targets: &[String]) -> Element<'a, Message> {
     let entries = column![]
         .spacing(0.0)
-        .width(MENU_WIDTH)
+        .width(Length::Fill)
         .extend(targets.iter().map(|to| {
             let label = if to.is_empty() {
                 fl!("ui-folder-move-top")
