@@ -500,7 +500,7 @@ async fn a_certificate_accepted_on_another_key_is_refused() {
 
 #[tokio::test]
 async fn where_several_servers_answer_a_certificate_accepted_on_another_key_leaves_this_one_asked_about()
-{
+ {
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_rdp_hosts");
     // The question was about another machine of the pool; the reconnection lands on this one.
