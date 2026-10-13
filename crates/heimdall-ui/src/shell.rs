@@ -8259,6 +8259,7 @@ fn host_key_card<'a>(
         .size(font_size::CAPTION)
         .style(text::secondary)
         .font(iced::Font::MONOSPACE)
+        .wrapping(text::Wrapping::WordOrGlyph)
     });
     let (heading, body, label, [reject, once, accept]) = match certificate {
         Some(asked) => (
@@ -8297,7 +8298,11 @@ fn host_key_card<'a>(
             dialog_parts::header(Severity::Warning, dialog_parts::title(heading)),
             body,
             row![
-                text(label).font(iced::Font::MONOSPACE).width(Length::Fill),
+                // A fingerprint is one word too long for the card: broken where it must be.
+                text(label)
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::WordOrGlyph)
+                    .width(Length::Fill),
                 button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION))
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::CopyHostKeyFingerprint(tab))),
