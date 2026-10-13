@@ -49,12 +49,17 @@ Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` an
 
 ## Build
 
-On Linux, the build needs the development packages of xkbcommon, Wayland, X11
-and fontconfig. Running it also needs `libxkbcommon-x11` and a Vulkan or OpenGL
-driver, such as Mesa. On Windows, the build needs the MSVC build tools.
+On Linux, the default build needs no C development package, only a C compiler
+(`gcc` or `clang`, for `ring`): the windowing libraries are opened at run time, not
+linked. RDP sound is off by default there; a build that asks for it with
+`--features audio` (`cargo build -p heimdall-ui --features audio`) links ALSA and needs
+`alsa-lib-devel` (Fedora, RHEL, AlmaLinux) or `libasound2-dev` (Debian, Ubuntu). On
+Windows, the build needs the MSVC build tools, and RDP sound is always built in.
 
-The C libraries the binary links or loads at run time on Linux, and when, are listed in
-[Native libraries](docs/native-libraries.md).
+Running on Linux needs the libraries the desktop loads at run time: `libxkbcommon`,
+`libxkbcommon-x11` and the Wayland or X11 client libraries, and a Vulkan or OpenGL
+driver, such as Mesa (without one, the window is drawn in software). Which libraries,
+and when, is listed in [Native libraries](docs/native-libraries.md).
 
 ```bash
 cargo run --package heimdall-ui
