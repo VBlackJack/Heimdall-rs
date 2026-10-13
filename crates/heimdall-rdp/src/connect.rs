@@ -48,7 +48,7 @@ use ironrdp::dvc::DrdynvcClient;
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::nego::NegoRequestData;
 use ironrdp::pdu::rdp::capability_sets::{MajorPlatformType, client_codecs_capabilities};
-use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
+use ironrdp::pdu::rdp::client_info::{CompressionType, PerformanceFlags, TimezoneInfo};
 use ironrdp_tokio::{Framed, FramedRead, FramedWrite, MovableTokioFramed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::client::TlsStream;
@@ -218,6 +218,10 @@ pub struct RdpConfig {
     /// The desktop scale factor asked for, in percent, as the C# Heimdall maps the screen's
     /// (see [`desktop_scale_factor`]): 100 draws the remote desktop at its own size.
     pub desktop_scale: u32,
+    /// The server may bulk-compress what it sends, as the C# `RdpCompression` sets the
+    /// `MsTscAx` control's `Compress` (`RdpActiveXHost.cs:2128`): offered up to
+    /// [`BULK_COMPRESSION`].
+    pub compression: bool,
     /// Told how far the connection has come, as the C# session header's phase stepper
     /// shows it; `None` when nobody follows it.
     pub progress: Option<Progress>,
@@ -863,6 +867,12 @@ fn adopt(
     Ok(())
 }
 
+/// The highest bulk compression the server is offered, RDP 6.1 (XCRUSH), as mstsc offers it:
+/// the server picks this level or a lower one per packet, and the session decompresses each
+/// level, the fast-path updates and the slow-path PDUs alike (with one history, see
+/// `vendor/PATCHES.md`).
+pub const BULK_COMPRESSION: CompressionType = CompressionType::Rdp61;
+
 fn connector_config(config: &RdpConfig) -> connector::Config {
     let (width, height) = config.desktop;
     connector::Config {
@@ -905,7 +915,7 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         enable_audio_playback: played_here(config.options.audio),
         remote_console_audio: config.options.audio == AudioPlayback::OnServer,
         console_session: config.options.admin_session,
-        compression_type: None,
+        compression_type: config.compression.then_some(BULK_COMPRESSION),
         pointer_software_rendering: true,
         multitransport_flags: None,
         performance_flags: performance_flags(config.options.performance_flags),
@@ -1150,6 +1160,7 @@ mod tests {
             kerberos: false,
             time_zone: None,
             desktop_scale: 100,
+            compression: false,
             progress: None,
         }
     }

@@ -495,9 +495,9 @@ impl Default for RdpExtras {
     }
 }
 
-/// A box of [`RdpExtras`] that only the external client honours: the built-in client does
-/// not share these devices, cache, compress, decode through the graphics adapter, probe UDP
-/// or open full screen yet.
+/// A box of [`RdpExtras`] that only the external client honours but compression: the
+/// built-in client does not share these devices, cache, decode through the graphics adapter,
+/// probe UDP or open full screen yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RdpSwitch {
     /// Printers shared, as the C# `RdpRedirectPrinters`.

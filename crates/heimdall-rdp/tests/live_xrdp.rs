@@ -66,6 +66,7 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         kerberos: false,
         time_zone: None,
         desktop_scale: 100,
+        compression: false,
         progress: None,
     }
 }

@@ -51,6 +51,18 @@ pub struct Processor {
 }
 
 impl Processor {
+    /// The bulk decompressor, for the slow-path PDUs too: the server compresses them with the
+    /// same history. Heimdall-rs patch, see `vendor/PATCHES.md`.
+    pub fn bulk_decompressor_mut(&mut self) -> Option<&mut BulkCompressor> {
+        self.bulk_decompressor.as_mut()
+    }
+
+    /// Takes the bulk decompressor out, for the processor that replaces this one after a
+    /// reactivation: the server's history goes on. Heimdall-rs patch, see `vendor/PATCHES.md`.
+    pub fn take_bulk_decompressor(&mut self) -> Option<BulkCompressor> {
+        self.bulk_decompressor.take()
+    }
+
     pub fn update_mouse_pos(&mut self, x: u16, y: u16) {
         self.mouse_pos_update = Some((x, y));
     }

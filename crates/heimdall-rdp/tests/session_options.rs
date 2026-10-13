@@ -18,8 +18,8 @@
 //!
 //! The server negotiates TLS without Network Level Authentication, as xrdp does, reads the
 //! client's MCS Connect Initial (colour depth, administrative session), answers it, skips the
-//! channel join, and reads the Client Info PDU (where the sound goes). It stops there: what
-//! the options change is all said by then.
+//! channel join, and reads the Client Info PDU (where the sound goes, the compression offered).
+//! It stops there: what the options change is all said by then.
 
 #![allow(
     clippy::large_futures,
@@ -31,7 +31,8 @@ use std::time::Duration;
 
 use heimdall_core::profile::{AudioPlayback, ColorDepth, Experience, RdpOptions};
 use heimdall_rdp::{
-    KnownRdpHosts, RdpConfig, Security, TimeZone, Timeouts, Transition, connect_over, given,
+    BULK_COMPRESSION, KnownRdpHosts, RdpConfig, Security, TimeZone, Timeouts, Transition,
+    connect_over, given,
 };
 use ironrdp::pdu::gcc::{
     ClientClusterData, ClientEarlyCapabilityFlags, ClientGccBlocks, ConferenceCreateResponse,
@@ -44,7 +45,7 @@ use ironrdp::pdu::mcs::{
 };
 use ironrdp::pdu::nego::{ConnectionConfirm, ResponseFlags, SecurityProtocol};
 use ironrdp::pdu::rdp::ClientInfoPdu;
-use ironrdp::pdu::rdp::client_info::{ClientInfoFlags, PerformanceFlags};
+use ironrdp::pdu::rdp::client_info::{ClientInfoFlags, CompressionType, PerformanceFlags};
 use ironrdp::pdu::x224::{X224, X224Data};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio_rustls::TlsAcceptor;
@@ -191,6 +192,11 @@ async fn sent_with(options: RdpOptions) -> Sent {
 
 /// [`sent_with`], this computer said to be in `time_zone`.
 async fn sent_in(options: RdpOptions, time_zone: Option<TimeZone>) -> Sent {
+    sent_by(options, time_zone, false).await
+}
+
+/// [`sent_in`], bulk compression offered when `compression`.
+async fn sent_by(options: RdpOptions, time_zone: Option<TimeZone>, compression: bool) -> Sent {
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_rdp_hosts");
     std::fs::write(&known, format!("{HOST}:{PORT} SHA256:{}\n", PIN.trim())).expect("known");
@@ -217,6 +223,7 @@ async fn sent_in(options: RdpOptions, time_zone: Option<TimeZone>) -> Sent {
         kerberos: false,
         time_zone,
         desktop_scale: 150,
+        compression,
         progress: None,
     };
     let (client, server) = tokio::io::duplex(1 << 16);
@@ -409,5 +416,24 @@ async fn the_administrative_session_asks_for_session_0_as_mstsc_admin() {
             redirection_version: RedirectionVersion::V5,
             redirected_session_id: 0,
         })
+    );
+}
+
+#[tokio::test]
+async fn compression_is_offered_up_to_rdp_6_1_as_mstsc_offers_it_and_not_at_all_when_off() {
+    let sent = sent_by(RdpOptions::default(), None, true).await;
+    let info = &sent.info.client_info;
+    assert!(info.flags.contains(ClientInfoFlags::COMPRESSION));
+    assert_eq!(info.compression_type, CompressionType::Rdp61);
+    assert_eq!(info.compression_type, BULK_COMPRESSION);
+
+    let sent = sent_by(RdpOptions::default(), None, false).await;
+    assert!(
+        !sent
+            .info
+            .client_info
+            .flags
+            .contains(ClientInfoFlags::COMPRESSION),
+        "off: the server sends everything as it is"
     );
 }

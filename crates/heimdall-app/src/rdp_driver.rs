@@ -350,6 +350,8 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         kerberos: request.route.is_empty(),
         time_zone: crate::time_zone::local(),
         desktop_scale: request.desktop_scale,
+        // The profile in effect, as for the strict server authentication.
+        compression: profile.extras.compression,
         progress: None,
     }
 }
@@ -662,5 +664,15 @@ mod tests {
             config.kerberos,
             "a server reached directly may log on with Kerberos"
         );
+        assert!(config.compression, "compressed by default, as the C#");
+    }
+
+    #[test]
+    fn the_built_in_client_compresses_as_the_profile_asks() {
+        for compression in [true, false] {
+            let mut profile = dc();
+            profile.extras.compression = compression;
+            assert_eq!(rdp_config(&request(profile)).compression, compression);
+        }
     }
 }

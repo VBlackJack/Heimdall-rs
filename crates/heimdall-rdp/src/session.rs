@@ -1235,6 +1235,8 @@ impl Running {
         }
         stage.set_share_id(share_id);
         stage.set_enable_server_pointer(enable_server_pointer);
+        // The server's compression history goes on across the reactivation.
+        let bulk_decompressor = stage.take_bulk_decompressor();
         stage.set_fastpath_processor(
             ProcessorBuilder {
                 io_channel_id: activation.io_channel_id(),
@@ -1242,7 +1244,7 @@ impl Running {
                 share_id,
                 enable_server_pointer,
                 pointer_software_rendering,
-                bulk_decompressor: None,
+                bulk_decompressor,
             }
             .build(),
         );

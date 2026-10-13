@@ -152,6 +152,7 @@ fn config(known_hosts: &std::path::Path) -> RdpConfig {
         kerberos: false,
         time_zone: None,
         desktop_scale: 100,
+        compression: false,
         progress: None,
     }
 }

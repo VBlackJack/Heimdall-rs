@@ -541,7 +541,7 @@ const SCREENS: [Monitor; 2] = [
 ];
 
 /// The boxes only Remote Desktop Connection honours, by their C# label.
-const EXTERNAL_ONLY: [(&str, RdpSwitch); 10] = [
+const EXTERNAL_ONLY: [(&str, RdpSwitch); 9] = [
     ("Capture local microphone", RdpSwitch::Microphone),
     ("Redirect printers", RdpSwitch::Printers),
     ("Redirect COM ports", RdpSwitch::ComPorts),
@@ -552,10 +552,12 @@ const EXTERNAL_ONLY: [(&str, RdpSwitch); 10] = [
         "Keep bitmap cache on disk between sessions",
         RdpSwitch::BitmapCaching,
     ),
-    ("Enable RDP compression", RdpSwitch::Compression),
     ("Avoid UDP transport probing", RdpSwitch::DisableUdp),
     ("Open in fullscreen", RdpSwitch::FullScreen),
 ];
+
+/// The box both clients honour, said to be neither's.
+const COMPRESSION: &str = "Enable RDP compression";
 
 /// What the form says beside an option only Remote Desktop Connection honours.
 const EXTERNAL_ONLY_NOTE: &str = "External client (mstsc.exe) only";
@@ -668,11 +670,18 @@ fn each_option_of_the_external_client_is_a_box_said_to_be_its_own_while_the_prof
                 "{label}: the note beside it"
             );
         }
+        let compression = ui.find(COMPRESSION).expect(COMPRESSION).bounds();
+        assert!(
+            notes
+                .iter()
+                .all(|note| (note.center_y() - compression.center_y()).abs() >= SAME_ROW),
+            "compression: the built-in client compresses too"
+        );
     }
-    for (label, switch) in EXTERNAL_ONLY
-        .into_iter()
-        .chain([(HARDWARE_ACCELERATION, RdpSwitch::HardwareAcceleration)])
-    {
+    for (label, switch) in EXTERNAL_ONLY.into_iter().chain([
+        (HARDWARE_ACCELERATION, RdpSwitch::HardwareAcceleration),
+        (COMPRESSION, RdpSwitch::Compression),
+    ]) {
         let on = !switch.is_on(&draft.rdp_extras);
         let expected = format!(
             "{:?}",

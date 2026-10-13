@@ -110,9 +110,32 @@ the published code, exact with the patch. The live test
 window, the first white pixel must sit in the same column (11 different columns with the
 published code, 1 with the patch).
 
+Also changed, for bulk compression (the profile's "Enable RDP compression"):
+
+- `src/x224/mod.rs`: `Processor::process_with_bulk`, which `process` calls without a
+  decompressor. A Data PDU on the I/O channel whose `compressedType` carries
+  `PACKET_COMPRESSED`, `PACKET_AT_FRONT` or `PACKET_FLUSHED` has its data decompressed
+  (the `compressedLength` bytes past the two headers, as FreeRDP's `rdp_recv_data_pdu`
+  reads them) and its headers rewritten uncompressed before the crate decodes it. The
+  package left a `TODO` there and decoded the compressed bytes as they came.
+- `src/active_stage.rs`: `process` hands the X.224 frames the fast-path processor's
+  decompressor; `take_bulk_decompressor` takes it out for the processor built after a
+  reactivation.
+- `src/fast_path.rs`: `Processor::bulk_decompressor_mut` and `take_bulk_decompressor`.
+
+Why: the server compresses the fast-path updates and the slow-path PDUs with one history.
+The package decompressed the fast-path updates only, so a compressed slow-path PDU (a Save
+Session Info, a Set Error Info, a slow-path update) was misread, and the history the next
+fast-path update refers to missed it. A reactivation also rebuilt the fast-path processor
+without its decompressor. The tests `crates/heimdall-rdp/tests/bulk_compression.rs` read two
+compressed Set Error Info PDUs, the second through the first's history, at RDP 5 and RDP
+6.1, and across a reactivation.
+
 Remove when: a published `ironrdp-session` crops the decoded rows to the rectangle (or
-decodes to the rectangle's width). Then delete this directory and its `[patch.crates-io]`
-entry, and run the live test against the xrdp container.
+decodes to the rectangle's width) and decompresses the slow-path PDUs with the fast-path
+history, kept across a reactivation. Then delete this directory and its
+`[patch.crates-io]` entry, and run the live test against the xrdp container and the bulk
+compression tests.
 
 ## ironrdp-rdpdr 0.7.0
 

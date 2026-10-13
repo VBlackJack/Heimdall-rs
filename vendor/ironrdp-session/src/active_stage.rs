@@ -177,7 +177,10 @@ impl ActiveStage {
                 )
             }
             Action::X224 => {
-                let x224_outputs = self.x224_processor.process(frame)?;
+                // Heimdall-rs patch: slow-path PDUs are decompressed with the fast-path history.
+                let x224_outputs = self
+                    .x224_processor
+                    .process_with_bulk(frame, self.fast_path_processor.bulk_decompressor_mut())?;
                 let mut stage_outputs = Vec::new();
                 let mut processor_updates = Vec::new();
 
@@ -227,6 +230,13 @@ impl ActiveStage {
 
     pub fn set_fastpath_processor(&mut self, processor: fast_path::Processor) {
         self.fast_path_processor = processor;
+    }
+
+    /// Takes the bulk decompressor out of the current fast-path processor, for the one
+    /// [`ActiveStage::set_fastpath_processor`] installs after a reactivation: the server keeps
+    /// compressing with the same history. Heimdall-rs patch, see `vendor/PATCHES.md`.
+    pub fn take_bulk_decompressor(&mut self) -> Option<BulkCompressor> {
+        self.fast_path_processor.take_bulk_decompressor()
     }
 
     /// Updates the share_id used by the x224 processor for encoding ShareDataPdu.
