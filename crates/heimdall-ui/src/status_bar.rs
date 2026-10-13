@@ -359,6 +359,15 @@ fn scheduled_notice(notice: &heimdall_app::ScheduledNotice) -> String {
             name = server_text(name),
             count = (*failures)
         ),
+        ScheduledNotice::Added(name) => {
+            fl!("ui-status-scheduled-added", name = server_text(name))
+        }
+        ScheduledNotice::Updated(name) => {
+            fl!("ui-status-scheduled-updated", name = server_text(name))
+        }
+        ScheduledNotice::Deleted(name) => {
+            fl!("ui-status-scheduled-deleted", name = server_text(name))
+        }
         ScheduledNotice::Deferred(name) => {
             fl!("ui-status-scheduled-deferred", name = server_text(name))
         }

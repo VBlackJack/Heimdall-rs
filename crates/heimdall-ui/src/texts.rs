@@ -421,6 +421,31 @@ pub fn auth_method(method: AuthMethod) -> String {
     }
 }
 
+/// What became of a scheduled connection's last run, for its row.
+#[must_use]
+pub fn scheduled_outcome(task: &heimdall_core::scheduled::ScheduledTask) -> String {
+    use heimdall_core::scheduled::Outcome;
+    let Some(outcome) = task.last_outcome else {
+        return String::new();
+    };
+    let said = match outcome {
+        Outcome::Ran => fl!("ui-scheduled-outcome-ran"),
+        Outcome::Missed => fl!("ui-scheduled-outcome-missed"),
+        Outcome::Deferred => fl!("ui-scheduled-outcome-deferred"),
+        Outcome::Failed(failure) => scheduled_failure(failure, &task.server_name),
+        Outcome::Refused(refusal) => scheduled_refusal(refusal),
+    };
+    if task.suspended() {
+        fl!(
+            "ui-scheduled-outcome-suspended",
+            count = task.failures,
+            reason = said
+        )
+    } else {
+        said
+    }
+}
+
 /// Why a schedule never opens a profile.
 #[must_use]
 pub fn scheduled_refusal(refusal: RefusalKind) -> String {
