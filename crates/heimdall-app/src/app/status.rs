@@ -488,7 +488,10 @@ impl SessionState {
         }
         match tab.phase {
             Phase::Connected => Self::Connected,
-            Phase::Closed { .. } => Self::Ended,
+            // Given up by the user, at a prompt or a certificate: ended, not failed, as the
+            // tab's own card and the RDP header say it.
+            Phase::Closed { .. }
+            | Phase::Failed(UiError::Cancelled | UiError::CertificateRefused) => Self::Ended,
             Phase::Failed(_) => Self::Failed,
             _ => Self::Connecting,
         }

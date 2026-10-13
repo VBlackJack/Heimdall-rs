@@ -342,3 +342,33 @@ fn a_profile_row_shows_the_most_alive_of_its_sessions() {
     app.update(Message::RequestCloseTab(third));
     assert_eq!(app.profile_state(&web), None, "only an ended session left");
 }
+
+#[test]
+fn a_session_the_user_gave_up_has_ended_not_failed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::SftpBrowser(heimdall_core::settings::SftpBrowser {
+            auto_open_on_ssh: false,
+            ..heimdall_core::settings::SftpBrowser::default()
+        }),
+    ));
+    let web = ProfileId::new("web");
+    let (tab, attempt) = open_ssh(&mut app);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::Failed(UiError::Cancelled),
+    );
+    assert_eq!(
+        app.profile_state(&web),
+        None,
+        "a cancelled session leaves the row as if none were open"
+    );
+    assert!(
+        matches!(app.session_status(), SessionStatus::Disconnected(_)),
+        "the status bar says disconnected, not error: {:?}",
+        app.session_status()
+    );
+}
