@@ -351,6 +351,28 @@ pub(crate) fn trust_locked(
     Ok(decided)
 }
 
+/// The fingerprint `host` on `port` is trusted by, as the gateway dialog shows it: the one
+/// pinned, or else that of the first key recorded in full; `None` when the server is not
+/// trusted.
+///
+/// # Errors
+///
+/// [`KnownHostsError`] when the host is unsafe, or the store or its pins cannot be read.
+pub fn trusted_fingerprint(
+    store: &KnownHosts,
+    host: &str,
+    port: u16,
+) -> Result<Option<String>, KnownHostsError> {
+    if let Some(pin) = Pins::beside(store.path())
+        .pinned(host, port)?
+        .into_iter()
+        .next()
+    {
+        return Ok(Some(pin));
+    }
+    Ok(store.recorded(host, port)?.first().map(fingerprint))
+}
+
 /// What the import would do with each key, against the keys `store` trusts and the
 /// fingerprints it pins.
 ///

@@ -23,6 +23,7 @@ heimdall-dragout = { path = "crates/heimdall-dragout" }
 heimdall-files = { path = "crates/heimdall-files" }
 heimdall-keyring = { path = "crates/heimdall-keyring" }
 heimdall-i18n = { path = "crates/heimdall-i18n" }
+heimdall-net = { path = "crates/heimdall-net" }
 heimdall-ssh = { path = "crates/heimdall-ssh" }
 heimdall-sftp = { path = "crates/heimdall-sftp" }
 heimdall-term = { path = "crates/heimdall-term" }
@@ -52,7 +53,7 @@ ironrdp = { version = "0.17.0", features = ["connector", "session", "graphics", 
 ironrdp-core = "0.2.1"
 ironrdp-tokio = "0.10.0"
 # cpal: an RDP server's sound played on this computer (WASAPI, ALSA, Core Audio).
-cpal = "0.17.3"
+cpal = "0.18.2"
 iced = "0.14.0"
 # iced_renderer: the renderer iced picks at run time, which iced keeps private.
 iced_renderer = "0.14.0"
@@ -61,7 +62,7 @@ iced_test = "0.14.0"
 # through iced's font database, at the same version.
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 # two-face: the syntaxes iced's highlighter colours with, to name the one a file is shown in.
-two-face = { version = "0.4.5", default-features = false, features = ["syntect-default-fancy"] }
+two-face = { version = "0.5.2", default-features = false, features = ["syntect-default-fancy"] }
 log = { version = "0.4.34", features = ["std"] }
 # libunftp, unftp-sbe-fs: an FTP server in the Files tests only; ring, as the workspace.
 libunftp = { version = "0.23.1", default-features = false, features = ["ring"] }
@@ -73,7 +74,7 @@ ring = "0.17.14"
 # font stack.
 roxmltree = "0.21.1"
 # des: 3DES-CBC, offered only to a profile that allows legacy algorithms.
-russh = { version = "0.63.3", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
+russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
 rust-embed = "8.12.0"
 # rustls-native-certs: the system's certificate store, for an FTPS certificate it trusts, as in
 # the C#, and a VNC one.
@@ -82,8 +83,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 # fancy-regex: the Regex Tester tool's engine, with .NET's look-arounds, backreferences,
 # atomic groups and conditionals; already in the tree through two-face. Approved by Julien
-# Bombled on 2026-10-09.
-fancy-regex = "0.16.2"
+# Bombled on 2026-10-09. Its default features but "variable-lookbehinds" (default since 0.19):
+# the tool refuses a look-behind whose length varies, and names it to the user.
+fancy-regex = { version = "0.19.2", default-features = false, features = ["unicode", "perf", "std"] }
 # similar: the Text Diff tool's lines compared (Myers); approved by Julien Bombled on
 # 2026-10-09. The algorithms only: no text or Unicode helpers.
 similar = { version = "3.2.0", default-features = false, features = ["std"] }
@@ -91,7 +93,8 @@ similar = { version = "3.2.0", default-features = false, features = ["std"] }
 # tree through the build of a dependency.
 shlex = "2.0.1"
 # suppaftp: FTP and explicit FTPS for the Files tab; tokio and rustls on ring, as the workspace.
-# subtle: the X11 cookie compared in constant time; already in the tree through russh.
+# subtle: secrets compared in constant time (sealvault::compare, the X11 cookie); already in
+# the tree through russh.
 subtle = { version = "2.6.1", default-features = false }
 # md-5, sha1, sha2, sha3, hmac: the Hash, HMAC, TOTP and JWT tools' digests and MACs, as the
 # C# computes them with .NET's; all already in the tree through russh, ssh-key and sspi, at
@@ -101,10 +104,18 @@ sha1 = { version = "0.11.0", default-features = false }
 sha2 = { version = "0.11.0", default-features = false }
 sha3 = { version = "0.12.0", default-features = false }
 hmac = "0.13.0"
+# hkdf: HKDF-SHA256 in sealvault::kdf, for the Windows Hello envelope; already in the tree
+# through russh, at this version.
+hkdf = "0.13.0"
 suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-rustls-ring"] }
-# rfd: the system's save dialog for "Export Sessions", as the C# SaveFileDialog; on Linux
-# through the desktop portal (zbus, already in the tree), no GTK.
+# rfd: the system's open, save and folder dialogs on Windows and macOS, as the C#
+# OpenFileDialog and SaveFileDialog. Not built on Linux: there heimdall-ui speaks to the
+# desktop portal's FileChooser itself, over zbus (see docs/native-libraries.md).
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+# zbus: the D-Bus session bus of the Linux file dialogs, in Rust (no libdbus); already in the
+# tree through iced's theme detection and the keyring. Its async-io runtime is the one those
+# use.
+zbus = { version = "5.19.0", default-features = false, features = ["async-io"] }
 # clipboard-win: the files copied in Explorer (CF_HDROP), read on Windows for "Paste from
 # Explorer" and the RDP file copy; already in the tree through iced's clipboard.
 clipboard-win = "5.4.1"
@@ -127,7 +138,8 @@ windows = { version = "0.62.2", features = [
     "Storage_Streams",
 ] }
 tempfile = "3.27.0"
-# des: VNC Authentication only, a DES challenge the protocol mandates.
+# des: VNC Authentication only, a DES challenge the protocol mandates; reached only through
+# sealvault::legacy::vnc_des.
 des = "0.9.0"
 # flate2: the zlib stream of VNC ZRLE, pure Rust backend.
 flate2 = "1.1.10"

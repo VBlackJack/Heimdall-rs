@@ -27,6 +27,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use heimdall_core::credentials::{CredentialProtocol, Endpoint};
+use heimdall_core::gateway_parents::MAX_GATEWAY_CHAIN_DEPTH;
 use heimdall_core::profile::SshGateway;
 use heimdall_ssh::{HopSecrets, Secret, Step};
 use tokio_util::sync::CancellationToken;
@@ -147,7 +148,12 @@ impl App {
             .ok()
             .map(|gateway| self.store.route(gateway.parent.as_ref()));
         let (gateway, target, parents) = match (checked, target, route) {
-            (Ok(gateway), Ok(target), Some(Ok(parents))) => (gateway, target, parents),
+            // The gateway tested is one more on the chain: a connection refuses it too deep.
+            (Ok(gateway), Ok(target), Some(Ok(parents)))
+                if parents.len() < MAX_GATEWAY_CHAIN_DEPTH =>
+            {
+                (gateway, target, parents)
+            }
             (_, Err(problem), _) => return self.refuse_route_test(problem),
             _ => return self.refuse_route_test(RouteProblem::Route),
         };

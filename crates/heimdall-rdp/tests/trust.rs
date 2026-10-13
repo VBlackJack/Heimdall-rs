@@ -183,6 +183,7 @@ fn config(known_hosts: &Path, accepted: Option<AcceptedCertificate>, port: u16) 
         kerberos: true,
         time_zone: None,
         desktop_scale: 100,
+        progress: None,
     }
 }
 
@@ -498,6 +499,32 @@ async fn a_certificate_accepted_on_another_key_is_refused() {
 }
 
 #[tokio::test]
+async fn where_several_servers_answer_a_certificate_accepted_on_another_key_leaves_this_one_asked_about()
+ {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    // The question was about another machine of the pool; the reconnection lands on this one.
+    let elsewhere = AcceptedCertificate {
+        key: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            .parse()
+            .expect("fingerprint"),
+        certificate: CertificateHash::of(b"another certificate"),
+    };
+    let pool = RdpConfig {
+        several_servers: true,
+        ..config(&known, Some(elsewhere), PORT)
+    };
+    let (outcome, seen) = attempt(&pool, KEY).await;
+    let Err(RdpError::UnknownCertificate(certificate)) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(certificate.fingerprint, expected_pin());
+    assert_eq!(seen.after_handshake, 0);
+    assert!(!seen.asked);
+    assert!(lines(&known).is_empty());
+}
+
+#[tokio::test]
 async fn a_replayed_certificate_without_its_key_fails_the_handshake() {
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_rdp_hosts");
@@ -700,22 +727,22 @@ async fn under_strict_authentication_a_server_no_authority_vouches_for_is_refuse
     assert_eq!(seen.after_handshake, 0, "nothing sent past the handshake");
     assert!(lines(&known).is_empty(), "never recorded");
 
-    // Trusted before: pinned, it goes through, as the C# keeps a profile's trust.
+    // Trusted before: pinned, it is refused all the same, as Windows refuses it for the C#
+    // at its `AuthenticationLevel` 1, where Heimdall's own check does not run.
     let accepted = config(&known, Some(accepted()), PORT);
     let _ = attempt(&accepted, KEY).await;
+    assert_eq!(lines(&known).len(), 1, "pinned");
     let strict = RdpConfig {
         strict_server_authentication: true,
         ..config(&known, None, PORT)
     };
     let (outcome, seen) = attempt(&strict, KEY).await;
     assert!(
-        !matches!(
-            outcome,
-            Err(RdpError::ServerNotAuthenticated | RdpError::UnknownCertificate(_))
-        ),
+        matches!(outcome, Err(RdpError::ServerNotAuthenticated)),
         "{outcome:?}"
     );
-    assert!(seen.asked, "the credentials come once the pin matches");
+    assert!(!seen.asked, "no password on the strength of a pin");
+    assert_eq!(seen.after_handshake, 0);
 }
 
 /// Every line logged by this test binary, as `LEVEL message`.

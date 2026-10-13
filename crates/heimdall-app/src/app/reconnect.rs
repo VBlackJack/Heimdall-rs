@@ -205,20 +205,7 @@ impl App {
         let Some(profile) = self.profile_summary(id) else {
             return Vec::new();
         };
-        let message = match profile.kind {
-            // An SFTP profile opens its files, as the C# one.
-            ProfileKind::Ssh if purpose == Purpose::Files => Message::OpenFiles(profile.id),
-            ProfileKind::Sftp => Message::OpenFiles(profile.id),
-            ProfileKind::Ssh => Message::OpenProfile(profile.id),
-            ProfileKind::Rdp => Message::OpenRdp(profile.id),
-            ProfileKind::Telnet => Message::OpenTelnet(profile.id),
-            ProfileKind::Vnc => Message::OpenVnc(profile.id),
-            ProfileKind::Ftp => Message::OpenFtp(profile.id),
-            ProfileKind::Local => Message::OpenLocalProfile(profile.id),
-            ProfileKind::WinRm => Message::OpenWinRm(profile.id),
-            ProfileKind::Citrix => Message::OpenCitrix(profile.id),
-        };
-        self.update(message)
+        self.update(open_message(profile.id, profile.kind, purpose))
     }
 
     /// Opens what `reopen` names again, in a new tab, the last, which opens again the same
@@ -277,5 +264,23 @@ impl App {
             Some(TabProfile::Rdp(_)) => self.reconnect_rdp(tab_id, None),
             _ => self.reconnect_tab(tab_id),
         }
+    }
+}
+
+/// The message that opens saved profile `id` of `kind` with its own protocol; an SSH
+/// profile for `purpose`, a shell or its files.
+pub(super) fn open_message(id: ProfileId, kind: ProfileKind, purpose: Purpose) -> Message {
+    match kind {
+        // An SFTP profile opens its files, as the C# one.
+        ProfileKind::Ssh if purpose == Purpose::Files => Message::OpenFiles(id),
+        ProfileKind::Sftp => Message::OpenFiles(id),
+        ProfileKind::Ssh => Message::OpenProfile(id),
+        ProfileKind::Rdp => Message::OpenRdp(id),
+        ProfileKind::Telnet => Message::OpenTelnet(id),
+        ProfileKind::Vnc => Message::OpenVnc(id),
+        ProfileKind::Ftp => Message::OpenFtp(id),
+        ProfileKind::Local => Message::OpenLocalProfile(id),
+        ProfileKind::WinRm => Message::OpenWinRm(id),
+        ProfileKind::Citrix => Message::OpenCitrix(id),
     }
 }

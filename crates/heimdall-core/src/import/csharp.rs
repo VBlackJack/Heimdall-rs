@@ -45,6 +45,9 @@ use crate::profile::{
     SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT, SUGGESTED_WINRM_TUNNEL_PORT, SshGateway,
     SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
+use crate::scheduled::{
+    DEFAULT_TIME_OF_DAY, FALLBACK_INTERVAL_MINUTES, Schedule, ScheduledTask, TimeOfDay, new_task_id,
+};
 use crate::settings::rdp_resize_enable_delay_accepted;
 
 /// `connectionType` of an SSH profile.
@@ -138,6 +141,8 @@ pub struct Skipped {
     pub name: String,
     /// Why it was left out.
     pub reason: SkipReason,
+    /// Its place in the file's list of servers, from 1; `None` for a gateway.
+    pub position: Option<usize>,
 }
 
 /// Result of an import.
@@ -177,6 +182,11 @@ pub struct ImportReport {
     pub metadata: Vec<(ProfileId, crate::metadata::ProfileMetadata)>,
     /// The colours `settings.json` gives folders, by path: those of its palette only.
     pub folder_colors: Vec<(String, FolderColor)>,
+    /// The scheduled connections `settings.json` keeps, each with its identifier, none
+    /// timed yet: when one runs next is computed on this computer's clock as it is carried
+    /// over. For the migration of this computer's own C# store only, never from a file
+    /// picked.
+    pub scheduled: Vec<ScheduledTask>,
 }
 
 impl ImportReport {
@@ -249,6 +259,9 @@ pub enum Dropped {
     /// A local shell's elevation mode, this one: imported as "Run as administrator", which
     /// opens the shell in a window of its own, never elevated in a tab.
     Elevation(LegacyElevation),
+    /// A daily scheduled connection's time, which is no time of day: carried over at
+    /// [`DEFAULT_TIME_OF_DAY`], as the C# ran it.
+    ScheduledTime,
 }
 
 /// The elevation a C# local shell asked for: each now runs as administrator in a window of
@@ -599,6 +612,147 @@ struct LegacySettings {
     default_rdp_tunnel_port: Option<i64>,
     /// The suggested local tunnel port of an SSH profile, the C# `DefaultSshTunnelPort`.
     default_ssh_tunnel_port: Option<i64>,
+    /// The scheduled connections, the C# `ScheduledTasks`: read one by one, so an entry that
+    /// does not read is left out without the rest of the file.
+    #[serde(default)]
+    scheduled_tasks: Option<serde_json::Value>,
+}
+
+/// A scheduled connection as the C# `ScheduledTaskDto` writes it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyScheduledTask {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    server_id: Option<String>,
+    #[serde(default)]
+    server_name: Option<String>,
+    #[serde(default)]
+    connection_type: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    /// The display text, "Daily 08:00" or "Every 30 min": what an older file says of the
+    /// schedule when it has no type, time or interval.
+    #[serde(default)]
+    schedule: Option<String>,
+    #[serde(default)]
+    schedule_type: Option<String>,
+    #[serde(default)]
+    time_of_day: Option<String>,
+    #[serde(default)]
+    interval_minutes: Option<i64>,
+    #[serde(default)]
+    last_run: Option<String>,
+}
+
+/// The C# `ScheduleType` of a task run every so many minutes, compared without case.
+const INTERVAL_SCHEDULE_TYPE: &str = "Interval";
+
+/// The C# display text of a daily schedule before its time.
+const DAILY_SCHEDULE_PREFIX: &str = "Daily ";
+
+/// The C# display text of an interval schedule, around its minutes.
+const INTERVAL_SCHEDULE_PREFIX: &str = "Every ";
+const INTERVAL_SCHEDULE_SUFFIX: &str = " min";
+
+/// The C# `ConnectionType` of a task that does not say.
+const DEFAULT_TASK_CONNECTION_TYPE: &str = "SSH";
+
+/// The scheduled connections of `settings`, each with its identifier, or a new one when it
+/// has none; an entry that does not read is left out. A daily time that is no time of day
+/// is carried over at [`DEFAULT_TIME_OF_DAY`] and said in `dropped`.
+fn scheduled_tasks(
+    settings: &LegacySettings,
+    dropped: &mut Vec<DroppedSettings>,
+) -> Vec<ScheduledTask> {
+    let Some(serde_json::Value::Array(entries)) = &settings.scheduled_tasks else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| serde_json::from_value::<LegacyScheduledTask>(entry.clone()).ok())
+        .filter_map(|legacy| {
+            let id = match legacy.id.clone().filter(|id| !id.trim().is_empty()) {
+                Some(id) => id,
+                None => new_task_id().ok()?,
+            };
+            let (schedule, time_read) = schedule_of(&legacy);
+            let server_name = legacy.server_name.unwrap_or_default();
+            if !time_read {
+                dropped.push(DroppedSettings {
+                    name: server_name.clone(),
+                    settings: vec![Dropped::ScheduledTime],
+                });
+            }
+            Some(ScheduledTask {
+                id,
+                server_id: legacy
+                    .server_id
+                    .filter(|id| !id.is_empty())
+                    .map(ProfileId::new),
+                server_name,
+                connection_type: legacy
+                    .connection_type
+                    .filter(|kind| !kind.trim().is_empty())
+                    .unwrap_or_else(|| DEFAULT_TASK_CONNECTION_TYPE.to_owned()),
+                enabled: legacy.enabled.unwrap_or(true),
+                schedule,
+                last_run: legacy
+                    .last_run
+                    .as_deref()
+                    .and_then(crate::utc::parse_iso)
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .and_then(|since| i64::try_from(since.as_secs()).ok()),
+                next_run: None,
+                last_outcome: None,
+                failures: 0,
+            })
+        })
+        .collect()
+}
+
+/// The schedule of `legacy`, as the C# `ComputeNextRun` reads it, and whether a daily time
+/// was read: a type other than `Interval` is daily; an interval below one minute is
+/// [`FALLBACK_INTERVAL_MINUTES`]. A file without a type, time or interval is read from its
+/// display text.
+fn schedule_of(legacy: &LegacyScheduledTask) -> (Schedule, bool) {
+    let text = legacy
+        .schedule
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    let shown_minutes = text
+        .strip_prefix(INTERVAL_SCHEDULE_PREFIX)
+        .and_then(|rest| rest.strip_suffix(INTERVAL_SCHEDULE_SUFFIX))
+        .and_then(|minutes| minutes.trim().parse::<i64>().ok());
+    let interval = match &legacy.schedule_type {
+        Some(kind) => kind.trim().eq_ignore_ascii_case(INTERVAL_SCHEDULE_TYPE),
+        None => shown_minutes.is_some(),
+    };
+    if interval {
+        let minutes = legacy
+            .interval_minutes
+            .filter(|minutes| *minutes > 0)
+            .or(shown_minutes)
+            .and_then(|minutes| u32::try_from(minutes).ok())
+            .filter(|minutes| *minutes > 0)
+            .unwrap_or(FALLBACK_INTERVAL_MINUTES);
+        return (Schedule::Interval { minutes }, true);
+    }
+    let written = legacy
+        .time_of_day
+        .as_deref()
+        .or_else(|| text.strip_prefix(DAILY_SCHEDULE_PREFIX));
+    match written.and_then(TimeOfDay::parse) {
+        Some(time) => (Schedule::Daily { time: time.text() }, true),
+        None => (
+            Schedule::Daily {
+                time: DEFAULT_TIME_OF_DAY.to_owned(),
+            },
+            false,
+        ),
+    }
 }
 
 /// The local tunnel port each type of profile is suggested, as the C#
@@ -811,11 +965,16 @@ impl RdpChoices {
 
     /// The C# audio mode: not played, played here, or played on the server.
     fn audio(&self) -> AudioPlayback {
-        match self.audio_mode {
-            CSHARP_AUDIO_LOCAL => AudioPlayback::Local,
-            CSHARP_AUDIO_ON_SERVER => AudioPlayback::OnServer,
-            _ => AudioPlayback::Off,
-        }
+        audio_playback(self.audio_mode)
+    }
+}
+
+/// The C# audio mode `mode`: played here, played on the server, else not played.
+pub(super) fn audio_playback(mode: i64) -> AudioPlayback {
+    match mode {
+        CSHARP_AUDIO_LOCAL => AudioPlayback::Local,
+        CSHARP_AUDIO_ON_SERVER => AudioPlayback::OnServer,
+        _ => AudioPlayback::Off,
     }
 }
 
@@ -1029,6 +1188,7 @@ pub fn import(
         folder_colors: folder_colors(&settings.group_defaults),
         ..ImportReport::default()
     };
+    report.scheduled = scheduled_tasks(&settings, &mut report.dropped);
     let suggested = SuggestedTunnelPorts::of(&settings);
     // The document's gateways, then the settings' ones: an identifier seen twice is the
     // first one's.
@@ -1040,7 +1200,7 @@ pub fn import(
         }
     }
     let (gateways, skipped_gateways) = convert_gateways(&legacy_gateways);
-    for mut server in servers.servers {
+    for (index, mut server) in servers.servers.into_iter().enumerate() {
         resolve_group_defaults(server.group.as_deref(), &settings.group_defaults)
             .apply_to(&mut server);
         let converted = if server
@@ -1106,6 +1266,7 @@ pub fn import(
                 id: server.id,
                 name: server.display_name,
                 reason,
+                position: Some(index + 1),
             }),
         }
     }
@@ -1221,6 +1382,7 @@ fn convert_gateways(legacy: &[LegacyGateway]) -> (Vec<SshGateway>, Vec<Skipped>)
                 id: gateway.id.clone(),
                 name: gateway.name.clone(),
                 reason,
+                position: None,
             }),
         }
     }

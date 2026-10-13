@@ -14,21 +14,26 @@
  * limitations under the License.
  */
 
-//! Quick Connect, the C# Heimdall's Ctrl+K palette without its tools and snippets: the
-//! sessions found as it scores them, the first ten when nothing is typed, those of the hosts
-//! last connected to first; when none is found, `ssh user@host:port` or `user@host` opens an
-//! SSH session saved nowhere, and a bare host or address offers SSH and RDP to it, the one
-//! last used with it first.
+//! Quick Connect, the C# Heimdall's Ctrl+K palette without its snippets and its tools'
+//! arguments: the sessions and the tools found as it scores them, the first ten sessions and
+//! the tools used lately when nothing is typed, those of the hosts last connected to first;
+//! when none is found, `ssh user@host:port` or `user@host` opens an SSH session saved
+//! nowhere, and a bare host or address offers SSH and RDP to it, the one last used with it
+//! first. Opened from a tab's "Split...", the sessions open in other tabs come first, to be
+//! merged into it without reconnecting; Ctrl+Enter opens a session as a split of the tab
+//! shown, as the C# `ConnectSplitFromPaletteAsync`.
 
 use std::net::IpAddr;
 
 use heimdall_core::profile::{DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, RdpProfile, SshProfile};
 
 use super::reconnect::Reopen;
+use super::split::{Axis, Placement, SplitMessage};
 use super::tree::{ProfileKind, ProfileSummary};
-use super::{App, Effect, Message, Phase, TabProfile};
+use super::{App, Effect, Message, Phase, TabProfile, ToolsMessage};
 use crate::driver::Purpose;
 use crate::ids::TabId;
+use crate::tools::{ToolCategory, ToolId};
 
 /// Sessions shown when nothing is typed, as the C# palette.
 const FIRST_SESSIONS: usize = 10;
@@ -38,6 +43,13 @@ const MOST_FOUND: usize = 20;
 
 /// Connections remembered, as the C# tracker's `MaxEntries`.
 const RECENT_KEPT: usize = 50;
+
+/// The score of a tool whose command word is typed whole, as the C# `ToolExactAliasScore`:
+/// above any other.
+const TOOL_EXACT_ALIAS_SCORE: usize = 999;
+
+/// What is typed to list every tool, as the C# palette's "tool" and "tools".
+const ALL_TOOLS_WORDS: [&str; 2] = ["tool", "tools"];
 
 /// What Quick Connect offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +70,115 @@ pub enum QuickResult {
         /// The host.
         host: String,
     },
+    /// A session open in another tab, merged into the tab split without reconnecting, as
+    /// the C# split mode's "Active Sessions".
+    Session {
+        /// Its tab.
+        tab: TabId,
+        /// The tab's title, as it is called on the strip.
+        title: String,
+        /// Its protocol.
+        kind: ProfileKind,
+    },
+    /// A built-in tool, opened in a tab of its own.
+    Tool {
+        /// The tool.
+        tool: ToolId,
+        /// Its name in the language shown, its tab's title.
+        name: String,
+    },
+}
+
+/// The section of the palette a result is listed under, as the C# palette groups its
+/// results by their `Group`, in the order each first appears.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuickGroup {
+    /// A saved session's folder.
+    Folder(String),
+    /// A saved session in no folder, as the C# `PaletteServersHeader` names it.
+    Servers,
+    /// A host typed, as the C# `PaletteQuickConnectHeader`.
+    QuickConnect,
+    /// The sessions open to merge, as the C# `SplitActiveSessionsHeader`.
+    ActiveSessions,
+    /// The tools used lately, when nothing is typed, as the C# `PaletteRecentToolsHeader`.
+    RecentTools,
+    /// A tool found, under its category.
+    Category(ToolCategory),
+}
+
+/// A line of the palette: a result and the section it is listed under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickRow {
+    /// What is offered.
+    pub result: QuickResult,
+    /// Its section.
+    pub group: QuickGroup,
+}
+
+/// The words that find a tool in the language shown, as the C# scores its label and its
+/// category's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolWords {
+    /// Its name.
+    pub name: String,
+    /// Its category's name.
+    pub category: String,
+}
+
+impl QuickRow {
+    /// A saved session's line, under its folder.
+    fn profile(profile: ProfileSummary) -> Self {
+        let group = profile
+            .group
+            .as_deref()
+            .map(str::trim)
+            .filter(|folder| !folder.is_empty())
+            .map_or(QuickGroup::Servers, |folder| {
+                QuickGroup::Folder(folder.to_owned())
+            });
+        Self {
+            result: QuickResult::Profile(profile),
+            group,
+        }
+    }
+
+    /// A tool's line, under `group`.
+    fn tool(tool: ToolId, words: &dyn Fn(ToolId) -> ToolWords, group: QuickGroup) -> Self {
+        Self {
+            result: QuickResult::Tool {
+                tool,
+                name: words(tool).name,
+            },
+            group,
+        }
+    }
+}
+
+/// `rows` with those of a section together, the sections in the order each first appears,
+/// as the C# palette's grouped list shows them.
+fn grouped(rows: Vec<QuickRow>) -> Vec<QuickRow> {
+    let mut sections: Vec<(QuickGroup, Vec<QuickRow>)> = Vec::new();
+    for row in rows {
+        match sections.iter_mut().find(|(group, _)| *group == row.group) {
+            Some((_, section)) => section.push(row),
+            None => sections.push((row.group.clone(), vec![row])),
+        }
+    }
+    sections.into_iter().flat_map(|(_, rows)| rows).collect()
+}
+
+/// How well `tool` matches `query`, as the C# `ScoreToolDescriptor`: its name, its command
+/// words, a word typed whole above all, and its category's name by half.
+fn score_tool(tool: ToolId, words: &ToolWords, query: &str) -> usize {
+    let mut best = score_text(&words.name, query);
+    for prefix in tool.prefixes() {
+        if prefix.eq_ignore_ascii_case(query) {
+            return TOOL_EXACT_ALIAS_SCORE;
+        }
+        best = best.max(score_text(prefix, query));
+    }
+    best.max(score_text(&words.category, query) / 2)
 }
 
 /// How well `text` matches `query`, as the C# palette scores it: a start best, then
@@ -143,93 +264,260 @@ fn parse_ssh(query: &str) -> Option<(String, String, u16)> {
 }
 
 impl App {
-    /// What Quick Connect offers for `query`.
-    #[must_use]
-    pub fn quick_results(&self, query: &str) -> Vec<QuickResult> {
-        let query = query.trim();
+    /// The saved sessions Quick Connect offers when nothing is typed: those of the hosts
+    /// last connected to first, newest first, then by name, as the C#; `most` of them when
+    /// it says.
+    fn first_profiles(&self, most: Option<usize>) -> Vec<ProfileSummary> {
         let mut profiles = self.profile_summaries();
-        if query.is_empty() {
-            // The hosts last connected to first, newest first; then by name, as the C#.
-            profiles.sort_by_cached_key(|profile| {
-                let recency = profile
-                    .endpoint
-                    .as_ref()
-                    .and_then(|(host, _)| self.recency(host))
-                    .unwrap_or(usize::MAX);
-                (recency, profile.name.to_lowercase())
-            });
-            return profiles
-                .into_iter()
-                .take(FIRST_SESSIONS)
-                .map(QuickResult::Profile)
-                .collect();
-        }
-        let mut scored: Vec<(usize, ProfileSummary)> = profiles
+        profiles.sort_by_cached_key(|profile| {
+            let recency = profile
+                .endpoint
+                .as_ref()
+                .and_then(|(host, _)| self.recency(host))
+                .unwrap_or(usize::MAX);
+            (recency, profile.name.to_lowercase())
+        });
+        profiles.truncate(most.unwrap_or(usize::MAX));
+        profiles
+    }
+
+    /// The saved sessions `query` finds, the best first, equal ones by name, each with its
+    /// score.
+    fn found_profiles(&self, query: &str) -> Vec<(usize, ProfileSummary)> {
+        let mut scored: Vec<(usize, ProfileSummary)> = self
+            .profile_summaries()
             .into_iter()
             .map(|profile| (score(&profile, query), profile))
             .filter(|(score, _)| *score > 0)
             .collect();
-        // The best first; equal ones by name.
         scored.sort_by(|a, b| {
             b.0.cmp(&a.0)
                 .then_with(|| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()))
         });
-        let mut results: Vec<QuickResult> = scored
+        scored
+    }
+
+    /// What `query` offers when nothing is found: `ssh user@host:port` an SSH session, a
+    /// bare host SSH and RDP to it, the protocol last used with it first, as the C# leans.
+    fn typed_destinations(&self, query: &str) -> Vec<QuickResult> {
+        if let Some((username, host, port)) = parse_ssh(query) {
+            return vec![QuickResult::Ssh {
+                username: Some(username),
+                host,
+                port,
+            }];
+        }
+        if !is_host(query) {
+            return Vec::new();
+        }
+        let mut offered = vec![
+            QuickResult::Ssh {
+                username: None,
+                host: query.to_owned(),
+                port: DEFAULT_SSH_PORT,
+            },
+            QuickResult::Rdp {
+                host: query.to_owned(),
+            },
+        ];
+        if self.last_kind(query) == Some(ProfileKind::Rdp) {
+            offered.reverse();
+        }
+        offered
+    }
+
+    /// The saved sessions Quick Connect finds for `query`, the best first, and the hosts
+    /// typed it offers when none is: sessions only, neither tools nor sections.
+    #[must_use]
+    pub fn quick_results(&self, query: &str) -> Vec<QuickResult> {
+        let query = query.trim();
+        if query.is_empty() {
+            return self
+                .first_profiles(Some(FIRST_SESSIONS))
+                .into_iter()
+                .map(QuickResult::Profile)
+                .collect();
+        }
+        let results: Vec<QuickResult> = self
+            .found_profiles(query)
             .into_iter()
             .take(MOST_FOUND)
             .map(|(_, profile)| QuickResult::Profile(profile))
             .collect();
         if results.is_empty() {
-            if let Some((username, host, port)) = parse_ssh(query) {
-                results.push(QuickResult::Ssh {
-                    username: Some(username),
-                    host,
-                    port,
-                });
-            } else if is_host(query) {
-                results.push(QuickResult::Ssh {
-                    username: None,
-                    host: query.to_owned(),
-                    port: DEFAULT_SSH_PORT,
-                });
-                results.push(QuickResult::Rdp {
-                    host: query.to_owned(),
-                });
-                // The protocol last used with this host first, as the C# palette leans.
-                if self.last_kind(query) == Some(ProfileKind::Rdp) {
-                    results.reverse();
-                }
-            }
+            self.typed_destinations(query)
+        } else {
+            results
         }
-        results
     }
 
-    /// What Quick Connect offers for `query`, opened from tab `split`'s "Split..." when it
-    /// is: with nothing typed, the profiles last split with the one its pane shows come
-    /// first, the most recent first, as the C# palette's split mode raises them.
+    /// The palette's lines for `query`, as the C# `OnSearchTextChanged` builds them and its
+    /// grouped list shows them, each section together; `words` names the tools in the
+    /// language shown.
+    ///
+    /// Nothing typed: opened from tab `split`'s "Split...", the sessions open in the other
+    /// tabs it can be merged with, then the profiles last split with the one its pane shows,
+    /// the most recent first, then every other profile; otherwise the first ten profiles.
+    /// The tools used lately follow. "tool" or "tools" lists every tool. Anything else is
+    /// scored across the tools and the profiles, the best twenty kept, and a host typed is
+    /// offered when nothing is found.
     #[must_use]
-    pub fn quick_results_in(&self, query: &str, split: Option<TabId>) -> Vec<QuickResult> {
-        let results = self.quick_results(query);
-        let Some(own) = split
-            .filter(|_| query.trim().is_empty())
-            .and_then(|host| self.saved_profile(self.focus_of(host)))
-        else {
-            return results;
-        };
-        let profiles = self.profile_summaries();
-        let mut raised: Vec<QuickResult> = self
-            .split_layouts
-            .partners(&own)
+    pub fn quick_results_in(
+        &self,
+        query: &str,
+        split: Option<TabId>,
+        words: &dyn Fn(ToolId) -> ToolWords,
+    ) -> Vec<QuickRow> {
+        let query = query.trim();
+        if query.is_empty() {
+            return grouped(self.first_rows(split, words));
+        }
+        if ALL_TOOLS_WORDS
+            .iter()
+            .any(|all| all.eq_ignore_ascii_case(query))
+        {
+            return ToolId::ALL
+                .into_iter()
+                .map(|tool| QuickRow::tool(tool, words, QuickGroup::Category(tool.category())))
+                .collect();
+        }
+        // Tools first, then the profiles, as the C# adds them; the sort keeps that order
+        // between equal scores.
+        let mut scored: Vec<(usize, QuickRow)> = ToolId::ALL
             .into_iter()
-            .filter_map(|partner| profiles.iter().find(|profile| profile.id == *partner))
-            .map(|profile| QuickResult::Profile(profile.clone()))
+            .filter_map(|tool| {
+                let score = score_tool(tool, &words(tool), query);
+                (score > 0).then(|| {
+                    let row = QuickRow::tool(tool, words, QuickGroup::Category(tool.category()));
+                    (score, row)
+                })
+            })
+            .chain(
+                self.found_profiles(query)
+                    .into_iter()
+                    .map(|(score, profile)| (score, QuickRow::profile(profile))),
+            )
             .collect();
-        let rest: Vec<QuickResult> = results
+        scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        let rows: Vec<QuickRow> = scored
             .into_iter()
-            .filter(|result| !raised.contains(result))
+            .take(MOST_FOUND)
+            .map(|(_, row)| row)
             .collect();
-        raised.extend(rest);
-        raised
+        if !rows.is_empty() {
+            return grouped(rows);
+        }
+        self.typed_destinations(query)
+            .into_iter()
+            .map(|result| QuickRow {
+                result,
+                group: QuickGroup::QuickConnect,
+            })
+            .collect()
+    }
+
+    /// The palette's lines when nothing is typed, before they are put in sections.
+    fn first_rows(
+        &self,
+        split: Option<TabId>,
+        words: &dyn Fn(ToolId) -> ToolWords,
+    ) -> Vec<QuickRow> {
+        let mut rows: Vec<QuickRow> = Vec::new();
+        if let Some(host) = split {
+            // The sessions open, to merge without reconnecting, as the C# lists them first.
+            rows.extend(self.merge_candidates(host).into_iter().map(|tab| QuickRow {
+                result: QuickResult::Session {
+                    tab: tab.id,
+                    title: tab.display_title().to_owned(),
+                    kind: self.tab_kind(tab),
+                },
+                group: QuickGroup::ActiveSessions,
+            }));
+            // Then the profiles last split with the one its pane shows, the most recent
+            // first, then every other one: all of them, as the C# split mode lists them.
+            let profiles = self.profile_summaries();
+            let partners: Vec<ProfileSummary> = self
+                .saved_profile(self.focus_of(host))
+                .map(|own| self.split_layouts.partners(&own))
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|partner| profiles.iter().find(|profile| profile.id == *partner))
+                .cloned()
+                .collect();
+            let others: Vec<ProfileSummary> = self
+                .first_profiles(None)
+                .into_iter()
+                .filter(|profile| !partners.iter().any(|partner| partner.id == profile.id))
+                .collect();
+            rows.extend(partners.into_iter().chain(others).map(QuickRow::profile));
+        } else {
+            rows.extend(
+                self.first_profiles(Some(FIRST_SESSIONS))
+                    .into_iter()
+                    .map(QuickRow::profile),
+            );
+        }
+        rows.extend(
+            self.recent_tools()
+                .iter()
+                .map(|tool| QuickRow::tool(*tool, words, QuickGroup::RecentTools)),
+        );
+        rows
+    }
+
+    /// What opens `result`, chosen in the palette opened from a tab's "Split..." when
+    /// `split` says which and how, and with Ctrl+Enter when `beside`, as the C#
+    /// `ConnectFromPaletteAsync` and `ConnectSplitFromPaletteAsync` route it.
+    ///
+    /// A session open is merged into the tab split. A tool opens in a tab of its own: a
+    /// tool's tab is neither split nor merged here. With Ctrl+Enter, a saved session opens
+    /// as a split of the tab shown, side by side, and as usual when no tab is shown or the
+    /// one shown is a tool's; a host typed opens as usual, as the C#. Without it, in split
+    /// mode, what is chosen is merged into the tab split; otherwise it opens as usual. Each
+    /// message goes through the gates an open goes through.
+    #[must_use]
+    pub fn quick_open(
+        &self,
+        result: QuickResult,
+        split: Option<(TabId, Axis)>,
+        beside: bool,
+    ) -> Message {
+        match result {
+            QuickResult::Session { tab, .. } => match split {
+                Some((host, axis)) => Message::Split(SplitMessage::Merge {
+                    host,
+                    tab,
+                    axis,
+                    placement: Placement::Second,
+                }),
+                None => Message::SelectTab(tab),
+            },
+            QuickResult::Tool { tool, name } => {
+                Message::Tools(ToolsMessage::Open { tool, title: name })
+            }
+            result @ QuickResult::Profile(_) if beside => match self.splittable_shown() {
+                Some(host) => Message::Split(SplitMessage::QuickConnect {
+                    host,
+                    axis: Axis::SideBySide,
+                    result,
+                }),
+                None => Message::QuickConnect(result),
+            },
+            result if beside => Message::QuickConnect(result),
+            result => match split {
+                Some((host, axis)) => {
+                    Message::Split(SplitMessage::QuickConnect { host, axis, result })
+                }
+                None => Message::QuickConnect(result),
+            },
+        }
+    }
+
+    /// The tab shown when a session can be opened as a split of it: not a tool's.
+    fn splittable_shown(&self) -> Option<TabId> {
+        self.shown_tab()
+            .filter(|tab| tab.tool().is_none())
+            .map(|tab| tab.id)
     }
 
     /// Records that `tab_id` just connected: its host, with its protocol, first among the
@@ -275,6 +563,10 @@ impl App {
         let (profile, purpose) = match result {
             QuickResult::Profile(profile) => {
                 return self.update(Message::ConnectProfile(profile.id));
+            }
+            // Routed by `quick_open`; reaching here, they open as it would outside split mode.
+            result @ (QuickResult::Session { .. } | QuickResult::Tool { .. }) => {
+                return self.update(self.quick_open(result, None, false));
             }
             QuickResult::Ssh {
                 username,

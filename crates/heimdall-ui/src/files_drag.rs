@@ -16,7 +16,8 @@
 
 //! A drag in a Files tab's panes, as the C# Files tab's: pressed on an entry, it becomes a
 //! drag once the pointer moves; where the pointer is let go, a pane or a folder in it, is
-//! where the entries go.
+//! where the entries go. Let go over the list of another tab shown beside it, the entries
+//! are copied there as the application's module `files_drop` says.
 //!
 //! Entries of a local pane dragged out of the window go on as the system's drag, to
 //! Explorer or another application, as the C# local list drags them
@@ -57,7 +58,7 @@ pub struct FilesDrag {
     start: Point,
     /// The pointer moved far enough: it is a drag.
     pub active: bool,
-    /// Where the pointer is now, in the same tab.
+    /// Where the pointer is now, in its tab or another.
     pub over: Option<Spot>,
 }
 
@@ -83,18 +84,38 @@ impl FilesDrag {
     }
 
     /// The message dropping the entries where the pointer is; `None` when it is not a drag
-    /// or over no pane of its tab.
+    /// or over no pane.
     #[must_use]
     pub fn drop_message(self) -> Option<AppMessage> {
-        let onto = self
-            .over
-            .filter(|over| self.active && over.tab == self.from.tab)?;
-        Some(AppMessage::Files(FilesMessage::DropEntries {
-            tab: onto.tab,
-            from: self.from.side,
-            onto: onto.side,
-            into: onto.index,
+        let onto = self.over.filter(|_| self.active)?;
+        Some(AppMessage::Files(if onto.tab == self.from.tab {
+            FilesMessage::DropEntries {
+                tab: onto.tab,
+                from: self.from.side,
+                onto: onto.side,
+                into: onto.index,
+            }
+        } else {
+            FilesMessage::DropAcross {
+                from_tab: self.from.tab,
+                from: self.from.side,
+                tab: onto.tab,
+                onto: onto.side,
+                into: onto.index,
+            }
         }))
+    }
+
+    /// Where a drop would go, to be lit: over a pane of its own tab, or of another tab
+    /// taking it; `None` before the press becomes a drag.
+    #[must_use]
+    pub fn target(&self, app: &heimdall_app::App) -> Option<Spot> {
+        self.over.filter(|over| {
+            self.active
+                && (over.tab == self.from.tab
+                    || app
+                        .takes_drop_across((self.from.tab, self.from.side), (over.tab, over.side)))
+        })
     }
 }
 

@@ -62,10 +62,25 @@ Also changed, for Kerberos logon:
 Why: Negotiate is used only with a `KerberosConfig`, which already carries the client's
 name; the package passed the wrong one of the two names it holds.
 
+Also changed, for no C cryptographic library in the build:
+
+- `Cargo.toml`: `sspi` is taken with `default-features = false`. Its only default feature,
+  `aws-lc-rs`, asks for `rustls?/aws-lc-rs` and `__install-crypto-provider`; nothing else
+  is turned off.
+
+Why: the connector builds no part of sspi that uses rustls (that needs sspi's `tsssp` or
+`network_client`, both off), so `aws-lc-rs` was never compiled, but Cargo still resolves a
+weak dependency feature when it writes `Cargo.lock`: the lock carried `aws-lc-rs`,
+`aws-lc-sys` (the AWS-LC C library), `cmake`, `dunce` and `fs_extra`, and `cargo fetch`
+downloaded them. Without the default feature they leave the lock; the compiled code is the
+same. `deny.toml` bans both crates, so that a later bump that would build them fails
+(cargo-deny reads the built graph: it never saw these lock-only entries). TLS stays on
+rustls with ring, chosen explicitly where each configuration is built.
+
 Remove when: a published `ironrdp-connector` depends on sspi 0.22 or later, can ask for the
 administrative session and for sound kept on the server, leaves `scard` to the user (or
-Heimdall-rs offers smart-card logon), and names the client in `NegotiateConfig` by
-`KerberosConfig::hostname`. Then delete this directory and the
+Heimdall-rs offers smart-card logon), takes sspi without its `aws-lc-rs` default, and
+names the client in `NegotiateConfig` by `KerberosConfig::hostname`. Then delete this directory and the
 `[patch.crates-io]` entry, map the two options to its fields, and run the gates,
 `crates/heimdall-rdp/tests/session_options.rs` included: it reads both off the wire.
 

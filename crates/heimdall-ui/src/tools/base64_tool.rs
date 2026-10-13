@@ -18,9 +18,7 @@
 //! at most 5 MB, encoded, standard or URL-safe; Base64 decoded to text, or to a file saved
 //! where the user says; the output copied.
 
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 
 use heimdall_app::TabId;
 use heimdall_core::tools::base64_codec;
@@ -30,6 +28,7 @@ use iced::widget::{checkbox, column, container, row, text};
 use iced::{Element, Length, Task, window};
 
 use super::{CopySlot, ToolMessage, ToolPane};
+use crate::file_dialog::{self, FileDialog};
 use crate::i18n::fl;
 use crate::shell::{Message, main_window_task};
 use crate::styles;
@@ -42,7 +41,7 @@ pub const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const STACK_GAP: f32 = 8.0;
 
 /// The file the user picks in a file dialog, once it closes; `None` when cancelled.
-type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
+type Pick = file_dialog::Pick<PathBuf>;
 
 /// What the status line says, as the C# `Base64StatusKind`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -404,25 +403,25 @@ fn pick_file(tab: TabId, main: Option<window::Id>) -> Task<Message> {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                Box::pin(
-                    rfd::AsyncFileDialog::new()
-                        .set_title(title.clone())
-                        .set_parent(&window)
-                        .pick_file(),
-                ) as Pick
+                FileDialog::new()
+                    .set_title(title.clone())
+                    .set_parent(window)
+                    .pick_file()
             }),
-            None => Task::done(
-                Box::pin(rfd::AsyncFileDialog::new().set_title(title).pick_file()) as Pick,
-            ),
+            None => Task::done(FileDialog::new().set_title(title).pick_file()),
         };
         pick.then(move |pick| Task::perform(read_picked(pick), done))
     })
 }
 
-/// The file picked read, at most [`MAX_FILE_BYTES`]; `None` when none was picked.
+/// The file picked read, at most [`MAX_FILE_BYTES`], or why no dialog could be shown;
+/// `None` when none was picked.
 async fn read_picked(pick: Pick) -> Option<Loaded> {
-    let file = pick.await?;
-    Some(read_file(file.path().to_owned()).await)
+    match pick.await {
+        Ok(Some(path)) => Some(read_file(path).await),
+        Ok(None) => None,
+        Err(unavailable) => Some(Loaded::Failed(unavailable.message())),
+    }
 }
 
 /// The file at `path` read for file mode, as the C# `Base64ToolService.LoadFileAsync`: its
@@ -450,25 +449,17 @@ fn pick_save(tab: TabId, main: Option<window::Id>) -> Task<Message> {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                Box::pin(
-                    rfd::AsyncFileDialog::new()
-                        .set_title(title.clone())
-                        .set_parent(&window)
-                        .save_file(),
-                ) as Pick
+                FileDialog::new()
+                    .set_title(title.clone())
+                    .set_parent(window)
+                    .save_file()
             }),
-            None => Task::done(
-                Box::pin(rfd::AsyncFileDialog::new().set_title(title).save_file()) as Pick,
-            ),
+            None => Task::done(FileDialog::new().set_title(title).save_file()),
         };
-        pick.then(move |pick| {
-            Task::perform(pick, move |file| {
-                Message::Tool(
-                    tab,
-                    ToolMessage::Base64(Base64Message::SaveTo(
-                        file.map(|file| file.path().to_owned()),
-                    )),
-                )
+        pick.then(move |pick: Pick| {
+            Task::perform(pick, move |picked| match picked {
+                Ok(path) => Message::Tool(tab, ToolMessage::Base64(Base64Message::SaveTo(path))),
+                Err(unavailable) => file_dialog::failed(&unavailable),
             })
         })
     })

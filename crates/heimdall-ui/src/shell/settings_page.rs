@@ -31,8 +31,8 @@ use heimdall_app::profile_draft::ProfileField;
 use heimdall_app::update_check::{Failure, ReleaseTag, minutes_to_wait};
 use heimdall_app::windows_hello;
 use heimdall_app::{
-    Dialog, Effect, Message as AppMessage, PinMessage, ProviderMessage, UpdateMessage,
-    UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus, search_folded,
+    Dialog, Effect, LegacyMigrationMessage, Message as AppMessage, PinMessage, ProviderMessage,
+    UpdateMessage, UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus, search_folded,
 };
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
@@ -191,6 +191,21 @@ fn send(message: SettingsMessage) -> Message {
     Message::App(AppMessage::Settings(message))
 }
 
+/// The C# "Welcome tour" card (`MainWindow.xaml:2715-2745`): what it does, then "Show the tour
+/// again", the only way back into the tour once it was finished or skipped.
+fn onboarding_row<'a>() -> Element<'a, Message> {
+    column![
+        text(fl!("ui-settings-onboarding-hint"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+        button(text(row_label(SettingRow::Onboarding)))
+            .style(styles::secondary)
+            .on_press(Message::ReplayTour),
+    ]
+    .spacing(spacing::MD)
+    .into()
+}
+
 /// The heading over `card`, when it has one of its own.
 fn card_heading(card: SettingsCard) -> Option<String> {
     Some(match card {
@@ -198,6 +213,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::Behavior => fl!("ui-settings-behavior"),
         SettingsCard::Updates => fl!("ui-settings-updates"),
         SettingsCard::Reachability => fl!("ui-settings-reachability"),
+        SettingsCard::Onboarding => fl!("ui-settings-onboarding"),
         SettingsCard::Terminal => fl!("ui-settings-terminal"),
         SettingsCard::SessionLogging => fl!("ui-settings-session-logging"),
         SettingsCard::Macros => fl!("ui-macros-menu"),
@@ -244,7 +260,9 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::MaxSessions => fl!("ui-settings-max-sessions"),
         SettingRow::UpdateChecks => fl!("ui-settings-updates-enabled"),
         SettingRow::UpdateVersion => fl!("ui-settings-updates-current-version"),
+        SettingRow::LegacyMigration => fl!("ui-settings-legacy-migration"),
         SettingRow::Reachability => fl!("ui-settings-reachability-enabled"),
+        SettingRow::Onboarding => fl!("ui-settings-onboarding-replay"),
         SettingRow::FontSize => fl!("ui-settings-font-size"),
         SettingRow::FontFamily => fl!("ui-settings-font-family"),
         SettingRow::ColorScheme => fl!("ui-settings-color-scheme"),
@@ -299,6 +317,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel-hint"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep-hint"),
         SettingRow::Reachability => fl!("ui-settings-reachability-hint"),
+        SettingRow::Onboarding => fl!("ui-settings-onboarding-hint"),
         SettingRow::PowerShellPolicy => fl!("ui-settings-powershell-policy-hint"),
         SettingRow::SessionLogging => fl!("ui-settings-session-logging-warning"),
         SettingRow::SessionLogDirectory => fl!("ui-settings-session-log-directory-hint"),
@@ -349,6 +368,11 @@ fn row_choices(row: SettingRow) -> Vec<String> {
             .to_vec(),
         SettingRow::MaxSessions => vec![SessionsChoice(0).to_string()],
         SettingRow::UpdateVersion => vec![fl!("ui-settings-updates-check-now")],
+        // The button and what it says, which the C# search finds.
+        SettingRow::LegacyMigration => vec![
+            fl!("ui-settings-legacy-migration-reoffer"),
+            fl!("ui-settings-legacy-migration-description"),
+        ],
         // The modes, and the button beside them, which the C# search finds as well.
         SettingRow::SshDefaultMode => SshMode::ALL
             .map(|mode| DefaultSshModeChoice(mode).to_string())
@@ -1050,6 +1074,8 @@ impl Shell {
             | SettingRow::RdpResetAll => self.list_card_row(row),
             SettingRow::Pin | SettingRow::Vault | SettingRow::Provider => self.security_row(row),
             SettingRow::UpdateVersion => self.update_version_row(),
+            SettingRow::LegacyMigration => self.legacy_migration_row(),
+            SettingRow::Onboarding => onboarding_row(),
             _ => self.choice_row(row),
         }
     }
@@ -1120,6 +1146,36 @@ impl Shell {
                 ]
                 .spacing(spacing::MD)
                 .align_y(iced::Alignment::Center),
+            );
+        }
+        body.into()
+    }
+
+    /// The C# "Legacy migration" section of the Updates card (`MainWindow.xaml:2653-2677`):
+    /// what it does, then "Offer legacy migration at next startup", which can be pressed only
+    /// once an offer was declined, said under it until then.
+    fn legacy_migration_row(&self) -> Element<'_, Message> {
+        let declined = self.app.settings().legacy_migration.has_decline();
+        let mut offer =
+            button(text(fl!("ui-settings-legacy-migration-reoffer"))).style(styles::secondary);
+        if declined {
+            offer = offer.on_press(Message::App(AppMessage::LegacyMigration(
+                LegacyMigrationMessage::OfferAgain,
+            )));
+        }
+        let mut body = column![
+            text(row_label(SettingRow::LegacyMigration))
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+            text(fl!("ui-settings-legacy-migration-description")).style(text::secondary),
+            offer,
+        ]
+        .spacing(spacing::SM);
+        if !declined {
+            body = body.push(
+                text(fl!("ui-settings-legacy-migration-unavailable"))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
             );
         }
         body.into()
@@ -1384,7 +1440,7 @@ impl Shell {
     fn font_family_row(&self) -> Element<'_, Message> {
         let chosen = &self.app.settings().terminal_font_family;
         let mut offered: Vec<FontChoice> =
-            crate::terminal_view::font::available(crate::terminal_view::font::installed)
+            crate::terminal_view::font::available(crate::terminal_view::font::installed())
                 .into_iter()
                 .map(|family| FontChoice(family.to_owned()))
                 .collect();

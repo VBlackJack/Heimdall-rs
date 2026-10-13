@@ -15,15 +15,17 @@
  */
 
 //! The family the terminals' text is drawn in, as the C# `TerminalFontFamily`: the embedded
-//! one unless another is chosen, among the monospace families desktops commonly have.
+//! one unless another is chosen, among the monospace families installed on the computer.
 //!
-//! iced draws a family by name from the faces it was given and those of the computer, which
-//! its text system reads when it starts. A family it lacks would be drawn in a fallback of
-//! its own choosing, proportional on most desktops, and a terminal's columns would no longer
-//! line up. So a family chosen is drawn only once it is found on the computer, monospace;
-//! otherwise the embedded one is, and the Settings page says so. The C# box offers every
-//! installed family and takes any name typed; here only [`FAMILIES`] are offered, a family
-//! named in the settings file by hand among them, whatever its case.
+//! The C# box offers every installed family (`SettingsViewModel.InstalledFontFamilies`,
+//! WPF's `Fonts.SystemFontFamilies`) and takes any name typed. iced draws a family by name
+//! from the faces it was given and those of the computer, which its text system reads when
+//! it starts. A family it lacks would be drawn in a fallback of its own choosing,
+//! proportional on most desktops, and a terminal's columns would no longer line up. So the
+//! families offered are the installed ones whose faces say they are monospace, read from
+//! iced's own font database, and a family chosen is drawn only once it is found there,
+//! monospace; otherwise (a family uninstalled since it was chosen, or named in the settings
+//! file by hand) the embedded one is, and the Settings page says so.
 //!
 //! A cell's size follows the family: its advance and its height are read from the face's
 //! own tables (`hmtx`, `hhea`), as they were measured for the embedded face.
@@ -35,20 +37,6 @@ use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
 
 /// Family of the embedded terminal font, the settings' default.
 pub const FONT_FAMILY: &str = TERMINAL_FONT_FAMILY_DEFAULT;
-
-/// The families offered: the embedded one first, then those Windows ships, then those of
-/// Linux desktops.
-pub const FAMILIES: [&str; 9] = [
-    FONT_FAMILY,
-    "Cascadia Mono",
-    "Cascadia Code",
-    "Consolas",
-    "Courier New",
-    "Lucida Console",
-    "DejaVu Sans Mono",
-    "Liberation Mono",
-    "Noto Sans Mono",
-];
 
 /// The characters whose advance must be the same as that of `0` for a face to be monospace.
 const MONOSPACE_PROBES: [char; 4] = ['i', 'M', 'W', ' '];
@@ -119,20 +107,22 @@ impl TerminalFont {
     /// The font the settings name as `chosen`, looked for on this computer.
     #[must_use]
     pub fn chosen(chosen: &str) -> Self {
-        Self::resolve(chosen, installed)
+        Self::resolve(chosen, installed())
     }
 
-    /// The font `chosen` names: one of [`FAMILIES`], whatever its case, with the proportions
-    /// `installed` finds it at; the embedded one for any other name, or one `installed` does
-    /// not find.
+    /// The font `chosen` names among `installed`, whatever its case and the spaces around
+    /// it; the embedded one for its own name, or a name `installed` does not hold.
     #[must_use]
-    pub fn resolve(chosen: &str, installed: impl Fn(&'static str) -> Option<FaceMetrics>) -> Self {
-        match offered(chosen) {
-            Some(family) if family != FONT_FAMILY => {
-                installed(family).map_or(Self::EMBEDDED, |metrics| Self { family, metrics })
-            }
-            _ => Self::EMBEDDED,
+    pub fn resolve(chosen: &str, installed: &[Self]) -> Self {
+        let chosen = chosen.trim();
+        if chosen.eq_ignore_ascii_case(FONT_FAMILY) {
+            return Self::EMBEDDED;
         }
+        installed
+            .iter()
+            .find(|font| font.family.eq_ignore_ascii_case(chosen))
+            .copied()
+            .unwrap_or(Self::EMBEDDED)
     }
 
     /// Whether this is the family `chosen` names: false when another is drawn in its place.
@@ -142,45 +132,63 @@ impl TerminalFont {
     }
 }
 
-/// The family of [`FAMILIES`] `chosen` names, whatever its case and the spaces around it.
-fn offered(chosen: &str) -> Option<&'static str> {
-    let chosen = chosen.trim();
-    FAMILIES
-        .into_iter()
-        .find(|family| family.eq_ignore_ascii_case(chosen))
-}
-
-/// The families of [`FAMILIES`] that can be drawn, as `installed` finds them: the embedded
-/// one always, first.
+/// The families offered, as the C# box lists installed ones: the embedded one first, then
+/// those of `installed` in their order, the embedded one not twice.
 #[must_use]
-pub fn available(installed: impl Fn(&'static str) -> Option<FaceMetrics>) -> Vec<&'static str> {
-    FAMILIES
-        .into_iter()
-        .filter(|family| *family == FONT_FAMILY || installed(family).is_some())
+pub fn available(installed: &[TerminalFont]) -> Vec<&'static str> {
+    std::iter::once(FONT_FAMILY)
+        .chain(
+            installed
+                .iter()
+                .map(|font| font.family)
+                .filter(|family| !family.eq_ignore_ascii_case(FONT_FAMILY)),
+        )
         .collect()
 }
 
-/// The proportions of `family`, one of [`FAMILIES`], as this computer has it: `None` when
-/// it has no face of that name, or one that is not monospace. Read once, at the first
-/// question: a font installed while the application runs is not seen, as iced's text
-/// system does not see it either.
+/// The monospace families this computer has, as iced's text system read them when it
+/// started: see [`monospace_families`]. Read once, at the first question: a font installed
+/// while the application runs is not seen, as iced's text system does not see it either.
 #[must_use]
-pub fn installed(family: &'static str) -> Option<FaceMetrics> {
-    static FOUND: OnceLock<Vec<Option<FaceMetrics>>> = OnceLock::new();
-    let found = FOUND.get_or_init(|| {
-        let Ok(mut system) = font_system().write() else {
-            return Vec::new();
-        };
-        let database = system.raw().db();
-        FAMILIES
+pub fn installed() -> &'static [TerminalFont] {
+    static FOUND: OnceLock<Vec<(String, FaceMetrics)>> = OnceLock::new();
+    static FONTS: OnceLock<Vec<TerminalFont>> = OnceLock::new();
+    FONTS.get_or_init(|| {
+        FOUND
+            .get_or_init(|| {
+                font_system().write().map_or_else(
+                    |_| Vec::new(),
+                    |mut system| monospace_families(system.raw().db()),
+                )
+            })
             .iter()
-            .map(|family| look_up(database, family))
+            .map(|(family, metrics)| TerminalFont {
+                family: family.as_str(),
+                metrics: *metrics,
+            })
             .collect()
-    });
-    FAMILIES
-        .iter()
-        .position(|offered| *offered == family)
-        .and_then(|index| found.get(index).copied().flatten())
+    })
+}
+
+/// The families of `database` whose faces say they are monospace (the `post` table's
+/// `isFixedPitch`, which fontdb reads), by their English name, sorted whatever their case
+/// and each once, as the C# list is; with the proportions of their regular face, those whose
+/// regular face does not measure as monospace left out.
+#[must_use]
+pub fn monospace_families(database: &fontdb::Database) -> Vec<(String, FaceMetrics)> {
+    let mut families: Vec<&str> = database
+        .faces()
+        .filter(|face| face.monospaced)
+        .filter_map(|face| face.families.first())
+        .map(|(family, _)| family.trim())
+        .filter(|family| !family.is_empty())
+        .collect();
+    families.sort_by_key(|family| family.to_lowercase());
+    families.dedup_by(|one, other| one.eq_ignore_ascii_case(other));
+    families
+        .into_iter()
+        .filter_map(|family| look_up(database, family).map(|metrics| (family.to_owned(), metrics)))
+        .collect()
 }
 
 /// The proportions of the regular face of `family` in `database`.
@@ -194,16 +202,28 @@ fn look_up(database: &fontdb::Database, family: &str) -> Option<FaceMetrics> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FAMILIES, FONT_FAMILY, FaceMetrics, TerminalFont, available};
+    use iced::advanced::graphics::text::{FIRA_SANS_REGULAR, cosmic_text::fontdb};
+
+    use super::{FONT_FAMILY, FaceMetrics, TerminalFont, available, monospace_families};
     use crate::terminal_view::FONTS;
 
-    /// A computer with only Consolas, at made-up proportions.
-    fn consolas_only(family: &'static str) -> Option<FaceMetrics> {
-        (family == "Consolas").then_some(FaceMetrics {
-            advance: 0.55,
-            line: 1.2,
-        })
-    }
+    /// A computer with Consolas and Cascadia Mono, at made-up proportions.
+    const INSTALLED: [TerminalFont; 2] = [
+        TerminalFont {
+            family: "Cascadia Mono",
+            metrics: FaceMetrics {
+                advance: 0.58,
+                line: 1.3,
+            },
+        },
+        TerminalFont {
+            family: "Consolas",
+            metrics: FaceMetrics {
+                advance: 0.55,
+                line: 1.2,
+            },
+        },
+    ];
 
     #[test]
     fn the_embedded_proportions_are_those_its_faces_hold() {
@@ -221,22 +241,46 @@ mod tests {
     }
 
     #[test]
-    fn a_family_found_is_drawn_and_any_other_falls_back_to_the_embedded_one() {
-        let chosen = TerminalFont::resolve(" consolas ", consolas_only);
-        assert_eq!(chosen.family, "Consolas", "whatever its case");
-        assert!((chosen.metrics.advance - 0.55).abs() < f32::EPSILON);
-        assert!(chosen.is("Consolas"));
-        for missing in ["Cascadia Mono", "Comic Sans MS", "", FONT_FAMILY] {
-            let drawn = TerminalFont::resolve(missing, consolas_only);
-            assert_eq!(drawn, TerminalFont::EMBEDDED, "{missing:?}");
+    fn the_installed_monospace_families_are_listed_once_and_proportional_ones_left_out() {
+        let mut database = fontdb::Database::new();
+        for face in FONTS {
+            database.load_font_data(face.to_vec());
         }
-        assert!(!TerminalFont::resolve("Cascadia Mono", consolas_only).is("Cascadia Mono"));
+        database.load_font_data(FIRA_SANS_REGULAR.to_vec());
+        assert_eq!(database.faces().count(), FONTS.len() + 1);
+        let found = monospace_families(&database);
+        assert_eq!(found.len(), 1, "Fira Sans is proportional: {found:?}");
+        assert_eq!(found[0].0, FONT_FAMILY, "four faces, one family");
+        assert!((found[0].1.advance - FaceMetrics::EMBEDDED.advance).abs() < 1e-4);
+        assert!(monospace_families(&fontdb::Database::new()).is_empty());
     }
 
     #[test]
-    fn the_families_offered_are_those_found_the_embedded_one_first() {
-        assert_eq!(available(consolas_only), [FONT_FAMILY, "Consolas"]);
-        assert_eq!(available(|_| None), [FONT_FAMILY]);
-        assert_eq!(FAMILIES[0], FONT_FAMILY);
+    fn a_family_installed_is_drawn_and_any_other_falls_back_to_the_embedded_one() {
+        let chosen = TerminalFont::resolve(" consolas ", &INSTALLED);
+        assert_eq!(chosen.family, "Consolas", "whatever its case");
+        assert!((chosen.metrics.advance - 0.55).abs() < f32::EPSILON);
+        assert!(chosen.is("Consolas"));
+        // A family uninstalled since it was saved, a proportional one, none, the embedded.
+        for missing in ["Fira Code", "Comic Sans MS", "", FONT_FAMILY] {
+            let drawn = TerminalFont::resolve(missing, &INSTALLED);
+            assert_eq!(drawn, TerminalFont::EMBEDDED, "{missing:?}");
+        }
+        assert!(!TerminalFont::resolve("Fira Code", &INSTALLED).is("Fira Code"));
+        assert_eq!(
+            TerminalFont::resolve("Consolas", &[]),
+            TerminalFont::EMBEDDED
+        );
+    }
+
+    #[test]
+    fn the_families_offered_are_those_installed_the_embedded_one_first_and_once() {
+        assert_eq!(
+            available(&INSTALLED),
+            [FONT_FAMILY, "Cascadia Mono", "Consolas"]
+        );
+        assert_eq!(available(&[]), [FONT_FAMILY]);
+        let with_embedded = [TerminalFont::EMBEDDED, INSTALLED[1]];
+        assert_eq!(available(&with_embedded), [FONT_FAMILY, "Consolas"]);
     }
 }

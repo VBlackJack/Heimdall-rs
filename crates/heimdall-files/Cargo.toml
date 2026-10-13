@@ -13,8 +13,11 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# heimdall-net: every TCP connection to a host by name, Happy Eyeballs.
+heimdall-net.workspace = true
 heimdall-sftp.workspace = true
-ring.workspace = true
+# sealvault: the copy script's random token.
+sealvault.workspace = true
 suppaftp.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true

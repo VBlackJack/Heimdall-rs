@@ -19,7 +19,12 @@
 //! gradient, through one of four zlib streams that last as long as the connection.
 //!
 //! Pixels arrive as 3-byte TPIXELs, red, green and blue: the format the client asks for is
-//! 32 bits, depth 24, true colour, 255 a colour. `TightPNG` is not asked for, nor read.
+//! 32 bits, depth 24, true colour, 255 a colour.
+//!
+//! `TightPNG` (encoding -260) is read by a decoder of its own, as noVNC's `TightPNGDecoder`:
+//! the same fills and JPEG images, PNG images in place of basic compression, which it
+//! refuses. Plain Tight refuses PNG images. Those images are read by our own PNG decoder,
+//! `super::png`.
 //!
 //! A rectangle carries no length of its own: it is read whole before anything is decoded,
 //! so one cut between two reads leaves the streams as they were.
@@ -30,7 +35,8 @@ use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 
-use super::screen::{Rect, Screen};
+use super::png;
+use super::screen::{PIXEL_BYTES, Rect, Screen};
 
 /// Bytes of a Tight pixel.
 const TPIXEL: usize = 3;
@@ -87,9 +93,16 @@ const ZLIB_SLACK: usize = 1024;
 const JPEG_BYTES_PER_PIXEL: usize = 2 * TPIXEL;
 const JPEG_SLACK: usize = 64 * 1024;
 
+/// PNG data allowed per pixel of its rectangle, plus room for its chunks: an RGBA image
+/// stored without compression, and more.
+const PNG_BYTES_PER_PIXEL: usize = 2 * PIXEL_BYTES;
+const PNG_SLACK: usize = 64 * 1024;
+
 /// The decoder of one connection.
 pub(crate) struct Tight {
     streams: [Decompress; STREAMS],
+    /// `TightPNG`: PNG images instead of basic compression.
+    png: bool,
 }
 
 /// A rectangle read whole, not yet decoded.
@@ -107,6 +120,8 @@ enum Coding<'a> {
     Fill([u8; TPIXEL]),
     /// A JPEG image.
     Jpeg(&'a [u8]),
+    /// A PNG image, in `TightPNG` only.
+    Png(&'a [u8]),
     /// Pixels through a filter, compressed through a stream unless short.
     Basic {
         /// The stream it goes through, when compressed.
@@ -138,10 +153,19 @@ enum Data<'a> {
 }
 
 impl Tight {
-    /// A decoder, its four streams fresh.
+    /// A Tight decoder, its four streams fresh.
     pub(crate) fn new() -> Self {
         Self {
             streams: std::array::from_fn(|_| Decompress::new(true)),
+            png: false,
+        }
+    }
+
+    /// A `TightPNG` decoder.
+    pub(crate) fn new_png() -> Self {
+        Self {
+            png: true,
+            ..Self::new()
         }
     }
 
@@ -154,7 +178,7 @@ impl Tight {
         rect: Rect,
         screen: &mut Screen,
     ) -> Result<Option<usize>, String> {
-        let Some(parsed) = parse(data, rect)? else {
+        let Some(parsed) = parse(data, rect, self.png)? else {
             return Ok(None);
         };
         for (index, stream) in self.streams.iter_mut().enumerate() {
@@ -165,6 +189,7 @@ impl Tight {
         match parsed.coding {
             Coding::Fill(rgb) => screen.fill(rect, rgb),
             Coding::Jpeg(image) => jpeg(image, rect, screen)?,
+            Coding::Png(image) => png(image, rect, screen)?,
             Coding::Basic {
                 stream,
                 filter,
@@ -230,8 +255,8 @@ impl<'a> Bytes<'a> {
     }
 }
 
-/// Reads a rectangle whole; `None` when more bytes are needed.
-fn parse(data: &[u8], rect: Rect) -> Result<Option<Parsed<'_>>, String> {
+/// Reads a rectangle whole, of `TightPNG` when `png`; `None` when more bytes are needed.
+fn parse(data: &[u8], rect: Rect, png: bool) -> Result<Option<Parsed<'_>>, String> {
     let mut bytes = Bytes { data, at: 0 };
     let Some(control) = bytes.byte() else {
         return Ok(None);
@@ -247,7 +272,18 @@ fn parse(data: &[u8], rect: Rect) -> Result<Option<Parsed<'_>>, String> {
             check_length(length, limit, "a Tight JPEG")?;
             bytes.take(length).map(Coding::Jpeg)
         }
-        PNG => return Err("a TightPNG rectangle, which was not asked for".to_owned()),
+        PNG if png => {
+            let Some(length) = bytes.compact_length() else {
+                return Ok(None);
+            };
+            let limit = rect.area() * PNG_BYTES_PER_PIXEL + PNG_SLACK;
+            check_length(length, limit, "a TightPNG image")?;
+            bytes.take(length).map(Coding::Png)
+        }
+        PNG => return Err("a PNG image in a Tight rectangle".to_owned()),
+        _ if kind & NOT_BASIC == 0 && png => {
+            return Err("basic compression in a TightPNG rectangle".to_owned());
+        }
         _ if kind & NOT_BASIC == 0 => parse_basic(&mut bytes, kind, rect)?,
         other => return Err(format!("an unknown Tight compression {other}")),
     };
@@ -441,6 +477,20 @@ fn jpeg(image: &[u8], rect: Rect, screen: &mut Screen) -> Result<(), String> {
     }
     paint(screen, rect, &pixels);
     Ok(())
+}
+
+/// Draws a PNG image the size of `rect`, its alpha laid over what is there as noVNC's canvas
+/// does; one of another size is refused before its pixels are decoded, and its data never
+/// inflates past the rectangle's size.
+fn png(image: &[u8], rect: Rect, screen: &mut Screen) -> Result<(), String> {
+    let mut places = (rect.y..rect.y + rect.height)
+        .flat_map(|y| (rect.x..rect.x + rect.width).map(move |x| (x, y)));
+    png::decode_with(image, rect.width, rect.height, |rgba| {
+        if let Some((x, y)) = places.next() {
+            screen.blend(x, y, rgba);
+        }
+    })
+    .map_err(|error| format!("a TightPNG image does not decode: {error}"))
 }
 
 #[cfg(test)]
@@ -746,6 +796,88 @@ mod tests {
         assert!(decoded(&[0x00, 4, 1, 2, 3, 4], 2, 2).is_err());
         assert!(decoded(&Server::new().basic(0x00, &[], 0, &[1; 11]), 2, 2).is_err());
         assert!(decoded(&Server::new().basic(0x00, &[], 0, &[1; 13]), 2, 2).is_err());
+    }
+
+    /// A `width` by `height` PNG of `colour` type from `data`, as a server's encoder writes
+    /// it.
+    fn png_image(width: u32, height: u32, colour: u8, data: &[u8]) -> Vec<u8> {
+        png::encoder::Image::new(width, height, colour, data).encode()
+    }
+
+    /// A `TightPNG` rectangle of `image`.
+    fn png_rect(image: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![PNG << KIND_SHIFT];
+        bytes.extend_from_slice(&compact(image.len()));
+        bytes.extend_from_slice(image);
+        bytes
+    }
+
+    #[test]
+    fn tight_png_draws_its_images_even_cut_and_refuses_basic_compression() {
+        let image = png_image(2, 2, png::RGB, &[255, 0, 0, 0, 255, 0, 0, 0, 255, 1, 2, 3]);
+        let bytes = png_rect(&image);
+        let mut client = Tight::new_png();
+        let mut screen = Screen::new(2, 2);
+        for end in 0..bytes.len() {
+            assert_eq!(
+                client.decode(&bytes[..end], rect(2, 2), &mut screen),
+                Ok(None)
+            );
+        }
+        assert_eq!(
+            client.decode(&bytes, rect(2, 2), &mut screen),
+            Ok(Some(bytes.len()))
+        );
+        assert_eq!(colours(&screen), [RED, GREEN, BLUE, [1, 2, 3]]);
+        // Fills and JPEG images as Tight's.
+        let fill = [FILL << KIND_SHIFT, 7, 8, 9];
+        assert_eq!(client.decode(&fill, rect(2, 2), &mut screen), Ok(Some(4)));
+        assert_eq!(colours(&screen), [[7, 8, 9]; 4]);
+        // Basic compression, which TightPNG has not.
+        let basic = [0x00, 255, 0, 0, 0, 0, 255];
+        assert!(client.decode(&basic, rect(2, 1), &mut screen).is_err());
+    }
+
+    #[test]
+    fn tight_png_lays_alpha_over_the_desktop_and_reads_grey() {
+        let mut client = Tight::new_png();
+        let mut screen = Screen::new(3, 1);
+        screen.fill(rect(3, 1), [100, 100, 100]);
+        // Transparent, opaque red, half blue.
+        let image = png_image(
+            3,
+            1,
+            png::RGBA,
+            &[9, 9, 9, 0, 255, 0, 0, 255, 0, 0, 255, 128],
+        );
+        client
+            .decode(&png_rect(&image), rect(3, 1), &mut screen)
+            .expect("decoded");
+        assert_eq!(colours(&screen), [[100, 100, 100], RED, [50, 50, 178]]);
+        let grey = png_image(3, 1, png::GREY, &[0, 128, 255]);
+        client
+            .decode(&png_rect(&grey), rect(3, 1), &mut screen)
+            .expect("decoded");
+        assert_eq!(colours(&screen), [[0; 3], [128; 3], [255; 3]]);
+    }
+
+    #[test]
+    fn malformed_tight_png_images_are_refused() {
+        let decode = |bytes: &[u8], width, height| {
+            let mut screen = Screen::new(width, height);
+            Tight::new_png().decode(bytes, rect(width, height), &mut screen)
+        };
+        let image = png_image(2, 1, png::RGB, &[1, 2, 3, 4, 5, 6]);
+        // Another size than its rectangle, either way.
+        assert!(decode(&png_rect(&image), 1, 1).is_err());
+        assert!(decode(&png_rect(&image), 4, 1).is_err());
+        // Not a PNG, and a PNG cut inside its own data.
+        assert!(decode(&png_rect(&[1, 2, 3, 4]), 2, 1).is_err());
+        assert!(decode(&png_rect(&image[..image.len() - 16]), 2, 1).is_err());
+        // A length of nothing, and one past what its rectangle allows, refused before it
+        // comes.
+        assert!(decode(&[PNG << KIND_SHIFT, 0], 1, 1).is_err());
+        assert!(decode(&[PNG << KIND_SHIFT, 0xff, 0xff, 0xff], 1, 1).is_err());
     }
 
     #[test]

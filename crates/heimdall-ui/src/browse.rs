@@ -24,14 +24,13 @@
 //! The system's dialogs filter by extension only: the C# `PuTTY` filter, which names
 //! `putty.exe` and `puttycac.exe`, is offered as the executables' filter.
 
-use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 
 use heimdall_core::paths;
 use iced::widget::{button, text};
 use iced::{Element, Task, window};
 
+use crate::file_dialog::{self, FileDialog, Pick};
 use crate::i18n::fl;
 use crate::settings_rows::ToolPath;
 use crate::shell::Message;
@@ -146,12 +145,8 @@ impl BrowseTarget {
     }
 
     /// The dialog, opening at `start`, over `parent` when there is one.
-    fn dialog(
-        self,
-        start: Option<&Path>,
-        parent: Option<&dyn window::Window>,
-    ) -> rfd::AsyncFileDialog {
-        let mut dialog = rfd::AsyncFileDialog::new();
+    fn dialog(self, start: Option<&Path>, parent: Option<&dyn window::Window>) -> FileDialog {
+        let mut dialog = FileDialog::new();
         if let Some(title) = self.title() {
             dialog = dialog.set_title(title);
         }
@@ -162,24 +157,21 @@ impl BrowseTarget {
             dialog = dialog.set_directory(start);
         }
         if let Some(parent) = parent {
-            dialog = dialog.set_parent(&parent);
+            dialog = dialog.set_parent(parent);
         }
         dialog
     }
 
     /// The dialog, opened.
-    fn open(self, start: Option<&Path>, parent: Option<&dyn window::Window>) -> Pick {
+    fn open(self, start: Option<&Path>, parent: Option<&dyn window::Window>) -> Pick<PathBuf> {
         let dialog = self.dialog(start, parent);
         if self.picks_folder() {
-            Box::pin(dialog.pick_folder())
+            dialog.pick_folder()
         } else {
-            Box::pin(dialog.pick_file())
+            dialog.pick_file()
         }
     }
 }
-
-/// The path picked in a dialog, once it closes; `None` when cancelled.
-type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
 
 /// The C# "Browse..." button of `target`.
 pub fn browse_button<'a>(target: BrowseTarget) -> Element<'a, Message> {
@@ -206,10 +198,9 @@ pub fn pick(
         };
         pick.then(move |pick| {
             Task::future(pick).then(move |picked| match picked {
-                Some(file) => {
-                    Task::done(Message::Browsed(target, file.path().display().to_string()))
-                }
-                None => Task::none(),
+                Ok(Some(path)) => Task::done(Message::Browsed(target, path.display().to_string())),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(file_dialog::failed(&unavailable)),
             })
         })
     })

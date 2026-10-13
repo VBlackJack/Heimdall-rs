@@ -135,7 +135,7 @@ fn run_taskkill(pid: u32, force: bool) -> TerminateResult {
     use std::os::windows::process::CommandExt;
     use std::process::Stdio;
     let Some(folder) = heimdall_core::paths::system_dir() else {
-        return TerminateResult::NotRun("the system folder is unknown".to_owned());
+        return TerminateResult::NotRun(heimdall_core::paths::SYSTEM_FOLDER_UNKNOWN.to_owned());
     };
     let spawned = taskkill_command(&folder, pid, force)
         .creation_flags(crate::citrix::CREATE_NO_WINDOW)

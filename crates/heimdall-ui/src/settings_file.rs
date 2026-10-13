@@ -18,15 +18,15 @@
 //! the system's dialogs held by the window, and the question showing what an import
 //! changes, as the C# preview lists it.
 
-use std::future::Future;
-use std::pin::Pin;
-
 use heimdall_app::{Message as AppMessage, SettingsTransferMessage};
-use heimdall_core::settings::{SETTINGS_EXPORT_FILE_NAME, SettingValue, SettingsImport};
+use heimdall_core::settings::{
+    SETTINGS_EXPORT_FILE_NAME, Sensitivity, SettingChange, SettingValue, SettingsImport,
+};
 use iced::widget::{Column, column, text};
 use iced::{Element, Task, window};
 
 use crate::dialog_parts::{self, Severity};
+use crate::file_dialog::{FileDialog, Pick};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -41,16 +41,20 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Tallest the list of changes grows before it scrolls, in logical pixels.
 const CHANGES_HEIGHT: f32 = 280.0;
 
-/// The file picked in a dialog, once it closes; `None` when cancelled.
-type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
+/// Settings the file holds but does not import named before summing up the rest, as the
+/// C# `SettingsImportPreview.MaxLines`.
+const MAX_IGNORED_SHOWN: usize = 20;
+
+/// Between the names of the settings not imported, as the C# preview's list separator.
+const LIST_SEPARATOR: &str = ", ";
 
 /// A dialog of settings files titled `title`, over `parent` when there is one.
-fn dialog(title: String, parent: Option<&dyn window::Window>) -> rfd::AsyncFileDialog {
-    let mut dialog = rfd::AsyncFileDialog::new()
+fn dialog(title: String, parent: Option<&dyn window::Window>) -> FileDialog {
+    let mut dialog = FileDialog::new()
         .set_title(title)
         .add_filter(fl!("ui-settings-file-filter"), &[EXTENSION]);
     if let Some(parent) = parent {
-        dialog = dialog.set_parent(&parent);
+        dialog = dialog.set_parent(parent);
     }
     dialog
 }
@@ -58,8 +62,8 @@ fn dialog(title: String, parent: Option<&dyn window::Window>) -> rfd::AsyncFileD
 /// `pick`, opened over the main window, `main`, when there is one.
 fn over_window(
     main: Option<window::Id>,
-    pick: fn(Option<&dyn window::Window>) -> Pick,
-) -> Task<Pick> {
+    pick: fn(Option<&dyn window::Window>) -> Pick<std::path::PathBuf>,
+) -> Task<Pick<std::path::PathBuf>> {
     crate::shell::main_window_task(main).then(move |id| match id {
         Some(id) => window::run(id, move |window| pick(Some(window))),
         None => Task::done(pick(None)),
@@ -70,17 +74,14 @@ fn over_window(
 /// `document` there; nothing when no file is picked.
 pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
     over_window(main, |parent| {
-        Box::pin(
-            dialog(fl!("ui-dialog-settings-export-title"), parent)
-                .set_file_name(SETTINGS_EXPORT_FILE_NAME)
-                .save_file(),
-        )
+        dialog(fl!("ui-dialog-settings-export-title"), parent)
+            .set_file_name(SETTINGS_EXPORT_FILE_NAME)
+            .save_file()
     })
     .then(move |pick| {
         let document = document.clone();
         Task::future(pick).then(move |picked| match picked {
-            Some(file) => {
-                let path = file.path().to_owned();
+            Ok(Some(path)) => {
                 let document = document.clone();
                 Task::perform(
                     async move { tokio::fs::write(path, document).await },
@@ -93,7 +94,10 @@ pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
                     },
                 )
             }
-            None => Task::none(),
+            Ok(None) => Task::none(),
+            Err(unavailable) => Task::done(Message::App(AppMessage::SettingsTransfer(
+                SettingsTransferMessage::Written(Err(unavailable.message())),
+            ))),
         })
     })
 }
@@ -102,16 +106,19 @@ pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
 /// nothing when none is picked.
 pub fn pick(main: Option<window::Id>) -> Task<Message> {
     over_window(main, |parent| {
-        Box::pin(dialog(fl!("ui-dialog-settings-import-title"), parent).pick_file())
+        dialog(fl!("ui-dialog-settings-import-title"), parent).pick_file()
     })
     .then(|pick| {
         Task::future(pick).then(|picked| match picked {
-            Some(file) => Task::perform(read(file.path().to_owned()), |read| {
+            Ok(Some(path)) => Task::perform(read(path), |read| {
                 Message::App(AppMessage::SettingsTransfer(SettingsTransferMessage::Read(
                     read,
                 )))
             }),
-            None => Task::none(),
+            Ok(None) => Task::none(),
+            Err(unavailable) => Task::done(Message::App(AppMessage::SettingsTransfer(
+                SettingsTransferMessage::Read(Err(unavailable.message())),
+            ))),
         })
     })
 }
@@ -145,32 +152,113 @@ fn shown(value: Option<&SettingValue>) -> String {
     }
 }
 
-/// What importing `read` changes, each setting with its value now and the file's, then
-/// Cancel and Import.
-pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
-    let mut lines = Column::new().spacing(2.0);
-    for change in &read.changes {
-        lines = lines.push(
-            text(fl!(
-                "ui-dialog-settings-import-line",
-                key = change.key.as_str(),
-                before = shown(change.before.as_ref()),
-                after = shown(change.after.as_ref())
+/// One change: the setting, its value now and the file's.
+fn change_line(change: &SettingChange) -> String {
+    fl!(
+        "ui-dialog-settings-import-line",
+        key = change.key.as_str(),
+        before = shown(change.before.as_ref()),
+        after = shown(change.after.as_ref())
+    )
+}
+
+/// The changes `changes`, one line each.
+fn change_lines<'a, 'b>(changes: impl Iterator<Item = &'b SettingChange>) -> Column<'a, Message> {
+    changes.fold(Column::new().spacing(2.0), |lines, change| {
+        lines.push(text(change_line(change)).size(font_size::CAPTION))
+    })
+}
+
+/// The changes flagged `why`, under `heading`; `None` when there is none.
+fn flagged_group(
+    read: &SettingsImport,
+    why: Sensitivity,
+    heading: String,
+) -> Option<Column<'_, Message>> {
+    read.flagged(why).next()?;
+    Some(
+        column![
+            text(heading).size(font_size::BODY).style(text::warning),
+            change_lines(read.flagged(why)),
+        ]
+        .spacing(spacing::XS),
+    )
+}
+
+/// The changes shown first, on a warning card: those deciding what runs on this computer,
+/// under the C# warning, then those weakening a security check, under their own heading;
+/// `None` when there is none.
+fn sensitive_part(read: &SettingsImport) -> Option<Element<'_, Message>> {
+    read.sensitive().next()?;
+    Some(dialog_parts::warning_panel(
+        column![]
+            .push(flagged_group(
+                read,
+                Sensitivity::RunsOnThisComputer,
+                fl!("ui-dialog-settings-import-sensitive"),
             ))
-            .size(font_size::CAPTION),
-        );
+            .push(flagged_group(
+                read,
+                Sensitivity::WeakensSecurity,
+                fl!("ui-dialog-settings-import-weakens"),
+            ))
+            .spacing(spacing::SM),
+    ))
+}
+
+/// The settings the file holds but does not import, named, the first
+/// [`MAX_IGNORED_SHOWN`] of them; `None` when there is none.
+fn ignored_part(read: &SettingsImport) -> Option<Element<'_, Message>> {
+    if read.ignored.is_empty() {
+        return None;
     }
+    let mut names = read
+        .ignored
+        .iter()
+        .take(MAX_IGNORED_SHOWN)
+        .map(|name| heimdall_app::server_text(name))
+        .collect::<Vec<_>>()
+        .join(LIST_SEPARATOR);
+    let rest = read.ignored.len().saturating_sub(MAX_IGNORED_SHOWN);
+    if rest > 0 {
+        names.push_str(LIST_SEPARATOR);
+        names.push_str(&fl!("ui-dialog-settings-import-more", count = rest));
+    }
+    Some(
+        column![
+            dialog_parts::note(fl!(
+                "ui-dialog-settings-import-ignored",
+                count = read.ignored.len()
+            )),
+            text(names).size(font_size::CAPTION),
+        ]
+        .spacing(spacing::XS)
+        .into(),
+    )
+}
+
+/// What importing `read` changes, as the C# preview: the changes deciding what runs on
+/// this computer or weakening a security check first, under their warnings, then the others, each setting with its value
+/// now and the file's; what the file holds that is not imported; then Cancel and Import.
+pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
+    let body = column![]
+        .push(sensitive_part(read))
+        .push(dialog_parts::body(fl!(
+            "ui-dialog-settings-import-body",
+            count = read.changes.len()
+        )))
+        .push(
+            read.benign()
+                .next()
+                .is_some()
+                .then(|| styles::scroll(change_lines(read.benign())).height(CHANGES_HEIGHT)),
+        )
+        .push(ignored_part(read))
+        .spacing(spacing::SM);
     dialog_parts::choice(
         Severity::Warning,
         fl!("ui-dialog-settings-import-title"),
-        column![
-            dialog_parts::body(fl!(
-                "ui-dialog-settings-import-body",
-                count = read.changes.len()
-            )),
-            styles::scroll(lines).height(CHANGES_HEIGHT),
-        ]
-        .spacing(spacing::SM),
+        body,
         fl!("ui-dialog-cancel-button"),
         fl!("ui-dialog-settings-import-confirm"),
     )

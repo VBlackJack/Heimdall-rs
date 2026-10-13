@@ -17,38 +17,40 @@
 //! Where "Export Sessions" writes: the system's save dialog, as the C# `SaveFileDialog`,
 //! offering `servers.json` and held by the window as the C# one is, then the file written.
 
-use std::future::Future;
-use std::path::Path;
-use std::pin::Pin;
+use std::path::{Path, PathBuf};
 
 use heimdall_app::ExportOutcome;
 use heimdall_core::export::EXPORT_FILE_NAME;
+
+use crate::file_dialog::{self, FileDialog};
 
 /// Extension the dialog offers.
 const JSON_EXTENSION: &str = "json";
 
 /// The file the user picks in the save dialog, once it closes; `None` when cancelled.
-pub type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
+pub type Pick = file_dialog::Pick<PathBuf>;
 
 /// Opens the save dialog titled `title`, its files named `filter`, over `parent` when there
 /// is one: the dialog then belongs to the window, in front of it and modal, as the C# one.
 #[must_use]
 pub fn dialog(title: String, filter: String, parent: Option<&dyn iced::window::Window>) -> Pick {
-    let mut dialog = rfd::AsyncFileDialog::new()
+    let mut dialog = FileDialog::new()
         .set_title(title)
         .set_file_name(EXPORT_FILE_NAME)
         .add_filter(filter, &[JSON_EXTENSION]);
     if let Some(parent) = parent {
-        dialog = dialog.set_parent(&parent);
+        dialog = dialog.set_parent(parent);
     }
-    Box::pin(dialog.save_file())
+    dialog.save_file()
 }
 
-/// Waits for the file picked, then writes `document` there.
+/// Waits for the file picked, then writes `document` there; why not when no dialog could
+/// be shown.
 pub async fn save(pick: Pick, document: String, count: usize) -> ExportOutcome {
     match pick.await {
-        Some(file) => write(file.path(), document, count).await,
-        None => ExportOutcome::Cancelled,
+        Ok(Some(path)) => write(&path, document, count).await,
+        Ok(None) => ExportOutcome::Cancelled,
+        Err(unavailable) => ExportOutcome::Failed(unavailable.message()),
     }
 }
 

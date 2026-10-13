@@ -289,3 +289,92 @@ fn selecting_while_scrolled_back_uses_the_history_lines() {
     term.begin_selection(at(0, 0, false), SelectionKind::Line);
     assert_eq!(term.selected_text().as_deref(), Some("line3\n"));
 }
+
+// ---- block selection, as xterm.js's Alt+drag --------------------------------------------
+
+/// What ends each line of a block copied, as xterm.js joins them.
+const BLOCK_BREAK: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+fn block(term: &mut Terminal, from: CellPoint, to: CellPoint) -> Option<String> {
+    term.begin_selection(from, SelectionKind::Block);
+    term.extend_selection(to);
+    term.selected_text()
+}
+
+#[test]
+fn a_block_takes_the_same_columns_from_every_line_ragged_ones_included() {
+    let mut term = terminal(20, 4);
+    term.feed(b"abcdefgh\r\nab\r\nabcdefghij");
+    let expected = ["cdef", "", "cdef"].join(BLOCK_BREAK);
+    assert_eq!(
+        block(&mut term, at(0, 2, false), at(2, 5, true)).as_deref(),
+        Some(expected.as_str())
+    );
+    let screen = term.snapshot();
+    let marked = |row: usize| -> Vec<usize> {
+        (0..20)
+            .filter(|col| screen.cell(row, *col).is_some_and(|cell| cell.selected))
+            .collect()
+    };
+    for row in 0..3 {
+        assert_eq!(marked(row), [2, 3, 4, 5], "row {row}: a rectangle");
+    }
+    assert!(marked(3).is_empty());
+    // Dragged the other way, from the bottom right to the top left: the same rectangle.
+    assert_eq!(
+        block(&mut term, at(2, 5, true), at(0, 2, false)).as_deref(),
+        Some(expected.as_str())
+    );
+}
+
+#[test]
+fn a_block_drops_the_blanks_ending_each_line_and_an_empty_one_copies_nothing() {
+    let mut term = terminal(20, 3);
+    term.feed(b"ab  cd\r\n  x");
+    let expected = ["ab", "  x"].join(BLOCK_BREAK);
+    assert_eq!(
+        block(&mut term, at(0, 0, false), at(1, 3, true)).as_deref(),
+        Some(expected.as_str())
+    );
+    // Not dragged across a column: no rectangle.
+    assert_eq!(block(&mut term, at(0, 2, false), at(1, 2, false)), None);
+}
+
+#[test]
+fn a_wide_character_starting_in_a_block_is_taken_whole_and_a_half_one_is_a_space() {
+    let mut term = terminal(10, 3);
+    // Row 0: a, the wide character over columns 1-2, b. Row 1: two wide characters.
+    term.feed("a\u{4e2d}b\r\n\u{4e2d}\u{6587}".as_bytes());
+    let expected = [" b", "\u{6587}"].join(BLOCK_BREAK);
+    assert_eq!(
+        block(&mut term, at(0, 2, false), at(1, 3, true)).as_deref(),
+        Some(expected.as_str()),
+        "the right half of a character starting left of the block is a space"
+    );
+    let expected = ["\u{4e2d}", ""].join(BLOCK_BREAK);
+    assert_eq!(
+        block(&mut term, at(0, 1, false), at(1, 1, true)).as_deref(),
+        Some(expected.as_str()),
+        "one starting in the block is taken whole, its right half past it"
+    );
+}
+
+#[test]
+fn the_cursor_blinks_until_the_application_asks_for_a_steady_one() {
+    let mut term = terminal(10, 2);
+    assert!(
+        term.cursor_blinks(),
+        "xterm.js cursorBlink, as the C# terminal"
+    );
+    term.feed(b"\x1b[2 q");
+    assert!(!term.cursor_blinks(), "a steady block");
+    term.feed(b"\x1b[5 q");
+    assert!(term.cursor_blinks(), "a blinking bar");
+    term.feed(b"\x1b[?12l");
+    assert!(!term.cursor_blinks(), "blinking reset");
+    term.feed(b"\x1b[0 q");
+    assert!(term.cursor_blinks(), "back to the default");
+    assert_eq!(term.cursor_position(), (0, 0));
+    term.feed(b"ab\r\nc");
+    assert_eq!(term.cursor_position(), (1, 1));
+}

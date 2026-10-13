@@ -20,5 +20,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() -> iced::Result {
+    // A test build roots every per-user folder in the one its command line names, before
+    // anything reads a folder; it never starts on the user's own.
+    #[cfg(feature = "test-data-dir")]
+    if let Err(error) = heimdall_ui::test_data::init(std::env::args_os().skip(1)) {
+        eprintln!("{error}");
+        std::process::exit(heimdall_ui::test_data::REFUSED_EXIT_CODE);
+    }
     heimdall_ui::run()
 }

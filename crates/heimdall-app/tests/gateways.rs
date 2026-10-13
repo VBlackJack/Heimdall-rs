@@ -20,6 +20,7 @@
 use std::path::Path;
 
 use heimdall_app::{App, AppConfig, Dialog, Effect, Message, Phase, UiError};
+use heimdall_core::gateway_parents::MAX_GATEWAY_CHAIN_DEPTH;
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, SshProfile};
 use heimdall_core::store::{ProfileStore, RouteError};
@@ -134,6 +135,28 @@ fn a_gateway_that_is_not_there_fails_the_tab_without_an_attempt() {
         Phase::Failed(UiError::Route(RouteError::MissingGateway(ProfileId::new(
             "gone"
         ))))
+    );
+}
+
+#[test]
+fn a_chain_deeper_than_five_gateways_fails_the_tab_as_the_csharp_does() {
+    let dir = tempfile::tempdir().expect("dir");
+    // g1 <- g2 <- ... <- g6, the server behind g6.
+    let mut chain = vec![gateway("g1", None)];
+    for level in 2..=MAX_GATEWAY_CHAIN_DEPTH + 1 {
+        chain.push(gateway(
+            &format!("g{level}"),
+            Some(&format!("g{}", level - 1)),
+        ));
+    }
+    let deepest = format!("g{}", MAX_GATEWAY_CHAIN_DEPTH + 1);
+    let mut app = app(dir.path(), web(Some(&deepest)), chain);
+    let effects = app.update(Message::OpenProfile(ProfileId::new("web")));
+    assert!(effects.is_empty(), "no attempt: {effects:?}");
+    let tab = app.active_tab().expect("a tab says why");
+    assert_eq!(
+        tab.phase,
+        Phase::Failed(UiError::Route(RouteError::TooDeep(ProfileId::new("g1"))))
     );
 }
 

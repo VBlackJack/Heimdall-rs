@@ -622,7 +622,7 @@ fn ctrl_k_in_the_window_opens_quick_connect_in_the_main_window_and_sends_nothing
     use iced::keyboard::key::{Code, Physical};
     use iced::keyboard::{Event, Key, Location, Modifiers as Held};
 
-    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    const FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
     let dir = tempfile::tempdir().expect("dir");
     let Connected {
         mut shell,
@@ -1194,14 +1194,18 @@ async fn the_windows_files_keys_drops_and_clicks_reach_its_tab_alone() {
         FloatEvent::Modifiers(iced::keyboard::Modifiers::empty()),
     ));
 
-    // Files dragged from Explorer over the window: said there alone, and dropped there.
-    let _ = shell.update(Message::Float(window, FloatEvent::FilesHovered(true)));
+    // Files dragged from Explorer over the window: said there alone, with how many go to
+    // which folder of its server, as the C# overlay, and dropped there.
+    let said = drop_said(&shell, floating);
+    for _ in 0..2 {
+        let _ = shell.update(Message::Float(window, FloatEvent::FilesHovered(true)));
+    }
     simulator(shell.window_view(window))
-        .find("Drop files to upload")
+        .find(said.as_str())
         .expect("said over its tab");
     assert!(
         common::simulator(settings(), TALL_WINDOW, shell.view())
-            .find("Drop files to upload")
+            .find(said.as_str())
             .is_err(),
         "not over the main window"
     );
@@ -1236,7 +1240,7 @@ async fn the_windows_files_keys_drops_and_clicks_reach_its_tab_alone() {
     assert_eq!(transfers(&shell, shown), 0);
     assert!(
         simulator(shell.window_view(window))
-            .find("Drop files to upload")
+            .find(said.as_str())
             .is_err(),
         "dropped: no longer said"
     );
@@ -1595,4 +1599,18 @@ async fn a_menu_of_the_window_goes_with_it_when_its_tab_comes_back() {
             .is_err(),
         "no menu of the closed window"
     );
+}
+
+/// What the drop overlay over Files tab `tab` says while two files are dragged over it, as
+/// the C# overlay: how many go to which folder of its server.
+fn drop_said(shell: &Shell, tab: heimdall_app::TabId) -> String {
+    let folder = shell
+        .app()
+        .tab(tab)
+        .and_then(|found| found.files.as_deref())
+        .expect("files")
+        .remote
+        .path
+        .display();
+    format!("Upload 2 items to {folder}")
 }

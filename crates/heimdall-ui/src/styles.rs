@@ -266,6 +266,23 @@ pub fn subtle(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     }
 }
 
+/// A line of Quick Connect's results, as the C# palette's `ListBoxItem`: nothing behind it
+/// but the highlight under the pointer; once `chosen`, a card outlined in the accent, as the
+/// C# selected item with the keyboard on it.
+pub fn palette_row(chosen: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
+    move |theme, status| {
+        let brushes = Brushes::of(theme);
+        if chosen {
+            let lit = brushes.button(Some(brushes.card), brushes.text, brushes.focus);
+            return match status {
+                ButtonStatus::Disabled => faded(&lit),
+                _ => lit,
+            };
+        }
+        subtle(theme, status)
+    }
+}
+
 /// A tab's close button, as the C# tab's: a secondary button, faded while `quiet`, on a
 /// tab neither selected nor under the pointer.
 pub fn close_mark(quiet: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
@@ -336,6 +353,40 @@ pub fn underline(lit: bool) -> impl Fn(&Theme) -> BoxStyle {
 pub fn strip(theme: &Theme) -> BoxStyle {
     BoxStyle {
         background: Some(Background::Color(Brushes::of(theme).card)),
+        ..BoxStyle::default()
+    }
+}
+
+/// A segment of the C# connection phase stepper: the accent once its phase is reached, the
+/// disabled text before it.
+pub fn phase_segment(theme: &Theme, lit: bool) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    let colour = if lit {
+        brushes.accent
+    } else {
+        Color {
+            a: brushes.secondary.a * crate::tokens::OPACITY_DISABLED,
+            ..brushes.secondary
+        }
+    };
+    BoxStyle {
+        background: Some(Background::Color(colour)),
+        border: Border {
+            radius: radius::XS.into(),
+            ..Border::default()
+        },
+        ..BoxStyle::default()
+    }
+}
+
+/// The C# letterbox hint's badge over a desktop: the border colour, small corners.
+pub fn letterbox_hint(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(Brushes::of(theme).edge)),
+        border: Border {
+            radius: radius::SM.into(),
+            ..Border::default()
+        },
         ..BoxStyle::default()
     }
 }
@@ -616,6 +667,31 @@ pub fn rule(theme: &Theme) -> BoxStyle {
     BoxStyle {
         background: Some(Background::Color(Brushes::of(theme).edge)),
         ..BoxStyle::default()
+    }
+}
+
+/// A dot of the welcome tour's step indicator, as the C# ellipses
+/// (`MainWindow.xaml:5697-5713`): the accent for the step shown, the disabled text colour for
+/// the others.
+pub fn step_dot(shown: bool) -> impl Fn(&Theme) -> BoxStyle {
+    move |theme| {
+        let brushes = Brushes::of(theme);
+        let color = if shown {
+            brushes.accent
+        } else {
+            Color {
+                a: brushes.secondary.a * OPACITY_DISABLED,
+                ..brushes.secondary
+            }
+        };
+        BoxStyle {
+            background: Some(Background::Color(color)),
+            border: Border {
+                radius: Radius::from(radius::SM),
+                ..Border::default()
+            },
+            ..BoxStyle::default()
+        }
     }
 }
 

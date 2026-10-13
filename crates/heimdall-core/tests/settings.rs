@@ -19,6 +19,7 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use heimdall_core::last_good_copy::backup_path;
 use heimdall_core::lockout::{LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS};
 use heimdall_core::pin::PinHash;
 use heimdall_core::settings::{
@@ -217,6 +218,34 @@ fn a_newer_or_broken_file_is_refused_not_guessed() {
 }
 
 #[test]
+fn settings_left_unreadable_are_read_from_their_last_good_copy() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings {
+        color_scheme: ColorScheme::Nord,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("first save");
+    settings.color_scheme = ColorScheme::Monokai;
+    settings.save(&path).expect("second save, the first kept");
+    std::fs::write(&path, "").expect("emptied");
+    let (read, recovered) = Settings::load_recovering(&path).expect("read from the copy");
+    assert!(recovered, "said, for the application to tell the user");
+    assert_eq!(read.color_scheme, ColorScheme::Nord, "the last good copy");
+    read.save(&path).expect("the damaged file replaced");
+    let (again, recovered) = Settings::load_recovering(&path).expect("reads");
+    assert!(!recovered);
+    assert_eq!(again.color_scheme, ColorScheme::Nord);
+    assert_eq!(
+        Settings::load(&backup_path(&path))
+            .expect("the copy reads")
+            .color_scheme,
+        ColorScheme::Nord,
+        "the emptied file never replaced the good copy"
+    );
+}
+
+#[test]
 fn session_logging_is_off_by_default_and_its_folder_beside_the_settings() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
@@ -354,9 +383,19 @@ fn the_broadcast_scope_is_the_current_tab_until_another_is_chosen() {
 fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default() {
     use heimdall_core::settings::{
         TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN,
+        TERMINAL_FONT_SIZE_UNWRITTEN,
     };
 
     let dir = tempfile::tempdir().expect("dir");
+    // A new installation starts at the C#'s 14.
+    assert_eq!(TERMINAL_FONT_SIZE_DEFAULT, 14);
+    assert_eq!(
+        Settings::load(&dir.path().join(SETTINGS_FILE_NAME))
+            .expect("no file yet")
+            .terminal_font_size,
+        TERMINAL_FONT_SIZE_DEFAULT
+    );
+    // A file written before it held a size keeps the one its terminals were drawn at.
     assert_eq!(
         written(
             dir.path(),
@@ -364,7 +403,7 @@ fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default()
 "
         )
         .terminal_font_size,
-        TERMINAL_FONT_SIZE_DEFAULT
+        TERMINAL_FONT_SIZE_UNWRITTEN
     );
     for (size, read) in [
         (TERMINAL_FONT_SIZE_MIN, TERMINAL_FONT_SIZE_MIN),
@@ -529,7 +568,13 @@ fn a_pin_and_its_wrong_tries_are_kept_across_runs() {
         0,
         "the master password's are apart"
     );
-    let text = std::fs::read_to_string(&path).expect("text");
+    // The salt and the hash are random text that can hold the digits by chance: only the
+    // rest of the file is looked at.
+    let saved = read.pin.as_ref().expect("pin");
+    let text = std::fs::read_to_string(&path)
+        .expect("text")
+        .replace(saved.salt(), "")
+        .replace(saved.hash(), "");
     assert!(!text.contains("2468"), "{text}");
 }
 
@@ -1918,6 +1963,111 @@ fn the_known_hosts_import_at_startup_is_off_by_default_kept_carried_and_reset() 
     assert!(settings.sync_known_hosts_at_startup);
     settings.reset_all();
     assert!(!settings.sync_known_hosts_at_startup);
+}
+
+#[test]
+fn a_declined_legacy_migration_is_kept_on_this_computer_never_exported_nor_imported() {
+    use heimdall_core::settings::LegacyMigration;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(
+        !settings.legacy_migration.has_decline(),
+        "none declined yet"
+    );
+    assert!(settings.legacy_migration.should_offer(1, "ABCD"));
+    settings.legacy_migration = LegacyMigration {
+        declined_offer_version: 1,
+        declined_source_fingerprint: Some("ABCD".to_owned()),
+    };
+    settings.save(&path).expect("save");
+    let read = Settings::load(&path).expect("load");
+    assert_eq!(read, settings, "read back");
+    assert!(read.legacy_migration.has_decline());
+    // That very offer is not made again; other files, or a newer offer, are.
+    assert!(!read.legacy_migration.should_offer(1, "ABCD"));
+    assert!(read.legacy_migration.should_offer(1, "ABCE"));
+    assert!(read.legacy_migration.should_offer(2, "ABCD"));
+
+    // As the C# settings transfer leaves the decline behind: this computer's own.
+    let (text, _) = settings.export(None, true);
+    assert!(!text.contains("legacy_migration"), "{text}");
+    assert!(!text.contains("ABCD"), "{text}");
+    let forged = format!(
+        "{text}\n[settings.legacy_migration]\ndeclined_offer_version = 9\ndeclined_source_fingerprint = \"FFFF\"\n"
+    );
+    let imported = Settings::default().import(&forged).expect("read");
+    assert_eq!(
+        imported.settings.legacy_migration,
+        LegacyMigration::default(),
+        "a file cannot set it"
+    );
+
+    // A reset keeps it: it is no preference.
+    let mut reset = settings.clone();
+    reset.reset_all();
+    assert_eq!(reset.legacy_migration, settings.legacy_migration);
+
+    // A blank fingerprint written by hand is none.
+    let blank = written(
+        dir.path(),
+        "version = 1\n[legacy_migration]\ndeclined_source_fingerprint = \"  \"\n",
+    );
+    assert_eq!(blank.legacy_migration, LegacyMigration::default());
+}
+
+#[test]
+fn the_welcome_tour_seen_is_kept_on_this_computer_never_exported_nor_imported() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(!settings.onboarding_completed, "not seen on a first run");
+    settings.onboarding_completed = true;
+    settings.save(&path).expect("save");
+    let read = Settings::load(&path).expect("load");
+    assert_eq!(read, settings, "read back");
+    assert!(read.onboarding_completed);
+
+    // As the C# settings transfer leaves `OnboardingCompleted` behind: no panel edits it.
+    let (text, _) = settings.export(None, true);
+    assert!(!text.contains("onboarding"), "{text}");
+    let forged = format!(
+        "{text}
+[settings.onboarding]
+completed = true
+"
+    );
+    let imported = Settings::default().import(&forged).expect("read");
+    assert!(
+        !imported.settings.onboarding_completed,
+        "a file cannot set it"
+    );
+
+    // A reset keeps it: it is no preference, and the tour is not shown again for it.
+    let mut reset = settings.clone();
+    reset.reset_all();
+    assert!(reset.onboarding_completed);
+
+    // A file written before it: the tour not seen.
+    assert!(
+        !written(
+            dir.path(),
+            "version = 1
+"
+        )
+        .onboarding_completed
+    );
+    assert!(
+        written(
+            dir.path(),
+            "version = 1
+[onboarding]
+completed = true
+"
+        )
+        .onboarding_completed
+    );
 }
 
 #[test]

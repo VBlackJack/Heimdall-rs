@@ -21,13 +21,11 @@
 //! what the user is typing into a question, and runs effects.
 
 use heimdall_core::settings::{AgentPreference, CtrlKTerminal, CtrlVPaste, ExecutionPolicy};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use heimdall_app::files::{
-    EntryKind, FilesError, FilesKey, Side, list_local, list_remote, plan_transfer,
-};
+use heimdall_app::files::{EntryKind, FilesError, FilesKey, Side, list_local, list_remote};
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::local_events;
@@ -60,11 +58,14 @@ use heimdall_app::{
     VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
     master_password_problem, open_vault, server_text,
 };
-use heimdall_app::{ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello, windows_hello};
+use heimdall_app::{
+    LegacyMigrationMessage, QuickRow, ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello,
+    windows_hello,
+};
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
-use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway, SshMode, display_address};
+use heimdall_core::profile::{ProfileId, SshGateway, SshMode, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{AppTheme, BroadcastScope, ColorScheme};
 use heimdall_ssh::{AgentSource, Secret};
@@ -97,6 +98,7 @@ use crate::finder::Finder;
 use crate::floating_view::{FloatEvent, FloatingWindow};
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
+use crate::menu_fit::menu_at;
 use crate::palette::Palette;
 pub use crate::profile_tabs::ProfileTab;
 use crate::report;
@@ -271,11 +273,13 @@ const FONT_SIZE_FIELD_WIDTH: f32 = 80.0;
 /// Room above Quick Connect.
 const PALETTE_TOP: f32 = 80.0;
 
-/// Longest tab title shown, in characters.
-const MAX_TAB_TITLE_CHARS: usize = 32;
+/// Widest a tab's title grows before it ends with an ellipsis, as the C# tab title's
+/// `MaxWidth`.
+const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
 
-/// Marks a cut title; three ASCII dots, as everywhere in the project.
-const ELLIPSIS: &str = "...";
+/// How long the pointer rests on the tree's search before its tooltip shows: the system's
+/// hover time, WPF's default for the C# box.
+const SEARCH_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Opacity of the veil behind a dialog.
 const VEIL_ALPHA: f32 = 0.6;
@@ -358,15 +362,56 @@ fn takes_drops(tab: &Tab) -> bool {
             .is_some_and(|files| files.client.is_some())
 }
 
-/// "Drop files to upload", over a Files tab while files are dragged over its window.
-fn drop_layer<'a>() -> Element<'a, Message> {
+/// Over a Files tab while `count` files are dragged over its window, as the C#
+/// `DescribeExternalDrop`: how many go to which folder of the server, or join the queue
+/// behind the transfer running.
+fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Element<'a, Message> {
+    let items = fl!("ui-files-drop-items", count = count);
+    let folder = files.remote.path.display();
+    let busy = files
+        .transfers
+        .iter()
+        .any(|transfer| !transfer.state.ended());
+    let said = if busy {
+        fl!(
+            "ui-files-drop-overlay-queued",
+            items = items,
+            folder = folder
+        )
+    } else {
+        fl!(
+            "ui-files-drop-overlay-target",
+            items = items,
+            folder = folder
+        )
+    };
     opaque(
         container(
-            container(text(fl!("ui-files-drop-overlay")).size(font_size::TITLE))
+            container(text(said).size(font_size::TITLE))
                 .padding(spacing::MD)
                 .style(container::bordered_box),
         )
         .center(Length::Fill),
+    )
+}
+
+/// The welcome tour's card over the window, veiled as under a dialog: what is under it is
+/// neither hovered nor clicked, as the C# overlay's scrim takes the pointer.
+fn tour_layer<'a>(tour: &crate::onboarding::Tour) -> Element<'a, Message> {
+    opaque(
+        container(crate::onboarding::card(tour))
+            .center(Length::Fill)
+            .padding(spacing::LG)
+            .style(|_: &Theme| container::Style {
+                background: Some(
+                    Color {
+                        a: VEIL_ALPHA,
+                        ..Color::BLACK
+                    }
+                    .into(),
+                ),
+                ..container::Style::default()
+            }),
     )
 }
 
@@ -441,6 +486,15 @@ fn sidebar_drag_event(
     }
 }
 
+/// Whether `physical` with `modifiers` toggles the window's full screen, as the C#
+/// `FullscreenShortcutRouter`: F11 alone, which a desktop keeps from its server, or
+/// Ctrl+Shift+F11, full screen over an embedded session, which neither a terminal nor a
+/// desktop passes on.
+fn toggles_fullscreen(physical: keyboard::key::Physical, modifiers: keyboard::Modifiers) -> bool {
+    (physical == keyboard::key::Physical::Code(keyboard::key::Code::F11) && modifiers.is_empty())
+        || crate::terminal_view::keys::is_fullscreen_key(physical, modifiers)
+}
+
 fn window_event(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Message> {
     match event {
         iced::Event::Window(window::Event::CloseRequested) => {
@@ -492,14 +546,13 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         } else {
             Message::DialogKey { confirm: false }
         }),
-        // F11 whatever took it: the window's full screen, as in the C# Heimdall. A desktop
-        // keeps it from its server.
+        // F11 and Ctrl+Shift+F11 whatever took them: the window's full screen.
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
-            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::F11),
+            physical_key,
             modifiers,
             repeat: false,
             ..
-        }) if modifiers.is_empty() => Some(Message::ToggleFullscreen),
+        }) if toggles_fullscreen(physical_key, modifiers) => Some(Message::ToggleFullscreen),
         // Ctrl+L even when a terminal took it: the session gets it too, as a shell's clear.
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
@@ -606,6 +659,10 @@ pub enum Message {
     TrustedSearch(TrustedList, String),
     /// The header of a column of the trusted SSH host keys clicked: sorted by it.
     HostKeySort(HostKeyColumn),
+    /// A press on the welcome tour's card, or Enter or Escape while it is shown.
+    Tour(crate::onboarding::TourMessage),
+    /// The Settings page's "Show the tour again": the welcome tour from its first step.
+    ReplayTour,
     /// A language chosen on the Settings page.
     LanguageChosen(Language),
     /// F11: the window full screen, showing the session only, or back.
@@ -625,6 +682,13 @@ pub enum Message {
         tab: TabId,
         /// Fit to window rather than match it.
         fit: bool,
+    },
+    /// How a VNC desktop is shown, from its overlay's "Scaling mode", as the C# noVNC page.
+    VncScaling {
+        /// Tab.
+        tab: TabId,
+        /// The mode chosen.
+        scaling: VncScaling,
     },
     /// The tree's search changed.
     Search(String),
@@ -680,6 +744,9 @@ pub enum Message {
     SettingsTab(SettingsTab),
     /// Show this tab of the profile form.
     ProfileTab(ProfileTab),
+    /// The RDP profile form's "Refresh" of its monitors, as the C# `RefreshMonitorsCommand`:
+    /// the screens listed again.
+    RefreshMonitors,
     /// The Settings page's search changed: its rows are filtered by what it holds.
     SettingsSearch(String),
     /// "Find modified settings": the search set to the "Modified" marker's word.
@@ -722,6 +789,10 @@ pub enum Message {
     },
     /// Copy the report of a tab's failure, as the C# card's "Copy error".
     CopyError(TabId),
+    /// Open or close the "Diagnostic details" of a tab's failure, as the C# card's expander.
+    ToggleFailureDetails(TabId),
+    /// Show the redirections a desktop does not share, as the C# "+N" badge does.
+    ShowDisabledRedirections(TabId),
     /// Copy the anonymized report of tab's failure: no server, account nor message.
     CopyAnonymousError(TabId),
     /// A second passed while a tab waits to open again: its countdown is drawn anew.
@@ -730,6 +801,8 @@ pub enum Message {
     IdleTick,
     /// Whether Windows high contrast is on, looked at again: the window follows it.
     SystemHighContrast(bool),
+    /// Whether Windows asks for reduced motion, looked at again: the cursors follow it.
+    SystemReducedMotion(bool),
     /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
     /// cannot be read.
     UserInput,
@@ -847,6 +920,9 @@ pub enum Message {
     PaletteQuery(String),
     /// Open Quick Connect's result at this place.
     PaletteChoose(usize),
+    /// Enter in Quick Connect: the result chosen opened, as a split of the tab shown when
+    /// Ctrl is held, as the C# Ctrl+Enter.
+    PaletteSubmit,
     /// Close Quick Connect.
     PaletteClose,
     /// The text of the search bar over `tab`'s terminal changed.
@@ -967,6 +1043,8 @@ impl fmt::Debug for Message {
             Self::ManageGateways => f.write_str("ManageGateways"),
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
             Self::HostKeySort(column) => write!(f, "HostKeySort({column:?})"),
+            Self::Tour(message) => write!(f, "Tour({message:?})"),
+            Self::ReplayTour => f.write_str("ReplayTour"),
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::WindowOpened(_) => f.write_str("WindowOpened"),
@@ -974,6 +1052,9 @@ impl fmt::Debug for Message {
             Self::BringForward => f.write_str("BringForward"),
             Self::Rescaled(scale) => write!(f, "Rescaled({scale})"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
+            Self::VncScaling { tab, scaling } => {
+                write!(f, "VncScaling({}, {scaling:?})", tab.value())
+            }
             Self::Search(_) => f.write_str("Search(..)"),
             Self::ResetTreeFilters => f.write_str("ResetTreeFilters"),
             Self::FocusSearch => f.write_str("FocusSearch"),
@@ -996,6 +1077,7 @@ impl fmt::Debug for Message {
             Self::SubmitBulkPassword => f.write_str("SubmitBulkPassword"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
             Self::ProfileTab(tab) => write!(f, "ProfileTab({tab:?})"),
+            Self::RefreshMonitors => f.write_str("RefreshMonitors"),
             Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
             Self::FindModifiedSettings => f.write_str("FindModifiedSettings"),
             Self::ResetSetting(row) => write!(f, "ResetSetting({row:?})"),
@@ -1016,10 +1098,17 @@ impl fmt::Debug for Message {
                 write!(f, "SplitPalette({}, {axis:?})", host.value())
             }
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
+            Self::ToggleFailureDetails(tab) => {
+                write!(f, "ToggleFailureDetails({})", tab.value())
+            }
+            Self::ShowDisabledRedirections(tab) => {
+                write!(f, "ShowDisabledRedirections({})", tab.value())
+            }
             Self::CopyAnonymousError(tab) => write!(f, "CopyAnonymousError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
             Self::IdleTick => f.write_str("IdleTick"),
             Self::SystemHighContrast(on) => write!(f, "SystemHighContrast({on})"),
+            Self::SystemReducedMotion(on) => write!(f, "SystemReducedMotion({on})"),
             Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1071,6 +1160,7 @@ impl fmt::Debug for Message {
             } => write!(f, "SplitReleased({}, {divider}, {ratio})", host.value()),
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
+            Self::PaletteSubmit => f.write_str("PaletteSubmit"),
             Self::PaletteClose => f.write_str("PaletteClose"),
             Self::FinderQuery { tab, .. } => write!(f, "FinderQuery({tab:?}, ..)"),
             Self::FinderFind { tab, direction } => write!(f, "FinderFind({tab:?}, {direction:?})"),
@@ -1152,19 +1242,6 @@ fn target(host: &str, port: u16, user: Option<&str>) -> String {
         Some(user) if !user.is_empty() => format!("{user}@{address}"),
         _ => address,
     }
-}
-
-/// A tab title cut to [`MAX_TAB_TITLE_CHARS`], so one long server title cannot take the
-/// whole tab bar.
-fn tab_label(title: &str) -> String {
-    if title.chars().count() <= MAX_TAB_TITLE_CHARS {
-        return title.to_owned();
-    }
-    let kept: String = title
-        .chars()
-        .take(MAX_TAB_TITLE_CHARS - ELLIPSIS.len())
-        .collect();
-    format!("{kept}{ELLIPSIS}")
 }
 
 /// Widget identifier of a tab of the sidebar's "Sessions | Tools".
@@ -1287,7 +1364,9 @@ fn config() -> AppConfig {
         agent: AgentSource::Auto(AgentPreference::default()),
         initial_grid: INITIAL_GRID,
         files_start: paths::home_dir().unwrap_or_else(|| PathBuf::from(".")),
-        system_credentials: SystemCredentials::keyring(CREDENTIAL_SERVICE),
+        system_credentials: SystemCredentials::keyring(&paths::credential_service(
+            CREDENTIAL_SERVICE,
+        )),
     }
 }
 
@@ -1429,6 +1508,8 @@ pub struct Shell {
     sidebar_hidden: bool,
     /// The theme Windows imposes over the one chosen: high contrast, while it is on.
     forced_theme: Option<AppTheme>,
+    /// Windows asks for reduced motion: the terminals' cursors do not blink.
+    reduced_motion: bool,
     /// Where the window's state is kept, and how it was left; none in tests.
     window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
     /// The main window, named once it is asked to open; none in tests, which open none.
@@ -1500,8 +1581,9 @@ pub struct Shell {
     /// The window's own last key, click or wheel turn: the idle time where the computer's
     /// cannot be read.
     last_input: std::time::Instant,
-    /// Files are dragged over the window.
-    files_hovered: bool,
+    /// How many files dragged from Explorer are over the window: none once they leave or
+    /// drop.
+    files_hovered: usize,
     /// The files of the drops still gathered, by the window they were dropped on.
     drops: crate::drop_batch::DropBatches,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
@@ -1509,6 +1591,12 @@ pub struct Shell {
     focus_next: Option<iced::widget::Id>,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
     desktop_fit: HashMap<TabId, (bool, Option<(u16, u16)>)>,
+    /// The failures whose "Diagnostic details" are open.
+    failure_details_open: HashSet<TabId>,
+    /// The desktops whose bar shows the redirections they do not share too.
+    redirections_shown: HashSet<TabId>,
+    /// The letterbox hint of each desktop.
+    letterbox_hints: HashMap<TabId, crate::rdp_status::LetterboxHint>,
     /// What the tree's search holds: the profiles it finds are shown.
     search: String,
     /// What the tool tabs hold, by tab.
@@ -1517,6 +1605,11 @@ pub struct Shell {
     tools_filter: String,
     /// What the Tools page's search holds.
     tools_search: String,
+    /// The welcome tour shown over the window.
+    tour: Option<crate::onboarding::Tour>,
+    /// The welcome tour waits to be shown at the first start: until the PIN and the master
+    /// password are given, and no dialog is open.
+    tour_pending: bool,
 }
 
 /// What the content area shows.
@@ -1526,6 +1619,8 @@ enum Page {
     Tab,
     /// Every tunnel, as the C# Tunnels page.
     Tunnels,
+    /// The scheduled connections, as the C# Scheduled page.
+    Scheduled,
     /// About Heimdall, as the C# About page.
     About,
     /// The built-in tools, as the C# Tools page.
@@ -1538,14 +1633,15 @@ enum Page {
     },
 }
 
-/// A page of the window's navigation, as the C# toolbar's tabs. The C# Scheduled page comes
-/// with what it holds.
+/// A page of the window's navigation, as the C# toolbar's tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Destination {
     /// The sessions: the tree beside them.
     Sessions,
     /// Every tunnel.
     Tunnels,
+    /// The scheduled connections.
+    Scheduled,
     /// The built-in tools.
     Tools,
     /// The settings.
@@ -1556,9 +1652,10 @@ pub enum Destination {
 
 impl Destination {
     /// Every page, in the C# order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Sessions,
         Self::Tunnels,
+        Self::Scheduled,
         Self::Tools,
         Self::Settings,
         Self::About,
@@ -1568,45 +1665,12 @@ impl Destination {
         match self {
             Self::Sessions => fl!("ui-nav-sessions"),
             Self::Tunnels => fl!("ui-nav-tunnels"),
+            Self::Scheduled => fl!("ui-nav-scheduled"),
             Self::Tools => fl!("ui-nav-tools"),
             Self::Settings => fl!("ui-nav-settings"),
             Self::About => fl!("ui-nav-about"),
         }
     }
-}
-
-/// What an RDP session shares, as the C# session bar's indicators: the clipboard, the
-/// drives, the sound played here; each says what it is when pointed at.
-fn redirection_badges<'a>(profile: &RdpProfile) -> Vec<Element<'a, Message>> {
-    [
-        (
-            profile.redirect_clipboard,
-            fl!("ui-desktop-shares-clipboard"),
-            fl!("ui-desktop-shares-clipboard-tooltip"),
-        ),
-        (
-            profile.redirect_drives,
-            fl!("ui-desktop-shares-drives"),
-            fl!("ui-desktop-shares-drives-tooltip"),
-        ),
-        (
-            profile.options.audio == heimdall_core::profile::AudioPlayback::Local,
-            fl!("ui-desktop-shares-audio"),
-            fl!("ui-desktop-shares-audio-tooltip"),
-        ),
-    ]
-    .into_iter()
-    .filter(|(on, _, _)| *on)
-    .map(|(_, label, tip)| {
-        tooltip(
-            text(label).size(font_size::CAPTION).style(text::secondary),
-            text(tip).size(font_size::CAPTION),
-            tooltip::Position::Bottom,
-        )
-        .style(container::rounded_box)
-        .into()
-    })
-    .collect()
 }
 
 /// The application's name, at the head of the navigation: a name, not translated.
@@ -1669,6 +1733,8 @@ impl Shell {
         // Windows high contrast, as it is at start; looked at again while the window runs.
         shell.forced_theme =
             heimdall_app::high_contrast::system_on().then_some(AppTheme::HighContrast);
+        // Windows' reduced motion, likewise.
+        shell.reduced_motion = heimdall_app::reduced_motion::system_on();
         // The tree as it was left.
         shell
             .app
@@ -1680,6 +1746,7 @@ impl Shell {
         }
         // Transcripts past their retention, removed beside the start, as the C# does.
         shell.app.prune_transcripts();
+        shell.offer_tour_on_first_run();
         shell
     }
 
@@ -1740,6 +1807,7 @@ impl Shell {
             tree_drag: None,
             sidebar_hidden: false,
             forced_theme: None,
+            reduced_motion: false,
             window_memory: None,
             main_window: None,
             instance_dir: None,
@@ -1771,13 +1839,18 @@ impl Shell {
             ftps_certificate_search: String::new(),
             vnc_certificate_search: String::new(),
             last_input: std::time::Instant::now(),
-            files_hovered: false,
+            files_hovered: 0,
             drops: crate::drop_batch::DropBatches::default(),
             desktop_fit: HashMap::new(),
+            failure_details_open: HashSet::new(),
+            redirections_shown: HashSet::new(),
+            letterbox_hints: HashMap::new(),
             search: String::new(),
             tools: crate::tools::ToolPanes::default(),
             tools_filter: String::new(),
             tools_search: String::new(),
+            tour: None,
+            tour_pending: false,
         }
         .with_tool_panes()
     }
@@ -1851,9 +1924,19 @@ impl Shell {
     }
 
     /// The title of the window `window`: a tab's own window's as the C# names it, the main
-    /// window's as [`Self::title`], the application's name for any other.
+    /// window's as [`Self::title`], the application's name for any other; in a test build,
+    /// followed by its test data folder.
     #[must_use]
     pub fn window_title(&self, window: window::Id) -> String {
+        #[cfg(feature = "test-data-dir")]
+        return crate::test_data::titled(self.own_window_title(window));
+        #[cfg(not(feature = "test-data-dir"))]
+        return self.own_window_title(window);
+    }
+
+    /// The title of the window `window`, as [`Self::window_title`] says it before a test
+    /// data folder.
+    fn own_window_title(&self, window: window::Id) -> String {
         if let Some(tab) = self.floating_tab_of(window) {
             return fl!("ui-window-title-detached", tab = tab.display_title());
         }
@@ -1865,12 +1948,15 @@ impl Shell {
     }
 
     /// What starts with the application: Credential Guard checked in the background when the
-    /// settings require it, so that the first embedded RDP session does not wait for it; and
-    /// the user's OpenSSH `known_hosts` imported in the background when chosen, as the C#
-    /// does at startup, the folders' permissions already set.
+    /// settings require it, so that the first embedded RDP session does not wait for it; the
+    /// user's OpenSSH `known_hosts` imported in the background when chosen, as the C#
+    /// does at startup, the folders' permissions already set; and the legacy PowerShell
+    /// Heimdall looked for from the program's folder, as the C# does, while no profile is
+    /// saved.
     pub fn start_tasks(&mut self) -> Task<Message> {
         let mut effects = self.app.warm_credential_guard();
         effects.extend(self.app.sync_known_hosts_at_startup());
+        effects.extend(self.app.look_for_legacy_installation(paths::program_dir()));
         let tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         Task::batch(tasks)
@@ -1966,8 +2052,12 @@ impl Shell {
             .tab_page(tab, true)
             .map(move |message| Message::InFloating(window, Box::new(message)));
         let mut layers = stack![crate::floating_view::view(heading, body)];
-        if floating.hovered && takes_drops(tab) {
-            layers = layers.push(drop_layer());
+        if let Some(files) = tab
+            .files
+            .as_deref()
+            .filter(|_| floating.hovered > 0 && takes_drops(tab))
+        {
+            layers = layers.push(drop_layer(files, floating.hovered));
         }
         if let Some(menu) = self.floating_menu(tab.id) {
             layers = layers
@@ -1982,6 +2072,12 @@ impl Shell {
     #[must_use]
     pub fn theme(&self) -> Theme {
         crate::themes::theme(self.theme_shown(), self.app.settings().accent)
+    }
+
+    /// Whether Windows asks for reduced motion, as last looked at.
+    #[must_use]
+    pub fn reduced_motion(&self) -> bool {
+        self.reduced_motion
     }
 
     /// The theme drawn: Windows high contrast's while it is on, else the one chosen.
@@ -2002,6 +2098,13 @@ impl Shell {
         if let Some(interval) = self.app.tmout_reset_interval() {
             ticks.push(
                 iced::time::every(interval).map(|_| Message::App(AppMessage::TmoutResetTick)),
+            );
+        }
+        // The scheduled connections looked at every minute, as the C# task scheduler.
+        if self.app.schedules_connections() {
+            ticks.push(
+                iced::time::every(heimdall_app::SCHEDULED_TICK)
+                    .map(|_| Message::App(AppMessage::ScheduledTick)),
             );
         }
         // Every server checked in the background, as the C# session health monitor.
@@ -2047,6 +2150,14 @@ impl Shell {
             ticks.push(
                 iced::time::every(heimdall_app::high_contrast::POLL)
                     .map(|_| Message::SystemHighContrast(heimdall_app::high_contrast::system_on())),
+            );
+        }
+        // Windows' animation effects turned on or off while the window is open.
+        if heimdall_app::reduced_motion::WATCHED {
+            ticks.push(
+                iced::time::every(heimdall_app::reduced_motion::POLL).map(|_| {
+                    Message::SystemReducedMotion(heimdall_app::reduced_motion::system_on())
+                }),
             );
         }
         ticks
@@ -2118,6 +2229,7 @@ impl Shell {
         if locked_out
             || self.app.tabs.iter().any(|tab| tab.retry.is_some())
             || self.app.undo_offer().is_some()
+            || self.letterbox_shown(std::time::Instant::now())
         {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
@@ -2409,6 +2521,7 @@ impl Shell {
             Message::InFloating(window, message) => return self.in_floating(window, *message),
             message => message,
         };
+        self.observe_letterboxes(std::time::Instant::now());
         // A click on another row of the tree ends a rename made in place, kept, as the C#
         // editor losing the focus.
         if self.inline_rename().is_some()
@@ -2431,6 +2544,10 @@ impl Shell {
         ) && self.cancel_tab_drag()
         {
             return Task::none();
+        }
+        // Enter and Escape are the welcome tour's while it is shown and nothing over it.
+        if let Some(tour) = self.tour_key(&message) {
+            return self.update(Message::Tour(tour));
         }
         // Escape no widget took leaves full screen when there is nothing else to close, as
         // the C# Heimdall's.
@@ -2522,8 +2639,16 @@ impl Shell {
                 self.forced_theme = on.then_some(AppTheme::HighContrast);
                 Vec::new()
             }
+            Message::SystemReducedMotion(on) => {
+                self.reduced_motion = on;
+                Vec::new()
+            }
             Message::UserInput => {
                 self.last_input = std::time::Instant::now();
+                Vec::new()
+            }
+            Message::RefreshMonitors => {
+                self.relist_monitors();
                 Vec::new()
             }
             Message::MainWindowClosed => return iced::exit(),
@@ -2568,7 +2693,13 @@ impl Shell {
             | Message::CloseTreeMenu
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
             Message::MenuChoice(message) => self.closing_menu(message),
+            Message::VncScaling { tab, scaling } => self.vnc_scaling(tab, scaling),
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
+            Message::Tour(message) => self.tour_message(message),
+            Message::ReplayTour => {
+                self.start_tour();
+                Vec::new()
+            }
             Message::SplitPalette { host, axis } => {
                 self.open_palette(Some((host, axis)));
                 Vec::new()
@@ -2577,6 +2708,16 @@ impl Shell {
             Message::Browse(target) => return self.browse(target),
             Message::Browsed(target, path) => self.browsed(target, path),
             Message::CopyError(tab) => return self.copy_error(tab),
+            Message::ToggleFailureDetails(tab) => {
+                if !self.failure_details_open.remove(&tab) {
+                    self.failure_details_open.insert(tab);
+                }
+                Vec::new()
+            }
+            Message::ShowDisabledRedirections(tab) => {
+                self.redirections_shown.insert(tab);
+                Vec::new()
+            }
             Message::CopyAnonymousError(tab) => {
                 return self
                     .anonymous_report(tab, std::time::SystemTime::now())
@@ -2634,6 +2775,7 @@ impl Shell {
             | Message::FilesDragEnd) => self.files_drag_message(&message),
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
+            | Message::PaletteSubmit
             | Message::PaletteClose) => self.palette_message(message),
             message @ (Message::FinderQuery { .. }
             | Message::FinderFind { .. }
@@ -2707,7 +2849,15 @@ impl Shell {
         // The previous run's sessions, offered once nothing else is asked and the window is
         // open to the user.
         if !self.gated() {
+            // The legacy migration found at start, before the sessions to restore: the PIN
+            // and the master password already given.
+            self.app.offer_legacy_migration();
             self.app.offer_restore();
+            // The welcome tour of a first start, once nothing else is asked.
+            if self.tour_pending && self.app.dialog.is_none() {
+                self.tour_pending = false;
+                self.start_tour();
+            }
             // The servers' first background check, once their tree can be seen.
             for effect in self.app.start_reachability() {
                 tasks.push(self.run(effect));
@@ -2828,6 +2978,8 @@ impl Shell {
     fn view_message(&mut self, message: &Message) -> Task<Message> {
         match message {
             Message::DesktopFit { tab, fit } => {
+                // Chosen from the tab's menu, which closes.
+                self.menu = None;
                 // Kept for the size the desktop has now: another chosen later makes it stale.
                 let fixed = self
                     .app
@@ -2867,6 +3019,7 @@ impl Shell {
                 match destination {
                     Destination::Sessions => self.page = Page::Tab,
                     Destination::Tunnels => self.page = Page::Tunnels,
+                    Destination::Scheduled => self.page = Page::Scheduled,
                     Destination::Tools => self.page = Page::Tools,
                     Destination::About => self.page = Page::About,
                     Destination::Settings => return self.view_message(&Message::ShowSettings),
@@ -3038,7 +3191,23 @@ impl Shell {
             passwords: self.password_store(),
             profile_tab: self.profile_tab,
             profile_refused: self.profile_refused,
+            scheduled: self.scheduled_dialog(),
         }
+    }
+
+    /// The sessions the scheduled connection's dialog offers, and when its task would run
+    /// next: worked out only while it is open.
+    fn scheduled_dialog(&self) -> Option<ScheduledDialogInputs> {
+        let Some(Dialog::ScheduledTask(form)) = &self.app.dialog else {
+            return None;
+        };
+        Some(ScheduledDialogInputs {
+            choices: self.app.scheduled_choices(),
+            preview: form.preview(
+                heimdall_app::time_zone::unix_now(),
+                &heimdall_app::time_zone::SystemClock,
+            ),
+        })
     }
 
     /// Whether the profile form is open with a protocol chosen, or left for a gateway it
@@ -3134,9 +3303,9 @@ impl Shell {
     }
 
     /// Whether a page of the navigation is shown in place of the tab: the settings, the
-    /// tunnels or About. The tab's keys are not its then.
+    /// tunnels, the scheduled connections or About. The tab's keys are not its then.
     fn page_over_tab(&self) -> bool {
-        self.settings_shown() || matches!(self.page, Page::Tunnels | Page::About)
+        self.settings_shown() || matches!(self.page, Page::Tunnels | Page::Scheduled | Page::About)
     }
 
     /// Whether the window is behind a gate: the lock screen, or the PIN asked at start.
@@ -3367,6 +3536,7 @@ impl Shell {
             .ctrl_v(self.app.settings().ctrl_v_paste)
             .ctrl_k(self.app.settings().ctrl_k_terminal)
             .interactive(interactive)
+            .reduced_motion(self.reduced_motion)
             .font(self.terminal_font())
             .font_size(self.font_size(tab.id))
             .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom)))
@@ -3466,6 +3636,96 @@ impl Shell {
         self.menu_window = window;
     }
 
+    /// The welcome tour at a first start, as the C# `MainWindow` shows it once loaded while
+    /// `OnboardingCompleted` is off: at once when the window is free, else once the PIN and
+    /// the master password are given and no dialog is open.
+    pub fn offer_tour_on_first_run(&mut self) {
+        if self.app.onboarding_completed() {
+            return;
+        }
+        if self.gated() || self.app.dialog.is_some() {
+            self.tour_pending = true;
+        } else {
+            self.start_tour();
+        }
+    }
+
+    /// The welcome tour shown, if it is.
+    #[must_use]
+    pub fn tour(&self) -> Option<&crate::onboarding::Tour> {
+        self.tour.as_ref()
+    }
+
+    /// The welcome tour from its first step, as the C# `Start`, its page shown.
+    fn start_tour(&mut self) {
+        self.tour = Some(crate::onboarding::Tour::new());
+        self.show_tour_step();
+    }
+
+    /// The page the tour's step speaks of shown first, as the C# `ApplyOnboardingStep`
+    /// navigates before it measures.
+    fn show_tour_step(&mut self) {
+        if self
+            .tour
+            .as_ref()
+            .is_some_and(|tour| tour.step().shows_sessions())
+        {
+            self.menu = None;
+            self.page = Page::Tab;
+        }
+    }
+
+    /// Next and Skip on the tour's card: the next step, or the tour's end recorded.
+    fn tour_message(&mut self, message: crate::onboarding::TourMessage) -> Vec<Effect> {
+        let Some(tour) = self.tour.as_mut() else {
+            return Vec::new();
+        };
+        if message == crate::onboarding::TourMessage::Next && tour.advance() {
+            self.show_tour_step();
+            return Vec::new();
+        }
+        self.finish_tour()
+    }
+
+    /// The tour's end, after its last step, Skip or Escape, as the C# `CompleteAsync`:
+    /// recorded as seen, then the Sessions page and the sidebar's sessions shown, where a new
+    /// user has something to do (`MainWindow.xaml.cs:2643-2667`). An end that cannot be saved
+    /// leaves the tour open with what went wrong.
+    fn finish_tour(&mut self) -> Vec<Effect> {
+        if !self.app.complete_onboarding() {
+            if let Some(tour) = self.tour.as_mut() {
+                tour.set_save_failed(true);
+            }
+            return Vec::new();
+        }
+        self.tour = None;
+        self.menu = None;
+        self.page = Page::Tab;
+        self.app
+            .update(AppMessage::Tools(ToolsMessage::ShowSidebarTab(
+                SidebarTab::Sessions,
+            )))
+    }
+
+    /// What `message` is to the welcome tour: Enter its Next and Escape its Skip, while it is
+    /// shown and no dialog, menu or Quick Connect is over it, as the C# overlay's key binding.
+    fn tour_key(&self, message: &Message) -> Option<crate::onboarding::TourMessage> {
+        let free = self.tour.is_some()
+            && !self.gated()
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && self.menu.is_none();
+        match message {
+            Message::DialogKey { confirm: true } if free => {
+                Some(crate::onboarding::TourMessage::Next)
+            }
+            Message::DialogKey { confirm: false } | Message::EscapeUntaken if free => {
+                Some(crate::onboarding::TourMessage::Skip)
+            }
+            _ => None,
+        }
+    }
+
     /// Whether Escape leaves full screen: in it, with no dialog, menu, Quick Connect, search
     /// bar or path bar for Escape to close first.
     fn escape_leaves_fullscreen(&self) -> bool {
@@ -3475,18 +3735,6 @@ impl Shell {
             && self.finder.is_none()
             && self.menu.is_none()
             && self.main_path_editing().is_none()
-    }
-
-    /// Whether the page shown is a remote desktop under its bar, whose bar has its own way
-    /// out of full screen.
-    fn desktop_bar_shown(&self) -> bool {
-        !self.settings_shown()
-            && self.app.active_tab().is_some_and(|tab| {
-                tab.prompts.is_empty()
-                    && matches!(tab.phase, Phase::Connected)
-                    && tab.files.is_none()
-                    && tab.desktop.is_some()
-            })
     }
 
     /// Enter confirms the open dialog, Escape dismisses it. Without a dialog, Enter opens
@@ -4033,6 +4281,18 @@ impl Shell {
                 .await;
             })
             .discard(),
+            Effect::FindLegacyInstallation(start) => Task::future(async move {
+                // Folders walked and files read: off the UI thread.
+                let found =
+                    tokio::task::spawn_blocking(move || heimdall_app::rdpmanager::detect(&start))
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(Box::new);
+                Message::App(AppMessage::LegacyMigration(LegacyMigrationMessage::Found(
+                    found,
+                )))
+            }),
             Effect::LaunchCitrix { tab, name, launch } => {
                 crate::citrix_view::launch(tab, name, launch)
             }
@@ -4141,6 +4401,9 @@ impl Shell {
             Effect::PickRdpFiles => pick_rdp(main),
             // Held by the window the Files tab is in, as its C# browser's.
             Effect::PickUploads { tab } => pick_uploads(tab, self.owner_of(tab)),
+            Effect::PickDownloadFolder { tab, start } => {
+                pick_download_folder(tab, start, self.owner_of(tab))
+            }
             Effect::ReadExplorerFiles { tab } => read_explorer_files(tab),
             Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
             // Held by the window the desktop is in, as the C# prompts are.
@@ -4392,9 +4655,9 @@ impl Shell {
         // Always a stack with the window first: a tree of one shape keeps the state of the
         // widgets under a dialog, such as how far a list is scrolled.
         let mut layers = stack![body];
-        // Full screen, a way out the mouse finds, as the C# floating button; a desktop's bar
-        // has its own.
-        if self.fullscreen && !locked && !self.desktop_bar_shown() {
+        // Full screen, a way out the mouse finds, as the C# floating button: a desktop's
+        // header is put away in full screen, as the C# one.
+        if self.fullscreen && !locked {
             layers = layers.push(
                 container(
                     tooltip(
@@ -4411,6 +4674,10 @@ impl Shell {
                 .align_x(iced::alignment::Horizontal::Right),
             );
         }
+        // Under a dialog, which stays answerable, as the C# dialogs open over its overlay.
+        if let Some(tour) = self.tour.as_ref().filter(|_| !locked) {
+            layers = layers.push(tour_layer(tour));
+        }
         if let Some(layer) = self.dialog_layer(locked) {
             layers = layers.push(layer);
         }
@@ -4420,13 +4687,11 @@ impl Shell {
             .filter(|(menu, _)| !locked && !self.menu_in_floating(menu))
             .and_then(|(menu, at)| Some((self.open_menu_entries(menu)?, *at)));
         if let Some(palette) = self.palette.as_ref().filter(|_| !locked) {
-            let results = self
-                .app
-                .quick_results_in(&palette.query, palette.split.map(|(host, _)| host));
+            let rows = self.palette_rows(palette);
             // At the top, as the C# palette; a click beside it closes it.
             layers = layers.push(opaque(
                 mouse_area(
-                    container(crate::palette::view(palette, &results))
+                    container(crate::palette::view(palette, &rows, &self.theme()))
                         .center_x(Length::Fill)
                         .padding(PALETTE_TOP)
                         .height(Length::Fill),
@@ -4444,23 +4709,13 @@ impl Shell {
             layers = layers.push(overlay);
         }
         if let Some((entries, at)) = open_menu {
-            // A tunnel row is at the window's foot: its menu opens above the cursor.
-            let y = if matches!(self.menu, Some((TreeMenu::Tunnel(_), _))) {
-                (at.y - tree_view::TUNNEL_MENU_HEIGHT).max(0.0)
-            } else {
-                at.y
-            };
+            // Kept whole and inside the window, as a WPF ContextMenu: near the right edge it
+            // opens left of the pointer, near the foot (a tunnel row) above it.
             // Opaque: what is under the menu is neither hovered nor clicked.
             layers = layers.push(opaque(
-                mouse_area(
-                    pin(entries)
-                        .x(at.x)
-                        .y(y)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
-                )
-                .on_press(Message::CloseTreeMenu)
-                .on_right_press(Message::CloseTreeMenu),
+                mouse_area(menu_at(entries, at))
+                    .on_press(Message::CloseTreeMenu)
+                    .on_right_press(Message::CloseTreeMenu),
             ));
         }
         container(CursorTracker::new(layers, self.cursor.clone()))
@@ -4560,6 +4815,10 @@ impl Shell {
             // Only while the session is saved.
             self.app.profile_summary(id)?;
             tree_view::notes_entries(id)
+        } else if let TreeMenu::SendKeys(tab) = *menu {
+            // Only while its desktop is shown.
+            shown_desktop(self.app.tab(tab)?)?;
+            tree_view::send_keys_entries(tab)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
             tree_view::resolution_entries(
@@ -4709,6 +4968,7 @@ impl Shell {
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_)
                 | TreeMenu::Resolution(_)
+                | TreeMenu::SendKeys(_)
                 | TreeMenu::Macros(_)
                 | TreeMenu::Notes(_)
                 | TreeMenu::Tool(_)
@@ -4792,10 +5052,13 @@ impl Shell {
             ]
             .height(Length::Fill)
             .into(),
-            Page::Tunnels => {
-                crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
-            }
+            Page::Tunnels => crate::tunnels_view::page(
+                &self.app.tunnels,
+                &self.app.session_routes(),
+                self.app.selected_tunnel(),
+            ),
             Page::Tools => crate::tools::catalog::page(&self.app, &self.tools_search),
+            Page::Scheduled => crate::scheduled_view::page(&self.app),
             Page::About => crate::about_view::view(&self.app),
             Page::Settings { .. } => container(self.content())
                 .width(Length::Fill)
@@ -4809,6 +5072,7 @@ impl Shell {
         let shown = match self.page {
             Page::Tab => Destination::Sessions,
             Page::Tunnels => Destination::Tunnels,
+            Page::Scheduled => Destination::Scheduled,
             Page::Tools => Destination::Tools,
             Page::About => Destination::About,
             Page::Settings { .. } => Destination::Settings,
@@ -4889,10 +5153,14 @@ impl Shell {
                     ))
                     .size(font_size::CAPTION)
                     .style(text::secondary)),
+            ]
+            // The C# header's health, phase and time elapsed, for an RDP session.
+            .push(rdp_status(tab))
+            .push(
                 button(text(fl!("ui-connect-cancel-button")))
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-            ]
+            )
             .spacing(spacing::SM),
         ))
         .into()
@@ -5413,9 +5681,13 @@ impl Shell {
                 Message::SearchDown,
             ),
             text(fl!("ui-tree-search-tooltip")).size(font_size::CAPTION),
-            tooltip::Position::Bottom,
+            // Above the box: under it, it hid the filters and their reset.
+            tooltip::Position::Top,
         )
+        .delay(SEARCH_TOOLTIP_DELAY)
         .style(container::rounded_box);
+        // Put away by the click that starts typing, as a WPF tooltip by its control's click.
+        let field = crate::press_tooltip::hide_on_press(field);
         let clear = (!self.search.is_empty()).then(|| {
             container(
                 tooltip(
@@ -5530,8 +5802,9 @@ impl Shell {
     /// server's folder of the Files tab shown, as the C# tab takes what Explorer drops on it.
     fn drop_message(&mut self, message: &Message) -> Vec<Effect> {
         match *message {
+            // winit says each file of the drag in turn: they are counted.
             Message::FilesHovered(over) => {
-                self.files_hovered = over;
+                self.files_hovered = if over { self.files_hovered + 1 } else { 0 };
                 Vec::new()
             }
             Message::DropGathered(place) => {
@@ -5554,10 +5827,11 @@ impl Shell {
         }
     }
 
-    /// "Drop files to upload" over the Files tab shown while files are dragged over it.
+    /// Where the files dragged over the Files tab shown go, while they are.
     fn drop_overlay(&self) -> Option<Element<'_, Message>> {
-        self.drop_target().filter(|_| self.files_hovered)?;
-        Some(drop_layer())
+        let tab = self.drop_target().filter(|_| self.files_hovered > 0)?;
+        let files = self.app.tab(tab)?.files.as_deref()?;
+        Some(drop_layer(files, self.files_hovered))
     }
 
     /// The transcripts' folder typed, or applied.
@@ -5686,34 +5960,40 @@ impl Shell {
                 }
                 Vec::new()
             }
-            Message::PaletteChoose(index) => {
-                let Some(palette) = self.palette.take() else {
-                    return Vec::new();
-                };
-                if let Some(result) = self
-                    .app
-                    .quick_results_in(&palette.query, palette.split.map(|(host, _)| host))
-                    .into_iter()
-                    .nth(index)
-                {
-                    // In split mode, merged into the tab its "Split..." was chosen from.
-                    self.app.update(match palette.split {
-                        Some((host, axis)) => {
-                            AppMessage::Split(SplitMessage::QuickConnect { host, axis, result })
-                        }
-                        None => AppMessage::QuickConnect(result),
-                    })
-                } else {
-                    // Nothing there: the palette stays for another search.
-                    self.palette = Some(palette);
-                    Vec::new()
-                }
+            Message::PaletteChoose(index) => self.palette_open(index, false),
+            Message::PaletteSubmit => {
+                let chosen = self.palette.as_ref().map_or(0, |palette| palette.chosen);
+                self.palette_open(chosen, self.modifiers == keyboard::Modifiers::CTRL)
             }
             _ => {
                 self.palette = None;
                 Vec::new()
             }
         }
+    }
+
+    /// Quick Connect's lines, as the core finds them for what `palette` has typed.
+    fn palette_rows(&self, palette: &Palette) -> Vec<QuickRow> {
+        self.app.quick_results_in(
+            &palette.query,
+            palette.split.map(|(host, _)| host),
+            &crate::palette::tool_words,
+        )
+    }
+
+    /// Opens Quick Connect's result at `index`, closing it, as the C# routes it: with
+    /// Ctrl+Enter when `beside`, as a split of the tab shown; nothing there, the palette
+    /// stays for another search.
+    fn palette_open(&mut self, index: usize, beside: bool) -> Vec<Effect> {
+        let Some(palette) = self.palette.take() else {
+            return Vec::new();
+        };
+        let Some(row) = self.palette_rows(&palette).into_iter().nth(index) else {
+            self.palette = Some(palette);
+            return Vec::new();
+        };
+        let message = self.app.quick_open(row.result, palette.split, beside);
+        self.app.update(message)
     }
 
     /// Ctrl+K or Ctrl+Shift+K, as the C# palette's: Quick Connect opened over whatever has
@@ -5741,18 +6021,12 @@ impl Shell {
     /// A key while Quick Connect is open: the arrows move its choice within its results,
     /// Enter opens the one chosen, the others are nobody's; `None` while it is closed.
     fn palette_key(&mut self, key: FilesKey) -> Option<Vec<Effect>> {
+        let count = self.palette_rows(self.palette.as_ref()?).len();
         let palette = self.palette.as_mut()?;
-        let count = self
-            .app
-            .quick_results_in(&palette.query, palette.split.map(|(host, _)| host))
-            .len();
         match key {
             FilesKey::Previous => palette.chosen = palette.chosen.saturating_sub(1),
             FilesKey::Next if palette.chosen + 1 < count => palette.chosen += 1,
-            FilesKey::Open => {
-                let chosen = palette.chosen;
-                return Some(self.palette_message(Message::PaletteChoose(chosen)));
-            }
+            FilesKey::Open => return Some(self.palette_message(Message::PaletteSubmit)),
             _ => {}
         }
         Some(Vec::new())
@@ -6530,6 +6804,11 @@ impl Shell {
             .endpoint()
             .map(|(host, port)| format!("{} ({host}:{port})", tab.profile.name()));
         let route = self.app.tab_route(tab);
+        // The error as its card says it, then its diagnostic details, as the C# copies them.
+        let mut said = vec![failure_text(tab, error)];
+        if let Some(details) = failure_details(tab, error) {
+            said.extend(details.report_lines());
+        }
         Some(report::error_report(
             self.app.tab_kind(tab).label(),
             server.as_deref(),
@@ -6537,9 +6816,43 @@ impl Shell {
                 route: &route,
                 lasted: tab.session_lasted(),
             },
-            &texts::error(error),
+            &said.join(
+                "
+",
+            ),
             now,
         ))
+    }
+
+    /// What each RDP desktop's letterbox hint sees at `now`, as the C# looks again at each
+    /// layout of its desktop.
+    fn observe_letterboxes(&mut self, now: std::time::Instant) {
+        let seen: Vec<LetterboxSeen> = self
+            .app
+            .tabs
+            .iter()
+            .filter(|tab| tab.purpose == Purpose::Rdp)
+            .filter_map(|tab| {
+                let pane = tab.desktop.as_deref()?;
+                let fixed = pane.fixed_size();
+                let fit = self.fits(tab);
+                let boxed = crate::rdp_status::letterboxed(fixed, pane.tab_size(), fit);
+                Some((tab.id, fixed, fit, boxed))
+            })
+            .collect();
+        self.letterbox_hints
+            .retain(|id, _| seen.iter().any(|(tab, ..)| tab == id));
+        for (tab, fixed, fit, boxed) in seen {
+            self.letterbox_hints
+                .entry(tab)
+                .or_default()
+                .observe(fixed, fit, boxed, now);
+        }
+    }
+
+    /// Whether a letterbox hint shows at `now`: the window is drawn again until it goes.
+    fn letterbox_shown(&self, now: std::time::Instant) -> bool {
+        self.letterbox_hints.values().any(|hint| hint.visible(now))
     }
 
     /// The anonymized report of tab `id`'s failure at `now`: when, how many gateways, how
@@ -6585,10 +6898,6 @@ impl Shell {
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
-            vnc_resize: tab
-                .desktop
-                .as_ref()
-                .and_then(|pane| pane.vnc_remote_resize()),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
             pane: false,
@@ -6646,6 +6955,7 @@ impl Shell {
         // Where a dragged tab goes, outlined as the C# drop target.
         let target = dragging.and_then(|drag| drag.onto(self.tab_hover)) == Some(tab);
         container(area)
+            .id(tab_id(tab))
             .style(move |theme: &Theme| container::Style {
                 border: iced::Border {
                     color: if target {
@@ -6678,12 +6988,30 @@ impl Shell {
 
     /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
     /// goes straight.
+    /// Its colour says the route's health, as the C# tab's tunnel badge: the success colour
+    /// while the session runs, the warning colour once it failed, ended or waits to open
+    /// again, said in its tooltip above the route.
     fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
         let route = self.route_text(tab)?;
+        let (health, colour): (String, fn(&Theme) -> text::Style) = match self.app.tunnel_badge(tab)
+        {
+            heimdall_app::tunnel::TunnelBadge::Hidden => return None,
+            heimdall_app::tunnel::TunnelBadge::Healthy => {
+                (fl!("ui-tab-route-badge-healthy"), text::success)
+            }
+            heimdall_app::tunnel::TunnelBadge::Unhealthy => {
+                (fl!("ui-tab-route-badge-unhealthy"), text::warning)
+            }
+        };
         Some(
             tooltip(
-                text(fl!("ui-tab-route-badge")).size(font_size::CAPTION),
-                text(route).size(font_size::CAPTION),
+                text(fl!("ui-tab-route-badge"))
+                    .size(font_size::CAPTION)
+                    .style(colour),
+                column![
+                    text(health).size(font_size::CAPTION),
+                    text(route).size(font_size::CAPTION),
+                ],
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
@@ -6697,9 +7025,9 @@ impl Shell {
     /// Connection opens no tab to name.
     fn tab_name(tab: &Tab) -> String {
         let name = if tab.files.is_some() && tab.custom_title.is_none() {
-            fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
+            fl!("ui-tab-files-title", name = tab.display_title())
         } else {
-            tab_label(tab.display_title())
+            tab.display_title().to_owned()
         };
         if tab.custom_title.is_none()
             && tab.rdp_mode_override == Some(heimdall_core::profile::RdpMode::Embedded)
@@ -6732,11 +7060,13 @@ impl Shell {
                 .style(container::rounded_box),
             );
         }
+        // One long server title cannot take the whole strip: it ends with an ellipsis.
         label = label.push(
-            text(Self::tab_name(tab))
+            crate::ellipsis::text(Self::tab_name(tab))
                 .size(font_size::BODY)
                 .font(styles::SEMIBOLD)
-                .style(text::base),
+                .style(text::base)
+                .max_width(TAB_TITLE_MAX_WIDTH),
         );
         // While it connects, as the C# tab's busy dot.
         let state = SessionState::of(tab);
@@ -6797,14 +7127,17 @@ impl Shell {
         self.tab_title(tab, active).push(transcript_mark(tab))
     }
 
+    /// The tabs' strip, as the C# one: on one row that scrolls sideways once the tabs pass
+    /// its width, the tab shown kept in view.
     fn tab_bar(&self) -> Element<'_, Message> {
-        let mut tabs = row![]
+        let mut strip = row![]
             .spacing(TAB_GAP)
             .padding(TAB_STRIP_PADDING)
             .align_y(iced::Alignment::Center);
+        let mut tabs = row![].spacing(TAB_GAP).align_y(iced::Alignment::Center);
         // The sidebar hidden, a way to show it again, as the C# button where it was.
         if self.sidebar_hidden {
-            tabs = tabs.push(
+            strip = strip.push(
                 tooltip(
                     container(
                         icons::button(Icon::ChevronRight)
@@ -6849,7 +7182,13 @@ impl Shell {
             let label = self.tab_heading(tab, active).push(close);
             tabs = tabs.push(self.tab_button(tab.id, label, active));
         }
-        tabs.wrap().into()
+        strip
+            .push(crate::tab_scroller::tab_scroller(
+                tabs,
+                tab_strip_id(),
+                shown.map(tab_id),
+            ))
+            .into()
     }
 
     /// A Files tab's page: its integrated editor when a file is open in it, else its lists,
@@ -6882,8 +7221,7 @@ impl Shell {
                     .map(|(_, side)| side),
                 self.files_drag
                     .as_ref()
-                    .filter(|drag| drag.active)
-                    .and_then(|drag| drag.over),
+                    .and_then(|drag| drag.target(&self.app)),
                 self.file_columns.get(&tab).copied().unwrap_or_default(),
                 notice,
             ),
@@ -6930,6 +7268,13 @@ impl Shell {
                 let focused = active == Some(tab.id);
                 let mut badges = tab_badges(tab, focused);
                 badges.extend(transcript_mark(tab));
+                // A desktop's indicators and buttons, on its pane's header as on the C#
+                // session header.
+                let (mut before_split, mut after_split) = (Vec::new(), Vec::new());
+                if let Some(pane) = shown_desktop(tab) {
+                    badges.extend(self.desktop_indicators(tab, pane));
+                    (before_split, after_split) = self.desktop_buttons(tab);
+                }
                 split_view::pane(
                     split_view::Heading {
                         tab: tab.id,
@@ -6940,6 +7285,8 @@ impl Shell {
                         route: self.route_text(tab),
                         state: crate::floating_view::state_text(SessionState::of(tab)),
                         badges,
+                        before_split,
+                        after_split,
                     },
                     self.tab_page(tab, focused),
                     focused,
@@ -7034,8 +7381,11 @@ impl Shell {
                 tab.id,
                 (host, *port),
                 (fingerprint, tab.host_key_algorithm()),
-                tab.asks_about_certificate()
-                    .then(|| (tab.profile.name(), tab.certificate_context.as_ref())),
+                tab.asks_about_certificate().then(|| CertificateAsked {
+                    name: tab.profile.name(),
+                    context: tab.certificate_context.as_ref(),
+                    key: tab.certificate_key(),
+                }),
                 self.certificate_owner(tab),
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
@@ -7069,7 +7419,14 @@ impl Shell {
                 } else {
                     fl!("ui-session-closed")
                 };
-                let mut ended = column![text(said)].spacing(spacing::SM);
+                let mut ended = column![
+                    row![]
+                        .push(rdp_status(tab))
+                        .push(text(said))
+                        .spacing(spacing::SM)
+                        .align_y(iced::Alignment::Center)
+                ]
+                .spacing(spacing::SM);
                 if let Some(reason) = tab.end_reason.as_ref().and_then(texts::rdp_ending) {
                     ended = ended.push(text(reason));
                 }
@@ -7114,7 +7471,9 @@ impl Shell {
             {
                 self.dropped_page(tab, error, focused)
             }
-            Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
+            Phase::Failed(_) if let Some(retry) = tab.retry => {
+                countdown_card(tab.id, retry, rdp_status(tab))
+            }
             Phase::Failed(error) => self.failure_card(tab, error),
         }
     }
@@ -7222,20 +7581,79 @@ impl Shell {
         .then(|| fl!("ui-certificate-owner-tab", tab = tab.display_title()))
     }
 
-    /// A failed session's card: the error, and its ways out.
+    /// A failed session's card: the error, an RDP one's health and "Diagnostic details" as
+    /// the C# card shows them, and its ways out.
     fn failure_card<'a>(&'a self, tab: &'a Tab, error: &'a UiError) -> Element<'a, Message> {
+        let title = text(fl!("ui-session-failed-title")).size(font_size::TITLE);
+        let mut body = column![if tab.purpose == Purpose::Rdp {
+            Element::from(
+                row![
+                    crate::rdp_status::health_dot(crate::rdp_status::Health::of(tab)),
+                    title
+                ]
+                .spacing(spacing::SM)
+                .align_y(iced::Alignment::Center),
+            )
+        } else {
+            title.into()
+        }]
+        .spacing(spacing::SM)
+        .push(text(failure_text(tab, error)));
+        if let Some(details) = failure_details(tab, error) {
+            body = body.push(self.failure_details(tab.id, &details));
+        }
+        // Buttons go to the next line whole when a translation is long, never cut.
         center(card(
-            column![
-                text(fl!("ui-session-failed-title")).size(font_size::TITLE),
-                text(texts::error(error)),
-                // Buttons go to the next line whole when a translation is long, never cut.
+            body.push(
                 self.failure_actions(tab, error)
                     .wrap()
                     .vertical_spacing(spacing::SM),
-            ]
-            .spacing(spacing::SM),
+            ),
         ))
         .into()
+    }
+
+    /// The C# card's "Diagnostic details" expander of tab `id`'s failure: its header, then
+    /// once open the stage, the code and the detail, label beside value.
+    fn failure_details<'a>(
+        &self,
+        id: TabId,
+        details: &crate::rdp_diagnostic::Details,
+    ) -> Element<'a, Message> {
+        let open = self.failure_details_open.contains(&id);
+        let header = button(
+            row![
+                icons::icon(
+                    if open {
+                        Icon::ChevronDown
+                    } else {
+                        Icon::ChevronRight
+                    },
+                    Tint::Secondary,
+                    FAILURE_DETAILS_CHEVRON,
+                ),
+                text(fl!("ui-failure-details-header")).size(font_size::CAPTION),
+            ]
+            .spacing(spacing::XS)
+            .align_y(iced::Alignment::Center),
+        )
+        .style(styles::subtle)
+        .on_press(Message::ToggleFailureDetails(id));
+        let mut section = column![header].spacing(spacing::XS);
+        if open {
+            let mut labels = column![].spacing(spacing::XS);
+            let mut values = column![].spacing(spacing::XS);
+            for (label, value) in details.rows() {
+                labels = labels.push(text(label).size(font_size::CAPTION).style(text::secondary));
+                values = values.push(text(value).size(font_size::CAPTION));
+            }
+            section = section.push(
+                row![labels, values]
+                    .spacing(spacing::MD)
+                    .padding([0.0, spacing::SM]),
+            );
+        }
+        section.into()
     }
 
     /// The ways out of a failed session: those of [`Self::session_actions`], and the way
@@ -7372,6 +7790,7 @@ impl Shell {
             shown: pane.tab_size(),
             aspect: pane.aspect,
             stabilizing: pane.stabilizing_until().is_some(),
+            fit: self.fits(tab),
         })
     }
 
@@ -7393,9 +7812,18 @@ impl Shell {
         }
     }
 
-    /// A remote desktop under its bar, as the C# session's: the keys this computer keeps for
-    /// itself, sent from a menu, how the desktop is shown, and full screen.
-    fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane, focused: bool) -> Element<'a, Message> {
+    /// A remote desktop under its header, as the C# session's: its name, address, state and
+    /// indicators at the left; at the right an RDP session's Resolution, Split, Send keys,
+    /// Fullscreen and health dot, then Disconnect. In a split, its pane's header carries them;
+    /// in full screen, none, as the C# puts its header away. In a tab's own window, its bar.
+    /// A VNC desktop has its clipboard, scaling and quality over its top right corner, as the
+    /// C# noVNC page.
+    fn desktop<'a>(
+        &'a self,
+        tab: &'a Tab,
+        pane: &'a DesktopPane,
+        focused: bool,
+    ) -> Element<'a, Message> {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
             .on_release(Message::ContentRelease)
@@ -7403,21 +7831,150 @@ impl Shell {
             .fit(fit)
             .density(self.density_of(tab.id));
         let tab_id = tab.id;
-        let mode = pick_list(
-            [DesktopMode::Match, DesktopMode::Fit],
-            Some(if fit {
-                DesktopMode::Fit
-            } else {
-                DesktopMode::Match
-            }),
-            move |mode| Message::DesktopFit {
-                tab: tab_id,
-                fit: mode == DesktopMode::Fit,
+        // A fixed size that does not fill the tab says so for a while, at the bottom right of
+        // the desktop, as the C# letterbox hint.
+        let hint = pane
+            .fixed_size()
+            .filter(|_| {
+                self.letterbox_hints
+                    .get(&tab_id)
+                    .is_some_and(|hint| hint.visible(std::time::Instant::now()))
+            })
+            .map(|(width, height)| {
+                container(crate::rdp_status::letterbox_badge(width, height))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .align_y(iced::alignment::Vertical::Bottom)
+                    .padding(iced::Padding {
+                        right: spacing::MD,
+                        bottom: spacing::MD,
+                        ..iced::Padding::ZERO
+                    })
+            });
+        let view: Element<'a, Message> = stack![view]
+            .push(hint)
+            .push(vnc_overlay(tab, pane, fit))
+            .into();
+        let top: Option<Element<'a, Message>> = if self.app.is_floating(tab_id) {
+            // Whole on a narrow window: what does not fit goes to a line of its own.
+            Some(
+                self.floating_desktop_bar(tab, pane, fit)
+                    .wrap()
+                    .vertical_spacing(spacing::XS)
+                    .into(),
+            )
+        } else if self.fullscreen || self.app.in_split(tab_id) {
+            None
+        } else {
+            Some(self.desktop_header(tab, pane))
+        };
+        column![].push(top).push(view).spacing(spacing::XS).into()
+    }
+
+    /// A desktop's header in its tab, as the C# session header: the pane header's, its right
+    /// click the tab's menu, its split button "Split...", its Disconnect the desktop's.
+    fn desktop_header<'a>(&'a self, tab: &'a Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
+        let mut badges = tab_badges(tab, true);
+        badges.extend(transcript_mark(tab));
+        badges.extend(self.desktop_indicators(tab, pane));
+        let (before_split, after_split) = self.desktop_buttons(tab);
+        split_view::session_header(
+            split_view::Heading {
+                tab: tab.id,
+                host: tab.id,
+                marks: self.tab_marks(tab),
+                name: Self::tab_name(tab),
+                detail: tab_endpoint(tab),
+                route: self.route_text(tab),
+                state: crate::floating_view::state_text(SessionState::of(tab)),
+                badges,
+                before_split,
+                after_split,
+            },
+            split_view::HeaderActions {
+                split: Message::OpenTreeMenu(TreeMenu::SplitAxis(tab.id)),
+                disconnect: Message::App(AppMessage::DisconnectDesktop(tab.id)),
+                menu: TreeMenu::Tab(tab.id),
             },
         )
-        .style(styles::pick_list)
-        .menu_style(styles::menu)
-        .text_size(font_size::CAPTION);
+    }
+
+    /// An RDP session header's buttons, as the C# `SessionHeaderBar` docks them: Resolution
+    /// before the split button; Send keys, Fullscreen and the health dot after it. None for
+    /// VNC, whose C# header has none of them.
+    fn desktop_buttons<'a>(
+        &self,
+        tab: &Tab,
+    ) -> (Vec<Element<'a, Message>>, Vec<Element<'a, Message>>) {
+        if tab.purpose != Purpose::Rdp {
+            return (Vec::new(), Vec::new());
+        }
+        let tab_id = tab.id;
+        let tip = |content: Element<'a, Message>, said: String| -> Element<'a, Message> {
+            tooltip(
+                content,
+                text(said).size(font_size::CAPTION),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+            .into()
+        };
+        let icon = |icon, button: SessionButton, message| -> Element<'a, Message> {
+            container(
+                crate::icons::button(icon)
+                    .style(styles::subtle)
+                    .on_press(message),
+            )
+            .id(session_button_id(tab_id, button))
+            .into()
+        };
+        // Its tip names the mode, as the C# button's.
+        let before = self
+            .resolution_state(tab)
+            .map(|state| {
+                tip(
+                    icon(
+                        crate::icons::Icon::Resolution,
+                        SessionButton::Resolution,
+                        Message::OpenTreeMenu(TreeMenu::Resolution(tab_id)),
+                    ),
+                    state.tooltip(),
+                )
+            })
+            .into_iter()
+            .collect();
+        let after = vec![
+            tip(
+                icon(
+                    crate::icons::Icon::Keyboard,
+                    SessionButton::SendKeys,
+                    Message::OpenTreeMenu(TreeMenu::SendKeys(tab_id)),
+                ),
+                fl!("ui-desktop-send-keys-tooltip"),
+            ),
+            tip(
+                icon(
+                    crate::icons::Icon::FullScreen,
+                    SessionButton::Fullscreen,
+                    Message::ToggleFullscreen,
+                ),
+                fl!("ui-desktop-fullscreen-tooltip"),
+            ),
+            crate::rdp_status::health_dot(crate::rdp_status::Health::of(tab)),
+        ];
+        (before, after)
+    }
+
+    /// A desktop's bar in a tab's own window, which has no tab menu nor the main window's
+    /// menus: the keys sent, how an RDP desktop is shown, Disconnect, then its indicators.
+    fn floating_desktop_bar<'a>(
+        &'a self,
+        tab: &'a Tab,
+        pane: &'a DesktopPane,
+        fit: bool,
+    ) -> iced::widget::Row<'a, Message> {
+        let tab_id = tab.id;
         let send_keys = pick_list(
             SpecialKeys::ALL.map(KeysChoice).to_vec(),
             None::<KeysChoice>,
@@ -7427,25 +7984,7 @@ impl Shell {
         .menu_style(styles::menu)
         .placeholder(fl!("ui-desktop-send-keys"))
         .text_size(font_size::CAPTION);
-        let fullscreen = button(
-            text(if self.fullscreen {
-                fl!("ui-desktop-exit-fullscreen")
-            } else {
-                fl!("ui-desktop-fullscreen")
-            })
-            .size(font_size::CAPTION),
-        )
-        .style(styles::secondary)
-        .on_press(Message::ToggleFullscreen);
-        let disconnect = tooltip(
-            button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
-            text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
-            tooltip::Position::Bottom,
-        )
-        .style(container::rounded_box);
-        let bar = row![
+        let mut bar = row![
             // Beside it: below, it would cover the menu's first entry.
             tooltip(
                 send_keys,
@@ -7457,53 +7996,58 @@ impl Shell {
             button(text(fl!("ui-desktop-shortcuts")).size(font_size::CAPTION))
                 .style(styles::subtle)
                 .on_press(Message::App(AppMessage::ShowShortcuts)),
-            mode,
         ]
-        // In a tab's own window, the main window's full screen is not the desktop's.
-        .push((!self.app.is_floating(tab_id)).then_some(fullscreen))
-        .push(disconnect)
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
-        let bar = self.desktop_bar_end(tab, pane, bar);
-        column![bar, view].spacing(spacing::XS).into()
-    }
-
-    /// The end of a desktop's session bar: the resolution menu, the anti-idle badge, saving
-    /// the server's files, VNC's clipboard and quality, the desktop's name and VNC's warning.
-    fn desktop_bar_end<'a>(
-        &self,
-        tab: &Tab,
-        pane: &'a DesktopPane,
-        mut bar: iced::widget::Row<'a, Message>,
-    ) -> iced::widget::Row<'a, Message> {
-        let tab_id = tab.id;
-        // The C# session bar's resolution button: the tab's menu, its tip naming the mode,
-        // in the accent colour while a size of its own is kept. The menus are the main
-        // window's: none from a tab's own window.
-        if let Some(state) = self
-            .resolution_state(tab)
-            .filter(|_| !self.app.is_floating(tab_id))
-        {
-            let style = if state.fixed.is_some() {
-                styles::primary
-            } else {
-                styles::secondary
-            };
+        // A VNC desktop's scaling is its overlay's.
+        if tab.purpose == Purpose::Rdp {
             bar = bar.push(
-                tooltip(
-                    button(text(fl!("ui-resolution-menu")).size(font_size::CAPTION))
-                        .style(style)
-                        .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab_id))),
-                    text(state.tooltip()).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
+                pick_list(
+                    [DesktopMode::Match, DesktopMode::Fit],
+                    Some(if fit {
+                        DesktopMode::Fit
+                    } else {
+                        DesktopMode::Match
+                    }),
+                    move |mode| Message::DesktopFit {
+                        tab: tab_id,
+                        fit: mode == DesktopMode::Fit,
+                    },
                 )
-                .style(container::rounded_box),
+                .style(styles::pick_list)
+                .menu_style(styles::menu)
+                .text_size(font_size::CAPTION),
             );
         }
+        bar.push(
+            tooltip(
+                button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
+                    .style(styles::secondary)
+                    .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
+                text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box),
+        )
+        .push(rdp_status(tab))
+        .extend(self.desktop_indicators(tab, pane))
+    }
+
+    /// What a desktop's header shows of its session after its state, in the C# header's
+    /// order: the countdown while it settles, the phase stepper while it connects, the
+    /// anti-idle badge, the redirections; then the server's copied files, the desktop's name
+    /// and VNC's encryption.
+    fn desktop_indicators<'a>(
+        &self,
+        tab: &'a Tab,
+        pane: &'a DesktopPane,
+    ) -> Vec<Element<'a, Message>> {
+        let tab_id = tab.id;
+        let mut shown: Vec<Element<'a, Message>> = Vec::new();
         // The C# status line's countdown while the session settles after connecting, its
         // tip saying how to stop waiting.
         if let Some(seconds) = pane.stabilization_seconds_left(std::time::Instant::now()) {
-            bar = bar.push(
+            shown.push(
                 tooltip(
                     text(fl!("ui-desktop-stabilizing", seconds = seconds))
                         .size(font_size::CAPTION)
@@ -7515,12 +8059,18 @@ impl Shell {
                     text(fl!("ui-desktop-stabilizing-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .style(container::rounded_box)
+                .into(),
             );
+        }
+        if tab.purpose == Purpose::Rdp {
+            shown.extend(crate::rdp_status::stepper(
+                crate::rdp_status::ConnectPhase::of(tab),
+            ));
         }
         // Shown while the session gets anti-idle keys; a click stops them, as the C# badge.
         if self.app.anti_idle_on(tab_id) {
-            bar = bar.push(
+            shown.push(
                 tooltip(
                     button(text(fl!("ui-desktop-anti-idle")).size(font_size::CAPTION))
                         .style(styles::subtle)
@@ -7528,52 +8078,64 @@ impl Shell {
                     text(fl!("ui-desktop-anti-idle-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .style(container::rounded_box)
+                .into(),
             );
-        }
-        if let Some(control) = save_files_control(pane, tab_id) {
-            bar = bar.push(control);
-        }
-        // VNC carries the clipboard in clear: sent on a click only, as the C# Heimdall's
-        // noVNC "sync" does. RDP shares it by itself when its profile says so.
-        if tab.purpose == Purpose::Vnc && pane.accepts_clipboard() {
-            bar = bar.push(
-                tooltip(
-                    button(text(fl!("ui-desktop-send-clipboard")).size(font_size::CAPTION))
-                        .style(styles::secondary)
-                        .on_press(Message::App(AppMessage::SendClipboard(tab_id))),
-                    text(fl!("ui-desktop-send-clipboard-tooltip")).size(font_size::CAPTION),
-                    tooltip::Position::Right,
-                )
-                .style(container::rounded_box),
-            );
-        }
-        if let Some(control) = vnc_quality_control(pane, tab_id) {
-            bar = bar.push(control);
         }
         if let TabProfile::Rdp(profile) = &tab.profile {
-            bar = bar.extend(redirection_badges(profile));
+            shown.extend(crate::rdp_status::redirection_controls(
+                tab_id,
+                profile,
+                self.redirections_shown.contains(&tab_id),
+            ));
         }
+        shown.extend(save_files_control(pane, tab_id));
         if let Some(name) = &pane.desktop_name {
-            bar = bar.push(
+            shown.push(
                 text(name.as_str())
                     .size(font_size::CAPTION)
-                    .style(text::secondary),
+                    .style(text::secondary)
+                    .into(),
             );
         }
         if tab.purpose == Purpose::Vnc {
             // Always in sight: whether the connection is encrypted, its server's certificate
             // trusted, or crosses the network in clear.
-            bar = bar.push(match pane.tls {
-                Some(version) => text(fl!("ui-session-vnc-encrypted", version = version))
-                    .size(font_size::CAPTION)
-                    .style(text::success),
-                None => text(fl!("ui-session-vnc-unencrypted"))
-                    .size(font_size::CAPTION)
-                    .style(text::danger),
-            });
+            shown.push(
+                match pane.tls {
+                    Some(version) => text(fl!("ui-session-vnc-encrypted", version = version))
+                        .size(font_size::CAPTION)
+                        .style(text::success),
+                    None => text(fl!("ui-session-vnc-unencrypted"))
+                        .size(font_size::CAPTION)
+                        .style(text::danger),
+                }
+                .into(),
+            );
         }
-        bar
+        shown
+    }
+
+    /// A VNC desktop shown as `scaling` asks: resized by its server to the tab, or not, then
+    /// scaled into the tab or drawn pixel for pixel.
+    fn vnc_scaling(&mut self, tab: TabId, scaling: VncScaling) -> Vec<Effect> {
+        let remote = scaling == VncScaling::RemoteResize;
+        let resized = self
+            .app
+            .tab(tab)
+            .and_then(|found| found.desktop.as_deref())
+            .and_then(DesktopPane::vnc_remote_resize);
+        let effects = if resized.is_some_and(|on| on != remote) {
+            self.app
+                .update(AppMessage::TabMenu(TabMenuMessage::VncRemoteResize(tab)))
+        } else {
+            Vec::new()
+        };
+        let _ = self.view_message(&Message::DesktopFit {
+            tab,
+            fit: scaling == VncScaling::Scale,
+        });
+        effects
     }
 
     fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
@@ -7667,6 +8229,16 @@ impl Default for Shell {
     }
 }
 
+/// The remote desktop `tab` shows: connected, with no question asked over it.
+fn shown_desktop(tab: &Tab) -> Option<&DesktopPane> {
+    (tab.prompts.is_empty()
+        && tab.elevated.is_none()
+        && tab.files.is_none()
+        && matches!(tab.phase, Phase::Connected))
+    .then_some(tab.desktop.as_deref())
+    .flatten()
+}
+
 /// Whether `tab` shows a terminal: a session of text, connected or ended.
 fn shows_terminal(tab: &Tab) -> bool {
     tab.files.is_none()
@@ -7680,18 +8252,40 @@ fn shows_terminal(tab: &Tab) -> bool {
 /// `certificate` names the profile, an RDP or FTPS server's own certificate, with the other
 /// certificates already trusted for the name and the gateways on the way. Either can be
 /// trusted for this run only, never recorded, and its fingerprint copied.
+/// What a certificate question shows beside the fingerprint of the certificate.
+struct CertificateAsked<'a> {
+    /// The profile's name.
+    name: &'a str,
+    /// The subject, the details, the certificates already trusted and the route.
+    context: Option<&'a CertificateContext>,
+    /// The certificate's key, said apart from the certificate's own fingerprint.
+    key: Option<heimdall_rdp::Fingerprint>,
+}
+
 fn host_key_card<'a>(
     tab: TabId,
     (host, port): (&'a str, u16),
     (fingerprint, algorithm): (&'a str, Option<String>),
-    certificate: Option<(&'a str, Option<&'a CertificateContext>)>,
+    certificate: Option<CertificateAsked<'a>>,
     owner: Option<String>,
 ) -> Element<'a, Message> {
     let port = port.to_string();
+    // The certificate's key, under its own name: not what an answer trusts.
+    let key_line = certificate.as_ref().and_then(|asked| asked.key).map(|key| {
+        text(fl!(
+            "ui-certificate-key-fingerprint",
+            fingerprint = key.to_string()
+        ))
+        .size(font_size::CAPTION)
+        .style(text::secondary)
+        .font(iced::Font::MONOSPACE)
+        .wrapping(text::Wrapping::WordOrGlyph)
+    });
     let (heading, body, label, [reject, once, accept]) = match certificate {
-        Some((name, context)) => (
+        Some(asked) => (
             fl!("ui-certificate-title"),
-            certificate_body(name, host, &port, context).push(owner.map(text)),
+            certificate_body(asked.name, host, &port, asked.context).push(owner.map(text)),
+            // The whole certificate's, as the C# thumbprint: what an answer trusts.
             fl!("ui-certificate-fingerprint", fingerprint = fingerprint),
             [
                 fl!("ui-certificate-refuse-button"),
@@ -7724,13 +8318,20 @@ fn host_key_card<'a>(
             dialog_parts::header(Severity::Warning, dialog_parts::title(heading)),
             body,
             row![
-                text(label).font(iced::Font::MONOSPACE).width(Length::Fill),
+                // A fingerprint is one word too long for the card: broken where it must be.
+                text(label)
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::WordOrGlyph)
+                    .width(Length::Fill),
                 button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION))
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::CopyHostKeyFingerprint(tab))),
             ]
             .spacing(spacing::SM)
             .align_y(iced::alignment::Vertical::Center),
+        ]
+        .push(key_line)
+        .push(
             row![
                 dialog_parts::action(reject, styles::secondary).on_press(Message::App(
                     AppMessage::HostKeyDecision { tab, accept: false }
@@ -7743,7 +8344,7 @@ fn host_key_card<'a>(
             ]
             .spacing(spacing::SM)
             .wrap(),
-        ]
+        )
         .spacing(spacing::SM),
     ))
     .into()
@@ -7999,8 +8600,12 @@ fn pick_sessions_file(main: Option<window::Id>) -> Task<Message> {
         };
         pick.then(|pick| {
             Task::future(pick).then(|picked| {
-                let Some(path) = picked.map(|file| file.path().to_owned()) else {
-                    return Task::none();
+                let path = match picked {
+                    Ok(Some(path)) => path,
+                    Ok(None) => return Task::none(),
+                    Err(unavailable) => {
+                        return Task::done(crate::file_dialog::failed(&unavailable));
+                    }
                 };
                 if crate::file_import_view::is_rdp(&path) {
                     Task::perform(crate::rdp_view::read_all(vec![path]), rdp_read)
@@ -8030,8 +8635,9 @@ fn pick_rdp(main: Option<window::Id>) -> Task<Message> {
         };
         pick.then(|pick| {
             Task::future(crate::rdp_view::read_picked(pick)).then(|read| match read {
-                Some(files) => Task::done(rdp_read(files)),
-                None => Task::none(),
+                Ok(Some(files)) => Task::done(rdp_read(files)),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
             })
         })
     })
@@ -8115,33 +8721,103 @@ fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, 
     )
 }
 
+/// A VNC desktop's controls over its top right corner, as the C# noVNC page's toolbar:
+/// Clipboard, the scaling mode and the quality; `None` for RDP.
+fn vnc_overlay<'a>(tab: &Tab, pane: &'a DesktopPane, fit: bool) -> Option<Element<'a, Message>> {
+    if tab.purpose != Purpose::Vnc {
+        return None;
+    }
+    let tab_id = tab.id;
+    let tip = |content: Element<'a, Message>, said: String| -> Element<'a, Message> {
+        tooltip(
+            content,
+            text(said).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
+        .into()
+    };
+    let mut controls = row![].spacing(spacing::XS).align_y(iced::Alignment::Center);
+    // The clipboard crosses in clear: sent on a click only, as the C# "Clipboard" does.
+    if pane.accepts_clipboard() {
+        controls = controls.push(tip(
+            button(text(fl!("ui-vnc-clipboard")).size(font_size::CAPTION))
+                .style(styles::secondary)
+                .on_press(Message::App(AppMessage::SendClipboard(tab_id)))
+                .into(),
+            fl!("ui-vnc-clipboard-tooltip"),
+        ));
+    }
+    let resized = pane.vnc_remote_resize();
+    let current = match (resized, fit) {
+        (Some(true), _) => VncScaling::RemoteResize,
+        (_, true) => VncScaling::Scale,
+        (_, false) => VncScaling::NoScaling,
+    };
+    // Remote resizing only for a server that can.
+    let modes: Vec<VncScaling> = resized
+        .map(|_| VncScaling::RemoteResize)
+        .into_iter()
+        .chain([VncScaling::Scale, VncScaling::NoScaling])
+        .collect();
+    controls = controls.push(tip(
+        container(
+            pick_list(modes, Some(current), move |scaling| Message::VncScaling {
+                tab: tab_id,
+                scaling,
+            })
+            .style(styles::pick_list)
+            .menu_style(styles::menu)
+            .text_size(font_size::CAPTION),
+        )
+        .id(session_button_id(tab_id, SessionButton::Scaling))
+        .into(),
+        fl!("ui-vnc-scaling-tooltip"),
+    ));
+    if let Some(quality) = vnc_quality_control(pane, tab_id) {
+        controls =
+            controls.push(container(quality).id(session_button_id(tab_id, SessionButton::Quality)));
+    }
+    Some(
+        container(
+            container(controls)
+                .padding([spacing::XS, spacing::SM])
+                .style(container::rounded_box),
+        )
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Right)
+        .padding(iced::Padding {
+            top: spacing::XS,
+            right: spacing::MD,
+            ..iced::Padding::ZERO
+        })
+        .into(),
+    )
+}
+
 /// The folder dialog of "Save copied files...", held by the window: the folder picked
 /// goes to the session of `tab`.
 fn pick_save_folder(tab: TabId, main: Option<window::Id>) -> Task<Message> {
-    type PickFolder =
-        std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>;
     let title = fl!("ui-desktop-save-files");
     main_window_task(main).then(move |id| {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                Box::pin(
-                    rfd::AsyncFileDialog::new()
-                        .set_title(title)
-                        .set_parent(&window)
-                        .pick_folder(),
-                ) as PickFolder
+                crate::file_dialog::FileDialog::new()
+                    .set_title(title)
+                    .set_parent(window)
+                    .pick_folder()
             }),
             None => Task::done(
-                Box::pin(rfd::AsyncFileDialog::new().set_title(title).pick_folder()) as PickFolder,
+                crate::file_dialog::FileDialog::new()
+                    .set_title(title)
+                    .pick_folder(),
             ),
         };
         pick.then(move |pick| {
-            Task::future(pick).map(move |picked| {
-                Message::App(AppMessage::SaveFolderPicked {
-                    tab,
-                    folder: picked.map(|folder| folder.path().to_owned()),
-                })
+            Task::future(pick).map(move |picked| match picked {
+                Ok(folder) => Message::App(AppMessage::SaveFolderPicked { tab, folder }),
+                Err(unavailable) => crate::file_dialog::failed(&unavailable),
             })
         })
     })
@@ -8316,27 +8992,53 @@ fn pick_uploads(tab: TabId, main: Option<window::Id>) -> Task<Message> {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                Box::pin(
-                    rfd::AsyncFileDialog::new()
-                        .set_title(title)
-                        .set_parent(&window)
-                        .pick_files(),
-                ) as crate::rdp_view::Pick
+                crate::file_dialog::FileDialog::new()
+                    .set_title(title)
+                    .set_parent(window)
+                    .pick_files()
             }),
             None => Task::done(
-                Box::pin(rfd::AsyncFileDialog::new().set_title(title).pick_files())
-                    as crate::rdp_view::Pick,
+                crate::file_dialog::FileDialog::new()
+                    .set_title(title)
+                    .pick_files(),
             ),
         };
         pick.then(move |pick| {
             Task::future(pick).then(move |picked| match picked {
-                Some(files) => Task::done(Message::App(AppMessage::Files(
-                    FilesMessage::UploadPicked {
-                        tab,
-                        paths: files.iter().map(|file| file.path().to_owned()).collect(),
-                    },
+                Ok(Some(paths)) => Task::done(Message::App(AppMessage::Files(
+                    FilesMessage::UploadPicked { tab, paths },
                 ))),
-                None => Task::none(),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
+            })
+        })
+    })
+}
+
+/// The folder picker of a download from a Files tab without its local pane, held by the
+/// window and opened on `start`, as the C# `PickDownloadFolder`; nothing when it is closed.
+fn pick_download_folder(
+    tab: TabId,
+    start: Option<std::path::PathBuf>,
+    main: Option<window::Id>,
+) -> Task<Message> {
+    let title = fl!("ui-files-download-button");
+    main_window_task(main).then(move |id| {
+        let mut dialog = crate::file_dialog::FileDialog::new().set_title(title.clone());
+        if let Some(start) = &start {
+            dialog = dialog.set_directory(start);
+        }
+        let pick = match id {
+            Some(id) => window::run(id, move |window| dialog.set_parent(window).pick_folder()),
+            None => Task::done(dialog.pick_folder()),
+        };
+        pick.then(move |pick| {
+            Task::future(pick).then(move |picked| match picked {
+                Ok(Some(folder)) => Task::done(Message::App(AppMessage::Files(
+                    FilesMessage::DownloadFolderPicked { tab, folder },
+                ))),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
             })
         })
     })
@@ -8458,6 +9160,13 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
             fl!("ui-dialog-store-changed-title"),
             vec![text(fl!("ui-dialog-store-changed-body")), detail(technical)],
         ),
+        Dialog::ConfigRecovered { documents } => (
+            fl!("ui-dialog-config-recovered-title"),
+            vec![text(fl!(
+                "ui-dialog-config-recovered-body",
+                documents = documents.join(&fl!("ui-dialog-config-recovered-separator"))
+            ))],
+        ),
         other => {
             let (title, lines) = crate::rdp_view::report_lines(other)
                 .map(|lines| (fl!("ui-rdp-title"), lines))
@@ -8474,13 +9183,39 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. } => Severity::Error,
-        Dialog::StoreChanged { .. } => Severity::Warning,
+        Dialog::StoreChanged { .. } | Dialog::ConfigRecovered { .. } => Severity::Warning,
         _ => Severity::Info,
     };
     dialog_parts::message(
         severity,
         title,
         Column::with_children(lines.into_iter().map(Element::from)).spacing(spacing::SM),
+        dialog_parts::buttons([ok]),
+    )
+}
+
+/// Height the result of the legacy migration scrolls past, as the C# message box grows no
+/// taller than the screen allows.
+const LEGACY_MIGRATION_RESULT_HEIGHT: f32 = 360.0;
+
+/// What the migration from the legacy PowerShell Heimdall did: a warning when something was
+/// left out, as the C# `MigrationPresentationPolicy`.
+fn legacy_migration_done<'a>(
+    done: &heimdall_app::LegacyMigrationDone,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let (title, lines, warns) = crate::legacy_migration_view::done(done);
+    let severity = if warns {
+        Severity::Warning
+    } else {
+        Severity::Info
+    };
+    let lines =
+        Column::with_children(lines.into_iter().map(|line| text(line).into())).spacing(spacing::SM);
+    dialog_parts::message(
+        severity,
+        title,
+        container(styles::scroll(lines)).max_height(LEGACY_MIGRATION_RESULT_HEIGHT),
         dialog_parts::buttons([ok]),
     )
 }
@@ -8535,6 +9270,54 @@ fn import_severity(summary: &heimdall_app::ImportSummary) -> Severity {
         }
         _ => Severity::Info,
     }
+}
+
+/// What the migration of this computer's C# store carried over besides the profiles: its
+/// trusted SSH servers and its scheduled connections, or why they could not be.
+fn migration_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, Message>> {
+    let mut lines = Vec::new();
+    match &summary.host_keys {
+        Some(Ok(carried)) if carried.keys + carried.pins > 0 => lines.push(
+            text(fl!(
+                "ui-dialog-import-host-keys",
+                keys = carried.keys,
+                pins = carried.pins
+            ))
+            .size(font_size::CAPTION)
+            .into(),
+        ),
+        Some(Err(detail)) => lines.push(
+            text(fl!(
+                "ui-dialog-import-host-keys-failed",
+                detail = detail.as_str()
+            ))
+            .size(font_size::CAPTION)
+            .style(text::danger)
+            .into(),
+        ),
+        _ => {}
+    }
+    match &summary.scheduled {
+        Some(Ok(count)) => {
+            let count = *count;
+            lines.push(
+                text(fl!("ui-dialog-import-scheduled", count = count))
+                    .size(font_size::CAPTION)
+                    .into(),
+            );
+        }
+        Some(Err(detail)) => lines.push(
+            text(fl!(
+                "ui-dialog-import-scheduled-failed",
+                detail = detail.as_str()
+            ))
+            .size(font_size::CAPTION)
+            .style(text::danger)
+            .into(),
+        ),
+        None => {}
+    }
+    lines
 }
 
 fn import_report<'a>(
@@ -8600,28 +9383,8 @@ fn import_report<'a>(
             .push(text(fl!("ui-dialog-import-dropped")))
             .push(container(styles::scroll(dropped)).max_height(SKIPPED_LIST_HEIGHT));
     }
-    match &summary.host_keys {
-        Some(Ok(carried)) if carried.keys + carried.pins > 0 => {
-            content = content.push(
-                text(fl!(
-                    "ui-dialog-import-host-keys",
-                    keys = carried.keys,
-                    pins = carried.pins
-                ))
-                .size(font_size::CAPTION),
-            );
-        }
-        Some(Err(detail)) => {
-            content = content.push(
-                text(fl!(
-                    "ui-dialog-import-host-keys-failed",
-                    detail = detail.as_str()
-                ))
-                .size(font_size::CAPTION)
-                .style(text::danger),
-            );
-        }
-        _ => {}
+    for line in migration_lines(summary) {
+        content = content.push(line);
     }
     // What the file said, and for `MobaXterm` that its passwords must be entered again.
     for line in crate::file_import_view::warning_lines(&summary.warnings)
@@ -8673,6 +9436,16 @@ struct Forms<'a> {
     /// The settings' wait after connecting, in milliseconds: what an RDP profile leaving
     /// its own empty takes, said in the field.
     rdp_resize_delay: u32,
+    /// What the scheduled connection's dialog shows, while it is open.
+    scheduled: Option<ScheduledDialogInputs>,
+}
+
+/// What the scheduled connection's dialog shows beside its fields.
+struct ScheduledDialogInputs {
+    /// The sessions it offers.
+    choices: Vec<heimdall_app::ScheduledChoice>,
+    /// When its task would run next.
+    preview: Option<heimdall_app::scheduled_form::NextRunPreview>,
 }
 
 /// Whether a password typed now can be saved.
@@ -8981,7 +9754,7 @@ fn key_field(draft: &ProfileDraft) -> Element<'_, Message> {
 /// path picked fills the field; nothing when none is picked.
 fn pick_key_file(main: Option<window::Id>) -> Task<Message> {
     let dialog = || {
-        let mut dialog = rfd::AsyncFileDialog::new()
+        let mut dialog = crate::file_dialog::FileDialog::new()
             .set_title(fl!("ui-profile-browse-key-title"))
             .add_filter(fl!("ui-profile-browse-key-all"), &["*"])
             .add_filter(fl!("ui-profile-browse-key-ppk"), &["ppk"])
@@ -8996,20 +9769,17 @@ fn pick_key_file(main: Option<window::Id>) -> Task<Message> {
     };
     main_window_task(main).then(move |id| {
         let pick = match id {
-            Some(id) => window::run(id, move |window| {
-                let pick: crate::sessions_view::Pick =
-                    Box::pin(dialog().set_parent(&window).pick_file());
-                pick
-            }),
-            None => Task::done(Box::pin(dialog().pick_file()) as crate::sessions_view::Pick),
+            Some(id) => window::run(id, move |window| dialog().set_parent(window).pick_file()),
+            None => Task::done(dialog().pick_file()),
         };
         pick.then(|pick| {
             Task::future(pick).then(|picked| match picked {
-                Some(file) => Task::done(Message::App(AppMessage::ProfileField {
+                Ok(Some(path)) => Task::done(Message::App(AppMessage::ProfileField {
                     field: ProfileField::KeyPath,
-                    value: file.path().display().to_string(),
+                    value: path.display().to_string(),
                 })),
-                None => Task::none(),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
             })
         })
     })
@@ -9177,7 +9947,8 @@ fn gateway_choice(gateway: &SshGateway) -> GatewayChoice {
 }
 
 /// A session's gateway routing, as the C# Network tab: connect directly, or through a
-/// gateway chosen, added or edited here; for RDP, then the RD Gateway.
+/// gateway chosen, added or edited here, and the connection path that makes; for RDP, then
+/// the RD Gateway.
 fn network_section<'a>(
     draft: &'a ProfileDraft,
     gateways: &'a [SshGateway],
@@ -9237,6 +10008,7 @@ fn network_section<'a>(
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
     }
+    section_column = section_column.push(crate::connection_path::card(draft, gateways));
     // Said where the SSL box was, as the C# dialog says it; HTTPS asked for, then a gateway
     // chosen, is said to be off.
     if draft.protocol == DraftProtocol::WinRm && draft.routed_gateway().is_some() {
@@ -9431,6 +10203,7 @@ fn gateway_dialog<'a>(
             forms,
         ))
         .push(parent_gateway(draft, forms))
+        .push(host_key_fingerprint(draft))
         .push(crate::route_test_view::card(draft, forms.gateways));
     if let Some(error) = error {
         form = form.push(dialog_parts::error(texts::draft_error(error)));
@@ -9566,15 +10339,15 @@ fn typed_secret(field: &mut Zeroizing<String>) -> Option<Secret> {
     (!typed.is_empty()).then(|| Secret::new(typed))
 }
 
-/// The gateway this one is reached through: none, or another saved gateway.
+/// The gateway this one is reached through: none, or a saved gateway the C#
+/// `GatewayParentEligibility` offers, neither itself nor one reached through it, nor one
+/// making a chain too deep to connect; the parent it has stays offered.
 fn parent_gateway<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Element<'a, Message> {
     let mut form = Column::new();
     let mut parents = vec![ParentChoice::None];
     parents.extend(
-        forms
-            .gateways
-            .iter()
-            .filter(|gateway| Some(&gateway.id) != draft.editing.as_ref())
+        heimdall_core::gateway_parents::parent_options(forms.gateways, draft.editing.as_ref())
+            .into_iter()
             .map(|gateway| ParentChoice::Gateway(gateway_choice(gateway))),
     );
     let selected = parents
@@ -9601,6 +10374,22 @@ fn parent_gateway<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Element<'a, Me
         .spacing(spacing::XS),
     );
     form.into()
+}
+
+/// The fingerprint the gateway's host key is trusted by, under the parent and read only as
+/// in the C# dialog (`GatewayDialog.xaml:176-186`, `IsReadOnly`, `OneWay`), then its hint:
+/// the pin of the gateway's host and port, or the key recorded for them. A field without an
+/// input message, which iced still lets the user select and copy from.
+fn host_key_fingerprint(draft: &GatewayDraft) -> Element<'_, Message> {
+    column![
+        dialog_parts::dialog_label(fl!("ui-gateway-field-host-key-fingerprint")),
+        text_input("", &draft.trusted_fingerprint)
+            .style(styles::text_input)
+            .id(iced::widget::Id::new("gateway-host-key-fingerprint")),
+        dialog_parts::hint(fl!("ui-gateway-host-key-fingerprint-hint")),
+    ]
+    .spacing(spacing::XS)
+    .into()
 }
 
 fn gateway_field_id(field: ProfileField) -> iced::widget::Id {
@@ -10577,6 +11366,36 @@ fn paste_dialog<'a>(
 }
 
 /// "Reconnecting (attempt 2/20)...", as the C# countdown says it.
+/// What a desktop's letterbox hint sees: its tab, its fixed size, whether fitted, whether
+/// letterboxed.
+type LetterboxSeen = (TabId, Option<(u16, u16)>, bool, bool);
+
+/// Side of the "Diagnostic details" expander's arrow.
+const FAILURE_DETAILS_CHEVRON: f32 = 10.0;
+
+/// The sentence of `tab`'s failure `error`: for an RDP connection, the C# text of its cause
+/// when the C# has one; else as any session's.
+fn failure_text(tab: &Tab, error: &UiError) -> String {
+    (tab.purpose == Purpose::Rdp)
+        .then(|| texts::rdp_error(error))
+        .flatten()
+        .unwrap_or_else(|| texts::error(error))
+}
+
+/// The diagnostic details of `tab`'s failure `error`, for an RDP connection.
+fn failure_details(tab: &Tab, error: &UiError) -> Option<crate::rdp_diagnostic::Details> {
+    (tab.purpose == Purpose::Rdp)
+        .then(|| crate::rdp_diagnostic::of(error, tab.dropped()))
+        .flatten()
+}
+
+/// The health, the phase and the time elapsed of `tab`'s RDP session, as the C# session
+/// header shows them; nothing for another protocol.
+fn rdp_status<'a>(tab: &Tab) -> Option<Element<'a, Message>> {
+    (tab.purpose == Purpose::Rdp)
+        .then(|| crate::rdp_status::status(tab, std::time::Instant::now()).into())
+}
+
 fn reconnecting(retry: Retry) -> String {
     fl!(
         "ui-session-reconnecting",
@@ -10601,8 +11420,13 @@ fn cancel_retry_button<'a>(tab: TabId) -> iced::widget::Button<'a, Message> {
         .on_press(Message::App(AppMessage::CancelAutoReconnect(tab)))
 }
 
-/// A session waiting to open again by itself: which attempt, in how long, and Cancel.
-fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
+/// A session waiting to open again by itself: which attempt, in how long, an RDP session's
+/// health and time elapsed, and Cancel.
+fn countdown_card(
+    tab: TabId,
+    retry: Retry,
+    status: Option<Element<'_, Message>>,
+) -> Element<'_, Message> {
     center(card(
         column![
             text(reconnecting(retry)).size(font_size::TITLE),
@@ -10610,8 +11434,9 @@ fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
                 "ui-session-reconnecting-in",
                 seconds = seconds_left(retry)
             )),
-            cancel_retry_button(tab),
         ]
+        .push(status)
+        .push(cancel_retry_button(tab))
         .spacing(spacing::SM),
     ))
     .into()
@@ -11065,11 +11890,21 @@ fn files_task(effect: Effect, journal: Option<OperationJournal>) -> Task<Message
         }),
         Effect::PlanTransfer { tab, request } => {
             let planned = (*request).clone();
-            Task::perform(plan_transfer(planned), move |result| {
-                Message::App(AppMessage::Files(FilesMessage::Planned {
-                    tab,
-                    request: request.clone(),
-                    result: result.map(Box::new),
+            // Started inside the task, like a transfer: spawning needs the runtime.
+            let events =
+                stream::once(async move { heimdall_app::files::plan_events(planned) }).flatten();
+            Task::stream(events).map(move |event| {
+                Message::App(AppMessage::Files(match event {
+                    heimdall_app::files::PlanEvent::Scanned(entries) => FilesMessage::Scanning {
+                        tab,
+                        rows: request.rows.clone(),
+                        entries,
+                    },
+                    heimdall_app::files::PlanEvent::Planned(result) => FilesMessage::Planned {
+                        tab,
+                        request: request.clone(),
+                        result: result.map(Box::new),
+                    },
                 }))
             })
         }
@@ -11228,6 +12063,57 @@ impl fmt::Display for DesktopMode {
     }
 }
 
+/// How a VNC desktop is shown, as the C# noVNC page's "Scaling mode" names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VncScaling {
+    /// The server's desktop resized to the tab.
+    RemoteResize,
+    /// The desktop scaled into the tab.
+    Scale,
+    /// The desktop drawn pixel for pixel.
+    NoScaling,
+}
+
+impl fmt::Display for VncScaling {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self {
+            Self::RemoteResize => fl!("ui-vnc-scaling-remote-resize"),
+            Self::Scale => fl!("ui-vnc-scaling-scale"),
+            Self::NoScaling => fl!("ui-vnc-scaling-none"),
+        })
+    }
+}
+
+/// A control of a remote desktop's session: a button of the C# RDP header, or a list of
+/// the C# noVNC toolbar over a VNC desktop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionButton {
+    /// The resolution menu.
+    Resolution,
+    /// The "Send keys" menu.
+    SendKeys,
+    /// Full screen.
+    Fullscreen,
+    /// VNC's scaling mode.
+    Scaling,
+    /// VNC's quality.
+    Quality,
+}
+
+/// Widget identifier of the session header's button `button` of tab `tab`: an icon, found
+/// by it alone.
+#[must_use]
+pub fn session_button_id(tab: TabId, button: SessionButton) -> iced::widget::Id {
+    let name = match button {
+        SessionButton::Resolution => "resolution",
+        SessionButton::SendKeys => "send-keys",
+        SessionButton::Fullscreen => "fullscreen",
+        SessionButton::Scaling => "scaling",
+        SessionButton::Quality => "quality",
+    };
+    iced::widget::Id::from(format!("session-{name}-{}", tab.value()))
+}
+
 /// A key combination in the desktop's menu, by the C# Heimdall's name for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
@@ -11238,12 +12124,7 @@ struct QualityChoice(VncQuality);
 
 impl fmt::Display for QualityChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&match self.0 {
-            VncQuality::Best => fl!("ui-session-vnc-quality-best"),
-            VncQuality::Balanced => fl!("ui-session-vnc-quality-balanced"),
-            VncQuality::Performance => fl!("ui-session-vnc-quality-performance"),
-            VncQuality::LowBandwidth => fl!("ui-session-vnc-quality-low-bandwidth"),
-        })
+        f.write_str(&texts::vnc_quality(self.0))
     }
 }
 
@@ -11474,18 +12355,7 @@ impl fmt::Display for SchemeChoice {
 
 impl fmt::Display for KeysChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&match self.0 {
-            SpecialKeys::CtrlAltDel => fl!("ui-desktop-keys-ctrl-alt-del"),
-            SpecialKeys::Windows => fl!("ui-desktop-keys-windows"),
-            SpecialKeys::AltTab => fl!("ui-desktop-keys-alt-tab"),
-            SpecialKeys::CtrlEsc => fl!("ui-desktop-keys-ctrl-esc"),
-            SpecialKeys::Escape => fl!("ui-desktop-keys-escape"),
-            SpecialKeys::PrintScreen => fl!("ui-desktop-keys-print-screen"),
-            SpecialKeys::F11 => fl!("ui-desktop-keys-f11"),
-            SpecialKeys::WinL => fl!("ui-desktop-keys-win-l"),
-            SpecialKeys::WinD => fl!("ui-desktop-keys-win-d"),
-            SpecialKeys::WinE => fl!("ui-desktop-keys-win-e"),
-        })
+        f.write_str(&texts::special_keys(self.0))
     }
 }
 
@@ -11509,6 +12379,18 @@ pub fn sidebar_toggle_id() -> iced::widget::Id {
 #[must_use]
 pub fn tree_add_id() -> iced::widget::Id {
     iced::widget::Id::new("tree-add")
+}
+
+/// Widget identifier of tab `tab` on the strip.
+#[must_use]
+pub fn tab_id(tab: TabId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("tab-{}", tab.value()))
+}
+
+/// Widget identifier of the row of tabs, which scrolls sideways.
+#[must_use]
+pub fn tab_strip_id() -> iced::widget::Id {
+    iced::widget::Id::new("tab-strip")
 }
 
 /// Widget identifier of the close button of tab `tab` on the strip, which shows a glyph
@@ -12067,6 +12949,14 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmSettingsImport(read) => crate::settings_file::import_question(read),
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
         Dialog::EditMacro(edited) => crate::macros_view::editor(edited),
+        Dialog::ScheduledTask(form) => {
+            let (choices, preview) = forms.scheduled.as_ref().map_or((&[][..], None), |inputs| {
+                (inputs.choices.as_slice(), inputs.preview)
+            });
+            crate::scheduled_view::dialog(form, choices, preview)
+        }
+        Dialog::ConfirmDeleteScheduled { name, .. } => crate::scheduled_view::delete_question(name),
+        Dialog::ConfirmDiscardScheduled(_) => crate::scheduled_view::discard_question(),
         Dialog::NewTunnel(form) => {
             crate::tunnels_view::new_tunnel(form, forms.gateways, forms.tunnel_problem)
         }
@@ -12087,6 +12977,18 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             crate::trusted_keys_view::forget_server_question(key, *count)
         }
         Dialog::ImportDone(summary) => import_report(summary, ok_button()),
+        Dialog::LegacyMigrationOffer(offer) => {
+            let (title, body, decline, confirm) = crate::legacy_migration_view::offer(offer);
+            // As the C# `ShowConfirm` at start, its question naming what was found.
+            dialog_parts::choice(
+                Severity::Info,
+                title,
+                dialog_parts::body(body),
+                decline,
+                confirm,
+            )
+        }
+        Dialog::LegacyMigrationDone(done) => legacy_migration_done(done, ok_button()),
         Dialog::RestoreSessions(dialog) => crate::restore_view::view(dialog),
         Dialog::Shortcuts => crate::shortcuts_view::view(ok_button()),
         Dialog::FileProperties(properties) => {
@@ -12112,7 +13014,8 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. }
-        | Dialog::StoreChanged { .. } => report(dialog, ok_button()),
+        | Dialog::StoreChanged { .. }
+        | Dialog::ConfigRecovered { .. } => report(dialog, ok_button()),
         Dialog::SessionsPreview(_)
         | Dialog::RdpPreview(_)
         | Dialog::HostKeysPreview(_)
@@ -12349,6 +13252,36 @@ mod tests {
                 Some(Message::ToggleFullscreen)
             ),
             "Ctrl+F11 is the session's"
+        );
+        // Ctrl+Shift+F11 toggles it too, whoever took it, as the C# `FullscreenShortcutRouter`.
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        for status in [event::Status::Captured, event::Status::Ignored] {
+            assert!(matches!(
+                window_event(f11(both, false), status, window::Id::unique()),
+                Some(Message::ToggleFullscreen)
+            ));
+        }
+        assert!(
+            !matches!(
+                window_event(
+                    f11(both, true),
+                    event::Status::Ignored,
+                    window::Id::unique()
+                ),
+                Some(Message::ToggleFullscreen)
+            ),
+            "held down, it switches once"
+        );
+        assert!(
+            !matches!(
+                window_event(
+                    f11(both | Modifiers::ALT, false),
+                    event::Status::Ignored,
+                    window::Id::unique()
+                ),
+                Some(Message::ToggleFullscreen)
+            ),
+            "Ctrl+Alt+Shift+F11 is the session's"
         );
     }
 

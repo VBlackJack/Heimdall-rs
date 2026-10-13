@@ -41,6 +41,16 @@ fn read_store() -> Result<Vec<RawSession>, String> {
     /// `HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)`: no such key.
     const NOT_FOUND: u32 = 0x8007_0002;
 
+    // Under a test data folder, the user's registry is never read: the sessions are the
+    // folder's own, as PuTTY keeps them off Windows.
+    #[cfg(feature = "test-data-dir")]
+    if heimdall_core::paths::test_data_dir().is_some() {
+        return heimdall_core::paths::home_dir().map_or_else(
+            || Ok(Vec::new()),
+            |home| read_folder(&home.join(heimdall_core::import::putty::SESSIONS_FOLDER)),
+        );
+    }
+
     let root = match CURRENT_USER.open(SESSIONS_KEY) {
         Ok(root) => root,
         Err(error) if error.code().0.cast_unsigned() == NOT_FOUND => return Ok(Vec::new()),

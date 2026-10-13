@@ -59,8 +59,11 @@ pub mod putty_driver;
 pub mod putty_store;
 pub mod rdp_driver;
 pub mod rdp_external;
+pub mod rdpmanager;
 pub mod reachability;
+pub mod reduced_motion;
 pub mod route_test;
+pub mod scheduled_form;
 pub mod script_shell;
 pub mod server_health;
 pub mod session_log;
@@ -101,21 +104,25 @@ pub use app::{
     MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
     OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode,
     PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
-    ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
-    RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, ResolutionChoice,
-    RestoreDialog, RestoreRow, Retry, ScriptConfirmation, SelectionMessage, SessionState,
-    SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
-    SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
-    TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
-    UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard,
-    VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    VaultTicket, WHEEL_LINES, bulk_password_refusal, local_date_time, master_password_problem,
-    open_vault, search_folded, should_auto_lock,
+    ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickGroup,
+    QuickResult, QuickRow, RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow,
+    ResolutionChoice, RestoreDialog, RestoreRow, Retry, ScriptConfirmation, SelectionMessage,
+    SessionState, SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow,
+    SessionsSource, SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage,
+    TabProfile, ToolWords, TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage,
+    TunnelMessage, UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog,
+    VaultHelloCard, VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem,
+    VaultStatus, VaultTicket, WHEEL_LINES, bulk_password_refusal, local_date_time,
+    master_password_problem, open_vault, search_folded, should_auto_lock,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
+pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use app::{
+    SCHEDULED_TICK, ScheduledChoice, ScheduledMessage, ScheduledNotice, local_time_text,
+};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };

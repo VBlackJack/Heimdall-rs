@@ -28,6 +28,7 @@ pub mod code_editor;
 pub mod column_header;
 pub mod component_versions;
 mod conflicts_view;
+mod connection_path;
 mod desktop_texture;
 pub mod desktop_view;
 mod detail_view;
@@ -35,13 +36,16 @@ mod dialog_parts;
 pub mod drop_batch;
 pub mod editor_history;
 mod editor_syntax;
+pub mod ellipsis;
 pub mod export_file;
+pub mod file_dialog;
 pub mod file_import_view;
 pub mod files_drag;
 mod files_view;
 pub mod finder;
 pub mod floating_view;
 mod gateways_view;
+mod headed_list;
 mod health_view;
 pub mod hostkeys_view;
 pub mod i18n;
@@ -49,20 +53,28 @@ pub mod icons;
 mod idle;
 mod integrated_editor;
 pub mod keysym;
+pub mod legacy_migration_view;
 pub mod local_form;
 mod logging;
 mod macros_view;
+mod menu_fit;
+pub mod onboarding;
 pub mod palette;
 pub mod post_connect_form;
 pub mod presets_editor;
+pub mod press_tooltip;
+pub mod priority_row;
 pub mod profile_import_view;
 pub mod profile_tabs;
 mod provider_view;
+pub mod rdp_diagnostic;
 pub mod rdp_options;
+pub mod rdp_status;
 pub mod rdp_view;
 mod report;
 mod restore_view;
 pub mod route_test_view;
+pub mod scheduled_view;
 mod screens;
 mod screenshot;
 mod search_keys;
@@ -78,7 +90,10 @@ pub mod split_view;
 pub mod status_bar;
 mod styles;
 pub mod tab_drag;
+pub mod tab_scroller;
 pub mod terminal_view;
+#[cfg(feature = "test-data-dir")]
+pub mod test_data;
 mod texts;
 pub mod themes;
 pub mod tokens;
@@ -89,6 +104,7 @@ mod tree_row;
 pub mod tree_view;
 pub mod trusted_keys_view;
 pub mod tunnels_view;
+pub mod xt_scancode;
 
 use heimdall_core::paths;
 use iced::{Font, Pixels, Size, window};
@@ -140,6 +156,13 @@ pub(crate) fn window_icon() -> Option<window::Icon> {
 ///
 /// When the window or the graphics backend cannot start.
 pub fn run() -> iced::Result {
+    // A test build never starts on the user's own folders: without its scratch folder, it
+    // stops before anything is read or written.
+    #[cfg(feature = "test-data-dir")]
+    if let Err(error) = test_data::ensure_set() {
+        eprintln!("{error}");
+        std::process::exit(test_data::REFUSED_EXIT_CODE);
+    }
     // The folders restricted to the user, the Administrators and SYSTEM before anything is
     // written in them, as the C# `AclEnforcer`; here, not beside the start, so that no file
     // is made with the wider access first. A folder left as it was is said once the log is

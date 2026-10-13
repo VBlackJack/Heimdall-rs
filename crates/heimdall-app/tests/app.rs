@@ -1110,6 +1110,74 @@ fn importing_the_csharp_profiles_merges_and_saves_them() {
 }
 
 #[test]
+fn the_csharp_scheduled_connections_are_carried_over_timed_from_now() {
+    use heimdall_core::scheduled::{self, Schedule, ScheduledTasks};
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut config = config(dir.path());
+    let legacy = dir.path().join("legacy");
+    std::fs::create_dir(&legacy).expect("legacy");
+    std::fs::write(
+        legacy.join("servers.json"),
+        r#"{"servers":[{"id":"x","displayName":"X","remoteServer":"x.lab","connectionType":"SSH"}]}"#,
+    )
+    .expect("servers");
+    std::fs::write(
+        legacy.join("settings.json"),
+        r#"{"scheduledTasks":[
+            {"id":"t1","serverId":"x","serverName":"X","scheduleType":"Interval",
+             "intervalMinutes":20,"nextRun":"2001-01-01T00:00:00+00:00"},
+            {"id":"t2","serverId":"x","serverName":"X","timeOfDay":"06:15"}]}"#,
+    )
+    .expect("settings");
+    config.legacy_dir = Some(legacy);
+    let path = scheduled::scheduled_path(&config.profiles_file);
+    let mut app = App::new(config.clone());
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_secs()
+        .cast_signed();
+    app.update(Message::ImportLegacy);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("expected ImportDone, got {:?}", app.dialog);
+    };
+    assert_eq!(summary.scheduled, Some(Ok(2)));
+    let tasks = ScheduledTasks::load(&path).expect("written");
+    let ids: Vec<&str> = tasks.tasks().iter().map(|task| task.id.as_str()).collect();
+    assert_eq!(ids, ["t1", "t2"], "their identifiers kept");
+    let interval = &tasks.tasks()[0];
+    assert_eq!(interval.schedule, Schedule::Interval { minutes: 20 });
+    let next = interval.next_run.expect("timed");
+    assert!(
+        (before + 20 * 60..before + 20 * 60 + 120).contains(&next),
+        "twenty minutes from now, never the C# time: {next}"
+    );
+    assert!(tasks.tasks()[1].next_run.is_some_and(|next| next > before));
+
+    assert_eq!(
+        app.scheduled_tasks(),
+        tasks.tasks(),
+        "the running list is the one written"
+    );
+
+    // Carried over again: each in place of the one of its identifier.
+    app.update(Message::DismissDialog);
+    app.update(Message::ImportLegacy);
+    assert_eq!(ScheduledTasks::load(&path).expect("read").tasks().len(), 2);
+    assert_eq!(app.scheduled_tasks().len(), 2);
+
+    // A file there that did not read at the start is left as it is, and said.
+    std::fs::write(&path, "task = [").expect("corrupt");
+    let mut app = App::new(config);
+    app.update(Message::ImportLegacy);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("expected ImportDone, got {:?}", app.dialog);
+    };
+    assert!(matches!(summary.scheduled, Some(Err(_))), "{summary:?}");
+    assert_eq!(std::fs::read_to_string(&path).expect("kept"), "task = [");
+}
+
+#[test]
 fn the_csharp_profiles_of_this_machine_keep_skipping_a_certificate_check() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut config = config(dir.path());
@@ -1225,6 +1293,157 @@ fn releasing_a_selection_copies_it_and_a_bare_click_copies_nothing() {
         input: pointer(MouseAction::Release(MouseButton::Left), 0, 4),
     });
     assert!(clipboard_asks(&effects).is_empty());
+}
+
+/// A press of the left button at `row`, `col`, on the right half of the cell or not, with
+/// `modifiers` held.
+fn press_with(row: usize, col: usize, right_half: bool, modifiers: Modifiers) -> PointerInput {
+    let mut input = pointer(MouseAction::Press(MouseButton::Left), row, col);
+    input.at.right_half = right_half;
+    input.modifiers = modifiers;
+    input
+}
+
+/// A drag with the left button held to `row`, `col`, on the right half of the cell, with
+/// `modifiers` held.
+fn drag_to(row: usize, col: usize, modifiers: Modifiers) -> PointerInput {
+    let mut input = pointer(
+        MouseAction::Motion {
+            held: Some(MouseButton::Left),
+        },
+        row,
+        col,
+    );
+    input.at.right_half = true;
+    input.modifiers = modifiers;
+    input
+}
+
+/// Releases the left button at `row`, `col`: what it copies.
+fn release_copies(app: &mut App, tab: TabId, row: usize, col: usize) -> Vec<ClipboardAsk> {
+    release_with(app, tab, row, col, Modifiers::default())
+}
+
+/// Releases the left button at `row`, `col` with `modifiers` held: what it copies.
+fn release_with(
+    app: &mut App,
+    tab: TabId,
+    row: usize,
+    col: usize,
+    modifiers: Modifiers,
+) -> Vec<ClipboardAsk> {
+    let mut input = pointer(MouseAction::Release(MouseButton::Left), row, col);
+    input.modifiers = modifiers;
+    let effects = app.update(Message::Pointer { tab, input });
+    clipboard_asks(&effects)
+}
+
+const SHIFT: Modifiers = Modifiers {
+    shift: true,
+    ctrl: false,
+    alt: false,
+};
+
+const ALT: Modifiers = Modifiers {
+    shift: false,
+    ctrl: false,
+    alt: true,
+};
+
+#[test]
+fn a_shift_click_extends_the_selection_either_way_from_where_it_started() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, _sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"hello world");
+
+    // A bare click: nothing copied, but the place the selection starts from.
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 2, false, Modifiers::default()),
+    });
+    assert!(release_copies(&mut app, tab, 0, 2).is_empty());
+    // Shift+click after it, then before it: from the place first clicked each time.
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 6, true, SHIFT),
+    });
+    assert_eq!(
+        release_copies(&mut app, tab, 0, 6),
+        [ClipboardAsk::Write("llo w".to_owned())]
+    );
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 0, false, SHIFT),
+    });
+    assert_eq!(
+        release_copies(&mut app, tab, 0, 0),
+        [ClipboardAsk::Write("he".to_owned())]
+    );
+}
+
+#[test]
+fn a_shift_click_starts_a_new_selection_when_the_program_tracks_the_mouse() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"hello world");
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 2, false, Modifiers::default()),
+    });
+    release_copies(&mut app, tab, 0, 2);
+    output(&mut app, tab, attempt, b"\x1b[?1000h");
+    let written = sink.written().len();
+
+    // Shift gets past the program, as in xterm.js, and selects anew.
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 6, false, SHIFT),
+    });
+    app.update(Message::Pointer {
+        tab,
+        input: drag_to(0, 8, SHIFT),
+    });
+    assert_eq!(
+        release_with(&mut app, tab, 0, 8, SHIFT),
+        [ClipboardAsk::Write("wor".to_owned())]
+    );
+    assert_eq!(sink.written().len(), written, "nothing reported");
+}
+
+#[test]
+fn an_alt_drag_selects_and_copies_a_rectangle() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, _sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"abcd\r\nefgh\r\nij");
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 1, false, ALT),
+    });
+    app.update(Message::Pointer {
+        tab,
+        input: drag_to(2, 2, ALT),
+    });
+    let lines = if cfg!(windows) { "\r\n" } else { "\n" };
+    assert_eq!(
+        release_copies(&mut app, tab, 2, 2),
+        [ClipboardAsk::Write(["bc", "fg", "j"].join(lines))]
+    );
+    // Without Alt, the same drag runs along the lines.
+    app.update(Message::Pointer {
+        tab,
+        input: press_with(0, 1, false, Modifiers::default()),
+    });
+    app.update(Message::Pointer {
+        tab,
+        input: drag_to(1, 2, Modifiers::default()),
+    });
+    assert_eq!(
+        release_copies(&mut app, tab, 1, 2),
+        [ClipboardAsk::Write("bcd\nefg".to_owned())]
+    );
 }
 
 #[test]

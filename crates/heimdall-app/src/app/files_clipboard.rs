@@ -264,7 +264,13 @@ impl App {
         let Some(from) = self.files_client(source) else {
             return Vec::new();
         };
-        let staging = self.edit_dir.clone().unwrap_or_else(std::env::temp_dir);
+        let Some(staging) = self
+            .edit_dir
+            .clone()
+            .or_else(heimdall_core::paths::temp_dir)
+        else {
+            return Vec::new();
+        };
         let Some(files) = self.files_mut(tab_id) else {
             return Vec::new();
         };

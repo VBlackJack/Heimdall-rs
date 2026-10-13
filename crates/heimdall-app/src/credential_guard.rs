@@ -133,7 +133,7 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotWindows => f.write_str("not Windows"),
-            Self::NoSystemFolder => f.write_str("the system folder is unknown"),
+            Self::NoSystemFolder => f.write_str(heimdall_core::paths::SYSTEM_FOLDER_UNKNOWN),
             Self::NotStarted(detail) => write!(f, "PowerShell did not start: {detail}"),
             Self::TimedOut => write!(f, "no answer within {} seconds", CHECK_TIME_LIMIT.as_secs()),
             Self::Exited(Some(code)) => write!(f, "PowerShell ended with code {code}"),
@@ -184,7 +184,10 @@ pub fn detection_command(system_dir: &std::path::Path) -> std::process::Command 
     command
         .args(POWERSHELL_SWITCHES)
         .arg(POWERSHELL_COMMAND_SWITCH)
-        .arg(DETECTION_SCRIPT);
+        .arg(DETECTION_SCRIPT)
+        // `Get-CimInstance` loads its module from this path: an inherited one could name
+        // modules planted by whoever started Heimdall. Windows PowerShell builds its own.
+        .env_remove(heimdall_term::local::module_path::VARIABLE);
     command
 }
 
@@ -410,6 +413,12 @@ mod tests {
                 "-Command",
                 DETECTION_SCRIPT
             ]
+        );
+        assert!(
+            command.get_envs().any(|(name, value)| name
+                == heimdall_term::local::module_path::VARIABLE
+                && value.is_none()),
+            "the inherited module path is removed"
         );
         assert_eq!(
             DETECTION_SCRIPT,

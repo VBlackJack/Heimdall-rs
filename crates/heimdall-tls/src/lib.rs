@@ -45,7 +45,6 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::ThreadId;
 
-use ring::digest::{SHA256, digest};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::client::WebPkiServerVerifier;
 use tokio_rustls::rustls::client::danger::{
@@ -64,7 +63,7 @@ use tokio_rustls::rustls::{
 pub use tokio_rustls::rustls::pki_types::UnixTime;
 
 /// Length of a certificate's SHA-256 fingerprint.
-pub const FINGERPRINT_LEN: usize = 32;
+pub const FINGERPRINT_LEN: usize = sealvault::hash::SHA256_LEN;
 
 /// The SHA-256 of a whole certificate, as the C# shows and pins it.
 pub type CertificateFingerprint = [u8; FINGERPRINT_LEN];
@@ -72,9 +71,7 @@ pub type CertificateFingerprint = [u8; FINGERPRINT_LEN];
 /// The fingerprint of certificate `der`.
 #[must_use]
 pub fn fingerprint(der: &[u8]) -> CertificateFingerprint {
-    let mut fingerprint = [0; FINGERPRINT_LEN];
-    fingerprint.copy_from_slice(digest(&SHA256, der).as_ref());
-    fingerprint
+    sealvault::hash::sha256(der)
 }
 
 /// Why the system did not vouch for a certificate, as the C# prompt's "Validation issue"

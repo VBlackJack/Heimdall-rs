@@ -159,9 +159,7 @@ fn local(error: &io::Error) -> FilesError {
     if error.kind() == io::ErrorKind::AlreadyExists {
         FilesError::Exists
     } else {
-        FilesError::Local {
-            detail: error.to_string(),
-        }
+        FilesError::local(error)
     }
 }
 

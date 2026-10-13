@@ -178,7 +178,7 @@ fn list_clients() -> Result<Pids, ListError> {
     use std::os::windows::process::CommandExt;
     use std::process::Stdio;
     let folder = heimdall_core::paths::system_dir()
-        .ok_or_else(|| ListError::Failed("the system folder is unknown".to_owned()))?;
+        .ok_or_else(|| ListError::Failed(heimdall_core::paths::SYSTEM_FOLDER_UNKNOWN.to_owned()))?;
     let mut child = tasklist_command(&folder)
         .creation_flags(crate::citrix::CREATE_NO_WINDOW)
         .stdin(Stdio::null())

@@ -241,6 +241,17 @@ fn clock(time: SystemTime) -> String {
 /// The C# "Started" column's format.
 const STARTED_FORMAT: &str = "%H:%M:%S";
 
+/// The tunnel badge of a tab, as the C# `TunnelBadgeState`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunnelBadge {
+    /// The tab goes through no gateway: no badge.
+    Hidden,
+    /// The tab goes through gateways and its session runs.
+    Healthy,
+    /// The tab goes through gateways and its session failed, ended or waits to open again.
+    Unhealthy,
+}
+
 /// What a tunnel's attempt, then the tunnel, report.
 #[derive(Debug, Clone)]
 pub enum TunnelEvent {

@@ -30,7 +30,7 @@ use heimdall_core::store::ProfileStore;
 use heimdall_rdp::{Ending, Framebuffer};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, SessionButton, Shell, session_button_id};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Point, Settings, Size, Theme, mouse};
 
@@ -242,8 +242,8 @@ fn a_click_on_the_desktop_moves_and_presses_there() {
 }
 
 /// Height of a point near the desktop's top left corner, below the tab strip as tall as the
-/// C#'s.
-const DESKTOP_CORNER_Y: u32 = 150;
+/// C#'s and the session header.
+const DESKTOP_CORNER_Y: u32 = 175;
 
 /// The RGBA pixel at logical `(x, y)` of a snapshot of `shell`, and the renderer that drew it.
 fn pixel_at(shell: &Shell, x: u32, y: u32) -> ([u8; 4], String) {
@@ -546,7 +546,7 @@ fn connected(
 ) -> (
     Shell,
     TabId,
-    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::Operation>>,
+    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::RdpInput>>,
 ) {
     let (mut shell, tab, attempt) = opened(dir);
     let (input, received) = tokio::sync::mpsc::unbounded_channel();
@@ -566,11 +566,11 @@ fn connected(
 
 #[test]
 fn ctrl_alt_del_from_the_menu_reaches_the_server_pressed_then_released_in_reverse() {
-    use heimdall_rdp::{Operation, Scancode};
+    use heimdall_rdp::{Operation, RdpInput, Scancode};
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, mut received) = connected(dir.path());
-    // The menu is a pick list, which the simulator cannot open: its message is sent here.
-    let _ = shell.update(Message::App(AppMessage::SendKeys {
+    // As the tab menu's "Send keys" sends it.
+    let _ = shell.update(Message::MenuChoice(AppMessage::SendKeys {
         tab,
         keys: heimdall_app::SpecialKeys::CtrlAltDel,
     }));
@@ -586,8 +586,8 @@ fn ctrl_alt_del_from_the_menu_reaches_the_server_pressed_then_released_in_revers
     let keys: Vec<(bool, Scancode)> = operations
         .iter()
         .map(|operation| match operation {
-            Operation::KeyPressed(code) => (true, *code),
-            Operation::KeyReleased(code) => (false, *code),
+            RdpInput::Operation(Operation::KeyPressed(code)) => (true, *code),
+            RdpInput::Operation(Operation::KeyReleased(code)) => (false, *code),
             other => panic!("not a key: {other:?}"),
         })
         .collect();
@@ -661,27 +661,36 @@ fn a_session_asking_for_no_anti_idle_shows_no_badge() {
 
 #[test]
 fn full_screen_shows_the_session_only_and_comes_back() {
+    use heimdall_ui::tree_view::TreeMenu;
+
     let dir = tempfile::tempdir().expect("dir");
-    let (mut shell, _, _received) = connected(dir.path());
+    let (mut shell, tab, _received) = connected(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
     {
         let mut ui = simulator(&shell);
         ui.find("Sessions").expect("the tree");
-        ui.click("Fullscreen (F11)").expect("the button");
+        ui.click("Fullscreen (F11)").expect("the tab menu's entry");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::MenuFullscreen(shown) if shown == tab))
+        );
+    }
+    let _ = shell.update(Message::MenuFullscreen(tab));
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Sessions").is_err(), "no tree in full screen");
+        // The C# header put away, the window's way back in its place.
+        assert!(ui.find("Disconnect").is_err(), "no header in full screen");
+        ui.click("Exit fullscreen").expect("the way back");
         assert!(
             ui.into_messages()
                 .any(|message| matches!(message, Message::ToggleFullscreen))
         );
     }
     let _ = shell.update(Message::ToggleFullscreen);
-    {
-        let mut ui = simulator(&shell);
-        assert!(ui.find("Sessions").is_err(), "no tree in full screen");
-        ui.find("Exit fullscreen (F11)").expect("the way back");
-    }
-    let _ = shell.update(Message::ToggleFullscreen);
     let mut ui = simulator(&shell);
     ui.find("Sessions").expect("the tree again");
-    ui.find("Fullscreen (F11)").expect("the button again");
+    ui.find("Disconnect").expect("the header again");
 }
 
 #[test]
@@ -856,6 +865,18 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
     .expect("body");
     ui.find("Subject: CN=dc.lab")
         .expect("the subject, as the C# prompt");
+    // The fingerprint compared is the pin's: the whole certificate's thumbprint, as the C#
+    // prompt shows it, never the key's under that label; the key is said apart.
+    let whole = heimdall_rdp::CertificateHash::of(b"the certificate of dc.lab").thumbprint();
+    ui.find(format!("SHA-256 fingerprint: {whole}").as_str())
+        .expect("the whole certificate's thumbprint");
+    assert!(
+        ui.find("SHA-256 fingerprint: SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            .is_err(),
+        "not the key under the certificate's label"
+    );
+    ui.find("Public key SHA-256: SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        .expect("the key, under its own name");
     ui.click("Just this once").expect("once");
     assert!(ui.into_messages().any(|message| matches!(
         message,
@@ -1217,7 +1238,7 @@ fn a_fixed_desktop_still_tells_the_tab_s_size_without_asking_it_of_the_server() 
 }
 
 #[test]
-fn the_session_bar_opens_the_resolution_menu_which_names_the_profile_s_mode() {
+fn the_tab_menu_opens_the_resolution_menu_which_names_the_profile_s_mode() {
     use heimdall_core::profile::{RdpOptions, Resolution};
     use heimdall_ui::tree_view::TreeMenu;
 
@@ -1229,9 +1250,10 @@ fn the_session_bar_opens_the_resolution_menu_which_names_the_profile_s_mode() {
             ..RdpOptions::default()
         },
     );
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
     {
         let mut ui = simulator(&shell);
-        ui.click("Resolution").expect("on the session bar");
+        ui.click("Resolution").expect("in the tab menu");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::OpenTreeMenu(TreeMenu::Resolution(opened)) if opened == tab
@@ -1335,7 +1357,7 @@ fn ctrl_alt_home_lets_go_of_the_keys_held_and_gives_the_keyboard_back() {
 }
 
 #[test]
-fn the_desktop_bar_shows_what_the_session_shares_and_offers_the_shortcuts() {
+fn the_desktop_header_shows_what_the_session_shares() {
     let dir = tempfile::tempdir().expect("dir");
     let (shell, _, _received) = connected(dir.path());
     let mut ui = simulator(&shell);
@@ -1343,14 +1365,6 @@ fn the_desktop_bar_shows_what_the_session_shares_and_offers_the_shortcuts() {
     ui.find("Clipboard").expect("the clipboard shared");
     assert!(ui.find("Drives").is_err(), "no drive shared");
     assert!(ui.find("Sound").is_err(), "no sound played here");
-    ui.click("Keyboard shortcuts...").expect("the help");
-    let messages: Vec<Message> = ui.into_messages().collect();
-    assert!(
-        messages
-            .iter()
-            .any(|message| matches!(message, Message::App(AppMessage::ShowShortcuts))),
-        "{messages:?}"
-    );
 }
 
 #[test]
@@ -1494,7 +1508,7 @@ fn a_session_that_failed_before_it_connected_reports_no_duration() {
 }
 
 #[test]
-fn a_desktop_settling_counts_down_on_its_bar_and_its_resolution_menu_skips_the_wait() {
+fn a_desktop_settling_counts_down_on_its_header_and_its_resolution_menu_skips_the_wait() {
     use heimdall_ui::tree_view::TreeMenu;
 
     let dir = tempfile::tempdir().expect("dir");
@@ -1538,4 +1552,885 @@ fn a_desktop_settling_counts_down_on_its_bar_and_its_resolution_menu_skips_the_w
         ui.find("Skip stabilization").is_err(),
         "no longer offered once over"
     );
+}
+
+/// Environment variable naming a directory for PNG snapshots.
+const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
+
+/// A picture of the window, written as `name` to the folder [`SNAPSHOT_VARIABLE`] names.
+fn snapshot(shell: &Shell, name: &str) {
+    let Some(dir) = std::env::var_os(SNAPSHOT_VARIABLE) else {
+        return;
+    };
+    let dir = Path::new(&dir);
+    // iced names the picture after its renderer: clear every variant, or an old picture is
+    // only compared against and never replaced.
+    let stem = name.trim_end_matches(".png");
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let file = entry.file_name();
+            let file = file.to_string_lossy();
+            if file == name || file.starts_with(&format!("{stem}-")) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    simulator(shell)
+        .snapshot(&shell.theme())
+        .expect("drawn")
+        .matches_image(dir.join(name))
+        .expect("written");
+}
+
+/// NTSTATUS of an expired password.
+const STATUS_PASSWORD_EXPIRED: u32 = 0xC000_0071;
+
+/// The tab of `shell` with identifier `tab`.
+fn tab_of(shell: &Shell, tab: TabId) -> &heimdall_app::Tab {
+    shell.app().tab(tab).expect("tab")
+}
+
+/// A shell whose RDP tab failed with `error`, its attempts not chained.
+fn failed_with(dir: &Path, error: UiError) -> (Shell, TabId) {
+    let mut core = app_of(
+        dir,
+        RdpProfile {
+            auto_reconnect: false,
+            ..profile(heimdall_core::profile::RdpOptions::default())
+        },
+    );
+    let effects = core.update(AppMessage::OpenRdp(ProfileId::new("dc")));
+    let [Effect::ConnectRdp { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("one connection");
+    };
+    let (tab, attempt) = (*tab, *attempt);
+    let mut shell = Shell::with_app(core);
+    connection(&mut shell, tab, attempt, ConnectionEvent::Failed(error));
+    (shell, tab)
+}
+
+#[test]
+fn a_refused_logon_shows_the_csharp_diagnostic_details_and_copies_them_with_the_error() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = failed_with(
+        dir.path(),
+        UiError::RdpRefused {
+            refusal: heimdall_rdp::Refusal::PasswordExpired,
+            status: Some(STATUS_PASSWORD_EXPIRED),
+        },
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Warning: The password has expired and must be changed before connecting.")
+            .expect("the C# sentence");
+        // Closed, as the C# expander: the header only.
+        assert!(ui.find("0xC0000071").is_err(), "closed");
+        ui.click("Diagnostic details").expect("the expander");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::ToggleFailureDetails(id) if *id == tab)),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(Message::ToggleFailureDetails(tab));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Stage").expect("its stage");
+        ui.find("Network Level Authentication").expect("the logon");
+        ui.find("Code").expect("its code");
+        ui.find("0xC0000071").expect("the NTSTATUS");
+        assert!(ui.find("Detail").is_err(), "no detail to give");
+    }
+    snapshot(&shell, "rdp-failure.png");
+
+    let report = shell
+        .failure_report(tab, std::time::UNIX_EPOCH)
+        .expect("a report");
+    let lines: Vec<&str> = report.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("Warning: The password has expired"))
+        .expect("the error");
+    assert_eq!(
+        &lines[at + 1..],
+        ["Stage: Network Level Authentication", "Code: 0xC0000071"],
+        "{report}"
+    );
+}
+
+#[test]
+fn each_rdp_cause_the_csharp_words_is_said_in_its_words_with_its_stage() {
+    use heimdall_app::NetworkFailure;
+
+    let causes = [
+        (
+            UiError::Network {
+                failure: NetworkFailure::Refused,
+                detail: "Connection refused (os error 111)".to_owned(),
+            },
+            "Notice: Could not connect to the remote computer. It may be turned off, not on the \
+             network, or Remote Desktop may be disabled.",
+            "RDP connection",
+            Some("Connection refused (os error 111)"),
+        ),
+        (
+            UiError::Timeout,
+            "Notice: The connection timed out while starting the session. The remote computer \
+             did not respond. Check the host and network, then try reconnecting.",
+            "RDP connection",
+            None,
+        ),
+        (
+            UiError::RdpEnded {
+                ending: Ending::License,
+                code: Some(0x101),
+            },
+            "Error: A Remote Desktop licensing error blocked the session. Contact your \
+             administrator; the license server may be unreachable or out of CALs.",
+            "RDP disconnect",
+            Some(
+                "[Protocol independent licensing error] A Remote Desktop License Server could \
+                 not be found to provide a license",
+            ),
+        ),
+        (
+            UiError::JumpRefused {
+                host: "dc.lab".to_owned(),
+                port: 3389,
+            },
+            "Notice: The gateway could not reach dc.lab:3389. The target host or its RDP port \
+             is unreachable from the SSH gateway.",
+            "RDP tunnel",
+            Some("dc.lab:3389"),
+        ),
+    ];
+    for (error, said, stage, detail) in causes {
+        let dir = tempfile::tempdir().expect("dir");
+        let (mut shell, tab) = failed_with(dir.path(), error.clone());
+        let _ = shell.update(Message::ToggleFailureDetails(tab));
+        let mut ui = simulator(&shell);
+        ui.find(said)
+            .unwrap_or_else(|_| panic!("{error:?}: {said}"));
+        ui.find(stage)
+            .unwrap_or_else(|_| panic!("{error:?}: {stage}"));
+        if let Some(detail) = detail {
+            ui.find(detail)
+                .unwrap_or_else(|_| panic!("{error:?}: {detail}"));
+        }
+    }
+}
+
+#[test]
+fn the_health_dot_follows_the_session_as_the_csharp_one() {
+    use heimdall_ui::rdp_status::Health;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    assert_eq!(Health::of(tab_of(&shell, tab)), Health::Transitional);
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    assert_eq!(Health::of(tab_of(&shell, tab)), Health::Healthy);
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: Ending::AdminDisconnect,
+        },
+    );
+    assert_eq!(
+        Health::of(tab_of(&shell, tab)),
+        Health::Faulted,
+        "ended by the server"
+    );
+
+    let other = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(other.path());
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: Ending::Logoff,
+        },
+    );
+    assert_eq!(Health::of(tab_of(&shell, tab)), Health::Idle, "logged off");
+
+    let failed = tempfile::tempdir().expect("dir");
+    let (shell, tab) = failed_with(
+        failed.path(),
+        UiError::RdpRefused {
+            refusal: heimdall_rdp::Refusal::BadCredentials,
+            status: None,
+        },
+    );
+    assert_eq!(Health::of(tab_of(&shell, tab)), Health::Faulted);
+    let cancelled = tempfile::tempdir().expect("dir");
+    let (shell, tab) = failed_with(cancelled.path(), UiError::Cancelled);
+    assert_eq!(Health::of(tab_of(&shell, tab)), Health::Idle, "the user's");
+}
+
+#[test]
+fn the_phase_stepper_follows_the_steps_the_connection_reports() {
+    use heimdall_rdp::Step;
+    use heimdall_ui::rdp_status::ConnectPhase;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    assert_eq!(
+        ConnectPhase::of(tab_of(&shell, tab)),
+        ConnectPhase::Preparing
+    );
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpStep(Step::Connecting),
+    );
+    assert_eq!(
+        ConnectPhase::of(tab_of(&shell, tab)),
+        ConnectPhase::Connecting
+    );
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpStep(Step::Loading),
+    );
+    assert_eq!(ConnectPhase::of(tab_of(&shell, tab)), ConnectPhase::Loading);
+    // Drawn on the connecting card, the health dot and the stepper above Cancel.
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Cancel").expect("the card");
+    }
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    assert_eq!(
+        ConnectPhase::of(tab_of(&shell, tab)),
+        ConnectPhase::Connected
+    );
+}
+
+#[test]
+fn a_dropped_desktop_counts_the_seconds_since_it_dropped() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let event = |core: &mut App, tab, attempt, event| {
+        core.update(AppMessage::Connection {
+            tab,
+            attempt,
+            event,
+        })
+    };
+    let effects = core.update(AppMessage::OpenRdp(ProfileId::new("dc")));
+    let [Effect::ConnectRdp { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("one connection");
+    };
+    let (tab, attempt) = (*tab, *attempt);
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    let _ = event(
+        &mut core,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    let _ = event(
+        &mut core,
+        tab,
+        attempt,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+    let since = core
+        .tab(tab)
+        .and_then(|found| found.retry)
+        .expect("waiting to reconnect")
+        .since;
+    // Kept from one attempt to the next: counted from the drop.
+    let effects = core.update(AppMessage::AutoReconnect { tab, attempt });
+    let Some(again) = effects.iter().find_map(|effect| match effect {
+        Effect::ConnectRdp { attempt, .. } => Some(*attempt),
+        _ => None,
+    }) else {
+        panic!("{effects:?}");
+    };
+    let _ = event(
+        &mut core,
+        tab,
+        again,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+    let retry = core
+        .tab(tab)
+        .and_then(|found| found.retry)
+        .expect("waiting again");
+    assert_eq!(retry.attempt, 2);
+    assert_eq!(retry.since, since, "from the drop, not the attempt");
+    assert_eq!(
+        heimdall_ui::rdp_status::elapsed_text(retry, since + std::time::Duration::from_secs(42)),
+        "42s elapsed"
+    );
+}
+
+#[test]
+fn the_desktop_header_shows_the_redirections_not_shared_behind_their_badge() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _received) = connected(dir.path());
+    {
+        let mut ui = simulator(&shell);
+        // The profile shares its clipboard only: seven more behind the badge.
+        ui.click("+7").expect("the badge");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.iter().any(
+                |message| matches!(message, Message::ShowDisabledRedirections(id) if *id == tab)
+            ),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(Message::ShowDisabledRedirections(tab));
+    let mut ui = simulator(&shell);
+    assert!(ui.find("+7").is_err(), "shown: no badge");
+    snapshot(&shell, "rdp-redirections.png");
+
+    let listed = heimdall_ui::rdp_status::redirections(&RdpProfile {
+        extras: heimdall_core::profile::RdpExtras {
+            redirect_printers: true,
+            ..heimdall_core::profile::RdpExtras::default()
+        },
+        ..profile(heimdall_core::profile::RdpOptions::default())
+    });
+    let said: Vec<String> = listed
+        .iter()
+        .map(heimdall_ui::rdp_status::Redirection::status)
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "Clipboard redirection: enabled",
+            "Drive redirection: disabled",
+            "Printer redirection: not supported yet by the built-in client",
+            "COM port redirection: disabled",
+            "Smart card redirection: disabled",
+            "USB redirection: disabled",
+            "Audio redirection: disabled",
+            "Multi-monitor: disabled",
+        ]
+    );
+    assert_eq!(heimdall_ui::rdp_status::hidden(&listed), 7);
+}
+
+#[test]
+fn a_fixed_size_smaller_than_the_tab_says_so_at_first() {
+    use heimdall_core::profile::{RdpOptions, Resolution};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = small_desktop(
+        dir.path(),
+        RdpOptions {
+            resolution: Resolution::Fixed,
+            scale_fixed: false,
+            ..RdpOptions::default()
+        },
+    );
+    let (width, height) = tab_of(&shell, tab)
+        .desktop
+        .as_deref()
+        .and_then(heimdall_app::DesktopPane::fixed_size)
+        .expect("a fixed size");
+    // The tab's size comes from its first drawing; the hint from what follows.
+    let reported: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        let _ = ui.snapshot(&Theme::Dark).expect("drawn");
+        ui.into_messages().collect()
+    };
+    for message in reported {
+        let _ = shell.update(message);
+    }
+    let _ = shell.update(Message::Tick);
+    let hint = format!("Fixed {width}x{height} - resize the window or change resolution to fill.");
+    let mut ui = simulator(&shell);
+    ui.find(hint.as_str()).expect("the C# hint");
+}
+
+#[test]
+fn keys_sent_from_the_menu_are_said_as_the_csharp_toast_and_so_is_a_failure() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, received) = connected(dir.path());
+    let _ = shell.update(Message::MenuChoice(AppMessage::SendKeys {
+        tab,
+        keys: heimdall_app::SpecialKeys::CtrlAltDel,
+    }));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Ctrl+Alt+Del sent to remote").expect("sent");
+    }
+    // The session gone, nothing reaches it: said so.
+    drop(received);
+    let _ = shell.update(Message::MenuChoice(AppMessage::SendKeys {
+        tab,
+        keys: heimdall_app::SpecialKeys::WinL,
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Could not send keys to the remote session.")
+        .expect("not sent");
+}
+
+/// A window tall enough for a tab's whole menu.
+const TALL_WINDOW: Size = Size::new(1200.0, 1400.0);
+
+fn tall(shell: &Shell) -> common::Drawn<'_> {
+    common::simulator(settings(), TALL_WINDOW, shell.view())
+}
+
+/// A connected RDP tab named "rdp tab", and what its session receives: a name the tree does
+/// not show, so the first text of it is the tab's in the strip.
+fn renamed(
+    dir: &Path,
+) -> (
+    Shell,
+    TabId,
+    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::RdpInput>>,
+) {
+    use heimdall_app::TabMenuMessage;
+
+    let (mut shell, tab, received) = connected(dir);
+    let _ = shell.update(Message::App(AppMessage::TabMenu(TabMenuMessage::Rename(
+        tab,
+    ))));
+    let _ = shell.update(Message::App(AppMessage::TabMenu(
+        TabMenuMessage::NameEdited("rdp tab".to_owned()),
+    )));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    (shell, tab, received)
+}
+
+/// What a click on the last text `label` sends: an open menu's entry.
+fn menu_click(shell: &Shell, label: &str) -> Vec<Message> {
+    let mut ui = tall(shell);
+    common::click_last(&mut ui, label);
+    ui.into_messages().collect()
+}
+
+/// The tops of the last texts `labels`, an open menu's entries: each below the one before.
+fn assert_in_order(shell: &Shell, labels: &[&str]) {
+    let mut ui = tall(shell);
+    let tops: Vec<f32> = labels
+        .iter()
+        .map(|label| common::last_bounds(&mut ui, label).y)
+        .collect();
+    assert!(
+        tops.windows(2).all(|pair| pair[0] < pair[1]),
+        "{labels:?} at {tops:?}"
+    );
+}
+
+/// The entries of a connected RDP tab's menu, as the C# `SessionTabContextMenuFactory` builds
+/// it for a saved profile not split.
+const RDP_TAB_MENU: [&str; 16] = [
+    "Disconnect",
+    "Rename tab",
+    "Reset title",
+    "Pin tab",
+    "Resolution",
+    "Fullscreen (F11)",
+    "Reconnect Session",
+    "Duplicate Session",
+    "Edit",
+    "Copy hostname",
+    "Copy username",
+    "Reveal in tree",
+    "Detach to Window",
+    "Close others",
+    "Close to the right",
+    "Split...",
+];
+
+/// The keys of the "Send keys" menu, in the C# session header's order.
+const SEND_KEYS_MENU: [(&str, heimdall_app::SpecialKeys); 10] = [
+    ("Ctrl+Alt+Del", heimdall_app::SpecialKeys::CtrlAltDel),
+    ("Windows key", heimdall_app::SpecialKeys::Windows),
+    ("Alt+Tab", heimdall_app::SpecialKeys::AltTab),
+    ("Ctrl+Esc (Start menu)", heimdall_app::SpecialKeys::CtrlEsc),
+    ("Print Screen", heimdall_app::SpecialKeys::PrintScreen),
+    ("Escape", heimdall_app::SpecialKeys::Escape),
+    ("F11", heimdall_app::SpecialKeys::F11),
+    ("Win+L (lock workstation)", heimdall_app::SpecialKeys::WinL),
+    ("Win+D (show desktop)", heimdall_app::SpecialKeys::WinD),
+    ("Win+E (file explorer)", heimdall_app::SpecialKeys::WinE),
+];
+
+/// Where the session header's button `button` of `tab` is drawn.
+fn header_button(shell: &Shell, tab: TabId, button: SessionButton) -> iced::Rectangle {
+    let mut ui = tall(shell);
+    ui.find(session_button_id(tab, button))
+        .expect("the header's button")
+        .bounds()
+}
+
+/// What a click on the session header's button `button` of `tab` sends.
+fn header_click(shell: &Shell, tab: TabId, button: SessionButton) -> Vec<Message> {
+    let mut ui = tall(shell);
+    ui.click(session_button_id(tab, button))
+        .expect("the header's button");
+    ui.into_messages().collect()
+}
+
+#[test]
+fn an_rdp_tab_s_header_has_the_csharp_buttons_and_indicators_and_no_bar_under_it() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab, _received) = renamed(dir.path());
+    {
+        let mut ui = tall(&shell);
+        // No bar of lists and words under the tab.
+        for gone in [
+            "Send keys",
+            "Keyboard shortcuts...",
+            "Match window",
+            "Fit to Window",
+            "Fullscreen (F11)",
+            "Resolution",
+        ] {
+            assert!(ui.find(gone).is_err(), "{gone} is on screen");
+        }
+        // The C# session header: name, state, indicators.
+        assert_eq!(
+            common::all_bounds(&mut ui, "rdp tab").len(),
+            2,
+            "strip and header"
+        );
+        ui.find("Connected").expect("the state");
+        ui.find("Clipboard").expect("the redirections");
+        ui.find("+7").expect("the redirections not shared");
+    }
+    // At the right, as the C# docks them: Resolution, Split, Send keys, Fullscreen, then
+    // Disconnect.
+    let resolution = header_button(&shell, tab, SessionButton::Resolution);
+    let send_keys = header_button(&shell, tab, SessionButton::SendKeys);
+    let fullscreen = header_button(&shell, tab, SessionButton::Fullscreen);
+    let disconnect = {
+        let mut ui = tall(&shell);
+        ui.find("Disconnect").expect("the header's button").bounds()
+    };
+    assert!(
+        resolution.x < send_keys.x && send_keys.x < fullscreen.x && fullscreen.x < disconnect.x,
+        "{resolution:?} {send_keys:?} {fullscreen:?} {disconnect:?}"
+    );
+    assert!(
+        header_click(&shell, tab, SessionButton::Resolution)
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::OpenTreeMenu(TreeMenu::Resolution(opened)) if *opened == tab
+            ))
+    );
+    assert!(
+        header_click(&shell, tab, SessionButton::SendKeys)
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::OpenTreeMenu(TreeMenu::SendKeys(opened)) if *opened == tab
+            ))
+    );
+    assert!(
+        header_click(&shell, tab, SessionButton::Fullscreen)
+            .iter()
+            .any(|message| matches!(message, Message::ToggleFullscreen))
+    );
+    let mut ui = tall(&shell);
+    ui.click("Disconnect").expect("the header's button");
+    assert!(
+        ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::DisconnectDesktop(closed)) if closed == tab
+        )),
+        "as the session bar's Disconnect"
+    );
+    snapshot(&shell, "rdp-header.png");
+}
+
+#[test]
+fn right_clicking_an_rdp_tab_offers_the_csharp_tab_menu() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _received) = renamed(dir.path());
+    {
+        let mut ui = tall(&shell);
+        common::right_click(&mut ui, "rdp tab");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::OpenTreeMenu(TreeMenu::Tab(opened)) if opened == tab
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    snapshot(&shell, "rdp-tab-menu.png");
+    assert_in_order(&shell, &RDP_TAB_MENU);
+    {
+        // The header's own: not in the C# tab menu.
+        let mut ui = tall(&shell);
+        for absent in ["Send keys", "Fit to Window", "Quality"] {
+            assert!(ui.find(absent).is_err(), "{absent} in the tab menu");
+        }
+    }
+    assert!(
+        menu_click(&shell, "Resolution")
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::OpenTreeMenu(TreeMenu::Resolution(opened)) if *opened == tab
+            ))
+    );
+    assert!(
+        menu_click(&shell, "Fullscreen (F11)")
+            .iter()
+            .any(|message| matches!(message, Message::MenuFullscreen(shown) if *shown == tab))
+    );
+    assert!(
+        menu_click(&shell, "Disconnect")
+            .iter()
+            .any(|message| matches!(
+                message,
+                Message::MenuChoice(AppMessage::RequestCloseTab(closed)) if *closed == tab
+            ))
+    );
+    // The resolution menu, the C# header's, scales the desktop into the tab, as the bar's
+    // "Fit to Window" did; checked once chosen, and chosen back.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
+    let fit = |messages: &[Message]| {
+        messages.iter().find_map(|message| match message {
+            Message::DesktopFit { tab: fitted, fit } if *fitted == tab => Some(*fit),
+            _ => None,
+        })
+    };
+    let first = fit(&menu_click(&shell, "Fit to Window")).expect("the bar's scaling");
+    let _ = shell.update(Message::DesktopFit { tab, fit: first });
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
+    assert_eq!(fit(&menu_click(&shell, "Fit to Window")), Some(!first));
+}
+
+#[test]
+fn the_send_keys_menu_sends_what_the_session_bar_sent_and_offers_the_shortcuts() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _received) = renamed(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::SendKeys(tab)));
+    let mut labels: Vec<&str> = SEND_KEYS_MENU.iter().map(|(label, _)| *label).collect();
+    labels.push("Keyboard shortcuts...");
+    assert_in_order(&shell, &labels);
+    for (label, keys) in SEND_KEYS_MENU {
+        let sent = menu_click(&shell, label);
+        assert!(
+            sent.iter().any(|message| matches!(
+                message,
+                Message::MenuChoice(AppMessage::SendKeys { tab: to, keys: chosen })
+                    if *to == tab && *chosen == keys
+            )),
+            "{label}: {sent:?}"
+        );
+    }
+    assert!(
+        menu_click(&shell, "Keyboard shortcuts...")
+            .iter()
+            .any(|message| matches!(message, Message::MenuChoice(AppMessage::ShowShortcuts)))
+    );
+    // Sent from the menu, as from the bar: the C# toast.
+    let _ = shell.update(Message::MenuChoice(AppMessage::SendKeys {
+        tab,
+        keys: heimdall_app::SpecialKeys::CtrlAltDel,
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Ctrl+Alt+Del sent to remote").expect("sent");
+    assert!(
+        ui.find("Win+L (lock workstation)").is_err(),
+        "the menu closed"
+    );
+}
+
+/// Quick Connect's field, shown once it is open.
+const QUICK_CONNECT_FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
+
+/// A click at `at` as the window takes it: the pointer moved there, then pressed and let
+/// go, each drawn apart; what the window sent is applied, as its loop does. What it sent.
+fn click_at(shell: &mut Shell, at: Point) -> Vec<Message> {
+    let messages: Vec<Message> = {
+        let mut ui = simulator(shell);
+        ui.point_at(at);
+        let _ = ui.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: at,
+        })]);
+        let _ = ui.simulate([iced::Event::Mouse(mouse::Event::ButtonPressed(
+            mouse::Button::Left,
+        ))]);
+        let _ = ui.simulate([iced::Event::Mouse(mouse::Event::ButtonReleased(
+            mouse::Button::Left,
+        ))]);
+        ui.into_messages().collect()
+    };
+    for message in messages.clone() {
+        let _ = shell.update(message);
+    }
+    messages
+}
+
+/// Whether `messages` send the server a button let go.
+fn releases_a_button(messages: &[Message]) -> bool {
+    messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::App(AppMessage::DesktopInput { inputs, .. })
+                if inputs.iter().any(|input| matches!(
+                    input,
+                    DesktopInput::Button { pressed: false, .. }
+                ))
+        )
+    })
+}
+
+#[test]
+fn the_quick_connect_button_opens_quick_connect_over_a_desktop_that_has_the_keyboard() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _tab, _received) = connected(dir.path());
+    // The desktop clicked: it has the keyboard and the pointer.
+    let _ = click_at(&mut shell, Point::new(700.0, 400.0));
+    assert!(
+        simulator(&shell).find(QUICK_CONNECT_FIELD).is_err(),
+        "closed"
+    );
+    let button = {
+        let mut ui = simulator(&shell);
+        ui.find("Quick connect")
+            .expect("the navigation's button")
+            .bounds()
+    };
+    let sent = click_at(&mut shell, button.center());
+    simulator(&shell)
+        .find(QUICK_CONNECT_FIELD)
+        .expect("Quick Connect open, at the first click");
+    assert!(
+        !releases_a_button(&sent),
+        "a press off the desktop sends the server no release"
+    );
+}
+
+#[test]
+fn a_tab_clicked_while_a_desktop_has_the_pointer_is_shown_at_the_first_click() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let open = |core: &mut App| match core
+        .update(AppMessage::OpenRdp(ProfileId::new("dc")))
+        .as_slice()
+    {
+        [Effect::ConnectRdp { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("{other:?}"),
+    };
+    let first = open(&mut core);
+    let second = open(&mut core);
+    let mut receivers = Vec::new();
+    for (tab, attempt) in [first, second] {
+        let (input, received) = tokio::sync::mpsc::unbounded_channel();
+        receivers.push(received);
+        let _ = core.update(AppMessage::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::RdpReady {
+                framebuffer: Framebuffer::new(1280, 800),
+                input,
+                size: tokio::sync::watch::channel(None).0,
+                clipboard: None,
+            },
+        });
+    }
+    let mut shell = Shell::with_app(core);
+    assert_eq!(shell.app().active_tab().map(|tab| tab.id), Some(second.0));
+    // The second's desktop clicked, then the first tab's title, left of its close mark.
+    let pressed = click_at(&mut shell, Point::new(700.0, 400.0));
+    assert!(
+        releases_a_button(&pressed),
+        "the desktop's own click let go"
+    );
+    let close = {
+        let mut ui = simulator(&shell);
+        ui.find(heimdall_ui::shell::tab_close_id(first.0))
+            .expect("the first tab's close mark")
+            .bounds()
+    };
+    let sent = click_at(
+        &mut shell,
+        Point::new(close.x - TAB_TITLE_OFFSET, close.center_y()),
+    );
+    assert_eq!(
+        shell.app().active_tab().map(|tab| tab.id),
+        Some(first.0),
+        "shown at the first click: {sent:?}"
+    );
+    assert!(
+        !releases_a_button(&sent),
+        "a press off the desktop sends the server no release"
+    );
+}
+
+/// How far left of its close mark a tab's title is clicked.
+const TAB_TITLE_OFFSET: f32 = 60.0;
+
+#[test]
+fn pause_reaches_the_server_as_its_whole_sequence_once_per_press() {
+    use heimdall_rdp::RdpInput;
+    use iced::keyboard::key::{Code, Named, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, mut received) = connected(dir.path());
+    let release = iced::Event::Keyboard(Event::KeyReleased {
+        key: Key::Named(Named::Pause),
+        modified_key: Key::Named(Named::Pause),
+        physical_key: Physical::Code(Code::Pause),
+        location: Location::Standard,
+        modifiers: Modifiers::default(),
+    });
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        let _ = ui.simulate([
+            modified_press(Key::Named(Named::Pause), Code::Pause, Modifiers::default()),
+            release,
+        ]);
+        ui.into_messages().collect()
+    };
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    let mut sent = Vec::new();
+    while let Ok(batch) = received.try_recv() {
+        sent.extend(batch);
+    }
+    assert!(matches!(sent.as_slice(), [RdpInput::Pause]), "{sent:?}");
 }

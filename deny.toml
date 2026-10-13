@@ -46,6 +46,12 @@ exceptions = [
 multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
+# Cryptography comes from RustCrypto and ring only: no C cryptographic library. rustls
+# runs on ring everywhere (see vendor/PATCHES.md for sspi's default features).
+deny = [
+    { crate = "aws-lc-rs", reason = "binds the AWS-LC C library; rustls runs on ring" },
+    { crate = "aws-lc-sys", reason = "the AWS-LC C library; rustls runs on ring" },
+]
 
 [sources]
 unknown-registry = "deny"

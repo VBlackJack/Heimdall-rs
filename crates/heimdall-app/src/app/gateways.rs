@@ -17,10 +17,15 @@
 //! SSH gateways, added and edited through the C# Heimdall's gateway dialog, from the "+"
 //! and tree menus or from a session's form, which the dialog returns to with the new
 //! gateway chosen.
+//!
+//! Its "Host Key Fingerprint" is shown read only, as the C# dialog shows it: no copy kept
+//! with the gateway, but what the trust files hold for the gateway's host and port, the pin
+//! or the key recorded in full. Saving the dialog never touches the trust files.
 
 use heimdall_core::credentials::{CredentialProtocol, Endpoint};
 use heimdall_core::profile::{ProfileId, SshGateway};
-use heimdall_ssh::Secret;
+use heimdall_ssh::known_hosts_import;
+use heimdall_ssh::{KnownHosts, Secret};
 
 use super::{App, Dialog, Message};
 use crate::gateway_draft::GatewayDraft;
@@ -39,7 +44,9 @@ impl App {
             Message::NewGateway => self.open_gateway(GatewayDraft::default()),
             Message::EditGateway(id) => {
                 if let Some(gateway) = self.gateways().iter().find(|g| g.id == id) {
-                    let mut draft = GatewayDraft::from_gateway(gateway);
+                    let trusted = self.trusted_fingerprint(&gateway.host, gateway.port);
+                    let mut draft =
+                        GatewayDraft::from_gateway(gateway).with_trusted_fingerprint(trusted);
                     draft.password_saved = self.password_saved(&id);
                     draft.passphrase = SavedSecret::from_saved(self.passphrase_saved(&id));
                     self.open_gateway(draft);
@@ -168,6 +175,20 @@ impl App {
                 draft.passphrase == SavedSecret::Cleared,
             );
         }
+    }
+
+    /// The fingerprint `host` on `port` is trusted by, as the dialog shows it; `None` when
+    /// it is not trusted, or the trust files cannot be read, which the log says.
+    fn trusted_fingerprint(&self, host: &str, port: u16) -> Option<String> {
+        known_hosts_import::trusted_fingerprint(
+            &KnownHosts::new(&self.config.known_hosts),
+            host,
+            port,
+        )
+        .unwrap_or_else(|error| {
+            log::warn!("the host key fingerprint of a gateway cannot be read: {error}");
+            None
+        })
     }
 
     /// `gateway`, unless its parents lead back to it.

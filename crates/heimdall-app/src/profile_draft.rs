@@ -283,8 +283,9 @@ pub enum ProfileToggle {
     RedirectClipboard,
     /// RDP: share this computer's drives.
     RedirectDrives,
-    /// RDP: never ask about a certificate not trusted yet; this computer's certificate
-    /// authorities decide, as the C# "Require server identity validation".
+    /// RDP: this computer's certificate authorities alone decide, a certificate trusted
+    /// before included, and nothing is asked, as the C# "Require server identity validation";
+    /// under Network Level Authentication only, as there.
     StrictServerAuthentication,
     /// `WinRM`: log in with a stored account rather than the current Windows identity.
     StoredCredential,

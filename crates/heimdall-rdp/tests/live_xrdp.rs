@@ -66,6 +66,7 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         kerberos: false,
         time_zone: None,
         desktop_scale: 100,
+        progress: None,
     }
 }
 
@@ -83,7 +84,7 @@ async fn a_server_without_nla_is_refused_when_nla_is_required() {
     )
     .await;
     assert!(
-        matches!(outcome, Err(RdpError::Negotiation(_))),
+        matches!(outcome, Err(RdpError::Negotiation { .. })),
         "{:?}",
         outcome.map(|_| ())
     );
@@ -310,9 +311,9 @@ async fn cancelling_the_login_screen_is_a_close_not_a_failure() {
     session
         .input
         .send(vec![
-            Operation::MouseMove(cancel_button),
-            Operation::MouseButtonPressed(MouseButton::Left),
-            Operation::MouseButtonReleased(MouseButton::Left),
+            Operation::MouseMove(cancel_button).into(),
+            Operation::MouseButtonPressed(MouseButton::Left).into(),
+            Operation::MouseButtonReleased(MouseButton::Left).into(),
         ])
         .expect("sent");
     let ended = tokio::time::timeout(FIRST_PICTURE, async {

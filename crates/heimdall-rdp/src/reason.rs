@@ -170,6 +170,16 @@ const WORDED: [(u32, Ending); 21] = [
     (0x10A, Ending::License),
 ];
 
+/// The NTSTATUS the server refused a logon with, when it gave one: the C# failure card's
+/// "Code" for it.
+pub(crate) fn status(error: &sspi::Error) -> Option<u32> {
+    error.nstatus.map(|status| status.0)
+}
+
+/// The highest Set Error Info code `IronRDP` names (`ERRINFO_DECRYPTFAILED2`): none past it
+/// can be told apart.
+const LAST_ERROR_INFO: u32 = 0x1195;
+
 /// What `IronRDP` prefixes to a Set Error Info it fails a connection step with.
 const ERROR_INFO_MARK: &str = "server returned error info: ";
 
@@ -178,6 +188,30 @@ fn description(code: u32) -> Option<String> {
     ironrdp_core::decode::<ServerSetErrorInfoPdu>(&code.to_le_bytes())
         .ok()
         .map(|ServerSetErrorInfoPdu(info): ServerSetErrorInfoPdu| ErrorInfo::description(info))
+}
+
+/// What `IronRDP` says of Set Error Info code `code`, in its own words; `None` for a code it
+/// does not know. Server-defined text, never the user's.
+#[must_use]
+pub fn error_info_description(code: u32) -> Option<String> {
+    description(code)
+}
+
+/// The Set Error Info code a `text` from `IronRDP` carries the description of: the one
+/// whose description is the longest found in it, so that a description inside another
+/// never stands for it; the lowest of codes `IronRDP` describes alike. `IronRDP` keeps the
+/// description only, the code is read back.
+pub(crate) fn error_info_code(text: &str) -> Option<u32> {
+    (0..=LAST_ERROR_INFO)
+        .filter_map(|code| {
+            description(code)
+                .filter(|known| text.contains(known.as_str()))
+                .map(|known| (code, known.len()))
+        })
+        .max_by(|(code, length), (other, other_length)| {
+            length.cmp(other_length).then(other.cmp(code))
+        })
+        .map(|(code, _)| code)
 }
 
 /// The ending a Set Error Info `text` stands for: `IronRDP` keeps only its description,
@@ -292,6 +326,38 @@ mod tests {
         ] {
             assert!(description(code).is_some(), "{code:#x}");
         }
+    }
+
+    #[test]
+    fn each_code_ironrdp_knows_is_read_back_from_its_description_alone() {
+        for code in 0..=LAST_ERROR_INFO {
+            let Some(text) = description(code) else {
+                continue;
+            };
+            let failed = format!("[ServerSetErrorInfo] reason: {ERROR_INFO_MARK}{text}");
+            let found = error_info_code(&failed).expect("a code");
+            // A few codes share their words: the lowest of them stands for all.
+            assert_eq!(description(found), Some(text.clone()), "{code:#x}");
+            assert!(found <= code, "{code:#x} read as {found:#x}");
+        }
+        // Distinct words, the code itself.
+        let denied = description(0x07).expect("known");
+        assert_eq!(error_info_code(&denied), Some(0x07));
+        assert_eq!(error_info_code("unexpected control action"), None);
+    }
+
+    #[test]
+    fn a_refusal_s_code_is_the_status_the_server_sent() {
+        let error = sspi::Error::new_with_nstatus(
+            sspi::ErrorKind::InvalidToken,
+            "refused",
+            sspi::credssp::NStatusCode(STATUS_LOGON_FAILURE),
+        );
+        assert_eq!(status(&error), Some(STATUS_LOGON_FAILURE));
+        assert_eq!(
+            status(&sspi::Error::new(sspi::ErrorKind::LogonDenied, "denied")),
+            None
+        );
     }
 
     #[test]

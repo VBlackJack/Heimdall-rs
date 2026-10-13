@@ -226,8 +226,16 @@ pub enum Notice {
     DetachSplitRefused,
     /// An image of the session shown was copied to the clipboard, as the C# says it.
     ScreenshotCopied,
+    /// These keys of the session bar's menu were sent to the remote desktop, as the C#
+    /// toast says it.
+    KeysSent(crate::desktop::SpecialKeys),
+    /// The keys of the session bar's menu could not be sent.
+    KeysNotSent,
     /// No image of the session shown could be copied.
     ScreenshotFailed,
+    /// No file dialog could be shown, or its answer could not be used: what the user is
+    /// told, in their language.
+    FileDialogFailed(String),
     /// This folder was created.
     FolderCreated(String),
     /// The full path of an entry of a Files tab was copied, as the C# says it.
@@ -330,6 +338,10 @@ pub enum Notice {
     NoteOpened(String),
     /// A note could not be written or opened, for this reason.
     NoteFailed(String),
+    /// The legacy migration declined can be offered again at the next start.
+    LegacyMigrationReoffered,
+    /// The legacy migration declined could not be forgotten: nothing changed.
+    LegacyMigrationReofferFailed,
     /// The settings were exported.
     SettingsExported,
     /// The settings could not be exported, for this reason.
@@ -393,6 +405,8 @@ pub enum Notice {
     /// not run on this computer or could not be found running, as the C#
     /// `ErrorEmbeddedCredentialGuardRequired`.
     CredentialGuardRequired,
+    /// What a scheduled connection did.
+    Scheduled(super::scheduled::ScheduledNotice),
     /// The master password opened the vault, but Windows Hello could not be enrolled again,
     /// as the C# `VaultHelloReenrollError`.
     VaultHelloEnrolAgainFailed,
@@ -476,7 +490,10 @@ impl SessionState {
         }
         match tab.phase {
             Phase::Connected => Self::Connected,
-            Phase::Closed { .. } => Self::Ended,
+            // Given up by the user, at a prompt or a certificate: ended, not failed, as the
+            // tab's own card and the RDP header say it.
+            Phase::Closed { .. }
+            | Phase::Failed(UiError::Cancelled | UiError::CertificateRefused) => Self::Ended,
             Phase::Failed(_) => Self::Failed,
             _ => Self::Connecting,
         }

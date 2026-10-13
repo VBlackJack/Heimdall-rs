@@ -4,6 +4,8 @@
 ui-window-title = Heimdall
 ui-window-title-tab = { $tab } - Heimdall
 ui-window-title-detached = { $tab } - Detached
+# A test build's title, its test data folder after it.
+ui-window-title-test-data = { $title } [test data: { $folder }]
 
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Tools
@@ -15,12 +17,11 @@ ui-desktop-anti-idle = Anti-idle
 ui-desktop-anti-idle-tooltip = Anti-idle is keeping this session alive. Click to disable for the current session.
 ui-desktop-stabilizing = Stabilizing session... { $seconds }s
 ui-desktop-stabilizing-tooltip = Automatic resizing is paused while the session settles. Use the Resolution menu, Skip stabilization, to resume now.
-ui-desktop-send-clipboard = Send clipboard
-ui-desktop-send-clipboard-tooltip = Send this computer's clipboard to the server, unencrypted
-ui-desktop-fullscreen = Fullscreen (F11)
+ui-vnc-clipboard = Clipboard
+ui-vnc-clipboard-tooltip = Sync clipboard
 ui-desktop-match-window = Match window
 ui-desktop-fit-window = Fit to Window
-ui-desktop-exit-fullscreen = Exit fullscreen (F11)
+ui-desktop-fullscreen-tooltip = Toggle fullscreen (F11)
 ui-desktop-keys-ctrl-alt-del = Ctrl+Alt+Del
 ui-desktop-keys-windows = Windows key
 ui-desktop-keys-alt-tab = Alt+Tab
@@ -158,6 +159,76 @@ ui-status-windows-hello-unavailable = Windows Hello is required but unavailable.
 ui-status-windows-hello-failed = Windows Hello verification failed. Connection cancelled.
 ui-status-windows-hello-cancelled = Windows Hello verification was cancelled. Connection cancelled.
 ui-status-credential-guard-required = Credential Guard is required but not enabled on this system
+ui-status-scheduled-triggered = Scheduled task triggered. Connecting to { $name }...
+ui-status-scheduled-failed = Scheduled task error: { $reason }
+ui-status-scheduled-refused = Scheduled task error: a schedule does not open "{ $name }": { $reason }
+ui-status-scheduled-suspended = The scheduled task for { $name } was turned off after { $count } failures in a row
+ui-nav-scheduled = Scheduled
+ui-scheduled-title = Scheduled Connections
+ui-scheduled-add = + Add
+ui-scheduled-edit = Edit
+ui-scheduled-delete = Delete
+ui-scheduled-empty = No scheduled tasks configured.
+ui-scheduled-empty-add = Create Task
+ui-scheduled-column-enabled = On
+ui-scheduled-column-server = Session
+ui-scheduled-column-type = Type
+ui-scheduled-column-schedule = Schedule
+ui-scheduled-column-last-run = Last Run
+ui-scheduled-column-next-run = Next Run
+ui-scheduled-column-outcome = Last Result
+ui-scheduled-schedule-daily = Daily { $time }
+ui-scheduled-schedule-interval = Every { $minutes } min
+ui-scheduled-dialog-add-title = Add Scheduled Task
+ui-scheduled-dialog-edit-title = Edit Scheduled Task
+ui-scheduled-field-server = Session:
+ui-scheduled-field-server-placeholder = Select the session to connect to
+ui-scheduled-field-kind = Schedule Type:
+ui-scheduled-kind-daily = Daily
+ui-scheduled-kind-interval = Interval
+ui-scheduled-field-time = Time of Day:
+ui-scheduled-field-time-hint = 24-hour format, e.g. 08:00
+ui-scheduled-field-interval = Interval (minutes):
+ui-scheduled-field-interval-suffix = min
+ui-scheduled-field-enabled = Enabled
+ui-scheduled-next-run-daily = Next execution: { $day } at { $time }
+ui-scheduled-next-run-today = today
+ui-scheduled-next-run-tomorrow = tomorrow
+ui-scheduled-next-run-interval = Next execution: in { $minutes } minutes (every { $minutes } min)
+ui-scheduled-problem-server = Please select a session.
+ui-scheduled-problem-time = Invalid time format. Use HH:mm (24-hour).
+ui-scheduled-problem-interval = Interval must be a positive number of minutes.
+ui-scheduled-save = Save
+ui-scheduled-delete-title = Delete Scheduled Task
+ui-scheduled-delete-body = Are you sure you want to delete the scheduled task "{ $name }"?
+ui-scheduled-discard-title = Unsaved Changes
+ui-scheduled-discard-body = You have unsaved changes. Discard them and close?
+ui-scheduled-discard-keep = Keep editing
+ui-scheduled-discard-confirm = Discard
+ui-scheduled-outcome-ran = Connected
+ui-scheduled-outcome-missed = Missed: Heimdall was closed
+ui-scheduled-outcome-deferred = Waiting for the unlock
+ui-scheduled-outcome-suspended = Turned off after { $count } failures: { $reason }
+ui-status-scheduled-added = Scheduled task "{ $name }" created.
+ui-status-scheduled-updated = Scheduled task "{ $name }" updated.
+ui-status-scheduled-deleted = Scheduled task "{ $name }" deleted.
+ui-scheduled-refusal-local-program = it is a local shell or program
+ui-scheduled-refusal-external-client = it opens in an external client (PuTTY or Remote Desktop Connection)
+ui-scheduled-refusal-rd-gateway = it goes through a Remote Desktop Gateway, which opens in Remote Desktop Connection
+ui-scheduled-refusal-citrix = it is a Citrix application, launched by the Citrix Workspace client
+ui-scheduled-refusal-winrm-no-account = it logs in as the Windows account running Heimdall, or names no account
+ui-scheduled-refusal-winrm-password = its password is not stored
+ui-scheduled-refusal-x11 = it forwards X11, which would start the local X server
+ui-scheduled-refusal-steps = its post-connect steps are not approved
+ui-scheduled-refusal-files-browser = the file browser is turned off
+ui-status-scheduled-deferred = The scheduled connection to { $name } waits for the workspace to be unlocked
+ui-scheduled-failure-not-found = Server "{ $name }" not found
+ui-scheduled-failure-name-ambiguous = several sessions are named "{ $name }": edit the task to choose one
+ui-scheduled-failure-credential-unavailable = no saved credentials for "{ $name }"
+ui-scheduled-failure-verification-required = "{ $name }" would need Windows Hello or Credential Guard to ask
+ui-scheduled-failure-confirmation-required = the key or certificate of "{ $name }" is not trusted yet
+ui-scheduled-failure-session-limit = the session limit is reached
+ui-scheduled-failure-connection-failed = the connection to "{ $name }" failed
 ui-status-vault-hello-enrol-again-failed = The vault was unlocked, but Windows Hello unlock could not be re-enabled.
 ui-windows-hello-verify-reason = Verify your identity to connect
 ui-status-link-not-a-folder = { $name } does not point at a directory.
@@ -359,6 +430,7 @@ ui-certificate-title = Unrecognised Server Certificate
 ui-certificate-body = "{ $name }" answered at { $host }:{ $port }, presenting a certificate this profile has never approved.
 ui-certificate-caution = Heimdall cannot tell whether this is the machine you expect. Approve it only if you recognise the fingerprint below, or if you know that several machines answer to this name.
 ui-certificate-fingerprint = SHA-256 fingerprint: { $fingerprint }
+ui-certificate-key-fingerprint = Public key SHA-256: { $fingerprint }
 ui-certificate-trust-button = Trust this certificate
 ui-certificate-trust-once-button = Just this once
 ui-certificate-refuse-button = Do not connect
@@ -467,6 +539,8 @@ ui-dialog-import-host-keys = Trusted SSH servers carried over: { $keys ->
    *[other] { $pins } fingerprints
 }.
 ui-dialog-import-host-keys-failed = The trusted SSH servers could not be carried over: { $detail }
+ui-dialog-import-scheduled = Scheduled connections carried over: { $count }
+ui-dialog-import-scheduled-failed = The scheduled connections could not be carried over: { $detail }
 ui-dialog-import-skipped-item = { $name }: { $reason }
 ui-dialog-import-dropped = Imported with settings the built-in client does not use yet:
 ui-dialog-import-dropped-item = { $name }: { $settings }
@@ -491,6 +565,7 @@ ui-import-dropped-command-library-links = { $count ->
    *[other] { $count } post-connect steps linked to the Command Library, imported without their links
 }
 ui-import-dropped-elevation = elevation "{ $mode }", now run as administrator in its own window
+ui-import-dropped-scheduled-time = scheduled connection time unreadable, now { $time }
 ui-import-elevation-auto = Auto (gsudo, then external window fallback)
 ui-import-elevation-gsudo = gsudo only (embedded terminal)
 ui-import-elevation-runas = External window (AdminByRequest compatible)
@@ -543,6 +618,9 @@ ui-dialog-save-failed-title = Save Error
 ui-dialog-save-failed-body = Failed to save: { $detail }
 ui-dialog-store-changed-title = Profiles not saved
 ui-dialog-store-changed-body = The profile file was changed by another program or another Heimdall since it was read, so this change was not saved and the file was left as it is. Reopen Heimdall to load the current file, then make the change again.
+ui-dialog-config-recovered-title = Configuration restored
+ui-dialog-config-recovered-body = { $documents } could not be read and was loaded from its last good copy. Changes saved after that copy was made may be missing.
+ui-dialog-config-recovered-separator = {", "}
 ui-dialog-detail = Detail: { $detail }
 
 ui-import-skip-not-ssh = not an SSH profile ({ $kind })
@@ -565,6 +643,8 @@ ui-files-new-folder-button = New folder
 ui-files-new-folder-tooltip = Create new folder
 ui-files-download-button = Download
 ui-files-upload-button = Upload
+ui-files-upload-files-tooltip = Upload files
+ui-files-download-selected-tooltip = Download the selected entries (Ctrl+Shift+D)
 ui-files-loading = Loading...
 ui-files-empty = Empty folder
 ui-files-cancel-button = Cancel
@@ -592,6 +672,7 @@ ui-files-error-unsupported = the server does not support this operation
 ui-files-error-failure = the operation failed
 ui-files-error-session = The SFTP session ended.
 ui-files-error-local = This computer refused: { $detail }
+ui-files-error-local-disk-full = The local disk is full. Free some space and try again.
 ui-files-error-unsafe-name = The server's name "{ $name }" cannot be used here: { $reason }.
 ui-files-error-not-a-file = Only files and folders can be transferred, not links or special files.
 ui-files-error-is-link = The permissions of a symbolic link cannot be changed: the server would change those of what it points to.
@@ -688,6 +769,7 @@ ui-import-skip-unknown-identity = logs in with an identity mode Heimdall does no
 ui-error-hostkey-changed-at = The host key of { $target } is not the one recorded: the connection may be intercepted. Recorded: { $recorded }. Presented: { $offered }.
 ui-error-gateway-missing = The SSH gateway { $id } this profile goes through is not in the profiles.
 ui-error-gateway-loop = The SSH gateway { $id } is reached through itself, by way of its parents.
+ui-error-gateway-too-deep = Maximum gateway chain depth exceeded. Reduce the number of chained gateways.
 ui-tree-connect = Connect
 ui-tree-connect-with = Connect with...
 ui-tree-connect-with-tooltip = Override the profile's RDP mode for this connection only.
@@ -1045,6 +1127,7 @@ ui-profile-audio = Audio mode
 ui-profile-audio-off = Disabled
 ui-profile-audio-local = Local playback
 ui-profile-audio-on-server = Remote playback
+ui-profile-audio-local-unavailable = Local playback is not available in this build: the built-in client plays no sound.
 ui-profile-color-depth = Color depth
 ui-profile-color-16 = 16-bit
 ui-profile-color-24 = 24-bit
@@ -1176,6 +1259,8 @@ ui-gateway-password-hint = Used for SSH password authentication. Leave blank if 
 ui-gateway-field-parent = Parent Gateway
 ui-gateway-parent-none = None (direct connection)
 ui-gateway-error-loop = A gateway cannot be reached through itself.
+ui-gateway-field-host-key-fingerprint = Host Key Fingerprint
+ui-gateway-host-key-fingerprint-hint = Auto-populated after the first connection. Used to verify server identity and prevent host key spoofing.
 ui-tree-gateway-via = via { $name }
 ui-tree-gateway-missing = gateway missing
 
@@ -1202,7 +1287,7 @@ ui-split-max-panes-reached = Maximum number of panes reached ({ $max }).
 ui-status-detach-split-refused = A split tab cannot be moved to its own window. Unsplit it first.
 ui-split-menu = Split...
 ui-split-session-tooltip = Split session view
-ui-split-palette-hint = Search server to split with...
+ui-split-palette-hint = Search server or pick active session to split with...
 ui-split-drop-to-split = Drop to split
 ui-tab-drag-detach-hint = Release to detach to a window
 ui-split-open-in-split = Open in split
@@ -1251,6 +1336,25 @@ ui-rdp-reason-security-error = A security error prevented the connection. The re
 ui-rdp-reason-admin-disconnect = The remote computer ended the session. An administrator may have ended it, the connection may have failed while it was being established, or a network problem may have interrupted it.
 ui-rdp-reason-license = A Remote Desktop licensing error blocked the session. Contact your administrator; the license server may be unreachable or out of CALs.
 ui-rdp-reason-with-severity = { $severity } { $reason }
+ui-rdp-severity-notice = Notice:
+ui-rdp-reason-socket-connect-failed = Could not connect to the remote computer. It may be turned off, not on the network, or Remote Desktop may be disabled.
+ui-rdp-reason-dns-lookup-failed = Could not resolve the remote computer name. Check the hostname for typos and verify your DNS settings or VPN connection.
+ui-rdp-reason-connection-timeout = The connection timed out. Verify that the remote host is reachable and that no firewall is blocking the Remote Desktop port (default 3389).
+ui-rdp-reason-socket-closed = The network connection was lost. Check your network connection or VPN and try reconnecting.
+ui-rdp-reason-connect-timeout = The connection timed out while starting the session. The remote computer did not respond. Check the host and network, then try reconnecting.
+ui-rdp-reason-nla-not-supported = The remote computer requires Network Level Authentication, which this connection is not using. Enable NLA in the server profile, or ask your administrator whether the remote computer can accept connections without it.
+ui-rdp-reason-gateway-target-unreachable = The gateway could not reach { $target }. The target host or its RDP port is unreachable from the SSH gateway.
+ui-failure-details-header = Diagnostic details
+ui-failure-details-stage = Stage
+ui-failure-details-code = Code
+ui-failure-details-detail = Detail
+ui-failure-details-line = { $label }: { $value }
+ui-rdp-stage-tunnel = RDP tunnel
+ui-rdp-stage-connection = RDP connection
+ui-rdp-stage-negotiation = Security negotiation
+ui-rdp-stage-certificate = TLS and server certificate
+ui-rdp-stage-authentication = Network Level Authentication
+ui-rdp-stage-disconnect = RDP disconnect
 ui-rdp-certificate-refused = Connection cancelled: you did not approve the certificate this server presented.
 
 ## A dropped desktop opening again by itself, as the C# countdown.
@@ -1294,12 +1398,23 @@ ui-dialog-delete-selection-body = Are you sure you want to delete { $count ->
    *[other] { $count } selected items
 }?
 
-## Quick Connect, as the C# Ctrl+K palette without its tools.
-ui-palette-placeholder = Search host or IP... (Ctrl+K)
+## Quick Connect, as the C# Ctrl+K palette.
+ui-palette-placeholder = Search host, IP, or tool... (Ctrl+K)
 ui-palette-ssh-to = [SSH] Connect to { $target }
 ui-palette-rdp-to = [RDP] Connect to { $target }
 ui-palette-quick-connect = Quick Connect
-ui-palette-nothing = No session matches, and this is no host to connect to.
+ui-palette-nothing = No results found. Try a host, ssh user@host, or tools.
+ui-palette-mode-split = Split Mode
+# The C# hints and no-result text also give a tool with its argument
+# (ping 1.1.1.1): that example comes back with the network tools.
+ui-palette-hints = Enter = open · Ctrl+Enter = split · tools = all tools · Esc = close
+ui-palette-servers = Servers
+ui-palette-active-sessions = Active Sessions
+ui-palette-recent-tools = Recent Tools
+ui-palette-merge-session = ↔ { $title }
+ui-palette-merge-detail = Active session - merge without reconnecting
+ui-palette-account = · { $account }
+ui-palette-tool-badge = TOOL
 
 ## The status bar, as the C# one.
 ui-status-ready = Ready. Select a session to get started.
@@ -1522,8 +1637,13 @@ ui-files-sudo-off = Sudo mode disabled
 ui-files-item-count = { $count } items
 ui-files-item-count-filtered = { $shown }/{ $count } items
 
-## Files dropped from Explorer on a Files tab, as the C# one.
-ui-files-drop-overlay = Drop files to upload
+## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
+ui-files-drop-items = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+}
+ui-files-drop-overlay-target = Upload { $items } to { $folder }
+ui-files-drop-overlay-queued = Add { $items } to the queue for { $folder }
 
 ## The keys trusted for servers, on the Settings page, as the C# Host keys and Certificates pages.
 ui-trusted-host-keys-title = Trusted host keys
@@ -1617,6 +1737,8 @@ ui-error-local-port-unavailable = Local port { $port } is already in use, or res
 ## The tunnels panel and its status-bar button, as the C# ones.
 ui-tunnels-header = Tunnels ({ $count })
 ui-tunnels-close-all = Close All
+ui-tunnels-close-selected = Close Selected
+ui-tunnels-close-selected-tooltip = Close selected tunnel
 ui-tunnels-new = + New
 ui-tunnels-collapse-tooltip = Collapse tunnel panel
 ui-tunnels-toggle-tooltip = Toggle tunnel panel
@@ -1911,8 +2033,11 @@ ui-settings-ssh-agent-pageant-only = Pageant only
 ui-settings-ssh-agent-preference-hint = Controls which loaded SSH agent keys Heimdall tries first. Changes apply to the next connection.
 ui-status-screenshot-copied = Screenshot copied to clipboard
 ui-status-screenshot-failed = Failed to capture screenshot
+ui-status-keys-sent = { $keys } sent to remote
+ui-status-keys-not-sent = Could not send keys to the remote session.
 ui-files-state-queued = Queued
 ui-files-state-preparing = Preparing transfer...
+ui-files-state-scanning = Scanning folders: { $count } entries found...
 ui-files-retry-button = Retry
 ui-files-clear-finished-button = Clear finished
 ui-files-error-interrupted = The transfer stopped unexpectedly.
@@ -2112,6 +2237,7 @@ ui-shortcuts-files-back = Back, parent folder
 ui-shortcuts-files-path = Type a path
 ui-shortcuts-files-switch-pane = Other pane
 ui-shortcuts-full-screen = Toggle fullscreen
+ui-shortcuts-full-screen-over-sessions = Toggle fullscreen over embedded sessions
 ui-shortcuts-settings = Open settings
 ui-shortcuts-screenshot = Capture screenshot
 ui-shortcuts-copy-status = Copy the status and its recent messages, for a screen reader
@@ -2252,6 +2378,13 @@ ui-dialog-settings-import-body = { $count ->
    *[other] { $count } settings will change:
 }
 ui-dialog-settings-import-line = { $key }: { $before } -> { $after }
+ui-dialog-settings-import-sensitive = Check these first: they decide what Heimdall runs on this computer.
+ui-dialog-settings-import-weakens = These weaken a security check:
+ui-dialog-settings-import-more = and { $count } more
+ui-dialog-settings-import-ignored = { $count ->
+    [one] The file also holds { $count } setting this version does not import. It is left out:
+   *[other] The file also holds { $count } settings this version does not import. They are left out:
+}
 ui-dialog-settings-import-confirm = Import
 ui-settings-value-on = On
 ui-settings-value-off = Off
@@ -2381,7 +2514,10 @@ ui-status-sftp-auto-open-failed = SFTP auto-open failed: { $reason }
 ui-status-sftp-browser-disabled = The integrated SFTP browser is disabled in settings.
 ui-status-nothing-to-undo = Nothing to undo.
 ui-shortcuts-undo-move = Undo the last move made by dragging in the tree
-ui-tab-menu-vnc-remote-resize = Resize the remote desktop to the tab
+ui-vnc-scaling-tooltip = Scaling mode
+ui-vnc-scaling-remote-resize = Remote Resize
+ui-vnc-scaling-scale = Scale
+ui-vnc-scaling-none = No Scaling
 ui-detail-host-port = { $host } : { $port }
 ui-detail-folder = Folder:
 ui-detail-environment = Environment:
@@ -2429,6 +2565,13 @@ ui-notes-tpl-references = References
 ui-about-open-notes = Open notes folder
 ui-status-note-opened = Note { $name } opened in the editor.
 ui-status-note-failed = The note could not be opened: { $reason }
+ui-file-dialog-no-session-bus = No file dialog: the D-Bus session bus cannot be reached ({ $reason }). Heimdall shows its file dialogs through the desktop portal, xdg-desktop-portal.
+ui-file-dialog-no-portal = No file dialog: the desktop portal does not answer ({ $reason }). Install xdg-desktop-portal and the portal of your desktop (GNOME, KDE or GTK).
+ui-file-dialog-failed = The file dialog could not be opened: { $reason }
+ui-file-dialog-closed = The file dialog closed: the session bus went away before it answered.
+ui-file-dialog-ended = The file dialog ended without an answer (code { $code }).
+ui-file-dialog-no-location = The file dialog answered without a file.
+ui-file-dialog-not-local = The place chosen is not a file of this computer: { $uri }
 ui-nav-sessions = Sessions
 ui-nav-tunnels = Tunnels
 ui-nav-tools = Tools
@@ -3498,7 +3641,7 @@ ui-profile-rd-gateway-hint = Microsoft Remote Desktop Gateway used to reach this
 ui-profile-rd-gateway-mstsc = With a gateway, this server opens in Remote Desktop Connection (mstsc.exe): the built-in client does not go through one yet.
 ui-profile-error-rd-gateway = The RD Gateway must be a valid host name or IP address.
 ui-fullscreen-exit = Exit fullscreen
-ui-fullscreen-exit-tooltip = F11, or Escape outside a terminal or a remote desktop
+ui-fullscreen-exit-tooltip = F11, Ctrl+Shift+F11, or Escape outside a terminal or a remote desktop
 ui-files-selected-with-size = { $selection } ({ $size })
 ui-files-special-mark = { $name } ({ $kind })
 ui-files-tooltip-type = Type: { $kind }
@@ -3513,7 +3656,7 @@ ui-sidebar-show-tooltip = Show sidebar (Ctrl+B)
 ui-nav-quick-connect = Quick connect
 ui-nav-quick-connect-tooltip = Quick connect (Ctrl+K)
 ui-profile-toggle-strict-server-auth = Require server identity validation
-ui-error-rdp-server-not-authenticated = The server's identity could not be validated: its certificate is not trusted yet and this computer's certificate authorities do not vouch for it. Strict server authentication refuses it.
+ui-error-rdp-server-not-authenticated = The server's identity could not be validated: this computer's certificate authorities do not vouch for its certificate. Strict server authentication refuses it, even when it was trusted before.
 ui-certificate-subject = Subject: { $subject }
 ui-certificate-issuer = Issuer: { $issuer }
 ui-certificate-validity = Valid from / until: { $from } - { $until }{ $period ->
@@ -3576,6 +3719,8 @@ ui-tunnels-session-route-local = -
 ui-tunnels-session-route-local-tooltip = Carried inside Heimdall: no local port
 ui-tunnels-close-all-tooltip = Closes the tunnels opened by hand; sessions through a gateway stay open
 ui-tab-route-badge = via
+ui-tab-route-badge-healthy = Active tunnels
+ui-tab-route-badge-unhealthy = Active tunnels - at least one is unhealthy
 ui-origin-rdp-file = Imported from RDP file
 ui-origin-openssh = Imported from OpenSSH config
 ui-origin-putty = Imported from PuTTY registry
@@ -3589,9 +3734,121 @@ ui-desktop-shares-drives = Drives
 ui-desktop-shares-drives-tooltip = Drive redirection
 ui-desktop-shares-audio = Sound
 ui-desktop-shares-audio-tooltip = Audio redirection
+ui-desktop-shares-printers = Printers
+ui-desktop-shares-printers-tooltip = Printer redirection
+ui-desktop-shares-com-ports = COM ports
+ui-desktop-shares-com-ports-tooltip = COM port redirection
+ui-desktop-shares-smart-cards = Smart cards
+ui-desktop-shares-smart-cards-tooltip = Smart card redirection
+ui-desktop-shares-usb = USB
+ui-desktop-shares-usb-tooltip = USB redirection
+ui-desktop-shares-multi-monitor = Multi-monitor
+ui-desktop-shares-multi-monitor-tooltip = Multi-monitor
+ui-rdp-redirection-on = { $name }: enabled
+ui-rdp-redirection-off = { $name }: disabled
+ui-rdp-redirection-unsupported = { $name }: not supported yet by the built-in client
+ui-rdp-redirections-more = +{ $count }
+ui-rdp-redirections-more-tooltip = Show disabled redirections
+ui-rdp-health-healthy = Connected
+ui-rdp-health-transitional = In transition
+ui-rdp-health-faulted = Faulted
+ui-rdp-health-idle = Idle
+ui-rdp-health-tooltip = Session health: { $state }
+ui-rdp-phase-preparing = Preparing the embedded Remote Desktop session.
+ui-rdp-phase-connecting = Connecting...
+ui-rdp-phase-loading = Loading the remote desktop session...
+ui-rdp-phase-connected = Connected
+ui-rdp-phase-progress = { $phase } ({ $step } of { $steps })
+ui-rdp-reconnect-elapsed = { $seconds }s elapsed
+ui-rdp-letterbox-hint = Fixed { $width }x{ $height } - resize the window or change resolution to fill.
 ui-settings-rdp-connect-timeout = RDP connection watchdog timeout (0 = off)
 ui-settings-rdp-resize-delay = Resolution stabilization delay after connect (0 = off)
 ui-settings-rdp-resize-delay-refused = RDP resize delay must be zero or between { $min } and { $max } ms.
 ui-settings-rdp-connect-timeout-off = Off
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Give the keyboard back from a remote desktop
+
+## The migration from the legacy PowerShell Heimdall, as the C# says it.
+ui-legacy-migration-title = Legacy Migration
+ui-legacy-migration-offer = A legacy Heimdall installation was detected in { $path }, holding { $profiles ->
+    [one] { $profiles } server
+   *[other] { $profiles } servers
+} and { $gateways ->
+    [one] { $gateways } SSH gateway
+   *[other] { $gateways } SSH gateways
+}. Would you like to import your servers and settings?
+ui-legacy-migration-import = Import
+ui-legacy-migration-decline = Do not import
+ui-legacy-migration-success = { $count ->
+    [one] { $count } server imported successfully.
+   *[other] { $count } servers imported successfully.
+}
+ui-legacy-migration-partial = Migration completed with skipped profiles: { $examined } examined, { $imported } imported, { $skipped } skipped.
+ui-legacy-migration-partial-item = #{ $index } - { $name }: { $reason }
+ui-legacy-migration-unnamed = Unnamed profile
+ui-legacy-migration-invalid-field = invalid legacy field value
+ui-legacy-migration-omitted = { $count ->
+    [one] { $count } additional skipped profile not shown.
+   *[other] { $count } additional skipped profiles not shown.
+}
+ui-legacy-migration-projects = { $count ->
+    [one] { $count } project was not imported: Heimdall has no projects.
+   *[other] { $count } projects were not imported: Heimdall has no projects.
+}
+ui-legacy-migration-secrets = Passwords, passphrases, the PIN and program paths of the legacy version are not imported: Heimdall asks for each password again at the next connection.
+ui-legacy-migration-key-paths = { $count ->
+    [one] { $count } key path was left out: it was not a file on a local drive (network, device or relative path). Choose the key again in the profile or gateway.
+   *[other] { $count } key paths were left out: they were not files on a local drive (network, device or relative paths). Choose the keys again in the profiles or gateways.
+}
+ui-legacy-migration-settings-not-saved = The settings of the legacy version could not be saved. See the log for details.
+ui-settings-legacy-migration = Legacy migration
+ui-settings-legacy-migration-description = Allow the legacy migration offer to appear again at the next startup if the legacy source is still available and the current server inventory is empty.
+ui-settings-legacy-migration-reoffer = Offer legacy migration at next startup
+ui-settings-legacy-migration-unavailable = This becomes available only after you decline a migration offer at startup.
+ui-status-legacy-migration-reoffered = The legacy migration offer can appear again at the next startup. No migration was started now.
+ui-status-legacy-migration-reoffer-failed = The legacy migration preference could not be saved. The existing startup behavior was not changed.
+ui-onboarding-sessions-title = Connect to Sessions
+ui-onboarding-sessions-body = Manage RDP, SSH, SFTP, VNC and more from a single interface. Add your first session or import from MobaXterm, mRemoteNG, or RDCMan.
+ui-onboarding-add-title = Add your first session
+ui-onboarding-add-body = The + button at the top of the sessions list creates a session, a tool, a folder or an SSH gateway. You can also import from MobaXterm, mRemoteNG or RDCMan.
+ui-onboarding-search-title = Find anything quickly
+ui-onboarding-search-body = Filter sessions and tools as you type. It matches names, hosts and tags.
+ui-onboarding-tools-title = Built-in Tools
+ui-onboarding-tools-body = { $count } network, security, encoding and system tools at your fingertips. Access them from the Tools tab or press Ctrl+K.
+ui-onboarding-quick-connect-title = Quick Connect
+ui-onboarding-quick-connect-body = Press Ctrl+K to open the Command Palette. Type a hostname, IP address, or tool name to instantly connect or launch.
+ui-onboarding-settings-title = Settings, and this tour
+ui-onboarding-settings-body = Protocol defaults, appearance and security live in the Settings tab. So does Show the tour again, under Welcome tour, whenever you want it.
+ui-onboarding-skip = Skip
+ui-onboarding-next = Next
+ui-onboarding-get-started = Get Started
+ui-onboarding-save-failed = Heimdall couldn't save setup completion. Check access to the configuration folder, then try again.
+ui-settings-onboarding = Welcome tour
+ui-settings-onboarding-replay = Show the tour again
+ui-settings-onboarding-hint = Replays the short introduction shown on first launch. You can leave it at any time and come back here.
+ui-profile-rdp-monitors-refresh = Refresh
+ui-profile-resolution-switch-auto = Switch to Auto
+ui-macros-edit-named = Edit "{ $name }"
+# The C# Network tab's connection path diagram.
+ui-profile-path-title = Connection path
+ui-profile-path-headline-tunnel = Heimdall will create an SSH tunnel before opening the session.
+ui-profile-path-headline-direct = Heimdall will connect directly to the destination host.
+ui-profile-path-your-pc = Your PC
+ui-profile-path-gateway = Gateway
+ui-profile-path-destination = Destination
+ui-profile-path-client-tunnel = Local tunnel on localhost:{ $port }
+ui-profile-path-client-direct = Direct outbound connection
+ui-profile-path-destination-server = Destination server
+ui-profile-path-ssh-tunnel = SSH tunnel
+ui-profile-path-no-gateway = No gateway selected
+ui-profile-path-no-ssh-gateway = No SSH gateway selected
+ui-profile-path-arrow = →
+ui-profile-path-session-rdp = RDP session
+ui-profile-path-session-ftp = FTP session
+ui-profile-path-session-sftp = SFTP session
+ui-profile-path-session-ssh = SSH session
+ui-profile-path-session-winrm = WinRM session
+ui-profile-path-session-vnc = VNC session
+ui-profile-path-session-telnet = Telnet session
+ui-profile-path-session-citrix = Citrix session
+ui-profile-path-session-local = Local shell

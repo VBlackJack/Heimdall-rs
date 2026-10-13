@@ -27,10 +27,7 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use data_encoding::HEXLOWER;
-use md5::Md5;
-use sha1::Sha1;
-use sha2::{Digest, Sha256, Sha384, Sha512};
-use sha3::Sha3_256;
+use sealvault::hash;
 
 /// The largest file hashed, as the C# `HashGeneratorService.MaxFileSizeBytes`: 50 MB.
 pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
@@ -79,6 +76,19 @@ impl HashAlgorithm {
         }
     }
 
+    /// The same digest in sealvault, which computes it.
+    #[must_use]
+    pub const fn sealed(self) -> hash::Algorithm {
+        match self {
+            Self::Md5 => hash::Algorithm::Md5,
+            Self::Sha1 => hash::Algorithm::Sha1,
+            Self::Sha256 => hash::Algorithm::Sha256,
+            Self::Sha384 => hash::Algorithm::Sha384,
+            Self::Sha512 => hash::Algorithm::Sha512,
+            Self::Sha3_256 => hash::Algorithm::Sha3_256,
+        }
+    }
+
     /// Characters of its hexadecimal digest, as the C# `HashAlgorithmCatalog.HexLength`.
     #[must_use]
     pub const fn hex_length(self) -> usize {
@@ -94,48 +104,20 @@ impl HashAlgorithm {
 
 /// A digest being computed, fed piece by piece.
 #[derive(Clone)]
-enum Hasher {
-    Md5(Md5),
-    Sha1(Sha1),
-    Sha256(Sha256),
-    Sha384(Sha384),
-    Sha512(Sha512),
-    Sha3_256(Sha3_256),
-}
+struct Hasher(hash::Hasher);
 
 impl Hasher {
     fn new(kind: HashAlgorithm) -> Self {
-        match kind {
-            HashAlgorithm::Md5 => Self::Md5(Md5::new()),
-            HashAlgorithm::Sha1 => Self::Sha1(Sha1::new()),
-            HashAlgorithm::Sha256 => Self::Sha256(Sha256::new()),
-            HashAlgorithm::Sha384 => Self::Sha384(Sha384::new()),
-            HashAlgorithm::Sha512 => Self::Sha512(Sha512::new()),
-            HashAlgorithm::Sha3_256 => Self::Sha3_256(Sha3_256::new()),
-        }
+        Self(hash::Hasher::new(kind.sealed()))
     }
 
     fn update(&mut self, data: &[u8]) {
-        match self {
-            Self::Md5(hasher) => hasher.update(data),
-            Self::Sha1(hasher) => hasher.update(data),
-            Self::Sha256(hasher) => hasher.update(data),
-            Self::Sha384(hasher) => hasher.update(data),
-            Self::Sha512(hasher) => hasher.update(data),
-            Self::Sha3_256(hasher) => hasher.update(data),
-        }
+        self.0.update(data);
     }
 
     /// The digest in lower-case hexadecimal, as .NET's `Convert.ToHexStringLower`.
     fn finish(self) -> String {
-        match self {
-            Self::Md5(hasher) => HEXLOWER.encode(&hasher.finalize()),
-            Self::Sha1(hasher) => HEXLOWER.encode(&hasher.finalize()),
-            Self::Sha256(hasher) => HEXLOWER.encode(&hasher.finalize()),
-            Self::Sha384(hasher) => HEXLOWER.encode(&hasher.finalize()),
-            Self::Sha512(hasher) => HEXLOWER.encode(&hasher.finalize()),
-            Self::Sha3_256(hasher) => HEXLOWER.encode(&hasher.finalize()),
-        }
+        HEXLOWER.encode(self.0.finalize().as_bytes())
     }
 }
 

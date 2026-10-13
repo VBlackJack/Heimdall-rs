@@ -49,6 +49,9 @@ pub struct Retry {
     pub max: u32,
     /// When it starts.
     pub due: Instant,
+    /// When the session dropped, the first attempt's wait began: the C# "elapsed" counts
+    /// from it, across the attempts.
+    pub since: Instant,
 }
 
 /// Whether a session of `purpose` that failed with `error` may come back by itself: for
@@ -84,6 +87,14 @@ impl App {
         error: &UiError,
         was_live: bool,
     ) -> Vec<Effect> {
+        // A tab a schedule opened never comes back by itself: an attempt nobody watches
+        // could only fail on what it would have to ask.
+        if self.is_scheduled_tab(tab_id) {
+            if let Some(tab) = self.tab_mut(tab_id) {
+                tab.retry = None;
+            }
+            return Vec::new();
+        }
         let ssh_attempts = self
             .settings
             .ssh_auto_reconnect
@@ -109,8 +120,15 @@ impl App {
             tab.retry = None;
             return Vec::new();
         };
-        let due = Instant::now() + delay(attempt);
-        tab.retry = Some(Retry { attempt, max, due });
+        let now = Instant::now();
+        let due = now + delay(attempt);
+        let since = tab.retry.map_or(now, |retry| retry.since);
+        tab.retry = Some(Retry {
+            attempt,
+            max,
+            due,
+            since,
+        });
         vec![Effect::RetryAt {
             tab: tab_id,
             attempt: tab.attempt,

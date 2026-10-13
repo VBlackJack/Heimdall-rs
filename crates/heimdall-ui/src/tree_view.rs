@@ -28,7 +28,7 @@ use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FloatMessage, FolderMessage, GatewayBadge,
     HostKeysMessage, Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind,
     ProfileMenuMessage, ProfileSummary, RdpMessage, ResolutionChoice, SelectionMessage,
-    SessionState, SessionsMessage, TabGroup, TabId, TabMenuMessage, TreeFilter,
+    SessionState, SessionsMessage, SpecialKeys, TabGroup, TabId, TabMenuMessage, TreeFilter,
 };
 use heimdall_core::folder::FolderColor;
 use heimdall_core::profile::{ProfileId, RdpMode, Resolution, fixed_desktop};
@@ -40,8 +40,10 @@ use iced::widget::{
 };
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
+use crate::ellipsis;
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
+use crate::press_tooltip::hide_on_press;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
@@ -114,6 +116,8 @@ pub enum TreeMenu {
     Tool(heimdall_app::tools::ToolId),
     /// An RDP tab's "Resolution" menu, as the C# one.
     Resolution(TabId),
+    /// A remote desktop tab's "Send keys" menu, as the C# session header's.
+    SendKeys(TabId),
     /// A terminal tab's macros: record, play, stop.
     Macros(TabId),
     /// The notes a session's menu writes about it, as the C# Notes submenu.
@@ -159,11 +163,18 @@ const SEMIBOLD: iced::Font = iced::Font {
     ..crate::UI_FONT
 };
 
-/// Widest a gateway badge grows beside a name, as the C# `SessionTreeGatewayBadgeMaxWidth`.
+/// Widest a gateway badge's text grows beside a name, as the C# `SessionTreeGatewayBadgeMaxWidth`.
 const BADGE_MAX_WIDTH: f32 = 140.0;
 
 /// Corner radius of a badge, as the C# `SessionTreeBadgeCornerRadius`.
 const BADGE_RADIUS: f32 = 3.0;
+
+/// Room at the sides of a badge's text, as the C# badge's padding.
+const BADGE_PADDING: f32 = 4.0;
+
+/// How long the pointer rests on a row before its tooltip shows, as the C#
+/// `SessionTreeRowToolTipDelay`.
+const ROW_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Size of a session's state dot, as the C# tree's and tabs'.
 const DOT_SIZE: f32 = 7.0;
@@ -353,8 +364,10 @@ pub fn folder_row<'a>(
             row![
                 container(icons::icon(Icon::Folder, tint, FOLDER_ICON_SIDE))
                     .center_y(ROW_CONTENT_HEIGHT),
-                text(label).size(font_size::BODY).font(SEMIBOLD),
-                iced::widget::space::horizontal(),
+                ellipsis::text(label)
+                    .width(Length::Fill)
+                    .size(font_size::BODY)
+                    .font(SEMIBOLD),
                 text(count.to_string())
                     .size(font_size::SMALL_CAPTION)
                     .style(text::secondary),
@@ -497,14 +510,16 @@ pub fn owned_row(
         ))
         .center_y(ROW_CONTENT_HEIGHT),
         container(profile_dot(state, reach.as_ref())).padding(DOT_HIT_PADDING),
-        column![text(profile.name.clone()).wrapping(text::Wrapping::Glyph)].push(context.map(
-            |context| {
-                text(context)
+        // On one line each, ended with an ellipsis where the badges' room starts, as the
+        // C#'s: the tooltip opens with the whole name.
+        column![ellipsis::text(profile.name.clone()).width(Length::Fill)]
+            .push(context.map(|context| {
+                ellipsis::text(context)
+                    .width(Length::Fill)
                     .size(font_size::SMALL_CAPTION)
                     .style(text::secondary)
-                    .wrapping(text::Wrapping::Glyph)
-            }
-        )),
+            }))
+            .width(Length::Fill),
     ]
     .spacing(spacing::XS)
     .align_y(iced::Alignment::Center);
@@ -537,12 +552,16 @@ pub fn owned_row(
         .interaction(mouse::Interaction::Pointer);
     row![
         iced::widget::space().width(EXPANDER_SIDE + EXPANDER_GAP),
-        tooltip(
-            area,
-            text(row_tooltip(profile, reach.as_ref())).size(font_size::CAPTION),
-            tooltip::Position::Right,
-        )
-        .style(container::rounded_box),
+        // Put away by a click, as the C# tooltip closes when its row is clicked.
+        hide_on_press(
+            tooltip(
+                area,
+                text(row_tooltip(profile, reach.as_ref())).size(font_size::CAPTION),
+                tooltip::Position::Right,
+            )
+            .delay(ROW_TOOLTIP_DELAY)
+            .style(container::rounded_box),
+        ),
     ]
     .into()
 }
@@ -555,15 +574,13 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
         GatewayBadge::Via(name) => fl!("ui-tree-gateway-via", name = name.as_str()),
         GatewayBadge::Missing => fl!("ui-tree-gateway-missing"),
     };
-    // On one line, cut at its edge: a long gateway name must not fold the row.
+    // On one line, ended with an ellipsis: a long gateway name must not fold the row.
     container(
-        text(label)
+        ellipsis::text(label)
             .size(font_size::SMALL_CAPTION)
-            .wrapping(text::Wrapping::None),
+            .max_width(BADGE_MAX_WIDTH),
     )
-    .max_width(BADGE_MAX_WIDTH)
-    .clip(true)
-    .padding([0.0, 4.0])
+    .padding([0.0, BADGE_PADDING])
     .style(move |theme: &Theme| {
         // As the C# badge: the card's background, the info colour's border and the
         // secondary text; the warning colour when the gateway is missing.
@@ -599,7 +616,7 @@ fn origin_badge(origin: heimdall_core::metadata::ProfileOrigin) -> Element<'stat
             .style(text::secondary)
             .wrapping(text::Wrapping::None),
     )
-    .padding([0.0, 4.0])
+    .padding([0.0, BADGE_PADDING])
     .style(|theme: &Theme| container::Style {
         background: Some(theme.extended_palette().background.weak.color.into()),
         border: iced::Border {
@@ -612,8 +629,13 @@ fn origin_badge(origin: heimdall_core::metadata::ProfileOrigin) -> Element<'stat
     .into()
 }
 
+/// What a row's tooltip says: its whole name first, the row ending a long one with an
+/// ellipsis, then what the row does not print, as the C# `RowTooltipText`.
 fn row_tooltip(profile: &ProfileSummary, reach: Option<&Verdict>) -> String {
     let mut lines = Vec::new();
+    if !profile.name.trim().is_empty() {
+        lines.push(profile.name.clone());
+    }
     if let Some((host, _)) = &profile.endpoint {
         lines.push(fl!("ui-tree-tooltip-host", host = host.as_str()));
     }
@@ -1401,8 +1423,6 @@ pub struct TabMenuState {
     pub health: Option<bool>,
     /// It is pinned.
     pub pinned: bool,
-    /// A VNC desktop resized to the tab, or not; `None` for one that cannot be.
-    pub vnc_resize: Option<bool>,
     /// Its session is saved nowhere, and can be saved as a profile.
     pub saveable: bool,
     /// It takes terminal macros.
@@ -1431,7 +1451,7 @@ pub enum SplitEntries {
 }
 
 /// A terminal tab's Macros menu: recording started or stopped, the macro typed stopped,
-/// or one of those kept typed.
+/// one of those kept typed, or edited.
 #[must_use]
 pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<'a, Message> {
     let macro_message = |message| Some(AppMessage::Macro(message));
@@ -1480,6 +1500,20 @@ pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<
             }),
         ));
     }
+    // The C# "Edit Macro" submenu: each opens the macro editor, whose "Delete macro" deletes
+    // it, as `SessionTabContextMenuFactory.AppendMacroItems` does.
+    if !menu.macros.is_empty() {
+        entries = entries.push(separator());
+    }
+    for name in &menu.macros {
+        entries = entries.push(entry(
+            fl!(
+                "ui-macros-edit-named",
+                name = heimdall_app::server_text(name)
+            ),
+            macro_message(heimdall_app::MacroMessage::Edit(name.clone())),
+        ));
+    }
     entries.into()
 }
 
@@ -1513,6 +1547,8 @@ pub struct ResolutionMenuState {
     pub aspect: heimdall_app::Aspect,
     /// The desktop settles after connecting: "Skip stabilization" is offered.
     pub stabilizing: bool,
+    /// The desktop is scaled into the tab, as the C# header menu's "Fit to Window".
+    pub fit: bool,
 }
 
 impl ResolutionMenuState {
@@ -1534,7 +1570,7 @@ impl ResolutionMenuState {
         }
     }
 
-    /// The session bar's button tip: "Change resolution - Fixed (1920x1080)", as the C#.
+    /// The session header's button tip: "Change resolution - Fixed (1920x1080)", as the C#.
     #[must_use]
     pub fn tooltip(&self) -> String {
         match self.fixed {
@@ -1577,6 +1613,11 @@ const CHECK_WIDTH: f32 = 18.0;
 
 /// An entry that is the current choice or not, as the C# checked menu items.
 fn checked_entry<'a>(label: String, checked: bool, message: AppMessage) -> Element<'a, Message> {
+    checked_message(label, checked, Message::MenuChoice(message))
+}
+
+/// A checked entry or not, sending `message` as it is.
+fn checked_message<'a>(label: String, checked: bool, message: Message) -> Element<'a, Message> {
     button(
         row![
             text(if checked { CHECKED } else { "" })
@@ -1588,7 +1629,7 @@ fn checked_entry<'a>(label: String, checked: bool, message: AppMessage) -> Eleme
     )
     .width(Length::Fill)
     .style(menu_style)
-    .on_press(Message::MenuChoice(message))
+    .on_press(message)
     .into()
 }
 
@@ -1621,6 +1662,17 @@ pub fn resolution_entries<'a>(
             ))
             .push(separator());
     }
+    // The C# session header menu's "Fit to Window": the desktop scaled into the tab.
+    entries = entries
+        .push(checked_message(
+            fl!("ui-desktop-fit-window"),
+            state.fit,
+            Message::DesktopFit {
+                tab,
+                fit: !state.fit,
+            },
+        ))
+        .push(separator());
     entries = entries.push(checked_entry(
         fl!("ui-resolution-match-window"),
         state.fixed.is_none() && state.aspect == heimdall_app::Aspect::Stretch,
@@ -1751,13 +1803,6 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             menu(TabMenuMessage::Pin(tab)),
         ));
     }
-    if let Some(on) = state.vnc_resize {
-        entries = entries.push(separator()).push(checked_entry(
-            fl!("ui-tab-menu-vnc-remote-resize"),
-            on,
-            AppMessage::TabMenu(TabMenuMessage::VncRemoteResize(tab)),
-        ));
-    }
     if state.resolution {
         entries = entries.push(separator()).push(submenu(
             fl!("ui-resolution-menu"),
@@ -1809,6 +1854,43 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             close(TabGroup::Right).filter(|_| state.right),
         ));
     menu_card(split_entries(entries, tab, state.split)).into()
+}
+
+/// The keys of the "Send keys" menu, in the C# session header's groups and order.
+const SEND_KEYS_GROUPS: [&[SpecialKeys]; 4] = [
+    &[SpecialKeys::CtrlAltDel],
+    &[
+        SpecialKeys::Windows,
+        SpecialKeys::AltTab,
+        SpecialKeys::CtrlEsc,
+    ],
+    &[
+        SpecialKeys::PrintScreen,
+        SpecialKeys::Escape,
+        SpecialKeys::F11,
+    ],
+    &[SpecialKeys::WinL, SpecialKeys::WinD, SpecialKeys::WinE],
+];
+
+/// A remote desktop's "Send keys" menu, as the C# session header's: the combinations in
+/// their groups, then "Keyboard shortcuts...".
+#[must_use]
+pub fn send_keys_entries<'a>(tab: TabId) -> Element<'a, Message> {
+    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    for group in SEND_KEYS_GROUPS {
+        for &keys in group {
+            entries = entries.push(entry(
+                crate::texts::special_keys(keys),
+                Some(AppMessage::SendKeys { tab, keys }),
+            ));
+        }
+        entries = entries.push(separator());
+    }
+    entries = entries.push(entry(
+        fl!("ui-desktop-shortcuts"),
+        Some(AppMessage::ShowShortcuts),
+    ));
+    menu_card(entries).into()
 }
 
 /// A tab's entries after its profile's, in the C# order: "Detach to Window", or on a split
@@ -1950,12 +2032,6 @@ pub fn merge_axis_entries<'a>(host: TabId, tab: TabId) -> Element<'a, Message> {
         .push(entry(fl!("ui-split-vertical"), merge(Axis::SideBySide)));
     menu_card(entries).into()
 }
-
-/// How tall a tunnel row's menu is, about: it opens above the cursor, the panel being at the
-/// window's foot. Three entries of a menu's text and the button's room, a separator, the
-/// card's padding.
-pub const TUNNEL_MENU_HEIGHT: f32 =
-    3.0 * (font_size::BODY_LARGE * 1.3 + 10.0) + 1.0 + 2.0 * spacing::XS;
 
 /// A tunnel row's menu, as the C# one: Close Tunnel, Copy Local Port, then Close All Tunnels.
 pub fn tunnel_menu_entries<'a>(

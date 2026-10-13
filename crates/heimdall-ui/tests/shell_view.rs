@@ -522,6 +522,9 @@ fn keyboard_named(named: Named) -> iced::keyboard::Key {
     iced::keyboard::Key::Named(named)
 }
 
+/// Widest a tab's title is drawn, as the C# tab title's `MaxWidth`.
+const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
+
 #[test]
 fn a_long_server_title_is_cut_in_its_tab() {
     let dir = tempfile::tempdir().expect("dir");
@@ -534,8 +537,12 @@ fn a_long_server_title_is_cut_in_its_tab() {
         event: ConnectionEvent::Output(std::mem::take(&mut core_title).into_bytes()),
     }));
     let mut ui = simulator(&shell);
-    let shown = format!("{}...", "w".repeat(29));
-    ui.find(shown.as_str()).expect("cut to 32 characters");
+    let title = "w".repeat(100);
+    let shown = ui.find(title.as_str()).expect("the tab's title").bounds();
+    assert!(
+        shown.width <= TAB_TITLE_MAX_WIDTH,
+        "ended with an ellipsis at the C# MaxWidth: {shown:?}"
+    );
 }
 
 #[test]
@@ -1609,7 +1616,8 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     use heimdall_ui::shell::TreeShortcut;
     use heimdall_ui::tree_view::TreeMenu;
 
-    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    const FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
+    const HINTS: &str = "Enter = open · Ctrl+Enter = split · tools = all tools · Esc = close";
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     assert!(simulator(&shell).find(FIELD).is_err(), "closed at first");
@@ -1625,8 +1633,11 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     snapshot(&shell, "quick-connect.png");
     {
         let mut ui = simulator(&shell);
-        for name in ["SSH  server a", "SSH  server b", "SSH  server c"] {
-            ui.find(name).expect(name);
+        // Each with its address and account, under its folder, the hints under them.
+        for line in [
+            "a.lab:22", "b.lab:22", "c.lab:22", "· admin", "Servers", HINTS,
+        ] {
+            ui.find(line).expect(line);
         }
         ui.click(FIELD).expect("its field");
         ui.typewrite("b");
@@ -1638,15 +1649,15 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     let _ = shell.update(Message::PaletteQuery("B.LAB".to_owned()));
     {
         let mut ui = simulator(&shell);
-        ui.find("SSH  server b").expect("found by its host");
-        assert!(ui.find("SSH  server a").is_err(), "filtered out");
+        ui.find("b.lab:22").expect("found by its host");
+        assert!(ui.find("a.lab:22").is_err(), "filtered out");
     }
     // Enter opens the one chosen, and closes the palette.
     let _ = shell.update(Message::DialogKey { confirm: true });
     assert_eq!(shell.app().tabs.len(), 1);
     assert_eq!(shell.app().tabs[0].title, "server b");
     assert!(
-        simulator(&shell).find("SSH  server b").is_err(),
+        simulator(&shell).find("b.lab:22").is_err(),
         "closed: the tree names it alone"
     );
 
@@ -1660,9 +1671,10 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
     let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
     {
+        // Each with its protocol's badge; what is typed is lit in their names.
         let mut ui = simulator(&shell);
-        ui.find("[SSH] Connect to jump.lab").expect("SSH");
-        ui.click("[RDP] Connect to jump.lab").expect("RDP");
+        ui.find("SSH").expect("SSH");
+        ui.click("RDP").expect("RDP");
         assert!(
             ui.into_messages()
                 .any(|message| matches!(message, Message::PaletteChoose(1)))
@@ -1685,12 +1697,12 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
     let _ = shell.update(Message::PaletteQuery("no such thing".to_owned()));
     simulator(&shell)
-        .find("No session matches, and this is no host to connect to.")
+        .find("No results found. Try a host, ssh user@host, or tools.")
         .expect("says so");
     let _ = shell.update(Message::PaletteChoose(0));
     assert_eq!(shell.app().tabs.len(), 2);
     simulator(&shell)
-        .find("No session matches, and this is no host to connect to.")
+        .find("No results found. Try a host, ssh user@host, or tools.")
         .expect("still open");
     // A new search chooses its first again.
     let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
@@ -1825,10 +1837,10 @@ fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
     };
     let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON;
     let normal = columns(&shell);
-    assert!(same(shell.font_size(tab), 15.0));
+    assert!(same(shell.font_size(tab), 14.0));
 
     let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
-    assert!(same(shell.font_size(tab), 16.0));
+    assert!(same(shell.font_size(tab), 15.0));
     assert!(columns(&shell) < normal, "larger text, fewer columns");
     for _ in 0..20 {
         let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
@@ -1840,7 +1852,7 @@ fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
     assert!(same(shell.font_size(tab), 8.0), "no smaller than 8");
     assert!(columns(&shell) > normal);
     let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::Reset)));
-    assert!(same(shell.font_size(tab), 15.0));
+    assert!(same(shell.font_size(tab), 14.0));
     assert_eq!(columns(&shell), normal);
 
     // The wheel with Ctrl held zooms instead of scrolling; without it, it scrolls.
@@ -3704,6 +3716,40 @@ printf '\u{001B}[2J'\u{0009}echo",
 }
 
 #[test]
+fn a_migration_says_how_many_scheduled_connections_it_carried_over() {
+    use heimdall_core::import::csharp::Dropped;
+    let summary = |scheduled| heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport::default(),
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        scheduled,
+        gateways: heimdall_core::import::gateways::Reconciliation::default(),
+        actions: None,
+        dropped: vec![("web".to_owned(), vec![Dropped::ScheduledTime])],
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Some(Ok(2)))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Scheduled connections carried over: 2")
+        .expect("counted");
+    ui.find("web: scheduled connection time unreadable, now 08:00")
+        .expect("the time it runs at said");
+
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Some(Err(
+        "disk full".to_owned()
+    )))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("The scheduled connections could not be carried over: disk full")
+        .expect("why not");
+}
+
+#[test]
 fn an_import_says_which_settings_it_left_out_of_which_profile() {
     use heimdall_core::import::csharp::Dropped;
     let dir = tempfile::tempdir().expect("dir");
@@ -3718,6 +3764,7 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
         actions: None,
         dropped: vec![(
@@ -3752,6 +3799,7 @@ fn an_import_counts_the_gateways_it_created_and_merged_as_the_csharp_summary() {
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 2,
             merged: 1,
@@ -3787,6 +3835,7 @@ fn an_import_with_orphan_gateway_references_counts_them_and_says_what_to_do_as_t
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 0,
             merged: 0,
@@ -4518,7 +4567,7 @@ fn ctrl_k_in_a_terminal_opens_quick_connect_unless_the_settings_send_it_to_the_s
     use iced::keyboard::key::{Code, Physical};
     use iced::keyboard::{Event, Key, Location, Modifiers};
 
-    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    const FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
     let pressed = |typed: &str, modifiers: Modifiers| {
         iced::Event::Keyboard(Event::KeyPressed {
             key: Key::Character(typed.into()),
@@ -5139,6 +5188,52 @@ fn ctrl_shift_a_in_a_terminal_is_left_to_the_window_and_never_sent() {
     );
 }
 
+/// Ctrl+Shift+F11, as the C# `FullscreenShortcutRouter`: full screen over an embedded session,
+/// listed with the window's keys, and never sent to the session.
+#[test]
+fn ctrl_shift_f11_in_a_terminal_is_left_to_the_window_and_never_sent() {
+    use iced::keyboard::key::{Code, Named, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    let ctrl_shift_f11 = iced::Event::Keyboard(Event::KeyPressed {
+        key: Key::Named(Named::F11),
+        modified_key: Key::Named(Named::F11),
+        physical_key: Physical::Code(Code::F11),
+        location: Location::Standard,
+        modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+        text: None,
+        repeat: false,
+    });
+    {
+        let mut ui = simulator(&shell);
+        let statuses = ui.simulate([ctrl_shift_f11]);
+        assert_eq!(statuses, [event::Status::Ignored], "the window's");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { .. }))),
+            "nothing sent to the session"
+        );
+    }
+    // What the window does with it: full screen, then back, as F11.
+    let _ = shell.update(Message::ToggleFullscreen);
+    simulator(&shell)
+        .find("Exit fullscreen")
+        .expect("full screen");
+    let _ = shell.update(Message::ToggleFullscreen);
+    assert!(simulator(&shell).find("Exit fullscreen").is_err());
+
+    // Listed in the F1 help, as the C# `HelpShortcutsContent` lists it.
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Help));
+    let mut ui = simulator(&shell);
+    ui.find("Ctrl+Shift+F11").expect("the key");
+    ui.find("Toggle fullscreen over embedded sessions")
+        .expect("what it does");
+}
+
 #[test]
 fn windows_high_contrast_is_followed_and_high_contrast_can_be_chosen_by_hand() {
     use heimdall_app::SettingsMessage;
@@ -5173,6 +5268,17 @@ fn windows_high_contrast_is_followed_and_high_contrast_can_be_chosen_by_hand() {
 }
 
 #[test]
+fn windows_reduced_motion_is_followed_while_the_window_is_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(!shell.reduced_motion(), "motion until Windows says");
+    let _ = shell.update(Message::SystemReducedMotion(true));
+    assert!(shell.reduced_motion());
+    let _ = shell.update(Message::SystemReducedMotion(false));
+    assert!(!shell.reduced_motion(), "turned back on");
+}
+
+#[test]
 fn tab_moves_between_fields_on_the_settings_page_and_in_a_dialog_but_a_tab_keeps_it() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, _, _) = connected_shell(dir.path());
@@ -5185,4 +5291,69 @@ fn tab_moves_between_fields_on_the_settings_page_and_in_a_dialog_but_a_tab_keeps
     assert!(shell.tab_moves_focus(), "between the dialog's fields");
     let _ = shell.update(Message::DialogKey { confirm: false });
     assert!(shell.app().dialog.is_none(), "Escape closes it");
+}
+
+#[test]
+fn a_file_read_from_its_last_good_copy_is_said_at_start_in_the_csharp_words() {
+    let dir = tempfile::tempdir().expect("dir");
+    // Saved twice: the first file is kept as the last good copy.
+    drop(app(dir.path()));
+    drop(app(dir.path()));
+    std::fs::write(dir.path().join("profiles.toml"), "").expect("emptied");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Configuration restored").expect("the C# title");
+    ui.find(
+        "profiles.toml could not be read and was loaded from its last good copy. Changes saved \
+         after that copy was made may be missing.",
+    )
+    .expect("the C# message");
+    ui.find("server a").expect("the profiles of the copy");
+}
+
+#[test]
+fn a_tab_menus_macro_is_edited_from_it_and_deleted_from_its_editor_as_the_csharp_submenu() {
+    use heimdall_app::MacroMessage;
+    use heimdall_core::macros::{MacroEntry, Macros, TerminalMacro, macros_path};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut macros = Macros::default();
+    macros.put(TerminalMacro {
+        name: "deploy".to_owned(),
+        entries: vec![MacroEntry {
+            input: "uptime\r".to_owned(),
+            delay_ms: 0,
+            expect: None,
+        }],
+    });
+    macros
+        .save(&macros_path(&dir.path().join("profiles.toml")))
+        .expect("saved");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Macros(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Play \"deploy\"").expect("played from the menu");
+        ui.click("Edit \"deploy\"").expect("edited from the menu");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::MenuChoice(AppMessage::Macro(MacroMessage::Edit(ref name))) if name == "deploy"
+        )));
+    }
+    let _ = shell.update(Message::MenuChoice(AppMessage::Macro(MacroMessage::Edit(
+        "deploy".to_owned(),
+    ))));
+    let mut ui = simulator(&shell);
+    ui.find("Edit macro").expect("the macro editor");
+    ui.find("Delete macro")
+        .expect("its delete, as the C# editor's");
 }

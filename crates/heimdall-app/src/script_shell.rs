@@ -59,13 +59,9 @@ pub const POWERSHELL_FILE: &str = "-File";
 /// nothing else (`/s`), the rest run with the shell kept open once it ends (`/k`).
 pub const CMD_SWITCHES: &str = "/s /k";
 
-/// `cmd.exe` under the system root.
+/// `cmd.exe`, in the system folder.
 #[cfg(windows)]
-const CMD_PROGRAM: &str = r"System32\cmd.exe";
-
-/// The variable naming the system root on Windows.
-#[cfg(windows)]
-const SYSTEM_ROOT_VARIABLE: &str = "SystemRoot";
+const CMD_PROGRAM: &str = "cmd.exe";
 
 /// The characters `cmd.exe` reads in a quoted path as more than text: the quote, which ends
 /// it; `%`, which expands a variable; `!`, which expands one when delayed expansion is on.
@@ -170,7 +166,7 @@ pub fn arguments(kind: ScriptKind, script: &Path) -> Result<LocalArguments, Scri
 }
 
 /// The interpreter of a `kind` script, by its full path: on Windows, the `PowerShell`
-/// local shells start and `cmd.exe` under the system root.
+/// local shells start and `cmd.exe` in the system folder Windows says.
 ///
 /// # Errors
 ///
@@ -179,14 +175,12 @@ pub fn interpreter(kind: ScriptKind) -> io::Result<PathBuf> {
     #[cfg(windows)]
     return match kind {
         ScriptKind::PowerShell => heimdall_term::local::program_path(None),
-        ScriptKind::Batch => std::env::var_os(SYSTEM_ROOT_VARIABLE)
-            .map(|root| Path::new(&root).join(CMD_PROGRAM))
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("{SYSTEM_ROOT_VARIABLE} is not set"),
-                )
-            }),
+        ScriptKind::Batch => heimdall_core::paths::system_program(CMD_PROGRAM).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                heimdall_core::paths::SYSTEM_FOLDER_UNKNOWN,
+            )
+        }),
         ScriptKind::Posix => Err(not_here()),
     };
     #[cfg(unix)]

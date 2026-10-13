@@ -879,6 +879,60 @@ mod tests {
         }
     }
 
+    /// The update check names its TLS provider, ring, rather than relying on a process-wide
+    /// default that nothing installs: the handshake runs, and a certificate no system trusts
+    /// is refused as a secure channel failure, not a panic.
+    #[test]
+    fn the_update_check_handshakes_on_ring_without_a_process_default() {
+        use std::io::Read as _;
+        use std::net::TcpListener;
+        use tokio_rustls::rustls::crypto::CryptoProvider;
+        use tokio_rustls::rustls::crypto::ring::default_provider;
+        use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use tokio_rustls::rustls::{ServerConfig, ServerConnection, StreamOwned};
+
+        assert!(
+            CryptoProvider::get_default().is_none(),
+            "nothing installs a process-wide provider"
+        );
+        let issued =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("cert");
+        let certificate = CertificateDer::from(issued.cert.der().to_vec());
+        let key =
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(issued.signing_key.serialize_der()));
+        let config = ServerConfig::builder_with_provider(Arc::new(default_provider()))
+            .with_safe_default_protocol_versions()
+            .expect("versions")
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate], key)
+            .expect("server config");
+        let config = Arc::new(config);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let connection = ServerConnection::new(config).expect("connection");
+            let mut tls = StreamOwned::new(connection, stream);
+            // Drives the handshake until the client refuses the certificate.
+            let mut byte = [0_u8; 1];
+            let _ = tls.read(&mut byte);
+        });
+
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .proxy(None)
+                .timeout_global(Some(REQUEST_TIMEOUT))
+                .tls_config(tls())
+                .build(),
+        );
+        let error = agent
+            .get(format!("https://127.0.0.1:{port}/"))
+            .call()
+            .expect_err("a certificate no system trusts");
+        assert_eq!(transport_failure(&error), Failure::SecureChannel, "{error}");
+        server.join().expect("server");
+    }
+
     #[test]
     fn the_windows_proxy_is_read_from_its_settings_and_its_bypass_list() {
         let host = "api.github.com";

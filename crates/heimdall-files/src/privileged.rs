@@ -42,7 +42,7 @@
 
 use std::fmt::Write as _;
 
-use crate::server_copy::{Unquotable, quote};
+use crate::server_copy::{TOKEN_LEN, Unquotable, quote};
 
 /// Exit status: the file is a link, or not a regular file.
 pub const NOT_A_FILE: u32 = 73;
@@ -125,7 +125,7 @@ pub fn replace_script(
     content: &[u8],
     expected: &[u8; 32],
     password: Option<&[u8]>,
-    token: [u8; 16],
+    token: [u8; TOKEN_LEN],
     sudo: Sudo<'_>,
 ) -> Result<SudoScript, Unquotable> {
     let target = quote(target)?;
@@ -245,7 +245,7 @@ pub fn read_script(
     target: &[u8],
     cap: u64,
     password: Option<&[u8]>,
-    token: [u8; 16],
+    token: [u8; TOKEN_LEN],
     sudo: Sudo<'_>,
 ) -> Result<SudoScript, Unquotable> {
     let target = quote(target)?;

@@ -36,6 +36,7 @@ embarqué.
 |---|---|
 | `heimdall-core` | Profils de serveurs, réglages, chemins, coffre d'identifiants |
 | `heimdall-i18n` | Langues prises en charge et contrôle de leur complétude |
+| `heimdall-net` | Connexions TCP à un hôte par son nom, Happy Eyeballs (RFC 8305) |
 | `heimdall-ssh` | Sessions SSH, tunnels, rebonds |
 | `heimdall-sftp` | SFTP, FTP et FTPS |
 | `heimdall-term` | Émulation de terminal et pseudo-terminaux locaux |
@@ -48,7 +49,7 @@ embarqué.
 | `xtask` | Outillage de développement |
 
 Seul `heimdall-ui` dépend d'iced. Les crates de protocole ne dépendent que de
-`heimdall-core`.
+`heimdall-core` et `heimdall-net`.
 
 ## Compilation
 
@@ -56,6 +57,9 @@ Sous Linux, la compilation demande les paquets de développement de xkbcommon,
 Wayland, X11 et fontconfig. L'exécution demande aussi `libxkbcommon-x11` et un
 pilote Vulkan ou OpenGL, par exemple Mesa. Sous Windows, la compilation demande
 les outils MSVC.
+
+Les bibliothèques C que le binaire lie ou charge à l'exécution sous Linux, et dans quels
+cas, sont recensées dans [Bibliothèques natives](docs/fr/native-libraries.md).
 
 ```bash
 cargo run --package heimdall-ui
@@ -72,6 +76,10 @@ une fois fermée :
 
 Les deux prennent un niveau de journal en argument, de `error` à `trace` :
 `run-debug.bat trace`.
+
+Les tests d'interface automatisés lancent une version debug compilée avec la fonctionnalité
+`test-data-dir` sur un dossier jetable, jamais sur les vrais profils, le coffre ou les mots
+de passe enregistrés : voir [Dossier de données de test](docs/fr/test-data-folder.md).
 
 Une release publiée est compilée avec `HEIMDALL_RELEASE` réglé sur son tag, par exemple
 `v2026.100901` : la vérification des mises à jour le compare à la dernière release publiée

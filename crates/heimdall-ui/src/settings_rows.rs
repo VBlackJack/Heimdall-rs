@@ -41,6 +41,8 @@ pub enum SettingsCard {
     Updates,
     /// The background check of every server.
     Reachability,
+    /// "Show the tour again", as the C# "Welcome tour" card.
+    Onboarding,
     /// The terminals' text and colours, Ctrl+V and the `PowerShell` policy.
     Terminal,
     /// The session transcripts.
@@ -85,11 +87,12 @@ pub enum SettingsCard {
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::Appearance,
         Self::Behavior,
         Self::Updates,
         Self::Reachability,
+        Self::Onboarding,
         Self::Terminal,
         Self::SessionLogging,
         Self::Macros,
@@ -116,9 +119,11 @@ impl SettingsCard {
     #[must_use]
     pub fn tab(self) -> SettingsTab {
         match self {
-            Self::Appearance | Self::Behavior | Self::Updates | Self::Reachability => {
-                SettingsTab::General
-            }
+            Self::Appearance
+            | Self::Behavior
+            | Self::Updates
+            | Self::Reachability
+            | Self::Onboarding => SettingsTab::General,
             Self::Terminal | Self::SessionLogging | Self::Macros => SettingsTab::Terminal,
             Self::SshReconnect
             | Self::SshSession
@@ -171,6 +176,8 @@ pub enum SettingRow {
     UpdateInterval,
     /// The version running, with "Check now" and what it found.
     UpdateVersion,
+    /// "Offer legacy migration at next startup", once an offer was declined.
+    LegacyMigration,
     /// The background check of every server runs.
     Reachability,
     /// Seconds between two background checks.
@@ -179,6 +186,8 @@ pub enum SettingRow {
     ReachabilityTimeout,
     /// Servers checked at once.
     ReachabilityProbes,
+    /// "Show the tour again", which shows the welcome tour from its first step.
+    Onboarding,
     /// The size of the terminals' text.
     FontSize,
     /// The family of the terminals' text.
@@ -279,7 +288,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 61] = [
+    pub const ALL: [Self; 63] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -289,10 +298,12 @@ impl SettingRow {
         Self::UpdateChecks,
         Self::UpdateInterval,
         Self::UpdateVersion,
+        Self::LegacyMigration,
         Self::Reachability,
         Self::ReachabilityInterval,
         Self::ReachabilityTimeout,
         Self::ReachabilityProbes,
+        Self::Onboarding,
         Self::FontSize,
         Self::FontFamily,
         Self::ColorScheme,
@@ -351,13 +362,16 @@ impl SettingRow {
             Self::CollapseTunnelsPanel | Self::PreventSleep | Self::MaxSessions => {
                 SettingsCard::Behavior
             }
-            Self::UpdateChecks | Self::UpdateInterval | Self::UpdateVersion => {
-                SettingsCard::Updates
-            }
+            Self::UpdateChecks
+            | Self::UpdateInterval
+            | Self::UpdateVersion
+            | Self::LegacyMigration => SettingsCard::Updates,
             Self::Reachability
             | Self::ReachabilityInterval
             | Self::ReachabilityTimeout
             | Self::ReachabilityProbes => SettingsCard::Reachability,
+            // The last card of the C# General tab (`MainWindow.xaml:2715-2745`).
+            Self::Onboarding => SettingsCard::Onboarding,
             Self::FontSize
             | Self::FontFamily
             | Self::ColorScheme
@@ -477,6 +491,8 @@ impl SettingRow {
             self,
             Self::Language
                 | Self::UpdateVersion
+                | Self::LegacyMigration
+                | Self::Onboarding
                 | Self::Macros
                 | Self::HostKeys
                 | Self::FtpsCertificates
@@ -1216,13 +1232,18 @@ mod tests {
             [
                 SettingRow::UpdateChecks,
                 SettingRow::UpdateInterval,
-                SettingRow::UpdateVersion
+                SettingRow::UpdateVersion,
+                SettingRow::LegacyMigration
             ]
         );
         assert_eq!(SettingsCard::Updates.tab(), SettingsTab::General);
         assert!(
             !SettingRow::UpdateVersion.is_marked(),
             "the version is no choice"
+        );
+        assert!(
+            !SettingRow::LegacyMigration.is_marked(),
+            "the legacy migration offer is no choice"
         );
         let changed = Settings {
             updates: heimdall_core::settings::Updates {

@@ -44,9 +44,7 @@ use std::time::Duration;
 use data_encoding::HEXLOWER;
 use russh::client::Msg;
 use russh::{Channel, ChannelStream};
-use subtle::ConstantTimeEq as _;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
-use tokio::net::TcpStream;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zeroize::Zeroizing;
 
@@ -242,7 +240,7 @@ impl X11Grant {
     /// A grant to `display` with a fresh fake cookie; `None` when no randomness is to be had.
     pub(crate) fn new(display: &X11Display) -> Option<Self> {
         let mut fake = Zeroizing::new([0; COOKIE_LENGTH]);
-        if let Err(error) = getrandom::fill(fake.as_mut()) {
+        if let Err(error) = sealvault::random::fill(fake.as_mut()) {
             log::warn!("no randomness for the X11 cookie: {error}");
             return None;
         }
@@ -260,16 +258,11 @@ impl X11Grant {
         if setup.name != MIT_MAGIC_COOKIE.as_bytes() {
             return Err(Refusal::Protocol);
         }
-        if !same(&setup.data, self.fake.as_ref()) {
+        if !sealvault::compare::equal(&setup.data, self.fake.as_ref()) {
             return Err(Refusal::Cookie);
         }
         Ok(())
     }
-}
-
-/// Whether `a` and `b` hold the same bytes, of the same length, in constant time.
-fn same(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && bool::from(a.ct_eq(b))
 }
 
 /// Asks the server of `connection` to forward X11 on `channel`, a shell's session channel,
@@ -491,9 +484,7 @@ pub(crate) async fn carry(
     let message = setup.encode(&grant.real);
     let unanswered = match &grant.target {
         Target::Tcp(host, port) => {
-            match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host.as_str(), *port)))
-                .await
-            {
+            match tokio::time::timeout(CONNECT_TIMEOUT, heimdall_net::connect(host, *port)).await {
                 Ok(Ok(near)) => {
                     relay(near, far, &message).await;
                     None
@@ -548,7 +539,7 @@ mod tests {
 
     use super::{
         AUTH_DATA_LIMIT, ByteOrder, COOKIE_LENGTH, Cookie, MIT_MAGIC_COOKIE, Refusal,
-        SETUP_TIMEOUT, Setup, Target, X11Display, X11Grant, padded, read_checked, read_setup, same,
+        SETUP_TIMEOUT, Setup, Target, X11Display, X11Grant, padded, read_checked, read_setup,
     };
     use zeroize::Zeroizing;
 
@@ -557,6 +548,15 @@ mod tests {
             .expect("display")
             .with_authority(None);
         X11Grant::new(&display).expect("granted")
+    }
+
+    #[test]
+    fn each_grant_draws_its_own_fake_cookie_of_the_cookie_length() {
+        let first = grant();
+        let second = grant();
+        assert_eq!(first.fake.len(), COOKIE_LENGTH);
+        assert_ne!(*first.fake, *second.fake, "two draws of 128 bits");
+        assert_ne!(*first.fake, [0; COOKIE_LENGTH]);
     }
 
     #[tokio::test]
@@ -661,9 +661,9 @@ mod tests {
     #[test]
     fn padding_and_comparison() {
         assert_eq!([0, 1, 4, 5, 18].map(padded), [0, 4, 4, 8, 20]);
-        assert!(same(&[1, 2], &[1, 2]));
-        assert!(!same(&[1, 2], &[1, 3]));
-        assert!(!same(&[1, 2], &[1, 2, 3]));
+        assert!(sealvault::compare::equal(&[1, 2], &[1, 2]));
+        assert!(!sealvault::compare::equal(&[1, 2], &[1, 3]));
+        assert!(!sealvault::compare::equal(&[1, 2], &[1, 2, 3]));
     }
 
     #[test]

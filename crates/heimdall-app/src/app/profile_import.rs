@@ -705,6 +705,7 @@ impl App {
             favorites,
             metadata,
             folder_colors: report.folder_colors,
+            scheduled: Vec::new(),
         };
         (chosen, replacing)
     }

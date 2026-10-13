@@ -27,8 +27,8 @@ use heimdall_rdp::drives::local_drives;
 use heimdall_rdp::session::{self, RdpEvent};
 use heimdall_rdp::{
     AcceptedCertificate, AskCredentials, CertificateHash, CloseReason, Ending, KnownRdpHosts,
-    Opening, RdpConfig, RdpConnection, RdpError, Security, ServerCertificate, Timeouts, Transport,
-    connect, connect_through,
+    Opening, Progress, RdpConfig, RdpConnection, RdpError, Security, ServerCertificate, Timeouts,
+    Transport, connect, connect_through,
 };
 use heimdall_ssh::{
     ConnectError, ConnectOptions, PasswordQuestion, UsernameQuestion, establish_via,
@@ -350,7 +350,17 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         kerberos: request.route.is_empty(),
         time_zone: crate::time_zone::local(),
         desktop_scale: request.desktop_scale,
+        progress: None,
     }
+}
+
+/// Where a connection tells its steps: to the tab, as [`ConnectionEvent::RdpStep`]s. A step
+/// that finds the queue full is dropped: the next one, or the session, says more.
+fn progress(events: &mpsc::Sender<ConnectionEvent>) -> Progress {
+    let events = events.clone();
+    Progress::new(move |step| {
+        let _ = events.try_send(ConnectionEvent::RdpStep(step));
+    })
 }
 
 /// Opens the RDP connection, over TCP or through the tunnel `request.route` leads to. An
@@ -363,7 +373,10 @@ async fn open(
     failure: &TunnelFailure,
     forwards: &ForwardsSlot,
 ) -> Result<RdpConnection, RdpError> {
-    let config = rdp_config(request);
+    let config = RdpConfig {
+        progress: Some(progress(events)),
+        ..rdp_config(request)
+    };
     if request.route.is_empty() {
         connect(config, ask_credentials, request.cancel.clone()).await
     } else {
@@ -439,7 +452,7 @@ fn ui_error(error: RdpError) -> UiError {
         RdpError::Network(error) => UiError::network(&error),
         RdpError::Timeout => UiError::Timeout,
         RdpError::Cancelled => UiError::Cancelled,
-        RdpError::Negotiation(detail) => UiError::SecurityRefused { detail },
+        RdpError::Negotiation { detail, code } => UiError::SecurityRefused { detail, code },
         RdpError::CertificateChanged {
             recorded,
             presented,
@@ -452,10 +465,11 @@ fn ui_error(error: RdpError) -> UiError {
         RdpError::KnownHosts(error) => UiError::KnownHosts {
             detail: error.to_string(),
         },
-        RdpError::Authentication(refusal) => UiError::RdpRefused { refusal },
+        RdpError::Authentication { refusal, status } => UiError::RdpRefused { refusal, status },
         RdpError::ServerNotAuthenticated => UiError::RdpServerNotAuthenticated,
-        RdpError::Ended(ending) => UiError::RdpEnded {
+        RdpError::Ended { ending, code } => UiError::RdpEnded {
             ending: safe(ending),
+            code,
         },
         // An unknown certificate is a question, handled by the caller; the rest is a protocol
         // failure described in plain words.

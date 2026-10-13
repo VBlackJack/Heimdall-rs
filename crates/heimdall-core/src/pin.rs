@@ -21,7 +21,9 @@
 //! passwords are the vault's to protect.
 
 use data_encoding::BASE64;
-use zeroize::Zeroizing;
+use sealvault::kdf::{self, KdfParams};
+use sealvault::secret::SecretKey;
+use sealvault::{compare, random};
 
 /// Fewest digits a PIN has, as the C# rule.
 pub const MIN_PIN_DIGITS: usize = 4;
@@ -31,6 +33,21 @@ pub const MAX_PIN_DIGITS: usize = 8;
 const SALT_BYTES: usize = 16;
 /// Bytes of hash kept.
 const HASH_BYTES: usize = 32;
+/// Memory of the PIN's Argon2id, in KiB.
+const PIN_MEMORY_KIB: u32 = 19_456;
+/// Passes of the PIN's Argon2id.
+const PIN_ITERATIONS: u32 = 2;
+/// Lanes of the PIN's Argon2id.
+const PIN_LANES: u32 = 1;
+/// The cost of the hash: the argon2 crate's default (19 MiB, 2 passes, 1 lane), which every
+/// PIN hash ever saved was made with. It is part of the saved format: the settings file
+/// keeps the salt and the hash, not the cost, so changing it would make every saved PIN
+/// fail. It never changes without a migration of the saved hashes.
+const PIN_COST: KdfParams = KdfParams {
+    memory_kib: PIN_MEMORY_KIB,
+    iterations: PIN_ITERATIONS,
+    lanes: PIN_LANES,
+};
 
 /// Why a new PIN is refused, checked in the C# order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,12 +95,11 @@ impl PinHash {
     ///
     /// Why no random salt could be drawn, or the hash made.
     pub fn new(pin: &str) -> Result<Self, String> {
-        let mut salt = [0; SALT_BYTES];
-        getrandom::fill(&mut salt).map_err(|error| error.to_string())?;
+        let salt: [u8; SALT_BYTES] = random::array().map_err(|error| error.to_string())?;
         let hash = derive(pin, &salt)?;
         Ok(Self {
             salt: BASE64.encode(&salt),
-            hash: BASE64.encode(hash.as_slice()),
+            hash: BASE64.encode(hash.as_bytes()),
         })
     }
 
@@ -121,28 +137,34 @@ impl PinHash {
         if kept.len() != HASH_BYTES {
             return false;
         }
-        derive(pin, &salt).is_ok_and(|typed| {
-            typed
-                .iter()
-                .zip(&kept)
-                .fold(0_u8, |differ, (a, b)| differ | (a ^ b))
-                == 0
-        })
+        derive(pin, &salt).is_ok_and(|typed| compare::equal(typed.as_bytes(), &kept))
     }
 }
 
-/// The hash of `pin` with `salt`, by Argon2id at the crate's default cost.
-fn derive(pin: &str, salt: &[u8]) -> Result<Zeroizing<[u8; HASH_BYTES]>, String> {
-    let mut hash = Zeroizing::new([0; HASH_BYTES]);
-    argon2::Argon2::default()
-        .hash_password_into(pin.as_bytes(), salt, hash.as_mut_slice())
-        .map_err(|error| error.to_string())?;
-    Ok(hash)
+/// The hash of `pin` with `salt`, by Argon2id version 0x13 at [`PIN_COST`].
+fn derive(pin: &str, salt: &[u8]) -> Result<SecretKey<HASH_BYTES>, String> {
+    kdf::argon2id(pin.as_bytes(), salt, &PIN_COST).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_saved_cost_is_the_argon2_default_and_sealvault_still_derives_at_it() {
+        // Part of the saved format: these three numbers never change without a migration.
+        assert_eq!(
+            PIN_COST,
+            KdfParams {
+                memory_kib: 19_456,
+                iterations: 2,
+                lanes: 1,
+            }
+        );
+        // Were sealvault's floor ever raised past it, every saved PIN would stop verifying:
+        // this fails first.
+        assert!(PIN_COST.is_within_bounds());
+    }
 
     #[test]
     fn a_pin_is_four_to_eight_digits() {

@@ -3,7 +3,7 @@
 
 [package]
 name = "sealvault"
-description = "A password-sealed file of named secrets: Argon2id, AES-256-GCM, every header byte authenticated."
+description = "Heimdall's cryptography behind one API (RustCrypto underneath), and a password-sealed file of named secrets: Argon2id, AES-256-GCM, every header byte authenticated."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,10 +15,32 @@ publish.workspace = true
 [dependencies]
 aes-gcm.workspace = true
 argon2.workspace = true
-getrandom.workspace = true
+# des: legacy::vnc_des only; zeroize wipes its key schedule on drop (cipher/zeroize is
+# already in the tree through aes-gcm).
+des = { workspace = true, features = ["zeroize"] }
+# sys_rng: the rand_core traits the RSA generation's watched generator implements.
+getrandom = { workspace = true, features = ["sys_rng"] }
+hkdf.workspace = true
+hmac.workspace = true
+md-5.workspace = true
+# pkcs8, rsa, ssh-key: keys::KeyPair, its PKCS#8 and PEM, PBES2, and its OpenSSH form.
+pkcs8.workspace = true
+# rcgen: cert's certificates, signed through ring; zeroize: its signing keys wiped.
+rcgen = { workspace = true, features = ["zeroize"] }
+rsa.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+sha3.workspace = true
+ssh-key.workspace = true
+subtle.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-zeroize.workspace = true
+# derive: zeroize_derive is already in the tree, enabled by another crate.
+zeroize = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+# x509-cert: the certificates cert makes, read back to check their key and signature.
+x509-cert.workspace = true
 
 [lints]
 workspace = true

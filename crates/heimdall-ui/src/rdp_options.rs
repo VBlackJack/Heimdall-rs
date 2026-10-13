@@ -23,13 +23,20 @@
 //! While a profile follows the global defaults, the options they decide are greyed and out
 //! of reach, their values the profile's own, as the C# greys them. What only Remote Desktop
 //! Connection honours says so while the profile opens in a tab.
+//!
+//! Local playback stays in the audio list in every build: Remote Desktop Connection plays
+//! the sound here on its own, and the value is carried to and from the C#. A build without
+//! the `audio` feature says under the list, while it is chosen for a tab, that the built-in
+//! client plays no sound.
 
 use heimdall_app::profile_draft::{ProfileChoice, ProfileDraft, ProfileField, ProfileToggle};
 use heimdall_app::{Message as AppMessage, SettingsMessage};
 use heimdall_core::profile::{
     Aspect, AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, RdpSwitch, Resolution,
 };
-use iced::widget::{checkbox, column, container, opaque, pick_list, row, space, stack, text};
+use iced::widget::{
+    button, checkbox, column, container, opaque, pick_list, row, space, stack, text,
+};
 use iced::{Alignment, Color, Element, Length, Theme};
 
 use crate::i18n::fl;
@@ -243,8 +250,9 @@ pub fn draws(toggle: ProfileToggle) -> bool {
     )
 }
 
-/// The C# "Display & Audio" tab of `draft`: the audio mode and colour depth, then the
-/// resolution card, its fields drawn by `field`, with the monitors among `monitors`.
+/// The C# "Display & Audio" tab of `draft`: the audio mode and colour depth, what this
+/// build cannot play while the profile opens in a tab, then the resolution card, its fields
+/// drawn by `field`, with the monitors among `monitors`.
 pub fn display_audio<'a>(
     draft: &'a ProfileDraft,
     monitors: &[Monitor],
@@ -253,10 +261,23 @@ pub fn display_audio<'a>(
     column![
         group(fl!("ui-profile-rdp-tab-display-audio")),
         view(draft.rdp_options, following(draft)),
-        resolution(draft, monitors, field),
     ]
+    .extend(local_playback_note(draft.rdp_options.audio).filter(|_| opens_in_tab(draft)))
+    .push(resolution(draft, monitors, field))
     .spacing(spacing::SM)
     .into()
+}
+
+/// Under the audio list, while it says Local playback, that this build plays no sound:
+/// built without the `audio` feature, the built-in client has no sound card to play on, and
+/// asks the server for no sound here.
+fn local_playback_note<'a>(audio: AudioPlayback) -> Option<Element<'a, Message>> {
+    (audio == AudioPlayback::Local && !heimdall_rdp::audio::AVAILABLE).then(|| {
+        text(fl!("ui-profile-audio-local-unavailable"))
+            .size(font_size::CAPTION)
+            .style(text::secondary)
+            .into()
+    })
 }
 
 /// The C# "Devices" tab of `draft`: what this computer shares with the server.
@@ -372,7 +393,8 @@ pub fn rd_gateway<'a>(draft: &ProfileDraft, field: Element<'a, Message>) -> Elem
 }
 
 /// The C# monitors of `draft` while it spans them: the note, the saved ones not connected
-/// said kept, then each of `monitors` to tick when there are several, as the C# picker.
+/// said kept, then each of `monitors` to tick when there are several, under their title and
+/// its "Refresh", as the C# picker.
 fn spanned<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Option<Element<'a, Message>> {
     if !draft.spans_monitors() {
         return None;
@@ -389,7 +411,16 @@ fn spanned<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Option<Element<'a,
     }
     if monitors.len() >= MULTI_MONITOR_SCREENS {
         card = card
-            .push(text(fl!("ui-profile-rdp-monitors-title")).size(font_size::CAPTION))
+            .push(
+                row![
+                    text(fl!("ui-profile-rdp-monitors-title")).size(font_size::CAPTION),
+                    space::horizontal(),
+                    button(text(fl!("ui-profile-rdp-monitors-refresh")).size(font_size::CAPTION))
+                        .style(styles::subtle)
+                        .on_press(Message::RefreshMonitors),
+                ]
+                .align_y(Alignment::Center),
+            )
             .push(text(fl!("ui-profile-rdp-monitors-caption")).size(font_size::CAPTION));
         for monitor in monitors {
             let index = monitor.index;
@@ -638,6 +669,7 @@ pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
             }),
         ),
     ]
+    .extend(local_playback_note(defaults.audio))
     .spacing(spacing::SM);
     for switch in switches() {
         let mut tick = checkbox((switch.get)(&defaults))
@@ -754,8 +786,9 @@ fn choice(choice: ProfileChoice) -> Message {
 
 /// The C# "Resolution profile" card of `draft`: the mode, and in the fixed mode its common
 /// sizes, the width and height drawn by `field`, and whether it is scaled; then the
-/// monitors spanned among `monitors` and the multi-monitor box; then the C# "Display" with
-/// whether the desktop follows the tab, and "Audio" with the microphone.
+/// monitors spanned among `monitors` and the multi-monitor box, and outside the automatic
+/// mode the C# "Switch to Auto"; then the C# "Display" with whether the desktop follows the
+/// tab, and "Audio" with the microphone.
 pub fn resolution<'a>(
     draft: &'a ProfileDraft,
     monitors: &[Monitor],
@@ -836,6 +869,12 @@ pub fn resolution<'a>(
         card = card.push(spanned);
     }
     card.push(multi_monitor(draft, monitors))
+        // As the C# `CanSwitchToAuto`: a way back to the mode a new profile starts in.
+        .push((options.resolution != Resolution::Auto).then(|| {
+            button(text(fl!("ui-profile-resolution-switch-auto")).size(font_size::CAPTION))
+                .style(styles::subtle)
+                .on_press(choice(ProfileChoice::Resolution(Resolution::Auto)))
+        }))
         .push(part(fl!("ui-profile-rdp-display-section")))
         .push(
             checkbox(options.dynamic_resolution)

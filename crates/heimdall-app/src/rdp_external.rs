@@ -55,10 +55,6 @@ pub const STALE_AFTER: Duration = Duration::from_secs(60);
 
 /// Remote Desktop Connection's program, in the system folder.
 const MSTSC: &str = "mstsc.exe";
-/// The system folder, under the Windows folder.
-const SYSTEM_FOLDER: &str = "System32";
-/// The variables naming the Windows folder, in the order they are read.
-const WINDOWS_FOLDER_VARIABLES: [&str; 2] = ["SystemRoot", "windir"];
 
 /// `screen mode id` of a window.
 const SCREEN_WINDOWED: u8 = 1;
@@ -350,10 +346,10 @@ fn gateway(file: &mut String, gateway: Option<&str>) {
 }
 
 /// The folder of the connection files: the application's own, in the system's temporary
-/// folder.
+/// folder; `None` when that folder is unknown.
 #[must_use]
-pub fn artifact_folder() -> PathBuf {
-    std::env::temp_dir().join(ARTIFACT_FOLDER)
+pub fn artifact_folder() -> Option<PathBuf> {
+    heimdall_core::paths::temp_dir().map(|temp| temp.join(ARTIFACT_FOLDER))
 }
 
 /// Writes `content` as a new connection file in `folder`, made or found the user's own: to
@@ -415,20 +411,20 @@ pub fn sweep(folder: &Path, now: SystemTime, older_than: Duration) -> usize {
 
 /// Sweeps the connection files earlier runs left in the application's folder.
 pub fn sweep_stale() {
-    let removed = sweep(&artifact_folder(), SystemTime::now(), STALE_AFTER);
+    let Some(folder) = artifact_folder() else {
+        return;
+    };
+    let removed = sweep(&folder, SystemTime::now(), STALE_AFTER);
     if removed > 0 {
         log::info!("removed {removed} connection file(s) an earlier run left");
     }
 }
 
-/// `mstsc.exe` in the system folder, named by its whole path, never looked for in the
-/// current folder, as the C# `MstscRdpExternalClientLauncher`.
+/// `mstsc.exe` in the system folder Windows says, never the one the environment names,
+/// named by its whole path, never looked for in the current folder, as the C#
+/// `MstscRdpExternalClientLauncher`. `None` off Windows.
 fn mstsc() -> Option<PathBuf> {
-    WINDOWS_FOLDER_VARIABLES
-        .iter()
-        .filter_map(std::env::var_os)
-        .map(|windows| PathBuf::from(windows).join(SYSTEM_FOLDER).join(MSTSC))
-        .find(|program| program.is_file())
+    heimdall_core::paths::system_program(MSTSC).filter(|program| program.is_file())
 }
 
 /// Remote Desktop Connection started, and its end to wait for.
@@ -451,7 +447,10 @@ fn prepare(content: &str) -> Result<(std::process::Command, PathBuf), ExternalRe
         return Err(ExternalRefusal::NotWindows);
     }
     let program = mstsc().ok_or(ExternalRefusal::NotFound)?;
-    let file = write_artifact(&artifact_folder(), content)
+    let folder = artifact_folder().ok_or_else(|| {
+        ExternalRefusal::NotWritten(heimdall_core::paths::TEMP_FOLDER_UNKNOWN.to_owned())
+    })?;
+    let file = write_artifact(&folder, content)
         .map_err(|error| ExternalRefusal::NotWritten(error.to_string()))?;
     let mut command = std::process::Command::new(&program);
     if let Some(system) = program.parent() {

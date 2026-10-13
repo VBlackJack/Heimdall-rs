@@ -26,10 +26,10 @@ use heimdall_ssh::{
 
 use heimdall_files::RemoteSession;
 use heimdall_rdp::{
-    CertificateHash, CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation,
+    CertificateHash, CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, RdpInput,
     SaveEnd,
 };
-use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
+use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, RemoteCursor, VncInput};
 use heimdall_tls::ValidationIssue;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -147,12 +147,14 @@ pub enum ConnectionEvent {
         /// FTPS prompt shows them; for an RDP server only when its certificate is renewed.
         details: Option<Box<CertificateDetails>>,
     },
+    /// The RDP connection came this far, before its session opened.
+    RdpStep(heimdall_rdp::Step),
     /// The RDP session is open.
     RdpReady {
         /// The desktop, drawn by the UI.
         framebuffer: Framebuffer,
         /// Where keyboard and mouse input goes.
-        input: mpsc::UnboundedSender<Vec<Operation>>,
+        input: mpsc::UnboundedSender<Vec<RdpInput>>,
         /// The desktop size the tab wants.
         size: watch::Sender<Option<(u16, u16)>>,
         /// Where this side's clipboard goes, when the clipboard is shared.
@@ -190,6 +192,8 @@ pub enum ConnectionEvent {
         framebuffer: VncFramebuffer,
         /// Where keyboard and mouse input goes.
         input: VncInput,
+        /// The server's pointer shape, drawn where the pointer is.
+        cursor: RemoteCursor,
         /// The TLS version the session is encrypted with, as "TLS 1.3"; `None` in clear.
         tls: Option<&'static str>,
     },
@@ -299,6 +303,7 @@ impl fmt::Debug for ConnectionEvent {
                 .field("port", port)
                 .field("fingerprint", &fingerprint.to_string())
                 .finish(),
+            Self::RdpStep(step) => f.debug_tuple("RdpStep").field(step).finish(),
             Self::RdpReady { .. } => f.write_str("RdpReady"),
             // What was copied can be a password: never shown.
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),

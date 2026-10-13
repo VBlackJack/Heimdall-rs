@@ -16,21 +16,24 @@
 
 //! The settings of Heimdall-rs, beside its profiles: what the Settings page changes.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, ProviderSettings};
+use crate::last_good_copy::Document;
 use crate::lockout::{LOCKOUT_DURATION, Lockout};
 use crate::pin::PinHash;
 use crate::profile::{
     ProfileId, RESOLUTION_PRESETS, RdpDefaults, RdpMode, SshMode, preset_fits, resolution_preset,
     resolution_text,
 };
-use crate::store::{StoreError, write_atomic};
+use crate::store::StoreError;
+
+mod sensitive;
+
+pub use sensitive::Sensitivity;
 
 /// Name of the settings file, beside the profile file.
 pub const SETTINGS_FILE_NAME: &str = "settings.toml";
@@ -656,6 +659,47 @@ pub struct Settings {
     pub last_used_gateway: Option<ProfileId>,
     /// The Tools area's own state: the tools pinned, the sidebar's tab and its categories.
     pub tools: ToolsSettings,
+    /// The offer to migrate from the legacy PowerShell Heimdall last declined, as the C#
+    /// `LegacyMigrationDeclined*` (`AppSettings.cs:65-66`). This computer's own: never
+    /// exported, and kept by a reset.
+    pub legacy_migration: LegacyMigration,
+    /// The welcome tour was finished or skipped, as the C# `OnboardingCompleted`
+    /// (`AppSettings.cs:354`): off until then, and the tour shows at start while it is off.
+    /// This computer's own: never exported, and kept by a reset.
+    pub onboarding_completed: bool,
+}
+
+/// The offer to migrate from the legacy PowerShell Heimdall (`RDPManager`) the user declined,
+/// as the C# `LegacyMigrationDecisionPolicy`: the version of the offer, and the fingerprint
+/// of the files it offered. A newer offer, or the same folder with other files, is offered
+/// again.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LegacyMigration {
+    /// The version of the offer declined; 0 when none was.
+    pub declined_offer_version: u32,
+    /// The fingerprint of the legacy files of the offer declined, upper-case hexadecimal.
+    pub declined_source_fingerprint: Option<String>,
+}
+
+impl LegacyMigration {
+    /// Whether the offer of `version` for the files of `fingerprint` is made, as the C#
+    /// `ShouldOffer`: unless that very offer was declined.
+    #[must_use]
+    pub fn should_offer(&self, version: u32, fingerprint: &str) -> bool {
+        self.declined_offer_version < version
+            || self.declined_source_fingerprint.as_deref() != Some(fingerprint)
+    }
+
+    /// Whether an offer was declined, as the C# `HasDeclineMarker`: what the Settings
+    /// page's "Offer legacy migration at next startup" undoes.
+    #[must_use]
+    pub fn has_decline(&self) -> bool {
+        self.declined_offer_version > 0
+            || self
+                .declined_source_fingerprint
+                .as_deref()
+                .is_some_and(|fingerprint| !fingerprint.trim().is_empty())
+    }
 }
 
 /// What the Tools area keeps across runs on this computer, as the C# `FavoriteToolIds`,
@@ -942,8 +986,13 @@ impl Language {
     }
 }
 
-/// Size of the terminals' text unless chosen: the one this terminal was drawn at before.
-pub const TERMINAL_FONT_SIZE_DEFAULT: u16 = 15;
+/// Size of the terminals' text unless chosen, as the C# `DefaultTerminalFontSize`
+/// (`AppSettings.cs:204`): what a new installation starts at, and "Reset" gives back.
+pub const TERMINAL_FONT_SIZE_DEFAULT: u16 = 14;
+
+/// Size of the terminals' text a settings file written before it held one stands for: the
+/// size its terminals were drawn at then, kept, the default having become the C#'s since.
+pub const TERMINAL_FONT_SIZE_UNWRITTEN: u16 = 15;
 /// Smallest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MIN: u16 = 8;
 
@@ -1131,6 +1180,8 @@ impl Default for Settings {
             session_log_retention_days: SESSION_LOG_RETENTION_DAYS_DEFAULT,
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
             terminal_font_family: TERMINAL_FONT_FAMILY_DEFAULT.to_owned(),
+            // Deliberately not the C# `DefaultLocale` "en": a new installation follows the
+            // desktop's language until one is chosen.
             language: None,
             theme: AppTheme::default(),
             accent: Accent::default(),
@@ -1175,6 +1226,8 @@ impl Default for Settings {
             windows_hello: WindowsHello::default(),
             last_used_gateway: None,
             tools: ToolsSettings::default(),
+            legacy_migration: LegacyMigration::default(),
+            onboarding_completed: false,
         }
     }
 }
@@ -1216,6 +1269,45 @@ struct SettingsFile {
     profile_form: ProfileFormSection,
     #[serde(default)]
     tools: ToolsSection,
+    #[serde(default)]
+    legacy_migration: LegacyMigrationSection,
+    #[serde(default)]
+    onboarding: OnboardingSection,
+}
+
+/// This computer's own: never exported.
+#[derive(Serialize, Deserialize, Default)]
+struct OnboardingSection {
+    /// Absent, from a file written before it, is the C# default: the tour not seen.
+    #[serde(default)]
+    completed: bool,
+}
+
+/// This computer's own: never exported.
+#[derive(Serialize, Deserialize, Default)]
+struct LegacyMigrationSection {
+    #[serde(default)]
+    declined_offer_version: u32,
+    #[serde(default)]
+    declined_source_fingerprint: Option<String>,
+}
+
+impl LegacyMigrationSection {
+    fn of(declined: &LegacyMigration) -> Self {
+        Self {
+            declined_offer_version: declined.declined_offer_version,
+            declined_source_fingerprint: declined.declined_source_fingerprint.clone(),
+        }
+    }
+
+    fn settings(self) -> LegacyMigration {
+        LegacyMigration {
+            declined_offer_version: self.declined_offer_version,
+            declined_source_fingerprint: self
+                .declined_source_fingerprint
+                .filter(|fingerprint| !fingerprint.trim().is_empty()),
+        }
+    }
 }
 
 /// This computer's own: never exported.
@@ -1665,7 +1757,8 @@ impl Settings {
     /// back; the PIN and the lockouts, which are state, not preferences; the release skipped
     /// and the last look for one; and what no C# Settings panel edits (the tree's gateway
     /// badge, the broadcast scope, the gateway a new profile starts on, the Tools area's pins,
-    /// tab and folded categories, which the C# resets but its tab). The gateways, the
+    /// tab and folded categories, which the C# resets but its tab, and the welcome tour seen).
+    /// The gateways, the
     /// profiles, the master password, the Windows Hello enrolment, the macros and the
     /// credential provider's unlock secret are kept elsewhere and are not touched.
     pub fn reset_all(&mut self) {
@@ -1682,6 +1775,8 @@ impl Settings {
             update_check: std::mem::take(&mut self.update_check),
             last_used_gateway: self.last_used_gateway.take(),
             tools: std::mem::take(&mut self.tools),
+            legacy_migration: std::mem::take(&mut self.legacy_migration),
+            onboarding_completed: self.onboarding_completed,
             ..Self::default()
         };
         *self = kept;
@@ -1694,9 +1789,22 @@ impl Settings {
     /// Returns [`StoreError`] when the file exists and cannot be read, does not parse, or has
     /// a newer format version.
     pub fn load(path: &Path) -> Result<Self, StoreError> {
-        let text = match fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
+        Self::load_recovering(path).map(|(settings, _)| settings)
+    }
+
+    /// Reads the settings at `path` as [`Self::load`] does, a file that is not readable read
+    /// from its last good copy when there is one, as the C# `ConfigManager` reads
+    /// `settings.json`; with whether it was, for the application to say so. The next save
+    /// replaces the damaged file.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load`].
+    pub fn load_recovering(path: &Path) -> Result<(Self, bool), StoreError> {
+        let (text, recovered) = match crate::last_good_copy::read_document(path) {
+            Ok(Document::Read(text)) => (text, false),
+            Ok(Document::Recovered(text)) => (text, true),
+            Ok(Document::Missing) => return Ok((Self::default(), false)),
             Err(source) => {
                 return Err(StoreError::Io {
                     path: path.to_owned(),
@@ -1715,7 +1823,7 @@ impl Settings {
                 expected: SETTINGS_FILE_VERSION,
             });
         }
-        Ok(Self::from_file(file))
+        Ok((Self::from_file(file), recovered))
     }
 
     /// The settings `file` says; a value out of its range is the default.
@@ -1746,12 +1854,13 @@ impl Settings {
                 session_log_retention_days_accepted,
                 SESSION_LOG_RETENTION_DAYS_DEFAULT,
             ),
-            // Out of the range, as the C# load warns and keeps the default.
-            terminal_font_size: file
-                .terminal
-                .font_size
-                .filter(|size| terminal_font_size_accepted(*size))
-                .unwrap_or(TERMINAL_FONT_SIZE_DEFAULT),
+            terminal_font_size: match file.terminal.font_size {
+                // Never written: what the file's terminals were drawn at, not the new default.
+                None => TERMINAL_FONT_SIZE_UNWRITTEN,
+                Some(size) if terminal_font_size_accepted(size) => size,
+                // Out of the range, as the C# load warns and keeps the default.
+                Some(_) => TERMINAL_FONT_SIZE_DEFAULT,
+            },
             terminal_font_family: terminal_font_family(
                 file.terminal.font_family.as_deref().unwrap_or_default(),
             ),
@@ -1925,6 +2034,8 @@ impl Settings {
                 .filter(|id| !id.trim().is_empty())
                 .map(ProfileId::new),
             tools: file.tools.settings(),
+            legacy_migration: file.legacy_migration.settings(),
+            onboarding_completed: file.onboarding.completed,
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -1980,14 +2091,15 @@ impl Settings {
             .map_or_else(|| chosen.clone(), |base| base.join(&chosen))
     }
 
-    /// Writes the settings to `path`, through a temporary file.
+    /// Writes the settings to `path`, through a temporary file, the file it replaces kept
+    /// as its last good copy when readable, as the C# `ConfigManager` keeps one.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when serialisation or any file operation fails.
     pub fn save(&self, path: &Path) -> Result<(), StoreError> {
         let text = toml::to_string_pretty(&self.file())?;
-        write_atomic(path, &text)
+        crate::last_good_copy::write_keeping_copy(path, &text)
     }
 
     /// The settings as their file holds them.
@@ -2068,6 +2180,10 @@ impl Settings {
             },
             profile_form: ProfileFormSection::of(self.last_used_gateway.as_ref()),
             tools: ToolsSection::of(&self.tools),
+            legacy_migration: LegacyMigrationSection::of(&self.legacy_migration),
+            onboarding: OnboardingSection {
+                completed: self.onboarding_completed,
+            },
         }
     }
 
@@ -2149,18 +2265,20 @@ impl Settings {
             return Err(TransferError::NotSettings);
         };
         let mut merged = toml::Table::try_from(self.file()).unwrap_or_default();
+        let mut ignored = Vec::new();
         for (section, values) in incoming {
             let toml::Value::Table(values) = values else {
+                ignored.push(section.clone());
                 continue;
             };
-            if !TRANSFERRED.contains(&section.as_str()) {
-                continue;
-            }
             let target = merged
                 .entry(section.clone())
                 .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-            if let toml::Value::Table(target) = target {
-                for (key, value) in values {
+            for (key, value) in values {
+                // Unknown, or this computer's own: not taken, and said so.
+                if !sensitive::carried(section, key) {
+                    ignored.push(format!("{section}.{key}"));
+                } else if let toml::Value::Table(target) = target {
                     target.insert(key.clone(), value.clone());
                 }
             }
@@ -2168,7 +2286,11 @@ impl Settings {
         let file: SettingsFile = merged.try_into().map_err(|_| TransferError::NotSettings)?;
         let settings = Self::from_file(file);
         let changes = changes(&self.transferable(), &settings.transferable());
-        Ok(SettingsImport { settings, changes })
+        Ok(SettingsImport {
+            settings,
+            changes,
+            ignored,
+        })
     }
 }
 
@@ -2209,6 +2331,34 @@ pub struct SettingsImport {
     pub settings: Settings,
     /// Each setting the file changes, in the file's order of sections and keys.
     pub changes: Vec<SettingChange>,
+    /// Each setting the file holds that is not imported, as `section.key`: one this version
+    /// does not know, or one that stays on this computer, such as the PIN. Said in the
+    /// preview rather than dropped unseen.
+    pub ignored: Vec<String>,
+}
+
+impl SettingsImport {
+    /// The changes shown first, each with why, as the C# preview lists them before the
+    /// others: every one of them, whatever the file's order.
+    pub fn sensitive(&self) -> impl Iterator<Item = &SettingChange> {
+        self.changes
+            .iter()
+            .filter(|change| change.sensitivity.is_some())
+    }
+
+    /// The changes shown first for `why`, in the file's order.
+    pub fn flagged(&self, why: Sensitivity) -> impl Iterator<Item = &SettingChange> {
+        self.changes
+            .iter()
+            .filter(move |change| change.sensitivity == Some(why))
+    }
+
+    /// The other changes, in the file's order.
+    pub fn benign(&self) -> impl Iterator<Item = &SettingChange> {
+        self.changes
+            .iter()
+            .filter(|change| change.sensitivity.is_none())
+    }
 }
 
 /// One setting a portable settings file changes.
@@ -2220,6 +2370,8 @@ pub struct SettingChange {
     pub before: Option<SettingValue>,
     /// Its value from the file; `None` when it has none.
     pub after: Option<SettingValue>,
+    /// Why it is shown first; `None` for a setting shown among the others.
+    pub sensitivity: Option<Sensitivity>,
 }
 
 /// A setting's value, as a change shows it.
@@ -2280,6 +2432,7 @@ fn changes(before: &toml::Table, after: &toml::Table) -> Vec<SettingChange> {
                     key: format!("{section}.{key}"),
                     before: old.map(SettingValue::of),
                     after: new.map(SettingValue::of),
+                    sensitivity: sensitive::sensitivity(section, key, old, new),
                 });
             }
         }
@@ -2292,14 +2445,17 @@ mod transfer_tests {
     use super::{Settings, TRANSFERRED};
 
     /// The sections that never travel: this computer's PIN and lockouts, its last look for a
-    /// newer release, the gateway its profile form starts on, and the file's own version.
-    const HELD_BACK: [&str; 6] = [
+    /// newer release, the gateway its profile form starts on, the legacy migration it
+    /// declined, the welcome tour it saw, and the file's own version.
+    const HELD_BACK: [&str; 8] = [
         "version",
         "vault_unlock",
         "pin",
         "update_check",
         "profile_form",
         "tools",
+        "legacy_migration",
+        "onboarding",
     ];
 
     #[test]

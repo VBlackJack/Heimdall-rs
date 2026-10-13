@@ -19,10 +19,11 @@
 
 use std::path::Path;
 
-use heimdall_ssh::KnownHosts;
 use heimdall_ssh::known_hosts_import::{
     HostKeyNote, HostKeyStatus, HostKeysImported, Malformed, assess, import, parse,
+    trusted_fingerprint,
 };
+use heimdall_ssh::{KnownHosts, Pins, PublicKey, fingerprint};
 
 /// A host key fixture's `type base64` part.
 fn key(name: &str) -> String {
@@ -623,4 +624,39 @@ fn at_startup_a_pinned_server_takes_its_pinned_key_in_full_and_nothing_else() {
         ],
         "the pin, then the key recorded from it, contradict the others"
     );
+}
+
+/// A host key fixture, read.
+fn public(name: &str) -> PublicKey {
+    PublicKey::from_openssh(&key(name)).expect("key")
+}
+
+#[test]
+fn the_fingerprint_a_server_is_trusted_by_is_its_pin_or_its_recorded_key() {
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    let ed = public("host-ed25519");
+    let other = fingerprint(&public("host-ed25519-other"));
+    assert_eq!(
+        trusted_fingerprint(&store, "gw.lab", 2222).expect("read"),
+        None,
+        "not trusted"
+    );
+    assert!(
+        Pins::beside(store.path())
+            .pin("gw.lab", 2222, &other)
+            .expect("pinned")
+    );
+    assert_eq!(
+        trusted_fingerprint(&store, "gw.lab", 2222).expect("read"),
+        Some(other),
+        "the pin"
+    );
+    store.learn("full.lab", 22, &ed).expect("learnt");
+    assert_eq!(
+        trusted_fingerprint(&store, "full.lab", 22).expect("read"),
+        Some(fingerprint(&ed)),
+        "the key recorded in full"
+    );
+    assert!(trusted_fingerprint(&store, "bad host", 22).is_err());
 }

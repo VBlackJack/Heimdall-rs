@@ -28,9 +28,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use std::sync::Mutex;
+
 use heimdall_rdp::{
-    AcceptedCertificate, KnownRdpHosts, RdpConfig, RdpError, Refusal, Security, ServerCertificate,
-    Timeouts, connect_over,
+    AcceptedCertificate, KnownRdpHosts, Progress, RdpConfig, RdpError, Refusal, Security,
+    ServerCertificate, Step, Timeouts, connect_over,
 };
 use ironrdp::connector::sspi::credssp::{NStatusCode, TsRequest};
 use ironrdp::pdu::nego::{ConnectionConfirm, ResponseFlags, SecurityProtocol};
@@ -53,6 +55,9 @@ const KEY: &[u8] = include_bytes!("fixtures/server-key.der");
 const STATUS_PASSWORD_EXPIRED: u32 = 0xC000_0071;
 /// The `CredSSP` version Windows Server 2016 and later speak.
 const CREDSSP_VERSION: u32 = 6;
+
+/// The password the client logs on with: never to be found in what a failure says.
+const PASSWORD: &str = "hunter2-password";
 
 /// Bound on waiting for what the client does next.
 const WAIT: Duration = Duration::from_secs(10);
@@ -147,18 +152,31 @@ fn config(known_hosts: &std::path::Path) -> RdpConfig {
         kerberos: false,
         time_zone: None,
         desktop_scale: 100,
+        progress: None,
     }
 }
 
 async fn attempt(answer: Answer) -> RdpError {
+    attempt_followed(answer).await.0
+}
+
+/// [`attempt`], and the steps the connection reported on its way.
+async fn attempt_followed(answer: Answer) -> (RdpError, Vec<Step>) {
     let dir = tempfile::tempdir().expect("dir");
-    let config = config(&dir.path().join("known_rdp_hosts"));
+    let steps = Arc::new(Mutex::new(Vec::new()));
+    let followed = Arc::clone(&steps);
+    let config = RdpConfig {
+        progress: Some(Progress::new(move |step| {
+            followed.lock().expect("steps").push(step);
+        })),
+        ..config(&dir.path().join("known_rdp_hosts"))
+    };
     let (client, server) = tokio::io::duplex(1 << 16);
     let server = tokio::spawn(serve(server, answer));
     let credentials: heimdall_rdp::AskCredentials = Box::new(|| {
         Box::pin(std::future::ready(Some((
             "alice".to_owned(),
-            Zeroizing::new("hunter2-password".to_owned()),
+            Zeroizing::new(PASSWORD.to_owned()),
         ))))
     });
     let outcome = tokio::time::timeout(
@@ -174,24 +192,40 @@ async fn attempt(answer: Answer) -> RdpError {
     .await
     .expect("in time");
     server.await.expect("server");
+    let steps = steps.lock().expect("steps").clone();
     match outcome {
         Ok(_) => panic!("the connection opened"),
-        Err(error) => error,
+        Err(error) => (error, steps),
     }
 }
 
 #[tokio::test]
 async fn a_logon_refused_with_an_expired_password_says_so() {
-    let error = attempt(Answer::Status(STATUS_PASSWORD_EXPIRED)).await;
+    let (error, steps) = attempt_followed(Answer::Status(STATUS_PASSWORD_EXPIRED)).await;
     assert!(
-        matches!(error, RdpError::Authentication(Refusal::PasswordExpired)),
+        matches!(
+            error,
+            RdpError::Authentication {
+                refusal: Refusal::PasswordExpired,
+                status: Some(STATUS_PASSWORD_EXPIRED),
+            }
+        ),
         "{error:?}"
     );
+    // The C# "Code" of the failure card, and never the password in anything it says.
+    for said in [format!("{error:?}"), error.to_string()] {
+        assert!(!said.contains(PASSWORD), "{said}");
+    }
+    // The server answered, the logon was refused: Connecting, never Loading.
+    assert_eq!(steps, [Step::Connecting]);
 }
 
 #[tokio::test]
 async fn a_server_closing_before_the_account_was_sent_did_not_refuse_it() {
     // Only the negotiate message went out: nothing the server could have refused.
     let error = attempt(Answer::Close).await;
-    assert!(!matches!(error, RdpError::Authentication(_)), "{error:?}");
+    assert!(
+        !matches!(error, RdpError::Authentication { .. }),
+        "{error:?}"
+    );
 }

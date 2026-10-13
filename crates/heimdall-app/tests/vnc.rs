@@ -45,7 +45,7 @@ const RESPONSE: [u8; 16] = [
 ];
 /// Client messages between the server's init and the session: pixel format, encodings,
 /// the first update request.
-const OPENING_REQUESTS: usize = 20 + 48 + 10;
+const OPENING_REQUESTS: usize = 20 + 4 + 16 * 4 + 10;
 
 fn app(dir: &Path, port: u16, view_only: bool) -> App {
     let profiles_file = dir.join("profiles.toml");
@@ -235,8 +235,10 @@ async fn a_vnc_tab_asks_the_password_and_sends_input_in_rfb_terms() {
                 vertical: true,
                 units: 120,
             },
+            // At Digit1: the server takes no scancodes, so the keysym alone goes.
             DesktopInput::Key {
                 scancode: None,
+                xt: Some(0x02),
                 keysym: Some(0x21),
                 pressed: true,
             },
@@ -272,6 +274,7 @@ async fn a_view_only_tab_sends_nothing() {
             DesktopInput::Move { x: 1, y: 1 },
             DesktopInput::Key {
                 scancode: None,
+                xt: None,
                 keysym: Some(0x61),
                 pressed: true,
             },

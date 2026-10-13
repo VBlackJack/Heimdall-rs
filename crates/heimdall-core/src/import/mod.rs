@@ -26,3 +26,4 @@ pub mod openssh;
 pub mod putty;
 pub mod rdcman;
 pub mod rdp_file;
+pub mod rdpmanager;

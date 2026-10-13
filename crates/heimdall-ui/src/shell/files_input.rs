@@ -50,7 +50,7 @@ impl Shell {
     /// dropped back while it lasts or settles, is not taken.
     pub(super) fn file_dropped(&mut self, place: DropPlace, path: PathBuf) -> Task<Message> {
         if place == DropPlace::Main {
-            self.files_hovered = false;
+            self.files_hovered = 0;
         }
         if self.dragged_out.swallows(&path) {
             log::debug!("a file dragged out and dropped back: not taken");
