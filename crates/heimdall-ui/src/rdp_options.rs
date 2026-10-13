@@ -694,20 +694,59 @@ pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
     page.into()
 }
 
-/// A resolution mode as the list names it.
+/// A resolution mode as the list names it; `available` false for the multi-monitor mode on
+/// a computer with fewer than [`MULTI_MONITOR_SCREENS`] screens, said so, as the C# item is
+/// disabled with its tooltip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ResolutionChoice(Resolution);
+struct ResolutionChoice {
+    mode: Resolution,
+    available: bool,
+}
 
 impl std::fmt::Display for ResolutionChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&match self.0 {
+        f.write_str(&match self.mode {
             Resolution::FitWindow => fl!("ui-profile-resolution-fit-window"),
             Resolution::Fixed => fl!("ui-profile-resolution-fixed"),
             Resolution::SmartSizing => fl!("ui-profile-resolution-smart-sizing"),
+            Resolution::MultiMonitor if !self.available => {
+                fl!("ui-profile-resolution-multi-monitor-unavailable")
+            }
             Resolution::MultiMonitor => fl!("ui-profile-resolution-multi-monitor"),
             Resolution::Auto => fl!("ui-profile-resolution-auto"),
         })
     }
+}
+
+/// The C# resolution mode list of `draft`: fitting the window, fixed, smart sizing and
+/// multi-monitor, the last one out of reach unless `monitors` count several screens, as the
+/// C# `IsMultimonAvailable` (`RdpDisplayCapabilities.IsMultimonAvailable`). The automatic
+/// mode is not offered, as the C# combo has no item for it; a profile in it shows it as the
+/// list's value, where the C# combo shows none.
+fn resolution_modes<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Element<'a, Message> {
+    let current = draft.rdp_options.resolution;
+    let available = monitors.len() >= MULTI_MONITOR_SCREENS;
+    let entry = |mode| ResolutionChoice {
+        mode,
+        available: mode != Resolution::MultiMonitor || available,
+    };
+    pick_list(
+        Resolution::LISTED.map(entry),
+        Some(entry(current)),
+        move |picked: ResolutionChoice| match picked.mode {
+            // The C# disabled item cannot be picked: the mode stays.
+            Resolution::MultiMonitor if !picked.available => {
+                choice(ProfileChoice::Resolution(current))
+            }
+            // As the C# `OnRdpResolutionModeChanged`, which spans the monitors with it.
+            Resolution::MultiMonitor => choice(ProfileChoice::MultiMonitor(true)),
+            mode => choice(ProfileChoice::Resolution(mode)),
+        },
+    )
+    .style(styles::pick_list)
+    .menu_style(styles::menu)
+    .width(Length::Fill)
+    .into()
 }
 
 /// A proportion as the list names it.
@@ -802,14 +841,7 @@ pub fn resolution<'a>(
         text(fl!("ui-profile-resolution-title")),
         text(fl!("ui-profile-resolution-desc")).size(font_size::CAPTION),
         text(fl!("ui-profile-resolution-mode")).size(font_size::CAPTION),
-        pick_list(
-            Resolution::ALL.map(ResolutionChoice),
-            Some(ResolutionChoice(options.resolution)),
-            |picked: ResolutionChoice| choice(ProfileChoice::Resolution(picked.0)),
-        )
-        .style(styles::pick_list)
-        .menu_style(styles::menu)
-        .width(Length::Fill),
+        resolution_modes(draft, monitors),
     ]
     .spacing(spacing::XS);
     if options.resolution == Resolution::Auto {
