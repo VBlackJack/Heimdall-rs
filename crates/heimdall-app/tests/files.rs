@@ -183,6 +183,7 @@ fn remote_entry(name: &[u8], kind: EntryKind, size: u64) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     }

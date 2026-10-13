@@ -30,7 +30,8 @@ use std::time::SystemTime;
 use heimdall_app::external_edit::EditSession;
 use heimdall_app::files::{
     Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
-    SortColumn, Special, Transfer, TransferState, local_segments, remote_segments, symbolic_mode,
+    SortColumn, Special, Transfer, TransferState, local_segments, owner_text, remote_segments,
+    symbolic_mode,
 };
 use heimdall_app::local_properties::LocalProperties;
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
@@ -469,6 +470,11 @@ fn row_tooltip<'a, E: Listed>(
             permissions = symbolic_mode(mode)
         ));
     }
+    // The owner, which its column may cut, as the C# owner cell's tooltip says it whole.
+    let owner = owner_text(entry);
+    if !owner.is_empty() {
+        lines.push(fl!("ui-files-tooltip-owner", owner = owner));
+    }
     tooltip(
         line,
         text(lines.join("\n")).size(font_size::CAPTION),
@@ -519,7 +525,13 @@ pub fn properties<'a>(
                 .map(|mode| format!("{} ({mode:o})", symbolic_mode(mode)))
                 .unwrap_or_default(),
         ),
-        (fl!("ui-files-properties-owner"), number(properties.owner)),
+        (
+            fl!("ui-files-properties-owner"),
+            properties
+                .owner_name
+                .clone()
+                .unwrap_or_else(|| number(properties.owner)),
+        ),
         (fl!("ui-files-properties-group"), number(properties.group)),
         (fl!("ui-files-properties-path"), properties.path.clone()),
     ];
@@ -625,7 +637,7 @@ fn cell_text<E: Listed>(entry: &E, column: SortColumn) -> String {
         },
         SortColumn::Modified => entry.modified().map(modified_text).unwrap_or_default(),
         SortColumn::Permissions => entry.permissions().map(symbolic_mode).unwrap_or_default(),
-        SortColumn::Owner => entry.owner().map(|uid| uid.to_string()).unwrap_or_default(),
+        SortColumn::Owner => owner_text(entry),
     }
 }
 
@@ -802,7 +814,7 @@ fn entry_row<'a, E: Listed>(
     let mut cells = row![].spacing(spacing::SM);
     for (column, width) in columns.iter().zip(laid.iter().copied()) {
         // On one line, ended with an ellipsis where the column ends, as the C# cells'
-        // `TextTrimming="CharacterEllipsis"`; the row's tooltip says the most of it.
+        // `TextTrimming="CharacterEllipsis"`; the row's tooltip says the whole of it.
         let cell = ellipsis::text(cell_text(entry, *column)).width(Length::Fill);
         let cell: Element<'a, Message> = match cell_size(*column) {
             Some(small) => cell.size(small).into(),

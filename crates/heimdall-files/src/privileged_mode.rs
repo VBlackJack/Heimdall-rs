@@ -350,6 +350,7 @@ fn listed_entry(record: &[&[u8]; FIELDS]) -> Option<ListedEntry> {
             modified: modified(time),
             permissions: Some(permissions & 0o7777),
             owner: small(owner),
+            owner_name: None,
             group: small(group),
         },
         inode: number(inode)?,

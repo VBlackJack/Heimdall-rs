@@ -176,6 +176,8 @@ pub struct RemoteEntry {
     pub permissions: Option<u32>,
     /// The owner's user number.
     pub owner: Option<u32>,
+    /// The owner's name an FTP server gave, made safe.
+    pub owner_name: Option<String>,
     /// The group's number.
     pub group: Option<u32>,
     /// Its inode, when listed as root: what a delete through sudo checks again.
@@ -199,6 +201,7 @@ impl RemoteEntry {
             modified: item.modified,
             permissions: item.permissions,
             owner: item.owner,
+            owner_name: item.owner_name.as_deref().map(server_text),
             group: item.group,
             inode: None,
         }
@@ -280,10 +283,38 @@ pub trait Listed {
     fn permissions(&self) -> Option<u32> {
         None
     }
-    /// Owner.
+    /// Owner's user number.
     fn owner(&self) -> Option<u32> {
         None
     }
+    /// Owner's name, when the server gave one.
+    fn owner_name(&self) -> Option<&str> {
+        None
+    }
+}
+
+/// The owner `entry` shows: the name the server gave, as the C# FTP listing shows it, else
+/// the user number, as the C# SFTP listing shows it; nothing when neither was said.
+#[must_use]
+pub fn owner_text<E: Listed>(entry: &E) -> String {
+    entry.owner_name().map_or_else(
+        || entry.owner().map(|uid| uid.to_string()).unwrap_or_default(),
+        str::to_owned,
+    )
+}
+
+/// How the owner column orders `a` and `b`: those with no name first, by user number, none
+/// before any; then those named, by name whatever its case, then as written, then by
+/// number. A listing gives names or numbers, so each is ordered as it reads.
+fn owner_order<E: Listed>(a: &E, b: &E) -> std::cmp::Ordering {
+    let name = |entry: &E| {
+        entry
+            .owner_name()
+            .map(|name| (name.to_lowercase(), name.to_owned()))
+    };
+    name(a)
+        .cmp(&name(b))
+        .then_with(|| a.owner().cmp(&b.owner()))
 }
 
 impl Listed for RemoteEntry {
@@ -304,6 +335,9 @@ impl Listed for RemoteEntry {
     }
     fn owner(&self) -> Option<u32> {
         self.owner
+    }
+    fn owner_name(&self) -> Option<&str> {
+        self.owner_name.as_deref()
     }
 }
 
@@ -332,7 +366,7 @@ pub fn sort_entries<E: Listed>(entries: &mut [E], sort: Sort) {
             SortColumn::Size => a.size().cmp(&b.size()),
             SortColumn::Modified => a.modified().cmp(&b.modified()),
             SortColumn::Permissions => a.permissions().cmp(&b.permissions()),
-            SortColumn::Owner => a.owner().cmp(&b.owner()),
+            SortColumn::Owner => owner_order(a, b),
         };
         let by_column = if sort.descending {
             by_column.reverse()
@@ -1881,6 +1915,8 @@ pub struct FileProperties {
     pub permissions: Option<u32>,
     /// Its owner's user number.
     pub owner: Option<u32>,
+    /// Its owner's name an FTP server gave, made safe.
+    pub owner_name: Option<String>,
     /// Its group's number.
     pub group: Option<u32>,
     /// Its whole path, made safe.
@@ -2307,7 +2343,8 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use super::{
-        EntryKind, Pane, RemoteEntry, Sort, SortColumn, sort_entries, sort_remote, symbolic_mode,
+        EntryKind, Pane, RemoteEntry, Sort, SortColumn, owner_text, sort_entries, sort_remote,
+        symbolic_mode,
     };
 
     /// A file listed with its size, time, mode and owner.
@@ -2319,6 +2356,21 @@ mod tests {
             modified: Some(UNIX_EPOCH + Duration::from_secs(at)),
             permissions: Some(mode),
             owner: Some(owner),
+            owner_name: None,
+            group: None,
+        })
+    }
+
+    /// A file an FTP server listed with its owner's name and maybe a user number.
+    fn owned_by(name: &str, owner: Option<&str>, uid: Option<u32>) -> RemoteEntry {
+        RemoteEntry::from_listing(RemoteItem {
+            name: name.as_bytes().to_vec(),
+            kind: ItemKind::File,
+            size: None,
+            modified: None,
+            permissions: None,
+            owner: uid,
+            owner_name: owner.map(str::to_owned),
             group: None,
         })
     }
@@ -2401,6 +2453,60 @@ mod tests {
             "dir b d C a",
             "the folder first, the other way too"
         );
+    }
+
+    #[test]
+    fn the_owner_shown_is_the_name_given_else_the_user_number() {
+        assert_eq!(
+            owner_text(&owned_by("a", Some("www-data"), Some(33))),
+            "www-data"
+        );
+        assert_eq!(owner_text(&owned_by("b", None, Some(1000))), "1000");
+        assert_eq!(owner_text(&owned_by("c", None, None)), "");
+        // A name from the server is made safe before it is shown.
+        assert_eq!(
+            owner_text(&owned_by("d", Some("ev\u{202e}il\n"), None)),
+            "evil"
+        );
+    }
+
+    #[test]
+    fn owners_sort_by_number_unnamed_first_then_by_name_whatever_its_case() {
+        let mut entries = vec![
+            owned_by("named-bob", Some("bob"), None),
+            owned_by("uid-1000", None, Some(1000)),
+            owned_by("named-Alice", Some("Alice"), None),
+            owned_by("unknown", None, None),
+            owned_by("named-alice", Some("alice"), Some(7)),
+            owned_by("uid-33", None, Some(33)),
+        ];
+        sort_entries(
+            &mut entries,
+            Sort {
+                column: SortColumn::Owner,
+                descending: false,
+            },
+        );
+        assert_eq!(
+            labels(&entries),
+            [
+                "unknown",
+                "uid-33",
+                "uid-1000",
+                "named-Alice",
+                "named-alice",
+                "named-bob"
+            ],
+            "numbers as numbers, 33 before 1000; Alice before alice as written"
+        );
+        sort_entries(
+            &mut entries,
+            Sort {
+                column: SortColumn::Owner,
+                descending: true,
+            },
+        );
+        assert_eq!(labels(&entries)[0], "named-bob");
     }
 
     fn pane(names: &[&str]) -> Pane<(), RemoteEntry> {
@@ -2568,6 +2674,7 @@ mod tests {
             modified: None,
             permissions: None,
             owner: None,
+            owner_name: None,
             group: None,
         })
     }

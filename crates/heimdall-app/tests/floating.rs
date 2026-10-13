@@ -855,6 +855,7 @@ async fn files_tab(app: &mut App, id: &str) -> TabId {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     };

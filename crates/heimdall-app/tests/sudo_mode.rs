@@ -416,6 +416,7 @@ fn entry(name: &str, kind: EntryKind, inode: u64) -> RemoteEntry {
         modified: None,
         permissions: Some(0o644),
         owner: None,
+        owner_name: None,
         group: None,
         inode: Some(inode),
     }

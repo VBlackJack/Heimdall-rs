@@ -1016,6 +1016,7 @@ fn remote_file(name: &str) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     }

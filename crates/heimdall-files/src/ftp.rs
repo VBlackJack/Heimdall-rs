@@ -835,16 +835,53 @@ fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
         .iter()
         .filter_map(|line| {
             if machine {
-                ListParser::parse_mlsd(line).ok()
+                let listed = ListParser::parse_mlsd(line).ok()?;
+                Some((listed, machine_owner(line)))
+            } else if let Ok(listed) = ListParser::parse_posix(line) {
+                Some((listed, unix_owner(line)))
             } else {
-                ListParser::parse_posix(line)
-                    .or_else(|_| ListParser::parse_dos(line))
-                    .ok()
+                // A DOS line names no owner.
+                Some((ListParser::parse_dos(line).ok()?, None))
             }
         })
-        .filter(|listed| !matches!(listed.name(), "." | ".."))
-        .map(|listed| item(&listed))
+        .filter(|(listed, _)| !matches!(listed.name(), "." | ".."))
+        .map(|(listed, owner_name)| RemoteItem {
+            owner_name,
+            ..item(&listed)
+        })
         .collect()
+}
+
+/// The facts of an `MLSD` line naming its owner, the most explicit first: `UNIX.ownername`,
+/// as `ProFTPD` writes it, then `UNIX.owner`.
+const OWNER_FACTS: [&str; 2] = ["unix.ownername", "unix.owner"];
+
+/// The owner's name a `LIST` line in UNIX format gives, as the C# keeps it in
+/// `FtpListItem.RawOwner`: its third field, after the mode and the link count. A number is the owner's
+/// user number, which the parser already reads: no name then.
+fn unix_owner(line: &str) -> Option<String> {
+    owner_name(line.split_whitespace().nth(2)?)
+}
+
+/// The owner's name an `MLSD` line gives in its facts, before the space that starts the
+/// name of the entry; facts are named whatever their case.
+fn machine_owner(line: &str) -> Option<String> {
+    let (facts, _) = line.split_once(' ')?;
+    let facts: Vec<(&str, &str)> = facts
+        .split(';')
+        .filter_map(|fact| fact.split_once('='))
+        .collect();
+    OWNER_FACTS.iter().find_map(|wanted| {
+        facts
+            .iter()
+            .find(|(fact, _)| fact.eq_ignore_ascii_case(wanted))
+            .and_then(|(_, value)| owner_name(value))
+    })
+}
+
+/// `said` as an owner's name: none when empty, or a number, which is a user number.
+fn owner_name(said: &str) -> Option<String> {
+    (!said.is_empty() && said.parse::<u32>().is_err()).then(|| said.to_owned())
 }
 
 /// Whether a delete goes into an entry of `kind` rather than deleting it: only a folder. A
@@ -885,6 +922,7 @@ fn item(listed: &Listed) -> RemoteItem {
         modified: (modified > UNIX_EPOCH).then_some(modified),
         permissions: Some(mode),
         owner: listed.uid(),
+        owner_name: None,
         group: listed.gid(),
     }
 }
@@ -935,7 +973,7 @@ mod tests {
     use suppaftp::types::Response;
     use suppaftp::{FtpError, Status};
 
-    use super::{ftp_error, items, walks};
+    use super::{ftp_error, items, machine_owner, unix_owner, walks};
     use crate::{ItemKind, Refusal, RemoteError};
 
     fn kinds(lines: &[&str], machine: bool) -> Vec<(String, ItemKind)> {
@@ -987,6 +1025,78 @@ mod tests {
                 ("notes.txt".to_owned(), ItemKind::File),
             ]
         );
+    }
+
+    fn owners(lines: &[&str], machine: bool) -> Vec<(Option<u32>, Option<String>)> {
+        let lines: Vec<String> = lines.iter().map(|line| (*line).to_owned()).collect();
+        items(&lines, machine)
+            .into_iter()
+            .map(|item| (item.owner, item.owner_name))
+            .collect()
+    }
+
+    #[test]
+    fn a_unix_listing_keeps_the_owner_name_the_server_gives() {
+        let listed = owners(
+            &[
+                "drwxr-xr-x    2 www-data ftp          4096 Sep 29 10:00 logs",
+                "-rw-r--r--    1 1000     1000           12 Sep 29 10:00 notes.txt",
+                "lrwxrwxrwx    1 Admin    ftp             4 Sep 29 10:00 link -> logs",
+            ],
+            false,
+        );
+        assert_eq!(
+            listed,
+            [
+                (None, Some("www-data".to_owned())),
+                // A number is the user number, read as such: no name.
+                (Some(1000), None),
+                (None, Some("Admin".to_owned())),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dos_listing_names_no_owner() {
+        let listed = owners(&["10-13-26  10:00AM       <DIR>          logs"], false);
+        assert_eq!(listed, [(None, None)]);
+    }
+
+    #[test]
+    fn a_machine_listing_names_the_owner_by_its_facts_the_most_explicit_first() {
+        let listed = owners(
+            &[
+                "type=file;size=1;UNIX.owner=1000;UNIX.ownername=alice;UNIX.uid=1000; a",
+                "type=file;size=1;unix.owner=bob; b",
+                "type=file;size=1;unix.uid=1001;unix.owner=1001; c",
+                "type=file;size=1; d",
+            ],
+            true,
+        );
+        assert_eq!(
+            listed,
+            [
+                (Some(1000), Some("alice".to_owned())),
+                (None, Some("bob".to_owned())),
+                (Some(1001), None),
+                (None, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_owner_field_is_read_where_its_line_puts_it() {
+        assert_eq!(
+            unix_owner("-rw-r--r-- 1 julien staff 12 Sep 29 10:00 a b c").as_deref(),
+            Some("julien")
+        );
+        assert_eq!(unix_owner("-rw-r--r-- 1"), None);
+        // The entry's name is never read as a fact, even with a "=" in it.
+        assert_eq!(
+            machine_owner("type=file;size=1; unix.owner=eve").as_deref(),
+            None
+        );
+        assert_eq!(machine_owner("no-facts"), None);
     }
 
     #[test]

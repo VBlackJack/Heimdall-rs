@@ -327,6 +327,7 @@ async fn letters_typed_search_the_docked_sftp_pane_once_it_has_the_keyboard() {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     };

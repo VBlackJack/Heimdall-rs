@@ -121,6 +121,9 @@ pub struct RemoteItem {
     pub permissions: Option<u32>,
     /// The owner's user number, when the server says.
     pub owner: Option<u32>,
+    /// The owner's name, when the server gives one rather than a number: an FTP listing,
+    /// as the C# `FtpListItem.RawOwner`. SFTP gives the number alone, as the C# shows it.
+    pub owner_name: Option<String>,
     /// The group's number, when the server says.
     pub group: Option<u32>,
 }
@@ -501,6 +504,7 @@ fn sftp_item(entry: DirEntry) -> RemoteItem {
         // The permission bits alone: the file type is the kind.
         permissions: attributes.permissions.map(|mode| mode & PERMISSION_BITS),
         owner: attributes.uid_gid.map(|(uid, _)| uid),
+        owner_name: None,
         group: attributes.uid_gid.map(|(_, gid)| gid),
         name: entry.name,
     }
