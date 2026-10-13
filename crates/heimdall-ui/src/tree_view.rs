@@ -2033,12 +2033,6 @@ pub fn merge_axis_entries<'a>(host: TabId, tab: TabId) -> Element<'a, Message> {
     menu_card(entries).into()
 }
 
-/// How tall a tunnel row's menu is, about: it opens above the cursor, the panel being at the
-/// window's foot. Three entries of a menu's text and the button's room, a separator, the
-/// card's padding.
-pub const TUNNEL_MENU_HEIGHT: f32 =
-    3.0 * (font_size::BODY_LARGE * 1.3 + 10.0) + 1.0 + 2.0 * spacing::XS;
-
 /// A tunnel row's menu, as the C# one: Close Tunnel, Copy Local Port, then Close All Tunnels.
 pub fn tunnel_menu_entries<'a>(
     id: heimdall_app::tunnel::TunnelId,
