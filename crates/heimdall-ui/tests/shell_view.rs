@@ -5268,6 +5268,17 @@ fn windows_high_contrast_is_followed_and_high_contrast_can_be_chosen_by_hand() {
 }
 
 #[test]
+fn windows_reduced_motion_is_followed_while_the_window_is_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(!shell.reduced_motion(), "motion until Windows says");
+    let _ = shell.update(Message::SystemReducedMotion(true));
+    assert!(shell.reduced_motion());
+    let _ = shell.update(Message::SystemReducedMotion(false));
+    assert!(!shell.reduced_motion(), "turned back on");
+}
+
+#[test]
 fn tab_moves_between_fields_on_the_settings_page_and_in_a_dialog_but_a_tab_keeps_it() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, _, _) = connected_shell(dir.path());
