@@ -73,6 +73,7 @@ pub mod rdp_view;
 mod report;
 mod restore_view;
 pub mod route_test_view;
+pub mod scheduled_view;
 mod screens;
 mod screenshot;
 mod search_keys;

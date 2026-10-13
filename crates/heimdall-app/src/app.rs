@@ -127,6 +127,7 @@ mod resolution;
 mod route_test;
 mod run_in_shell;
 mod scheduled;
+mod scheduled_page;
 mod selection;
 mod session_events;
 mod session_restore;
@@ -191,6 +192,7 @@ use rdp_tab::ResizeFallback;
 pub use resolution::ResolutionChoice;
 pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
+pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -489,6 +491,8 @@ pub enum Message {
     Files(FilesMessage),
     /// Something about the tunnels the user opens by hand.
     Tunnel(TunnelMessage),
+    /// The Scheduled page and its dialog.
+    Scheduled(ScheduledMessage),
     /// Show a tab.
     SelectTab(TabId),
     /// A tab dragged onto another: it takes that one's place, within its own group, pinned
@@ -1000,6 +1004,7 @@ impl fmt::Debug for Message {
             Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
+            Self::Scheduled(_) => f.write_str("Scheduled"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::MoveTab { tab, onto } => {
                 write!(f, "MoveTab({} onto {})", tab.value(), onto.value())
@@ -2602,6 +2607,18 @@ pub enum Dialog {
     },
     /// The C# "New tunnel" dialog, as filled.
     NewTunnel(crate::tunnel::TunnelForm),
+    /// The dialog adding or editing a scheduled connection, as filled.
+    ScheduledTask(Box<crate::scheduled_form::ScheduledForm>),
+    /// Whether to delete a scheduled connection, as the C# danger confirmation.
+    ConfirmDeleteScheduled {
+        /// The task.
+        id: String,
+        /// Its session's name.
+        name: String,
+    },
+    /// Whether to close the scheduled connection's dialog and lose what was changed, as the
+    /// C# unsaved-changes question; the dialog kept to go back to.
+    ConfirmDiscardScheduled(Box<crate::scheduled_form::ScheduledForm>),
     /// A gateway on a tunnel's way, or a server `PuTTY` is to open, presented a key never
     /// seen: trusted, or neither opened.
     TunnelHostKey {
@@ -3615,6 +3632,10 @@ impl App {
             }
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),
+            Message::Scheduled(message) => {
+                self.scheduled_message(message);
+                Vec::new()
+            }
             message @ (Message::TestRoute { .. }
             | Message::StopRouteTest
             | Message::RouteTarget { .. }
@@ -3807,6 +3828,7 @@ impl App {
                 .or_else(|| self.dismiss_pin())
                 .or_else(|| self.dismiss_tunnel_key())
                 .or_else(|| self.dismiss_settings_export())
+                .or_else(|| self.dismiss_scheduled())
                 .unwrap_or_else(|| self.dismiss_dialog()),
             _ => self.post_connect_message(message),
         }
@@ -4833,6 +4855,14 @@ impl App {
                 self.confirm_import(dialog);
                 Vec::new()
             }
+            Some(Dialog::ScheduledTask(form)) => {
+                self.save_scheduled_form(*form);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDeleteScheduled { id, name }) => {
+                self.delete_scheduled(&id, name);
+                Vec::new()
+            }
             Some(Dialog::ConfirmCitrixImport(scan)) => {
                 self.import_citrix(*scan);
                 Vec::new()
@@ -5027,6 +5057,8 @@ impl App {
                 | Dialog::ConfigRecovered { .. }
                 | Dialog::PasswordSaveFailed { .. }
                 | Dialog::Shortcuts
+                // "Discard": the scheduled connection's dialog goes with what was changed.
+                | Dialog::ConfirmDiscardScheduled(_)
                 // Confirmed before: see `confirm_dialog`.
                 | Dialog::NewTunnel(_)
                 | Dialog::TunnelHostKey { .. },

@@ -1593,6 +1593,8 @@ enum Page {
     Tab,
     /// Every tunnel, as the C# Tunnels page.
     Tunnels,
+    /// The scheduled connections, as the C# Scheduled page.
+    Scheduled,
     /// About Heimdall, as the C# About page.
     About,
     /// The built-in tools, as the C# Tools page.
@@ -1605,14 +1607,15 @@ enum Page {
     },
 }
 
-/// A page of the window's navigation, as the C# toolbar's tabs. The C# Scheduled page comes
-/// with what it holds.
+/// A page of the window's navigation, as the C# toolbar's tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Destination {
     /// The sessions: the tree beside them.
     Sessions,
     /// Every tunnel.
     Tunnels,
+    /// The scheduled connections.
+    Scheduled,
     /// The built-in tools.
     Tools,
     /// The settings.
@@ -1623,9 +1626,10 @@ pub enum Destination {
 
 impl Destination {
     /// Every page, in the C# order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Sessions,
         Self::Tunnels,
+        Self::Scheduled,
         Self::Tools,
         Self::Settings,
         Self::About,
@@ -1635,6 +1639,7 @@ impl Destination {
         match self {
             Self::Sessions => fl!("ui-nav-sessions"),
             Self::Tunnels => fl!("ui-nav-tunnels"),
+            Self::Scheduled => fl!("ui-nav-scheduled"),
             Self::Tools => fl!("ui-nav-tools"),
             Self::Settings => fl!("ui-nav-settings"),
             Self::About => fl!("ui-nav-about"),
@@ -2959,6 +2964,7 @@ impl Shell {
                 match destination {
                     Destination::Sessions => self.page = Page::Tab,
                     Destination::Tunnels => self.page = Page::Tunnels,
+                    Destination::Scheduled => self.page = Page::Scheduled,
                     Destination::Tools => self.page = Page::Tools,
                     Destination::About => self.page = Page::About,
                     Destination::Settings => return self.view_message(&Message::ShowSettings),
@@ -3130,7 +3136,23 @@ impl Shell {
             passwords: self.password_store(),
             profile_tab: self.profile_tab,
             profile_refused: self.profile_refused,
+            scheduled: self.scheduled_dialog(),
         }
+    }
+
+    /// The sessions the scheduled connection's dialog offers, and when its task would run
+    /// next: worked out only while it is open.
+    fn scheduled_dialog(&self) -> Option<ScheduledDialogInputs> {
+        let Some(Dialog::ScheduledTask(form)) = &self.app.dialog else {
+            return None;
+        };
+        Some(ScheduledDialogInputs {
+            choices: self.app.scheduled_choices(),
+            preview: form.preview(
+                heimdall_app::time_zone::unix_now(),
+                &heimdall_app::time_zone::SystemClock,
+            ),
+        })
     }
 
     /// Whether the profile form is open with a protocol chosen, or left for a gateway it
@@ -3226,9 +3248,9 @@ impl Shell {
     }
 
     /// Whether a page of the navigation is shown in place of the tab: the settings, the
-    /// tunnels or About. The tab's keys are not its then.
+    /// tunnels, the scheduled connections or About. The tab's keys are not its then.
     fn page_over_tab(&self) -> bool {
-        self.settings_shown() || matches!(self.page, Page::Tunnels | Page::About)
+        self.settings_shown() || matches!(self.page, Page::Tunnels | Page::Scheduled | Page::About)
     }
 
     /// Whether the window is behind a gate: the lock screen, or the PIN asked at start.
@@ -4990,6 +5012,7 @@ impl Shell {
                 self.app.selected_tunnel(),
             ),
             Page::Tools => crate::tools::catalog::page(&self.app, &self.tools_search),
+            Page::Scheduled => crate::scheduled_view::page(&self.app),
             Page::About => crate::about_view::view(&self.app),
             Page::Settings { .. } => container(self.content())
                 .width(Length::Fill)
@@ -5003,6 +5026,7 @@ impl Shell {
         let shown = match self.page {
             Page::Tab => Destination::Sessions,
             Page::Tunnels => Destination::Tunnels,
+            Page::Scheduled => Destination::Scheduled,
             Page::Tools => Destination::Tools,
             Page::About => Destination::About,
             Page::Settings { .. } => Destination::Settings,
@@ -9360,6 +9384,16 @@ struct Forms<'a> {
     /// The settings' wait after connecting, in milliseconds: what an RDP profile leaving
     /// its own empty takes, said in the field.
     rdp_resize_delay: u32,
+    /// What the scheduled connection's dialog shows, while it is open.
+    scheduled: Option<ScheduledDialogInputs>,
+}
+
+/// What the scheduled connection's dialog shows beside its fields.
+struct ScheduledDialogInputs {
+    /// The sessions it offers.
+    choices: Vec<heimdall_app::ScheduledChoice>,
+    /// When its task would run next.
+    preview: Option<heimdall_app::scheduled_form::NextRunPreview>,
 }
 
 /// Whether a password typed now can be saved.
@@ -12863,6 +12897,14 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmSettingsImport(read) => crate::settings_file::import_question(read),
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
         Dialog::EditMacro(edited) => crate::macros_view::editor(edited),
+        Dialog::ScheduledTask(form) => {
+            let (choices, preview) = forms.scheduled.as_ref().map_or((&[][..], None), |inputs| {
+                (inputs.choices.as_slice(), inputs.preview)
+            });
+            crate::scheduled_view::dialog(form, choices, preview)
+        }
+        Dialog::ConfirmDeleteScheduled { name, .. } => crate::scheduled_view::delete_question(name),
+        Dialog::ConfirmDiscardScheduled(_) => crate::scheduled_view::discard_question(),
         Dialog::NewTunnel(form) => {
             crate::tunnels_view::new_tunnel(form, forms.gateways, forms.tunnel_problem)
         }

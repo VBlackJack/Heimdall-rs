@@ -76,6 +76,12 @@ pub enum ScheduledNotice {
     },
     /// A task waits for the workspace to be unlocked.
     Deferred(String),
+    /// A task for the profile of this name was created.
+    Added(String),
+    /// A task for the profile of this name was changed.
+    Updated(String),
+    /// A task for the profile of this name was deleted.
+    Deleted(String),
     /// A task was turned off after failing this many times in a row.
     Suspended {
         /// The profile's name, as the task recorded it.
@@ -111,7 +117,7 @@ struct Origin {
 #[derive(Debug, Default)]
 pub(super) struct Scheduler {
     /// The tasks, and their file.
-    tasks: ScheduledTasks,
+    pub(super) tasks: ScheduledTasks,
     /// Why the file was not read, when it was there and was not: the tasks are then kept
     /// for the run only, and the migration does not add to them.
     unread: Option<String>,
@@ -119,6 +125,8 @@ pub(super) struct Scheduler {
     origins: Vec<Origin>,
     /// The tasks due and not run yet: while the workspace was locked, or a dialog was open.
     held: Vec<String>,
+    /// The task selected on the Scheduled page.
+    pub(super) selected: Option<String>,
     /// What to say once the event being applied has changed what the tab shows.
     pending: Option<ScheduledNotice>,
     /// The tabs to close once the event being applied is done with them.
@@ -718,7 +726,7 @@ impl App {
     }
 
     /// Writes the tasks; a failure is logged, and they are kept for the run.
-    fn save_scheduled(&self) {
+    pub(super) fn save_scheduled(&self) {
         if let Err(error) = self.scheduler.tasks.save() {
             log::warn!("scheduled connections not saved: {error}");
         }
