@@ -97,6 +97,7 @@ use crate::finder::Finder;
 use crate::floating_view::{FloatEvent, FloatingWindow};
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
+use crate::menu_fit::menu_at;
 use crate::palette::Palette;
 pub use crate::profile_tabs::ProfileTab;
 use crate::report;
@@ -4680,23 +4681,13 @@ impl Shell {
             layers = layers.push(overlay);
         }
         if let Some((entries, at)) = open_menu {
-            // A tunnel row is at the window's foot: its menu opens above the cursor.
-            let y = if matches!(self.menu, Some((TreeMenu::Tunnel(_), _))) {
-                (at.y - tree_view::TUNNEL_MENU_HEIGHT).max(0.0)
-            } else {
-                at.y
-            };
+            // Kept whole and inside the window, as a WPF ContextMenu: near the right edge it
+            // opens left of the pointer, near the foot (a tunnel row) above it.
             // Opaque: what is under the menu is neither hovered nor clicked.
             layers = layers.push(opaque(
-                mouse_area(
-                    pin(entries)
-                        .x(at.x)
-                        .y(y)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
-                )
-                .on_press(Message::CloseTreeMenu)
-                .on_right_press(Message::CloseTreeMenu),
+                mouse_area(menu_at(entries, at))
+                    .on_press(Message::CloseTreeMenu)
+                    .on_right_press(Message::CloseTreeMenu),
             ));
         }
         container(CursorTracker::new(layers, self.cursor.clone()))

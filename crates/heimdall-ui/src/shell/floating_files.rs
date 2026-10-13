@@ -22,13 +22,14 @@ use std::time::Instant;
 
 use heimdall_app::files::{FilesKey, Side};
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
-use iced::widget::{mouse_area, opaque, operation, pin};
-use iced::{Element, Length, Task, window};
+use iced::widget::{mouse_area, opaque, operation};
+use iced::{Element, Task, window};
 
 use super::{Message, Shell};
 use crate::drop_batch::DropPlace;
 use crate::files_drag::FilesDrag;
 use crate::floating_view::{FloatEvent, PaneField, field_id, files_menu_tab};
+use crate::menu_fit::menu_at;
 use crate::tree_view::TreeMenu;
 
 impl Shell {
@@ -197,16 +198,11 @@ impl Shell {
             .as_ref()
             .filter(|(menu, _)| files_menu_tab(menu) == Some(tab))?;
         let entries = self.open_menu_entries(menu)?;
+        // Fitted to its window as the main window's menus.
         Some(opaque(
-            mouse_area(
-                pin(entries)
-                    .x(at.x)
-                    .y(at.y)
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            )
-            .on_press(Message::CloseTreeMenu)
-            .on_right_press(Message::CloseTreeMenu),
+            mouse_area(menu_at(entries, *at))
+                .on_press(Message::CloseTreeMenu)
+                .on_right_press(Message::CloseTreeMenu),
         ))
     }
 }
