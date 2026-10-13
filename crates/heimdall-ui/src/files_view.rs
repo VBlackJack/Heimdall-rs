@@ -44,6 +44,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Font, Length, Theme};
 
+use crate::ellipsis;
 use crate::i18n::fl;
 use crate::icons::{self, Hue, Icon, Tint};
 use crate::shell::Message;
@@ -65,8 +66,9 @@ const MODIFIED_WIDTH: f32 = 130.0;
 /// Width of the permissions column until resized, in logical pixels.
 const PERMISSIONS_WIDTH: f32 = 90.0;
 
-/// Width of the owner column until resized, in logical pixels.
-const OWNER_WIDTH: f32 = 55.0;
+/// Width of the owner column until resized, in logical pixels, as the C#
+/// `EmbeddedSftpView.xaml` column's.
+const OWNER_WIDTH: f32 = 90.0;
 
 /// Narrowest the size column is resized to, in logical pixels.
 const SIZE_MIN_WIDTH: f32 = 40.0;
@@ -673,11 +675,12 @@ fn headers<'a, E: Listed>(
         .iter()
         .zip(laid.iter().copied())
         .map(|(column, width)| {
+            // On one line, ended with an ellipsis where the column ends, as the C# header's.
             button(
-                text(column_title(*column, sort))
+                ellipsis::text(column_title(*column, sort))
+                    .width(Length::Fill)
                     .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .wrapping(text::Wrapping::None),
+                    .style(text::secondary),
             )
             .style(styles::subtle)
             .padding(0)
@@ -798,7 +801,9 @@ fn entry_row<'a, E: Listed>(
     let on_press = files(FilesMessage::Select { tab, side, index });
     let mut cells = row![].spacing(spacing::SM);
     for (column, width) in columns.iter().zip(laid.iter().copied()) {
-        let cell = text(cell_text(entry, *column)).wrapping(text::Wrapping::None);
+        // On one line, ended with an ellipsis where the column ends, as the C# cells'
+        // `TextTrimming="CharacterEllipsis"`; the row's tooltip says the most of it.
+        let cell = ellipsis::text(cell_text(entry, *column)).width(Length::Fill);
         let cell: Element<'a, Message> = match cell_size(*column) {
             Some(small) => cell.size(small).into(),
             None => row![entry_icon(entry, side), cell]
