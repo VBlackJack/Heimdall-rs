@@ -2704,3 +2704,224 @@ async fn a_download_walk_reports_its_entries_every_25() {
     .expect("planned");
     assert_eq!(reports, [25, 50]);
 }
+
+/// The folder entry at the top of `side`, "logs" or "docs", opened: its listing on its
+/// way, the entries of the folder left still shown.
+fn another_on_its_way(app: &mut App, tab: TabId, side: Side) -> Vec<Effect> {
+    files(
+        app,
+        FilesMessage::Open {
+            tab,
+            side,
+            index: 0,
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_servers_entry_is_acted_on_in_the_folder_it_was_listed_from() {
+    use heimdall_app::files::FileProperties;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let side = Side::Remote;
+    assert!(matches!(
+        another_on_its_way(&mut app, tab, side).as_slice(),
+        [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/srv/logs"
+    ));
+
+    for failed in [false, true] {
+        if failed {
+            // The listing failed: the folder asked for stays named, its entries never came.
+            files(
+                &mut app,
+                FilesMessage::RemoteListed {
+                    tab,
+                    result: Err(FilesError::IsLink),
+                },
+            );
+        }
+        select(&mut app, tab, side, 1);
+        let effects = files(&mut app, FilesMessage::CopyPath { tab, side });
+        assert!(
+            matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if text == "/srv/a.txt"),
+            "failed {failed}: {effects:?}"
+        );
+    }
+
+    files(&mut app, FilesMessage::ShowProperties { tab, side });
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::FileProperties(properties))
+            if **properties == FileProperties {
+                name: "a.txt".to_owned(),
+                kind: EntryKind::File,
+                size: Some(4096),
+                modified: None,
+                permissions: None,
+                owner: None,
+                group: None,
+                path: "/srv/a.txt".to_owned(),
+            }
+    ));
+    app.update(Message::DismissDialog);
+
+    files(&mut app, FilesMessage::AskRename { tab, side });
+    files(&mut app, FilesMessage::NameEdited("c.txt".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteRename { from, to, .. } => {
+            assert_eq!(from.as_bytes(), b"/srv/a.txt");
+            assert_eq!(to.as_bytes(), b"/srv/c.txt");
+        }
+        other => panic!("{other:?}"),
+    }
+
+    select(&mut app, tab, side, 1);
+    files(&mut app, FilesMessage::AskDelete { tab, side });
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteRemove { path, .. } => assert_eq!(path.as_bytes(), b"/srv/a.txt"),
+        other => panic!("{other:?}"),
+    }
+    files(
+        &mut app,
+        FilesMessage::BatchStepDone {
+            tab,
+            result: Ok(()),
+        },
+    );
+
+    select(&mut app, tab, side, 1);
+    let effects = files(&mut app, FilesMessage::EditIntegrated { tab });
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenEditor { remote, .. }] if remote.as_bytes() == b"/srv/a.txt"),
+        "{effects:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_servers_entry_is_moved_and_opened_from_the_folder_it_was_listed_from() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let side = Side::Remote;
+    another_on_its_way(&mut app, tab, side);
+
+    select(&mut app, tab, side, 1);
+    let effects = files(
+        &mut app,
+        FilesMessage::DropEntries {
+            tab,
+            from: side,
+            onto: side,
+            into: Some(0),
+        },
+    );
+    let moves = match effects.as_slice() {
+        [Effect::MoveRemote { moves, .. }] => moves.clone(),
+        other => panic!("expected a move, got {other:?}"),
+    };
+    assert_eq!(
+        moves,
+        vec![(
+            RemotePath::from("/srv/a.txt"),
+            RemotePath::from("/srv/logs/a.txt")
+        )]
+    );
+
+    // Opening the folder entry again lists it, not a folder of its name inside it.
+    assert!(matches!(
+        another_on_its_way(&mut app, tab, side).as_slice(),
+        [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/srv/logs"
+    ));
+
+    // A new folder is made in the folder asked for, the one named above the list, which
+    // is listed again once it is made.
+    files(&mut app, FilesMessage::AskNewFolder { tab, side });
+    files(&mut app, FilesMessage::NameEdited("fresh".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteMakeFolder { path, .. } => {
+            assert_eq!(path.as_bytes(), b"/srv/logs/fresh");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn an_entry_of_this_computer_is_acted_on_in_the_folder_it_was_listed_from() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let side = Side::Local;
+    let docs = dir.path().join("docs");
+    let listed = dir.path().join("b.txt");
+    assert!(matches!(
+        another_on_its_way(&mut app, tab, side).as_slice(),
+        [Effect::ListLocal { path, .. }] if *path == docs
+    ));
+
+    select(&mut app, tab, side, 1);
+    let shown = listed.display().to_string();
+    let effects = files(&mut app, FilesMessage::CopyPath { tab, side });
+    assert!(
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if *text == shown),
+        "{effects:?}"
+    );
+
+    files(&mut app, FilesMessage::AskRename { tab, side });
+    files(&mut app, FilesMessage::NameEdited("d.txt".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::LocalRename { from, to } => {
+            assert_eq!(from, listed);
+            assert_eq!(to, dir.path().join("d.txt"));
+        }
+        other => panic!("{other:?}"),
+    }
+
+    select(&mut app, tab, side, 1);
+    files(&mut app, FilesMessage::AskDelete { tab, side });
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::LocalRemove { path } => assert_eq!(path, listed),
+        other => panic!("{other:?}"),
+    }
+    files(
+        &mut app,
+        FilesMessage::BatchStepDone {
+            tab,
+            result: Ok(()),
+        },
+    );
+
+    select(&mut app, tab, side, 1);
+    let effects = files(
+        &mut app,
+        FilesMessage::DropEntries {
+            tab,
+            from: side,
+            onto: side,
+            into: Some(0),
+        },
+    );
+    match operation(&effects) {
+        FileOperation::LocalRename { from, to } => {
+            assert_eq!(from, listed);
+            assert_eq!(to, docs.join("b.txt"));
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // Sent to the server, from where it was listed.
+    select(&mut app, tab, side, 1);
+    let effects = files(
+        &mut app,
+        FilesMessage::DropEntries {
+            tab,
+            from: side,
+            onto: Side::Remote,
+            into: None,
+        },
+    );
+    assert_eq!(plan_request(&effects).roots[0].root.local, listed);
+
+    assert!(matches!(
+        another_on_its_way(&mut app, tab, side).as_slice(),
+        [Effect::ListLocal { path, .. }] if *path == docs
+    ));
+}

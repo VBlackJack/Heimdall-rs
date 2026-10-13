@@ -102,7 +102,7 @@ impl App {
                 any_kind || matches!(entry.kind, EntryKind::File | EntryKind::Directory)
             })
             .map(|entry| CopySource {
-                path: files.remote.path.join(&entry.name),
+                path: files.remote.entries_folder().join(&entry.name),
                 folder: entry.kind == EntryKind::Directory,
             })
             .collect()

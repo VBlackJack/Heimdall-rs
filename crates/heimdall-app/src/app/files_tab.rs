@@ -1494,12 +1494,19 @@ impl App {
                 .remote
                 .selected
                 .and_then(|index| files.remote.entries.get(index))
-                .map(|entry| files.remote.path.join(&entry.name).display()),
+                .map(|entry| files.remote.entries_folder().join(&entry.name).display()),
             Side::Local => files
                 .local
                 .selected
                 .and_then(|index| files.local.entries.get(index))
-                .map(|entry| files.local.path.join(&entry.name).display().to_string()),
+                .map(|entry| {
+                    files
+                        .local
+                        .entries_folder()
+                        .join(&entry.name)
+                        .display()
+                        .to_string()
+                }),
         };
         let Some(path) = path else {
             return Vec::new();
@@ -1788,7 +1795,7 @@ impl App {
                     return Vec::new();
                 };
                 if entry.kind == EntryKind::Directory {
-                    let path = files.remote.path.join(&entry.name);
+                    let path = files.remote.entries_folder().join(&entry.name);
                     files.remote.leave();
                     files.remote.path = path;
                     return self.list(tab, side);
@@ -1796,7 +1803,7 @@ impl App {
                 // The listing does not say what a link points at; listing it tells. A link is
                 // never downloaded from here, as in the C# Files tab.
                 if entry.kind == EntryKind::Link {
-                    let from = files.remote.path.clone();
+                    let from = files.remote.entries_folder().clone();
                     let path = from.join(&entry.name);
                     files.remote.entering_link = Some((from, entry.label.clone()));
                     files.remote.leave();
@@ -1815,7 +1822,7 @@ impl App {
                     return Vec::new();
                 };
                 if entry.kind == EntryKind::Directory {
-                    let path = files.local.path.join(&entry.name);
+                    let path = files.local.entries_folder().join(&entry.name);
                     files.local.leave();
                     files.local.path = path;
                     return self.list(tab, side);
@@ -2276,6 +2283,8 @@ impl App {
 
 impl App {
     /// The selected entry of a pane: its label, both path forms, and whether it is a folder.
+    /// Its paths are in the folder it was listed from, not in one whose listing is on its
+    /// way or failed: the entries shown are still those of the first.
     fn selected(&mut self, tab: TabId, side: Side) -> Option<(String, RemotePath, PathBuf, bool)> {
         let files = self.files_mut(tab)?;
         match side {
@@ -2283,7 +2292,7 @@ impl App {
                 let entry = files.remote.entries.get(files.remote.selected?)?;
                 Some((
                     entry.label.clone(),
-                    files.remote.path.join(&entry.name),
+                    files.remote.entries_folder().join(&entry.name),
                     PathBuf::new(),
                     entry.kind == EntryKind::Directory,
                 ))
@@ -2293,7 +2302,7 @@ impl App {
                 Some((
                     entry.label.clone(),
                     RemotePath::default(),
-                    files.local.path.join(&entry.name),
+                    files.local.entries_folder().join(&entry.name),
                     entry.kind == EntryKind::Directory,
                 ))
             }
@@ -2322,7 +2331,7 @@ impl App {
             permissions: entry.permissions,
             owner: entry.owner,
             group: entry.group,
-            path: crate::text::server_text(&pane.path.join(&entry.name).display()),
+            path: crate::text::server_text(&pane.entries_folder().join(&entry.name).display()),
         };
         self.dialog = Some(Dialog::FileProperties(Box::new(properties)));
     }
@@ -2341,7 +2350,7 @@ impl App {
                 .map(|entry| {
                     (
                         entry.label.clone(),
-                        files.remote.path.join(&entry.name),
+                        files.remote.entries_folder().join(&entry.name),
                         PathBuf::new(),
                         entry.kind == EntryKind::Directory,
                     )
@@ -2356,7 +2365,7 @@ impl App {
                     (
                         entry.label.clone(),
                         RemotePath::default(),
-                        files.local.path.join(&entry.name),
+                        files.local.entries_folder().join(&entry.name),
                         entry.kind == EntryKind::Directory,
                     )
                 })
@@ -2385,7 +2394,7 @@ impl App {
                     .chosen()
                     .into_iter()
                     .filter_map(|index| pane.entries.get(index))
-                    .map(|entry| (entry.label.clone(), pane.path.join(&entry.name)))
+                    .map(|entry| (entry.label.clone(), pane.entries_folder().join(&entry.name)))
                     .collect();
                 (PendingKind::Permissions { remotes }, value)
             }
@@ -2470,7 +2479,7 @@ impl App {
             .into_iter()
             .filter_map(|index| pane.entries.get(index))
             .map(|entry| {
-                let path = pane.path.join(&entry.name);
+                let path = pane.entries_folder().join(&entry.name);
                 deletable_as_root(path.as_bytes(), home.as_ref().map(RemotePath::as_bytes)).ok()?;
                 let removal = FileOperation::RemoteSudoRemove {
                     access: access.clone(),
@@ -2826,15 +2835,17 @@ impl App {
         }
         let destination = (
             match (onto, into) {
-                (Side::Local, Some(index)) => {
-                    files.local.path.join(&files.local.entries[index].name)
-                }
+                (Side::Local, Some(index)) => files
+                    .local
+                    .entries_folder()
+                    .join(&files.local.entries[index].name),
                 _ => files.local.path.clone(),
             },
             match (onto, into) {
-                (Side::Remote, Some(index)) => {
-                    files.remote.path.join(&files.remote.entries[index].name)
-                }
+                (Side::Remote, Some(index)) => files
+                    .remote
+                    .entries_folder()
+                    .join(&files.remote.entries[index].name),
                 _ => files.remote.path.clone(),
             },
         );
@@ -2870,17 +2881,22 @@ impl App {
                     return Vec::new();
                 };
                 let pane = &files.remote;
-                let target = pane.path.join(&pane.entries[folder].name);
+                let target = pane.entries_folder().join(&pane.entries[folder].name);
                 let moves = chosen
                     .iter()
                     .filter_map(|index| pane.entries.get(*index))
-                    .map(|entry| (pane.path.join(&entry.name), target.join(&entry.name)))
+                    .map(|entry| {
+                        (
+                            pane.entries_folder().join(&entry.name),
+                            target.join(&entry.name),
+                        )
+                    })
                     .collect();
                 vec![Effect::MoveRemote { tab, client, moves }]
             }
             Side::Local => {
                 let pane = &files.local;
-                let target = pane.path.join(&pane.entries[folder].name);
+                let target = pane.entries_folder().join(&pane.entries[folder].name);
                 chosen
                     .iter()
                     .filter_map(|index| pane.entries.get(*index))
@@ -2888,7 +2904,7 @@ impl App {
                         tab,
                         side,
                         operation: Box::new(FileOperation::LocalRename {
-                            from: pane.path.join(&entry.name),
+                            from: pane.entries_folder().join(&entry.name),
                             to: target.join(&entry.name),
                         }),
                     })

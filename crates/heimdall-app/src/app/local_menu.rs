@@ -80,7 +80,7 @@ impl App {
         let local = &self.tab(tab)?.files.as_deref()?.local;
         let entry = local.entries.get(index)?;
         Some((
-            local.path.join(&entry.name),
+            local.entries_folder().join(&entry.name),
             entry.name.to_string_lossy().into_owned(),
         ))
     }
@@ -138,7 +138,7 @@ impl App {
             .chosen()
             .into_iter()
             .filter_map(|index| local.entries.get(index))
-            .map(|entry| local.path.join(&entry.name))
+            .map(|entry| local.entries_folder().join(&entry.name))
             .collect();
         if paths.is_empty() {
             return Vec::new();
@@ -232,7 +232,7 @@ impl App {
         let Some(path) = local
             .selected
             .and_then(|index| local.entries.get(index))
-            .map(|entry| local.path.join(&entry.name))
+            .map(|entry| local.entries_folder().join(&entry.name))
         else {
             return;
         };
