@@ -3449,7 +3449,6 @@ ui-error-credential-guard-required = Credential Guard est requis mais n'est pas 
 ui-profile-resolution-auto = Auto (recommandé)
 ui-profile-resolution-auto-desc = Heimdall choisit le meilleur mode selon le moniteur hôte et le mode plein écran ou fenêtré de la session.
 ui-profile-resolution-multi-monitor = Multi-écran
-ui-profile-resolution-multi-monitor-unavailable = Multi-écran (nécessite plusieurs moniteurs)
 ui-resolution-mode-auto = Auto
 ui-resolution-mode-multi-monitor = Multi-écran
 ui-profile-aspect-ratio = Rapport d'aspect
