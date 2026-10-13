@@ -322,6 +322,68 @@ async fn without_a_connection_to_run_on_nothing_is_copied_any_other_way() {
     );
 }
 
+#[tokio::test]
+async fn a_duplicate_lands_next_to_its_entry_and_a_paste_in_the_folder_shown() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), idle_client().await, Some(connection));
+    let side = Side::Remote;
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side,
+            index: 1,
+        },
+    );
+    files(&mut app, FilesMessage::Copy { tab });
+    // "logs" opened: its listing on its way, the entries of "/srv" still shown.
+    files(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side,
+            index: 0,
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side,
+            index: 1,
+        },
+    );
+    let (sources, folder, duplicate) = copy_of(&files(&mut app, FilesMessage::Duplicate { tab }));
+    assert_eq!(
+        (sources, folder, duplicate),
+        (
+            vec![source("/srv/a.txt", false)],
+            RemotePath::from("/srv"),
+            true
+        )
+    );
+    files(
+        &mut app,
+        FilesMessage::Copied {
+            tab,
+            results: Vec::new(),
+            duplicate: true,
+        },
+    );
+    // The listing failed: the folder shown is "/srv" again, where a paste goes.
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Err(FilesError::CopyRefused),
+        },
+    );
+    let (_, folder, duplicate) = copy_of(&files(&mut app, FilesMessage::Paste { tab }));
+    assert_eq!((folder, duplicate), (RemotePath::from("/srv"), false));
+}
+
 #[cfg(unix)]
 #[path = "../../heimdall-sftp/tests/common/mod.rs"]
 mod sftp;

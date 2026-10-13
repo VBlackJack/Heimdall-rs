@@ -448,7 +448,7 @@ pub struct Pane<P, E> {
     /// How the listing on its way was asked for.
     navigation: Option<Navigation<P>>,
     /// The folder the entries shown were listed from, once one was: the folder shown, but
-    /// while another folder's listing is on its way, or after it failed, the one before.
+    /// while another folder's listing is on its way, the one before.
     listed: Option<P>,
     /// The type-ahead going on over its entries shown.
     search: TypeAhead,
@@ -469,9 +469,10 @@ enum Navigation<P> {
 
 impl<P: Clone + PartialEq, E> Pane<P, E> {
     /// The folder shown is about to be left for another, by `path` or by a listing: kept in
-    /// the history once the other is shown.
+    /// the history once the other is shown. The folder whose entries are shown, as the C#
+    /// pushes its `CurrentPath`: not one whose listing is still on its way.
     pub(crate) fn leave(&mut self) {
-        self.navigation = Some(Navigation::Away(self.path.clone()));
+        self.navigation = Some(Navigation::Away(self.entries_folder().clone()));
     }
 
     /// Goes back to the last folder of the history, taken out of it once shown; `false`
@@ -480,7 +481,8 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
         let Some(previous) = self.history.last().cloned() else {
             return false;
         };
-        let left = std::mem::replace(&mut self.path, previous);
+        let left = self.entries_folder().clone();
+        self.path = previous;
         self.navigation = Some(Navigation::Back(left));
         true
     }
@@ -516,9 +518,13 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
         }
     }
 
-    /// The listing on its way failed: the history stays as it was.
+    /// The listing on its way failed: the history stays as it was, and the folder named goes
+    /// back to the one whose entries are shown, as the C# path bar does
+    /// (`EmbeddedSftpViewModel.LoadDirectoryCoreAsync`): an action on "the folder shown" never
+    /// goes to a folder that could not be listed.
     pub(crate) fn not_arrived(&mut self) {
         self.navigation = None;
+        self.path = self.entries_folder().clone();
     }
 
     /// Stops waiting for the listing on its way, as the C# Escape: the folder shown stays
@@ -567,8 +573,8 @@ impl<P, E> Pane<P, E> {
     }
 
     /// The folder the entries shown are in: the one they were listed from, which is not
-    /// the folder shown while another's listing is on its way or after it failed; the
-    /// folder shown before any listing.
+    /// the folder named while another's listing is on its way; the folder named before any
+    /// listing.
     #[must_use]
     pub fn entries_folder(&self) -> &P {
         self.listed.as_ref().unwrap_or(&self.path)
@@ -2555,9 +2561,37 @@ mod tests {
         assert_eq!(pane.entries_folder(), &first, "the other one on its way");
         pane.not_arrived();
         assert_eq!(pane.entries_folder(), &first, "nor after it failed");
+        assert_eq!(
+            pane.path, first,
+            "the folder named again, as the entries shown"
+        );
         pane.leave();
+        pane.path = second.clone();
         pane.arrived(&second);
         assert_eq!(pane.entries_folder(), &second, "listed");
+    }
+
+    #[test]
+    fn the_history_keeps_the_folder_shown_never_one_still_on_its_way() {
+        let [first, second, third] = ["first", "second", "third"].map(std::path::PathBuf::from);
+        let mut pane: Pane<std::path::PathBuf, RemoteEntry> = Pane::new(first.clone());
+        pane.arrived(&first);
+        pane.leave();
+        pane.path = second.clone();
+        // Left again before "second" came: "first" is still the folder shown.
+        pane.leave();
+        pane.path = third.clone();
+        pane.arrived(&third);
+        assert_eq!(pane.history, std::slice::from_ref(&first));
+        // Back while another listing is on its way, given up: the folder shown, "third",
+        // is named again, not the one that never came.
+        pane.leave();
+        pane.path = second;
+        assert!(pane.back());
+        assert_eq!(pane.path, first);
+        pane.loading = true;
+        assert!(pane.cancel_listing());
+        assert_eq!(pane.path, third);
     }
 
     fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {

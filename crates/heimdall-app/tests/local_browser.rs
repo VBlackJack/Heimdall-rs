@@ -1946,3 +1946,33 @@ fn an_entry_is_opened_and_copied_from_the_folder_listed_while_another_is_on_its_
     );
     assert!(sink.take().is_empty());
 }
+
+#[test]
+fn a_script_runs_from_the_folder_listed_while_another_is_on_its_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane, folder) = browser_of_scripts(dir.path(), &RUN_HERE[..1], &sink);
+    let sub = index_of(&app, pane, "sub");
+    let effects = opened(&mut app, pane, sub);
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == folder.join("sub")),
+        "{effects:?}"
+    );
+    let name = RUN_HERE[0];
+    let index = index_of(&app, pane, name);
+    let (expected, command, _) = expected_run(name, &folder);
+    assert!(run_in_shell(&mut app, pane, index).is_empty());
+    let question = script_question(&app);
+    assert_eq!(
+        question.command, command,
+        "the script listed, not one in \"sub\""
+    );
+    assert_eq!(
+        question.folder.as_deref(),
+        Some(folder.to_string_lossy().as_ref())
+    );
+    let effects = app.update(Message::ConfirmDialog);
+    let (_, running) = started(&effects).unwrap_or_else(|| panic!("started, {effects:?}"));
+    assert_eq!(running, expected);
+    assert!(sink.take().is_empty());
+}

@@ -302,7 +302,9 @@ impl App {
         self.copy_into_shown(tab_id, sources, true)
     }
 
-    /// Copies `sources` into the folder `tab_id` shows, unless a copy runs there already.
+    /// Copies `sources` into the folder `tab_id` shows, unless a copy runs there already. A
+    /// duplicate goes next to its entries, into the folder they were listed from, even while
+    /// another folder's listing is on its way.
     fn copy_into_shown(
         &mut self,
         tab_id: TabId,
@@ -328,7 +330,11 @@ impl App {
             client,
             shell,
             sources,
-            folder: files.remote.path.clone(),
+            folder: if duplicate {
+                files.remote.entries_folder().clone()
+            } else {
+                files.remote.path.clone()
+            },
             cancel,
             duplicate,
         }]
