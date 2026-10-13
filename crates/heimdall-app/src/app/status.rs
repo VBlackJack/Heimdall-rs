@@ -403,6 +403,8 @@ pub enum Notice {
     /// not run on this computer or could not be found running, as the C#
     /// `ErrorEmbeddedCredentialGuardRequired`.
     CredentialGuardRequired,
+    /// What a scheduled connection did.
+    Scheduled(super::scheduled::ScheduledNotice),
     /// The master password opened the vault, but Windows Hello could not be enrolled again,
     /// as the C# `VaultHelloReenrollError`.
     VaultHelloEnrolAgainFailed,

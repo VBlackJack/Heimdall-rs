@@ -2055,6 +2055,13 @@ impl Shell {
                 iced::time::every(interval).map(|_| Message::App(AppMessage::TmoutResetTick)),
             );
         }
+        // The scheduled connections looked at every minute, as the C# task scheduler.
+        if self.app.schedules_connections() {
+            ticks.push(
+                iced::time::every(heimdall_app::SCHEDULED_TICK)
+                    .map(|_| Message::App(AppMessage::ScheduledTick)),
+            );
+        }
         // Every server checked in the background, as the C# session health monitor.
         if let Some(interval) = self.app.reachability_interval() {
             ticks.push(

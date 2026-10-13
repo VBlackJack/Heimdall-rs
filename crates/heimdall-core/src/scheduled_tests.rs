@@ -346,6 +346,7 @@ fn task(id: &str, outcome: Option<Outcome>) -> ScheduledTask {
         last_run: Some(1_790_000_000),
         next_run: Some(1_790_086_400),
         last_outcome: outcome,
+        failures: 0,
     }
 }
 
@@ -366,7 +367,7 @@ fn tasks_are_written_and_read_back_each_outcome_included() {
         Some(Outcome::Missed),
         Some(Outcome::Failed(FailureKind::CredentialUnavailable)),
         Some(Outcome::Deferred),
-        Some(Outcome::Refused),
+        Some(Outcome::Refused(RefusalKind::X11Forwarding)),
     ];
     for (index, outcome) in outcomes.into_iter().enumerate() {
         tasks
@@ -448,4 +449,194 @@ fn a_new_identifier_is_random_hexadecimal() {
     assert_eq!(first.len(), 2 * ID_BYTES);
     assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert_ne!(first, second);
+}
+
+fn ssh_profile() -> SshProfile {
+    SshProfile {
+        id: ProfileId::new("web"),
+        name: "web".to_owned(),
+        group: None,
+        host: "web.lab".to_owned(),
+        port: 22,
+        username: Some("admin".to_owned()),
+        key_path: None,
+        gateway: None,
+        local_tunnel_port: None,
+        vault_entry: None,
+        forwards: crate::profile::Forwards::default(),
+        post_connect: crate::post_connect::PostConnect::default(),
+        forward_agent: false,
+        compression: false,
+        sftp: false,
+        legacy_algorithms: false,
+        session_logging: None,
+        ssh_mode: crate::profile::SshMode::Embedded,
+        x11_forwarding: false,
+    }
+}
+
+fn rdp_profile() -> RdpProfile {
+    RdpProfile {
+        extras: crate::profile::RdpExtras::default(),
+        id: ProfileId::new("dc"),
+        name: "DC".to_owned(),
+        group: None,
+        host: "dc.lab".to_owned(),
+        port: 3389,
+        username: Some("admin".to_owned()),
+        domain: None,
+        allow_tls_only: false,
+        gateway: None,
+        local_tunnel_port: None,
+        redirect_clipboard: false,
+        redirect_drives: false,
+        options: crate::profile::RdpOptions::default(),
+        vault_entry: None,
+        forwards: crate::profile::Forwards::default(),
+        follow_defaults: true,
+        several_servers: false,
+        anti_idle: false,
+        auto_reconnect: true,
+    }
+}
+
+fn winrm_profile(username: Option<&str>) -> WinRmProfile {
+    WinRmProfile {
+        id: ProfileId::new("ps"),
+        name: "PS".to_owned(),
+        group: None,
+        host: "ps.lab".to_owned(),
+        port: 5985,
+        use_ssl: false,
+        skip_certificate_check: false,
+        username: username.map(str::to_owned),
+        gateway: None,
+        local_tunnel_port: None,
+    }
+}
+
+#[test]
+fn a_schedule_opens_only_what_opens_in_a_tab_without_asking() {
+    let ssh = ssh_profile();
+    assert_eq!(refusal(Target::Ssh(&ssh), true), None, "a plain SSH shell");
+    for target in [Target::Telnet, Target::Vnc, Target::Ftp] {
+        assert_eq!(refusal(target, false), None, "{target:?}");
+    }
+    assert_eq!(
+        refusal(Target::Local, true),
+        Some(RefusalKind::LocalProgram)
+    );
+    assert_eq!(refusal(Target::Citrix, true), Some(RefusalKind::Citrix));
+}
+
+#[test]
+fn an_ssh_profile_is_refused_in_putty_with_x11_or_with_steps_not_approved() {
+    let mut putty = ssh_profile();
+    putty.ssh_mode = crate::profile::SshMode::External;
+    assert_eq!(
+        refusal(Target::Ssh(&putty), true),
+        Some(RefusalKind::ExternalClient)
+    );
+    let mut x11 = ssh_profile();
+    x11.x11_forwarding = true;
+    assert_eq!(
+        refusal(Target::Ssh(&x11), true),
+        Some(RefusalKind::X11Forwarding),
+        "the local X server would start"
+    );
+    let mut steps = ssh_profile();
+    steps.post_connect.steps = vec![crate::post_connect::PostConnectStep::new("uptime")];
+    assert_eq!(
+        refusal(Target::Ssh(&steps), true),
+        Some(RefusalKind::StepsNotApproved)
+    );
+    steps.post_connect = crate::post_connect::PostConnect::approved_as(steps.post_connect.steps);
+    assert_eq!(refusal(Target::Ssh(&steps), true), None, "approved: run");
+    let mut sftp = ssh_profile();
+    sftp.sftp = true;
+    sftp.ssh_mode = crate::profile::SshMode::External;
+    assert_eq!(
+        refusal(Target::Ssh(&sftp), true),
+        None,
+        "its files, in a tab"
+    );
+    assert_eq!(
+        refusal(Target::Ssh(&sftp), false),
+        Some(RefusalKind::FilesBrowserOff)
+    );
+}
+
+#[test]
+fn an_rdp_profile_is_refused_outside_a_tab() {
+    let rdp = rdp_profile();
+    assert_eq!(refusal(Target::Rdp(&rdp), true), None);
+    let mut external = rdp_profile();
+    external.extras.external = true;
+    assert_eq!(
+        refusal(Target::Rdp(&external), true),
+        Some(RefusalKind::ExternalClient)
+    );
+    let mut gateway = rdp_profile();
+    gateway.extras.rd_gateway = Some("rdg.lab".to_owned());
+    assert_eq!(
+        refusal(Target::Rdp(&gateway), true),
+        Some(RefusalKind::RdGateway)
+    );
+    gateway.extras.rd_gateway = Some("  ".to_owned());
+    assert_eq!(refusal(Target::Rdp(&gateway), true), None, "none named");
+}
+
+#[test]
+fn a_winrm_profile_needs_a_stored_account_and_password() {
+    fn target(profile: &WinRmProfile, password_stored: bool) -> Target<'_> {
+        Target::WinRm {
+            profile,
+            password_stored,
+        }
+    }
+    let account = winrm_profile(Some(r"LAB\admin"));
+    assert_eq!(refusal(target(&account, true), true), None);
+    assert_eq!(
+        refusal(target(&account, false), true),
+        Some(RefusalKind::WinRmPasswordNotStored)
+    );
+    for identity in [winrm_profile(None), winrm_profile(Some(" "))] {
+        assert_eq!(
+            refusal(target(&identity, true), true),
+            Some(RefusalKind::WinRmNoAccount),
+            "the account running Heimdall"
+        );
+    }
+}
+
+#[test]
+fn three_failures_in_a_row_turn_a_task_off_and_a_run_clears_them() {
+    let mut task = task("t", None);
+    task.failures = 0;
+    assert!(!task.record(Outcome::Failed(FailureKind::ConnectionFailed)));
+    assert!(!task.record(Outcome::Missed), "neither a run nor a failure");
+    assert!(!task.record(Outcome::Deferred));
+    assert!(!task.record(Outcome::Failed(FailureKind::ConnectionFailed)));
+    assert_eq!(task.failures, 2);
+    assert!(!task.record(Outcome::Ran));
+    assert_eq!(task.failures, 0, "cleared");
+    for _ in 1..MAX_CONSECUTIVE_FAILURES {
+        assert!(!task.record(Outcome::Refused(RefusalKind::Citrix)));
+    }
+    assert!(task.enabled);
+    assert!(
+        task.record(Outcome::Failed(FailureKind::SessionLimit)),
+        "turned off"
+    );
+    assert!(!task.enabled);
+    assert!(task.suspended());
+    assert_eq!(
+        task.last_outcome,
+        Some(Outcome::Failed(FailureKind::SessionLimit)),
+        "the last reason kept"
+    );
+    assert!(
+        !task.record(Outcome::Failed(FailureKind::SessionLimit)),
+        "once"
+    );
 }

@@ -118,6 +118,7 @@ pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, Ro
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
 pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use app::{SCHEDULED_TICK, ScheduledNotice};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };

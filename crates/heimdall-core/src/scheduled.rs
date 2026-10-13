@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::profile::ProfileId;
+use crate::profile::{ProfileId, RdpProfile, SshProfile, WinRmProfile};
 use crate::store::{StoreError, write_atomic};
 
 /// Name of the file, beside the profiles.
@@ -215,6 +215,13 @@ pub enum FailureKind {
     NameAmbiguous,
     /// The profile's credentials are not stored, or could not be read without asking.
     CredentialUnavailable,
+    /// Windows Hello or Credential Guard would have had to be asked.
+    VerificationRequired,
+    /// The server's key or certificate is not trusted yet: the user decides it, never a
+    /// schedule.
+    ConfirmationRequired,
+    /// The most sessions the settings allow are open.
+    SessionLimit,
     /// The connection did not open.
     ConnectionFailed,
 }
@@ -231,8 +238,105 @@ pub enum Outcome {
     Failed(FailureKind),
     /// Its time came while the workspace was locked: it runs once unlocked.
     Deferred,
-    /// Its profile is one a schedule may not open: a local shell or program.
-    Refused,
+    /// Its profile is one a schedule never opens, for this reason.
+    Refused(RefusalKind),
+}
+
+/// Why a schedule never opens a profile: opening it would start a program on this computer
+/// or ask the user something, and a schedule runs unattended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalKind {
+    /// A local shell or program.
+    LocalProgram,
+    /// Opened in an external client, `PuTTY` or Remote Desktop Connection.
+    ExternalClient,
+    /// An RDP profile through a Remote Desktop Gateway, which opens in Remote Desktop
+    /// Connection.
+    RdGateway,
+    /// A Citrix application, launched by the Citrix Workspace client.
+    Citrix,
+    /// A `WinRM` profile logging in as the account running Heimdall, or without an
+    /// account: only a stored account and password are used unattended.
+    WinRmNoAccount,
+    /// A `WinRM` profile whose password is not stored.
+    WinRmPasswordNotStored,
+    /// An SSH profile forwarding X11, which starts the local X server.
+    X11Forwarding,
+    /// An SSH profile whose post-connect steps are not approved as they are: approving
+    /// them asks the user.
+    StepsNotApproved,
+    /// An SFTP profile while the file browser is turned off.
+    FilesBrowserOff,
+}
+
+/// What a schedule is asked to open, with what decides whether it may.
+#[derive(Debug, Clone, Copy)]
+pub enum Target<'a> {
+    /// An SSH or SFTP profile.
+    Ssh(&'a SshProfile),
+    /// An RDP profile.
+    Rdp(&'a RdpProfile),
+    /// A `WinRM` profile, and whether a password is stored for its account.
+    WinRm {
+        /// The profile.
+        profile: &'a WinRmProfile,
+        /// A password is stored for its host, port and account.
+        password_stored: bool,
+    },
+    /// A Telnet profile.
+    Telnet,
+    /// A VNC profile.
+    Vnc,
+    /// An FTP profile.
+    Ftp,
+    /// A Citrix profile.
+    Citrix,
+    /// A local shell or program profile.
+    Local,
+}
+
+/// Why a schedule never opens `target`; `None` when it may, its SFTP profiles only while
+/// `files_browser` is on. A profile opens unattended only in a tab of the application, with
+/// what is stored for it: never in an external program, never asking anything.
+#[must_use]
+pub fn refusal(target: Target<'_>, files_browser: bool) -> Option<RefusalKind> {
+    match target {
+        Target::Local => Some(RefusalKind::LocalProgram),
+        Target::Citrix => Some(RefusalKind::Citrix),
+        Target::Ssh(profile) if profile.sftp => {
+            (!files_browser).then_some(RefusalKind::FilesBrowserOff)
+        }
+        Target::Ssh(profile) if !profile.ssh_mode.is_embedded() => {
+            Some(RefusalKind::ExternalClient)
+        }
+        Target::Ssh(profile) if profile.x11_forwarding => Some(RefusalKind::X11Forwarding),
+        Target::Ssh(profile) if profile.post_connect.needs_approval() => {
+            Some(RefusalKind::StepsNotApproved)
+        }
+        Target::Rdp(profile) if profile.extras.external => Some(RefusalKind::ExternalClient),
+        Target::Rdp(profile) if profile.extras.rd_gateway().is_some() => {
+            Some(RefusalKind::RdGateway)
+        }
+        Target::WinRm { profile, .. }
+            if profile
+                .username
+                .as_deref()
+                .is_none_or(|user| user.trim().is_empty()) =>
+        {
+            Some(RefusalKind::WinRmNoAccount)
+        }
+        Target::WinRm {
+            password_stored: false,
+            ..
+        } => Some(RefusalKind::WinRmPasswordNotStored),
+        Target::Ssh(_)
+        | Target::Rdp(_)
+        | Target::WinRm { .. }
+        | Target::Telnet
+        | Target::Vnc
+        | Target::Ftp => None,
+    }
 }
 
 /// A scheduled connection, as the C# `ScheduledTaskDto`.
@@ -260,6 +364,49 @@ pub struct ScheduledTask {
     /// What became of it the last time it was due.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_outcome: Option<Outcome>,
+    /// Its failures and refusals in a row, since it last ran: at
+    /// [`MAX_CONSECUTIVE_FAILURES`] it is turned off.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub failures: u32,
+}
+
+/// Failures and refusals in a row after which a task is turned off, so that a task that
+/// cannot run does not fail again every time its schedule comes round.
+pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+
+/// Whether `count` is zero, for a count written only when there is one.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_zero(count: &u32) -> bool {
+    *count == 0
+}
+
+impl ScheduledTask {
+    /// Whether it was turned off after [`MAX_CONSECUTIVE_FAILURES`] failures in a row.
+    #[must_use]
+    pub fn suspended(&self) -> bool {
+        !self.enabled && self.failures >= MAX_CONSECUTIVE_FAILURES
+    }
+
+    /// Records `outcome`: a run clears the failures, a failure or a refusal counts one, and
+    /// the task is turned off at [`MAX_CONSECUTIVE_FAILURES`]; whether this turned it off.
+    pub fn record(&mut self, outcome: Outcome) -> bool {
+        self.last_outcome = Some(outcome);
+        match outcome {
+            Outcome::Ran => self.failures = 0,
+            Outcome::Failed(_) | Outcome::Refused(_) => {
+                self.failures = self.failures.saturating_add(1);
+                if self.enabled && self.failures >= MAX_CONSECUTIVE_FAILURES {
+                    self.enabled = false;
+                    return true;
+                }
+            }
+            Outcome::Missed | Outcome::Deferred => {}
+        }
+        false
+    }
 }
 
 /// When a task of `schedule` runs next after `now`, in seconds since the Unix epoch, as the

@@ -126,6 +126,7 @@ mod reconnect;
 mod resolution;
 mod route_test;
 mod run_in_shell;
+mod scheduled;
 mod selection;
 mod session_events;
 mod session_restore;
@@ -189,6 +190,7 @@ pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview
 use rdp_tab::ResizeFallback;
 pub use resolution::ResolutionChoice;
 pub use run_in_shell::ScriptConfirmation;
+pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
 pub use selection::SelectionMessage;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -438,6 +440,8 @@ pub enum Message {
     HealthTick,
     /// Time for the background check of every server.
     ReachabilityTick,
+    /// Time to look at the scheduled connections.
+    ScheduledTick,
     /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
     Update(UpdateMessage),
     /// A server answered the background check, or did not.
@@ -977,6 +981,7 @@ impl fmt::Debug for Message {
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::HealthTick => f.write_str("HealthTick"),
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
+            Self::ScheduledTick => f.write_str("ScheduledTick"),
             Self::Update(message) => write!(f, "Update({message:?})"),
             Self::ReachabilityChecked { id, verdict } => {
                 write!(f, "ReachabilityChecked({id}, {verdict:?})")
@@ -3266,6 +3271,8 @@ pub struct App {
     /// The auto-reconnects due while the workspace was locked, by tab and failed attempt:
     /// attempted once it is unlocked.
     deferred_reconnects: Vec<(TabId, AttemptId)>,
+    /// The scheduled connections, and what is running of them.
+    scheduler: scheduled::Scheduler,
     /// SSH keys trusted for this run only, shared with every connection.
     run_trust: RunTrust,
     /// RDP, FTPS and VNC certificates trusted for this run only: server, port, and the hash
@@ -3346,6 +3353,7 @@ impl App {
         let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog, &store);
         let tunnels_panel = !settings.collapse_tunnels_panel;
         let (macros, files_state, split_layouts) = side_files(&config.profiles_file);
+        let scheduler = scheduled::Scheduler::open(&config.profiles_file);
         let mut app = Self {
             settings,
             settings_file,
@@ -3407,6 +3415,7 @@ impl App {
             vault_hello: vault_hello::VaultHelloState::with(vault.hello_record()),
             vault,
             deferred_reconnects: Vec::new(),
+            scheduler,
             run_trust: RunTrust::default(),
             rdp_run_trust: Vec::new(),
             session_logs: crate::session_log::SessionLogs::default(),
@@ -3416,6 +3425,8 @@ impl App {
         };
         // The PIN when one is set, then a vault on disk is offered to unlock: its passwords
         // are then ready.
+        // A task whose time came while Heimdall was closed is missed, never run late.
+        app.skip_missed(crate::time_zone::unix_now(), &crate::time_zone::SystemClock);
         app.show_start_gates();
         app
     }
@@ -3594,6 +3605,9 @@ impl App {
                 Vec::new()
             }
             Message::ReachabilityTick => self.reachability_round(),
+            Message::ScheduledTick => {
+                self.scheduled_tick_at(crate::time_zone::unix_now(), &crate::time_zone::SystemClock)
+            }
             Message::Update(message) => self.update_message(message),
             Message::ReachabilityChecked { id, verdict } => {
                 self.reachability_checked(&id, verdict);
@@ -3967,20 +3981,25 @@ impl App {
     /// said: no limit at 0; this computer's own shells are not counted, nor a session
     /// opening in a tab's place.
     pub(super) fn session_limit_reached(&mut self) -> bool {
+        let Some(max) = self.session_limit_hit() else {
+            return false;
+        };
+        self.tell(Notice::SessionLimitReached(max));
+        true
+    }
+
+    /// The session limit when one more session may not open, without saying it.
+    pub(super) fn session_limit_hit(&self) -> Option<u32> {
         let max = self.settings.max_sessions;
         if max == 0 || self.replacing {
-            return false;
+            return None;
         }
         let open = self
             .tabs
             .iter()
             .filter(|tab| !matches!(tab.profile, TabProfile::Local(_) | TabProfile::Tool(_)))
             .count();
-        let reached = open >= usize::try_from(max).unwrap_or(usize::MAX);
-        if reached {
-            self.tell(Notice::SessionLimitReached(max));
-        }
-        reached
+        (open >= usize::try_from(max).unwrap_or(usize::MAX)).then_some(max)
     }
 
     /// Opens a tab for `profile`, a shell or its files, without asking about its steps:
@@ -4081,6 +4100,11 @@ impl App {
                 answer: Some(answer),
             }];
         }
+        // A tab a scheduled task opened asks nothing: what is not saved fails it.
+        if let Some(effects) = self.unattended_event(tab_id, &event) {
+            self.after_scheduled_event();
+            return effects;
+        }
         // No password saved: the external credential provider, when it is to be asked.
         if let ConnectionEvent::Question { question, kind } = &event
             && let Some(request) = self.provider_request(tab_id, *question, kind)
@@ -4120,7 +4144,9 @@ impl App {
             self.warn_ftp_cleartext(tab_id);
         }
         if shell_up {
+            let count = self.tabs.len();
             effects.extend(self.dock_sftp(tab_id));
+            self.adopt_companion(tab_id, count);
             effects.extend(self.dock_local_browser(tab_id));
         }
         if let Some((error, was_live)) = failure
@@ -4128,6 +4154,9 @@ impl App {
         {
             effects.extend(self.retry_after(tab_id, &error, was_live));
         }
+        // Said once the tab shows its new state, which a notice is told for; a scheduled
+        // tab that failed closed.
+        self.after_scheduled_event();
         effects
     }
 
@@ -5116,42 +5145,6 @@ impl App {
             );
             self.dialog = Some(Dialog::ImportDone(summary));
         }
-    }
-}
-
-impl App {
-    /// Carries the scheduled connections of this computer's C# store into the file beside
-    /// the profiles, each in place of the one of its identifier, each timed from now on this
-    /// computer's clock; how many, or why none could be. `None` when there were none. A file
-    /// there that does not read is left as it is.
-    fn carry_scheduled(
-        &self,
-        tasks: Vec<heimdall_core::scheduled::ScheduledTask>,
-    ) -> Option<Result<usize, String>> {
-        use heimdall_core::scheduled::{self, ScheduledTasks};
-        if tasks.is_empty() {
-            return None;
-        }
-        let now = crate::time_zone::unix_now();
-        let clock = crate::time_zone::SystemClock;
-        let tasks = tasks.into_iter().map(|mut task| {
-            task.next_run = Some(scheduled::next_run(&task.schedule, now, &clock));
-            task
-        });
-        let path = scheduled::scheduled_path(self.profiles_file());
-        let (mut held, unread) = ScheduledTasks::open(&path);
-        let carried = match unread {
-            Some(error) => Err(error.to_string()),
-            None => held
-                .merge(tasks)
-                .map(|count| count.added + count.updated)
-                .map_err(|error| error.to_string()),
-        };
-        match &carried {
-            Ok(count) => log::info!("scheduled connections carried over: {count}"),
-            Err(error) => log::warn!("scheduled connections not carried over: {error}"),
-        }
-        Some(carried)
     }
 }
 
