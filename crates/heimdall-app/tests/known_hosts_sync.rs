@@ -16,6 +16,10 @@
 
 //! The user's OpenSSH `known_hosts` imported at startup, as the C# `KnownHostsStartupSync`:
 //! only when chosen, once, in the background, from the file under the home folder.
+//!
+//! Not in a test build: before its scratch folder is set it knows no home folder, so there
+//! is no file to import.
+#![cfg(not(feature = "test-data-dir"))]
 
 use std::path::Path;
 

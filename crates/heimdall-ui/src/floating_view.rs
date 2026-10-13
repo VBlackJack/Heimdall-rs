@@ -253,6 +253,7 @@ pub fn floating_message_allowed(message: &Message, tab: &Tab) -> bool {
         | Message::Submit(named)
         | Message::Decline(named)
         | Message::DesktopFit { tab: named, .. }
+        | Message::VncScaling { tab: named, .. }
         | Message::CopyError(named)
         | Message::CopyAnonymousError(named)
         // Its Files pane's path bar opened, its columns resized, its menus opened, and its
@@ -377,8 +378,8 @@ pub(crate) struct FloatingWindow {
     pub scale: f32,
     /// The question of its tab whose first field was last given the focus.
     pub question: Option<QuestionId>,
-    /// Files dragged from Explorer are over it.
-    pub hovered: bool,
+    /// How many files dragged from Explorer are over it: none once they leave or drop.
+    pub hovered: usize,
     /// Where the pointer last was in it: where a menu opens, and a drag starts.
     pub cursor: CursorSpot,
     /// The search bar over its terminal, when open: its own, the main window's bar left
@@ -393,7 +394,7 @@ impl FloatingWindow {
             key,
             scale,
             question: None,
-            hovered: false,
+            hovered: 0,
             cursor: CursorSpot::default(),
             finder: None,
         }

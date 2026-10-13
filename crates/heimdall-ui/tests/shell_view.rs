@@ -522,6 +522,9 @@ fn keyboard_named(named: Named) -> iced::keyboard::Key {
     iced::keyboard::Key::Named(named)
 }
 
+/// Widest a tab's title is drawn, as the C# tab title's `MaxWidth`.
+const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
+
 #[test]
 fn a_long_server_title_is_cut_in_its_tab() {
     let dir = tempfile::tempdir().expect("dir");
@@ -534,8 +537,12 @@ fn a_long_server_title_is_cut_in_its_tab() {
         event: ConnectionEvent::Output(std::mem::take(&mut core_title).into_bytes()),
     }));
     let mut ui = simulator(&shell);
-    let shown = format!("{}...", "w".repeat(29));
-    ui.find(shown.as_str()).expect("cut to 32 characters");
+    let title = "w".repeat(100);
+    let shown = ui.find(title.as_str()).expect("the tab's title").bounds();
+    assert!(
+        shown.width <= TAB_TITLE_MAX_WIDTH,
+        "ended with an ellipsis at the C# MaxWidth: {shown:?}"
+    );
 }
 
 #[test]
@@ -1830,10 +1837,10 @@ fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
     };
     let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON;
     let normal = columns(&shell);
-    assert!(same(shell.font_size(tab), 15.0));
+    assert!(same(shell.font_size(tab), 14.0));
 
     let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
-    assert!(same(shell.font_size(tab), 16.0));
+    assert!(same(shell.font_size(tab), 15.0));
     assert!(columns(&shell) < normal, "larger text, fewer columns");
     for _ in 0..20 {
         let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
@@ -1845,7 +1852,7 @@ fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
     assert!(same(shell.font_size(tab), 8.0), "no smaller than 8");
     assert!(columns(&shell) > normal);
     let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::Reset)));
-    assert!(same(shell.font_size(tab), 15.0));
+    assert!(same(shell.font_size(tab), 14.0));
     assert_eq!(columns(&shell), normal);
 
     // The wheel with Ctrl held zooms instead of scrolling; without it, it scrolls.
@@ -3709,6 +3716,40 @@ printf '\u{001B}[2J'\u{0009}echo",
 }
 
 #[test]
+fn a_migration_says_how_many_scheduled_connections_it_carried_over() {
+    use heimdall_core::import::csharp::Dropped;
+    let summary = |scheduled| heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport::default(),
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        scheduled,
+        gateways: heimdall_core::import::gateways::Reconciliation::default(),
+        actions: None,
+        dropped: vec![("web".to_owned(), vec![Dropped::ScheduledTime])],
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Some(Ok(2)))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Scheduled connections carried over: 2")
+        .expect("counted");
+    ui.find("web: scheduled connection time unreadable, now 08:00")
+        .expect("the time it runs at said");
+
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Some(Err(
+        "disk full".to_owned()
+    )))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("The scheduled connections could not be carried over: disk full")
+        .expect("why not");
+}
+
+#[test]
 fn an_import_says_which_settings_it_left_out_of_which_profile() {
     use heimdall_core::import::csharp::Dropped;
     let dir = tempfile::tempdir().expect("dir");
@@ -3723,6 +3764,7 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
         actions: None,
         dropped: vec![(
@@ -3757,6 +3799,7 @@ fn an_import_counts_the_gateways_it_created_and_merged_as_the_csharp_summary() {
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 2,
             merged: 1,
@@ -3792,6 +3835,7 @@ fn an_import_with_orphan_gateway_references_counts_them_and_says_what_to_do_as_t
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        scheduled: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 0,
             merged: 0,
@@ -5224,6 +5268,17 @@ fn windows_high_contrast_is_followed_and_high_contrast_can_be_chosen_by_hand() {
 }
 
 #[test]
+fn windows_reduced_motion_is_followed_while_the_window_is_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(!shell.reduced_motion(), "motion until Windows says");
+    let _ = shell.update(Message::SystemReducedMotion(true));
+    assert!(shell.reduced_motion());
+    let _ = shell.update(Message::SystemReducedMotion(false));
+    assert!(!shell.reduced_motion(), "turned back on");
+}
+
+#[test]
 fn tab_moves_between_fields_on_the_settings_page_and_in_a_dialog_but_a_tab_keeps_it() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, _, _) = connected_shell(dir.path());
@@ -5236,4 +5291,69 @@ fn tab_moves_between_fields_on_the_settings_page_and_in_a_dialog_but_a_tab_keeps
     assert!(shell.tab_moves_focus(), "between the dialog's fields");
     let _ = shell.update(Message::DialogKey { confirm: false });
     assert!(shell.app().dialog.is_none(), "Escape closes it");
+}
+
+#[test]
+fn a_file_read_from_its_last_good_copy_is_said_at_start_in_the_csharp_words() {
+    let dir = tempfile::tempdir().expect("dir");
+    // Saved twice: the first file is kept as the last good copy.
+    drop(app(dir.path()));
+    drop(app(dir.path()));
+    std::fs::write(dir.path().join("profiles.toml"), "").expect("emptied");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Configuration restored").expect("the C# title");
+    ui.find(
+        "profiles.toml could not be read and was loaded from its last good copy. Changes saved \
+         after that copy was made may be missing.",
+    )
+    .expect("the C# message");
+    ui.find("server a").expect("the profiles of the copy");
+}
+
+#[test]
+fn a_tab_menus_macro_is_edited_from_it_and_deleted_from_its_editor_as_the_csharp_submenu() {
+    use heimdall_app::MacroMessage;
+    use heimdall_core::macros::{MacroEntry, Macros, TerminalMacro, macros_path};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut macros = Macros::default();
+    macros.put(TerminalMacro {
+        name: "deploy".to_owned(),
+        entries: vec![MacroEntry {
+            input: "uptime\r".to_owned(),
+            delay_ms: 0,
+            expect: None,
+        }],
+    });
+    macros
+        .save(&macros_path(&dir.path().join("profiles.toml")))
+        .expect("saved");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Macros(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Play \"deploy\"").expect("played from the menu");
+        ui.click("Edit \"deploy\"").expect("edited from the menu");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::MenuChoice(AppMessage::Macro(MacroMessage::Edit(ref name))) if name == "deploy"
+        )));
+    }
+    let _ = shell.update(Message::MenuChoice(AppMessage::Macro(MacroMessage::Edit(
+        "deploy".to_owned(),
+    ))));
+    let mut ui = simulator(&shell);
+    ui.find("Edit macro").expect("the macro editor");
+    ui.find("Delete macro")
+        .expect("its delete, as the C# editor's");
 }

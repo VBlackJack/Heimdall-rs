@@ -20,6 +20,17 @@ path = "src/main.rs"
 [lib]
 path = "src/lib.rs"
 
+[features]
+# audio: the RDP server's sound played on this computer. On by default on Windows, below,
+# where it needs nothing but the system's WASAPI; elsewhere asked with `--features audio`,
+# which links the system's sound library (ALSA on Linux).
+audio = ["heimdall-rdp/audio"]
+# test-data-dir: `--data-dir <full path>` roots every per-user folder in a scratch folder and
+# the saved passwords in a namespace of it, for automated UI tests of a debug build. Off by
+# default and never in a release build, where it does not compile; xtask's guard refuses a
+# manifest or workflow that turns it on.
+test-data-dir = ["heimdall-app/test-data-dir", "heimdall-core/test-data-dir"]
+
 [dependencies]
 heimdall-app.workspace = true
 heimdall-core.workspace = true
@@ -38,7 +49,6 @@ i18n-embed-fl.workspace = true
 iced = { workspace = true, features = ["advanced", "canvas", "tokio", "fira-sans", "image-without-codecs", "highlighter"] }
 iced_renderer = { workspace = true, features = ["wgpu"] }
 log.workspace = true
-rfd.workspace = true
 rust-embed.workspace = true
 # fs: the exported sessions written where the save dialog says.
 tokio = { workspace = true, features = ["fs"] }
@@ -47,7 +57,17 @@ ttf-parser.workspace = true
 two-face.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+# The system's open, save and folder dialogs.
+rfd.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The desktop portal's file dialogs, over the D-Bus session bus.
+zbus.workspace = true
+
 [target.'cfg(windows)'.dependencies]
+# audio: the RDP server's sound, through WASAPI.
+heimdall-rdp = { workspace = true, features = ["audio"] }
 # The files copied in Explorer, which iced's clipboard does not read.
 clipboard-win.workspace = true
 # The screens the window is put back on.
@@ -66,6 +86,10 @@ rcgen.workspace = true
 tempfile.workspace = true
 # The stop of a post-connect sequence, in the tab tests.
 tokio-util.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# p2p: the fake desktop portal of the file dialog tests, on a socket pair without a bus.
+zbus = { workspace = true, features = ["p2p"] }
 
 [lints]
 workspace = true

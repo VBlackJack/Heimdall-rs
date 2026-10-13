@@ -50,7 +50,7 @@ use iced::{
     alignment,
 };
 
-use crate::terminal_view::blink::CursorBlink;
+use crate::terminal_view::blink::{CursorBlink, blinks};
 use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
     Shortcut, Zoom, committed_text, key_input, shortcut, window_shortcut,
@@ -120,6 +120,8 @@ pub struct TerminalView<'a, M> {
     on_zoom: Option<fn(Zoom) -> M>,
     ctrl_v: heimdall_core::settings::CtrlVPaste,
     ctrl_k: heimdall_core::settings::CtrlKTerminal,
+    /// Windows asks for reduced motion: the cursor does not blink.
+    reduced_motion: bool,
 }
 
 impl<'a, M> TerminalView<'a, M> {
@@ -136,6 +138,7 @@ impl<'a, M> TerminalView<'a, M> {
             on_zoom: None,
             ctrl_v: heimdall_core::settings::CtrlVPaste::default(),
             ctrl_k: heimdall_core::settings::CtrlKTerminal::default(),
+            reduced_motion: false,
         }
     }
 
@@ -150,6 +153,14 @@ impl<'a, M> TerminalView<'a, M> {
     #[must_use]
     pub fn ctrl_k(mut self, choice: heimdall_core::settings::CtrlKTerminal) -> Self {
         self.ctrl_k = choice;
+        self
+    }
+
+    /// Whether Windows asks for reduced motion: the cursor then stays steady, as xterm.js's
+    /// with `cursorBlink` off.
+    #[must_use]
+    pub fn reduced_motion(mut self, reduced: bool) -> Self {
+        self.reduced_motion = reduced;
         self
     }
 
@@ -283,7 +294,11 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 state.blink.observe(
                     *now,
                     self.terminal.cursor_position(),
-                    !state.window_unfocused && self.terminal.cursor_blinks(),
+                    blinks(
+                        !state.window_unfocused,
+                        self.terminal.cursor_blinks(),
+                        self.reduced_motion,
+                    ),
                 );
                 if let Some(next) = state.blink.next_change(*now) {
                     shell.request_redraw_at(next);

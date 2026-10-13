@@ -69,7 +69,7 @@ pub enum UlidError {
 /// [`NoRandomness`] when the system gives no random bytes.
 pub fn generate() -> Result<String, NoRandomness> {
     let mut random = [0_u8; RANDOM_BYTE_COUNT];
-    getrandom::fill(&mut random).map_err(|_| NoRandomness)?;
+    sealvault::random::fill(&mut random).map_err(|_| NoRandomness)?;
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| {

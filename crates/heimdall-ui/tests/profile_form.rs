@@ -1391,6 +1391,7 @@ fn the_tunnel_port_card_shows_through_a_gateway_and_its_box_frees_the_field() {
         assert!(ui.find("Auto (33890)").is_err(), "a port is chosen");
         ui.find("If the port is taken when the session starts, the system chooses another one.")
             .expect("what a port taken does");
+        common::reveal(&mut ui, "33890");
         ui.click("33890").expect("the field, typed into now");
         ui.typewrite("1");
         assert!(ui.into_messages().any(|message| matches!(
@@ -1401,4 +1402,183 @@ fn the_tunnel_port_card_shows_through_a_gateway_and_its_box_frees_the_field() {
             })
         )));
     }
+}
+
+/// A gateway `id`, named as it is, at `host`, reached through `parent`.
+fn gateway(id: &str, host: &str, parent: Option<&str>) -> heimdall_core::profile::SshGateway {
+    heimdall_core::profile::SshGateway {
+        id: heimdall_core::profile::ProfileId::new(id),
+        name: id.to_owned(),
+        host: host.to_owned(),
+        port: 22,
+        username: Some("jump".to_owned()),
+        key_path: None,
+        parent: parent.map(heimdall_core::profile::ProfileId::new),
+    }
+}
+
+#[test]
+fn the_network_tab_draws_the_connection_path_through_every_gateway_of_the_route() {
+    use heimdall_app::profile_draft::ProfileChoice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store =
+        heimdall_core::store::ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge_gateways([
+        gateway("outer", "outer.lab", None),
+        gateway("inner", "inner.lab", Some("outer")),
+    ]);
+    store.save().expect("save");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::DirectConnection,
+        on: true,
+    }));
+    show(&mut shell, ProfileTab::Network);
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "Connection path",
+            "Heimdall will connect directly to the destination host.",
+            "Your PC",
+            "Direct outbound connection",
+            "RDP session",
+            "Destination",
+            "Destination server",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("SSH tunnel").is_err(), "no tunnel");
+    }
+    let _ = shell.update(app(AppMessage::ProfileField {
+        field: ProfileField::Host,
+        value: "web.lab".to_owned(),
+    }));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::DirectConnection,
+        on: false,
+    }));
+    let _ = shell.update(app(AppMessage::ChooseGateway(
+        heimdall_core::profile::ProfileId::new("inner"),
+    )));
+    snapshot(&shell, "profile-connection-path.png");
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "Heimdall will create an SSH tunnel before opening the session.",
+            "outer",
+            "outer.lab:22",
+            "inner",
+            "inner.lab:22",
+            "web.lab:3389",
+        ] {
+            ui.find(label).expect(label);
+        }
+        // The route's two hops, the one reached first first.
+        let tunnels = common::all_bounds(&mut ui, "SSH tunnel");
+        assert_eq!(tunnels.len(), 2, "one arrow to each gateway");
+        let outer = common::last_bounds(&mut ui, "outer.lab:22");
+        let inner = common::last_bounds(&mut ui, "inner.lab:22");
+        assert!(outer.x < inner.x || outer.y < inner.y, "outer before inner");
+        // In a tab the desktop opens no local port: none is named.
+        assert!(
+            ui.find("Local tunnel on localhost:Auto (33890)").is_err(),
+            "no port in a tab"
+        );
+    }
+    // Remote Desktop Connection listens on the local tunnel's port, as the C# says.
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::External(
+        true,
+    ))));
+    let mut ui = tall_simulator(&shell);
+    ui.find("Local tunnel on localhost:Auto (33890)")
+        .expect("the port Remote Desktop Connection opens");
+}
+
+#[test]
+fn the_monitors_picker_lists_the_screens_again_on_refresh() {
+    use heimdall_app::profile_draft::ProfileChoice;
+    use heimdall_ui::rdp_options::Monitor;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
+    // Screens this test machine does not have, as a screen unplugged since they were listed.
+    shell.set_monitors(vec![
+        Monitor {
+            index: 0,
+            width: 2560,
+            height: 1440,
+            primary: true,
+        },
+        Monitor {
+            index: 1,
+            width: 1920,
+            height: 1080,
+            primary: false,
+        },
+    ]);
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::MultiMonitor(
+        true,
+    ))));
+    show(&mut shell, ProfileTab::Options);
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find("Monitor 2: 1920x1080").expect("listed");
+        common::reveal(&mut ui, "Refresh");
+        ui.click("Refresh").expect("the picker's refresh");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::RefreshMonitors))
+        );
+    }
+    let _ = shell.update(Message::RefreshMonitors);
+    // Listed again from the computer: off Windows, where none are listed, the two given go.
+    if !cfg!(windows) {
+        assert!(
+            tall_simulator(&shell).find("Monitor 2: 1920x1080").is_err(),
+            "the screens there are now"
+        );
+    }
+}
+
+#[test]
+fn switch_to_auto_shows_outside_the_automatic_mode_and_goes_back_to_it() {
+    use heimdall_app::profile_draft::ProfileChoice;
+    use heimdall_core::profile::Resolution;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    show(&mut shell, ProfileTab::Options);
+    assert!(
+        tall_simulator(&shell).find("Switch to Auto").is_err(),
+        "a new profile is in Auto"
+    );
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::Resolution(
+        Resolution::Fixed,
+    ))));
+    {
+        let mut ui = tall_simulator(&shell);
+        common::reveal(&mut ui, "Switch to Auto");
+        ui.click("Switch to Auto").expect("the C# link");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ProfileChoice(ProfileChoice::Resolution(
+                Resolution::Auto
+            )))
+        )));
+    }
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::Resolution(
+        Resolution::Auto,
+    ))));
+    assert!(tall_simulator(&shell).find("Switch to Auto").is_err());
 }

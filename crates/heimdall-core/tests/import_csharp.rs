@@ -1986,3 +1986,111 @@ fn the_suggested_tunnel_ports_of_the_csharp_settings_are_the_automatic_choice() 
     assert_eq!(imported_local_port("RDP", "33890", Some(wrong)), Ok(None));
     assert_eq!(imported_local_port("SSH", "2222", Some(wrong)), Ok(None));
 }
+
+/// A `settings.json` holding `tasks` as its `scheduledTasks`.
+fn scheduled_settings(tasks: &str) -> String {
+    format!(r#"{{"scheduledTasks": [{tasks}]}}"#)
+}
+
+#[test]
+fn scheduled_connections_are_carried_over_with_their_identifiers_untimed() {
+    use heimdall_core::scheduled::Schedule;
+    let settings = scheduled_settings(
+        r#"{"id": "t1", "serverId": "a1", "serverName": "Web", "connectionType": "SSH",
+            "enabled": true, "schedule": "Daily 7:30", "scheduleType": "daily",
+            "timeOfDay": "7:30", "intervalMinutes": 0,
+            "lastRun": "2026-10-10T07:30:00.1234567+02:00",
+            "nextRun": "2026-10-11T07:30:00+02:00"},
+           {"id": "t2", "serverId": "", "serverName": "Old", "connectionType": "RDP",
+            "enabled": false, "scheduleType": "INTERVAL", "intervalMinutes": 15,
+            "lastRun": "2026-10-10T07:30:00"},
+           {"id": "t3", "serverName": "Zero", "scheduleType": "Interval", "intervalMinutes": -4},
+           {"id": "t4", "serverName": "Shown", "schedule": "Every 45 min"},
+           {"id": 7},
+           {"serverName": "No id", "timeOfDay": "23:15"}"#,
+    );
+    let report = import(&servers(""), Some(&settings)).expect("valid JSON");
+    let tasks = &report.scheduled;
+    assert_eq!(tasks.len(), 5, "the entry that does not read is left out");
+    assert_eq!(tasks[0].id, "t1");
+    assert_eq!(tasks[0].server_id, Some(ProfileId::new("a1")));
+    assert_eq!(tasks[0].server_name, "Web");
+    assert_eq!(tasks[0].connection_type, "SSH");
+    assert!(tasks[0].enabled);
+    assert_eq!(
+        tasks[0].schedule,
+        Schedule::Daily {
+            time: "07:30".to_owned()
+        }
+    );
+    assert_eq!(
+        tasks[0].last_run,
+        Some(1_791_610_200),
+        "2026-10-10T05:30:00Z, the offset applied"
+    );
+    assert_eq!(tasks[0].next_run, None, "timed as it is carried over");
+    assert_eq!(tasks[0].last_outcome, None);
+    assert_eq!(tasks[1].server_id, None, "an empty identifier is none");
+    assert!(!tasks[1].enabled);
+    assert_eq!(tasks[1].schedule, Schedule::Interval { minutes: 15 });
+    assert_eq!(
+        tasks[1].last_run, None,
+        "a time without its offset is no moment"
+    );
+    assert_eq!(
+        tasks[2].schedule,
+        Schedule::Interval { minutes: 60 },
+        "below one minute: an hour, as the C# runs it"
+    );
+    assert_eq!(tasks[2].connection_type, "SSH", "the C# default");
+    assert_eq!(
+        tasks[3].schedule,
+        Schedule::Interval { minutes: 45 },
+        "an older file, read from its display text"
+    );
+    assert_eq!(tasks[4].server_name, "No id");
+    assert_eq!(tasks[4].id.len(), 32, "a new identifier");
+    assert!(tasks[4].enabled, "enabled when the file does not say");
+    assert!(report.dropped.is_empty(), "{:?}", report.dropped);
+}
+
+#[test]
+fn a_daily_time_that_is_no_time_of_day_runs_at_eight_and_is_said() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+    use heimdall_core::scheduled::Schedule;
+    let settings = scheduled_settings(
+        r#"{"id": "t1", "serverName": "Web", "scheduleType": "Daily", "timeOfDay": "25:00"},
+           {"id": "t2", "serverName": "Db"}"#,
+    );
+    let report = import(&servers(""), Some(&settings)).expect("valid JSON");
+    for task in &report.scheduled {
+        assert_eq!(
+            task.schedule,
+            Schedule::Daily {
+                time: "08:00".to_owned()
+            }
+        );
+    }
+    assert_eq!(
+        report.dropped,
+        ["Web", "Db"]
+            .into_iter()
+            .map(|name| DroppedSettings {
+                name: name.to_owned(),
+                settings: vec![Dropped::ScheduledTime],
+            })
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn settings_without_scheduled_connections_carry_none_over() {
+    for settings in [
+        r"{}",
+        r#"{"scheduledTasks": null}"#,
+        r#"{"scheduledTasks": {"id": "t1"}}"#,
+    ] {
+        let report = import(&servers(""), Some(settings)).expect("valid JSON");
+        assert!(report.scheduled.is_empty(), "{settings}");
+    }
+}

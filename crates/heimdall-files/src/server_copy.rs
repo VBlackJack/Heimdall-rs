@@ -38,6 +38,9 @@
 
 use std::fmt::Write as _;
 
+/// Bytes of a copy script's token, written in hexadecimal in the script.
+pub const TOKEN_LEN: usize = 16;
+
 /// Exit status of a file copy whose destination turned out to be a link: something else
 /// was put there meanwhile.
 pub const RACED: u32 = 99;
@@ -84,7 +87,7 @@ pub fn copy_script(
     source: &[u8],
     destination: &[u8],
     kind: CopyKind,
-    token: [u8; 16],
+    token: [u8; TOKEN_LEN],
 ) -> Result<CopyScript, Unquotable> {
     let hex = token.iter().fold(String::new(), |mut hex, byte| {
         let _ = write!(hex, "{byte:02x}");
@@ -164,10 +167,8 @@ pub fn copy_script(
 /// A fresh token for [`copy_script`], from the system's random source; `None` when it
 /// cannot give one.
 #[must_use]
-pub fn random_token() -> Option<[u8; 16]> {
-    ring::rand::generate(&ring::rand::SystemRandom::new())
-        .ok()
-        .map(ring::rand::Random::expose)
+pub fn random_token() -> Option<[u8; TOKEN_LEN]> {
+    sealvault::random::array().ok()
 }
 
 /// `path` as one word of `sh`: in single quotes, each quote of it closed, escaped and

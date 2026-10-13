@@ -357,11 +357,8 @@ pub struct EditSession {
 
 /// SHA-256 of `data`.
 #[must_use]
-pub fn hash(data: &[u8]) -> [u8; 32] {
-    let digest = ring::digest::digest(&ring::digest::SHA256, data);
-    let mut out = [0; 32];
-    out.copy_from_slice(digest.as_ref());
-    out
+pub fn hash(data: &[u8]) -> [u8; sealvault::hash::SHA256_LEN] {
+    sealvault::hash::sha256(data)
 }
 
 /// Copies the server's `remote` file into a new folder of the user's own under `base`,
@@ -413,9 +410,7 @@ pub(crate) async fn open_copy(
             let folder = edit_folder(&base).map_err(|_| FilesError::WorkingFolderUnprotected)?;
             sweep(&base, &keep);
             let local = folder.join(&name.name);
-            write_new(&local, &data).map_err(|error| FilesError::Local {
-                detail: error.to_string(),
-            })?;
+            write_new(&local, &data).map_err(|error| FilesError::local(&error))?;
             let modified = std::fs::metadata(&local)
                 .and_then(|found| found.modified())
                 .ok();

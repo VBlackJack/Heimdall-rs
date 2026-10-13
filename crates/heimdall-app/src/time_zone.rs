@@ -111,6 +111,26 @@ pub fn local_offset_of_wall_clock(wall_seconds: i64) -> i32 {
 /// How far before a skipped wall-clock time its offset is looked for.
 const GAP_PROBE_SECONDS: i64 = 3_600;
 
+/// This computer's clock, for the scheduled connections' timing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemClock;
+
+impl heimdall_core::scheduled::LocalClock for SystemClock {
+    fn offset_at(&self, unix_seconds: i64) -> i32 {
+        local_offset_at(Instant::from_unix_seconds(unix_seconds))
+    }
+
+    fn offset_of_wall_clock(&self, wall_seconds: i64) -> i32 {
+        local_offset_of_wall_clock(wall_seconds)
+    }
+}
+
+/// Now, in whole seconds since the Unix epoch.
+#[must_use]
+pub fn unix_now() -> i64 {
+    Instant::now().unix_seconds()
+}
+
 /// The time zones this computer knows, as .NET's `TimeZoneInfo.GetSystemTimeZones`, in its
 /// order: on Windows, the registry's, each under its key with its display name and its
 /// `TZI` rule; elsewhere, the IANA zones of the system's zone information, each with the

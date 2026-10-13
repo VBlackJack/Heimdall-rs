@@ -290,3 +290,51 @@ fn reset_all_asks_first_then_puts_every_setting_back_but_the_language_theme_and_
     // Terminals open take the default colours too.
     assert_eq!(backgrounds(&app), [Palette::dracula().background]);
 }
+
+#[test]
+fn files_left_unreadable_are_read_from_their_last_good_copy_and_said_at_start() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(SettingsMessage::ColorScheme(
+        ColorScheme::Nord,
+    )));
+    app.update(Message::Settings(SettingsMessage::ColorScheme(
+        ColorScheme::Monokai,
+    )));
+    drop(app);
+    // Saved once more by the next start: the profiles' last good copy is there.
+    drop(self::app(dir.path()));
+    // As a power cut mid-save leaves them.
+    std::fs::write(dir.path().join("profiles.toml"), "").expect("emptied");
+    std::fs::write(dir.path().join(SETTINGS_FILE_NAME), vec![0_u8; 32]).expect("zeroed");
+    let restarted = App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    });
+    match &restarted.dialog {
+        Some(Dialog::ConfigRecovered { documents }) => assert_eq!(
+            documents,
+            &["profiles.toml".to_owned(), SETTINGS_FILE_NAME.to_owned()]
+        ),
+        other => panic!("the C# notice, not {other:?}"),
+    }
+    assert_eq!(restarted.profiles().len(), 1, "the profiles of the copy");
+    assert_eq!(
+        restarted.settings().color_scheme,
+        ColorScheme::Nord,
+        "the settings of the copy: the last change came after it"
+    );
+}
+
+#[test]
+fn readable_files_say_nothing_at_start() {
+    let dir = tempfile::tempdir().expect("dir");
+    drop(app(dir.path()));
+    let again = app(dir.path());
+    assert!(again.dialog.is_none(), "{:?}", again.dialog);
+}

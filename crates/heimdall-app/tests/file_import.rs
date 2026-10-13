@@ -108,6 +108,7 @@ fn a_mobaxterm_file_is_asked_about_then_merged_with_new_ids_and_its_passwords_sa
             stored_credentials: Some(1),
             dropped: Vec::new(),
             host_keys: None,
+            scheduled: None,
             gateways: heimdall_core::import::gateways::Reconciliation::default(),
             actions: None,
         }))

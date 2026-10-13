@@ -29,6 +29,7 @@ mod clipboard_save;
 pub mod connect;
 pub mod drives;
 mod frames;
+mod input;
 mod kdc;
 mod keep_alive;
 pub mod known_hosts;
@@ -48,6 +49,7 @@ pub use connect::{
     RdpConfig, RdpConnection, RdpError, Security, Step, Timeouts, Transport, connect, connect_over,
     connect_through, desktop_scale_factor, given,
 };
+pub use input::{RdpInput, fast_path_events};
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 pub use keep_alive::DEFAULT_KEEP_ALIVE;
 pub use known_hosts::{CertificateVerdict, KnownRdpHost, KnownRdpHosts, Verdict};

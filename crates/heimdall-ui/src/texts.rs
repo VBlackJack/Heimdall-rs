@@ -25,6 +25,7 @@ use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
 use heimdall_core::import::csharp::{Dropped, LegacyElevation, SkipReason};
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
+use heimdall_core::scheduled::{FailureKind, RefusalKind};
 use heimdall_core::settings::{RDP_RESIZE_ENABLE_DELAY_MAX_MS, RDP_RESIZE_ENABLE_DELAY_MIN_MS};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
@@ -169,6 +170,18 @@ pub fn special_keys(keys: heimdall_app::SpecialKeys) -> String {
         SpecialKeys::WinL => fl!("ui-desktop-keys-win-l"),
         SpecialKeys::WinD => fl!("ui-desktop-keys-win-d"),
         SpecialKeys::WinE => fl!("ui-desktop-keys-win-e"),
+    }
+}
+
+/// The name of a VNC quality, as the C# toolbar's menu names it.
+#[must_use]
+pub fn vnc_quality(quality: heimdall_app::VncQuality) -> String {
+    use heimdall_app::VncQuality;
+    match quality {
+        VncQuality::Best => fl!("ui-session-vnc-quality-best"),
+        VncQuality::Balanced => fl!("ui-session-vnc-quality-balanced"),
+        VncQuality::Performance => fl!("ui-session-vnc-quality-performance"),
+        VncQuality::LowBandwidth => fl!("ui-session-vnc-quality-low-bandwidth"),
     }
 }
 
@@ -408,6 +421,70 @@ pub fn auth_method(method: AuthMethod) -> String {
     }
 }
 
+/// What became of a scheduled connection's last run, for its row.
+#[must_use]
+pub fn scheduled_outcome(task: &heimdall_core::scheduled::ScheduledTask) -> String {
+    use heimdall_core::scheduled::Outcome;
+    let Some(outcome) = task.last_outcome else {
+        return String::new();
+    };
+    let said = match outcome {
+        Outcome::Ran => fl!("ui-scheduled-outcome-ran"),
+        Outcome::Missed => fl!("ui-scheduled-outcome-missed"),
+        Outcome::Deferred => fl!("ui-scheduled-outcome-deferred"),
+        Outcome::Failed(failure) => scheduled_failure(failure, &task.server_name),
+        Outcome::Refused(refusal) => scheduled_refusal(refusal),
+    };
+    if task.suspended() {
+        fl!(
+            "ui-scheduled-outcome-suspended",
+            count = task.failures,
+            reason = said
+        )
+    } else {
+        said
+    }
+}
+
+/// Why a schedule never opens a profile.
+#[must_use]
+pub fn scheduled_refusal(refusal: RefusalKind) -> String {
+    match refusal {
+        RefusalKind::LocalProgram => fl!("ui-scheduled-refusal-local-program"),
+        RefusalKind::ExternalClient => fl!("ui-scheduled-refusal-external-client"),
+        RefusalKind::RdGateway => fl!("ui-scheduled-refusal-rd-gateway"),
+        RefusalKind::Citrix => fl!("ui-scheduled-refusal-citrix"),
+        RefusalKind::WinRmNoAccount => fl!("ui-scheduled-refusal-winrm-no-account"),
+        RefusalKind::WinRmPasswordNotStored => fl!("ui-scheduled-refusal-winrm-password"),
+        RefusalKind::X11Forwarding => fl!("ui-scheduled-refusal-x11"),
+        RefusalKind::StepsNotApproved => fl!("ui-scheduled-refusal-steps"),
+        RefusalKind::FilesBrowserOff => fl!("ui-scheduled-refusal-files-browser"),
+    }
+}
+
+/// Why a scheduled connection did not open the profile named `name`.
+#[must_use]
+pub fn scheduled_failure(failure: FailureKind, name: &str) -> String {
+    let name = server_text(name);
+    match failure {
+        FailureKind::ProfileNotFound | FailureKind::NameNotFound => {
+            fl!("ui-scheduled-failure-not-found", name = name)
+        }
+        FailureKind::NameAmbiguous => fl!("ui-scheduled-failure-name-ambiguous", name = name),
+        FailureKind::CredentialUnavailable => {
+            fl!("ui-scheduled-failure-credential-unavailable", name = name)
+        }
+        FailureKind::VerificationRequired => {
+            fl!("ui-scheduled-failure-verification-required", name = name)
+        }
+        FailureKind::ConfirmationRequired => {
+            fl!("ui-scheduled-failure-confirmation-required", name = name)
+        }
+        FailureKind::SessionLimit => fl!("ui-scheduled-failure-session-limit"),
+        FailureKind::ConnectionFailed => fl!("ui-scheduled-failure-connection-failed", name = name),
+    }
+}
+
 /// A setting an imported profile came without.
 #[must_use]
 pub fn dropped_setting(dropped: Dropped) -> String {
@@ -440,6 +517,10 @@ pub fn dropped_setting(dropped: Dropped) -> String {
                 LegacyElevation::Runas => fl!("ui-import-elevation-runas"),
                 LegacyElevation::Unknown => fl!("ui-import-elevation-unknown"),
             }
+        ),
+        Dropped::ScheduledTime => fl!(
+            "ui-import-dropped-scheduled-time",
+            time = heimdall_core::scheduled::DEFAULT_TIME_OF_DAY
         ),
     }
 }
@@ -592,6 +673,7 @@ pub fn files_error(error: &FilesError) -> String {
         FilesError::SessionClosed => fl!("ui-files-error-session"),
         FilesError::Interrupted => fl!("ui-files-error-interrupted"),
         FilesError::Local { detail } => fl!("ui-files-error-local", detail = detail.as_str()),
+        FilesError::LocalDiskFull => fl!("ui-files-error-local-disk-full"),
         FilesError::UnsafeName { name, reason } => fl!(
             "ui-files-error-unsafe-name",
             name = name.as_str(),

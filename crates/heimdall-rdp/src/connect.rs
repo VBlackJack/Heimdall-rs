@@ -51,7 +51,6 @@ use ironrdp::pdu::rdp::capability_sets::{MajorPlatformType, client_codecs_capabi
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp_tokio::{Framed, FramedRead, FramedWrite, MovableTokioFramed};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_util::sync::CancellationToken;
@@ -184,9 +183,12 @@ pub struct RdpConfig {
     /// Several machines answer at the address: a certificate not trusted yet is asked
     /// about rather than refused as changed.
     pub several_servers: bool,
-    /// Never ask about a certificate not trusted yet: one this computer's certificate
-    /// authorities validate for the server's name goes through, any other is refused, as
-    /// the C# `RdpStrictServerAuthentication`.
+    /// The server is authenticated by this computer's certificate authorities alone, as the
+    /// C# `RdpStrictServerAuthentication` asks Windows to (`AuthenticationLevel` 1): one
+    /// they validate for the server's name goes through, any other is refused, pinned or
+    /// not, and nothing is asked. Under Network Level Authentication only: with plain TLS
+    /// allowed the C# has no server authentication level and checks the pins
+    /// ([`Security::NlaOrTls`]).
     pub strict_server_authentication: bool,
     /// Pins of the servers trusted so far.
     pub known_hosts: KnownRdpHosts,
@@ -315,8 +317,8 @@ pub enum RdpError {
     /// The server's certificate cannot be read.
     #[error("the server certificate cannot be read")]
     Certificate,
-    /// Strict server authentication: the certificate is neither trusted yet nor validated
-    /// by this computer's certificate authorities.
+    /// Strict server authentication: the certificate is not validated by this computer's
+    /// certificate authorities, pinned or not.
     #[error("the server's identity cannot be authenticated")]
     ServerNotAuthenticated,
     /// The server is not known: the user decides, then connects again with
@@ -415,7 +417,7 @@ pub async fn connect(
     let host = config.host.clone();
     let port = config.port;
     let tcp: Opening = Box::pin(async move {
-        let tcp = TcpStream::connect((host.as_str(), port)).await?;
+        let tcp = heimdall_net::connect(&host, port).await?;
         let local = tcp.local_addr()?;
         Ok((Box::new(tcp) as Box<dyn Transport>, local))
     });
@@ -504,14 +506,27 @@ async fn connect_in_place(
 /// device one. The sound is played here when the profile asks and this computer can; else
 /// the channel declines it. The device channel announces the shared drives, maybe none.
 fn attach_sound_and_drives(connector: &mut ClientConnector, config: &RdpConfig) {
-    let speakers = (config.options.audio == AudioPlayback::Local)
-        .then(crate::audio::local_speakers)
-        .flatten()
-        .map(|backend| Box::new(backend) as Box<dyn RdpsndClientHandler>);
-    if let Some((sound, devices)) = sound_and_devices(speakers, &config.drives) {
+    if let Some((sound, devices)) =
+        sound_and_devices(speakers(config.options.audio), &config.drives)
+    {
         connector.attach_static_channel(sound);
         connector.attach_static_channel(devices);
     }
+}
+
+/// Whether the server's sound is played here: the profile asks it, and this build can play
+/// it, built with the `audio` feature. Else the server is told not to send it here.
+fn played_here(audio: AudioPlayback) -> bool {
+    audio == AudioPlayback::Local && crate::audio::AVAILABLE
+}
+
+/// The speakers the sound channel plays on, when `audio` is played here and this computer
+/// has a sound card to play on.
+fn speakers(audio: AudioPlayback) -> Option<Box<dyn RdpsndClientHandler>> {
+    played_here(audio)
+        .then(crate::audio::local_speakers)
+        .flatten()
+        .map(|backend| Box::new(backend) as Box<dyn RdpsndClientHandler>)
 }
 
 /// The sound and device channels, as a pair or not at all: none when there is neither
@@ -590,9 +605,7 @@ pub async fn connect_over(
 
     let server_name = ServerName::try_from(config.host.clone())
         .map_err(|_| RdpError::Protocol("the server name is not valid".to_owned()))?;
-    let system = config
-        .strict_server_authentication
-        .then(tls::SystemTrust::default);
+    let system = authenticated_by_system(config).then(tls::SystemTrust::default);
     let tls = phase(
         config.timeouts.handshake,
         cancel,
@@ -644,7 +657,7 @@ pub async fn connect_over(
         return Err(RdpError::DesktopTooLarge { width, height });
     }
     if passed == Passed::KeyOnly {
-        adopt(config, pin)?;
+        adopt_or_keep(config, pin);
     }
     Ok(RdpConnection {
         framed,
@@ -678,6 +691,14 @@ fn checked(
     Ok((certificate, passed))
 }
 
+/// Whether the server is authenticated by this computer's certificate authorities alone:
+/// strict server authentication, under Network Level Authentication only. The C#
+/// `RdpAuthenticationResolver` gives no server authentication level without NLA, its profile
+/// form greys the box out then, and Heimdall's own certificate check runs instead.
+fn authenticated_by_system(config: &RdpConfig) -> bool {
+    config.strict_server_authentication && config.security == Security::Nla
+}
+
 /// What the pin check let through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Passed {
@@ -702,6 +723,21 @@ fn trust(
 ) -> Result<Passed, RdpError> {
     let (presented, whole) = (certificate.fingerprint, certificate.certificate);
     let target = heimdall_core::profile::display_address(&config.host, config.port);
+    // Strict: the system's certificate authorities decide alone, as Windows does for the C#
+    // at its `AuthenticationLevel` 1, where Heimdall's certificate check does not run. A pin
+    // lets nothing through they do not validate, and nothing is asked or recorded.
+    if authenticated_by_system(config) {
+        if validated {
+            log::info!(
+                "the certificate of {target} is validated by this computer's authorities: {whole}, key {presented}"
+            );
+            return Ok(Passed::Trusted);
+        }
+        log::warn!(
+            "the certificate of {target} is not validated by this computer's authorities: refused"
+        );
+        return Err(RdpError::ServerNotAuthenticated);
+    }
     let verdict = match config
         .known_hosts
         .certificate_verdict(&config.host, config.port, &presented, &whole)
@@ -734,16 +770,14 @@ fn trust(
         }
         asked @ (CertificateVerdict::Renewed { .. } | CertificateVerdict::Unknown) => asked,
     };
-    unsettled(config, certificate, validated, verdict)
+    unsettled(config, certificate, verdict)
 }
 
 /// Decides about a certificate not trusted yet, as `verdict` says: never seen, or renewed on a
-/// key trusted. Trusted for this run, accepted just now, decided by the system under strict
-/// authentication, else asked about.
+/// key trusted. Trusted for this run, accepted just now, else asked about.
 fn unsettled(
     config: &RdpConfig,
     certificate: &ServerCertificate,
-    validated: bool,
     verdict: CertificateVerdict,
 ) -> Result<Passed, RdpError> {
     let (presented, whole) = (certificate.fingerprint, certificate.certificate);
@@ -768,8 +802,10 @@ fn unsettled(
             );
             return Ok(Passed::Trusted);
         }
-        // The key changed between the question and this connection.
-        Some(accepted) if accepted.key != presented => {
+        // The key changed between the question and this connection. Where several machines
+        // answer, another one answered this time: asked about in its turn, as the C# asks
+        // about each certificate of a pool it does not trust yet.
+        Some(accepted) if accepted.key != presented && !config.several_servers => {
             log::warn!(
                 "the certificate of {target} changed since it was accepted: accepted {}, presented {presented}: refused",
                 accepted.key
@@ -779,21 +815,9 @@ fn unsettled(
                 presented: Box::new(certificate.clone()),
             });
         }
-        // The same key, another certificate than the one accepted: asked about again.
+        // The same key, another certificate than the one accepted, or another machine of a
+        // pool: asked about.
         Some(_) | None => {}
-    }
-    // Strict: never asked about; the system's certificate authorities decide.
-    if config.strict_server_authentication {
-        if validated {
-            log::info!(
-                "the certificate of {target} is validated by this computer's authorities: {presented}"
-            );
-            return Ok(Passed::Trusted);
-        }
-        log::warn!(
-            "the certificate of {target} is not validated by this computer's authorities: refused"
-        );
-        return Err(RdpError::ServerNotAuthenticated);
     }
     Err(match verdict {
         CertificateVerdict::Renewed { recorded } => {
@@ -807,6 +831,19 @@ fn unsettled(
         }
         _ => RdpError::UnknownCertificate(Box::new(certificate.clone())),
     })
+}
+
+/// [`adopt`], the connection kept whatever comes of it: a server that just logged on is not
+/// ended because its certificate could not be written down. Nothing is adopted then, and the
+/// next connection is checked on the key again; the failure is in the diagnostics log, as the
+/// C# `RdpCertificatePersistence` logs a trust it could not save and keeps the session.
+fn adopt_or_keep(config: &RdpConfig, pin: (Fingerprint, CertificateHash, Validity)) {
+    if let Err(error) = adopt(config, pin) {
+        log::warn!(
+            "the certificate of the RDP server {} could not be adopted, the connection is kept and it is checked on its key again next time: {error}",
+            heimdall_core::profile::display_address(&config.host, config.port)
+        );
+    }
 }
 
 /// The connection is up, its certificate let through on a key an earlier Heimdall recorded
@@ -872,8 +909,9 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         enable_server_pointer: false,
         request_data: Some(NegoRequestData::cookie(NEGOTIATION_COOKIE.to_owned())),
         autologon: false,
-        // Played here when the profile asks; else kept on the server, or not played at all.
-        enable_audio_playback: config.options.audio == AudioPlayback::Local,
+        // Played here when the profile asks and this build can; else kept on the server, or
+        // not played at all.
+        enable_audio_playback: played_here(config.options.audio),
         remote_console_audio: config.options.audio == AudioPlayback::OnServer,
         console_session: config.options.admin_session,
         compression_type: None,
@@ -1188,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn a_renewal_under_strict_authentication_is_never_asked_about() {
+    fn under_strict_authentication_the_authorities_decide_alone_pinned_or_not() {
         let dir = tempfile::tempdir().expect("dir");
         let known = dir.path().join("known_rdp_hosts");
         let certificate = ServerCertificate::from_der(CERT).expect("fixture");
@@ -1201,19 +1239,178 @@ mod tests {
                 (&certificate.certificate, Some(&certificate.validity)),
             )
             .expect("pinned");
+        let strict = || RdpConfig {
+            strict_server_authentication: true,
+            ..pinned_by(&known)
+        };
+        // As the C# `RdpStrictServerAuthentication`, Windows' `AuthenticationLevel` 1: the
+        // system's authorities decide, and Heimdall's own check does not run.
+        assert!(matches!(
+            trust(&strict(), &renewed, false),
+            Err(RdpError::ServerNotAuthenticated)
+        ));
+        assert_eq!(trust(&strict(), &renewed, true).ok(), Some(Passed::Trusted));
+        assert!(
+            matches!(
+                trust(&strict(), &certificate, false),
+                Err(RdpError::ServerNotAuthenticated)
+            ),
+            "a pin lets nothing through the authorities do not validate"
+        );
+        assert_eq!(
+            trust(&strict(), &certificate, true).ok(),
+            Some(Passed::Trusted)
+        );
+        // Nor does an answer given, or a trust for the run.
+        let answered = RdpConfig {
+            accepted: Some(AcceptedCertificate::from(&renewed)),
+            trusted_for_run: vec![renewed.certificate],
+            ..strict()
+        };
+        assert!(matches!(
+            trust(&answered, &renewed, false),
+            Err(RdpError::ServerNotAuthenticated)
+        ));
+        // Nothing recorded by any of it.
+        let [entry] = KnownRdpHosts::new(&known)
+            .entries()
+            .expect("read")
+            .try_into()
+            .expect("one entry");
+        assert_eq!(entry.certificate, Some(certificate.certificate));
+    }
+
+    #[test]
+    fn under_strict_authentication_a_key_recorded_alone_is_not_adopted() {
+        let dir = tempfile::tempdir().expect("dir");
+        let known = dir.path().join("known_rdp_hosts");
+        let certificate = ServerCertificate::from_der(CERT).expect("fixture");
+        KnownRdpHosts::new(&known)
+            .record(HOST, PORT, &certificate.fingerprint)
+            .expect("legacy");
         let strict = RdpConfig {
             strict_server_authentication: true,
             ..pinned_by(&known)
         };
-        // As the C# `RdpStrictServerAuthentication`: the system's authorities decide.
         assert!(matches!(
-            trust(&strict, &renewed, false),
+            trust(&strict, &certificate, false),
             Err(RdpError::ServerNotAuthenticated)
         ));
-        assert_eq!(trust(&strict, &renewed, true).ok(), Some(Passed::Trusted));
         assert_eq!(
-            trust(&strict, &certificate, false).ok(),
+            trust(&strict, &certificate, true).ok(),
+            Some(Passed::Trusted),
+            "validated: nothing left to adopt"
+        );
+    }
+
+    #[test]
+    fn strict_authentication_with_plain_tls_allowed_checks_the_pins_as_the_csharp_without_nla() {
+        let dir = tempfile::tempdir().expect("dir");
+        let known = dir.path().join("known_rdp_hosts");
+        let certificate = ServerCertificate::from_der(CERT).expect("fixture");
+        let tls_allowed = RdpConfig {
+            strict_server_authentication: true,
+            security: Security::NlaOrTls,
+            ..pinned_by(&known)
+        };
+        assert!(!authenticated_by_system(&tls_allowed));
+        assert!(
+            matches!(
+                trust(&tls_allowed, &certificate, false),
+                Err(RdpError::UnknownCertificate(_))
+            ),
+            "asked about, as the C# check at its level 0"
+        );
+        KnownRdpHosts::new(&known)
+            .record_whole_certificate(
+                HOST,
+                PORT,
+                &certificate,
+                (&certificate.certificate, Some(&certificate.validity)),
+            )
+            .expect("pinned");
+        assert_eq!(
+            trust(&tls_allowed, &certificate, false).ok(),
             Some(Passed::Trusted)
+        );
+        assert!(authenticated_by_system(&RdpConfig {
+            strict_server_authentication: true,
+            ..pinned_by(&known)
+        }));
+        assert!(!authenticated_by_system(&pinned_by(&known)));
+    }
+
+    #[test]
+    fn where_several_machines_answer_one_accepted_on_another_key_leaves_this_one_asked_about() {
+        let dir = tempfile::tempdir().expect("dir");
+        let known = dir.path().join("known_rdp_hosts");
+        let certificate = ServerCertificate::from_der(CERT).expect("fixture");
+        // The machine the question was about, accepted; the reconnection lands on this one.
+        let elsewhere = || AcceptedCertificate {
+            key: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                .parse()
+                .expect("fingerprint"),
+            certificate: CertificateHash::of(b"the certificate of the other machine"),
+        };
+        let pool = RdpConfig {
+            several_servers: true,
+            accepted: Some(elsewhere()),
+            ..pinned_by(&known)
+        };
+        assert!(
+            matches!(
+                trust(&pool, &certificate, false),
+                Err(RdpError::UnknownCertificate(_))
+            ),
+            "another machine to ask about, not a change"
+        );
+        // One machine at the address: the key changed since the question.
+        let single = RdpConfig {
+            accepted: Some(elsewhere()),
+            ..pinned_by(&known)
+        };
+        assert!(matches!(
+            trust(&single, &certificate, false),
+            Err(RdpError::CertificateChanged { .. })
+        ));
+        assert!(
+            KnownRdpHosts::new(&known)
+                .entries()
+                .expect("read")
+                .is_empty(),
+            "nothing recorded"
+        );
+    }
+
+    #[test]
+    fn a_failed_adoption_keeps_the_connection_and_the_key_is_checked_again_next_time() {
+        let dir = tempfile::tempdir().expect("dir");
+        let known = dir.path().join("known_rdp_hosts");
+        let certificate = ServerCertificate::from_der(CERT).expect("fixture");
+        let file = KnownRdpHosts::new(&known);
+        file.record(HOST, PORT, &certificate.fingerprint)
+            .expect("legacy");
+        let config = pinned_by(&known);
+        assert_eq!(
+            trust(&config, &certificate, false).ok(),
+            Some(Passed::KeyOnly)
+        );
+        // The file cannot be rewritten: its new text has nowhere to be written beside it.
+        std::fs::create_dir(dir.path().join("known_rdp_hosts.tmp")).expect("blocked");
+        let pin = (
+            certificate.fingerprint,
+            certificate.certificate,
+            certificate.validity,
+        );
+        assert!(adopt(&config, pin).is_err(), "the write fails");
+        let before = std::fs::read_to_string(&known).expect("file");
+        // What the connection does with it: nothing that could end the session.
+        let () = adopt_or_keep(&config, pin);
+        assert_eq!(std::fs::read_to_string(&known).expect("file"), before);
+        assert_eq!(
+            trust(&config, &certificate, false).ok(),
+            Some(Passed::KeyOnly),
+            "not adopted: checked on its key again"
         );
     }
 
@@ -1253,5 +1450,60 @@ mod tests {
     #[test]
     fn neither_sound_nor_drive_opens_neither_channel() {
         assert!(sound_and_devices(None, &[]).is_none());
+    }
+
+    #[test]
+    fn sound_kept_on_the_server_or_off_opens_no_sound_channel_and_asks_none_here() {
+        for audio in [AudioPlayback::OnServer, AudioPlayback::Off] {
+            assert!(speakers(audio).is_none(), "{audio:?}");
+            assert!(
+                sound_and_devices(speakers(audio), &[]).is_none(),
+                "{audio:?}"
+            );
+            let config = RdpConfig {
+                options: RdpOptions {
+                    audio,
+                    ..RdpOptions::default()
+                },
+                ..pinned_by(std::path::Path::new("known_rdp_hosts"))
+            };
+            assert!(
+                !connector_config(&config).enable_audio_playback,
+                "{audio:?}"
+            );
+        }
+    }
+
+    #[cfg(not(feature = "audio"))]
+    #[test]
+    fn without_the_audio_feature_local_playback_opens_no_sound_channel_and_asks_none_here() {
+        // The server then keeps no sound for this computer: neither the sound channel nor
+        // the device one it needs is offered, and the client info says no playback here.
+        assert!(!played_here(AudioPlayback::Local));
+        assert!(speakers(AudioPlayback::Local).is_none());
+        assert!(sound_and_devices(speakers(AudioPlayback::Local), &[]).is_none());
+        let config = RdpConfig {
+            options: RdpOptions {
+                audio: AudioPlayback::Local,
+                ..RdpOptions::default()
+            },
+            ..pinned_by(std::path::Path::new("known_rdp_hosts"))
+        };
+        assert!(!connector_config(&config).enable_audio_playback);
+        assert!(!connector_config(&config).remote_console_audio);
+    }
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn with_the_audio_feature_local_playback_is_asked_here() {
+        assert!(played_here(AudioPlayback::Local));
+        let config = RdpConfig {
+            options: RdpOptions {
+                audio: AudioPlayback::Local,
+                ..RdpOptions::default()
+            },
+            ..pinned_by(std::path::Path::new("known_rdp_hosts"))
+        };
+        assert!(connector_config(&config).enable_audio_playback);
     }
 }

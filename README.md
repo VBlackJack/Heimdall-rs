@@ -33,6 +33,7 @@ embedded web engine.
 |---|---|
 | `heimdall-core` | Server profiles, settings, paths, credential vault |
 | `heimdall-i18n` | Supported languages and the check that keeps them complete |
+| `heimdall-net` | TCP connections to a host by name, Happy Eyeballs (RFC 8305) |
 | `heimdall-ssh` | SSH sessions, tunnels, jump hosts |
 | `heimdall-sftp` | SFTP, FTP and FTPS |
 | `heimdall-term` | Terminal emulation and local pseudo-terminals |
@@ -43,13 +44,17 @@ embedded web engine.
 | `heimdall-ui` | The desktop application |
 | `xtask` | Developer tooling |
 
-Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` only.
+Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` and
+`heimdall-net` only.
 
 ## Build
 
 On Linux, the build needs the development packages of xkbcommon, Wayland, X11
 and fontconfig. Running it also needs `libxkbcommon-x11` and a Vulkan or OpenGL
 driver, such as Mesa. On Windows, the build needs the MSVC build tools.
+
+The C libraries the binary links or loads at run time on Linux, and when, are listed in
+[Native libraries](docs/native-libraries.md).
 
 ```bash
 cargo run --package heimdall-ui
@@ -62,6 +67,10 @@ end of its log (`%LOCALAPPDATA%\Heimdall-rs\data\logs\heimdall.log`) once it clo
 - `run-release.bat`: release build, as a user runs it, without a console; level `info`.
 
 Both take a log level as their argument, `error` to `trace`: `run-debug.bat trace`.
+
+Automated UI tests run a debug build with the `test-data-dir` feature on a scratch folder,
+never on the real profiles, vault or saved passwords: see
+[Test data folder](docs/test-data-folder.md).
 
 A published release is compiled with `HEIMDALL_RELEASE` set to its release tag, such as
 `v2026.100901`: the update check compares it with the latest release on GitHub and offers

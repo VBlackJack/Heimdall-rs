@@ -29,7 +29,7 @@ use std::time::Duration;
 use ironrdp::connector::sspi::generator::NetworkRequest;
 use ironrdp::connector::sspi::network_client::NetworkProtocol;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::UdpSocket;
 
 /// Port of a KDC whose address names none.
 const KDC_PORT: u16 = 88;
@@ -81,9 +81,13 @@ async fn addresses(request: &NetworkRequest) -> io::Result<Vec<SocketAddr>> {
     Ok(tokio::net::lookup_host((host, port)).await?.collect())
 }
 
-/// One exchange over TCP, with the first address that accepts the connection.
+/// One exchange over TCP, with the first address that accepts the connection, raced as
+/// every connection is (`heimdall_net`).
 async fn tcp(addresses: &[SocketAddr], message: &[u8]) -> io::Result<Vec<u8>> {
-    let mut stream = TcpStream::connect(addresses).await?;
+    let mut stream = heimdall_net::connect_addresses(addresses, None)
+        .await
+        .map_err(io::Error::from)?
+        .stream;
     stream.write_all(message).await?;
     let mut prefix = [0; LENGTH_PREFIX];
     stream.read_exact(&mut prefix).await?;

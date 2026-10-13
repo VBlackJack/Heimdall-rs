@@ -102,12 +102,12 @@ pub enum FilesKey {
     Last,
     /// Open the selected folder, or send the selected file to the other side.
     Open,
-    /// Show the parent folder; Alt+Up, which in the session tree moves the session one
-    /// place up.
+    /// Show the parent folder, on Backspace as the C# `FileBrowserShortcutPolicy`; Alt+Up,
+    /// which in the session tree moves the session one place up.
     Parent,
     /// Alt+Down: nothing in a Files pane; in the session tree, the session one place down.
     Lower,
-    /// Show the folder shown before, as the C# Files tab's Backspace.
+    /// Show the folder shown before, as the C# Files tab's Alt+Left.
     Back,
     /// Give the focus to the other pane.
     SwitchPane,
@@ -447,6 +447,9 @@ pub struct Pane<P, E> {
     pub home: Option<P>,
     /// How the listing on its way was asked for.
     navigation: Option<Navigation<P>>,
+    /// The folder the entries shown were listed from, once one was: the folder shown, but
+    /// while another folder's listing is on its way, or after it failed, the one before.
+    listed: Option<P>,
     /// The type-ahead going on over its entries shown.
     search: TypeAhead,
 }
@@ -495,6 +498,7 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
     /// `path` was listed: the history follows how it was asked for, and the first folder
     /// shown is Home.
     pub(crate) fn arrived(&mut self, path: &P) {
+        self.listed = Some(path.clone());
         match self.navigation.take() {
             Some(Navigation::Away(left)) if left != *path => {
                 self.history.push(left);
@@ -557,8 +561,17 @@ impl<P, E> Pane<P, E> {
             history: Vec::new(),
             home: None,
             navigation: None,
+            listed: None,
             search: TypeAhead::default(),
         }
+    }
+
+    /// The folder the entries shown are in: the one they were listed from, which is not
+    /// the folder shown while another's listing is on its way or after it failed; the
+    /// folder shown before any listing.
+    #[must_use]
+    pub fn entries_folder(&self) -> &P {
+        self.listed.as_ref().unwrap_or(&self.path)
     }
 
     /// Whether Back has a folder to go to.
@@ -852,6 +865,9 @@ pub struct Transfer {
     pub state: TransferState,
     /// The entry picked, planned again by Retry; none for what could not be picked at all.
     pub picked: Option<PlannedRoot>,
+    /// How many entries the walk of a download being prepared found so far, as the C#
+    /// "Scanning folders" says it; none before the first report.
+    pub scanned: Option<usize>,
     pub(crate) cancel: CancellationToken,
 }
 
@@ -880,6 +896,8 @@ pub enum FilesError {
         /// Operating system message.
         detail: String,
     },
+    /// The local disk is full, as the C# `SftpErrorLocalDiskFull` says it.
+    LocalDiskFull,
     /// The server's name cannot be a local file name.
     UnsafeName {
         /// The name, made safe.
@@ -968,6 +986,15 @@ pub enum FilesError {
     },
 }
 
+impl FilesError {
+    /// What the local file system said, `error`: a full disk told apart from the rest, as
+    /// the C# `IsLocalDiskFull`.
+    #[must_use]
+    pub fn local(error: &std::io::Error) -> Self {
+        Self::from(&RemoteError::local(error))
+    }
+}
+
 impl From<&RemoteError> for FilesError {
     fn from(error: &RemoteError) -> Self {
         match error {
@@ -978,6 +1005,7 @@ impl From<&RemoteError> for FilesError {
             RemoteError::Local { detail } => Self::Local {
                 detail: detail.clone(),
             },
+            RemoteError::LocalDiskFull => Self::LocalDiskFull,
             RemoteError::NotAFile => Self::NotAFile,
             RemoteError::IsLink => Self::IsLink,
             RemoteError::LocalExists => Self::Exists,
@@ -1604,16 +1632,56 @@ impl PlannedRoot {
 ///
 /// [`FilesError`] when the session ends or the walk is too large.
 pub async fn plan_transfer(request: PlanRequest) -> Result<Plan, FilesError> {
+    plan_transfer_reporting(request, &mut |_| {}).await
+}
+
+/// Plans `request` as [`plan_transfer`] does, a download's walk saying to `scanned` how
+/// many entries it found so far.
+async fn plan_transfer_reporting(
+    request: PlanRequest,
+    scanned: &mut (dyn FnMut(usize) + Send),
+) -> Result<Plan, FilesError> {
     let roots: Vec<Root> = request
         .roots
         .into_iter()
         .map(|planned| planned.root)
         .collect();
     let plan = match request.direction {
-        Direction::Download => request.client.plan_download(&roots, &request.cancel).await,
+        Direction::Download => {
+            request
+                .client
+                .plan_download_reporting(&roots, &request.cancel, scanned)
+                .await
+        }
         Direction::Upload => request.client.plan_upload(&roots, &request.cancel).await,
     };
     plan.map_err(|error| FilesError::from(&error))
+}
+
+/// What planning a transfer reports.
+#[derive(Debug)]
+pub enum PlanEvent {
+    /// A download's walk found this many entries so far, as the C# `ReportDownloadScan`.
+    Scanned(usize),
+    /// The plan, or why there is none. Last event.
+    Planned(Result<Plan, FilesError>),
+}
+
+/// Plans `request` on the current tokio runtime; what it reports arrives on the stream,
+/// which ends after [`PlanEvent::Planned`].
+#[must_use]
+pub fn plan_events(request: PlanRequest) -> ReceiverStream<PlanEvent> {
+    let (events, receiver) = mpsc::channel(TRANSFER_QUEUE_LENGTH);
+    tokio::spawn(async move {
+        let reports = events.clone();
+        // A report the window has not read yet is passed over: the next one says more.
+        let mut scanned = move |entries| {
+            let _ = reports.try_send(PlanEvent::Scanned(entries));
+        };
+        let result = plan_transfer_reporting(request, &mut scanned).await;
+        let _ = events.send(PlanEvent::Planned(result)).await;
+    });
+    ReceiverStream::new(receiver)
 }
 
 /// Runs a transfer on the current tokio runtime; its events arrive on the stream, which
@@ -1823,9 +1891,7 @@ fn local_failure(error: &std::io::Error) -> FilesError {
     if error.kind() == std::io::ErrorKind::AlreadyExists {
         FilesError::Exists
     } else {
-        FilesError::Local {
-            detail: error.to_string(),
-        }
+        FilesError::local(error)
     }
 }
 
@@ -2189,6 +2255,7 @@ mod tests {
             rate: super::Rate::default(),
             state,
             picked: None,
+            scanned: None,
             cancel: tokio_util::sync::CancellationToken::new(),
         };
         pane.transfers = vec![
@@ -2468,6 +2535,29 @@ mod tests {
         pane.show(vec![file("x", 50, 0, 0o644, 0), file("y", 5, 0, 0o644, 0)]);
         assert_eq!(labels(&pane.entries), ["y", "x"], "listed again, by size");
         assert_eq!(pane.selected, None);
+    }
+
+    #[test]
+    fn the_entries_stay_in_the_folder_listed_while_another_is_on_its_way() {
+        let (first, second) = (
+            std::path::PathBuf::from("first"),
+            std::path::PathBuf::from("second"),
+        );
+        let mut pane: Pane<std::path::PathBuf, RemoteEntry> = Pane::new(first.clone());
+        assert_eq!(
+            pane.entries_folder(),
+            &first,
+            "the folder shown, before any listing"
+        );
+        pane.arrived(&first);
+        pane.leave();
+        pane.path = second.clone();
+        assert_eq!(pane.entries_folder(), &first, "the other one on its way");
+        pane.not_arrived();
+        assert_eq!(pane.entries_folder(), &first, "nor after it failed");
+        pane.leave();
+        pane.arrived(&second);
+        assert_eq!(pane.entries_folder(), &second, "listed");
     }
 
     fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {

@@ -36,7 +36,9 @@ use super::{App, Dialog, Effect, Notice};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::ids::QuestionId;
-use crate::tunnel::{Tunnel, TunnelEvent, TunnelField, TunnelForm, TunnelId, TunnelSpec};
+use crate::tunnel::{
+    Tunnel, TunnelBadge, TunnelEvent, TunnelField, TunnelForm, TunnelId, TunnelSpec,
+};
 use crate::tunnel_driver::TunnelRequest;
 
 /// What the user does with tunnels, and what their attempts report.
@@ -62,6 +64,10 @@ pub enum TunnelMessage {
     },
     /// Closes a tunnel.
     Close(TunnelId),
+    /// Selects a tunnel's row on the Tunnels page, as a click on a row of the C# grid.
+    Select(TunnelId),
+    /// Closes the tunnel selected on the Tunnels page, as the C# "Close Selected".
+    CloseSelected,
     /// Closes every tunnel.
     CloseAll,
     /// Opens an interrupted tunnel again, as it was asked for.
@@ -156,15 +162,25 @@ impl App {
                     title: tab.display_title().to_owned(),
                     route,
                     remote: (host.to_owned(), port),
-                    interrupted: tab.retry.is_some()
-                        || matches!(
-                            tab.phase,
-                            super::Phase::Failed(_) | super::Phase::Closed { .. }
-                        ),
+                    interrupted: route_interrupted(tab),
                     started: tab.opened,
                 })
             })
             .collect()
+    }
+
+    /// The health of the gateways `tab` goes through, as the C# `TunnelBadgeStateResolver`
+    /// says it for the tab's badge: hidden when it goes straight, unhealthy once its session
+    /// failed, ended or waits to open again.
+    #[must_use]
+    pub fn tunnel_badge(&self, tab: &super::Tab) -> TunnelBadge {
+        if self.tab_route(tab).is_empty() {
+            TunnelBadge::Hidden
+        } else if route_interrupted(tab) {
+            TunnelBadge::Unhealthy
+        } else {
+            TunnelBadge::Healthy
+        }
     }
 
     /// Opens or closes the tunnels panel, as the C# `TogglePanel`: the choice is the tab
@@ -228,6 +244,16 @@ impl App {
                 }
                 Vec::new()
             }
+            TunnelMessage::Select(id) => {
+                if self.tunnel(id).is_some() {
+                    self.selected_tunnel = Some(id);
+                }
+                Vec::new()
+            }
+            TunnelMessage::CloseSelected => match self.selected_tunnel() {
+                Some(id) => self.tunnel_message(TunnelMessage::Close(id)),
+                None => Vec::new(),
+            },
             TunnelMessage::Reopen(id) => {
                 let Some(index) = self
                     .tunnels
@@ -294,6 +320,12 @@ impl App {
     #[must_use]
     pub fn tunnel(&self, id: TunnelId) -> Option<&Tunnel> {
         self.tunnels.iter().find(|tunnel| tunnel.id == id)
+    }
+
+    /// The tunnel selected on the Tunnels page, while it is listed.
+    #[must_use]
+    pub fn selected_tunnel(&self) -> Option<TunnelId> {
+        self.selected_tunnel.filter(|id| self.tunnel(*id).is_some())
     }
 
     /// How many tunnels listen: the interrupted ones are not counted.
@@ -610,6 +642,9 @@ impl App {
         if let Some(run) = self.take_run(id) {
             run.cancel.cancel();
         }
+        if self.selected_tunnel == Some(id) {
+            self.selected_tunnel = None;
+        }
         let index = self.tunnels.iter().position(|tunnel| tunnel.id == id)?;
         let tunnel = self.tunnels.remove(index);
         (!tunnel.interrupted).then(|| tunnel.local.port())
@@ -628,6 +663,16 @@ impl App {
         self.dialog = None;
         Some(self.tunnel_host_key_decision(super::KeyTrust::Refused))
     }
+}
+
+/// Whether the route of `tab` through its gateways is interrupted: its session failed,
+/// ended or waits to open again.
+fn route_interrupted(tab: &super::Tab) -> bool {
+    tab.retry.is_some()
+        || matches!(
+            tab.phase,
+            super::Phase::Failed(_) | super::Phase::Closed { .. }
+        )
 }
 
 /// Declines `question`: nobody is there to answer it.

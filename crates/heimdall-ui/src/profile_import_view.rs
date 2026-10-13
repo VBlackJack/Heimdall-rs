@@ -27,6 +27,7 @@ use heimdall_core::import::rdp_file::Conflict;
 use iced::widget::{Column, button, checkbox, column, container, pick_list, row, text};
 use iced::{Element, Length};
 
+use crate::ellipsis;
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -37,6 +38,15 @@ const ROWS_HEIGHT: f32 = 320.0;
 
 /// Widths of the columns: tick, source, name, host, status, conflict.
 const COLUMNS: [f32; 6] = [50.0, 150.0, 190.0, 170.0, 240.0, 150.0];
+
+/// Room around a cell's text, as the C# cells' `Margin="4,2,8,0"`: its text clear of the
+/// next column.
+const CELL_PADDING: iced::Padding = iced::Padding {
+    top: 0.0,
+    right: 8.0,
+    bottom: 0.0,
+    left: 4.0,
+};
 
 /// Every choice for a clash, as the C# list offers them.
 const CONFLICTS: [crate::rdp_view::ConflictChoice; 3] = [
@@ -49,14 +59,16 @@ fn app(message: ProfileImportMessage) -> Message {
     Message::App(AppMessage::ProfileImport(message))
 }
 
+/// A cell of `width`: its text on one line, ended with an ellipsis where the column ends,
+/// as the C# cells' `TextTrimming="CharacterEllipsis"`.
 fn cell<'a>(value: impl Into<String>, width: f32) -> Element<'a, Message> {
     container(
-        text(value.into())
-            .size(font_size::BODY)
-            .wrapping(text::Wrapping::None),
+        ellipsis::text(value)
+            .width(Length::Fill)
+            .size(font_size::BODY),
     )
     .width(width)
-    .clip(true)
+    .padding(CELL_PADDING)
     .into()
 }
 

@@ -23,7 +23,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use heimdall_app::profile_draft::ProfileField;
-use heimdall_app::tunnel::{TunnelEvent, TunnelField, TunnelId, TunnelProblem};
+use heimdall_app::tunnel::{TunnelBadge, TunnelEvent, TunnelField, TunnelId, TunnelProblem};
 use heimdall_app::{
     Answer, App, AppConfig, ConnectionEvent, Dialog, Effect, Message, Notice, QuestionId,
     QuestionKind, SystemCredentials, TunnelMessage, UiError,
@@ -679,7 +679,7 @@ fn a_session_through_a_gateway_is_listed_as_its_route_and_close_all_leaves_it() 
         panic!("one connection: {effects:?}");
     };
     let (inner, attempt) = (*inner, *attempt);
-    connect(&mut app, "direct");
+    let direct = connect(&mut app, "direct");
     let routes = app.session_routes();
     assert_eq!(
         routes.len(),
@@ -692,6 +692,10 @@ fn a_session_through_a_gateway_is_listed_as_its_route_and_close_all_leaves_it() 
     assert_eq!(route.remote, ("inner.lab".to_owned(), 22));
     assert_eq!(route.title, "server inner");
     assert!(!route.interrupted, "connecting");
+    // The tab's badge, as the C# resolver says it: none for the direct session.
+    let badge = |app: &App, tab| app.tunnel_badge(app.tab(tab).expect("tab"));
+    assert_eq!(badge(&app, inner), TunnelBadge::Healthy);
+    assert_eq!(badge(&app, direct), TunnelBadge::Hidden);
 
     // Close All is the hand-opened tunnels': the session stays.
     tunnel(&mut app, TunnelMessage::CloseAll);
@@ -705,4 +709,50 @@ fn a_session_through_a_gateway_is_listed_as_its_route_and_close_all_leaves_it() 
         event: ConnectionEvent::Failed(UiError::ConnectionLost),
     });
     assert!(app.session_routes()[0].interrupted);
+    assert_eq!(badge(&app, inner), TunnelBadge::Unhealthy, "the C# warning");
+}
+
+#[test]
+fn a_row_selected_is_what_close_selected_closes_as_the_csharp_page() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    save_gateway(&mut app);
+    tunnel(&mut app, TunnelMessage::CloseSelected);
+    assert!(app.selected_tunnel().is_none(), "nothing to close");
+    let mut ids = Vec::new();
+    for port in [LOCAL_PORT, LOCAL_PORT + 1] {
+        let id = open_tunnel_on(&mut app, port);
+        event(
+            &mut app,
+            id,
+            TunnelEvent::Opened(SocketAddr::from((Ipv4Addr::LOCALHOST, port))),
+        );
+        ids.push(id);
+    }
+    tunnel(&mut app, TunnelMessage::CloseSelected);
+    assert_eq!(app.tunnels.len(), 2, "nothing selected: nothing closed");
+
+    tunnel(&mut app, TunnelMessage::Select(ids[1]));
+    assert_eq!(app.selected_tunnel(), Some(ids[1]));
+    tunnel(&mut app, TunnelMessage::CloseSelected);
+    assert_eq!(
+        app.tunnels.iter().map(|open| open.id).collect::<Vec<_>>(),
+        [ids[0]],
+        "the selected row only"
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::TunnelClosed {
+            port: LOCAL_PORT + 1,
+            error: None
+        })
+    );
+    assert!(app.selected_tunnel().is_none(), "its row gone with it");
+
+    // A row closed otherwise is no longer selected either.
+    tunnel(&mut app, TunnelMessage::Select(ids[0]));
+    tunnel(&mut app, TunnelMessage::Close(ids[0]));
+    assert!(app.selected_tunnel().is_none());
+    tunnel(&mut app, TunnelMessage::Select(ids[0]));
+    assert!(app.selected_tunnel().is_none(), "a row no longer listed");
 }

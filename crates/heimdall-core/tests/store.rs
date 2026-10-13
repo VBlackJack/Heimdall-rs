@@ -18,6 +18,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use heimdall_core::gateway_parents::MAX_GATEWAY_CHAIN_DEPTH;
+use heimdall_core::last_good_copy::backup_path;
 use heimdall_core::paths::PROFILES_FILE_NAME;
 use heimdall_core::profile::{
     Forwards, LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile,
@@ -79,11 +80,20 @@ fn save_leaves_no_temporary_file_behind() {
     store.merge([profile("a", "h1")]);
     store.save().expect("saves once");
     store.save().expect("saves over the existing file");
-    let names: Vec<_> = fs::read_dir(dir.path())
+    let mut names: Vec<_> = fs::read_dir(dir.path())
         .expect("readable")
         .map(|entry| entry.expect("entry").file_name())
         .collect();
-    assert_eq!(names, vec![PROFILES_FILE_NAME]);
+    names.sort();
+    // The file and its last good copy, as the C# keeps one: nothing else.
+    let copy = backup_path(&path);
+    assert_eq!(
+        names,
+        vec![
+            PROFILES_FILE_NAME.into(),
+            copy.file_name().expect("named").to_owned()
+        ]
+    );
 }
 
 #[test]
@@ -239,6 +249,62 @@ fn a_corrupt_file_is_an_error_not_an_empty_store() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(PROFILES_FILE_NAME);
     fs::write(&path, "version = [").expect("writes");
+    assert!(matches!(
+        ProfileStore::open(&path),
+        Err(StoreError::Parse { .. })
+    ));
+}
+
+#[test]
+fn a_file_left_unreadable_is_read_from_its_last_good_copy_then_replaced_at_the_next_save() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store
+        .apply(|store| store.merge([profile("web", "web.lab")]))
+        .expect("first save");
+    assert!(!backup_path(&path).exists(), "nothing replaced yet");
+    store
+        .apply(|store| store.merge([profile("db", "db.lab")]))
+        .expect("second save");
+    assert!(
+        backup_path(&path).exists(),
+        "the first file kept, as the C# .bak"
+    );
+    // As a power cut mid-save leaves it.
+    fs::write(&path, vec![0_u8; 64]).expect("zeroed");
+    let mut reopened = ProfileStore::open(&path).expect("read from the copy");
+    assert!(reopened.recovered_from_backup());
+    let ids: Vec<&str> = reopened
+        .ssh_profiles()
+        .iter()
+        .map(|profile| profile.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        ["web"],
+        "the last good copy, not the profile saved after it"
+    );
+    reopened
+        .apply(|store| store.merge([profile("app", "app.lab")]))
+        .expect("the damaged file is replaced");
+    let again = ProfileStore::open(&path).expect("reads");
+    assert!(!again.recovered_from_backup());
+    assert_eq!(again.ssh_profiles().len(), 2);
+    let copy = ProfileStore::open(backup_path(&path)).expect("the copy reads");
+    assert_eq!(
+        copy.ssh_profiles().len(),
+        1,
+        "the zeroed file never replaced the good copy"
+    );
+}
+
+#[test]
+fn an_unreadable_file_without_a_usable_copy_fails_as_before() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(&path, "").expect("emptied");
+    fs::write(backup_path(&path), "version = [").expect("broken copy");
     assert!(matches!(
         ProfileStore::open(&path),
         Err(StoreError::Parse { .. })

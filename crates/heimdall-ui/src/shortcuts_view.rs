@@ -153,7 +153,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
             ("F7", Action::FilesNewFolder),
             ("Del", Action::FilesDelete),
             ("F5", Action::FilesRefresh),
-            ("Backspace, Alt+Left, Alt+Up", Action::FilesBack),
+            ("Alt+Left, Backspace, Alt+Up", Action::FilesBack),
             ("F4, Alt+D", Action::FilesPath),
             ("Tab", Action::FilesSwitchPane),
         ],

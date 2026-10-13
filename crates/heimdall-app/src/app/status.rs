@@ -233,6 +233,9 @@ pub enum Notice {
     KeysNotSent,
     /// No image of the session shown could be copied.
     ScreenshotFailed,
+    /// No file dialog could be shown, or its answer could not be used: what the user is
+    /// told, in their language.
+    FileDialogFailed(String),
     /// This folder was created.
     FolderCreated(String),
     /// The full path of an entry of a Files tab was copied, as the C# says it.
@@ -400,6 +403,8 @@ pub enum Notice {
     /// not run on this computer or could not be found running, as the C#
     /// `ErrorEmbeddedCredentialGuardRequired`.
     CredentialGuardRequired,
+    /// What a scheduled connection did.
+    Scheduled(super::scheduled::ScheduledNotice),
     /// The master password opened the vault, but Windows Hello could not be enrolled again,
     /// as the C# `VaultHelloReenrollError`.
     VaultHelloEnrolAgainFailed,
@@ -483,7 +488,10 @@ impl SessionState {
         }
         match tab.phase {
             Phase::Connected => Self::Connected,
-            Phase::Closed { .. } => Self::Ended,
+            // Given up by the user, at a prompt or a certificate: ended, not failed, as the
+            // tab's own card and the RDP header say it.
+            Phase::Closed { .. }
+            | Phase::Failed(UiError::Cancelled | UiError::CertificateRefused) => Self::Ended,
             Phase::Failed(_) => Self::Failed,
             _ => Self::Connecting,
         }

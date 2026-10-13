@@ -61,7 +61,9 @@ pub mod rdp_driver;
 pub mod rdp_external;
 pub mod rdpmanager;
 pub mod reachability;
+pub mod reduced_motion;
 pub mod route_test;
+pub mod scheduled_form;
 pub mod script_shell;
 pub mod server_health;
 pub mod session_log;
@@ -118,6 +120,9 @@ pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, Ro
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
 pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use app::{
+    SCHEDULED_TICK, ScheduledChoice, ScheduledMessage, ScheduledNotice, local_time_text,
+};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };

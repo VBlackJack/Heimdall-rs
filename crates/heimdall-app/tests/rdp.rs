@@ -31,7 +31,7 @@ use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
 use heimdall_rdp::{
     AcceptedCertificate, CertificateHash, Ending, Fingerprint, Framebuffer, KnownRdpHosts,
-    Operation, Scancode,
+    Operation, RdpInput, Scancode,
 };
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -186,7 +186,12 @@ fn an_accepted_certificate_reconnects_with_that_certificate_and_a_refused_one_en
             certificate: whole(),
         },
     );
-    assert!(matches!(&app.tabs[0].phase, Phase::HostKey { fingerprint, .. } if fingerprint == KEY));
+    // The fingerprint compared is the pin's, the whole certificate's thumbprint, as the
+    // C# prompt shows it; the key is said apart.
+    assert!(
+        matches!(&app.tabs[0].phase, Phase::HostKey { fingerprint, .. } if *fingerprint == whole().thumbprint())
+    );
+    assert_eq!(app.tabs[0].certificate_key(), Some(key()));
     let effects = app.update(Message::HostKeyDecision { tab, accept: true });
     let [
         Effect::ConnectRdp {
@@ -346,6 +351,7 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
         tab,
         inputs: vec![DesktopInput::Key {
             scancode: Some(Scancode::from_u8(false, 0x1E)),
+            xt: Some(0x1E),
             keysym: Some(u32::from(b'a')),
             pressed: true,
         }],
@@ -369,7 +375,7 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
     // The key goes to RDP by its position.
     let sent = received.try_recv().expect("sent");
     assert!(
-        matches!(sent.as_slice(), [Operation::KeyPressed(code)] if *code == Scancode::from_u8(false, 0x1E)),
+        matches!(sent.as_slice(), [RdpInput::Operation(Operation::KeyPressed(code))] if *code == Scancode::from_u8(false, 0x1E)),
         "{sent:?}"
     );
 
@@ -445,7 +451,7 @@ fn anti_idle_sends_shift_to_the_sessions_asking_for_it_until_stopped() {
     let shift = Scancode::from_u8(false, 0x2A);
     let sent = web_received.try_recv().expect("shift");
     assert!(
-        matches!(sent.as_slice(), [Operation::KeyPressed(down), Operation::KeyReleased(up)]
+        matches!(sent.as_slice(), [RdpInput::Operation(Operation::KeyPressed(down)), RdpInput::Operation(Operation::KeyReleased(up))]
             if *down == shift && *up == shift),
         "{sent:?}"
     );
@@ -678,11 +684,13 @@ fn every_key_combination_releases_what_it_pressed_modifiers_last() {
             "{keys:?}: named for RDP and VNC alike"
         );
     }
-    // The Windows key is Super_L for VNC, the extended 0x5B for RDP.
+    // The Windows key is Super_L for VNC, the extended 0x5B for RDP, 0xE05B in XT terms for
+    // a VNC server that takes scancodes.
     assert_eq!(
         SpecialKeys::Windows.inputs()[0],
         DesktopInput::Key {
             scancode: Some(heimdall_rdp::Scancode::from_u8(true, 0x5B)),
+            xt: Some(0xE05B),
             keysym: Some(0xFFEB),
             pressed: true,
         }
@@ -1006,7 +1014,7 @@ fn the_certificate_question_counts_the_other_certificates_and_names_the_route() 
     // Its fingerprint can be copied, as the C# prompt's Copy.
     let effects = app.update(Message::CopyHostKeyFingerprint(tab));
     assert!(
-        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if text == KEY),
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if *text == whole().thumbprint()),
         "{effects:?}"
     );
     assert_eq!(

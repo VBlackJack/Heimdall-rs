@@ -22,13 +22,14 @@ use std::time::Instant;
 
 use heimdall_app::files::{FilesKey, Side};
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
-use iced::widget::{mouse_area, opaque, operation, pin};
-use iced::{Element, Length, Task, window};
+use iced::widget::{mouse_area, opaque, operation};
+use iced::{Element, Task, window};
 
 use super::{Message, Shell};
 use crate::drop_batch::DropPlace;
 use crate::files_drag::FilesDrag;
 use crate::floating_view::{FloatEvent, PaneField, field_id, files_menu_tab};
+use crate::menu_fit::menu_at;
 use crate::tree_view::TreeMenu;
 
 impl Shell {
@@ -49,16 +50,17 @@ impl Shell {
             return Task::none();
         };
         match event {
+            // winit says each file of the drag in turn: they are counted.
             FloatEvent::FilesHovered(over) => {
                 if let Some(floating) = self.floating.get_mut(&window) {
-                    floating.hovered = over;
+                    floating.hovered = if over { floating.hovered + 1 } else { 0 };
                 }
                 Task::none()
             }
             // Gathered with the rest of its drop: sent on once they all came.
             FloatEvent::FileDropped(path) => {
                 if let Some(floating) = self.floating.get_mut(&window) {
-                    floating.hovered = false;
+                    floating.hovered = 0;
                 }
                 self.file_dropped(DropPlace::Floating(window), path)
             }
@@ -196,16 +198,11 @@ impl Shell {
             .as_ref()
             .filter(|(menu, _)| files_menu_tab(menu) == Some(tab))?;
         let entries = self.open_menu_entries(menu)?;
+        // Fitted to its window as the main window's menus.
         Some(opaque(
-            mouse_area(
-                pin(entries)
-                    .x(at.x)
-                    .y(at.y)
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            )
-            .on_press(Message::CloseTreeMenu)
-            .on_right_press(Message::CloseTreeMenu),
+            mouse_area(menu_at(entries, *at))
+                .on_press(Message::CloseTreeMenu)
+                .on_right_press(Message::CloseTreeMenu),
         ))
     }
 }

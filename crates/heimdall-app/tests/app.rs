@@ -1110,6 +1110,74 @@ fn importing_the_csharp_profiles_merges_and_saves_them() {
 }
 
 #[test]
+fn the_csharp_scheduled_connections_are_carried_over_timed_from_now() {
+    use heimdall_core::scheduled::{self, Schedule, ScheduledTasks};
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut config = config(dir.path());
+    let legacy = dir.path().join("legacy");
+    std::fs::create_dir(&legacy).expect("legacy");
+    std::fs::write(
+        legacy.join("servers.json"),
+        r#"{"servers":[{"id":"x","displayName":"X","remoteServer":"x.lab","connectionType":"SSH"}]}"#,
+    )
+    .expect("servers");
+    std::fs::write(
+        legacy.join("settings.json"),
+        r#"{"scheduledTasks":[
+            {"id":"t1","serverId":"x","serverName":"X","scheduleType":"Interval",
+             "intervalMinutes":20,"nextRun":"2001-01-01T00:00:00+00:00"},
+            {"id":"t2","serverId":"x","serverName":"X","timeOfDay":"06:15"}]}"#,
+    )
+    .expect("settings");
+    config.legacy_dir = Some(legacy);
+    let path = scheduled::scheduled_path(&config.profiles_file);
+    let mut app = App::new(config.clone());
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_secs()
+        .cast_signed();
+    app.update(Message::ImportLegacy);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("expected ImportDone, got {:?}", app.dialog);
+    };
+    assert_eq!(summary.scheduled, Some(Ok(2)));
+    let tasks = ScheduledTasks::load(&path).expect("written");
+    let ids: Vec<&str> = tasks.tasks().iter().map(|task| task.id.as_str()).collect();
+    assert_eq!(ids, ["t1", "t2"], "their identifiers kept");
+    let interval = &tasks.tasks()[0];
+    assert_eq!(interval.schedule, Schedule::Interval { minutes: 20 });
+    let next = interval.next_run.expect("timed");
+    assert!(
+        (before + 20 * 60..before + 20 * 60 + 120).contains(&next),
+        "twenty minutes from now, never the C# time: {next}"
+    );
+    assert!(tasks.tasks()[1].next_run.is_some_and(|next| next > before));
+
+    assert_eq!(
+        app.scheduled_tasks(),
+        tasks.tasks(),
+        "the running list is the one written"
+    );
+
+    // Carried over again: each in place of the one of its identifier.
+    app.update(Message::DismissDialog);
+    app.update(Message::ImportLegacy);
+    assert_eq!(ScheduledTasks::load(&path).expect("read").tasks().len(), 2);
+    assert_eq!(app.scheduled_tasks().len(), 2);
+
+    // A file there that did not read at the start is left as it is, and said.
+    std::fs::write(&path, "task = [").expect("corrupt");
+    let mut app = App::new(config);
+    app.update(Message::ImportLegacy);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("expected ImportDone, got {:?}", app.dialog);
+    };
+    assert!(matches!(summary.scheduled, Some(Err(_))), "{summary:?}");
+    assert_eq!(std::fs::read_to_string(&path).expect("kept"), "task = [");
+}
+
+#[test]
 fn the_csharp_profiles_of_this_machine_keep_skipping_a_certificate_check() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut config = config(dir.path());

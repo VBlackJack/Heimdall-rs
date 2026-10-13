@@ -19,6 +19,7 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use heimdall_core::last_good_copy::backup_path;
 use heimdall_core::lockout::{LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS};
 use heimdall_core::pin::PinHash;
 use heimdall_core::settings::{
@@ -217,6 +218,34 @@ fn a_newer_or_broken_file_is_refused_not_guessed() {
 }
 
 #[test]
+fn settings_left_unreadable_are_read_from_their_last_good_copy() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings {
+        color_scheme: ColorScheme::Nord,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("first save");
+    settings.color_scheme = ColorScheme::Monokai;
+    settings.save(&path).expect("second save, the first kept");
+    std::fs::write(&path, "").expect("emptied");
+    let (read, recovered) = Settings::load_recovering(&path).expect("read from the copy");
+    assert!(recovered, "said, for the application to tell the user");
+    assert_eq!(read.color_scheme, ColorScheme::Nord, "the last good copy");
+    read.save(&path).expect("the damaged file replaced");
+    let (again, recovered) = Settings::load_recovering(&path).expect("reads");
+    assert!(!recovered);
+    assert_eq!(again.color_scheme, ColorScheme::Nord);
+    assert_eq!(
+        Settings::load(&backup_path(&path))
+            .expect("the copy reads")
+            .color_scheme,
+        ColorScheme::Nord,
+        "the emptied file never replaced the good copy"
+    );
+}
+
+#[test]
 fn session_logging_is_off_by_default_and_its_folder_beside_the_settings() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
@@ -354,9 +383,19 @@ fn the_broadcast_scope_is_the_current_tab_until_another_is_chosen() {
 fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default() {
     use heimdall_core::settings::{
         TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN,
+        TERMINAL_FONT_SIZE_UNWRITTEN,
     };
 
     let dir = tempfile::tempdir().expect("dir");
+    // A new installation starts at the C#'s 14.
+    assert_eq!(TERMINAL_FONT_SIZE_DEFAULT, 14);
+    assert_eq!(
+        Settings::load(&dir.path().join(SETTINGS_FILE_NAME))
+            .expect("no file yet")
+            .terminal_font_size,
+        TERMINAL_FONT_SIZE_DEFAULT
+    );
+    // A file written before it held a size keeps the one its terminals were drawn at.
     assert_eq!(
         written(
             dir.path(),
@@ -364,7 +403,7 @@ fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default()
 "
         )
         .terminal_font_size,
-        TERMINAL_FONT_SIZE_DEFAULT
+        TERMINAL_FONT_SIZE_UNWRITTEN
     );
     for (size, read) in [
         (TERMINAL_FONT_SIZE_MIN, TERMINAL_FONT_SIZE_MIN),

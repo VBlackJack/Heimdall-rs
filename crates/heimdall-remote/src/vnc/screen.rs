@@ -105,6 +105,21 @@ impl Screen {
         self.pixels[at..at + PIXEL_BYTES].copy_from_slice(&[rgb[0], rgb[1], rgb[2], OPAQUE]);
     }
 
+    /// Lays `rgba` over the pixel at `x`, `y`, as a canvas draws an image with alpha: its
+    /// colour weighed by its alpha against the one under it. The caller checked the bounds.
+    pub(crate) fn blend(&mut self, x: u16, y: u16, rgba: [u8; PIXEL_BYTES]) {
+        let at = self.offset(x, y);
+        let alpha = u16::from(rgba[3]);
+        let under = u16::from(OPAQUE) - alpha;
+        for (channel, over) in self.pixels[at..at + 3].iter_mut().zip(rgba) {
+            let mixed =
+                (u16::from(over) * alpha + u16::from(*channel) * under + u16::from(OPAQUE) / 2)
+                    / u16::from(OPAQUE);
+            *channel = u8::try_from(mixed).unwrap_or(OPAQUE);
+        }
+        self.pixels[at + 3] = OPAQUE;
+    }
+
     /// Copies `rect` of `source`, a screen of the same size; nothing outside either.
     pub(crate) fn copy_from(&mut self, source: &Screen, rect: Rect) {
         if !source.contains(rect) || !self.contains(rect) || source.width != self.width {

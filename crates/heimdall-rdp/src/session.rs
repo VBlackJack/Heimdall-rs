@@ -26,7 +26,7 @@ use ironrdp::connector::connection_activation::{
 use ironrdp::connector::{ConnectionResult, Sequence as _};
 use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp::graphics::image_processing::PixelFormat;
-use ironrdp::input::{Database, Operation};
+use ironrdp::input::Database;
 use ironrdp::pdu::Action;
 use ironrdp::session::fast_path::ProcessorBuilder;
 use ironrdp::session::image::DecodedImage;
@@ -39,7 +39,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use ring::digest::{SHA256, SHA256_OUTPUT_LEN, digest};
+use sealvault::hash::{SHA256_LEN as SHA256_OUTPUT_LEN, sha256};
 
 use ironrdp::cliprdr::CliprdrClient;
 use ironrdp::cliprdr::pdu::{ClipboardFormatId, FileContentsRequest, FileContentsResponse};
@@ -50,6 +50,7 @@ use crate::clipboard_files::{COPY_LIMITS, CopyRefusal, Entry, FileList};
 use crate::clipboard_save::{Command, Download, SaveEnd, SaveStep, Writer};
 use crate::connect::{ClipboardLink, MAX_DESKTOP_SIDE, RdpConnection, Upgraded};
 use crate::frames::FrameReader;
+use crate::input::{RdpInput, fast_path_events};
 use crate::keep_alive::{self, KeepAlive};
 use crate::reason::{self, Ending};
 
@@ -150,7 +151,7 @@ pub struct RdpSession {
     pub events: mpsc::Receiver<RdpEvent>,
     /// Keyboard and mouse input. Unbounded, so a key is never dropped while the session
     /// is busy drawing.
-    pub input: mpsc::UnboundedSender<Vec<Operation>>,
+    pub input: mpsc::UnboundedSender<Vec<RdpInput>>,
     /// The desktop size wanted: the session asks the server for it once it has not changed
     /// for [`RESIZE_SETTLE`], so dragging a window edge sends one request, not hundreds.
     pub size: watch::Sender<Option<(u16, u16)>>,
@@ -401,9 +402,7 @@ impl Held {
 
 /// SHA-256 of `bytes`, so the text or image itself is not kept.
 fn fingerprint(bytes: &[u8]) -> [u8; SHA256_OUTPUT_LEN] {
-    let mut seen = [0; SHA256_OUTPUT_LEN];
-    seen.copy_from_slice(digest(&SHA256, bytes).as_ref());
-    seen
+    sha256(bytes)
 }
 
 /// Files walked for the offer numbered `generation`.
@@ -769,7 +768,7 @@ fn described(error: &ironrdp::session::SessionError) -> String {
 struct Running {
     framebuffer: Framebuffer,
     events: mpsc::Sender<RdpEvent>,
-    input: mpsc::UnboundedReceiver<Vec<Operation>>,
+    input: mpsc::UnboundedReceiver<Vec<RdpInput>>,
     size: watch::Receiver<Option<(u16, u16)>>,
     /// A size to ask the server for, once [`Running::settle`] passes.
     wanted: Option<(u32, u32)>,
@@ -865,8 +864,8 @@ impl Running {
                     self.send(&keep_alive::frame(&stage, user_channel_id)?).await?;
                     Vec::new()
                 }
-                Some(operations) = self.input.recv() => {
-                    let events = keys.apply(operations);
+                Some(inputs) = self.input.recv() => {
+                    let events = fast_path_events(&mut keys, inputs);
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
                     stage
                         .process_fastpath_input(&mut image, &events)

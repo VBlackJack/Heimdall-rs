@@ -85,6 +85,7 @@ mod detail;
 mod docked_sftp;
 mod file_import;
 mod files_clipboard;
+mod files_drop;
 mod files_edit;
 mod files_editor;
 mod files_sudo;
@@ -125,6 +126,8 @@ mod reconnect;
 mod resolution;
 mod route_test;
 mod run_in_shell;
+mod scheduled;
+mod scheduled_page;
 mod selection;
 mod session_events;
 mod session_restore;
@@ -188,6 +191,8 @@ pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview
 use rdp_tab::ResizeFallback;
 pub use resolution::ResolutionChoice;
 pub use run_in_shell::ScriptConfirmation;
+pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
+pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -437,6 +442,8 @@ pub enum Message {
     HealthTick,
     /// Time for the background check of every server.
     ReachabilityTick,
+    /// Time to look at the scheduled connections.
+    ScheduledTick,
     /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
     Update(UpdateMessage),
     /// A server answered the background check, or did not.
@@ -484,6 +491,8 @@ pub enum Message {
     Files(FilesMessage),
     /// Something about the tunnels the user opens by hand.
     Tunnel(TunnelMessage),
+    /// The Scheduled page and its dialog.
+    Scheduled(ScheduledMessage),
     /// Show a tab.
     SelectTab(TabId),
     /// A tab dragged onto another: it takes that one's place, within its own group, pinned
@@ -600,6 +609,9 @@ pub enum Message {
         /// Text, if the clipboard held any.
         text: Option<String>,
     },
+    /// No file dialog could be shown, or its answer could not be used: what the user is
+    /// told, in their language.
+    FileDialogFailed(String),
     /// The session shown was copied to the clipboard as an image, or could not be.
     ScreenshotTaken {
         /// Whether it is on the clipboard.
@@ -973,6 +985,7 @@ impl fmt::Debug for Message {
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::HealthTick => f.write_str("HealthTick"),
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
+            Self::ScheduledTick => f.write_str("ScheduledTick"),
             Self::Update(message) => write!(f, "Update({message:?})"),
             Self::ReachabilityChecked { id, verdict } => {
                 write!(f, "ReachabilityChecked({id}, {verdict:?})")
@@ -991,6 +1004,7 @@ impl fmt::Debug for Message {
             Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
+            Self::Scheduled(_) => f.write_str("Scheduled"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::MoveTab { tab, onto } => {
                 write!(f, "MoveTab({} onto {})", tab.value(), onto.value())
@@ -1037,6 +1051,7 @@ impl fmt::Debug for Message {
             Self::Copy(tab) => write!(f, "Copy({})", tab.value()),
             Self::PasteRequest(tab) => write!(f, "PasteRequest({})", tab.value()),
             Self::ClipboardText { tab, .. } => write!(f, "ClipboardText({}, ..)", tab.value()),
+            Self::FileDialogFailed(_) => f.write_str("FileDialogFailed"),
             Self::ScreenshotTaken { copied } => write!(f, "ScreenshotTaken({copied})"),
             Self::ClipboardFiles { tab, paths } => {
                 write!(f, "ClipboardFiles({}, {})", tab.value(), paths.len())
@@ -1561,6 +1576,15 @@ pub enum Effect {
         /// Tab.
         tab: TabId,
     },
+    /// Ask the user for a folder of this computer to download the server's selection into,
+    /// then send [`FilesMessage::DownloadFolderPicked`], as the C# "Download" of the SFTP
+    /// pane without a local one.
+    PickDownloadFolder {
+        /// Tab.
+        tab: TabId,
+        /// Where the picker opens: the folder the last download went to.
+        start: Option<PathBuf>,
+    },
     /// Ask the server of a shell tab how it is, then send [`Message::HealthRead`].
     ReadHealth {
         /// Tab.
@@ -1909,6 +1933,9 @@ impl fmt::Debug for Effect {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
             Self::PickUploads { tab } => write!(f, "PickUploads({})", tab.value()),
+            Self::PickDownloadFolder { tab, .. } => {
+                write!(f, "PickDownloadFolder({})", tab.value())
+            }
             Self::PickSaveFolder { tab } => write!(f, "PickSaveFolder({})", tab.value()),
             Self::ReadExplorerFiles { tab } => write!(f, "ReadExplorerFiles({})", tab.value()),
             Self::StartEdit { tab, remote, .. } => {
@@ -2193,6 +2220,13 @@ impl Tab {
         (matches!(self.purpose, Purpose::Rdp | Purpose::Vnc)
             || matches!(self.profile, TabProfile::Ftp(_)))
             && self.pending_rdp_key.is_some()
+    }
+
+    /// The key of the certificate the question asks about, while it is asked: said apart
+    /// from the certificate's own fingerprint, which is what an answer trusts.
+    #[must_use]
+    pub fn certificate_key(&self) -> Option<heimdall_rdp::Fingerprint> {
+        self.pending_rdp_key.map(|(key, _)| key)
     }
 
     /// What the tab is called: the name the user gave it, else its title.
@@ -2531,6 +2565,9 @@ pub struct ImportSummary {
     /// For the migration of this computer's C# store, the trusted SSH servers carried over;
     /// or why they could not be.
     pub host_keys: Option<Result<heimdall_ssh::Carried, String>>,
+    /// For the migration of this computer's C# store, how many scheduled connections were
+    /// carried over; or why they could not be. `None` when it had none.
+    pub scheduled: Option<Result<usize, String>>,
     /// The SSH gateways the file brought, created or found already saved, as the C# summary's
     /// gateway line counts them.
     pub gateways: heimdall_core::import::gateways::Reconciliation,
@@ -2570,6 +2607,18 @@ pub enum Dialog {
     },
     /// The C# "New tunnel" dialog, as filled.
     NewTunnel(crate::tunnel::TunnelForm),
+    /// The dialog adding or editing a scheduled connection, as filled.
+    ScheduledTask(Box<crate::scheduled_form::ScheduledForm>),
+    /// Whether to delete a scheduled connection, as the C# danger confirmation.
+    ConfirmDeleteScheduled {
+        /// The task.
+        id: String,
+        /// Its session's name.
+        name: String,
+    },
+    /// Whether to close the scheduled connection's dialog and lose what was changed, as the
+    /// C# unsaved-changes question; the dialog kept to go back to.
+    ConfirmDiscardScheduled(Box<crate::scheduled_form::ScheduledForm>),
     /// A gateway on a tunnel's way, or a server `PuTTY` is to open, presented a key never
     /// seen: trusted, or neither opened.
     TunnelHostKey {
@@ -2901,6 +2950,13 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// The profile or settings files named were unreadable at start and were read from
+    /// their last good copy, as the C# `ConfigRecoveredFromBackupMessage` says: what was
+    /// saved after that copy may be missing.
+    ConfigRecovered {
+        /// The files' names, in the order read.
+        documents: Vec<String>,
+    },
     /// A change could not be saved, as the C# `EditorSaveErrorMessage` says.
     StoreError {
         /// Technical detail.
@@ -3176,6 +3232,9 @@ pub struct App {
     hello: hello_gate::HelloGate,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
+    /// The row selected on the Tunnels page, as the C# grid's `SelectedItem`: what "Close
+    /// Selected" closes.
+    selected_tunnel: Option<crate::tunnel::TunnelId>,
     /// The identifier of the next tunnel.
     next_tunnel: crate::tunnel::TunnelId,
     /// The gateway key the user is asked about for a tunnel.
@@ -3229,6 +3288,8 @@ pub struct App {
     /// The auto-reconnects due while the workspace was locked, by tab and failed attempt:
     /// attempted once it is unlocked.
     deferred_reconnects: Vec<(TabId, AttemptId)>,
+    /// The scheduled connections, and what is running of them.
+    scheduler: scheduled::Scheduler,
     /// SSH keys trusted for this run only, shared with every connection.
     run_trust: RunTrust,
     /// RDP, FTPS and VNC certificates trusted for this run only: server, port, and the hash
@@ -3306,9 +3367,10 @@ impl App {
             ),
         };
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
-        let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
+        let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog, &store);
         let tunnels_panel = !settings.collapse_tunnels_panel;
         let (macros, files_state, split_layouts) = side_files(&config.profiles_file);
+        let scheduler = scheduled::Scheduler::open(&config.profiles_file);
         let mut app = Self {
             settings,
             settings_file,
@@ -3351,6 +3413,7 @@ impl App {
             legacy_migration: legacy_migration::LegacyMigrationState::default(),
             hello: hello_gate::HelloGate::default(),
             tunnel_runs: Vec::new(),
+            selected_tunnel: None,
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
             putty_routes: Vec::new(),
@@ -3369,6 +3432,7 @@ impl App {
             vault_hello: vault_hello::VaultHelloState::with(vault.hello_record()),
             vault,
             deferred_reconnects: Vec::new(),
+            scheduler,
             run_trust: RunTrust::default(),
             rdp_run_trust: Vec::new(),
             session_logs: crate::session_log::SessionLogs::default(),
@@ -3378,6 +3442,8 @@ impl App {
         };
         // The PIN when one is set, then a vault on disk is offered to unlock: its passwords
         // are then ready.
+        // A task whose time came while Heimdall was closed is missed, never run late.
+        app.skip_missed(crate::time_zone::unix_now(), &crate::time_zone::SystemClock);
         app.show_start_gates();
         app
     }
@@ -3556,6 +3622,9 @@ impl App {
                 Vec::new()
             }
             Message::ReachabilityTick => self.reachability_round(),
+            Message::ScheduledTick => {
+                self.scheduled_tick_at(crate::time_zone::unix_now(), &crate::time_zone::SystemClock)
+            }
             Message::Update(message) => self.update_message(message),
             Message::ReachabilityChecked { id, verdict } => {
                 self.reachability_checked(&id, verdict);
@@ -3563,6 +3632,10 @@ impl App {
             }
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),
+            Message::Scheduled(message) => {
+                self.scheduled_message(message);
+                Vec::new()
+            }
             message @ (Message::TestRoute { .. }
             | Message::StopRouteTest
             | Message::RouteTarget { .. }
@@ -3603,6 +3676,10 @@ impl App {
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
+            Message::FileDialogFailed(said) => {
+                self.tell(Notice::FileDialogFailed(said));
+                Vec::new()
+            }
             Message::ScreenshotTaken { copied } => {
                 self.tell(if copied {
                     Notice::ScreenshotCopied
@@ -3751,6 +3828,7 @@ impl App {
                 .or_else(|| self.dismiss_pin())
                 .or_else(|| self.dismiss_tunnel_key())
                 .or_else(|| self.dismiss_settings_export())
+                .or_else(|| self.dismiss_scheduled())
                 .unwrap_or_else(|| self.dismiss_dialog()),
             _ => self.post_connect_message(message),
         }
@@ -3925,20 +4003,25 @@ impl App {
     /// said: no limit at 0; this computer's own shells are not counted, nor a session
     /// opening in a tab's place.
     pub(super) fn session_limit_reached(&mut self) -> bool {
+        let Some(max) = self.session_limit_hit() else {
+            return false;
+        };
+        self.tell(Notice::SessionLimitReached(max));
+        true
+    }
+
+    /// The session limit when one more session may not open, without saying it.
+    pub(super) fn session_limit_hit(&self) -> Option<u32> {
         let max = self.settings.max_sessions;
         if max == 0 || self.replacing {
-            return false;
+            return None;
         }
         let open = self
             .tabs
             .iter()
             .filter(|tab| !matches!(tab.profile, TabProfile::Local(_) | TabProfile::Tool(_)))
             .count();
-        let reached = open >= usize::try_from(max).unwrap_or(usize::MAX);
-        if reached {
-            self.tell(Notice::SessionLimitReached(max));
-        }
-        reached
+        (open >= usize::try_from(max).unwrap_or(usize::MAX)).then_some(max)
     }
 
     /// Opens a tab for `profile`, a shell or its files, without asking about its steps:
@@ -4039,6 +4122,11 @@ impl App {
                 answer: Some(answer),
             }];
         }
+        // A tab a scheduled task opened asks nothing: what is not saved fails it.
+        if let Some(effects) = self.unattended_event(tab_id, &event) {
+            self.after_scheduled_event();
+            return effects;
+        }
         // No password saved: the external credential provider, when it is to be asked.
         if let ConnectionEvent::Question { question, kind } = &event
             && let Some(request) = self.provider_request(tab_id, *question, kind)
@@ -4078,7 +4166,9 @@ impl App {
             self.warn_ftp_cleartext(tab_id);
         }
         if shell_up {
+            let count = self.tabs.len();
             effects.extend(self.dock_sftp(tab_id));
+            self.adopt_companion(tab_id, count);
             effects.extend(self.dock_local_browser(tab_id));
         }
         if let Some((error, was_live)) = failure
@@ -4086,6 +4176,9 @@ impl App {
         {
             effects.extend(self.retry_after(tab_id, &error, was_live));
         }
+        // Said once the tab shows its new state, which a notice is told for; a scheduled
+        // tab that failed closed.
+        self.after_scheduled_event();
         effects
     }
 
@@ -4762,6 +4855,14 @@ impl App {
                 self.confirm_import(dialog);
                 Vec::new()
             }
+            Some(Dialog::ScheduledTask(form)) => {
+                self.save_scheduled_form(*form);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDeleteScheduled { id, name }) => {
+                self.delete_scheduled(&id, name);
+                Vec::new()
+            }
             Some(Dialog::ConfirmCitrixImport(scan)) => {
                 self.import_citrix(*scan);
                 Vec::new()
@@ -4953,8 +5054,11 @@ impl App {
                 | Dialog::StoreUnreadable { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::StoreChanged { .. }
+                | Dialog::ConfigRecovered { .. }
                 | Dialog::PasswordSaveFailed { .. }
                 | Dialog::Shortcuts
+                // "Discard": the scheduled connection's dialog goes with what was changed.
+                | Dialog::ConfirmDiscardScheduled(_)
                 // Confirmed before: see `confirm_dialog`.
                 | Dialog::NewTunnel(_)
                 | Dialog::TunnelHostKey { .. },
@@ -5059,8 +5163,10 @@ impl App {
             }
         };
         let host_keys = std::mem::take(&mut report.host_keys);
+        let scheduled = std::mem::take(&mut report.scheduled);
         // Saved before it is kept: a failed save leaves the list as its file is.
         if let Some(mut summary) = self.merge_import(report) {
+            summary.scheduled = self.carry_scheduled(scheduled);
             // This computer's own C# store: its trusted servers are trusted here too.
             summary.host_keys = Some(
                 heimdall_ssh::carry_over(

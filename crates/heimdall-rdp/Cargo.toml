@@ -12,15 +12,25 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# audio: the server's sound played on this computer, through cpal. Off by default: on Linux
+# cpal links the system's ALSA library (libasound, through alsa-sys); the application turns
+# it on for Windows only, where cpal speaks to WASAPI through system DLLs alone.
+audio = ["dep:cpal"]
+
 [dependencies]
-cpal.workspace = true
+cpal = { workspace = true, optional = true }
 data-encoding.workspace = true
 heimdall-core.workspace = true
+# heimdall-net: every TCP connection to a host by name, Happy Eyeballs.
+heimdall-net.workspace = true
 ironrdp.workspace = true
 ironrdp-core.workspace = true
 ironrdp-tokio.workspace = true
 log.workspace = true
-ring.workspace = true
+# sealvault: certificate, public key and clipboard SHA-256 fingerprints. TLS itself runs on
+# tokio-rustls's ring provider.
+sealvault.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 # The system's certificates, for strict server authentication.

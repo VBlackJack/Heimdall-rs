@@ -560,7 +560,7 @@ mod tests {
         else {
             panic!("asked to generate");
         };
-        let key = engine::generate_with_rounds(algorithm, &comment, &passphrase, 1000)
+        let key = engine::generate(algorithm, &comment, &passphrase)
             .map(Arc::new)
             .map_err(|error| error.to_string());
         pane.update(SshKeyMessage::Generated(generation, Some(key)));

@@ -17,7 +17,9 @@
 //! The server-side copy script: what it accepts, and, run by this computer's own `sh` on a
 //! folder of its own, what it does.
 
-use heimdall_files::server_copy::{CopyKind, Unquotable, copy_script, is_same_or_inside};
+use heimdall_files::server_copy::{
+    CopyKind, TOKEN_LEN, Unquotable, copy_script, is_same_or_inside, random_token,
+};
 
 const TOKEN: [u8; 16] = [0xab; 16];
 
@@ -250,4 +252,13 @@ mod run {
         assert!(!output.status.success());
         assert!(!destination.exists());
     }
+}
+
+#[test]
+fn each_token_is_fresh_and_of_the_length_the_script_writes() {
+    let first = random_token().expect("random");
+    let second = random_token().expect("random");
+    assert_eq!(first.len(), TOKEN_LEN);
+    assert_ne!(first, second, "two draws of 128 bits");
+    assert_ne!(first, [0; TOKEN_LEN]);
 }

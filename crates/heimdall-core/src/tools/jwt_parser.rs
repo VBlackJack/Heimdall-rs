@@ -27,9 +27,8 @@
 
 use std::fmt::Write as _;
 
-use hmac::{Hmac, KeyInit, Mac};
+use sealvault::mac;
 use serde_json::Value;
-use sha2::{Sha256, Sha384, Sha512};
 
 use super::base64_codec;
 
@@ -510,25 +509,16 @@ pub fn verify_hmac(decoded: &JwtDecoded, alg: JwtAlgorithm, secret: &str) -> Hma
     }
     let input = format!("{}{SEPARATOR}{}", decoded.header_raw, decoded.payload_raw);
     let key = secret.as_bytes();
-    let signed = match alg {
-        JwtAlgorithm::Hmac256 => signs::<Hmac<Sha256>>(key, &input, &decoded.signature),
-        JwtAlgorithm::Hmac384 => signs::<Hmac<Sha384>>(key, &input, &decoded.signature),
-        JwtAlgorithm::Hmac512 => signs::<Hmac<Sha512>>(key, &input, &decoded.signature),
+    let algorithm = match alg {
+        JwtAlgorithm::Hmac256 => mac::Algorithm::HmacSha256,
+        JwtAlgorithm::Hmac384 => mac::Algorithm::HmacSha384,
+        JwtAlgorithm::Hmac512 => mac::Algorithm::HmacSha512,
         _ => return HmacVerification::AlgorithmNotHmac,
     };
-    if signed {
+    // Compared in constant time; a signature of another length is refused.
+    if mac::verify(algorithm, key, input.as_bytes(), &decoded.signature) {
         HmacVerification::Valid
     } else {
         HmacVerification::Invalid
     }
-}
-
-/// Whether `signature` is the code of `input` under `key` by the MAC `M`, compared in
-/// constant time.
-fn signs<M: Mac + KeyInit>(key: &[u8], input: &str, signature: &[u8]) -> bool {
-    let Ok(mut mac) = <M as KeyInit>::new_from_slice(key) else {
-        return false;
-    };
-    Mac::update(&mut mac, input.as_bytes());
-    mac.verify_slice(signature).is_ok()
 }
