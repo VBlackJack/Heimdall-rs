@@ -19,8 +19,11 @@
 //! A dialog centred anew each time it is laid out jumped under the pointer whenever it grew:
 //! a validation line appearing raised the whole card by half its height. The C# dialogs are
 //! windows opened centred on their owner, which then keep their top-left corner and grow
-//! downward. [`Anchored`] centres its dialog the first time it lays it out, then places it
-//! by [`place`]: where it was, moved back only as far as it must to stay inside the window.
+//! downward: `ScheduledTaskDialog.xaml` is `SizeToContent="Height"` with
+//! `WindowStartupLocation="CenterOwner"`, as `HostKeyPromptDialog.xaml` and most of the
+//! dialogs are. [`Anchored`] centres its dialog the first time it lays it out, then places it
+//! by [`place_keyed`]: where it was, moved back only as far as it must to stay inside the
+//! window. The tab's own question cards are placed the same way.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, tree};
@@ -53,6 +56,21 @@ pub fn place(previous: Option<Placement>, size: Size, window: Size) -> Placement
         ),
     };
     Placement { at, window }
+}
+
+/// [`place`] for the dialog `key`, `previous` being the dialog placed last and where: another
+/// dialog is centred anew, as a new WPF window opens centred on its owner.
+#[must_use]
+pub fn place_keyed<K: PartialEq + Copy>(
+    previous: Option<(K, Placement)>,
+    key: K,
+    size: Size,
+    window: Size,
+) -> (K, Placement) {
+    let previous = previous
+        .filter(|(placed, _)| *placed == key)
+        .map(|(_, placement)| placement);
+    (key, place(previous, size, window))
 }
 
 /// [`place`] along one axis for a dialog placed already at `at`.
@@ -122,13 +140,8 @@ where
                 .layout(&mut tree.children[0], renderer, &limits.loose());
         let window = limits.resolve(Length::Fill, Length::Fill, node.size());
         let state = tree.state.downcast_mut::<State<K>>();
-        // Another dialog is centred anew, as a new WPF window is.
-        let previous = state
-            .placed
-            .filter(|(key, _)| *key == self.key)
-            .map(|(_, placement)| placement);
-        let placement = place(previous, node.size(), window);
-        state.placed = Some((self.key, placement));
+        let (key, placement) = place_keyed(state.placed, self.key, node.size(), window);
+        state.placed = Some((key, placement));
         layout::Node::with_children(window, vec![node.move_to(placement.at)])
     }
 
@@ -293,6 +306,19 @@ mod tests {
             place(None, Size::new(1200.0, 900.0), WINDOW).at,
             Point::ORIGIN
         );
+    }
+
+    #[test]
+    fn another_dialog_opens_centred() {
+        let (key, opened) = place_keyed(None, 1, DIALOG, WINDOW);
+        let grown = place_keyed(Some((key, opened)), 1, Size::new(400.0, 324.0), WINDOW);
+        assert_eq!(grown, (1, opened));
+        // The same dialog keeps its top; another of the same size is centred on its own.
+        let other = place_keyed(Some(grown), 2, Size::new(400.0, 500.0), WINDOW);
+        assert_eq!(other.0, 2);
+        assert_eq!(other.1.at, Point::new(300.0, 100.0));
+        // The first time, whatever the key, centred.
+        assert_eq!(place_keyed(None, 3, DIALOG, WINDOW).1, opened);
     }
 
     #[test]

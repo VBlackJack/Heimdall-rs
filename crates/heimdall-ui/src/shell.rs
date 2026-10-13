@@ -5105,39 +5105,43 @@ impl Shell {
 
     /// A tab still connecting: to what, through which gateways, and a way to stop.
     fn connecting_card<'a>(&self, tab: &'a Tab) -> Element<'a, Message> {
-        center(card(
-            column![
-                text(match (tab.retry, tab.profile.endpoint()) {
-                    (Some(retry), _) => reconnecting(retry),
-                    (None, Some((host, port))) => fl!(
-                        "ui-connect-progress",
-                        target = target(host, port, tab.profile.username())
-                    ),
-                    (None, None) => fl!("ui-local-starting", name = tab.profile.name()),
-                }),
-                // Through which gateways, as the C# loading overlay says it.
-                Some(self.app.tab_route(tab))
-                    .filter(|route| !route.is_empty())
-                    .map(|route| text(fl!(
-                        "ui-connect-via",
-                        route = route
-                            .iter()
-                            .map(|name| server_text(name))
-                            .collect::<Vec<_>>()
-                            .join(&fl!("ui-route-test-separator"))
-                    ))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)),
-            ]
-            // The C# header's health, phase and time elapsed, for an RDP session.
-            .push(rdp_status(tab))
-            .push(
-                button(text(fl!("ui-connect-cancel-button")))
-                    .style(styles::secondary)
-                    .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-            )
-            .spacing(spacing::SM),
-        ))
+        tab_card(
+            tab.id,
+            TabCard::Connecting,
+            card(
+                column![
+                    text(match (tab.retry, tab.profile.endpoint()) {
+                        (Some(retry), _) => reconnecting(retry),
+                        (None, Some((host, port))) => fl!(
+                            "ui-connect-progress",
+                            target = target(host, port, tab.profile.username())
+                        ),
+                        (None, None) => fl!("ui-local-starting", name = tab.profile.name()),
+                    }),
+                    // Through which gateways, as the C# loading overlay says it.
+                    Some(self.app.tab_route(tab))
+                        .filter(|route| !route.is_empty())
+                        .map(|route| text(fl!(
+                            "ui-connect-via",
+                            route = route
+                                .iter()
+                                .map(|name| server_text(name))
+                                .collect::<Vec<_>>()
+                                .join(&fl!("ui-route-test-separator"))
+                        ))
+                        .size(font_size::CAPTION)
+                        .style(text::secondary)),
+                ]
+                // The C# header's health, phase and time elapsed, for an RDP session.
+                .push(rdp_status(tab))
+                .push(
+                    button(text(fl!("ui-connect-cancel-button")))
+                        .style(styles::secondary)
+                        .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+                )
+                .spacing(spacing::SM),
+            ),
+        )
         .into()
     }
 
@@ -7340,7 +7344,12 @@ impl Shell {
             return crate::citrix_view::view(profile, pane, SessionState::of(tab), tab.id, &offer);
         }
         if let Some(prompt) = tab.prompts.front() {
-            return center(card(self.question(tab, prompt))).into();
+            return tab_card(
+                tab.id,
+                TabCard::Question(prompt.question),
+                card(self.question(tab, prompt)),
+            )
+            .into();
         }
         if let Some(pane) = &tab.elevated {
             return self.elevated_card(tab, pane);
@@ -7404,7 +7413,12 @@ impl Shell {
                 if let Some(reason) = tab.end_reason.as_ref().and_then(texts::rdp_ending) {
                     ended = ended.push(text(reason));
                 }
-                center(card(ended.push(self.session_actions(tab).wrap()))).into()
+                tab_card(
+                    tab.id,
+                    TabCard::Ended,
+                    card(ended.push(self.session_actions(tab).wrap())),
+                )
+                .into()
             }
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
@@ -7434,9 +7448,13 @@ impl Shell {
                 } else {
                     texts::error(error)
                 };
-                center(card(
-                    column![text(said), self.session_actions(tab).wrap()].spacing(spacing::SM),
-                ))
+                tab_card(
+                    tab.id,
+                    TabCard::Stopped,
+                    card(
+                        column![text(said), self.session_actions(tab).wrap()].spacing(spacing::SM),
+                    ),
+                )
                 .into()
             }
             // Dropped once open: what it showed stays in sight, the failure under it.
@@ -7512,7 +7530,7 @@ impl Shell {
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
         );
-        center(card(body.push(actions.wrap()))).into()
+        tab_card(tab.id, TabCard::Elevated, card(body.push(actions.wrap()))).into()
     }
 
     /// A session that dropped once open, as the C# "View output" leaves its output readable
@@ -7577,13 +7595,17 @@ impl Shell {
             body = body.push(self.failure_details(tab.id, &details));
         }
         // Buttons go to the next line whole when a translation is long, never cut.
-        center(card(
-            body.push(
-                self.failure_actions(tab, error)
-                    .wrap()
-                    .vertical_spacing(spacing::SM),
+        tab_card(
+            tab.id,
+            TabCard::Failed,
+            card(
+                body.push(
+                    self.failure_actions(tab, error)
+                        .wrap()
+                        .vertical_spacing(spacing::SM),
+                ),
             ),
-        ))
+        )
         .into()
     }
 
@@ -8286,41 +8308,47 @@ fn host_key_card<'a>(
             ],
         ),
     };
-    center(card(
-        column![
-            // As the C# `HostKeyPromptDialog`: the warning's icon beside its title.
-            dialog_parts::header(Severity::Warning, dialog_parts::title(heading)),
-            body,
-            row![
-                // A fingerprint is one word too long for the card: broken where it must be.
-                text(label)
-                    .font(iced::Font::MONOSPACE)
-                    .wrapping(text::Wrapping::WordOrGlyph)
-                    .width(Length::Fill),
-                button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION))
+    tab_card(
+        tab,
+        TabCard::HostKey,
+        card(
+            column![
+                // As the C# `HostKeyPromptDialog`: the warning's icon beside its title.
+                dialog_parts::header(Severity::Warning, dialog_parts::title(heading)),
+                body,
+                row![
+                    // A fingerprint is one word too long for the card: broken where it must be.
+                    text(label)
+                        .font(iced::Font::MONOSPACE)
+                        .wrapping(text::Wrapping::WordOrGlyph)
+                        .width(Length::Fill),
+                    button(
+                        text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION)
+                    )
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::CopyHostKeyFingerprint(tab))),
+                ]
+                .spacing(spacing::SM)
+                .align_y(iced::alignment::Vertical::Center),
             ]
-            .spacing(spacing::SM)
-            .align_y(iced::alignment::Vertical::Center),
-        ]
-        .push(key_line)
-        .push(
-            row![
-                dialog_parts::action(reject, styles::secondary).on_press(Message::App(
-                    AppMessage::HostKeyDecision { tab, accept: false }
-                )),
-                dialog_parts::action(once, styles::secondary)
-                    .on_press(Message::App(AppMessage::HostKeyTrustOnce(tab))),
-                dialog_parts::action(accept, styles::primary).on_press(Message::App(
-                    AppMessage::HostKeyDecision { tab, accept: true }
-                )),
-            ]
-            .spacing(spacing::SM)
-            .wrap(),
-        )
-        .spacing(spacing::SM),
-    ))
+            .push(key_line)
+            .push(
+                row![
+                    dialog_parts::action(reject, styles::secondary).on_press(Message::App(
+                        AppMessage::HostKeyDecision { tab, accept: false }
+                    )),
+                    dialog_parts::action(once, styles::secondary)
+                        .on_press(Message::App(AppMessage::HostKeyTrustOnce(tab))),
+                    dialog_parts::action(accept, styles::primary).on_press(Message::App(
+                        AppMessage::HostKeyDecision { tab, accept: true }
+                    )),
+                ]
+                .spacing(spacing::SM)
+                .wrap(),
+            )
+            .spacing(spacing::SM),
+        ),
+    )
     .into()
 }
 
@@ -8421,6 +8449,38 @@ fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         .max_width(CARD_WIDTH)
         .style(styles::dialog)
         .into()
+}
+
+/// Which card a tab shows in place of its session: another one, or another question, is
+/// centred anew; the same one keeps its top while it grows, as a dialog does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabCard {
+    /// A question, by its identifier.
+    Question(QuestionId),
+    /// The question about an unknown key.
+    HostKey,
+    /// Still connecting.
+    Connecting,
+    /// Waiting to open again by itself.
+    Countdown,
+    /// A remote desktop that ended.
+    Ended,
+    /// Stopped by the user.
+    Stopped,
+    /// An elevated local shell's state.
+    Elevated,
+    /// A session that failed.
+    Failed,
+}
+
+/// `card`, the card `kind` of tab `tab`, centred in the tab, then kept at its place while it
+/// grows: a line appearing in it does not move it.
+fn tab_card(
+    tab: TabId,
+    kind: TabCard,
+    card: Element<'_, Message>,
+) -> crate::dialog_place::Anchored<'_, Message, (TabId, TabCard)> {
+    anchored(card, (tab, kind))
 }
 
 /// A session action's label, kept on one line: a card moves the whole button instead.
@@ -11401,18 +11461,22 @@ fn countdown_card(
     retry: Retry,
     status: Option<Element<'_, Message>>,
 ) -> Element<'_, Message> {
-    center(card(
-        column![
-            text(reconnecting(retry)).size(font_size::TITLE),
-            text(fl!(
-                "ui-session-reconnecting-in",
-                seconds = seconds_left(retry)
-            )),
-        ]
-        .push(status)
-        .push(cancel_retry_button(tab))
-        .spacing(spacing::SM),
-    ))
+    tab_card(
+        tab,
+        TabCard::Countdown,
+        card(
+            column![
+                text(reconnecting(retry)).size(font_size::TITLE),
+                text(fl!(
+                    "ui-session-reconnecting-in",
+                    seconds = seconds_left(retry)
+                )),
+            ]
+            .push(status)
+            .push(cancel_retry_button(tab))
+            .spacing(spacing::SM),
+        ),
+    )
     .into()
 }
 
