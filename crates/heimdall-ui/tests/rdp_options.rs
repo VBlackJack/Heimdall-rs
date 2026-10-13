@@ -227,6 +227,62 @@ fn the_resolution_modes_are_the_csharp_combo_s_in_its_order_auto_only_shown() {
     assert_eq!(modes_offered(&auto, &SCREENS), expected);
 }
 
+/// `draft` after each choice the resolution mode list of `draft` sends on `monitors`, entry
+/// by entry, down to the multi-monitor box.
+fn modes_picked(draft: &ProfileDraft, monitors: &[Monitor]) -> Vec<ProfileDraft> {
+    let bottom = resolution_on(draft, monitors)
+        .find("Enable multi-monitor mode")
+        .expect("the box")
+        .bounds()
+        .y;
+    let bounds = resolution_on(draft, monitors)
+        .find("Resolution mode")
+        .expect("the list")
+        .bounds();
+    let list = Point::new(bounds.x + INTO_LIST, bounds.y + bounds.height + INTO_LIST);
+    let mut picked = Vec::new();
+    let mut y = list.y;
+    while y < bottom {
+        let mut ui = resolution_on(draft, monitors);
+        click(&mut ui, list);
+        click(&mut ui, Point::new(list.x, y));
+        for message in ui.into_messages() {
+            if let Message::App(AppMessage::ProfileChoice(choice)) = message {
+                let mut after = draft.clone();
+                after.choose(choice);
+                picked.push(after);
+            }
+        }
+        y += STEP;
+    }
+    picked
+}
+
+#[test]
+fn multi_monitor_picked_with_several_screens_is_the_profile_s_mode_spanning_them() {
+    let mut fit = own_options();
+    fit.choose(ProfileChoice::Resolution(Resolution::FitWindow));
+    let modes = |monitors: &[Monitor]| -> Vec<Resolution> {
+        modes_picked(&fit, monitors)
+            .iter()
+            .map(|after| after.rdp_options.resolution)
+            .collect()
+    };
+    let spanning: Vec<ProfileDraft> = modes_picked(&fit, &SCREENS)
+        .into_iter()
+        .filter(|after| after.rdp_options.resolution == Resolution::MultiMonitor)
+        .collect();
+    assert!(!spanning.is_empty(), "{:?}", modes(&SCREENS));
+    assert!(
+        spanning
+            .iter()
+            .all(|after| after.spans_monitors() && after.rdp_extras.multi_monitor),
+        "as the C# OnRdpResolutionModeChanged"
+    );
+    // One screen: never the mode, whatever entry is picked.
+    assert!(!modes(&SCREENS[..1]).contains(&Resolution::MultiMonitor));
+}
+
 #[test]
 fn the_fixed_mode_offers_the_csharp_sizes_and_its_own_fields_only_there() {
     let mut draft = own_options();
