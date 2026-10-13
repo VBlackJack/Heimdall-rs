@@ -33,6 +33,7 @@ mod desktop_texture;
 pub mod desktop_view;
 mod detail_view;
 mod dialog_parts;
+mod dialog_place;
 pub mod drop_batch;
 pub mod editor_history;
 mod editor_syntax;

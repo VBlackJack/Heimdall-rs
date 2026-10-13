@@ -92,6 +92,7 @@ pub use settings_page::search_field_id as settings_search_field_id;
 
 use crate::desktop_view::DesktopView;
 use crate::dialog_parts::{self, Severity};
+use crate::dialog_place::anchored;
 use crate::files_view;
 use crate::finder::Finder;
 use crate::floating_view::{FloatEvent, FloatingWindow};
@@ -4579,7 +4580,9 @@ impl Shell {
                 } else {
                     card(content)
                 };
-                center(card).into()
+                // Centred when it opens, then kept at its place while it grows, as a WPF
+                // window with SizeToContent: a line appearing does not move it.
+                anchored(card, std::mem::discriminant(dialog)).into()
             }))
             .id(dialog_area_id())
             .style(move |theme: &Theme| container::Style {
