@@ -52,13 +52,19 @@ Seul `heimdall-ui` dépend d'iced. Les crates de protocole ne dépendent que de
 
 ## Compilation
 
-Sous Linux, la compilation demande les paquets de développement de xkbcommon,
-Wayland, X11 et fontconfig. L'exécution demande aussi `libxkbcommon-x11` et un
-pilote Vulkan ou OpenGL, par exemple Mesa. Sous Windows, la compilation demande
-les outils MSVC.
+Sous Linux, la compilation par défaut ne demande aucun paquet de développement C,
+seulement un compilateur C (`gcc` ou `clang`, pour `ring`) : les bibliothèques de
+fenêtrage sont ouvertes à l'exécution, pas liées. Le son RDP y est désactivé par
+défaut ; une compilation qui le demande avec `--features audio`
+(`cargo build -p heimdall-ui --features audio`) lie ALSA et demande `alsa-lib-devel`
+(Fedora, RHEL, AlmaLinux) ou `libasound2-dev` (Debian, Ubuntu). Sous Windows, la
+compilation demande les outils MSVC, et le son RDP est toujours compilé.
 
-Les bibliothèques C que le binaire lie ou charge à l'exécution sous Linux, et dans quels
-cas, sont recensées dans [Bibliothèques natives](docs/fr/native-libraries.md).
+L'exécution sous Linux demande les bibliothèques que le bureau charge à l'exécution :
+`libxkbcommon`, `libxkbcommon-x11` et les bibliothèques client Wayland ou X11, ainsi
+qu'un pilote Vulkan ou OpenGL, par exemple Mesa (sans lui, la fenêtre est dessinée en
+logiciel). Leur liste, et les cas où chacune est chargée, sont dans
+[Bibliothèques natives](docs/fr/native-libraries.md).
 
 ```bash
 cargo run --package heimdall-ui
