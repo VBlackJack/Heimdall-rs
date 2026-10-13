@@ -20,27 +20,11 @@
 //! a menu opened near the window's right edge was squeezed until its labels wrapped, and
 //! one opened near its foot ran past it, its last entries out of reach. [`MenuFit`] lays
 //! the menu out with the whole window as its room, then places it by [`fit`].
-//!
-//! A WPF menu is also as wide as its longest entry. Entries filling their menu's width have
-//! none of their own to give, and an iced 0.14 column as wide as its content collapses them;
-//! [`MenuFit`] lays the menu out in two widths of room, [`PROBE`] apart, tells from them what
-//! fills its room and what keeps its own width, reads from that how wide the content is
-//! ([`natural_width`]), then lays the menu out once more as wide as [`menu_width`] says.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
-
-/// The narrowest a menu is: the width every menu had before menus took their entries'.
-pub const MIN_WIDTH: f32 = 270.0;
-
-/// How much wider the second room [`MenuFit`] lays a menu out in is: what fills its room
-/// grows by exactly this much, what keeps its own width does not.
-const PROBE: f32 = 64.0;
-
-/// How far from [`PROBE`] a growth still counts as filling the room, for rounding.
-const PROBE_TOLERANCE: f32 = 0.5;
 
 /// `menu` at `anchor`, the pointer, fitted to the area it fills; see the module.
 pub struct MenuFit<'a, Message> {
@@ -70,51 +54,6 @@ pub fn fit(anchor: Point, size: Size, bounds: Size) -> Point {
         fit_axis(anchor.x, size.width, bounds.width),
         fit_axis(anchor.y, size.height, bounds.height),
     )
-}
-
-/// How wide a menu whose content is `natural` wide is drawn in an area `room` wide: as wide
-/// as its content, as a WPF menu is as wide as its longest entry, never narrower than
-/// [`MIN_WIDTH`] nor wider than the area. Rounded up to a whole pixel: a label laid out in
-/// exactly its own measured width could wrap on a rounding.
-#[must_use]
-pub fn menu_width(natural: f32, room: f32) -> f32 {
-    natural.ceil().max(MIN_WIDTH).min(room)
-}
-
-/// How wide the content of a menu laid out as `narrow` in some room and as `wide` in a room
-/// [`PROBE`] wider is. A node that grew by the probe fills its room: it is as wide as what it
-/// holds reaches, plus the margin after it, which is the room a child filling it leaves on
-/// its right or, when none fills it, the margin before its first child (a button's padding
-/// is the same on both sides); filling and holding nothing, a separator, it gives no width.
-/// Any other node keeps its own width. Children are taken where `narrow` placed them, left
-/// aligned as menu entries are.
-#[must_use]
-pub fn natural_width(narrow: &layout::Node, wide: &layout::Node) -> f32 {
-    if !fills(narrow, wide) {
-        return narrow.size().width;
-    }
-    let mut reach: f32 = 0.0;
-    let mut lead = f32::INFINITY;
-    let mut filled: Option<f32> = None;
-    for (child, wide_child) in narrow.children().iter().zip(wide.children()) {
-        let x = child.bounds().x;
-        reach = reach.max(x + natural_width(child, wide_child));
-        lead = lead.min(x);
-        if fills(child, wide_child) {
-            let right = x + child.size().width;
-            filled = Some(filled.map_or(right, |found| found.max(right)));
-        }
-    }
-    if lead.is_infinite() {
-        return 0.0;
-    }
-    let trailing = filled.map_or(lead, |right| narrow.size().width - right);
-    reach + trailing.max(0.0)
-}
-
-/// Whether a node laid out as `narrow`, then as `wide` in a room [`PROBE`] wider, fills it.
-fn fills(narrow: &layout::Node, wide: &layout::Node) -> bool {
-    (wide.size().width - narrow.size().width - PROBE).abs() < PROBE_TOLERANCE
 }
 
 /// [`fit`] along one axis.
@@ -157,22 +96,11 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for MenuFit<'_, Message> {
     ) -> layout::Node {
         let limits = limits.width(Length::Fill).height(Length::Fill);
         // The whole area as room, not what is left past the pointer: the menu keeps its width.
-        let room = limits.max();
-        let mut lay_out = |width: f32| {
-            self.menu.as_widget_mut().layout(
-                tree,
-                renderer,
-                &layout::Limits::new(Size::ZERO, Size::new(width, room.height)),
-            )
-        };
-        let node = if room.width.is_finite() {
-            // As wide as its longest entry, as a WPF menu; see the module.
-            let narrow = lay_out(room.width);
-            let wide = lay_out(room.width + PROBE);
-            lay_out(menu_width(natural_width(&narrow, &wide), room.width))
-        } else {
-            lay_out(room.width)
-        };
+        let node = self.menu.as_widget_mut().layout(
+            tree,
+            renderer,
+            &layout::Limits::new(Size::ZERO, limits.max()),
+        );
         let size = limits.resolve(Length::Fill, Length::Fill, node.size());
         let at = fit(self.anchor, node.size(), size);
         layout::Node::with_children(size, vec![node.move_to(at)])
@@ -276,59 +204,6 @@ mod tests {
 
     const WINDOW: Size = Size::new(1000.0, 700.0);
     const MENU: Size = Size::new(270.0, 300.0);
-
-    /// Room of a probe: the first layout's width.
-    const ROOM: f32 = 1000.0;
-
-    /// A node `width` wide at `x`, holding `children`.
-    fn node(x: f32, width: f32, children: Vec<layout::Node>) -> layout::Node {
-        layout::Node::with_children(Size::new(width, 20.0), children).move_to(Point::new(x, 0.0))
-    }
-
-    /// A menu as the tree's are laid out in `room`: a card with a padding of 4 around a
-    /// column filling it, of a button filling it with a label of `label` and a padding of
-    /// 8, and of a separator.
-    fn menu(room: f32, label: f32) -> layout::Node {
-        let column = room - 8.0;
-        let button = node(0.0, column, vec![node(8.0, label, vec![])]);
-        let separator = node(0.0, column, vec![]);
-        node(0.0, room, vec![node(4.0, column, vec![button, separator])])
-    }
-
-    #[test]
-    fn a_menu_is_as_wide_as_its_longest_entry() {
-        // The label 300, its button's padding 8 each side, the card's 4 each side.
-        let natural = natural_width(&menu(ROOM, 300.0), &menu(ROOM + PROBE, 300.0));
-        assert!((natural - 324.0).abs() < f32::EPSILON, "{natural}");
-        assert!((menu_width(natural, ROOM) - 324.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn a_menu_of_short_entries_keeps_the_width_it_had() {
-        let natural = natural_width(&menu(ROOM, 80.0), &menu(ROOM + PROBE, 80.0));
-        assert!((natural - 104.0).abs() < f32::EPSILON, "{natural}");
-        assert!((menu_width(natural, ROOM) - MIN_WIDTH).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn a_menu_is_never_wider_than_its_window() {
-        assert!((menu_width(1400.0, ROOM) - ROOM).abs() < f32::EPSILON);
-        // Under the minimum too in a window narrower than it.
-        assert!((menu_width(100.0, 200.0) - 200.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn a_menu_width_is_a_whole_pixel() {
-        assert!((menu_width(300.2, ROOM) - 301.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn an_entry_keeping_its_own_width_counts_whole() {
-        // A header in a card that fills its room: the header is 350 wide whatever the room.
-        let laid_out = |room: f32| node(0.0, room, vec![node(4.0, 350.0, vec![])]);
-        let natural = natural_width(&laid_out(ROOM), &laid_out(ROOM + PROBE));
-        assert!((natural - 358.0).abs() < f32::EPSILON, "{natural}");
-    }
 
     #[test]
     fn a_menu_that_fits_opens_right_of_and_below_the_pointer() {

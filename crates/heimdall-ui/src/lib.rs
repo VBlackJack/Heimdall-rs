@@ -58,6 +58,7 @@ pub mod legacy_migration_view;
 pub mod local_form;
 mod logging;
 mod macros_view;
+mod menu_column;
 mod menu_fit;
 pub mod onboarding;
 pub mod palette;
