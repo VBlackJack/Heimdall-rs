@@ -182,6 +182,9 @@ impl Sequence for ConnectionFinalizationSequence {
 
             ConnectionFinalizationState::WaitForResponse => {
                 let ctx = ironrdp_pdu::mcs::decode_send_data_indication(input).map_err(ConnectorError::decode)?;
+                // Heimdall-rs patch: a bulk-compressed PDU here is refused, never decoded as
+                // plain data nor skipped (it would leave the session's history out of step).
+                ensure_uncompressed(ctx.user_data)?;
                 let ctx = ironrdp_pdu::rdp::headers::decode_share_data(ctx).map_err(ConnectorError::decode)?;
 
                 debug!(message = ?ctx.pdu, "Received");
@@ -268,4 +271,37 @@ impl Sequence for ConnectionFinalizationSequence {
 
         Ok(written)
     }
+}
+
+/// Offsets in a Share Control PDU's bytes ([MS-RDPBCGR] 2.2.8.1.1.1.1 and 2.2.8.1.1.1.2):
+/// `pduType`, then the Share Data Header's `compressedType`, past the 10 bytes of the Share
+/// Control Header and the 5 of `pad1`, `streamId`, `uncompressedLength` and `pduType2`.
+const PDU_TYPE_OFFSET: usize = 2;
+const COMPRESSED_TYPE_OFFSET: usize = 15;
+/// `pduType` of a Data PDU, in its low four bits.
+const PDU_TYPE_DATA: u16 = 0x7;
+const PDU_TYPE_MASK: u16 = 0xF;
+/// `PACKET_COMPRESSED`, `PACKET_AT_FRONT` and `PACKET_FLUSHED`.
+const BULK_FLAGS_MASK: u8 = 0xE0;
+
+/// Fails on a Data PDU carrying bulk compression flags. The finalization PDUs (Synchronize,
+/// Control, Font Map, Set Error Info) are small and sent uncompressed by the servers met so
+/// far; one compressed would need the session's decompressor, which does not exist yet at
+/// this point. Heimdall-rs patch, see `vendor/PATCHES.md`.
+fn ensure_uncompressed(user_data: &[u8]) -> ConnectorResult<()> {
+    let (Some(pdu_type), Some(compressed_type)) = (
+        user_data.get(PDU_TYPE_OFFSET..PDU_TYPE_OFFSET + 2),
+        user_data.get(COMPRESSED_TYPE_OFFSET),
+    ) else {
+        // Too short for a Data PDU: the decoder reports it.
+        return Ok(());
+    };
+    let pdu_type = u16::from_le_bytes([pdu_type[0], pdu_type[1]]);
+    if pdu_type & PDU_TYPE_MASK == PDU_TYPE_DATA && compressed_type & BULK_FLAGS_MASK != 0 {
+        return Err(reason_err!(
+            "ConnectionFinalization",
+            "bulk-compressed PDU (compressedType {compressed_type:#04x}) during the connection finalization"
+        ));
+    }
+    Ok(())
 }

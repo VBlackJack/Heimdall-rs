@@ -133,8 +133,11 @@ impl Processor {
                     );
                     decompressed_data.as_slice()
                 } else {
-                    warn!("Received compressed FastPath data but no decompressor is configured");
-                    update_pdu.data
+                    // Heimdall-rs patch: never decode compressed bytes as plain data.
+                    return Err(reason_err!(
+                        "FastPath",
+                        "compressed update without negotiated compression"
+                    ));
                 }
             } else {
                 // Compression flags present but COMPRESSED bit not set — pass data through.

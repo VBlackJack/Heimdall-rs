@@ -8,7 +8,7 @@ use ironrdp_pdu::rdp::multitransport::MultitransportRequestPdu;
 use ironrdp_pdu::rdp::server_error_info::{ErrorInfo, ProtocolIndependentCode, ServerSetErrorInfoPdu};
 use ironrdp_pdu::x224::X224;
 use ironrdp_svc::{StaticChannelSet, SvcMessage, SvcProcessor, SvcProcessorMessages, client_encode_svc_messages};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::{SessionError, SessionErrorExt as _, SessionResult, reason_err};
 
@@ -322,8 +322,9 @@ const BULK_FLAGS_MASK: u8 = 0xE0;
 /// The IO channel `user_data` of a bulk-compressed Data PDU, rewritten uncompressed: its
 /// data decompressed by `bulk`, its `compressedType` and `compressedLength` zeroed and its
 /// `totalLength` set to the new size, as FreeRDP's `rdp_recv_data_pdu` decompresses before
-/// it reads the PDU. `None` when the PDU carries no compression flags, or when there is no
-/// decompressor (compression not negotiated: the data is left as the server sent it).
+/// it reads the PDU. `None` when the PDU carries no compression flags. A PDU with compression
+/// flags and no decompressor (compression not negotiated) is an error: its bytes are never
+/// decoded as plain data. Bytes past `compressedLength` are dropped, as FreeRDP drops them.
 fn decompress_share_data(user_data: &[u8], bulk: Option<&mut BulkCompressor>) -> SessionResult<Option<Vec<u8>>> {
     if user_data.len() < SHARE_HEADERS_LEN {
         return Ok(None);
@@ -337,8 +338,10 @@ fn decompress_share_data(user_data: &[u8], bulk: Option<&mut BulkCompressor>) ->
         return Ok(None);
     }
     let Some(bulk) = bulk else {
-        warn!("Received compressed slow-path data but no decompressor is configured");
-        return Ok(None);
+        return Err(reason_err!(
+            "IO channel",
+            "compressed slow-path PDU (compressedType {compressed_type:#04x}) without negotiated compression"
+        ));
     };
     let compressed_length = usize::from(u16::from_le_bytes([
         user_data[COMPRESSED_LENGTH_OFFSET],

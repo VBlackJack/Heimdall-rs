@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 
 use crate::fast_path::UpdateKind;
 use crate::image::DecodedImage;
-use crate::{SessionError, SessionErrorExt as _, SessionResult, fast_path, x224};
+use crate::{SessionError, SessionErrorExt as _, SessionResult, fast_path, reason_err, x224};
 
 /// Converts the PDU-layer compression type to the bulk crate's compression type.
 fn to_bulk_compression_type(ct: PduCompressionType) -> ironrdp_bulk::CompressionType {
@@ -55,7 +55,10 @@ pub struct ActiveStageBuilder {
 }
 
 impl ActiveStageBuilder {
-    pub fn build(self) -> ActiveStage {
+    /// Fails when compression was negotiated and its decompressor cannot be built: the
+    /// server would compress what the session could not read. Heimdall-rs patch (the package
+    /// logged the error and went on without a decompressor), see `vendor/PATCHES.md`.
+    pub fn build(self) -> SessionResult<ActiveStage> {
         let Self {
             static_channels,
             user_channel_id,
@@ -76,19 +79,15 @@ impl ActiveStageBuilder {
         );
 
         // Create bulk decompressor if compression was negotiated
-        let bulk_decompressor = compression_type.and_then(|ct| {
-            let bulk_ct = to_bulk_compression_type(ct);
-            match BulkCompressor::new(bulk_ct) {
-                Ok(compressor) => {
-                    info!(compression_type = %bulk_ct, "Bulk decompressor initialized for FastPath");
-                    Some(compressor)
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "Failed to create bulk decompressor, compression disabled");
-                    None
-                }
-            }
-        });
+        let bulk_decompressor = compression_type
+            .map(|ct| {
+                let bulk_ct = to_bulk_compression_type(ct);
+                let compressor = BulkCompressor::new(bulk_ct)
+                    .map_err(|e| reason_err!("bulk compression", "decompressor not built: {e}"))?;
+                info!(compression_type = %bulk_ct, "Bulk decompressor initialized");
+                Ok::<_, SessionError>(compressor)
+            })
+            .transpose()?;
 
         let fast_path_processor = fast_path::ProcessorBuilder {
             io_channel_id,
@@ -100,11 +99,11 @@ impl ActiveStageBuilder {
         }
         .build();
 
-        ActiveStage {
+        Ok(ActiveStage {
             x224_processor,
             fast_path_processor,
             enable_server_pointer,
-        }
+        })
     }
 }
 

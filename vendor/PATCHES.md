@@ -77,10 +77,28 @@ same. `deny.toml` bans both crates, so that a later bump that would build them f
 (cargo-deny reads the built graph: it never saw these lock-only entries). TLS stays on
 rustls with ring, chosen explicitly where each configuration is built.
 
+Also changed, for bulk compression:
+
+- `src/connection_finalization.rs`, `WaitForResponse`: `ensure_uncompressed` refuses, with
+  an error, a Data PDU whose `compressedType` carries `PACKET_COMPRESSED`,
+  `PACKET_AT_FRONT` or `PACKET_FLUSHED`, before the crate decodes it.
+
+Why: compression is offered in the Client Info PDU, so the server may compress the
+Synchronize, Control, Font Map and Set Error Info PDUs that finalize the connection (and a
+reactivation); FreeRDP reads them through `rdp_recv_data_pdu`, which decompresses. The
+package decoded their compressed bytes as plain data, and the history the session's
+decompressor starts with would miss them. Decompressing them would mean building the
+decompressor here and handing it, with its history, to the session through
+`ConnectionResult` and the reactivation sequence; until a server is seen compressing them,
+the connection fails instead, which says so. The test
+`a_compressed_pdu_while_the_connection_finalizes_is_refused` in
+`crates/heimdall-rdp/tests/bulk_compression.rs` checks it.
+
 Remove when: a published `ironrdp-connector` depends on sspi 0.22 or later, can ask for the
 administrative session and for sound kept on the server, leaves `scard` to the user (or
-Heimdall-rs offers smart-card logon), takes sspi without its `aws-lc-rs` default, and
-names the client in `NegotiateConfig` by `KerberosConfig::hostname`. Then delete this directory and the
+Heimdall-rs offers smart-card logon), takes sspi without its `aws-lc-rs` default,
+names the client in `NegotiateConfig` by `KerberosConfig::hostname`, and decompresses (or
+refuses) compressed finalization PDUs. Then delete this directory and the
 `[patch.crates-io]` entry, map the two options to its fields, and run the gates,
 `crates/heimdall-rdp/tests/session_options.rs` included: it reads both off the wire.
 
@@ -122,14 +140,25 @@ Also changed, for bulk compression (the profile's "Enable RDP compression"):
   decompressor; `take_bulk_decompressor` takes it out for the processor built after a
   reactivation.
 - `src/fast_path.rs`: `Processor::bulk_decompressor_mut` and `take_bulk_decompressor`.
+- Fail closed: a compressed fast-path update or slow-path PDU with no decompressor
+  (compression not negotiated) is an error, where the package logged a warning and decoded
+  the compressed bytes as plain data; `ActiveStageBuilder::build` returns a `SessionResult`
+  and fails when the decompressor of a negotiated compression cannot be built, where the
+  package logged the error and went on without one. Bytes past `compressedLength` are
+  dropped, as FreeRDP drops them.
 
 Why: the server compresses the fast-path updates and the slow-path PDUs with one history.
 The package decompressed the fast-path updates only, so a compressed slow-path PDU (a Save
 Session Info, a Set Error Info, a slow-path update) was misread, and the history the next
 fast-path update refers to missed it. A reactivation also rebuilt the fast-path processor
-without its decompressor. The tests `crates/heimdall-rdp/tests/bulk_compression.rs` read two
-compressed Set Error Info PDUs, the second through the first's history, at RDP 5 and RDP
-6.1, and across a reactivation.
+without its decompressor. The tests `crates/heimdall-rdp/tests/bulk_compression.rs` read a
+slow-path PDU, a fast-path update through its history, then a slow-path PDU through the
+update's, at each of the four levels and across a reactivation; refuse a `compressedLength`
+out of the PDU, an unknown level, data that does not decompress and compressed data without
+compression negotiated; and feed 300,000 seeded malformed inputs (5,000,000 with
+`--ignored`) to long-lived sessions without a panic.
+
+Validated against: xrdp MPPC (lab): pending its manual check; Windows: pending owner.
 
 Remove when: a published `ironrdp-session` crops the decoded rows to the rectangle (or
 decodes to the rectangle's width) and decompresses the slow-path PDUs with the fast-path

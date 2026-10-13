@@ -816,7 +816,10 @@ impl Running {
             enable_server_pointer: result.enable_server_pointer,
             pointer_software_rendering: result.pointer_software_rendering,
         }
-        .build();
+        // Compression offered and its decompressor not built: the session ends here rather
+        // than read what the server compresses.
+        .build()
+        .map_err(|error| error.to_string())?;
         let mut keys = Database::new();
         loop {
             let outputs = tokio::select! {
