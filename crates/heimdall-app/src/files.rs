@@ -591,6 +591,17 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
         self.path = self.entries_folder().clone();
     }
 
+    /// The listing awaited failed: as [`Self::not_arrived`], and the pane back in the folder
+    /// a link being entered was opened from. The link's name, when it was one: it points at
+    /// no folder.
+    pub(crate) fn listing_failed(&mut self) -> Option<String> {
+        self.answered();
+        self.not_arrived();
+        let (from, name) = self.entering_link.take()?;
+        self.path = from;
+        Some(name)
+    }
+
     /// Stops waiting for the listing on its way, as the C# Escape: the folder shown stays
     /// shown and named, and the listing, when it comes, is not shown. Whether one was on
     /// its way.
@@ -645,11 +656,20 @@ impl<P, E> Pane<P, E> {
         self.listed.as_ref().unwrap_or(&self.path)
     }
 
-    /// A listing is asked for: the pane waits for it, and for no other one asked before.
+    /// A listing is asked for: the pane waits for it, and for no other one asked before. A
+    /// link being entered is the listing asked for before: forgotten.
     pub(crate) fn ask_listing(&mut self) -> ListingRequest {
         self.loading = true;
+        self.entering_link = None;
         self.request = ListingRequest::fresh();
         self.request
+    }
+
+    /// The listing awaited arrived: none is awaited any more, and the same one coming again
+    /// is not shown.
+    pub(crate) fn answered(&mut self) {
+        self.loading = false;
+        self.request = ListingRequest::NONE;
     }
 
     /// The listing asked for last, the only one shown when it comes.
@@ -2776,6 +2796,9 @@ mod tests {
             "given up, even with another on its way"
         );
         assert!(pane.awaits(third));
+        pane.answered();
+        assert!(!pane.loading);
+        assert!(!pane.awaits(third), "answered once");
     }
 
     fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {

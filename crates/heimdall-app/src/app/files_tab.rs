@@ -1000,13 +1000,11 @@ impl App {
             }
         }
         let mut effects = Vec::new();
+        // As root when the sudo mode stayed on through a reconnection: the C# keeps it
+        // (`EmbeddedSftpViewModel.SudoMode` is only changed by its toggle).
         if let Some(client) = files.client.clone() {
-            effects.push(Effect::ListRemote {
-                tab,
-                client,
-                path: files.remote.path.clone(),
-                request: files.remote.ask_listing(),
-            });
+            let path = files.remote.path.clone();
+            effects.push(super::files_sudo::remote_listing(files, tab, client, path));
         }
         let path = files.local.path.clone();
         effects.push(local_listing(files, tab, path));
@@ -1048,23 +1046,19 @@ impl App {
             if !pane.awaits(request) {
                 return Vec::new();
             }
-            pane.loading = false;
-            match (result, pane.entering_link.take()) {
-                (Ok((path, entries)), _) => {
+            match result {
+                Ok((path, entries)) => {
+                    pane.answered();
+                    pane.entering_link = None;
                     pane.arrived(&path);
                     pane.path = path;
                     pane.show(entries);
                     pane.error = None;
                 }
-                (Err(_), Some((from, name))) => {
-                    pane.not_arrived();
-                    pane.path = from;
-                    not_a_folder = Some(name);
-                }
-                (Err(error), None) => {
-                    pane.not_arrived();
-                    pane.error = Some(error);
-                }
+                Err(error) => match pane.listing_failed() {
+                    Some(name) => not_a_folder = Some(name),
+                    None => pane.error = Some(error),
+                },
             }
         }
         if let Some(name) = not_a_folder {
@@ -1092,16 +1086,16 @@ impl App {
         }
         if let Some(files) = self.files_mut(tab) {
             let pane = &mut files.local;
-            pane.loading = false;
             match result {
                 Ok((path, entries)) => {
+                    pane.answered();
                     pane.arrived(&path);
                     pane.path = path;
                     pane.show(entries);
                     pane.error = None;
                 }
                 Err(error) => {
-                    pane.not_arrived();
+                    pane.listing_failed();
                     pane.error = Some(error);
                 }
             }
@@ -1827,10 +1821,17 @@ impl App {
                 if entry.kind == EntryKind::Link {
                     let from = files.remote.entries_folder().clone();
                     let path = from.join(&entry.name);
-                    files.remote.entering_link = Some((from, entry.label.clone()));
+                    let name = entry.label.clone();
                     files.remote.leave();
                     files.remote.path = path;
-                    return self.list(tab, side);
+                    let effects = self.list(tab, side);
+                    // Tied to this listing: asking for another one forgets it.
+                    if !effects.is_empty()
+                        && let Some(files) = self.files_mut(tab)
+                    {
+                        files.remote.entering_link = Some((from, name));
+                    }
+                    return effects;
                 }
                 files.remote.select_only(Some(index));
                 // A text file is opened in the integrated editor, as the C# opens it.

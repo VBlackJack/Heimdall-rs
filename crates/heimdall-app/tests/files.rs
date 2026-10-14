@@ -424,7 +424,7 @@ async fn a_link_to_a_folder_is_entered_and_one_to_anything_else_goes_back_and_sa
         "{tried:?}"
     );
     // The server cannot list it: it points at no folder.
-    let request = remote_request(&app, tab);
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
@@ -529,7 +529,7 @@ async fn back_returns_through_the_folders_left_and_home_to_the_first_one_as_the_
             side: Side::Remote,
         },
     );
-    let request = remote_request(&app, tab);
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
@@ -694,7 +694,7 @@ async fn an_upload_with_nothing_in_its_way_starts_without_a_question() {
     let mut app = app(dir.path());
     let (tab, _) = opened(&mut app).await;
     listed_remote(&mut app, tab, "/srv", Vec::new());
-    let request = local_request(&app, tab);
+    let request = local_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::LocalListed {
@@ -1007,7 +1007,7 @@ async fn copy_path_copies_the_selected_entry_whole_and_says_so() {
         Some(&Notice::PathCopied("/srv/run.sh".to_owned()))
     );
 
-    let request = local_request(&app, tab);
+    let request = local_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::LocalListed {
@@ -1150,7 +1150,7 @@ async fn a_files_tab_opens_on_the_folder_the_last_download_went_to() {
     std::fs::create_dir(&downloads).expect("folder");
     let mut app = app(dir.path());
     let (tab, _) = opened(&mut app).await;
-    let request = local_request(&app, tab);
+    let request = local_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::LocalListed {
@@ -1476,7 +1476,7 @@ async fn escape_gives_up_a_listing_on_its_way_the_folder_shown_staying() {
             .remote;
         (pane.path.display(), pane.loading, pane.entries.len())
     };
-    files(
+    let opened = files(
         &mut app,
         FilesMessage::Open {
             tab,
@@ -1484,6 +1484,15 @@ async fn escape_gives_up_a_listing_on_its_way_the_folder_shown_staying() {
             index: 0,
         },
     );
+    let [
+        Effect::ListRemote {
+            request: given_up, ..
+        },
+    ] = opened.as_slice()
+    else {
+        panic!("{opened:?}");
+    };
+    let given_up = *given_up;
     assert_eq!(remote(&app), ("/home/admin/logs".to_owned(), true, 1));
 
     files(
@@ -1501,7 +1510,14 @@ async fn escape_gives_up_a_listing_on_its_way_the_folder_shown_staying() {
     assert_eq!(app.notice(), Some(&Notice::ListingCancelled));
 
     // The listing given up comes after all: not shown.
-    listed_remote(&mut app, tab, "/home/admin/logs", Vec::new());
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            request: given_up,
+            result: Ok((RemotePath::from("/home/admin/logs"), Vec::new())),
+        },
+    );
     assert_eq!(remote(&app), ("/home/admin".to_owned(), false, 1));
     // Nothing on its way: Escape does nothing more.
     let before = app.notice().cloned();
@@ -1527,30 +1543,52 @@ async fn escape_gives_up_a_listing_on_its_way_the_folder_shown_staying() {
     assert_eq!(remote(&app), ("/home/admin/logs".to_owned(), false, 0));
 }
 
-/// The listing the local pane of `tab` waits for.
+/// The listing the local pane of `tab` waits for; one asked for by a refresh when none is.
 fn local_request(
-    app: &heimdall_app::App,
+    app: &mut heimdall_app::App,
     tab: heimdall_app::TabId,
 ) -> heimdall_app::files::ListingRequest {
-    app.tab(tab)
-        .expect("tab")
-        .files
-        .as_ref()
-        .expect("files")
-        .local
-        .listing_request()
+    awaited_listing(app, tab, heimdall_app::files::Side::Local)
 }
 
-/// The listing the server pane of `tab` waits for.
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
 fn remote_request(
-    app: &heimdall_app::App,
+    app: &mut heimdall_app::App,
     tab: heimdall_app::TabId,
 ) -> heimdall_app::files::ListingRequest {
-    app.tab(tab)
-        .expect("tab")
-        .files
-        .as_ref()
-        .expect("files")
-        .remote
-        .listing_request()
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
 }

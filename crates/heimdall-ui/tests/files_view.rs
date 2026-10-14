@@ -157,7 +157,7 @@ async fn files_tab_attempt(dir: &Path) -> (App, TabId, AttemptId) {
             shell: None,
         },
     });
-    let request = remote_request(&core, tab);
+    let request = remote_request(&mut core, tab);
     core.update(AppMessage::Files(FilesMessage::RemoteListed {
         tab,
         request,
@@ -169,7 +169,7 @@ async fn files_tab_attempt(dir: &Path) -> (App, TabId, AttemptId) {
             ],
         )),
     }));
-    let request = local_request(&core, tab);
+    let request = local_request(&mut core, tab);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab,
         request,
@@ -270,7 +270,7 @@ async fn show_hidden_is_the_csharp_check_box_ticked_in_a_new_pane_and_unticked_i
 {
     let dir = tempfile::tempdir().expect("dir");
     let (mut core, tab) = files_tab(dir.path()).await;
-    let request = local_request(&core, tab);
+    let request = local_request(&mut core, tab);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab,
         request,
@@ -597,7 +597,7 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;
     let mut shell = Shell::with_app(core);
-    let request = remote_request(shell.app(), tab);
+    let request = shell_remote_request(&mut shell, tab);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
             tab,
@@ -964,7 +964,7 @@ async fn the_servers_permissions_and_properties_dialogs_show() {
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;
     let mut shell = Shell::with_app(core);
-    let request = remote_request(shell.app(), tab);
+    let request = shell_remote_request(&mut shell, tab);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
             tab,
@@ -1552,7 +1552,7 @@ async fn an_empty_pane_says_why_and_offers_the_way_out_as_the_csharp() {
             side: Side::Remote,
         },
     )));
-    let request = remote_request(shell.app(), tab);
+    let request = shell_remote_request(&mut shell, tab);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
             tab,
@@ -1850,7 +1850,7 @@ fn a_file(index: usize) -> heimdall_ui::tree_view::FilesEntryFacts {
 
 /// The remote pane listing `entries` in `/srv`.
 fn list_remote(shell: &mut Shell, tab: TabId, entries: Vec<RemoteEntry>) {
-    let request = remote_request(shell.app(), tab);
+    let request = shell_remote_request(shell, tab);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
             tab,
@@ -2623,30 +2623,85 @@ async fn a_full_local_disk_is_said_in_the_csharp_words() {
         .expect("the C# SftpErrorLocalDiskFull");
 }
 
-/// The listing the local pane of `tab` waits for.
+/// The listing the local pane of `tab` waits for; one asked for by a refresh when none is.
 fn local_request(
-    app: &heimdall_app::App,
+    app: &mut heimdall_app::App,
     tab: heimdall_app::TabId,
 ) -> heimdall_app::files::ListingRequest {
-    app.tab(tab)
-        .expect("tab")
-        .files
-        .as_ref()
-        .expect("files")
-        .local
-        .listing_request()
+    awaited_listing(app, tab, heimdall_app::files::Side::Local)
 }
 
-/// The listing the server pane of `tab` waits for.
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
 fn remote_request(
-    app: &heimdall_app::App,
+    app: &mut heimdall_app::App,
     tab: heimdall_app::TabId,
 ) -> heimdall_app::files::ListingRequest {
-    app.tab(tab)
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
+}
+
+/// [`remote_request`] through `shell`: the listing the server pane of `tab` waits for, one
+/// asked for by a refresh when none is.
+fn shell_remote_request(shell: &mut Shell, tab: TabId) -> heimdall_app::files::ListingRequest {
+    let files = shell
+        .app()
+        .tab(tab)
         .expect("tab")
         .files
-        .as_ref()
-        .expect("files")
-        .remote
-        .listing_request()
+        .as_deref()
+        .expect("files");
+    if files.remote.loading {
+        return files.remote.listing_request();
+    }
+    let focus = files.focus;
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Refresh {
+        tab,
+        side: Side::Remote,
+    })));
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    })));
+    let files = shell
+        .app()
+        .tab(tab)
+        .expect("tab")
+        .files
+        .as_deref()
+        .expect("files");
+    assert!(files.remote.loading, "a listing asked for");
+    files.remote.listing_request()
 }

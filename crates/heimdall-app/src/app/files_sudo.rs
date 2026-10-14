@@ -101,7 +101,9 @@ impl App {
         }
         match result {
             Err(error) if is_password_error(&error) => {
-                files.remote.loading = false;
+                // Failed as any listing: the folder named is the one whose entries are
+                // shown while the password is asked.
+                files.remote.listing_failed();
                 let name = crate::text::server_text(&path.display());
                 self.sudo_refused(tab, name, SudoAction::List(path), error);
                 Vec::new()
@@ -118,6 +120,8 @@ impl App {
         let Some(client) = files.client.clone() else {
             return Vec::new();
         };
+        // The folder shown is left for it, as when it was first asked for.
+        files.remote.leave();
         vec![remote_listing(files, tab, client, path)]
     }
 }

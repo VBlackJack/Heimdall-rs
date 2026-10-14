@@ -360,7 +360,7 @@ fn a_folder_that_cannot_be_listed_is_said_and_the_browser_stays_where_it_was() {
     let refused = FilesError::Local {
         detail: "access denied".to_owned(),
     };
-    let request = local_request(&app, pane);
+    let request = local_request(&mut app, pane);
     let effects = app.update(Message::Files(FilesMessage::LocalListed {
         tab: pane,
         request,
@@ -554,13 +554,13 @@ async fn an_ssh_shells_report_drives_its_sftp_pane_alone_and_a_local_one_its_bro
             shell: None,
         },
     });
-    let request = remote_request(&app, sftp);
+    let request = remote_request(&mut app, sftp);
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab: sftp,
         request,
         result: Ok((RemotePath::from(REMOTE_HOME), Vec::new())),
     }));
-    let request = local_request(&app, sftp);
+    let request = local_request(&mut app, sftp);
     app.update(Message::Files(FilesMessage::LocalListed {
         tab: sftp,
         request,
@@ -623,30 +623,52 @@ fn a_local_browser_split_with_an_ssh_shell_never_follows_it() {
     assert!(ssh_sink.written().is_empty());
 }
 
-/// The listing the local pane of `tab` waits for.
+/// The listing the local pane of `tab` waits for; one asked for by a refresh when none is.
 fn local_request(
-    app: &heimdall_app::App,
+    app: &mut heimdall_app::App,
     tab: heimdall_app::TabId,
 ) -> heimdall_app::files::ListingRequest {
-    app.tab(tab)
-        .expect("tab")
-        .files
-        .as_ref()
-        .expect("files")
-        .local
-        .listing_request()
+    awaited_listing(app, tab, heimdall_app::files::Side::Local)
 }
 
-/// The listing the server pane of `tab` waits for.
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
 fn remote_request(
-    app: &heimdall_app::App,
+    app: &mut heimdall_app::App,
     tab: heimdall_app::TabId,
 ) -> heimdall_app::files::ListingRequest {
-    app.tab(tab)
-        .expect("tab")
-        .files
-        .as_ref()
-        .expect("files")
-        .remote
-        .listing_request()
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
 }
