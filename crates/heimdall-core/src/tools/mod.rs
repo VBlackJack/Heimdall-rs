@@ -21,6 +21,7 @@
 
 #![allow(clippy::all, clippy::pedantic)]
 
+pub mod banner_grab;
 pub mod base64_codec;
 pub mod certificate_generator;
 pub mod cron_builder;
@@ -31,6 +32,7 @@ pub mod diff_engine;
 pub mod dns_security;
 pub mod hash_computer;
 pub mod hmac_computer;
+pub mod http_status;
 pub mod ip_address;
 pub mod ip_codec;
 pub mod json_codec;
@@ -53,6 +55,7 @@ pub mod ssh_config;
 pub mod ssh_key_audit;
 pub mod ssh_key_generator;
 pub mod subnet_calculator;
+pub mod tcp_ping;
 pub mod text_case_codec;
 pub mod time_zone_rules;
 pub mod tls_audit;
@@ -60,3 +63,5 @@ pub mod totp_generator;
 pub mod ulid_generator;
 pub mod url_codec;
 pub mod uuid_generator;
+pub mod wake_on_lan;
+pub mod whois;

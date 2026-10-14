@@ -4279,3 +4279,134 @@ ui-tool-smb-help =
     Security checks:
     - SMB signing disabled (relay attack risk)
     - SMBv1 detected (EternalBlue vulnerability)
+
+ui-tool-http-name = HTTP Status Codes
+ui-tool-http-description = Reference guide for HTTP status codes with category filtering
+ui-tool-http-filter-placeholder = Search by code or description...
+ui-tool-http-copy-hint = Click code to copy
+ui-tool-http-no-results = No matching status codes
+ui-tool-http-cat-1xx = 1xx Informational
+ui-tool-http-cat-2xx = 2xx Success
+ui-tool-http-cat-3xx = 3xx Redirection
+ui-tool-http-cat-4xx = 4xx Client Error
+ui-tool-http-cat-5xx = 5xx Server Error
+ui-tool-http-help =
+    HTTP Status Codes Reference
+
+    Quick reference guide for standard HTTP response status codes.
+
+    Categories:
+    - 1xx: Informational (request received, continuing process)
+    - 2xx: Success (action successfully received, understood, accepted)
+    - 3xx: Redirection (further action must be taken)
+    - 4xx: Client Error (request contains bad syntax or cannot be fulfilled)
+    - 5xx: Server Error (server failed to fulfill an apparently valid request)
+
+    Usage:
+    - Type in the filter box to search by numeric code or name.
+    - Click any entry to copy its code and name to the clipboard.
+
+ui-tool-tcpping-name = TCP Ping
+ui-tool-tcpping-description = Measure TCP connection latency to a specific host and port
+ui-tool-tcpping-host-label = Host
+ui-tool-tcpping-host-placeholder = example.com or 192.168.1.1
+ui-tool-tcpping-port-label = Port
+ui-tool-tcpping-count-label = Count
+ui-tool-tcpping-btn-start = Start
+ui-tool-tcpping-btn-stop = Stop
+ui-tool-tcpping-btn-copy = Copy results
+ui-tool-tcpping-summary = Min: { $min } ms, Avg: { $avg } ms, Max: { $max } ms, Lost: { $lost }/{ $total } ({ $pct }%)
+ui-tool-tcpping-empty-state = Enter a host and port, then click Start to measure TCP handshake latency
+ui-tool-tcpping-error-host-required = Please enter a host name or IP address.
+ui-tool-tcpping-error-count = Count must be a number between 1 and 10000.
+ui-tool-tcpping-help =
+    TCP Ping Tool
+
+    Measures TCP connection handshake latency to a target host and port.
+    Unlike ICMP ping, TCP ping works through firewalls that block ICMP echo requests.
+
+    Usage:
+    1. Enter target host name or IP address.
+    2. Enter port number (default: 443).
+    3. Specify number of probes to send (default: 10).
+    4. Click Start to begin probing.
+
+ui-tool-wol-name = Wake-on-LAN
+ui-tool-wol-description = Send magic packets to power on sleeping devices across the network
+ui-tool-wol-mac-label = MAC Address
+ui-tool-wol-mac-placeholder = AA:BB:CC:DD:EE:FF
+ui-tool-wol-broadcast-label = Broadcast Address
+ui-tool-wol-broadcast-placeholder = 255.255.255.255
+ui-tool-wol-port-label = UDP Port
+ui-tool-wol-btn-send = Send Wake-on-LAN
+ui-tool-wol-status-sent = Magic packet sent to { $mac } via { $dest }
+ui-tool-wol-status-error = Failed to send packet: { $error }
+ui-tool-wol-error-invalid-mac = Invalid MAC address. Use format AA:BB:CC:DD:EE:FF or AABBCCDDEEFF.
+ui-tool-wol-help =
+    Wake-on-LAN
+
+    Transmits UDP magic broadcast packets to wake sleeping machines on the network.
+
+    Requirements:
+    - Target machine must have Wake-on-LAN enabled in BIOS/UEFI.
+    - Network card must support WOL and be connected to network power.
+    - Router/switch must allow UDP broadcast packets.
+
+    Usage:
+    1. Enter target machine's MAC address.
+    2. Optionally adjust broadcast address (default: 255.255.255.255).
+    3. Click Send Wake-on-LAN.
+
+ui-tool-whois-name = WHOIS Lookup
+ui-tool-whois-description = Query WHOIS servers to look up domain and IP registration data
+ui-tool-whois-domain-label = Domain or IP Address
+ui-tool-whois-domain-placeholder = example.com or 1.1.1.1
+ui-tool-whois-btn-lookup = Lookup
+ui-tool-whois-btn-copy = Copy output
+ui-tool-whois-empty-state = Enter a domain name or IP address to query WHOIS registration data
+ui-tool-whois-status-querying = Querying WHOIS server...
+ui-tool-whois-status-complete = Query completed in { $elapsed } ms
+ui-tool-whois-error-required = Please enter a domain name or IP address.
+ui-tool-whois-help =
+    WHOIS Lookup
+
+    Queries WHOIS servers directly over TCP port 43 to retrieve domain registration,
+    registrar data, name servers, and network allocation details.
+
+    Features:
+    - Automatic TLD referral resolution (.com, .org, .fr, .io, .dev, etc.)
+    - Direct TCP port 43 querying
+    - Offline fallback to IANA registry
+
+ui-tool-banner-name = Banner Grabber
+ui-tool-banner-description = Probe network ports to capture service banners and software versions
+ui-tool-banner-host-label = Target Host
+ui-tool-banner-host-placeholder = example.com or 192.168.1.1
+ui-tool-banner-ports-label = Ports
+ui-tool-banner-ports-placeholder = 21,22,25,80,443,3306,8080
+ui-tool-banner-btn-grab = Grab Banners
+ui-tool-banner-btn-stop = Stop
+ui-tool-banner-btn-copy = Copy results
+ui-tool-banner-btn-export = Export CSV
+ui-tool-banner-col-port = Port
+ui-tool-banner-col-service = Service
+ui-tool-banner-col-time = Time
+ui-tool-banner-col-banner = Banner
+ui-tool-banner-preset-common = Common
+ui-tool-banner-preset-web = Web
+ui-tool-banner-preset-mail = Mail
+ui-tool-banner-preset-database = Database
+ui-tool-banner-empty-state = Enter a host and port list, then click Grab Banners to inspect service banners
+ui-tool-banner-progress = { $completed } / { $total } ports probed
+ui-tool-banner-error-host-required = Please enter a target host.
+ui-tool-banner-help =
+    Banner Grabber
+
+    Probes open network ports and reads initial greeting banners to identify
+    running software, server daemons, and exact version numbers.
+
+    Features:
+    - Custom port lists and port ranges (e.g. 80,443,8000-8005)
+    - Presets for Common, Web, Mail, and Database ports
+    - Automatic service fingerprinting (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
+    - Export results to CSV or formatted text

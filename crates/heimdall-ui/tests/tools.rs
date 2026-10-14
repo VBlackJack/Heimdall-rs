@@ -175,10 +175,14 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
             (
                 ToolGroup::Category(ToolCategory::Network),
                 vec![
+                    ToolId::BannerGrabber,
+                    ToolId::HttpStatus,
                     ToolId::IpConverter,
                     ToolId::NetworkCalculator,
-                    ToolId::SubnetCalculator
-                ]
+                    ToolId::SubnetCalculator,
+                    ToolId::TcpPing,
+                    ToolId::Whois,
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::Security),
@@ -198,7 +202,7 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::SshKey,
                     ToolId::TlsAudit,
                     ToolId::Totp,
-                ]
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::Encoding),
@@ -208,8 +212,8 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::RegexTester,
                     ToolId::TextCase,
                     ToolId::TextDiff,
-                    ToolId::UrlEncoder
-                ]
+                    ToolId::UrlEncoder,
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::System),
@@ -219,8 +223,12 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::DateTime,
                     ToolId::SshConfig,
                     ToolId::Ulid,
-                    ToolId::Uuid
-                ]
+                    ToolId::Uuid,
+                ],
+            ),
+            (
+                ToolGroup::Category(ToolCategory::External),
+                vec![ToolId::WakeOnLan],
             ),
         ]
     );
@@ -337,13 +345,14 @@ fn a_card_pin_toggles_its_tool() {
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::Navigate(Destination::Tools));
     let mut ui = simulator(&shell);
-    ui.click(catalog::pin_id(ToolId::UrlEncoder)).expect("pin");
+    ui.click(catalog::pin_id(ToolId::SubnetCalculator))
+        .expect("pin");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(
         messages.iter().any(|message| matches!(
             message,
             Message::App(AppMessage::Tools(ToolsMessage::ToggleFavorite(
-                ToolId::UrlEncoder
+                ToolId::SubnetCalculator
             )))
         )),
         "{messages:?}"

@@ -205,6 +205,14 @@ pub enum Icon {
     ToolCrontab,
     /// `Geo.Tool.SshConfigGenerator`: a page with a prompt, the SSH config generator.
     ToolSshConfig,
+    /// `Geo.Tool.HttpStatus`: a globe with signal lines, the HTTP status codes reference.
+    ToolHttpStatus,
+    /// `Geo.Tool.WakeOnLan`: a lightning bolt within a circle, the Wake-on-LAN tool.
+    ToolWakeOnLan,
+    /// `Geo.Tool.Whois`: an ID badge with question, the WHOIS lookup tool.
+    ToolWhois,
+    /// `Geo.Tool.BannerGrabber`: a terminal window with prompt, the banner grabber.
+    ToolBannerGrabber,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
     /// The `Resolution` glyph (`E740`): a screen with its corners, an RDP session's
@@ -218,7 +226,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 77] = [
+    pub const ALL: [Self; 81] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -292,6 +300,10 @@ impl Icon {
         Self::ToolUlid,
         Self::ToolCrontab,
         Self::ToolSshConfig,
+        Self::ToolHttpStatus,
+        Self::ToolWakeOnLan,
+        Self::ToolWhois,
+        Self::ToolBannerGrabber,
         Self::Monitor,
         Self::Resolution,
         Self::Keyboard,
@@ -539,6 +551,16 @@ impl Icon {
                 "M8,1 L14,4 L14,9 C14,12 11,14.5 8,15.5 C5,14.5 2,12 2,9 L2,4 Z \
                  M5.5,8.5 L7.5,10.5 L11,6.5"
             }
+            Self::ToolHttpStatus => {
+                "M8,1 A7,7 0 1 1 8,15 A7,7 0 1 1 8,1 Z M1,8 L15,8 M8,1 C5,4 5,12 8,15 M8,1 C11,4 11,12 8,15 M4,5 L6,5 M10,11 L12,11"
+            }
+            Self::ToolWakeOnLan => {
+                "M8,1 A7,7 0 1 1 8,15 A7,7 0 1 1 8,1 Z M9,4 L6.5,8.5 L8.5,8.5 L7,12 L11,7.5 L9,7.5 Z"
+            }
+            Self::ToolWhois => {
+                "M3,1 L13,1 L13,15 L3,15 Z M8,6 A2.5,2.5 0 1 1 8,11 L10,11 L10,8 A1,1 0 0 0 8,8 A1,1 0 0 1 8,6 Z"
+            }
+            Self::ToolBannerGrabber => "M1,3 L15,3 L15,13 L1,13 Z M3,6 L6,8 L3,10 M7,10 L12,10",
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
             Self::Resolution => {
                 "M1.5,2.5 L14.5,2.5 L14.5,11.5 L1.5,11.5 Z M5.5,14 L10.5,14                  M4,7 L4,5 L6,5 M12,7 L12,9 L10,9"
@@ -609,6 +631,10 @@ impl Icon {
             | Self::ToolSmb
             | Self::ToolCertificateGenerator
             | Self::ToolPasswordAudit
+            | Self::ToolHttpStatus
+            | Self::ToolWakeOnLan
+            | Self::ToolWhois
+            | Self::ToolBannerGrabber
             // These hold open lines too, which a fill would lose; the ULID's blocks are
             // closed, filled as the UUID's.
             | Self::ToolSubnet

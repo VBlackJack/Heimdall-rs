@@ -55,6 +55,10 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::SubnetCalculator,
             ToolId::IpConverter,
             ToolId::NetworkCalculator,
+            ToolId::HttpStatus,
+            ToolId::Whois,
+            ToolId::BannerGrabber,
+            ToolId::TcpPing,
             ToolId::Hash,
             ToolId::Hmac,
             ToolId::Password,
@@ -82,8 +86,19 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Ulid,
             ToolId::Crontab,
             ToolId::SshConfig,
+            ToolId::WakeOnLan,
         ]
     );
+    assert_eq!(ToolId::HttpStatus.code(), "HTTP");
+    assert_eq!(ToolId::Whois.code(), "WHOIS");
+    assert_eq!(ToolId::BannerGrabber.code(), "BANNER");
+    assert_eq!(ToolId::TcpPing.code(), "TCPPING");
+    assert_eq!(ToolId::WakeOnLan.code(), "WOL");
+    assert_eq!(ToolId::WakeOnLan.category(), ToolCategory::External);
+    assert!(ToolId::TcpPing.is_network());
+    assert!(ToolId::BannerGrabber.is_network());
+    assert!(ToolId::Whois.is_network());
+    assert!(!ToolId::HttpStatus.is_network());
     assert_eq!(ToolId::SubnetCalculator.code(), "SUBNET");
     assert_eq!(
         ToolId::NetworkCalculator.prefixes(),

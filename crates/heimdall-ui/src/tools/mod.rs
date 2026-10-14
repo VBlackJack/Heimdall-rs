@@ -28,6 +28,7 @@
 
 #![allow(clippy::all, clippy::pedantic)]
 
+mod banner_tool;
 mod base64_tool;
 pub mod catalog;
 mod certgen_tool;
@@ -41,6 +42,7 @@ mod diff_tool;
 mod dnssec_tool;
 mod hash_tool;
 mod hmac_tool;
+mod http_status_tool;
 mod ip_converter_tool;
 mod json_tool;
 mod jwt_tool;
@@ -56,12 +58,15 @@ mod ssh_config_tool;
 mod sshaudit_tool;
 mod sshkey_tool;
 mod subnet_tool;
+mod tcp_ping_tool;
 mod text_case_tool;
 mod tlsaudit_tool;
 mod totp_tool;
 mod ulid_tool;
 mod url_tool;
 mod uuid_tool;
+mod whois_tool;
+mod wol_tool;
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -74,6 +79,7 @@ use iced::widget::text_editor::{self, Action, Content};
 use iced::widget::{Column, button, column, container, row, scrollable, text, tooltip};
 use iced::{Color, Element, Length, Task, Theme, window};
 
+pub use banner_tool::BannerMessage;
 pub use base64_tool::Base64Message;
 pub use certgen_tool::{
     CertCopy, CertGenMessage, CertSave, Generated as GeneratedCertificates, KeySizeChoice,
@@ -87,6 +93,7 @@ pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_di
 pub use dnssec_tool::{DnsSecMessage, Outcome as DnsSecOutcome};
 pub use hash_tool::HashMessage;
 pub use hmac_tool::HmacMessage;
+pub use http_status_tool::HttpStatusMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
 pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
@@ -102,12 +109,15 @@ pub use sshaudit_tool::{
 };
 pub use sshkey_tool::{AlgorithmChoice, SshCopy, SshKeyMessage, SshSave};
 pub use subnet_tool::{SubnetField, SubnetMessage};
+pub use tcp_ping_tool::TcpPingMessage;
 pub use text_case_tool::TextCaseMessage;
 pub use tlsaudit_tool::{Outcome as TlsAuditOutcome, TlsAuditMessage};
 pub use totp_tool::TotpMessage;
 pub use ulid_tool::UlidMessage;
 pub use url_tool::UrlMessage;
 pub use uuid_tool::UuidMessage;
+pub use whois_tool::WhoisMessage;
+pub use wol_tool::WolMessage;
 
 use crate::i18n::fl;
 use crate::icons::Icon;
@@ -218,6 +228,11 @@ pub fn label(tool: ToolId) -> String {
         ToolId::CveLookup => fl!("ui-tool-cve-name"),
         ToolId::SecNumCloud => fl!("ui-tool-secnumcloud-name"),
         ToolId::Smb => fl!("ui-tool-smb-name"),
+        ToolId::HttpStatus => fl!("ui-tool-http-name"),
+        ToolId::TcpPing => fl!("ui-tool-tcpping-name"),
+        ToolId::WakeOnLan => fl!("ui-tool-wol-name"),
+        ToolId::Whois => fl!("ui-tool-whois-name"),
+        ToolId::BannerGrabber => fl!("ui-tool-banner-name"),
     }
 }
 
@@ -255,6 +270,11 @@ pub fn description(tool: ToolId) -> String {
         ToolId::CveLookup => fl!("ui-tool-cve-description"),
         ToolId::SecNumCloud => fl!("ui-tool-secnumcloud-description"),
         ToolId::Smb => fl!("ui-tool-smb-description"),
+        ToolId::HttpStatus => fl!("ui-tool-http-description"),
+        ToolId::TcpPing => fl!("ui-tool-tcpping-description"),
+        ToolId::WakeOnLan => fl!("ui-tool-wol-description"),
+        ToolId::Whois => fl!("ui-tool-whois-description"),
+        ToolId::BannerGrabber => fl!("ui-tool-banner-description"),
     }
 }
 
@@ -292,6 +312,11 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::CveLookup => Icon::ToolCve,
         ToolId::SecNumCloud => Icon::ToolSecNumCloud,
         ToolId::Smb => Icon::ToolSmb,
+        ToolId::HttpStatus => Icon::ToolHttpStatus,
+        ToolId::TcpPing => Icon::ToolSubnet,
+        ToolId::WakeOnLan => Icon::ToolWakeOnLan,
+        ToolId::Whois => Icon::ToolWhois,
+        ToolId::BannerGrabber => Icon::ToolBannerGrabber,
     }
 }
 
@@ -447,6 +472,16 @@ pub enum CopySlot {
     SecNumCloudHtml,
     /// The SMB enumerator report text.
     SmbReport,
+    /// A status code entry of the HTTP status tool.
+    HttpStatus(u16),
+    /// The TCP ping results log.
+    TcpPingResults,
+    /// The WHOIS output text.
+    WhoisOutput,
+    /// The banner grabber results.
+    BannerGrabResults,
+    /// The banner grabber CSV export.
+    BannerGrabCsv,
 }
 
 /// What a tool's tab is asked.
@@ -518,6 +553,16 @@ pub enum ToolMessage {
     SecNumCloud(SecNumCloudMessage),
     /// The SMB enumerator tool's.
     Smb(SmbMessage),
+    /// The HTTP status codes tool's.
+    HttpStatus(HttpStatusMessage),
+    /// The TCP ping tool's.
+    TcpPing(TcpPingMessage),
+    /// The Wake-on-LAN tool's.
+    Wol(WolMessage),
+    /// The WHOIS lookup tool's.
+    Whois(WhoisMessage),
+    /// The banner grabber tool's.
+    Banner(BannerMessage),
 }
 
 /// A tool's own state.
@@ -553,6 +598,11 @@ enum Pane {
     DefaultCreds(Box<defaultcreds_tool::DefaultCredsPane>),
     SecNumCloud(Box<secnumcloud_tool::SecNumCloudPane>),
     Smb(Box<smb_tool::SmbPane>),
+    HttpStatus(http_status_tool::HttpStatusPane),
+    TcpPing(tcp_ping_tool::TcpPingPane),
+    Wol(wol_tool::WolPane),
+    Whois(whois_tool::WhoisPane),
+    Banner(banner_tool::BannerPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -604,6 +654,11 @@ impl ToolPane {
             ToolId::CveLookup => Pane::Cve(Box::default()),
             ToolId::SecNumCloud => Pane::SecNumCloud(Box::default()),
             ToolId::Smb => Pane::Smb(Box::default()),
+            ToolId::HttpStatus => Pane::HttpStatus(http_status_tool::HttpStatusPane::default()),
+            ToolId::TcpPing => Pane::TcpPing(tcp_ping_tool::TcpPingPane::default()),
+            ToolId::WakeOnLan => Pane::Wol(wol_tool::WolPane::default()),
+            ToolId::Whois => Pane::Whois(whois_tool::WhoisPane::default()),
+            ToolId::BannerGrabber => Pane::Banner(banner_tool::BannerPane::default()),
         };
         Self {
             pane,
@@ -854,6 +909,35 @@ impl ToolPanes {
                     smb_tool::Outcome::None => Task::none(),
                 };
             }
+            (ToolMessage::HttpStatus(message), Pane::HttpStatus(pane)) => {
+                if let http_status_tool::Outcome::Copy(slot, content) = pane.update(message) {
+                    return state.copy(tab, slot, content);
+                }
+            }
+            (ToolMessage::TcpPing(message), Pane::TcpPing(pane)) => {
+                return match pane.update(tab, message) {
+                    tcp_ping_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    tcp_ping_tool::Outcome::Task(task) => task,
+                    tcp_ping_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Wol(message), Pane::Wol(pane)) => {
+                pane.update(message);
+            }
+            (ToolMessage::Whois(message), Pane::Whois(pane)) => {
+                return match pane.update(tab, message) {
+                    whois_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    whois_tool::Outcome::Task(task) => task,
+                    whois_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Banner(message), Pane::Banner(pane)) => {
+                return match pane.update(tab, message) {
+                    banner_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    banner_tool::Outcome::Task(task) => task,
+                    banner_tool::Outcome::None => Task::none(),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -981,6 +1065,11 @@ pub fn view<'a>(
             fl!("ui-tool-secnumcloud-help"),
         ),
         ToolId::Smb => (fl!("ui-tool-smb-title"), fl!("ui-tool-smb-help")),
+        ToolId::HttpStatus => (fl!("ui-tool-http-name"), fl!("ui-tool-http-help")),
+        ToolId::TcpPing => (fl!("ui-tool-tcpping-name"), fl!("ui-tool-tcpping-help")),
+        ToolId::WakeOnLan => (fl!("ui-tool-wol-name"), fl!("ui-tool-wol-help")),
+        ToolId::Whois => (fl!("ui-tool-whois-name"), fl!("ui-tool-whois-help")),
+        ToolId::BannerGrabber => (fl!("ui-tool-banner-name"), fl!("ui-tool-banner-help")),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -1013,6 +1102,11 @@ pub fn view<'a>(
         Pane::Cve(pane) => (pane.view(tab, state, theme), None),
         Pane::SecNumCloud(pane) => (pane.view(tab, state, theme), None),
         Pane::Smb(pane) => (pane.view(tab, state, theme), None),
+        Pane::HttpStatus(pane) => (pane.view(tab, state, theme), None),
+        Pane::TcpPing(pane) => (pane.view(tab, state, theme), None),
+        Pane::Wol(pane) => (pane.view(tab, state, theme), None),
+        Pane::Whois(pane) => (pane.view(tab, state, theme), None),
+        Pane::Banner(pane) => (pane.view(tab, state, theme), None),
     };
     column![
         header(tab, title, actions),

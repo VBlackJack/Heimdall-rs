@@ -4326,3 +4326,134 @@ ui-tool-smb-help =
     Vérifications de sécurité :
     - Signature SMB désactivée (risque d'attaque par relais)
     - SMBv1 détecté (vulnérabilité EternalBlue)
+
+ui-tool-http-name = Codes de statut HTTP
+ui-tool-http-description = Guide de reference des codes de statut HTTP avec filtrage
+ui-tool-http-filter-placeholder = Rechercher par code ou description...
+ui-tool-http-copy-hint = Cliquer pour copier
+ui-tool-http-no-results = Aucun code correspondant
+ui-tool-http-cat-1xx = 1xx Informationnel
+ui-tool-http-cat-2xx = 2xx Succes
+ui-tool-http-cat-3xx = 3xx Redirection
+ui-tool-http-cat-4xx = 4xx Erreur client
+ui-tool-http-cat-5xx = 5xx Erreur serveur
+ui-tool-http-help =
+    Codes de statut HTTP
+
+    Guide de reference pour les codes de statut HTTP standard.
+
+    Categories :
+    - 1xx : Informationnel (requete recue, traitement en cours)
+    - 2xx : Succes (action recue, comprise et acceptee)
+    - 3xx : Redirection (actions supplementaires requises)
+    - 4xx : Erreur client (syntaxe incorrecte ou impossible a traiter)
+    - 5xx : Erreur serveur (le serveur n'a pas pu traiter la requete)
+
+    Utilisation :
+    - Saisissez un terme dans la barre de recherche pour filtrer par code ou nom.
+    - Cliquez sur une entree pour copier le code et son intitule dans le presse-papiers.
+
+ui-tool-tcpping-name = TCP Ping
+ui-tool-tcpping-description = Mesure de la latence de connexion TCP vers un hote et un port
+ui-tool-tcpping-host-label = Hote
+ui-tool-tcpping-host-placeholder = example.com ou 192.168.1.1
+ui-tool-tcpping-port-label = Port
+ui-tool-tcpping-count-label = Nombre
+ui-tool-tcpping-btn-start = Demarrer
+ui-tool-tcpping-btn-stop = Arreter
+ui-tool-tcpping-btn-copy = Copier les resultats
+ui-tool-tcpping-summary = Min : { $min } ms, Moy : { $avg } ms, Max : { $max } ms, Perdus : { $lost }/{ $total } ({ $pct }%)
+ui-tool-tcpping-empty-state = Entrez un hote et un port, puis cliquez sur Demarrer pour mesurer la latence de connexion
+ui-tool-tcpping-error-host-required = Veuillez saisir un nom d'hote ou une adresse IP.
+ui-tool-tcpping-error-count = Le nombre doit etre compris entre 1 et 10000.
+ui-tool-tcpping-help =
+    Outil TCP Ping
+
+    Mesure la latence de connexion TCP vers un hote et un port cibles.
+    Contrairement au ping ICMP, le ping TCP traverse les pare-feu bloquant les paquets echo ICMP.
+
+    Utilisation :
+    1. Saisissez l'hote ou l'adresse IP cible.
+    2. Saisissez le numero de port (par defaut : 443).
+    3. Indiquez le nombre de sondes a envoyer (par defaut : 10).
+    4. Cliquez sur Demarrer pour lancer la mesure.
+
+ui-tool-wol-name = Wake-on-LAN
+ui-tool-wol-description = Envoi de paquets magiques pour allumer des machines sur le reseau
+ui-tool-wol-mac-label = Adresse MAC
+ui-tool-wol-mac-placeholder = AA:BB:CC:DD:EE:FF
+ui-tool-wol-broadcast-label = Adresse de diffusion
+ui-tool-wol-broadcast-placeholder = 255.255.255.255
+ui-tool-wol-port-label = Port UDP
+ui-tool-wol-btn-send = Envoyer Wake-on-LAN
+ui-tool-wol-status-sent = Paquet magique envoye a { $mac } via { $dest }
+ui-tool-wol-status-error = Erreur d'envoi : { $error }
+ui-tool-wol-error-invalid-mac = Adresse MAC invalide. Format : AA:BB:CC:DD:EE:FF ou AABBCCDDEEFF.
+ui-tool-wol-help =
+    Wake-on-LAN
+
+    Transmet des paquets de diffusion magiques UDP pour reveiller des machines distantes.
+
+    Prerequis :
+    - La machine cible doit avoir active le Wake-on-LAN dans son BIOS/UEFI.
+    - La carte reseau doit supporter le WOL et etre sous tension.
+    - Le commutateur ou routeur doit autoriser les paquets UDP broadcast.
+
+    Utilisation :
+    1. Saisissez l'adresse MAC de la machine cible.
+    2. Ajustez si necessaire l'adresse de diffusion (par defaut : 255.255.255.255).
+    3. Cliquez sur Envoyer Wake-on-LAN.
+
+ui-tool-whois-name = Recherche WHOIS
+ui-tool-whois-description = Interrogation des serveurs WHOIS pour domaines et adresses IP
+ui-tool-whois-domain-label = Domaine ou adresse IP
+ui-tool-whois-domain-placeholder = example.com ou 1.1.1.1
+ui-tool-whois-btn-lookup = Rechercher
+ui-tool-whois-btn-copy = Copier le rapport
+ui-tool-whois-empty-state = Entrez un domaine ou une adresse IP pour interroger les donnees d'enregistrement WHOIS
+ui-tool-whois-status-querying = Interrogation du serveur WHOIS en cours...
+ui-tool-whois-status-complete = Requete terminee en { $elapsed } ms
+ui-tool-whois-error-required = Veuillez saisir un domaine ou une adresse IP.
+ui-tool-whois-help =
+    Recherche WHOIS
+
+    Interroge directement les serveurs WHOIS via le port TCP 43 pour obtenir les donnees
+    d'enregistrement de domaine, le registrar, les serveurs DNS et l'attribution IP.
+
+    Fonctionnalites :
+    - Resolution automatique du serveur WHOIS par TLD (.com, .org, .fr, .io, .dev, etc.)
+    - Requete TCP directe sur le port 43
+    - Repli hors-ligne vers le registre IANA
+
+ui-tool-banner-name = Capture de bannieres
+ui-tool-banner-description = Sonde de ports reseau pour capturer bannieres et versions logicielles
+ui-tool-banner-host-label = Hote cible
+ui-tool-banner-host-placeholder = example.com ou 192.168.1.1
+ui-tool-banner-ports-label = Ports
+ui-tool-banner-ports-placeholder = 21,22,25,80,443,3306,8080
+ui-tool-banner-btn-grab = Capturer
+ui-tool-banner-btn-stop = Arreter
+ui-tool-banner-btn-copy = Copier les resultats
+ui-tool-banner-btn-export = Exporter CSV
+ui-tool-banner-col-port = Port
+ui-tool-banner-col-service = Service
+ui-tool-banner-col-time = Temps
+ui-tool-banner-col-banner = Banniere
+ui-tool-banner-preset-common = Standard
+ui-tool-banner-preset-web = Web
+ui-tool-banner-preset-mail = Mail
+ui-tool-banner-preset-database = Base de donnees
+ui-tool-banner-empty-state = Entrez un hote et des ports pour capturer les bannieres de service
+ui-tool-banner-progress = { $completed } / { $total } ports sondes
+ui-tool-banner-error-host-required = Veuillez saisir un hote cible.
+ui-tool-banner-help =
+    Capture de bannieres
+
+    Sonde les ports reseau ouverts et lit les bannieres d'accueil initiales pour identifier
+    les logiciels actifs, les daemons et leurs numeros de version exacts.
+
+    Fonctionnalites :
+    - Liste et plages de ports personnalisables (ex : 80,443,8000-8005)
+    - Profils predefinis pour ports Usuels, Web, Mail et Bases de donnees
+    - Empreinte automatique des services (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
+    - Export des resultats en CSV ou texte formate
