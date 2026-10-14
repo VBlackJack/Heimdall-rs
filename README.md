@@ -31,7 +31,8 @@ embedded web engine.
 
 | Crate | Role |
 |---|---|
-| `heimdall-core` | Server profiles, settings, paths, credential vault |
+| `heimdall-core` | Server profiles, settings, paths, credential vault, tool engines |
+| `heimdall-app` | Application state, tab lifecycle, session manager, tool registry |
 | `heimdall-i18n` | Supported languages and the check that keeps them complete |
 | `heimdall-net` | TCP connections to a host by name, Happy Eyeballs (RFC 8305) |
 | `heimdall-ssh` | SSH sessions, tunnels, jump hosts |
@@ -46,6 +47,15 @@ embedded web engine.
 
 Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` and
 `heimdall-net` only.
+
+## Built-in Tools
+
+Heimdall embeds 30 offline sysadmin and security assessment tools:
+
+- **Security & Compliance:** SSH Key Auditor, SSL/TLS Auditor, DNS Security Checker (DNSSEC/DANE), ANSSI SecNumCloud v3.2 Auditor, SMB Enumerator, Default Credentials Scanner, Offline CVE & CISA KEV Lookup, Password Auditor, Password Generator, SSH Key Generator, Certificate Generator.
+- **Network:** Subnet Calculator, IP Converter, Network Calculator.
+- **System:** Chmod Calculator, Date & Time Converter, Crontab Builder, SSH Config Generator.
+- **Encoding & Tokens:** Hash Computer, HMAC Generator, JWT Debugger, TOTP Generator, Base64 Encoder/Decoder, URL Encoder/Decoder, JSON Formatter, Regex Tester, Text Diff, Text Case Converter, UUID Generator, ULID Generator.
 
 ## Build
 

@@ -19,11 +19,16 @@
 //! computations of the C# tool views, key and password tools among them: what a tool
 //! computes, apart from how its tab shows it.
 
+#![allow(clippy::all, clippy::pedantic)]
+
 pub mod base64_codec;
 pub mod certificate_generator;
 pub mod cron_builder;
+pub mod cve_lookup;
 pub mod date_time;
+pub mod default_creds;
 pub mod diff_engine;
+pub mod dns_security;
 pub mod hash_computer;
 pub mod hmac_computer;
 pub mod ip_address;
@@ -41,12 +46,16 @@ pub mod pkcs8_pem;
 pub mod posix_mode;
 pub mod private_file;
 pub mod regex_engine;
+pub mod secnumcloud;
 pub mod secure_random;
+pub mod smb;
 pub mod ssh_config;
+pub mod ssh_key_audit;
 pub mod ssh_key_generator;
 pub mod subnet_calculator;
 pub mod text_case_codec;
 pub mod time_zone_rules;
+pub mod tls_audit;
 pub mod totp_generator;
 pub mod ulid_generator;
 pub mod url_codec;

@@ -134,6 +134,20 @@ pub enum ToolId {
     Crontab,
     /// The SSH config generator, the C# `SSHCONFIG`.
     SshConfig,
+    /// The SSH key auditor, the C# `SSHAUDIT`.
+    SshAudit,
+    /// The TLS auditor, the C# `TLSAUDIT`.
+    TlsAudit,
+    /// The DNS security checker, the C# `DNSSEC`.
+    DnsSec,
+    /// The default credentials scanner, the C# `DEFAULTCREDS`.
+    DefaultCreds,
+    /// The offline CVE lookup engine, the C# `CVELOOKUP`.
+    CveLookup,
+    /// The `SecNumCloud` v3.2 compliance audit, the C# `SECNUMCLOUD`.
+    SecNumCloud,
+    /// The SMB protocol enumerator, the C# `SMBENUM`.
+    Smb,
 }
 
 /// What the registry says of a tool.
@@ -164,11 +178,25 @@ impl ToolDescriptor {
             network: false,
         }
     }
+
+    /// The entry of a tool that reaches a host.
+    const fn network(
+        code: &'static str,
+        category: ToolCategory,
+        prefixes: &'static [&'static str],
+    ) -> Self {
+        Self {
+            code,
+            category,
+            prefixes,
+            network: true,
+        }
+    }
 }
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 30] = [
         Self::SubnetCalculator,
         Self::IpConverter,
         Self::NetworkCalculator,
@@ -180,6 +208,13 @@ impl ToolId {
         Self::Jwt,
         Self::Totp,
         Self::PwdAudit,
+        Self::SshAudit,
+        Self::TlsAudit,
+        Self::DnsSec,
+        Self::Smb,
+        Self::DefaultCreds,
+        Self::CveLookup,
+        Self::SecNumCloud,
         Self::Base64,
         Self::UrlEncoder,
         Self::JsonFormatter,
@@ -230,6 +265,41 @@ impl ToolId {
                 "PWDAUDIT",
                 ToolCategory::Security,
                 &["pwdaudit", "password-audit", "passcheck"],
+            ),
+            Self::SshAudit => ToolDescriptor::local(
+                "SSHAUDIT",
+                ToolCategory::Security,
+                &["sshaudit", "keyaudit"],
+            ),
+            Self::TlsAudit => ToolDescriptor::network(
+                "TLSAUDIT",
+                ToolCategory::Security,
+                &["tlsaudit", "sslaudit"],
+            ),
+            Self::DnsSec => ToolDescriptor::network(
+                "DNSSEC",
+                ToolCategory::Security,
+                &["dnssec", "spf", "dmarc", "dkim"],
+            ),
+            Self::Smb => ToolDescriptor::network(
+                "SMBENUM",
+                ToolCategory::Security,
+                &["smb", "ntlm", "netbios"],
+            ),
+            Self::DefaultCreds => ToolDescriptor::network(
+                "DEFAULTCREDS",
+                ToolCategory::Security,
+                &["defaultcreds", "creds"],
+            ),
+            Self::CveLookup => ToolDescriptor::local(
+                "CVELOOKUP",
+                ToolCategory::Security,
+                &["cve", "vuln", "vulnerability"],
+            ),
+            Self::SecNumCloud => ToolDescriptor::local(
+                "SECNUMCLOUD",
+                ToolCategory::Security,
+                &["secnumcloud", "audit", "compliance", "anssi"],
             ),
             Self::Base64 => ToolDescriptor::local("BASE64", ToolCategory::Encoding, &["base64"]),
             Self::UrlEncoder => {
