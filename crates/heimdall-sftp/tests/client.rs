@@ -341,6 +341,71 @@ async fn an_endless_listing_stops_at_the_limit_and_its_handle_is_closed() {
 }
 
 #[tokio::test]
+async fn a_listing_leaves_out_every_name_that_is_not_one_clean_segment() {
+    let (client, mut server) = client().await;
+    let asking = client.clone();
+    let listing = tokio::spawn(async move { asking.read_dir(&RemotePath::from("/")).await });
+    let mut paged = false;
+    while let Some(request) = within(read_request(&mut server)).await {
+        let id = request_id(&request);
+        let status = |code| Response::Status {
+            id,
+            code,
+            message: Vec::new(),
+        };
+        match request {
+            Request::Opendir { .. } => {
+                send(
+                    &mut server,
+                    &Response::Handle {
+                        id,
+                        handle: b"d".to_vec(),
+                    },
+                )
+                .await;
+            }
+            Request::Readdir { .. } if !paged => {
+                paged = true;
+                let entries = [
+                    &b"."[..],
+                    b"..",
+                    b"../etc",
+                    b"a/b",
+                    b"..\\x",
+                    b" .. ",
+                    b"a\0b",
+                    b"a\nb",
+                    b"kept",
+                    b" kept",
+                ]
+                .iter()
+                .map(|name| NameEntry {
+                    filename: name.to_vec(),
+                    longname: Vec::new(),
+                    attributes: Attributes::default(),
+                })
+                .collect();
+                send(&mut server, &Response::Name { id, entries }).await;
+            }
+            Request::Readdir { .. } => send(&mut server, &status(StatusCode::Eof)).await,
+            Request::Close { .. } => {
+                send(&mut server, &status(StatusCode::Ok)).await;
+                break;
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    let names: Vec<Vec<u8>> = within(listing)
+        .await
+        .expect("joined")
+        .expect("listed")
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect();
+    assert_eq!(names, [b"kept".to_vec(), b" kept".to_vec()]);
+}
+
+#[tokio::test]
 async fn dropping_the_client_ends_the_stream() {
     let (client, mut server) = client().await;
     drop(client);

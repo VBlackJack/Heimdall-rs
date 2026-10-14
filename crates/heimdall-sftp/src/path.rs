@@ -131,9 +131,108 @@ pub fn display_bytes(bytes: &[u8]) -> String {
     text
 }
 
+/// Whether `name`, an entry's name as a server listed it, is one clean path segment that
+/// may enter a listing, as the C# `SftpPathGuard.IsValidChildName` that every C# listing
+/// (`SftpBrowser`, `FtpBrowser`, `SudoDirectoryListing`) passes its names through: not blank,
+/// not `.` or `..` once trimmed, no `/` or `\`, no control character. A hostile server's
+/// `../x` or `a/b` would otherwise be joined to a folder and reach outside it.
+///
+/// Stricter than the C# on one point: a control character at either end, which the C#
+/// trims away before looking, is refused too; `a\n` names no file a user can type.
+#[must_use]
+pub fn is_child_name(name: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(name);
+    let trimmed = text.trim();
+    !trimmed.is_empty()
+        && trimmed != "."
+        && trimmed != ".."
+        && !text
+            .chars()
+            .any(|character| matches!(character, '/' | '\\') || character.is_control())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{RemotePath, display_bytes};
+    use super::{RemotePath, display_bytes, is_child_name};
+
+    #[test]
+    fn a_listed_name_is_one_clean_segment_or_left_out() {
+        for name in [
+            &b""[..],
+            b" ",
+            b"\t",
+            b".",
+            b"..",
+            b" .. ",
+            b"../x",
+            b"a/b",
+            b"/",
+            b"/etc/passwd",
+            b"a\\b",
+            b"..\\x",
+            b"a\0b",
+            b"a\nb",
+            b"a\n",
+            b"a\x1b[2J",
+            b"a\x7f",
+            "a\u{85}".as_bytes(),
+        ] {
+            assert!(!is_child_name(name), "{}", display_bytes(name));
+        }
+        for name in [
+            &b"a"[..],
+            b" a",
+            b"a b ",
+            b"...",
+            b".hidden",
+            b"C:x",
+            b"caf\xE9",
+            "\u{e9}t\u{e9}".as_bytes(),
+        ] {
+            assert!(is_child_name(name), "{}", display_bytes(name));
+        }
+    }
+
+    #[test]
+    fn a_listed_name_a_download_writes_never_leaves_its_folder() {
+        use std::path::{Component, Path};
+
+        use crate::local_name::{LocalName, Rules};
+
+        // What a hostile server may list, past the listing's guard or not: a download's
+        // local name (`LocalName`, the tree and folder downloads' only way to a local
+        // path) is either refused or one plain component of the target folder.
+        let target = Path::new("target");
+        for name in [
+            &b"../x"[..],
+            b"..",
+            b"a/b",
+            b"/etc/passwd",
+            b"..\\x",
+            b"C:x",
+            b"C:\\x",
+            b"\\\\server\\share",
+            b"a\0b",
+            b"x",
+            b" a",
+        ] {
+            for rules in [Rules::Unix, Rules::Windows] {
+                let Ok(local) = LocalName::from_remote(name, rules) else {
+                    continue;
+                };
+                let joined = target.join(&local.name);
+                assert_eq!(joined.parent(), Some(target), "{}", display_bytes(name));
+                assert!(
+                    matches!(
+                        Path::new(&local.name).components().collect::<Vec<_>>()[..],
+                        [Component::Normal(_)]
+                    ),
+                    "{}",
+                    display_bytes(name)
+                );
+            }
+        }
+    }
 
     #[test]
     fn a_latin1_name_is_kept_byte_for_byte_and_shown_escaped() {
