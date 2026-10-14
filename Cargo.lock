@@ -2419,6 +2419,7 @@ dependencies = [
  "heimdall-sftp",
  "heimdall-tls",
  "libunftp",
+ "log",
  "rcgen",
  "sealvault",
  "suppaftp",
@@ -2501,6 +2502,7 @@ dependencies = [
 name = "heimdall-sftp"
 version = "0.1.0"
 dependencies = [
+ "log",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

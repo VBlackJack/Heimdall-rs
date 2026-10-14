@@ -158,9 +158,12 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
     let folder = dir.path().join("secret");
     std::fs::create_dir(&folder).expect("folder");
     std::fs::create_dir(folder.join("logs")).expect("logs");
-    std::fs::write(folder.join("it's a\nname"), b"12345").expect("file");
+    std::fs::write(folder.join("it's a name"), b"12345").expect("file");
+    // A name that is not one clean segment never enters the listing, as the C#
+    // `SudoDirectoryListing` skips it.
+    std::fs::write(folder.join("a\nline"), b"1").expect("unsafe name");
     std::fs::set_permissions(
-        folder.join("it's a\nname"),
+        folder.join("it's a name"),
         std::fs::Permissions::from_mode(0o640),
     )
     .expect("mode");
@@ -191,7 +194,7 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
         (logs.label.as_str(), logs.kind),
         ("logs", EntryKind::Directory)
     );
-    assert_eq!(file.name, b"it's a\nname", "the exact bytes");
+    assert_eq!(file.name, b"it's a name", "the exact bytes");
     assert_eq!(
         (file.kind, file.size, file.permissions),
         (EntryKind::File, Some(5), Some(0o640))
@@ -199,7 +202,7 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
     assert_eq!(
         file.inode,
         Some(
-            std::fs::metadata(folder.join("it's a\nname"))
+            std::fs::metadata(folder.join("it's a name"))
                 .expect("there")
                 .ino()
         )

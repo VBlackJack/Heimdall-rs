@@ -39,7 +39,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::path::RemotePath;
+use crate::path::{RemotePath, is_child_name};
 use crate::protocol::{
     Attributes, Extensions, NameEntry, Request, Response, SFTP_VERSION, StatusCode,
 };
@@ -720,7 +720,8 @@ impl SftpClient {
 
     async fn read_dir_pages(&self, handle: &Handle) -> Result<Vec<DirEntry>, SftpError> {
         let mut entries = Vec::new();
-        loop {
+        let mut unsafe_names = 0usize;
+        let entries = loop {
             let request_handle = handle.0.clone();
             let page = self
                 .request(Expect::Name, |id| Request::Readdir {
@@ -739,6 +740,13 @@ impl SftpClient {
                         if filename == b"." || filename == b".." {
                             continue;
                         }
+                        // A name that is not one clean segment never enters a listing, as
+                        // the C# `SftpBrowser.IsListableEntryName`: joined to a folder, it
+                        // would reach outside it.
+                        if !is_child_name(&filename) {
+                            unsafe_names += 1;
+                            continue;
+                        }
                         if entries.len() == self.inner.max_listing_entries {
                             return Err(SftpError::ListingTooLarge(entries.len()));
                         }
@@ -751,11 +759,18 @@ impl SftpClient {
                 Response::Status {
                     code: StatusCode::Eof,
                     ..
-                } => return Ok(entries),
+                } => break entries,
                 Response::Status { code, message, .. } => return Err(status_error(code, message)),
                 _ => return Err(unexpected()),
             }
+        };
+        if unsafe_names > 0 {
+            // Server data: the count only, never the names.
+            log::debug!(
+                "SFTP listing: {unsafe_names} entry name(s) not one clean segment, left out"
+            );
         }
+        Ok(entries)
     }
 
     /// Creates directory `path`.

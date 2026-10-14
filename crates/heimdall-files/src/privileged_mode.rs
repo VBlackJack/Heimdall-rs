@@ -36,6 +36,8 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use heimdall_sftp::path::is_child_name;
+
 use crate::privileged::{Sudo, SudoScript, hex, prelude};
 use crate::server_copy::{TOKEN_LEN, Unquotable, quote};
 use crate::{ItemKind, RemoteItem, Special};
@@ -314,8 +316,20 @@ pub fn list_output(output: &[u8], done: &[u8]) -> Option<SudoListing> {
     if !rest.is_empty() {
         return None;
     }
-    let entries = records
+    // A name that is not one clean segment is left out, the rest of the listing kept, as
+    // the C# `SudoDirectoryListing` skips it.
+    let (records, unsafe_names): (Vec<_>, Vec<_>) = records
         .iter()
+        .partition(|record| record.last().is_some_and(|name| is_child_name(name)));
+    if !unsafe_names.is_empty() {
+        // Server data: the count only, never the names.
+        log::debug!(
+            "sudo listing: {} entry name(s) not one clean segment, left out",
+            unsafe_names.len()
+        );
+    }
+    let entries = records
+        .into_iter()
         .map(listed_entry)
         .collect::<Option<Vec<_>>>()?;
     Some(SudoListing {
@@ -455,7 +469,11 @@ mod tests {
             b"d\x0012\x00755\x000\x000\x004096\x001700000000.5000000000\x00logs\x00",
         );
         output
-            .extend_from_slice(b"f\x0013\x004644\x001000\x0010\x005\x001700000001\x00a\nb.txt\x00");
+            .extend_from_slice(b"f\x0013\x004644\x001000\x0010\x005\x001700000001\x00a b.txt\x00");
+        // Names that are not one clean segment: left out, the listing kept.
+        output.extend_from_slice(b"f\x0015\x00644\x000\x000\x001\x001700000001\x00a\nb.txt\x00");
+        output.extend_from_slice(b"f\x0016\x00644\x000\x000\x001\x001700000001\x00..\x00");
+        output.extend_from_slice(b"f\x0017\x00644\x000\x000\x001\x001700000001\x00a\\b\x00");
         output.extend_from_slice(b"c\x0014\x00620\x000\x005\x000\x001700000002.25\x00tty\x00");
         output.extend_from_slice(done);
         let listing = list_output(&output, done).expect("listed");
@@ -471,7 +489,7 @@ mod tests {
             logs.item.modified,
             Some(UNIX_EPOCH + Duration::from_millis(1_700_000_000_500))
         );
-        assert_eq!(file.item.name, b"a\nb.txt", "a line end in a name is kept");
+        assert_eq!(file.item.name, b"a b.txt", "a space in a name is kept");
         assert_eq!(
             (
                 file.item.permissions,
