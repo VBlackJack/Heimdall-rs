@@ -21,6 +21,16 @@
 //! Provides asynchronous query execution, live progress streaming, summary status
 //! badge, per-control result cards, and formatted report copying.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use heimdall_app::TabId;
 use heimdall_core::tools::dns_security::{
     self, DEFAULT_DKIM_SELECTORS, DnsCheckFinding, DnsCheckResult, DnsCheckStatus,
@@ -209,9 +219,12 @@ impl DnsSecPane {
         };
 
         let controls_row = row![
-            column![super::field_label(fl!("ui-tool-dnssec-domain")), domain_input]
-                .spacing(spacing::XS)
-                .width(Length::Fill),
+            column![
+                super::field_label(fl!("ui-tool-dnssec-domain")),
+                domain_input
+            ]
+            .spacing(spacing::XS)
+            .width(Length::Fill),
             container(check_button).align_y(Alignment::End),
         ]
         .spacing(spacing::SM)
@@ -222,13 +235,9 @@ impl DnsSecPane {
 
         if let Some(err) = &self.error {
             body_col = body_col.push(
-                container(
-                    text(err.as_str())
-                        .size(font_size::BODY)
-                        .style(text::danger),
-                )
-                .padding(spacing::MD)
-                .style(styles::card),
+                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
+                    .padding(spacing::MD)
+                    .style(styles::card),
             );
         }
 
@@ -476,12 +485,18 @@ fn finding_message(finding: &DnsCheckFinding) -> String {
         DnsCheckFinding::NoDkim => fl!("ui-tool-dnssec-finding-dkim-none"),
         DnsCheckFinding::NoCaa => fl!("ui-tool-dnssec-finding-caa-missing"),
         DnsCheckFinding::CaaPresent(issuers) => {
-            fl!("ui-tool-dnssec-finding-caa-present", issuers = issuers.as_str())
+            fl!(
+                "ui-tool-dnssec-finding-caa-present",
+                issuers = issuers.as_str()
+            )
         }
         DnsCheckFinding::DnssecPresent => fl!("ui-tool-dnssec-finding-dnssec-present"),
         DnsCheckFinding::DnssecMissing => fl!("ui-tool-dnssec-finding-dnssec-missing"),
         DnsCheckFinding::MxServers(servers) => {
-            fl!("ui-tool-dnssec-finding-mx-servers", servers = servers.as_str())
+            fl!(
+                "ui-tool-dnssec-finding-mx-servers",
+                servers = servers.as_str()
+            )
         }
         DnsCheckFinding::NoMx => fl!("ui-tool-dnssec-finding-no-mx"),
         DnsCheckFinding::Error(err) => fl!("ui-tool-dnssec-finding-error", error = err.as_str()),
@@ -549,10 +564,7 @@ fn query_dns(record_type: &str, query_target: &str) -> String {
 }
 
 /// Asynchronous streaming DNS security checks.
-fn check_stream(
-    domain: String,
-    check_id: u64,
-) -> impl iced::futures::Stream<Item = DnsSecMessage> {
+fn check_stream(domain: String, check_id: u64) -> impl iced::futures::Stream<Item = DnsSecMessage> {
     iced::stream::channel(16, async move |mut out| {
         let total_steps = 6.0f32;
         let mut results = Vec::with_capacity(6);
@@ -562,7 +574,11 @@ fn check_stream(
             .send(DnsSecMessage::Progress(
                 check_id,
                 1.0 / total_steps,
-                fl!("ui-tool-dnssec-progress", record = "SPF", domain = domain.as_str()),
+                fl!(
+                    "ui-tool-dnssec-progress",
+                    record = "SPF",
+                    domain = domain.as_str()
+                ),
             ))
             .await;
 
@@ -577,7 +593,11 @@ fn check_stream(
             .send(DnsSecMessage::Progress(
                 check_id,
                 2.0 / total_steps,
-                fl!("ui-tool-dnssec-progress", record = "DKIM", domain = domain.as_str()),
+                fl!(
+                    "ui-tool-dnssec-progress",
+                    record = "DKIM",
+                    domain = domain.as_str()
+                ),
             ))
             .await;
 
@@ -600,16 +620,22 @@ fn check_stream(
             }
         }
 
-        results.push(dkim_result.or(first_warn).unwrap_or_else(|| {
-            dns_security::evaluate_dkim(None, None)
-        }));
+        results.push(
+            dkim_result
+                .or(first_warn)
+                .unwrap_or_else(|| dns_security::evaluate_dkim(None, None)),
+        );
 
         // 3. DMARC
         let _ = out
             .send(DnsSecMessage::Progress(
                 check_id,
                 3.0 / total_steps,
-                fl!("ui-tool-dnssec-progress", record = "DMARC", domain = domain.as_str()),
+                fl!(
+                    "ui-tool-dnssec-progress",
+                    record = "DMARC",
+                    domain = domain.as_str()
+                ),
             ))
             .await;
 
@@ -624,7 +650,11 @@ fn check_stream(
             .send(DnsSecMessage::Progress(
                 check_id,
                 4.0 / total_steps,
-                fl!("ui-tool-dnssec-progress", record = "CAA", domain = domain.as_str()),
+                fl!(
+                    "ui-tool-dnssec-progress",
+                    record = "CAA",
+                    domain = domain.as_str()
+                ),
             ))
             .await;
 
@@ -639,7 +669,11 @@ fn check_stream(
             .send(DnsSecMessage::Progress(
                 check_id,
                 5.0 / total_steps,
-                fl!("ui-tool-dnssec-progress", record = "DNSSEC", domain = domain.as_str()),
+                fl!(
+                    "ui-tool-dnssec-progress",
+                    record = "DNSSEC",
+                    domain = domain.as_str()
+                ),
             ))
             .await;
 
@@ -664,7 +698,11 @@ fn check_stream(
             .send(DnsSecMessage::Progress(
                 check_id,
                 6.0 / total_steps,
-                fl!("ui-tool-dnssec-progress", record = "MX", domain = domain.as_str()),
+                fl!(
+                    "ui-tool-dnssec-progress",
+                    record = "MX",
+                    domain = domain.as_str()
+                ),
             ))
             .await;
 
@@ -675,6 +713,8 @@ fn check_stream(
         results.push(dns_security::evaluate_mx(&mx_raw));
 
         let report = dns_security::build_report(&domain, results);
-        let _ = out.send(DnsSecMessage::Finished(check_id, Ok(report))).await;
+        let _ = out
+            .send(DnsSecMessage::Finished(check_id, Ok(report)))
+            .await;
     })
 }

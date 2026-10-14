@@ -144,7 +144,7 @@ pub enum ToolId {
     DefaultCreds,
     /// The offline CVE lookup engine, the C# `CVELOOKUP`.
     CveLookup,
-    /// The SecNumCloud v3.2 compliance audit, the C# `SECNUMCLOUD`.
+    /// The `SecNumCloud` v3.2 compliance audit, the C# `SECNUMCLOUD`.
     SecNumCloud,
     /// The SMB protocol enumerator, the C# `SMBENUM`.
     Smb,

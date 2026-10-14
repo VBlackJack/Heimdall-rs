@@ -26,6 +26,16 @@
 //! Parses raw DNS output (`dig +short` or `nslookup` format), classifies posture,
 //! calculates overall security summary score, and formats text reports.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use std::fmt;
 
 /// Identifies which DNS security control a [`DnsCheckResult`] represents.
@@ -206,7 +216,10 @@ pub fn extract_record(raw: &str, marker: &str) -> String {
             line = line[idx + 6..].trim().trim_matches('"');
         }
 
-        if line.to_ascii_lowercase().contains(&marker.to_ascii_lowercase()) {
+        if line
+            .to_ascii_lowercase()
+            .contains(&marker.to_ascii_lowercase())
+        {
             return line.to_owned();
         }
     }
@@ -223,7 +236,10 @@ pub fn extract_tag(record: &str, tag: &str) -> String {
 
     for part in record.split(';') {
         let trimmed = part.trim();
-        if trimmed.to_ascii_lowercase().starts_with(&format!("{}=", tag.to_ascii_lowercase())) {
+        if trimmed
+            .to_ascii_lowercase()
+            .starts_with(&format!("{}=", tag.to_ascii_lowercase()))
+        {
             return trimmed[tag.len() + 1..].trim().to_owned();
         }
     }
@@ -617,16 +633,28 @@ mod tests {
     #[test]
     fn normalize_domain_variations() {
         assert_eq!(normalize_domain_input("  google.com  "), "google.com");
-        assert_eq!(normalize_domain_input("https://example.com/path"), "example.com");
-        assert_eq!(normalize_domain_input("admin@sub.domain.org:8080"), "sub.domain.org");
-        assert_eq!(normalize_domain_input("http://USER:pass@DOMAIN.NET/"), "domain.net");
+        assert_eq!(
+            normalize_domain_input("https://example.com/path"),
+            "example.com"
+        );
+        assert_eq!(
+            normalize_domain_input("admin@sub.domain.org:8080"),
+            "sub.domain.org"
+        );
+        assert_eq!(
+            normalize_domain_input("http://USER:pass@DOMAIN.NET/"),
+            "domain.net"
+        );
         assert_eq!(normalize_domain_input(""), "");
     }
 
     #[test]
     fn extract_record_finds_txt() {
         let raw = "google.com text = \"v=spf1 include:_spf.google.com ~all\"\nguogle.com text = \"other\"";
-        assert_eq!(extract_record(raw, "v=spf1"), "v=spf1 include:_spf.google.com ~all");
+        assert_eq!(
+            extract_record(raw, "v=spf1"),
+            "v=spf1 include:_spf.google.com ~all"
+        );
         assert_eq!(extract_record(raw, "notfound"), "");
     }
 
@@ -679,7 +707,10 @@ mod tests {
         // Enforced reject
         let res = evaluate_dmarc("v=DMARC1; p=reject; rua=mailto:d@example.com");
         assert_eq!(res.status, DnsCheckStatus::Pass);
-        assert_eq!(res.finding, DnsCheckFinding::DmarcEnforced("reject".to_owned()));
+        assert_eq!(
+            res.finding,
+            DnsCheckFinding::DmarcEnforced("reject".to_owned())
+        );
 
         // Enforced quarantine
         let res = evaluate_dmarc("v=DMARC1; p=quarantine;");
@@ -693,7 +724,10 @@ mod tests {
         // Pct=0 warn
         let res = evaluate_dmarc("v=DMARC1; p=reject; pct=0");
         assert_eq!(res.status, DnsCheckStatus::Warn);
-        assert_eq!(res.finding, DnsCheckFinding::DmarcPctZero("reject".to_owned()));
+        assert_eq!(
+            res.finding,
+            DnsCheckFinding::DmarcPctZero("reject".to_owned())
+        );
 
         // Missing fail
         let res = evaluate_dmarc("");

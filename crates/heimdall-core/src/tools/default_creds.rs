@@ -21,6 +21,16 @@
 //! services (SSH, Telnet, FTP, HTTP, SNMP, MySQL, PostgreSQL, Redis, MSSQL, VNC),
 //! result structures, CSV/report formatters, and HTTP response validation.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use serde::{Deserialize, Serialize};
 
 /// Connection timeout in milliseconds for network probes.
@@ -281,7 +291,10 @@ pub fn build_summary_text(
         .count();
 
     let mut services_seen = std::collections::HashSet::new();
-    for r in results.iter().filter(|r| r.status == CredTestStatus::Default) {
+    for r in results
+        .iter()
+        .filter(|r| r.status == CredTestStatus::Default)
+    {
         services_seen.insert((r.service.as_str(), r.port));
     }
     let service_count = services_seen.len();
@@ -373,12 +386,15 @@ pub fn build_csv_export(
 ) -> String {
     let mut out = String::new();
 
-    let col_svc = localize.map_or_else(|| "Service".to_string(), |loc| loc("ToolDefCredColService"));
+    let col_svc =
+        localize.map_or_else(|| "Service".to_string(), |loc| loc("ToolDefCredColService"));
     let col_port = localize.map_or_else(|| "Port".to_string(), |loc| loc("ToolDefCredColPort"));
     let col_user = localize.map_or_else(|| "User".to_string(), |loc| loc("ToolDefCredColUser"));
     let col_pass = localize.map_or_else(|| "Password".to_string(), |loc| loc("ToolDefCredColPass"));
-    let col_status = localize.map_or_else(|| "Status".to_string(), |loc| loc("ToolDefCredColStatus"));
-    let col_detail = localize.map_or_else(|| "Detail".to_string(), |loc| loc("ToolDefCredColDetail"));
+    let col_status =
+        localize.map_or_else(|| "Status".to_string(), |loc| loc("ToolDefCredColStatus"));
+    let col_detail =
+        localize.map_or_else(|| "Detail".to_string(), |loc| loc("ToolDefCredColDetail"));
 
     out.push_str(&format!(
         "{col_svc},{col_port},{col_user},{col_pass},{col_status},{col_detail}\n"
@@ -451,7 +467,9 @@ mod tests {
         assert!(is_http_success_response("HTTP/1.0 301 Moved"));
         assert!(!is_http_success_response("HTTP/1.1 401 Unauthorized"));
         assert!(!is_http_success_response("HTTP/1.1 403 Forbidden"));
-        assert!(!is_http_success_response("HTTP/1.1 500 Internal Server Error"));
+        assert!(!is_http_success_response(
+            "HTTP/1.1 500 Internal Server Error"
+        ));
         assert!(!is_http_success_response(""));
         assert!(!is_http_success_response("garbage"));
     }
@@ -474,11 +492,7 @@ mod tests {
 
     #[test]
     fn status_to_detail_default_contains_service_with_localized_template() {
-        let detail = status_to_detail(
-            CredTestStatus::Default,
-            "SSH",
-            Some(&test_localize),
-        );
+        let detail = status_to_detail(CredTestStatus::Default, "SSH", Some(&test_localize));
         assert!(detail.contains("SSH"));
         assert!(detail.contains("accepted"));
     }

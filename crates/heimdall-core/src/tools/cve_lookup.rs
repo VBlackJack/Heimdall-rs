@@ -23,8 +23,18 @@
 //! Features banner detection, semantic version normalization, version range checking,
 //! CVSS score classification, and formatted report output. Completely offline and thread-safe.
 
-use std::cmp::Ordering;
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use regex::Regex;
+use std::cmp::Ordering;
 use std::sync::LazyLock;
 
 /// Severity classification for a CVE entry based on CVSS score.
@@ -716,25 +726,82 @@ static CVE_DATABASE: &[ProductDb] = &[
 
 static BANNER_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     vec![
-        (Regex::new(r"(?i)OpenSSH[_/ ]?(\d[\d.p]*)").expect("valid regex"), "OpenSSH"),
-        (Regex::new(r"(?i)PuTTY[_/ ]?(?:Release[_/ ]?)?(\d[\d.]*)").expect("valid regex"), "PuTTY"),
-        (Regex::new(r"(?i)Plink[_/ ]?(?:Release[_/ ]?)?(\d[\d.]*)").expect("valid regex"), "Plink"),
-        (Regex::new(r"(?i)Apache(?:/| HTTPD |httpd[ /])(\d[\d.]*)").expect("valid regex"), "Apache"),
-        (Regex::new(r"(?i)Apache Tomcat/(\d[\d.]*)").expect("valid regex"), "Apache Tomcat"),
-        (Regex::new(r"(?i)nginx/(\d[\d.]*)").expect("valid regex"), "nginx"),
-        (Regex::new(r"(?i)Microsoft-IIS/(\d[\d.]*)").expect("valid regex"), "Microsoft IIS"),
-        (Regex::new(r"(?i)ProFTPD[/ ](\d[\d.a-z]*)").expect("valid regex"), "ProFTPD"),
-        (Regex::new(r"(?i)vsftpd[/ ](\d[\d.]*)").expect("valid regex"), "vsftpd"),
-        (Regex::new(r"(?i)Postfix(?:.*?version )?(\d[\d.]*)?").expect("valid regex"), "Postfix"),
-        (Regex::new(r"(?i)Exim[/ ](\d[\d.]*)").expect("valid regex"), "Exim"),
-        (Regex::new(r"(?i)MySQL(?:.*?)?(\d[\d.]*)").expect("valid regex"), "MySQL"),
-        (Regex::new(r"(?i)PostgreSQL[/ ](\d[\d.]*)").expect("valid regex"), "PostgreSQL"),
-        (Regex::new(r"(?i)Redis(?:.*?v=?| server v=?)(\d[\d.]*)").expect("valid regex"), "Redis"),
-        (Regex::new(r"(?i)MongoDB(?:.*?v?| server v?)(\d[\d.]*)").expect("valid regex"), "MongoDB"),
-        (Regex::new(r"(?i)Elasticsearch[/ ](\d[\d.]*)").expect("valid regex"), "Elasticsearch"),
-        (Regex::new(r"(?i)Jenkins[/ :]*(\d[\d.]*)").expect("valid regex"), "Jenkins"),
-        (Regex::new(r"(?i)PHP[/ ](\d[\d.]*)").expect("valid regex"), "PHP"),
-        (Regex::new(r"(?i)Node\.?js[/ ]v?(\d[\d.]*)").expect("valid regex"), "Node.js"),
+        (
+            Regex::new(r"(?i)OpenSSH[_/ ]?(\d[\d.p]*)").expect("valid regex"),
+            "OpenSSH",
+        ),
+        (
+            Regex::new(r"(?i)PuTTY[_/ ]?(?:Release[_/ ]?)?(\d[\d.]*)").expect("valid regex"),
+            "PuTTY",
+        ),
+        (
+            Regex::new(r"(?i)Plink[_/ ]?(?:Release[_/ ]?)?(\d[\d.]*)").expect("valid regex"),
+            "Plink",
+        ),
+        (
+            Regex::new(r"(?i)Apache(?:/| HTTPD |httpd[ /])(\d[\d.]*)").expect("valid regex"),
+            "Apache",
+        ),
+        (
+            Regex::new(r"(?i)Apache Tomcat/(\d[\d.]*)").expect("valid regex"),
+            "Apache Tomcat",
+        ),
+        (
+            Regex::new(r"(?i)nginx/(\d[\d.]*)").expect("valid regex"),
+            "nginx",
+        ),
+        (
+            Regex::new(r"(?i)Microsoft-IIS/(\d[\d.]*)").expect("valid regex"),
+            "Microsoft IIS",
+        ),
+        (
+            Regex::new(r"(?i)ProFTPD[/ ](\d[\d.a-z]*)").expect("valid regex"),
+            "ProFTPD",
+        ),
+        (
+            Regex::new(r"(?i)vsftpd[/ ](\d[\d.]*)").expect("valid regex"),
+            "vsftpd",
+        ),
+        (
+            Regex::new(r"(?i)Postfix(?:.*?version )?(\d[\d.]*)?").expect("valid regex"),
+            "Postfix",
+        ),
+        (
+            Regex::new(r"(?i)Exim[/ ](\d[\d.]*)").expect("valid regex"),
+            "Exim",
+        ),
+        (
+            Regex::new(r"(?i)MySQL(?:.*?)?(\d[\d.]*)").expect("valid regex"),
+            "MySQL",
+        ),
+        (
+            Regex::new(r"(?i)PostgreSQL[/ ](\d[\d.]*)").expect("valid regex"),
+            "PostgreSQL",
+        ),
+        (
+            Regex::new(r"(?i)Redis(?:.*?v=?| server v=?)(\d[\d.]*)").expect("valid regex"),
+            "Redis",
+        ),
+        (
+            Regex::new(r"(?i)MongoDB(?:.*?v?| server v?)(\d[\d.]*)").expect("valid regex"),
+            "MongoDB",
+        ),
+        (
+            Regex::new(r"(?i)Elasticsearch[/ ](\d[\d.]*)").expect("valid regex"),
+            "Elasticsearch",
+        ),
+        (
+            Regex::new(r"(?i)Jenkins[/ :]*(\d[\d.]*)").expect("valid regex"),
+            "Jenkins",
+        ),
+        (
+            Regex::new(r"(?i)PHP[/ ](\d[\d.]*)").expect("valid regex"),
+            "PHP",
+        ),
+        (
+            Regex::new(r"(?i)Node\.?js[/ ]v?(\d[\d.]*)").expect("valid regex"),
+            "Node.js",
+        ),
     ]
 });
 
@@ -838,13 +905,21 @@ pub fn format_report(result: &CveSearchResult) -> String {
     if count == 1 {
         out.push_str(&format!("1 CVE found for {}\n", result.resolved_query));
     } else {
-        out.push_str(&format!("{count} CVEs found for {}\n", result.resolved_query));
+        out.push_str(&format!(
+            "{count} CVEs found for {}\n",
+            result.resolved_query
+        ));
     }
     out.push_str(&"=".repeat(72));
     out.push_str("\n\n");
 
     for m in &result.matches {
-        out.push_str(&format!("{}  [{}]  CVSS {:.1}\n", m.id, m.severity.label(), m.cvss_score));
+        out.push_str(&format!(
+            "{}  [{}]  CVSS {:.1}\n",
+            m.id,
+            m.severity.label(),
+            m.cvss_score
+        ));
         out.push_str(&format!("  {}\n", m.summary));
         out.push_str(&format!("  Affected Versions: {}\n\n", m.affected_versions));
     }
@@ -858,7 +933,9 @@ pub fn parse_banner(input: &str) -> Option<(String, String)> {
     for (regex, software) in &*BANNER_PATTERNS {
         if let Some(captures) = regex.captures(input) {
             let version = if captures.len() > 1 {
-                captures.get(1).map_or(String::new(), |m| normalize_version(m.as_str()))
+                captures
+                    .get(1)
+                    .map_or(String::new(), |m| normalize_version(m.as_str()))
             } else {
                 String::new()
             };
@@ -912,7 +989,9 @@ pub fn parse_version(v: &str) -> Vec<i32> {
 pub fn version_below(version: &str, threshold: &str) -> bool {
     let current = parse_version(version);
     let target = parse_version(threshold);
-    !current.is_empty() && !target.is_empty() && compare_versions(&current, &target) == Ordering::Less
+    !current.is_empty()
+        && !target.is_empty()
+        && compare_versions(&current, &target) == Ordering::Less
 }
 
 /// Returns `true` if `version` falls within `[from, to]` inclusive.
@@ -933,7 +1012,9 @@ pub fn version_in_range(version: &str, from: &str, to: &str) -> bool {
 pub fn version_equals(version: &str, target: &str) -> bool {
     let current = parse_version(version);
     let expected = parse_version(target);
-    !current.is_empty() && !expected.is_empty() && compare_versions(&current, &expected) == Ordering::Equal
+    !current.is_empty()
+        && !expected.is_empty()
+        && compare_versions(&current, &expected) == Ordering::Equal
 }
 
 /// Compares two parsed version slices component-by-component.
@@ -969,7 +1050,11 @@ fn build_matches(entries: &[CveEntry], version: &str) -> Vec<CveMatch> {
         });
     }
 
-    matches.sort_by(|a, b| b.cvss_score.partial_cmp(&a.cvss_score).unwrap_or(Ordering::Equal));
+    matches.sort_by(|a, b| {
+        b.cvss_score
+            .partial_cmp(&a.cvss_score)
+            .unwrap_or(Ordering::Equal)
+    });
     matches
 }
 

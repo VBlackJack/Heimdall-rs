@@ -184,13 +184,20 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                 ToolGroup::Category(ToolCategory::Security),
                 vec![
                     ToolId::CertGen,
+                    ToolId::CveLookup,
+                    ToolId::DefaultCreds,
+                    ToolId::DnsSec,
                     ToolId::Hash,
                     ToolId::Hmac,
                     ToolId::Jwt,
                     ToolId::PwdAudit,
                     ToolId::Password,
+                    ToolId::SecNumCloud,
+                    ToolId::Smb,
+                    ToolId::SshAudit,
                     ToolId::SshKey,
-                    ToolId::Totp
+                    ToolId::TlsAudit,
+                    ToolId::Totp,
                 ]
             ),
             (
@@ -251,20 +258,20 @@ fn a_folded_group_hides_its_tools_and_offers_its_menu_to_pin() {
     let _ = shell.update(tools(ToolsMessage::ShowSidebarTab(SidebarTab::Tools)));
     {
         let mut ui = simulator(&shell);
-        ui.click("System").expect("the group");
+        ui.click("Network").expect("the group");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::App(AppMessage::Tools(ToolsMessage::ToggleGroup(
-                ToolGroup::Category(ToolCategory::System)
+                ToolGroup::Category(ToolCategory::Network)
             )))
         )));
     }
     let _ = shell.update(tools(ToolsMessage::ToggleGroup(ToolGroup::Category(
-        ToolCategory::System,
+        ToolCategory::Network,
     ))));
     let mut ui = simulator(&shell);
-    assert!(ui.find("UUID Generator").is_err(), "folded");
-    ui.find("Base64 Encoder / Decoder")
+    assert!(ui.find("Subnet Calculator").is_err(), "folded");
+    ui.find("Certificate Generator")
         .expect("another group stays open");
 }
 
@@ -282,7 +289,8 @@ fn the_tools_page_shows_its_sections_and_cards_and_pins_a_tool() {
         ui.find("SECURITY").expect("category");
         ui.find("ENCODING & FORMAT").expect("category");
         ui.find("SYSTEM").expect("category");
-        ui.find("23 tools").expect("count");
+        ui.find(format!("{} tools", ToolId::ALL.len()))
+            .expect("count");
         ui.find("UUID/GUID generator with multiple format options")
             .expect("description");
         assert!(ui.find("Recently Used").is_err(), "nothing used yet");

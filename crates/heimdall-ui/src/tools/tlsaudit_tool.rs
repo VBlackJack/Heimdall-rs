@@ -19,13 +19,23 @@
 //! enumerates TLS 1.2 cipher suites, inspects the server certificate, calculates
 //! a security grade (A+ through F), and generates granular findings and recommendations.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use std::time::Duration;
 
 use heimdall_app::TabId;
 use heimdall_core::tools::tls_audit::{
-    self, CipherStrength, TlsAuditResult, TlsCertificateSummary, TlsCipherInfo, TlsFinding,
-    TlsFindingKind, TlsFindingSeverity, TlsGrade, TlsProtocol, TlsProtocolRating,
-    TlsProtocolTestResult, KNOWN_TLS12_CIPHER_SUITES, PROTOCOL_DEFINITIONS,
+    self, CipherStrength, KNOWN_TLS12_CIPHER_SUITES, PROTOCOL_DEFINITIONS, TlsAuditResult,
+    TlsCertificateSummary, TlsCipherInfo, TlsFinding, TlsFindingKind, TlsFindingSeverity, TlsGrade,
+    TlsProtocol, TlsProtocolRating, TlsProtocolTestResult,
 };
 use iced::futures::SinkExt as _;
 use iced::widget::{column, container, progress_bar, row, text, text_input};
@@ -261,13 +271,9 @@ impl TlsAuditPane {
 
         if let Some(err) = &self.error {
             body_col = body_col.push(
-                container(
-                    text(err.as_str())
-                        .size(font_size::BODY)
-                        .style(text::danger),
-                )
-                .padding(spacing::MD)
-                .style(styles::card),
+                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
+                    .padding(spacing::MD)
+                    .style(styles::card),
             );
         }
 
@@ -336,30 +342,26 @@ impl TlsAuditPane {
         let grade_str = tls_audit::grade_to_str(grade);
 
         let badge = container(
-            text(format!(
-                "{}: {}",
-                fl!("ui-tool-tlsaudit-grade"),
-                grade_str
-            ))
-            .size(font_size::SUBTITLE)
-            .font(styles::SEMIBOLD)
-            .style(move |t: &Theme| {
-                let palette = t.extended_palette();
-                match grade {
-                    TlsGrade::APlus | TlsGrade::A => text::Style {
-                        color: Some(palette.success.base.color),
-                    },
-                    TlsGrade::B | TlsGrade::C => text::Style {
-                        color: Some(palette.warning.base.color),
-                    },
-                    TlsGrade::D | TlsGrade::F => text::Style {
-                        color: Some(palette.danger.base.color),
-                    },
-                    TlsGrade::T => text::Style {
-                        color: Some(palette.secondary.base.color),
-                    },
-                }
-            }),
+            text(format!("{}: {}", fl!("ui-tool-tlsaudit-grade"), grade_str))
+                .size(font_size::SUBTITLE)
+                .font(styles::SEMIBOLD)
+                .style(move |t: &Theme| {
+                    let palette = t.extended_palette();
+                    match grade {
+                        TlsGrade::APlus | TlsGrade::A => text::Style {
+                            color: Some(palette.success.base.color),
+                        },
+                        TlsGrade::B | TlsGrade::C => text::Style {
+                            color: Some(palette.warning.base.color),
+                        },
+                        TlsGrade::D | TlsGrade::F => text::Style {
+                            color: Some(palette.danger.base.color),
+                        },
+                        TlsGrade::T => text::Style {
+                            color: Some(palette.secondary.base.color),
+                        },
+                    }
+                }),
         )
         .padding([8.0, 16.0])
         .style(move |t: &Theme| {
@@ -462,8 +464,8 @@ impl TlsAuditPane {
         ciphers: &'a [TlsCipherInfo],
         _theme: &Theme,
     ) -> Element<'a, Message> {
-        let mut card_col = column![key_parts::section_title(fl!("ui-tool-tlsaudit-ciphers"))]
-            .spacing(spacing::SM);
+        let mut card_col =
+            column![key_parts::section_title(fl!("ui-tool-tlsaudit-ciphers"))].spacing(spacing::SM);
 
         for c in ciphers {
             let strength_text = match c.strength {
@@ -537,8 +539,10 @@ impl TlsAuditPane {
     }
 
     fn certificate_card<'a>(&'a self, cert: &'a TlsCertificateSummary) -> Element<'a, Message> {
-        let mut card_col = column![key_parts::section_title(fl!("ui-tool-tlsaudit-cert-section"))]
-            .spacing(spacing::SM);
+        let mut card_col = column![key_parts::section_title(fl!(
+            "ui-tool-tlsaudit-cert-section"
+        ))]
+        .spacing(spacing::SM);
 
         let bits_str = if cert.key_size_bits > 0 {
             fl!("ui-tool-tlsaudit-bits", bits = cert.key_size_bits)
@@ -633,7 +637,10 @@ fn finding_message(kind: &TlsFindingKind) -> String {
         TlsFindingKind::Tls11Supported => fl!("ui-tool-tlsaudit-finding-tls11"),
         TlsFindingKind::NoTls13 => fl!("ui-tool-tlsaudit-finding-no-tls13"),
         TlsFindingKind::WeakCipher(suite) => {
-            fl!("ui-tool-tlsaudit-finding-weak-cipher", suite = suite.as_str())
+            fl!(
+                "ui-tool-tlsaudit-finding-weak-cipher",
+                suite = suite.as_str()
+            )
         }
         TlsFindingKind::NoPfs => fl!("ui-tool-tlsaudit-finding-no-pfs"),
         TlsFindingKind::AllGood => fl!("ui-tool-tlsaudit-finding-all-good"),
@@ -751,8 +758,8 @@ fn audit_stream(
                 TlsProtocol::Ssl3 => &[0x000A, 0x0005, 0x0004],
                 TlsProtocol::Tls13 => &[0x1301, 0x1302, 0x1303, 0xC02F, 0xC030],
                 _ => &[
-                    0xC030, 0xC02F, 0xC02C, 0xC02B, 0x009F, 0x009E, 0x009D, 0x009C,
-                    0x003D, 0x003C, 0x0035, 0x002F, 0xC028, 0xC027, 0xC014, 0xC013,
+                    0xC030, 0xC02F, 0xC02C, 0xC02B, 0x009F, 0x009E, 0x009D, 0x009C, 0x003D, 0x003C,
+                    0x0035, 0x002F, 0xC028, 0xC027, 0xC014, 0xC013,
                 ],
             };
 
@@ -781,7 +788,10 @@ fn audit_stream(
         }
 
         if !any_connected {
-            let err_msg = fl!("ui-tool-tlsaudit-error-connection", error = last_error.as_str());
+            let err_msg = fl!(
+                "ui-tool-tlsaudit-error-connection",
+                error = last_error.as_str()
+            );
             let _ = out
                 .send(TlsAuditMessage::Finished(audit_id, Err(err_msg)))
                 .await;
@@ -824,8 +834,8 @@ fn audit_stream(
                 TlsProtocol::Tls12,
                 &host,
                 &[
-                    0xC030, 0xC02F, 0xC02C, 0xC02B, 0x009F, 0x009E, 0x009D, 0x009C,
-                    0x003D, 0x003C, 0x0035, 0x002F, 0xC028, 0xC027, 0xC014, 0xC013,
+                    0xC030, 0xC02F, 0xC02C, 0xC02B, 0x009F, 0x009E, 0x009D, 0x009C, 0x003D, 0x003C,
+                    0x0035, 0x002F, 0xC028, 0xC027, 0xC014, 0xC013,
                 ],
             );
             if let Ok(Some(flight)) =

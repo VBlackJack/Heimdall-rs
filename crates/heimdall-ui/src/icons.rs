@@ -181,7 +181,7 @@ pub enum Icon {
     ToolCve,
     /// `Geo.Tool.DefaultCreds`: a key with notches, the default credentials scanner.
     ToolDefaultCreds,
-    /// `Geo.Tool.SecNumCloud`: a shield with checklist, the SecNumCloud compliance audit.
+    /// `Geo.Tool.SecNumCloud`: a shield with checklist, the `SecNumCloud` compliance audit.
     ToolSecNumCloud,
     /// `Geo.Tool.SmbEnumerator`: a server with list, the SMB protocol enumerator.
     ToolSmb,
@@ -510,7 +510,7 @@ impl Icon {
                 "M5,4 A3,3 0 1 1 5,10 A3,3 0 1 1 5,4 Z M8,7 L14,7 L14,9 L12,9 L12,7 M10,9 L10,7 \
                  M4.5,6.5 A1,1 0 1 1 5.5,7.5 A1,1 0 1 1 4.5,6.5 Z"
             }
-            Self::ToolSshAudit => {
+            Self::ToolSshAudit | Self::ToolDefaultCreds => {
                 "M6,8 A3,3 0 1,1 6,8.01 M9,8 L14,8 L14,6 M12,8 L12,6"
             }
             Self::ToolTlsAudit => {
@@ -522,9 +522,6 @@ impl Icon {
             }
             Self::ToolCve => {
                 "M6,4 A4,4 0 1,1 6,12 A4,4 0 1,1 6,4 M9.5,10.5 L14,15 M4,7 L8,7 M4,9 L8,9"
-            }
-            Self::ToolDefaultCreds => {
-                "M6,8 A3,3 0 1,1 6,8.01 M9,8 L14,8 L14,6 M12,8 L12,6"
             }
             Self::ToolSecNumCloud => {
                 "M8,1 L14,4 L14,9 C14,12 11,14.5 8,15.5 C5,14.5 2,12 2,9 L2,4 Z \

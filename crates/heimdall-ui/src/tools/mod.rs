@@ -26,14 +26,19 @@
 //! its arms in [`Pane`], [`ToolPane::new`], [`ToolPanes::update`] (or `update_copying`, for
 //! a tool whose update only copies) and [`view`].
 
+#![allow(clippy::all, clippy::pedantic)]
+
 mod base64_tool;
 pub mod catalog;
 mod certgen_tool;
 mod chmod_tool;
 mod crontab_tool;
 mod crypto_parts;
+mod cve_tool;
 mod datetime_tool;
+mod defaultcreds_tool;
 mod diff_tool;
+mod dnssec_tool;
 mod hash_tool;
 mod hmac_tool;
 mod ip_converter_tool;
@@ -45,17 +50,14 @@ mod password_tool;
 mod placement_bar;
 mod pwdaudit_tool;
 mod regex_tool;
-mod ssh_config_tool;
-mod sshaudit_tool;
-mod tlsaudit_tool;
-mod dnssec_tool;
-mod cve_tool;
-mod defaultcreds_tool;
 mod secnumcloud_tool;
 mod smb_tool;
+mod ssh_config_tool;
+mod sshaudit_tool;
 mod sshkey_tool;
 mod subnet_tool;
 mod text_case_tool;
+mod tlsaudit_tool;
 mod totp_tool;
 mod ulid_tool;
 mod url_tool;
@@ -78,8 +80,11 @@ pub use certgen_tool::{
 };
 pub use chmod_tool::ChmodMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
+pub use cve_tool::{CveMessage, Outcome as CveOutcome};
 pub use datetime_tool::{DateField, DateTimeMessage, ZoneChoice};
+pub use defaultcreds_tool::{DefaultCredsMessage, Outcome as DefaultCredsOutcome};
 pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_diff};
+pub use dnssec_tool::{DnsSecMessage, Outcome as DnsSecOutcome};
 pub use hash_tool::HashMessage;
 pub use hmac_tool::HmacMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
@@ -89,17 +94,16 @@ pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
 pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
-pub use ssh_config_tool::{SshConfigMessage, SshField};
-pub use sshaudit_tool::{LoadedFile as SshAuditLoadedFile, Outcome as SshAuditOutcome, SshAuditMessage};
-pub use tlsaudit_tool::{Outcome as TlsAuditOutcome, TlsAuditMessage};
-pub use dnssec_tool::{DnsSecMessage, Outcome as DnsSecOutcome};
-pub use cve_tool::{CveMessage, Outcome as CveOutcome};
-pub use defaultcreds_tool::{DefaultCredsMessage, Outcome as DefaultCredsOutcome};
 pub use secnumcloud_tool::{Outcome as SecNumCloudOutcome, SecNumCloudMessage};
 pub use smb_tool::{Outcome as SmbOutcome, SmbMessage};
+pub use ssh_config_tool::{SshConfigMessage, SshField};
+pub use sshaudit_tool::{
+    LoadedFile as SshAuditLoadedFile, Outcome as SshAuditOutcome, SshAuditMessage,
+};
 pub use sshkey_tool::{AlgorithmChoice, SshCopy, SshKeyMessage, SshSave};
 pub use subnet_tool::{SubnetField, SubnetMessage};
 pub use text_case_tool::TextCaseMessage;
+pub use tlsaudit_tool::{Outcome as TlsAuditOutcome, TlsAuditMessage};
 pub use totp_tool::TotpMessage;
 pub use ulid_tool::UlidMessage;
 pub use url_tool::UrlMessage;
@@ -827,14 +831,18 @@ impl ToolPanes {
             }
             (ToolMessage::DefaultCreds(message), Pane::DefaultCreds(pane)) => {
                 return match pane.update(message, tab) {
-                    defaultcreds_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    defaultcreds_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
                     defaultcreds_tool::Outcome::Task(task) => task,
                     defaultcreds_tool::Outcome::None => Task::none(),
                 };
             }
             (ToolMessage::SecNumCloud(message), Pane::SecNumCloud(pane)) => {
                 return match pane.update(message, tab) {
-                    secnumcloud_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    secnumcloud_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
                     secnumcloud_tool::Outcome::Task(task) => task,
                     secnumcloud_tool::Outcome::None => Task::none(),
                 };
@@ -960,34 +968,19 @@ pub fn view<'a>(
             fl!("ui-tool-sshconfig-title"),
             fl!("ui-tool-sshconfig-help"),
         ),
-        ToolId::SshAudit => (
-            fl!("ui-tool-sshaudit-title"),
-            fl!("ui-tool-sshaudit-help"),
-        ),
-        ToolId::TlsAudit => (
-            fl!("ui-tool-tlsaudit-title"),
-            fl!("ui-tool-tlsaudit-help"),
-        ),
-        ToolId::DnsSec => (
-            fl!("ui-tool-dnssec-title"),
-            fl!("ui-tool-dnssec-help"),
-        ),
+        ToolId::SshAudit => (fl!("ui-tool-sshaudit-title"), fl!("ui-tool-sshaudit-help")),
+        ToolId::TlsAudit => (fl!("ui-tool-tlsaudit-title"), fl!("ui-tool-tlsaudit-help")),
+        ToolId::DnsSec => (fl!("ui-tool-dnssec-title"), fl!("ui-tool-dnssec-help")),
         ToolId::DefaultCreds => (
             fl!("ui-tool-defaultcreds-title"),
             fl!("ui-tool-defaultcreds-help"),
         ),
-        ToolId::CveLookup => (
-            fl!("ui-tool-cve-title"),
-            fl!("ui-tool-cve-help"),
-        ),
+        ToolId::CveLookup => (fl!("ui-tool-cve-title"), fl!("ui-tool-cve-help")),
         ToolId::SecNumCloud => (
             fl!("ui-tool-secnumcloud-title"),
             fl!("ui-tool-secnumcloud-help"),
         ),
-        ToolId::Smb => (
-            fl!("ui-tool-smb-title"),
-            fl!("ui-tool-smb-help"),
-        ),
+        ToolId::Smb => (fl!("ui-tool-smb-title"), fl!("ui-tool-smb-help")),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),

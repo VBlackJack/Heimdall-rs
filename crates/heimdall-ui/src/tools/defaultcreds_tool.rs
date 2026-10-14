@@ -20,14 +20,24 @@
 //! Features automatic port discovery, rate limiting, masked password toggle,
 //! plain-text report copy, and CSV export.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use std::time::Duration;
 
 use heimdall_app::TabId;
 use heimdall_core::tools::base64_codec;
 use heimdall_core::tools::default_creds::{
-    self, build_csv_export, build_report_text, build_summary_text, is_http_success_response,
-    status_to_detail, CredTestResult, CredTestStatus, PORT_PROBE_TIMEOUT_MS, RATE_LIMIT_DELAY_MS,
-    SERVICE_PORTS,
+    self, CredTestResult, CredTestStatus, PORT_PROBE_TIMEOUT_MS, RATE_LIMIT_DELAY_MS,
+    SERVICE_PORTS, build_csv_export, build_report_text, build_summary_text,
+    is_http_success_response, status_to_detail,
 };
 use iced::futures::SinkExt as _;
 use iced::widget::{checkbox, column, container, progress_bar, row, scrollable, text, text_input};
@@ -186,10 +196,9 @@ impl DefaultCredsPane {
 
                 let host_str = trimmed.to_owned();
                 let auto = self.auto_detect;
-                let task = Task::run(
-                    scan_stream(host_str, auto, current_id),
-                    move |msg| Message::Tool(tab, ToolMessage::DefaultCreds(msg)),
-                );
+                let task = Task::run(scan_stream(host_str, auto, current_id), move |msg| {
+                    Message::Tool(tab, ToolMessage::DefaultCreds(msg))
+                });
                 Outcome::Task(task)
             }
             DefaultCredsMessage::Progress(id, fraction, desc) => {
@@ -278,16 +287,13 @@ impl DefaultCredsPane {
         });
 
         // 2. Host input and options
-        let host_input = text_input(
-            &fl!("ui-tool-defaultcreds-host-placeholder"),
-            &self.host,
-        )
-        .font(super::BOX_FONT)
-        .size(font_size::BODY_LARGE)
-        .padding(super::INPUT_PADDING)
-        .style(styles::text_input)
-        .on_input(move |h| send(DefaultCredsMessage::HostChanged(h)))
-        .on_submit(send(DefaultCredsMessage::Scan));
+        let host_input = text_input(&fl!("ui-tool-defaultcreds-host-placeholder"), &self.host)
+            .font(super::BOX_FONT)
+            .size(font_size::BODY_LARGE)
+            .padding(super::INPUT_PADDING)
+            .style(styles::text_input)
+            .on_input(move |h| send(DefaultCredsMessage::HostChanged(h)))
+            .on_submit(send(DefaultCredsMessage::Scan));
 
         let scan_button = if self.is_scanning {
             super::action_button(
@@ -333,22 +339,16 @@ impl DefaultCredsPane {
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
-        let input_card = key_parts::card(
-            column![input_row, options_row].spacing(spacing::MD),
-        );
+        let input_card = key_parts::card(column![input_row, options_row].spacing(spacing::MD));
 
         let mut body_col = column![warning_banner, input_card].spacing(spacing::MD);
 
         // 3. Error banner
         if let Some(err) = &self.error {
             body_col = body_col.push(
-                container(
-                    text(err.as_str())
-                        .size(font_size::BODY)
-                        .style(text::danger),
-                )
-                .padding(spacing::MD)
-                .style(styles::card),
+                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
+                    .padding(spacing::MD)
+                    .style(styles::card),
             );
         }
 
@@ -379,9 +379,7 @@ impl DefaultCredsPane {
                 );
             }
         } else if self.results.is_empty() && self.error.is_none() {
-            body_col = body_col.push(super::empty_state(fl!(
-                "ui-tool-defaultcreds-empty-state"
-            )));
+            body_col = body_col.push(super::empty_state(fl!("ui-tool-defaultcreds-empty-state")));
         }
 
         // 5. Results table
@@ -551,7 +549,9 @@ impl DefaultCredsPane {
             rows_col = rows_col.push(item_row);
         }
 
-        let scroll = scrollable(rows_col).width(Length::Fill).height(Length::Shrink);
+        let scroll = scrollable(rows_col)
+            .width(Length::Fill)
+            .height(Length::Shrink);
         key_parts::card(column![scroll])
     }
 }
@@ -560,8 +560,12 @@ impl DefaultCredsPane {
 fn localize_key(key: &str) -> String {
     match key {
         "ToolDefCredSummary" => "{0} on {1}".to_string(),
-        "ToolDefCredSummaryCredentials" => fl!("ui-tool-defaultcreds-summary", defaults = 2, services = 1),
-        "ToolDefCredSummaryCredentialsOne" => fl!("ui-tool-defaultcreds-summary", defaults = 1, services = 1),
+        "ToolDefCredSummaryCredentials" => {
+            fl!("ui-tool-defaultcreds-summary", defaults = 2, services = 1)
+        }
+        "ToolDefCredSummaryCredentialsOne" => {
+            fl!("ui-tool-defaultcreds-summary", defaults = 1, services = 1)
+        }
         "ToolDefCredSummaryServices" => "{0} services".to_string(),
         "ToolDefCredSummaryServicesOne" => "{0} service".to_string(),
         "ToolDefCredNoDefaults" => fl!("ui-tool-defaultcreds-no-defaults"),
@@ -826,12 +830,7 @@ async fn test_vnc(host: &str, port: u16) -> Result<bool, String> {
 }
 
 /// Tests HTTP Basic Authentication.
-async fn test_http_basic(
-    host: &str,
-    port: u16,
-    user: &str,
-    pass: &str,
-) -> Result<bool, String> {
+async fn test_http_basic(host: &str, port: u16, user: &str, pass: &str) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
         .map_err(|_| "Connection timed out".to_string())?
@@ -857,12 +856,7 @@ async fn test_http_basic(
 }
 
 /// Tests Telnet credentials by sending user and password commands.
-async fn test_telnet(
-    host: &str,
-    port: u16,
-    user: &str,
-    pass: &str,
-) -> Result<bool, String> {
+async fn test_telnet(host: &str, port: u16, user: &str, pass: &str) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
         .map_err(|_| "Connection timed out".to_string())?

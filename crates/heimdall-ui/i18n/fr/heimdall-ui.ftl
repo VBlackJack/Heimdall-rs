@@ -4296,15 +4296,15 @@ ui-tool-smb-boot-time = Heure de démarrage
 ui-tool-smb-yes = Oui
 ui-tool-smb-no = Non
 ui-tool-smb-not-available = N/A
-ui-tool-smb-signing-disabled = La signature SMB n'est pas requise — vulnérable aux attaques par relais
+ui-tool-smb-signing-disabled = La signature SMB n'est pas requise - vulnérable aux attaques par relais
 ui-tool-smb-signing-enabled = La signature SMB est requise
-ui-tool-smb-v1-detected = Dialecte SMBv1 détecté — obsolète et vulnérable (EternalBlue)
+ui-tool-smb-v1-detected = Dialecte SMBv1 détecté - obsolète et vulnérable (EternalBlue)
 ui-tool-smb-modern-dialect = Utilisation d'un dialecte SMB moderne : { $dialect }
 ui-tool-smb-netbios-failed = Requête NetBIOS expirée (le port UDP 137 est peut-être bloqué)
 ui-tool-smb-error-connection = Connexion au port 445 impossible : { $error }
 ui-tool-smb-error-ntlm = Échec de la sonde NTLM : { $error }
 ui-tool-smb-error-host-required = Entrez un hôte à énumérer.
-ui-tool-smb-report-identity = === Identité de l’hôte ===
+ui-tool-smb-report-identity = === Identité de l'hôte ===
 ui-tool-smb-report-protocol = === Protocole SMB ===
 ui-tool-smb-report-findings = === Résultats de sécurité ===
 ui-tool-smb-help =

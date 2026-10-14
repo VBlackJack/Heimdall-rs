@@ -18,6 +18,16 @@
 //! pure parsing and security assessment for SSH keys. Supports OpenSSH (public and private),
 //! PEM (PKCS#1, PKCS#8, legacy DSA, legacy EC), and SPKI formats.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use sealvault::hash::{Algorithm, Hasher};
 
 /// Minimum acceptable RSA key size in bits.
@@ -56,7 +66,9 @@ const OPENSSH_KDF_BCRYPT: &str = "bcrypt";
 const OPENSSH_MAGIC: &[u8] = b"openssh-key-v1\0";
 
 const OID_ED25519: &[u8] = &[0x06, 0x03, 0x2B, 0x65, 0x70];
-const OID_RSA_ENCRYPTION: &[u8] = &[0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
+const OID_RSA_ENCRYPTION: &[u8] = &[
+    0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01,
+];
 const OID_DSA: &[u8] = &[0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x38, 0x04, 0x01];
 const OID_EC_PUBLIC_KEY: &[u8] = &[0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
 const OID_SECP256R1: &[u8] = &[0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
@@ -753,7 +765,9 @@ fn extract_rsa_modulus_and_exponent_from_pkcs1<'a>(der: &'a [u8]) -> Option<(&'a
     Some((modulus, exponent))
 }
 
-fn extract_rsa_modulus_and_exponent_from_pkcs1_pub<'a>(der: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
+fn extract_rsa_modulus_and_exponent_from_pkcs1_pub<'a>(
+    der: &'a [u8],
+) -> Option<(&'a [u8], &'a [u8])> {
     let (tag, seq_body, _) = read_der_tlv(der)?;
     if tag != 0x30 {
         return None;

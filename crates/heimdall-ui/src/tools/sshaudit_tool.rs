@@ -19,6 +19,16 @@
 //! evaluates algorithm security and key size, checks passphrase encryption, computes SHA-256
 //! fingerprints, and displays security ratings and granular findings.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use std::path::PathBuf;
 
 use heimdall_app::TabId;
@@ -126,7 +136,10 @@ impl SshAuditPane {
                 Outcome::None
             }
             SshAuditMessage::Loaded(Some(LoadedFile::ReadError(error))) => {
-                self.file_error = Some(fl!("ui-tool-sshaudit-file-read-error", error = error.as_str()));
+                self.file_error = Some(fl!(
+                    "ui-tool-sshaudit-file-read-error",
+                    error = error.as_str()
+                ));
                 Outcome::None
             }
             SshAuditMessage::Loaded(None) => Outcome::None,
@@ -156,7 +169,9 @@ impl SshAuditPane {
 
         let input_header = row![
             super::field_label(fl!("ui-tool-sshaudit-input")),
-            container(browse_button).align_x(Alignment::End).width(Length::Fill),
+            container(browse_button)
+                .align_x(Alignment::End)
+                .width(Length::Fill),
         ]
         .align_y(Alignment::Center)
         .width(Length::Fill);
@@ -183,7 +198,9 @@ impl SshAuditPane {
             let badges = self.badges_row(res);
             let details = self.details_card(res, send, state);
             let findings = self.findings_card(res, theme);
-            column![badges, details, findings].spacing(spacing::MD).into()
+            column![badges, details, findings]
+                .spacing(spacing::MD)
+                .into()
         } else {
             container(
                 text(fl!("ui-tool-sshaudit-parse-error"))
@@ -250,7 +267,9 @@ impl SshAuditPane {
             let palette = t.extended_palette();
             let (bg, border_color) = match rating {
                 SecurityRating::Strong => (palette.success.weak.color, palette.success.base.color),
-                SecurityRating::Acceptable => (palette.warning.weak.color, palette.warning.base.color),
+                SecurityRating::Acceptable => {
+                    (palette.warning.weak.color, palette.warning.base.color)
+                }
                 SecurityRating::Weak | SecurityRating::Deprecated => {
                     (palette.danger.weak.color, palette.danger.base.color)
                 }
@@ -300,54 +319,67 @@ impl SshAuditPane {
             super::COPY_PADDING,
         );
 
-        let fp_row = row![
-            text(&res.fingerprint).size(font_size::BODY),
-            copy_btn,
-        ]
-        .spacing(spacing::SM)
-        .align_y(Alignment::Center);
+        let fp_row = row![text(&res.fingerprint).size(font_size::BODY), copy_btn,]
+            .spacing(spacing::SM)
+            .align_y(Alignment::Center);
 
         let content = column![
             key_parts::section_title(fl!("ui-tool-sshaudit-details")),
-            key_parts::labeled(fl!("ui-tool-sshaudit-algorithm"), text(&res.algorithm).size(font_size::BODY)),
-            key_parts::labeled(fl!("ui-tool-sshaudit-key-size"), text(bits_label).size(font_size::BODY)),
+            key_parts::labeled(
+                fl!("ui-tool-sshaudit-algorithm"),
+                text(&res.algorithm).size(font_size::BODY)
+            ),
+            key_parts::labeled(
+                fl!("ui-tool-sshaudit-key-size"),
+                text(bits_label).size(font_size::BODY)
+            ),
             key_parts::labeled(fl!("ui-tool-sshaudit-fingerprint"), fp_row),
-            key_parts::labeled(fl!("ui-tool-sshaudit-format"), text(&res.format).size(font_size::BODY)),
-            key_parts::labeled(fl!("ui-tool-sshaudit-type"), text(key_type).size(font_size::BODY)),
-            key_parts::labeled(fl!("ui-tool-sshaudit-encrypted"), text(encrypted).size(font_size::BODY)),
+            key_parts::labeled(
+                fl!("ui-tool-sshaudit-format"),
+                text(&res.format).size(font_size::BODY)
+            ),
+            key_parts::labeled(
+                fl!("ui-tool-sshaudit-type"),
+                text(key_type).size(font_size::BODY)
+            ),
+            key_parts::labeled(
+                fl!("ui-tool-sshaudit-encrypted"),
+                text(encrypted).size(font_size::BODY)
+            ),
         ]
         .spacing(spacing::SM);
 
         key_parts::card(content)
     }
 
-    fn findings_card<'a>(&'a self, res: &'a SshKeyAuditResult, theme: &Theme) -> Element<'a, Message> {
+    fn findings_card<'a>(
+        &'a self,
+        res: &'a SshKeyAuditResult,
+        theme: &Theme,
+    ) -> Element<'a, Message> {
         let mut list = column![key_parts::section_title(fl!("ui-tool-sshaudit-findings"))]
             .spacing(spacing::SM);
 
         for finding in &res.findings {
             let (mark, mark_color) = match finding.severity {
-                FindingSeverity::Pass => (
-                    PASS_MARK,
-                    theme.extended_palette().success.base.color,
-                ),
-                FindingSeverity::Warning => (
-                    WARN_MARK,
-                    theme.extended_palette().warning.base.color,
-                ),
-                FindingSeverity::Fail => (
-                    FAIL_MARK,
-                    theme.extended_palette().danger.base.color,
-                ),
+                FindingSeverity::Pass => (PASS_MARK, theme.extended_palette().success.base.color),
+                FindingSeverity::Warning => {
+                    (WARN_MARK, theme.extended_palette().warning.base.color)
+                }
+                FindingSeverity::Fail => (FAIL_MARK, theme.extended_palette().danger.base.color),
             };
 
             let finding_text = match finding.kind {
                 FindingKind::Ed25519Strong => fl!("ui-tool-sshaudit-finding-ed25519"),
-                FindingKind::RsaStrong(bits) => fl!("ui-tool-sshaudit-finding-rsa-strong", bits = bits),
+                FindingKind::RsaStrong(bits) => {
+                    fl!("ui-tool-sshaudit-finding-rsa-strong", bits = bits)
+                }
                 FindingKind::RsaOk => fl!("ui-tool-sshaudit-finding-rsa-ok"),
                 FindingKind::RsaWeak(bits) => fl!("ui-tool-sshaudit-finding-rsa-weak", bits = bits),
                 FindingKind::DsaDeprecated => fl!("ui-tool-sshaudit-finding-dsa"),
-                FindingKind::EcdsaStrong(bits) => fl!("ui-tool-sshaudit-finding-ecdsa-strong", bits = bits),
+                FindingKind::EcdsaStrong(bits) => {
+                    fl!("ui-tool-sshaudit-finding-ecdsa-strong", bits = bits)
+                }
                 FindingKind::EcdsaOk => fl!("ui-tool-sshaudit-finding-ecdsa-ok"),
                 FindingKind::UnencryptedPrivateKey => fl!("ui-tool-sshaudit-finding-unencrypted"),
                 FindingKind::EncryptedPrivateKey => fl!("ui-tool-sshaudit-finding-encrypted"),
@@ -359,7 +391,9 @@ impl SshAuditPane {
                     text(mark)
                         .size(font_size::BODY_LARGE)
                         .font(styles::SEMIBOLD)
-                        .style(move |_| text::Style { color: Some(mark_color) })
+                        .style(move |_| text::Style {
+                            color: Some(mark_color)
+                        })
                 )
                 .width(Length::Fixed(24.0)),
                 text(finding_text).size(font_size::BODY).width(Length::Fill),
@@ -376,7 +410,8 @@ impl SshAuditPane {
 
 fn pick_file(tab: TabId, main: Option<window::Id>) -> Task<Message> {
     let title = fl!("ui-tool-sshaudit-title");
-    let done = move |loaded| Message::Tool(tab, ToolMessage::SshAudit(SshAuditMessage::Loaded(loaded)));
+    let done =
+        move |loaded| Message::Tool(tab, ToolMessage::SshAudit(SshAuditMessage::Loaded(loaded)));
     crate::shell::main_window_task(main).then(move |id| {
         let title = title.clone();
         let pick = match id {

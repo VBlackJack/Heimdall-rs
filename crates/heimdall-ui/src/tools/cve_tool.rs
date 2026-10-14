@@ -22,6 +22,16 @@
 //! Features automatic banner parsing, semantic version matching, CVSS scoring,
 //! severity classification badges, and clipboard report generation. Completely offline.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use heimdall_app::TabId;
 use heimdall_core::tools::cve_lookup::{
     self, CveMatch, CveSearchResult, CveSeverity, format_report, total_cve_count,
@@ -103,15 +113,12 @@ impl CvePane {
         let send = move |msg: CveMessage| Message::Tool(tab, ToolMessage::Cve(msg));
 
         // 1. Search input toolbar
-        let input_box = text_input(
-            &fl!("ui-tool-cve-input-placeholder"),
-            &self.query,
-        )
-        .on_input(move |v| send(CveMessage::InputChanged(v)))
-        .on_submit(send(CveMessage::Search))
-        .padding([spacing::SM, spacing::MD])
-        .size(font_size::BODY)
-        .width(Length::FillPortion(3));
+        let input_box = text_input(&fl!("ui-tool-cve-input-placeholder"), &self.query)
+            .on_input(move |v| send(CveMessage::InputChanged(v)))
+            .on_submit(send(CveMessage::Search))
+            .padding([spacing::SM, spacing::MD])
+            .size(font_size::BODY)
+            .width(Length::FillPortion(3));
 
         let search_btn = super::action_button(
             fl!("ui-tool-cve-btn-search"),
@@ -321,7 +328,9 @@ impl CvePane {
             row![id_text, sev_pill]
                 .spacing(spacing::SM)
                 .align_y(Alignment::Center),
-            container(cvss_pill).width(Length::Fill).align_x(Alignment::End),
+            container(cvss_pill)
+                .width(Length::Fill)
+                .align_x(Alignment::End),
         ]
         .width(Length::Fill)
         .align_y(Alignment::Center);

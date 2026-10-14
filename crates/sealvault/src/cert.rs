@@ -294,12 +294,10 @@ pub fn inspect(der: &[u8]) -> Option<CertificateSummary> {
         Some(bytes) => {
             let oid = spki.algorithm.oid;
             // 1.2.840.113549.1.1.1 (rsaEncryption) or 1.2.840.113549.1.1.10 (id-RSASSA-PSS)
-            if oid.as_bytes() == &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
-                || oid.as_bytes() == &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A]
+            if oid.as_bytes() == [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
+                || oid.as_bytes() == [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A]
             {
-                rsa::RsaPublicKey::from_pkcs1_der(bytes)
-                    .map(|k| k.size() * 8)
-                    .unwrap_or(0)
+                rsa::RsaPublicKey::from_pkcs1_der(bytes).map_or(0, |k| k.size() * 8)
             } else if bytes.len() >= 65 && bytes.len() < 90 {
                 256
             } else if bytes.len() >= 97 && bytes.len() < 120 {

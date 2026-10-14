@@ -18,14 +18,24 @@
 //! extracts host identity (NetBIOS/DNS names, domain, forest, OS build, MAC) and SMB protocol metadata
 //! (dialect revision, signing enforcement, server GUID, uptime) without authentication.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use std::time::{Duration, Instant};
 
 use heimdall_app::TabId;
 use heimdall_core::tools::smb::{
-    build_netbios_header, build_netbios_nbstat_query, build_ntlmssp_type1, build_report,
-    build_result, build_smb2_negotiate, build_smb2_session_setup, find_ntlmssp_message,
-    parse_negotiate_response, parse_netbios_response, parse_ntlm_type2, read_netbios_length,
-    wrap_in_spnego, NtlmInfo, SmbEnumerationResult, SmbFindingSeverity, SmbNegotiateInfo,
+    NtlmInfo, SmbEnumerationResult, SmbFindingSeverity, SmbNegotiateInfo, build_netbios_header,
+    build_netbios_nbstat_query, build_ntlmssp_type1, build_report, build_result,
+    build_smb2_negotiate, build_smb2_session_setup, find_ntlmssp_message, parse_negotiate_response,
+    parse_netbios_response, parse_ntlm_type2, read_netbios_length, wrap_in_spnego,
 };
 use iced::widget::{column, container, progress_bar, row, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
@@ -33,7 +43,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::timeout;
 
-use super::{key_parts, CopySlot, ToolMessage, ToolPane};
+use super::{CopySlot, ToolMessage, ToolPane, key_parts};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -113,7 +123,10 @@ impl SmbPane {
                         (current_id, outcome, elapsed)
                     },
                     move |(id, outcome, elapsed)| {
-                        Message::Tool(tab, ToolMessage::Smb(SmbMessage::Finished(id, outcome, elapsed)))
+                        Message::Tool(
+                            tab,
+                            ToolMessage::Smb(SmbMessage::Finished(id, outcome, elapsed)),
+                        )
                     },
                 );
                 Outcome::Task(task)
@@ -154,19 +167,21 @@ impl SmbPane {
     }
 
     /// Renders the SMB Enumerator tool view.
-    pub fn view<'a>(&'a self, tab: TabId, state: &'a ToolPane, theme: &Theme) -> Element<'a, Message> {
+    pub fn view<'a>(
+        &'a self,
+        tab: TabId,
+        state: &'a ToolPane,
+        theme: &Theme,
+    ) -> Element<'a, Message> {
         let send = move |msg| Message::Tool(tab, ToolMessage::Smb(msg));
 
         // 1. Host input & Action button
-        let host_input = text_input(
-            &fl!("ui-tool-smb-host-placeholder"),
-            &self.host,
-        )
-        .on_input(move |val| send(SmbMessage::HostChanged(val)))
-        .on_submit(send(SmbMessage::Enumerate))
-        .font(super::BOX_FONT)
-        .size(font_size::BODY_LARGE)
-        .padding(super::INPUT_PADDING);
+        let host_input = text_input(&fl!("ui-tool-smb-host-placeholder"), &self.host)
+            .on_input(move |val| send(SmbMessage::HostChanged(val)))
+            .on_submit(send(SmbMessage::Enumerate))
+            .font(super::BOX_FONT)
+            .size(font_size::BODY_LARGE)
+            .padding(super::INPUT_PADDING);
 
         let action_btn = if self.is_enumerating {
             super::action_button(
@@ -200,11 +215,7 @@ impl SmbPane {
 
         // 2. Loading indicator
         if self.is_enumerating {
-            body_col = body_col.push(
-                progress_bar(0.0..=1.0, 0.5)
-                    .length(Length::Fill)
-                    .girth(4.0),
-            );
+            body_col = body_col.push(progress_bar(0.0..=1.0, 0.5).length(Length::Fill).girth(4.0));
         }
 
         // 3. Error line
@@ -402,11 +413,21 @@ async fn execute_enumeration(host: &str) -> Result<SmbEnumerationResult, String>
     let (nb_name, nb_domain, nb_mac, nb_failed) = netbios_res;
     let (ntlm, smb) = smb_res?;
 
-    if ntlm.is_none() && smb.is_none() && nb_name.is_none() && nb_domain.is_none() && nb_mac.is_none() {
-        return Err(fl!("ui-tool-smb-error-connection", error = "port 445 closed or filtered"));
+    if ntlm.is_none()
+        && smb.is_none()
+        && nb_name.is_none()
+        && nb_domain.is_none()
+        && nb_mac.is_none()
+    {
+        return Err(fl!(
+            "ui-tool-smb-error-connection",
+            error = "port 445 closed or filtered"
+        ));
     }
 
-    Ok(build_result(ntlm, smb, nb_name, nb_domain, nb_mac, nb_failed))
+    Ok(build_result(
+        ntlm, smb, nb_name, nb_domain, nb_mac, nb_failed,
+    ))
 }
 
 async fn probe_netbios(
@@ -448,10 +469,15 @@ async fn probe_smb_and_ntlm(
         let negotiate_body = build_smb2_negotiate();
         let nb_hdr = build_netbios_header(negotiate_body.len());
         stream.write_all(&nb_hdr).await.map_err(|e| e.to_string())?;
-        stream.write_all(&negotiate_body).await.map_err(|e| e.to_string())?;
+        stream
+            .write_all(&negotiate_body)
+            .await
+            .map_err(|e| e.to_string())?;
         stream.flush().await.map_err(|e| e.to_string())?;
 
-        let neg_resp = read_netbios_message(&mut stream).await.map_err(|e| e.to_string())?;
+        let neg_resp = read_netbios_message(&mut stream)
+            .await
+            .map_err(|e| e.to_string())?;
         if neg_resp.len() < 68 || neg_resp[0] != 0xFE || neg_resp[1] != b'S' {
             return Err("Invalid SMB2 negotiate response".to_string());
         }
@@ -463,11 +489,19 @@ async fn probe_smb_and_ntlm(
         let spnego = wrap_in_spnego(&type1);
         let setup_body = build_smb2_session_setup(&spnego);
         let setup_hdr = build_netbios_header(setup_body.len());
-        stream.write_all(&setup_hdr).await.map_err(|e| e.to_string())?;
-        stream.write_all(&setup_body).await.map_err(|e| e.to_string())?;
+        stream
+            .write_all(&setup_hdr)
+            .await
+            .map_err(|e| e.to_string())?;
+        stream
+            .write_all(&setup_body)
+            .await
+            .map_err(|e| e.to_string())?;
         stream.flush().await.map_err(|e| e.to_string())?;
 
-        let setup_resp = read_netbios_message(&mut stream).await.map_err(|e| e.to_string())?;
+        let setup_resp = read_netbios_message(&mut stream)
+            .await
+            .map_err(|e| e.to_string())?;
         if setup_resp.len() < 73 {
             return Ok((None, smb_info));
         }
@@ -494,8 +528,9 @@ async fn probe_smb_and_ntlm(
 async fn read_netbios_message(stream: &mut TcpStream) -> Result<Vec<u8>, std::io::Error> {
     let mut header = [0u8; 4];
     stream.read_exact(&mut header).await?;
-    let len = read_netbios_length(&header)
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid NetBIOS header"))?;
+    let len = read_netbios_length(&header).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid NetBIOS header")
+    })?;
 
     let mut data = vec![0u8; len];
     stream.read_exact(&mut data).await?;
@@ -545,5 +580,6 @@ fn localize_finding(finding: &heimdall_core::tools::smb::SmbFinding) -> String {
 }
 
 fn field_str(opt: &Option<String>) -> String {
-    opt.clone().unwrap_or_else(|| fl!("ui-tool-smb-not-available"))
+    opt.clone()
+        .unwrap_or_else(|| fl!("ui-tool-smb-not-available"))
 }

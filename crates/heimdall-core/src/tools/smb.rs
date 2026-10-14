@@ -20,6 +20,16 @@
 //! Provides protocol packet crafting, binary parsing, security findings generation,
 //! and localized report generation without external cryptography dependencies.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use serde::{Deserialize, Serialize};
 
 /// SMB Dialect 2.0.2.
@@ -387,11 +397,22 @@ pub fn parse_negotiate_response(data: &[u8]) -> Option<SmbNegotiateInfo> {
     let guid_bytes = &data[BODY_OFF + 0x08..BODY_OFF + 0x18];
     let server_guid = format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        guid_bytes[3], guid_bytes[2], guid_bytes[1], guid_bytes[0],
-        guid_bytes[5], guid_bytes[4],
-        guid_bytes[7], guid_bytes[6],
-        guid_bytes[8], guid_bytes[9],
-        guid_bytes[10], guid_bytes[11], guid_bytes[12], guid_bytes[13], guid_bytes[14], guid_bytes[15]
+        guid_bytes[3],
+        guid_bytes[2],
+        guid_bytes[1],
+        guid_bytes[0],
+        guid_bytes[5],
+        guid_bytes[4],
+        guid_bytes[7],
+        guid_bytes[6],
+        guid_bytes[8],
+        guid_bytes[9],
+        guid_bytes[10],
+        guid_bytes[11],
+        guid_bytes[12],
+        guid_bytes[13],
+        guid_bytes[14],
+        guid_bytes[15]
     );
 
     let capabilities = u32::from_le_bytes([
@@ -961,16 +982,39 @@ mod tests {
         };
 
         let findings = build_security_findings(None, Some(&smb), true);
-        assert!(findings.iter().any(|f| f.message_key == "ToolSmbSigningDisabled" && f.severity == SmbFindingSeverity::Warning));
-        assert!(findings.iter().any(|f| f.message_key == "ToolSmbV1Detected" && f.severity == SmbFindingSeverity::Critical));
-        assert!(findings.iter().any(|f| f.message_key == "ToolSmbNetBiosFailed" && f.severity == SmbFindingSeverity::Info));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message_key == "ToolSmbSigningDisabled"
+                    && f.severity == SmbFindingSeverity::Warning)
+        );
+        assert!(
+            findings.iter().any(|f| f.message_key == "ToolSmbV1Detected"
+                && f.severity == SmbFindingSeverity::Critical)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message_key == "ToolSmbNetBiosFailed"
+                    && f.severity == SmbFindingSeverity::Info)
+        );
 
         // Modern dialect with signing
         smb.dialect_revision = DIALECT_SMB311;
         smb.signing_required = true;
         let findings_ok = build_security_findings(None, Some(&smb), false);
-        assert!(findings_ok.iter().any(|f| f.message_key == "ToolSmbSigningEnabled" && f.severity == SmbFindingSeverity::Success));
-        assert!(findings_ok.iter().any(|f| f.message_key == "ToolSmbModernDialect" && f.severity == SmbFindingSeverity::Success));
+        assert!(
+            findings_ok
+                .iter()
+                .any(|f| f.message_key == "ToolSmbSigningEnabled"
+                    && f.severity == SmbFindingSeverity::Success)
+        );
+        assert!(
+            findings_ok
+                .iter()
+                .any(|f| f.message_key == "ToolSmbModernDialect"
+                    && f.severity == SmbFindingSeverity::Success)
+        );
     }
 
     #[test]
@@ -990,9 +1034,10 @@ mod tests {
             server_guid: Some("12345678-1234-1234-1234-123456789ABC".to_string()),
             system_time: Some("2026-10-14 12:00:00 UTC".to_string()),
             boot_time: Some("2026-10-01 08:00:00 UTC".to_string()),
-            findings: vec![
-                SmbFinding::new(SmbFindingSeverity::Success, "ToolSmbSigningEnabled"),
-            ],
+            findings: vec![SmbFinding::new(
+                SmbFindingSeverity::Success,
+                "ToolSmbSigningEnabled",
+            )],
             report: None,
         };
 

@@ -21,16 +21,25 @@
 //! Features live progress tracking, chapter expanders, compliance scoring,
 //! CSV evidence export, and standalone HTML report generation.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use std::collections::HashSet;
 use std::time::Duration;
 
 use heimdall_app::TabId;
 use heimdall_core::tools::secnumcloud::{
-    build_access_chapter, build_crypto_chapter, build_csv_export, build_html_export,
+    AuditChapter, AuditDepth, AuditEvidence, AuditOptions, AuditReport, AuditScope, AuditStatus,
+    DiscoveredHost, DiscoveredService, HTTP_PORTS, REQUIRED_SECURITY_HEADERS, STANDARD_PORTS,
+    TLS_PORTS, build_access_chapter, build_crypto_chapter, build_csv_export, build_html_export,
     build_network_chapter, build_operations_chapter, find_cves_for_software, parse_banner,
-    AuditChapter, AuditDepth, AuditEvidence, AuditOptions, AuditReport, AuditScope,
-    AuditStatus, DiscoveredHost, DiscoveredService, HTTP_PORTS, REQUIRED_SECURITY_HEADERS,
-    STANDARD_PORTS, TLS_PORTS,
 };
 use iced::futures::SinkExt as _;
 use iced::widget::{
@@ -41,7 +50,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-use super::{key_parts, CopySlot, ToolMessage, ToolPane};
+use super::{CopySlot, ToolMessage, ToolPane, key_parts};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -251,17 +260,19 @@ impl SecNumCloudPane {
     }
 
     /// Renders the SecNumCloud audit tool view.
-    pub fn view<'a>(&'a self, tab: TabId, state: &'a ToolPane, theme: &Theme) -> Element<'a, Message> {
+    pub fn view<'a>(
+        &'a self,
+        tab: TabId,
+        state: &'a ToolPane,
+        theme: &Theme,
+    ) -> Element<'a, Message> {
         let send = move |msg| Message::Tool(tab, ToolMessage::SecNumCloud(msg));
 
         // 1. Scope input & configuration card
-        let scope_input = text_input(
-            &fl!("ui-tool-secnumcloud-scope-placeholder"),
-            &self.scope,
-        )
-        .on_input(move |val| send(SecNumCloudMessage::ScopeChanged(val)))
-        .size(font_size::BODY)
-        .padding(spacing::SM);
+        let scope_input = text_input(&fl!("ui-tool-secnumcloud-scope-placeholder"), &self.scope)
+            .on_input(move |val| send(SecNumCloudMessage::ScopeChanged(val)))
+            .size(font_size::BODY)
+            .padding(spacing::SM);
 
         let depth_selector = pick_list(
             AuditDepth::ALL.map(DepthChoice),
@@ -336,13 +347,9 @@ impl SecNumCloudPane {
         // 2. Error banner
         if let Some(err) = &self.error {
             body_col = body_col.push(
-                container(
-                    text(err.as_str())
-                        .size(font_size::BODY)
-                        .style(text::danger),
-                )
-                .padding(spacing::MD)
-                .style(styles::card),
+                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
+                    .padding(spacing::MD)
+                    .style(styles::card),
             );
         }
 
@@ -373,9 +380,7 @@ impl SecNumCloudPane {
                 );
             }
         } else if self.last_report.is_none() && self.error.is_none() {
-            body_col = body_col.push(super::empty_state(fl!(
-                "ui-tool-secnumcloud-empty-state"
-            )));
+            body_col = body_col.push(super::empty_state(fl!("ui-tool-secnumcloud-empty-state")));
         }
 
         // 4. Results view
@@ -424,7 +429,11 @@ impl SecNumCloudPane {
         super::content_column(body_col)
     }
 
-    fn render_compliance_badge<'a>(&'a self, report: &'a AuditReport, theme: &Theme) -> Element<'a, Message> {
+    fn render_compliance_badge<'a>(
+        &'a self,
+        report: &'a AuditReport,
+        theme: &Theme,
+    ) -> Element<'a, Message> {
         let palette = theme.extended_palette();
         let compliance = report.compliance_percent();
 
@@ -446,17 +455,29 @@ impl SecNumCloudPane {
                     .size(font_size::SUBTITLE)
                     .font(styles::SEMIBOLD),
                 row![
-                    text(format!("{}: {}", fl!("ui-tool-secnumcloud-status-pass"), report.total_pass()))
-                        .size(font_size::BODY)
-                        .color(palette.success.base.color),
+                    text(format!(
+                        "{}: {}",
+                        fl!("ui-tool-secnumcloud-status-pass"),
+                        report.total_pass()
+                    ))
+                    .size(font_size::BODY)
+                    .color(palette.success.base.color),
                     text(" | ").size(font_size::BODY).style(text::secondary),
-                    text(format!("{}: {}", fl!("ui-tool-secnumcloud-status-warn"), report.total_warn()))
-                        .size(font_size::BODY)
-                        .color(palette.warning.base.color),
+                    text(format!(
+                        "{}: {}",
+                        fl!("ui-tool-secnumcloud-status-warn"),
+                        report.total_warn()
+                    ))
+                    .size(font_size::BODY)
+                    .color(palette.warning.base.color),
                     text(" | ").size(font_size::BODY).style(text::secondary),
-                    text(format!("{}: {}", fl!("ui-tool-secnumcloud-status-fail"), report.total_fail()))
-                        .size(font_size::BODY)
-                        .color(palette.danger.base.color),
+                    text(format!(
+                        "{}: {}",
+                        fl!("ui-tool-secnumcloud-status-fail"),
+                        report.total_fail()
+                    ))
+                    .size(font_size::BODY)
+                    .color(palette.danger.base.color),
                 ]
                 .spacing(spacing::XS)
                 .align_y(Alignment::Center),
@@ -469,7 +490,11 @@ impl SecNumCloudPane {
         key_parts::card(column![badge_row])
     }
 
-    fn render_chapters_view<'a>(&'a self, report: &'a AuditReport, theme: &Theme) -> Element<'a, Message> {
+    fn render_chapters_view<'a>(
+        &'a self,
+        report: &'a AuditReport,
+        theme: &Theme,
+    ) -> Element<'a, Message> {
         let palette = theme.extended_palette();
         let mut chapters_col = column![].spacing(spacing::MD);
 
@@ -479,15 +504,27 @@ impl SecNumCloudPane {
                     .size(font_size::SUBTITLE)
                     .font(styles::SEMIBOLD)
                     .width(Length::Fill),
-                text(format!("{}: {}", fl!("ui-tool-secnumcloud-status-pass"), ch.pass_count()))
-                    .size(font_size::CAPTION)
-                    .color(palette.success.base.color),
-                text(format!("{}: {}", fl!("ui-tool-secnumcloud-status-warn"), ch.warn_count()))
-                    .size(font_size::CAPTION)
-                    .color(palette.warning.base.color),
-                text(format!("{}: {}", fl!("ui-tool-secnumcloud-status-fail"), ch.fail_count()))
-                    .size(font_size::CAPTION)
-                    .color(palette.danger.base.color),
+                text(format!(
+                    "{}: {}",
+                    fl!("ui-tool-secnumcloud-status-pass"),
+                    ch.pass_count()
+                ))
+                .size(font_size::CAPTION)
+                .color(palette.success.base.color),
+                text(format!(
+                    "{}: {}",
+                    fl!("ui-tool-secnumcloud-status-warn"),
+                    ch.warn_count()
+                ))
+                .size(font_size::CAPTION)
+                .color(palette.warning.base.color),
+                text(format!(
+                    "{}: {}",
+                    fl!("ui-tool-secnumcloud-status-fail"),
+                    ch.fail_count()
+                ))
+                .size(font_size::CAPTION)
+                .color(palette.danger.base.color),
             ]
             .spacing(spacing::SM)
             .align_y(Alignment::Center);
@@ -586,7 +623,9 @@ impl SecNumCloudPane {
             chapters_col = chapters_col.push(key_parts::card(checks_col));
         }
 
-        let scroll = scrollable(chapters_col).width(Length::Fill).height(Length::Shrink);
+        let scroll = scrollable(chapters_col)
+            .width(Length::Fill)
+            .height(Length::Shrink);
         key_parts::card(column![scroll])
     }
 }
@@ -751,7 +790,9 @@ fn parse_scope_targets(raw: &str) -> Vec<String> {
 }
 
 async fn probe_host(host: &str) -> DiscoveredHost {
-    let probe_ports: &[u16] = &[21, 22, 23, 25, 53, 80, 161, 443, 445, 1433, 3306, 3389, 5432, 6379, 8080, 8443];
+    let probe_ports: &[u16] = &[
+        21, 22, 23, 25, 53, 80, 161, 443, 445, 1433, 3306, 3389, 5432, 6379, 8080, 8443,
+    ];
     let mut services = Vec::new();
 
     for &port in probe_ports {
@@ -820,7 +861,13 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
             if !open.is_empty() {
                 let port_list = open
                     .iter()
-                    .map(|s| format!("{}/{}", s.port, s.service_name.as_deref().unwrap_or("unknown")))
+                    .map(|s| {
+                        format!(
+                            "{}/{}",
+                            s.port,
+                            s.service_name.as_deref().unwrap_or("unknown")
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 c.evidence.push(AuditEvidence {
@@ -831,7 +878,10 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
             }
         }
         c.status = AuditStatus::Pass;
-        c.summary = format!("Inventoried {total_open} open ports across {} hosts.", hosts.len());
+        c.summary = format!(
+            "Inventoried {total_open} open ports across {} hosts.",
+            hosts.len()
+        );
     }
 
     // NET-02: Unnecessary services
@@ -847,7 +897,13 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
             if !non_std.is_empty() {
                 let port_list = non_std
                     .iter()
-                    .map(|s| format!("{}/{}", s.port, s.service_name.as_deref().unwrap_or("unknown")))
+                    .map(|s| {
+                        format!(
+                            "{}/{}",
+                            s.port,
+                            s.service_name.as_deref().unwrap_or("unknown")
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 c.evidence.push(AuditEvidence {
@@ -862,7 +918,9 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
             c.summary = "No unnecessary or non-standard services detected.".to_string();
         } else {
             c.status = AuditStatus::Warning;
-            c.summary = format!("{non_standard_count} non-standard ports found - review for operational necessity.");
+            c.summary = format!(
+                "{non_standard_count} non-standard ports found - review for operational necessity."
+            );
         }
     }
 
@@ -872,14 +930,22 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
         let mut checked_count = 0;
 
         for host in hosts {
-            for svc in host.services.iter().filter(|s| s.is_open && HTTP_PORTS.contains(&s.port)) {
+            for svc in host
+                .services
+                .iter()
+                .filter(|s| s.is_open && HTTP_PORTS.contains(&s.port))
+            {
                 checked_count += 1;
                 let missing = fetch_missing_headers(&host.ip_address, svc.port).await;
                 if !missing.is_empty() {
                     missing_count += 1;
                     c.evidence.push(AuditEvidence {
                         host: host.ip_address.clone(),
-                        detail: format!("Port {}: missing headers: {}", svc.port, missing.join(", ")),
+                        detail: format!(
+                            "Port {}: missing headers: {}",
+                            svc.port,
+                            missing.join(", ")
+                        ),
                         raw_data: String::new(),
                     });
                 }
@@ -894,7 +960,9 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
             c.summary = format!("All {checked_count} web services have required security headers.");
         } else {
             c.status = AuditStatus::Fail;
-            c.summary = format!("{missing_count} web services out of {checked_count} are missing required security headers (HSTS, CSP, XFO, XCTO).");
+            c.summary = format!(
+                "{missing_count} web services out of {checked_count} are missing required security headers (HSTS, CSP, XFO, XCTO)."
+            );
         }
     }
 
@@ -912,7 +980,10 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
         } else {
             AuditStatus::Warning
         };
-        c.summary = format!("Detected {} subnets. Verify network segmentation according to ANSSI guidelines.", subnets.len());
+        c.summary = format!(
+            "Detected {} subnets. Verify network segmentation according to ANSSI guidelines.",
+            subnets.len()
+        );
     }
 }
 
@@ -939,14 +1010,21 @@ async fn run_crypto_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
     if let Some(c) = chapter.checks.get_mut(0) {
         let tls_svcs: Vec<_> = hosts
             .iter()
-            .flat_map(|h| h.services.iter().filter(|s| s.is_open && TLS_PORTS.contains(&s.port)))
+            .flat_map(|h| {
+                h.services
+                    .iter()
+                    .filter(|s| s.is_open && TLS_PORTS.contains(&s.port))
+            })
             .collect();
         if tls_svcs.is_empty() {
             c.status = AuditStatus::Skipped;
             c.summary = "No TLS services found to check.".to_string();
         } else {
             c.status = AuditStatus::Pass;
-            c.summary = format!("All {} TLS endpoints verified for acceptable protocols.", tls_svcs.len());
+            c.summary = format!(
+                "All {} TLS endpoints verified for acceptable protocols.",
+                tls_svcs.len()
+            );
         }
     }
 
@@ -974,7 +1052,8 @@ async fn run_crypto_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
                         weak_ssh += 1;
                         c.evidence.push(AuditEvidence {
                             host: host.ip_address.clone(),
-                            detail: "Port 22: weak SSH host key algorithm (DSA) detected".to_string(),
+                            detail: "Port 22: weak SSH host key algorithm (DSA) detected"
+                                .to_string(),
                             raw_data: b.clone(),
                         });
                     }
@@ -986,7 +1065,8 @@ async fn run_crypto_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
             c.summary = "No SSH services found to check.".to_string();
         } else if weak_ssh > 0 {
             c.status = AuditStatus::Fail;
-            c.summary = format!("{weak_ssh} SSH servers out of {checked_ssh} offer weak key algorithms.");
+            c.summary =
+                format!("{weak_ssh} SSH servers out of {checked_ssh} offer weak key algorithms.");
         } else {
             c.status = AuditStatus::Pass;
             c.summary = format!("All {checked_ssh} SSH servers use acceptable key algorithms.");
@@ -1012,7 +1092,10 @@ async fn run_access_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
             c.summary = "No SMB services found to check.".to_string();
         } else {
             c.status = AuditStatus::Pass;
-            c.summary = format!("{} SMB services evaluated for message signing.", smb_svcs.len());
+            c.summary = format!(
+                "{} SMB services evaluated for message signing.",
+                smb_svcs.len()
+            );
         }
     }
 
@@ -1057,7 +1140,10 @@ async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHo
                             matched_cves += 1;
                             c.evidence.push(AuditEvidence {
                                 host: host.ip_address.clone(),
-                                detail: format!("Port {}: {} {} affected by {} ({})", svc.port, software, version, cve.id, cve.severity),
+                                detail: format!(
+                                    "Port {}: {} {} affected by {} ({})",
+                                    svc.port, software, version, cve.id, cve.severity
+                                ),
                                 raw_data: cve.summary.to_string(),
                             });
                         }
@@ -1067,7 +1153,8 @@ async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHo
         }
         if matched_cves == 0 {
             c.status = AuditStatus::Pass;
-            c.summary = "No known high-severity CVEs matched across scanned service banners.".to_string();
+            c.summary =
+                "No known high-severity CVEs matched across scanned service banners.".to_string();
         } else {
             c.status = AuditStatus::Fail;
             c.summary = format!("{matched_cves} known CVEs matched across scanned services.");
@@ -1082,7 +1169,11 @@ async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHo
                 count += 1;
                 c.evidence.push(AuditEvidence {
                     host: host.ip_address.clone(),
-                    detail: format!("Port {}: {}", svc.port, svc.service_name.as_deref().unwrap_or("unknown")),
+                    detail: format!(
+                        "Port {}: {}",
+                        svc.port,
+                        svc.service_name.as_deref().unwrap_or("unknown")
+                    ),
                     raw_data: svc.banner.clone().unwrap_or_default(),
                 });
             }

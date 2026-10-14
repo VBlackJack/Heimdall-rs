@@ -22,6 +22,16 @@
 //!
 //! Pure analysis engine: thread-safe, stateless, and fully covered with unit tests.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use std::fmt;
 
 /// Overall TLS configuration grade (A+ is best, F is worst, T is unreachable).
@@ -179,25 +189,82 @@ pub struct KnownCipherSuite {
 
 /// The 19 known TLS 1.2 cipher suites to probe, matching C# `KnownTls12CipherSuites`.
 pub const KNOWN_TLS12_CIPHER_SUITES: [KnownCipherSuite; 19] = [
-    KnownCipherSuite { id: 0xC030, name: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" },
-    KnownCipherSuite { id: 0xC02F, name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" },
-    KnownCipherSuite { id: 0xC02C, name: "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384" },
-    KnownCipherSuite { id: 0xC02B, name: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" },
-    KnownCipherSuite { id: 0x009F, name: "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384" },
-    KnownCipherSuite { id: 0x009E, name: "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256" },
-    KnownCipherSuite { id: 0x009D, name: "TLS_RSA_WITH_AES_256_GCM_SHA384" },
-    KnownCipherSuite { id: 0x009C, name: "TLS_RSA_WITH_AES_128_GCM_SHA256" },
-    KnownCipherSuite { id: 0x003D, name: "TLS_RSA_WITH_AES_256_CBC_SHA256" },
-    KnownCipherSuite { id: 0x003C, name: "TLS_RSA_WITH_AES_128_CBC_SHA256" },
-    KnownCipherSuite { id: 0x0035, name: "TLS_RSA_WITH_AES_256_CBC_SHA" },
-    KnownCipherSuite { id: 0x002F, name: "TLS_RSA_WITH_AES_128_CBC_SHA" },
-    KnownCipherSuite { id: 0xC028, name: "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384" },
-    KnownCipherSuite { id: 0xC027, name: "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256" },
-    KnownCipherSuite { id: 0xC014, name: "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA" },
-    KnownCipherSuite { id: 0xC013, name: "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA" },
-    KnownCipherSuite { id: 0x000A, name: "TLS_RSA_WITH_3DES_EDE_CBC_SHA" },
-    KnownCipherSuite { id: 0x0005, name: "TLS_RSA_WITH_RC4_128_SHA" },
-    KnownCipherSuite { id: 0x0004, name: "TLS_RSA_WITH_RC4_128_MD5" },
+    KnownCipherSuite {
+        id: 0xC030,
+        name: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+    },
+    KnownCipherSuite {
+        id: 0xC02F,
+        name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+    },
+    KnownCipherSuite {
+        id: 0xC02C,
+        name: "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+    },
+    KnownCipherSuite {
+        id: 0xC02B,
+        name: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+    },
+    KnownCipherSuite {
+        id: 0x009F,
+        name: "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
+    },
+    KnownCipherSuite {
+        id: 0x009E,
+        name: "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256",
+    },
+    KnownCipherSuite {
+        id: 0x009D,
+        name: "TLS_RSA_WITH_AES_256_GCM_SHA384",
+    },
+    KnownCipherSuite {
+        id: 0x009C,
+        name: "TLS_RSA_WITH_AES_128_GCM_SHA256",
+    },
+    KnownCipherSuite {
+        id: 0x003D,
+        name: "TLS_RSA_WITH_AES_256_CBC_SHA256",
+    },
+    KnownCipherSuite {
+        id: 0x003C,
+        name: "TLS_RSA_WITH_AES_128_CBC_SHA256",
+    },
+    KnownCipherSuite {
+        id: 0x0035,
+        name: "TLS_RSA_WITH_AES_256_CBC_SHA",
+    },
+    KnownCipherSuite {
+        id: 0x002F,
+        name: "TLS_RSA_WITH_AES_128_CBC_SHA",
+    },
+    KnownCipherSuite {
+        id: 0xC028,
+        name: "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384",
+    },
+    KnownCipherSuite {
+        id: 0xC027,
+        name: "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256",
+    },
+    KnownCipherSuite {
+        id: 0xC014,
+        name: "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+    },
+    KnownCipherSuite {
+        id: 0xC013,
+        name: "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+    },
+    KnownCipherSuite {
+        id: 0x000A,
+        name: "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+    },
+    KnownCipherSuite {
+        id: 0x0005,
+        name: "TLS_RSA_WITH_RC4_128_SHA",
+    },
+    KnownCipherSuite {
+        id: 0x0004,
+        name: "TLS_RSA_WITH_RC4_128_MD5",
+    },
 ];
 
 /// Result of a cipher suite probe with classification details.
@@ -290,10 +357,7 @@ pub fn build_cipher_info(suite_name: &str) -> TlsCipherInfo {
 /// Calculates the overall TLS grade based on protocol support and cipher analysis,
 /// exactly matching C# `TlsAuditEngine.CalculateGrade`.
 #[must_use]
-pub fn calculate_grade(
-    protocols: &[TlsProtocolTestResult],
-    ciphers: &[TlsCipherInfo],
-) -> TlsGrade {
+pub fn calculate_grade(protocols: &[TlsProtocolTestResult], ciphers: &[TlsCipherInfo]) -> TlsGrade {
     let ssl3 = protocols.iter().any(|p| p.name == "SSL 3.0" && p.supported);
     let tls10 = protocols.iter().any(|p| p.name == "TLS 1.0" && p.supported);
     let tls11 = protocols.iter().any(|p| p.name == "TLS 1.1" && p.supported);
@@ -403,11 +467,7 @@ pub fn build_findings(
 
 /// Builds a binary ClientHello packet for probing a protocol version or cipher suite.
 #[must_use]
-pub fn build_client_hello(
-    protocol: TlsProtocol,
-    host: &str,
-    ciphers: &[u16],
-) -> Vec<u8> {
+pub fn build_client_hello(protocol: TlsProtocol, host: &str, ciphers: &[u16]) -> Vec<u8> {
     let mut hello = Vec::with_capacity(256);
 
     // Client version in ClientHello
@@ -421,10 +481,9 @@ pub fn build_client_hello(
 
     // 32-byte client random (fixed seed for deterministic probe)
     let random: [u8; 32] = [
-        0x58, 0x21, 0x11, 0x42, 0x01, 0x02, 0x03, 0x04,
-        0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
-        0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
-        0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+        0x58, 0x21, 0x11, 0x42, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A,
+        0x1B, 0x1C,
     ];
     hello.extend_from_slice(&random);
 
@@ -507,10 +566,9 @@ pub fn build_client_hello(
                 0x00, 0x1D, // X25519
                 0x00, 0x20, // 32 bytes key exchange
                 // 32-byte dummy public key
-                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-                0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-                0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-                0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+                0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+                0x1D, 0x1E, 0x1F, 0x20,
             ];
             extensions.extend_from_slice(&0x0033u16.to_be_bytes());
             extensions.extend_from_slice(&(key_share_entry.len() as u16 + 2).to_be_bytes());
@@ -654,13 +712,39 @@ pub fn extract_certificate_from_handshake(data: &[u8]) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn make_protocols(ssl3: bool, tls10: bool, tls11: bool, tls12: bool, tls13: bool) -> Vec<TlsProtocolTestResult> {
+    fn make_protocols(
+        ssl3: bool,
+        tls10: bool,
+        tls11: bool,
+        tls12: bool,
+        tls13: bool,
+    ) -> Vec<TlsProtocolTestResult> {
         vec![
-            TlsProtocolTestResult { name: "SSL 3.0".to_owned(), supported: ssl3, rating: TlsProtocolRating::Critical },
-            TlsProtocolTestResult { name: "TLS 1.0".to_owned(), supported: tls10, rating: TlsProtocolRating::Weak },
-            TlsProtocolTestResult { name: "TLS 1.1".to_owned(), supported: tls11, rating: TlsProtocolRating::Weak },
-            TlsProtocolTestResult { name: "TLS 1.2".to_owned(), supported: tls12, rating: TlsProtocolRating::Strong },
-            TlsProtocolTestResult { name: "TLS 1.3".to_owned(), supported: tls13, rating: TlsProtocolRating::Strong },
+            TlsProtocolTestResult {
+                name: "SSL 3.0".to_owned(),
+                supported: ssl3,
+                rating: TlsProtocolRating::Critical,
+            },
+            TlsProtocolTestResult {
+                name: "TLS 1.0".to_owned(),
+                supported: tls10,
+                rating: TlsProtocolRating::Weak,
+            },
+            TlsProtocolTestResult {
+                name: "TLS 1.1".to_owned(),
+                supported: tls11,
+                rating: TlsProtocolRating::Weak,
+            },
+            TlsProtocolTestResult {
+                name: "TLS 1.2".to_owned(),
+                supported: tls12,
+                rating: TlsProtocolRating::Strong,
+            },
+            TlsProtocolTestResult {
+                name: "TLS 1.3".to_owned(),
+                supported: tls13,
+                rating: TlsProtocolRating::Strong,
+            },
         ]
     }
 
@@ -678,7 +762,10 @@ mod tests {
     #[test]
     fn calculate_grade_weak_ciphers_returns_d() {
         let protocols = make_protocols(false, false, false, true, false);
-        let ciphers = make_ciphers(&["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", "TLS_RSA_WITH_3DES_EDE_CBC_SHA"]);
+        let ciphers = make_ciphers(&[
+            "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+            "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+        ]);
         assert_eq!(calculate_grade(&protocols, &ciphers), TlsGrade::D);
     }
 
@@ -699,7 +786,10 @@ mod tests {
     #[test]
     fn calculate_grade_cbc_returns_b() {
         let protocols = make_protocols(false, false, false, true, false);
-        let ciphers = make_ciphers(&["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", "TLS_RSA_WITH_AES_256_CBC_SHA256"]);
+        let ciphers = make_ciphers(&[
+            "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+            "TLS_RSA_WITH_AES_256_CBC_SHA256",
+        ]);
         assert_eq!(calculate_grade(&protocols, &ciphers), TlsGrade::B);
     }
 
@@ -759,7 +849,11 @@ mod tests {
         let protocols = make_protocols(true, false, false, true, true);
         let ciphers = make_ciphers(&["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"]);
         let findings = build_findings(&protocols, &ciphers);
-        assert!(findings.iter().any(|f| f.severity == TlsFindingSeverity::Critical));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.severity == TlsFindingSeverity::Critical)
+        );
     }
 
     #[test]
@@ -767,7 +861,11 @@ mod tests {
         let protocols = make_protocols(false, false, false, true, false);
         let ciphers = make_ciphers(&["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"]);
         let findings = build_findings(&protocols, &ciphers);
-        assert!(findings.iter().any(|f| f.severity == TlsFindingSeverity::Info));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.severity == TlsFindingSeverity::Info)
+        );
     }
 
     #[test]

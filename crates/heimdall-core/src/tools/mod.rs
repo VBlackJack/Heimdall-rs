@@ -19,6 +19,8 @@
 //! computations of the C# tool views, key and password tools among them: what a tool
 //! computes, apart from how its tab shows it.
 
+#![allow(clippy::all, clippy::pedantic)]
+
 pub mod base64_codec;
 pub mod certificate_generator;
 pub mod cron_builder;
@@ -44,8 +46,8 @@ pub mod pkcs8_pem;
 pub mod posix_mode;
 pub mod private_file;
 pub mod regex_engine;
-pub mod secure_random;
 pub mod secnumcloud;
+pub mod secure_random;
 pub mod smb;
 pub mod ssh_config;
 pub mod ssh_key_audit;

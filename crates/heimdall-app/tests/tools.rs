@@ -47,6 +47,7 @@ fn open(app: &mut App, tool: ToolId) {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(
         ToolId::ALL,
@@ -116,17 +117,29 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert!(ToolId::DnsSec.is_network());
     assert_eq!(ToolId::DnsSec.code(), "DNSSEC");
     assert_eq!(ToolId::DnsSec.category(), ToolCategory::Security);
-    assert_eq!(ToolId::DnsSec.prefixes(), ["dnssec", "spf", "dmarc", "dkim"]);
+    assert_eq!(
+        ToolId::DnsSec.prefixes(),
+        ["dnssec", "spf", "dmarc", "dkim"]
+    );
     assert!(ToolId::DefaultCreds.is_network());
     assert_eq!(ToolId::DefaultCreds.code(), "DEFAULTCREDS");
     assert_eq!(ToolId::DefaultCreds.category(), ToolCategory::Security);
     assert_eq!(ToolId::DefaultCreds.prefixes(), ["defaultcreds", "creds"]);
-    assert_eq!(ToolId::from_code("defaultcreds"), Some(ToolId::DefaultCreds));
-    assert_eq!(ToolId::from_code("TOOL:DEFAULTCREDS"), Some(ToolId::DefaultCreds));
+    assert_eq!(
+        ToolId::from_code("defaultcreds"),
+        Some(ToolId::DefaultCreds)
+    );
+    assert_eq!(
+        ToolId::from_code("TOOL:DEFAULTCREDS"),
+        Some(ToolId::DefaultCreds)
+    );
     assert!(!ToolId::CveLookup.is_network());
     assert_eq!(ToolId::CveLookup.code(), "CVELOOKUP");
     assert_eq!(ToolId::CveLookup.category(), ToolCategory::Security);
-    assert_eq!(ToolId::CveLookup.prefixes(), ["cve", "vuln", "vulnerability"]);
+    assert_eq!(
+        ToolId::CveLookup.prefixes(),
+        ["cve", "vuln", "vulnerability"]
+    );
     assert_eq!(ToolId::from_code("cvelookup"), Some(ToolId::CveLookup));
     assert!(!ToolId::SecNumCloud.is_network());
     assert_eq!(ToolId::SecNumCloud.code(), "SECNUMCLOUD");

@@ -22,6 +22,16 @@
 //! banner parsing and embedded CVE matcher, RFC 4180 CSV evidence exporter,
 //! and standalone HTML compliance report generator.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::module_name_repetitions,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 use serde::{Deserialize, Serialize};
 
 /// Controls the breadth and duration of the audit scan.
@@ -165,19 +175,28 @@ impl AuditChapter {
     /// Count of checks that passed.
     #[must_use]
     pub fn pass_count(&self) -> usize {
-        self.checks.iter().filter(|c| c.status == AuditStatus::Pass).count()
+        self.checks
+            .iter()
+            .filter(|c| c.status == AuditStatus::Pass)
+            .count()
     }
 
     /// Count of checks with warnings.
     #[must_use]
     pub fn warn_count(&self) -> usize {
-        self.checks.iter().filter(|c| c.status == AuditStatus::Warning).count()
+        self.checks
+            .iter()
+            .filter(|c| c.status == AuditStatus::Warning)
+            .count()
     }
 
     /// Count of checks that failed.
     #[must_use]
     pub fn fail_count(&self) -> usize {
-        self.checks.iter().filter(|c| c.status == AuditStatus::Fail).count()
+        self.checks
+            .iter()
+            .filter(|c| c.status == AuditStatus::Fail)
+            .count()
     }
 }
 
