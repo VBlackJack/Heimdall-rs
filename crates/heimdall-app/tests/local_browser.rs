@@ -1901,3 +1901,78 @@ fn a_scripts_tab_is_not_offered_again_at_the_next_start() {
         "no session to reopen: the script runs again only once asked"
     );
 }
+
+#[test]
+fn an_entry_is_opened_and_copied_from_the_folder_listed_while_another_is_on_its_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane) = browser(dir.path(), &sink);
+    let from = dir.path().join("from");
+    std::fs::create_dir_all(from.join("sub")).expect("folders");
+    std::fs::write(from.join("photo.png"), b"png").expect("file");
+    listed_as_is(&mut app, pane, &from);
+    // Into "sub": its listing on its way, the entries of "from" still shown.
+    let sub = index_of(&app, pane, "sub");
+    let effects = opened(&mut app, pane, sub);
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == from.join("sub")),
+        "{effects:?}"
+    );
+
+    let photo = from.join("photo.png");
+    let index = index_of(&app, pane, "photo.png");
+    let effects = opened(&mut app, pane, index);
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenLocalFile { file, .. }] if *file == photo),
+        "the file listed, not one of the folder on its way: {effects:?}"
+    );
+    choose(&mut app, pane, &["photo.png"]);
+    let effects = app.update(Message::Files(FilesMessage::Copy { tab: pane }));
+    if cfg!(windows) {
+        assert!(
+            matches!(effects.as_slice(), [Effect::WriteFileList(paths)] if *paths == [photo.clone()]),
+            "{effects:?}"
+        );
+    }
+    // Pasted, it goes into the folder shown: the one asked for.
+    let (sources, folder) = pasted(&paste(&mut app, pane, std::slice::from_ref(&photo)), pane);
+    assert_eq!((sources, folder), (vec![photo.clone()], from.join("sub")));
+    // Opening "sub" again lists "sub", not a "sub" inside it.
+    let index = index_of(&app, pane, "sub");
+    let effects = opened(&mut app, pane, index);
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == from.join("sub")),
+        "{effects:?}"
+    );
+    assert!(sink.take().is_empty());
+}
+
+#[test]
+fn a_script_runs_from_the_folder_listed_while_another_is_on_its_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane, folder) = browser_of_scripts(dir.path(), &RUN_HERE[..1], &sink);
+    let sub = index_of(&app, pane, "sub");
+    let effects = opened(&mut app, pane, sub);
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == folder.join("sub")),
+        "{effects:?}"
+    );
+    let name = RUN_HERE[0];
+    let index = index_of(&app, pane, name);
+    let (expected, command, _) = expected_run(name, &folder);
+    assert!(run_in_shell(&mut app, pane, index).is_empty());
+    let question = script_question(&app);
+    assert_eq!(
+        question.command, command,
+        "the script listed, not one in \"sub\""
+    );
+    assert_eq!(
+        question.folder.as_deref(),
+        Some(folder.to_string_lossy().as_ref())
+    );
+    let effects = app.update(Message::ConfirmDialog);
+    let (_, running) = started(&effects).unwrap_or_else(|| panic!("started, {effects:?}"));
+    assert_eq!(running, expected);
+    assert!(sink.take().is_empty());
+}

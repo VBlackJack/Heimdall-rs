@@ -817,3 +817,57 @@ async fn permissions_fall_back_to_sudo_only_while_the_mode_is_on() {
     );
     assert!(change(&mut app), "the mode on: as root where refused");
 }
+
+#[tokio::test]
+async fn a_delete_as_root_takes_the_entry_from_the_folder_it_was_listed_from() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), Some(connection)).await;
+    files(&mut app, FilesMessage::ToggleSudo { tab });
+    listed_as_root(
+        &mut app,
+        tab,
+        "/srv",
+        vec![
+            entry("logs", EntryKind::Directory, 99),
+            entry("f00", EntryKind::File, 100),
+        ],
+    );
+    // "logs" opened: its listing on its way, the entries of "/srv" still shown.
+    files(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    assert_eq!(pane(&app, tab).remote.path, RemotePath::from("/srv/logs"));
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side: Side::Remote,
+            index: 1,
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    let deleting = app.update(Message::ConfirmDialog);
+    let [Effect::FileBatchStep { operation, .. }] = deleting.as_slice() else {
+        panic!("{deleting:?}");
+    };
+    match operation.as_ref() {
+        FileOperation::RemoteSudoRemove { path, inode, .. } => {
+            assert_eq!(path.as_bytes(), b"/srv/f00");
+            assert_eq!(*inode, Some(100));
+        }
+        other => panic!("{other:?}"),
+    }
+}
