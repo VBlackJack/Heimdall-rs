@@ -145,10 +145,12 @@ async fn tab(dir: &Path) -> (App, TabId) {
         size: Some(4096),
         modified: None,
     };
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![
@@ -158,10 +160,12 @@ async fn tab(dir: &Path) -> (App, TabId) {
             )),
         },
     );
+    let request = local_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::LocalListed {
             tab,
+            request,
             result: Ok((
                 dir.to_owned(),
                 vec![
@@ -909,10 +913,12 @@ async fn a_folder_with_a_link_ends_incomplete() {
 async fn a_servers_entry_gets_new_permissions_typed_in_octal() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut app, tab) = tab(dir.path()).await;
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![RemoteEntry {
@@ -1289,10 +1295,12 @@ async fn cut_entries_are_pasted_by_a_move_into_the_folder_shown() {
 
     select(&mut app, tab, Side::Remote, 1);
     files(&mut app, FilesMessage::Cut { tab });
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((RemotePath::from("/srv/logs"), Vec::new())),
         },
     );
@@ -1454,10 +1462,12 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
                 shell: None,
             },
         });
+        let request = remote_request(app, tab);
         files(
             app,
             FilesMessage::RemoteListed {
                 tab,
+                request,
                 result: Ok((
                     RemotePath::from("/srv"),
                     vec![RemoteEntry {
@@ -1689,10 +1699,12 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
         "a file: its folder"
     );
 
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((RemotePath::from("/srv/it's"), Vec::new())),
         },
     );
@@ -1701,10 +1713,12 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
         [r"cd -- '/srv/it'\''s'"],
         "quoted for sh"
     );
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((RemotePath::from("/srv/a\nrm -rf ~"), Vec::new())),
         },
     );
@@ -1941,10 +1955,12 @@ fn local_browser(app: &mut App, file: &Path) -> TabId {
     };
     let browser = *browser;
     let name = file.file_name().expect("name");
+    let request = local_request(app, browser);
     files(
         app,
         FilesMessage::LocalListed {
             tab: browser,
+            request,
             result: Ok((
                 file.parent().expect("folder").to_owned(),
                 vec![LocalEntry {
@@ -2239,10 +2255,12 @@ async fn a_file_too_large_for_the_integrated_editor_points_to_the_external_one()
         group: None,
         inode: None,
     };
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((RemotePath::from("/srv"), vec![large])),
         },
     );
@@ -2390,10 +2408,12 @@ async fn opening_a_file_too_large_to_edit_downloads_it_as_before() {
         group: None,
         inode: None,
     };
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((RemotePath::from("/srv"), vec![large])),
         },
     );
@@ -2739,10 +2759,12 @@ async fn a_servers_entry_is_acted_on_in_the_folder_it_was_listed_from() {
     for failed in [false, true] {
         if failed {
             // The listing failed: its entries never came, those of "/srv" stay shown.
+            let request = remote_request(&mut app, tab);
             files(
                 &mut app,
                 FilesMessage::RemoteListed {
                     tab,
+                    request,
                     result: Err(FilesError::IsLink),
                 },
             );
@@ -2957,10 +2979,12 @@ async fn what_was_asked_about_is_acted_on_even_once_another_listing_arrived() {
     let (mut app, tab) = tab(dir.path()).await;
     let side = Side::Remote;
     let arrives = |app: &mut App| {
+        let request = remote_request(app, tab);
         files(
             app,
             FilesMessage::RemoteListed {
                 tab,
+                request,
                 result: Ok((
                     RemotePath::from("/srv/logs"),
                     vec![remote_entry("a.txt", EntryKind::File)],
@@ -2982,10 +3006,12 @@ async fn what_was_asked_about_is_acted_on_even_once_another_listing_arrived() {
     }
 
     files(&mut app, FilesMessage::Up { tab, side });
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![
@@ -3013,10 +3039,12 @@ async fn after_a_failed_listing_the_folder_shown_is_the_one_listed() {
     let (mut app, tab) = tab(dir.path()).await;
     let side = Side::Remote;
     let failed = |app: &mut App| {
+        let request = remote_request(app, tab);
         files(
             app,
             FilesMessage::RemoteListed {
                 tab,
+                request,
                 result: Err(FilesError::IsLink),
             },
         );
@@ -3052,10 +3080,12 @@ async fn after_a_failed_listing_the_folder_shown_is_the_one_listed() {
 
     // Back goes to the folder shown before the one that failed, never to it.
     another_on_its_way(&mut app, tab, side);
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv/logs"),
                 vec![remote_entry("old", EntryKind::Directory)],
@@ -3065,10 +3095,12 @@ async fn after_a_failed_listing_the_folder_shown_is_the_one_listed() {
     another_on_its_way(&mut app, tab, side);
     failed(&mut app);
     another_on_its_way(&mut app, tab, side);
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((RemotePath::from("/srv/logs/old"), Vec::new())),
         },
     );
@@ -3077,6 +3109,240 @@ async fn after_a_failed_listing_the_folder_shown_is_the_one_listed() {
         matches!(back.as_slice(), [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/srv/logs"),
         "{back:?}"
     );
+}
+
+/// The listing `effects` asked for, on either side, and its folder.
+fn asked(effects: &[Effect]) -> (heimdall_app::files::ListingRequest, String) {
+    match effects {
+        [Effect::ListRemote { request, path, .. }] => (*request, path.display()),
+        [Effect::ListLocal { request, path, .. }] => (*request, path.display().to_string()),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// `side` sent to `folder`, typed in its path bar: the listing asked for.
+fn go_to(
+    app: &mut App,
+    tab: TabId,
+    side: Side,
+    folder: &str,
+) -> heimdall_app::files::ListingRequest {
+    files(
+        app,
+        FilesMessage::PathEdited {
+            tab,
+            side,
+            text: folder.to_owned(),
+        },
+    );
+    asked(&files(app, FilesMessage::GoTo { tab, side })).0
+}
+
+/// The listing `request` of `side` arrived: `folder` and the files `names`, or `error`.
+fn arrived(
+    app: &mut App,
+    tab: TabId,
+    side: Side,
+    request: heimdall_app::files::ListingRequest,
+    listed: Result<(&str, &[&str]), FilesError>,
+) {
+    let message = match side {
+        Side::Remote => FilesMessage::RemoteListed {
+            tab,
+            request,
+            result: listed.map(|(folder, names)| {
+                let entries = names
+                    .iter()
+                    .map(|name| remote_entry(name, EntryKind::File))
+                    .collect();
+                (RemotePath::from(folder), entries)
+            }),
+        },
+        Side::Local => FilesMessage::LocalListed {
+            tab,
+            request,
+            result: listed.map(|(folder, names)| {
+                let entries = names
+                    .iter()
+                    .map(|name| LocalEntry {
+                        name: (*name).into(),
+                        label: (*name).to_owned(),
+                        kind: EntryKind::File,
+                        size: Some(1),
+                        modified: None,
+                    })
+                    .collect();
+                (PathBuf::from(folder), entries)
+            }),
+        },
+    };
+    files(app, message);
+}
+
+/// What `side` shows: the folder named, the labels of its entries, and whether a listing
+/// is on its way.
+fn shown(app: &App, tab: TabId, side: Side) -> (String, Vec<String>, bool) {
+    let files = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+    match side {
+        Side::Remote => (
+            files.remote.path.display(),
+            files
+                .remote
+                .entries
+                .iter()
+                .map(|e| e.label.clone())
+                .collect(),
+            files.remote.loading,
+        ),
+        Side::Local => (
+            files.local.path.display().to_string(),
+            files
+                .local
+                .entries
+                .iter()
+                .map(|e| e.label.clone())
+                .collect(),
+            files.local.loading,
+        ),
+    }
+}
+
+#[tokio::test]
+async fn the_listing_asked_for_last_is_shown_whatever_order_they_come_in() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    for side in [Side::Remote, Side::Local] {
+        let folder = |name: &str| match side {
+            Side::Remote => format!("/srv/{name}"),
+            Side::Local => dir.path().join(name).display().to_string(),
+        };
+        let start = shown(&app, tab, side).0;
+
+        // Two folders asked for one after the other: the second's listing comes first, the
+        // first's after it, and is not shown.
+        let first = go_to(&mut app, tab, side, &folder("first"));
+        let second = go_to(&mut app, tab, side, &folder("second"));
+        assert_ne!(first, second);
+        arrived(
+            &mut app,
+            tab,
+            side,
+            second,
+            Ok((&folder("second"), &["new"])),
+        );
+        arrived(&mut app, tab, side, first, Ok((&folder("first"), &["old"])));
+        assert_eq!(
+            shown(&app, tab, side),
+            (folder("second"), vec!["new".to_owned()], false),
+            "{side:?}: the one asked for last"
+        );
+        // The folder left is the one shown before, never the one that came late.
+        let (back, to) = asked(&files(&mut app, FilesMessage::Back { tab, side }));
+        assert_eq!(to, start, "{side:?}");
+        arrived(&mut app, tab, side, back, Ok((&start, &[])));
+
+        // A failure of a listing asked for before another: no error shown, the folder named
+        // stays, the other one still awaited and shown when it comes.
+        let failing = go_to(&mut app, tab, side, &folder("gone"));
+        let awaited = go_to(&mut app, tab, side, &folder("third"));
+        arrived(&mut app, tab, side, failing, Err(FilesError::IsLink));
+        assert_eq!(shown(&app, tab, side), (start.clone(), Vec::new(), true));
+        assert_eq!(pane_error(&app, tab, side), None, "{side:?}");
+        arrived(&mut app, tab, side, awaited, Ok((&folder("third"), &["x"])));
+        assert_eq!(
+            shown(&app, tab, side),
+            (folder("third"), vec!["x".to_owned()], false)
+        );
+
+        // Given up with Escape, then another asked for: the one given up, coming between,
+        // is not shown, and the other one still is when it comes.
+        let given_up = go_to(&mut app, tab, side, &folder("fourth"));
+        key(&mut app, tab, FilesKey::CancelLoad);
+        let next = go_to(&mut app, tab, side, &folder("fifth"));
+        arrived(
+            &mut app,
+            tab,
+            side,
+            given_up,
+            Ok((&folder("fourth"), &["late"])),
+        );
+        assert_eq!(
+            shown(&app, tab, side),
+            (folder("third"), vec!["x".to_owned()], true),
+            "{side:?}: the one given up is not shown"
+        );
+        arrived(&mut app, tab, side, next, Ok((&folder("fifth"), &["y"])));
+        assert_eq!(
+            shown(&app, tab, side),
+            (folder("fifth"), vec!["y".to_owned()], false)
+        );
+
+        // Given up with nothing asked after it: still not shown when it comes.
+        let given_up = go_to(&mut app, tab, side, &folder("sixth"));
+        key(&mut app, tab, FilesKey::CancelLoad);
+        arrived(&mut app, tab, side, given_up, Err(FilesError::IsLink));
+        assert_eq!(
+            shown(&app, tab, side),
+            (folder("fifth"), vec!["y".to_owned()], false)
+        );
+        assert_eq!(pane_error(&app, tab, side), None, "{side:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_link_entered_then_left_for_another_folder_says_that_folders_failure() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let side = Side::Remote;
+    let request = go_to(&mut app, tab, side, "/srv/x");
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            request,
+            result: Ok((
+                RemotePath::from("/srv/x"),
+                vec![remote_entry("lnk", EntryKind::Link)],
+            )),
+        },
+    );
+    // The link double-clicked, then another folder asked for before its listing came.
+    let (link, _) = asked(&another_on_its_way(&mut app, tab, side));
+    let other = go_to(&mut app, tab, side, "/srv/y");
+    arrived(&mut app, tab, side, link, Err(FilesError::IsLink));
+    arrived(&mut app, tab, side, other, Err(FilesError::SessionClosed));
+    assert_eq!(pane_error(&app, tab, side), Some(FilesError::SessionClosed));
+    assert_ne!(
+        app.notice(),
+        Some(&Notice::LinkNotAFolder("lnk".to_owned()))
+    );
+    assert_eq!(
+        shown(&app, tab, side),
+        ("/srv/x".to_owned(), vec!["lnk".to_owned()], false),
+        "where the entries shown were listed"
+    );
+}
+
+#[tokio::test]
+async fn a_listing_shown_once_is_not_shown_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    for side in [Side::Remote, Side::Local] {
+        let folder = match side {
+            Side::Remote => "/srv/once".to_owned(),
+            Side::Local => dir.path().join("once").display().to_string(),
+        };
+        let request = go_to(&mut app, tab, side, &folder);
+        arrived(&mut app, tab, side, request, Ok((&folder, &["first"])));
+        arrived(&mut app, tab, side, request, Ok((&folder, &["again"])));
+        assert_eq!(
+            shown(&app, tab, side),
+            (folder.clone(), vec!["first".to_owned()], false),
+            "{side:?}"
+        );
+    }
 }
 
 fn remote_entry(name: &str, kind: EntryKind) -> RemoteEntry {
@@ -3091,5 +3357,55 @@ fn remote_entry(name: &str, kind: EntryKind) -> RemoteEntry {
         owner_name: None,
         group: None,
         inode: None,
+    }
+}
+
+/// The listing the local pane of `tab` waits for; one asked for by a refresh when none is.
+fn local_request(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    awaited_listing(app, tab, heimdall_app::files::Side::Local)
+}
+
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
+fn remote_request(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
     }
 }

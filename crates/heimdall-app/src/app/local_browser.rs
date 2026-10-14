@@ -149,7 +149,7 @@ impl App {
         else {
             return false;
         };
-        if files.local.path == home || files.local.discard_listing {
+        if files.local.path == home {
             return false;
         }
         files.local.path = home;

@@ -11731,6 +11731,7 @@ fn sudo_task(effect: Effect) -> Task<Message> {
             shell,
             path,
             password,
+            request,
         } => Task::perform(
             {
                 let path = path.clone();
@@ -11749,6 +11750,7 @@ fn sudo_task(effect: Effect) -> Task<Message> {
             move |result| {
                 Message::App(AppMessage::Files(FilesMessage::SudoListed {
                     tab,
+                    request,
                     path: path.clone(),
                     result,
                 }))
@@ -11915,17 +11917,27 @@ fn edit_task(effect: Effect) -> Task<Message> {
 #[expect(clippy::too_many_lines, reason = "one arm per effect")]
 fn files_task(effect: Effect, journal: Option<OperationJournal>) -> Task<Message> {
     match effect {
-        Effect::ListRemote { tab, client, path } => {
-            Task::perform(list_remote(client, path), move |result| {
-                Message::App(AppMessage::Files(FilesMessage::RemoteListed {
+        Effect::ListRemote {
+            tab,
+            client,
+            path,
+            request,
+        } => Task::perform(list_remote(client, path), move |result| {
+            Message::App(AppMessage::Files(FilesMessage::RemoteListed {
+                tab,
+                request,
+                result,
+            }))
+        }),
+        Effect::ListLocal { tab, path, request } => {
+            Task::perform(list_local(path), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::LocalListed {
                     tab,
+                    request,
                     result,
                 }))
             })
         }
-        Effect::ListLocal { tab, path } => Task::perform(list_local(path), move |result| {
-            Message::App(AppMessage::Files(FilesMessage::LocalListed { tab, result }))
-        }),
         Effect::PlanTransfer { tab, request } => {
             let planned = (*request).clone();
             // Started inside the task, like a transfer: spawning needs the runtime.

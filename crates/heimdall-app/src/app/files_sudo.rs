@@ -22,25 +22,33 @@ use heimdall_files::{RemotePath, RemoteSession};
 
 use super::files_edit::{SudoAction, is_password_error};
 use super::{App, Effect, Notice};
-use crate::files::{FilesError, FilesPane, RemoteEntry, Side};
+use crate::files::{FilesError, FilesPane, ListingRequest, RemoteEntry, Side};
 use crate::ids::TabId;
 
 /// The listing of the server's folder `path` in `tab`: as root while its sudo mode is on,
-/// with the password sudo took for the tab.
+/// with the password sudo took for the tab. It is the server pane's latest: any other one on
+/// its way is not shown.
 pub(super) fn remote_listing(
-    files: &FilesPane,
+    files: &mut FilesPane,
     tab: TabId,
     client: RemoteSession,
     path: RemotePath,
 ) -> Effect {
+    let request = files.remote.ask_listing();
     match files.shell.clone().filter(|_| files.sudo_mode) {
         Some(shell) => Effect::SudoListRemote {
             tab,
             shell,
             path,
             password: files.sudo_password.clone(),
+            request,
         },
-        None => Effect::ListRemote { tab, client, path },
+        None => Effect::ListRemote {
+            tab,
+            client,
+            path,
+            request,
+        },
     }
 }
 
@@ -80,27 +88,27 @@ impl App {
     pub(super) fn sudo_listed(
         &mut self,
         tab: TabId,
+        request: ListingRequest,
         path: RemotePath,
         result: Result<(RemotePath, Vec<RemoteEntry>), FilesError>,
     ) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        if !files.sudo_mode {
+        // Asked for before another one, or given up with Escape: nothing is shown or asked.
+        if !files.sudo_mode || !files.remote.awaits(request) {
             return Vec::new();
         }
         match result {
             Err(error) if is_password_error(&error) => {
-                // Given up with Escape: nothing is asked.
-                if std::mem::take(&mut files.remote.discard_listing) {
-                    return Vec::new();
-                }
-                files.remote.loading = false;
+                // Failed as any listing: the folder named is the one whose entries are
+                // shown while the password is asked.
+                files.remote.listing_failed();
                 let name = crate::text::server_text(&path.display());
                 self.sudo_refused(tab, name, SudoAction::List(path), error);
                 Vec::new()
             }
-            result => self.remote_listed(tab, result),
+            result => self.remote_listed(tab, request, result),
         }
     }
 
@@ -112,8 +120,8 @@ impl App {
         let Some(client) = files.client.clone() else {
             return Vec::new();
         };
-        files.remote.loading = true;
-        files.remote.discard_listing = false;
+        // The folder shown is left for it, as when it was first asked for.
+        files.remote.leave();
         vec![remote_listing(files, tab, client, path)]
     }
 }
