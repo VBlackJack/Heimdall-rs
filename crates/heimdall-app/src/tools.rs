@@ -148,6 +148,16 @@ pub enum ToolId {
     SecNumCloud,
     /// The SMB protocol enumerator, the C# `SMBENUM`.
     Smb,
+    /// The HTTP status codes reference, the C# `HTTP`.
+    HttpStatus,
+    /// The TCP ping latency probe, the C# `TCPPING`.
+    TcpPing,
+    /// The Wake-on-LAN magic packet tool, the C# `WOL`.
+    WakeOnLan,
+    /// The WHOIS domain lookup tool, the C# `WHOIS`.
+    Whois,
+    /// The TCP banner grabber, the C# `BANNER`.
+    BannerGrabber,
 }
 
 /// What the registry says of a tool.
@@ -196,10 +206,14 @@ impl ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 35] = [
         Self::SubnetCalculator,
         Self::IpConverter,
         Self::NetworkCalculator,
+        Self::HttpStatus,
+        Self::Whois,
+        Self::BannerGrabber,
+        Self::TcpPing,
         Self::Hash,
         Self::Hmac,
         Self::Password,
@@ -227,10 +241,12 @@ impl ToolId {
         Self::Ulid,
         Self::Crontab,
         Self::SshConfig,
+        Self::WakeOnLan,
     ];
 
     /// Its entry, as the C# registry's (`ToolRegistry.cs:62-109`).
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one arm per tool")]
     pub const fn descriptor(self) -> ToolDescriptor {
         match self {
             Self::SubnetCalculator => {
@@ -325,6 +341,21 @@ impl ToolId {
                 ToolCategory::System,
                 &["sshconfig", "ssh-config"],
             ),
+            Self::HttpStatus => {
+                ToolDescriptor::local("HTTP", ToolCategory::Network, &["http", "status"])
+            }
+            Self::Whois => ToolDescriptor::network("WHOIS", ToolCategory::Network, &["whois"]),
+            Self::BannerGrabber => {
+                ToolDescriptor::network("BANNER", ToolCategory::Network, &["banner", "grab"])
+            }
+            Self::TcpPing => ToolDescriptor::network(
+                "TCPPING",
+                ToolCategory::Network,
+                &["tcpping", "tcping", "portping"],
+            ),
+            Self::WakeOnLan => {
+                ToolDescriptor::local("WOL", ToolCategory::External, &["wol", "wake", "wakeonlan"])
+            }
         }
     }
 
