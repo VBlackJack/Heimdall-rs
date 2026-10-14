@@ -1058,7 +1058,7 @@ fn fields(line: &str) -> Vec<(usize, &str)> {
 /// every space before the name, so ` a` and `a` would be one entry, and a delete or a
 /// download would reach the other. A link's name stops at the first ` -> `, as the parser
 /// stops it. None when the date is not there or a tab follows it: the parser's name then.
-fn exact_name(line: &str, fields: &[(usize, &str)], date: usize, link: bool) -> Option<String> {
+fn exact_name(line: &str, fields: &[(usize, &str)], date: usize, is_link: bool) -> Option<String> {
     let field = |at: usize| fields.get(at).map(|(_, field)| *field);
     let dated = field(date).is_some_and(month)
         && field(date + 1).is_some_and(|day| digits(day, 1, 2))
@@ -1076,7 +1076,7 @@ fn exact_name(line: &str, fields: &[(usize, &str)], date: usize, link: bool) -> 
         return None;
     }
     let name = line.get(start + time.len()..)?.strip_prefix(' ')?;
-    let name = if link {
+    let name = if is_link {
         name.split(" -> ").next()?
     } else {
         name
