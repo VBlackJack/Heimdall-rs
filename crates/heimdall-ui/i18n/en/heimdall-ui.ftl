@@ -3645,6 +3645,7 @@ ui-files-tooltip-type = Type: { $kind }
 ui-files-tooltip-size = Size: { $size }
 ui-files-tooltip-modified = Modified: { $at }
 ui-files-tooltip-permissions = Permissions: { $permissions }
+ui-files-tooltip-owner = Owner: { $owner }
 ui-files-tooltip-time = { $day } { $time } UTC
 ui-tree-expand-all = Expand all
 ui-tree-collapse-all = Collapse all

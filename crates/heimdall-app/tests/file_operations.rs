@@ -134,6 +134,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     };
@@ -922,6 +923,7 @@ async fn a_servers_entry_gets_new_permissions_typed_in_octal() {
                     modified: None,
                     permissions: Some(0o755),
                     owner: Some(1000),
+                    owner_name: None,
                     group: Some(50),
                     inode: None,
                 }],
@@ -980,6 +982,7 @@ async fn a_servers_entry_shows_its_properties() {
             modified: None,
             permissions: None,
             owner: None,
+            owner_name: None,
             group: None,
             path: "/srv/a.txt".to_owned(),
         })))
@@ -1465,6 +1468,7 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
                         modified: None,
                         permissions: None,
                         owner: None,
+                        owner_name: None,
                         group: None,
                         inode: None,
                     }],
@@ -2231,6 +2235,7 @@ async fn a_file_too_large_for_the_integrated_editor_points_to_the_external_one()
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     };
@@ -2381,6 +2386,7 @@ async fn opening_a_file_too_large_to_edit_downloads_it_as_before() {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     };

@@ -117,6 +117,7 @@ fn remote(name: &str, kind: EntryKind, size: u64) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     }
@@ -604,6 +605,7 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
                     modified: Some(UNIX_EPOCH + Duration::from_secs(1_790_536_503)),
                     permissions: Some(0o4755),
                     owner: Some(1000),
+                    owner_name: None,
                     group: None,
                     inode: None,
                 }],
@@ -902,9 +904,9 @@ async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
 }
 
 #[tokio::test]
-async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_show() {
+async fn the_servers_menu_offers_permissions_and_properties() {
     let dir = tempfile::tempdir().expect("dir");
-    let (core, tab) = files_tab(dir.path()).await;
+    let (_core, tab) = files_tab(dir.path()).await;
     let settings = || Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
@@ -947,7 +949,12 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
         menu(Side::Remote).find("Duplicate").is_err(),
         "a tab that cannot copy on its server"
     );
+}
 
+#[tokio::test]
+async fn the_servers_permissions_and_properties_dialogs_show() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
     let mut shell = Shell::with_app(core);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
@@ -962,6 +969,7 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
                     modified: None,
                     permissions: Some(0o755),
                     owner: Some(1000),
+                    owner_name: Some("deploy".to_owned()),
                     group: Some(50),
                     inode: None,
                 }],
@@ -991,6 +999,9 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
         ] {
             ui.find(shown).expect(shown);
         }
+        // The name the server gave, in the list and in the dialog, never its number.
+        assert_eq!(common::all_bounds(&mut ui, "deploy").len(), 2);
+        assert!(ui.find("1000").is_err(), "the number unsaid");
     }
     let _ = shell.update(Message::App(AppMessage::DismissDialog));
     let _ = shell.update(Message::App(AppMessage::Files(
@@ -2127,6 +2138,7 @@ async fn columns_shell(dir: &Path) -> Shell {
             modified: Some(UNIX_EPOCH + Duration::from_secs(1_790_536_503)),
             permissions: Some(0o4755),
             owner: Some(1000),
+            owner_name: None,
             group: None,
             inode: None,
         }],

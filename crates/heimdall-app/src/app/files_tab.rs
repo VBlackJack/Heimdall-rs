@@ -2330,6 +2330,7 @@ impl App {
             modified: entry.modified,
             permissions: entry.permissions,
             owner: entry.owner,
+            owner_name: entry.owner_name.clone(),
             group: entry.group,
             path: crate::text::server_text(&pane.entries_folder().join(&entry.name).display()),
         };
