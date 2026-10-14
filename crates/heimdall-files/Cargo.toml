@@ -16,6 +16,8 @@ publish.workspace = true
 # heimdall-net: every TCP connection to a host by name, Happy Eyeballs.
 heimdall-net.workspace = true
 heimdall-sftp.workspace = true
+# log: a listing's unread lines counted, already the workspace's logger.
+log.workspace = true
 # sealvault: the copy script's random token.
 sealvault.workspace = true
 suppaftp.workspace = true
