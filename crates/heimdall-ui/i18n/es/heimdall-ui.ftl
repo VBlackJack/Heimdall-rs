@@ -3892,3 +3892,431 @@ ui-profile-path-session-vnc = Sesión VNC
 ui-profile-path-session-telnet = Sesión Telnet
 ui-profile-path-session-citrix = Sesión Citrix
 ui-profile-path-session-local = Shell local
+
+ui-tool-sshaudit-name = Auditor de claves SSH
+ui-tool-sshaudit-description = Analiza la seguridad de las claves SSH y ofrece recomendaciones
+ui-tool-sshaudit-title = Auditor de claves SSH
+ui-tool-sshaudit-input = Pega la clave SSH (pública o privada, formato OpenSSH o PEM)
+ui-tool-sshaudit-browse = Examinar...
+ui-tool-sshaudit-details = Detalles de la clave
+ui-tool-sshaudit-findings = Resultados de seguridad
+ui-tool-sshaudit-algorithm = Algoritmo
+ui-tool-sshaudit-key-size = Tamaño de clave
+ui-tool-sshaudit-fingerprint = Huella
+ui-tool-sshaudit-format = Formato
+ui-tool-sshaudit-type = Tipo
+ui-tool-sshaudit-public = Clave pública
+ui-tool-sshaudit-private = Clave privada
+ui-tool-sshaudit-encrypted = Cifrada
+ui-tool-sshaudit-yes = Sí
+ui-tool-sshaudit-no = No
+ui-tool-sshaudit-rating = Calificación de seguridad
+ui-tool-sshaudit-strong = Fuerte
+ui-tool-sshaudit-acceptable = Aceptable
+ui-tool-sshaudit-weak = Débil
+ui-tool-sshaudit-deprecated = Obsoleto
+ui-tool-sshaudit-bits = { $bits } bits
+ui-tool-sshaudit-copy-fingerprint = Copiar huella
+ui-tool-sshaudit-empty-state = Pega una clave SSH o busca un archivo de clave para auditar su seguridad
+ui-tool-sshaudit-parse-error = No se pudo interpretar la clave proporcionada. Asegúrate de que sea una clave SSH pública o privada válida.
+ui-tool-sshaudit-file-too-large = El archivo supera los { $limit } bytes y no se puede auditar.
+ui-tool-sshaudit-file-read-error = No se pudo leer el archivo de clave: { $error }
+ui-tool-sshaudit-finding-ed25519 = Ed25519 es el algoritmo recomendado: rápido, seguro y compacto
+ui-tool-sshaudit-finding-rsa-strong = El tamaño de clave RSA es fuerte ({ $bits } bits)
+ui-tool-sshaudit-finding-rsa-ok = RSA de 2048 bits cumple el mínimo, pero se recomiendan 4096
+ui-tool-sshaudit-finding-rsa-weak = La clave RSA es demasiado corta ({ $bits } bits); se requiere un mínimo de 2048
+ui-tool-sshaudit-finding-dsa = DSA está obsoleto y no debería usarse; migra a Ed25519
+ui-tool-sshaudit-finding-ecdsa-strong = ECDSA con curva de { $bits } bits es fuerte
+ui-tool-sshaudit-finding-ecdsa-ok = ECDSA de 256 bits es aceptable; considera Ed25519 para mejor rendimiento
+ui-tool-sshaudit-finding-unencrypted = La clave privada no está cifrada; añade una frase de contraseña para protegerla
+ui-tool-sshaudit-finding-encrypted = La clave privada está cifrada con una frase de contraseña
+ui-tool-sshaudit-finding-old-format = El formato PEM antiguo usa cifrado débil basado en MD5; convierte al formato OpenSSH
+ui-tool-sshaudit-help =
+    Auditor de claves SSH
+
+    Analiza la seguridad de las claves SSH y proporciona recomendaciones.
+
+    Uso:
+    1. Pegue una clave SSH (pública o privada) en el área de texto, O
+    2. Haga clic en Examinar para cargar un archivo de clave
+
+    Formatos admitidos:
+    - Claves públicas OpenSSH (ssh-rsa, ssh-ed25519, ecdsa-sha2-*)
+    - Claves privadas OpenSSH
+    - Formato PEM (PKCS#1, PKCS#8)
+
+    Comprobaciones de seguridad:
+    - Fortaleza del algoritmo (Ed25519 > ECDSA > RSA > DSA)
+    - Adecuación del tamaño de clave (RSA: mín. 2048, recomendado 4096)
+    - Estado de cifrado (se señalan las claves privadas sin cifrar)
+    - Seguridad del formato (cifrado PEM antiguo vs OpenSSH moderno)
+
+ui-tool-tlsaudit-name = Auditor TLS
+ui-tool-tlsaudit-description = Audita los protocolos TLS, conjuntos de cifrado y certificados
+ui-tool-tlsaudit-title = Auditor SSL/TLS
+ui-tool-tlsaudit-host = Host
+ui-tool-tlsaudit-port = Puerto
+ui-tool-tlsaudit-audit = Auditar
+ui-tool-tlsaudit-cancel = Cancelar
+ui-tool-tlsaudit-grade = Calificación
+ui-tool-tlsaudit-protocols = Compatibilidad de protocolos
+ui-tool-tlsaudit-ciphers = Conjuntos de cifrado (TLS 1.2)
+ui-tool-tlsaudit-supported = Compatible
+ui-tool-tlsaudit-not-supported = No compatible
+ui-tool-tlsaudit-strong = Fuerte
+ui-tool-tlsaudit-acceptable = Aceptable
+ui-tool-tlsaudit-weak = Débil
+ui-tool-tlsaudit-critical = Crítico
+ui-tool-tlsaudit-col-cipher = Conjunto de cifrado
+ui-tool-tlsaudit-col-strength = Fortaleza
+ui-tool-tlsaudit-col-key-ex = Intercambio de claves
+ui-tool-tlsaudit-col-auth = Autenticación
+ui-tool-tlsaudit-col-enc = Cifrado
+ui-tool-tlsaudit-findings = Hallazgos
+ui-tool-tlsaudit-finding-ssl3 = SSL 3.0 es compatible - vulnerable al ataque POODLE
+ui-tool-tlsaudit-finding-tls10 = TLS 1.0 es compatible - obsoleto desde 2020
+ui-tool-tlsaudit-finding-tls11 = TLS 1.1 es compatible - obsoleto desde 2020
+ui-tool-tlsaudit-finding-no-tls13 = TLS 1.3 no es compatible - se recomienda para máxima seguridad
+ui-tool-tlsaudit-finding-weak-cipher = Se detectó un conjunto de cifrado débil: { $suite }
+ui-tool-tlsaudit-finding-no-pfs = Se aceptan conjuntos de cifrado sin PFS (sin intercambio de claves ECDHE/DHE)
+ui-tool-tlsaudit-finding-all-good = Configuración TLS fuerte - solo protocolos y cifrados modernos
+ui-tool-tlsaudit-cert-section = Certificado
+ui-tool-tlsaudit-cert-subject = Sujeto
+ui-tool-tlsaudit-cert-issuer = Emisor
+ui-tool-tlsaudit-cert-expires = Caduca
+ui-tool-tlsaudit-cert-key-size = Tamaño de clave
+ui-tool-tlsaudit-bits = { $bits } bits
+ui-tool-tlsaudit-progress = Probando { $step }...
+ui-tool-tlsaudit-progress-ciphers = Enumerando conjuntos de cifrado...
+ui-tool-tlsaudit-copy-report = Copiar informe
+ui-tool-tlsaudit-empty-state = Introduce un host y puerto para auditar su configuración TLS
+ui-tool-tlsaudit-error-host-required = El host es obligatorio
+ui-tool-tlsaudit-error-invalid-host = Nombre de host o dirección IP no válida
+ui-tool-tlsaudit-error-invalid-port = El puerto debe estar entre 1 y 65535
+ui-tool-tlsaudit-error-connection = Falló la conexión: { $error }
+ui-tool-tlsaudit-report-title = Informe de auditoría SSL/TLS: { $host }:{ $port }
+ui-tool-tlsaudit-report-grade = Calificación: { $grade }
+ui-tool-tlsaudit-report-protocols = === Compatibilidad de protocolos ===
+ui-tool-tlsaudit-report-ciphers = === Conjuntos de cifrado (TLS 1.2) ===
+ui-tool-tlsaudit-report-cert = === Certificado ===
+ui-tool-tlsaudit-report-findings = === Hallazgos ===
+ui-tool-tlsaudit-help =
+    Auditor SSL/TLS
+
+    Audita la configuración TLS de un servidor, sus conjuntos de cifrado y certificado.
+
+    Uso:
+    1. Introduce un nombre de host o dirección IP de destino
+    2. Introduce el puerto de destino (predeterminado: 443)
+    3. Haz clic en Auditar para iniciar la comprobación
+
+    Comprobaciones realizadas:
+    - Compatibilidad de protocolos (SSL 3.0, TLS 1.0, 1.1, 1.2, 1.3)
+    - Enumeración de conjuntos TLS 1.2 (PFS, intercambio de claves, fortaleza del cifrado)
+    - Inspección del certificado del servidor (sujeto, emisor, validez, longitud de clave)
+    - Cálculo de calificación de seguridad (de A+ a F) y recomendaciones
+
+ui-tool-dnssec-name = Verificador de seguridad DNS
+ui-tool-dnssec-description = Comprueba los registros SPF, DKIM, DMARC, CAA, DNSSEC y MX
+ui-tool-dnssec-title = Verificador de seguridad DNS
+ui-tool-dnssec-domain = Dominio
+ui-tool-dnssec-domain-watermark = ejemplo.es
+ui-tool-dnssec-check = Comprobar
+ui-tool-dnssec-cancel = Cancelar
+ui-tool-dnssec-copy-report = Copiar informe
+ui-tool-dnssec-empty-state = Introduce un dominio para analizar sus registros de seguridad DNS
+ui-tool-dnssec-summary = { $passed } / { $total } comprobaciones superadas
+ui-tool-dnssec-summary-all-pass = Todas las comprobaciones superadas ({ $passed }/{ $total })
+ui-tool-dnssec-summary-good = Buena postura de seguridad ({ $passed }/{ $total })
+ui-tool-dnssec-summary-partial = Cobertura de seguridad parcial ({ $passed }/{ $total })
+ui-tool-dnssec-summary-bad = Mala postura de seguridad ({ $passed }/{ $total })
+ui-tool-dnssec-pass = Conforme
+ui-tool-dnssec-warn = Advertencia
+ui-tool-dnssec-fail = No conforme
+ui-tool-dnssec-no-record = No se encontró ningún registro
+ui-tool-dnssec-progress = Consultando { $record } para { $domain }...
+ui-tool-dnssec-status-complete = Completado en { $ms } ms
+ui-tool-dnssec-error-domain-required = El dominio es obligatorio
+ui-tool-dnssec-error-invalid-domain = Formato de nombre de dominio no válido
+ui-tool-dnssec-error-timeout = La consulta DNS ha caducado tras 30 segundos
+ui-tool-dnssec-error-failed = Error de búsqueda DNS: { $error }
+ui-tool-dnssec-finding-missing = Registro ausente o no configurado
+ui-tool-dnssec-finding-spf-permissive = La política SPF utiliza +all (permisivo: cualquier servidor puede enviar correo)
+ui-tool-dnssec-finding-spf-neutral = La política SPF utiliza ?all (neutral: sin aplicación)
+ui-tool-dnssec-finding-spf-no-all = El registro SPF carece de un mecanismo all
+ui-tool-dnssec-finding-spf-good = El registro SPF restringe los remitentes no autorizados
+ui-tool-dnssec-finding-dmarc-none = La política DMARC es none (solo supervisión, sin rechazo)
+ui-tool-dnssec-finding-dmarc-enforced = La política DMARC aplica { $policy }
+ui-tool-dnssec-finding-dmarc-pct-zero = Política DMARC configurada en { $policy } pero pct=0 (no aplicada)
+ui-tool-dnssec-finding-dkim-found = Clave pública DKIM configurada para el selector { $selector }
+ui-tool-dnssec-finding-dkim-revoked = La clave DKIM para el selector { $selector } tiene una clave pública vacía (revocada)
+ui-tool-dnssec-finding-dkim-none = No se encontraron registros DKIM para los selectores comunes
+ui-tool-dnssec-finding-caa-missing = Falta el registro CAA (cualquier autoridad de certificación puede emitir certificados)
+ui-tool-dnssec-finding-caa-present = CAA autoriza: { $issuers }
+ui-tool-dnssec-finding-dnssec-present = DNSSEC habilitado con firmas criptográficas
+ui-tool-dnssec-finding-dnssec-missing = DNSSEC no está habilitado
+ui-tool-dnssec-finding-mx-servers = Servidores de correo: { $servers }
+ui-tool-dnssec-finding-no-mx = No se encontraron registros MX
+ui-tool-dnssec-finding-error = Error: { $error }
+ui-tool-dnssec-report-title = === Informe de seguridad DNS para { $domain } ===
+ui-tool-dnssec-report-summary = Resumen: { $passed } / { $total } comprobaciones superadas
+ui-tool-dnssec-help =
+    Verificador de seguridad DNS
+
+    Audita la postura de seguridad de un dominio en seis controles DNS clave.
+
+    Uso:
+    1. Introduce un nombre de dominio (p. ej. ejemplo.es)
+    2. Haz clic en Comprobar para consultar los registros DNS
+
+    Controles evaluados:
+    - SPF: Valida los servidores autorizados para enviar correo
+    - DKIM: Comprueba las firmas criptográficas para el correo saliente
+    - DMARC: Verifica la alineación y políticas de rechazo (none, quarantine, reject)
+    - CAA: Verifica las autoridades de certificación autorizadas para emitir TLS
+    - DNSSEC: Comprueba la autenticidad criptográfica de las respuestas DNS
+    - MX: Identifica los puntos de entrega de correo
+
+## La herramienta de búsqueda de CVE sin conexión, como CveLookupView en C#.
+ui-tool-cve-name = Búsqueda CVE
+ui-tool-cve-description = Busca en una base de datos sin conexión de vulnerabilidades conocidas para software de infraestructura común
+ui-tool-cve-title = Búsqueda CVE
+ui-tool-cve-input-placeholder = Software y versión (o pega el banner)
+ui-tool-cve-btn-search = Buscar
+ui-tool-cve-summary = { $count ->
+    [one] Se encontró { $count } CVE para { $query }
+   *[other] Se encontraron { $count } CVE para { $query }
+}
+ui-tool-cve-no-results = No se encontraron CVE conocidas para esta versión de software.
+ui-tool-cve-empty-state = Introduce un nombre de software y versión para buscar vulnerabilidades conocidas
+ui-tool-cve-db-info = Base de datos sin conexión: { $cves } CVE que cubren { $products } productos
+ui-tool-cve-col-id = ID de CVE
+ui-tool-cve-col-cvss = CVSS
+ui-tool-cve-col-severity = Gravedad
+ui-tool-cve-col-summary = Resumen
+ui-tool-cve-col-affected = Versiones afectadas
+ui-tool-cve-severity-critical = Crítica
+ui-tool-cve-severity-high = Alta
+ui-tool-cve-severity-medium = Media
+ui-tool-cve-severity-low = Baja
+ui-tool-cve-btn-copy = Copiar informe
+ui-tool-cve-help =
+    Búsqueda CVE
+
+    Busca en una base de datos sin conexión de vulnerabilidades conocidas para software de infraestructura común.
+
+    Uso:
+    1. Introduce un nombre de software y versión (por ejemplo, "OpenSSH 8.9")
+    2. O pega un banner de servicio (por ejemplo, "SSH-2.0-OpenSSH_8.9p1")
+    3. Haz clic en Buscar
+
+    La herramienta detecta automáticamente nombres y versiones de software a partir de formatos de banner comunes (encabezados HTTP Server, banners SSH, saludos FTP, etc.).
+
+    Puntuación CVSS:
+    - Crítica (9.0-10.0): parcheo inmediato requerido
+    - Alta (7.0-8.9): parchear en la próxima oportunidad
+    - Media (4.0-6.9): programar el parcheo
+    - Baja (0.1-3.9): solo supervisar
+
+    Base de datos:
+    Base de datos curada sin conexión que cubre OpenSSH, Apache, nginx, MySQL, PostgreSQL, Redis, ProFTPD, y más. No requiere conexión a internet.
+
+
+
+## La herramienta de escaneo de credenciales predeterminadas, idéntica a DefaultCredentialView en C#.
+ui-tool-defaultcreds-name = Escáner de credenciales predeterminadas
+ui-tool-defaultcreds-description = Prueba credenciales predeterminadas comunes contra servicios detectados en un host de destino
+ui-tool-defaultcreds-title = Escáner de credenciales predeterminadas
+ui-tool-defaultcreds-host-label = Host
+ui-tool-defaultcreds-host-placeholder = Nombre de host o dirección IP
+ui-tool-defaultcreds-btn-scan = Escanear
+ui-tool-defaultcreds-btn-stop = Detener
+ui-tool-defaultcreds-auto-detect = Detectar servicios automáticamente
+ui-tool-defaultcreds-show-passwords = Mostrar contraseñas
+ui-tool-defaultcreds-warning = Usa esto solo en sistemas de tu propiedad o con autorización explícita para probar.
+ui-tool-defaultcreds-col-service = Servicio
+ui-tool-defaultcreds-col-port = Puerto
+ui-tool-defaultcreds-col-user = Usuario
+ui-tool-defaultcreds-col-pass = Contraseña
+ui-tool-defaultcreds-col-status = Estado
+ui-tool-defaultcreds-col-detail = Detalle
+ui-tool-defaultcreds-status-default = ¡Predeterminada!
+ui-tool-defaultcreds-status-changed = Cambiada
+ui-tool-defaultcreds-status-error = Error
+ui-tool-defaultcreds-detecting = Detectando servicios...
+ui-tool-defaultcreds-testing = Probando { $service } { $user }:{ $pass }...
+ui-tool-defaultcreds-summary = { $defaults ->
+    [one] { $defaults } credencial predeterminada encontrada en { $services ->
+        [one] { $services } servicio
+       *[other] { $services } servicios
+    }
+   *[other] { $defaults } credenciales predeterminadas encontradas en { $services ->
+        [one] { $services } servicio
+       *[other] { $services } servicios
+    }
+}
+ui-tool-defaultcreds-no-defaults = No se encontraron credenciales predeterminadas: todos los servicios probados parecen seguros.
+ui-tool-defaultcreds-btn-copy = Copiar informe
+ui-tool-defaultcreds-btn-export = Exportar CSV
+ui-tool-defaultcreds-empty-state = Introduce un host para escanear en busca de credenciales predeterminadas en servicios comunes
+ui-tool-defaultcreds-error-host-required = Se requiere un nombre de host o dirección IP.
+ui-tool-defaultcreds-error-invalid-host = Formato de nombre de host o dirección IP no válido.
+ui-tool-defaultcreds-detail-accepted = { $service } aceptó credenciales predeterminadas
+ui-tool-defaultcreds-detail-rejected = { $service } rechazó las credenciales
+ui-tool-defaultcreds-progress = Progreso del escaneo de credenciales
+ui-tool-defaultcreds-help =
+    Escáner de credenciales predeterminadas
+
+    Prueba credenciales predeterminadas comunes contra servicios detectados en un host de destino.
+
+    Uso:
+    1. Introduce un nombre de host o IP
+    2. Activa "Detectar servicios automáticamente" para escanear primero los puertos comunes
+    3. Haz clic en Escanear
+
+    Protocolos probados:
+    - SSH (contraseñas comunes de root/admin)
+    - Autenticación básica HTTP
+    - FTP (anónimo, admin)
+    - SNMP (cadenas de comunidad)
+    - MySQL, PostgreSQL, MSSQL (credenciales de base de datos predeterminadas)
+    - VNC (contraseñas comunes)
+    - Telnet
+    - Redis (detección de ausencia de autenticación)
+
+    Seguridad:
+    - Limitado en frecuencia (1 intento/segundo por servicio)
+    - Solo prueba credenciales predeterminadas bien conocidas
+    - NO realiza ataques de fuerza bruta
+ui-tool-secnumcloud-name = Auditoría SecNumCloud
+ui-tool-secnumcloud-description = Auditoría de cumplimiento SecNumCloud v3.2 en red, criptografía, accesos y operaciones
+ui-tool-secnumcloud-title = Auditoría de cumplimiento SecNumCloud v3.2
+ui-tool-secnumcloud-scope-label = Ámbito de la auditoría
+ui-tool-secnumcloud-scope-placeholder = 10.0.1.0/24 o un host por línea
+ui-tool-secnumcloud-depth-label = Profundidad
+ui-tool-secnumcloud-depth-quick = Rápida
+ui-tool-secnumcloud-depth-standard = Estándar
+ui-tool-secnumcloud-depth-deep = Profunda
+ui-tool-secnumcloud-chk-network = Red (cap. 9)
+ui-tool-secnumcloud-chk-crypto = Criptografía (cap. 10)
+ui-tool-secnumcloud-chk-access = Control de acceso (cap. 11)
+ui-tool-secnumcloud-chk-operations = Operaciones (cap. 12)
+ui-tool-secnumcloud-btn-start = Iniciar auditoría
+ui-tool-secnumcloud-btn-stop = Detener
+ui-tool-secnumcloud-compliance = Cumplimiento
+ui-tool-secnumcloud-status-pass = Correcto
+ui-tool-secnumcloud-status-warn = Aviso
+ui-tool-secnumcloud-status-fail = Fallo
+ui-tool-secnumcloud-status-error = Error
+ui-tool-secnumcloud-status-skipped = Omitido
+ui-tool-secnumcloud-ch-network = Seguridad de red
+ui-tool-secnumcloud-ch-crypto = Criptografía
+ui-tool-secnumcloud-ch-access = Control de acceso
+ui-tool-secnumcloud-ch-operations = Seguridad operativa
+ui-tool-secnumcloud-net01-name = Inventario de puertos abiertos
+ui-tool-secnumcloud-net02-name = Servicios innecesarios
+ui-tool-secnumcloud-net03-name = Cabeceras de seguridad HTTP
+ui-tool-secnumcloud-net04-name = Segmentación de red
+ui-tool-secnumcloud-cry01-name = Versiones de protocolos TLS
+ui-tool-secnumcloud-cry02-name = Suites de cifrado débiles
+ui-tool-secnumcloud-cry03-name = Validez de certificados
+ui-tool-secnumcloud-cry04-name = Fortaleza de claves SSH
+ui-tool-secnumcloud-acc01-name = Credenciales por defecto
+ui-tool-secnumcloud-acc02-name = Firma SMB
+ui-tool-secnumcloud-acc03-name = Cadenas de comunidad SNMP
+ui-tool-secnumcloud-ops01-name = Registros SPF/DKIM/DMARC
+ui-tool-secnumcloud-ops02-name = Registros CAA
+ui-tool-secnumcloud-ops03-name = Detección de CVE conocidas
+ui-tool-secnumcloud-ops04-name = Inventario de servicios
+ui-tool-secnumcloud-btn-copy-csv = Copiar CSV
+ui-tool-secnumcloud-btn-copy-html = Copiar HTML
+ui-tool-secnumcloud-empty-state = Introduce una subred o lista de hosts para iniciar una auditoría de cumplimiento SecNumCloud
+ui-tool-secnumcloud-error-scope = Introduce al menos un host de destino o subred.
+ui-tool-secnumcloud-phase-discovery = Fase 1/5: Descubrimiento de red...
+ui-tool-secnumcloud-phase-network = Fase 2/5: Comprobaciones de seguridad de red...
+ui-tool-secnumcloud-phase-crypto = Fase 3/5: Comprobaciones de criptografía...
+ui-tool-secnumcloud-phase-access = Fase 4/5: Comprobaciones de control de acceso...
+ui-tool-secnumcloud-phase-operations = Fase 5/5: Comprobaciones de seguridad operativa...
+ui-tool-secnumcloud-phase-complete = Auditoría completada.
+ui-tool-secnumcloud-summary = { $compliance }% de cumplimiento ({ $pass } correcto, { $warn } aviso, { $fail } fallo)
+ui-tool-secnumcloud-progress = Progreso de la auditoría SecNumCloud
+ui-tool-secnumcloud-help =
+    Auditoría de cumplimiento SecNumCloud v3.2
+
+    Auditoría de seguridad automatizada según los requisitos de ANSSI SecNumCloud v3.2.
+
+    Ámbito:
+    Introduce una subred CIDR (ej. 10.0.1.0/24) para descubrimiento automático de hosts, o una lista de hosts (uno por línea) para una auditoría específica.
+
+    Capítulos auditados:
+    - Seguridad de red (cap. 9): Inventario de puertos, cabeceras HTTP, segmentación
+    - Criptografía (cap. 10): Versiones TLS, suites de cifrado, certificados, claves SSH
+    - Control de acceso (cap. 11): Credenciales por defecto, firma SMB, comunidades SNMP
+    - Operaciones (cap. 12): SPF/DKIM/DMARC, CAA, búsqueda de CVE, inventario de servicios
+
+    Profundidad:
+    - Rápida: Solo comprobaciones esenciales (~2 min)
+    - Estándar: Auditoría completa (~5 min)
+    - Profunda: Enumeración extendida (~15 min)
+
+    Exportaciones:
+    - HTML: Informe independiente para auditores
+    - CSV: Datos de evidencia para herramientas GRC
+
+ui-tool-smb-name = Enumerador SMB
+ui-tool-smb-description = Enumerador del protocolo SMB con detección de firma y versión
+ui-tool-smb-title = Enumerador SMB
+ui-tool-smb-host-label = Host
+ui-tool-smb-host-placeholder = 192.168.1.100 o nombre de host
+ui-tool-smb-btn-enum = Enumerar
+ui-tool-smb-btn-stop = Detener
+ui-tool-smb-btn-copy = Copiar informe
+ui-tool-smb-empty-state = Introduce un nombre de host o IP para enumerar información SMB
+ui-tool-smb-card-identity = Identidad del host
+ui-tool-smb-card-protocol = Protocolo SMB
+ui-tool-smb-card-findings = Hallazgos de seguridad
+ui-tool-smb-computer-name = Nombre del equipo
+ui-tool-smb-domain = Dominio
+ui-tool-smb-dns-name = Nombre DNS
+ui-tool-smb-dns-domain = Dominio DNS
+ui-tool-smb-forest = Bosque
+ui-tool-smb-os-build = Compilación del SO
+ui-tool-smb-mac = Dirección MAC
+ui-tool-smb-dialect = Dialecto SMB
+ui-tool-smb-signing = Firma requerida
+ui-tool-smb-server-guid = GUID del servidor
+ui-tool-smb-system-time = Hora del sistema
+ui-tool-smb-boot-time = Hora de arranque
+ui-tool-smb-yes = Sí
+ui-tool-smb-no = No
+ui-tool-smb-not-available = N/D
+ui-tool-smb-signing-disabled = La firma SMB no es obligatoria: vulnerable a ataques de retransmisión
+ui-tool-smb-signing-enabled = La firma SMB es obligatoria
+ui-tool-smb-v1-detected = Se detectó el dialecto SMBv1: obsoleto y vulnerable (EternalBlue)
+ui-tool-smb-modern-dialect = Usando el dialecto SMB moderno: { $dialect }
+ui-tool-smb-netbios-failed = Se agotó el tiempo de espera de la consulta NetBIOS (UDP 137 podría estar bloqueado)
+ui-tool-smb-error-connection = No se pudo conectar al puerto 445: { $error }
+ui-tool-smb-error-ntlm = Falló el sondeo NTLM: { $error }
+ui-tool-smb-error-host-required = Introduce un host para enumerar.
+ui-tool-smb-report-identity = === Identidad del host ===
+ui-tool-smb-report-protocol = === Protocolo SMB ===
+ui-tool-smb-report-findings = === Hallazgos de seguridad ===
+ui-tool-smb-help =
+    Enumerador SMB
+
+    Extrae la identidad del host e información del protocolo SMB sin credenciales.
+
+    Uso:
+    1. Introduce un nombre de host o dirección IP
+    2. Haz clic en Enumerar
+
+    Información extraída:
+    - Nombre del equipo, dominio, nombres DNS (mediante negociación NTLM)
+    - Número de compilación del SO
+    - Dirección MAC (mediante NetBIOS)
+    - Versión del dialecto SMB, requisitos de firma
+    - GUID del servidor, hora del sistema, hora de arranque
+
+    Comprobaciones de seguridad:
+    - Firma SMB desactivada (riesgo de ataque de retransmisión)
+    - SMBv1 detectado (vulnerabilidad EternalBlue)

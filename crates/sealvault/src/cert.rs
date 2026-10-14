@@ -262,6 +262,65 @@ fn encoding(error: impl fmt::Display) -> Error {
     Error::Encoding(error.to_string())
 }
 
+/// Summary of an X.509 certificate's key properties.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateSummary {
+    /// The subject name.
+    pub subject: String,
+    /// The issuer name.
+    pub issuer: String,
+    /// The expiration time formatted as a string.
+    pub not_after: String,
+    /// The public key size in bits, or 0 if unsupported/unknown.
+    pub key_size_bits: usize,
+}
+
+/// Inspects a DER-encoded X.509 certificate and extracts a summary of its key properties.
+#[must_use]
+pub fn inspect(der: &[u8]) -> Option<CertificateSummary> {
+    use rsa::pkcs1::DecodeRsaPublicKey as _;
+    use rsa::traits::PublicKeyParts as _;
+    use x509_cert::Certificate;
+    use x509_cert::der::Decode as _;
+
+    let cert = Certificate::from_der(der).ok()?;
+    let tbs = cert.tbs_certificate();
+    let subject = tbs.subject().to_string();
+    let issuer = tbs.issuer().to_string();
+    let not_after = tbs.validity().not_after.to_string();
+    let spki = tbs.subject_public_key_info();
+
+    let key_size_bits = match spki.subject_public_key.as_bytes() {
+        Some(bytes) => {
+            let oid = spki.algorithm.oid;
+            // 1.2.840.113549.1.1.1 (rsaEncryption) or 1.2.840.113549.1.1.10 (id-RSASSA-PSS)
+            if oid.as_bytes() == &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
+                || oid.as_bytes() == &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A]
+            {
+                rsa::RsaPublicKey::from_pkcs1_der(bytes)
+                    .map(|k| k.size() * 8)
+                    .unwrap_or(0)
+            } else if bytes.len() >= 65 && bytes.len() < 90 {
+                256
+            } else if bytes.len() >= 97 && bytes.len() < 120 {
+                384
+            } else if bytes.len() >= 133 {
+                521
+            } else {
+                0
+            }
+        }
+        None => 0,
+    };
+
+    Some(CertificateSummary {
+        subject,
+        issuer,
+        not_after,
+        key_size_bits,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use rsa::pkcs1::EncodeRsaPublicKey as _;
@@ -441,5 +500,15 @@ mod tests {
             Profile::TlsLeaf(vec![AltName::Dns("s\u{e9}rveur".to_owned())]),
         );
         assert!(self_signed(&leaf, &key).is_err());
+    }
+
+    #[test]
+    fn inspect_der_certificate() {
+        let (_, key) = key();
+        let leaf = spec("server.local", Profile::TlsLeaf(Vec::new()));
+        let der = self_signed(&leaf, &key).expect("signed");
+        let summary = super::inspect(&der).expect("inspected");
+        assert!(summary.subject.contains("server.local"));
+        assert_eq!(summary.key_size_bits, 2048);
     }
 }

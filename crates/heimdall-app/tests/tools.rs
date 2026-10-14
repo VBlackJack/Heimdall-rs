@@ -62,6 +62,13 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Jwt,
             ToolId::Totp,
             ToolId::PwdAudit,
+            ToolId::SshAudit,
+            ToolId::TlsAudit,
+            ToolId::DnsSec,
+            ToolId::Smb,
+            ToolId::DefaultCreds,
+            ToolId::CveLookup,
+            ToolId::SecNumCloud,
             ToolId::Base64,
             ToolId::UrlEncoder,
             ToolId::JsonFormatter,
@@ -87,6 +94,9 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(ToolId::from_code("tool:datetime"), Some(ToolId::DateTime));
     assert_eq!(ToolId::Totp.prefixes(), ["totp", "otp", "2fa"]);
     assert_eq!(ToolId::Jwt.code(), "JWT");
+    assert_eq!(ToolId::Smb.code(), "SMBENUM");
+    assert_eq!(ToolId::Smb.prefixes(), ["smb", "ntlm", "netbios"]);
+    assert!(ToolId::Smb.is_network());
     assert!(
         [ToolId::Hash, ToolId::Hmac, ToolId::Jwt, ToolId::Totp]
             .iter()
@@ -102,7 +112,35 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(ToolId::TextDiff.category(), ToolCategory::Encoding);
     assert_eq!(ToolId::Base64.category(), ToolCategory::Encoding);
     assert_eq!(ToolId::Uuid.category(), ToolCategory::System);
-    assert!(ToolId::ALL.iter().all(|tool| !tool.is_network()));
+    assert!(ToolId::TlsAudit.is_network());
+    assert!(ToolId::DnsSec.is_network());
+    assert_eq!(ToolId::DnsSec.code(), "DNSSEC");
+    assert_eq!(ToolId::DnsSec.category(), ToolCategory::Security);
+    assert_eq!(ToolId::DnsSec.prefixes(), ["dnssec", "spf", "dmarc", "dkim"]);
+    assert!(ToolId::DefaultCreds.is_network());
+    assert_eq!(ToolId::DefaultCreds.code(), "DEFAULTCREDS");
+    assert_eq!(ToolId::DefaultCreds.category(), ToolCategory::Security);
+    assert_eq!(ToolId::DefaultCreds.prefixes(), ["defaultcreds", "creds"]);
+    assert_eq!(ToolId::from_code("defaultcreds"), Some(ToolId::DefaultCreds));
+    assert_eq!(ToolId::from_code("TOOL:DEFAULTCREDS"), Some(ToolId::DefaultCreds));
+    assert!(!ToolId::CveLookup.is_network());
+    assert_eq!(ToolId::CveLookup.code(), "CVELOOKUP");
+    assert_eq!(ToolId::CveLookup.category(), ToolCategory::Security);
+    assert_eq!(ToolId::CveLookup.prefixes(), ["cve", "vuln", "vulnerability"]);
+    assert_eq!(ToolId::from_code("cvelookup"), Some(ToolId::CveLookup));
+    assert!(!ToolId::SecNumCloud.is_network());
+    assert_eq!(ToolId::SecNumCloud.code(), "SECNUMCLOUD");
+    assert_eq!(ToolId::SecNumCloud.category(), ToolCategory::Security);
+    assert_eq!(
+        ToolId::SecNumCloud.prefixes(),
+        ["secnumcloud", "audit", "compliance", "anssi"]
+    );
+    assert_eq!(ToolId::from_code("secnumcloud"), Some(ToolId::SecNumCloud));
+    assert_eq!(
+        ToolId::from_code("TOOL:SECNUMCLOUD"),
+        Some(ToolId::SecNumCloud)
+    );
+    assert!(!ToolId::SshAudit.is_network());
     // Looked up as the C# registry looks up, case aside and its prefix taken off.
     assert_eq!(ToolId::from_code("urlenc"), Some(ToolId::UrlEncoder));
     assert_eq!(ToolId::from_code("TOOL:uuid"), Some(ToolId::Uuid));

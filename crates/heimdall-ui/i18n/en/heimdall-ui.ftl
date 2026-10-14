@@ -3851,3 +3851,431 @@ ui-profile-path-session-vnc = VNC session
 ui-profile-path-session-telnet = Telnet session
 ui-profile-path-session-citrix = Citrix session
 ui-profile-path-session-local = Local shell
+
+ui-tool-sshaudit-name = SSH Key Auditor
+ui-tool-sshaudit-description = Analyzes SSH key security and provides recommendations
+ui-tool-sshaudit-title = SSH Key Auditor
+ui-tool-sshaudit-input = Paste SSH key (public or private, OpenSSH or PEM format)
+ui-tool-sshaudit-browse = Browse...
+ui-tool-sshaudit-details = Key Details
+ui-tool-sshaudit-findings = Security Findings
+ui-tool-sshaudit-algorithm = Algorithm
+ui-tool-sshaudit-key-size = Key Size
+ui-tool-sshaudit-fingerprint = Fingerprint
+ui-tool-sshaudit-format = Format
+ui-tool-sshaudit-type = Type
+ui-tool-sshaudit-public = Public key
+ui-tool-sshaudit-private = Private key
+ui-tool-sshaudit-encrypted = Encrypted
+ui-tool-sshaudit-yes = Yes
+ui-tool-sshaudit-no = No
+ui-tool-sshaudit-rating = Security Rating
+ui-tool-sshaudit-strong = Strong
+ui-tool-sshaudit-acceptable = Acceptable
+ui-tool-sshaudit-weak = Weak
+ui-tool-sshaudit-deprecated = Deprecated
+ui-tool-sshaudit-bits = { $bits } bits
+ui-tool-sshaudit-copy-fingerprint = Copy fingerprint
+ui-tool-sshaudit-empty-state = Paste an SSH key or browse for a key file to audit its security
+ui-tool-sshaudit-parse-error = Could not parse the provided key. Ensure it is a valid SSH public or private key.
+ui-tool-sshaudit-file-too-large = The file is larger than { $limit } bytes and cannot be audited.
+ui-tool-sshaudit-file-read-error = The key file could not be read: { $error }
+ui-tool-sshaudit-finding-ed25519 = Ed25519 is the recommended algorithm - fast, secure, compact
+ui-tool-sshaudit-finding-rsa-strong = RSA key size is strong ({ $bits } bits)
+ui-tool-sshaudit-finding-rsa-ok = RSA 2048-bit meets minimum requirements but 4096 is recommended
+ui-tool-sshaudit-finding-rsa-weak = RSA key is too short ({ $bits } bits) - minimum 2048 required
+ui-tool-sshaudit-finding-dsa = DSA is deprecated and should not be used - migrate to Ed25519
+ui-tool-sshaudit-finding-ecdsa-strong = ECDSA with { $bits }-bit curve is strong
+ui-tool-sshaudit-finding-ecdsa-ok = ECDSA 256-bit is acceptable - consider Ed25519 for better performance
+ui-tool-sshaudit-finding-unencrypted = Private key is not encrypted - add a passphrase for protection
+ui-tool-sshaudit-finding-encrypted = Private key is encrypted with a passphrase
+ui-tool-sshaudit-finding-old-format = Old PEM format uses weak MD5-based encryption - convert to OpenSSH format
+ui-tool-sshaudit-help =
+    SSH Key Auditor
+
+    Analyzes SSH key security and provides recommendations.
+
+    Usage:
+    1. Paste an SSH key (public or private) into the text area, OR
+    2. Click Browse to load a key file
+
+    Supported formats:
+    - OpenSSH public keys (ssh-rsa, ssh-ed25519, ecdsa-sha2-*)
+    - OpenSSH private keys
+    - PEM format (PKCS#1, PKCS#8)
+
+    Security checks:
+    - Algorithm strength (Ed25519 > ECDSA > RSA > DSA)
+    - Key size adequacy (RSA: min 2048, recommended 4096)
+    - Encryption status (unencrypted private keys flagged)
+    - Format security (old PEM encryption vs modern OpenSSH)
+
+ui-tool-tlsaudit-name = TLS Auditor
+ui-tool-tlsaudit-description = Audits TLS protocols, cipher suites, and certificates
+ui-tool-tlsaudit-title = SSL/TLS Auditor
+ui-tool-tlsaudit-host = Host
+ui-tool-tlsaudit-port = Port
+ui-tool-tlsaudit-audit = Audit
+ui-tool-tlsaudit-cancel = Cancel
+ui-tool-tlsaudit-grade = Grade
+ui-tool-tlsaudit-protocols = Protocol Support
+ui-tool-tlsaudit-ciphers = Cipher Suites (TLS 1.2)
+ui-tool-tlsaudit-supported = Supported
+ui-tool-tlsaudit-not-supported = Not supported
+ui-tool-tlsaudit-strong = Strong
+ui-tool-tlsaudit-acceptable = Acceptable
+ui-tool-tlsaudit-weak = Weak
+ui-tool-tlsaudit-critical = Critical
+ui-tool-tlsaudit-col-cipher = Cipher Suite
+ui-tool-tlsaudit-col-strength = Strength
+ui-tool-tlsaudit-col-key-ex = Key Exchange
+ui-tool-tlsaudit-col-auth = Auth
+ui-tool-tlsaudit-col-enc = Encryption
+ui-tool-tlsaudit-findings = Findings
+ui-tool-tlsaudit-finding-ssl3 = SSL 3.0 is supported - vulnerable to POODLE attack
+ui-tool-tlsaudit-finding-tls10 = TLS 1.0 is supported - deprecated since 2020
+ui-tool-tlsaudit-finding-tls11 = TLS 1.1 is supported - deprecated since 2020
+ui-tool-tlsaudit-finding-no-tls13 = TLS 1.3 is not supported - recommended for best security
+ui-tool-tlsaudit-finding-weak-cipher = Weak cipher suite detected: { $suite }
+ui-tool-tlsaudit-finding-no-pfs = Non-PFS cipher suites accepted (no ECDHE/DHE key exchange)
+ui-tool-tlsaudit-finding-all-good = Strong TLS configuration - only modern protocols and ciphers
+ui-tool-tlsaudit-cert-section = Certificate
+ui-tool-tlsaudit-cert-subject = Subject
+ui-tool-tlsaudit-cert-issuer = Issuer
+ui-tool-tlsaudit-cert-expires = Expires
+ui-tool-tlsaudit-cert-key-size = Key size
+ui-tool-tlsaudit-bits = { $bits } bits
+ui-tool-tlsaudit-progress = Testing { $step }...
+ui-tool-tlsaudit-progress-ciphers = Enumerating cipher suites...
+ui-tool-tlsaudit-copy-report = Copy report
+ui-tool-tlsaudit-empty-state = Enter a host and port to audit its TLS configuration
+ui-tool-tlsaudit-error-host-required = Host is required
+ui-tool-tlsaudit-error-invalid-host = Invalid hostname or IP address
+ui-tool-tlsaudit-error-invalid-port = Port must be between 1 and 65535
+ui-tool-tlsaudit-error-connection = Connection failed: { $error }
+ui-tool-tlsaudit-report-title = SSL/TLS Audit Report: { $host }:{ $port }
+ui-tool-tlsaudit-report-grade = Grade: { $grade }
+ui-tool-tlsaudit-report-protocols = === Protocol Support ===
+ui-tool-tlsaudit-report-ciphers = === Cipher Suites (TLS 1.2) ===
+ui-tool-tlsaudit-report-cert = === Certificate ===
+ui-tool-tlsaudit-report-findings = === Findings ===
+ui-tool-tlsaudit-help =
+    SSL/TLS Auditor
+
+    Audits a server's TLS configuration, cipher suites, and certificate.
+
+    Usage:
+    1. Enter a target hostname or IP address
+    2. Enter the target port (default: 443)
+    3. Click Audit to run the probe
+
+    Checks performed:
+    - Protocol support (SSL 3.0, TLS 1.0, 1.1, 1.2, 1.3)
+    - TLS 1.2 cipher suite enumeration (PFS, key exchange, encryption strength)
+    - Server certificate inspection (subject, issuer, validity, key length)
+    - Security grade calculation (A+ through F) and recommendations
+
+ui-tool-dnssec-name = DNS Security Checker
+ui-tool-dnssec-description = Checks SPF, DKIM, DMARC, CAA, DNSSEC, and MX records
+ui-tool-dnssec-title = DNS Security Checker
+ui-tool-dnssec-domain = Domain
+ui-tool-dnssec-domain-watermark = example.com
+ui-tool-dnssec-check = Check
+ui-tool-dnssec-cancel = Cancel
+ui-tool-dnssec-copy-report = Copy report
+ui-tool-dnssec-empty-state = Enter a domain to analyze its DNS security records
+ui-tool-dnssec-summary = { $passed } / { $total } checks passed
+ui-tool-dnssec-summary-all-pass = All checks passed ({ $passed }/{ $total })
+ui-tool-dnssec-summary-good = Good security posture ({ $passed }/{ $total })
+ui-tool-dnssec-summary-partial = Partial security coverage ({ $passed }/{ $total })
+ui-tool-dnssec-summary-bad = Poor security posture ({ $passed }/{ $total })
+ui-tool-dnssec-pass = Pass
+ui-tool-dnssec-warn = Warning
+ui-tool-dnssec-fail = Fail
+ui-tool-dnssec-no-record = No record found
+ui-tool-dnssec-progress = Querying { $record } for { $domain }...
+ui-tool-dnssec-status-complete = Completed in { $ms } ms
+ui-tool-dnssec-error-domain-required = Domain is required
+ui-tool-dnssec-error-invalid-domain = Invalid domain name format
+ui-tool-dnssec-error-timeout = DNS query timed out after 30 seconds
+ui-tool-dnssec-error-failed = DNS lookup failed: { $error }
+ui-tool-dnssec-finding-missing = Record missing or not configured
+ui-tool-dnssec-finding-spf-permissive = SPF policy uses +all (permissive - any server can send mail)
+ui-tool-dnssec-finding-spf-neutral = SPF policy uses ?all (neutral - no enforcement)
+ui-tool-dnssec-finding-spf-no-all = SPF record lacks an all mechanism
+ui-tool-dnssec-finding-spf-good = SPF record restricts unauthorized senders
+ui-tool-dnssec-finding-dmarc-none = DMARC policy is none (monitoring only, no rejection)
+ui-tool-dnssec-finding-dmarc-enforced = DMARC policy enforces { $policy }
+ui-tool-dnssec-finding-dmarc-pct-zero = DMARC policy set to { $policy } but pct=0 (not enforced)
+ui-tool-dnssec-finding-dkim-found = DKIM public key configured for selector { $selector }
+ui-tool-dnssec-finding-dkim-revoked = DKIM key for selector { $selector } has empty public key (revoked)
+ui-tool-dnssec-finding-dkim-none = No DKIM records found for common selectors
+ui-tool-dnssec-finding-caa-missing = CAA record missing (any Certificate Authority may issue certificates)
+ui-tool-dnssec-finding-caa-present = CAA authorizes: { $issuers }
+ui-tool-dnssec-finding-dnssec-present = DNSSEC enabled with cryptographic signatures
+ui-tool-dnssec-finding-dnssec-missing = DNSSEC is not enabled
+ui-tool-dnssec-finding-mx-servers = Mail exchangers: { $servers }
+ui-tool-dnssec-finding-no-mx = No MX records found
+ui-tool-dnssec-finding-error = Error: { $error }
+ui-tool-dnssec-report-title = === DNS Security Report for { $domain } ===
+ui-tool-dnssec-report-summary = Summary: { $passed } / { $total } checks passed
+ui-tool-dnssec-help =
+    DNS Security Checker
+
+    Audits domain security posture across six key DNS controls.
+
+    Usage:
+    1. Enter a domain name (e.g. example.com)
+    2. Click Check to query DNS records
+
+    Controls evaluated:
+    - SPF: Validates authorized email sending servers
+    - DKIM: Checks cryptographic signatures for outgoing email
+    - DMARC: Verifies alignment and rejection policies (none, quarantine, reject)
+    - CAA: Verifies authorized Certificate Authorities for TLS issuance
+    - DNSSEC: Checks DNS response cryptographic authenticity
+    - MX: Identifies mail delivery endpoints
+
+## The offline CVE lookup tool, as the C# CveLookupView.
+ui-tool-cve-name = CVE Lookup
+ui-tool-cve-description = Searches an offline database of known vulnerabilities for common infrastructure software
+ui-tool-cve-title = CVE Lookup
+ui-tool-cve-input-placeholder = Software and version (or paste banner)
+ui-tool-cve-btn-search = Search
+ui-tool-cve-summary = { $count ->
+    [one] { $count } CVE found for { $query }
+   *[other] { $count } CVEs found for { $query }
+}
+ui-tool-cve-no-results = No known CVEs found for this software version.
+ui-tool-cve-empty-state = Enter a software name and version to search for known vulnerabilities
+ui-tool-cve-db-info = Offline database: { $cves } CVEs covering { $products } products
+ui-tool-cve-col-id = CVE ID
+ui-tool-cve-col-cvss = CVSS
+ui-tool-cve-col-severity = Severity
+ui-tool-cve-col-summary = Summary
+ui-tool-cve-col-affected = Affected Versions
+ui-tool-cve-severity-critical = Critical
+ui-tool-cve-severity-high = High
+ui-tool-cve-severity-medium = Medium
+ui-tool-cve-severity-low = Low
+ui-tool-cve-btn-copy = Copy report
+ui-tool-cve-help =
+    CVE Lookup
+
+    Searches an offline database of known vulnerabilities for common infrastructure software.
+
+    Usage:
+    1. Enter a software name and version (e.g. 'OpenSSH 8.9')
+    2. Or paste a service banner (e.g. 'SSH-2.0-OpenSSH_8.9p1')
+    3. Click Search
+
+    The tool auto-detects software names and versions from common banner formats (HTTP Server headers, SSH banners, FTP greetings, etc.).
+
+    CVSS Scoring:
+    - Critical (9.0-10.0): Immediate patching required
+    - High (7.0-8.9): Patch at next opportunity
+    - Medium (4.0-6.9): Schedule patching
+    - Low (0.1-3.9): Monitor only
+
+    Database:
+    Offline curated database covering OpenSSH, Apache, nginx, MySQL, PostgreSQL, Redis, ProFTPD, and more. No internet connection required.
+
+
+
+## The Default Credentials Scanner tool, as the C# DefaultCredentialView.
+ui-tool-defaultcreds-name = Default Credentials Scanner
+ui-tool-defaultcreds-description = Tests common default credentials against detected services on a target host
+ui-tool-defaultcreds-title = Default Credentials Scanner
+ui-tool-defaultcreds-host-label = Host
+ui-tool-defaultcreds-host-placeholder = Hostname or IP address
+ui-tool-defaultcreds-btn-scan = Scan
+ui-tool-defaultcreds-btn-stop = Stop
+ui-tool-defaultcreds-auto-detect = Auto-detect services
+ui-tool-defaultcreds-show-passwords = Show passwords
+ui-tool-defaultcreds-warning = Use only on systems you own or have explicit authorization to test.
+ui-tool-defaultcreds-col-service = Service
+ui-tool-defaultcreds-col-port = Port
+ui-tool-defaultcreds-col-user = Username
+ui-tool-defaultcreds-col-pass = Password
+ui-tool-defaultcreds-col-status = Status
+ui-tool-defaultcreds-col-detail = Detail
+ui-tool-defaultcreds-status-default = Default!
+ui-tool-defaultcreds-status-changed = Changed
+ui-tool-defaultcreds-status-error = Error
+ui-tool-defaultcreds-detecting = Detecting services...
+ui-tool-defaultcreds-testing = Testing { $service } { $user }:{ $pass }...
+ui-tool-defaultcreds-summary = { $defaults ->
+    [one] { $defaults } default credential found on { $services ->
+        [one] { $services } service
+       *[other] { $services } services
+    }
+   *[other] { $defaults } default credentials found on { $services ->
+        [one] { $services } service
+       *[other] { $services } services
+    }
+}
+ui-tool-defaultcreds-no-defaults = No default credentials found - all tested services appear secured.
+ui-tool-defaultcreds-btn-copy = Copy report
+ui-tool-defaultcreds-btn-export = Export CSV
+ui-tool-defaultcreds-empty-state = Enter a host to scan for default credentials on common services
+ui-tool-defaultcreds-error-host-required = A hostname or IP address is required.
+ui-tool-defaultcreds-error-invalid-host = Invalid hostname or IP address format.
+ui-tool-defaultcreds-detail-accepted = { $service } accepted default credentials
+ui-tool-defaultcreds-detail-rejected = { $service } rejected credentials
+ui-tool-defaultcreds-progress = Credential scan progress
+ui-tool-defaultcreds-help =
+    Default Credential Scanner
+
+    Tests common default credentials against services detected on a target host.
+
+    Usage:
+    1. Enter a hostname or IP
+    2. Enable 'Auto-detect services' to scan common ports first
+    3. Click Scan
+
+    Protocols tested:
+    - SSH (common root/admin passwords)
+    - HTTP Basic Authentication
+    - FTP (anonymous, admin)
+    - SNMP (community strings)
+    - MySQL, PostgreSQL, MSSQL (default database credentials)
+    - VNC (common passwords)
+    - Telnet
+    - Redis (no-auth detection)
+
+    Safety:
+    - Rate-limited (1 attempt/second per service)
+    - Only tests well-known default credentials
+    - Does NOT perform brute-force attacks
+ui-tool-secnumcloud-name = SecNumCloud Audit
+ui-tool-secnumcloud-description = SecNumCloud v3.2 compliance audit across network, crypto, access, and operations
+ui-tool-secnumcloud-title = SecNumCloud v3.2 Compliance Audit
+ui-tool-secnumcloud-scope-label = Audit Scope
+ui-tool-secnumcloud-scope-placeholder = 10.0.1.0/24 or one host per line
+ui-tool-secnumcloud-depth-label = Depth
+ui-tool-secnumcloud-depth-quick = Quick
+ui-tool-secnumcloud-depth-standard = Standard
+ui-tool-secnumcloud-depth-deep = Deep
+ui-tool-secnumcloud-chk-network = Network (Ch.9)
+ui-tool-secnumcloud-chk-crypto = Cryptography (Ch.10)
+ui-tool-secnumcloud-chk-access = Access Control (Ch.11)
+ui-tool-secnumcloud-chk-operations = Operations (Ch.12)
+ui-tool-secnumcloud-btn-start = Start Audit
+ui-tool-secnumcloud-btn-stop = Stop
+ui-tool-secnumcloud-compliance = Compliance
+ui-tool-secnumcloud-status-pass = Pass
+ui-tool-secnumcloud-status-warn = Warning
+ui-tool-secnumcloud-status-fail = Fail
+ui-tool-secnumcloud-status-error = Error
+ui-tool-secnumcloud-status-skipped = Skipped
+ui-tool-secnumcloud-ch-network = Network Security
+ui-tool-secnumcloud-ch-crypto = Cryptography
+ui-tool-secnumcloud-ch-access = Access Control
+ui-tool-secnumcloud-ch-operations = Operations Security
+ui-tool-secnumcloud-net01-name = Open ports inventory
+ui-tool-secnumcloud-net02-name = Unnecessary services
+ui-tool-secnumcloud-net03-name = HTTP security headers
+ui-tool-secnumcloud-net04-name = Network segmentation
+ui-tool-secnumcloud-cry01-name = TLS protocol versions
+ui-tool-secnumcloud-cry02-name = Weak cipher suites
+ui-tool-secnumcloud-cry03-name = Certificate validity
+ui-tool-secnumcloud-cry04-name = SSH key strength
+ui-tool-secnumcloud-acc01-name = Default credentials
+ui-tool-secnumcloud-acc02-name = SMB signing
+ui-tool-secnumcloud-acc03-name = SNMP community strings
+ui-tool-secnumcloud-ops01-name = SPF/DKIM/DMARC records
+ui-tool-secnumcloud-ops02-name = CAA records
+ui-tool-secnumcloud-ops03-name = Known CVE detection
+ui-tool-secnumcloud-ops04-name = Service inventory
+ui-tool-secnumcloud-btn-copy-csv = Copy CSV
+ui-tool-secnumcloud-btn-copy-html = Copy HTML
+ui-tool-secnumcloud-empty-state = Enter a subnet or host list to start a SecNumCloud compliance audit
+ui-tool-secnumcloud-error-scope = Enter at least one target host or subnet.
+ui-tool-secnumcloud-phase-discovery = Phase 1/5: Network discovery...
+ui-tool-secnumcloud-phase-network = Phase 2/5: Network security checks...
+ui-tool-secnumcloud-phase-crypto = Phase 3/5: Cryptography checks...
+ui-tool-secnumcloud-phase-access = Phase 4/5: Access control checks...
+ui-tool-secnumcloud-phase-operations = Phase 5/5: Operations checks...
+ui-tool-secnumcloud-phase-complete = Audit complete.
+ui-tool-secnumcloud-summary = { $compliance }% compliance ({ $pass } pass, { $warn } warn, { $fail } fail)
+ui-tool-secnumcloud-progress = SecNumCloud audit progress
+ui-tool-secnumcloud-help =
+    SecNumCloud v3.2 Compliance Audit
+
+    Automated security audit against ANSSI SecNumCloud v3.2 requirements.
+
+    Scope:
+    Enter a CIDR subnet (e.g. 10.0.1.0/24) for automatic host discovery, or a list of hosts (one per line) for targeted audit.
+
+    Chapters audited:
+    - Network Security (Ch.9): Port inventory, HTTP headers, segmentation
+    - Cryptography (Ch.10): TLS versions, cipher suites, certificates, SSH keys
+    - Access Control (Ch.11): Default credentials, SMB signing, SNMP communities
+    - Operations (Ch.12): SPF/DKIM/DMARC, CAA, CVE lookup, service inventory
+
+    Depth:
+    - Quick: Essential checks only (~2 min)
+    - Standard: Full audit (~5 min)
+    - Deep: Extended enumeration (~15 min)
+
+    Exports:
+    - HTML: Standalone report for auditors
+    - CSV: Evidence data for GRC tools
+
+ui-tool-smb-name = SMB Enumerator
+ui-tool-smb-description = SMB protocol enumerator with signing and version detection
+ui-tool-smb-title = SMB Enumerator
+ui-tool-smb-host-label = Host
+ui-tool-smb-host-placeholder = 192.168.1.100 or hostname
+ui-tool-smb-btn-enum = Enumerate
+ui-tool-smb-btn-stop = Stop
+ui-tool-smb-btn-copy = Copy report
+ui-tool-smb-empty-state = Enter a hostname or IP to enumerate SMB information
+ui-tool-smb-card-identity = Host Identity
+ui-tool-smb-card-protocol = SMB Protocol
+ui-tool-smb-card-findings = Security Findings
+ui-tool-smb-computer-name = Computer Name
+ui-tool-smb-domain = Domain
+ui-tool-smb-dns-name = DNS Name
+ui-tool-smb-dns-domain = DNS Domain
+ui-tool-smb-forest = Forest
+ui-tool-smb-os-build = OS Build
+ui-tool-smb-mac = MAC Address
+ui-tool-smb-dialect = SMB Dialect
+ui-tool-smb-signing = Signing Required
+ui-tool-smb-server-guid = Server GUID
+ui-tool-smb-system-time = System Time
+ui-tool-smb-boot-time = Boot Time
+ui-tool-smb-yes = Yes
+ui-tool-smb-no = No
+ui-tool-smb-not-available = N/A
+ui-tool-smb-signing-disabled = SMB signing is not required — vulnerable to relay attacks
+ui-tool-smb-signing-enabled = SMB signing is required
+ui-tool-smb-v1-detected = SMBv1 dialect detected — deprecated and vulnerable (EternalBlue)
+ui-tool-smb-modern-dialect = Using modern SMB dialect: { $dialect }
+ui-tool-smb-netbios-failed = NetBIOS query timed out (UDP 137 may be blocked)
+ui-tool-smb-error-connection = Could not connect to port 445: { $error }
+ui-tool-smb-error-ntlm = NTLM probe failed: { $error }
+ui-tool-smb-error-host-required = Enter a host to enumerate.
+ui-tool-smb-report-identity = === Host Identity ===
+ui-tool-smb-report-protocol = === SMB Protocol ===
+ui-tool-smb-report-findings = === Security Findings ===
+ui-tool-smb-help =
+    SMB Enumerator
+
+    Extracts host identity and SMB protocol information without credentials.
+
+    Usage:
+    1. Enter a hostname or IP address
+    2. Click Enumerate
+
+    Information extracted:
+    - Computer name, domain, DNS names (via NTLM negotiation)
+    - OS build number
+    - MAC address (via NetBIOS)
+    - SMB dialect version, signing requirements
+    - Server GUID, system time, boot time
+
+    Security checks:
+    - SMB signing disabled (relay attack risk)
+    - SMBv1 detected (EternalBlue vulnerability)

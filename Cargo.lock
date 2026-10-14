@@ -2580,6 +2580,7 @@ dependencies = [
  "rcgen",
  "rfd",
  "rust-embed",
+ "sealvault",
  "tempfile",
  "tokio",
  "tokio-util",
