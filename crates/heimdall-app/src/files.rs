@@ -89,6 +89,69 @@ impl ListingRequest {
     }
 }
 
+/// The listings of one pane, coalesced: at most one on its way, and at most one waiting
+/// for it, the one asked for last. FTP lists every folder through one control connection
+/// (`heimdall_files::ftp`), and sudo starts one `ls` per listing: five Back clicks would
+/// otherwise run five full listings in turn, the one wanted last. A listing on its way is
+/// never stopped, as dropping it while it holds the FTP connection would leave the
+/// connection mid-answer: the next one waits for it instead.
+#[derive(Debug)]
+pub(crate) struct ListingQueue<T> {
+    /// The listing started whose answer has not come yet.
+    in_flight: Option<ListingRequest>,
+    /// The listing asked for while another was on its way, started once that one's answer
+    /// comes; a later one takes its place.
+    waiting: Option<(ListingRequest, T)>,
+}
+
+impl<T> Default for ListingQueue<T> {
+    fn default() -> Self {
+        Self {
+            in_flight: None,
+            waiting: None,
+        }
+    }
+}
+
+impl<T> ListingQueue<T> {
+    /// `listing`, asked for as `request`: handed back to start now when none is on its way;
+    /// else kept, in place of any kept before, until the one on its way comes.
+    pub(crate) fn ask(&mut self, request: ListingRequest, listing: T) -> Option<T> {
+        if self.in_flight.is_none() {
+            self.in_flight = Some(request);
+            return Some(listing);
+        }
+        if let Some((replaced, _)) = self.waiting.replace((request, listing)) {
+            log::debug!(
+                "listing {} never started: {} is asked for after it",
+                replaced.value(),
+                request.value()
+            );
+        }
+        None
+    }
+
+    /// The answer of `request` came: the listing waiting for it, if any, handed back to
+    /// start now. An answer of a listing this queue no longer follows, started before
+    /// Escape or a reconnection, changes nothing.
+    pub(crate) fn came(&mut self, request: ListingRequest) -> Option<T> {
+        if self.in_flight != Some(request) {
+            return None;
+        }
+        self.in_flight = None;
+        let (next, listing) = self.waiting.take()?;
+        self.in_flight = Some(next);
+        Some(listing)
+    }
+
+    /// Forgets the listing on its way and the one waiting: Escape gave them up, or the
+    /// session they were asked of is gone.
+    pub(crate) fn clear(&mut self) {
+        self.in_flight = None;
+        self.waiting = None;
+    }
+}
+
 /// One of the two panes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
@@ -1197,6 +1260,10 @@ pub struct FilesPane {
     /// an SFTP pane; none over FTP, which the C# never lets follow. The local file browser
     /// has one too, following the local shell it is docked beside.
     pub follow: Option<ShellFollow>,
+    /// The server pane's listings, one on its way at most.
+    pub(crate) remote_listings: ListingQueue<crate::Effect>,
+    /// This computer's pane's listings, one on its way at most.
+    pub(crate) local_listings: ListingQueue<crate::Effect>,
 }
 
 /// An SFTP pane following the working folder its SSH shell reports (OSC 7), as the C#
@@ -1366,6 +1433,8 @@ impl FilesPane {
             editor: None,
             batch: None,
             follow: None,
+            remote_listings: ListingQueue::default(),
+            local_listings: ListingQueue::default(),
         }
     }
 
@@ -2427,8 +2496,8 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use super::{
-        EntryKind, Pane, RemoteEntry, Sort, SortColumn, owner_text, sort_entries, sort_remote,
-        symbolic_mode,
+        EntryKind, ListingQueue, ListingRequest, Pane, RemoteEntry, Sort, SortColumn, owner_text,
+        sort_entries, sort_remote, symbolic_mode,
     };
 
     /// A file listed with its size, time, mode and owner.
@@ -2799,6 +2868,42 @@ mod tests {
         pane.answered();
         assert!(!pane.loading);
         assert!(!pane.awaits(third), "answered once");
+    }
+
+    #[test]
+    fn one_listing_runs_at_a_time_and_only_the_last_one_asked_for_waits() {
+        let mut queue: ListingQueue<&str> = ListingQueue::default();
+        let [first, second, third, fourth] = [(); 4].map(|()| ListingRequest::fresh());
+        assert_eq!(queue.ask(first, "first"), Some("first"), "none on its way");
+        assert_eq!(queue.ask(second, "second"), None, "waits for the first");
+        assert_eq!(queue.ask(third, "third"), None, "takes the second's place");
+        assert_eq!(
+            queue.came(second),
+            None,
+            "never started: no answer of its own"
+        );
+        assert_eq!(queue.came(first), Some("third"), "the last one asked for");
+        assert_eq!(queue.came(first), None, "the same answer twice");
+        assert_eq!(queue.ask(fourth, "fourth"), None, "the third is on its way");
+        assert_eq!(queue.came(third), Some("fourth"));
+        assert_eq!(queue.came(fourth), None, "nothing waits");
+        assert_eq!(
+            queue.ask(first, "again"),
+            Some("again"),
+            "nothing on its way"
+        );
+    }
+
+    #[test]
+    fn a_cleared_queue_starts_the_next_listing_at_once() {
+        let mut queue: ListingQueue<&str> = ListingQueue::default();
+        let [first, second, third] = [(); 3].map(|()| ListingRequest::fresh());
+        assert!(queue.ask(first, "first").is_some());
+        assert!(queue.ask(second, "second").is_none());
+        queue.clear();
+        assert_eq!(queue.ask(third, "third"), Some("third"));
+        assert_eq!(queue.came(first), None, "given up: the third goes on");
+        assert_eq!(queue.ask(second, "second"), None, "the third is on its way");
     }
 
     fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {

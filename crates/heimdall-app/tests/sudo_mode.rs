@@ -595,15 +595,21 @@ async fn the_sudo_toggle_asks_the_password_once_and_turning_it_off_forgets_it() 
     assert_eq!(pane(&app, tab).remote.entries[0].label, "root-only");
 
     // Asked once: every listing after it is as root, with the password kept.
-    for message in [
-        FilesMessage::Refresh {
-            tab,
-            side: Side::Remote,
-        },
-        FilesMessage::Up {
-            tab,
-            side: Side::Remote,
-        },
+    for (message, folder) in [
+        (
+            FilesMessage::Refresh {
+                tab,
+                side: Side::Remote,
+            },
+            "/srv",
+        ),
+        (
+            FilesMessage::Up {
+                tab,
+                side: Side::Remote,
+            },
+            "/",
+        ),
     ] {
         let listing = files(&mut app, message);
         assert!(
@@ -617,6 +623,7 @@ async fn the_sudo_toggle_asks_the_password_once_and_turning_it_off_forgets_it() 
             "{listing:?}"
         );
         assert!(app.dialog.is_none());
+        listed_as_root(&mut app, tab, folder, Vec::new());
     }
 
     let off = files(&mut app, FilesMessage::ToggleSudo { tab });
@@ -676,14 +683,32 @@ async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_
     };
     let srv = RemotePath::from("/srv");
     let first = asked(&files(&mut app, FilesMessage::ToggleSudo { tab }));
+    // Five refreshes while it is on its way: no "sudo ls" starts for any of them yet.
+    for refresh in 0..5 {
+        let effects = files(
+            &mut app,
+            FilesMessage::Refresh {
+                tab,
+                side: Side::Remote,
+            },
+        );
+        assert!(effects.is_empty(), "refresh {refresh}: {effects:?}");
+    }
+    let last = remote_request(&mut app, tab);
+    // The first one comes, wanting a password: nothing is asked, nothing changes, and the
+    // last one asked for starts, alone.
     let second = asked(&files(
         &mut app,
-        FilesMessage::Refresh {
+        FilesMessage::SudoListed {
             tab,
-            side: Side::Remote,
+            request: first,
+            path: srv.clone(),
+            result: Err(FilesError::SudoPasswordNeeded),
         },
     ));
-    files(
+    assert_eq!(second, last);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let started = files(
         &mut app,
         FilesMessage::SudoListed {
             tab,
@@ -692,17 +717,8 @@ async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_
             result: Ok((srv.clone(), vec![entry("fresh", EntryKind::File, 1)])),
         },
     );
-    // The first one comes last, wanting a password: nothing is asked, nothing changes.
-    files(
-        &mut app,
-        FilesMessage::SudoListed {
-            tab,
-            request: first,
-            path: srv.clone(),
-            result: Err(FilesError::SudoPasswordNeeded),
-        },
-    );
-    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert!(started.is_empty(), "{started:?}");
+    // The first one coming again changes nothing.
     files(
         &mut app,
         FilesMessage::SudoListed {

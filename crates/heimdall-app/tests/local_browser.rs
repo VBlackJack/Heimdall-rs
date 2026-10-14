@@ -1947,9 +1947,16 @@ fn an_entry_is_opened_and_copied_from_the_folder_listed_while_another_is_on_its_
     // Pasted, it goes into the folder shown: the one asked for.
     let (sources, folder) = pasted(&paste(&mut app, pane, std::slice::from_ref(&photo)), pane);
     assert_eq!((sources, folder), (vec![photo.clone()], from.join("sub")));
-    // Opening "sub" again lists "sub", not a "sub" inside it.
+    // Opening "sub" again lists "sub", not a "sub" inside it, once the listing on its way
+    // comes.
+    let first = local_request(&mut app, pane);
     let index = index_of(&app, pane, "sub");
-    let effects = opened(&mut app, pane, index);
+    assert!(opened(&mut app, pane, index).is_empty(), "it waits");
+    let effects = app.update(Message::Files(FilesMessage::LocalListed {
+        tab: pane,
+        request: first,
+        result: Ok((from.join("sub"), Vec::new())),
+    }));
     assert!(
         matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == from.join("sub")),
         "{effects:?}"

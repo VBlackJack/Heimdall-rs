@@ -964,13 +964,16 @@ fn name_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
 }
 
 /// The listing of the local folder `path` in `tab`, the local pane's latest: any other one
-/// on its way is not shown.
-pub(super) fn local_listing(files: &mut FilesPane, tab: TabId, path: PathBuf) -> Effect {
-    Effect::ListLocal {
-        tab,
-        path,
-        request: files.local.ask_listing(),
-    }
+/// on its way is not shown. Started now when none is on its way; else it waits for that
+/// one's answer, in place of any other waiting.
+pub(super) fn local_listing(files: &mut FilesPane, tab: TabId, path: PathBuf) -> Vec<Effect> {
+    let request = files.local.ask_listing();
+    let listing = Effect::ListLocal { tab, path, request };
+    files
+        .local_listings
+        .ask(request, listing)
+        .into_iter()
+        .collect()
 }
 
 impl App {
@@ -1000,14 +1003,18 @@ impl App {
             }
         }
         let mut effects = Vec::new();
+        // A listing on its way went over the session gone: its answer, if one comes, holds
+        // nothing up.
+        files.remote_listings.clear();
+        files.local_listings.clear();
         // As root when the sudo mode stayed on through a reconnection: the C# keeps it
         // (`EmbeddedSftpViewModel.SudoMode` is only changed by its toggle).
         if let Some(client) = files.client.clone() {
             let path = files.remote.path.clone();
-            effects.push(super::files_sudo::remote_listing(files, tab, client, path));
+            effects.extend(super::files_sudo::remote_listing(files, tab, client, path));
         }
         let path = files.local.path.clone();
-        effects.push(local_listing(files, tab, path));
+        effects.extend(local_listing(files, tab, path));
         effects
     }
 
@@ -1021,19 +1028,36 @@ impl App {
                     return Vec::new();
                 };
                 let path = files.remote.path.clone();
-                vec![super::files_sudo::remote_listing(files, tab, client, path)]
+                super::files_sudo::remote_listing(files, tab, client, path)
             }
             Side::Local => {
                 let path = files.local.path.clone();
-                vec![local_listing(files, tab, path)]
+                local_listing(files, tab, path)
             }
         }
     }
 
-    /// A remote listing arrived. A link being entered that cannot be listed points at no
-    /// folder: the pane goes back where it was opened from, as the C# Files tab stays, and
-    /// says so.
-    pub(super) fn remote_listed(
+    /// A remote listing arrived: the one waiting for it starts, and it is shown unless
+    /// another was asked for since.
+    fn remote_listed(
+        &mut self,
+        tab: TabId,
+        request: ListingRequest,
+        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+    ) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = self
+            .files_mut(tab)
+            .and_then(|files| files.remote_listings.came(request))
+            .into_iter()
+            .collect();
+        effects.extend(self.show_remote_listing(tab, request, result));
+        effects
+    }
+
+    /// A remote listing shown, when it is the one awaited. A link being entered that cannot
+    /// be listed points at no folder: the pane goes back where it was opened from, as the C#
+    /// Files tab stays, and says so.
+    pub(super) fn show_remote_listing(
         &mut self,
         tab: TabId,
         request: ListingRequest,
@@ -1067,19 +1091,22 @@ impl App {
         Vec::new()
     }
 
-    /// A local listing arrived.
+    /// A local listing arrived: the one waiting for it starts, and it is shown unless
+    /// another was asked for since.
     fn local_listed(
         &mut self,
         tab: TabId,
         request: ListingRequest,
         result: Result<(PathBuf, Vec<crate::files::LocalEntry>), FilesError>,
     ) -> Vec<Effect> {
-        // Asked for before another one, or given up with Escape: the folder shown stays.
-        if !self
-            .files_mut(tab)
-            .is_some_and(|files| files.local.awaits(request))
-        {
+        let Some(files) = self.files_mut(tab) else {
             return Vec::new();
+        };
+        let next: Vec<Effect> = files.local_listings.came(request).into_iter().collect();
+        // Asked for before another one, started now, or given up with Escape: the folder
+        // shown stays. The one awaited has nothing waiting for it.
+        if !files.local.awaits(request) {
+            return next;
         }
         if result.is_err() && self.local_browser_start_failed(tab) {
             return self.list(tab, Side::Local);
@@ -1501,7 +1528,7 @@ impl App {
         };
         files.focus = Side::Remote;
         files.remote.leave();
-        vec![super::files_sudo::remote_listing(files, tab, client, path)]
+        super::files_sudo::remote_listing(files, tab, client, path)
     }
 
     /// Copies the full path of `side`'s selected entry, and says so.
@@ -1588,7 +1615,7 @@ impl App {
                     files.remote.path.join(typed.as_bytes())
                 };
                 files.remote.leave();
-                vec![super::files_sudo::remote_listing(files, tab, client, path)]
+                super::files_sudo::remote_listing(files, tab, client, path)
             }
             Side::Local => {
                 let Some(typed) = files.local.typed.take() else {
@@ -1601,7 +1628,7 @@ impl App {
                 // Joining an absolute path gives that path.
                 let path = files.local.path.join(typed);
                 files.local.leave();
-                vec![local_listing(files, tab, path)]
+                local_listing(files, tab, path)
             }
         }
     }
@@ -1788,6 +1815,9 @@ impl App {
             FilesKey::CancelLoad => {
                 let remote = files.remote.cancel_listing();
                 let local = files.local.cancel_listing();
+                // Nothing waits any more: the next listing asked for starts at once.
+                files.remote_listings.clear();
+                files.local_listings.clear();
                 if remote || local {
                     self.tell(super::Notice::ListingCancelled);
                 }
@@ -1822,12 +1852,14 @@ impl App {
                     let from = files.remote.entries_folder().clone();
                     let path = from.join(&entry.name);
                     let name = entry.label.clone();
+                    let before = files.remote.listing_request();
                     files.remote.leave();
                     files.remote.path = path;
                     let effects = self.list(tab, side);
-                    // Tied to this listing: asking for another one forgets it.
-                    if !effects.is_empty()
-                        && let Some(files) = self.files_mut(tab)
+                    // Tied to this listing, started or waiting: asking for another one
+                    // forgets it.
+                    if let Some(files) = self.files_mut(tab)
+                        && files.remote.listing_request() != before
                     {
                         files.remote.entering_link = Some((from, name));
                     }

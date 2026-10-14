@@ -247,6 +247,7 @@ async fn opening_a_folder_lists_it_and_up_goes_back() {
         opened_folder.as_slice(),
         [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/home/admin/logs"
     ));
+    listed_remote(&mut app, tab, "/home/admin/logs", Vec::new());
     let up = files(
         &mut app,
         FilesMessage::Up {
@@ -258,6 +259,103 @@ async fn opening_a_folder_lists_it_and_up_goes_back() {
         up.as_slice(),
         [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/home/admin"
     ));
+}
+
+#[tokio::test]
+async fn five_moves_while_a_listing_is_on_its_way_start_one_listing_the_last() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    let side = Side::Remote;
+    listed_remote(&mut app, tab, "/a/b/c/d/e/f", Vec::new());
+    let named = |app: &App| {
+        let files = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+        (files.remote.path.display(), files.remote.history.clone())
+    };
+    let first = files(&mut app, FilesMessage::Up { tab, side });
+    let first = match first.as_slice() {
+        [Effect::ListRemote { request, path, .. }] if path.as_bytes() == b"/a/b/c/d/e" => *request,
+        other => panic!("{other:?}"),
+    };
+    // Up five times more while it is on its way, as fast as one clicks: the path bar
+    // follows each at once, and no listing starts.
+    for (up, folder) in ["/a/b/c/d", "/a/b/c", "/a/b", "/a", "/"].iter().enumerate() {
+        let effects = files(&mut app, FilesMessage::Up { tab, side });
+        assert!(effects.is_empty(), "up {up}: {effects:?}");
+        assert_eq!(named(&app).0, *folder);
+    }
+    let last = remote_request(&mut app, tab);
+    // The first comes: not shown, and the last one asked for starts, alone.
+    let started = files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            request: first,
+            result: Ok((RemotePath::from("/a/b/c/d/e"), Vec::new())),
+        },
+    );
+    match started.as_slice() {
+        [Effect::ListRemote { request, path, .. }] => {
+            assert_eq!((*request, path.as_bytes()), (last, &b"/"[..]));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        named(&app),
+        ("/".to_owned(), Vec::new()),
+        "nothing arrived yet"
+    );
+    listed_remote(&mut app, tab, "/", Vec::new());
+    assert_eq!(
+        named(&app),
+        ("/".to_owned(), vec![RemotePath::from("/a/b/c/d/e/f")]),
+        "one step back, to the folder shown before"
+    );
+}
+
+#[tokio::test]
+async fn a_session_open_again_lists_at_once_whatever_waited_on_the_one_gone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = match app
+        .update(Message::OpenFiles(ProfileId::new("a")))
+        .as_slice()
+    {
+        [Effect::Connect { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("{other:?}"),
+    };
+    ready(&mut app, tab, attempt).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/home/admin",
+        vec![remote_entry(b"logs", EntryKind::Directory, 0)],
+    );
+    let side = Side::Remote;
+    assert_eq!(
+        files(
+            &mut app,
+            FilesMessage::Open {
+                tab,
+                side,
+                index: 0
+            }
+        )
+        .len(),
+        1
+    );
+    assert!(files(&mut app, FilesMessage::Up { tab, side }).is_empty());
+    // The session open again before the listings on its way answer: both panes list at
+    // once, nothing held up by a listing sent over the session gone.
+    let again = ready(&mut app, tab, attempt).await;
+    assert!(
+        matches!(
+            again.as_slice(),
+            [Effect::ListRemote { path, .. }, Effect::ListLocal { .. }]
+                if path.as_bytes() == b"/home/admin"
+        ),
+        "{again:?}"
+    );
 }
 
 #[tokio::test]
@@ -758,6 +856,16 @@ async fn a_finished_download_runs_the_next_refreshes_the_local_pane_and_closing_
             remote_entry(b"two", EntryKind::File, 1),
         ],
     );
+    // This computer's pane listed: the listing asked once a download is done starts at once.
+    let request = local_request(&mut app, tab);
+    files(
+        &mut app,
+        FilesMessage::LocalListed {
+            tab,
+            request,
+            result: Ok((dir.path().to_owned(), Vec::new())),
+        },
+    );
     let first = download(&mut app, tab, 0);
     let first = planned(&mut app, first).await;
     let [Effect::Transfer { id, .. }] = first.as_slice() else {
@@ -861,7 +969,15 @@ async fn a_folder_typed_in_the_path_bar_is_listed_from_the_one_shown() {
     let mut app = app(dir.path());
     let (tab, _) = opened(&mut app).await;
     listed_remote(&mut app, tab, "/home/admin", Vec::new());
+    // Each listing given up before the next, which then starts at once.
     let go = |app: &mut App, side: Side, text: &str| {
+        files(
+            app,
+            FilesMessage::Key {
+                tab,
+                key: heimdall_app::files::FilesKey::CancelLoad,
+            },
+        );
         files(
             app,
             FilesMessage::PathEdited {

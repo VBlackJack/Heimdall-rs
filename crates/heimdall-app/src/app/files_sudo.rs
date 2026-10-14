@@ -27,15 +27,16 @@ use crate::ids::TabId;
 
 /// The listing of the server's folder `path` in `tab`: as root while its sudo mode is on,
 /// with the password sudo took for the tab. It is the server pane's latest: any other one on
-/// its way is not shown.
+/// its way is not shown. Started now when none is on its way; else it waits for that one's
+/// answer, in place of any other waiting, and nothing is started yet.
 pub(super) fn remote_listing(
     files: &mut FilesPane,
     tab: TabId,
     client: RemoteSession,
     path: RemotePath,
-) -> Effect {
+) -> Vec<Effect> {
     let request = files.remote.ask_listing();
-    match files.shell.clone().filter(|_| files.sudo_mode) {
+    let listing = match files.shell.clone().filter(|_| files.sudo_mode) {
         Some(shell) => Effect::SudoListRemote {
             tab,
             shell,
@@ -49,7 +50,12 @@ pub(super) fn remote_listing(
             path,
             request,
         },
-    }
+    };
+    files
+        .remote_listings
+        .ask(request, listing)
+        .into_iter()
+        .collect()
 }
 
 impl App {
@@ -95,9 +101,11 @@ impl App {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
+        // The listing waiting for this one starts now.
+        let next: Vec<Effect> = files.remote_listings.came(request).into_iter().collect();
         // Asked for before another one, or given up with Escape: nothing is shown or asked.
         if !files.sudo_mode || !files.remote.awaits(request) {
-            return Vec::new();
+            return next;
         }
         match result {
             Err(error) if is_password_error(&error) => {
@@ -106,9 +114,9 @@ impl App {
                 files.remote.listing_failed();
                 let name = crate::text::server_text(&path.display());
                 self.sudo_refused(tab, name, SudoAction::List(path), error);
-                Vec::new()
+                next
             }
-            result => self.remote_listed(tab, request, result),
+            result => self.show_remote_listing(tab, request, result),
         }
     }
 
@@ -122,6 +130,6 @@ impl App {
         };
         // The folder shown is left for it, as when it was first asked for.
         files.remote.leave();
-        vec![remote_listing(files, tab, client, path)]
+        remote_listing(files, tab, client, path)
     }
 }
