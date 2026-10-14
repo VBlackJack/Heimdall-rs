@@ -216,21 +216,22 @@ mod tests {
             b"x",
             b" a",
         ] {
-            for rules in [Rules::Unix, Rules::Windows] {
-                let Ok(local) = LocalName::from_remote(name, rules) else {
-                    continue;
-                };
-                let joined = target.join(&local.name);
-                assert_eq!(joined.parent(), Some(target), "{}", display_bytes(name));
-                assert!(
-                    matches!(
-                        Path::new(&local.name).components().collect::<Vec<_>>()[..],
-                        [Component::Normal(_)]
-                    ),
-                    "{}",
-                    display_bytes(name)
-                );
-            }
+            // The host's rules, as every download uses (`Rules::native()`): the other
+            // system's rules allow names this host's paths would split, such as a
+            // backslash, a plain character on Unix.
+            let Ok(local) = LocalName::from_remote(name, Rules::native()) else {
+                continue;
+            };
+            let joined = target.join(&local.name);
+            assert_eq!(joined.parent(), Some(target), "{}", display_bytes(name));
+            assert!(
+                matches!(
+                    Path::new(&local.name).components().collect::<Vec<_>>()[..],
+                    [Component::Normal(_)]
+                ),
+                "{}",
+                display_bytes(name)
+            );
         }
     }
 
