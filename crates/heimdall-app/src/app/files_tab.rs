@@ -981,6 +981,31 @@ impl App {
         self.tab_mut(tab)?.files.as_deref_mut()
     }
 
+    /// Whether pane `side` of `tab` waits for a listing: the folder its path bar names is
+    /// then not yet the one whose entries it shows.
+    #[must_use]
+    pub fn files_loading(&self, tab: TabId, side: Side) -> bool {
+        self.tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .is_some_and(|files| match side {
+                Side::Remote => files.remote.loading,
+                Side::Local => files.local.loading,
+            })
+    }
+
+    /// Whether something may be put into the folder pane `side` of `tab` shows: not while
+    /// its listing is on its way, the path bar naming the folder asked for over the entries
+    /// of the one before, where a paste, an upload, a new folder or a drop could replace
+    /// files the user has not seen. Refused, the status says so; keys and drops are refused
+    /// as the greyed buttons are.
+    pub(super) fn takes_into_shown(&mut self, tab: TabId, side: Side) -> bool {
+        if !self.files_loading(tab, side) {
+            return true;
+        }
+        self.tell(super::Notice::ListingInProgress);
+        false
+    }
+
     /// Effects that list both panes, once the session is open; the server's bookmarks
     /// kept from before brought back.
     pub(super) fn files_ready(&mut self, tab: TabId) -> Vec<Effect> {
@@ -1374,26 +1399,28 @@ impl App {
 
     /// Sends `path`, dropped on the tab, to the server's folder shown; asked first when it
     /// would replace a name listed there.
-    /// "Paste from Explorer": the files copied in Explorer read, while connected.
-    fn paste_from_explorer(&self, tab: TabId) -> Vec<Effect> {
+    /// "Paste from Explorer": the files copied in Explorer read, while connected and the
+    /// server's folder shown is listed.
+    fn paste_from_explorer(&mut self, tab: TabId) -> Vec<Effect> {
         let connected = self
             .tab(tab)
             .and_then(|found| found.files.as_deref())
             .is_some_and(|files| files.client.is_some());
-        if connected {
+        if connected && self.takes_into_shown(tab, Side::Remote) {
             vec![Effect::ReadExplorerFiles { tab }]
         } else {
             Vec::new()
         }
     }
 
-    /// "Upload here...": the files to upload asked of the user, while connected.
-    fn upload_here(&self, tab: TabId) -> Vec<Effect> {
+    /// "Upload here...": the files to upload asked of the user, while connected and the
+    /// server's folder shown is listed.
+    fn upload_here(&mut self, tab: TabId) -> Vec<Effect> {
         let connected = self
             .tab(tab)
             .and_then(|found| found.files.as_deref())
             .is_some_and(|files| files.client.is_some());
-        if connected {
+        if connected && self.takes_into_shown(tab, Side::Remote) {
             vec![Effect::PickUploads { tab }]
         } else {
             Vec::new()
@@ -1402,8 +1429,12 @@ impl App {
 
     /// Uploads `paths`, files and folders of this computer, into the server's folder shown,
     /// in one plan: one question for whatever is in the way. What is neither a file nor a
-    /// folder is said failed, the others go.
+    /// folder is said failed, the others go. Nothing while that folder's listing is on its
+    /// way: dropped, picked or pasted, the files would go into a folder not shown yet.
     pub(super) fn upload_paths(&mut self, tab: TabId, paths: &[PathBuf]) -> Vec<Effect> {
+        if !self.takes_into_shown(tab, Side::Remote) {
+            return Vec::new();
+        }
         let Some(folder) = self.files_mut(tab).map(|files| files.remote.path.clone()) else {
             return Vec::new();
         };
@@ -1902,6 +1933,8 @@ impl App {
         match direction {
             Direction::Upload if hidden => self.upload_here(tab),
             Direction::Download if hidden => self.pick_download_folder(tab),
+            // Into the server's folder shown: not while its listing is on its way.
+            Direction::Upload if !self.takes_into_shown(tab, Side::Remote) => Vec::new(),
             _ => self.send_chosen(tab, direction, None),
         }
     }
@@ -2431,6 +2464,8 @@ impl App {
 
     fn ask(&mut self, tab: TabId, side: Side, action: NameAction) -> Vec<Effect> {
         let (kind, value) = match action {
+            // In the folder shown: not while its listing is on its way.
+            NameAction::NewFolder if !self.takes_into_shown(tab, side) => return Vec::new(),
             NameAction::NewFolder => (PendingKind::NewFolder, String::new()),
             // The server's permissions only, as in the C# Files tab; the ones it has, to
             // change from.
@@ -2586,6 +2621,9 @@ impl App {
             PendingKind::SudoDelete { targets } => {
                 return self.start_batch(tab, Side::Remote, BatchKind::Delete, targets);
             }
+            // Another folder asked for while the name was typed: not made where it was not
+            // asked for.
+            PendingKind::NewFolder if !self.takes_into_shown(tab, side) => return Vec::new(),
             kind => kind,
         };
         let Some(files) = self.files_mut(tab) else {
@@ -2889,6 +2927,14 @@ impl App {
             };
             return self.move_into(tab, from, &chosen, folder);
         }
+        // Beside the entries, into the folder shown: not while its listing is on its way. A
+        // folder entry dropped on is its own destination.
+        if into.is_none() && !self.takes_into_shown(tab, onto) {
+            return Vec::new();
+        }
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
         let destination = (
             match (onto, into) {
                 (Side::Local, Some(index)) => files

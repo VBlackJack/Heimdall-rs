@@ -262,6 +262,17 @@ async fn copied_entries_are_pasted_by_a_copy_and_stay_to_be_pasted_again() {
     assert!(matches!(done.as_slice(), [Effect::ListRemote { .. }]));
     assert_eq!(app.notice(), Some(&Notice::FilesPasted));
     assert!(app.can_paste(tab), "a copy stays to be pasted again");
+    // Not into the folder named while its listing is on its way: given up here, the
+    // entries stay chosen.
+    assert!(files(&mut app, FilesMessage::Paste { tab }).is_empty());
+    assert_eq!(app.notice(), Some(&Notice::ListingInProgress));
+    files(
+        &mut app,
+        FilesMessage::Key {
+            tab,
+            key: heimdall_app::files::FilesKey::CancelLoad,
+        },
+    );
     copy_of(&files(&mut app, FilesMessage::Paste { tab }));
     files(
         &mut app,

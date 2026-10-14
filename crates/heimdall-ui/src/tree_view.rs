@@ -1172,6 +1172,9 @@ pub struct FilesTabFacts {
     /// It is the local file browser docked beside a local shell: no server to send to,
     /// and "Open in Explorer" and "Open in terminal", as the C# browser.
     pub local_only: bool,
+    /// The pane's listing is on its way: the folder it names is not yet the one whose
+    /// entries are shown, and nothing is put into it until it is.
+    pub loading: bool,
 }
 
 /// The menu of an entry of a Files tab's pane, in the C# order, limited to what this
@@ -1182,7 +1185,9 @@ pub struct FilesTabFacts {
 /// connection; Paste while what was cut or copied can be pasted in this tab. The local file
 /// browser's own entries, as the C# `LocalFileBrowserView`: "Open With" (on Windows, which
 /// alone has the chooser) and "Open in Editor" for one regular file, "Copy" and "Paste" of
-/// its files, and "Properties" for an entry chosen alone.
+/// its files, and "Properties" for an entry chosen alone. What puts something into the
+/// folder shown, New Folder, Paste and the uploads, is greyed while its listing is on its
+/// way.
 pub fn files_entry_menu<'a>(
     (tab, side): (TabId, Side),
     entry_facts: Option<FilesEntryFacts>,
@@ -1258,7 +1263,7 @@ pub fn files_entry_menu<'a>(
         on_entry.then(separator),
         entry(
             fl!("ui-files-menu-new-folder"),
-            files(FilesMessage::AskNewFolder { tab, side })
+            files(FilesMessage::AskNewFolder { tab, side }).filter(|_| !tab_facts.loading)
         ),
         entry(
             fl!("ui-files-menu-refresh"),
@@ -1288,15 +1293,17 @@ fn clipboard_entries<'a>(
     let remote = side == Side::Remote;
     let local_only = tab_facts.local_only;
     let files = |message| Some(AppMessage::Files(message));
+    // Into the folder shown: greyed while its listing is on its way.
+    let into_shown = |message| files(message).filter(|_| !tab_facts.loading);
     menu_column![
         remote.then(|| entry(
             fl!("ui-files-menu-upload-here"),
-            files(FilesMessage::UploadHere { tab })
+            into_shown(FilesMessage::UploadHere { tab })
         )),
         // Explorer's copied files are read on Windows only.
         (remote && cfg!(windows)).then(|| entry(
             fl!("ui-files-menu-paste-explorer"),
-            files(FilesMessage::PasteFromExplorer { tab })
+            into_shown(FilesMessage::PasteFromExplorer { tab })
         )),
         (remote && on_entry)
             .then(|| entry(fl!("ui-files-menu-cut"), files(FilesMessage::Cut { tab }))),
@@ -1304,7 +1311,7 @@ fn clipboard_entries<'a>(
             .then(|| entry(fl!("ui-files-menu-copy"), files(FilesMessage::Copy { tab }))),
         ((remote || local_only) && tab_facts.can_paste).then(|| entry(
             fl!("ui-files-menu-paste"),
-            files(FilesMessage::Paste { tab })
+            into_shown(FilesMessage::Paste { tab })
         )),
         (remote && tab_facts.over_ssh && on_entry).then(|| entry(
             fl!("ui-files-menu-duplicate"),

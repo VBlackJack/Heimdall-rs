@@ -4842,6 +4842,10 @@ impl Shell {
                     sftp: self.app.files_over_sftp(tab),
                     over_ssh: self.app.can_copy(tab),
                     local_only: files.local_only,
+                    loading: match side {
+                        Side::Remote => files.remote.loading,
+                        Side::Local => files.local.loading,
+                    },
                 },
             )
         } else if let TreeMenu::Folder(path) = menu {

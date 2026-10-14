@@ -746,6 +746,14 @@ async fn enter_opens_a_folder_and_sends_a_file() {
             if path.as_bytes() == b"/srv/logs"),
         "{opened:?}"
     );
+    // Once "logs" is listed, a file is sent into it.
+    arrived(
+        &mut app,
+        tab,
+        Side::Remote,
+        asked(&opened).0,
+        Ok(("/srv/logs", &[])),
+    );
     key(&mut app, tab, FilesKey::Focus(Side::Local));
     key(&mut app, tab, FilesKey::Last);
     let sent = key(&mut app, tab, FilesKey::Open);
@@ -1188,6 +1196,15 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
             },
         );
     }
+    // The folder listed again once the file is up: the next drop goes there once it is.
+    let request = remote_request(&mut app, tab);
+    arrived(
+        &mut app,
+        tab,
+        Side::Remote,
+        request,
+        Ok(("/srv", &["report.pdf"])),
+    );
 
     let dropped = drop(&mut app, &folder);
     let sent = planned(&mut app, dropped).await;
@@ -2878,8 +2895,10 @@ async fn a_servers_entry_is_moved_and_opened_from_the_folder_it_was_listed_from(
         [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/srv/logs"
     ));
 
-    // A new folder is made in the folder asked for, the one named above the list, which
-    // is listed again once it is made.
+    // A new folder is made in the folder named above the list once it is listed, which is
+    // listed again once it is made.
+    let request = remote_request(&mut app, tab);
+    arrived(&mut app, tab, side, request, Ok(("/srv/logs", &[])));
     files(&mut app, FilesMessage::AskNewFolder { tab, side });
     files(&mut app, FilesMessage::NameEdited("fresh".to_owned()));
     match operation(&app.update(Message::ConfirmDialog)) {
@@ -3343,6 +3362,209 @@ async fn one_listing_runs_at_a_time_and_only_the_last_one_asked_for_waits_for_it
             (folder("fifth"), vec!["y".to_owned()], false)
         );
         assert_eq!(pane_error(&app, tab, side), None, "{side:?}");
+    }
+}
+
+/// `message` sent to `tab`, whose local entry "b.txt" is chosen, the keys on its server's
+/// pane: nothing done, nothing asked, and the status says a listing is on its way.
+fn refused(app: &mut App, tab: TabId, message: FilesMessage) {
+    use heimdall_app::Notice;
+
+    let said = format!("{message:?}");
+    // Another notice said first.
+    files(
+        app,
+        FilesMessage::CopyPath {
+            tab,
+            side: Side::Local,
+        },
+    );
+    assert!(
+        matches!(app.notice(), Some(Notice::PathCopied(_))),
+        "{said}"
+    );
+    files(
+        app,
+        FilesMessage::Key {
+            tab,
+            key: FilesKey::Focus(Side::Remote),
+        },
+    );
+    let effects = files(app, message);
+    assert!(effects.is_empty(), "{said}: {effects:?}");
+    assert!(app.dialog.is_none(), "{said}: {:?}", app.dialog);
+    assert_eq!(app.notice(), Some(&Notice::ListingInProgress), "{said}");
+}
+
+#[tokio::test]
+async fn nothing_lands_in_the_folder_named_while_its_listing_is_on_its_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let picked = vec![dir.path().join("b.txt")];
+    // "a.txt" cut, to be pasted; "b.txt" of this computer chosen, to be uploaded.
+    select(&mut app, tab, Side::Remote, 1);
+    files(&mut app, FilesMessage::Cut { tab });
+    select(&mut app, tab, Side::Local, 1);
+    // Into "logs": the path bar names it while the entries of "/srv" are still shown.
+    let into_logs = another_on_its_way(&mut app, tab, Side::Remote);
+    assert_eq!(shown(&app, tab, Side::Remote).0, "/srv/logs");
+    let key_of = |key| FilesMessage::Key { tab, key };
+    for message in [
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Remote,
+        },
+        key_of(FilesKey::NewFolder),
+        FilesMessage::Paste { tab },
+        key_of(FilesKey::Paste),
+        FilesMessage::UploadHere { tab },
+        FilesMessage::PasteFromExplorer { tab },
+        FilesMessage::UploadPicked {
+            tab,
+            paths: picked.clone(),
+        },
+        FilesMessage::Dropped {
+            tab,
+            paths: picked.clone(),
+        },
+        FilesMessage::ExplorerFilesRead {
+            tab,
+            paths: picked.clone(),
+        },
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+        // Beside the entries, or on a file: the folder named.
+        FilesMessage::DropEntries {
+            tab,
+            from: Side::Local,
+            onto: Side::Remote,
+            into: None,
+        },
+        FilesMessage::DropEntries {
+            tab,
+            from: Side::Local,
+            onto: Side::Remote,
+            into: Some(1),
+        },
+    ] {
+        refused(&mut app, tab, message);
+    }
+    // Dropped on a folder entry: into that folder, listed from "/srv".
+    let onto_entry = files(
+        &mut app,
+        FilesMessage::DropEntries {
+            tab,
+            from: Side::Local,
+            onto: Side::Remote,
+            into: Some(0),
+        },
+    );
+    assert_eq!(
+        plan_request(&onto_entry).roots[0].root.remote.as_bytes(),
+        b"/srv/logs/b.txt"
+    );
+    stop_planning(&mut app, tab);
+
+    // Listed: each lands there again.
+    arrived(
+        &mut app,
+        tab,
+        Side::Remote,
+        asked(&into_logs).0,
+        Ok(("/srv/logs", &["c.txt"])),
+    );
+    files(
+        &mut app,
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(app.dialog, Some(Dialog::AskName { .. })));
+    app.update(Message::DismissDialog);
+    assert!(matches!(
+        files(&mut app, FilesMessage::UploadHere { tab }).as_slice(),
+        [Effect::PickUploads { .. }]
+    ));
+    match files(&mut app, FilesMessage::Paste { tab }).as_slice() {
+        [Effect::MoveRemote { moves, .. }] => assert_eq!(
+            *moves,
+            [(
+                RemotePath::from("/srv/a.txt"),
+                RemotePath::from("/srv/logs/a.txt")
+            )]
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn nothing_lands_in_this_computers_folder_named_while_its_listing_is_on_its_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // The server's "a.txt" chosen, to be downloaded; "b.txt" of this computer too.
+    select(&mut app, tab, Side::Remote, 1);
+    select(&mut app, tab, Side::Local, 1);
+    // Into "docs": nothing made in it, nor dropped beside the entries into it, until listed.
+    let into_docs = another_on_its_way(&mut app, tab, Side::Local);
+    refused(
+        &mut app,
+        tab,
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Local,
+        },
+    );
+    refused(
+        &mut app,
+        tab,
+        FilesMessage::DropEntries {
+            tab,
+            from: Side::Remote,
+            onto: Side::Local,
+            into: None,
+        },
+    );
+    arrived(
+        &mut app,
+        tab,
+        Side::Local,
+        asked(&into_docs).0,
+        Ok((&dir.path().join("docs").display().to_string(), &[])),
+    );
+    files(
+        &mut app,
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Local,
+        },
+    );
+    assert!(matches!(app.dialog, Some(Dialog::AskName { .. })));
+}
+
+#[tokio::test]
+async fn a_new_folder_named_while_another_folder_came_to_be_listed_is_not_made() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let side = Side::Remote;
+    files(&mut app, FilesMessage::AskNewFolder { tab, side });
+    files(&mut app, FilesMessage::NameEdited("fresh".to_owned()));
+    // The pane follows its shell, say, to another folder while the name is typed.
+    let request = go_to(&mut app, tab, side, "/srv/logs");
+    assert!(app.update(Message::ConfirmDialog).is_empty());
+    assert_eq!(app.notice(), Some(&Notice::ListingInProgress));
+    arrived(&mut app, tab, side, request, Ok(("/srv/logs", &[])));
+    files(&mut app, FilesMessage::AskNewFolder { tab, side });
+    files(&mut app, FilesMessage::NameEdited("fresh".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteMakeFolder { path, .. } => {
+            assert_eq!(path.as_bytes(), b"/srv/logs/fresh");
+        }
+        other => panic!("{other:?}"),
     }
 }
 
