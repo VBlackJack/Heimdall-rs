@@ -145,19 +145,17 @@ async fn tab(dir: &Path) -> (App, TabId) {
         size: Some(4096),
         modified: None,
     };
+    let listed = vec![
+        remote("logs", EntryKind::Directory),
+        remote("a.txt", EntryKind::File),
+    ];
     let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((
-                RemotePath::from("/srv"),
-                vec![
-                    remote("logs", EntryKind::Directory),
-                    remote("a.txt", EntryKind::File),
-                ],
-            )),
+            result: Ok((RemotePath::from("/srv"), listed, 0)),
         },
     );
     let request = local_request(&mut app, tab);
@@ -933,6 +931,7 @@ async fn a_servers_entry_gets_new_permissions_typed_in_octal() {
                     group: Some(50),
                     inode: None,
                 }],
+                0,
             )),
         },
     );
@@ -1301,7 +1300,7 @@ async fn cut_entries_are_pasted_by_a_move_into_the_folder_shown() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv/logs"), Vec::new())),
+            result: Ok((RemotePath::from("/srv/logs"), Vec::new(), 0)),
         },
     );
     let effects = files(&mut app, FilesMessage::Paste { tab });
@@ -1462,27 +1461,25 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
                 shell: None,
             },
         });
+        let listed = vec![RemoteEntry {
+            name: b"a.txt".to_vec(),
+            label: "a.txt".to_owned(),
+            kind: EntryKind::File,
+            size: Some(1),
+            modified: None,
+            permissions: None,
+            owner: None,
+            owner_name: None,
+            group: None,
+            inode: None,
+        }];
         let request = remote_request(app, tab);
         files(
             app,
             FilesMessage::RemoteListed {
                 tab,
                 request,
-                result: Ok((
-                    RemotePath::from("/srv"),
-                    vec![RemoteEntry {
-                        name: b"a.txt".to_vec(),
-                        label: "a.txt".to_owned(),
-                        kind: EntryKind::File,
-                        size: Some(1),
-                        modified: None,
-                        permissions: None,
-                        owner: None,
-                        owner_name: None,
-                        group: None,
-                        inode: None,
-                    }],
-                )),
+                result: Ok((RemotePath::from("/srv"), listed, 0)),
             },
         );
         tab
@@ -1705,7 +1702,7 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv/it's"), Vec::new())),
+            result: Ok((RemotePath::from("/srv/it's"), Vec::new(), 0)),
         },
     );
     assert_eq!(
@@ -1719,7 +1716,7 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv/a\nrm -rf ~"), Vec::new())),
+            result: Ok((RemotePath::from("/srv/a\nrm -rf ~"), Vec::new(), 0)),
         },
     );
     assert!(
@@ -2261,7 +2258,7 @@ async fn a_file_too_large_for_the_integrated_editor_points_to_the_external_one()
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv"), vec![large])),
+            result: Ok((RemotePath::from("/srv"), vec![large], 0)),
         },
     );
     select(&mut app, tab, Side::Remote, 0);
@@ -2414,7 +2411,7 @@ async fn opening_a_file_too_large_to_edit_downloads_it_as_before() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv"), vec![large])),
+            result: Ok((RemotePath::from("/srv"), vec![large], 0)),
         },
     );
     let opened = files(
@@ -2988,6 +2985,7 @@ async fn what_was_asked_about_is_acted_on_even_once_another_listing_arrived() {
                 result: Ok((
                     RemotePath::from("/srv/logs"),
                     vec![remote_entry("a.txt", EntryKind::File)],
+                    0,
                 )),
             },
         );
@@ -3018,6 +3016,7 @@ async fn what_was_asked_about_is_acted_on_even_once_another_listing_arrived() {
                     remote_entry("logs", EntryKind::Directory),
                     remote_entry("a.txt", EntryKind::File),
                 ],
+                0,
             )),
         },
     );
@@ -3089,6 +3088,7 @@ async fn after_a_failed_listing_the_folder_shown_is_the_one_listed() {
             result: Ok((
                 RemotePath::from("/srv/logs"),
                 vec![remote_entry("old", EntryKind::Directory)],
+                0,
             )),
         },
     );
@@ -3101,7 +3101,7 @@ async fn after_a_failed_listing_the_folder_shown_is_the_one_listed() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv/logs/old"), Vec::new())),
+            result: Ok((RemotePath::from("/srv/logs/old"), Vec::new(), 0)),
         },
     );
     let back = files(&mut app, FilesMessage::Back { tab, side });
@@ -3155,7 +3155,7 @@ fn arrived(
                     .iter()
                     .map(|name| remote_entry(name, EntryKind::File))
                     .collect();
-                (RemotePath::from(folder), entries)
+                (RemotePath::from(folder), entries, 0)
             }),
         },
         Side::Local => FilesMessage::LocalListed {
@@ -3305,6 +3305,7 @@ async fn a_link_entered_then_left_for_another_folder_says_that_folders_failure()
             result: Ok((
                 RemotePath::from("/srv/x"),
                 vec![remote_entry("lnk", EntryKind::Link)],
+                0,
             )),
         },
     );

@@ -55,7 +55,7 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ItemKind, Refusal, RemoteError, RemoteItem};
+use crate::{ItemKind, Listing, Refusal, RemoteError, RemoteItem};
 
 /// Suffix of a file being downloaded, as for SFTP.
 const PART_SUFFIX: &str = ".heimdall-part";
@@ -259,6 +259,15 @@ impl FtpClient {
     ///
     /// [`RemoteError`] from the server.
     pub async fn list(&self, path: &RemotePath) -> Result<Vec<RemoteItem>, RemoteError> {
+        Ok(self.list_counted(path).await?.items)
+    }
+
+    /// As [`Self::list`], with how many names were left out as not one clean segment.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server.
+    pub async fn list_counted(&self, path: &RemotePath) -> Result<Listing, RemoteError> {
         let mut control = self.control.lock().await;
         self.list_locked(&mut control, path).await
     }
@@ -267,7 +276,7 @@ impl FtpClient {
         &self,
         control: &mut AsyncRustlsFtpStream,
         path: &RemotePath,
-    ) -> Result<Vec<RemoteItem>, RemoteError> {
+    ) -> Result<Listing, RemoteError> {
         let folder = text(path);
         let lines = if self.machine_listing {
             control.mlsd(Some(&folder)).await
@@ -275,7 +284,25 @@ impl FtpClient {
             control.list(Some(&folder)).await
         }
         .map_err(|e| ftp_error(&e))?;
-        Ok(items(&lines, self.machine_listing))
+        let read = read_lines(&lines, self.machine_listing);
+        // Warnings naming the folder, as the C# `SftpBrowser.ListDirectoryAsync` warns of a
+        // name it leaves out: an entry a listing hides may be what an administrator looks
+        // for. Server data: the counts only, never the lines or names themselves.
+        if read.unread > 0 {
+            log::warn!(
+                "FTP listing of {:?} left out {} line(s) that do not read",
+                path.display(),
+                read.unread
+            );
+        }
+        if read.listing.hidden_unsafe > 0 {
+            log::warn!(
+                "FTP listing of {:?} left out {} entry name(s) that are not one clean segment",
+                path.display(),
+                read.listing.hidden_unsafe
+            );
+        }
+        Ok(read.listing)
     }
 
     /// The entry at `path`, looked up in its folder's listing; `None` when there is none.
@@ -291,6 +318,7 @@ impl FtpClient {
         Ok(self
             .list_locked(control, &path.parent())
             .await?
+            .items
             .into_iter()
             .find(|entry| entry.name == name))
     }
@@ -374,7 +402,7 @@ impl FtpClient {
                 continue;
             }
             pending.push((folder.clone(), true));
-            for entry in self.list_locked(&mut control, &folder).await? {
+            for entry in self.list_locked(&mut control, &folder).await?.items {
                 visited += 1;
                 if visited > MAX_ENTRIES {
                     return Err(RemoteError::TooLarge);
@@ -829,10 +857,18 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// What a listing's lines gave: the entries kept, with how many names were left out, and
+/// how many lines did not read.
+struct ReadLines {
+    listing: Listing,
+    unread: usize,
+}
+
 /// The entries a listing's `lines` describe: machine lines (`MLSD`) or human ones (`LIST`,
 /// UNIX or DOS format); `.` and `..`, lines that do not read, and names that are not one
-/// clean segment (`is_child_name`, as the C# `FtpBrowser.MapFtpItemToFileInfo`) left out.
-fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
+/// clean segment (`is_child_name`, as the C# `FtpBrowser.MapFtpItemToFileInfo`) left out
+/// and counted.
+fn read_lines(lines: &[String], machine: bool) -> ReadLines {
     let (mut unread, mut unsafe_names) = (0usize, 0usize);
     let listed: Vec<RemoteItem> = lines
         .iter()
@@ -850,14 +886,13 @@ fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
             safe
         })
         .collect();
-    if unread > 0 || unsafe_names > 0 {
-        // Server data: the counts only, never the lines or names themselves.
-        log::debug!(
-            "FTP listing: {unread} line(s) not read, {unsafe_names} name(s) not one clean \
-             segment, left out"
-        );
+    ReadLines {
+        listing: Listing {
+            items: listed,
+            hidden_unsafe: unsafe_names,
+        },
+        unread,
     }
-    listed
 }
 
 /// The entry one listing line describes, if it reads.
@@ -1267,8 +1302,12 @@ mod tests {
     use suppaftp::types::Response;
     use suppaftp::{FtpError, Status};
 
-    use super::{Owner, ftp_error, items, machine_owner, tolerated, unix_owner, walks};
-    use crate::{ItemKind, Refusal, RemoteError};
+    use super::{Owner, ftp_error, machine_owner, read_lines, tolerated, unix_owner, walks};
+    use crate::{ItemKind, Refusal, RemoteError, RemoteItem};
+
+    fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
+        read_lines(lines, machine).listing.items
+    }
 
     fn kinds(lines: &[&str], machine: bool) -> Vec<(String, ItemKind)> {
         let lines: Vec<String> = lines.iter().map(|line| (*line).to_owned()).collect();
@@ -1681,6 +1720,28 @@ mod tests {
             kinds(&["10-13-26  10:00AM                 1 ..\\x"], false),
             []
         );
+    }
+
+    #[test]
+    fn the_names_a_listing_leaves_out_are_counted_apart_from_the_lines_that_do_not_read() {
+        let lines: Vec<String> = [
+            "total 3",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 a/b",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 ..\\x",
+            "drwxr-xr-x 1 a s 1 Sep 29 10:00 ..",
+            "not a listing line",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 kept",
+        ]
+        .iter()
+        .map(|line| (*line).to_owned())
+        .collect();
+        let read = read_lines(&lines, false);
+        assert_eq!(read.listing.items.len(), 1);
+        // `..` is no entry, and the summary line is no line left out.
+        assert_eq!(read.listing.hidden_unsafe, 2);
+        assert_eq!(read.unread, 1);
+        let clean = read_lines(&lines[5..], false);
+        assert_eq!((clean.listing.hidden_unsafe, clean.unread), (0, 0));
     }
 
     #[test]

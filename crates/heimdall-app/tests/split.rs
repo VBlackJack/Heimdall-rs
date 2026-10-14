@@ -685,6 +685,7 @@ async fn unsaved_files_tab(app: &mut App) -> TabId {
                     group: None,
                     inode: None,
                 }],
+                0,
             )),
         },
     );

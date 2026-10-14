@@ -206,7 +206,7 @@ fn listed_remote(app: &mut App, tab: TabId, path: &str, entries: Vec<RemoteEntry
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from(path), entries)),
+            result: Ok((RemotePath::from(path), entries, 0)),
         },
     );
 }
@@ -1515,7 +1515,7 @@ async fn escape_gives_up_a_listing_on_its_way_the_folder_shown_staying() {
         FilesMessage::RemoteListed {
             tab,
             request: given_up,
-            result: Ok((RemotePath::from("/home/admin/logs"), Vec::new())),
+            result: Ok((RemotePath::from("/home/admin/logs"), Vec::new(), 0)),
         },
     );
     assert_eq!(remote(&app), ("/home/admin".to_owned(), false, 1));

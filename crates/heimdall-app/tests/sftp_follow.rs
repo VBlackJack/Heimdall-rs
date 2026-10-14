@@ -222,7 +222,7 @@ fn listed(app: &mut App, pane: TabId, path: &str) {
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab: pane,
         request,
-        result: Ok((RemotePath::from(path), Vec::new())),
+        result: Ok((RemotePath::from(path), Vec::new(), 0)),
     }));
 }
 

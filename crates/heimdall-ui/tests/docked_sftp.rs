@@ -154,7 +154,7 @@ async fn docked(dir: &Path) -> (App, TabId, AttemptId) {
     core.update(AppMessage::Files(FilesMessage::RemoteListed {
         tab: pane,
         request,
-        result: Ok((RemotePath::from("/home/admin"), Vec::new())),
+        result: Ok((RemotePath::from("/home/admin"), Vec::new(), 0)),
     }));
     let request = local_request(&mut core, pane);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
@@ -345,6 +345,7 @@ async fn letters_typed_search_the_docked_sftp_pane_once_it_has_the_keyboard() {
                 remote("logs", EntryKind::Directory),
                 remote("report.pdf", EntryKind::File),
             ],
+            0,
         )),
     }));
     let mut shell = Shell::with_app(core);

@@ -1197,6 +1197,8 @@ struct PaneParts<'p, E> {
     counts: (usize, usize),
     loading: bool,
     error: Option<&'p FilesError>,
+    /// Entries its last listing left out, their names not safe to use here.
+    hidden_unsafe: usize,
     focused: bool,
     /// Where the pane can go besides up.
     moves: Moves,
@@ -1471,6 +1473,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         counts: (total, unhidden),
         loading,
         error,
+        hidden_unsafe,
         focused,
         moves,
         batch,
@@ -1534,7 +1537,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         (chosen, chosen_size(entries, selected, marked)),
     );
     pane_frame(
-        pane_notes(content, tab, (toggles.sudo, error, batch))
+        pane_notes(content, tab, (toggles.sudo, error, hidden_unsafe, batch))
             .push(listing)
             .push(pane_rule())
             .push(footer),
@@ -1545,14 +1548,16 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
 }
 
 /// What a pane says above its entries: listed as root, as the C# status says it while the
-/// sudo mode is on; why the last listing failed; where its delete or change of permissions
-/// is.
+/// sudo mode is on; why the last listing failed; how many entries it hid, their names not
+/// safe to use here, where the C# only writes a warning to its log; where its delete or
+/// change of permissions is.
 fn pane_notes<'a>(
     mut content: Column<'a, Message>,
     tab: TabId,
-    (sudo, error, batch): (
+    (sudo, error, hidden_unsafe, batch): (
         Option<bool>,
         Option<&FilesError>,
+        usize,
         Option<&heimdall_app::files::Batch>,
     ),
 ) -> Column<'a, Message> {
@@ -1565,6 +1570,14 @@ fn pane_notes<'a>(
     }
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(font_size::CAPTION));
+    }
+    if hidden_unsafe > 0 {
+        // The count alone: the names are what cannot be shown safely.
+        content = content.push(
+            text(fl!("ui-files-hidden-unsafe", count = hidden_unsafe))
+                .size(font_size::CAPTION)
+                .style(text::warning),
+        );
     }
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
@@ -1895,6 +1908,7 @@ pub fn view(
         counts: files_pane.local.counts(),
         loading: files_pane.local.loading,
         error: files_pane.local.error.as_ref(),
+        hidden_unsafe: files_pane.local.hidden_unsafe,
         focused: files_pane.focus == Side::Local,
         moves: Moves {
             back: files_pane.local.can_go_back(),
@@ -1927,6 +1941,7 @@ pub fn view(
         counts: files_pane.remote.counts(),
         loading: files_pane.remote.loading,
         error: files_pane.remote.error.as_ref(),
+        hidden_unsafe: files_pane.remote.hidden_unsafe,
         focused: files_pane.focus == Side::Remote,
         moves: Moves {
             back: files_pane.remote.can_go_back(),

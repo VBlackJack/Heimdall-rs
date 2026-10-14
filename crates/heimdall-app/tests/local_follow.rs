@@ -558,7 +558,7 @@ async fn an_ssh_shells_report_drives_its_sftp_pane_alone_and_a_local_one_its_bro
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab: sftp,
         request,
-        result: Ok((RemotePath::from(REMOTE_HOME), Vec::new())),
+        result: Ok((RemotePath::from(REMOTE_HOME), Vec::new(), 0)),
     }));
     let request = local_request(&mut app, sftp);
     app.update(Message::Files(FilesMessage::LocalListed {

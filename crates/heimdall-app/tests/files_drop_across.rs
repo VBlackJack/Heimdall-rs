@@ -122,7 +122,7 @@ fn ftp_tab(
             FilesMessage::RemoteListed {
                 tab,
                 request,
-                result: Ok((RemotePath::from("/"), remote)),
+                result: Ok((RemotePath::from("/"), remote, 0)),
             },
         );
     }

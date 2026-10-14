@@ -168,6 +168,7 @@ fn tab(dir: &Path, client: RemoteSession, shell: Option<Connection>) -> (App, Ta
                     entry("a.txt", EntryKind::File),
                     entry("link", EntryKind::Link),
                 ],
+                0,
             )),
         },
     );

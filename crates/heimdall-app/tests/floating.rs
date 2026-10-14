@@ -866,6 +866,7 @@ async fn files_tab(app: &mut App, id: &str) -> TabId {
         result: Ok((
             RemotePath::from("/srv"),
             vec![entry("a.txt"), entry("b.txt")],
+            0,
         )),
     }));
     app.update(Message::Files(FilesMessage::Key {

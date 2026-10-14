@@ -1052,6 +1052,7 @@ async fn two_files(dir: &Path) -> TwoFiles {
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![remote_file("notes.txt"), remote_file("old.txt")],
+                0,
             )),
         }));
         core.update(AppMessage::Files(FilesMessage::Key {

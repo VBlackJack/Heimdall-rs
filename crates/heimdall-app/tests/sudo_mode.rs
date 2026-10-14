@@ -177,7 +177,7 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
         sudo_list(&connection, &remote(&folder), Some(b"wrong"), sudo).await,
         Err(FilesError::SudoPasswordRejected)
     );
-    let (listed, entries) = sudo_list(
+    let (listed, entries, hidden_unsafe) = sudo_list(
         &connection,
         &remote(&dir.path().join("link")),
         Some(PASSWORD.as_bytes()),
@@ -190,6 +190,7 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
     let [logs, file] = entries.as_slice() else {
         panic!("{entries:?}");
     };
+    assert_eq!(hidden_unsafe, 1, "counted, so the pane says it");
     assert_eq!(
         (logs.label.as_str(), logs.kind),
         ("logs", EntryKind::Directory)
@@ -491,6 +492,7 @@ async fn opened(dir: &Path, shell: Option<Connection>) -> (App, TabId, AttemptId
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![entry("logs", EntryKind::Directory, 0)],
+                0,
             )),
         },
     );
@@ -516,7 +518,7 @@ fn listed_as_root(app: &mut App, tab: TabId, path: &str, entries: Vec<RemoteEntr
             tab,
             request,
             path: RemotePath::from(path),
-            result: Ok((RemotePath::from(path), entries)),
+            result: Ok((RemotePath::from(path), entries, 0)),
         },
     );
 }
@@ -665,6 +667,37 @@ async fn a_password_not_given_leaves_the_sudo_mode_off() {
 }
 
 #[tokio::test]
+async fn a_listing_as_root_says_how_many_entries_it_hid_until_the_next_listing() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), Some(connection)).await;
+    assert_eq!(pane(&app, tab).remote.hidden_unsafe, 0, "none hidden");
+    files(&mut app, FilesMessage::ToggleSudo { tab });
+    let srv = RemotePath::from("/srv");
+    let request = remote_request(&mut app, tab);
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request,
+            path: srv.clone(),
+            result: Ok((srv, vec![entry("kept", EntryKind::File, 1)], 2)),
+        },
+    );
+    let remote = &pane(&app, tab).remote;
+    assert_eq!(remote.hidden_unsafe, 2, "the count, to be said in the pane");
+    assert_eq!(remote.entries.len(), 1, "the hidden ones never listed");
+    listed_as_root(
+        &mut app,
+        tab,
+        "/srv",
+        vec![entry("kept", EntryKind::File, 1)],
+    );
+    assert_eq!(pane(&app, tab).remote.hidden_unsafe, 0, "cleared");
+}
+
+#[tokio::test]
 async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_password() {
     let server = ssh::start(ssh::Spec::default()).await;
     let dir = tempfile::tempdir().expect("dir");
@@ -689,7 +722,7 @@ async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_
             tab,
             request: second,
             path: srv.clone(),
-            result: Ok((srv.clone(), vec![entry("fresh", EntryKind::File, 1)])),
+            result: Ok((srv.clone(), vec![entry("fresh", EntryKind::File, 1)], 0)),
         },
     );
     // The first one comes last, wanting a password: nothing is asked, nothing changes.
@@ -709,7 +742,7 @@ async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_
             tab,
             request: first,
             path: srv.clone(),
-            result: Ok((srv, vec![entry("stale", EntryKind::File, 2)])),
+            result: Ok((srv, vec![entry("stale", EntryKind::File, 2)], 0)),
         },
     );
     let remote = &pane(&app, tab).remote;

@@ -496,6 +496,9 @@ pub struct Pane<P, E> {
     request: ListingRequest,
     /// Why the last listing failed.
     pub error: Option<FilesError>,
+    /// Entries the last listing shown left out, their names not safe to use here: said in
+    /// the pane, never named. Only a server's listing leaves any out.
+    pub hidden_unsafe: usize,
     /// A folder typed in its path bar, not gone to yet.
     pub typed: Option<String>,
     /// How its entries are sorted.
@@ -637,6 +640,7 @@ impl<P, E> Pane<P, E> {
             loading: true,
             request: ListingRequest::NONE,
             error: None,
+            hidden_unsafe: 0,
             typed: None,
             sort: Sort::default(),
             entering_link: None,
@@ -1575,6 +1579,10 @@ pub fn download_name(remote_name: &[u8]) -> Result<LocalName, FilesError> {
 
 // ---- the work the UI runs for the application's effects -------------------------------
 
+/// A remote folder listed: the folder, absolute; its entries, sorted; and how many entries
+/// were left out, their names not safe to use here.
+pub type RemoteListing = (RemotePath, Vec<RemoteEntry>, usize);
+
 /// Lists remote folder `path`, first resolved to its absolute form.
 ///
 /// # Errors
@@ -1583,18 +1591,22 @@ pub fn download_name(remote_name: &[u8]) -> Result<LocalName, FilesError> {
 pub async fn list_remote(
     client: RemoteSession,
     path: RemotePath,
-) -> Result<(RemotePath, Vec<RemoteEntry>), FilesError> {
+) -> Result<RemoteListing, FilesError> {
     let absolute = client
         .canonical(&path)
         .await
         .map_err(|e| FilesError::from(&e))?;
     let listed = client
-        .list(&absolute)
+        .list_counted(&absolute)
         .await
         .map_err(|e| FilesError::from(&e))?;
-    let mut entries: Vec<RemoteEntry> = listed.into_iter().map(RemoteEntry::from_listing).collect();
+    let mut entries: Vec<RemoteEntry> = listed
+        .items
+        .into_iter()
+        .map(RemoteEntry::from_listing)
+        .collect();
     sort_remote(&mut entries);
-    Ok((absolute, entries))
+    Ok((absolute, entries, listed.hidden_unsafe))
 }
 
 /// The kind of a local entry of `file_type`, a link not followed.

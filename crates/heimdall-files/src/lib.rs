@@ -198,6 +198,17 @@ impl RemoteError {
     }
 }
 
+/// A remote folder listed: the entries kept, and how many names were left out as unsafe to
+/// use, so that the user can be told some entries are not shown.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Listing {
+    /// The entries, in the server's order.
+    pub items: Vec<RemoteItem>,
+    /// Names that are not one clean segment (`heimdall_sftp::path::is_child_name`), left
+    /// out: counted, never kept.
+    pub hidden_unsafe: usize,
+}
+
 /// How a folder transfer ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FolderReport {
@@ -224,15 +235,27 @@ impl RemoteSession {
     ///
     /// [`RemoteError`] from the server.
     pub async fn list(&self, path: &RemotePath) -> Result<Vec<RemoteItem>, RemoteError> {
+        Ok(self.list_counted(path).await?.items)
+    }
+
+    /// As [`Self::list`], with how many names were left out as not one clean segment.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server.
+    pub async fn list_counted(&self, path: &RemotePath) -> Result<Listing, RemoteError> {
         match self {
-            Self::Sftp(client) => Ok(client
-                .read_dir(path)
-                .await
-                .map_err(|e| sftp_error(&e))?
-                .into_iter()
-                .map(sftp_item)
-                .collect()),
-            Self::Ftp(client) => client.list(path).await,
+            Self::Sftp(client) => {
+                let listing = client
+                    .read_dir_counted(path)
+                    .await
+                    .map_err(|e| sftp_error(&e))?;
+                Ok(Listing {
+                    items: listing.entries.into_iter().map(sftp_item).collect(),
+                    hidden_unsafe: listing.hidden_unsafe,
+                })
+            }
+            Self::Ftp(client) => client.list_counted(path).await,
         }
     }
 

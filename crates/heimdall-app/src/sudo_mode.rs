@@ -31,7 +31,7 @@ use heimdall_ssh::{CommandEnd, ConnectError, Connection};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroize as _;
 
-use crate::files::{EntryKind, FilesError, RemoteEntry, sort_remote};
+use crate::files::{EntryKind, FilesError, RemoteEntry, RemoteListing, sort_remote};
 use crate::sudo_edit::{SHELL, SudoPassword, connection_error, sudo_error};
 
 /// The time one listing, delete or change as root has, as the C# allows a sudo command: a
@@ -59,7 +59,8 @@ impl SudoAccess {
 }
 
 /// The server's folder `folder` listed as root, with `password` when sudo asks for one:
-/// the folder as the server names it once entered, and its entries, each with its inode.
+/// the folder as the server names it once entered, its entries, each with its inode, and how
+/// many were left out, their names not safe to use here.
 ///
 /// # Errors
 ///
@@ -71,7 +72,7 @@ pub async fn sudo_list(
     folder: &RemotePath,
     password: Option<&[u8]>,
     sudo: Sudo<'_>,
-) -> Result<(RemotePath, Vec<RemoteEntry>), FilesError> {
+) -> Result<RemoteListing, FilesError> {
     let token = random_token().ok_or(FilesError::SudoFailed)?;
     let mut list = list_script(folder.as_bytes(), password, token, sudo)
         .map_err(|_| FilesError::InvalidName)?;
@@ -106,7 +107,11 @@ pub async fn sudo_list(
         .map(RemoteEntry::from_sudo_listing)
         .collect();
     sort_remote(&mut entries);
-    Ok((RemotePath::from_bytes(listing.folder), entries))
+    Ok((
+        RemotePath::from_bytes(listing.folder),
+        entries,
+        listing.hidden_unsafe,
+    ))
 }
 
 /// Deletes the server's `path` as root, only while it is still of `kind` and `inode` as
