@@ -162,7 +162,12 @@ fn local_shell(app: &mut App, folder: &Path, sink: &Arc<Sink>) -> ((TabId, Attem
             input: Arc::clone(sink) as Arc<dyn InputSink>,
         },
     });
-    let [Effect::ListLocal { tab: pane, path }] = effects.as_slice() else {
+    let [
+        Effect::ListLocal {
+            tab: pane, path, ..
+        },
+    ] = effects.as_slice()
+    else {
         panic!("the browser's listing: {effects:?}");
     };
     assert_eq!(path, folder, "the shell's folder");
@@ -173,8 +178,10 @@ fn local_shell(app: &mut App, folder: &Path, sink: &Arc<Sink>) -> ((TabId, Attem
 
 /// The browser's listing of `folder` arrived.
 fn listed(app: &mut App, pane: TabId, folder: &Path) {
+    let request = local_request(app, pane);
     app.update(Message::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((folder.to_owned(), Vec::new())),
     }));
 }
@@ -203,7 +210,7 @@ fn lists(effects: &[Effect], pane: TabId) -> Vec<PathBuf> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::ListLocal { tab, path } if *tab == pane => Some(path.clone()),
+            Effect::ListLocal { tab, path, .. } if *tab == pane => Some(path.clone()),
             _ => None,
         })
         .collect()
@@ -353,8 +360,10 @@ fn a_folder_that_cannot_be_listed_is_said_and_the_browser_stays_where_it_was() {
     let refused = FilesError::Local {
         detail: "access denied".to_owned(),
     };
+    let request = local_request(&app, pane);
     let effects = app.update(Message::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Err(refused.clone()),
     }));
     assert!(
@@ -545,12 +554,16 @@ async fn an_ssh_shells_report_drives_its_sftp_pane_alone_and_a_local_one_its_bro
             shell: None,
         },
     });
+    let request = remote_request(&app, sftp);
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab: sftp,
+        request,
         result: Ok((RemotePath::from(REMOTE_HOME), Vec::new())),
     }));
+    let request = local_request(&app, sftp);
     app.update(Message::Files(FilesMessage::LocalListed {
         tab: sftp,
+        request,
         result: Ok((dir.path().to_owned(), Vec::new())),
     }));
     let sink = Arc::new(Sink::default());
@@ -608,4 +621,32 @@ fn a_local_browser_split_with_an_ssh_shell_never_follows_it() {
     assert!(effects.is_empty(), "a server's path: {effects:?}");
     assert_eq!(files(&app, pane).local.path, dir.path());
     assert!(ssh_sink.written().is_empty());
+}
+
+/// The listing the local pane of `tab` waits for.
+fn local_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .local
+        .listing_request()
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

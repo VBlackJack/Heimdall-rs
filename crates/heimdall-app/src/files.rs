@@ -65,6 +65,30 @@ impl TransferId {
     }
 }
 
+/// Identifies a listing asked for, for the life of the process: the pane shows only the
+/// one asked for last, as the C# load gate (`EmbeddedSftpViewModel.LoadDirectoryCoreAsync`)
+/// never applies two loads. Folders cannot tell them apart: the first remote listing asks
+/// for "." and comes back as the home folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ListingRequest(u64);
+
+impl ListingRequest {
+    /// A new identifier, never used before; only a pane asks for one.
+    fn fresh() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// No listing: never asked for, so never the one awaited.
+    const NONE: Self = Self(0);
+
+    /// The number, for logs.
+    #[must_use]
+    pub fn value(self) -> u64 {
+        self.0
+    }
+}
+
 /// One of the two panes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
@@ -467,8 +491,9 @@ pub struct Pane<P, E> {
     cursor: Option<usize>,
     /// A listing is on its way.
     pub loading: bool,
-    /// A listing given up with Escape is still on its way: it is not shown when it comes.
-    pub(crate) discard_listing: bool,
+    /// The listing asked for last: any other that comes, one asked for before or given up
+    /// with Escape, is not shown.
+    request: ListingRequest,
     /// Why the last listing failed.
     pub error: Option<FilesError>,
     /// A folder typed in its path bar, not gone to yet.
@@ -574,7 +599,8 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
             return false;
         }
         self.loading = false;
-        self.discard_listing = true;
+        // The listing on its way is no longer the one awaited.
+        self.request = ListingRequest::NONE;
         match self.navigation.take() {
             Some(Navigation::Away(left) | Navigation::Back(left)) => self.path = left,
             None => {}
@@ -598,7 +624,7 @@ impl<P, E> Pane<P, E> {
             marked: BTreeSet::new(),
             cursor: None,
             loading: true,
-            discard_listing: false,
+            request: ListingRequest::NONE,
             error: None,
             typed: None,
             sort: Sort::default(),
@@ -617,6 +643,33 @@ impl<P, E> Pane<P, E> {
     #[must_use]
     pub fn entries_folder(&self) -> &P {
         self.listed.as_ref().unwrap_or(&self.path)
+    }
+
+    /// A listing is asked for: the pane waits for it, and for no other one asked before.
+    pub(crate) fn ask_listing(&mut self) -> ListingRequest {
+        self.loading = true;
+        self.request = ListingRequest::fresh();
+        self.request
+    }
+
+    /// The listing asked for last, the only one shown when it comes.
+    #[must_use]
+    pub fn listing_request(&self) -> ListingRequest {
+        self.request
+    }
+
+    /// Whether `request` is the listing awaited; one that is not is left unshown, and said
+    /// in the log.
+    pub(crate) fn awaits(&self, request: ListingRequest) -> bool {
+        let awaited = request != ListingRequest::NONE && request == self.request;
+        if !awaited {
+            log::debug!(
+                "listing {} dropped: {} is the one awaited",
+                request.value(),
+                self.request.value()
+            );
+        }
+        awaited
     }
 
     /// Whether Back has a folder to go to.
@@ -2703,6 +2756,26 @@ mod tests {
         pane.loading = true;
         assert!(pane.cancel_listing());
         assert_eq!(pane.path, third);
+    }
+
+    #[test]
+    fn only_the_listing_asked_for_last_is_awaited() {
+        let mut pane: Pane<std::path::PathBuf, RemoteEntry> =
+            Pane::new(std::path::PathBuf::from("first"));
+        assert!(!pane.awaits(pane.listing_request()), "none asked for yet");
+        let first = pane.ask_listing();
+        let second = pane.ask_listing();
+        assert!(pane.loading);
+        assert!(!pane.awaits(first), "asked for before another");
+        assert!(pane.awaits(second));
+        assert!(pane.cancel_listing());
+        assert!(!pane.awaits(second), "given up");
+        let third = pane.ask_listing();
+        assert!(
+            !pane.awaits(second),
+            "given up, even with another on its way"
+        );
+        assert!(pane.awaits(third));
     }
 
     fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {

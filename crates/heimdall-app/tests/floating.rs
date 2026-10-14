@@ -859,8 +859,10 @@ async fn files_tab(app: &mut App, id: &str) -> TabId {
         group: None,
         inode: None,
     };
+    let request = remote_request(app, tab);
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab,
+        request,
         result: Ok((
             RemotePath::from("/srv"),
             vec![entry("a.txt"), entry("b.txt")],
@@ -971,4 +973,18 @@ async fn the_integrated_editor_of_a_detached_files_tab_saves_its_own_file() {
     );
     assert!(app.is_floating(floating));
     assert_eq!(app.active, Some(shown));
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

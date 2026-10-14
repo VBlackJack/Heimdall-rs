@@ -104,10 +104,12 @@ fn ftp_tab(app: &mut App, id: &str, client: RemoteSession, entries: Vec<RemoteEn
             shell: None,
         },
     });
+    let request = remote_request(app, tab);
     files(
         app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((RemotePath::from("/"), entries)),
         },
     );
@@ -698,4 +700,18 @@ async fn a_plain_ftp_session_is_said_to_be_in_clear_and_an_ftps_one_is_not() {
         "{:?}",
         app.notice()
     );
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

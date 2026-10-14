@@ -116,10 +116,12 @@ fn ftp_tab(
                 shell: None,
             },
         });
+        let request = remote_request(app, tab);
         files(
             app,
             FilesMessage::RemoteListed {
                 tab,
+                request,
                 result: Ok((RemotePath::from("/"), remote)),
             },
         );
@@ -129,10 +131,12 @@ fn ftp_tab(
         .and_then(|found| found.files.as_deref())
         .map(|pane| pane.local.path.clone())
         .expect("files");
+    let request = local_request(app, tab);
     files(
         app,
         FilesMessage::LocalListed {
             tab,
+            request,
             result: Ok((folder, local)),
         },
     );
@@ -537,4 +541,32 @@ async fn a_server_not_connected_takes_no_drop_and_gives_none() {
     let effects = drop_across(app, (source, Side::Local), (offline, Side::Remote), None);
     assert!(effects.is_empty(), "{effects:?}");
     assert!(transfers(app, offline).is_empty());
+}
+
+/// The listing the local pane of `tab` waits for.
+fn local_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .local
+        .listing_request()
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

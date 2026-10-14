@@ -150,12 +150,16 @@ async fn docked(dir: &Path) -> (App, TabId, AttemptId) {
             shell: None,
         },
     });
+    let request = remote_request(&core, pane);
     core.update(AppMessage::Files(FilesMessage::RemoteListed {
         tab: pane,
+        request,
         result: Ok((RemotePath::from("/home/admin"), Vec::new())),
     }));
+    let request = local_request(&core, pane);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((
             PathBuf::from(dir),
             vec![LocalEntry {
@@ -331,8 +335,10 @@ async fn letters_typed_search_the_docked_sftp_pane_once_it_has_the_keyboard() {
         group: None,
         inode: None,
     };
+    let request = remote_request(&core, pane);
     core.update(AppMessage::Files(FilesMessage::RemoteListed {
         tab: pane,
+        request,
         result: Ok((
             RemotePath::from("/home/admin"),
             vec![
@@ -356,4 +362,32 @@ async fn letters_typed_search_the_docked_sftp_pane_once_it_has_the_keyboard() {
     let _ = shell.update(Message::App(AppMessage::Split(SplitMessage::Focus(pane))));
     let _ = shell.update(Message::TypeAhead("R".to_owned()));
     assert_eq!(selected(&shell), Some(1), "report.pdf");
+}
+
+/// The listing the local pane of `tab` waits for.
+fn local_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .local
+        .listing_request()
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

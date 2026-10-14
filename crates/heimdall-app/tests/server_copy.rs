@@ -155,10 +155,12 @@ fn tab(dir: &Path, client: RemoteSession, shell: Option<Connection>) -> (App, Ta
         attempt,
         event: ConnectionEvent::FilesReady { client, shell },
     });
+    let request = remote_request(&app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![
@@ -374,10 +376,12 @@ async fn a_duplicate_lands_next_to_its_entry_and_a_paste_in_the_folder_shown() {
         },
     );
     // The listing failed: the folder shown is "/srv" again, where a paste goes.
+    let request = remote_request(&app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Err(FilesError::CopyRefused),
         },
     );
@@ -667,4 +671,18 @@ async fn a_file_opened_with_sudo_is_watched_with_the_password_and_its_save_said(
         app.notice(),
         Some(&Notice::FilesSavedWithSudo("a.txt".to_owned()))
     );
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

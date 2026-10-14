@@ -218,8 +218,10 @@ async fn docked(dir: &Path, sftp: SftpBrowser) -> Docked {
 
 /// The pane's listing of `path` arrived.
 fn listed(app: &mut App, pane: TabId, path: &str) {
+    let request = remote_request(app, pane);
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab: pane,
+        request,
         result: Ok((RemotePath::from(path), Vec::new())),
     }));
 }
@@ -404,8 +406,10 @@ async fn a_folder_that_cannot_be_listed_is_said_and_the_pane_stays_where_it_was(
         refusal: Refusal::PermissionDenied,
         message: String::new(),
     };
+    let request = remote_request(&app, pane);
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab: pane,
+        request,
         result: Err(refused.clone()),
     }));
     let remote = &files(&app, pane).remote;
@@ -516,4 +520,18 @@ async fn an_ftp_pane_beside_the_shell_never_follows_it() {
     let effects = report(&mut app, (tab, attempt), "file://a.lab/pub");
     assert!(lists(&effects, ftp).is_empty(), "{effects:?}");
     assert_eq!(files(&app, ftp).remote.path.display(), "/");
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

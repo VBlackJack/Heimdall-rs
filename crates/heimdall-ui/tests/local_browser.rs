@@ -104,8 +104,10 @@ fn docked(dir: &Path) -> (App, TabId) {
         panic!("the browser's listing: {effects:?}");
     };
     let pane = *pane;
+    let request = local_request(&core, pane);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((
             PathBuf::from(dir),
             vec![LocalEntry {
@@ -227,8 +229,10 @@ fn a_file_that_would_run_is_asked_about_with_its_full_path() {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).expect("mode");
     }
+    let request = local_request(&core, pane);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((
             PathBuf::from(dir.path()),
             vec![LocalEntry {
@@ -423,8 +427,10 @@ fn listing(core: &mut App, pane: TabId, dir: &Path, names: &[OsString]) {
             modified: None,
         })
         .collect();
+    let request = local_request(core, pane);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((PathBuf::from(dir), entries)),
     }));
 }
@@ -787,4 +793,18 @@ fn a_script_path_that_is_not_text_is_said_on_the_pane() {
     let mut ui = common::simulator(settings(), WINDOW, shell.view());
     ui.find("This script was not run: its path is not valid text, which its interpreter could not be handed as it is.")
         .expect("the notice");
+}
+
+/// The listing the local pane of `tab` waits for.
+fn local_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .local
+        .listing_request()
 }

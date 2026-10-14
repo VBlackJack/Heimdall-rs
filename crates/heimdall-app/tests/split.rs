@@ -665,10 +665,12 @@ async fn unsaved_files_tab(app: &mut App) -> TabId {
         },
     });
     let files = |app: &mut App, message| app.update(Message::Files(message));
+    let request = remote_request(app, tab);
     files(
         app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![RemoteEntry {
@@ -1369,4 +1371,18 @@ fn enter_in_split_mode_still_merges_what_is_opened_into_the_tab_split() {
         message,
         Message::QuickConnect(QuickResult::Profile(_))
     ));
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

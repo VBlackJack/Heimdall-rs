@@ -157,8 +157,10 @@ async fn files_tab_attempt(dir: &Path) -> (App, TabId, AttemptId) {
             shell: None,
         },
     });
+    let request = remote_request(&core, tab);
     core.update(AppMessage::Files(FilesMessage::RemoteListed {
         tab,
+        request,
         result: Ok((
             RemotePath::from("/home/admin"),
             vec![
@@ -167,8 +169,10 @@ async fn files_tab_attempt(dir: &Path) -> (App, TabId, AttemptId) {
             ],
         )),
     }));
+    let request = local_request(&core, tab);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab,
+        request,
         result: Ok((
             PathBuf::from(dir),
             vec![
@@ -266,8 +270,10 @@ async fn show_hidden_is_the_csharp_check_box_ticked_in_a_new_pane_and_unticked_i
 {
     let dir = tempfile::tempdir().expect("dir");
     let (mut core, tab) = files_tab(dir.path()).await;
+    let request = local_request(&core, tab);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab,
+        request,
         result: Ok((
             PathBuf::from(dir.path()),
             vec![
@@ -591,9 +597,11 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;
     let mut shell = Shell::with_app(core);
+    let request = remote_request(shell.app(), tab);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![RemoteEntry {
@@ -956,9 +964,11 @@ async fn the_servers_permissions_and_properties_dialogs_show() {
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;
     let mut shell = Shell::with_app(core);
+    let request = remote_request(shell.app(), tab);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![RemoteEntry {
@@ -1542,9 +1552,11 @@ async fn an_empty_pane_says_why_and_offers_the_way_out_as_the_csharp() {
             side: Side::Remote,
         },
     )));
+    let request = remote_request(shell.app(), tab);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/home/admin"),
                 vec![remote(".profile", EntryKind::File, 10)],
@@ -1628,15 +1640,19 @@ async fn second_files_tab(core: &mut App, dir: &Path) -> TabId {
             shell: None,
         },
     });
+    let request = remote_request(core, tab);
     core.update(AppMessage::Files(FilesMessage::RemoteListed {
         tab,
+        request,
         result: Ok((
             RemotePath::from("/srv"),
             vec![remote("inbox", EntryKind::Directory, 0)],
         )),
     }));
+    let request = local_request(core, tab);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
         tab,
+        request,
         result: Ok((
             PathBuf::from(dir),
             vec![local("Documents", EntryKind::Directory)],
@@ -1834,9 +1850,11 @@ fn a_file(index: usize) -> heimdall_ui::tree_view::FilesEntryFacts {
 
 /// The remote pane listing `entries` in `/srv`.
 fn list_remote(shell: &mut Shell, tab: TabId, entries: Vec<RemoteEntry>) {
+    let request = remote_request(shell.app(), tab);
     let _ = shell.update(Message::App(AppMessage::Files(
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((RemotePath::from("/srv"), entries)),
         },
     )));
@@ -2603,4 +2621,32 @@ async fn a_full_local_disk_is_said_in_the_csharp_words() {
     simulator(&shell)
         .find("Failed: The local disk is full. Free some space and try again.")
         .expect("the C# SftpErrorLocalDiskFull");
+}
+
+/// The listing the local pane of `tab` waits for.
+fn local_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .local
+        .listing_request()
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

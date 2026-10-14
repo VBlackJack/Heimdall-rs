@@ -1045,8 +1045,10 @@ async fn two_files(dir: &Path) -> TwoFiles {
                 shell: None,
             },
         });
+        let request = remote_request(&core, tab);
         core.update(AppMessage::Files(FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![remote_file("notes.txt"), remote_file("old.txt")],
@@ -1614,4 +1616,18 @@ fn drop_said(shell: &Shell, tab: heimdall_app::TabId) -> String {
         .path
         .display();
     format!("Upload 2 items to {folder}")
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }

@@ -472,10 +472,12 @@ async fn tab(dir: &Path, shell: Option<Connection>) -> (App, TabId) {
             shell,
         },
     });
+    let request = remote_request(&app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![entry("logs", EntryKind::Directory, 0)],
@@ -497,10 +499,12 @@ fn pane(app: &App, tab: TabId) -> &heimdall_app::files::FilesPane {
 
 /// What `tab` lists as root, as a listing on its way would bring it.
 fn listed_as_root(app: &mut App, tab: TabId, path: &str, entries: Vec<RemoteEntry>) {
+    let request = remote_request(app, tab);
     files(
         app,
         FilesMessage::SudoListed {
             tab,
+            request,
             path: RemotePath::from(path),
             result: Ok((RemotePath::from(path), entries)),
         },
@@ -544,10 +548,12 @@ async fn the_sudo_toggle_asks_the_password_once_and_turning_it_off_forgets_it() 
         "listed as root: {on:?}"
     );
     assert!(pane(&app, tab).sudo_mode);
+    let request = remote_request(&app, tab);
     files(
         &mut app,
         FilesMessage::SudoListed {
             tab,
+            request,
             path: srv.clone(),
             result: Err(FilesError::SudoPasswordNeeded),
         },
@@ -629,10 +635,12 @@ async fn a_password_not_given_leaves_the_sudo_mode_off() {
     let connection = shell(&server, dir.path()).await;
     let (mut app, tab) = tab(dir.path(), Some(connection)).await;
     files(&mut app, FilesMessage::ToggleSudo { tab });
+    let request = remote_request(&app, tab);
     files(
         &mut app,
         FilesMessage::SudoListed {
             tab,
+            request,
             path: RemotePath::from("/srv"),
             result: Err(FilesError::SudoPasswordNeeded),
         },
@@ -644,6 +652,61 @@ async fn a_password_not_given_leaves_the_sudo_mode_off() {
         "listed as the account: {dismissed:?}"
     );
     assert!(!pane(&app, tab).sudo_mode);
+}
+
+#[tokio::test]
+async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_password() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), Some(connection)).await;
+    let asked = |effects: &[Effect]| match effects {
+        [Effect::SudoListRemote { request, .. }] => *request,
+        other => panic!("{other:?}"),
+    };
+    let srv = RemotePath::from("/srv");
+    let first = asked(&files(&mut app, FilesMessage::ToggleSudo { tab }));
+    let second = asked(&files(
+        &mut app,
+        FilesMessage::Refresh {
+            tab,
+            side: Side::Remote,
+        },
+    ));
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request: second,
+            path: srv.clone(),
+            result: Ok((srv.clone(), vec![entry("fresh", EntryKind::File, 1)])),
+        },
+    );
+    // The first one comes last, wanting a password: nothing is asked, nothing changes.
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request: first,
+            path: srv.clone(),
+            result: Err(FilesError::SudoPasswordNeeded),
+        },
+    );
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request: first,
+            path: srv.clone(),
+            result: Ok((srv, vec![entry("stale", EntryKind::File, 2)])),
+        },
+    );
+    let remote = &pane(&app, tab).remote;
+    assert_eq!(remote.entries.len(), 1);
+    assert_eq!(remote.entries[0].label, "fresh", "the one asked for last");
+    assert!(!remote.loading);
+    assert_eq!(remote.error, None);
 }
 
 #[tokio::test]
@@ -871,4 +934,18 @@ async fn a_delete_as_root_takes_the_entry_from_the_folder_it_was_listed_from() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+/// The listing the server pane of `tab` waits for.
+fn remote_request(
+    app: &heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    app.tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .listing_request()
 }
