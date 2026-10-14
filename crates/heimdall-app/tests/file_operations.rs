@@ -2766,6 +2766,7 @@ async fn a_servers_entry_is_acted_on_in_the_folder_it_was_listed_from() {
                 modified: None,
                 permissions: None,
                 owner: None,
+                owner_name: None,
                 group: None,
                 path: "/srv/a.txt".to_owned(),
             }
@@ -3087,6 +3088,7 @@ fn remote_entry(name: &str, kind: EntryKind) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     }
