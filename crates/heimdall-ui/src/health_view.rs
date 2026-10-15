@@ -73,7 +73,7 @@ fn figures(last: Option<&ServerHealth>) -> [(f32, String); 3] {
                     narrow(health.cpu_percent),
                     fl!(
                         "ui-health-cpu-value",
-                        percent = format!("{:.1}", health.cpu_percent)
+                        percent = crate::i18n::decimal(health.cpu_percent, 1)
                     ),
                 ),
                 (

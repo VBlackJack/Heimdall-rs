@@ -10,7 +10,6 @@ ui-window-title-test-data = { $title } [données de test : { $folder }]
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Outils
 ui-sidebar-empty = Aucun profil enregistré.
-ui-sidebar-settings-button = Paramètres
 ui-desktop-send-keys = Envoyer des touches
 ui-desktop-send-keys-tooltip = Envoyer des touches à la session distante
 ui-vnc-clipboard = Presse-papiers
@@ -57,7 +56,6 @@ ui-settings-tab-terminal = Terminal
 ui-settings-tab-ssh = SSH
 ui-settings-tab-rdp = RDP
 ui-settings-tab-security = Sécurité
-ui-settings-security = Sécurité
 ui-settings-posture-title = Vue d'ensemble de la sécurité
 ui-settings-posture-description = Les choix de ce panneau qui touchent à la sécurité, tels qu'ils sont maintenant. Une ligne qui demande attention dit pourquoi et mène au paramètre.
 ui-settings-posture-summary-none = Aucun paramètre à risque
@@ -189,7 +187,10 @@ ui-scheduled-field-enabled = Activée
 ui-scheduled-next-run-daily = Prochaine exécution : { $day } à { $time }
 ui-scheduled-next-run-today = aujourd'hui
 ui-scheduled-next-run-tomorrow = demain
-ui-scheduled-next-run-interval = Prochaine exécution : dans { $minutes } minutes (toutes les { $minutes } min)
+ui-scheduled-next-run-interval = { $minutes ->
+    [one] Prochaine exécution : dans { $minutes } minute (toutes les { $minutes } min)
+   *[other] Prochaine exécution : dans { $minutes } minutes (toutes les { $minutes } min)
+}
 ui-scheduled-problem-server = Veuillez sélectionner une session.
 ui-scheduled-problem-time = Format d'heure invalide. Utilisez HH:mm (24h).
 ui-scheduled-problem-interval = L'intervalle doit être un nombre positif de minutes.
@@ -564,7 +565,6 @@ ui-profile-edit-title = Modifier la session
 ui-profile-field-name = Nom d'affichage *
 ui-profile-field-group = Dossier
 ui-profile-field-host = Serveur *
-ui-profile-field-port = Port
 ui-profile-field-username = Nom d'utilisateur
 ui-profile-field-key = Clé SSH
 ui-profile-optional = facultatif
@@ -1124,8 +1124,8 @@ ui-gateway-password-hint = Utilisé pour l'authentification par mot de passe SSH
 ui-gateway-field-parent = Passerelle parente
 ui-gateway-parent-none = Aucune (connexion directe)
 ui-gateway-error-loop = Une passerelle ne peut pas être atteinte par elle-même.
-ui-gateway-field-host-key-fingerprint = Empreinte de la clé hôte
-ui-gateway-host-key-fingerprint-hint = Renseigné automatiquement après la première connexion. Utilisé pour vérifier l'identité du serveur et prévenir l'usurpation de clé hôte.
+ui-gateway-field-host-key-fingerprint = Empreinte de la clé d'hôte
+ui-gateway-host-key-fingerprint-hint = Renseigné automatiquement après la première connexion. Utilisé pour vérifier l'identité du serveur et prévenir l'usurpation de clé d'hôte.
 ui-tree-gateway-via = via { $name }
 ui-tree-gateway-missing = passerelle manquante
 
@@ -1458,8 +1458,14 @@ ui-files-follow-tooltip = Suivre le répertoire du terminal SSH
 ui-files-follow-local-tooltip = Suivre le répertoire du terminal
 ui-files-sudo-on = Mode sudo activé - navigation en tant que root
 ui-files-sudo-off = Mode sudo désactivé
-ui-files-item-count = { $count } éléments
-ui-files-item-count-filtered = { $shown }/{ $count } éléments
+ui-files-item-count = { $count ->
+    [one] { $count } élément
+   *[other] { $count } éléments
+}
+ui-files-item-count-filtered = { $count ->
+    [one] { $shown }/{ $count } élément
+   *[other] { $shown }/{ $count } éléments
+}
 
 ## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
 ui-files-drop-items = { $count ->
@@ -1624,7 +1630,7 @@ ui-route-test-network = Connexion indisponible. Vérifiez l'hôte, le port, le V
 ui-route-test-forwarding = Accès à la cible non confirmé. Vérifiez l'adresse, le port et les autorisations de transfert TCP sur la passerelle.
 ui-route-test-cancelled = Annulé.
 ui-route-test-interactive = Une authentification interactive est nécessaire. Utilisez une connexion SSH interactive pour examiner la méthode requise.
-ui-route-test-auth = Échec d'authentification. Vérifiez le compte, la clé, la phrase secrète et l'agent SSH.
+ui-route-test-auth = Échec d'authentification. Vérifiez le compte, la clé, la phrase de passe et l'agent SSH.
 ui-route-test-unavailable = Diagnostic indisponible ou échec non classé. Vérifiez la configuration et les prérequis d'authentification.
 ui-route-test-invalid-route = Parcours invalide : vérifiez les parents manquants, les cycles et la profondeur maximale.
 ui-route-test-invalid-target = Saisissez un nom d'hôte ou une adresse IP valide et un port TCP entre 1 et 65535.
@@ -1663,7 +1669,10 @@ ui-resolution-save-default-unavailable = Impossible d'enregistrer une résolutio
 ## The SSH agent chip of the profile form, as the C# one.
 ui-agent-chip-off = Aucun agent SSH détecté
 ui-agent-chip-warn = Agent SSH : { $agent } (aucune clé chargée)
-ui-agent-chip-ok = Agent SSH : { $agent } ({ $count } clés)
+ui-agent-chip-ok = { $count ->
+    [one] Agent SSH : { $agent } ({ $count } clé)
+   *[other] Agent SSH : { $agent } ({ $count } clés)
+}
 ui-agent-chip-tooltip = Cliquer pour rescanner les agents SSH
 ui-files-menu-cut = Couper
 ui-files-menu-paste = Coller
@@ -1857,7 +1866,10 @@ ui-status-keys-sent = { $keys } envoyé à la session distante
 ui-status-keys-not-sent = Impossible d'envoyer les touches à la session distante.
 ui-files-state-queued = En attente
 ui-files-state-preparing = Préparation du transfert...
-ui-files-state-scanning = Analyse des dossiers : { $count } entrées trouvées...
+ui-files-state-scanning = { $count ->
+    [one] Analyse des dossiers : { $count } entrée trouvée...
+   *[other] Analyse des dossiers : { $count } entrées trouvées...
+}
 ui-files-retry-button = Réessayer
 ui-files-clear-finished-button = Effacer les terminés
 ui-files-error-interrupted = Le transfert s'est interrompu de façon inattendue.
@@ -1974,17 +1986,16 @@ ui-settings-rdp-resolution-presets-hint = Un préréglage par ligne, format LARG
 ui-settings-rdp-resolution-presets-reset = Réinitialiser aux valeurs par défaut
 ui-settings-rdp-resolution-presets-invalid = Préréglages de résolution : ces lignes ne sont pas au format LARGEURxHAUTEUR avec une largeur de { $min } à { $width } et une hauteur de { $min } à { $height } pixels : { $lines }
 ui-settings-rdp-reset-defaults = Réinitialiser les valeurs RDP
-ui-settings-rdp-reset-defaults-tooltip = Restaure uniquement les valeurs RDP par défaut. Les autres réglages ne sont pas modifiés.
+ui-settings-rdp-reset-defaults-tooltip = Restaure uniquement les valeurs RDP par défaut. Les autres paramètres ne sont pas modifiés.
 ui-dialog-reset-rdp-title = Réinitialiser les valeurs RDP ?
 ui-dialog-reset-rdp-body = Restaurer toutes les valeurs RDP par défaut ? Les serveurs existants ne sont pas affectés.
 ui-settings-reset-all = Valeurs par défaut
-ui-dialog-reset-all-title = Réinitialiser tous les réglages ?
+ui-dialog-reset-all-title = Réinitialiser tous les paramètres ?
 ui-dialog-reset-all-body = Restaurer tous les onglets des Paramètres aux valeurs d'usine ? Le texte saisi et pas encore appliqué est perdu. Dans l'onglet Sécurité, cela désactive le fournisseur d'identifiants externe, l'exigence Credential Guard et l'exigence Windows Hello à la connexion, et réinitialise le délai de grâce Windows Hello, le délai de verrouillage automatique et la déconnexion au verrouillage. Votre langue, votre thème, vos sessions, passerelles SSH, mot de passe maître, code PIN et inscription Windows Hello sont conservés. Le changement est enregistré aussitôt.
 ui-dialog-apply-ssh-mode-title = Appliquer à toutes les sessions SSH enregistrées ?
 ui-dialog-apply-ssh-mode-body = { $changes } des { $total } sessions SSH enregistrées passeront en mode { $mode }, et { $mode } devient le mode par défaut des nouvelles sessions. Action irréversible.
 ui-dialog-apply-rdp-mode-title = Appliquer à toutes les sessions RDP enregistrées ?
 ui-dialog-apply-rdp-mode-body = { $changes } des { $total } sessions RDP enregistrées passeront en mode { $mode }, et { $mode } devient le mode par défaut des nouvelles sessions. Action irréversible.
-ui-settings-tab-about = À propos
 ui-about-version = Version { $version }
 ui-about-tagline = Gestionnaire de connexions sécurisé RDP/SSH/SFTP
 ui-about-section-system = Système
@@ -1992,17 +2003,17 @@ ui-about-platform = Plateforme
 ui-about-iced = iced
 ui-about-russh = russh
 ui-about-ironrdp = IronRDP
-ui-about-build-date = Date de build
+ui-about-build-date = Date de compilation
 ui-about-author = Auteur
 ui-about-license = Licence
 ui-about-section-data = Données
 ui-about-sessions = Sessions
 ui-about-gateways = Passerelles
 ui-about-config-path = Config
-ui-about-log-path = Logs
+ui-about-log-path = Journaux
 ui-about-section-links = Accès rapide
-ui-about-open-config = Ouvrir le dossier config
-ui-about-open-logs = Ouvrir le dossier logs
+ui-about-open-config = Ouvrir le dossier de configuration
+ui-about-open-logs = Ouvrir le dossier des journaux
 ui-about-repository = GitHub
 ui-about-section-diagnostics = Diagnostic
 ui-about-diagnostics-log = Écrire le journal de diagnostic de l'application (événements et erreurs de Heimdall)
@@ -2093,7 +2104,7 @@ ui-restore-selected = Restaurer la sélection
 ui-profile-field-environment = Environnement
 ui-profile-environment-none = (Aucun)
 ui-profile-environment-production = Production
-ui-profile-environment-staging = Staging
+ui-profile-environment-staging = Préproduction
 ui-profile-environment-lab = Lab
 ui-profile-environment-personal = Personnel
 ui-profile-field-tags = Tags
@@ -2120,8 +2131,14 @@ ui-status-files-permissions-partial = { $failed ->
     [one] Permissions non modifiées pour { $failed } élément sur { $total }. "{ $name }" : { $reason }
    *[other] Permissions non modifiées pour { $failed } éléments sur { $total }. Le premier, "{ $name }" : { $reason }
 }
-ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
-ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
+ui-status-files-delete-stopped = { $total ->
+    [one] Suppression annulée : { $done } élément sur { $total } supprimé.
+   *[other] Suppression annulée : { $done } éléments sur { $total } supprimés.
+}
+ui-status-files-permissions-stopped = { $total ->
+    [one] Modification des permissions annulée : { $done } élément sur { $total } modifié.
+   *[other] Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
+}
 ui-macros-menu = Macros
 ui-macros-record = Enregistrer une macro
 ui-macros-stop-recording = { $count ->
@@ -2166,7 +2183,7 @@ ui-macro-editor-delete-entry = Supprimer l'entrée
 ui-macro-editor-expects = Attendre un texte d'abord
 ui-macro-editor-pattern = Motif attendu
 ui-macro-editor-regex = Regex
-ui-macro-editor-timeout = Timeout (ms)
+ui-macro-editor-timeout = Délai (ms)
 ui-macro-editor-timeout-abort = Arrêter
 ui-macro-editor-timeout-continue = Continuer
 ui-macro-editor-add-expect = Ajouter une étape expect
@@ -2273,7 +2290,7 @@ ui-status-gateways-cleared = { $count ->
 ui-status-gateways-unchanged = Aucune session ne nécessitait de changement.
 ui-settings-reachability = Moniteur de santé des sessions
 ui-settings-reachability-enabled = Activer les sondes de joignabilité en arrière-plan
-ui-settings-reachability-hint = Chaque serveur est appelé depuis cet ordinateur, quelques-uns à la fois, et sa pastille dans la liste montre s'il a répondu. Les serveurs derrière une gateway ne sont pas appelés. Rien n'est envoyé hormis la connexion.
+ui-settings-reachability-hint = Chaque serveur est appelé depuis cet ordinateur, quelques-uns à la fois, et sa pastille dans la liste montre s'il a répondu. Les serveurs derrière une passerelle ne sont pas appelés. Rien n'est envoyé hormis la connexion.
 ui-settings-reachability-interval = Intervalle de vérification
 ui-settings-reachability-timeout = Délai d'expiration des sondes
 ui-settings-reachability-probes = Sondes simultanées max
@@ -2317,7 +2334,7 @@ ui-reachability-reason-timeout = Délai de connexion dépassé
 ui-reachability-reason-refused = Connexion refusée
 ui-reachability-reason-unreachable = Hôte injoignable
 ui-reachability-reason-dns = Résolution DNS échouée
-ui-reachability-reason-behind-gateway = Derrière une gateway SSH - non sondé
+ui-reachability-reason-behind-gateway = Derrière une passerelle SSH - non sondé
 ui-reachability-reason-no-port = Pas de port à sonder pour ce protocole
 ui-reachability-reason-no-host = Aucun hôte configuré
 ui-status-dropped-profiles = { $count ->
@@ -2352,7 +2369,7 @@ ui-detail-favorite = Favori :
 ui-detail-connect = Se connecter
 ui-detail-saved-password = mot de passe
 ui-detail-saved-key = fichier de clé { $name }
-ui-detail-saved-passphrase = phrase secrète de la clé
+ui-detail-saved-passphrase = phrase de passe de la clé
 ui-detail-hints = Entrée ou double-clic connecte, Ctrl+E modifie, Suppr supprime, F1 liste tous les raccourcis.
 ui-detail-edit = Modifier
 ui-tree-notes = Notes
@@ -2749,7 +2766,7 @@ ui-tool-chmod-symbolic-placeholder = u+x,g-w,o=r
 ui-tool-chmod-error-symbolic = Notation symbolique invalide
 ui-tool-chmod-command-preview = Aperçu de la commande :
 ui-tool-chmod-copy-command = Copier la commande
-ui-tool-chmod-command = chmod { $mode } filename
+ui-tool-chmod-command = chmod { $mode } fichier
 ui-tool-chmod-help =
     Calculateur Chmod
 
@@ -2766,7 +2783,7 @@ ui-tool-datetime-now = Maintenant
 ui-tool-datetime-copy = Copier
 ui-tool-datetime-unix = Horodatage Unix (secondes)
 ui-tool-datetime-iso-utc = ISO 8601 (UTC)
-ui-tool-datetime-iso-local = ISO 8601 (Local)
+ui-tool-datetime-iso-local = ISO 8601 (heure locale)
 ui-tool-datetime-local-time = Heure locale
 ui-tool-datetime-timezone = Fuseau horaire
 ui-tool-datetime-relative = Temps relatif
@@ -2881,7 +2898,6 @@ ui-tool-crontab-day-3 = Mercredi
 ui-tool-crontab-day-4 = Jeudi
 ui-tool-crontab-day-5 = Vendredi
 ui-tool-crontab-day-6 = Samedi
-ui-tool-crontab-expression = Expression Cron
 ui-tool-crontab-copy = Copier
 ui-tool-crontab-manual-edit = Édition manuelle (expression cron à 5 champs)
 ui-tool-crontab-placeholder = { "* * * * *" }
@@ -3095,7 +3111,6 @@ ui-tool-password-title = Générateur de mot de passe
 ui-tool-password-generate = Générer
 ui-tool-password-generate-tooltip = Générer un nouveau mot de passe
 ui-tool-password-copy = Copier
-ui-tool-password-copy-tooltip = Copier le mot de passe
 ui-tool-password-length = Longueur
 ui-tool-password-total-length = Longueur totale : { $count } caractères
 ui-tool-password-uppercase = Majuscules (A-Z)
@@ -3133,7 +3148,7 @@ ui-tool-password-strength-weak = Faible
 ui-tool-password-strength-fair = Moyen
 ui-tool-password-strength-good = Bon
 ui-tool-password-strength-strong = Fort
-ui-tool-password-bits = bits
+ui-tool-password-bits = { $bits } bits
 ui-tool-password-issue-too-short = Trop court (< 8 caractères)
 ui-tool-password-issue-no-upper = Pas de majuscules
 ui-tool-password-issue-no-lower = Pas de minuscules
@@ -3164,8 +3179,7 @@ ui-tool-password-advanced-tooltip = Ouvrir les options avancées
 ui-tool-password-preset-label = Préréglage :
 ui-tool-password-preset-tooltip = Choisissez un préréglage, ou Enregistrer pour conserver les réglages actuels
 ui-tool-password-preset-custom = Personnalisé
-ui-tool-password-presets-built-in = Fournis
-ui-tool-password-presets-saved = Enregistrés
+ui-tool-password-presets-saved = Enregistré : { $name }
 ui-tool-password-preset-pin4 = PIN 4
 ui-tool-password-preset-pin6 = PIN 6
 ui-tool-password-preset-wifi = WiFi
@@ -3188,7 +3202,6 @@ ui-tool-password-entropy-floor = Force minimale :
 ui-tool-password-entropy-floor-off = Aucun minimum
 ui-tool-password-phonetic = Phonétique :
 ui-tool-password-copy-phonetic = Copier la phonétique
-ui-tool-password-copy-phonetic-tooltip = Copier l'épellation phonétique
 ui-tool-password-keyboard-hint = Entrée : regénérer - Échap : effacer
 ui-tool-password-quick-length = Rapide :
 ui-tool-password-history = Mots de passe récents
@@ -3267,8 +3280,8 @@ ui-tool-sshkey-rsa-2048 = RSA (2048)
 ui-tool-sshkey-rsa-4096 = RSA (4096)
 ui-tool-sshkey-ed25519 = Ed25519
 ui-tool-sshkey-comment = Commentaire
-ui-tool-sshkey-comment-placeholder = user@hostname
-ui-tool-sshkey-passphrase = Phrase secrète
+ui-tool-sshkey-comment-placeholder = utilisateur@hôte
+ui-tool-sshkey-passphrase = Phrase de passe
 ui-tool-sshkey-passphrase-hint = Facultatif. Chiffre la clé privée avec AES-256-CBC.
 ui-tool-sshkey-generate = Générer
 ui-tool-sshkey-generating = Génération...
@@ -3438,7 +3451,6 @@ ui-tool-password-crack-centuries =
        *[other] { $count } siècles
     }
 ui-tool-password-remember-settings-note = Rouvre l'outil là où vous l'avez laissé. Conservé sur cet ordinateur, dans le dossier de réglages de Heimdall, lisible par votre seul compte.
-ui-tool-password-save-failed = L'enregistrement a échoué : { $error }
 ui-tool-sshkey-error = La génération de la clé a échoué : { $error }
 ui-tool-sshkey-save-failed = L'enregistrement a échoué : { $error }
 ui-tool-certgen-save-failed = L'enregistrement a échoué : { $error }
@@ -3597,11 +3609,11 @@ ui-profile-experience-no-cursor-shadow = Désactiver l'ombre du curseur
 ui-profile-experience-no-drag = Désactiver le glisser fenêtre complète
 ui-profile-experience-no-themes = Désactiver les thèmes
 ui-profile-experience-no-wallpaper = Désactiver le fond d'écran
-ui-profile-field-passphrase = Passphrase de clé
+ui-profile-field-passphrase = Phrase de passe de la clé
 ui-profile-legacy-algorithms-hint = Les échanges de clés SHA-1, les chiffrements CBC, HMAC-SHA1 et les clés d'hôte RSA SHA-1 sont proposés après les actuels. À activer uniquement pour un appareil qui ne connaît rien de plus récent.
-ui-profile-passphrase-clear-tooltip = Supprimer la passphrase enregistrée pour cette session
-ui-profile-passphrase-hint = Sert uniquement à déchiffrer la clé SSH choisie. Laissez vide si la clé n'a pas de passphrase ou si un agent SSH la déverrouille.
-ui-profile-passphrase-saved = Passphrase enregistrée
+ui-profile-passphrase-clear-tooltip = Supprimer la phrase de passe enregistrée pour cette session
+ui-profile-passphrase-hint = Sert uniquement à déchiffrer la clé SSH choisie. Laissez vide si la clé n'a pas de phrase de passe ou si un agent SSH la déverrouille.
+ui-profile-passphrase-saved = Phrase de passe enregistrée
 ui-profile-skip-cert-hint = Désactive la vérification du certificat TLS. À utiliser uniquement pour des hôtes internes de confiance aux certificats auto-signés.
 ui-profile-toggle-anti-idle = Activer le maintien anti-inactivité
 ui-profile-toggle-auto-reconnect = Se reconnecter automatiquement

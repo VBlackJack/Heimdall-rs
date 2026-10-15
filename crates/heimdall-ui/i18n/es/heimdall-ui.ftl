@@ -10,7 +10,6 @@ ui-window-title-test-data = { $title } [datos de prueba: { $folder }]
 ui-sidebar-title = Sesiones
 ui-sidebar-tools-tab = Herramientas
 ui-sidebar-empty = Aún no hay perfiles guardados.
-ui-sidebar-settings-button = Ajustes
 ui-desktop-send-keys = Enviar teclas
 ui-desktop-send-keys-tooltip = Enviar teclas al remoto
 ui-vnc-clipboard = Portapapeles
@@ -57,7 +56,6 @@ ui-settings-tab-terminal = Terminal
 ui-settings-tab-ssh = SSH
 ui-settings-tab-rdp = RDP
 ui-settings-tab-security = Seguridad
-ui-settings-security = Seguridad
 ui-settings-posture-title = Resumen de seguridad
 ui-settings-posture-description = Las opciones de este panel que afectan a la seguridad, tal como están ahora. Una línea que requiere atención explica por qué y lleva al ajuste.
 ui-settings-posture-summary-none = Ningún ajuste de riesgo
@@ -189,7 +187,10 @@ ui-scheduled-field-enabled = Activada
 ui-scheduled-next-run-daily = Próxima ejecución: { $day } a las { $time }
 ui-scheduled-next-run-today = hoy
 ui-scheduled-next-run-tomorrow = mañana
-ui-scheduled-next-run-interval = Próxima ejecución: en { $minutes } minutos (cada { $minutes } min)
+ui-scheduled-next-run-interval = { $minutes ->
+    [one] Próxima ejecución: en { $minutes } minuto (cada { $minutes } min)
+   *[other] Próxima ejecución: en { $minutes } minutos (cada { $minutes } min)
+}
 ui-scheduled-problem-server = Selecciona una sesión.
 ui-scheduled-problem-time = Formato de hora no válido. Usa HH:mm (24 horas).
 ui-scheduled-problem-interval = El intervalo debe ser un número positivo de minutos.
@@ -564,7 +565,6 @@ ui-profile-edit-title = Editar perfil
 ui-profile-field-name = Nombre para mostrar *
 ui-profile-field-group = Grupo
 ui-profile-field-host = Dirección del servidor
-ui-profile-field-port = Puerto
 ui-profile-field-username = Nombre de usuario
 ui-profile-field-key = Archivo de clave privada
 ui-profile-optional = opcional
@@ -1455,8 +1455,14 @@ ui-files-follow-tooltip = Seguir el directorio de la terminal SSH
 ui-files-follow-local-tooltip = Seguir el directorio de la terminal
 ui-files-sudo-on = Modo sudo activado: explorando como root
 ui-files-sudo-off = Modo sudo desactivado
-ui-files-item-count = { $count } elementos
-ui-files-item-count-filtered = { $shown }/{ $count } elementos
+ui-files-item-count = { $count ->
+    [one] { $count } elemento
+   *[other] { $count } elementos
+}
+ui-files-item-count-filtered = { $count ->
+    [one] { $shown }/{ $count } elemento
+   *[other] { $shown }/{ $count } elementos
+}
 
 ## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
 ui-files-drop-items = { $count ->
@@ -1660,7 +1666,10 @@ ui-resolution-save-default-unavailable = No se puede guardar una resolución pre
 ## The SSH agent chip of the profile form, as the C# one.
 ui-agent-chip-off = No se detectó ningún agente SSH
 ui-agent-chip-warn = Agente SSH: { $agent } (sin claves cargadas)
-ui-agent-chip-ok = Agente SSH: { $agent } ({ $count } claves)
+ui-agent-chip-ok = { $count ->
+    [one] Agente SSH: { $agent } ({ $count } clave)
+   *[other] Agente SSH: { $agent } ({ $count } claves)
+}
 ui-agent-chip-tooltip = Haz clic para volver a escanear los agentes SSH
 ui-files-menu-cut = Cortar
 ui-files-menu-paste = Pegar
@@ -1854,7 +1863,10 @@ ui-status-keys-sent = { $keys } enviado al remoto
 ui-status-keys-not-sent = No se pudieron enviar las teclas a la sesión remota.
 ui-files-state-queued = En cola
 ui-files-state-preparing = Preparando la transferencia...
-ui-files-state-scanning = Analizando carpetas: { $count } entradas encontradas...
+ui-files-state-scanning = { $count ->
+    [one] Analizando carpetas: { $count } entrada encontrada...
+   *[other] Analizando carpetas: { $count } entradas encontradas...
+}
 ui-files-retry-button = Reintentar
 ui-files-clear-finished-button = Borrar finalizadas
 ui-files-error-interrupted = La transferencia se detuvo de forma inesperada.
@@ -1981,7 +1993,6 @@ ui-dialog-apply-ssh-mode-title = ¿Aplicar a todas las sesiones SSH guardadas?
 ui-dialog-apply-ssh-mode-body = { $changes } de { $total } sesiones SSH guardadas pasarán al modo { $mode }, y { $mode } será el predeterminado para las sesiones nuevas. Esto no se puede deshacer.
 ui-dialog-apply-rdp-mode-title = ¿Aplicar a todas las sesiones RDP guardadas?
 ui-dialog-apply-rdp-mode-body = { $changes } de { $total } sesiones RDP guardadas pasarán al modo { $mode }, y { $mode } será el predeterminado para las sesiones nuevas. Esto no se puede deshacer.
-ui-settings-tab-about = Acerca de
 ui-about-version = Versión { $version }
 ui-about-tagline = Administrador seguro de conexiones RDP/SSH/SFTP
 ui-about-section-system = Sistema
@@ -2117,8 +2128,14 @@ ui-status-files-permissions-partial = { $failed ->
     [one] No se pudieron cambiar los permisos de { $failed } elemento de { $total }. "{ $name }": { $reason }
    *[other] No se pudieron cambiar los permisos de { $failed } elementos de { $total }. El primero, "{ $name }": { $reason }
 }
-ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
-ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.
+ui-status-files-delete-stopped = { $total ->
+    [one] Eliminación cancelada: { $done } de { $total } elemento eliminado.
+   *[other] Eliminación cancelada: { $done } de { $total } elementos eliminados.
+}
+ui-status-files-permissions-stopped = { $total ->
+    [one] Cambio de permisos cancelado: { $done } de { $total } elemento cambiado.
+   *[other] Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.
+}
 ui-macros-menu = Macros
 ui-macros-record = Grabar macro
 ui-macros-stop-recording = { $count ->
@@ -2875,7 +2892,6 @@ ui-tool-crontab-day-3 = Miércoles
 ui-tool-crontab-day-4 = Jueves
 ui-tool-crontab-day-5 = Viernes
 ui-tool-crontab-day-6 = Sábado
-ui-tool-crontab-expression = Expresión cron
 ui-tool-crontab-copy = Copiar
 ui-tool-crontab-manual-edit = Edición manual (expresión cron de 5 campos)
 ui-tool-crontab-placeholder = { "* * * * *" }
@@ -3089,7 +3105,6 @@ ui-tool-password-title = Generador de contraseñas
 ui-tool-password-generate = Generar
 ui-tool-password-generate-tooltip = Generar contraseña nueva
 ui-tool-password-copy = Copiar
-ui-tool-password-copy-tooltip = Copiar la contraseña al portapapeles
 ui-tool-password-length = Longitud
 ui-tool-password-total-length = Longitud total: { $count } caracteres
 ui-tool-password-uppercase = Mayúsculas (A-Z)
@@ -3127,7 +3142,7 @@ ui-tool-password-strength-weak = Débil
 ui-tool-password-strength-fair = Aceptable
 ui-tool-password-strength-good = Buena
 ui-tool-password-strength-strong = Fuerte
-ui-tool-password-bits = bits
+ui-tool-password-bits = { $bits } bits
 ui-tool-password-issue-too-short = Demasiado corta (< 8 caracteres)
 ui-tool-password-issue-no-upper = Sin mayúsculas
 ui-tool-password-issue-no-lower = Sin minúsculas
@@ -3158,8 +3173,7 @@ ui-tool-password-advanced-tooltip = Abrir las opciones avanzadas
 ui-tool-password-preset-label = Preajuste:
 ui-tool-password-preset-tooltip = Elija un preajuste, o Guardar para conservar los ajustes actuales
 ui-tool-password-preset-custom = Personalizado
-ui-tool-password-presets-built-in = Incluidos
-ui-tool-password-presets-saved = Guardados
+ui-tool-password-presets-saved = Guardado: { $name }
 ui-tool-password-preset-pin4 = PIN 4
 ui-tool-password-preset-pin6 = PIN 6
 ui-tool-password-preset-wifi = WiFi
@@ -3182,7 +3196,6 @@ ui-tool-password-entropy-floor = Fuerza mínima:
 ui-tool-password-entropy-floor-off = Sin mínimo
 ui-tool-password-phonetic = Fonética:
 ui-tool-password-copy-phonetic = Copiar fonética
-ui-tool-password-copy-phonetic-tooltip = Copiar la lectura fonética
 ui-tool-password-keyboard-hint = Intro: regenerar - Escape: borrar
 ui-tool-password-quick-length = Rápido:
 ui-tool-password-history = Contraseñas recientes
@@ -3432,7 +3445,6 @@ ui-tool-password-crack-centuries =
        *[other] { $count } siglos
     }
 ui-tool-password-remember-settings-note = Vuelve a abrir la herramienta donde la dejó. Se guarda en este equipo, en la carpeta de configuración de Heimdall, legible solo por su cuenta.
-ui-tool-password-save-failed = No se pudo guardar: { $error }
 ui-tool-sshkey-error = No se pudo generar la clave: { $error }
 ui-tool-sshkey-save-failed = No se pudo guardar: { $error }
 ui-tool-certgen-save-failed = No se pudo guardar: { $error }

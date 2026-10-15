@@ -10,7 +10,6 @@ ui-window-title-test-data = { $title } [test data: { $folder }]
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Tools
 ui-sidebar-empty = No saved profile yet.
-ui-sidebar-settings-button = Settings
 ui-desktop-send-keys = Send keys
 ui-desktop-send-keys-tooltip = Send keys to remote
 ui-desktop-anti-idle = Anti-idle
@@ -62,7 +61,6 @@ ui-settings-tab-terminal = Terminal
 ui-settings-tab-ssh = SSH
 ui-settings-tab-rdp = RDP
 ui-settings-tab-security = Security
-ui-settings-security = Security
 ui-settings-posture-title = Security overview
 ui-settings-posture-description = The choices on this panel that affect security, as they stand now. A line that needs attention says why and leads to the setting.
 ui-settings-posture-summary-none = No risky setting
@@ -194,7 +192,10 @@ ui-scheduled-field-enabled = Enabled
 ui-scheduled-next-run-daily = Next execution: { $day } at { $time }
 ui-scheduled-next-run-today = today
 ui-scheduled-next-run-tomorrow = tomorrow
-ui-scheduled-next-run-interval = Next execution: in { $minutes } minutes (every { $minutes } min)
+ui-scheduled-next-run-interval = { $minutes ->
+    [one] Next execution: in { $minutes } minute (every { $minutes } min)
+   *[other] Next execution: in { $minutes } minutes (every { $minutes } min)
+}
 ui-scheduled-problem-server = Please select a session.
 ui-scheduled-problem-time = Invalid time format. Use HH:mm (24-hour).
 ui-scheduled-problem-interval = Interval must be a positive number of minutes.
@@ -708,7 +709,6 @@ ui-profile-edit-title = Edit Session
 ui-profile-field-name = Display name *
 ui-profile-field-group = Folder
 ui-profile-field-host = Server *
-ui-profile-field-port = Port
 ui-profile-field-username = Username
 ui-profile-field-key = SSH key
 ui-profile-optional = optional
@@ -1634,8 +1634,14 @@ ui-files-follow-tooltip = Follow the SSH terminal directory
 ui-files-follow-local-tooltip = Follow the terminal directory
 ui-files-sudo-on = Sudo mode enabled - browsing as root
 ui-files-sudo-off = Sudo mode disabled
-ui-files-item-count = { $count } items
-ui-files-item-count-filtered = { $shown }/{ $count } items
+ui-files-item-count = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+}
+ui-files-item-count-filtered = { $count ->
+    [one] { $shown }/{ $count } item
+   *[other] { $shown }/{ $count } items
+}
 
 ## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
 ui-files-drop-items = { $count ->
@@ -1840,7 +1846,10 @@ ui-resolution-save-default-unavailable = Cannot save a default resolution for th
 ## The SSH agent chip of the profile form, as the C# one.
 ui-agent-chip-off = No SSH agent detected
 ui-agent-chip-warn = SSH agent: { $agent } (no keys loaded)
-ui-agent-chip-ok = SSH agent: { $agent } ({ $count } keys)
+ui-agent-chip-ok = { $count ->
+    [one] SSH agent: { $agent } ({ $count } key)
+   *[other] SSH agent: { $agent } ({ $count } keys)
+}
 ui-agent-chip-tooltip = Click to re-scan SSH agents
 ui-files-menu-cut = Cut
 ui-files-menu-paste = Paste
@@ -2034,7 +2043,10 @@ ui-status-keys-sent = { $keys } sent to remote
 ui-status-keys-not-sent = Could not send keys to the remote session.
 ui-files-state-queued = Queued
 ui-files-state-preparing = Preparing transfer...
-ui-files-state-scanning = Scanning folders: { $count } entries found...
+ui-files-state-scanning = { $count ->
+    [one] Scanning folders: { $count } entry found...
+   *[other] Scanning folders: { $count } entries found...
+}
 ui-files-retry-button = Retry
 ui-files-clear-finished-button = Clear finished
 ui-files-error-interrupted = The transfer stopped unexpectedly.
@@ -2161,7 +2173,6 @@ ui-dialog-apply-ssh-mode-title = Apply to all saved SSH sessions?
 ui-dialog-apply-ssh-mode-body = { $changes } of { $total } saved SSH sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
 ui-dialog-apply-rdp-mode-title = Apply to all saved RDP sessions?
 ui-dialog-apply-rdp-mode-body = { $changes } of { $total } saved RDP sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
-ui-settings-tab-about = About
 ui-about-version = Version { $version }
 ui-about-tagline = Secure RDP/SSH/SFTP connection manager
 ui-about-section-system = System
@@ -2297,8 +2308,14 @@ ui-status-files-permissions-partial = { $failed ->
     [one] Permissions could not be changed on { $failed } item out of { $total }. "{ $name }": { $reason }
    *[other] Permissions could not be changed on { $failed } items out of { $total }. First, "{ $name }": { $reason }
 }
-ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
-ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-status-files-delete-stopped = { $total ->
+    [one] Deletion cancelled: { $done } of { $total } item deleted.
+   *[other] Deletion cancelled: { $done } of { $total } items deleted.
+}
+ui-status-files-permissions-stopped = { $total ->
+    [one] Permission change cancelled: { $done } of { $total } item changed.
+   *[other] Permission change cancelled: { $done } of { $total } items changed.
+}
 ui-macros-menu = Macros
 ui-macros-record = Record macro
 ui-macros-stop-recording = { $count ->
@@ -3055,7 +3072,6 @@ ui-tool-crontab-day-3 = Wednesday
 ui-tool-crontab-day-4 = Thursday
 ui-tool-crontab-day-5 = Friday
 ui-tool-crontab-day-6 = Saturday
-ui-tool-crontab-expression = Cron Expression
 ui-tool-crontab-copy = Copy
 ui-tool-crontab-manual-edit = Manual edit (5-field cron expression)
 ui-tool-crontab-placeholder = { "* * * * *" }
@@ -3269,7 +3285,6 @@ ui-tool-password-title = Password Generator
 ui-tool-password-generate = Generate
 ui-tool-password-generate-tooltip = Generate new password
 ui-tool-password-copy = Copy
-ui-tool-password-copy-tooltip = Copy password to clipboard
 ui-tool-password-length = Length
 ui-tool-password-total-length = Total length: { $count } characters
 ui-tool-password-uppercase = Uppercase (A-Z)
@@ -3307,7 +3322,7 @@ ui-tool-password-strength-weak = Weak
 ui-tool-password-strength-fair = Fair
 ui-tool-password-strength-good = Good
 ui-tool-password-strength-strong = Strong
-ui-tool-password-bits = bits
+ui-tool-password-bits = { $bits } bits
 ui-tool-password-issue-too-short = Too short (< 8 characters)
 ui-tool-password-issue-no-upper = No uppercase letters
 ui-tool-password-issue-no-lower = No lowercase letters
@@ -3338,8 +3353,7 @@ ui-tool-password-advanced-tooltip = Open the advanced options
 ui-tool-password-preset-label = Preset:
 ui-tool-password-preset-tooltip = Pick a preset, or Save to keep the settings you have now
 ui-tool-password-preset-custom = Custom
-ui-tool-password-presets-built-in = Built in
-ui-tool-password-presets-saved = Saved
+ui-tool-password-presets-saved = Saved: { $name }
 ui-tool-password-preset-pin4 = PIN 4
 ui-tool-password-preset-pin6 = PIN 6
 ui-tool-password-preset-wifi = WiFi
@@ -3362,7 +3376,6 @@ ui-tool-password-entropy-floor = Minimum strength:
 ui-tool-password-entropy-floor-off = No minimum
 ui-tool-password-phonetic = Phonetic:
 ui-tool-password-copy-phonetic = Copy phonetic
-ui-tool-password-copy-phonetic-tooltip = Copy phonetic spelling
 ui-tool-password-keyboard-hint = Enter: regenerate - Escape: clear
 ui-tool-password-quick-length = Quick:
 ui-tool-password-history = Recent passwords
@@ -3612,7 +3625,6 @@ ui-tool-password-crack-centuries =
        *[other] { $count } centuries
     }
 ui-tool-password-remember-settings-note = Reopens the tool where you left it. Kept on this computer, in the Heimdall settings folder, readable by your account alone.
-ui-tool-password-save-failed = Saving failed: { $error }
 ui-tool-sshkey-error = Key generation failed: { $error }
 ui-tool-sshkey-save-failed = Saving failed: { $error }
 ui-tool-certgen-save-failed = Saving failed: { $error }

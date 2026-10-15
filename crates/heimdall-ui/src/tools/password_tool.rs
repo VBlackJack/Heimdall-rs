@@ -195,11 +195,7 @@ impl fmt::Display for PresetEntry {
             Self::Custom => f.write_str(&fl!("ui-tool-password-preset-custom")),
             Self::BuiltIn(preset) => f.write_str(&preset.label()),
             Self::Saved(name) => {
-                write!(
-                    f,
-                    "{}: {name}",
-                    fl!("ui-tool-password-presets-saved").trim_end_matches(':')
-                )
+                f.write_str(&fl!("ui-tool-password-presets-saved", name = name.as_str()))
             }
         }
     }
@@ -278,7 +274,7 @@ impl fmt::Display for FloorChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match ENTROPY_FLOOR_CHOICES.get(self.0).copied().unwrap_or(0) {
             0 => f.write_str(&fl!("ui-tool-password-entropy-floor-off")),
-            bits => write!(f, "{bits} {}", fl!("ui-tool-password-bits")),
+            bits => f.write_str(&fl!("ui-tool-password-bits", bits = bits)),
         }
     }
 }
@@ -1139,12 +1135,15 @@ impl PasswordPane {
             });
         let mut panel = column![
             bar,
-            text(format!("{word} ({bits} {})", fl!("ui-tool-password-bits")))
-                .size(font_size::BODY)
-                .font(styles::SEMIBOLD)
-                .style(move |theme: &Theme| text::Style {
-                    color: Some(strength_color(level, theme)),
-                }),
+            text(format!(
+                "{word} ({})",
+                fl!("ui-tool-password-bits", bits = bits)
+            ))
+            .size(font_size::BODY)
+            .font(styles::SEMIBOLD)
+            .style(move |theme: &Theme| text::Style {
+                color: Some(strength_color(level, theme)),
+            }),
         ]
         .spacing(spacing::XS);
         if let Some(crack) = self.engine.crack_time() {
@@ -1452,7 +1451,7 @@ impl PasswordPane {
             language = language.push(key_parts::hint(fl!(
                 "ui-tool-password-word-list-size",
                 words = words,
-                bits = format!("{bits:.1}")
+                bits = crate::i18n::decimal(bits, 1)
             )));
         }
         language.into()
