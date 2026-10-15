@@ -38,6 +38,7 @@ use heimdall_core::tools::ssh_key_audit::{
 use iced::widget::text_editor::{Action, Content};
 use iced::widget::{column, container, row, text};
 use iced::{Alignment, Background, Border, Element, Length, Task, Theme, window};
+use zeroize::Zeroizing;
 
 use super::{CopySlot, ToolMessage, ToolPane, key_parts};
 use crate::file_dialog::{FileDialog, Pick};
@@ -113,7 +114,9 @@ impl SshAuditPane {
                 self.input.perform(action);
                 if is_edit {
                     self.file_error = None;
-                    let text = super::box_text(&self.input);
+                    // The pasted/typed key may be a private key: hold the working copy in a
+                    // zeroizing buffer so it is wiped from memory when this scope ends.
+                    let text = Zeroizing::new(super::box_text(&self.input));
                     self.has_input = !text.trim().is_empty();
                     self.result = if self.has_input {
                         ssh_key_audit::audit(&text)
@@ -126,6 +129,8 @@ impl SshAuditPane {
             SshAuditMessage::Browse => Outcome::Task(pick_file(tab, main)),
             SshAuditMessage::Loaded(Some(LoadedFile::Text(content))) => {
                 self.file_error = None;
+                // Loaded file contents may be a private key: wipe the working copy on drop.
+                let content = Zeroizing::new(content);
                 self.has_input = !content.trim().is_empty();
                 self.result = ssh_key_audit::audit(&content);
                 self.input = Content::with_text(&content);
@@ -443,7 +448,9 @@ async fn read_picked(pick: Pick<PathBuf>) -> Option<LoadedFile> {
 
 async fn read_file(path: PathBuf) -> LoadedFile {
     match tokio::fs::metadata(&path).await {
-        Ok(meta) if meta.len() as usize > ssh_key_audit::MAX_KEY_FILE_SIZE => {
+        // Compare in u64: casting a 64-bit file length to usize would truncate on a 32-bit
+        // target and could let an oversized file through.
+        Ok(meta) if meta.len() > ssh_key_audit::MAX_KEY_FILE_SIZE as u64 => {
             LoadedFile::TooLarge(ssh_key_audit::MAX_KEY_FILE_SIZE)
         }
         Ok(_) => match tokio::fs::read_to_string(&path).await {
