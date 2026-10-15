@@ -198,6 +198,34 @@ impl RemoteError {
     }
 }
 
+/// What a listing left out, counted so that the user can be told some entries are not
+/// shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LeftOut {
+    /// Names that are not one clean segment (`heimdall_sftp::path::is_child_name`): never
+    /// kept, never shown.
+    pub unsafe_names: usize,
+    /// Lines of an FTP `LIST` that do not read, in a format no parser knows; none over SFTP.
+    pub unread_lines: usize,
+}
+
+impl LeftOut {
+    /// Whether anything was left out.
+    #[must_use]
+    pub fn any(self) -> bool {
+        self.unsafe_names > 0 || self.unread_lines > 0
+    }
+}
+
+/// A remote folder listed: the entries kept, and what was left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Listing {
+    /// The entries, in the server's order.
+    pub items: Vec<RemoteItem>,
+    /// What was left out.
+    pub left_out: LeftOut,
+}
+
 /// How a folder transfer ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FolderReport {
@@ -233,6 +261,32 @@ impl RemoteSession {
                 .map(sftp_item)
                 .collect()),
             Self::Ftp(client) => client.list(path).await,
+        }
+    }
+
+    /// As [`Self::list`], for a pane to show: with what was left out, and warned of in the
+    /// log with the folder, where [`Self::list`], run once per entry by walks and lookups,
+    /// says it at debug level only.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server.
+    pub async fn list_counted(&self, path: &RemotePath) -> Result<Listing, RemoteError> {
+        match self {
+            Self::Sftp(client) => {
+                let listing = client
+                    .read_dir_counted(path)
+                    .await
+                    .map_err(|e| sftp_error(&e))?;
+                Ok(Listing {
+                    items: listing.entries.into_iter().map(sftp_item).collect(),
+                    left_out: LeftOut {
+                        unsafe_names: listing.hidden_unsafe,
+                        unread_lines: 0,
+                    },
+                })
+            }
+            Self::Ftp(client) => client.list_counted(path).await,
         }
     }
 

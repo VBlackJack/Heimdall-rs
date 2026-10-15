@@ -196,7 +196,7 @@ async fn the_driver_opens_an_sftp_session_that_lists_the_home_folder() {
     })
     .await
     .expect("in time");
-    let (home, _entries) = tokio::time::timeout(
+    let (home, _entries, _hidden) = tokio::time::timeout(
         STEP_TIMEOUT,
         heimdall_app::files::list_remote(client, heimdall_sftp::RemotePath::from(".")),
     )

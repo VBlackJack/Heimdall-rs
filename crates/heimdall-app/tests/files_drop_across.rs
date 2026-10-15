@@ -32,6 +32,7 @@ use heimdall_app::files::{
 };
 use heimdall_app::{App, AppConfig, ConnectionEvent, Dialog, Effect, FilesMessage, Message, TabId};
 use heimdall_core::profile::{FtpProfile, ProfileId};
+use heimdall_files::LeftOut;
 use heimdall_files::{FtpClient, FtpSecurity, FtpTarget, RemotePath, RemoteSession};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -122,7 +123,7 @@ fn ftp_tab(
             FilesMessage::RemoteListed {
                 tab,
                 request,
-                result: Ok((RemotePath::from("/"), remote)),
+                result: Ok((RemotePath::from("/"), remote, LeftOut::default())),
             },
         );
     }

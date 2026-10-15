@@ -14,12 +14,25 @@
  * limitations under the License.
  */
 
-//! Continuous ping monitor engine: models, response parsing, validation, running
-//! statistics calculation, live graph scaling, and CSV export.
+//! Continuous ping monitor engine, as the C# `PingStatsEngine`: models, input validation,
+//! the system `ping` program's arguments and replies, running statistics and CSV export.
+//!
+//! The C# sends its echo requests through `System.Net.NetworkInformation.Ping`. Rust has
+//! no unprivileged ICMP socket without a new crate or `unsafe`, so the probe runs the
+//! system's own `ping` by its full path, once per request, on an address the host was
+//! resolved to first: no name ever reaches the program, and nothing typed can be read as
+//! one of its options. Its reply is read without its words, which Windows translates
+//! (`temps=14 ms`, `Délai d'attente`): an address, a number followed by `ms` and a `TTL`.
 
 use std::fmt::Write as _;
-use std::process::Command;
-use std::time::Instant;
+use std::net::IpAddr;
+use std::path::PathBuf;
+use std::sync::LazyLock;
+
+use regex::Regex;
+
+use super::default_creds::escape_csv;
+use super::net_host;
 
 /// Maximum number of data points retained in the live latency graph.
 pub const MAX_DATA_POINTS: usize = 60;
@@ -33,15 +46,41 @@ pub const MIN_TIMEOUT_MS: u64 = 100;
 pub const MAX_TIMEOUT_MS: u64 = 30000;
 /// Maximum allowed probe count limit.
 pub const MAX_COUNT: usize = 100000;
+/// Time between two probes, as the C# view's default interval (`PingToolView.xaml.cs:513`).
+pub const PING_INTERVAL_MS: u64 = 1000;
+/// Probes kept in the history of a continuous run: the oldest go first, the statistics
+/// covering what is kept.
+pub const MAX_HISTORY: usize = MAX_COUNT;
+/// Time the `ping` program may take beyond the probe's own timeout before it is stopped,
+/// as the C# gateway probe's `CommandTimeout` (`PingService.cs`, `timeoutMs + 5000`).
+pub const PROGRAM_GRACE_MS: u64 = 5000;
+
+/// The `ping` program of Windows, in its system folder.
+#[cfg(windows)]
+pub const PING_PROGRAM: &str = "PING.EXE";
+
+/// Where the `ping` program lives on the other systems, tried in order.
+#[cfg(not(windows))]
+pub const PING_PROGRAMS: [&str; 4] = ["/usr/bin/ping", "/bin/ping", "/usr/sbin/ping", "/sbin/ping"];
+
+/// A number of milliseconds as `ping` writes it after its time word: `=14ms`, `<1ms`,
+/// `=14 ms`, `=14.3 ms`, `=0,456 ms`, in whatever language the word is.
+static LATENCY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)[=<]\s*([0-9]+(?:[.,][0-9]+)?)\s*ms\b").expect("valid regex")
+});
+
+/// The time-to-live of a reply: `TTL=57`, `ttl=57`.
+static TTL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bttl[=:]\s*([0-9]+)").expect("valid regex"));
 
 /// Status outcome of a single ICMP ping probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PingStatus {
     /// Echo reply received successfully.
     Success,
-    /// Probe request timed out.
+    /// No echo reply: timed out, or the host was unreachable.
     Timeout,
-    /// Probe encountered an error (network unreachable, host not found, etc.).
+    /// Probe encountered an error (host not found, no `ping` program).
     Error,
 }
 
@@ -57,14 +96,57 @@ impl PingStatus {
     }
 }
 
+/// What a probe came to, beyond its status; the view says it in the user's language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PingDetail {
+    /// An echo reply.
+    Ok,
+    /// No reply in time.
+    TimedOut,
+    /// A router said the host cannot be reached (Windows `ping` still exits with 0 then).
+    Unreachable,
+    /// The host name did not resolve.
+    Unresolved,
+    /// No `ping` program where the system keeps it.
+    NoProgram,
+    /// The program could not run, or ran past its time: why, made safe to show.
+    Failed(String),
+}
+
+impl PingDetail {
+    /// The status this detail is counted under; the C# counts every reply but an echo as
+    /// a timeout (`PingService.cs`, `PingStatus.Timeout`).
+    #[must_use]
+    pub const fn status(&self) -> PingStatus {
+        match self {
+            Self::Ok => PingStatus::Success,
+            Self::TimedOut | Self::Unreachable => PingStatus::Timeout,
+            Self::Unresolved | Self::NoProgram | Self::Failed(_) => PingStatus::Error,
+        }
+    }
+
+    /// The detail's code in an export, as the C# `IPStatus` names it.
+    #[must_use]
+    pub fn code(&self) -> &str {
+        match self {
+            Self::Ok => "Success",
+            Self::TimedOut => "TimedOut",
+            Self::Unreachable => "DestinationHostUnreachable",
+            Self::Unresolved => "Unresolved",
+            Self::NoProgram => "NoProgram",
+            Self::Failed(why) => why,
+        }
+    }
+}
+
 /// Validated input parameters for a ping probe session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PingInputs {
-    /// Target host name or IP address.
+    /// Target host name or IP address, checked by [`net_host::checked_host`].
     pub host: String,
     /// Timeout in milliseconds per probe.
     pub timeout_ms: u64,
-    /// Number of probes to issue (0 = continuous until cancelled).
+    /// Number of probes to issue (0 = continuous until stopped).
     pub count: usize,
 }
 
@@ -73,7 +155,7 @@ pub struct PingInputs {
 pub struct PingProbeResult {
     /// Sequence counter (1-based).
     pub seq: usize,
-    /// Wall-clock timestamp (HH:mm:ss format).
+    /// Local wall-clock time of the probe (HH:mm:ss), as the C# `DateTime.Now`.
     pub timestamp: String,
     /// Round-trip latency in milliseconds (-1.0 if lost/timed out).
     pub latency_ms: f64,
@@ -81,65 +163,51 @@ pub struct PingProbeResult {
     pub status: PingStatus,
     /// Time-to-live reported in the reply (0 if unavailable).
     pub ttl: u32,
-    /// Target host name or resolved IP address.
+    /// Target host name or the address that replied.
     pub ip_or_host: String,
-    /// Status detail or error message.
-    pub detail: String,
+    /// What the probe came to.
+    pub detail: PingDetail,
 }
 
 impl PingProbeResult {
-    /// Creates a successful probe result.
+    /// A probe that came to `detail`, without a reply.
     #[must_use]
-    pub fn success(
-        seq: usize,
-        timestamp: String,
-        latency_ms: f64,
-        ttl: u32,
-        ip_or_host: String,
-    ) -> Self {
+    pub fn without_reply(seq: usize, timestamp: String, host: String, detail: PingDetail) -> Self {
         Self {
             seq,
             timestamp,
-            latency_ms,
+            latency_ms: -1.0,
+            status: detail.status(),
+            ttl: 0,
+            ip_or_host: host,
+            detail,
+        }
+    }
+
+    /// A probe answered by `reply`.
+    #[must_use]
+    pub fn replied(seq: usize, timestamp: String, host: String, reply: &PingReply) -> Self {
+        Self {
+            seq,
+            timestamp,
+            latency_ms: reply.latency_ms,
             status: PingStatus::Success,
-            ttl,
-            ip_or_host,
-            detail: "OK".to_string(),
+            ttl: reply.ttl.unwrap_or(0),
+            ip_or_host: reply.address.map_or(host, |address| address.to_string()),
+            detail: PingDetail::Ok,
         }
     }
+}
 
-    /// Creates a timed-out probe result.
-    #[must_use]
-    pub fn timeout(seq: usize, timestamp: String, host: String) -> Self {
-        Self {
-            seq,
-            timestamp,
-            latency_ms: -1.0,
-            status: PingStatus::Timeout,
-            ttl: 0,
-            ip_or_host: host,
-            detail: "Request timed out".to_string(),
-        }
-    }
-
-    /// Creates an erroneous probe result.
-    #[must_use]
-    pub fn error(
-        seq: usize,
-        timestamp: String,
-        host: String,
-        error_message: impl Into<String>,
-    ) -> Self {
-        Self {
-            seq,
-            timestamp,
-            latency_ms: -1.0,
-            status: PingStatus::Error,
-            ttl: 0,
-            ip_or_host: host,
-            detail: error_message.into(),
-        }
-    }
+/// An echo reply, as read from the `ping` program's output.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PingReply {
+    /// Round-trip time in milliseconds.
+    pub latency_ms: f64,
+    /// Time-to-live, when the reply says it (Windows says none over IPv6).
+    pub ttl: Option<u32>,
+    /// The address that replied.
+    pub address: Option<IpAddr>,
 }
 
 /// Aggregated running statistics across a collection of ping probes.
@@ -189,7 +257,8 @@ pub struct PingDataPoint {
     pub is_timeout: bool,
 }
 
-/// Validates raw textual inputs for ping parameters.
+/// Validates raw textual inputs for ping parameters, as the C# `ValidateInputs`: a host,
+/// a timeout within its bounds, a count within its bounds or none for a continuous run.
 ///
 /// Returns `Ok(PingInputs)` on success, or an error translation key on failure.
 pub fn validate_inputs(
@@ -197,19 +266,15 @@ pub fn validate_inputs(
     timeout_text: &str,
     count_text: &str,
 ) -> Result<PingInputs, &'static str> {
-    let host = host_text.trim();
-    if host.is_empty() {
+    if host_text.trim().is_empty() {
         return Err("ui-tool-ping-error-host-required");
     }
+    let host = net_host::checked_host(host_text).ok_or("ui-tool-ping-error-host-invalid")?;
 
-    let timeout_trimmed = timeout_text.trim();
-    let timeout_ms = if timeout_trimmed.is_empty() {
-        DEFAULT_PING_TIMEOUT_MS
-    } else {
-        match timeout_trimmed.parse::<u64>() {
-            Ok(val) if (MIN_TIMEOUT_MS..=MAX_TIMEOUT_MS).contains(&val) => val,
-            _ => return Err("ui-tool-ping-error-timeout-invalid"),
-        }
+    // Required, as the C# `int.TryParse` of an empty field fails.
+    let timeout_ms = match timeout_text.trim().parse::<u64>() {
+        Ok(val) if (MIN_TIMEOUT_MS..=MAX_TIMEOUT_MS).contains(&val) => val,
+        _ => return Err("ui-tool-ping-error-timeout-invalid"),
     };
 
     let count_trimmed = count_text.trim();
@@ -223,72 +288,96 @@ pub fn validate_inputs(
     };
 
     Ok(PingInputs {
-        host: host.to_string(),
+        host,
         timeout_ms,
         count,
     })
 }
 
-/// Parses the round-trip latency in milliseconds from standard ping command output.
+/// The system's `ping` program, by its full path: never one found on the `PATH` or beside
+/// Heimdall. `None` when the system has none where it keeps it.
 #[must_use]
-pub fn parse_ping_latency(output: &str) -> Option<f64> {
-    if output.is_empty() {
-        return None;
-    }
-
-    // Windows: "time=24ms", "time<1ms"
-    // Linux/macOS: "time=24.3 ms", "time=0.456 ms"
-    let lower = output.to_ascii_lowercase();
-    if let Some(pos) = lower.find("time") {
-        let after = &lower[pos + 4..];
-        let trimmed = after.trim_start();
-        let stripped = trimmed
-            .strip_prefix('=')
-            .or_else(|| trimmed.strip_prefix('<'))?;
-        let after_op = stripped.trim_start();
-        let ms_pos = after_op.find("ms")?;
-        let num_str = after_op[..ms_pos].trim();
-        if let Ok(val) = num_str.parse::<f64>() {
-            return Some(val);
-        }
-    }
-
-    None
+pub fn ping_program() -> Option<PathBuf> {
+    #[cfg(windows)]
+    return crate::paths::system_program(PING_PROGRAM);
+    #[cfg(not(windows))]
+    return PING_PROGRAMS
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file());
 }
 
-/// Parses the TTL (Time-To-Live) value from standard ping command output.
+/// The arguments of one echo request to `address`, waiting `timeout_ms` for its reply.
 #[must_use]
-pub fn parse_ping_ttl(output: &str) -> Option<u32> {
-    let lower = output.to_ascii_lowercase();
-    if let Some(pos) = lower.find("ttl=") {
-        let after = &lower[pos + 4..];
-        let end = after
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(after.len());
-        if let Ok(val) = after[..end].parse::<u32>() {
-            return Some(val);
-        }
+pub fn ping_arguments(address: IpAddr, timeout_ms: u64) -> Vec<String> {
+    let mut arguments = Vec::new();
+    #[cfg(windows)]
+    {
+        arguments.extend(["-n".to_owned(), "1".to_owned(), "-w".to_owned()]);
+        arguments.push(timeout_ms.to_string());
+        arguments.push(if address.is_ipv6() { "-6" } else { "-4" }.to_owned());
     }
-    None
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: one request, the wait in milliseconds, numeric output.
+        arguments.extend(["-n".to_owned(), "-c".to_owned(), "1".to_owned()]);
+        arguments.extend(["-W".to_owned(), timeout_ms.to_string()]);
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        // iputils: one request, the wait in whole seconds, numeric output.
+        let seconds = timeout_ms.div_ceil(1000).max(1);
+        arguments.extend(["-n".to_owned(), "-c".to_owned(), "1".to_owned()]);
+        arguments.extend(["-W".to_owned(), seconds.to_string()]);
+    }
+    arguments.push(address.to_string());
+    arguments
 }
 
-/// Parses the resolved IP address from standard ping command output.
+/// The echo reply in `output`, the `ping` program's: the first line holding an address
+/// and a time in milliseconds. A line of statistics holds no address, and a router's
+/// "unreachable" no time, so neither passes for a reply.
 #[must_use]
-pub fn parse_ping_address(output: &str) -> Option<String> {
-    // Windows: Reply from 142.250.74.206: bytes=32...
-    // Unix: 64 bytes from 142.250.74.206: icmp_seq=1...
-    let lower = output.to_ascii_lowercase();
-    if let Some(pos) = lower.find("from ") {
-        let after = &output[pos + 5..];
-        let end = after
-            .find(|c: char| c == ':' || c == ' ' || c == '(' || c == ')')
-            .unwrap_or(after.len());
-        let addr = after[..end].trim();
-        if !addr.is_empty() {
-            return Some(addr.to_string());
-        }
+pub fn parse_reply(output: &str) -> Option<PingReply> {
+    output.lines().find_map(|line| {
+        let latency_ms = LATENCY
+            .captures(line)
+            .and_then(|found| found[1].replace(',', ".").parse::<f64>().ok())?;
+        let address = address_in(line)?;
+        let ttl = TTL
+            .captures(line)
+            .and_then(|found| found[1].parse::<u32>().ok());
+        Some(PingReply {
+            latency_ms,
+            ttl,
+            address: Some(address),
+        })
+    })
+}
+
+/// The first IP address written in `line`, whatever surrounds it: a colon after it
+/// (`1.1.1.1:`, `::1:`), parentheses, or a space the console's code page turned into a
+/// replacement character.
+fn address_in(line: &str) -> Option<IpAddr> {
+    line.split(|c: char| !(c.is_ascii_hexdigit() || c == '.' || c == ':'))
+        .find_map(|piece| {
+            piece
+                .parse::<IpAddr>()
+                .ok()
+                .or_else(|| piece.strip_suffix(':')?.parse::<IpAddr>().ok())
+        })
+}
+
+/// What one run of the `ping` program came to, from whether it `exited_ok` and its
+/// `output`: a reply, or why there was none. Windows `ping` exits with 0 when a router
+/// answers "Destination host unreachable": no time in that answer, so it is no reply.
+#[must_use]
+pub fn classify_run(exited_ok: bool, output: &str) -> Result<PingReply, PingDetail> {
+    match parse_reply(output) {
+        Some(reply) => Ok(reply),
+        None if exited_ok => Err(PingDetail::Unreachable),
+        None => Err(PingDetail::TimedOut),
     }
-    None
 }
 
 /// Computes summary statistics from a slice of probe results.
@@ -372,7 +461,8 @@ pub fn compute_graph_y_scale(data_points: &[PingDataPoint]) -> (f64, f64) {
     (ceiling, ceiling / 2.0)
 }
 
-/// Builds CSV formatted export text from probe history.
+/// Builds CSV formatted export text from probe history: every text cell quoted, and one
+/// that a spreadsheet would read as a formula neutralized, as the C# `SanitizeCsvCell`.
 #[must_use]
 pub fn build_csv_export(results: &[PingProbeResult]) -> String {
     let mut csv = String::from("Seq,Timestamp,Host,Status,LatencyMs,TTL,Detail\n");
@@ -386,80 +476,15 @@ pub fn build_csv_export(results: &[PingProbeResult]) -> String {
             csv,
             "{},{},{},{},{},{},{}",
             r.seq,
-            r.timestamp,
-            r.ip_or_host,
+            escape_csv(&r.timestamp),
+            escape_csv(&r.ip_or_host),
             r.status.label(),
             lat_str,
             r.ttl,
-            r.detail.replace(',', " ")
+            escape_csv(r.detail.code())
         );
     }
     csv
-}
-
-/// Executes a single synchronous ICMP ping probe against `host`.
-#[must_use]
-pub fn probe_ping(host: &str, seq: usize, timeout_ms: u64) -> PingProbeResult {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let hour = (secs / 3600) % 24;
-    let min = (secs / 60) % 60;
-    let sec = secs % 60;
-    let timestamp = format!("{hour:02}:{min:02}:{sec:02}");
-
-    let mut cmd = Command::new("ping");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.arg("-n").arg("1");
-        cmd.arg("-w").arg(timeout_ms.to_string());
-        cmd.arg(host);
-    }
-    #[cfg(not(windows))]
-    {
-        let timeout_secs = ((timeout_ms + 999) / 1000).max(1).to_string();
-        cmd.arg("-c").arg("1");
-        cmd.arg("-W").arg(timeout_secs);
-        cmd.arg(host);
-    }
-
-    let start = Instant::now();
-    match cmd.output() {
-        Ok(output) => {
-            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let combined = format!("{stdout} {stderr}");
-
-            if output.status.success() {
-                let latency = parse_ping_latency(&combined).unwrap_or(elapsed_ms);
-                let ttl = parse_ping_ttl(&combined).unwrap_or(0);
-                let addr = parse_ping_address(&combined).unwrap_or_else(|| host.to_string());
-                PingProbeResult::success(seq, timestamp, latency, ttl, addr)
-            } else if combined.to_ascii_lowercase().contains("timed out")
-                || combined.to_ascii_lowercase().contains("100% packet loss")
-            {
-                PingProbeResult::timeout(seq, timestamp, host.to_string())
-            } else {
-                let err_msg = if stderr.trim().is_empty() {
-                    stdout.trim().to_string()
-                } else {
-                    stderr.trim().to_string()
-                };
-                let detail = if err_msg.is_empty() {
-                    "Destination unreachable".to_string()
-                } else {
-                    err_msg
-                };
-                PingProbeResult::error(seq, timestamp, host.to_string(), detail)
-            }
-        }
-        Err(err) => PingProbeResult::error(seq, timestamp, host.to_string(), err.to_string()),
-    }
 }
 
 #[cfg(test)]
@@ -477,13 +502,14 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_inputs_empty_defaults() {
-        let res = validate_inputs("google.com", "", "");
-        assert!(res.is_ok());
-        let inputs = res.unwrap();
-        assert_eq!(inputs.host, "google.com");
-        assert_eq!(inputs.timeout_ms, DEFAULT_PING_TIMEOUT_MS);
+    fn an_empty_count_is_a_continuous_run_and_an_empty_timeout_refused() {
+        let inputs = validate_inputs("google.com", "2000", "").expect("valid");
         assert_eq!(inputs.count, DEFAULT_PING_COUNT);
+        assert_eq!(inputs.count, 0, "continuous, as the C#");
+        assert_eq!(
+            validate_inputs("google.com", "", ""),
+            Err("ui-tool-ping-error-timeout-invalid")
+        );
     }
 
     #[test]
@@ -494,39 +520,132 @@ mod tests {
     }
 
     #[test]
+    fn a_host_that_reads_as_an_option_is_refused() {
+        for host in ["-t", "-n 1000 example.com", "example.com -l 65500", "a b"] {
+            assert_eq!(
+                validate_inputs(host, "1000", "1"),
+                Err("ui-tool-ping-error-host-invalid"),
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
     fn test_validate_inputs_bad_timeout_fails() {
         assert!(validate_inputs("example.com", "50", "1").is_err());
         assert!(validate_inputs("example.com", "999999", "1").is_err());
+        assert!(validate_inputs("example.com", "1000", "100001").is_err());
     }
 
     #[test]
-    fn test_parse_ping_latency_windows() {
-        let out = "Reply from 1.1.1.1: bytes=32 time=14ms TTL=57";
-        assert_eq!(parse_ping_latency(out), Some(14.0));
-
-        let out_less = "Reply from 127.0.0.1: bytes=32 time<1ms TTL=128";
-        assert_eq!(parse_ping_latency(out_less), Some(1.0));
+    fn the_arguments_end_with_the_address_and_ask_for_one_request() {
+        let arguments = ping_arguments("192.0.2.1".parse().unwrap(), 1500);
+        assert_eq!(arguments.last().map(String::as_str), Some("192.0.2.1"));
+        assert!(arguments.iter().any(|argument| argument == "1"));
+        assert!(
+            arguments[..arguments.len() - 1]
+                .iter()
+                .all(|argument| argument.starts_with('-') || argument.parse::<u64>().is_ok())
+        );
     }
 
     #[test]
-    fn test_parse_ping_latency_unix() {
-        let out = "64 bytes from 1.1.1.1: icmp_seq=1 ttl=57 time=14.32 ms";
-        assert_eq!(parse_ping_latency(out), Some(14.32));
+    fn an_english_windows_reply_is_read() {
+        let out = "\r\nPinging 1.1.1.1 with 32 bytes of data:\r\n\
+                   Reply from 1.1.1.1: bytes=32 time=14ms TTL=57\r\n\r\n\
+                   Ping statistics for 1.1.1.1:\r\n\
+                   Approximate round trip times in milli-seconds:\r\n\
+                   Minimum = 14ms, Maximum = 14ms, Average = 14ms\r\n";
+        let reply = classify_run(true, out).expect("a reply");
+        assert_eq!(reply.latency_ms, 14.0);
+        assert_eq!(reply.ttl, Some(57));
+        assert_eq!(reply.address, Some("1.1.1.1".parse().unwrap()));
     }
 
     #[test]
-    fn test_parse_ping_ttl() {
-        let out = "Reply from 1.1.1.1: bytes=32 time=14ms TTL=57";
-        assert_eq!(parse_ping_ttl(out), Some(57));
+    fn a_french_windows_reply_is_read_whatever_its_accents_became() {
+        // The console's code page turns the accents into replacement characters.
+        let out = "Envoi d'une requ\u{fffd}te 'Ping'  192.168.1.1 avec 32 octets de donn\u{fffd}es :\r\n\
+                   R\u{fffd}ponse de 192.168.1.1\u{fffd}: octets=32 temps=3 ms TTL=64\r\n\r\n\
+                   Statistiques Ping pour 192.168.1.1:\r\n\
+                   Minimum = 3ms, Maximum = 3ms, Moyenne = 3ms\r\n";
+        let reply = classify_run(true, out).expect("a reply");
+        assert_eq!(reply.latency_ms, 3.0);
+        assert_eq!(reply.ttl, Some(64));
+        assert_eq!(reply.address, Some("192.168.1.1".parse().unwrap()));
+        let below = "R\u{fffd}ponse de 127.0.0.1 : octets=32 temps<1ms TTL=128";
+        assert_eq!(parse_reply(below).map(|reply| reply.latency_ms), Some(1.0));
+    }
+
+    #[test]
+    fn a_linux_reply_and_a_windows_ipv6_reply_are_read() {
+        let linux = "PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.\n\
+                     64 bytes from 1.1.1.1: icmp_seq=1 ttl=57 time=14.32 ms\n\n\
+                     --- 1.1.1.1 ping statistics ---\n\
+                     rtt min/avg/max/mdev = 14.320/14.320/14.320/0.000 ms\n";
+        let reply = classify_run(true, linux).expect("a reply");
+        assert_eq!(reply.latency_ms, 14.32);
+        assert_eq!(reply.ttl, Some(57));
+        let v6 = "Reply from ::1: time<1ms\r\n";
+        let reply = classify_run(true, v6).expect("a reply");
+        assert_eq!(reply.ttl, None, "Windows says no TTL over IPv6");
+        assert_eq!(reply.address, Some("::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn destination_host_unreachable_is_no_reply_though_windows_exits_with_zero() {
+        let english = "Reply from 192.168.1.10: Destination host unreachable.\r\n\r\n\
+                       Ping statistics for 192.168.1.20:\r\n\
+                       Packets: Sent = 1, Received = 1, Lost = 0 (0% loss),\r\n";
+        assert_eq!(classify_run(true, english), Err(PingDetail::Unreachable));
+        let french = "R\u{fffd}ponse de 192.168.1.10\u{a0}: Impossible de joindre l'h\u{fffd}te de destination.\r\n";
+        assert_eq!(classify_run(true, french), Err(PingDetail::Unreachable));
+        assert_eq!(
+            PingDetail::Unreachable.status(),
+            PingStatus::Timeout,
+            "lost, as the C# counts it"
+        );
+    }
+
+    #[test]
+    fn no_reply_in_any_language_is_a_timeout() {
+        assert_eq!(
+            classify_run(false, "Request timed out.\r\n"),
+            Err(PingDetail::TimedOut)
+        );
+        assert_eq!(
+            classify_run(
+                false,
+                "D\u{fffd}lai d'attente de la demande d\u{fffd}pass\u{fffd}.\r\n"
+            ),
+            Err(PingDetail::TimedOut)
+        );
+        assert_eq!(
+            classify_run(
+                false,
+                "1 packets transmitted, 0 received, 100% packet loss, time 0ms\n"
+            ),
+            Err(PingDetail::TimedOut)
+        );
     }
 
     #[test]
     fn test_compute_stats_mixed() {
+        let reply = |latency_ms| PingReply {
+            latency_ms,
+            ttl: Some(64),
+            address: None,
+        };
         let results = vec![
-            PingProbeResult::success(1, "12:00:00".into(), 10.0, 64, "host".into()),
-            PingProbeResult::success(2, "12:00:01".into(), 20.0, 64, "host".into()),
-            PingProbeResult::timeout(3, "12:00:02".into(), "host".into()),
-            PingProbeResult::success(4, "12:00:03".into(), 30.0, 64, "host".into()),
+            PingProbeResult::replied(1, "12:00:00".into(), "host".into(), &reply(10.0)),
+            PingProbeResult::replied(2, "12:00:01".into(), "host".into(), &reply(20.0)),
+            PingProbeResult::without_reply(
+                3,
+                "12:00:02".into(),
+                "host".into(),
+                PingDetail::TimedOut,
+            ),
+            PingProbeResult::replied(4, "12:00:03".into(), "host".into(), &reply(30.0)),
         ];
 
         let stats = compute_stats(&results);
@@ -560,14 +679,32 @@ mod tests {
     }
 
     #[test]
-    fn test_build_csv_export() {
+    fn the_csv_quotes_its_text_and_neutralizes_formulas() {
+        let reply = PingReply {
+            latency_ms: 12.5,
+            ttl: Some(64),
+            address: Some("1.1.1.1".parse().unwrap()),
+        };
         let results = vec![
-            PingProbeResult::success(1, "10:00:00".into(), 12.5, 64, "1.1.1.1".into()),
-            PingProbeResult::timeout(2, "10:00:01".into(), "1.1.1.1".into()),
+            PingProbeResult::replied(1, "10:00:00".into(), "one.one".into(), &reply),
+            PingProbeResult::without_reply(
+                2,
+                "10:00:01".into(),
+                "1.1.1.1".into(),
+                PingDetail::TimedOut,
+            ),
+            PingProbeResult::without_reply(
+                3,
+                "10:00:02".into(),
+                "=cmd|' /C calc'!A0".into(),
+                PingDetail::Failed("-oops, \"quoted\"".into()),
+            ),
         ];
         let csv = build_csv_export(&results);
-        assert!(csv.contains("Seq,Timestamp,Host,Status,LatencyMs,TTL,Detail"));
-        assert!(csv.contains("1,10:00:00,1.1.1.1,Success,12.5,64,OK"));
-        assert!(csv.contains("2,10:00:01,1.1.1.1,Timeout,,0,Request timed out"));
+        assert!(csv.starts_with("Seq,Timestamp,Host,Status,LatencyMs,TTL,Detail\n"));
+        assert!(csv.contains("1,\"10:00:00\",\"1.1.1.1\",Success,12.5,64,\"Success\""));
+        assert!(csv.contains("2,\"10:00:01\",\"1.1.1.1\",Timeout,,0,\"TimedOut\""));
+        assert!(csv.contains("\"'=cmd|' /C calc'!A0\""), "{csv}");
+        assert!(csv.contains("\"'-oops, \"\"quoted\"\"\""), "{csv}");
     }
 }

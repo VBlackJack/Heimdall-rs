@@ -28,6 +28,7 @@ use heimdall_app::files::{EntryKind, RemoteEntry, Side, copy_across};
 use heimdall_app::integrated_edit::{open, save};
 use heimdall_app::{App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message, Notice, TabId};
 use heimdall_core::profile::{FtpProfile, ProfileId};
+use heimdall_files::LeftOut;
 use heimdall_files::{FtpClient, FtpSecurity, FtpTarget, RemotePath, RemoteSession};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -110,7 +111,7 @@ fn ftp_tab(app: &mut App, id: &str, client: RemoteSession, entries: Vec<RemoteEn
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/"), entries)),
+            result: Ok((RemotePath::from("/"), entries, LeftOut::default())),
         },
     );
     tab
@@ -268,6 +269,43 @@ async fn an_ftp_file_opens_in_the_integrated_editor_and_its_save_is_written_back
         .map(|entry| entry.expect("entry").file_name())
         .collect();
     assert_eq!(left.len(), 1, "no temporary file nor backup left: {left:?}");
+}
+
+// A name holding a backslash is a file name on a UNIX file system alone.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_ftp_listing_counts_the_names_it_hides_for_the_pane_to_say() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("kept"), b"1").expect("file");
+    std::fs::write(root.path().join("..\\x"), b"1").expect("unsafe name");
+    std::fs::create_dir(root.path().join("clean")).expect("folder");
+    std::fs::write(root.path().join("clean").join("a"), b"1").expect("file");
+    let port = serve(root.path()).await;
+
+    let (_, entries, left_out) = tokio::time::timeout(
+        STEP,
+        heimdall_app::files::list_remote(session(port).await, RemotePath::from("/")),
+    )
+    .await
+    .expect("in time")
+    .expect("listed");
+    let names: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
+    assert_eq!(names, ["clean", "kept"]);
+    assert_eq!(
+        left_out,
+        LeftOut {
+            unsafe_names: 1,
+            unread_lines: 0
+        }
+    );
+    let (_, _, none) = tokio::time::timeout(
+        STEP,
+        heimdall_app::files::list_remote(session(port).await, RemotePath::from("/clean")),
+    )
+    .await
+    .expect("in time")
+    .expect("listed");
+    assert!(!none.any(), "a clean folder hides nothing");
 }
 
 #[tokio::test]
