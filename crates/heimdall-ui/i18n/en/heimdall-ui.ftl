@@ -1636,6 +1636,18 @@ ui-files-sudo-on = Sudo mode enabled - browsing as root
 ui-files-sudo-off = Sudo mode disabled
 ui-files-item-count = { $count } items
 ui-files-item-count-filtered = { $shown }/{ $count } items
+ui-files-hidden-unsafe = { $count ->
+    [one] { $count } entry hidden: its name is not safe to use here
+   *[other] { $count } entries hidden: their names are not safe to use here
+}
+ui-files-hidden-unsafe-terminal = { $count ->
+    [one] { $count } entry hidden: its name is not safe to use here; use the terminal
+   *[other] { $count } entries hidden: their names are not safe to use here; use the terminal
+}
+ui-files-unread-lines = { $count ->
+    [one] { $count } line of the listing could not be read
+   *[other] { $count } lines of the listing could not be read
+}
 
 ## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
 ui-files-drop-items = { $count ->
@@ -4835,130 +4847,216 @@ ui-tool-services-act-restart = Restart
 ui-tool-services-empty-state = Click Refresh to inspect Windows system services.
 ui-tool-services-action-success = Service action completed successfully.
 
-## Log Viewer
+## Log viewer
 ui-tool-logview-name = Log Viewer
-ui-tool-logview-description = View log files with tailing, auto-scroll, and regex search filter
-ui-tool-logview-title = Log Viewer
+ui-tool-logview-description = View a log file, filter its lines and follow what is appended
+ui-tool-logview-title = Log Viewer / Tail
 ui-tool-logview-help =
-    Inspect log files in real time with continuous tailing, automatic scrolling, and regex filtering.
+    Log Viewer
 
-    Supports UTF-8, ASCII, UTF-16, and Windows-1252 encodings.
-ui-tool-logview-path-placeholder = Enter log file path...
-ui-tool-logview-btn-load = Load
-ui-tool-logview-btn-clear = Clear
-ui-tool-logview-btn-copy = Copy Log
-ui-tool-logview-chk-tail = Live Tail
-ui-tool-logview-chk-autoscroll = Auto-scroll
-ui-tool-logview-filter-placeholder = Filter text or regex...
-ui-tool-logview-chk-casesensitive = Match Case
-ui-tool-logview-chk-regex = Regex
-ui-tool-logview-status = { $lines } lines ({ $bytes } bytes)
-ui-tool-logview-empty-state = Specify a log file path and click Load to inspect contents.
+    Shows the newest 10,000 lines of a log file, read in the encoding chosen.
 
-## Cron Job Manager
+    Usage:
+    Browse for a file or type its path and press Enter. Filter keeps the lines that contain the text typed, or that match it as a regular expression when Regex is checked. Tail reads what is appended every half second; a file that gets shorter is read again from its start. Only the end of a very large file is read.
+ui-tool-logview-path-placeholder = Log file path
+ui-tool-logview-browse = Browse
+ui-tool-logview-open = Open
+ui-tool-logview-tail = Tail
+ui-tool-logview-filter-placeholder = Filter text
+ui-tool-logview-filter = Filter
+ui-tool-logview-clear = Clear
+ui-tool-logview-case-sensitive = Case sensitive
+ui-tool-logview-regex = Regular expression
+ui-tool-logview-encoding = Encoding:
+ui-tool-logview-encoding-utf8 = UTF-8
+ui-tool-logview-encoding-ascii = ASCII
+ui-tool-logview-encoding-utf16 = UTF-16
+ui-tool-logview-encoding-windows1252 = Windows-1252
+ui-tool-logview-auto-scroll = Follow the last line
+ui-tool-logview-tail-active = Tail active
+ui-tool-logview-copy = Copy
+ui-tool-logview-file-filter = Log files
+ui-tool-logview-empty-state = Browse or enter a log file path to start viewing
+ui-tool-logview-no-matches = No log lines match the current filter
+ui-tool-logview-stats =
+    { $total ->
+        [one] { $shown } / { $total } line | { $size } KB | Last update: { $time }
+       *[other] { $shown } / { $total } lines | { $size } KB | Last update: { $time }
+    }
+ui-tool-logview-error-not-found = File not found.
+ui-tool-logview-error-open = Cannot open file: { $error }
+ui-tool-logview-error-regex = Invalid regular expression.
+
+## Cron job manager
 ui-tool-cronjob-name = Cron Job Manager
-ui-tool-cronjob-description = Parse crontab expressions, calculate next run dates, and inspect Windows scheduled tasks
+ui-tool-cronjob-description = Analyze a crontab and list the Windows scheduled tasks
 ui-tool-cronjob-title = Cron Job Manager
 ui-tool-cronjob-help =
-    Parse crontab expressions into natural language schedules and inspect system scheduled tasks.
+    Cron Job Manager
 
-    Includes presets for common recurrence rules and next 5 run calculations.
-ui-tool-cronjob-tab-crontab = Crontab Expression
-ui-tool-cronjob-tab-schtasks = Scheduled Tasks
-ui-tool-cronjob-expr-placeholder = Enter crontab expression (e.g. */15 * * * *)...
-ui-tool-cronjob-preset-every-min = Every minute
-ui-tool-cronjob-preset-hourly = Hourly
-ui-tool-cronjob-preset-daily = Daily midnight
-ui-tool-cronjob-preset-weekly = Weekly Monday
-ui-tool-cronjob-schedule-title = Schedule Description
-ui-tool-cronjob-next-runs-title = Next Scheduled Executions:
-ui-tool-cronjob-btn-refresh = Refresh Tasks
-ui-tool-cronjob-btn-copy-csv = Export CSV
-ui-tool-cronjob-filter-placeholder = Filter scheduled tasks...
-ui-tool-cronjob-col-taskname = Task Name
-ui-tool-cronjob-col-nextrun = Next Run Time
+    Reads a crontab and the scheduled tasks of this computer.
+
+    Usage:
+    Paste the output of crontab -l and press Parse: each schedule is listed with its command, its next run and what it does; select one to see its next five runs. Windows Tasks lists the scheduled tasks of this computer with their status and their last result. Copy puts the list shown on the clipboard, one row a line.
+ui-tool-cronjob-tab-paste = Paste Crontab
+ui-tool-cronjob-tab-tasks = Windows Tasks
+ui-tool-cronjob-paste-instructions = Paste raw crontab output (from crontab -l via SSH terminal) to parse and analyze entries.
+ui-tool-cronjob-paste-placeholder = Crontab content
+ui-tool-cronjob-parse = Parse
+ui-tool-cronjob-clear = Clear
+ui-tool-cronjob-refresh = Refresh
+ui-tool-cronjob-copy = Copy
+ui-tool-cronjob-col-schedule = Schedule
+ui-tool-cronjob-col-command = Command
+ui-tool-cronjob-col-next-run = Next Run
+ui-tool-cronjob-col-description = Description
+ui-tool-cronjob-col-task-name = Task Name
 ui-tool-cronjob-col-status = Status
-ui-tool-cronjob-col-lastrun = Last Run Time
-ui-tool-cronjob-col-lastresult = Last Result
-ui-tool-cronjob-empty-tasks = Click Refresh Tasks to inspect scheduled system tasks.
+ui-tool-cronjob-col-last-run = Last Run
+ui-tool-cronjob-col-last-result = Last Result
+ui-tool-cronjob-detail-header = Entry Details
+ui-tool-cronjob-detail-schedule = Schedule: { $schedule }
+ui-tool-cronjob-detail-command = Command: { $command }
+ui-tool-cronjob-detail-next-runs = Next runs:
+ui-tool-cronjob-empty-state = Paste a crontab to list its schedules
+ui-tool-cronjob-tasks-empty = Refresh to list the Windows scheduled tasks
+ui-tool-cronjob-loading = Loading scheduled tasks...
+ui-tool-cronjob-error-empty = Please paste crontab content to parse.
+ui-tool-cronjob-error-no-entry = No valid crontab entries found.
+ui-tool-cronjob-error-timeout = Loading tasks timed out.
+ui-tool-cronjob-error-failed = Failed to load tasks: { $error }
+ui-tool-cronjob-error-unsupported = Scheduled tasks can only be listed on Windows.
+ui-tool-cronjob-error-no-system-folder = Windows did not give its system folder: the scheduled tasks cannot be listed.
+ui-tool-cronjob-status-parsed =
+    { $count ->
+        [one] { $count } entry parsed.
+       *[other] { $count } entries parsed.
+    }
+ui-tool-cronjob-status-tasks =
+    { $count ->
+        [one] { $count } scheduled task found.
+       *[other] { $count } scheduled tasks found.
+    }
 
-## Notes Scratchpad
-ui-tool-notes-name = Notes Scratchpad
-ui-tool-notes-description = Personal notes and scratchpad with markdown formatting and tag organization
-ui-tool-notes-title = Notes Scratchpad
+## Notes
+ui-tool-notes-name = Notes
+ui-tool-notes-description = Markdown work notes kept as files, with tags and HTML export
+ui-tool-notes-title = Work Notes
 ui-tool-notes-help =
-    Store and organize personal engineering notes with tag filtering and markdown support.
+    Notes
 
-    Quick scratchpad for command outputs, credentials, and documentation with HTML and Markdown export.
-ui-tool-notes-search-placeholder = Search notes...
-ui-tool-notes-btn-new = New Note
-ui-tool-notes-title-placeholder = Note title...
-ui-tool-notes-tags-placeholder = Tags (comma-separated)...
-ui-tool-notes-content-placeholder = Enter markdown notes here...
-ui-tool-notes-btn-copy-md = Copy Markdown
-ui-tool-notes-btn-copy-html = Copy HTML
-ui-tool-notes-btn-delete = Delete Note
-ui-tool-notes-no-selection = Select a note from the list or click New Note to create one.
-ui-tool-notes-count = { $count } notes
+    Work notes in Markdown, one file each in the notes folder of Heimdall's data.
 
-## Diagram Editor
+    Usage:
+    New makes a note; the first line starting with "# " is its title, and a line such as "> tags: network, prod" gives its tags. A note is saved shortly after each change, when another is selected and when the tab closes. Search finds a note by its text, its title or its file name. The note shown is copied as Markdown or as an HTML page.
+ui-tool-notes-new-title = Working Note
+ui-tool-notes-search-placeholder = Search notes
+ui-tool-notes-new = New
+ui-tool-notes-count =
+    { $count ->
+        [one] { $count } note
+       *[other] { $count } notes
+    }
+ui-tool-notes-delete = Delete
+ui-tool-notes-delete-confirm = Delete note "{ $title }"?
+ui-tool-notes-cancel = Cancel
+ui-tool-notes-copy-markdown = Copy Markdown
+ui-tool-notes-copy-html = Copy HTML
+ui-tool-notes-content-placeholder = Write the note in Markdown
+ui-tool-notes-empty-title = No note selected
+ui-tool-notes-empty-body = Create a note or select one from the list.
+ui-tool-notes-error-no-folder = This system gives Heimdall no data folder to keep notes in.
+ui-tool-notes-error-list = Cannot read the notes: { $error }
+ui-tool-notes-error-save = Cannot save the note: { $error }
+
+## Diagram editor
 ui-tool-diagram-name = Diagram Editor
-ui-tool-diagram-description = Create architecture and network topology diagrams with Mermaid, Graphviz, and ASCII
+ui-tool-diagram-description = Edit a diagram's source text (Mermaid, Graphviz, PlantUML or ASCII) from templates
 ui-tool-diagram-title = Diagram Editor
 ui-tool-diagram-help =
-    Design architecture diagrams and network topologies using Mermaid, Graphviz DOT, or ASCII.
+    Diagram Editor
 
-    Includes perimeter DMZ, cloud VPC, and Active Directory templates.
-ui-tool-diagram-template-select = Template:
-ui-tool-diagram-template-perimeter = DMZ Perimeter
+    A text editor for the source of a diagram, in Mermaid, Graphviz DOT, PlantUML or ASCII art. It does not draw the diagram: paste the source in a tool or a page that renders its format.
+
+    Usage:
+    Start from a template or open a text file. Save writes to the current file; Save As asks for a new one. A template or a file never replaces changes that are not saved without asking first.
+ui-tool-diagram-templates = Templates
+ui-tool-diagram-template-perimeter = Perimeter and DMZ
 ui-tool-diagram-template-cloud = Cloud VPC
-ui-tool-diagram-template-ascii = ASCII Network Topology
+ui-tool-diagram-template-ascii = ASCII network topology
 ui-tool-diagram-template-ad = Active Directory
-ui-tool-diagram-status-dirty = Modified
-ui-tool-diagram-status-saved = Saved
-ui-tool-diagram-btn-load-template = Load Template
-ui-tool-diagram-btn-copy-source = Copy Source
-ui-tool-diagram-btn-clear = Clear
-ui-tool-diagram-editor-header = Diagram Source Code:
-ui-tool-diagram-preview-header = Diagram Preview:
+ui-tool-diagram-format-mermaid = Mermaid
+ui-tool-diagram-format-dot = Graphviz DOT
+ui-tool-diagram-format-plantuml = PlantUML
+ui-tool-diagram-format-ascii = ASCII art
+ui-tool-diagram-open = Open
+ui-tool-diagram-save = Save
+ui-tool-diagram-save-as = Save As
+ui-tool-diagram-copy = Copy
+ui-tool-diagram-untitled = Untitled diagram
+ui-tool-diagram-modified = { $name } (modified)
+ui-tool-diagram-confirm-replace = This diagram has changes that are not saved. Replace it anyway?
+ui-tool-diagram-replace = Replace
+ui-tool-diagram-keep = Keep my changes
+ui-tool-diagram-placeholder = Diagram source
+ui-tool-diagram-open-title = Open a diagram
+ui-tool-diagram-save-title = Save the diagram
+ui-tool-diagram-default-file-name = diagram
+ui-tool-diagram-saved = Saved to { $path }
+ui-tool-diagram-error-open = Could not open the diagram: { $error }
+ui-tool-diagram-error-save = Could not save the diagram: { $error }
+ui-tool-diagram-error-too-large = the file is too large to open
 
-## Command Snippet Library
+## Command snippet library
 ui-tool-cmdlib-name = Command Snippet Library
-ui-tool-cmdlib-description = Curated catalog of sysadmin, network, and security commands with interactive parameters
+ui-tool-cmdlib-description = Administration, network and security commands with their values filled in
 ui-tool-cmdlib-title = Command Snippet Library
 ui-tool-cmdlib-help =
-    Search and execute curated command snippets with interactive parameter substitution.
+    Command Snippet Library
 
-    Filter by platform (Linux, Windows, Cross-Platform) or search by keyword and category.
-ui-tool-cmdlib-search-placeholder = Search commands by name, tag, or description...
-ui-tool-cmdlib-platform-all = All Platforms
+    Common administration, network and security commands, ready to copy.
+
+    Usage:
+    Choose a platform or type a word to find a command. Type its values: the command shows them as it will be copied. A value left empty takes the example shown.
+ui-tool-cmdlib-search-placeholder = Search commands
+ui-tool-cmdlib-platform-all = All platforms
 ui-tool-cmdlib-platform-linux = Linux
 ui-tool-cmdlib-platform-windows = Windows
-ui-tool-cmdlib-platform-cross = Cross-Platform
-ui-tool-cmdlib-category-all = All Categories
-ui-tool-cmdlib-btn-copy = Copy Command
-ui-tool-cmdlib-empty = No command snippets match the selected filters.
-ui-tool-cmdlib-rendered-label = Rendered Command:
-ui-tool-cmdlib-count = { $count } snippets
-
-## Elevated Privilege Launcher
-ui-tool-privlaunch-name = Elevated Privilege Launcher
-ui-tool-privlaunch-description = Launch administrative tools and processes with elevated UAC or root privileges
-ui-tool-privlaunch-title = Elevated Privilege Launcher
-ui-tool-privlaunch-help =
-    Launch administrative management consoles and custom executables with elevated privileges.
-
-    Provides one-click shortcuts for standard Windows management tools and arbitrary command execution.
-ui-tool-privlaunch-banner-elevated = Heimdall is currently running with elevated administrative privileges.
-ui-tool-privlaunch-banner-standard = Heimdall is currently running with standard user privileges.
-ui-tool-privlaunch-warning = Warning: Executing processes with elevated privileges grants full administrative control over the operating system.
-ui-tool-privlaunch-quick-title = Quick Administrative Consoles:
-ui-tool-privlaunch-custom-title = Launch Custom Executable:
-ui-tool-privlaunch-exe-placeholder = Executable path or command (e.g. powershell.exe)...
-ui-tool-privlaunch-args-placeholder = Command-line arguments (optional)...
-ui-tool-privlaunch-privilege-label = Privilege Level:
-ui-tool-privlaunch-priv-user = Current User Elevated
-ui-tool-privlaunch-priv-system = SYSTEM / Root
-ui-tool-privlaunch-btn-launch = Launch Elevated
-ui-tool-privlaunch-success = Process launched successfully with elevated privileges.
-ui-tool-privlaunch-failed = Failed to launch elevated process: { $error }
+ui-tool-cmdlib-platform-cross = Cross-platform
+ui-tool-cmdlib-category-network = Network
+ui-tool-cmdlib-category-system = System
+ui-tool-cmdlib-category-services = Services
+ui-tool-cmdlib-category-security = Security
+ui-tool-cmdlib-category-diagnostics = Diagnostics
+ui-tool-cmdlib-param-host = Host
+ui-tool-cmdlib-param-port = Port
+ui-tool-cmdlib-param-local-port = Local port
+ui-tool-cmdlib-param-port-range = Ports
+ui-tool-cmdlib-param-service = Service
+ui-tool-cmdlib-copy = Copy
+ui-tool-cmdlib-empty = No command matches the filters.
+ui-tool-cmdlib-count =
+    { $count ->
+        [one] { $count } command
+       *[other] { $count } commands
+    }
+ui-tool-cmdlib-snippet-listening-ports = List listening sockets
+ui-tool-cmdlib-snippet-listening-ports-description = Shows the TCP and UDP sockets listening, with their process.
+ui-tool-cmdlib-snippet-kill-port = Kill the process on a port
+ui-tool-cmdlib-snippet-kill-port-description = Ends the process listening on a TCP port.
+ui-tool-cmdlib-snippet-journal-follow = Follow a service's journal
+ui-tool-cmdlib-snippet-journal-follow-description = Shows the systemd journal of a service as it is written.
+ui-tool-cmdlib-snippet-cert-expiry = Remote TLS certificate dates
+ui-tool-cmdlib-snippet-cert-expiry-description = Connects with TLS and shows the subject and validity dates of the server's certificate.
+ui-tool-cmdlib-snippet-test-connection = Test a TCP port
+ui-tool-cmdlib-snippet-test-connection-description = Checks with PowerShell that a host answers on a TCP port.
+ui-tool-cmdlib-snippet-port-owner = Find the process of a port
+ui-tool-cmdlib-snippet-port-owner-description = Shows the state and the owning process of a local TCP port.
+ui-tool-cmdlib-snippet-restart-service = Restart a Windows service
+ui-tool-cmdlib-snippet-restart-service-description = Stops and starts a Windows service.
+ui-tool-cmdlib-snippet-flush-dns = Flush the DNS cache
+ui-tool-cmdlib-snippet-flush-dns-description = Empties the DNS client cache of Windows.
+ui-tool-cmdlib-snippet-mtr = Network path quality
+ui-tool-cmdlib-snippet-mtr-description = Sends 50 probes to each hop to measure loss and latency.
+ui-tool-cmdlib-snippet-nmap = Service versions with Nmap
+ui-tool-cmdlib-snippet-nmap-description = Probes open ports for the service and version behind them.

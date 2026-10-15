@@ -14,29 +14,37 @@
  * limitations under the License.
  */
 
-//! Architecture diagram editor, templates, and diagramming engine.
+//! The diagram editor's text: a diagram's source in Mermaid, Graphviz DOT, PlantUML or
+//! ASCII art, typed or started from a template, opened from and saved to a text file.
 //!
-//! Provides templates for network topologies, cloud architectures, DMZ firewalls,
-//! and server maps in Mermaid, ASCII, and Graphviz formats.
+//! This is not the C# `DIAGRAM` tool, which embeds the draw.io editor
+//! (`Views/Tools/DiagramEditorView.xaml.cs`) and draws on a canvas: here the diagram is its
+//! source text, drawn by whatever reads that format.
 
-use std::path::PathBuf;
+use std::path::Path;
 
-/// Diagram representation format.
+/// The largest file opened, so a file picked by mistake cannot fill memory.
+pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The language a diagram's source is written in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DiagramFormat {
-    /// Mermaid diagram syntax.
+    /// Mermaid.
     #[default]
     Mermaid,
-    /// Graphviz DOT syntax.
+    /// Graphviz DOT.
     Dot,
-    /// PlantUML syntax.
+    /// PlantUML.
     PlantUml,
-    /// ASCII box drawing syntax.
+    /// Plain text drawn with ASCII characters.
     Ascii,
 }
 
 impl DiagramFormat {
-    /// File extension standard for the format.
+    /// Every format.
+    pub const ALL: [Self; 4] = [Self::Mermaid, Self::Dot, Self::PlantUml, Self::Ascii];
+
+    /// The extension of a file in this format.
     #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
@@ -47,36 +55,50 @@ impl DiagramFormat {
         }
     }
 
-    /// Display label for the format.
+    /// The format a file's extension names; ASCII for any other.
     #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Mermaid => "Mermaid",
-            Self::Dot => "Graphviz DOT",
-            Self::PlantUml => "PlantUML",
-            Self::Ascii => "ASCII",
+    pub fn of_path(path: &Path) -> Self {
+        let extension = path
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        match extension.as_str() {
+            "mmd" | "mermaid" => Self::Mermaid,
+            "dot" | "gv" => Self::Dot,
+            "puml" | "plantuml" => Self::PlantUml,
+            _ => Self::Ascii,
         }
     }
 }
 
-/// Predefined architectural diagram template.
+/// Which template: its name is the window's to write in its language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplateKind {
+    /// A perimeter with its DMZ.
+    Perimeter,
+    /// A cloud VPC with a public and a private subnet.
+    CloudVpc,
+    /// A network topology in ASCII art.
+    AsciiTopology,
+    /// An Active Directory forest.
+    ActiveDirectory,
+}
+
+/// A diagram to start from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagramTemplate {
-    /// Template unique key identifier.
-    pub id: &'static str,
-    /// Human-readable title of the template.
-    pub title: &'static str,
-    /// Target format.
+    /// Which it is.
+    pub kind: TemplateKind,
+    /// The language of its source.
     pub format: DiagramFormat,
-    /// Diagram source definition.
+    /// Its source.
     pub content: &'static str,
 }
 
-/// Built-in diagram templates catalog.
+/// The templates, in the order they are offered.
 pub const DIAGRAM_TEMPLATES: &[DiagramTemplate] = &[
     DiagramTemplate {
-        id: "network-perimeter",
-        title: "Network Perimeter & DMZ",
+        kind: TemplateKind::Perimeter,
         format: DiagramFormat::Mermaid,
         content: r#"graph TD
     Internet([Internet]) --> FW1[External Firewall]
@@ -97,8 +119,7 @@ pub const DIAGRAM_TEMPLATES: &[DiagramTemplate] = &[
     end"#,
     },
     DiagramTemplate {
-        id: "cloud-vpc",
-        title: "Cloud VPC & Dual Subnets",
+        kind: TemplateKind::CloudVpc,
         format: DiagramFormat::Mermaid,
         content: r#"flowchart LR
     User([Clients]) --> ALB[Application Load Balancer]
@@ -121,8 +142,7 @@ pub const DIAGRAM_TEMPLATES: &[DiagramTemplate] = &[
     Node2 -.-> NAT"#,
     },
     DiagramTemplate {
-        id: "ascii-topology",
-        title: "ASCII Enterprise Topology",
+        kind: TemplateKind::AsciiTopology,
         format: DiagramFormat::Ascii,
         content: r#"+---------------------------------------------------------------+
 |                        [ INTERNET ]                           |
@@ -145,8 +165,7 @@ pub const DIAGRAM_TEMPLATES: &[DiagramTemplate] = &[
 +---------------------------------------------------------------+"#,
     },
     DiagramTemplate {
-        id: "active-directory",
-        title: "Active Directory Topology",
+        kind: TemplateKind::ActiveDirectory,
         format: DiagramFormat::Mermaid,
         content: r#"graph TD
     Forest([corp.internal Forest Root])
@@ -161,58 +180,13 @@ pub const DIAGRAM_TEMPLATES: &[DiagramTemplate] = &[
     },
 ];
 
-/// A diagram document state holding name, format, content, and file binding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiagramDocument {
-    /// Document file or display name.
-    pub name: String,
-    /// Diagram source format.
-    pub format: DiagramFormat,
-    /// Raw diagram code text.
-    pub content: String,
-    /// Bound file path on disk (if saved).
-    pub file_path: Option<PathBuf>,
-    /// Unsaved modifications indicator.
-    pub dirty: bool,
-}
-
-impl DiagramDocument {
-    /// Creates a new empty diagram document with the specified template.
-    #[must_use]
-    pub fn from_template(template: &DiagramTemplate) -> Self {
-        Self {
-            name: template.title.to_owned(),
-            format: template.format,
-            content: template.content.to_owned(),
-            file_path: None,
-            dirty: false,
-        }
-    }
-
-    /// Sets new content and marks document as modified.
-    pub fn update_content(&mut self, new_content: String) {
-        if self.content != new_content {
-            self.content = new_content;
-            self.dirty = true;
-        }
-    }
-
-    /// Updates diagram source text.
-    pub fn update_source(&mut self, new_source: String) {
-        self.update_content(new_source);
-    }
-
-    /// Clears diagram content and marks as dirty.
-    pub fn clear(&mut self) {
-        self.content.clear();
-        self.dirty = true;
-    }
-}
-
-impl Default for DiagramDocument {
-    fn default() -> Self {
-        Self::from_template(&DIAGRAM_TEMPLATES[0])
-    }
+/// The template of kind `kind`.
+#[must_use]
+pub fn template(kind: TemplateKind) -> &'static DiagramTemplate {
+    DIAGRAM_TEMPLATES
+        .iter()
+        .find(|template| template.kind == kind)
+        .unwrap_or(&DIAGRAM_TEMPLATES[0])
 }
 
 #[cfg(test)]
@@ -220,20 +194,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_templates_catalog() {
-        assert!(DIAGRAM_TEMPLATES.len() >= 4);
-        let first = &DIAGRAM_TEMPLATES[0];
-        assert_eq!(first.id, "network-perimeter");
-        assert!(first.content.contains("graph TD"));
+    fn every_kind_has_one_template_with_a_source() {
+        for kind in [
+            TemplateKind::Perimeter,
+            TemplateKind::CloudVpc,
+            TemplateKind::AsciiTopology,
+            TemplateKind::ActiveDirectory,
+        ] {
+            let found = template(kind);
+            assert_eq!(found.kind, kind);
+            assert!(!found.content.trim().is_empty());
+            assert_eq!(
+                DIAGRAM_TEMPLATES.iter().filter(|t| t.kind == kind).count(),
+                1
+            );
+        }
+        assert_eq!(
+            template(TemplateKind::AsciiTopology).format,
+            DiagramFormat::Ascii
+        );
     }
 
     #[test]
-    fn test_document_dirty_tracking() {
-        let mut doc = DiagramDocument::default();
-        assert!(!doc.dirty);
-
-        doc.update_content("flowchart TD\nA-->B".to_owned());
-        assert!(doc.dirty);
-        assert_eq!(doc.content, "flowchart TD\nA-->B");
+    fn a_file_extension_names_its_format() {
+        for format in DiagramFormat::ALL {
+            let name = format!("diagram.{}", format.extension());
+            assert_eq!(DiagramFormat::of_path(Path::new(&name)), format);
+        }
+        assert_eq!(
+            DiagramFormat::of_path(Path::new("x.GV")),
+            DiagramFormat::Dot
+        );
+        assert_eq!(DiagramFormat::of_path(Path::new("x")), DiagramFormat::Ascii);
     }
 }

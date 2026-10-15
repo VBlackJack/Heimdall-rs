@@ -14,429 +14,552 @@
  * limitations under the License.
  */
 
-//! Cron job parsing, natural language schedule description, and task scheduler engine.
-//!
-//! Provides parsing of standard 5-field crontab lines, next run calculations,
-//! and Windows Task Scheduler (`schtasks`) enumeration.
+//! The cron job manager's two lists, as the C# `CronJobViewModel`
+//! (`ViewModels/Tools/CronJobViewModel.cs`) fills them: a crontab pasted, read as the C#
+//! `CrontabParser`, its runs and descriptions from the crontab builder's
+//! [`cron_builder`](super::cron_builder); and this computer's Windows scheduled tasks, from
+//! `schtasks /query /fo CSV /v` as the C# `CronJobService` runs it and its
+//! `SchtasksCsvParser` reads it.
 
-use std::process::Command;
+use std::time::Duration;
 
-/// A parsed crontab entry.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+use super::cron_builder::{self, Description, FIELD_COUNT, Minute};
+use super::csv_cell;
+
+/// Runs shown for the entry selected, as the C# `NextRunsCount`.
+pub const NEXT_RUNS_COUNT: usize = 5;
+
+/// How long `schtasks` is given, as the C# `LoadTimeoutSeconds`.
+pub const LOAD_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Windows' program listing the scheduled tasks, run from the system folder.
+const SCHTASKS_PROGRAM: &str = "schtasks.exe";
+
+/// The whole task list as verbose CSV, as the C# `SchtasksQueryArguments`.
+const SCHTASKS_ARGUMENTS: [&str; 4] = ["/query", "/fo", "CSV", "/v"];
+
+/// What separates the cells of a row copied, as the C# `BuildClipboardText`.
+const CELL_SEPARATOR: char = '\t';
+
+/// The columns of the verbose CSV the C# finds by their English names.
+const TASK_NAME_COLUMN: &str = "TaskName";
+const STATUS_COLUMN: &str = "Status";
+const NEXT_RUN_COLUMN: &str = "Next Run Time";
+const LAST_RUN_COLUMN: &str = "Last Run Time";
+const LAST_RESULT_COLUMN: &str = "Last Result";
+
+/// Where the verbose CSV puts them, whatever the language of Windows names them: the host,
+/// then the task, its next run, its status, the logon mode, its last run and last result.
+const TASK_NAME_POSITION: usize = 1;
+const NEXT_RUN_POSITION: usize = 2;
+const STATUS_POSITION: usize = 3;
+const LAST_RUN_POSITION: usize = 5;
+const LAST_RESULT_POSITION: usize = 6;
+
+/// One schedule line of a crontab, as the C# `CrontabEntry`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrontabEntry {
-    /// Minute field (0..=59 or `*`, `*/n`, `a,b`).
-    pub minute: String,
-    /// Hour field (0..=23 or `*`, `*/n`, `a,b`).
-    pub hour: String,
-    /// Day of month field (1..=31 or `*`, `*/n`, `a,b`).
-    pub day_of_month: String,
-    /// Month field (1..=12 or `*`, `*/n`, `a,b`).
-    pub month: String,
-    /// Day of week field (0..=7 or `*`, `*/n`, `a,b`).
-    pub day_of_week: String,
-    /// Command line or shell script to execute.
+    /// Minute, hour, day of the month, month and day of the week, as written.
+    pub fields: [String; FIELD_COUNT],
+    /// What it runs: the rest of the line.
     pub command: String,
-    /// Raw unparsed line.
-    pub raw_line: String,
-    /// Human-readable schedule description.
-    pub description: String,
-    /// Next upcoming execution timestamps formatted as strings.
-    pub next_runs: Vec<String>,
 }
 
-/// Parser and schedule descriptor for crontab syntax.
-pub struct CrontabParser;
-
-impl CrontabParser {
-    /// Generates a natural language description from a 5-field cron expression string.
+impl CrontabEntry {
+    /// Its schedule, the five fields joined by spaces, as the C# `Schedule` column.
     #[must_use]
-    pub fn describe(expr: &str) -> String {
-        let parts: Vec<&str> = expr.split_whitespace().collect();
-        if parts.len() >= 5 {
-            Self::describe_schedule(parts[0], parts[1], parts[2], parts[3], parts[4])
+    pub fn schedule(&self) -> String {
+        cron_builder::join(&self.fields)
+    }
+
+    /// What its schedule does, as the C# `CronDescriber`; a schedule the builder cannot read
+    /// is shown as written.
+    #[must_use]
+    pub fn description(&self) -> Description {
+        if cron_builder::parse(&self.schedule()).is_some() {
+            cron_builder::describe(&self.fields)
         } else {
-            "Invalid cron expression".to_owned()
+            Description::Custom(self.schedule())
         }
     }
 
-    /// Calculates upcoming run timestamps from a 5-field cron expression string.
+    /// Its next `count` runs after `now`, a day of the week of 7 being Sunday; none when a
+    /// field cannot be read, as the C# `CronScheduleCalculator`.
     #[must_use]
-    pub fn next_runs(expr: &str, count: usize) -> Vec<String> {
-        let parts: Vec<&str> = expr.split_whitespace().collect();
-        if parts.len() >= 5 {
-            Self::calculate_next_runs(parts[0], parts[1], parts[2], parts[3], parts[4], count)
-        } else {
-            Vec::new()
+    pub fn next_runs(&self, now: Minute, count: usize) -> Vec<String> {
+        if cron_builder::parse(&self.schedule()).is_none() {
+            return Vec::new();
         }
-    }
-
-    /// Parses multi-line crontab text into a list of [`CrontabEntry`].
-    #[must_use]
-    pub fn parse(content: &str) -> Vec<CrontabEntry> {
-        let mut entries = Vec::new();
-
-        for raw_line in content.lines() {
-            let line = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 6 {
-                continue;
-            }
-
-            let minute = parts[0].to_owned();
-            let hour = parts[1].to_owned();
-            let day_of_month = parts[2].to_owned();
-            let month = parts[3].to_owned();
-            let day_of_week = parts[4].to_owned();
-            let command = parts[5..].join(" ");
-
-            let description =
-                Self::describe_schedule(&minute, &hour, &day_of_month, &month, &day_of_week);
-            let next_runs =
-                Self::calculate_next_runs(&minute, &hour, &day_of_month, &month, &day_of_week, 5);
-
-            entries.push(CrontabEntry {
-                minute,
-                hour,
-                day_of_month,
-                month,
-                day_of_week,
-                command,
-                raw_line: raw_line.to_owned(),
-                description,
-                next_runs,
-            });
-        }
-
-        entries
-    }
-
-    /// Generates a natural language description for the 5-field cron schedule.
-    #[must_use]
-    pub fn describe_schedule(min: &str, hour: &str, dom: &str, mon: &str, dow: &str) -> String {
-        if min == "*" && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
-            return "Every minute".to_owned();
-        }
-
-        if let Some(step) = min.strip_prefix("*/") {
-            if hour == "*" && dom == "*" && mon == "*" && dow == "*" {
-                return format!("Every {step} minutes");
-            }
-        }
-
-        if min == "0" && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
-            return "Every hour at minute 0".to_owned();
-        }
-
-        if let Some(step) = hour.strip_prefix("*/") {
-            if min == "0" && dom == "*" && mon == "*" && dow == "*" {
-                return format!("Every {step} hours at minute 0");
-            }
-        }
-
-        if min == "0" && hour == "0" && dom == "*" && mon == "*" && dow == "*" {
-            return "Every day at midnight (00:00)".to_owned();
-        }
-
-        if min == "0" && hour == "12" && dom == "*" && mon == "*" && dow == "*" {
-            return "Every day at noon (12:00)".to_owned();
-        }
-
-        if dom == "*" && mon == "*" && dow == "*" {
-            if let (Ok(h), Ok(m)) = (hour.parse::<u32>(), min.parse::<u32>()) {
-                return format!("Every day at {:02}:{:02}", h, m);
-            }
-        }
-
-        if dom == "*" && mon == "*" {
-            let day_name = match dow {
-                "0" | "7" => "Sunday",
-                "1" => "Monday",
-                "2" => "Tuesday",
-                "3" => "Wednesday",
-                "4" => "Thursday",
-                "5" => "Friday",
-                "6" => "Saturday",
-                _ => dow,
-            };
-            if let (Ok(h), Ok(m)) = (hour.parse::<u32>(), min.parse::<u32>()) {
-                return format!("Every {day_name} at {:02}:{:02}", h, m);
-            }
-        }
-
-        format!("At {min} {hour} on day {dom} of month {mon} (weekday {dow})")
-    }
-
-    /// Simulates the next upcoming execution times for preview.
-    #[must_use]
-    pub fn calculate_next_runs(
-        min: &str,
-        hour: &str,
-        _dom: &str,
-        _mon: &str,
-        _dow: &str,
-        count: usize,
-    ) -> Vec<String> {
-        let mut runs = Vec::new();
-        let target_min: u32 = min.parse().unwrap_or(0);
-        let target_hour: u32 = hour.parse().unwrap_or(0);
-
-        // Approximate 24h rolling schedule calculation for UI display
-        for day_offset in 1..=count {
-            runs.push(format!(
-                "+{day_offset}d at {:02}:{:02}:00",
-                target_hour, target_min
-            ));
-        }
-
-        runs
+        cron_builder::crontab_next_runs(&self.fields, now, count)
     }
 }
 
-/// A Windows Task Scheduler entry.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TaskEntry {
-    /// Task name / hierarchy path.
+/// The schedule lines of `content`, as the C# `CrontabParser.Parse`: blank lines, comments
+/// and environment settings (`NAME=value`) skipped, as are lines of fewer than six words;
+/// the command is the rest of the line.
+#[must_use]
+pub fn parse_crontab(content: &str) -> Vec<CrontabEntry> {
+    content.lines().filter_map(parse_crontab_line).collect()
+}
+
+/// One line of a crontab, when it is a schedule.
+fn parse_crontab_line(line: &str) -> Option<CrontabEntry> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    // `MAILTO=root`, `PATH=/usr/bin`: a name before `=`, no space in it.
+    if let Some(equals) = trimmed.find('=')
+        && equals > 0
+        && !trimmed[..equals].contains([' ', '\t'])
+    {
+        return None;
+    }
+    let mut rest = trimmed;
+    let mut fields: [String; FIELD_COUNT] = Default::default();
+    for field in &mut fields {
+        let word_end = rest.find([' ', '\t'])?;
+        *field = rest[..word_end].to_owned();
+        rest = rest[word_end..].trim_start_matches([' ', '\t']);
+    }
+    if rest.is_empty() {
+        return None;
+    }
+    Some(CrontabEntry {
+        fields,
+        command: rest.to_owned(),
+    })
+}
+
+/// One Windows scheduled task, as the C# `WindowsTaskEntry`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledTask {
+    /// Its path and name.
     pub name: String,
-    /// Next scheduled run timestamp.
-    pub next_run_time: String,
-    /// Execution status (e.g. "Ready", "Running", "Disabled").
+    /// Its status, as Windows words it.
     pub status: String,
-    /// Executable or script command configured to run.
-    pub task_to_run: String,
-    /// Author or owner account.
-    pub author: String,
+    /// When it runs next, as Windows writes it.
+    pub next_run: String,
+    /// When it last ran.
+    pub last_run: String,
+    /// What its last run returned.
+    pub last_result: String,
 }
 
-impl TaskEntry {
-    /// Formats the task entry as a CSV line.
-    #[must_use]
-    pub fn to_csv_line(&self) -> String {
-        format!(
-            "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"",
-            self.name, self.next_run_time, self.status, self.task_to_run, self.author
-        )
-    }
+/// The column of the verbose CSV each value is read from.
+struct Columns {
+    name: usize,
+    status: usize,
+    next_run: usize,
+    last_run: usize,
+    last_result: usize,
 }
 
-/// Parser for Windows `schtasks.exe /query /fo csv /v` output.
-pub struct SchtasksParser;
-
-impl SchtasksParser {
-    /// Parses CSV output from `schtasks` into a list of [`TaskEntry`].
-    #[must_use]
-    pub fn parse(csv: &str) -> Vec<TaskEntry> {
-        let mut lines = csv.lines();
-        let header_line = match lines.next() {
-            Some(h) if !h.trim().is_empty() => h,
-            _ => return Vec::new(),
+impl Columns {
+    /// The columns of `header`: by their English names as the C# finds them; on a Windows
+    /// that names them in its own language, where the verbose layout puts them.
+    fn of(header: &[String]) -> Option<Self> {
+        let find = |name: &str| {
+            let lowered = name.to_lowercase();
+            header
+                .iter()
+                .position(|column| column.to_lowercase().contains(&lowered))
         };
-
-        let headers = Self::split_csv_line(header_line);
-        let name_idx = Self::find_column_index(&headers, &["TaskName", "Nom de la tâche", "Tâche"])
-            .unwrap_or(0);
-        let next_run_idx = Self::find_column_index(
-            &headers,
-            &[
-                "Next Run Time",
-                "Prochaine exécution",
-                "Heure de la prochaine",
-            ],
-        )
-        .unwrap_or(1);
-        let status_idx =
-            Self::find_column_index(&headers, &["Status", "Statut", "État"]).unwrap_or(2);
-        let task_to_run_idx =
-            Self::find_column_index(&headers, &["Task To Run", "Tâche à exécuter", "Action"])
-                .or_else(|| Self::find_column_index(&headers, &["Command", "Executable"]));
-        let author_idx = Self::find_column_index(&headers, &["Author", "Auteur", "Créateur"])
-            .unwrap_or(usize::MAX);
-
-        let mut entries = Vec::new();
-
-        for line in lines {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let fields = Self::split_csv_line(trimmed);
-            let name = fields
-                .get(name_idx)
-                .map_or("", |s| s.trim_matches('"'))
-                .to_owned();
-            if name.is_empty() {
-                continue;
-            }
-
-            let next_run_time = fields
-                .get(next_run_idx)
-                .map_or("", |s| s.trim_matches('"'))
-                .to_owned();
-            let status = fields
-                .get(status_idx)
-                .map_or("", |s| s.trim_matches('"'))
-                .to_owned();
-            let task_to_run = task_to_run_idx
-                .and_then(|idx| fields.get(idx))
-                .map_or("", |s| s.trim_matches('"'))
-                .to_owned();
-            let author = if author_idx < fields.len() {
-                fields[author_idx].trim_matches('"').to_owned()
-            } else {
-                String::new()
-            };
-
-            entries.push(TaskEntry {
+        if let Some(name) = find(TASK_NAME_COLUMN) {
+            return Some(Self {
                 name,
-                next_run_time,
-                status,
-                task_to_run,
-                author,
+                status: find(STATUS_COLUMN).unwrap_or(usize::MAX),
+                next_run: find(NEXT_RUN_COLUMN).unwrap_or(usize::MAX),
+                last_run: find(LAST_RUN_COLUMN).unwrap_or(usize::MAX),
+                last_result: find(LAST_RESULT_COLUMN).unwrap_or(usize::MAX),
             });
         }
-
-        entries
-    }
-
-    fn find_column_index(headers: &[String], candidates: &[&str]) -> Option<usize> {
-        for (idx, header) in headers.iter().enumerate() {
-            let lower = header.to_lowercase();
-            for candidate in candidates {
-                if lower.contains(&candidate.to_lowercase()) {
-                    return Some(idx);
-                }
-            }
-        }
-        None
-    }
-
-    fn split_csv_line(line: &str) -> Vec<String> {
-        let mut fields = Vec::new();
-        let mut current = String::new();
-        let mut in_quotes = false;
-
-        for ch in line.chars() {
-            match ch {
-                '"' => {
-                    in_quotes = !in_quotes;
-                    current.push(ch);
-                }
-                ',' if !in_quotes => {
-                    fields.push(current.trim().to_owned());
-                    current.clear();
-                }
-                _ => current.push(ch),
-            }
-        }
-        fields.push(current.trim().to_owned());
-        fields
+        (header.len() > LAST_RESULT_POSITION).then_some(Self {
+            name: TASK_NAME_POSITION,
+            status: STATUS_POSITION,
+            next_run: NEXT_RUN_POSITION,
+            last_run: LAST_RUN_POSITION,
+            last_result: LAST_RESULT_POSITION,
+        })
     }
 }
 
-/// Executes the system task query command and returns scheduled task entries.
+/// The tasks of `schtasks /query /fo CSV /v` output, as the C# `SchtasksCsvParser.Parse`:
+/// the header read from the first line, rows without a name skipped, and so are the
+/// header's repeats, which `schtasks` writes before each folder's tasks.
+#[must_use]
+pub fn parse_schtasks_csv(csv: &str) -> Vec<ScheduledTask> {
+    let mut lines = csv.lines().map(str::trim).filter(|line| !line.is_empty());
+    let Some(header_line) = lines.next() else {
+        return Vec::new();
+    };
+    let header = parse_csv_line(header_line);
+    let Some(columns) = Columns::of(&header) else {
+        return Vec::new();
+    };
+    let cell = |fields: &[String], index: usize| fields.get(index).cloned().unwrap_or_default();
+    lines
+        .filter(|line| *line != header_line)
+        .filter_map(|line| {
+            let fields = parse_csv_line(line);
+            let name = cell(&fields, columns.name);
+            (!name.is_empty()).then(|| ScheduledTask {
+                name,
+                status: cell(&fields, columns.status),
+                next_run: cell(&fields, columns.next_run),
+                last_run: cell(&fields, columns.last_run),
+                last_result: cell(&fields, columns.last_result),
+            })
+        })
+        .collect()
+}
+
+/// The fields of one CSV line, as the C# `ParseCsvLine`: quotes taken off, a doubled quote
+/// inside quotes read as one, each field trimmed.
+fn parse_csv_line(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if in_quotes && chars.peek() == Some(&'"') => {
+                current.push('"');
+                chars.next();
+            }
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                fields.push(current.trim().to_owned());
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+    fields.push(current.trim().to_owned());
+    fields
+}
+
+/// The output of `schtasks` as text: UTF-8 when it is, else code page 850, the OEM code page
+/// a console program writes a French or Western European Windows' text in.
+#[must_use]
+pub fn decode_console_output(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_owned(),
+        Err(_) => crate::code_page::decode_cp850(bytes),
+    }
+}
+
+/// Why the scheduled tasks could not be listed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TasksError {
+    /// Not on Windows, which alone has them.
+    Unsupported,
+    /// Windows did not say where its system folder is.
+    NoSystemFolder,
+    /// `schtasks` did not end within [`LOAD_TIMEOUT`], as the C# timeout.
+    TimedOut,
+    /// `schtasks` could not be started, or failed: what it or the system said.
+    Failed(String),
+}
+
+/// This computer's scheduled tasks, as the C# `LoadWindowsTasksAsync`: `schtasks` run from
+/// the system folder, never one found through `PATH`, without a console window, and given
+/// [`LOAD_TIMEOUT`].
 ///
 /// # Errors
 ///
-/// Returns an error message if the query process fails.
-pub fn run_tasks_command() -> Result<Vec<TaskEntry>, String> {
+/// [`TasksError`] when the tasks cannot be listed.
+pub fn load_scheduled_tasks() -> Result<Vec<ScheduledTask>, TasksError> {
     #[cfg(windows)]
     {
-        let output = Command::new("schtasks")
-            .args(["/query", "/fo", "csv", "/v"])
-            .output()
-            .map_err(|err| format!("Failed to run schtasks: {err}"))?;
+        use std::os::windows::process::CommandExt as _;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(if stderr.trim().is_empty() {
-                format!(
-                    "schtasks failed with exit code {}",
-                    output.status.code().unwrap_or(-1)
-                )
-            } else {
-                stderr.into_owned()
-            });
+        /// `CREATE_NO_WINDOW`: no console flashes up while `schtasks` runs.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let program =
+            crate::paths::system_program(SCHTASKS_PROGRAM).ok_or(TasksError::NoSystemFolder)?;
+        let mut command = std::process::Command::new(&program);
+        command
+            .args(SCHTASKS_ARGUMENTS)
+            .creation_flags(CREATE_NO_WINDOW);
+        if let Some(folder) = program.parent() {
+            command.current_dir(folder);
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(SchtasksParser::parse(&stdout))
+        let output = timed::run(&mut command, LOAD_TIMEOUT)?;
+        Ok(parse_schtasks_csv(&decode_console_output(&output.stdout)))
     }
-
     #[cfg(not(windows))]
     {
-        let output = Command::new("crontab")
-            .args(["-l"])
-            .output()
-            .map_err(|err| format!("Failed to run crontab -l: {err}"))?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let crons = CrontabParser::parse(&stdout);
-        let tasks = crons
-            .into_iter()
-            .map(|c| TaskEntry {
-                name: c.command.clone(),
-                next_run_time: c.next_runs.first().cloned().unwrap_or_default(),
-                status: "Enabled".to_owned(),
-                task_to_run: c.command,
-                author: "current_user".to_owned(),
-            })
-            .collect();
-        Ok(tasks)
+        let _ = (SCHTASKS_PROGRAM, SCHTASKS_ARGUMENTS);
+        Err(TasksError::Unsupported)
     }
 }
 
-/// Builds a CSV string from a slice of [`TaskEntry`].
-#[must_use]
-pub fn build_tasks_csv(entries: &[TaskEntry]) -> String {
-    let mut csv = String::from("TaskName,NextRunTime,Status,TaskToRun,Author\n");
-    for t in entries {
-        csv.push_str(&t.to_csv_line());
-        csv.push('\n');
+/// Programs run with a time limit: `schtasks` on Windows, and the tests.
+#[cfg(any(windows, test))]
+mod timed {
+    use std::io::{self, Read};
+    use std::process::{Command, Output, Stdio};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use super::{TasksError, decode_console_output};
+
+    /// How often a running program is looked at for its end.
+    const EXIT_POLL: Duration = Duration::from_millis(50);
+
+    /// `command` run to its end within `timeout`, its outputs read as it runs; killed past it.
+    ///
+    /// # Errors
+    ///
+    /// [`TasksError::TimedOut`] past `timeout`, [`TasksError::Failed`] when it cannot start or
+    /// ends in failure.
+    pub(super) fn run(command: &mut Command, timeout: Duration) -> Result<Output, TasksError> {
+        let failed = |error: io::Error| TasksError::Failed(error.to_string());
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(failed)?;
+        let stdout = child.stdout.take().map(drain);
+        let stderr = child.stderr.take().map(drain);
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(failed)? {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(TasksError::TimedOut);
+            }
+            thread::sleep(EXIT_POLL);
+        };
+        let collect = |reader: Option<thread::JoinHandle<Vec<u8>>>| {
+            reader
+                .and_then(|reader| reader.join().ok())
+                .unwrap_or_default()
+        };
+        let output = Output {
+            status,
+            stdout: collect(stdout),
+            stderr: collect(stderr),
+        };
+        if output.status.success() {
+            Ok(output)
+        } else {
+            let said = decode_console_output(&output.stderr).trim().to_owned();
+            Err(TasksError::Failed(if said.is_empty() {
+                output.status.to_string()
+            } else {
+                said
+            }))
+        }
     }
-    csv
+
+    /// A thread reading `pipe` to its end, so a full pipe never stalls the program.
+    fn drain(mut pipe: impl Read + Send + 'static) -> thread::JoinHandle<Vec<u8>> {
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = pipe.read_to_end(&mut bytes);
+            bytes
+        })
+    }
+}
+
+/// One row copied: its cells sanitized and joined by tabs, as the C# `BuildClipboardText`.
+#[must_use]
+pub fn clipboard_row(cells: &[&str]) -> String {
+    let mut row = cells
+        .iter()
+        .map(|cell| csv_cell::sanitize(cell))
+        .collect::<Vec<_>>()
+        .join(&CELL_SEPARATOR.to_string());
+    row.push('\n');
+    row
+}
+
+/// The tasks as the C# copies them: name, status, next run, last run and last result.
+#[must_use]
+pub fn tasks_clipboard_text(tasks: &[ScheduledTask]) -> String {
+    tasks
+        .iter()
+        .map(|task| {
+            clipboard_row(&[
+                &task.name,
+                &task.status,
+                &task.next_run,
+                &task.last_run,
+                &task.last_result,
+            ])
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+    use std::time::Instant;
+
     use super::*;
+    use crate::tools::date_time;
 
-    #[test]
-    fn test_crontab_parser_and_descriptions() {
-        let sample = "\
-# Nightly backup
-0 2 * * * /usr/local/bin/backup.sh
-*/15 * * * * /usr/bin/healthcheck
-0 0 * * 1 /opt/cleanup.sh
-";
-        let parsed = CrontabParser::parse(sample);
-        assert_eq!(parsed.len(), 3);
-
-        assert_eq!(parsed[0].command, "/usr/local/bin/backup.sh");
-        assert_eq!(parsed[0].description, "Every day at 02:00");
-
-        assert_eq!(parsed[1].command, "/usr/bin/healthcheck");
-        assert_eq!(parsed[1].description, "Every 15 minutes");
-
-        assert_eq!(parsed[2].command, "/opt/cleanup.sh");
-        assert_eq!(parsed[2].description, "Every Monday at 00:00");
+    fn minute(seconds: i64) -> Minute {
+        Minute::of(&date_time::Instant::from_unix_seconds(seconds).wall_clock(0))
     }
 
     #[test]
-    fn test_schtasks_csv_parser() {
+    fn a_crontab_keeps_its_schedules_and_skips_comments_settings_and_short_lines() {
         let sample = "\
-\"Folder\",\"HostName\",\"TaskName\",\"Next Run Time\",\"Status\",\"Logon Mode\",\"Last Run Time\",\"Last Result\",\"Author\",\"Task To Run\"
-\"\\\",\"HOST\",\"\\Microsoft\\Windows\\UpdateOrchestrator\\Backup\",\"10/16/2026 03:00:00 AM\",\"Ready\",\"Interactive/Background\",\"10/15/2026 03:00:00 AM\",\"0\",\"Microsoft\",\"cmd.exe /c echo update\"
+# Nightly backup
+MAILTO=root
+PATH=/usr/bin:/bin
+0 2 * * * /usr/local/bin/backup.sh --full  now
+*/15\t* * * *\t/usr/bin/healthcheck
+@reboot /opt/start.sh
+0 0 * * 7 /opt/sunday.sh
 ";
-        let tasks = SchtasksParser::parse(sample);
-        assert_eq!(tasks.len(), 1);
+        let entries = parse_crontab(sample);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].schedule(), "0 2 * * *");
+        assert_eq!(entries[0].command, "/usr/local/bin/backup.sh --full  now");
+        assert_eq!(entries[1].schedule(), "*/15 * * * *");
+        assert_eq!(entries[1].command, "/usr/bin/healthcheck");
         assert_eq!(
-            tasks[0].name,
-            "\\Microsoft\\Windows\\UpdateOrchestrator\\Backup"
+            entries[0].description(),
+            Description::DailyAt("02:00".to_owned())
         );
-        assert_eq!(tasks[0].status, "Ready");
+        assert_eq!(
+            entries[1].description(),
+            Description::EveryNMinutes("15".to_owned())
+        );
+    }
+
+    #[test]
+    fn next_runs_are_real_and_seven_is_sunday() {
+        // 2026-10-15 12:07 UTC is a Thursday.
+        let now = minute(1_792_066_020);
+        let entries = parse_crontab("*/5 * * * * a\n0 0 * * 7 b\n0 0 * * 0 c\n0 0 * * MON d\n");
+        assert_eq!(
+            entries[0].next_runs(now, 3),
+            [
+                "2026-10-15 12:10 (Thu)",
+                "2026-10-15 12:15 (Thu)",
+                "2026-10-15 12:20 (Thu)"
+            ]
+        );
+        assert_eq!(entries[1].next_runs(now, 1), ["2026-10-18 00:00 (Sun)"]);
+        assert_eq!(entries[1].next_runs(now, 1), entries[2].next_runs(now, 1));
+        assert!(
+            entries[3].next_runs(now, 1).is_empty(),
+            "a name is not read"
+        );
+        assert_eq!(
+            entries[3].description(),
+            Description::Custom("0 0 * * MON".to_owned())
+        );
+    }
+
+    #[test]
+    fn schtasks_rows_are_read_by_their_english_columns() {
+        let sample = "\
+\"HostName\",\"TaskName\",\"Next Run Time\",\"Status\",\"Logon Mode\",\"Last Run Time\",\"Last Result\",\"Author\"
+\"HOST\",\"\\Microsoft\\Backup\",\"10/16/2026 3:00:00 AM\",\"Ready\",\"Interactive/Background\",\"10/15/2026 3:00:00 AM\",\"0\",\"Microsoft\"
+\"HostName\",\"TaskName\",\"Next Run Time\",\"Status\",\"Logon Mode\",\"Last Run Time\",\"Last Result\",\"Author\"
+\"HOST\",\"\\Say \"\"hi\"\"\",\"N/A\",\"Disabled\",\"Interactive only\",\"N/A\",\"267011\",\"me\"
+\"HOST\",\"\",\"N/A\",\"Ready\",\"\",\"\",\"\",\"\"
+";
+        let tasks = parse_schtasks_csv(sample);
+        assert_eq!(
+            tasks,
+            [
+                ScheduledTask {
+                    name: "\\Microsoft\\Backup".to_owned(),
+                    status: "Ready".to_owned(),
+                    next_run: "10/16/2026 3:00:00 AM".to_owned(),
+                    last_run: "10/15/2026 3:00:00 AM".to_owned(),
+                    last_result: "0".to_owned(),
+                },
+                ScheduledTask {
+                    name: "\\Say \"hi\"".to_owned(),
+                    status: "Disabled".to_owned(),
+                    next_run: "N/A".to_owned(),
+                    last_run: "N/A".to_owned(),
+                    last_result: "267011".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_french_windows_header_is_read_by_the_verbose_layout() {
+        let sample = decode_console_output(
+            b"\"Nom de l'h\x93te\",\"Nom de la t\x83che\",\"Prochaine ex\x82cution\",\"Statut\",\"Mode d'ouverture de session\",\"Derni\x8Are ex\x82cution\",\"Dernier r\x82sultat\",\"Auteur\"\r\n\
+\"PC\",\"\\T\x83che\",\"16/10/2026 03:00:00\",\"Pr\x88t\",\"Interactif/Arri\x8Are-plan\",\"15/10/2026 03:00:00\",\"0\",\"Moi\"\r\n",
+        );
+        let tasks = parse_schtasks_csv(&sample);
+        assert_eq!(
+            tasks,
+            [ScheduledTask {
+                name: "\\T\u{e2}che".to_owned(),
+                status: "Pr\u{ea}t".to_owned(),
+                next_run: "16/10/2026 03:00:00".to_owned(),
+                last_run: "15/10/2026 03:00:00".to_owned(),
+                last_result: "0".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn output_with_too_few_columns_holds_no_task() {
+        assert!(parse_schtasks_csv("\"a\",\"b\"\n\"c\",\"d\"\n").is_empty());
+        assert!(parse_schtasks_csv("").is_empty());
+    }
+
+    #[test]
+    fn copied_rows_are_tab_separated_and_sanitized() {
+        let tasks = [ScheduledTask {
+            name: "=HYPERLINK(\"x\")".to_owned(),
+            status: "Ready".to_owned(),
+            next_run: "N/A".to_owned(),
+            last_run: "-".to_owned(),
+            last_result: "0".to_owned(),
+        }];
+        assert_eq!(
+            tasks_clipboard_text(&tasks),
+            "'=HYPERLINK(\"x\")\tReady\tN/A\t'-\t0\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_past_its_time_is_killed() {
+        let mut command = Command::new("sleep");
+        command.arg("5");
+        let started = Instant::now();
+        assert_eq!(
+            timed::run(&mut command, Duration::from_millis(100)),
+            Err(TasksError::TimedOut)
+        );
+        assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_program_says_why() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "echo nope >&2; exit 3"]);
+        assert_eq!(
+            timed::run(&mut command, LOAD_TIMEOUT),
+            Err(TasksError::Failed("nope".to_owned()))
+        );
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf ok"]);
+        assert_eq!(
+            timed::run(&mut command, LOAD_TIMEOUT).map(|output| output.stdout),
+            Ok(b"ok".to_vec())
+        );
     }
 }

@@ -759,29 +759,6 @@ pub fn build_operations_chapter(chapter_name: String, check_names: [String; 4]) 
 
 // ── Export Helpers ───────────────────────────────────────────────────
 
-/// Sanitizes CSV cells to prevent CSV formula injection attacks (leading `=,+,-,@,\t,\r`).
-#[must_use]
-pub fn sanitize_csv_cell(value: &str) -> String {
-    let trimmed = value.trim_start();
-    if trimmed.starts_with('=')
-        || trimmed.starts_with('+')
-        || trimmed.starts_with('-')
-        || trimmed.starts_with('@')
-        || trimmed.starts_with('\t')
-        || trimmed.starts_with('\r')
-    {
-        format!("'{value}")
-    } else {
-        value.to_string()
-    }
-}
-
-/// Escapes a CSV cell per RFC 4180: wraps in double quotes and replaces `"` with `""`.
-#[must_use]
-pub fn escape_csv(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
-}
-
 /// Generates an RFC 4180 compliant CSV string containing all audit checks and their evidence.
 #[must_use]
 pub fn build_csv_export(report: &AuditReport) -> String {
@@ -835,21 +812,21 @@ fn append_csv_row(
     detail: &str,
     raw_data: &str,
 ) {
-    out.push_str(&escape_csv(&sanitize_csv_cell(chapter)));
+    out.push_str(&super::csv_cell::quoted(chapter));
     out.push(',');
-    out.push_str(&escape_csv(&sanitize_csv_cell(check_id)));
+    out.push_str(&super::csv_cell::quoted(check_id));
     out.push(',');
-    out.push_str(&escape_csv(&sanitize_csv_cell(check_name)));
+    out.push_str(&super::csv_cell::quoted(check_name));
     out.push(',');
-    out.push_str(&escape_csv(&sanitize_csv_cell(clause)));
+    out.push_str(&super::csv_cell::quoted(clause));
     out.push(',');
-    out.push_str(&escape_csv(&sanitize_csv_cell(status)));
+    out.push_str(&super::csv_cell::quoted(status));
     out.push(',');
-    out.push_str(&escape_csv(&sanitize_csv_cell(host)));
+    out.push_str(&super::csv_cell::quoted(host));
     out.push(',');
-    out.push_str(&escape_csv(&sanitize_csv_cell(detail)));
+    out.push_str(&super::csv_cell::quoted(detail));
     out.push(',');
-    out.push_str(&escape_csv(&sanitize_csv_cell(raw_data)));
+    out.push_str(&super::csv_cell::quoted(raw_data));
     out.push_str("\r\n");
 }
 
@@ -1037,16 +1014,6 @@ mod tests {
 
         report.chapters[0].checks[1].status = AuditStatus::Pass;
         assert_eq!(report.compliance_percent(), 100);
-    }
-
-    #[test]
-    fn csv_export_sanitizes_cell_injection_and_escapes() {
-        let cell = "=cmd|' /C calc'!A0";
-        let sanitized = sanitize_csv_cell(cell);
-        assert_eq!(sanitized, "'=cmd|' /C calc'!A0");
-
-        let escaped = escape_csv("hello \"world\"");
-        assert_eq!(escaped, "\"hello \"\"world\"\"\"");
     }
 
     #[test]

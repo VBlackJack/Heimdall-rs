@@ -246,45 +246,7 @@ impl CrontabPane {
     /// What the expression does, as the C# `DescribeCron` writes it.
     #[must_use]
     pub fn description_text(&self) -> String {
-        match &self.description {
-            Description::EveryMinute => fl!("ui-tool-crontab-desc-every-minute"),
-            Description::EveryHour => fl!("ui-tool-crontab-desc-every-hour"),
-            Description::EveryDay => fl!("ui-tool-crontab-desc-every-day"),
-            Description::EveryNMinutes(interval) => {
-                fl!(
-                    "ui-tool-crontab-desc-every-n-min",
-                    interval = interval.as_str()
-                )
-            }
-            Description::DailyAt(time) => {
-                fl!("ui-tool-crontab-desc-daily-at", time = time.as_str())
-            }
-            Description::WeeklyAt(day, time) => {
-                let day = match day {
-                    WeekDay::Day(day) => day_name(*day),
-                    WeekDay::Field(field) => field.clone(),
-                };
-                fl!(
-                    "ui-tool-crontab-desc-weekly-at",
-                    day = day,
-                    time = time.as_str()
-                )
-            }
-            Description::MonthlyAt(day, time) => {
-                let day = *day;
-                fl!(
-                    "ui-tool-crontab-desc-monthly-at",
-                    day = day,
-                    time = time.as_str()
-                )
-            }
-            Description::Custom(expression) => {
-                fl!(
-                    "ui-tool-crontab-desc-custom",
-                    expression = expression.as_str()
-                )
-            }
-        }
+        describe(&self.description)
     }
 
     /// What is wrong with the box typed in, as the C# `TxtValidationError`.
@@ -407,6 +369,50 @@ impl CrontabPane {
             .push(runs)
             .spacing(spacing::SM + spacing::XS),
         )
+    }
+}
+
+/// What `description` says, as the C# `DescribeCron` and the cron job manager's
+/// `CronDescriber` write it.
+pub(super) fn describe(description: &Description) -> String {
+    match description {
+        Description::EveryMinute => fl!("ui-tool-crontab-desc-every-minute"),
+        Description::EveryHour => fl!("ui-tool-crontab-desc-every-hour"),
+        Description::EveryDay => fl!("ui-tool-crontab-desc-every-day"),
+        Description::EveryNMinutes(interval) => {
+            fl!(
+                "ui-tool-crontab-desc-every-n-min",
+                interval = interval.as_str()
+            )
+        }
+        Description::DailyAt(time) => {
+            fl!("ui-tool-crontab-desc-daily-at", time = time.as_str())
+        }
+        Description::WeeklyAt(day, time) => {
+            let day = match day {
+                WeekDay::Day(day) => day_name(*day),
+                WeekDay::Field(field) => field.clone(),
+            };
+            fl!(
+                "ui-tool-crontab-desc-weekly-at",
+                day = day,
+                time = time.as_str()
+            )
+        }
+        Description::MonthlyAt(day, time) => {
+            let day = *day;
+            fl!(
+                "ui-tool-crontab-desc-monthly-at",
+                day = day,
+                time = time.as_str()
+            )
+        }
+        Description::Custom(expression) => {
+            fl!(
+                "ui-tool-crontab-desc-custom",
+                expression = expression.as_str()
+            )
+        }
     }
 }
 

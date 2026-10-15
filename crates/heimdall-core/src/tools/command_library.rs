@@ -14,12 +14,10 @@
  * limitations under the License.
  */
 
-//! Command library, cheat sheets, and script snippet manager.
-//!
-//! Provides a curated catalog of sysadmin, network, and operational commands with
-//! interactive parameter substitution and custom snippet persistence.
-
-use std::collections::HashMap;
+//! The command snippet library: a fixed catalog of administration, network and security
+//! commands, each with the values it asks for put in its text. Every text shown about a
+//! snippet (its title, description, category, platform and the label of each value) is
+//! named here by an enumeration and written by the window in its language.
 
 /// Target operating system platform for a snippet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,15 +31,63 @@ pub enum SnippetPlatform {
 }
 
 impl SnippetPlatform {
-    /// Display label for UI tags.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Linux => "Linux",
-            Self::Windows => "Windows",
-            Self::CrossPlatform => "Cross-Platform",
-        }
-    }
+    /// Every platform, in the order the filter offers them.
+    pub const ALL: [Self; 3] = [Self::Linux, Self::Windows, Self::CrossPlatform];
+}
+
+/// What a snippet is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnippetCategory {
+    /// Sockets, routes, names and reachability.
+    Network,
+    /// Processes and the system.
+    System,
+    /// Services and their logs.
+    Services,
+    /// Certificates and exposure.
+    Security,
+    /// Path quality and troubleshooting.
+    Diagnostics,
+}
+
+/// Which snippet: its title and description are the window's to write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SnippetId {
+    /// `ss -tulpen`.
+    LinuxListeningPorts,
+    /// `fuser -k`.
+    LinuxKillPort,
+    /// `journalctl -f`.
+    LinuxJournalFollow,
+    /// `openssl s_client` and `x509 -dates`.
+    LinuxCertExpiry,
+    /// `Test-NetConnection`.
+    WindowsTestConnection,
+    /// `Get-NetTCPConnection`.
+    WindowsPortOwner,
+    /// `Restart-Service`.
+    WindowsRestartService,
+    /// `Clear-DnsClientCache`.
+    WindowsFlushDns,
+    /// `mtr`.
+    MtrProbe,
+    /// `nmap -sV -sC`.
+    NmapServiceScan,
+}
+
+/// What a value of a snippet is, named by its label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamLabel {
+    /// A host name or address.
+    Host,
+    /// A port.
+    Port,
+    /// A local port.
+    LocalPort,
+    /// Ports or ranges of ports.
+    PortRange,
+    /// A service's name.
+    Service,
 }
 
 /// A parameter variable within a command snippet.
@@ -49,8 +95,8 @@ impl SnippetPlatform {
 pub struct SnippetParam {
     /// Placeholder name (e.g. "host", "port").
     pub key: &'static str,
-    /// Display prompt label.
-    pub label: &'static str,
+    /// What the value is.
+    pub label: ParamLabel,
     /// Default initial value.
     pub default_value: &'static str,
 }
@@ -58,14 +104,10 @@ pub struct SnippetParam {
 /// A command snippet template with description and parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSnippet {
-    /// Unique identifier.
-    pub id: &'static str,
-    /// Category / tag (e.g. "Network", "Services", "Security").
-    pub category: &'static str,
-    /// Title name of the command snippet.
-    pub title: &'static str,
-    /// Detailed description.
-    pub description: &'static str,
+    /// Which it is.
+    pub id: SnippetId,
+    /// What it is about.
+    pub category: SnippetCategory,
     /// Platform scope.
     pub platform: SnippetPlatform,
     /// Command template text with `{key}` placeholders.
@@ -75,14 +117,13 @@ pub struct CommandSnippet {
 }
 
 impl CommandSnippet {
-    /// Renders the command by replacing `{key}` placeholders with values from `params`.
+    /// The command, each `{key}` replaced by the value `value_of` gives for it, its default
+    /// when none or a blank one is given.
     #[must_use]
-    pub fn render(&self, params: &HashMap<String, String>) -> String {
+    pub fn render<'v>(&self, value_of: impl Fn(&str) -> Option<&'v str>) -> String {
         let mut result = self.template.to_owned();
         for p in self.parameters {
-            let val = params
-                .get(p.key)
-                .map(String::as_str)
+            let val = value_of(p.key)
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or(p.default_value);
 
@@ -96,182 +137,155 @@ impl CommandSnippet {
 /// Curated built-in library of administrator and operational snippets.
 pub const BUILTIN_SNIPPETS: &[CommandSnippet] = &[
     CommandSnippet {
-        id: "lin-listening-ports",
-        category: "Network",
-        title: "List Listening Sockets",
-        description: "Display all active listening TCP and UDP sockets with processes and PIDs.",
+        id: SnippetId::LinuxListeningPorts,
+        category: SnippetCategory::Network,
         platform: SnippetPlatform::Linux,
         template: "ss -tulpen",
         parameters: &[],
     },
     CommandSnippet {
-        id: "lin-kill-port",
-        category: "System",
-        title: "Kill Process on Port",
-        description: "Forcibly terminates the process listening on the specified TCP port.",
+        id: SnippetId::LinuxKillPort,
+        category: SnippetCategory::System,
         platform: SnippetPlatform::Linux,
         template: "fuser -k {port}/tcp",
         parameters: &[SnippetParam {
             key: "port",
-            label: "Port number",
+            label: ParamLabel::Port,
             default_value: "8080",
         }],
     },
     CommandSnippet {
-        id: "lin-journal-follow",
-        category: "Services",
-        title: "Follow Service Journal",
-        description: "Continuously tails systemd journal log entries for a service in real time.",
+        id: SnippetId::LinuxJournalFollow,
+        category: SnippetCategory::Services,
         platform: SnippetPlatform::Linux,
         template: "journalctl -u {service} -f --no-tail",
         parameters: &[SnippetParam {
             key: "service",
-            label: "Systemd service name",
+            label: ParamLabel::Service,
             default_value: "nginx",
         }],
     },
     CommandSnippet {
-        id: "lin-cert-expiry",
-        category: "Security",
-        title: "Inspect Remote TLS Certificate Expiry",
-        description: "Connects via TLS SNI and prints validity dates without full handshake.",
+        id: SnippetId::LinuxCertExpiry,
+        category: SnippetCategory::Security,
         platform: SnippetPlatform::Linux,
         template: "openssl s_client -connect {host}:{port} -servername {host} </dev/null 2>/dev/null | openssl x509 -noout -dates -subject",
         parameters: &[
             SnippetParam {
                 key: "host",
-                label: "Target Host / FQDN",
+                label: ParamLabel::Host,
                 default_value: "example.com",
             },
             SnippetParam {
                 key: "port",
-                label: "Port",
+                label: ParamLabel::Port,
                 default_value: "443",
             },
         ],
     },
     CommandSnippet {
-        id: "win-test-net-conn",
-        category: "Network",
-        title: "Test TCP Port Reachability",
-        description: "PowerShell native reachability and TCP port handshake probe.",
+        id: SnippetId::WindowsTestConnection,
+        category: SnippetCategory::Network,
         platform: SnippetPlatform::Windows,
         template: "Test-NetConnection -ComputerName {host} -Port {port}",
         parameters: &[
             SnippetParam {
                 key: "host",
-                label: "Target Host / IP",
+                label: ParamLabel::Host,
                 default_value: "1.1.1.1",
             },
             SnippetParam {
                 key: "port",
-                label: "Port",
+                label: ParamLabel::Port,
                 default_value: "443",
             },
         ],
     },
     CommandSnippet {
-        id: "win-find-port-pid",
-        category: "Network",
-        title: "Find Process Owning Port",
-        description: "Finds the local socket state and owning PID for a specific port.",
+        id: SnippetId::WindowsPortOwner,
+        category: SnippetCategory::Network,
         platform: SnippetPlatform::Windows,
         template: "Get-NetTCPConnection -LocalPort {port} | Select-Object LocalAddress, LocalPort, OwningProcess, State",
         parameters: &[SnippetParam {
             key: "port",
-            label: "Local Port",
+            label: ParamLabel::LocalPort,
             default_value: "80",
         }],
     },
     CommandSnippet {
-        id: "win-restart-service",
-        category: "Services",
-        title: "Restart Windows Service",
-        description: "Stops and starts a Windows background service immediately.",
+        id: SnippetId::WindowsRestartService,
+        category: SnippetCategory::Services,
         platform: SnippetPlatform::Windows,
         template: "Restart-Service -Name '{service}' -Force",
         parameters: &[SnippetParam {
             key: "service",
-            label: "Service Name",
+            label: ParamLabel::Service,
             default_value: "wuauserv",
         }],
     },
     CommandSnippet {
-        id: "win-flush-dns",
-        category: "Network",
-        title: "Flush DNS Resolver Cache",
-        description: "Purges client DNS cache entries on Windows.",
+        id: SnippetId::WindowsFlushDns,
+        category: SnippetCategory::Network,
         platform: SnippetPlatform::Windows,
         template: "Clear-DnsClientCache",
         parameters: &[],
     },
     CommandSnippet {
-        id: "net-mtr-probe",
-        category: "Diagnostics",
-        title: "MTR Network Path Quality",
-        description: "Sends 50 packets per hop to diagnose packet loss and latency jitter.",
+        id: SnippetId::MtrProbe,
+        category: SnippetCategory::Diagnostics,
         platform: SnippetPlatform::CrossPlatform,
         template: "mtr -rw -c 50 {host}",
         parameters: &[SnippetParam {
             key: "host",
-            label: "Remote Host",
+            label: ParamLabel::Host,
             default_value: "8.8.8.8",
         }],
     },
     CommandSnippet {
-        id: "sec-nmap-service-scan",
-        category: "Security",
-        title: "Nmap Service Version Probe",
-        description: "Probes open ports to determine service and version info.",
+        id: SnippetId::NmapServiceScan,
+        category: SnippetCategory::Security,
         platform: SnippetPlatform::CrossPlatform,
         template: "nmap -sV -sC -T4 -p {port} {host}",
         parameters: &[
             SnippetParam {
                 key: "host",
-                label: "Target Host",
+                label: ParamLabel::Host,
                 default_value: "192.168.1.1",
             },
             SnippetParam {
                 key: "port",
-                label: "Port Range",
+                label: ParamLabel::PortRange,
                 default_value: "22,80,443",
             },
         ],
     },
 ];
 
-/// Filters snippets based on category, platform, and search query.
+/// The snippet of `id`.
 #[must_use]
-pub fn filter_snippets<'a>(
-    snippets: &'a [CommandSnippet],
-    category_filter: Option<&str>,
-    platform_filter: Option<SnippetPlatform>,
-    query: &str,
-) -> Vec<&'a CommandSnippet> {
-    let q = query.trim().to_lowercase();
-    snippets
-        .iter()
-        .filter(|s| {
-            if let Some(cat) = category_filter {
-                if !s.category.eq_ignore_ascii_case(cat) {
-                    return false;
-                }
-            }
-            if let Some(plat) = platform_filter {
-                if s.platform != SnippetPlatform::CrossPlatform && s.platform != plat {
-                    return false;
-                }
-            }
-            if q.is_empty() {
-                true
-            } else {
-                s.title.to_lowercase().contains(&q)
-                    || s.description.to_lowercase().contains(&q)
-                    || s.template.to_lowercase().contains(&q)
-                    || s.category.to_lowercase().contains(&q)
-            }
-        })
-        .collect()
+pub fn snippet(id: SnippetId) -> Option<&'static CommandSnippet> {
+    BUILTIN_SNIPPETS.iter().find(|snippet| snippet.id == id)
+}
+
+/// Whether `snippet` is shown under the platform chosen, `None` being every platform: a
+/// cross-platform snippet is shown under each.
+#[must_use]
+pub fn on_platform(snippet: &CommandSnippet, platform: Option<SnippetPlatform>) -> bool {
+    platform.is_none_or(|platform| {
+        snippet.platform == platform || snippet.platform == SnippetPlatform::CrossPlatform
+    })
+}
+
+/// Whether `query` is in the snippet's command or in one of `texts`, its title, description
+/// and category as the window writes them, ignoring case; an empty query matches all.
+#[must_use]
+pub fn matches_query(snippet: &CommandSnippet, texts: &[&str], query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty()
+        || snippet.template.to_lowercase().contains(&query)
+        || texts
+            .iter()
+            .any(|text| text.to_lowercase().contains(&query))
 }
 
 #[cfg(test)]
@@ -279,23 +293,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_snippet_render() {
-        let snippet = &BUILTIN_SNIPPETS[4]; // Test-NetConnection
-        let mut params = HashMap::new();
-        params.insert("host".to_owned(), "my-server.local".to_owned());
-        params.insert("port".to_owned(), "8443".to_owned());
-
-        let rendered = snippet.render(&params);
+    fn a_snippet_takes_the_values_given_else_its_defaults() {
+        let snippet = snippet(SnippetId::WindowsTestConnection).expect("in the catalog");
+        let rendered = snippet.render(|key| match key {
+            "host" => Some("my-server.local"),
+            "port" => Some("  "),
+            _ => None,
+        });
         assert_eq!(
             rendered,
-            "Test-NetConnection -ComputerName my-server.local -Port 8443"
+            "Test-NetConnection -ComputerName my-server.local -Port 443"
         );
     }
 
     #[test]
-    fn test_snippet_filter() {
-        let matched = filter_snippets(BUILTIN_SNIPPETS, Some("Network"), None, "listen");
-        assert_eq!(matched.len(), 1);
-        assert_eq!(matched[0].id, "lin-listening-ports");
+    fn every_snippet_is_in_the_catalog_once_with_its_placeholders() {
+        for snippet in BUILTIN_SNIPPETS {
+            assert_eq!(
+                BUILTIN_SNIPPETS
+                    .iter()
+                    .filter(|other| other.id == snippet.id)
+                    .count(),
+                1
+            );
+            for parameter in snippet.parameters {
+                assert!(
+                    snippet.template.contains(&format!("{{{}}}", parameter.key)),
+                    "{:?} {}",
+                    snippet.id,
+                    parameter.key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn platform_and_query_filter_the_catalog() {
+        let listening = snippet(SnippetId::LinuxListeningPorts).expect("in the catalog");
+        let mtr = snippet(SnippetId::MtrProbe).expect("in the catalog");
+        assert!(on_platform(listening, None));
+        assert!(on_platform(listening, Some(SnippetPlatform::Linux)));
+        assert!(!on_platform(listening, Some(SnippetPlatform::Windows)));
+        assert!(on_platform(mtr, Some(SnippetPlatform::Windows)));
+        assert!(matches_query(
+            listening,
+            &["List listening sockets"],
+            "LISTENING"
+        ));
+        assert!(matches_query(listening, &[], "tulpen"));
+        assert!(!matches_query(
+            listening,
+            &["List listening sockets"],
+            "nmap"
+        ));
+        assert!(matches_query(listening, &[], " "));
     }
 }

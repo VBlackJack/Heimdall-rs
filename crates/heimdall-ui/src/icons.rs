@@ -245,8 +245,6 @@ pub enum Icon {
     ToolDiagram,
     /// `Geo.Tool.CommandLibrary`: a document and shelf, the command snippet library.
     ToolCommandLibrary,
-    /// `Geo.Tool.PrivilegeLauncher`: a shield with chevron arrow, the elevated launcher.
-    ToolPrivilegeLauncher,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
     /// The `Resolution` glyph (`E740`): a screen with its corners, an RDP session's
@@ -260,7 +258,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 98] = [
+    pub const ALL: [Self; 97] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -354,7 +352,6 @@ impl Icon {
         Self::ToolNotes,
         Self::ToolDiagram,
         Self::ToolCommandLibrary,
-        Self::ToolPrivilegeLauncher,
         Self::Monitor,
         Self::Resolution,
         Self::Keyboard,
@@ -658,9 +655,6 @@ impl Icon {
             Self::ToolCommandLibrary => {
                 "M1,2 L11,2 L11,14 L1,14 Z M3,5 L5,5 M6,5 L9,5 M3,7 L9,7 M3,9 L7,9 M3,11 L9,11 M12,4 L15,4 L15,13 L11,13 M12,4 L12,13"
             }
-            Self::ToolPrivilegeLauncher => {
-                "M8,1 L14,4 L14,9 C14,12 11,14.5 8,15.5 C5,14.5 2,12 2,9 L2,4 Z M8,5 L8,12 M8,5 L5.5,7.5 M8,5 L10.5,7.5"
-            }
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
             Self::Resolution => {
                 "M1.5,2.5 L14.5,2.5 L14.5,11.5 L1.5,11.5 Z M5.5,14 L10.5,14                  M4,7 L4,5 L6,5 M12,7 L12,9 L10,9"
@@ -751,7 +745,6 @@ impl Icon {
             | Self::ToolNotes
             | Self::ToolDiagram
             | Self::ToolCommandLibrary
-            | Self::ToolPrivilegeLauncher
             // These hold open lines too, which a fill would lose; the ULID's blocks are
             // closed, filled as the UUID's.
             | Self::ToolSubnet

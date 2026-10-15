@@ -67,7 +67,6 @@ mod password_tool;
 mod ping_tool;
 mod placement_bar;
 mod port_scan_tool;
-mod privilege_launcher_tool;
 mod pwdaudit_tool;
 mod regex_tool;
 mod route_table_tool;
@@ -96,11 +95,12 @@ use std::time::Duration;
 
 use heimdall_app::tools::{ToolCategory, ToolGroup, ToolId};
 use heimdall_app::{App, TabId};
+use heimdall_core::tools::command_library::SnippetId;
 use heimdall_core::tools::hash_computer::HashAlgorithm;
 use iced::advanced::text::highlighter::PlainText;
 use iced::widget::text_editor::{self, Action, Content};
 use iced::widget::{Column, button, column, container, row, scrollable, text, tooltip};
-use iced::{Color, Element, Length, Task, Theme, window};
+use iced::{Color, Element, Length, Subscription, Task, Theme, window};
 
 pub use arp_monitor_tool::ArpMonitorMessage;
 pub use banner_tool::BannerMessage;
@@ -139,7 +139,6 @@ pub use open_ports_tool::OpenPortsMessage;
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
 pub use ping_tool::PingMessage;
 pub use port_scan_tool::PortScanMessage;
-pub use privilege_launcher_tool::PrivilegeLauncherMessage;
 pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
 pub use route_table_tool::RouteTableMessage;
@@ -301,7 +300,6 @@ pub fn label(tool: ToolId) -> String {
         ToolId::Notes => fl!("ui-tool-notes-name"),
         ToolId::Diagram => fl!("ui-tool-diagram-name"),
         ToolId::CmdLib => fl!("ui-tool-cmdlib-name"),
-        ToolId::PrivLaunch => fl!("ui-tool-privlaunch-name"),
     }
 }
 
@@ -366,7 +364,6 @@ pub fn description(tool: ToolId) -> String {
         ToolId::Notes => fl!("ui-tool-notes-description"),
         ToolId::Diagram => fl!("ui-tool-diagram-description"),
         ToolId::CmdLib => fl!("ui-tool-cmdlib-description"),
-        ToolId::PrivLaunch => fl!("ui-tool-privlaunch-description"),
     }
 }
 
@@ -430,7 +427,6 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::Notes => Icon::ToolNotes,
         ToolId::Diagram => Icon::ToolDiagram,
         ToolId::CmdLib => Icon::ToolCommandLibrary,
-        ToolId::PrivLaunch => Icon::ToolPrivilegeLauncher,
     }
 }
 
@@ -634,16 +630,18 @@ pub enum CopySlot {
     HostsFileText,
     /// The service status dashboard CSV export.
     ServicesCsv,
-    /// The log viewer text export.
+    /// The log viewer's lines shown.
     LogViewText,
-    /// The cron job schedule / CSV export.
+    /// The cron job manager's list.
     CronJobExport,
-    /// The notes markdown / HTML export.
-    NotesExport,
-    /// The diagram source export.
+    /// The note shown, as Markdown.
+    NotesMarkdown,
+    /// The note shown, as an HTML document.
+    NotesHtml,
+    /// The diagram's source.
     DiagramSource,
-    /// The command library snippet command.
-    CmdLibCommand,
+    /// The command of a snippet of the command library.
+    CmdLibCommand(SnippetId),
 }
 
 /// What a tool's tab is asked.
@@ -769,8 +767,6 @@ pub enum ToolMessage {
     Diagram(DiagramMessage),
     /// The command library tool's.
     CmdLib(CommandLibraryMessage),
-    /// The elevated privilege launcher tool's.
-    PrivLaunch(PrivilegeLauncherMessage),
 }
 
 /// A tool's own state.
@@ -833,7 +829,6 @@ enum Pane {
     Notes(notes_tool::NotesPane),
     Diagram(diagram_tool::DiagramPane),
     CmdLib(command_library_tool::CommandLibraryPane),
-    PrivLaunch(privilege_launcher_tool::PrivilegeLauncherPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -914,9 +909,6 @@ impl ToolPane {
             ToolId::Notes => Pane::Notes(notes_tool::NotesPane::default()),
             ToolId::Diagram => Pane::Diagram(diagram_tool::DiagramPane::default()),
             ToolId::CmdLib => Pane::CmdLib(command_library_tool::CommandLibraryPane::default()),
-            ToolId::PrivLaunch => {
-                Pane::PrivLaunch(privilege_launcher_tool::PrivilegeLauncherPane::default())
-            }
         };
         Self {
             pane,
@@ -969,8 +961,12 @@ impl ToolPanes {
         self.panes.retain(|id, state| {
             let open = app.tab(*id).and_then(heimdall_app::Tab::tool).is_some();
             // A tab closing writes down what it keeps, as the C# views' `Unloaded`.
-            if !open && let Pane::Password(pane) = &mut state.pane {
-                pane.closing();
+            if !open {
+                match &mut state.pane {
+                    Pane::Password(pane) => pane.closing(),
+                    Pane::Notes(pane) => pane.closing(),
+                    _ => {}
+                }
             }
             open
         });
@@ -987,6 +983,25 @@ impl ToolPanes {
     #[must_use]
     pub fn get(&self, tab: TabId) -> Option<&ToolPane> {
         self.panes.get(&tab)
+    }
+
+    /// The timers of the tool tabs that follow something: each log viewer tailing its
+    /// file looked at every [`TAIL_INTERVAL`](heimdall_core::tools::log_viewer::TAIL_INTERVAL),
+    /// as the C# `_tailTimer`.
+    #[must_use]
+    pub fn subscription(&self) -> Subscription<Message> {
+        Subscription::batch(self.panes.iter().filter_map(|(tab, state)| {
+            match &state.pane {
+                Pane::LogView(pane) if pane.tailing() => Some(
+                    iced::time::every(heimdall_core::tools::log_viewer::TAIL_INTERVAL)
+                        .with(*tab)
+                        .map(|(tab, _)| {
+                            Message::Tool(tab, ToolMessage::LogView(LogViewerMessage::TailTick))
+                        }),
+                ),
+                _ => None,
+            }
+        }))
     }
 
     /// Applies `message` to tool tab `tab`; the window `main` holds the file dialogs.
@@ -1340,49 +1355,33 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::LogView(message), Pane::LogView(pane)) => {
-                return match pane.update(tab, message) {
-                    log_viewer_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
-                    log_viewer_tool::Outcome::Task(task) => task,
-                    log_viewer_tool::Outcome::None => Task::none(),
+                return match pane.update(message) {
+                    log_viewer_tool::Outcome::Copy(content) => {
+                        state.copy(tab, CopySlot::LogViewText, content)
+                    }
+                    outcome => outcome.task(tab, main),
                 };
             }
             (ToolMessage::CronJob(message), Pane::CronJob(pane)) => {
-                return match pane.update(tab, message) {
-                    cron_job_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
-                    cron_job_tool::Outcome::Task(task) => task,
-                    cron_job_tool::Outcome::None => Task::none(),
+                return match pane.update(message) {
+                    cron_job_tool::Outcome::Copy(content) => {
+                        state.copy(tab, CopySlot::CronJobExport, content)
+                    }
+                    outcome => outcome.task(tab),
                 };
             }
             (ToolMessage::Notes(message), Pane::Notes(pane)) => {
-                return match pane.update(tab, message) {
+                return match pane.update(message) {
                     notes_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
-                    notes_tool::Outcome::Task(task) => task,
-                    notes_tool::Outcome::None => Task::none(),
+                    outcome => outcome.task(tab),
                 };
             }
             (ToolMessage::Diagram(message), Pane::Diagram(pane)) => {
-                return match pane.update(tab, message) {
-                    diagram_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
-                    diagram_tool::Outcome::Task(task) => task,
-                    diagram_tool::Outcome::None => Task::none(),
-                };
-            }
-            (ToolMessage::CmdLib(message), Pane::CmdLib(pane)) => {
-                return match pane.update(tab, message) {
-                    command_library_tool::Outcome::Copy(slot, content) => {
-                        state.copy(tab, slot, content)
+                return match pane.update(message) {
+                    diagram_tool::Outcome::Copy(content) => {
+                        state.copy(tab, CopySlot::DiagramSource, content)
                     }
-                    command_library_tool::Outcome::Task(task) => task,
-                    command_library_tool::Outcome::None => Task::none(),
-                };
-            }
-            (ToolMessage::PrivLaunch(message), Pane::PrivLaunch(pane)) => {
-                return match pane.update(tab, message) {
-                    privilege_launcher_tool::Outcome::Copy(slot, content) => {
-                        state.copy(tab, slot, content)
-                    }
-                    privilege_launcher_tool::Outcome::Task(task) => task,
-                    privilege_launcher_tool::Outcome::None => Task::none(),
+                    outcome => outcome.task(tab, main),
                 };
             }
             (message, pane) => {
@@ -1407,6 +1406,7 @@ fn update_copying(message: ToolMessage, pane: &mut Pane) -> Option<(CopySlot, St
         (ToolMessage::Ulid(message), Pane::Ulid(pane)) => pane.update(message),
         (ToolMessage::Crontab(message), Pane::Crontab(pane)) => pane.update(message),
         (ToolMessage::SshConfig(message), Pane::SshConfig(pane)) => pane.update(message),
+        (ToolMessage::CmdLib(message), Pane::CmdLib(pane)) => pane.update(message),
         _ => None,
     }
 }
@@ -1557,10 +1557,6 @@ pub fn view<'a>(
         ToolId::Notes => (fl!("ui-tool-notes-title"), fl!("ui-tool-notes-help")),
         ToolId::Diagram => (fl!("ui-tool-diagram-title"), fl!("ui-tool-diagram-help")),
         ToolId::CmdLib => (fl!("ui-tool-cmdlib-title"), fl!("ui-tool-cmdlib-help")),
-        ToolId::PrivLaunch => (
-            fl!("ui-tool-privlaunch-title"),
-            fl!("ui-tool-privlaunch-help"),
-        ),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -1615,12 +1611,11 @@ pub fn view<'a>(
         Pane::Wifi(pane) => (pane.view(tab, state, theme), None),
         Pane::Hosts(pane) => (pane.view(tab, state, theme), None),
         Pane::Services(pane) => (pane.view(tab, state, theme), None),
-        Pane::LogView(pane) => (pane.view(tab, state, theme), None),
-        Pane::CronJob(pane) => (pane.view(tab, state, theme), None),
-        Pane::Notes(pane) => (pane.view(tab, state, theme), None),
-        Pane::Diagram(pane) => (pane.view(tab, state, theme), None),
-        Pane::CmdLib(pane) => (pane.view(tab, state, theme), None),
-        Pane::PrivLaunch(pane) => (pane.view(tab, state, theme), None),
+        Pane::LogView(pane) => (pane.view(tab, state), None),
+        Pane::CronJob(pane) => (pane.view(tab, state), None),
+        Pane::Notes(pane) => (pane.view(tab, state), None),
+        Pane::Diagram(pane) => (pane.view(tab, state), None),
+        Pane::CmdLib(pane) => (pane.view(tab, state), None),
     };
     column![
         header(tab, title, actions),

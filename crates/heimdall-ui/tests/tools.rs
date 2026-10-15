@@ -235,7 +235,6 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::Crontab,
                     ToolId::DateTime,
                     ToolId::Diagram,
-                    ToolId::PrivLaunch,
                     ToolId::Hosts,
                     ToolId::LogView,
                     ToolId::Notes,

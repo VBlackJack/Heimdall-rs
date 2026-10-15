@@ -14,404 +14,595 @@
  * limitations under the License.
  */
 
-//! The Cron Job Manager tool view: crontab expression natural language explanation,
-//! next execution schedule calculation, and system scheduled tasks inspection.
+//! The cron job manager, as the C# `CronJobManagerView` and `CronJobViewModel`: a crontab
+//! pasted and parsed into its schedules, each with its next run and what it does, the one
+//! selected with its next five runs; or this computer's Windows scheduled tasks, with their
+//! status, next run, last run and last result. Either list copied as tab-separated rows.
 
 use heimdall_app::TabId;
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Element, Length, Task, Theme};
+use heimdall_core::tools::cron_builder::Minute;
+use heimdall_core::tools::cron_job::{
+    self, CrontabEntry, NEXT_RUNS_COUNT, ScheduledTask, TasksError,
+};
+use heimdall_core::tools::date_time::{Instant, WallClock};
+use iced::widget::text_editor::{Action, Content};
+use iced::widget::{Column, button, column, container, row, scrollable, text};
+use iced::{Element, Length, Task};
 
-use heimdall_core::tools::cron_job::{self, CrontabParser, TaskEntry};
-
-use super::{CopySlot, ToolPane};
+use super::{CopySlot, ToolMessage, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
 
-/// Mode for the Cron Job Manager view.
+/// What is shown for a schedule with no run, as the C# `"-"`.
+const NO_RUN: &str = "-";
+
+/// The height of the crontab box, as the C# paste box.
+const PASTE_HEIGHT: f32 = 140.0;
+
+/// How wide each column of the crontab list is, as the C# grid's star widths.
+const CRON_COLUMNS: [u16; 4] = [2, 4, 3, 4];
+
+/// How wide each column of the tasks list is.
+const TASK_COLUMNS: [u16; 5] = [5, 2, 3, 3, 2];
+
+/// Which list is shown, as the C# `CronJobMode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CronMode {
-    /// Crontab expression parser and next runs.
+    /// A crontab pasted.
     #[default]
-    Crontab,
-    /// System scheduled tasks viewer.
-    ScheduledTasks,
+    Paste,
+    /// The Windows scheduled tasks.
+    Tasks,
 }
 
-/// Messages emitted by the Cron Job Manager view.
+/// What the cron job manager is asked.
 #[derive(Debug, Clone)]
 pub enum CronJobMessage {
-    /// Mode changed.
-    ModeChanged(CronMode),
-    /// Crontab expression input changed.
-    ExpressionChanged(String),
-    /// Apply preset expression.
-    ApplyPreset(String),
-    /// Refresh scheduled tasks list.
-    RefreshTasks,
-    /// Scheduled tasks loaded.
-    TasksLoaded(Result<Vec<TaskEntry>, String>),
-    /// Filter query text changed for scheduled tasks.
-    TaskFilterChanged(String),
-    /// Copy CSV export of scheduled tasks.
-    CopyCsv,
-    /// Copy crontab description.
-    CopySchedule,
+    /// The list shown.
+    Mode(CronMode),
+    /// Something done in the crontab box.
+    Input(Action),
+    /// Parse the crontab, as the C# `ParseCommand`.
+    Parse,
+    /// Clear it, as the C# `ClearPasteCommand`.
+    Clear,
+    /// The schedule selected, by its place.
+    Select(usize),
+    /// List the tasks again, as the C# `RefreshTasksCommand`.
+    Refresh,
+    /// The tasks listed, or why not.
+    Loaded(Result<Vec<ScheduledTask>, TasksError>),
+    /// Copy the list shown, as the C# `CopyAllCommand`.
+    Copy,
 }
 
-/// The Cron Job Manager tool pane state.
+/// What an update asks of its tab.
+#[derive(Debug)]
+pub enum Outcome {
+    /// Nothing more.
+    Done,
+    /// This text copied.
+    Copy(String),
+    /// The tasks listed.
+    Load,
+}
+
+impl Outcome {
+    /// What tab `tab` runs for it.
+    pub fn task(self, tab: TabId) -> Task<Message> {
+        match self {
+            Self::Done | Self::Copy(_) => Task::none(),
+            Self::Load => Task::perform(
+                async {
+                    tokio::task::spawn_blocking(cron_job::load_scheduled_tasks)
+                        .await
+                        .unwrap_or_else(|error| Err(TasksError::Failed(error.to_string())))
+                },
+                move |loaded| {
+                    Message::Tool(tab, ToolMessage::CronJob(CronJobMessage::Loaded(loaded)))
+                },
+            ),
+        }
+    }
+}
+
+/// Why a crontab gave nothing, as the C# errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasteError {
+    /// Nothing pasted, as `ToolCronJobErrorEmpty`.
+    Empty,
+    /// No schedule in it, as `ToolCronJobErrorNoParsed`.
+    NoEntry,
+}
+
+/// What the status line says, as the C# `CronJobStatusKind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Status {
+    None,
+    Parsed(usize),
+    Tasks(usize),
+}
+
+/// The cron job manager's state, as the C# view model's.
 #[derive(Debug)]
 pub struct CronJobPane {
     mode: CronMode,
-    expression: String,
-    tasks_loading: bool,
-    tasks_error: Option<String>,
-    tasks: Vec<TaskEntry>,
-    task_filter: String,
+    input: Content,
+    entries: Vec<CrontabEntry>,
+    /// The minute the crontab was parsed, which its runs follow, as the C# `_lastParseNow`.
+    parsed_at: Option<Minute>,
+    selected: Option<usize>,
+    paste_error: Option<PasteError>,
+    tasks: Vec<ScheduledTask>,
+    loading: bool,
+    tasks_error: Option<TasksError>,
+    status: Status,
+    now: fn() -> WallClock,
 }
 
 impl Default for CronJobPane {
     fn default() -> Self {
-        Self {
-            mode: CronMode::Crontab,
-            expression: "*/15 * * * *".to_string(),
-            tasks_loading: false,
-            tasks_error: None,
-            tasks: Vec::new(),
-            task_filter: String::new(),
-        }
+        Self::with_clock(local_now)
     }
 }
 
-/// Outcome of updating the Cron Job tool pane.
-#[derive(Debug)]
-pub enum Outcome {
-    None,
-    Task(Task<Message>),
-    Copy(CopySlot, String),
+/// This computer's wall clock now.
+fn local_now() -> WallClock {
+    let now = Instant::now();
+    now.wall_clock(heimdall_app::time_zone::local_offset_at(now))
 }
 
 impl CronJobPane {
-    /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: CronJobMessage) -> Outcome {
-        match message {
-            CronJobMessage::ModeChanged(mode) => {
-                self.mode = mode;
-                Outcome::None
-            }
-            CronJobMessage::ExpressionChanged(expr) => {
-                self.expression = expr;
-                Outcome::None
-            }
-            CronJobMessage::ApplyPreset(expr) => {
-                self.expression = expr;
-                Outcome::None
-            }
-            CronJobMessage::RefreshTasks => {
-                self.tasks_loading = true;
-                self.tasks_error = None;
-
-                let task = Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(cron_job::run_tasks_command)
-                            .await
-                            .map_err(|e| e.to_string())
-                            .and_then(|r| r)
-                    },
-                    move |res| {
-                        Message::Tool(
-                            tab,
-                            super::ToolMessage::CronJob(CronJobMessage::TasksLoaded(res)),
-                        )
-                    },
-                );
-
-                Outcome::Task(task)
-            }
-            CronJobMessage::TasksLoaded(Ok(tasks)) => {
-                self.tasks_loading = false;
-                self.tasks = tasks;
-                Outcome::None
-            }
-            CronJobMessage::TasksLoaded(Err(err)) => {
-                self.tasks_loading = false;
-                self.tasks_error = Some(err);
-                Outcome::None
-            }
-            CronJobMessage::TaskFilterChanged(filter) => {
-                self.task_filter = filter;
-                Outcome::None
-            }
-            CronJobMessage::CopyCsv => {
-                let csv = cron_job::build_tasks_csv(&self.tasks);
-                Outcome::Copy(CopySlot::CronJobExport, csv)
-            }
-            CronJobMessage::CopySchedule => {
-                let desc = CrontabParser::describe(&self.expression);
-                Outcome::Copy(CopySlot::CronJobExport, desc)
-            }
+    /// Its state, its runs counted from what `now` says.
+    #[must_use]
+    pub fn with_clock(now: fn() -> WallClock) -> Self {
+        Self {
+            mode: CronMode::default(),
+            input: Content::new(),
+            entries: Vec::new(),
+            parsed_at: None,
+            selected: None,
+            paste_error: None,
+            tasks: Vec::new(),
+            loading: false,
+            tasks_error: None,
+            status: Status::None,
+            now,
         }
     }
 
-    /// Renders the Cron Job Manager tool view.
-    pub fn view<'a>(
-        &'a self,
-        tab: TabId,
-        state: &ToolPane,
-        _theme: &Theme,
-    ) -> Element<'a, Message> {
-        let send = move |msg| Message::Tool(tab, super::ToolMessage::CronJob(msg));
-
-        let btn_crontab_mode =
-            button(text(fl!("ui-tool-cronjob-tab-crontab")).size(font_size::CAPTION))
-                .padding([spacing::XS, spacing::SM])
-                .style(if self.mode == CronMode::Crontab {
-                    styles::primary
-                } else {
-                    styles::secondary
-                })
-                .on_press(send(CronJobMessage::ModeChanged(CronMode::Crontab)));
-
-        let btn_tasks_mode =
-            button(text(fl!("ui-tool-cronjob-tab-schtasks")).size(font_size::CAPTION))
-                .padding([spacing::XS, spacing::SM])
-                .style(if self.mode == CronMode::ScheduledTasks {
-                    styles::primary
-                } else {
-                    styles::secondary
-                })
-                .on_press(send(CronJobMessage::ModeChanged(CronMode::ScheduledTasks)));
-
-        let mode_row = row![btn_crontab_mode, btn_tasks_mode]
-            .spacing(spacing::SM)
-            .align_y(Alignment::Center);
-
-        let content_body: Element<'a, Message> = match self.mode {
-            CronMode::Crontab => {
-                let expr_input =
-                    text_input(&fl!("ui-tool-cronjob-expr-placeholder"), &self.expression)
-                        .on_input(move |s| send(CronJobMessage::ExpressionChanged(s)))
-                        .width(Length::Fill);
-
-                let btn_preset_min = button(
-                    text(fl!("ui-tool-cronjob-preset-every-min")).size(font_size::SMALL_CAPTION),
-                )
-                .padding([spacing::XS, spacing::XS])
-                .style(styles::secondary)
-                .on_press(send(CronJobMessage::ApplyPreset("* * * * *".to_string())));
-
-                let btn_preset_hr = button(
-                    text(fl!("ui-tool-cronjob-preset-hourly")).size(font_size::SMALL_CAPTION),
-                )
-                .padding([spacing::XS, spacing::XS])
-                .style(styles::secondary)
-                .on_press(send(CronJobMessage::ApplyPreset("0 * * * *".to_string())));
-
-                let btn_preset_daily = button(
-                    text(fl!("ui-tool-cronjob-preset-daily")).size(font_size::SMALL_CAPTION),
-                )
-                .padding([spacing::XS, spacing::XS])
-                .style(styles::secondary)
-                .on_press(send(CronJobMessage::ApplyPreset("0 0 * * *".to_string())));
-
-                let btn_preset_weekly = button(
-                    text(fl!("ui-tool-cronjob-preset-weekly")).size(font_size::SMALL_CAPTION),
-                )
-                .padding([spacing::XS, spacing::XS])
-                .style(styles::secondary)
-                .on_press(send(CronJobMessage::ApplyPreset("0 0 * * 1".to_string())));
-
-                let presets_row = row![
-                    btn_preset_min,
-                    btn_preset_hr,
-                    btn_preset_daily,
-                    btn_preset_weekly,
-                ]
-                .spacing(spacing::XS)
-                .align_y(Alignment::Center);
-
-                let description_text = CrontabParser::describe(&self.expression);
-
-                let copy_schedule_btn = super::copy_button(
-                    fl!("ui-tool-cronjob-schedule-title"),
-                    state.copied(CopySlot::CronJobExport),
-                    send(CronJobMessage::CopySchedule),
-                    super::COPY_PADDING,
-                );
-
-                let desc_card = container(
-                    column![
-                        row![
-                            text(fl!("ui-tool-cronjob-schedule-title"))
-                                .size(font_size::CAPTION)
-                                .style(text::secondary),
-                            copy_schedule_btn,
-                        ]
-                        .spacing(spacing::SM)
-                        .align_y(Alignment::Center),
-                        text(description_text).size(font_size::SUBTITLE),
-                    ]
-                    .spacing(spacing::XS),
-                )
-                .padding(spacing::MD)
-                .style(styles::card)
-                .width(Length::Fill);
-
-                let next_runs = CrontabParser::next_runs(&self.expression, 5);
-
-                let mut next_runs_col = column![
-                    text(fl!("ui-tool-cronjob-next-runs-title"))
-                        .size(font_size::CAPTION)
-                        .style(text::secondary)
-                ]
-                .spacing(spacing::XS);
-
-                for run in next_runs {
-                    next_runs_col = next_runs_col.push(
-                        row![
-                            text("•").size(font_size::CAPTION).style(text::secondary),
-                            text(run).size(font_size::CAPTION),
-                        ]
-                        .spacing(spacing::SM),
-                    );
+    /// Applies `message`; what is then to be done.
+    pub fn update(&mut self, message: CronJobMessage) -> Outcome {
+        match message {
+            CronJobMessage::Mode(mode) => self.mode = mode,
+            CronJobMessage::Input(action) => self.input.perform(action),
+            CronJobMessage::Parse => self.parse(),
+            CronJobMessage::Clear => {
+                self.input = Content::new();
+                self.entries.clear();
+                self.selected = None;
+                self.paste_error = None;
+                self.status = Status::None;
+            }
+            CronJobMessage::Select(index) => {
+                self.selected = (index < self.entries.len()).then_some(index);
+            }
+            CronJobMessage::Refresh => {
+                if !self.loading {
+                    self.loading = true;
+                    self.tasks_error = None;
+                    return Outcome::Load;
                 }
-
-                let next_runs_card = container(next_runs_col)
-                    .padding(spacing::MD)
-                    .style(styles::card)
-                    .width(Length::Fill);
-
-                column![expr_input, presets_row, desc_card, next_runs_card]
-                    .spacing(spacing::MD)
-                    .into()
             }
-            CronMode::ScheduledTasks => {
-                let btn_refresh =
-                    button(text(fl!("ui-tool-cronjob-btn-refresh")).size(font_size::CAPTION))
-                        .padding([spacing::XS, spacing::SM])
-                        .on_press_maybe(if self.tasks_loading {
-                            None
-                        } else {
-                            Some(send(CronJobMessage::RefreshTasks))
-                        });
-
-                let copy_csv_btn = super::copy_button(
-                    fl!("ui-tool-cronjob-btn-copy-csv"),
-                    state.copied(CopySlot::CronJobExport),
-                    send(CronJobMessage::CopyCsv),
-                    super::COPY_PADDING,
-                );
-
-                let filter_input = text_input(
-                    &fl!("ui-tool-cronjob-filter-placeholder"),
-                    &self.task_filter,
-                )
-                .on_input(move |s| send(CronJobMessage::TaskFilterChanged(s)))
-                .width(Length::Fill);
-
-                let controls_row = row![btn_refresh, copy_csv_btn, filter_input]
-                    .spacing(spacing::SM)
-                    .align_y(Alignment::Center);
-
-                let tasks_body: Element<'a, Message> = if let Some(err) = &self.tasks_error {
-                    container(text(err).size(font_size::CAPTION).style(text::danger))
-                        .padding(spacing::MD)
-                        .into()
-                } else if self.tasks.is_empty() {
-                    container(
-                        text(fl!("ui-tool-cronjob-empty-tasks"))
-                            .size(font_size::CAPTION)
-                            .style(text::secondary),
-                    )
-                    .padding(spacing::XL)
-                    .center_x(Length::Fill)
-                    .into()
-                } else {
-                    let filter_lower = self.task_filter.trim().to_lowercase();
-                    let matching_tasks: Vec<&'a TaskEntry> = self
-                        .tasks
-                        .iter()
-                        .filter(|t| {
-                            if filter_lower.is_empty() {
-                                true
-                            } else {
-                                t.name.to_lowercase().contains(&filter_lower)
-                                    || t.status.to_lowercase().contains(&filter_lower)
-                            }
-                        })
-                        .collect();
-
-                    let header = row![
-                        text(fl!("ui-tool-cronjob-col-taskname"))
-                            .size(font_size::SMALL_CAPTION)
-                            .style(text::secondary)
-                            .width(Length::FillPortion(3)),
-                        text(fl!("ui-tool-cronjob-col-nextrun"))
-                            .size(font_size::SMALL_CAPTION)
-                            .style(text::secondary)
-                            .width(Length::FillPortion(2)),
-                        text(fl!("ui-tool-cronjob-col-status"))
-                            .size(font_size::SMALL_CAPTION)
-                            .style(text::secondary)
-                            .width(Length::FillPortion(1)),
-                        text(fl!("ui-tool-cronjob-col-lastrun"))
-                            .size(font_size::SMALL_CAPTION)
-                            .style(text::secondary)
-                            .width(Length::FillPortion(2)),
-                        text(fl!("ui-tool-cronjob-col-lastresult"))
-                            .size(font_size::SMALL_CAPTION)
-                            .style(text::secondary)
-                            .width(Length::FillPortion(1)),
-                    ]
-                    .spacing(spacing::SM);
-
-                    let mut rows_col = column![header].spacing(spacing::XS);
-
-                    for task in matching_tasks {
-                        let task_row = row![
-                            text(&task.name)
-                                .size(font_size::SMALL_CAPTION)
-                                .width(Length::FillPortion(3)),
-                            text(&task.next_run_time)
-                                .size(font_size::SMALL_CAPTION)
-                                .width(Length::FillPortion(2)),
-                            text(&task.status)
-                                .size(font_size::SMALL_CAPTION)
-                                .width(Length::FillPortion(1)),
-                            text(&task.task_to_run)
-                                .size(font_size::SMALL_CAPTION)
-                                .width(Length::FillPortion(2)),
-                            text(&task.author)
-                                .size(font_size::SMALL_CAPTION)
-                                .width(Length::FillPortion(1)),
-                        ]
-                        .spacing(spacing::SM);
-
-                        rows_col = rows_col.push(task_row);
+            CronJobMessage::Loaded(loaded) => {
+                self.loading = false;
+                match loaded {
+                    Ok(tasks) => {
+                        self.status = Status::Tasks(tasks.len());
+                        self.tasks = tasks;
                     }
-
-                    scrollable(
-                        container(rows_col)
-                            .padding(spacing::SM)
-                            .style(styles::card)
-                            .width(Length::Fill),
-                    )
-                    .height(Length::Fill)
-                    .into()
-                };
-
-                column![controls_row, tasks_body]
-                    .spacing(spacing::MD)
-                    .into()
+                    Err(error) => self.tasks_error = Some(error),
+                }
             }
-        };
+            CronJobMessage::Copy => return Outcome::Copy(self.clipboard_text()),
+        }
+        Outcome::Done
+    }
 
-        column![mode_row, content_body]
-            .spacing(spacing::MD)
-            .padding(spacing::MD)
-            .width(Length::Fill)
+    /// The crontab pasted parsed, as the C# `Parse`.
+    fn parse(&mut self) {
+        self.selected = None;
+        self.entries.clear();
+        self.paste_error = None;
+        let content = self.input.text();
+        if content.trim().is_empty() {
+            self.paste_error = Some(PasteError::Empty);
+            return;
+        }
+        let entries = cron_job::parse_crontab(&content);
+        if entries.is_empty() {
+            self.paste_error = Some(PasteError::NoEntry);
+            return;
+        }
+        self.parsed_at = Some(Minute::of(&(self.now)()));
+        self.status = Status::Parsed(entries.len());
+        self.entries = entries;
+    }
+
+    /// The next `count` runs of `entry` after the parse.
+    fn runs(&self, entry: &CrontabEntry, count: usize) -> Vec<String> {
+        self.parsed_at
+            .map(|now| entry.next_runs(now, count))
+            .unwrap_or_default()
+    }
+
+    /// The next run of `entry`, or `-`.
+    fn next_run(&self, entry: &CrontabEntry) -> String {
+        self.runs(entry, 1)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| NO_RUN.to_owned())
+    }
+
+    /// The list shown as the C# `BuildClipboardText` copies it.
+    fn clipboard_text(&self) -> String {
+        match self.mode {
+            CronMode::Paste => self
+                .entries
+                .iter()
+                .map(|entry| {
+                    cron_job::clipboard_row(&[
+                        &entry.schedule(),
+                        &entry.command,
+                        &self.next_run(entry),
+                        &super::crontab_tool::describe(&entry.description()),
+                    ])
+                })
+                .collect(),
+            CronMode::Tasks => cron_job::tasks_clipboard_text(&self.tasks),
+        }
+    }
+
+    /// What the status line says.
+    fn status_text(&self) -> Option<String> {
+        match self.status {
+            Status::None => None,
+            Status::Parsed(count) => Some(fl!("ui-tool-cronjob-status-parsed", count = count)),
+            Status::Tasks(count) => Some(fl!("ui-tool-cronjob-status-tasks", count = count)),
+        }
+    }
+
+    /// The tool's page, as the C# `CronJobManagerView.xaml`: the two modes, then the list
+    /// of the one shown, the status and the copy button.
+    pub fn view<'a>(&'a self, tab: TabId, state: &ToolPane) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CronJob(message));
+        let mode = |label: String, mode: CronMode| {
+            button(text(label).size(font_size::BODY))
+                .padding(super::COPY_PADDING)
+                .style(if self.mode == mode {
+                    styles::primary
+                } else {
+                    styles::secondary
+                })
+                .on_press(send(CronJobMessage::Mode(mode)))
+        };
+        let can_copy = match self.mode {
+            CronMode::Paste => !self.entries.is_empty(),
+            CronMode::Tasks => !self.tasks.is_empty(),
+        };
+        let header = row![
+            mode(fl!("ui-tool-cronjob-tab-paste"), CronMode::Paste),
+            mode(fl!("ui-tool-cronjob-tab-tasks"), CronMode::Tasks),
+            iced::widget::space().width(Length::Fill),
+        ]
+        .push(can_copy.then(|| {
+            super::copy_button(
+                fl!("ui-tool-cronjob-copy"),
+                state.copied(CopySlot::CronJobExport),
+                send(CronJobMessage::Copy),
+                super::COPY_PADDING,
+            )
+        }))
+        .spacing(spacing::SM)
+        .align_y(iced::Alignment::Center);
+        let body = match self.mode {
+            CronMode::Paste => self.paste_view(tab),
+            CronMode::Tasks => self.tasks_view(tab),
+        };
+        super::tool_body(
+            column![header, body]
+                .push(super::status_line(
+                    self.status_text().map(|status| (status, false)),
+                ))
+                .spacing(spacing::SM),
+        )
+    }
+
+    /// The crontab box, its list and the selected schedule's details.
+    fn paste_view(&self, tab: TabId) -> Element<'_, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CronJob(message));
+        let input = super::text_box(&self.input, Some(fl!("ui-tool-cronjob-paste-placeholder")))
+            .height(PASTE_HEIGHT)
+            .on_action(move |action| send(CronJobMessage::Input(action)));
+        let buttons = row![
+            super::action_button(
+                fl!("ui-tool-cronjob-parse"),
+                true,
+                Some(send(CronJobMessage::Parse))
+            ),
+            super::action_button(
+                fl!("ui-tool-cronjob-clear"),
+                false,
+                Some(send(CronJobMessage::Clear))
+            ),
+        ]
+        .spacing(spacing::SM);
+        let error = self.paste_error.map(|error| match error {
+            PasteError::Empty => fl!("ui-tool-cronjob-error-empty"),
+            PasteError::NoEntry => fl!("ui-tool-cronjob-error-no-entry"),
+        });
+        let list: Element<'_, Message> = if self.entries.is_empty() {
+            super::empty_state(fl!("ui-tool-cronjob-empty-state"))
+        } else {
+            let heading = table_row(
+                &[
+                    fl!("ui-tool-cronjob-col-schedule"),
+                    fl!("ui-tool-cronjob-col-command"),
+                    fl!("ui-tool-cronjob-col-next-run"),
+                    fl!("ui-tool-cronjob-col-description"),
+                ],
+                &CRON_COLUMNS,
+                true,
+            );
+            let rows = self.entries.iter().enumerate().map(|(index, entry)| {
+                button(table_row(
+                    &[
+                        entry.schedule(),
+                        entry.command.clone(),
+                        self.next_run(entry),
+                        super::crontab_tool::describe(&entry.description()),
+                    ],
+                    &CRON_COLUMNS,
+                    false,
+                ))
+                .padding(0)
+                .width(Length::Fill)
+                .style(if self.selected == Some(index) {
+                    styles::primary
+                } else {
+                    styles::subtle
+                })
+                .on_press(send(CronJobMessage::Select(index)))
+                .into()
+            });
+            column![
+                heading,
+                scrollable(Column::with_children(rows).spacing(spacing::XS)).height(Length::Fill)
+            ]
+            .push(self.detail())
+            .spacing(spacing::XS)
             .height(Length::Fill)
             .into()
+        };
+        column![
+            text(fl!("ui-tool-cronjob-paste-instructions"))
+                .size(font_size::BODY)
+                .style(text::secondary),
+            input,
+            buttons
+        ]
+        .push(error.map(super::error_line))
+        .push(list)
+        .spacing(spacing::SM)
+        .height(Length::Fill)
+        .into()
+    }
+
+    /// The selected schedule, its command and its next runs, as the C# detail panel.
+    fn detail(&self) -> Option<Element<'_, Message>> {
+        let entry = self.entries.get(self.selected?)?;
+        let runs = self.runs(entry, NEXT_RUNS_COUNT);
+        let runs = if runs.is_empty() {
+            NO_RUN.to_owned()
+        } else {
+            runs.join("\n")
+        };
+        let schedule = entry.schedule();
+        Some(
+            container(
+                column![
+                    text(fl!("ui-tool-cronjob-detail-header"))
+                        .size(font_size::BODY)
+                        .font(styles::SEMIBOLD),
+                    text(fl!(
+                        "ui-tool-cronjob-detail-schedule",
+                        schedule = schedule.as_str()
+                    ))
+                    .size(font_size::BODY),
+                    text(fl!(
+                        "ui-tool-cronjob-detail-command",
+                        command = entry.command.as_str()
+                    ))
+                    .size(font_size::BODY),
+                    text(fl!("ui-tool-cronjob-detail-next-runs"))
+                        .size(font_size::BODY)
+                        .style(text::secondary),
+                    text(runs).font(super::BOX_FONT).size(font_size::BODY),
+                ]
+                .spacing(spacing::XS),
+            )
+            .padding(spacing::MD)
+            .width(Length::Fill)
+            .style(styles::card)
+            .into(),
+        )
+    }
+
+    /// The Refresh button and the tasks.
+    fn tasks_view(&self, tab: TabId) -> Element<'_, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CronJob(message));
+        let refresh = row![super::action_button(
+            fl!("ui-tool-cronjob-refresh"),
+            true,
+            (!self.loading).then(|| send(CronJobMessage::Refresh))
+        )]
+        .push(self.loading.then(|| {
+            text(fl!("ui-tool-cronjob-loading"))
+                .size(font_size::BODY)
+                .style(text::secondary)
+        }))
+        .spacing(spacing::SM)
+        .align_y(iced::Alignment::Center);
+        let error = self.tasks_error.as_ref().map(|error| match error {
+            TasksError::Unsupported => fl!("ui-tool-cronjob-error-unsupported"),
+            TasksError::NoSystemFolder => fl!("ui-tool-cronjob-error-no-system-folder"),
+            TasksError::TimedOut => fl!("ui-tool-cronjob-error-timeout"),
+            TasksError::Failed(reason) => {
+                fl!("ui-tool-cronjob-error-failed", error = reason.as_str())
+            }
+        });
+        let list: Element<'_, Message> = if self.tasks.is_empty() {
+            super::empty_state(fl!("ui-tool-cronjob-tasks-empty"))
+        } else {
+            let heading = table_row(
+                &[
+                    fl!("ui-tool-cronjob-col-task-name"),
+                    fl!("ui-tool-cronjob-col-status"),
+                    fl!("ui-tool-cronjob-col-next-run"),
+                    fl!("ui-tool-cronjob-col-last-run"),
+                    fl!("ui-tool-cronjob-col-last-result"),
+                ],
+                &TASK_COLUMNS,
+                true,
+            );
+            let rows = self.tasks.iter().map(|task| {
+                table_row(
+                    &[
+                        task.name.clone(),
+                        task.status.clone(),
+                        task.next_run.clone(),
+                        task.last_run.clone(),
+                        task.last_result.clone(),
+                    ],
+                    &TASK_COLUMNS,
+                    false,
+                )
+            });
+            column![
+                heading,
+                scrollable(Column::with_children(rows).spacing(spacing::XS)).height(Length::Fill)
+            ]
+            .spacing(spacing::XS)
+            .height(Length::Fill)
+            .into()
+        };
+        column![refresh]
+            .push(error.map(super::error_line))
+            .push(list)
+            .spacing(spacing::SM)
+            .height(Length::Fill)
+            .into()
+    }
+}
+
+/// A row of a list: its cells in columns `portions` wide; the heading in semibold.
+fn table_row<'a>(cells: &[String], portions: &[u16], heading: bool) -> Element<'a, Message> {
+    let cells = cells.iter().zip(portions).map(|(cell, portion)| {
+        let cell = text(cell.clone()).size(font_size::BODY);
+        let cell = if heading {
+            cell.font(styles::SEMIBOLD).style(text::secondary)
+        } else {
+            cell
+        };
+        container(cell)
+            .width(Length::FillPortion(*portion))
+            .padding([spacing::XS, spacing::SM])
+            .into()
+    });
+    iced::widget::Row::with_children(cells)
+        .width(Length::Fill)
+        .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn thursday_noon() -> WallClock {
+        // 2026-10-15 12:07 UTC, a Thursday.
+        Instant::from_unix_seconds(1_792_066_020).wall_clock(0)
+    }
+
+    fn pasted(pane: &mut CronJobPane, crontab: &str) {
+        pane.update(CronJobMessage::Input(Action::Edit(
+            iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(crontab.to_owned())),
+        )));
+        pane.update(CronJobMessage::Parse);
+    }
+
+    #[test]
+    fn a_pasted_crontab_lists_its_schedules_with_real_next_runs() {
+        let mut pane = CronJobPane::with_clock(thursday_noon);
+        pasted(
+            &mut pane,
+            "MAILTO=root\n*/5 * * * * /bin/check\n0 0 * * 7 /bin/weekly\n",
+        );
+        assert_eq!(pane.entries.len(), 2);
+        assert_eq!(pane.status, Status::Parsed(2));
+        assert_eq!(pane.next_run(&pane.entries[0]), "2026-10-15 12:10 (Thu)");
+        assert_eq!(pane.next_run(&pane.entries[1]), "2026-10-18 00:00 (Sun)");
+        pane.update(CronJobMessage::Select(1));
+        assert_eq!(pane.selected, Some(1));
+        assert_eq!(
+            pane.runs(&pane.entries[1], NEXT_RUNS_COUNT).len(),
+            NEXT_RUNS_COUNT
+        );
+        let copied = pane.clipboard_text();
+        assert!(copied.starts_with("*/5 * * * *\t/bin/check\t2026-10-15 12:10 (Thu)\t"));
+        assert_eq!(copied.lines().count(), 2);
+    }
+
+    #[test]
+    fn an_empty_or_scheduleless_paste_is_said() {
+        let mut pane = CronJobPane::with_clock(thursday_noon);
+        pane.update(CronJobMessage::Parse);
+        assert_eq!(pane.paste_error, Some(PasteError::Empty));
+        pasted(&mut pane, "# only a comment\nPATH=/bin\n");
+        assert_eq!(pane.paste_error, Some(PasteError::NoEntry));
+        pane.update(CronJobMessage::Clear);
+        assert_eq!(pane.paste_error, None);
+        assert_eq!(pane.status, Status::None);
+    }
+
+    #[test]
+    fn tasks_load_once_at_a_time_and_their_errors_are_kept() {
+        let mut pane = CronJobPane::with_clock(thursday_noon);
+        assert!(matches!(
+            pane.update(CronJobMessage::Refresh),
+            Outcome::Load
+        ));
+        assert!(matches!(
+            pane.update(CronJobMessage::Refresh),
+            Outcome::Done
+        ));
+        pane.update(CronJobMessage::Loaded(Err(TasksError::TimedOut)));
+        assert_eq!(pane.tasks_error, Some(TasksError::TimedOut));
+        assert!(matches!(
+            pane.update(CronJobMessage::Refresh),
+            Outcome::Load
+        ));
+        assert_eq!(pane.tasks_error, None);
+        pane.update(CronJobMessage::Loaded(Ok(vec![ScheduledTask {
+            name: "\\Backup".to_owned(),
+            status: "Ready".to_owned(),
+            next_run: "N/A".to_owned(),
+            last_run: "N/A".to_owned(),
+            last_result: "0".to_owned(),
+        }])));
+        assert_eq!(pane.status, Status::Tasks(1));
+        pane.update(CronJobMessage::Mode(CronMode::Tasks));
+        assert_eq!(pane.clipboard_text(), "\\Backup\tReady\tN/A\tN/A\t0\n");
     }
 }

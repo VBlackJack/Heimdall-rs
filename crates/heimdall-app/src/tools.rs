@@ -202,8 +202,6 @@ pub enum ToolId {
     Diagram,
     /// The command snippet and script library, the C# `CMDLIB`.
     CmdLib,
-    /// The elevated privilege process launcher, the C# `PRIVLAUNCH`.
-    PrivLaunch,
 }
 
 /// What the registry says of a tool.
@@ -252,7 +250,7 @@ impl ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 58] = [
+    pub const ALL: [Self; 57] = [
         Self::Ping,
         Self::Dns,
         Self::Cert,
@@ -304,7 +302,6 @@ impl ToolId {
         Self::Notes,
         Self::Diagram,
         Self::CmdLib,
-        Self::PrivLaunch,
         Self::WakeOnLan,
         Self::OpenPorts,
         Self::NetIf,
@@ -521,18 +518,6 @@ impl ToolId {
                     "cheatsheet",
                     "powershell",
                     "bash",
-                ],
-            ),
-            Self::PrivLaunch => ToolDescriptor::local(
-                "PRIVLAUNCH",
-                ToolCategory::System,
-                &[
-                    "privlaunch",
-                    "sudo",
-                    "nsudo",
-                    "elevate",
-                    "system",
-                    "trustedinstaller",
                 ],
             ),
         }

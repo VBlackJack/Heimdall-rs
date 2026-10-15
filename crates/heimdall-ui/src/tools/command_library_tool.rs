@@ -14,288 +14,339 @@
  * limitations under the License.
  */
 
-//! The Command Snippet Library tool view: curated catalog of sysadmin, network,
-//! and security commands with interactive parameter substitution and copying.
+//! The command snippet library: the catalog filtered by platform and by what is typed, each
+//! snippet with its description, the values it asks for and its command with them put in,
+//! copied by its own button.
 
 use std::collections::HashMap;
 
 use heimdall_app::TabId;
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Element, Length, Task, Theme};
+use heimdall_core::tools::command_library::{
+    self, BUILTIN_SNIPPETS, CommandSnippet, ParamLabel, SnippetCategory, SnippetId, SnippetPlatform,
+};
+use iced::widget::{Column, Row, button, column, container, row, scrollable, text, text_input};
+use iced::{Element, Length};
 
-use heimdall_core::tools::command_library::{BUILTIN_SNIPPETS, SnippetPlatform, filter_snippets};
-
-use super::{CopySlot, ToolPane};
+use super::{CopySlot, ToolMessage, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
 
-/// Messages emitted by the Command Snippet Library view.
+/// Width of a value's label, as the result grids' label column.
+const PARAM_LABEL_WIDTH: f32 = 160.0;
+
+/// What the command library is asked.
 #[derive(Debug, Clone)]
 pub enum CommandLibraryMessage {
-    /// Platform filter changed.
-    PlatformFilterChanged(Option<SnippetPlatform>),
-    /// Search query changed.
-    SearchQueryChanged(String),
-    /// Parameter value changed for a snippet.
-    ParamValueChanged {
-        snippet_id: String,
-        param_name: String,
-        value: String,
-    },
-    /// Copy rendered command to clipboard.
-    CopyCommand(String),
+    /// The platform shown; `None` for every one.
+    Platform(Option<SnippetPlatform>),
+    /// The search typed.
+    Search(String),
+    /// Value `.1` of snippet `.0` typed.
+    Param(SnippetId, &'static str, String),
+    /// Copy the command of this snippet.
+    Copy(SnippetId),
 }
 
-/// The Command Snippet Library tool pane state.
+/// The command library's state.
 #[derive(Debug, Default)]
 pub struct CommandLibraryPane {
-    platform_filter: Option<SnippetPlatform>,
-    search_query: String,
-    param_values: HashMap<(String, String), String>,
-}
-
-/// Outcome of updating the Command Snippet Library tool pane.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum Outcome {
-    None,
-    Task(Task<Message>),
-    Copy(CopySlot, String),
+    platform: Option<SnippetPlatform>,
+    search: String,
+    values: HashMap<(SnippetId, &'static str), String>,
 }
 
 impl CommandLibraryPane {
-    /// Handles tool messages.
-    pub fn update(&mut self, _tab: TabId, message: CommandLibraryMessage) -> Outcome {
+    /// Applies `message`; what to copy, and by which button.
+    pub fn update(&mut self, message: CommandLibraryMessage) -> Option<(CopySlot, String)> {
         match message {
-            CommandLibraryMessage::PlatformFilterChanged(platform) => {
-                self.platform_filter = platform;
-                Outcome::None
+            CommandLibraryMessage::Platform(platform) => self.platform = platform,
+            CommandLibraryMessage::Search(typed) => self.search = typed,
+            CommandLibraryMessage::Param(id, key, value) => {
+                self.values.insert((id, key), value);
             }
-            CommandLibraryMessage::SearchQueryChanged(query) => {
-                self.search_query = query;
-                Outcome::None
-            }
-            CommandLibraryMessage::ParamValueChanged {
-                snippet_id,
-                param_name,
-                value,
-            } => {
-                self.param_values.insert((snippet_id, param_name), value);
-                Outcome::None
-            }
-            CommandLibraryMessage::CopyCommand(cmd) => Outcome::Copy(CopySlot::CmdLibCommand, cmd),
-        }
-    }
-
-    fn get_param_value<'a>(
-        &'a self,
-        snippet_id: &str,
-        param_name: &str,
-        default: &'a str,
-    ) -> &'a str {
-        if let Some(val) = self
-            .param_values
-            .get(&(snippet_id.to_string(), param_name.to_string()))
-        {
-            if !val.is_empty() {
-                return val.as_str();
+            CommandLibraryMessage::Copy(id) => {
+                let snippet = command_library::snippet(id)?;
+                return Some((CopySlot::CmdLibCommand(id), self.render(snippet)));
             }
         }
-        default
+        None
     }
 
-    /// Renders the Command Snippet Library tool view.
-    pub fn view<'a>(
-        &'a self,
-        tab: TabId,
-        state: &ToolPane,
-        _theme: &Theme,
-    ) -> Element<'a, Message> {
-        let send = move |msg| Message::Tool(tab, super::ToolMessage::CmdLib(msg));
+    /// The command of `snippet` with the values typed.
+    fn render(&self, snippet: &CommandSnippet) -> String {
+        snippet.render(|key| self.values.get(&(snippet.id, key)).map(String::as_str))
+    }
 
-        let btn_all = button(text(fl!("ui-tool-cmdlib-platform-all")).size(font_size::CAPTION))
-            .padding([spacing::XS, spacing::SM])
-            .style(if self.platform_filter.is_none() {
-                styles::primary
-            } else {
-                styles::secondary
+    /// The snippets the platform and the search keep.
+    fn shown(&self) -> Vec<&'static CommandSnippet> {
+        BUILTIN_SNIPPETS
+            .iter()
+            .filter(|snippet| command_library::on_platform(snippet, self.platform))
+            .filter(|snippet| {
+                let (title, description) = snippet_texts(snippet.id);
+                let category = category_name(snippet.category);
+                command_library::matches_query(
+                    snippet,
+                    &[&title, &description, &category],
+                    &self.search,
+                )
             })
-            .on_press(send(CommandLibraryMessage::PlatformFilterChanged(None)));
+            .collect()
+    }
 
-        let btn_linux = button(text(fl!("ui-tool-cmdlib-platform-linux")).size(font_size::CAPTION))
-            .padding([spacing::XS, spacing::SM])
-            .style(if self.platform_filter == Some(SnippetPlatform::Linux) {
-                styles::primary
-            } else {
-                styles::secondary
-            })
-            .on_press(send(CommandLibraryMessage::PlatformFilterChanged(Some(
-                SnippetPlatform::Linux,
-            ))));
-
-        let btn_windows =
-            button(text(fl!("ui-tool-cmdlib-platform-windows")).size(font_size::CAPTION))
-                .padding([spacing::XS, spacing::SM])
-                .style(if self.platform_filter == Some(SnippetPlatform::Windows) {
+    /// The tool's page: the platforms and the search, the count, then each snippet.
+    pub fn view<'a>(&'a self, tab: TabId, state: &ToolPane) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let platform = |label: String, choice: Option<SnippetPlatform>| {
+            button(text(label).size(font_size::BODY))
+                .padding(super::COPY_PADDING)
+                .style(if self.platform == choice {
                     styles::primary
                 } else {
                     styles::secondary
                 })
-                .on_press(send(CommandLibraryMessage::PlatformFilterChanged(Some(
-                    SnippetPlatform::Windows,
-                ))));
-
-        let btn_cross = button(text(fl!("ui-tool-cmdlib-platform-cross")).size(font_size::CAPTION))
-            .padding([spacing::XS, spacing::SM])
-            .style(
-                if self.platform_filter == Some(SnippetPlatform::CrossPlatform) {
-                    styles::primary
-                } else {
-                    styles::secondary
-                },
-            )
-            .on_press(send(CommandLibraryMessage::PlatformFilterChanged(Some(
-                SnippetPlatform::CrossPlatform,
-            ))));
-
-        let search_input = text_input(
-            &fl!("ui-tool-cmdlib-search-placeholder"),
-            &self.search_query,
+                .on_press(send(CommandLibraryMessage::Platform(choice)))
+                .into()
+        };
+        let platforms = Row::with_children(
+            std::iter::once(platform(fl!("ui-tool-cmdlib-platform-all"), None)).chain(
+                SnippetPlatform::ALL
+                    .into_iter()
+                    .map(|choice| platform(platform_name(choice), Some(choice))),
+            ),
         )
-        .on_input(move |s| send(CommandLibraryMessage::SearchQueryChanged(s)))
-        .width(Length::Fill);
-
-        let platform_row = row![btn_all, btn_linux, btn_windows, btn_cross, search_input]
-            .spacing(spacing::SM)
-            .align_y(Alignment::Center);
-
-        let matching_snippets = filter_snippets(
-            &BUILTIN_SNIPPETS,
-            None,
-            self.platform_filter,
-            &self.search_query,
-        );
-
-        let count_text = text(fl!(
-            "ui-tool-cmdlib-count",
-            count = matching_snippets.len().to_string()
-        ))
-        .size(font_size::SMALL_CAPTION)
-        .style(text::secondary);
-
-        let list_content: Element<'a, Message> = if matching_snippets.is_empty() {
-            container(
-                text(fl!("ui-tool-cmdlib-empty"))
+        .spacing(spacing::SM);
+        let search = text_input(&fl!("ui-tool-cmdlib-search-placeholder"), &self.search)
+            .size(font_size::BODY)
+            .padding(super::INPUT_PADDING)
+            .style(styles::text_input)
+            .on_input(move |typed| send(CommandLibraryMessage::Search(typed)));
+        let shown = self.shown();
+        let count = shown.len();
+        let list: Element<'a, Message> = if shown.is_empty() {
+            super::empty_state(fl!("ui-tool-cmdlib-empty"))
+        } else {
+            let cards = shown
+                .into_iter()
+                .map(|snippet| self.card(tab, state, snippet));
+            scrollable(Column::with_children(cards).spacing(spacing::MD))
+                .height(Length::Fill)
+                .into()
+        };
+        super::tool_body(
+            column![
+                row![platforms, search]
+                    .spacing(spacing::MD)
+                    .align_y(iced::Alignment::Center),
+                text(fl!("ui-tool-cmdlib-count", count = count))
                     .size(font_size::CAPTION)
                     .style(text::secondary),
-            )
-            .padding(spacing::XL)
-            .center_x(Length::Fill)
+                list,
+            ]
+            .spacing(spacing::SM),
+        )
+    }
+
+    /// One snippet: its title, platform and category, its description, its values and its
+    /// command with its copy button.
+    fn card<'a>(
+        &'a self,
+        tab: TabId,
+        state: &ToolPane,
+        snippet: &'static CommandSnippet,
+    ) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let (title, description) = snippet_texts(snippet.id);
+        let header = row![
+            text(title)
+                .size(font_size::BODY_LARGE)
+                .font(styles::SEMIBOLD),
+            text(platform_name(snippet.platform))
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+            text(category_name(snippet.category))
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+        ]
+        .spacing(spacing::SM)
+        .align_y(iced::Alignment::Center);
+        let params = Column::with_children(snippet.parameters.iter().map(|parameter| {
+            let id = snippet.id;
+            let key = parameter.key;
+            let value = self.values.get(&(id, key)).map_or("", String::as_str);
+            row![
+                text(param_label(parameter.label))
+                    .size(font_size::BODY)
+                    .width(PARAM_LABEL_WIDTH),
+                text_input(parameter.default_value, value)
+                    .size(font_size::BODY)
+                    .padding(super::INPUT_PADDING)
+                    .style(styles::text_input)
+                    .on_input(move |typed| send(CommandLibraryMessage::Param(id, key, typed))),
+            ]
+            .spacing(spacing::SM)
+            .align_y(iced::Alignment::Center)
             .into()
-        } else {
-            let mut cards_col = column![].spacing(spacing::MD);
-
-            for snippet in matching_snippets {
-                let snippet_id = snippet.id.to_string();
-
-                let mut current_params = HashMap::new();
-                for p in snippet.parameters {
-                    let val = self.get_param_value(&snippet_id, p.key, p.default_value);
-                    current_params.insert(p.key.to_string(), val.to_string());
-                }
-
-                let rendered_cmd = snippet.render(&current_params);
-                let copy_cmd = rendered_cmd.clone();
-
-                let header_row = row![
-                    text(snippet.title).size(font_size::BODY_LARGE),
-                    text(format!("[{}]", snippet.platform.label()))
-                        .size(font_size::SMALL_CAPTION)
-                        .style(text::secondary),
-                    text(format!("#{}", snippet.category))
-                        .size(font_size::SMALL_CAPTION)
-                        .style(text::secondary),
-                ]
-                .spacing(spacing::SM)
-                .align_y(Alignment::Center);
-
-                let desc_text = text(snippet.description)
-                    .size(font_size::CAPTION)
-                    .style(text::secondary);
-
-                let mut params_col = column![].spacing(spacing::XS);
-                for p in snippet.parameters {
-                    let p_name = p.key.to_string();
-                    let s_id = snippet.id.to_string();
-                    let current_val = self.get_param_value(&s_id, p.key, p.default_value);
-
-                    let p_row = row![
-                        text(format!("{}:", p.label))
-                            .size(font_size::SMALL_CAPTION)
-                            .width(Length::Fixed(160.0)),
-                        text_input(p.default_value, current_val)
-                            .on_input(move |val| {
-                                Message::Tool(
-                                    tab,
-                                    super::ToolMessage::CmdLib(
-                                        CommandLibraryMessage::ParamValueChanged {
-                                            snippet_id: s_id.clone(),
-                                            param_name: p_name.clone(),
-                                            value: val,
-                                        },
-                                    ),
-                                )
-                            })
-                            .size(font_size::SMALL_CAPTION)
-                            .width(Length::FillPortion(2)),
-                    ]
-                    .spacing(spacing::SM)
-                    .align_y(Alignment::Center);
-
-                    params_col = params_col.push(p_row);
-                }
-
-                let copy_cmd_btn = super::copy_button(
-                    fl!("ui-tool-cmdlib-btn-copy"),
-                    state.copied(CopySlot::CmdLibCommand),
-                    send(CommandLibraryMessage::CopyCommand(copy_cmd)),
+        }))
+        .spacing(spacing::XS);
+        let command = container(
+            row![
+                text(self.render(snippet))
+                    .font(super::BOX_FONT)
+                    .size(font_size::BODY)
+                    .width(Length::Fill),
+                super::copy_button(
+                    fl!("ui-tool-cmdlib-copy"),
+                    state.copied(CopySlot::CmdLibCommand(snippet.id)),
+                    send(CommandLibraryMessage::Copy(snippet.id)),
                     super::COPY_PADDING,
-                );
+                ),
+            ]
+            .spacing(spacing::SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(spacing::SM)
+        .width(Length::Fill)
+        .style(styles::field_box);
+        container(
+            column![
+                header,
+                text(description)
+                    .size(font_size::BODY)
+                    .style(text::secondary),
+                params,
+                command
+            ]
+            .spacing(spacing::SM),
+        )
+        .padding(spacing::MD)
+        .width(Length::Fill)
+        .style(styles::card)
+        .into()
+    }
+}
 
-                let cmd_preview = container(
-                    row![
-                        text(rendered_cmd)
-                            .size(font_size::SMALL_CAPTION)
-                            .width(Length::Fill),
-                        copy_cmd_btn,
-                    ]
-                    .spacing(spacing::SM)
-                    .align_y(Alignment::Center),
-                )
-                .padding(spacing::SM)
-                .style(styles::card)
-                .width(Length::Fill);
+/// The title and description of snippet `id`, in the window's language.
+fn snippet_texts(id: SnippetId) -> (String, String) {
+    match id {
+        SnippetId::LinuxListeningPorts => (
+            fl!("ui-tool-cmdlib-snippet-listening-ports"),
+            fl!("ui-tool-cmdlib-snippet-listening-ports-description"),
+        ),
+        SnippetId::LinuxKillPort => (
+            fl!("ui-tool-cmdlib-snippet-kill-port"),
+            fl!("ui-tool-cmdlib-snippet-kill-port-description"),
+        ),
+        SnippetId::LinuxJournalFollow => (
+            fl!("ui-tool-cmdlib-snippet-journal-follow"),
+            fl!("ui-tool-cmdlib-snippet-journal-follow-description"),
+        ),
+        SnippetId::LinuxCertExpiry => (
+            fl!("ui-tool-cmdlib-snippet-cert-expiry"),
+            fl!("ui-tool-cmdlib-snippet-cert-expiry-description"),
+        ),
+        SnippetId::WindowsTestConnection => (
+            fl!("ui-tool-cmdlib-snippet-test-connection"),
+            fl!("ui-tool-cmdlib-snippet-test-connection-description"),
+        ),
+        SnippetId::WindowsPortOwner => (
+            fl!("ui-tool-cmdlib-snippet-port-owner"),
+            fl!("ui-tool-cmdlib-snippet-port-owner-description"),
+        ),
+        SnippetId::WindowsRestartService => (
+            fl!("ui-tool-cmdlib-snippet-restart-service"),
+            fl!("ui-tool-cmdlib-snippet-restart-service-description"),
+        ),
+        SnippetId::WindowsFlushDns => (
+            fl!("ui-tool-cmdlib-snippet-flush-dns"),
+            fl!("ui-tool-cmdlib-snippet-flush-dns-description"),
+        ),
+        SnippetId::MtrProbe => (
+            fl!("ui-tool-cmdlib-snippet-mtr"),
+            fl!("ui-tool-cmdlib-snippet-mtr-description"),
+        ),
+        SnippetId::NmapServiceScan => (
+            fl!("ui-tool-cmdlib-snippet-nmap"),
+            fl!("ui-tool-cmdlib-snippet-nmap-description"),
+        ),
+    }
+}
 
-                let card = container(
-                    column![header_row, desc_text, params_col, cmd_preview].spacing(spacing::SM),
-                )
-                .padding(spacing::MD)
-                .style(styles::card)
-                .width(Length::Fill);
+/// The name of `platform`.
+fn platform_name(platform: SnippetPlatform) -> String {
+    match platform {
+        SnippetPlatform::Linux => fl!("ui-tool-cmdlib-platform-linux"),
+        SnippetPlatform::Windows => fl!("ui-tool-cmdlib-platform-windows"),
+        SnippetPlatform::CrossPlatform => fl!("ui-tool-cmdlib-platform-cross"),
+    }
+}
 
-                cards_col = cards_col.push(card);
-            }
+/// The name of `category`.
+fn category_name(category: SnippetCategory) -> String {
+    match category {
+        SnippetCategory::Network => fl!("ui-tool-cmdlib-category-network"),
+        SnippetCategory::System => fl!("ui-tool-cmdlib-category-system"),
+        SnippetCategory::Services => fl!("ui-tool-cmdlib-category-services"),
+        SnippetCategory::Security => fl!("ui-tool-cmdlib-category-security"),
+        SnippetCategory::Diagnostics => fl!("ui-tool-cmdlib-category-diagnostics"),
+    }
+}
 
-            scrollable(cards_col).height(Length::Fill).into()
-        };
+/// The label of a value of kind `label`.
+fn param_label(label: ParamLabel) -> String {
+    match label {
+        ParamLabel::Host => fl!("ui-tool-cmdlib-param-host"),
+        ParamLabel::Port => fl!("ui-tool-cmdlib-param-port"),
+        ParamLabel::LocalPort => fl!("ui-tool-cmdlib-param-local-port"),
+        ParamLabel::PortRange => fl!("ui-tool-cmdlib-param-port-range"),
+        ParamLabel::Service => fl!("ui-tool-cmdlib-param-service"),
+    }
+}
 
-        column![platform_row, count_text, list_content]
-            .spacing(spacing::MD)
-            .padding(spacing::MD)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_snippet_copies_its_command_with_the_values_typed_by_its_own_button() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::Param(
+            SnippetId::MtrProbe,
+            "host",
+            "10.0.0.1".to_owned(),
+        ));
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(SnippetId::MtrProbe)),
+            Some((
+                CopySlot::CmdLibCommand(SnippetId::MtrProbe),
+                "mtr -rw -c 50 10.0.0.1".to_owned()
+            ))
+        );
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(SnippetId::WindowsFlushDns)),
+            Some((
+                CopySlot::CmdLibCommand(SnippetId::WindowsFlushDns),
+                "Clear-DnsClientCache".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn the_platform_and_the_search_filter_the_catalog() {
+        let mut pane = CommandLibraryPane::default();
+        assert_eq!(pane.shown().len(), BUILTIN_SNIPPETS.len());
+        pane.update(CommandLibraryMessage::Platform(Some(
+            SnippetPlatform::Windows,
+        )));
+        assert!(
+            pane.shown()
+                .iter()
+                .all(|snippet| { snippet.platform != SnippetPlatform::Linux })
+        );
+        pane.update(CommandLibraryMessage::Search("dnsclient".to_owned()));
+        let shown: Vec<SnippetId> = pane.shown().iter().map(|snippet| snippet.id).collect();
+        assert_eq!(shown, [SnippetId::WindowsFlushDns]);
     }
 }
