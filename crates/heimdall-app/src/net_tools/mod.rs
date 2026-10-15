@@ -16,17 +16,21 @@
 
 //! The network side of the PING, DNS, DNSBATCH, PORTSCAN and HTTPHEADERS tools, as the C#
 //! `PingService`, `DnsLookupService`, `DnsBatchResolverService`, `PortScanService` and
-//! `HttpHeaderService`: what they send, read and run, the engines in
-//! `heimdall_core::tools` deciding what it means.
+//! `HttpHeaderService`, and of the TCPPING, BANNER and WHOIS tools, as the C#
+//! `TcpPingService`, `BannerGrabService` and `WhoisLookupService`: what they send, read and
+//! run, the engines in `heimdall_core::tools` deciding what it means.
 //!
 //! Everything here is a future that does nothing once dropped: a tool stops a run by
 //! dropping it, which closes its sockets and kills the program it started. Each is bounded
 //! in time on its own; what a server or a program writes comes back made safe to show.
 
+pub mod banner;
 pub mod dns;
 pub mod http;
 pub mod ping;
 pub mod port_scan;
+pub mod tcp_ping;
+pub mod whois;
 
 use std::net::IpAddr;
 use std::path::Path;

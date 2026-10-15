@@ -253,7 +253,7 @@ fn checked_username(username: &str) -> Result<&str, CommandError> {
 }
 
 /// `text` as the inside of a single-quoted `PowerShell` string: each quote doubled.
-fn quoted_content(text: &str) -> String {
+pub(crate) fn quoted_content(text: &str) -> String {
     let mut quoted = String::with_capacity(text.len());
     for c in text.chars() {
         if SINGLE_QUOTES.contains(&c) {
