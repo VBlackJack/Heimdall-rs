@@ -4287,3 +4287,6 @@ ui-tool-defaultcreds-empty = (empty)
 ui-tool-defaultcreds-timeout-connect = Connection timed out
 ui-tool-defaultcreds-timeout-write = Write timed out
 ui-tool-defaultcreds-timeout-read = Read timed out
+ui-tool-dnssec-report-record = Record
+ui-tool-dnssec-report-detail = Detail
+ui-tool-dnssec-error-nslookup-missing = nslookup was not found. Install it (bind-utils / dnsutils on Linux) or ensure it is on PATH.

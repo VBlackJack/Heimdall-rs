@@ -4334,3 +4334,6 @@ ui-tool-defaultcreds-empty = (vide)
 ui-tool-defaultcreds-timeout-connect = Délai de connexion dépassé
 ui-tool-defaultcreds-timeout-write = Délai d'écriture dépassé
 ui-tool-defaultcreds-timeout-read = Délai de lecture dépassé
+ui-tool-dnssec-report-record = Enregistrement
+ui-tool-dnssec-report-detail = Détail
+ui-tool-dnssec-error-nslookup-missing = nslookup est introuvable. Installez-le (bind-utils / dnsutils sous Linux) ou assurez-vous qu'il est dans le PATH.
