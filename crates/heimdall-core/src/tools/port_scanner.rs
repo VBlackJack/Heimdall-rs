@@ -14,18 +14,35 @@
  * limitations under the License.
  */
 
-//! TCP port scanner engine: port range parsing, well-known service identification,
-//! handshake probes, open/closed/filtered status detection, summary statistics, and CSV export.
+//! TCP port scanner engine, as the C# `PortScanEngine`: input validation, well-known service
+//! identification, open/closed/filtered status, summary statistics, and CSV export. The
+//! scan itself, the host resolved once and its ports probed [`MAX_CONCURRENT`] at a time,
+//! runs in `heimdall_app::net_tools`.
 
 use std::fmt::Write as _;
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::{Duration, Instant};
+use std::io::ErrorKind;
+
+use super::csv_cell::quoted;
+use super::net_host;
 
 /// Standard preset of popular network service ports.
 pub const DEFAULT_COMMON_PORTS: &str =
     "21,22,23,25,53,80,110,135,139,143,443,445,993,995,1433,1521,3306,3389,5432,5900,8080,8443";
-/// Default timeout in milliseconds for each port probe attempt.
-pub const DEFAULT_PORT_TIMEOUT_MS: u64 = 1000;
+/// Default timeout in milliseconds for each port probe attempt, as the C#
+/// `PortScanEngine.ConnectTimeoutMs`: Windows takes about two seconds to report a refusal,
+/// so a shorter wait would show a closed port as filtered.
+pub const DEFAULT_PORT_TIMEOUT_MS: u64 = 2000;
+/// Shortest timeout of a connection attempt, in milliseconds.
+pub const MIN_TIMEOUT_MS: u64 = 100;
+/// Longest timeout of a connection attempt, in milliseconds.
+pub const MAX_TIMEOUT_MS: u64 = 10000;
+/// Ports probed at once, as the C# `PortScanEngine.MaxConcurrent`.
+pub const MAX_CONCURRENT: usize = 50;
+/// Port count above which a scan is confirmed first, as the C#
+/// `PortScanEngine.LargePortCountWarningThreshold`.
+pub const LARGE_PORT_COUNT_WARNING: usize = 10000;
+/// Time the host name may take to resolve, in milliseconds.
+pub const RESOLVE_TIMEOUT_MS: u64 = 5000;
 
 /// Status classification of a scanned TCP port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,61 +145,40 @@ pub const fn service_name_for_port(port: u16) -> &'static str {
     }
 }
 
-/// Executes a synchronous TCP handshake probe on `port` of `host`.
+/// Validates the typed host, as the C# `InputValidator.Validate(host, "Address")` before a
+/// scan (`PortScanViewModel.cs`); returns it trimmed, or an error translation key.
+pub fn validate_host(host_text: &str) -> Result<String, &'static str> {
+    if host_text.trim().is_empty() {
+        return Err("ui-tool-portscan-error-host-required");
+    }
+    net_host::checked_host(host_text).ok_or("ui-tool-portscan-error-host-invalid")
+}
+
+/// Validates the typed timeout of each connection attempt: a whole number of milliseconds
+/// within [`MIN_TIMEOUT_MS`] and [`MAX_TIMEOUT_MS`], never replaced by the default.
+pub fn validate_timeout(timeout_text: &str) -> Result<u64, &'static str> {
+    match timeout_text.trim().parse::<u64>() {
+        Ok(ms) if (MIN_TIMEOUT_MS..=MAX_TIMEOUT_MS).contains(&ms) => Ok(ms),
+        _ => Err("ui-tool-portscan-error-timeout-invalid"),
+    }
+}
+
+/// Whether a scan of `port_count` ports is to be confirmed first, as the C# asks above
+/// [`LARGE_PORT_COUNT_WARNING`] (`PortScannerView.xaml.cs:219`).
 #[must_use]
-pub fn probe_single_port(host: &str, port: u16, timeout_ms: u64) -> PortProbeResult {
-    let service = service_name_for_port(port);
-    let timeout = Duration::from_millis(timeout_ms);
-    let start = Instant::now();
+pub const fn needs_confirmation(port_count: usize) -> bool {
+    port_count > LARGE_PORT_COUNT_WARNING
+}
 
-    let Ok(mut addrs) = (host, port).to_socket_addrs() else {
-        return PortProbeResult {
-            port,
-            service,
-            status: PortStatus::Filtered,
-            latency_ms: -1.0,
-        };
-    };
-
-    let Some(addr) = addrs.next() else {
-        return PortProbeResult {
-            port,
-            service,
-            status: PortStatus::Filtered,
-            latency_ms: -1.0,
-        };
-    };
-
-    match TcpStream::connect_timeout(&addr, timeout) {
-        Ok(_stream) => {
-            let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-            PortProbeResult {
-                port,
-                service,
-                status: PortStatus::Open,
-                latency_ms,
-            }
-        }
-        Err(err) => {
-            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-            let status = match err.kind() {
-                std::io::ErrorKind::ConnectionRefused => PortStatus::Closed,
-                std::io::ErrorKind::TimedOut => PortStatus::Filtered,
-                _ => {
-                    if elapsed_ms >= (timeout_ms as f64 * 0.9) {
-                        PortStatus::Filtered
-                    } else {
-                        PortStatus::Closed
-                    }
-                }
-            };
-            PortProbeResult {
-                port,
-                service,
-                status,
-                latency_ms: -1.0,
-            }
-        }
+/// The status of a port whose connection failed with `kind`, the most telling of the
+/// failures over the host's addresses; `None` when no attempt ended before the timeout.
+/// Only a refusal says the port is closed: a timeout, or a router's "unreachable", says
+/// something stands in between.
+#[must_use]
+pub fn status_of_failure(kind: Option<ErrorKind>) -> PortStatus {
+    match kind {
+        Some(ErrorKind::ConnectionRefused) => PortStatus::Closed,
+        _ => PortStatus::Filtered,
     }
 }
 
@@ -207,11 +203,14 @@ pub fn compute_port_summary(results: &[PortProbeResult]) -> PortScanSummary {
     summary
 }
 
-/// Formats a CSV export string from the scan results.
+/// Formats a CSV export string from the scan results, in port order, its text cells
+/// quoted and neutralized as the C# `SanitizeCsvCell` does.
 #[must_use]
 pub fn format_port_scan_csv(results: &[PortProbeResult]) -> String {
+    let mut sorted: Vec<&PortProbeResult> = results.iter().collect();
+    sorted.sort_by_key(|r| r.port);
     let mut csv = String::from("Port,Service,Status,LatencyMs\n");
-    for r in results {
+    for r in sorted {
         let lat_str = if r.latency_ms >= 0.0 {
             format!("{:.1}", r.latency_ms)
         } else {
@@ -221,7 +220,7 @@ pub fn format_port_scan_csv(results: &[PortProbeResult]) -> String {
             csv,
             "{},{},{},{}",
             r.port,
-            r.service,
+            quoted(r.service),
             r.status.label(),
             lat_str
         );
@@ -283,6 +282,63 @@ mod tests {
         }];
         let csv = format_port_scan_csv(&results);
         assert!(csv.contains("Port,Service,Status,LatencyMs"));
-        assert!(csv.contains("443,HTTPS,Open,12.0"));
+        assert!(csv.contains("443,\"HTTPS\",Open,12.0"));
+    }
+
+    #[test]
+    fn the_csv_is_in_port_order_whatever_order_the_probes_ended_in() {
+        let probe = |port| PortProbeResult {
+            port,
+            service: service_name_for_port(port),
+            status: PortStatus::Closed,
+            latency_ms: -1.0,
+        };
+        let csv = format_port_scan_csv(&[probe(443), probe(22), probe(80)]);
+        let ports: Vec<&str> = csv
+            .lines()
+            .skip(1)
+            .map(|line| line.split(',').next().unwrap())
+            .collect();
+        assert_eq!(ports, ["22", "80", "443"]);
+    }
+
+    #[test]
+    fn the_host_and_the_timeout_are_validated_not_replaced() {
+        assert_eq!(validate_host(" 10.0.0.1 "), Ok("10.0.0.1".into()));
+        assert_eq!(
+            validate_host(""),
+            Err("ui-tool-portscan-error-host-required")
+        );
+        assert_eq!(
+            validate_host("-sS example.com"),
+            Err("ui-tool-portscan-error-host-invalid")
+        );
+        assert_eq!(validate_timeout("250"), Ok(250));
+        for refused in ["", "abc", "50", "10001"] {
+            assert_eq!(
+                validate_timeout(refused),
+                Err("ui-tool-portscan-error-timeout-invalid"),
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scan_above_ten_thousand_ports_is_confirmed_first() {
+        assert!(!needs_confirmation(LARGE_PORT_COUNT_WARNING));
+        assert!(needs_confirmation(LARGE_PORT_COUNT_WARNING + 1));
+    }
+
+    #[test]
+    fn only_a_refusal_says_a_port_is_closed() {
+        assert_eq!(
+            status_of_failure(Some(ErrorKind::ConnectionRefused)),
+            PortStatus::Closed
+        );
+        assert_eq!(
+            status_of_failure(Some(ErrorKind::TimedOut)),
+            PortStatus::Filtered
+        );
+        assert_eq!(status_of_failure(None), PortStatus::Filtered);
     }
 }

@@ -14,17 +14,34 @@
  * limitations under the License.
  */
 
-//! HTTP header analyzer engine: URL normalization, HTTP response header parsing,
-//! security posture evaluation, information disclosure detection, grading, and text reports.
+//! HTTP header analyzer engine, as the C# `HttpHeaderEvaluationEngine`: the target URL,
+//! the request, the response header parsing, security posture evaluation, information
+//! disclosure detection, grading, and text reports.
+//!
+//! The request is sent by Heimdall's own client, as the C# `HttpHeaderService` sends it over
+//! its own `TcpClient`: a `HEAD`, then a `GET` when the server refuses it with 405, of which
+//! at most [`MAX_RESPONSE_BYTES`] are read. That client, in `heimdall_app::net_tools`,
+//! checks an HTTPS server's certificate.
 
 use std::fmt::Write as _;
+
+use super::net_host;
 
 /// Standard HTTP default port.
 pub const DEFAULT_HTTP_PORT: u16 = 80;
 /// Standard HTTPS default port.
 pub const DEFAULT_HTTPS_PORT: u16 = 443;
-/// Maximum bytes to read from the response header section.
+/// Maximum bytes to read from the response header section, as the C#
+/// `HttpHeaderEvaluationEngine.MaxResponseBytes`.
 pub const MAX_RESPONSE_BYTES: usize = 16384;
+/// How long the whole fetch may take, as the C# `HttpHeaderService.ConnectionTimeout`.
+pub const FETCH_TIMEOUT_MS: u64 = 15000;
+/// The status a server refuses a `HEAD` with, when the request is sent again as a `GET`.
+pub const METHOD_NOT_ALLOWED: u16 = 405;
+/// The end of a response's header section.
+pub const HEADER_END: &[u8] = b"\r\n\r\n";
+/// The user agent the request names, as the C#.
+pub const USER_AGENT: &str = "Heimdall";
 
 /// Standard security header names.
 pub const HEADER_HSTS: &str = "Strict-Transport-Security";
@@ -103,7 +120,8 @@ pub struct HeaderCheckResult {
     pub status: HeaderCheckStatus,
     /// Localization key for recommendation, if applicable.
     pub recommendation_key: Option<&'static str>,
-    /// Optional dynamic detail message (e.g. missing cookie flags).
+    /// The cookie flags missing, comma-separated, for the cookie check: the view says it
+    /// in the user's language.
     pub detail: Option<String>,
 }
 
@@ -129,33 +147,140 @@ pub struct HeaderEvaluation {
     pub grade: HttpGrade,
 }
 
-/// Normalizes raw user input into an absolute HTTP or HTTPS URL.
-pub fn try_normalize_url(input: &str) -> Result<String, &'static str> {
+/// The server and the resource the analyzer asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpTarget {
+    /// Over TLS.
+    pub https: bool,
+    /// The host, checked by [`net_host::checked_host`]; an IPv6 address without brackets.
+    pub host: String,
+    /// The port.
+    pub port: u16,
+    /// The path and query, never empty.
+    pub path: String,
+}
+
+impl HttpTarget {
+    /// The target as a URL, for the report.
+    #[must_use]
+    pub fn url(&self) -> String {
+        let scheme = if self.https { "https" } else { "http" };
+        format!("{scheme}://{}{}", self.authority(), self.path)
+    }
+
+    /// The host, an IPv6 address in brackets, and the port unless it is the scheme's own.
+    fn authority(&self) -> String {
+        let default_port = if self.https {
+            DEFAULT_HTTPS_PORT
+        } else {
+            DEFAULT_HTTP_PORT
+        };
+        let host = if self.host.contains(':') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        if self.port == default_port {
+            host
+        } else {
+            format!("{host}:{}", self.port)
+        }
+    }
+
+    /// The `method` request for this target, as the C# `SendRequestAsync` writes it; its
+    /// `Host` names the port when it is not the scheme's own, as RFC 9112 asks.
+    #[must_use]
+    pub fn request(&self, method: &str) -> String {
+        format!(
+            "{method} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: {USER_AGENT}\r\n\r\n",
+            self.path,
+            self.authority()
+        )
+    }
+}
+
+/// Reads the typed URL as the C# `TryNormalizeUrl`: `https://` added when no scheme is
+/// given, any scheme but HTTP and HTTPS refused. The host must be one
+/// [`net_host::checked_host`] takes, the port a number, and nothing in the URL a space or a
+/// control character, so the request cannot be given a line of its own. User information
+/// (`user@`) is refused rather than sent nowhere. The fragment is dropped.
+///
+/// # Errors
+///
+/// A translation key: the URL is empty, or not one the analyzer can ask.
+pub fn parse_target(input: &str) -> Result<HttpTarget, &'static str> {
+    const INVALID: &str = "ui-tool-headers-error-invalid-url";
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err("ui-tool-headers-error-url-required");
     }
-
-    if trimmed.contains("://")
-        && !trimmed.to_ascii_lowercase().starts_with("http://")
-        && !trimmed.to_ascii_lowercase().starts_with("https://")
-    {
-        return Err("ui-tool-headers-error-invalid-url");
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(INVALID);
     }
-
-    let url_str = if !trimmed.to_ascii_lowercase().starts_with("http://")
-        && !trimmed.to_ascii_lowercase().starts_with("https://")
-    {
-        format!("https://{trimmed}")
+    let lower = trimmed.to_ascii_lowercase();
+    let (https, rest) = if lower.starts_with("https://") {
+        (true, &trimmed["https://".len()..])
+    } else if lower.starts_with("http://") {
+        (false, &trimmed["http://".len()..])
+    } else if trimmed.contains("://") {
+        return Err(INVALID);
     } else {
-        trimmed.to_string()
+        (true, trimmed)
     };
-
-    if !url_str.contains('.') && !url_str.contains("localhost") {
-        return Err("ui-tool-headers-error-invalid-url");
+    let rest = rest.split('#').next().unwrap_or_default();
+    let split = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (authority, path) = rest.split_at(split);
+    if authority.contains('@') {
+        return Err(INVALID);
     }
+    let (host_text, port_text) = if let Some(bracketed) = authority.strip_prefix('[') {
+        let (inner, after) = bracketed.split_once(']').ok_or(INVALID)?;
+        let port = match after {
+            "" => None,
+            _ => Some(after.strip_prefix(':').ok_or(INVALID)?),
+        };
+        (format!("[{inner}]"), port)
+    } else {
+        match authority.split_once(':') {
+            Some((host, port)) => (host.to_owned(), Some(port)),
+            None => (authority.to_owned(), None),
+        }
+    };
+    let host = net_host::checked_host(&host_text).ok_or(INVALID)?;
+    let port = match port_text {
+        None => {
+            if https {
+                DEFAULT_HTTPS_PORT
+            } else {
+                DEFAULT_HTTP_PORT
+            }
+        }
+        Some(text) => match text.parse::<u16>() {
+            Ok(port) if port > 0 => port,
+            _ => return Err(INVALID),
+        },
+    };
+    let path = if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("/{path}")
+    };
+    Ok(HttpTarget {
+        https,
+        host,
+        port,
+        path,
+    })
+}
 
-    Ok(url_str)
+/// Where the header section of `received` ends, the blank line after it included; `None`
+/// while it has not ended.
+#[must_use]
+pub fn header_end(received: &[u8]) -> Option<usize> {
+    received
+        .windows(HEADER_END.len())
+        .position(|window| window == HEADER_END)
+        .map(|start| start + HEADER_END.len())
 }
 
 /// Parses a raw HTTP response string into status code, headers, and the header section.
@@ -403,15 +528,10 @@ pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderChec
     } else {
         let mut missing_flags = Vec::new();
         for cookie in &cookie_headers {
-            let lower = cookie.to_ascii_lowercase();
-            if !lower.contains("secure") && !missing_flags.contains(&"Secure") {
-                missing_flags.push("Secure");
-            }
-            if !lower.contains("httponly") && !missing_flags.contains(&"HttpOnly") {
-                missing_flags.push("HttpOnly");
-            }
-            if !lower.contains("samesite") && !missing_flags.contains(&"SameSite") {
-                missing_flags.push("SameSite");
+            for flag in COOKIE_FLAGS {
+                if !has_cookie_attribute(cookie, flag) && !missing_flags.contains(&flag) {
+                    missing_flags.push(flag);
+                }
             }
         }
 
@@ -425,7 +545,7 @@ pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderChec
                 detail: None,
             });
         } else {
-            let detail_text = format!("Missing flags: {}", missing_flags.join(", "));
+            let detail_text = missing_flags.join(", ");
             results.push(HeaderCheckResult {
                 name: HEADER_SET_COOKIE.to_string(),
                 display_key: "ui-tool-headers-cookies",
@@ -438,6 +558,22 @@ pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderChec
     }
 
     results
+}
+
+/// The cookie flags every `Set-Cookie` should carry.
+const COOKIE_FLAGS: [&str; 3] = ["Secure", "HttpOnly", "SameSite"];
+
+/// Whether `set_cookie` carries the attribute `name`, as RFC 6265 reads its attributes:
+/// after the first `;`, each `name` or `name=value`, the name compared without regard to
+/// case. A cookie named `insecure_pref` or valued `secure` carries no `Secure`.
+#[must_use]
+pub fn has_cookie_attribute(set_cookie: &str, name: &str) -> bool {
+    set_cookie.split(';').skip(1).any(|attribute| {
+        attribute
+            .split('=')
+            .next()
+            .is_some_and(|attribute_name| attribute_name.trim().eq_ignore_ascii_case(name))
+    })
 }
 
 /// Evaluates disclosure-oriented headers such as Server, X-Powered-By, X-AspNet-Version.
@@ -537,55 +673,90 @@ pub fn evaluate_headers(headers: &[(String, String)]) -> HeaderEvaluation {
     }
 }
 
-/// Builds an exportable plain-text report of the header analysis.
+/// A text of the report, said by the caller in the user's language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportText<'a> {
+    /// The title, naming the target.
+    Title(&'a str),
+    /// The grade line.
+    Grade(&'a str),
+    /// The security headers' heading.
+    SecurityHeaders,
+    /// The information disclosure heading.
+    Disclosure,
+    /// The raw headers' heading.
+    RawHeaders,
+    /// A security check's status.
+    Status(HeaderCheckStatus),
+    /// A disclosure check's status.
+    DisclosureStatus(HeaderCheckStatus),
+    /// A header absent.
+    Missing,
+    /// A disclosure header absent.
+    NotExposed,
+    /// The cookie flags missing.
+    MissingFlags(&'a str),
+}
+
+/// Builds an exportable plain-text report of the header analysis, its words from `say`, as
+/// the C# `BuildTextReport` takes its `localize`; `certificate`, when given, is the line
+/// saying whether the server's certificate was trusted.
 #[must_use]
 pub fn build_text_report(
     target_url: &str,
     evaluation: &HeaderEvaluation,
     raw_response: &str,
+    certificate: Option<&str>,
+    say: &dyn Fn(ReportText<'_>) -> String,
 ) -> String {
     let mut report = String::new();
-    let _ = writeln!(report, "=== HTTP Header Security Report ===");
-    let _ = writeln!(report, "Target: {target_url}");
-    let _ = writeln!(report, "Grade: {}", evaluation.grade.label());
+    let _ = writeln!(report, "{}", say(ReportText::Title(target_url)));
+    let _ = writeln!(
+        report,
+        "{}",
+        say(ReportText::Grade(evaluation.grade.label()))
+    );
+    if let Some(certificate) = certificate {
+        let _ = writeln!(report, "{certificate}");
+    }
     let _ = writeln!(report);
 
-    let _ = writeln!(report, "--- Security Headers ---");
+    let _ = writeln!(report, "{}", say(ReportText::SecurityHeaders));
     for check in &evaluation.security_checks {
-        let status_str = match check.status {
-            HeaderCheckStatus::Pass => "[PASS]",
-            HeaderCheckStatus::Warn => "[WARN]",
-            HeaderCheckStatus::Fail => "[FAIL]",
-        };
         let val = if check.value.is_empty() {
-            "(missing)"
+            say(ReportText::Missing)
         } else {
-            check.value.as_str()
+            check.value.clone()
         };
-        let _ = writeln!(report, "{status_str} {}: {val}", check.name);
+        let _ = writeln!(
+            report,
+            "[{}] {}: {val}",
+            say(ReportText::Status(check.status)),
+            check.name
+        );
         if let Some(detail) = &check.detail {
-            let _ = writeln!(report, "  Detail: {detail}");
+            let _ = writeln!(report, "  {}", say(ReportText::MissingFlags(detail)));
         }
     }
     let _ = writeln!(report);
 
-    let _ = writeln!(report, "--- Information Disclosure ---");
+    let _ = writeln!(report, "{}", say(ReportText::Disclosure));
     for check in &evaluation.disclosure_checks {
-        let status_str = match check.status {
-            HeaderCheckStatus::Pass => "[CLEAN]",
-            HeaderCheckStatus::Warn => "[EXPOSED]",
-            HeaderCheckStatus::Fail => "[FAIL]",
-        };
         let val = if check.value.is_empty() {
-            "(not exposed)"
+            say(ReportText::NotExposed)
         } else {
-            check.value.as_str()
+            check.value.clone()
         };
-        let _ = writeln!(report, "{status_str} {}: {val}", check.name);
+        let _ = writeln!(
+            report,
+            "[{}] {}: {val}",
+            say(ReportText::DisclosureStatus(check.status)),
+            check.name
+        );
     }
     let _ = writeln!(report);
 
-    let _ = writeln!(report, "--- Raw Response Headers ---");
+    let _ = writeln!(report, "{}", say(ReportText::RawHeaders));
     report.push_str(raw_response);
 
     report
@@ -596,17 +767,110 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_try_normalize_url() {
+    fn a_url_is_read_into_its_target() {
+        let target = parse_target("example.com").unwrap();
         assert_eq!(
-            try_normalize_url("example.com").unwrap(),
-            "https://example.com"
+            target,
+            HttpTarget {
+                https: true,
+                host: "example.com".into(),
+                port: DEFAULT_HTTPS_PORT,
+                path: "/".into(),
+            }
         );
+        assert_eq!(target.url(), "https://example.com/");
+        let target = parse_target(" HTTP://Example.com:8080/a?b=c#frag ").unwrap();
+        assert!(!target.https);
+        assert_eq!(target.port, 8080);
+        assert_eq!(target.path, "/a?b=c");
+        assert_eq!(target.url(), "http://Example.com:8080/a?b=c");
+        let target = parse_target("https://[2001:db8::1]:8443?x").unwrap();
+        assert_eq!(target.host, "2001:db8::1");
+        assert_eq!(target.path, "/?x");
+        assert_eq!(target.url(), "https://[2001:db8::1]:8443/?x");
         assert_eq!(
-            try_normalize_url("http://example.com").unwrap(),
-            "http://example.com"
+            parse_target("   "),
+            Err("ui-tool-headers-error-url-required")
         );
-        assert!(try_normalize_url("   ").is_err());
-        assert!(try_normalize_url("ftp://example.com").is_err());
+    }
+
+    #[test]
+    fn a_url_that_could_bend_the_request_is_refused() {
+        for refused in [
+            "ftp://example.com",
+            "https://example.com/a b",
+            "https://example.com/\r\nX-Injected: 1",
+            "https://user:pw@example.com/",
+            "https://-oProxy=x/",
+            "https://example.com:0/",
+            "https://example.com:99999/",
+            "https://example.com:http/",
+            "https://[example.com]/",
+            "https://[2001:db8::1]x/",
+        ] {
+            assert_eq!(
+                parse_target(refused),
+                Err("ui-tool-headers-error-invalid-url"),
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_request_is_the_csharp_one() {
+        let target = parse_target("http://[::1]:8080/x").unwrap();
+        assert_eq!(
+            target.request("HEAD"),
+            "HEAD /x HTTP/1.1\r\nHost: [::1]:8080\r\nConnection: close\r\nUser-Agent: Heimdall\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn the_header_section_ends_at_its_blank_line() {
+        assert_eq!(header_end(b"HTTP/1.1 200 OK\r\nA: b\r\n\r\nbody"), Some(25));
+        assert_eq!(header_end(b"HTTP/1.1 200 OK\r\nA: b\r\n"), None);
+    }
+
+    #[test]
+    fn a_cookie_flag_is_an_attribute_not_a_substring() {
+        assert!(!has_cookie_attribute("insecure_pref=1; Path=/", "Secure"));
+        assert!(!has_cookie_attribute("session=secure; HttpOnly", "Secure"));
+        assert!(has_cookie_attribute(
+            "id=1; Path=/; secure; HttpOnly",
+            "Secure"
+        ));
+        assert!(has_cookie_attribute("id=1;SameSite=Lax", "SameSite"));
+        assert!(!has_cookie_attribute("samesite=1", "SameSite"), "its name");
+        let headers = vec![(
+            "Set-Cookie".to_string(),
+            "insecure_pref=1; HttpOnly; SameSite=Lax".to_string(),
+        )];
+        let cookie = evaluate_security_headers(&headers)
+            .into_iter()
+            .find(|check| check.name == HEADER_SET_COOKIE)
+            .unwrap();
+        assert_eq!(cookie.status, HeaderCheckStatus::Warn);
+        assert_eq!(cookie.detail.as_deref(), Some("Secure"));
+    }
+
+    #[test]
+    fn the_report_takes_its_words_from_the_caller() {
+        let headers = vec![("Server".to_string(), "nginx".to_string())];
+        let evaluation = evaluate_headers(&headers);
+        let say = |text: ReportText<'_>| format!("<{text:?}>");
+        let report = build_text_report(
+            "https://example.com/",
+            &evaluation,
+            "HTTP/1.1 200 OK",
+            Some("<certificate>"),
+            &say,
+        );
+        assert!(
+            report
+                .starts_with("<Title(\"https://example.com/\")>\n<Grade(\"F\")>\n<certificate>\n")
+        );
+        assert!(report.contains("[<DisclosureStatus(Warn)>] Server: nginx"));
+        assert!(report.ends_with("<RawHeaders>\nHTTP/1.1 200 OK"));
     }
 
     #[test]
