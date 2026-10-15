@@ -37,7 +37,7 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
-use super::default_creds::escape_csv;
+use super::csv_cell;
 use super::service_status::wait_within;
 
 /// How long a listing may take, as the C# services list's `CancelAfter(30s)`: Windows
@@ -263,7 +263,7 @@ pub fn find_program(candidates: &[&str]) -> Option<PathBuf> {
 /// The text of a program's output: UTF-8 when it is (its byte order mark left out), else
 /// the system's OEM code page, the one a Windows console program writes in when its output
 /// is a pipe (cp850 on a French Windows, cp437 on an American one), decoded by Windows
-/// itself. Elsewhere, bytes that are not UTF-8 are read as U+FFFD.
+/// itself. Elsewhere, as code page 850.
 #[must_use]
 pub fn decode_text(bytes: &[u8]) -> String {
     let bytes = bytes.strip_prefix(UTF8_BOM).unwrap_or(bytes);
@@ -277,7 +277,9 @@ pub fn decode_text(bytes: &[u8]) -> String {
             return String::from_utf16_lossy(&units);
         }
     }
-    String::from_utf8_lossy(bytes).into_owned()
+    // Elsewhere, or when Windows cannot say: code page 850, the OEM code page of Western
+    // European Windows, never a replacement character in place of a letter.
+    crate::code_page::decode_cp850(bytes)
 }
 
 /// `text` on one line: its lines trimmed, the empty ones left out, the others joined by a
@@ -350,7 +352,7 @@ where
     let line = |cells: &[String]| {
         cells
             .iter()
-            .map(|cell| escape_csv(cell))
+            .map(|cell| csv_cell::quoted(cell))
             .collect::<Vec<_>>()
             .join(",")
     };
@@ -408,14 +410,9 @@ mod tests {
     fn output_that_is_not_utf8_never_fails_to_decode() {
         // "réseau" in cp850, as netsh writes it on a French console: 0x82 is "é".
         let text = decode_text(b"Type de r\x82seau : Infrastructure");
-        assert!(text.starts_with("Type de r"));
-        assert!(text.ends_with("seau : Infrastructure"));
-        #[cfg(windows)]
-        {
-            // Decoded by Windows in the system's OEM code page: never U+FFFD in place of
-            // a letter (cp437 and cp850 both read 0x82 as "é").
-            assert!(!text.contains('\u{FFFD}'), "{text}");
-        }
+        // In the system's OEM code page on Windows (cp437 and cp850 both read 0x82 as
+        // "é"), in cp850 elsewhere: never U+FFFD in place of a letter.
+        assert_eq!(text, "Type de r\u{e9}seau : Infrastructure");
     }
 
     #[test]

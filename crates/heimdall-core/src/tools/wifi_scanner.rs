@@ -536,7 +536,6 @@ SSID 2\u{a0}: =cmd|' /C calc'!A0
         assert_eq!(list[0].signal_value, 70);
         assert_eq!(list[0].channel, "11");
         assert_eq!(list[0].auth, "WPA2-Personnel");
-        #[cfg(windows)]
         assert_eq!(list[0].ssid, "Caf\u{e9}");
     }
 
