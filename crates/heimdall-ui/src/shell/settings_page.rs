@@ -752,13 +752,15 @@ impl Shell {
                 text(fl!("ui-settings-find-modified-hint")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             tooltip(
                 field,
                 text(fl!("ui-settings-search-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
@@ -771,7 +773,8 @@ impl Shell {
                     text(fl!("ui-settings-search-clear")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             );
         }
         header.into()
@@ -942,7 +945,8 @@ impl Shell {
                 .size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             tooltip(
                 button(
                     row![
@@ -962,7 +966,8 @@ impl Shell {
                 .size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center)
@@ -1622,7 +1627,8 @@ impl Shell {
             text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         column![
             labelled(
                 row_label(SettingRow::SshDefaultMode),
@@ -1653,7 +1659,8 @@ impl Shell {
             text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         column![
             labelled(
                 row_label(SettingRow::RdpDefaultMode),
@@ -1730,7 +1737,8 @@ impl Shell {
                 text(fl!("ui-settings-rdp-reset-defaults-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         }
     }

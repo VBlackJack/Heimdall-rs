@@ -23,6 +23,7 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
 use crate::tokens::{font_size, spacing};
 
 /// Width of the panel, as the C#'s.
@@ -42,7 +43,11 @@ pub fn view<'a>(health: &HealthPane) -> Element<'a, Message> {
     {
         panel = panel
             .push(text(label).size(font_size::CAPTION).style(text::secondary))
-            .push(progress_bar(0.0..=100.0, share).girth(14.0))
+            .push(
+                progress_bar(0.0..=100.0, share)
+                    .girth(14.0)
+                    .style(styles::progress),
+            )
             .push(
                 container(text(figure).size(font_size::CAPTION))
                     .align_right(Length::Fill)
@@ -53,7 +58,7 @@ pub fn view<'a>(health: &HealthPane) -> Element<'a, Message> {
         .width(PANEL_WIDTH)
         .height(Length::Fill)
         .padding(spacing::SM)
-        .style(container::bordered_box)
+        .style(styles::panel)
         .into()
 }
 
@@ -73,7 +78,7 @@ fn figures(last: Option<&ServerHealth>) -> [(f32, String); 3] {
                     narrow(health.cpu_percent),
                     fl!(
                         "ui-health-cpu-value",
-                        percent = format!("{:.1}", health.cpu_percent)
+                        percent = crate::i18n::decimal(health.cpu_percent, 1)
                     ),
                 ),
                 (

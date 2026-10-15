@@ -10,7 +10,6 @@ ui-window-title-test-data = { $title } [test data: { $folder }]
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Tools
 ui-sidebar-empty = No saved profile yet.
-ui-sidebar-settings-button = Settings
 ui-desktop-send-keys = Send keys
 ui-desktop-send-keys-tooltip = Send keys to remote
 ui-desktop-anti-idle = Anti-idle
@@ -62,7 +61,6 @@ ui-settings-tab-terminal = Terminal
 ui-settings-tab-ssh = SSH
 ui-settings-tab-rdp = RDP
 ui-settings-tab-security = Security
-ui-settings-security = Security
 ui-settings-posture-title = Security overview
 ui-settings-posture-description = The choices on this panel that affect security, as they stand now. A line that needs attention says why and leads to the setting.
 ui-settings-posture-summary-none = No risky setting
@@ -194,7 +192,10 @@ ui-scheduled-field-enabled = Enabled
 ui-scheduled-next-run-daily = Next execution: { $day } at { $time }
 ui-scheduled-next-run-today = today
 ui-scheduled-next-run-tomorrow = tomorrow
-ui-scheduled-next-run-interval = Next execution: in { $minutes } minutes (every { $minutes } min)
+ui-scheduled-next-run-interval = { $minutes ->
+    [one] Next execution: in { $minutes } minute (every { $minutes } min)
+   *[other] Next execution: in { $minutes } minutes (every { $minutes } min)
+}
 ui-scheduled-problem-server = Please select a session.
 ui-scheduled-problem-time = Invalid time format. Use HH:mm (24-hour).
 ui-scheduled-problem-interval = Interval must be a positive number of minutes.
@@ -708,7 +709,6 @@ ui-profile-edit-title = Edit Session
 ui-profile-field-name = Display name *
 ui-profile-field-group = Folder
 ui-profile-field-host = Server *
-ui-profile-field-port = Port
 ui-profile-field-username = Username
 ui-profile-field-key = SSH key
 ui-profile-optional = optional
@@ -1634,8 +1634,14 @@ ui-files-follow-tooltip = Follow the SSH terminal directory
 ui-files-follow-local-tooltip = Follow the terminal directory
 ui-files-sudo-on = Sudo mode enabled - browsing as root
 ui-files-sudo-off = Sudo mode disabled
-ui-files-item-count = { $count } items
-ui-files-item-count-filtered = { $shown }/{ $count } items
+ui-files-item-count = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+}
+ui-files-item-count-filtered = { $count ->
+    [one] { $shown }/{ $count } item
+   *[other] { $shown }/{ $count } items
+}
 ui-files-hidden-unsafe = { $count ->
     [one] { $count } entry hidden: its name is not safe to use here
    *[other] { $count } entries hidden: their names are not safe to use here
@@ -1852,7 +1858,10 @@ ui-resolution-save-default-unavailable = Cannot save a default resolution for th
 ## The SSH agent chip of the profile form, as the C# one.
 ui-agent-chip-off = No SSH agent detected
 ui-agent-chip-warn = SSH agent: { $agent } (no keys loaded)
-ui-agent-chip-ok = SSH agent: { $agent } ({ $count } keys)
+ui-agent-chip-ok = { $count ->
+    [one] SSH agent: { $agent } ({ $count } key)
+   *[other] SSH agent: { $agent } ({ $count } keys)
+}
 ui-agent-chip-tooltip = Click to re-scan SSH agents
 ui-files-menu-cut = Cut
 ui-files-menu-paste = Paste
@@ -2046,7 +2055,10 @@ ui-status-keys-sent = { $keys } sent to remote
 ui-status-keys-not-sent = Could not send keys to the remote session.
 ui-files-state-queued = Queued
 ui-files-state-preparing = Preparing transfer...
-ui-files-state-scanning = Scanning folders: { $count } entries found...
+ui-files-state-scanning = { $count ->
+    [one] Scanning folders: { $count } entry found...
+   *[other] Scanning folders: { $count } entries found...
+}
 ui-files-retry-button = Retry
 ui-files-clear-finished-button = Clear finished
 ui-files-error-interrupted = The transfer stopped unexpectedly.
@@ -2173,7 +2185,6 @@ ui-dialog-apply-ssh-mode-title = Apply to all saved SSH sessions?
 ui-dialog-apply-ssh-mode-body = { $changes } of { $total } saved SSH sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
 ui-dialog-apply-rdp-mode-title = Apply to all saved RDP sessions?
 ui-dialog-apply-rdp-mode-body = { $changes } of { $total } saved RDP sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
-ui-settings-tab-about = About
 ui-about-version = Version { $version }
 ui-about-tagline = Secure RDP/SSH/SFTP connection manager
 ui-about-section-system = System
@@ -2309,8 +2320,14 @@ ui-status-files-permissions-partial = { $failed ->
     [one] Permissions could not be changed on { $failed } item out of { $total }. "{ $name }": { $reason }
    *[other] Permissions could not be changed on { $failed } items out of { $total }. First, "{ $name }": { $reason }
 }
-ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
-ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-status-files-delete-stopped = { $total ->
+    [one] Deletion cancelled: { $done } of { $total } item deleted.
+   *[other] Deletion cancelled: { $done } of { $total } items deleted.
+}
+ui-status-files-permissions-stopped = { $total ->
+    [one] Permission change cancelled: { $done } of { $total } item changed.
+   *[other] Permission change cancelled: { $done } of { $total } items changed.
+}
 ui-macros-menu = Macros
 ui-macros-record = Record macro
 ui-macros-stop-recording = { $count ->
@@ -3067,7 +3084,6 @@ ui-tool-crontab-day-3 = Wednesday
 ui-tool-crontab-day-4 = Thursday
 ui-tool-crontab-day-5 = Friday
 ui-tool-crontab-day-6 = Saturday
-ui-tool-crontab-expression = Cron Expression
 ui-tool-crontab-copy = Copy
 ui-tool-crontab-manual-edit = Manual edit (5-field cron expression)
 ui-tool-crontab-placeholder = { "* * * * *" }
@@ -3281,7 +3297,6 @@ ui-tool-password-title = Password Generator
 ui-tool-password-generate = Generate
 ui-tool-password-generate-tooltip = Generate new password
 ui-tool-password-copy = Copy
-ui-tool-password-copy-tooltip = Copy password to clipboard
 ui-tool-password-length = Length
 ui-tool-password-total-length = Total length: { $count } characters
 ui-tool-password-uppercase = Uppercase (A-Z)
@@ -3319,7 +3334,7 @@ ui-tool-password-strength-weak = Weak
 ui-tool-password-strength-fair = Fair
 ui-tool-password-strength-good = Good
 ui-tool-password-strength-strong = Strong
-ui-tool-password-bits = bits
+ui-tool-password-bits = { $bits } bits
 ui-tool-password-issue-too-short = Too short (< 8 characters)
 ui-tool-password-issue-no-upper = No uppercase letters
 ui-tool-password-issue-no-lower = No lowercase letters
@@ -3350,8 +3365,7 @@ ui-tool-password-advanced-tooltip = Open the advanced options
 ui-tool-password-preset-label = Preset:
 ui-tool-password-preset-tooltip = Pick a preset, or Save to keep the settings you have now
 ui-tool-password-preset-custom = Custom
-ui-tool-password-presets-built-in = Built in
-ui-tool-password-presets-saved = Saved
+ui-tool-password-presets-saved = Saved: { $name }
 ui-tool-password-preset-pin4 = PIN 4
 ui-tool-password-preset-pin6 = PIN 6
 ui-tool-password-preset-wifi = WiFi
@@ -3374,7 +3388,6 @@ ui-tool-password-entropy-floor = Minimum strength:
 ui-tool-password-entropy-floor-off = No minimum
 ui-tool-password-phonetic = Phonetic:
 ui-tool-password-copy-phonetic = Copy phonetic
-ui-tool-password-copy-phonetic-tooltip = Copy phonetic spelling
 ui-tool-password-keyboard-hint = Enter: regenerate - Escape: clear
 ui-tool-password-quick-length = Quick:
 ui-tool-password-history = Recent passwords
@@ -3624,7 +3637,6 @@ ui-tool-password-crack-centuries =
        *[other] { $count } centuries
     }
 ui-tool-password-remember-settings-note = Reopens the tool where you left it. Kept on this computer, in the Heimdall settings folder, readable by your account alone.
-ui-tool-password-save-failed = Saving failed: { $error }
 ui-tool-sshkey-error = Key generation failed: { $error }
 ui-tool-sshkey-save-failed = Saving failed: { $error }
 ui-tool-certgen-save-failed = Saving failed: { $error }
@@ -3881,7 +3893,6 @@ ui-tool-sshaudit-private = Private key
 ui-tool-sshaudit-encrypted = Encrypted
 ui-tool-sshaudit-yes = Yes
 ui-tool-sshaudit-no = No
-ui-tool-sshaudit-rating = Security Rating
 ui-tool-sshaudit-strong = Strong
 ui-tool-sshaudit-acceptable = Acceptable
 ui-tool-sshaudit-weak = Weak
@@ -3937,12 +3948,6 @@ ui-tool-tlsaudit-not-supported = Not supported
 ui-tool-tlsaudit-strong = Strong
 ui-tool-tlsaudit-acceptable = Acceptable
 ui-tool-tlsaudit-weak = Weak
-ui-tool-tlsaudit-critical = Critical
-ui-tool-tlsaudit-col-cipher = Cipher Suite
-ui-tool-tlsaudit-col-strength = Strength
-ui-tool-tlsaudit-col-key-ex = Key Exchange
-ui-tool-tlsaudit-col-auth = Auth
-ui-tool-tlsaudit-col-enc = Encryption
 ui-tool-tlsaudit-findings = Findings
 ui-tool-tlsaudit-finding-ssl3 = SSL 3.0 is supported - vulnerable to POODLE attack
 ui-tool-tlsaudit-finding-tls10 = TLS 1.0 is supported - deprecated since 2020
@@ -3962,7 +3967,6 @@ ui-tool-tlsaudit-progress-ciphers = Enumerating cipher suites...
 ui-tool-tlsaudit-copy-report = Copy report
 ui-tool-tlsaudit-empty-state = Enter a host and port to audit its TLS configuration
 ui-tool-tlsaudit-error-host-required = Host is required
-ui-tool-tlsaudit-error-invalid-host = Invalid hostname or IP address
 ui-tool-tlsaudit-error-invalid-port = Port must be between 1 and 65535
 ui-tool-tlsaudit-error-connection = Connection failed: { $error }
 ui-tool-tlsaudit-report-title = SSL/TLS Audit Report: { $host }:{ $port }
@@ -3996,7 +4000,6 @@ ui-tool-dnssec-check = Check
 ui-tool-dnssec-cancel = Cancel
 ui-tool-dnssec-copy-report = Copy report
 ui-tool-dnssec-empty-state = Enter a domain to analyze its DNS security records
-ui-tool-dnssec-summary = { $passed } / { $total } checks passed
 ui-tool-dnssec-summary-all-pass = All checks passed ({ $passed }/{ $total })
 ui-tool-dnssec-summary-good = Good security posture ({ $passed }/{ $total })
 ui-tool-dnssec-summary-partial = Partial security coverage ({ $passed }/{ $total })
@@ -4006,11 +4009,8 @@ ui-tool-dnssec-warn = Warning
 ui-tool-dnssec-fail = Fail
 ui-tool-dnssec-no-record = No record found
 ui-tool-dnssec-progress = Querying { $record } for { $domain }...
-ui-tool-dnssec-status-complete = Completed in { $ms } ms
 ui-tool-dnssec-error-domain-required = Domain is required
 ui-tool-dnssec-error-invalid-domain = Invalid domain name format
-ui-tool-dnssec-error-timeout = DNS query timed out after 30 seconds
-ui-tool-dnssec-error-failed = DNS lookup failed: { $error }
 ui-tool-dnssec-finding-missing = Record missing or not configured
 ui-tool-dnssec-finding-spf-permissive = SPF policy uses +all (permissive - any server can send mail)
 ui-tool-dnssec-finding-spf-neutral = SPF policy uses ?all (neutral - no enforcement)
@@ -4061,10 +4061,6 @@ ui-tool-cve-summary = { $count ->
 ui-tool-cve-no-results = No known CVEs found for this software version.
 ui-tool-cve-empty-state = Enter a software name and version to search for known vulnerabilities
 ui-tool-cve-db-info = Offline database: { $cves } CVEs covering { $products } products
-ui-tool-cve-col-id = CVE ID
-ui-tool-cve-col-cvss = CVSS
-ui-tool-cve-col-severity = Severity
-ui-tool-cve-col-summary = Summary
 ui-tool-cve-col-affected = Affected Versions
 ui-tool-cve-severity-critical = Critical
 ui-tool-cve-severity-high = High
@@ -4131,10 +4127,8 @@ ui-tool-defaultcreds-btn-copy = Copy report
 ui-tool-defaultcreds-btn-export = Export CSV
 ui-tool-defaultcreds-empty-state = Enter a host to scan for default credentials on common services
 ui-tool-defaultcreds-error-host-required = A hostname or IP address is required.
-ui-tool-defaultcreds-error-invalid-host = Invalid hostname or IP address format.
 ui-tool-defaultcreds-detail-accepted = { $service } accepted default credentials
 ui-tool-defaultcreds-detail-rejected = { $service } rejected credentials
-ui-tool-defaultcreds-progress = Credential scan progress
 ui-tool-defaultcreds-help =
     Default Credential Scanner
 
@@ -4210,7 +4204,6 @@ ui-tool-secnumcloud-phase-access = Phase 4/5: Access control checks...
 ui-tool-secnumcloud-phase-operations = Phase 5/5: Operations checks...
 ui-tool-secnumcloud-phase-complete = Audit complete.
 ui-tool-secnumcloud-summary = { $compliance }% compliance ({ $pass } pass, { $warn } warn, { $fail } fail)
-ui-tool-secnumcloud-progress = SecNumCloud audit progress
 ui-tool-secnumcloud-help =
     SecNumCloud v3.2 Compliance Audit
 
@@ -4465,7 +4458,6 @@ ui-tool-ping-results-title = Probe History
 ui-tool-ping-copy-results = Copy Results
 ui-tool-ping-copy-csv = Export CSV
 ui-tool-ping-status-timeout = Timed out
-ui-tool-ping-status-error = Error
 ui-tool-ping-error-host-required = Please enter a target host or IP address.
 ui-tool-ping-error-timeout-invalid = Timeout must be between 100 ms and 30000 ms.
 ui-tool-ping-error-count-invalid = Count must be between 0 and 100000.
@@ -4491,7 +4483,6 @@ ui-tool-dns-lookup = Query DNS
 ui-tool-dns-searching = Querying...
 ui-tool-dns-copy = Copy Output
 ui-tool-dns-results-title = DNS Results for { $host } ({ $record_type }, { $time } ms)
-ui-tool-dns-aliases = Aliases:
 ui-tool-dns-no-records = No records returned.
 ui-tool-dns-error-host-required = Please enter a domain name.
 ui-tool-dns-help =
@@ -4509,7 +4500,6 @@ ui-tool-dnsbatch-name = DNS Batch Resolver
 ui-tool-dnsbatch-description = Resolve multiple hostnames concurrently into IPv4 and IPv6 addresses
 ui-tool-dnsbatch-hostnames-label = Hostnames to resolve (one per line or comma-separated)
 ui-tool-dnsbatch-resolve = Resolve Batch
-ui-tool-dnsbatch-resolving = Resolving...
 ui-tool-dnsbatch-copy-csv = Export CSV
 ui-tool-dnsbatch-total = Total
 ui-tool-dnsbatch-resolved = Resolved
@@ -4631,7 +4621,6 @@ ui-tool-cert-valid-to = Valid To
 ui-tool-cert-days-remaining = Days Remaining
 ui-tool-cert-tls-version = TLS Version
 ui-tool-cert-key-size = Key Size
-ui-tool-cert-hostname-match = Hostname Match
 ui-tool-cert-sans = SANs
 ui-tool-cert-match-yes = Match
 ui-tool-cert-match-no = Mismatch
@@ -4720,9 +4709,6 @@ ui-tool-netmap-hosts-scanned = Scanned
 ui-tool-netmap-hosts-up = Active Hosts
 ui-tool-netmap-ports-open = Open Ports
 ui-tool-netmap-col-ip = IP Address
-ui-tool-netmap-col-hostname = Hostname
-ui-tool-netmap-col-mac = MAC
-ui-tool-netmap-col-vendor = Vendor
 ui-tool-netmap-col-role = Role
 ui-tool-netmap-col-ports = Open Ports
 ui-tool-netmap-col-latency = Latency
