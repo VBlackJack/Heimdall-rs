@@ -275,7 +275,8 @@ pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, 
             text(fl!("ui-tunnels-collapse-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
     ]
     .spacing(spacing::SM)
     .align_y(Alignment::Center);
@@ -288,7 +289,7 @@ pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, 
     .padding(PANEL_PADDING)
     .height(PANEL_HEIGHT)
     .width(Length::Fill)
-    .style(container::bordered_box)
+    .style(styles::panel)
     .into()
 }
 
@@ -313,7 +314,8 @@ pub fn page<'a>(
             text(fl!("ui-tunnels-close-selected-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
         close_all(
             button(text(fl!("ui-tunnels-close-all")))
                 .style(styles::danger)
@@ -353,7 +355,8 @@ fn close_all(button: iced::widget::Button<'_, Message>) -> Element<'_, Message> 
         text(fl!("ui-tunnels-close-all-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -393,7 +396,8 @@ fn said_whole(cell: Ellipsis<'_>, value: String) -> Element<'_, Message> {
         text(value).size(font_size::CAPTION),
         tooltip::Position::Top,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -448,7 +452,8 @@ fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
             text(fl!("ui-tunnels-session-route-local-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
         text_cell(server_text(&route.remote.0), Length::Fill),
         cell(route.remote.1.to_string()).width(PORT_WIDTH),
     ]
@@ -510,7 +515,8 @@ fn tunnel_row(open: &Tunnel, place: Place) -> Element<'_, Message> {
             text(fl!("ui-tunnels-close-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Left,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
     )
     .spacing(spacing::SM)
     .align_y(Alignment::Center);
@@ -568,7 +574,8 @@ fn status_dot<'a>(interrupted: bool) -> Element<'a, Message> {
         text(label).size(font_size::CAPTION),
         tooltip::Position::Right,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 

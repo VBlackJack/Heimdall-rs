@@ -135,7 +135,7 @@ pub fn view(rows: &[ConflictRow]) -> Element<'_, Message> {
         all,
         container(column![header, styles::scroll(list).height(ROWS_HEIGHT)].spacing(spacing::SM))
             .padding(spacing::SM)
-            .style(container::bordered_box),
+            .style(styles::panel),
         crate::dialog_parts::buttons([
             crate::dialog_parts::cancel(),
             crate::dialog_parts::confirm(

@@ -24,7 +24,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use super::banner_grab::clean_banner;
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 use super::net_command::{self, RunEnd};
 use super::net_host::checked_host;
 
@@ -237,17 +237,17 @@ pub fn build_export_csv(
     header: [&str; 5],
     status_label: impl Fn(HopStatus) -> String,
 ) -> String {
-    let mut out = header.map(escape_csv).join(",");
+    let mut out = header.map(quoted).join(",");
     out.push('\n');
 
     for h in hops {
         out.push_str(&format!(
             "{},{},{},{},{}\n",
             h.hop,
-            escape_csv(&h.address),
-            escape_csv(&h.hostname),
-            escape_csv(&h.latency),
-            escape_csv(&status_label(h.status))
+            quoted(&h.address),
+            quoted(&h.hostname),
+            quoted(&h.latency),
+            quoted(&status_label(h.status))
         ));
     }
 

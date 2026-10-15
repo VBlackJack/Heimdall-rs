@@ -25,7 +25,7 @@ use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 use super::net_command;
 
 /// Quick scan ports for network cartography.
@@ -168,7 +168,7 @@ pub fn build_nodes_csv(
     header: [&str; 7],
     role_label: impl Fn(NodeRole) -> String,
 ) -> String {
-    let mut out = header.map(escape_csv).join(",");
+    let mut out = header.map(quoted).join(",");
     out.push('\n');
 
     for n in nodes {
@@ -181,12 +181,12 @@ pub fn build_nodes_csv(
 
         out.push_str(&format!(
             "{},{},{},{},{},{},{}\n",
-            escape_csv(&n.ip),
-            escape_csv(n.hostname.as_deref().unwrap_or_default()),
-            escape_csv(n.mac.as_deref().unwrap_or_default()),
-            escape_csv(n.vendor.as_deref().unwrap_or_default()),
-            escape_csv(&ports),
-            escape_csv(&role_label(n.role)),
+            quoted(&n.ip),
+            quoted(n.hostname.as_deref().unwrap_or_default()),
+            quoted(n.mac.as_deref().unwrap_or_default()),
+            quoted(n.vendor.as_deref().unwrap_or_default()),
+            quoted(&ports),
+            quoted(&role_label(n.role)),
             n.response_time_ms
         ));
     }

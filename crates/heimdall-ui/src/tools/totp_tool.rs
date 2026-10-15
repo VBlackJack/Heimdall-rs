@@ -306,7 +306,8 @@ impl TotpPane {
                     super::field_label(fl!("ui-tool-totp-remaining", seconds = self.remaining)),
                     progress_bar(0.0..=step, left)
                         .length(BAR_WIDTH)
-                        .girth(BAR_HEIGHT),
+                        .girth(BAR_HEIGHT)
+                        .style(styles::progress),
                 ]
                 .spacing(spacing::SM)
                 .align_x(Alignment::Center),

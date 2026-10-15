@@ -26,7 +26,7 @@ use std::net::IpAddr;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 use super::net_command::{self, RunEnd};
 
 /// How long `arp -a` may run, as the C# `WaitForExit(5000)`.
@@ -237,18 +237,18 @@ pub fn build_arp_csv(
     header: [&str; 6],
     status_label: impl Fn(ArpStatus) -> String,
 ) -> String {
-    let mut out = header.map(escape_csv).join(",");
+    let mut out = header.map(quoted).join(",");
     out.push('\n');
 
     for e in entries {
         out.push_str(&format!(
             "{},{},{},{},{},{}\n",
-            escape_csv(&e.ip),
-            escape_csv(&e.mac),
-            escape_csv(&e.vendor),
-            escape_csv(&status_label(e.status)),
-            escape_csv(&e.first_seen),
-            escape_csv(&e.last_seen)
+            quoted(&e.ip),
+            quoted(&e.mac),
+            quoted(&e.vendor),
+            quoted(&status_label(e.status)),
+            quoted(&e.first_seen),
+            quoted(&e.last_seen)
         ));
     }
 

@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::banner_grab::clean_banner;
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 use super::net_command::POLL_INTERVAL;
 
 /// Default SNMP UDP port.
@@ -627,16 +627,16 @@ pub fn parse_snmpwalk_line(line: &str) -> Option<SnmpEntry> {
 /// `BuildCsvExport` sanitizes them.
 #[must_use]
 pub fn build_snmp_csv(entries: &[SnmpEntry], header: [&str; 4]) -> String {
-    let mut out = header.map(escape_csv).join(",");
+    let mut out = header.map(quoted).join(",");
     out.push('\n');
 
     for e in entries {
         out.push_str(&format!(
             "{},{},{},{}\n",
-            escape_csv(&e.oid),
-            escape_csv(&e.name),
-            escape_csv(&e.val_type),
-            escape_csv(&e.value)
+            quoted(&e.oid),
+            quoted(&e.name),
+            quoted(&e.val_type),
+            quoted(&e.value)
         ));
     }
 

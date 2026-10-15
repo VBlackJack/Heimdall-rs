@@ -10,7 +10,6 @@ ui-window-title-test-data = { $title } [test data: { $folder }]
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Tools
 ui-sidebar-empty = No saved profile yet.
-ui-sidebar-settings-button = Settings
 ui-desktop-send-keys = Send keys
 ui-desktop-send-keys-tooltip = Send keys to remote
 ui-desktop-anti-idle = Anti-idle
@@ -62,7 +61,6 @@ ui-settings-tab-terminal = Terminal
 ui-settings-tab-ssh = SSH
 ui-settings-tab-rdp = RDP
 ui-settings-tab-security = Security
-ui-settings-security = Security
 ui-settings-posture-title = Security overview
 ui-settings-posture-description = The choices on this panel that affect security, as they stand now. A line that needs attention says why and leads to the setting.
 ui-settings-posture-summary-none = No risky setting
@@ -194,7 +192,10 @@ ui-scheduled-field-enabled = Enabled
 ui-scheduled-next-run-daily = Next execution: { $day } at { $time }
 ui-scheduled-next-run-today = today
 ui-scheduled-next-run-tomorrow = tomorrow
-ui-scheduled-next-run-interval = Next execution: in { $minutes } minutes (every { $minutes } min)
+ui-scheduled-next-run-interval = { $minutes ->
+    [one] Next execution: in { $minutes } minute (every { $minutes } min)
+   *[other] Next execution: in { $minutes } minutes (every { $minutes } min)
+}
 ui-scheduled-problem-server = Please select a session.
 ui-scheduled-problem-time = Invalid time format. Use HH:mm (24-hour).
 ui-scheduled-problem-interval = Interval must be a positive number of minutes.
@@ -708,7 +709,6 @@ ui-profile-edit-title = Edit Session
 ui-profile-field-name = Display name *
 ui-profile-field-group = Folder
 ui-profile-field-host = Server *
-ui-profile-field-port = Port
 ui-profile-field-username = Username
 ui-profile-field-key = SSH key
 ui-profile-optional = optional
@@ -1634,8 +1634,14 @@ ui-files-follow-tooltip = Follow the SSH terminal directory
 ui-files-follow-local-tooltip = Follow the terminal directory
 ui-files-sudo-on = Sudo mode enabled - browsing as root
 ui-files-sudo-off = Sudo mode disabled
-ui-files-item-count = { $count } items
-ui-files-item-count-filtered = { $shown }/{ $count } items
+ui-files-item-count = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+}
+ui-files-item-count-filtered = { $count ->
+    [one] { $shown }/{ $count } item
+   *[other] { $shown }/{ $count } items
+}
 ui-files-hidden-unsafe = { $count ->
     [one] { $count } entry hidden: its name is not safe to use here
    *[other] { $count } entries hidden: their names are not safe to use here
@@ -1852,7 +1858,10 @@ ui-resolution-save-default-unavailable = Cannot save a default resolution for th
 ## The SSH agent chip of the profile form, as the C# one.
 ui-agent-chip-off = No SSH agent detected
 ui-agent-chip-warn = SSH agent: { $agent } (no keys loaded)
-ui-agent-chip-ok = SSH agent: { $agent } ({ $count } keys)
+ui-agent-chip-ok = { $count ->
+    [one] SSH agent: { $agent } ({ $count } key)
+   *[other] SSH agent: { $agent } ({ $count } keys)
+}
 ui-agent-chip-tooltip = Click to re-scan SSH agents
 ui-files-menu-cut = Cut
 ui-files-menu-paste = Paste
@@ -2046,7 +2055,10 @@ ui-status-keys-sent = { $keys } sent to remote
 ui-status-keys-not-sent = Could not send keys to the remote session.
 ui-files-state-queued = Queued
 ui-files-state-preparing = Preparing transfer...
-ui-files-state-scanning = Scanning folders: { $count } entries found...
+ui-files-state-scanning = { $count ->
+    [one] Scanning folders: { $count } entry found...
+   *[other] Scanning folders: { $count } entries found...
+}
 ui-files-retry-button = Retry
 ui-files-clear-finished-button = Clear finished
 ui-files-error-interrupted = The transfer stopped unexpectedly.
@@ -2173,7 +2185,6 @@ ui-dialog-apply-ssh-mode-title = Apply to all saved SSH sessions?
 ui-dialog-apply-ssh-mode-body = { $changes } of { $total } saved SSH sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
 ui-dialog-apply-rdp-mode-title = Apply to all saved RDP sessions?
 ui-dialog-apply-rdp-mode-body = { $changes } of { $total } saved RDP sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
-ui-settings-tab-about = About
 ui-about-version = Version { $version }
 ui-about-tagline = Secure RDP/SSH/SFTP connection manager
 ui-about-section-system = System
@@ -2309,8 +2320,14 @@ ui-status-files-permissions-partial = { $failed ->
     [one] Permissions could not be changed on { $failed } item out of { $total }. "{ $name }": { $reason }
    *[other] Permissions could not be changed on { $failed } items out of { $total }. First, "{ $name }": { $reason }
 }
-ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
-ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-status-files-delete-stopped = { $total ->
+    [one] Deletion cancelled: { $done } of { $total } item deleted.
+   *[other] Deletion cancelled: { $done } of { $total } items deleted.
+}
+ui-status-files-permissions-stopped = { $total ->
+    [one] Permission change cancelled: { $done } of { $total } item changed.
+   *[other] Permission change cancelled: { $done } of { $total } items changed.
+}
 ui-macros-menu = Macros
 ui-macros-record = Record macro
 ui-macros-stop-recording = { $count ->
@@ -3067,7 +3084,6 @@ ui-tool-crontab-day-3 = Wednesday
 ui-tool-crontab-day-4 = Thursday
 ui-tool-crontab-day-5 = Friday
 ui-tool-crontab-day-6 = Saturday
-ui-tool-crontab-expression = Cron Expression
 ui-tool-crontab-copy = Copy
 ui-tool-crontab-manual-edit = Manual edit (5-field cron expression)
 ui-tool-crontab-placeholder = { "* * * * *" }
@@ -3281,7 +3297,6 @@ ui-tool-password-title = Password Generator
 ui-tool-password-generate = Generate
 ui-tool-password-generate-tooltip = Generate new password
 ui-tool-password-copy = Copy
-ui-tool-password-copy-tooltip = Copy password to clipboard
 ui-tool-password-length = Length
 ui-tool-password-total-length = Total length: { $count } characters
 ui-tool-password-uppercase = Uppercase (A-Z)
@@ -3319,7 +3334,7 @@ ui-tool-password-strength-weak = Weak
 ui-tool-password-strength-fair = Fair
 ui-tool-password-strength-good = Good
 ui-tool-password-strength-strong = Strong
-ui-tool-password-bits = bits
+ui-tool-password-bits = { $bits } bits
 ui-tool-password-issue-too-short = Too short (< 8 characters)
 ui-tool-password-issue-no-upper = No uppercase letters
 ui-tool-password-issue-no-lower = No lowercase letters
@@ -3350,8 +3365,7 @@ ui-tool-password-advanced-tooltip = Open the advanced options
 ui-tool-password-preset-label = Preset:
 ui-tool-password-preset-tooltip = Pick a preset, or Save to keep the settings you have now
 ui-tool-password-preset-custom = Custom
-ui-tool-password-presets-built-in = Built in
-ui-tool-password-presets-saved = Saved
+ui-tool-password-presets-saved = Saved: { $name }
 ui-tool-password-preset-pin4 = PIN 4
 ui-tool-password-preset-pin6 = PIN 6
 ui-tool-password-preset-wifi = WiFi
@@ -3374,7 +3388,6 @@ ui-tool-password-entropy-floor = Minimum strength:
 ui-tool-password-entropy-floor-off = No minimum
 ui-tool-password-phonetic = Phonetic:
 ui-tool-password-copy-phonetic = Copy phonetic
-ui-tool-password-copy-phonetic-tooltip = Copy phonetic spelling
 ui-tool-password-keyboard-hint = Enter: regenerate - Escape: clear
 ui-tool-password-quick-length = Quick:
 ui-tool-password-history = Recent passwords
@@ -3624,7 +3637,6 @@ ui-tool-password-crack-centuries =
        *[other] { $count } centuries
     }
 ui-tool-password-remember-settings-note = Reopens the tool where you left it. Kept on this computer, in the Heimdall settings folder, readable by your account alone.
-ui-tool-password-save-failed = Saving failed: { $error }
 ui-tool-sshkey-error = Key generation failed: { $error }
 ui-tool-sshkey-save-failed = Saving failed: { $error }
 ui-tool-certgen-save-failed = Saving failed: { $error }
@@ -3881,7 +3893,6 @@ ui-tool-sshaudit-private = Private key
 ui-tool-sshaudit-encrypted = Encrypted
 ui-tool-sshaudit-yes = Yes
 ui-tool-sshaudit-no = No
-ui-tool-sshaudit-rating = Security Rating
 ui-tool-sshaudit-strong = Strong
 ui-tool-sshaudit-acceptable = Acceptable
 ui-tool-sshaudit-weak = Weak
@@ -3937,12 +3948,6 @@ ui-tool-tlsaudit-not-supported = Not supported
 ui-tool-tlsaudit-strong = Strong
 ui-tool-tlsaudit-acceptable = Acceptable
 ui-tool-tlsaudit-weak = Weak
-ui-tool-tlsaudit-critical = Critical
-ui-tool-tlsaudit-col-cipher = Cipher Suite
-ui-tool-tlsaudit-col-strength = Strength
-ui-tool-tlsaudit-col-key-ex = Key Exchange
-ui-tool-tlsaudit-col-auth = Auth
-ui-tool-tlsaudit-col-enc = Encryption
 ui-tool-tlsaudit-findings = Findings
 ui-tool-tlsaudit-finding-ssl3 = SSL 3.0 is supported - vulnerable to POODLE attack
 ui-tool-tlsaudit-finding-tls10 = TLS 1.0 is supported - deprecated since 2020
@@ -3962,7 +3967,6 @@ ui-tool-tlsaudit-progress-ciphers = Enumerating cipher suites...
 ui-tool-tlsaudit-copy-report = Copy report
 ui-tool-tlsaudit-empty-state = Enter a host and port to audit its TLS configuration
 ui-tool-tlsaudit-error-host-required = Host is required
-ui-tool-tlsaudit-error-invalid-host = Invalid hostname or IP address
 ui-tool-tlsaudit-error-invalid-port = Port must be between 1 and 65535
 ui-tool-tlsaudit-error-connection = Connection failed: { $error }
 ui-tool-tlsaudit-report-title = SSL/TLS Audit Report: { $host }:{ $port }
@@ -3996,7 +4000,6 @@ ui-tool-dnssec-check = Check
 ui-tool-dnssec-cancel = Cancel
 ui-tool-dnssec-copy-report = Copy report
 ui-tool-dnssec-empty-state = Enter a domain to analyze its DNS security records
-ui-tool-dnssec-summary = { $passed } / { $total } checks passed
 ui-tool-dnssec-summary-all-pass = All checks passed ({ $passed }/{ $total })
 ui-tool-dnssec-summary-good = Good security posture ({ $passed }/{ $total })
 ui-tool-dnssec-summary-partial = Partial security coverage ({ $passed }/{ $total })
@@ -4006,11 +4009,8 @@ ui-tool-dnssec-warn = Warning
 ui-tool-dnssec-fail = Fail
 ui-tool-dnssec-no-record = No record found
 ui-tool-dnssec-progress = Querying { $record } for { $domain }...
-ui-tool-dnssec-status-complete = Completed in { $ms } ms
 ui-tool-dnssec-error-domain-required = Domain is required
 ui-tool-dnssec-error-invalid-domain = Invalid domain name format
-ui-tool-dnssec-error-timeout = DNS query timed out after 30 seconds
-ui-tool-dnssec-error-failed = DNS lookup failed: { $error }
 ui-tool-dnssec-finding-missing = Record missing or not configured
 ui-tool-dnssec-finding-spf-permissive = SPF policy uses +all (permissive - any server can send mail)
 ui-tool-dnssec-finding-spf-neutral = SPF policy uses ?all (neutral - no enforcement)
@@ -4061,10 +4061,6 @@ ui-tool-cve-summary = { $count ->
 ui-tool-cve-no-results = No known CVEs found for this software version.
 ui-tool-cve-empty-state = Enter a software name and version to search for known vulnerabilities
 ui-tool-cve-db-info = Offline database: { $cves } CVEs covering { $products } products
-ui-tool-cve-col-id = CVE ID
-ui-tool-cve-col-cvss = CVSS
-ui-tool-cve-col-severity = Severity
-ui-tool-cve-col-summary = Summary
 ui-tool-cve-col-affected = Affected Versions
 ui-tool-cve-severity-critical = Critical
 ui-tool-cve-severity-high = High
@@ -4131,10 +4127,8 @@ ui-tool-defaultcreds-btn-copy = Copy report
 ui-tool-defaultcreds-btn-export = Export CSV
 ui-tool-defaultcreds-empty-state = Enter a host to scan for default credentials on common services
 ui-tool-defaultcreds-error-host-required = A hostname or IP address is required.
-ui-tool-defaultcreds-error-invalid-host = Invalid hostname or IP address format.
 ui-tool-defaultcreds-detail-accepted = { $service } accepted default credentials
 ui-tool-defaultcreds-detail-rejected = { $service } rejected credentials
-ui-tool-defaultcreds-progress = Credential scan progress
 ui-tool-defaultcreds-help =
     Default Credential Scanner
 
@@ -4210,7 +4204,6 @@ ui-tool-secnumcloud-phase-access = Phase 4/5: Access control checks...
 ui-tool-secnumcloud-phase-operations = Phase 5/5: Operations checks...
 ui-tool-secnumcloud-phase-complete = Audit complete.
 ui-tool-secnumcloud-summary = { $compliance }% compliance ({ $pass } pass, { $warn } warn, { $fail } fail)
-ui-tool-secnumcloud-progress = SecNumCloud audit progress
 ui-tool-secnumcloud-help =
     SecNumCloud v3.2 Compliance Audit
 
@@ -4465,7 +4458,6 @@ ui-tool-ping-results-title = Probe History
 ui-tool-ping-copy-results = Copy Results
 ui-tool-ping-copy-csv = Export CSV
 ui-tool-ping-status-timeout = Timed out
-ui-tool-ping-status-error = Error
 ui-tool-ping-error-host-required = Please enter a target host or IP address.
 ui-tool-ping-error-timeout-invalid = Timeout must be between 100 ms and 30000 ms.
 ui-tool-ping-error-count-invalid = Count must be between 0 and 100000.
@@ -4491,7 +4483,6 @@ ui-tool-dns-lookup = Query DNS
 ui-tool-dns-searching = Querying...
 ui-tool-dns-copy = Copy Output
 ui-tool-dns-results-title = DNS Results for { $host } ({ $record_type }, { $time } ms)
-ui-tool-dns-aliases = Aliases:
 ui-tool-dns-no-records = No records returned.
 ui-tool-dns-error-host-required = Please enter a domain name.
 ui-tool-dns-help =
@@ -4509,7 +4500,6 @@ ui-tool-dnsbatch-name = DNS Batch Resolver
 ui-tool-dnsbatch-description = Resolve multiple hostnames concurrently into IPv4 and IPv6 addresses
 ui-tool-dnsbatch-hostnames-label = Hostnames to resolve (one per line or comma-separated)
 ui-tool-dnsbatch-resolve = Resolve Batch
-ui-tool-dnsbatch-resolving = Resolving...
 ui-tool-dnsbatch-copy-csv = Export CSV
 ui-tool-dnsbatch-total = Total
 ui-tool-dnsbatch-resolved = Resolved
@@ -4991,6 +4981,219 @@ ui-tool-netmap-role-remote = Remote Management Host
 ui-tool-netmap-role-appliance = Network Gateway / Appliance
 ui-tool-netmap-role-active = Active Node
 ui-tool-netmap-role-no-ports = Host (No Port Open)
+## Log viewer
+ui-tool-logview-name = Log Viewer
+ui-tool-logview-description = View a log file, filter its lines and follow what is appended
+ui-tool-logview-title = Log Viewer / Tail
+ui-tool-logview-help =
+    Log Viewer
+
+    Shows the newest 10,000 lines of a log file, read in the encoding chosen.
+
+    Usage:
+    Browse for a file or type its path and press Enter. Filter keeps the lines that contain the text typed, or that match it as a regular expression when Regex is checked. Tail reads what is appended every half second; a file that gets shorter is read again from its start. Only the end of a very large file is read.
+ui-tool-logview-path-placeholder = Log file path
+ui-tool-logview-browse = Browse
+ui-tool-logview-open = Open
+ui-tool-logview-tail = Tail
+ui-tool-logview-filter-placeholder = Filter text
+ui-tool-logview-filter = Filter
+ui-tool-logview-clear = Clear
+ui-tool-logview-case-sensitive = Case sensitive
+ui-tool-logview-regex = Regular expression
+ui-tool-logview-encoding = Encoding:
+ui-tool-logview-encoding-utf8 = UTF-8
+ui-tool-logview-encoding-ascii = ASCII
+ui-tool-logview-encoding-utf16 = UTF-16
+ui-tool-logview-encoding-windows1252 = Windows-1252
+ui-tool-logview-auto-scroll = Follow the last line
+ui-tool-logview-tail-active = Tail active
+ui-tool-logview-copy = Copy
+ui-tool-logview-file-filter = Log files
+ui-tool-logview-empty-state = Browse or enter a log file path to start viewing
+ui-tool-logview-no-matches = No log lines match the current filter
+ui-tool-logview-stats =
+    { $total ->
+        [one] { $shown } / { $total } line | { $size } KB | Last update: { $time }
+       *[other] { $shown } / { $total } lines | { $size } KB | Last update: { $time }
+    }
+ui-tool-logview-error-not-found = File not found.
+ui-tool-logview-error-open = Cannot open file: { $error }
+ui-tool-logview-error-regex = Invalid regular expression.
+
+## Cron job manager
+ui-tool-cronjob-name = Cron Job Manager
+ui-tool-cronjob-description = Analyze a crontab and list the Windows scheduled tasks
+ui-tool-cronjob-title = Cron Job Manager
+ui-tool-cronjob-help =
+    Cron Job Manager
+
+    Reads a crontab and the scheduled tasks of this computer.
+
+    Usage:
+    Paste the output of crontab -l and press Parse: each schedule is listed with its command, its next run and what it does; select one to see its next five runs. Windows Tasks lists the scheduled tasks of this computer with their status and their last result. Copy puts the list shown on the clipboard, one row a line.
+ui-tool-cronjob-tab-paste = Paste Crontab
+ui-tool-cronjob-tab-tasks = Windows Tasks
+ui-tool-cronjob-paste-instructions = Paste raw crontab output (from crontab -l via SSH terminal) to parse and analyze entries.
+ui-tool-cronjob-paste-placeholder = Crontab content
+ui-tool-cronjob-parse = Parse
+ui-tool-cronjob-clear = Clear
+ui-tool-cronjob-refresh = Refresh
+ui-tool-cronjob-copy = Copy
+ui-tool-cronjob-col-schedule = Schedule
+ui-tool-cronjob-col-command = Command
+ui-tool-cronjob-col-next-run = Next Run
+ui-tool-cronjob-col-description = Description
+ui-tool-cronjob-col-task-name = Task Name
+ui-tool-cronjob-col-status = Status
+ui-tool-cronjob-col-last-run = Last Run
+ui-tool-cronjob-col-last-result = Last Result
+ui-tool-cronjob-detail-header = Entry Details
+ui-tool-cronjob-detail-schedule = Schedule: { $schedule }
+ui-tool-cronjob-detail-command = Command: { $command }
+ui-tool-cronjob-detail-next-runs = Next runs:
+ui-tool-cronjob-empty-state = Paste a crontab to list its schedules
+ui-tool-cronjob-tasks-empty = Refresh to list the Windows scheduled tasks
+ui-tool-cronjob-loading = Loading scheduled tasks...
+ui-tool-cronjob-error-empty = Please paste crontab content to parse.
+ui-tool-cronjob-error-no-entry = No valid crontab entries found.
+ui-tool-cronjob-error-timeout = Loading tasks timed out.
+ui-tool-cronjob-error-failed = Failed to load tasks: { $error }
+ui-tool-cronjob-error-unsupported = Scheduled tasks can only be listed on Windows.
+ui-tool-cronjob-error-no-system-folder = Windows did not give its system folder: the scheduled tasks cannot be listed.
+ui-tool-cronjob-status-parsed =
+    { $count ->
+        [one] { $count } entry parsed.
+       *[other] { $count } entries parsed.
+    }
+ui-tool-cronjob-status-tasks =
+    { $count ->
+        [one] { $count } scheduled task found.
+       *[other] { $count } scheduled tasks found.
+    }
+
+## Notes
+ui-tool-notes-name = Notes
+ui-tool-notes-description = Markdown work notes kept as files, with tags and HTML export
+ui-tool-notes-title = Work Notes
+ui-tool-notes-help =
+    Notes
+
+    Work notes in Markdown, one file each in the notes folder of Heimdall's data.
+
+    Usage:
+    New makes a note; the first line starting with "# " is its title, and a line such as "> tags: network, prod" gives its tags. A note is saved shortly after each change, when another is selected and when the tab closes. Search finds a note by its text, its title or its file name. The note shown is copied as Markdown or as an HTML page.
+ui-tool-notes-new-title = Working Note
+ui-tool-notes-search-placeholder = Search notes
+ui-tool-notes-new = New
+ui-tool-notes-count =
+    { $count ->
+        [one] { $count } note
+       *[other] { $count } notes
+    }
+ui-tool-notes-delete = Delete
+ui-tool-notes-delete-confirm = Delete note "{ $title }"?
+ui-tool-notes-cancel = Cancel
+ui-tool-notes-copy-markdown = Copy Markdown
+ui-tool-notes-copy-html = Copy HTML
+ui-tool-notes-content-placeholder = Write the note in Markdown
+ui-tool-notes-empty-title = No note selected
+ui-tool-notes-empty-body = Create a note or select one from the list.
+ui-tool-notes-error-no-folder = This system gives Heimdall no data folder to keep notes in.
+ui-tool-notes-error-list = Cannot read the notes: { $error }
+ui-tool-notes-error-save = Cannot save the note: { $error }
+
+## Diagram editor
+ui-tool-diagram-name = Diagram Editor
+ui-tool-diagram-description = Edit a diagram's source text (Mermaid, Graphviz, PlantUML or ASCII) from templates
+ui-tool-diagram-title = Diagram Editor
+ui-tool-diagram-help =
+    Diagram Editor
+
+    A text editor for the source of a diagram, in Mermaid, Graphviz DOT, PlantUML or ASCII art. It does not draw the diagram: paste the source in a tool or a page that renders its format.
+
+    Usage:
+    Start from a template or open a text file. Save writes to the current file; Save As asks for a new one. A template or a file never replaces changes that are not saved without asking first.
+ui-tool-diagram-templates = Templates
+ui-tool-diagram-template-perimeter = Perimeter and DMZ
+ui-tool-diagram-template-cloud = Cloud VPC
+ui-tool-diagram-template-ascii = ASCII network topology
+ui-tool-diagram-template-ad = Active Directory
+ui-tool-diagram-format-mermaid = Mermaid
+ui-tool-diagram-format-dot = Graphviz DOT
+ui-tool-diagram-format-plantuml = PlantUML
+ui-tool-diagram-format-ascii = ASCII art
+ui-tool-diagram-open = Open
+ui-tool-diagram-save = Save
+ui-tool-diagram-save-as = Save As
+ui-tool-diagram-copy = Copy
+ui-tool-diagram-untitled = Untitled diagram
+ui-tool-diagram-modified = { $name } (modified)
+ui-tool-diagram-confirm-replace = This diagram has changes that are not saved. Replace it anyway?
+ui-tool-diagram-replace = Replace
+ui-tool-diagram-keep = Keep my changes
+ui-tool-diagram-placeholder = Diagram source
+ui-tool-diagram-open-title = Open a diagram
+ui-tool-diagram-save-title = Save the diagram
+ui-tool-diagram-default-file-name = diagram
+ui-tool-diagram-saved = Saved to { $path }
+ui-tool-diagram-error-open = Could not open the diagram: { $error }
+ui-tool-diagram-error-save = Could not save the diagram: { $error }
+ui-tool-diagram-error-too-large = the file is too large to open
+
+## Command snippet library
+ui-tool-cmdlib-name = Command Snippet Library
+ui-tool-cmdlib-description = Administration, network and security commands with their values filled in
+ui-tool-cmdlib-title = Command Snippet Library
+ui-tool-cmdlib-help =
+    Command Snippet Library
+
+    Common administration, network and security commands, ready to copy.
+
+    Usage:
+    Choose a platform or type a word to find a command. Type its values: the command shows them as it will be copied. A value left empty takes the example shown.
+ui-tool-cmdlib-search-placeholder = Search commands
+ui-tool-cmdlib-platform-all = All platforms
+ui-tool-cmdlib-platform-linux = Linux
+ui-tool-cmdlib-platform-windows = Windows
+ui-tool-cmdlib-platform-cross = Cross-platform
+ui-tool-cmdlib-category-network = Network
+ui-tool-cmdlib-category-system = System
+ui-tool-cmdlib-category-services = Services
+ui-tool-cmdlib-category-security = Security
+ui-tool-cmdlib-category-diagnostics = Diagnostics
+ui-tool-cmdlib-param-host = Host
+ui-tool-cmdlib-param-port = Port
+ui-tool-cmdlib-param-local-port = Local port
+ui-tool-cmdlib-param-port-range = Ports
+ui-tool-cmdlib-param-service = Service
+ui-tool-cmdlib-copy = Copy
+ui-tool-cmdlib-empty = No command matches the filters.
+ui-tool-cmdlib-count =
+    { $count ->
+        [one] { $count } command
+       *[other] { $count } commands
+    }
+ui-tool-cmdlib-snippet-listening-ports = List listening sockets
+ui-tool-cmdlib-snippet-listening-ports-description = Shows the TCP and UDP sockets listening, with their process.
+ui-tool-cmdlib-snippet-kill-port = Kill the process on a port
+ui-tool-cmdlib-snippet-kill-port-description = Ends the process listening on a TCP port.
+ui-tool-cmdlib-snippet-journal-follow = Follow a service's journal
+ui-tool-cmdlib-snippet-journal-follow-description = Shows the systemd journal of a service as it is written.
+ui-tool-cmdlib-snippet-cert-expiry = Remote TLS certificate dates
+ui-tool-cmdlib-snippet-cert-expiry-description = Connects with TLS and shows the subject and validity dates of the server's certificate.
+ui-tool-cmdlib-snippet-test-connection = Test a TCP port
+ui-tool-cmdlib-snippet-test-connection-description = Checks with PowerShell that a host answers on a TCP port.
+ui-tool-cmdlib-snippet-port-owner = Find the process of a port
+ui-tool-cmdlib-snippet-port-owner-description = Shows the state and the owning process of a local TCP port.
+ui-tool-cmdlib-snippet-restart-service = Restart a Windows service
+ui-tool-cmdlib-snippet-restart-service-description = Stops and starts a Windows service.
+ui-tool-cmdlib-snippet-flush-dns = Flush the DNS cache
+ui-tool-cmdlib-snippet-flush-dns-description = Empties the DNS client cache of Windows.
+ui-tool-cmdlib-snippet-mtr = Network path quality
+ui-tool-cmdlib-snippet-mtr-description = Sends 50 probes to each hop to measure loss and latency.
+ui-tool-cmdlib-snippet-nmap = Service versions with Nmap
+ui-tool-cmdlib-snippet-nmap-description = Probes open ports for the service and version behind them.
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
 ui-tool-ping-latency = { $ms } ms

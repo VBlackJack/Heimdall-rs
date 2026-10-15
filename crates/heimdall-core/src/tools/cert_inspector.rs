@@ -22,7 +22,7 @@
 //! caller), and CSV export generation.
 
 use super::banner_grab::clean_banner;
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 
 /// Default warning threshold in days before certificate expiry.
 pub const DEFAULT_WARNING_THRESHOLD_DAYS: i64 = 30;
@@ -260,22 +260,22 @@ pub fn build_scan_csv(
     header: [&str; SCAN_CSV_COLUMNS],
     (yes, no): (&str, &str),
 ) -> String {
-    let mut out = header.map(escape_csv).join(",");
+    let mut out = header.map(quoted).join(",");
     out.push('\n');
 
     for r in results {
         out.push_str(&format!(
             "{},{},{},{},{},{},{},{},{},{}\n",
             r.port,
-            escape_csv(&r.subject),
-            escape_csv(&r.issuer),
-            escape_csv(&r.not_before),
-            escape_csv(&r.not_after),
+            quoted(&r.subject),
+            quoted(&r.issuer),
+            quoted(&r.not_before),
+            quoted(&r.not_after),
             r.days_remaining,
-            escape_csv(&r.tls_version),
+            quoted(&r.tls_version),
             r.key_size_bits,
-            escape_csv(if r.hostname_matches { yes } else { no }),
-            escape_csv(&r.sans.join("; "))
+            quoted(if r.hostname_matches { yes } else { no }),
+            quoted(&r.sans.join("; "))
         ));
     }
 

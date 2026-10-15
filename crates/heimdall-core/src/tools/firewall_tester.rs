@@ -26,7 +26,7 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs as _};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 use super::net_command;
 use super::net_host::checked_host;
 
@@ -261,20 +261,20 @@ pub fn build_matrix_csv(
         .map(|r| ((r.host.as_str(), r.port), r))
         .collect();
 
-    let mut out = escape_csv(host_header);
+    let mut out = quoted(host_header);
     for &p in ports {
         out.push_str(&format!(",{p}"));
     }
     out.push('\n');
 
     for h in hosts {
-        out.push_str(&escape_csv(h));
+        out.push_str(&quoted(h));
         for &p in ports {
             out.push(',');
             let text = map
                 .get(&(h.as_str(), p))
                 .map_or_else(|| not_run.to_owned(), |r| cell(r));
-            out.push_str(&escape_csv(&text));
+            out.push_str(&quoted(&text));
         }
         out.push('\n');
     }

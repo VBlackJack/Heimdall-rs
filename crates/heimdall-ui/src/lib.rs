@@ -132,11 +132,11 @@ const ICON_RGBA: &[u8] = include_bytes!("../assets/icon/heimdall-32.rgba");
 /// Side of the icon's square image, in pixels.
 const ICON_SIDE: u32 = 32;
 
-/// Window size at first start, in logical pixels.
-const WINDOW_SIZE: Size = Size::new(1280.0, 800.0);
+/// Window size at first start, in logical pixels, as the C# main window's.
+const WINDOW_SIZE: Size = Size::new(1400.0, 900.0);
 
-/// Smallest window size, in logical pixels.
-const MIN_WINDOW_SIZE: Size = Size::new(640.0, 400.0);
+/// Smallest window size, in logical pixels, as the C# main window's.
+const MIN_WINDOW_SIZE: Size = Size::new(800.0, 600.0);
 
 /// Largest side a window kept is opened at, in logical pixels: no screen is larger.
 const MAX_WINDOW_SIDE: f32 = 16_384.0;
@@ -199,8 +199,16 @@ pub fn run() -> iced::Result {
         .map_or(WINDOW_SIZE, |(width, height)| Size::new(width, height));
     let hidden = screens::opens_hidden(&left);
     let maximized = left.maximized && !hidden;
+    // Centred on the screen at first start, as the C# `CenterScreen`; a window left
+    // somewhere is put back there once open.
+    let position = if left.bounds().is_none() {
+        window::Position::Centered
+    } else {
+        window::Position::default()
+    };
     let settings = window::Settings {
         size,
+        position,
         maximized,
         visible: !hidden,
         min_size: Some(MIN_WINDOW_SIZE),
