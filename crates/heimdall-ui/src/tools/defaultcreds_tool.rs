@@ -368,7 +368,8 @@ impl DefaultCredsPane {
                     .align_y(Alignment::Center),
                     progress_bar(0.0..=1.0, *fraction)
                         .length(Length::Fill)
-                        .girth(PROGRESS_HEIGHT),
+                        .girth(PROGRESS_HEIGHT)
+                        .style(styles::progress),
                 ]
                 .spacing(spacing::SM);
 
