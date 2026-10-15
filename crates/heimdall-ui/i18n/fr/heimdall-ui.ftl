@@ -4500,7 +4500,7 @@ ui-tool-banner-help =
     - Export des resultats en CSV ou texte formate
 
 ui-tool-ping-name = Moniteur Ping
-ui-tool-ping-description = Moniteur de ping ICMP continu avec statistiques de latence et graphique en direct
+ui-tool-ping-description = Moniteur de ping ICMP continu avec statistiques de latence en direct
 ui-tool-ping-host = Hôte cible
 ui-tool-ping-host-watermark = example.com ou 192.168.1.1
 ui-tool-ping-timeout = Délai d'attente (ms)
@@ -4591,7 +4591,7 @@ ui-tool-portscan-host-watermark = example.com ou 192.168.1.1
 ui-tool-portscan-ports = Plage de ports
 ui-tool-portscan-ports-watermark = 20-80,443
 ui-tool-portscan-timeout = Délai d'attente (ms)
-ui-tool-portscan-timeout-watermark = 1000
+ui-tool-portscan-timeout-watermark = 2000
 ui-tool-portscan-start = Démarrer le scan
 ui-tool-portscan-stop = Arrêter
 ui-tool-portscan-copy-csv = Exporter CSV
@@ -4922,3 +4922,56 @@ ui-tool-services-act-stop = Arreter
 ui-tool-services-act-restart = Redemarrer
 ui-tool-services-empty-state = Cliquez sur Actualiser pour inspecter les services Windows.
 ui-tool-services-action-success = Action de service terminee avec succes.
+
+## Network tools batch 2: review follow-ups
+ui-tool-ping-error-host-invalid = Nom d'hôte ou adresse IP invalide. Seuls les lettres, chiffres, points et tirets sont autorisés.
+ui-tool-ping-latency = { $ms } ms
+ui-tool-ping-detail-unreachable = Hôte de destination injoignable
+ui-tool-ping-detail-unresolved = Hôte introuvable
+ui-tool-ping-detail-no-program = Le programme ping du système est introuvable.
+ui-tool-ping-detail-failed = Échec du ping : { $reason }
+ui-tool-ping-copy-header = --- Statistiques ping pour { $host } ---
+ui-tool-ping-copy-counts = Envoyés = { $sent }, Reçus = { $received }, Perdus = { $lost } ({ $loss } % de perte)
+ui-tool-ping-copy-times = Min = { $min } ms, Max = { $max } ms, Moy = { $avg } ms, Gigue = { $jitter } ms
+ui-tool-ping-copy-line = [{ $time }] { $host } : { $status }, TTL={ $ttl }
+ui-tool-ping-loss-value = { $loss } %
+ui-tool-ping-shown-last = Affichage des { $shown } dernières sondes sur { $total }. Les exports les contiennent toutes.
+ui-tool-ping-seq = #{ $seq }
+ui-tool-ping-ttl = TTL : { $ttl }
+ui-tool-portscan-error-host-invalid = Nom d'hôte ou adresse IP invalide. Seuls les lettres, chiffres, points et tirets sont autorisés.
+ui-tool-portscan-error-timeout-invalid = Le délai d'attente doit être compris entre 100 ms et 10000 ms.
+ui-tool-portscan-error-unresolved = Le nom d'hôte n'a pas pu être résolu.
+ui-tool-portscan-error-unresolved-reason = Le nom d'hôte n'a pas pu être résolu : { $reason }
+ui-tool-portscan-large-warning = Vous êtes sur le point d'analyser { $count } ports. Cela peut prendre beaucoup de temps. Continuer ?
+ui-tool-portscan-confirm = Analyser quand même
+ui-tool-portscan-progress = { $done } ports analysés sur { $total }
+ui-tool-portscan-shown-open = Affichage des { $shown } ports ouverts sur { $total } analysés. L'export CSV contient tous les ports.
+ui-tool-portscan-latency = { $ms } ms
+ui-tool-portscan-no-latency = -
+ui-tool-portscan-port = Port { $port }
+ui-tool-dns-server-preset = { $name } ({ $address })
+ui-tool-dns-server-system = Résolveur par défaut du système
+ui-tool-dns-error-timeout = La requête a expiré après 5 secondes. Vérifiez que le serveur DNS est joignable.
+ui-tool-dns-error-no-program = Le programme nslookup du système est introuvable.
+ui-tool-dns-error-failed = Échec de la recherche : { $reason }. Vérifiez le nom de domaine et essayez un autre type d'enregistrement.
+ui-tool-dns-error-host-invalid = Nom d'hôte ou adresse IP invalide. Seuls les lettres, chiffres, points et tirets sont autorisés.
+ui-tool-dns-stop = Arrêter
+ui-tool-dnsbatch-no-address = Aucune adresse trouvée
+ui-tool-dnsbatch-timed-out = Délai dépassé
+ui-tool-dnsbatch-error-too-many = { $count } noms d'hôtes saisis : { $max } au plus peuvent être résolus à la fois.
+ui-tool-dnsbatch-stop = Arrêter
+ui-tool-dnsbatch-progress = { $done } noms d'hôtes résolus sur { $total }
+ui-tool-dnsbatch-time = { $ms } ms
+ui-tool-headers-report-title = === Rapport de sécurité des en-têtes HTTP : { $target } ===
+ui-tool-headers-report-grade = Note : { $grade }
+ui-tool-headers-cookie-missing = Attributs manquants : { $flags }
+ui-tool-headers-certificate-trusted = Certificat TLS : approuvé par cet ordinateur.
+ui-tool-headers-certificate-untrusted = Certificat TLS non approuvé : { $reason } Les en-têtes ci-dessous ont tout de même été lus.
+ui-tool-headers-error-timeout = La requête a expiré après 15 secondes.
+ui-tool-headers-error-unresolved = Le nom d'hôte { $host } n'a pas pu être résolu.
+ui-tool-headers-error-connection = Échec de la connexion : { $reason }
+ui-tool-headers-error-tls = Échec de la négociation TLS : { $reason }
+ui-tool-headers-error-certificate = Le serveur a présenté un autre certificat pendant l'analyse : { $reason }
+ui-tool-headers-error-empty = Le serveur a fermé la connexion sans répondre.
+ui-tool-headers-http-status = Statut HTTP : { $code }
+ui-tool-headers-stop = Arrêter

@@ -4489,7 +4489,7 @@ ui-tool-banner-help =
     - Exportación de resultados a CSV o texto formateado
 
 ui-tool-ping-name = Monitor Ping
-ui-tool-ping-description = Monitor de ping ICMP continuo con estadísticas de latencia y gráficos en vivo
+ui-tool-ping-description = Monitor de ping ICMP continuo con estadísticas de latencia en vivo
 ui-tool-ping-host = Host de destino
 ui-tool-ping-host-watermark = example.com o 192.168.1.1
 ui-tool-ping-timeout = Tiempo de espera (ms)
@@ -4580,7 +4580,7 @@ ui-tool-portscan-host-watermark = example.com o 192.168.1.1
 ui-tool-portscan-ports = Rango de puertos
 ui-tool-portscan-ports-watermark = 20-80,443
 ui-tool-portscan-timeout = Tiempo de espera (ms)
-ui-tool-portscan-timeout-watermark = 1000
+ui-tool-portscan-timeout-watermark = 2000
 ui-tool-portscan-start = Iniciar escaneo
 ui-tool-portscan-stop = Detener
 ui-tool-portscan-copy-csv = Exportar CSV
@@ -4911,3 +4911,56 @@ ui-tool-services-act-stop = Detener
 ui-tool-services-act-restart = Reiniciar
 ui-tool-services-empty-state = Haga clic en Actualizar para inspeccionar los servicios de Windows.
 ui-tool-services-action-success = Accion de servicio completada con exito.
+
+## Network tools batch 2: review follow-ups
+ui-tool-ping-error-host-invalid = Nombre de host o dirección IP no válidos. Solo se permiten letras, dígitos, puntos y guiones.
+ui-tool-ping-latency = { $ms } ms
+ui-tool-ping-detail-unreachable = Host de destino inaccesible
+ui-tool-ping-detail-unresolved = Host no encontrado
+ui-tool-ping-detail-no-program = No se encontró el programa ping del sistema.
+ui-tool-ping-detail-failed = Error de ping: { $reason }
+ui-tool-ping-copy-header = --- Estadísticas de ping para { $host } ---
+ui-tool-ping-copy-counts = Enviados = { $sent }, Recibidos = { $received }, Perdidos = { $lost } ({ $loss }% de pérdida)
+ui-tool-ping-copy-times = Mín = { $min } ms, Máx = { $max } ms, Media = { $avg } ms, Jitter = { $jitter } ms
+ui-tool-ping-copy-line = [{ $time }] { $host }: { $status }, TTL={ $ttl }
+ui-tool-ping-loss-value = { $loss } %
+ui-tool-ping-shown-last = Se muestran las últimas { $shown } de { $total } sondas. Las exportaciones las contienen todas.
+ui-tool-ping-seq = #{ $seq }
+ui-tool-ping-ttl = TTL: { $ttl }
+ui-tool-portscan-error-host-invalid = Nombre de host o dirección IP no válidos. Solo se permiten letras, dígitos, puntos y guiones.
+ui-tool-portscan-error-timeout-invalid = El tiempo de espera debe estar entre 100 ms y 10000 ms.
+ui-tool-portscan-error-unresolved = No se pudo resolver el nombre de host.
+ui-tool-portscan-error-unresolved-reason = No se pudo resolver el nombre de host: { $reason }
+ui-tool-portscan-large-warning = Está a punto de escanear { $count } puertos. Esto puede tardar mucho tiempo. ¿Continuar?
+ui-tool-portscan-confirm = Escanear de todos modos
+ui-tool-portscan-progress = { $done } de { $total } puertos escaneados
+ui-tool-portscan-shown-open = Se muestran los { $shown } puertos abiertos de { $total } escaneados. La exportación CSV contiene todos los puertos.
+ui-tool-portscan-latency = { $ms } ms
+ui-tool-portscan-no-latency = -
+ui-tool-portscan-port = Puerto { $port }
+ui-tool-dns-server-preset = { $name } ({ $address })
+ui-tool-dns-server-system = Resolvedor predeterminado del sistema
+ui-tool-dns-error-timeout = La consulta expiró tras 5 segundos. Compruebe que el servidor DNS es accesible.
+ui-tool-dns-error-no-program = No se encontró el programa nslookup del sistema.
+ui-tool-dns-error-failed = Error de búsqueda: { $reason }. Verifique el nombre de dominio y pruebe otro tipo de registro.
+ui-tool-dns-error-host-invalid = Nombre de host o dirección IP no válidos. Solo se permiten letras, dígitos, puntos y guiones.
+ui-tool-dns-stop = Detener
+ui-tool-dnsbatch-no-address = No se encontró ninguna dirección
+ui-tool-dnsbatch-timed-out = Tiempo agotado
+ui-tool-dnsbatch-error-too-many = { $count } nombres de host introducidos: como máximo se pueden resolver { $max } a la vez.
+ui-tool-dnsbatch-stop = Detener
+ui-tool-dnsbatch-progress = { $done } de { $total } nombres de host resueltos
+ui-tool-dnsbatch-time = { $ms } ms
+ui-tool-headers-report-title = === Informe de seguridad de cabeceras HTTP: { $target } ===
+ui-tool-headers-report-grade = Calificación: { $grade }
+ui-tool-headers-cookie-missing = Atributos ausentes: { $flags }
+ui-tool-headers-certificate-trusted = Certificado TLS: de confianza para este equipo.
+ui-tool-headers-certificate-untrusted = Certificado TLS no fiable: { $reason } Las cabeceras siguientes se leyeron de todos modos.
+ui-tool-headers-error-timeout = La solicitud expiró tras 15 segundos.
+ui-tool-headers-error-unresolved = No se pudo resolver el nombre de host { $host }.
+ui-tool-headers-error-connection = Error de conexión: { $reason }
+ui-tool-headers-error-tls = Error en la negociación TLS: { $reason }
+ui-tool-headers-error-certificate = El servidor presentó otro certificado durante el análisis: { $reason }
+ui-tool-headers-error-empty = El servidor cerró la conexión sin responder.
+ui-tool-headers-http-status = Estado HTTP: { $code }
+ui-tool-headers-stop = Detener

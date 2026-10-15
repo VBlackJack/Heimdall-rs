@@ -14,23 +14,31 @@
  * limitations under the License.
  */
 
-//! The HTTP Header Analyzer tool view: URL normalization, header fetching,
-//! security posture analysis, information disclosure detection, letter grading, and report export.
-
-use std::process::Command;
+//! The HTTP Header Analyzer tool view, as the C# `HttpHeaderAnalyzerView` and
+//! `HttpHeaderAnalyzerViewModel`: the URL read, its headers fetched by Heimdall's own client
+//! (`heimdall_app::net_tools::http`), their security posture graded, information disclosure
+//! detected, and the report copied.
+//!
+//! A fetch is one task, aborted by Stop, as the C# `Cancel`, or when the tab closes; its
+//! answer carries its fetch's number, so an earlier one never replaces a later one. Enter
+//! while a fetch goes on starts nothing, as the C# `CanCheck`. An HTTPS certificate the
+//! system does not trust is shown as a finding, with why.
 
 use heimdall_app::TabId;
+use heimdall_app::net_tools::http::{self, CertificateCheck, HttpFetch, HttpFetchError};
+use iced::task::Handle;
 use iced::widget::{column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 use heimdall_core::tools::http_headers::{
-    self, HeaderCheckStatus, HeaderEvaluation, HttpGrade, HttpResponseInfo,
+    self, HeaderCheckStatus, HeaderEvaluation, HttpGrade, HttpTarget, ReportText,
 };
 
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
+use crate::texts::validation_issue;
 use crate::tokens::{font_size, spacing};
 
 /// Messages emitted by the HTTP Header Analyzer view.
@@ -40,34 +48,29 @@ pub enum HttpHeadersMessage {
     UrlChanged(String),
     /// Start header analysis.
     Analyze,
-    /// Header fetch and evaluation completed.
-    Finished(Result<(HttpResponseInfo, HeaderEvaluation), String>),
+    /// Cancel the analysis under way.
+    Stop,
+    /// Fetch `.0` completed.
+    Finished(u64, Result<HttpFetch, HttpFetchError>),
     /// Copy report text to clipboard.
     CopyReport,
 }
 
 /// The HTTP Header Analyzer tool pane state.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HttpHeadersPane {
     url: String,
     analyzing: bool,
+    /// The number of the latest fetch; the answer of any other is ignored.
+    run: u64,
+    /// Aborts the fetch under way, also when the pane is dropped.
+    stop: Option<Handle>,
+    /// The target of the latest fetch.
+    target: Option<HttpTarget>,
     error: Option<String>,
-    response_info: Option<HttpResponseInfo>,
+    fetched: Option<HttpFetch>,
     evaluation: Option<HeaderEvaluation>,
     report_text: String,
-}
-
-impl Default for HttpHeadersPane {
-    fn default() -> Self {
-        Self {
-            url: String::new(),
-            analyzing: false,
-            error: None,
-            response_info: None,
-            evaluation: None,
-            report_text: String::new(),
-        }
-    }
 }
 
 /// Outcome of updating the HTTP Header Analyzer tool pane.
@@ -78,115 +81,162 @@ pub enum Outcome {
     Copy(CopySlot, String),
 }
 
-/// Fetches HTTP response headers via standard system curl with fallback.
-fn fetch_headers_sync(url: &str) -> Result<String, String> {
-    let mut cmd = Command::new("curl");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd.arg("-I");
-    cmd.arg("-s");
-    cmd.arg("-S");
-    cmd.arg("-k");
-    cmd.arg("--max-time");
-    cmd.arg("10");
-    cmd.arg(url);
-
-    match cmd.output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stdout.trim().is_empty() {
-                Ok(stdout.to_string())
-            } else if !stderr.trim().is_empty() {
-                Err(stderr.trim().to_string())
-            } else {
-                Err("Empty response received".to_string())
-            }
+/// A text of the report, in the user's words.
+fn report_text(said: ReportText<'_>) -> String {
+    match said {
+        ReportText::Title(target) => fl!("ui-tool-headers-report-title", target = target),
+        ReportText::Grade(grade) => fl!("ui-tool-headers-report-grade", grade = grade),
+        ReportText::SecurityHeaders => fl!("ui-tool-headers-sec-headers-title"),
+        ReportText::Disclosure => fl!("ui-tool-headers-disclosure-title"),
+        ReportText::RawHeaders => fl!("ui-tool-headers-raw-title"),
+        ReportText::Status(HeaderCheckStatus::Pass) => fl!("ui-tool-headers-status-pass"),
+        ReportText::Status(HeaderCheckStatus::Warn) => fl!("ui-tool-headers-status-warn"),
+        ReportText::Status(HeaderCheckStatus::Fail) => fl!("ui-tool-headers-status-fail"),
+        ReportText::DisclosureStatus(HeaderCheckStatus::Pass) => {
+            fl!("ui-tool-headers-status-clean")
         }
-        Err(err) => Err(format!("Failed to execute header request: {err}")),
+        ReportText::DisclosureStatus(_) => fl!("ui-tool-headers-status-exposed"),
+        ReportText::Missing => fl!("ui-tool-headers-missing"),
+        ReportText::NotExposed => fl!("ui-tool-headers-not-exposed"),
+        ReportText::MissingFlags(flags) => fl!("ui-tool-headers-cookie-missing", flags = flags),
+    }
+}
+
+/// What the server's certificate came to, in the user's words; `None` over plain HTTP.
+fn certificate_text(check: CertificateCheck) -> Option<String> {
+    match check {
+        CertificateCheck::NotTls => None,
+        CertificateCheck::Trusted => Some(fl!("ui-tool-headers-certificate-trusted")),
+        CertificateCheck::Untrusted(issue) => Some(fl!(
+            "ui-tool-headers-certificate-untrusted",
+            reason = validation_issue(issue)
+        )),
+    }
+}
+
+/// Why no response was read, in the user's words.
+fn fetch_error(error: &HttpFetchError, host: &str) -> String {
+    match error {
+        HttpFetchError::TimedOut => fl!("ui-tool-headers-error-timeout"),
+        HttpFetchError::Unresolved(_) => fl!("ui-tool-headers-error-unresolved", host = host),
+        HttpFetchError::Connection(why) => {
+            fl!("ui-tool-headers-error-connection", reason = why.as_str())
+        }
+        HttpFetchError::Tls(why) => fl!("ui-tool-headers-error-tls", reason = why.as_str()),
+        HttpFetchError::Certificate(issue) => fl!(
+            "ui-tool-headers-error-certificate",
+            reason = validation_issue(*issue)
+        ),
+        HttpFetchError::Empty => fl!("ui-tool-headers-error-empty"),
     }
 }
 
 impl HttpHeadersPane {
     /// Handles tool messages.
     pub fn update(&mut self, tab: TabId, message: HttpHeadersMessage) -> Outcome {
+        if !matches!(message, HttpHeadersMessage::Analyze) {
+            return self.apply(message);
+        }
+        let Some(target) = self.start() else {
+            return Outcome::None;
+        };
+        let run = self.run;
+        let (task, handle) =
+            Task::perform(async move { http::fetch(&target).await }, move |answer| {
+                Message::Tool(
+                    tab,
+                    super::ToolMessage::HttpHeaders(HttpHeadersMessage::Finished(run, answer)),
+                )
+            })
+            .abortable();
+        self.stop = Some(handle.abort_on_drop());
+        Outcome::Task(task)
+    }
+
+    /// Handles every message but [`HttpHeadersMessage::Analyze`], which needs the tab for its
+    /// task.
+    fn apply(&mut self, message: HttpHeadersMessage) -> Outcome {
         match message {
             HttpHeadersMessage::UrlChanged(val) => {
                 self.url = val;
                 self.error = None;
-                Outcome::None
             }
-            HttpHeadersMessage::Analyze => {
-                let normalized = match http_headers::try_normalize_url(&self.url) {
-                    Ok(norm) => norm,
-                    Err("ui-tool-headers-error-url-required") => {
-                        self.error = Some(fl!("ui-tool-headers-error-url-required"));
-                        return Outcome::None;
-                    }
-                    Err(_) => {
-                        self.error = Some(fl!("ui-tool-headers-error-invalid-url"));
-                        return Outcome::None;
-                    }
-                };
-
-                self.analyzing = true;
-                self.error = None;
-                self.response_info = None;
-                self.evaluation = None;
-                self.report_text.clear();
-
-                let task_url = normalized;
-                let task = Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            let raw_res = fetch_headers_sync(&task_url)?;
-                            let info = http_headers::parse_http_response(&raw_res);
-                            let eval = http_headers::evaluate_headers(&info.headers);
-                            Ok((info, eval))
-                        })
-                        .await
-                        .unwrap_or_else(|err| Err(err.to_string()))
-                    },
-                    move |res| {
-                        Message::Tool(
-                            tab,
-                            super::ToolMessage::HttpHeaders(HttpHeadersMessage::Finished(res)),
-                        )
-                    },
-                );
-
-                Outcome::Task(task)
-            }
-            HttpHeadersMessage::Finished(res) => {
-                self.analyzing = false;
-                match res {
-                    Ok((info, eval)) => {
-                        self.report_text =
-                            http_headers::build_text_report(&self.url, &eval, &info.header_section);
-                        self.response_info = Some(info);
-                        self.evaluation = Some(eval);
-                        self.error = None;
-                    }
-                    Err(err) => {
-                        self.error = Some(err);
-                        self.response_info = None;
-                        self.evaluation = None;
-                        self.report_text.clear();
-                    }
+            HttpHeadersMessage::Analyze => {}
+            HttpHeadersMessage::Stop => self.finish(),
+            HttpHeadersMessage::Finished(run, answer) => {
+                if run == self.run && self.analyzing {
+                    self.finish();
+                    self.finished(answer);
                 }
-                Outcome::None
             }
             HttpHeadersMessage::CopyReport => {
                 if !self.report_text.is_empty() {
-                    Outcome::Copy(CopySlot::HttpHeadersReport, self.report_text.clone())
-                } else {
-                    Outcome::None
+                    return Outcome::Copy(CopySlot::HttpHeadersReport, self.report_text.clone());
                 }
             }
+        }
+        Outcome::None
+    }
+
+    /// A new fetch's target, the pane reset for it; `None` while a fetch goes on, or when
+    /// the URL is refused, said in the error card.
+    fn start(&mut self) -> Option<HttpTarget> {
+        if self.analyzing {
+            return None;
+        }
+        match http_headers::parse_target(&self.url) {
+            Ok(target) => {
+                self.run = self.run.wrapping_add(1);
+                self.analyzing = true;
+                self.error = None;
+                self.fetched = None;
+                self.evaluation = None;
+                self.report_text.clear();
+                self.target = Some(target.clone());
+                Some(target)
+            }
+            Err(key) => {
+                self.error = Some(match key {
+                    "ui-tool-headers-error-url-required" => {
+                        fl!("ui-tool-headers-error-url-required")
+                    }
+                    _ => fl!("ui-tool-headers-error-invalid-url"),
+                });
+                None
+            }
+        }
+    }
+
+    /// The fetch over: stopped, its task aborted.
+    fn finish(&mut self) {
+        self.analyzing = false;
+        if let Some(stop) = self.stop.take() {
+            stop.abort();
+        }
+    }
+
+    /// The answer of the latest fetch shown: its evaluation and report, or why it failed.
+    fn finished(&mut self, answer: Result<HttpFetch, HttpFetchError>) {
+        let (url, host) = self
+            .target
+            .as_ref()
+            .map(|target| (target.url(), target.host.clone()))
+            .unwrap_or_default();
+        match answer {
+            Ok(fetched) => {
+                let evaluation = http_headers::evaluate_headers(&fetched.info.headers);
+                let certificate = certificate_text(fetched.certificate);
+                self.report_text = http_headers::build_text_report(
+                    &url,
+                    &evaluation,
+                    &fetched.info.header_section,
+                    certificate.as_deref(),
+                    &report_text,
+                );
+                self.fetched = Some(fetched);
+                self.evaluation = Some(evaluation);
+            }
+            Err(error) => self.error = Some(fetch_error(&error, &host)),
         }
     }
 
@@ -199,17 +249,24 @@ impl HttpHeadersPane {
     ) -> Element<'a, Message> {
         let send = move |msg| Message::Tool(tab, super::ToolMessage::HttpHeaders(msg));
 
-        let url_input = text_input(&fl!("ui-tool-headers-url-watermark"), &self.url)
+        let mut url_input = text_input(&fl!("ui-tool-headers-url-watermark"), &self.url)
             .font(super::BOX_FONT)
             .size(font_size::BODY_LARGE)
             .padding(super::INPUT_PADDING)
             .style(styles::text_input)
-            .on_input(move |v| send(HttpHeadersMessage::UrlChanged(v)))
-            .on_submit(send(HttpHeadersMessage::Analyze))
             .width(Length::Fill);
+        if !self.analyzing {
+            url_input = url_input
+                .on_input(move |v| send(HttpHeadersMessage::UrlChanged(v)))
+                .on_submit(send(HttpHeadersMessage::Analyze));
+        }
 
         let analyze_button = if self.analyzing {
-            super::action_button(fl!("ui-tool-headers-analyzing"), false, None)
+            super::action_button(
+                fl!("ui-tool-headers-stop"),
+                false,
+                Some(send(HttpHeadersMessage::Stop)),
+            )
         } else {
             super::action_button(
                 fl!("ui-tool-headers-analyze"),
@@ -232,6 +289,14 @@ impl HttpHeadersPane {
             .style(styles::card);
         let mut body = column![input_card].spacing(spacing::MD);
 
+        if self.analyzing {
+            body = body.push(
+                text(fl!("ui-tool-headers-analyzing"))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
+            );
+        }
+
         if let Some(err) = &self.error {
             body = body.push(
                 container(text(err.as_str()).size(font_size::BODY).style(text::danger))
@@ -240,7 +305,8 @@ impl HttpHeadersPane {
             );
         }
 
-        if let (Some(info), Some(eval)) = (&self.response_info, &self.evaluation) {
+        if let (Some(fetched), Some(eval)) = (&self.fetched, &self.evaluation) {
+            let info = &fetched.info;
             let (grade_color, grade_desc): (fn(&Theme) -> text::Style, String) = match eval.grade {
                 HttpGrade::APlus => (text::success, fl!("ui-tool-headers-grade-aplus")),
                 HttpGrade::A => (text::success, fl!("ui-tool-headers-grade-a")),
@@ -270,9 +336,12 @@ impl HttpHeadersPane {
             let grade_summary = row![
                 grade_badge,
                 column![
-                    text(format!("HTTP Status: {}", info.status_code))
-                        .size(font_size::SUBTITLE)
-                        .font(super::BOX_FONT),
+                    text(fl!(
+                        "ui-tool-headers-http-status",
+                        code = info.status_code.to_string()
+                    ))
+                    .size(font_size::SUBTITLE)
+                    .font(super::BOX_FONT),
                     text(grade_desc)
                         .size(font_size::BODY)
                         .style(text::secondary),
@@ -289,6 +358,21 @@ impl HttpHeadersPane {
                     .padding(spacing::MD)
                     .style(styles::card),
             );
+
+            // The certificate, a finding of its own when the system refused it.
+            if let Some(said) = certificate_text(fetched.certificate) {
+                let style = if matches!(fetched.certificate, CertificateCheck::Untrusted(_)) {
+                    text::danger
+                } else {
+                    text::success
+                };
+                body = body.push(
+                    container(text(said).size(font_size::BODY).style(style))
+                        .padding(spacing::MD)
+                        .style(styles::card)
+                        .width(Length::Fill),
+                );
+            }
 
             // Security Headers Card
             let mut sec_col =
@@ -333,6 +417,17 @@ impl HttpHeadersPane {
                     .spacing(spacing::SM)
                     .align_y(Alignment::Center)
                 ];
+
+                if let Some(flags) = &check.detail {
+                    row_col = row_col.push(
+                        text(fl!(
+                            "ui-tool-headers-cookie-missing",
+                            flags = flags.as_str()
+                        ))
+                        .size(font_size::CAPTION)
+                        .style(text::warning),
+                    );
+                }
 
                 if let Some(rec_key) = check.recommendation_key {
                     row_col = row_col.push(
@@ -435,5 +530,86 @@ fn recommendation_text(key: &'static str) -> String {
         "ui-tool-headers-rec-cookie" => fl!("ui-tool-headers-rec-cookie"),
         "ui-tool-headers-rec-disclosure" => fl!("ui-tool-headers-rec-disclosure"),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heimdall_core::tools::http_headers::parse_http_response;
+    use heimdall_tls::ValidationIssue;
+
+    fn typed(url: &str) -> HttpHeadersPane {
+        let mut pane = HttpHeadersPane::default();
+        pane.apply(HttpHeadersMessage::UrlChanged(url.into()));
+        pane
+    }
+
+    fn started(pane: &mut HttpHeadersPane) -> Handle {
+        assert!(pane.start().is_some(), "{:?}", pane.error);
+        let (_, handle) = Task::<()>::none().abortable();
+        let watcher = handle.clone();
+        pane.stop = Some(handle.abort_on_drop());
+        watcher
+    }
+
+    fn fetched(certificate: CertificateCheck) -> HttpFetch {
+        HttpFetch {
+            info: parse_http_response("HTTP/1.1 200 OK\r\nServer: test\r\n\r\n"),
+            certificate,
+        }
+    }
+
+    #[test]
+    fn stop_cancels_the_fetch_and_its_late_answer_is_dropped() {
+        let mut pane = typed("example.com");
+        let handle = started(&mut pane);
+        assert_eq!(pane.start(), None, "one fetch at a time");
+        pane.apply(HttpHeadersMessage::Stop);
+        assert!(!pane.analyzing && handle.is_aborted());
+        pane.apply(HttpHeadersMessage::Finished(
+            pane.run,
+            Ok(fetched(CertificateCheck::Trusted)),
+        ));
+        assert!(pane.fetched.is_none());
+    }
+
+    #[test]
+    fn an_earlier_answer_never_replaces_a_later_one() {
+        let mut pane = typed("example.com");
+        started(&mut pane);
+        let first = pane.run;
+        pane.apply(HttpHeadersMessage::Stop);
+        started(&mut pane);
+        pane.apply(HttpHeadersMessage::Finished(
+            first,
+            Err(HttpFetchError::Empty),
+        ));
+        assert!(pane.error.is_none() && pane.analyzing);
+    }
+
+    #[test]
+    fn a_certificate_refused_is_a_finding_of_the_report() {
+        let mut pane = typed("https://self-signed.example/");
+        started(&mut pane);
+        pane.apply(HttpHeadersMessage::Finished(
+            pane.run,
+            Ok(fetched(CertificateCheck::Untrusted(
+                ValidationIssue::SelfSigned,
+            ))),
+        ));
+        let finding = fl!(
+            "ui-tool-headers-certificate-untrusted",
+            reason = validation_issue(ValidationIssue::SelfSigned)
+        );
+        assert!(pane.report_text.contains(&finding), "{}", pane.report_text);
+        assert!(pane.report_text.contains("Server: test"));
+    }
+
+    #[test]
+    fn a_url_that_could_bend_the_request_is_refused() {
+        let mut pane = typed("https://example.com/a b");
+        assert_eq!(pane.start(), None);
+        assert_eq!(pane.error, Some(fl!("ui-tool-headers-error-invalid-url")));
     }
 }
