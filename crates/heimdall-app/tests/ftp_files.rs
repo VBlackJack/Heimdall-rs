@@ -28,6 +28,7 @@ use heimdall_app::files::{EntryKind, RemoteEntry, Side, copy_across};
 use heimdall_app::integrated_edit::{open, save};
 use heimdall_app::{App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message, Notice, TabId};
 use heimdall_core::profile::{FtpProfile, ProfileId};
+use heimdall_files::LeftOut;
 use heimdall_files::{FtpClient, FtpSecurity, FtpTarget, RemotePath, RemoteSession};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -110,7 +111,7 @@ fn ftp_tab(app: &mut App, id: &str, client: RemoteSession, entries: Vec<RemoteEn
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/"), entries, 0)),
+            result: Ok((RemotePath::from("/"), entries, LeftOut::default())),
         },
     );
     tab
@@ -281,7 +282,7 @@ async fn an_ftp_listing_counts_the_names_it_hides_for_the_pane_to_say() {
     std::fs::write(root.path().join("clean").join("a"), b"1").expect("file");
     let port = serve(root.path()).await;
 
-    let (_, entries, hidden) = tokio::time::timeout(
+    let (_, entries, left_out) = tokio::time::timeout(
         STEP,
         heimdall_app::files::list_remote(session(port).await, RemotePath::from("/")),
     )
@@ -290,7 +291,13 @@ async fn an_ftp_listing_counts_the_names_it_hides_for_the_pane_to_say() {
     .expect("listed");
     let names: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
     assert_eq!(names, ["clean", "kept"]);
-    assert_eq!(hidden, 1);
+    assert_eq!(
+        left_out,
+        LeftOut {
+            unsafe_names: 1,
+            unread_lines: 0
+        }
+    );
     let (_, _, none) = tokio::time::timeout(
         STEP,
         heimdall_app::files::list_remote(session(port).await, RemotePath::from("/clean")),
@@ -298,7 +305,7 @@ async fn an_ftp_listing_counts_the_names_it_hides_for_the_pane_to_say() {
     .await
     .expect("in time")
     .expect("listed");
-    assert_eq!(none, 0, "a clean folder hides nothing");
+    assert!(!none.any(), "a clean folder hides nothing");
 }
 
 #[tokio::test]

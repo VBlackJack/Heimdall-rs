@@ -1458,8 +1458,16 @@ ui-files-sudo-off = Modo sudo desactivado
 ui-files-item-count = { $count } elementos
 ui-files-item-count-filtered = { $shown }/{ $count } elementos
 ui-files-hidden-unsafe = { $count ->
+    [one] { $count } elemento oculto: su nombre no es seguro de usar aquí
+   *[other] { $count } elementos ocultos: sus nombres no son seguros de usar aquí
+}
+ui-files-hidden-unsafe-terminal = { $count ->
     [one] { $count } elemento oculto: su nombre no es seguro de usar aquí; usa el terminal
    *[other] { $count } elementos ocultos: sus nombres no son seguros de usar aquí; usa el terminal
+}
+ui-files-unread-lines = { $count ->
+    [one] { $count } línea del listado no se pudo leer
+   *[other] { $count } líneas del listado no se pudieron leer
 }
 
 ## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.

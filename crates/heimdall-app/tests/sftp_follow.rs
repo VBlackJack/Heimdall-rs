@@ -37,6 +37,7 @@ use heimdall_app::{
 use heimdall_core::profile::{FtpProfile, ProfileId, SshProfile};
 use heimdall_core::settings::SftpBrowser;
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::{FtpClient, FtpSecurity, FtpTarget, Refusal, RemotePath, RemoteSession};
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, SftpClient};
@@ -222,7 +223,7 @@ fn listed(app: &mut App, pane: TabId, path: &str) {
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab: pane,
         request,
-        result: Ok((RemotePath::from(path), Vec::new(), 0)),
+        result: Ok((RemotePath::from(path), Vec::new(), LeftOut::default())),
     }));
 }
 

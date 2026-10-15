@@ -34,6 +34,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
@@ -685,7 +686,7 @@ async fn unsaved_files_tab(app: &mut App) -> TabId {
                     group: None,
                     inode: None,
                 }],
-                0,
+                LeftOut::default(),
             )),
         },
     );

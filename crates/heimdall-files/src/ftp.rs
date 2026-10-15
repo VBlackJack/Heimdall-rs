@@ -55,7 +55,7 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ItemKind, Listing, Refusal, RemoteError, RemoteItem};
+use crate::{ItemKind, LeftOut, Listing, Refusal, RemoteError, RemoteItem};
 
 /// Suffix of a file being downloaded, as for SFTP.
 const PART_SUFFIX: &str = ".heimdall-part";
@@ -259,23 +259,33 @@ impl FtpClient {
     ///
     /// [`RemoteError`] from the server.
     pub async fn list(&self, path: &RemotePath) -> Result<Vec<RemoteItem>, RemoteError> {
-        Ok(self.list_counted(path).await?.items)
+        let mut control = self.control.lock().await;
+        Ok(self
+            .list_locked(&mut control, path, log::Level::Debug)
+            .await?
+            .items)
     }
 
-    /// As [`Self::list`], with how many names were left out as not one clean segment.
+    /// As [`Self::list`], for a pane to show: with what was left out, and warned of in the
+    /// log with the folder.
     ///
     /// # Errors
     ///
     /// [`RemoteError`] from the server.
     pub async fn list_counted(&self, path: &RemotePath) -> Result<Listing, RemoteError> {
         let mut control = self.control.lock().await;
-        self.list_locked(&mut control, path).await
+        self.list_locked(&mut control, path, log::Level::Warn).await
     }
 
+    /// The listing of `path`, what it left out said in the log at `level`: a warning for the
+    /// listing a pane shows, as the C# `SftpBrowser.ListDirectoryAsync` warns; debug for the
+    /// lookups and walks that list a folder once per entry, which would repeat it hundreds
+    /// of times.
     async fn list_locked(
         &self,
         control: &mut AsyncRustlsFtpStream,
         path: &RemotePath,
+        level: log::Level,
     ) -> Result<Listing, RemoteError> {
         let folder = text(path);
         let lines = if self.machine_listing {
@@ -284,25 +294,29 @@ impl FtpClient {
             control.list(Some(&folder)).await
         }
         .map_err(|e| ftp_error(&e))?;
-        let read = read_lines(&lines, self.machine_listing);
-        // Warnings naming the folder, as the C# `SftpBrowser.ListDirectoryAsync` warns of a
-        // name it leaves out: an entry a listing hides may be what an administrator looks
-        // for. Server data: the counts only, never the lines or names themselves.
-        if read.unread > 0 {
-            log::warn!(
-                "FTP listing of {:?} left out {} line(s) that do not read",
-                path.display(),
-                read.unread
+        let listing = read_lines(&lines, self.machine_listing);
+        // The folder named: an entry a listing hides may be what an administrator looks for.
+        // Server data: the counts only, never the lines or names themselves.
+        let LeftOut {
+            unsafe_names,
+            unread_lines,
+        } = listing.left_out;
+        if unread_lines > 0 {
+            log::log!(
+                level,
+                "FTP listing of {:?} left out {unread_lines} line(s) that do not read",
+                path.display()
             );
         }
-        if read.listing.hidden_unsafe > 0 {
-            log::warn!(
-                "FTP listing of {:?} left out {} entry name(s) that are not one clean segment",
-                path.display(),
-                read.listing.hidden_unsafe
+        if unsafe_names > 0 {
+            log::log!(
+                level,
+                "FTP listing of {:?} left out {unsafe_names} entry name(s) that are not one \
+                 clean segment",
+                path.display()
             );
         }
-        Ok(read.listing)
+        Ok(listing)
     }
 
     /// The entry at `path`, looked up in its folder's listing; `None` when there is none.
@@ -316,7 +330,7 @@ impl FtpClient {
         };
         let name = name.to_vec();
         Ok(self
-            .list_locked(control, &path.parent())
+            .list_locked(control, &path.parent(), log::Level::Debug)
             .await?
             .items
             .into_iter()
@@ -402,7 +416,11 @@ impl FtpClient {
                 continue;
             }
             pending.push((folder.clone(), true));
-            for entry in self.list_locked(&mut control, &folder).await?.items {
+            for entry in self
+                .list_locked(&mut control, &folder, log::Level::Debug)
+                .await?
+                .items
+            {
                 visited += 1;
                 if visited > MAX_ENTRIES {
                     return Err(RemoteError::TooLarge);
@@ -857,18 +875,11 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// What a listing's lines gave: the entries kept, with how many names were left out, and
-/// how many lines did not read.
-struct ReadLines {
-    listing: Listing,
-    unread: usize,
-}
-
 /// The entries a listing's `lines` describe: machine lines (`MLSD`) or human ones (`LIST`,
 /// UNIX or DOS format); `.` and `..`, lines that do not read, and names that are not one
 /// clean segment (`is_child_name`, as the C# `FtpBrowser.MapFtpItemToFileInfo`) left out
 /// and counted.
-fn read_lines(lines: &[String], machine: bool) -> ReadLines {
+fn read_lines(lines: &[String], machine: bool) -> Listing {
     let (mut unread, mut unsafe_names) = (0usize, 0usize);
     let listed: Vec<RemoteItem> = lines
         .iter()
@@ -886,12 +897,12 @@ fn read_lines(lines: &[String], machine: bool) -> ReadLines {
             safe
         })
         .collect();
-    ReadLines {
-        listing: Listing {
-            items: listed,
-            hidden_unsafe: unsafe_names,
+    Listing {
+        items: listed,
+        left_out: LeftOut {
+            unsafe_names,
+            unread_lines: unread,
         },
-        unread,
     }
 }
 
@@ -1303,10 +1314,10 @@ mod tests {
     use suppaftp::{FtpError, Status};
 
     use super::{Owner, ftp_error, machine_owner, read_lines, tolerated, unix_owner, walks};
-    use crate::{ItemKind, Refusal, RemoteError, RemoteItem};
+    use crate::{ItemKind, LeftOut, Refusal, RemoteError, RemoteItem};
 
     fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
-        read_lines(lines, machine).listing.items
+        read_lines(lines, machine).items
     }
 
     fn kinds(lines: &[&str], machine: bool) -> Vec<(String, ItemKind)> {
@@ -1736,12 +1747,17 @@ mod tests {
         .map(|line| (*line).to_owned())
         .collect();
         let read = read_lines(&lines, false);
-        assert_eq!(read.listing.items.len(), 1);
+        assert_eq!(read.items.len(), 1);
         // `..` is no entry, and the summary line is no line left out.
-        assert_eq!(read.listing.hidden_unsafe, 2);
-        assert_eq!(read.unread, 1);
+        assert_eq!(
+            read.left_out,
+            LeftOut {
+                unsafe_names: 2,
+                unread_lines: 1
+            }
+        );
         let clean = read_lines(&lines[5..], false);
-        assert_eq!((clean.listing.hidden_unsafe, clean.unread), (0, 0));
+        assert!(!clean.left_out.any());
     }
 
     #[test]

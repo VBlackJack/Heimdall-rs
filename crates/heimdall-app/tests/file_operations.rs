@@ -28,6 +28,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_files::conflict::Kind;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
@@ -155,7 +156,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv"), listed, 0)),
+            result: Ok((RemotePath::from("/srv"), listed, LeftOut::default())),
         },
     );
     let request = local_request(&mut app, tab);
@@ -931,7 +932,7 @@ async fn a_servers_entry_gets_new_permissions_typed_in_octal() {
                     group: Some(50),
                     inode: None,
                 }],
-                0,
+                LeftOut::default(),
             )),
         },
     );
@@ -1300,7 +1301,11 @@ async fn cut_entries_are_pasted_by_a_move_into_the_folder_shown() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv/logs"), Vec::new(), 0)),
+            result: Ok((
+                RemotePath::from("/srv/logs"),
+                Vec::new(),
+                LeftOut::default(),
+            )),
         },
     );
     let effects = files(&mut app, FilesMessage::Paste { tab });
@@ -1479,7 +1484,7 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
             FilesMessage::RemoteListed {
                 tab,
                 request,
-                result: Ok((RemotePath::from("/srv"), listed, 0)),
+                result: Ok((RemotePath::from("/srv"), listed, LeftOut::default())),
             },
         );
         tab
@@ -1702,7 +1707,11 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv/it's"), Vec::new(), 0)),
+            result: Ok((
+                RemotePath::from("/srv/it's"),
+                Vec::new(),
+                LeftOut::default(),
+            )),
         },
     );
     assert_eq!(
@@ -1716,7 +1725,11 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv/a\nrm -rf ~"), Vec::new(), 0)),
+            result: Ok((
+                RemotePath::from("/srv/a\nrm -rf ~"),
+                Vec::new(),
+                LeftOut::default(),
+            )),
         },
     );
     assert!(
@@ -2258,7 +2271,7 @@ async fn a_file_too_large_for_the_integrated_editor_points_to_the_external_one()
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv"), vec![large], 0)),
+            result: Ok((RemotePath::from("/srv"), vec![large], LeftOut::default())),
         },
     );
     select(&mut app, tab, Side::Remote, 0);
@@ -2411,7 +2424,7 @@ async fn opening_a_file_too_large_to_edit_downloads_it_as_before() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv"), vec![large], 0)),
+            result: Ok((RemotePath::from("/srv"), vec![large], LeftOut::default())),
         },
     );
     let opened = files(
@@ -2985,7 +2998,7 @@ async fn what_was_asked_about_is_acted_on_even_once_another_listing_arrived() {
                 result: Ok((
                     RemotePath::from("/srv/logs"),
                     vec![remote_entry("a.txt", EntryKind::File)],
-                    0,
+                    LeftOut::default(),
                 )),
             },
         );
@@ -3016,7 +3029,7 @@ async fn what_was_asked_about_is_acted_on_even_once_another_listing_arrived() {
                     remote_entry("logs", EntryKind::Directory),
                     remote_entry("a.txt", EntryKind::File),
                 ],
-                0,
+                LeftOut::default(),
             )),
         },
     );
@@ -3088,7 +3101,7 @@ async fn after_a_failed_listing_the_folder_shown_is_the_one_listed() {
             result: Ok((
                 RemotePath::from("/srv/logs"),
                 vec![remote_entry("old", EntryKind::Directory)],
-                0,
+                LeftOut::default(),
             )),
         },
     );
@@ -3101,7 +3114,11 @@ async fn after_a_failed_listing_the_folder_shown_is_the_one_listed() {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv/logs/old"), Vec::new(), 0)),
+            result: Ok((
+                RemotePath::from("/srv/logs/old"),
+                Vec::new(),
+                LeftOut::default(),
+            )),
         },
     );
     let back = files(&mut app, FilesMessage::Back { tab, side });
@@ -3155,7 +3172,7 @@ fn arrived(
                     .iter()
                     .map(|name| remote_entry(name, EntryKind::File))
                     .collect();
-                (RemotePath::from(folder), entries, 0)
+                (RemotePath::from(folder), entries, LeftOut::default())
             }),
         },
         Side::Local => FilesMessage::LocalListed {
@@ -3305,7 +3322,7 @@ async fn a_link_entered_then_left_for_another_folder_says_that_folders_failure()
             result: Ok((
                 RemotePath::from("/srv/x"),
                 vec![remote_entry("lnk", EntryKind::Link)],
-                0,
+                LeftOut::default(),
             )),
         },
     );

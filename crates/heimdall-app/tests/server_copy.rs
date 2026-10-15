@@ -26,6 +26,7 @@ use std::sync::Arc;
 use heimdall_app::files::{CopySource, EntryKind, FilesError, RemoteEntry, Side, copy_remote};
 use heimdall_app::{App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message, Notice, TabId};
 use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
@@ -168,7 +169,7 @@ fn tab(dir: &Path, client: RemoteSession, shell: Option<Connection>) -> (App, Ta
                     entry("a.txt", EntryKind::File),
                     entry("link", EntryKind::Link),
                 ],
-                0,
+                LeftOut::default(),
             )),
         },
     );

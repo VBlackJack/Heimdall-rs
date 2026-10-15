@@ -28,6 +28,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_files::conflict::Choice;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
@@ -206,7 +207,7 @@ fn listed_remote(app: &mut App, tab: TabId, path: &str, entries: Vec<RemoteEntry
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from(path), entries, 0)),
+            result: Ok((RemotePath::from(path), entries, LeftOut::default())),
         },
     );
 }
@@ -1515,7 +1516,11 @@ async fn escape_gives_up_a_listing_on_its_way_the_folder_shown_staying() {
         FilesMessage::RemoteListed {
             tab,
             request: given_up,
-            result: Ok((RemotePath::from("/home/admin/logs"), Vec::new(), 0)),
+            result: Ok((
+                RemotePath::from("/home/admin/logs"),
+                Vec::new(),
+                LeftOut::default(),
+            )),
         },
     );
     assert_eq!(remote(&app), ("/home/admin".to_owned(), false, 1));

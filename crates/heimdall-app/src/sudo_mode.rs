@@ -26,7 +26,7 @@ use heimdall_files::privileged_mode::{
     CHANGED, NOT_A_FOLDER, chmod_script, deletable_as_root, list_output, list_script, remove_script,
 };
 use heimdall_files::server_copy::random_token;
-use heimdall_files::{ItemKind, Refusal, RemoteError, RemotePath, RemoteSession, Special};
+use heimdall_files::{ItemKind, LeftOut, Refusal, RemoteError, RemotePath, RemoteSession, Special};
 use heimdall_ssh::{CommandEnd, ConnectError, Connection};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroize as _;
@@ -107,11 +107,11 @@ pub async fn sudo_list(
         .map(RemoteEntry::from_sudo_listing)
         .collect();
     sort_remote(&mut entries);
-    Ok((
-        RemotePath::from_bytes(listing.folder),
-        entries,
-        listing.hidden_unsafe,
-    ))
+    let left_out = LeftOut {
+        unsafe_names: listing.hidden_unsafe,
+        unread_lines: 0,
+    };
+    Ok((RemotePath::from_bytes(listing.folder), entries, left_out))
 }
 
 /// Deletes the server's `path` as root, only while it is still of `kind` and `inode` as

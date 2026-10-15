@@ -46,8 +46,7 @@ pub enum FilesMessage {
         tab: TabId,
         /// Which listing.
         request: ListingRequest,
-        /// The folder, absolute, its entries, and how many were left out as unsafe; or
-        /// why not.
+        /// The folder, absolute, its entries, and what was left out; or why not.
         result: Result<crate::files::RemoteListing, FilesError>,
     },
     /// A local listing arrived.
@@ -398,8 +397,7 @@ pub enum FilesMessage {
         request: ListingRequest,
         /// The folder asked for.
         path: RemotePath,
-        /// The folder, absolute, its entries, and how many were left out as unsafe; or
-        /// why not.
+        /// The folder, absolute, its entries, and what was left out; or why not.
         result: Result<crate::files::RemoteListing, FilesError>,
     },
     /// Show the folder of an edit's local copy.
@@ -1049,14 +1047,14 @@ impl App {
                 return Vec::new();
             }
             match result {
-                Ok((path, entries, hidden_unsafe)) => {
+                Ok((path, entries, left_out)) => {
                     pane.answered();
                     pane.entering_link = None;
                     pane.arrived(&path);
                     pane.path = path;
                     pane.show(entries);
                     // Said for this folder alone: the next listing says it again or not.
-                    pane.hidden_unsafe = hidden_unsafe;
+                    pane.left_out = left_out;
                     pane.error = None;
                 }
                 Err(error) => match pane.listing_failed() {

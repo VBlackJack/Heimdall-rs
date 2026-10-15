@@ -32,6 +32,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
@@ -167,7 +168,7 @@ async fn files_tab_attempt(dir: &Path) -> (App, TabId, AttemptId) {
                 remote("logs", EntryKind::Directory, 0),
                 remote("backup.tar.gz", EntryKind::File, 5 * 1024 * 1024 + 99),
             ],
-            0,
+            LeftOut::default(),
         )),
     }));
     let request = local_request(&mut core, tab);
@@ -618,7 +619,7 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
                     group: None,
                     inode: None,
                 }],
-                0,
+                LeftOut::default(),
             )),
         },
     )));
@@ -985,7 +986,7 @@ async fn the_servers_permissions_and_properties_dialogs_show() {
                     group: Some(50),
                     inode: None,
                 }],
-                0,
+                LeftOut::default(),
             )),
         },
     )));
@@ -1563,7 +1564,7 @@ async fn an_empty_pane_says_why_and_offers_the_way_out_as_the_csharp() {
             result: Ok((
                 RemotePath::from("/home/admin"),
                 vec![remote(".profile", EntryKind::File, 10)],
-                0,
+                LeftOut::default(),
             )),
         },
     )));
@@ -1651,7 +1652,7 @@ async fn second_files_tab(core: &mut App, dir: &Path) -> TabId {
         result: Ok((
             RemotePath::from("/srv"),
             vec![remote("inbox", EntryKind::Directory, 0)],
-            0,
+            LeftOut::default(),
         )),
     }));
     let request = local_request(core, tab);
@@ -1860,7 +1861,7 @@ fn list_remote(shell: &mut Shell, tab: TabId, entries: Vec<RemoteEntry>) {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv"), entries, 0)),
+            result: Ok((RemotePath::from("/srv"), entries, LeftOut::default())),
         },
     )));
 }
@@ -1959,7 +1960,9 @@ async fn a_listing_says_how_many_entries_it_hid_never_their_names_until_the_next
         .map(|entry| entry.label.clone())
         .collect();
     assert_eq!(labels, ["kept"], "the rest listed");
-    let notice = "2 entries hidden: their names are not safe to use here; use the terminal";
+    // No SSH shell under this tab: no terminal is advised. Which wording where is checked
+    // with the pane's notes themselves.
+    let notice = "2 entries hidden: their names are not safe to use here";
     let mut ui = simulator(&shell);
     ui.find(notice).expect("said, the count alone");
     for raw in ["evil\nname", "evil", "..\\escape", "escape"] {
@@ -1975,13 +1978,19 @@ async fn a_listing_says_how_many_entries_it_hid_never_their_names_until_the_next
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![remote("kept", EntryKind::File, 1)],
-                1,
+                LeftOut {
+                    unsafe_names: 1,
+                    unread_lines: 2,
+                },
             )),
         },
     )));
-    simulator(&shell)
-        .find("1 entry hidden: its name is not safe to use here; use the terminal")
+    let mut ui = simulator(&shell);
+    ui.find("1 entry hidden: its name is not safe to use here")
         .expect("one");
+    ui.find("2 lines of the listing could not be read")
+        .expect("an FTP listing's lines that do not read");
+    drop(ui);
     list_remote(&mut shell, tab, vec![remote("kept", EntryKind::File, 1)]);
     let mut ui = simulator(&shell);
     assert!(
@@ -1989,9 +1998,10 @@ async fn a_listing_says_how_many_entries_it_hid_never_their_names_until_the_next
         "a listing hiding none says nothing"
     );
     assert!(
-        ui.find("1 entry hidden: its name is not safe to use here; use the terminal")
+        ui.find("1 entry hidden: its name is not safe to use here")
             .is_err()
     );
+    assert!(ui.find("2 lines of the listing could not be read").is_err());
 }
 
 #[tokio::test]

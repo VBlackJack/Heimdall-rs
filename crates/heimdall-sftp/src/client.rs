@@ -714,15 +714,27 @@ impl SftpClient {
     ///
     /// [`SftpError`], [`SftpError::ListingTooLarge`] past the configured limit.
     pub async fn read_dir(&self, path: &RemotePath) -> Result<Vec<DirEntry>, SftpError> {
-        Ok(self.read_dir_counted(path).await?.entries)
+        Ok(self.read_dir_logged(path, log::Level::Debug).await?.entries)
     }
 
-    /// As [`Self::read_dir`], with how many names were left out as not one clean segment.
+    /// As [`Self::read_dir`], for a pane to show: with how many names were left out as not
+    /// one clean segment, warned of in the log with the folder, as the C#
+    /// `SftpBrowser.ListDirectoryAsync` warns. [`Self::read_dir`], which walks run once per
+    /// folder, says it at debug level only.
     ///
     /// # Errors
     ///
     /// As [`Self::read_dir`].
     pub async fn read_dir_counted(&self, path: &RemotePath) -> Result<DirListing, SftpError> {
+        self.read_dir_logged(path, log::Level::Warn).await
+    }
+
+    /// The listing of `path`, the names it left out said in the log at `level`.
+    async fn read_dir_logged(
+        &self,
+        path: &RemotePath,
+        level: log::Level,
+    ) -> Result<DirListing, SftpError> {
         let request_path = path.clone();
         let handle = self
             .expect_handle(|id| Request::Opendir {
@@ -735,10 +747,10 @@ impl SftpClient {
         let listing = listed?;
         closed?;
         if listing.hidden_unsafe > 0 {
-            // A warning naming the folder, as the C# `SftpBrowser.ListDirectoryAsync`: the
-            // user is told too, and an entry the listing hides may be what an administrator
-            // looks for. Server data: the count only, never the names.
-            log::warn!(
+            // The folder named: an entry a listing hides may be what an administrator looks
+            // for. Server data: the count only, never the names.
+            log::log!(
+                level,
                 "SFTP listing of {:?} left out {} entry name(s) that are not one clean segment",
                 path.display(),
                 listing.hidden_unsafe

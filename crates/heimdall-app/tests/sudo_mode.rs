@@ -36,6 +36,7 @@ use heimdall_app::{
     TabId, UiError,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_files::LeftOut;
 use heimdall_files::privileged::Sudo;
 use heimdall_files::{Refusal, RemoteSession};
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
@@ -177,7 +178,7 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
         sudo_list(&connection, &remote(&folder), Some(b"wrong"), sudo).await,
         Err(FilesError::SudoPasswordRejected)
     );
-    let (listed, entries, hidden_unsafe) = sudo_list(
+    let (listed, entries, left_out) = sudo_list(
         &connection,
         &remote(&dir.path().join("link")),
         Some(PASSWORD.as_bytes()),
@@ -190,7 +191,7 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
     let [logs, file] = entries.as_slice() else {
         panic!("{entries:?}");
     };
-    assert_eq!(hidden_unsafe, 1, "counted, so the pane says it");
+    assert_eq!(left_out.unsafe_names, 1, "counted, so the pane says it");
     assert_eq!(
         (logs.label.as_str(), logs.kind),
         ("logs", EntryKind::Directory)
@@ -492,7 +493,7 @@ async fn opened(dir: &Path, shell: Option<Connection>) -> (App, TabId, AttemptId
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![entry("logs", EntryKind::Directory, 0)],
-                0,
+                LeftOut::default(),
             )),
         },
     );
@@ -518,7 +519,7 @@ fn listed_as_root(app: &mut App, tab: TabId, path: &str, entries: Vec<RemoteEntr
             tab,
             request,
             path: RemotePath::from(path),
-            result: Ok((RemotePath::from(path), entries, 0)),
+            result: Ok((RemotePath::from(path), entries, LeftOut::default())),
         },
     );
 }
@@ -672,7 +673,7 @@ async fn a_listing_as_root_says_how_many_entries_it_hid_until_the_next_listing()
     let dir = tempfile::tempdir().expect("dir");
     let connection = shell(&server, dir.path()).await;
     let (mut app, tab) = tab(dir.path(), Some(connection)).await;
-    assert_eq!(pane(&app, tab).remote.hidden_unsafe, 0, "none hidden");
+    assert!(!pane(&app, tab).remote.left_out.any(), "none hidden");
     files(&mut app, FilesMessage::ToggleSudo { tab });
     let srv = RemotePath::from("/srv");
     let request = remote_request(&mut app, tab);
@@ -682,11 +683,21 @@ async fn a_listing_as_root_says_how_many_entries_it_hid_until_the_next_listing()
             tab,
             request,
             path: srv.clone(),
-            result: Ok((srv, vec![entry("kept", EntryKind::File, 1)], 2)),
+            result: Ok((
+                srv,
+                vec![entry("kept", EntryKind::File, 1)],
+                LeftOut {
+                    unsafe_names: 2,
+                    unread_lines: 0,
+                },
+            )),
         },
     );
     let remote = &pane(&app, tab).remote;
-    assert_eq!(remote.hidden_unsafe, 2, "the count, to be said in the pane");
+    assert_eq!(
+        remote.left_out.unsafe_names, 2,
+        "the count, to be said in the pane"
+    );
     assert_eq!(remote.entries.len(), 1, "the hidden ones never listed");
     listed_as_root(
         &mut app,
@@ -694,7 +705,7 @@ async fn a_listing_as_root_says_how_many_entries_it_hid_until_the_next_listing()
         "/srv",
         vec![entry("kept", EntryKind::File, 1)],
     );
-    assert_eq!(pane(&app, tab).remote.hidden_unsafe, 0, "cleared");
+    assert!(!pane(&app, tab).remote.left_out.any(), "cleared");
 }
 
 #[tokio::test]
@@ -722,7 +733,11 @@ async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_
             tab,
             request: second,
             path: srv.clone(),
-            result: Ok((srv.clone(), vec![entry("fresh", EntryKind::File, 1)], 0)),
+            result: Ok((
+                srv.clone(),
+                vec![entry("fresh", EntryKind::File, 1)],
+                LeftOut::default(),
+            )),
         },
     );
     // The first one comes last, wanting a password: nothing is asked, nothing changes.
@@ -742,7 +757,11 @@ async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_
             tab,
             request: first,
             path: srv.clone(),
-            result: Ok((srv, vec![entry("stale", EntryKind::File, 2)], 0)),
+            result: Ok((
+                srv,
+                vec![entry("stale", EntryKind::File, 2)],
+                LeftOut::default(),
+            )),
         },
     );
     let remote = &pane(&app, tab).remote;

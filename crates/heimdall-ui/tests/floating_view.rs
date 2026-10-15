@@ -36,6 +36,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
@@ -1052,7 +1053,7 @@ async fn two_files(dir: &Path) -> TwoFiles {
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![remote_file("notes.txt"), remote_file("old.txt")],
-                0,
+                LeftOut::default(),
             )),
         }));
         core.update(AppMessage::Files(FilesMessage::Key {
