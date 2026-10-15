@@ -43,13 +43,6 @@ const NO_PORT: u16 = 0;
 /// Port when the field is left empty.
 pub const DEFAULT_SSH_PORT: u16 = 22;
 
-/// The longest name a Remote Desktop Gateway can have, as the C# `InputValidator` bounds a
-/// DNS name.
-const MAX_GATEWAY_NAME_LENGTH: usize = 255;
-
-/// The longest label of a DNS name, between two dots.
-const MAX_DNS_LABEL_LENGTH: usize = 63;
-
 /// Prefix of the identifiers this application gives, apart from imported ones.
 const ID_PREFIX: &str = "rs-";
 
@@ -1960,24 +1953,10 @@ pub(crate) fn host(typed: &str) -> Result<String, DraftError> {
 }
 
 /// Whether `typed` names a Remote Desktop Gateway as the C# `InputValidator` "Address" rule
-/// reads one: an IPv4 address, or a DNS name starting with a letter, of letters, digits and
-/// hyphens, no label empty, longer than [`MAX_DNS_LABEL_LENGTH`] or starting or ending with a
-/// hyphen, the whole at most [`MAX_GATEWAY_NAME_LENGTH`] long.
+/// reads one, the rule the network tools read a host by:
+/// [`heimdall_core::tools::net_input::is_address`].
 fn is_gateway_address(typed: &str) -> bool {
-    if typed.len() > MAX_GATEWAY_NAME_LENGTH {
-        return false;
-    }
-    if typed.parse::<std::net::Ipv4Addr>().is_ok() {
-        return true;
-    }
-    typed.starts_with(|c: char| c.is_ascii_alphabetic())
-        && typed.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= MAX_DNS_LABEL_LENGTH
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-        })
+    heimdall_core::tools::net_input::is_address(typed)
 }
 
 /// An identifier none of `taken` holds.
@@ -2813,8 +2792,11 @@ mod tests {
                 "{good}"
             );
         }
-        let long_label = "a".repeat(MAX_DNS_LABEL_LENGTH + 1);
-        let long_name = format!("a{}", ".b".repeat(MAX_GATEWAY_NAME_LENGTH / 2 + 1));
+        let long_label = "a".repeat(heimdall_core::tools::net_input::MAX_DNS_LABEL_LENGTH + 1);
+        let long_name = format!(
+            "a{}",
+            ".b".repeat(heimdall_core::tools::net_input::MAX_NAME_LENGTH / 2 + 1)
+        );
         for bad in [
             "rdg.lab:443",
             "https://rdg.lab",

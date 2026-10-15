@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-//! WHOIS Lookup tool pane for querying domain and IP registration data.
+//! WHOIS Lookup tool pane for querying domain and IP registration data, as the C#
+//! `WhoisLookupViewModel`.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -27,7 +28,8 @@
 )]
 
 use heimdall_app::TabId;
-use heimdall_core::tools::whois::{self, WhoisLookupRequest, WhoisLookupResult};
+use heimdall_app::network_tools::{self, WhoisFailure, WhoisReply};
+use heimdall_core::tools::whois::{self, MAX_REPLY_BYTES};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
@@ -37,6 +39,9 @@ use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
 
+/// Bytes in a KiB, for the size a reply is cut at.
+const BYTES_PER_KIB: usize = 1024;
+
 /// Messages emitted by the WHOIS Lookup tool.
 #[derive(Debug, Clone)]
 pub enum WhoisMessage {
@@ -44,10 +49,21 @@ pub enum WhoisMessage {
     DomainChanged(String),
     /// Start WHOIS lookup.
     Lookup,
-    /// WHOIS lookup query completed.
-    LookupDone(WhoisLookupResult),
+    /// The lookup of `.0` ended.
+    LookupDone(String, Result<WhoisReply, WhoisFailure>),
     /// Copy output text to clipboard.
     CopyOutput,
+}
+
+/// What the tool says went wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Problem {
+    /// Nothing typed, the C# `ToolWhoisErrorDomainRequired`.
+    Required,
+    /// Not a domain or an IP address, the C# `ToolWhoisErrorInvalidDomain`.
+    Invalid,
+    /// The lookup failed.
+    Failed(WhoisFailure),
 }
 
 /// The WHOIS Lookup tool pane state.
@@ -55,8 +71,9 @@ pub enum WhoisMessage {
 pub struct WhoisPane {
     domain: String,
     running: bool,
-    error: Option<String>,
-    result: Option<WhoisLookupResult>,
+    problem: Option<Problem>,
+    /// The domain asked and its reply.
+    result: Option<(String, WhoisReply)>,
 }
 
 /// Outcome of updating the WHOIS Lookup tool pane.
@@ -67,65 +84,90 @@ pub enum Outcome {
     Copy(CopySlot, String),
 }
 
+/// What a message did, before its tab is known.
+#[derive(Debug)]
+enum Applied {
+    None,
+    Run(Task<WhoisMessage>),
+    Copy(CopySlot, String),
+}
+
 impl WhoisPane {
     /// Handles tool messages.
     pub fn update(&mut self, tab: TabId, message: WhoisMessage) -> Outcome {
+        match self.apply(message) {
+            Applied::None => Outcome::None,
+            Applied::Run(task) => Outcome::Task(
+                task.map(move |message| Message::Tool(tab, ToolMessage::Whois(message))),
+            ),
+            Applied::Copy(slot, content) => Outcome::Copy(slot, content),
+        }
+    }
+
+    /// Handles a message, as [`Self::update`] without the tab.
+    fn apply(&mut self, message: WhoisMessage) -> Applied {
         match message {
             WhoisMessage::DomainChanged(val) => {
                 self.domain = val;
-                self.error = None;
-                Outcome::None
+                self.problem = None;
+                Applied::None
             }
             WhoisMessage::Lookup => {
-                let domain = self.domain.trim().to_string();
-                if domain.is_empty() {
-                    self.error = Some(fl!("ui-tool-whois-error-required"));
-                    return Outcome::None;
+                // One lookup at a time, as the C# `CanLookup`.
+                if self.running {
+                    return Applied::None;
                 }
+                if self.domain.trim().is_empty() {
+                    self.problem = Some(Problem::Required);
+                    return Applied::None;
+                }
+                let Some(query) = whois::whois_query(&self.domain) else {
+                    self.problem = Some(Problem::Invalid);
+                    return Applied::None;
+                };
 
                 self.running = true;
-                self.error = None;
+                self.problem = None;
                 self.result = None;
 
-                let domain_fallback = domain.clone();
-                let req = WhoisLookupRequest { domain };
-
-                let task = Task::perform(
+                let server = whois::resolve_whois_server(&query);
+                Applied::Run(Task::perform(
                     async move {
-                        tokio::task::spawn_blocking(move || whois::lookup_whois(&req))
-                            .await
-                            .unwrap_or_else(|_| WhoisLookupResult {
-                                domain: domain_fallback,
-                                output: String::new(),
-                                elapsed_ms: 0,
-                                success: false,
-                                error: Some("Lookup task failed to execute".into()),
-                            })
+                        let reply = network_tools::whois(server, &query).await;
+                        (query, reply)
                     },
-                    move |res| {
-                        Message::Tool(tab, ToolMessage::Whois(WhoisMessage::LookupDone(res)))
-                    },
-                );
-
-                Outcome::Task(task)
+                    |(query, reply)| WhoisMessage::LookupDone(query, reply),
+                ))
             }
-            WhoisMessage::LookupDone(res) => {
+            WhoisMessage::LookupDone(query, reply) => {
                 self.running = false;
-                if res.success {
-                    self.result = Some(res);
-                } else {
-                    self.error = res.error;
+                match reply {
+                    Ok(reply) => self.result = Some((query, reply)),
+                    Err(failure) => self.problem = Some(Problem::Failed(failure)),
                 }
-                Outcome::None
+                Applied::None
             }
             WhoisMessage::CopyOutput => {
                 let output = self
                     .result
                     .as_ref()
-                    .map(|r| r.output.clone())
+                    .map(|(_, reply)| reply.text.clone())
                     .unwrap_or_default();
-                Outcome::Copy(CopySlot::WhoisOutput, output)
+                Applied::Copy(CopySlot::WhoisOutput, output)
             }
+        }
+    }
+
+    /// What the tool says went wrong, in the user's language, as the C# `ToolWhoisError*`.
+    fn problem_text(problem: &Problem) -> String {
+        match problem {
+            Problem::Required => fl!("ui-tool-whois-error-required"),
+            Problem::Invalid => fl!("ui-tool-whois-error-invalid"),
+            Problem::Failed(WhoisFailure::TimedOut) => fl!("ui-tool-whois-error-timeout"),
+            Problem::Failed(WhoisFailure::Failed(reason)) => fl!(
+                "ui-tool-whois-error-failed",
+                reason = super::down_reason_text(reason)
+            ),
         }
     }
 
@@ -158,7 +200,9 @@ impl WhoisPane {
         )
         .padding(super::PRIMARY_PADDING)
         .style(styles::primary)
-        .on_press(Message::Tool(tab, ToolMessage::Whois(WhoisMessage::Lookup)));
+        .on_press_maybe(
+            (!self.running).then_some(Message::Tool(tab, ToolMessage::Whois(WhoisMessage::Lookup))),
+        );
 
         let input_row = row![domain_input, lookup_btn]
             .spacing(spacing::MD)
@@ -166,19 +210,25 @@ impl WhoisPane {
 
         let mut body_col = column![input_row].spacing(spacing::MD);
 
-        if let Some(err) = &self.error {
-            body_col = body_col.push(text(err).size(font_size::BODY).color(colors.red));
+        if let Some(problem) = &self.problem {
+            body_col = body_col.push(
+                text(Self::problem_text(problem))
+                    .size(font_size::BODY)
+                    .color(colors.red),
+            );
         }
 
-        if let Some(res) = &self.result {
+        if let Some((query, reply)) = &self.result {
+            let elapsed = u64::try_from(reply.elapsed.as_millis()).unwrap_or(u64::MAX);
             let header_row = row![
-                text(fl!(
-                    "ui-tool-whois-status-complete",
-                    elapsed = res.elapsed_ms
-                ))
-                .size(font_size::CAPTION)
-                .font(styles::SEMIBOLD)
-                .color(colors.green)
+                column![
+                    text(fl!("ui-tool-whois-result-header", domain = query.as_str()))
+                        .size(font_size::BODY)
+                        .font(styles::SEMIBOLD),
+                    text(fl!("ui-tool-whois-status-complete", elapsed = elapsed))
+                        .size(font_size::CAPTION)
+                        .color(colors.green),
+                ]
                 .width(Length::Fill),
                 super::copy_button(
                     fl!("ui-tool-whois-btn-copy"),
@@ -188,10 +238,20 @@ impl WhoisPane {
                 ),
             ]
             .align_y(Alignment::Center);
+            body_col = body_col.push(header_row);
+
+            if reply.truncated {
+                let kib = MAX_REPLY_BYTES / BYTES_PER_KIB;
+                body_col = body_col.push(
+                    text(fl!("ui-tool-whois-truncated", kib = kib))
+                        .size(font_size::CAPTION)
+                        .color(colors.orange),
+                );
+            }
 
             let output_viewer = container(
                 scrollable(
-                    text(&res.output)
+                    text(&reply.text)
                         .size(font_size::CAPTION)
                         .font(super::BOX_FONT),
                 )
@@ -202,7 +262,7 @@ impl WhoisPane {
             .height(Length::Fill)
             .style(styles::card);
 
-            body_col = body_col.push(header_row).push(output_viewer);
+            body_col = body_col.push(output_viewer);
         } else if !self.running {
             body_col = body_col.push(
                 container(
@@ -220,5 +280,38 @@ impl WhoisPane {
             .max_width(super::CONTENT_MAX_WIDTH);
 
         content.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_domain_is_checked_before_any_lookup() {
+        let mut pane = WhoisPane::default();
+        assert!(matches!(pane.apply(WhoisMessage::Lookup), Applied::None));
+        assert_eq!(pane.problem, Some(Problem::Required));
+        pane.apply(WhoisMessage::DomainChanged(
+            "example.com\r\nevil".to_owned(),
+        ));
+        assert!(matches!(pane.apply(WhoisMessage::Lookup), Applied::None));
+        assert_eq!(pane.problem, Some(Problem::Invalid));
+        assert!(!pane.running);
+    }
+
+    #[test]
+    fn a_second_lookup_waits_for_the_first() {
+        let mut pane = WhoisPane::default();
+        pane.apply(WhoisMessage::DomainChanged("example.com".to_owned()));
+        assert!(matches!(pane.apply(WhoisMessage::Lookup), Applied::Run(_)));
+        assert!(pane.running);
+        assert!(matches!(pane.apply(WhoisMessage::Lookup), Applied::None));
+        pane.apply(WhoisMessage::LookupDone(
+            "example.com".to_owned(),
+            Err(WhoisFailure::TimedOut),
+        ));
+        assert!(!pane.running);
+        assert_eq!(pane.problem, Some(Problem::Failed(WhoisFailure::TimedOut)));
     }
 }

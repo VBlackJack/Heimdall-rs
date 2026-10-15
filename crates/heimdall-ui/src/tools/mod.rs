@@ -922,7 +922,10 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::Wol(message), Pane::Wol(pane)) => {
-                pane.update(message);
+                return match pane.update(tab, message) {
+                    wol_tool::Outcome::Task(task) => task,
+                    wol_tool::Outcome::None => Task::none(),
+                };
             }
             (ToolMessage::Whois(message), Pane::Whois(pane)) => {
                 return match pane.update(tab, message) {
@@ -1206,6 +1209,19 @@ fn copy_button<'a>(
     )
     .style(container::rounded_box)
     .into()
+}
+
+/// Why a network tool's probe got no answer, in the user's language: the reasons of the
+/// tree's reachability check, the system's words led by what they are.
+fn down_reason_text(reason: &heimdall_app::reachability::DownReason) -> String {
+    use heimdall_app::reachability::DownReason;
+    match reason {
+        DownReason::Timeout => fl!("ui-reachability-reason-timeout"),
+        DownReason::Refused => fl!("ui-reachability-reason-refused"),
+        DownReason::Unreachable => fl!("ui-reachability-reason-unreachable"),
+        DownReason::Dns => fl!("ui-reachability-reason-dns"),
+        DownReason::Other(detail) => fl!("ui-tool-net-reason-other", detail = detail.as_str()),
+    }
 }
 
 /// A tool's main button: `label`, `primary` filled with the accent as the C#

@@ -4306,6 +4306,14 @@ ui-tool-http-help =
     - Type in the filter box to search by numeric code or name.
     - Click any entry to copy its code and name to the clipboard.
 
+ui-tool-net-error-host-required = Please enter a hostname or IP address.
+ui-tool-net-error-invalid-host = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-net-error-port = The port must be a number between 1 and 65535.
+ui-tool-net-error-port-range = Please enter a port or port range.
+ui-tool-net-reason-other = Connection failed: { $detail }
+ui-tool-net-no-value = -
+ui-tool-net-millis = { $ms } ms
+
 ui-tool-tcpping-name = TCP Ping
 ui-tool-tcpping-description = Measure TCP connection latency to a specific host and port
 ui-tool-tcpping-host-label = Host
@@ -4316,8 +4324,10 @@ ui-tool-tcpping-btn-start = Start
 ui-tool-tcpping-btn-stop = Stop
 ui-tool-tcpping-btn-copy = Copy results
 ui-tool-tcpping-summary = Min: { $min } ms, Avg: { $avg } ms, Max: { $max } ms, Lost: { $lost }/{ $total } ({ $pct }%)
+ui-tool-tcpping-summary-all-lost = Min: -, Avg: -, Max: -, Lost: { $lost }/{ $total } ({ $pct }%)
+ui-tool-tcpping-probe-ok = [{ $seq }/{ $total }] { $target } - { $ms } ms
+ui-tool-tcpping-probe-failed = [{ $seq }/{ $total }] { $target } - FAILED: { $reason }
 ui-tool-tcpping-empty-state = Enter a host and port, then click Start to measure TCP handshake latency
-ui-tool-tcpping-error-host-required = Please enter a host name or IP address.
 ui-tool-tcpping-error-count = Count must be a number between 1 and 10000.
 ui-tool-tcpping-help =
     TCP Ping Tool
@@ -4328,20 +4338,24 @@ ui-tool-tcpping-help =
     Usage:
     1. Enter target host name or IP address.
     2. Enter port number (default: 443).
-    3. Specify number of probes to send (default: 10).
-    4. Click Start to begin probing.
+    3. Specify number of probes to send (default: 10, at most 10000).
+    4. Click Start to begin probing; Stop ends the run at once.
+
+    The host name is looked up once, before the first probe: the times shown are the
+    handshakes alone. Probes are one second apart, and each has five seconds to answer.
 
 ui-tool-wol-name = Wake-on-LAN
 ui-tool-wol-description = Send magic packets to power on sleeping devices across the network
 ui-tool-wol-mac-label = MAC Address
 ui-tool-wol-mac-placeholder = AA:BB:CC:DD:EE:FF
 ui-tool-wol-broadcast-label = Broadcast Address
-ui-tool-wol-broadcast-placeholder = 255.255.255.255
 ui-tool-wol-port-label = UDP Port
 ui-tool-wol-btn-send = Send Wake-on-LAN
+ui-tool-wol-status-sending = Sending magic packet...
 ui-tool-wol-status-sent = Magic packet sent to { $mac } via { $dest }
 ui-tool-wol-status-error = Failed to send packet: { $error }
 ui-tool-wol-error-invalid-mac = Invalid MAC address. Use format AA:BB:CC:DD:EE:FF or AABBCCDDEEFF.
+ui-tool-wol-error-invalid-broadcast = Invalid broadcast address. Enter an IPv4 or IPv6 address.
 ui-tool-wol-help =
     Wake-on-LAN
 
@@ -4354,8 +4368,9 @@ ui-tool-wol-help =
 
     Usage:
     1. Enter target machine's MAC address.
-    2. Optionally adjust broadcast address (default: 255.255.255.255).
-    3. Click Send Wake-on-LAN.
+    2. Optionally adjust the broadcast address, an IP address (default: 255.255.255.255).
+    3. Optionally adjust the UDP port, from 1 to 65535 (default: 9).
+    4. Click Send Wake-on-LAN.
 
 ui-tool-whois-name = WHOIS Lookup
 ui-tool-whois-description = Query WHOIS servers to look up domain and IP registration data
@@ -4366,17 +4381,25 @@ ui-tool-whois-btn-copy = Copy output
 ui-tool-whois-empty-state = Enter a domain name or IP address to query WHOIS registration data
 ui-tool-whois-status-querying = Querying WHOIS server...
 ui-tool-whois-status-complete = Query completed in { $elapsed } ms
+ui-tool-whois-result-header = WHOIS results for { $domain }
+ui-tool-whois-truncated = The reply was longer than { $kib } KiB: only its beginning is shown.
 ui-tool-whois-error-required = Please enter a domain name or IP address.
+ui-tool-whois-error-invalid = Invalid domain name or IP address.
+ui-tool-whois-error-timeout = WHOIS query timed out. The WHOIS server may be unreachable or rate-limiting requests.
+ui-tool-whois-error-failed = WHOIS query failed: { $reason }. Try again or use a different domain/IP.
 ui-tool-whois-help =
     WHOIS Lookup
 
-    Queries WHOIS servers directly over TCP port 43 to retrieve domain registration,
-    registrar data, name servers, and network allocation details.
+    Queries a WHOIS server directly over TCP port 43 for domain registration data:
+    registrar, dates, name servers.
 
-    Features:
-    - Automatic TLD referral resolution (.com, .org, .fr, .io, .dev, etc.)
-    - Direct TCP port 43 querying
-    - Offline fallback to IANA registry
+    How it works:
+    - The server is chosen by the domain's TLD from a built-in list (com, net, org, fr,
+      io, dev and others); whois.iana.org is asked for any other TLD and for an IP
+      address.
+    - The reply is shown as the server sent it: a referral to another server is not
+      followed.
+    - The whole lookup has 10 seconds, and at most 64 KiB of the reply is kept.
 
 ui-tool-banner-name = Banner Grabber
 ui-tool-banner-description = Probe network ports to capture service banners and software versions
@@ -4398,7 +4421,6 @@ ui-tool-banner-preset-mail = Mail
 ui-tool-banner-preset-database = Database
 ui-tool-banner-empty-state = Enter a host and port list, then click Grab Banners to inspect service banners
 ui-tool-banner-progress = { $completed } / { $total } ports probed
-ui-tool-banner-error-host-required = Please enter a target host.
 ui-tool-banner-help =
     Banner Grabber
 
@@ -4408,5 +4430,6 @@ ui-tool-banner-help =
     Features:
     - Custom port lists and port ranges (e.g. 80,443,8000-8005)
     - Presets for Common, Web, Mail, and Database ports
+    - 20 ports probed at a time, each result shown as it comes; Stop ends the scan at once
     - Automatic service fingerprinting (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
     - Export results to CSV or formatted text

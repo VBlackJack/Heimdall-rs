@@ -37,6 +37,7 @@ pub mod ip_address;
 pub mod ip_codec;
 pub mod json_codec;
 pub mod jwt_parser;
+pub mod net_input;
 pub mod network_calculator;
 pub mod number_text;
 pub mod password_audit;
