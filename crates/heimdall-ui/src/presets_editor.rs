@@ -107,7 +107,8 @@ impl PresetsEditor {
             text(fl!("ui-settings-rdp-resolution-presets")),
             text_editor(&self.content)
                 .on_action(Message::PresetsEdited)
-                .height(Length::Fixed(BOX_HEIGHT)),
+                .height(Length::Fixed(BOX_HEIGHT))
+                .style(styles::text_box),
             text(fl!("ui-settings-rdp-resolution-presets-hint")).size(font_size::CAPTION),
         ]
         .spacing(spacing::SM);

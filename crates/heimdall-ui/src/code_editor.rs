@@ -91,9 +91,6 @@ const WHEEL_PIXELS: f32 = 60.0;
 /// Pixels of a trackpad's movement per line scrolled, as iced's.
 const PIXELS_PER_LINE: f32 = 4.0;
 
-/// Width of the editor's border, as iced's text editor.
-const BORDER_WIDTH: f32 = 1.0;
-
 /// What turns a key press into a [`Binding`].
 type KeyBindingFn<'a, Message> = Box<dyn Fn(KeyPress) -> Option<Binding<Message>> + 'a>;
 
@@ -1633,18 +1630,16 @@ impl Catalog for Theme {
     }
 }
 
-/// The default style of a [`TextEditor`]: iced's, the line numbers in the theme's weak
-/// text colour, and the scrollbar as iced's scrollables'.
+/// The default style of a [`TextEditor`]: the window's background, outlined as every field
+/// of the window is, with the focus ring while typed in; the line numbers in the theme's
+/// weak text colour, and the scrollbar as iced's scrollables'.
 fn default(theme: &Theme, status: Status) -> Style {
     let palette = theme.extended_palette();
+    let border = crate::styles::text_box(theme, status).border;
 
     let active = Style {
         background: Background::Color(palette.background.base.color),
-        border: Border {
-            radius: radius::XS.into(),
-            width: BORDER_WIDTH,
-            color: palette.background.strong.color,
-        },
+        border,
         value: palette.background.base.text,
         selection: palette.primary.weak.color,
         line_number: palette.secondary.base.color,
@@ -1654,21 +1649,7 @@ fn default(theme: &Theme, status: Status) -> Style {
     };
 
     match status {
-        Status::Active => active,
-        Status::Hovered => Style {
-            border: Border {
-                color: palette.background.base.text,
-                ..active.border
-            },
-            ..active
-        },
-        Status::Focused { .. } => Style {
-            border: Border {
-                color: palette.primary.strong.color,
-                ..active.border
-            },
-            ..active
-        },
+        Status::Active | Status::Hovered | Status::Focused { .. } => active,
         Status::Disabled => Style {
             background: Background::Color(palette.background.weak.color),
             value: palette.secondary.base.color,

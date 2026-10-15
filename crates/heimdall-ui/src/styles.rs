@@ -29,8 +29,13 @@ use iced::widget::button::{Status as ButtonStatus, Style as ButtonStyle};
 use iced::widget::checkbox::{Status as CheckStatus, Style as CheckStyle};
 use iced::widget::container::Style as BoxStyle;
 use iced::widget::pick_list::{Status as ListStatus, Style as ListStyle};
+use iced::widget::progress_bar::Style as ProgressStyle;
+use iced::widget::radio::{Status as RadioStatus, Style as RadioStyle};
 use iced::widget::scrollable::{
     Direction, Rail, Scrollable, Scrollbar, Scroller, Status as ScrollStatus, Style as ScrollStyle,
+};
+use iced::widget::slider::{
+    Handle, Rail as SliderRail, Status as SliderStatus, Style as SliderStyle,
 };
 use iced::widget::text_editor::{Status as EditorStatus, Style as EditorStyle};
 use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
@@ -57,12 +62,19 @@ pub const SEMIBOLD: Font = Font {
     ..crate::UI_FONT
 };
 
+/// The window's font, bold, as the C#'s `FontWeight="Bold"`: the application's name in its
+/// toolbar.
+pub const BOLD: Font = Font {
+    weight: font::Weight::Bold,
+    ..crate::UI_FONT
+};
+
 /// Opacity of the C# `BroadcastActiveBrush`: the red behind broadcast input while it is on.
 const BROADCAST_ALPHA: f32 = 0.27;
 
-/// Opacity of a tab's close button at rest, as the C# tab's: full on the tab selected or
-/// under the pointer.
-pub const CLOSE_REST_OPACITY: f32 = 0.3;
+/// Opacity of a tab's close button at rest, as the C# `TabCloseButtonIdleOpacity`: full on
+/// the tab selected or under the pointer. 0.3 measured under the 3:1 a control needs.
+pub const CLOSE_REST_OPACITY: f32 = 0.5;
 
 /// Radius of a tab's top corners, as the C# `ThemedTabItemStyle`'s `8,8,0,0`.
 const TAB_RADIUS: Radius = Radius {
@@ -97,7 +109,7 @@ struct Brushes {
     danger: Color,
     /// `WarningBrush`.
     warning: Color,
-    /// `BorderBrush`: a card's edge, as iced's bordered box draws it.
+    /// `BorderBrush`: a card's, a bar's or a popup's edge, the C# `BorderColor`.
     edge: Color,
     /// The edge of a control drawn without one: none, but in high contrast.
     quiet_edge: Color,
@@ -125,7 +137,13 @@ impl Brushes {
             secondary,
             danger: extended.danger.base.color,
             warning: extended.warning.base.color,
-            edge: extended.background.strong.color,
+            // `BorderColor`, the current line in every ThemeForge theme, which the card
+            // takes too; the text colour in high contrast, whose current line is black.
+            edge: if high_contrast {
+                extended.background.base.text
+            } else {
+                extended.background.weak.color
+            },
             quiet_edge: if high_contrast {
                 secondary
             } else {
@@ -543,17 +561,23 @@ pub fn pick_list(theme: &Theme, status: ListStatus) -> ListStyle {
     }
 }
 
-/// A drop-down's open list, as the C# combo box's popup: a card outlined in the accent, the
-/// entry under the pointer lit.
+/// A drop-down's open list, as the C# combo box's popup: the window's background outlined in
+/// the border colour, the entry under the pointer on the card colour, as `HighlightBrush`.
 pub fn menu(theme: &Theme) -> MenuStyle {
     let brushes = Brushes::of(theme);
-    let lit = theme.extended_palette().primary.strong;
+    // High contrast's card is its background: the entry under the pointer takes the accent
+    // there, to be seen.
+    let (lit, on_lit) = if crate::themes::is_high_contrast(theme) {
+        (brushes.accent, brushes.on_accent)
+    } else {
+        (brushes.card, brushes.text)
+    };
     MenuStyle {
-        background: Background::Color(brushes.card),
-        border: brushes.outline(brushes.accent, radius::LG),
+        background: Background::Color(brushes.surface),
+        border: brushes.outline(brushes.edge, radius::LG),
         text_color: brushes.text,
-        selected_text_color: lit.text,
-        selected_background: Background::Color(lit.color),
+        selected_text_color: on_lit,
+        selected_background: Background::Color(lit),
         shadow: Shadow::default(),
     }
 }
@@ -638,6 +662,121 @@ pub fn toggle(on: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
             ButtonStatus::Disabled => faded(&rest),
         }
     }
+}
+
+/// A choice among several, as the C# `ThemedRadioButtonStyle`: a card circle outlined in the
+/// secondary text, the accent under the pointer, filled with the accent and a dot of the
+/// window's background when chosen.
+pub fn radio(theme: &Theme, status: RadioStatus) -> RadioStyle {
+    let brushes = Brushes::of(theme);
+    let (chosen, hovered) = match status {
+        RadioStatus::Active { is_selected } => (is_selected, false),
+        RadioStatus::Hovered { is_selected } => (is_selected, true),
+    };
+    let (fill, edge) = match (chosen, hovered) {
+        (true, _) => (brushes.accent, brushes.accent),
+        (false, true) => (brushes.card, brushes.accent),
+        (false, false) => (brushes.card, brushes.secondary),
+    };
+    RadioStyle {
+        background: Background::Color(fill),
+        dot_color: brushes.on_accent,
+        border_width: brushes.width,
+        border_color: edge,
+        text_color: None,
+    }
+}
+
+/// A slider, as the C# `ThemedSliderStyle`: the accent up to the thumb, the card colour past
+/// it, an accent thumb edged in the window's background, lighter under the pointer and
+/// darker dragged.
+pub fn slider(theme: &Theme, status: SliderStatus) -> SliderStyle {
+    let brushes = Brushes::of(theme);
+    let thumb = match status {
+        SliderStatus::Active => brushes.accent,
+        SliderStatus::Hovered => brushes.accent_hover,
+        SliderStatus::Dragged => brushes.accent_pressed,
+    };
+    let base = iced::widget::slider::default(theme, status);
+    SliderStyle {
+        rail: SliderRail {
+            backgrounds: (
+                Background::Color(brushes.accent),
+                Background::Color(brushes.card),
+            ),
+            border: Border {
+                radius: radius::XS.into(),
+                ..Border::default()
+            },
+            ..base.rail
+        },
+        handle: Handle {
+            background: Background::Color(thumb),
+            border_width: BORDER_WIDTH,
+            border_color: brushes.surface,
+            ..base.handle
+        },
+    }
+}
+
+/// A bar of progress, as the C# `ThemedProgressBarStyle`: the accent on a card, outlined in
+/// the border colour.
+pub fn progress(theme: &Theme) -> ProgressStyle {
+    let brushes = Brushes::of(theme);
+    ProgressStyle {
+        background: Background::Color(brushes.card),
+        bar: Background::Color(brushes.accent),
+        border: brushes.outline(brushes.edge, radius::MD),
+    }
+}
+
+/// Room around a tooltip's text, as the C# `ThemedToolTipStyle`'s `8,6` above and below:
+/// iced pads a tooltip evenly, so on every side.
+pub const TOOLTIP_PADDING: f32 = 6.0;
+
+/// A tooltip, as the C# `ThemedToolTipStyle`: the window's background, outlined in the
+/// border colour and rounded as `CornerRadiusMd`; outlined in white in high contrast.
+pub fn tooltip(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        text_color: Some(brushes.text),
+        border: brushes.outline(brushes.edge, radius::MD),
+        ..BoxStyle::default()
+    }
+}
+
+/// A panel set over or beside the content, as the C# popups and list boxes: the window's
+/// background, outlined in the border colour and rounded as `CornerRadiusLg`.
+pub fn panel(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        text_color: Some(brushes.text),
+        border: brushes.outline(brushes.edge, radius::LG),
+        ..BoxStyle::default()
+    }
+}
+
+/// A bar along an edge of the window, as the C# toolbar and status bar: the window's
+/// background, square, no outline; a [`rule`] beside it draws the C# edge on its one side.
+pub fn bar(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        text_color: Some(brushes.text),
+        ..BoxStyle::default()
+    }
+}
+
+/// The one-sided edge of a [`bar`]: a line across, as thick as a border, in the border
+/// colour.
+pub fn edge_line<'a, Message: 'a>() -> Element<'a, Message> {
+    iced::widget::container(iced::widget::space())
+        .width(iced::Length::Fill)
+        .height(BORDER_WIDTH)
+        .style(rule)
+        .into()
 }
 
 /// A card, as the C# Settings cards: the card colour, rounded, its edge the border colour.

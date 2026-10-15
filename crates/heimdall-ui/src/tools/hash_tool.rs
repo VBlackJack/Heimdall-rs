@@ -440,6 +440,7 @@ impl HashPane {
             progress_bar(0.0..=ALL_READ, self.progress)
                 .length(Length::Fill)
                 .girth(PROGRESS_HEIGHT)
+                .style(styles::progress)
         });
         let file_line =
             row![container(super::status_line(self.file_status.said())).width(Length::Fill)]

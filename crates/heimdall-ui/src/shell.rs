@@ -124,14 +124,15 @@ use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, Spl
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
 
-/// Width of the profile list, in logical pixels.
+/// Width of the profile list, in logical pixels, as the C# `SessionTreeColumn`'s.
 const SIDEBAR_WIDTH: f32 = 260.0;
 /// Narrowest the sidebar is dragged to, as the C# column's minimum.
-const SIDEBAR_MIN_WIDTH: f32 = 180.0;
-/// Widest it is dragged to.
-const SIDEBAR_MAX_WIDTH: f32 = 600.0;
-/// Width of the handle between the sidebar and the sessions, dragged to resize it.
-const SPLITTER_WIDTH: f32 = 4.0;
+const SIDEBAR_MIN_WIDTH: f32 = 243.0;
+/// Widest it is dragged to, as the C# column's maximum.
+const SIDEBAR_MAX_WIDTH: f32 = 500.0;
+/// Width of the handle between the sidebar and the sessions, dragged to resize it, as the
+/// C# `GridSplitter`'s.
+const SPLITTER_WIDTH: f32 = 6.0;
 
 /// Space between the terminal and the panels around it, in logical pixels.
 const TERMINAL_MARGIN: f32 = 6.0;
@@ -282,11 +283,11 @@ const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
 /// hover time, WPF's default for the C# box.
 const SEARCH_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
-/// Opacity of the veil behind a dialog.
-const VEIL_ALPHA: f32 = 0.6;
+/// Opacity of the veil behind a dialog, as the C# `OverlayBackground` (`#B3000000`).
+const VEIL_ALPHA: f32 = 0.7;
 
-/// Widest the settings' cards grow.
-const SETTINGS_WIDTH: f32 = 720.0;
+/// Widest the settings' cards grow, as the C# `SettingsContentMaxWidth`.
+const SETTINGS_WIDTH: f32 = 900.0;
 
 /// Window events and the window's shortcuts.
 /// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N.
@@ -390,7 +391,7 @@ fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Eleme
         container(
             container(text(said).size(font_size::TITLE))
                 .padding(spacing::MD)
-                .style(container::bordered_box),
+                .style(styles::panel),
         )
         .center(Length::Fill),
     )
@@ -1331,7 +1332,8 @@ fn transcript_mark<'a>(tab: &Tab) -> Option<Element<'a, Message>> {
             text(fl!("ui-tab-recording-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     })
 }
@@ -3297,11 +3299,22 @@ impl Shell {
 
     /// Whether Tab and Shift+Tab move the keyboard between the main window's fields: under
     /// a dialog, and on a page of the navigation that is not a tab's (the settings, the
-    /// tunnels, About), Quick Connect closed. A tab shown keeps Tab: a terminal's, or a
-    /// Files tab's other pane.
+    /// tunnels, About) or in a tool's tab, Quick Connect closed. Any other tab shown keeps
+    /// Tab: a terminal's, or a Files tab's other pane.
     #[must_use]
     pub fn tab_moves_focus(&self) -> bool {
-        self.app.dialog.is_some() || (self.palette.is_none() && self.page_over_tab())
+        self.app.dialog.is_some()
+            || (self.palette.is_none() && (self.page_over_tab() || self.tool_has_keys()))
+    }
+
+    /// Whether the pane with the keyboard is a tool's, on the tabs' page: a form whose fields
+    /// Tab goes through, as WPF moves through a tool's controls.
+    fn tool_has_keys(&self) -> bool {
+        self.page == Page::Tab
+            && self
+                .app
+                .active_tab()
+                .is_some_and(|tab| matches!(tab.profile, TabProfile::Tool(_)))
     }
 
     /// Whether a page of the navigation is shown in place of the tab: the settings, the
@@ -4671,7 +4684,8 @@ impl Shell {
                         text(fl!("ui-fullscreen-exit-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Left,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 )
                 .padding(spacing::MD)
                 .width(Length::Fill)
@@ -5085,6 +5099,7 @@ impl Shell {
             container(
                 text(APP_NAME)
                     .size(font_size::LARGE)
+                    .font(styles::BOLD)
                     .style(|theme: &Theme| text::Style {
                         color: Some(theme.extended_palette().primary.base.color),
                     })
@@ -5095,16 +5110,16 @@ impl Shell {
         .align_y(iced::Alignment::Center);
         for destination in Destination::ALL {
             let active = destination == shown;
-            // The page shown in the accent colour, a line under it, as the C# tabs.
-            let entry = button(text(destination.label()))
-                .style(move |theme: &Theme, status| {
-                    let mut style = styles::subtle(theme, status);
-                    if active {
-                        style.text_color = theme.extended_palette().primary.base.color;
-                    }
-                    style
-                })
-                .on_press(Message::Navigate(destination));
+            // As the C# `ToolbarTabStyle`: the secondary text, the page shown in the text
+            // colour and semi-bold with an accent line under it, lit under the pointer.
+            let entry = button(text(destination.label()).font(if active {
+                styles::SEMIBOLD
+            } else {
+                crate::UI_FONT
+            }))
+            .padding([spacing::SM, spacing::MD])
+            .style(styles::sidebar_tab(active))
+            .on_press(Message::Navigate(destination));
             let underline = container(iced::widget::space())
                 .height(NAV_UNDERLINE)
                 .width(Length::Fill)
@@ -5123,13 +5138,18 @@ impl Shell {
                 text(fl!("ui-nav-quick-connect-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         );
-        container(bar)
-            .padding([spacing::XS, spacing::MD])
-            .width(Length::Fill)
-            .style(container::bordered_box)
-            .into()
+        // The C# toolbar: the window's background, its edge below it.
+        column![
+            container(bar)
+                .padding([spacing::XS, spacing::MD])
+                .width(Length::Fill)
+                .style(styles::bar),
+            styles::edge_line(),
+        ]
+        .into()
     }
 
     /// A tab still connecting: to what, through which gateways, and a way to stop.
@@ -5213,7 +5233,8 @@ impl Shell {
             text(fl!("ui-tunnels-toggle-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     }
 
@@ -5247,7 +5268,8 @@ impl Shell {
                 .size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             tooltip(
                 crate::status_bar::glyph_button(
                     Icon::List,
@@ -5259,7 +5281,8 @@ impl Shell {
                 text(fl!("ui-broadcast-scope-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center)
@@ -5282,7 +5305,8 @@ impl Shell {
                 text(fl!("ui-sidebar-hide-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
@@ -5295,7 +5319,8 @@ impl Shell {
                 text(fl!("ui-sidebar-lock-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
         });
         // The Tools tab: its filter, its context and its tools, as the C#
         // `SidebarToolsContent`, in place of the tree.
@@ -5337,7 +5362,7 @@ impl Shell {
         let zone = container(text(fl!("ui-tree-no-folder-zone")).size(font_size::CAPTION))
             .width(Length::Fill)
             .padding([4.0, 6.0])
-            .style(container::bordered_box);
+            .style(styles::panel);
         Some(
             tooltip(
                 crate::tree_drag::drop_zone(
@@ -5348,7 +5373,8 @@ impl Shell {
                 text(fl!("ui-tree-no-folder-zone-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         )
     }
@@ -5495,7 +5521,8 @@ impl Shell {
                 text(remove).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into()
         }))
         .spacing(spacing::XS)
@@ -5693,7 +5720,8 @@ impl Shell {
             tooltip::Position::Top,
         )
         .delay(SEARCH_TOOLTIP_DELAY)
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         // Put away by the click that starts typing, as a WPF tooltip by its control's click.
         let field = crate::press_tooltip::hide_on_press(field);
         let clear = (!self.search.is_empty()).then(|| {
@@ -5712,7 +5740,8 @@ impl Shell {
                     text(fl!("ui-tree-search-clear")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             )
             .align_right(Length::Fill)
             .center_y(Length::Fill)
@@ -5729,7 +5758,8 @@ impl Shell {
                 text(tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
         };
         let glyph = |icon| center(icons::icon(icon, Tint::Text, icons::GLYPH_SIDE)).into();
         // The filters: a dot in the accent while one leaves sessions out, as the C#'s.
@@ -7022,7 +7052,8 @@ impl Shell {
                 ],
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         )
     }
@@ -7065,7 +7096,8 @@ impl Shell {
                     text(fl!("ui-tab-pinned-badge")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             );
         }
         // One long server title cannot take the whole strip: it ends with an ellipsis.
@@ -7119,7 +7151,8 @@ impl Shell {
                     text(fl!("ui-broadcast-target-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box)
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip)
                 .into(),
             );
         }
@@ -7156,7 +7189,8 @@ impl Shell {
                     text(fl!("ui-sidebar-show-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             );
         }
         let shown = self.shown_tab_id();
@@ -7169,22 +7203,29 @@ impl Shell {
             // faded but on the tab selected or pointed at. It takes the press, which selecting
             // the tab then does not see.
             let quiet = !active && self.tab_hover != Some(tab.id);
+            // Named as the C# button's accessible name, in a tooltip.
             let close = container(
-                button(center(icons::faded(
-                    Icon::Close,
-                    Tint::Text,
-                    font_size::SMALL_CAPTION,
-                    if quiet {
-                        styles::CLOSE_REST_OPACITY
-                    } else {
-                        1.0
-                    },
-                )))
-                .width(TAB_CLOSE_SIDE)
-                .height(TAB_CLOSE_SIDE)
-                .padding(0.0)
-                .style(styles::close_mark(quiet))
-                .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+                tooltip(
+                    button(center(icons::faded(
+                        Icon::Close,
+                        Tint::Text,
+                        font_size::SMALL_CAPTION,
+                        if quiet {
+                            styles::CLOSE_REST_OPACITY
+                        } else {
+                            1.0
+                        },
+                    )))
+                    .width(TAB_CLOSE_SIDE)
+                    .height(TAB_CLOSE_SIDE)
+                    .padding(0.0)
+                    .style(styles::close_mark(quiet))
+                    .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+                    text(fl!("ui-session-close-button")).size(font_size::CAPTION),
+                    tooltip::Position::Bottom,
+                )
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             )
             .id(tab_close_id(tab.id));
             let label = self.tab_heading(tab, active).push(close);
@@ -7528,7 +7569,7 @@ impl Shell {
                 .wrapping(text::Wrapping::None),
         )
         .padding([0.0, spacing::XS])
-        .style(container::bordered_box);
+        .style(styles::panel);
         let mut body = column![
             row![badge, text(name).size(font_size::TITLE)]
                 .spacing(spacing::SM)
@@ -7750,7 +7791,8 @@ impl Shell {
                         text(fl!("ui-error-report-anonymous-hint")).size(font_size::CAPTION),
                         tooltip::Position::Bottom,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 );
         }
         if let Some(profile) = self
@@ -7943,7 +7985,8 @@ impl Shell {
                 text(said).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into()
         };
         let icon = |icon, button: SessionButton, message| -> Element<'a, Message> {
@@ -8017,7 +8060,8 @@ impl Shell {
                 text(fl!("ui-desktop-send-keys-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Right,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             // The C# Send keys menu's "Keyboard shortcuts...".
             button(text(fl!("ui-desktop-shortcuts")).size(font_size::CAPTION))
                 .style(styles::subtle)
@@ -8053,7 +8097,8 @@ impl Shell {
                 text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         )
         .push(rdp_status(tab))
         .extend(self.desktop_indicators(tab, pane))
@@ -8085,7 +8130,8 @@ impl Shell {
                     text(fl!("ui-desktop-stabilizing-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box)
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip)
                 .into(),
             );
         }
@@ -8104,7 +8150,8 @@ impl Shell {
                     text(fl!("ui-desktop-anti-idle-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box)
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip)
                 .into(),
             );
         }
@@ -8549,17 +8596,23 @@ fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message
 /// The handle between the sidebar and the sessions, dragged to resize the sidebar, as the
 /// C# `GridSplitter`.
 fn splitter<'a>() -> Element<'a, Message> {
-    mouse_area(
+    // The card colour at rest, the accent under the pointer, as the C# splitter's brushes.
+    let handle = |lit: bool| {
         container(iced::widget::space().width(SPLITTER_WIDTH))
             .height(Length::Fill)
-            .style(|theme: &Theme| container::Style {
-                background: Some(theme.extended_palette().background.strong.color.into()),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(if lit {
+                    theme.extended_palette().primary.base.color.into()
+                } else {
+                    styles::card_color(theme).into()
+                }),
                 ..container::Style::default()
-            }),
-    )
-    .on_press(Message::SidebarDragStart)
-    .interaction(iced::mouse::Interaction::ResizingHorizontally)
-    .into()
+            })
+    };
+    mouse_area(iced::widget::hover(handle(false), handle(true)))
+        .on_press(Message::SidebarDragStart)
+        .interaction(iced::mouse::Interaction::ResizingHorizontally)
+        .into()
 }
 
 /// Opens `target`, a folder or a web address, with the system; one it cannot open is
@@ -8736,7 +8789,8 @@ fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, M
                 text(fl!("ui-desktop-save-files-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         );
     }
@@ -8780,7 +8834,8 @@ fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, 
             text(fl!("ui-session-vnc-quality")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into(),
     )
 }
@@ -8798,7 +8853,8 @@ fn vnc_overlay<'a>(tab: &Tab, pane: &'a DesktopPane, fit: bool) -> Option<Elemen
             text(said).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     };
     let mut controls = row![].spacing(spacing::XS).align_y(iced::Alignment::Center);
@@ -9560,7 +9616,8 @@ fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Me
                         text(fl!("ui-profile-password-clear-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Top,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 ]
                 .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
@@ -10380,7 +10437,8 @@ fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Colum
                         text(fl!("ui-profile-passphrase-clear-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Top,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 ]
                 .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
@@ -10817,7 +10875,8 @@ fn protocol_line<'a>(protocol: DraftProtocol, adding: bool) -> Element<'a, Messa
             text(fl!("ui-profile-protocol-change-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     } else {
         container(chip).padding(CHIP_PADDING).into()
@@ -11748,7 +11807,8 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
         .size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 

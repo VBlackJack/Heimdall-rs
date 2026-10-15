@@ -28,6 +28,7 @@ use iced::{Element, Length};
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
+use crate::styles;
 use crate::tokens::{font_size, spacing};
 
 /// Room around the bar's text.
@@ -706,7 +707,8 @@ pub fn view(
             .size(font_size::CAPTION)
             .style(text::secondary),
     ];
-    container(
+    // The C# status bar: the window's background, its edge above it.
+    let bar = container(
         row![
             text(left).size(font_size::CAPTION).style(text::secondary),
             crate::shortcuts_view::hint(font_size::SMALL_CAPTION),
@@ -720,8 +722,8 @@ pub fn view(
     )
     .padding(PADDING)
     .width(Length::Fill)
-    .style(container::bordered_box)
-    .into()
+    .style(styles::bar);
+    iced::widget::column![styles::edge_line(), bar].into()
 }
 
 #[cfg(test)]

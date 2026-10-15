@@ -239,13 +239,15 @@ fn kind_choice<'a>(kind: ProviderKind) -> Element<'a, Message> {
                 ProviderKind::Command,
                 Some(kind),
                 |kind| provider(ProviderMessage::Kind(kind)),
-            ),
+            )
+            .style(styles::radio),
             radio(
                 fl!("ui-settings-provider-type-credman"),
                 ProviderKind::WindowsCredentialManager,
                 Some(kind),
                 |kind| provider(ProviderMessage::Kind(kind)),
-            ),
+            )
+            .style(styles::radio),
         ]
         .spacing(spacing::SM * 2.0),
         None,
@@ -256,7 +258,7 @@ fn boxed(card: Column<'_, Message>) -> Element<'_, Message> {
     container(card)
         .width(Length::Fill)
         .padding(spacing::MD)
-        .style(container::bordered_box)
+        .style(styles::panel)
         .into()
 }
 

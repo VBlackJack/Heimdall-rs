@@ -207,7 +207,7 @@ pub fn view<'a>(
         container(card)
             .padding(spacing::XL)
             .max_width(CARD_MAX_WIDTH)
-            .style(container::bordered_box),
+            .style(styles::panel),
     )
     .into()
 }
