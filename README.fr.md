@@ -53,9 +53,18 @@ Seul `heimdall-ui` dépend d'iced. Les crates de protocole ne dépendent que de
 
 ## Outils intégrés
 
-Heimdall intègre 30 outils hors-ligne d'administration système et d'audit de sécurité :
+Heimdall intègre 30 outils d'administration système et d'audit de sécurité. Tous
+ne sont pas hors-ligne : les outils réseau, comme l'Auditeur SSL/TLS, le
+Vérificateur de sécurité DNS, l'Énumérateur SMB, le Scanner d'identifiants par
+défaut et l'Auditeur SecNumCloud, se connectent aux hôtes que vous indiquez ; les
+autres fonctionnent entièrement hors-ligne.
 
-- **Sécurité & Conformité :** Auditeur de clés SSH, Auditeur SSL/TLS, Vérificateur de sécurité DNS (DNSSEC/DANE), Audit de conformité ANSSI SecNumCloud v3.2, Énumérateur SMB & NetBIOS, Scanner d'identifiants par défaut, Recherche hors-ligne CVE & CISA KEV, Auditeur de mots de passe, Générateur de mots de passe, Générateur de clés SSH, Générateur de certificats.
+La Recherche CVE utilise une base embarquée et constituée à la main de 68 entrées
+(63 CVE distinctes) pour des logiciels d'infrastructure courants, couvrant 2015 à
+2024. Elle ne contient aucune donnée CISA KEV (Known Exploited Vulnerabilities) et
+n'est pas un flux en direct.
+
+- **Sécurité & Conformité :** Auditeur de clés SSH, Auditeur SSL/TLS, Vérificateur de sécurité DNS (DNSSEC/DANE), Audit de conformité ANSSI SecNumCloud v3.2, Énumérateur SMB & NetBIOS, Scanner d'identifiants par défaut, Recherche hors-ligne CVE, Auditeur de mots de passe, Générateur de mots de passe, Générateur de clés SSH, Générateur de certificats.
 - **Réseau :** Calculateur de sous-réseau, Convertisseur IP, Calculateur réseau.
 - **Système :** Calculateur Chmod, Convertisseur date et heure, Générateur Crontab, Générateur de configuration SSH.
 - **Encodage & Jetons :** Calculateur de hachage, Générateur HMAC, Débogueur JWT, Générateur TOTP, Encodeur/Décodeur Base64, Encodeur/Décodeur URL, Formateur JSON, Testeur d'expressions régulières, Comparateur de texte (Diff), Convertisseur de casse, Générateur UUID, Générateur ULID.

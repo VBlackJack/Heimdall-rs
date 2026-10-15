@@ -99,11 +99,14 @@ impl FilesDrag {
     }
 
     /// Where a drop would go, to be lit: over a pane of its own tab, or of another tab
-    /// taking it; `None` before the press becomes a drag.
+    /// taking it; `None` before the press becomes a drag. Never where the application
+    /// refuses it: beside the entries, or on a file, of a pane naming another folder whose
+    /// listing is on its way; a folder entry of it still takes the drop.
     #[must_use]
     pub fn target(&self, app: &heimdall_app::App) -> Option<Spot> {
         self.over.filter(|over| {
             self.active
+                && app.drop_lands(over.tab, over.side, over.index)
                 && (over.tab == self.from.tab
                     || app
                         .takes_drop_across((self.from.tab, self.from.side), (over.tab, over.side)))

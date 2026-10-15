@@ -125,7 +125,9 @@ impl DnsSecPane {
                     return Outcome::None;
                 }
 
-                if !normalized.contains('.') || normalized.len() < 3 {
+                // Strict validation: the domain reaches `nslookup` as a bare argument, so a
+                // name starting with "-" (or otherwise malformed) must never be accepted.
+                if !normalized.contains('.') || !dns_security::is_valid_lookup_domain(&normalized) {
                     self.error = Some(fl!("ui-tool-dnssec-error-invalid-domain"));
                     self.report = None;
                     self.report_text.clear();
@@ -531,37 +533,94 @@ fn format_report_text(report: &DnsSecurityReport) -> String {
             res.raw_record.clone()
         };
         sb.push_str(&format!("[{status_str}] {}\n", res.kind.name()));
-        sb.push_str(&format!("  Record: {val}\n"));
-        sb.push_str(&format!("  Detail: {detail}\n\n"));
+        sb.push_str(&format!(
+            "  {}: {val}\n",
+            fl!("ui-tool-dnssec-report-record")
+        ));
+        sb.push_str(&format!(
+            "  {}: {detail}\n\n",
+            fl!("ui-tool-dnssec-report-detail")
+        ));
     }
 
     sb
 }
 
-/// Executes nslookup silently and returns the raw output string.
-fn query_dns(record_type: &str, query_target: &str) -> String {
-    let mut cmd = std::process::Command::new("nslookup");
+/// Maximum wall-clock time a single `nslookup` invocation may take before it is killed,
+/// matching the C# `DnsSecurityService.CommandTimeout`.
+const DNS_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Interval between child-exit polls while waiting for `nslookup`.
+const DNS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Why a DNS query could not produce output.
+enum DnsQueryError {
+    /// The `nslookup` binary was not found (e.g. Linux without bind-utils).
+    NotFound,
+    /// Any other spawn or wait failure.
+    Other,
+}
+
+/// Executes `nslookup -type=<record_type> <query_target>` silently, with a timeout and no
+/// shell, and returns its raw output. Arguments are passed as separate items (never through
+/// a shell) and the target is validated by the caller, so no option or shell injection is
+/// possible. Returns [`DnsQueryError::NotFound`] when `nslookup` is absent.
+fn query_dns(record_type: &str, query_target: &str) -> Result<String, DnsQueryError> {
+    use std::io::ErrorKind;
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let mut cmd = Command::new("nslookup");
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
+        use std::os::windows::process::CommandExt as _;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    cmd.arg(format!("-type={record_type}"));
-    cmd.arg(query_target);
+    cmd.arg(format!("-type={record_type}"))
+        .arg(query_target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    match cmd.output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stdout.trim().is_empty() {
-                stderr.to_string()
-            } else {
-                stdout.to_string()
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Err(DnsQueryError::NotFound),
+        Err(_) => return Err(DnsQueryError::Other),
+    };
+
+    let deadline = Instant::now() + DNS_QUERY_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(String::new());
+                }
+                std::thread::sleep(DNS_POLL_INTERVAL);
             }
+            Err(_) => return Err(DnsQueryError::Other),
         }
-        Err(e) => format!("Error executing nslookup: {e}"),
     }
+
+    let output = child.wait_with_output().map_err(|_| DnsQueryError::Other)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(if stdout.trim().is_empty() {
+        stderr.to_string()
+    } else {
+        stdout.to_string()
+    })
+}
+
+/// Runs one `nslookup` query on a blocking thread. A task-join failure is reported as
+/// [`DnsQueryError::Other`], so only a genuinely missing binary surfaces as `NotFound`.
+async fn run_query(record_type: &'static str, target: String) -> Result<String, DnsQueryError> {
+    tokio::task::spawn_blocking(move || query_dns(record_type, &target))
+        .await
+        .unwrap_or(Err(DnsQueryError::Other))
 }
 
 /// Asynchronous streaming DNS security checks.
@@ -583,10 +642,21 @@ fn check_stream(domain: String, check_id: u64) -> impl iced::futures::Stream<Ite
             ))
             .await;
 
-        let dom = domain.clone();
-        let spf_raw = tokio::task::spawn_blocking(move || query_dns("TXT", &dom))
-            .await
-            .unwrap_or_default();
+        let spf_raw = match run_query("TXT", domain.clone()).await {
+            Ok(raw) => raw,
+            Err(DnsQueryError::NotFound) => {
+                // nslookup is the only backend; if it is absent, every check would fail
+                // silently, so report the missing tool clearly instead.
+                let _ = out
+                    .send(DnsSecMessage::Finished(
+                        check_id,
+                        Err(fl!("ui-tool-dnssec-error-nslookup-missing")),
+                    ))
+                    .await;
+                return;
+            }
+            Err(DnsQueryError::Other) => String::new(),
+        };
         results.push(dns_security::evaluate_spf(&spf_raw));
 
         // 2. DKIM
@@ -607,9 +677,7 @@ fn check_stream(domain: String, check_id: u64) -> impl iced::futures::Stream<Ite
 
         for selector in DEFAULT_DKIM_SELECTORS {
             let selector_domain = format!("{selector}._domainkey.{domain}");
-            let raw = tokio::task::spawn_blocking(move || query_dns("TXT", &selector_domain))
-                .await
-                .unwrap_or_default();
+            let raw = run_query("TXT", selector_domain).await.unwrap_or_default();
 
             let eval = dns_security::evaluate_dkim(Some(selector), Some(&raw));
             if eval.status == DnsCheckStatus::Pass {
@@ -641,9 +709,7 @@ fn check_stream(domain: String, check_id: u64) -> impl iced::futures::Stream<Ite
             .await;
 
         let dmarc_domain = format!("_dmarc.{domain}");
-        let dmarc_raw = tokio::task::spawn_blocking(move || query_dns("TXT", &dmarc_domain))
-            .await
-            .unwrap_or_default();
+        let dmarc_raw = run_query("TXT", dmarc_domain).await.unwrap_or_default();
         results.push(dns_security::evaluate_dmarc(&dmarc_raw));
 
         // 4. CAA
@@ -659,10 +725,7 @@ fn check_stream(domain: String, check_id: u64) -> impl iced::futures::Stream<Ite
             ))
             .await;
 
-        let dom = domain.clone();
-        let caa_raw = tokio::task::spawn_blocking(move || query_dns("CAA", &dom))
-            .await
-            .unwrap_or_default();
+        let caa_raw = run_query("CAA", domain.clone()).await.unwrap_or_default();
         results.push(dns_security::evaluate_caa(&caa_raw));
 
         // 5. DNSSEC
@@ -678,18 +741,14 @@ fn check_stream(domain: String, check_id: u64) -> impl iced::futures::Stream<Ite
             ))
             .await;
 
-        let dom = domain.clone();
-        let dnskey_raw = tokio::task::spawn_blocking(move || query_dns("DNSKEY", &dom))
+        let dnskey_raw = run_query("DNSKEY", domain.clone())
             .await
             .unwrap_or_default();
 
-        let rrsig_raw = if !dns_security::contains_dns_records(&dnskey_raw, "DNSKEY") {
-            let dom2 = domain.clone();
-            tokio::task::spawn_blocking(move || query_dns("RRSIG", &dom2))
-                .await
-                .unwrap_or_default()
-        } else {
+        let rrsig_raw = if dns_security::contains_dns_records(&dnskey_raw, "DNSKEY") {
             String::new()
+        } else {
+            run_query("RRSIG", domain.clone()).await.unwrap_or_default()
         };
 
         results.push(dns_security::evaluate_dnssec(&dnskey_raw, &rrsig_raw));
@@ -707,10 +766,7 @@ fn check_stream(domain: String, check_id: u64) -> impl iced::futures::Stream<Ite
             ))
             .await;
 
-        let dom = domain.clone();
-        let mx_raw = tokio::task::spawn_blocking(move || query_dns("MX", &dom))
-            .await
-            .unwrap_or_default();
+        let mx_raw = run_query("MX", domain.clone()).await.unwrap_or_default();
         results.push(dns_security::evaluate_mx(&mx_raw));
 
         let report = dns_security::build_report(&domain, results);
