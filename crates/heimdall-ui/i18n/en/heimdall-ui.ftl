@@ -4801,7 +4801,7 @@ ui-tool-hosts-title = Hosts File Editor
 ui-tool-hosts-help =
     Edits the system hosts file with syntax validation.
 
-    View and edit host entries. Changes require administrator privileges to save.
+    The file is read when the tool opens. Entries can be enabled, disabled, removed or added; comments, aliases and line endings are kept as they are. Saving requires administrator privileges, keeps a dated backup copy beside the file, and is refused if another program changed the file since it was read.
 ui-tool-hosts-reload = Reload
 ui-tool-hosts-save = Save Changes
 ui-tool-hosts-copy-all = Copy Hosts
@@ -4809,11 +4809,20 @@ ui-tool-hosts-btn-add = Add Entry
 ui-tool-hosts-btn-delete = Delete
 ui-tool-hosts-invalid-ip = Invalid IP address format.
 ui-tool-hosts-missing-host = Hostname cannot be empty.
+ui-tool-hosts-invalid-host = Invalid hostname: use letters, digits, dots, hyphens or underscores, without spaces or '#'.
+ui-tool-hosts-invalid-comment = A comment cannot contain a line break or a control character.
 ui-tool-hosts-loaded = Loaded { $count } entries from { $path }
-ui-tool-hosts-save-success = Hosts file saved successfully.
+ui-tool-hosts-save-success = Hosts file saved. Backup copy of the previous version: { $backup }
+ui-tool-hosts-unchanged = No changes to save: the hosts file was left as it is.
 ui-tool-hosts-save-failed = Failed to save hosts file: { $error }
+ui-tool-hosts-error-not-found = Hosts file not found.
+ui-tool-hosts-error-read-denied = Access denied (read). Run as administrator.
+ui-tool-hosts-error-read = The hosts file could not be read: { $error }
+ui-tool-hosts-error-admin-required = Cannot write the hosts file. Run Heimdall as administrator to save changes.
+ui-tool-hosts-error-changed = The hosts file was changed by another program since it was read. Nothing was written: reload it, then make your changes again.
+ui-tool-hosts-error-backup = The backup copy could not be written, so the hosts file was not changed: { $error }
 ui-tool-hosts-empty-state = No entries found in the hosts file.
-ui-tool-hosts-loading-hint = Click Reload to load entries from the hosts file.
+ui-tool-hosts-loading-hint = Reading the hosts file...
 ui-tool-hosts-col-enabled = Active
 ui-tool-hosts-col-ip = IP Address
 ui-tool-hosts-col-hostname = Hostname
@@ -4827,7 +4836,7 @@ ui-tool-services-title = Service Status Dashboard
 ui-tool-services-help =
     Monitors Windows background service status with start and stop controls.
 
-    View running services, their operational status, and startup type. Start, stop, or restart services directly.
+    View running services, their operational status, and startup type. Start, stop, or restart a service: Windows asks for administrator rights first, and the action only runs on a service of the list just read.
 ui-tool-services-refresh = Refresh
 ui-tool-services-scanning = Refreshing...
 ui-tool-services-copy-csv = Export CSV
@@ -4846,6 +4855,17 @@ ui-tool-services-act-stop = Stop
 ui-tool-services-act-restart = Restart
 ui-tool-services-empty-state = Click Refresh to inspect Windows system services.
 ui-tool-services-action-success = Service action completed successfully.
+ui-tool-services-error-invalid-name = This service name holds characters that cannot be passed safely to the system: no action was run.
+ui-tool-services-error-unknown-name = This service is not in the list just read: refresh the list, then try again.
+ui-tool-services-error-no-powershell = Windows PowerShell could not be found in the system folder.
+ui-tool-services-error-no-systemctl = systemctl could not be found in /usr/bin or /bin.
+ui-tool-services-error-not-started = The command could not be started: { $error }
+ui-tool-services-error-timeout = The command did not finish in time and was stopped. An action may still complete: refresh the list to check.
+ui-tool-services-error-not-elevated = The action was not run: the administrator prompt was declined, or Windows could not start it.
+ui-tool-services-error-action-failed = The action on the service failed (exit code { $code }).
+ui-tool-services-error-action-failed-detail = The action on the service failed: { $error }
+ui-tool-services-error-list-failed = Failed to load services: { $error }
+ui-tool-services-exit-code-none = none
 
 ## Log viewer
 ui-tool-logview-name = Log Viewer

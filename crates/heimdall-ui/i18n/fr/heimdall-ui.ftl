@@ -4841,58 +4841,78 @@ ui-tool-wifi-col-auth = Authentification
 ui-tool-wifi-col-encryption = Chiffrement
 ui-tool-wifi-col-radio = Type radio
 
-## Editeur de fichier hosts
-ui-tool-hosts-name = Editeur de fichier hosts
+## Éditeur du fichier hosts
+ui-tool-hosts-name = Éditeur du fichier hosts
 ui-tool-hosts-description = Visualiser, basculer et modifier les associations de domaines du fichier hosts
-ui-tool-hosts-title = Editeur de fichier hosts
+ui-tool-hosts-title = Éditeur du fichier hosts
 ui-tool-hosts-help =
-    Edite le fichier hosts systeme avec validation syntaxique.
+    Édite le fichier hosts du système avec validation syntaxique.
 
-    Visualisez et modifiez les entrees. L'enregistrement necessite les privileges administrateur.
+    Le fichier est lu à l'ouverture de l'outil. Les entrées peuvent être activées, désactivées, supprimées ou ajoutées ; les commentaires, les alias et les fins de ligne sont conservés tels quels. L'enregistrement nécessite les privilèges administrateur, garde une copie de sauvegarde datée à côté du fichier, et est refusé si un autre programme a modifié le fichier depuis sa lecture.
 ui-tool-hosts-reload = Recharger
 ui-tool-hosts-save = Enregistrer
 ui-tool-hosts-copy-all = Copier hosts
 ui-tool-hosts-btn-add = Ajouter
 ui-tool-hosts-btn-delete = Supprimer
 ui-tool-hosts-invalid-ip = Format d'adresse IP invalide.
-ui-tool-hosts-missing-host = Le nom d'hote ne peut pas etre vide.
-ui-tool-hosts-loaded = { $count } entrees chargees depuis { $path }
-ui-tool-hosts-save-success = Fichier hosts enregistre avec succes.
-ui-tool-hosts-save-failed = Echec de l'enregistrement du fichier hosts : { $error }
-ui-tool-hosts-empty-state = Aucune entree trouvee dans le fichier hosts.
-ui-tool-hosts-loading-hint = Cliquez sur Recharger pour lire le fichier hosts.
+ui-tool-hosts-missing-host = Le nom d'hôte ne peut pas être vide.
+ui-tool-hosts-invalid-host = Nom d'hôte invalide : utilisez des lettres, des chiffres, des points, des tirets ou des soulignés, sans espace ni '#'.
+ui-tool-hosts-invalid-comment = Un commentaire ne peut pas contenir de saut de ligne ni de caractère de contrôle.
+ui-tool-hosts-loaded = { $count } entrées chargées depuis { $path }
+ui-tool-hosts-save-success = Fichier hosts enregistré. Copie de sauvegarde de la version précédente : { $backup }
+ui-tool-hosts-unchanged = Aucune modification à enregistrer : le fichier hosts est resté tel quel.
+ui-tool-hosts-save-failed = Échec de l'enregistrement du fichier hosts : { $error }
+ui-tool-hosts-error-not-found = Fichier hosts introuvable.
+ui-tool-hosts-error-read-denied = Accès refusé (lecture). Exécutez en tant qu'administrateur.
+ui-tool-hosts-error-read = Le fichier hosts n'a pas pu être lu : { $error }
+ui-tool-hosts-error-admin-required = Impossible d'écrire le fichier hosts. Lancez Heimdall en tant qu'administrateur pour enregistrer les modifications.
+ui-tool-hosts-error-changed = Un autre programme a modifié le fichier hosts depuis sa lecture. Rien n'a été écrit : rechargez-le, puis refaites vos modifications.
+ui-tool-hosts-error-backup = La copie de sauvegarde n'a pas pu être écrite, le fichier hosts n'a donc pas été modifié : { $error }
+ui-tool-hosts-empty-state = Aucune entrée trouvée dans le fichier hosts.
+ui-tool-hosts-loading-hint = Lecture du fichier hosts...
 ui-tool-hosts-col-enabled = Actif
 ui-tool-hosts-col-ip = Adresse IP
-ui-tool-hosts-col-hostname = Nom d'hote
+ui-tool-hosts-col-hostname = Nom d'hôte
 ui-tool-hosts-col-comment = Commentaire
 ui-tool-hosts-col-action = Action
 
 ## Tableau de bord des services
 ui-tool-services-name = Tableau de bord des services
-ui-tool-services-description = Surveiller les services d'arriere-plan Windows et controler leur etat
+ui-tool-services-description = Surveiller les services d'arrière-plan Windows et contrôler leur état
 ui-tool-services-title = Tableau de bord des services
 ui-tool-services-help =
-    Surveille le statut des services Windows avec commandes de demarrage et d'arret.
+    Surveille le statut des services Windows avec commandes de démarrage et d'arrêt.
 
-    Visualisez les services actifs, leur statut et type de demarrage. Demarrez, arretez ou redemarrez directement.
+    Visualisez les services actifs, leur statut et leur type de démarrage. Démarrez, arrêtez ou redémarrez un service : Windows demande d'abord les droits administrateur, et l'action ne porte que sur un service de la liste qui vient d'être lue.
 ui-tool-services-refresh = Actualiser
 ui-tool-services-scanning = Actualisation...
 ui-tool-services-copy-csv = Exporter CSV
-ui-tool-services-filter-placeholder = Filtrer par nom de service ou affichage...
-ui-tool-services-running-only = En cours seulement
+ui-tool-services-filter-placeholder = Filtrer par nom de service ou nom d'affichage...
+ui-tool-services-running-only = En cours uniquement
 ui-tool-services-total = Total :
 ui-tool-services-running-label = En cours :
-ui-tool-services-stopped-label = Arretes :
+ui-tool-services-stopped-label = Arrêtés :
 ui-tool-services-col-name = Nom du service
-ui-tool-services-col-display-name = Nom affiche
+ui-tool-services-col-display-name = Nom d'affichage
 ui-tool-services-col-status = Statut
-ui-tool-services-col-start-type = Type de demarrage
+ui-tool-services-col-start-type = Type de démarrage
 ui-tool-services-col-actions = Actions
-ui-tool-services-act-start = Demarrer
-ui-tool-services-act-stop = Arreter
-ui-tool-services-act-restart = Redemarrer
+ui-tool-services-act-start = Démarrer
+ui-tool-services-act-stop = Arrêter
+ui-tool-services-act-restart = Redémarrer
 ui-tool-services-empty-state = Cliquez sur Actualiser pour inspecter les services Windows.
-ui-tool-services-action-success = Action de service terminee avec succes.
+ui-tool-services-action-success = Action sur le service terminée avec succès.
+ui-tool-services-error-invalid-name = Ce nom de service contient des caractères qui ne peuvent pas être transmis sans risque au système : aucune action n'a été lancée.
+ui-tool-services-error-unknown-name = Ce service ne figure pas dans la liste qui vient d'être lue : actualisez la liste, puis réessayez.
+ui-tool-services-error-no-powershell = Windows PowerShell est introuvable dans le dossier système.
+ui-tool-services-error-no-systemctl = systemctl est introuvable dans /usr/bin et /bin.
+ui-tool-services-error-not-started = La commande n'a pas pu être lancée : { $error }
+ui-tool-services-error-timeout = La commande ne s'est pas terminée à temps et a été arrêtée. Une action peut encore aboutir : actualisez la liste pour le vérifier.
+ui-tool-services-error-not-elevated = L'action n'a pas été lancée : la demande de droits administrateur a été refusée, ou Windows n'a pas pu la démarrer.
+ui-tool-services-error-action-failed = L'action sur le service a échoué (code de sortie { $code }).
+ui-tool-services-error-action-failed-detail = L'action sur le service a échoué : { $error }
+ui-tool-services-error-list-failed = Échec du chargement des services : { $error }
+ui-tool-services-exit-code-none = aucun
 
 ## Visionneuse de logs
 ui-tool-logview-name = Visionneuse de logs
