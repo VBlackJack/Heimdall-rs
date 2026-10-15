@@ -28,8 +28,11 @@
 
 #![allow(clippy::all, clippy::pedantic)]
 
+mod arp_monitor_tool;
+mod banner_tool;
 mod base64_tool;
 pub mod catalog;
+mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
 mod crontab_tool;
@@ -38,30 +41,49 @@ mod cve_tool;
 mod datetime_tool;
 mod defaultcreds_tool;
 mod diff_tool;
+mod dns_batch_tool;
+mod dns_tool;
 mod dnssec_tool;
+mod firewall_tester_tool;
 mod hash_tool;
 mod hmac_tool;
+mod hosts_editor_tool;
+mod http_headers_tool;
+mod http_status_tool;
 mod ip_converter_tool;
 mod json_tool;
 mod jwt_tool;
 mod key_parts;
 mod network_calculator_tool;
+mod network_cartography_tool;
+mod network_interfaces_tool;
+mod open_ports_tool;
 mod password_tool;
+mod ping_tool;
 mod placement_bar;
+mod port_scan_tool;
 mod pwdaudit_tool;
 mod regex_tool;
+mod route_table_tool;
 mod secnumcloud_tool;
+mod service_status_tool;
 mod smb_tool;
+mod snmp_walker_tool;
 mod ssh_config_tool;
 mod sshaudit_tool;
 mod sshkey_tool;
 mod subnet_tool;
+mod tcp_ping_tool;
+mod tcp_traceroute_tool;
 mod text_case_tool;
 mod tlsaudit_tool;
 mod totp_tool;
 mod ulid_tool;
 mod url_tool;
 mod uuid_tool;
+mod whois_tool;
+mod wifi_networks_tool;
+mod wol_tool;
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -74,7 +96,10 @@ use iced::widget::text_editor::{self, Action, Content};
 use iced::widget::{Column, button, column, container, row, scrollable, text, tooltip};
 use iced::{Color, Element, Length, Task, Theme, window};
 
+pub use arp_monitor_tool::ArpMonitorMessage;
+pub use banner_tool::BannerMessage;
 pub use base64_tool::Base64Message;
+pub use cert_inspector_tool::CertInspectorMessage;
 pub use certgen_tool::{
     CertCopy, CertGenMessage, CertSave, Generated as GeneratedCertificates, KeySizeChoice,
 };
@@ -84,30 +109,49 @@ pub use cve_tool::{CveMessage, Outcome as CveOutcome};
 pub use datetime_tool::{DateField, DateTimeMessage, ZoneChoice};
 pub use defaultcreds_tool::{DefaultCredsMessage, Outcome as DefaultCredsOutcome};
 pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_diff};
+pub use dns_batch_tool::DnsBatchMessage;
+pub use dns_tool::DnsMessage;
 pub use dnssec_tool::{DnsSecMessage, Outcome as DnsSecOutcome};
+pub use firewall_tester_tool::FirewallTesterMessage;
 pub use hash_tool::HashMessage;
 pub use hmac_tool::HmacMessage;
+pub use hosts_editor_tool::HostsMessage;
+pub use http_headers_tool::HttpHeadersMessage;
+pub use http_status_tool::HttpStatusMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
 pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
 pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
+pub use network_cartography_tool::NetworkCartographyMessage;
+pub use network_interfaces_tool::NetIfMessage;
+pub use open_ports_tool::OpenPortsMessage;
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
+pub use ping_tool::PingMessage;
+pub use port_scan_tool::PortScanMessage;
 pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
+pub use route_table_tool::RouteTableMessage;
 pub use secnumcloud_tool::{Outcome as SecNumCloudOutcome, SecNumCloudMessage};
+pub use service_status_tool::ServiceStatusMessage;
 pub use smb_tool::{Outcome as SmbOutcome, SmbMessage};
+pub use snmp_walker_tool::SnmpWalkerMessage;
 pub use ssh_config_tool::{SshConfigMessage, SshField};
 pub use sshaudit_tool::{
     LoadedFile as SshAuditLoadedFile, Outcome as SshAuditOutcome, SshAuditMessage,
 };
 pub use sshkey_tool::{AlgorithmChoice, SshCopy, SshKeyMessage, SshSave};
 pub use subnet_tool::{SubnetField, SubnetMessage};
+pub use tcp_ping_tool::TcpPingMessage;
+pub use tcp_traceroute_tool::TcpTracerouteMessage;
 pub use text_case_tool::TextCaseMessage;
 pub use tlsaudit_tool::{Outcome as TlsAuditOutcome, TlsAuditMessage};
 pub use totp_tool::TotpMessage;
 pub use ulid_tool::UlidMessage;
 pub use url_tool::UrlMessage;
 pub use uuid_tool::UuidMessage;
+pub use whois_tool::WhoisMessage;
+pub use wifi_networks_tool::WifiMessage;
+pub use wol_tool::WolMessage;
 
 use crate::i18n::fl;
 use crate::icons::Icon;
@@ -218,6 +262,28 @@ pub fn label(tool: ToolId) -> String {
         ToolId::CveLookup => fl!("ui-tool-cve-name"),
         ToolId::SecNumCloud => fl!("ui-tool-secnumcloud-name"),
         ToolId::Smb => fl!("ui-tool-smb-name"),
+        ToolId::HttpStatus => fl!("ui-tool-http-name"),
+        ToolId::TcpPing => fl!("ui-tool-tcpping-name"),
+        ToolId::WakeOnLan => fl!("ui-tool-wol-name"),
+        ToolId::Whois => fl!("ui-tool-whois-name"),
+        ToolId::BannerGrabber => fl!("ui-tool-banner-name"),
+        ToolId::Ping => fl!("ui-tool-ping-name"),
+        ToolId::Dns => fl!("ui-tool-dns-name"),
+        ToolId::DnsBatch => fl!("ui-tool-dnsbatch-name"),
+        ToolId::PortScan => fl!("ui-tool-portscan-name"),
+        ToolId::HttpHeaders => fl!("ui-tool-headers-name"),
+        ToolId::Cert => fl!("ui-tool-cert-name"),
+        ToolId::TcpTrace => fl!("ui-tool-tcptrace-name"),
+        ToolId::SnmpWalk => fl!("ui-tool-snmpwalk-name"),
+        ToolId::ArpMon => fl!("ui-tool-arpmon-name"),
+        ToolId::FwTest => fl!("ui-tool-fwtest-name"),
+        ToolId::NetMap => fl!("ui-tool-netmap-name"),
+        ToolId::OpenPorts => fl!("ui-tool-openports-name"),
+        ToolId::NetIf => fl!("ui-tool-netif-name"),
+        ToolId::Routes => fl!("ui-tool-routes-name"),
+        ToolId::Wifi => fl!("ui-tool-wifi-name"),
+        ToolId::Hosts => fl!("ui-tool-hosts-name"),
+        ToolId::Services => fl!("ui-tool-services-name"),
     }
 }
 
@@ -255,6 +321,28 @@ pub fn description(tool: ToolId) -> String {
         ToolId::CveLookup => fl!("ui-tool-cve-description"),
         ToolId::SecNumCloud => fl!("ui-tool-secnumcloud-description"),
         ToolId::Smb => fl!("ui-tool-smb-description"),
+        ToolId::HttpStatus => fl!("ui-tool-http-description"),
+        ToolId::TcpPing => fl!("ui-tool-tcpping-description"),
+        ToolId::WakeOnLan => fl!("ui-tool-wol-description"),
+        ToolId::Whois => fl!("ui-tool-whois-description"),
+        ToolId::BannerGrabber => fl!("ui-tool-banner-description"),
+        ToolId::Ping => fl!("ui-tool-ping-description"),
+        ToolId::Dns => fl!("ui-tool-dns-description"),
+        ToolId::DnsBatch => fl!("ui-tool-dnsbatch-description"),
+        ToolId::PortScan => fl!("ui-tool-portscan-description"),
+        ToolId::HttpHeaders => fl!("ui-tool-headers-description"),
+        ToolId::Cert => fl!("ui-tool-cert-description"),
+        ToolId::TcpTrace => fl!("ui-tool-tcptrace-description"),
+        ToolId::SnmpWalk => fl!("ui-tool-snmpwalk-description"),
+        ToolId::ArpMon => fl!("ui-tool-arpmon-description"),
+        ToolId::FwTest => fl!("ui-tool-fwtest-description"),
+        ToolId::NetMap => fl!("ui-tool-netmap-description"),
+        ToolId::OpenPorts => fl!("ui-tool-openports-description"),
+        ToolId::NetIf => fl!("ui-tool-netif-description"),
+        ToolId::Routes => fl!("ui-tool-routes-description"),
+        ToolId::Wifi => fl!("ui-tool-wifi-description"),
+        ToolId::Hosts => fl!("ui-tool-hosts-description"),
+        ToolId::Services => fl!("ui-tool-services-description"),
     }
 }
 
@@ -292,6 +380,27 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::CveLookup => Icon::ToolCve,
         ToolId::SecNumCloud => Icon::ToolSecNumCloud,
         ToolId::Smb => Icon::ToolSmb,
+        ToolId::HttpStatus => Icon::ToolHttpStatus,
+        ToolId::TcpPing => Icon::ToolSubnet,
+        ToolId::WakeOnLan => Icon::ToolWakeOnLan,
+        ToolId::Whois => Icon::ToolWhois,
+        ToolId::BannerGrabber => Icon::ToolBannerGrabber,
+        ToolId::Ping => Icon::ToolSubnet,
+        ToolId::Dns | ToolId::DnsBatch => Icon::ToolDnsLookup,
+        ToolId::PortScan => Icon::ToolPortScanner,
+        ToolId::HttpHeaders => Icon::ToolHttpHeaders,
+        ToolId::Cert => Icon::ToolCertInspector,
+        ToolId::TcpTrace => Icon::ToolTraceroute,
+        ToolId::SnmpWalk => Icon::ToolSnmpWalker,
+        ToolId::ArpMon => Icon::ToolArpMonitor,
+        ToolId::FwTest => Icon::ToolFirewallTester,
+        ToolId::NetMap => Icon::ToolNetMap,
+        ToolId::OpenPorts => Icon::ToolPortScanner,
+        ToolId::NetIf => Icon::ToolSubnet,
+        ToolId::Routes => Icon::ToolTraceroute,
+        ToolId::Wifi => Icon::ToolSubnet,
+        ToolId::Hosts => Icon::ToolHostsFileEditor,
+        ToolId::Services => Icon::ToolServiceStatus,
     }
 }
 
@@ -447,6 +556,54 @@ pub enum CopySlot {
     SecNumCloudHtml,
     /// The SMB enumerator report text.
     SmbReport,
+    /// A status code entry of the HTTP status tool.
+    HttpStatus(u16),
+    /// The TCP ping results log.
+    TcpPingResults,
+    /// The WHOIS output text.
+    WhoisOutput,
+    /// The banner grabber results.
+    BannerGrabResults,
+    /// The banner grabber CSV export.
+    BannerGrabCsv,
+    /// The ICMP ping results text.
+    PingResults,
+    /// The ICMP ping CSV export.
+    PingCsv,
+    /// The DNS lookup output text.
+    DnsOutput,
+    /// The DNS batch resolver CSV export.
+    DnsBatchCsv,
+    /// The TCP port scanner CSV export.
+    PortScanCsv,
+    /// The HTTP header analyzer report text.
+    HttpHeadersReport,
+    /// The SSL/TLS certificate details text.
+    CertDetails,
+    /// The SSL/TLS certificate scan CSV export.
+    CertCsv,
+    /// The TCP traceroute CSV export.
+    TcpTraceCsv,
+    /// The SNMP walk CSV export.
+    SnmpWalkCsv,
+    /// The ARP table monitor CSV export.
+    ArpMonCsv,
+    /// The firewall egress tester CSV export.
+    FwTestCsv,
+    /// The network cartography CSV export.
+    NetMapCsv,
+    /// The open TCP/UDP ports CSV export.
+    OpenPortsCsv,
+    /// The network interfaces CSV export.
+    NetIfCsv,
+    /// The routing table CSV export.
+    RoutesCsv,
+    /// The Wi-Fi scanner CSV export.
+    WifiCsv,
+    /// The serialized hosts file text.
+    HostsFileText,
+    /// The service status dashboard CSV export.
+    ServicesCsv,
 }
 
 /// What a tool's tab is asked.
@@ -518,6 +675,50 @@ pub enum ToolMessage {
     SecNumCloud(SecNumCloudMessage),
     /// The SMB enumerator tool's.
     Smb(SmbMessage),
+    /// The HTTP status codes tool's.
+    HttpStatus(HttpStatusMessage),
+    /// The TCP ping tool's.
+    TcpPing(TcpPingMessage),
+    /// The Wake-on-LAN tool's.
+    Wol(WolMessage),
+    /// The WHOIS lookup tool's.
+    Whois(WhoisMessage),
+    /// The banner grabber tool's.
+    Banner(BannerMessage),
+    /// The ICMP ping tool's.
+    Ping(PingMessage),
+    /// The DNS lookup tool's.
+    Dns(DnsMessage),
+    /// The DNS batch resolver tool's.
+    DnsBatch(DnsBatchMessage),
+    /// The TCP port scanner tool's.
+    PortScan(PortScanMessage),
+    /// The HTTP header analyzer tool's.
+    HttpHeaders(HttpHeadersMessage),
+    /// The SSL/TLS certificate inspector tool's.
+    Cert(CertInspectorMessage),
+    /// The TCP traceroute tool's.
+    TcpTrace(TcpTracerouteMessage),
+    /// The SNMP MIB walker tool's.
+    SnmpWalk(SnmpWalkerMessage),
+    /// The ARP table monitor tool's.
+    ArpMon(ArpMonitorMessage),
+    /// The firewall egress tester tool's.
+    FwTest(FirewallTesterMessage),
+    /// The network cartography tool's.
+    NetMap(NetworkCartographyMessage),
+    /// The open ports tool's.
+    OpenPorts(OpenPortsMessage),
+    /// The network interfaces tool's.
+    NetIf(NetIfMessage),
+    /// The routing table tool's.
+    Routes(RouteTableMessage),
+    /// The Wi-Fi scanner tool's.
+    Wifi(WifiMessage),
+    /// The hosts file editor tool's.
+    Hosts(HostsMessage),
+    /// The service status dashboard tool's.
+    Services(ServiceStatusMessage),
 }
 
 /// A tool's own state.
@@ -553,6 +754,28 @@ enum Pane {
     DefaultCreds(Box<defaultcreds_tool::DefaultCredsPane>),
     SecNumCloud(Box<secnumcloud_tool::SecNumCloudPane>),
     Smb(Box<smb_tool::SmbPane>),
+    HttpStatus(http_status_tool::HttpStatusPane),
+    TcpPing(tcp_ping_tool::TcpPingPane),
+    Wol(wol_tool::WolPane),
+    Whois(whois_tool::WhoisPane),
+    Banner(banner_tool::BannerPane),
+    Ping(ping_tool::PingPane),
+    Dns(dns_tool::DnsPane),
+    DnsBatch(dns_batch_tool::DnsBatchPane),
+    PortScan(port_scan_tool::PortScanPane),
+    HttpHeaders(http_headers_tool::HttpHeadersPane),
+    Cert(cert_inspector_tool::CertInspectorPane),
+    TcpTrace(tcp_traceroute_tool::TcpTraceroutePane),
+    SnmpWalk(snmp_walker_tool::SnmpWalkerPane),
+    ArpMon(arp_monitor_tool::ArpMonitorPane),
+    FwTest(firewall_tester_tool::FirewallTesterPane),
+    NetMap(network_cartography_tool::NetworkCartographyPane),
+    OpenPorts(open_ports_tool::OpenPortsPane),
+    NetIf(network_interfaces_tool::NetIfPane),
+    Routes(route_table_tool::RouteTablePane),
+    Wifi(wifi_networks_tool::WifiNetworksPane),
+    Hosts(hosts_editor_tool::HostsEditorPane),
+    Services(service_status_tool::ServiceStatusPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -604,6 +827,30 @@ impl ToolPane {
             ToolId::CveLookup => Pane::Cve(Box::default()),
             ToolId::SecNumCloud => Pane::SecNumCloud(Box::default()),
             ToolId::Smb => Pane::Smb(Box::default()),
+            ToolId::HttpStatus => Pane::HttpStatus(http_status_tool::HttpStatusPane::default()),
+            ToolId::TcpPing => Pane::TcpPing(tcp_ping_tool::TcpPingPane::default()),
+            ToolId::WakeOnLan => Pane::Wol(wol_tool::WolPane::default()),
+            ToolId::Whois => Pane::Whois(whois_tool::WhoisPane::default()),
+            ToolId::BannerGrabber => Pane::Banner(banner_tool::BannerPane::default()),
+            ToolId::Ping => Pane::Ping(ping_tool::PingPane::default()),
+            ToolId::Dns => Pane::Dns(dns_tool::DnsPane::default()),
+            ToolId::DnsBatch => Pane::DnsBatch(dns_batch_tool::DnsBatchPane::default()),
+            ToolId::PortScan => Pane::PortScan(port_scan_tool::PortScanPane::default()),
+            ToolId::HttpHeaders => Pane::HttpHeaders(http_headers_tool::HttpHeadersPane::default()),
+            ToolId::Cert => Pane::Cert(cert_inspector_tool::CertInspectorPane::default()),
+            ToolId::TcpTrace => Pane::TcpTrace(tcp_traceroute_tool::TcpTraceroutePane::default()),
+            ToolId::SnmpWalk => Pane::SnmpWalk(snmp_walker_tool::SnmpWalkerPane::default()),
+            ToolId::ArpMon => Pane::ArpMon(arp_monitor_tool::ArpMonitorPane::default()),
+            ToolId::FwTest => Pane::FwTest(firewall_tester_tool::FirewallTesterPane::default()),
+            ToolId::NetMap => {
+                Pane::NetMap(network_cartography_tool::NetworkCartographyPane::default())
+            }
+            ToolId::OpenPorts => Pane::OpenPorts(open_ports_tool::OpenPortsPane::default()),
+            ToolId::NetIf => Pane::NetIf(network_interfaces_tool::NetIfPane::default()),
+            ToolId::Routes => Pane::Routes(route_table_tool::RouteTablePane::default()),
+            ToolId::Wifi => Pane::Wifi(wifi_networks_tool::WifiNetworksPane::default()),
+            ToolId::Hosts => Pane::Hosts(hosts_editor_tool::HostsEditorPane::default()),
+            ToolId::Services => Pane::Services(service_status_tool::ServiceStatusPane::default()),
         };
         Self {
             pane,
@@ -854,6 +1101,178 @@ impl ToolPanes {
                     smb_tool::Outcome::None => Task::none(),
                 };
             }
+            (ToolMessage::HttpStatus(message), Pane::HttpStatus(pane)) => {
+                if let http_status_tool::Outcome::Copy(slot, content) = pane.update(message) {
+                    return state.copy(tab, slot, content);
+                }
+            }
+            (ToolMessage::TcpPing(message), Pane::TcpPing(pane)) => {
+                return match pane.update(tab, message) {
+                    tcp_ping_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    tcp_ping_tool::Outcome::Task(task) => task,
+                    tcp_ping_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Wol(message), Pane::Wol(pane)) => {
+                pane.update(message);
+            }
+            (ToolMessage::Whois(message), Pane::Whois(pane)) => {
+                return match pane.update(tab, message) {
+                    whois_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    whois_tool::Outcome::Task(task) => task,
+                    whois_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Banner(message), Pane::Banner(pane)) => {
+                return match pane.update(tab, message) {
+                    banner_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    banner_tool::Outcome::Task(task) => task,
+                    banner_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Ping(message), Pane::Ping(pane)) => {
+                return match pane.update(tab, message) {
+                    ping_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    ping_tool::Outcome::Task(task) => task,
+                    ping_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Dns(message), Pane::Dns(pane)) => {
+                return match pane.update(tab, message) {
+                    dns_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    dns_tool::Outcome::Task(task) => task,
+                    dns_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::DnsBatch(message), Pane::DnsBatch(pane)) => {
+                return match pane.update(tab, message) {
+                    dns_batch_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    dns_batch_tool::Outcome::Task(task) => task,
+                    dns_batch_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::PortScan(message), Pane::PortScan(pane)) => {
+                return match pane.update(tab, message) {
+                    port_scan_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    port_scan_tool::Outcome::Task(task) => task,
+                    port_scan_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::HttpHeaders(message), Pane::HttpHeaders(pane)) => {
+                return match pane.update(tab, message) {
+                    http_headers_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    http_headers_tool::Outcome::Task(task) => task,
+                    http_headers_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Cert(message), Pane::Cert(pane)) => {
+                return match pane.update(tab, message) {
+                    cert_inspector_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    cert_inspector_tool::Outcome::Task(task) => task,
+                    cert_inspector_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::TcpTrace(message), Pane::TcpTrace(pane)) => {
+                return match pane.update(tab, message) {
+                    tcp_traceroute_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    tcp_traceroute_tool::Outcome::Task(task) => task,
+                    tcp_traceroute_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::SnmpWalk(message), Pane::SnmpWalk(pane)) => {
+                return match pane.update(tab, message) {
+                    snmp_walker_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    snmp_walker_tool::Outcome::Task(task) => task,
+                    snmp_walker_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::ArpMon(message), Pane::ArpMon(pane)) => {
+                return match pane.update(tab, message) {
+                    arp_monitor_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    arp_monitor_tool::Outcome::Task(task) => task,
+                    arp_monitor_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::FwTest(message), Pane::FwTest(pane)) => {
+                return match pane.update(tab, message) {
+                    firewall_tester_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    firewall_tester_tool::Outcome::Task(task) => task,
+                    firewall_tester_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::NetMap(message), Pane::NetMap(pane)) => {
+                return match pane.update(tab, message) {
+                    network_cartography_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    network_cartography_tool::Outcome::Task(task) => task,
+                    network_cartography_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::OpenPorts(message), Pane::OpenPorts(pane)) => {
+                return match pane.update(tab, message) {
+                    open_ports_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    open_ports_tool::Outcome::Task(task) => task,
+                    open_ports_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::NetIf(message), Pane::NetIf(pane)) => {
+                return match pane.update(tab, message) {
+                    network_interfaces_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    network_interfaces_tool::Outcome::Task(task) => task,
+                    network_interfaces_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Routes(message), Pane::Routes(pane)) => {
+                return match pane.update(tab, message) {
+                    route_table_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    route_table_tool::Outcome::Task(task) => task,
+                    route_table_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Wifi(message), Pane::Wifi(pane)) => {
+                return match pane.update(tab, message) {
+                    wifi_networks_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    wifi_networks_tool::Outcome::Task(task) => task,
+                    wifi_networks_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Hosts(message), Pane::Hosts(pane)) => {
+                return match pane.update(tab, message) {
+                    hosts_editor_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    hosts_editor_tool::Outcome::Task(task) => task,
+                    hosts_editor_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Services(message), Pane::Services(pane)) => {
+                return match pane.update(tab, message) {
+                    service_status_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    service_status_tool::Outcome::Task(task) => task,
+                    service_status_tool::Outcome::None => Task::none(),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -981,6 +1400,46 @@ pub fn view<'a>(
             fl!("ui-tool-secnumcloud-help"),
         ),
         ToolId::Smb => (fl!("ui-tool-smb-title"), fl!("ui-tool-smb-help")),
+        ToolId::HttpStatus => (fl!("ui-tool-http-name"), fl!("ui-tool-http-help")),
+        ToolId::TcpPing => (fl!("ui-tool-tcpping-name"), fl!("ui-tool-tcpping-help")),
+        ToolId::WakeOnLan => (fl!("ui-tool-wol-name"), fl!("ui-tool-wol-help")),
+        ToolId::Whois => (fl!("ui-tool-whois-name"), fl!("ui-tool-whois-help")),
+        ToolId::BannerGrabber => (fl!("ui-tool-banner-name"), fl!("ui-tool-banner-help")),
+        ToolId::Ping => (fl!("ui-tool-ping-name"), fl!("ui-tool-ping-help")),
+        ToolId::Dns => (fl!("ui-tool-dns-name"), fl!("ui-tool-dns-help")),
+        ToolId::DnsBatch => (fl!("ui-tool-dnsbatch-name"), fl!("ui-tool-dnsbatch-help")),
+        ToolId::PortScan => (fl!("ui-tool-portscan-name"), fl!("ui-tool-portscan-help")),
+        ToolId::HttpHeaders => (fl!("ui-tool-headers-name"), fl!("ui-tool-headers-help")),
+        ToolId::Cert => (fl!("ui-tool-cert-name"), fl!("ui-tool-cert-description")),
+        ToolId::TcpTrace => (
+            fl!("ui-tool-tcptrace-name"),
+            fl!("ui-tool-tcptrace-description"),
+        ),
+        ToolId::SnmpWalk => (
+            fl!("ui-tool-snmpwalk-name"),
+            fl!("ui-tool-snmpwalk-description"),
+        ),
+        ToolId::ArpMon => (
+            fl!("ui-tool-arpmon-name"),
+            fl!("ui-tool-arpmon-description"),
+        ),
+        ToolId::FwTest => (
+            fl!("ui-tool-fwtest-name"),
+            fl!("ui-tool-fwtest-description"),
+        ),
+        ToolId::NetMap => (
+            fl!("ui-tool-netmap-name"),
+            fl!("ui-tool-netmap-description"),
+        ),
+        ToolId::OpenPorts => (
+            fl!("ui-tool-openports-title"),
+            fl!("ui-tool-openports-help"),
+        ),
+        ToolId::NetIf => (fl!("ui-tool-netif-title"), fl!("ui-tool-netif-help")),
+        ToolId::Routes => (fl!("ui-tool-routes-title"), fl!("ui-tool-routes-help")),
+        ToolId::Wifi => (fl!("ui-tool-wifi-title"), fl!("ui-tool-wifi-help")),
+        ToolId::Hosts => (fl!("ui-tool-hosts-title"), fl!("ui-tool-hosts-help")),
+        ToolId::Services => (fl!("ui-tool-services-title"), fl!("ui-tool-services-help")),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -1013,6 +1472,28 @@ pub fn view<'a>(
         Pane::Cve(pane) => (pane.view(tab, state, theme), None),
         Pane::SecNumCloud(pane) => (pane.view(tab, state, theme), None),
         Pane::Smb(pane) => (pane.view(tab, state, theme), None),
+        Pane::HttpStatus(pane) => (pane.view(tab, state, theme), None),
+        Pane::TcpPing(pane) => (pane.view(tab, state, theme), None),
+        Pane::Wol(pane) => (pane.view(tab, state, theme), None),
+        Pane::Whois(pane) => (pane.view(tab, state, theme), None),
+        Pane::Banner(pane) => (pane.view(tab, state, theme), None),
+        Pane::Ping(pane) => (pane.view(tab, state, theme), None),
+        Pane::Dns(pane) => (pane.view(tab, state, theme), None),
+        Pane::DnsBatch(pane) => (pane.view(tab, state, theme), None),
+        Pane::PortScan(pane) => (pane.view(tab, state, theme), None),
+        Pane::HttpHeaders(pane) => (pane.view(tab, state, theme), None),
+        Pane::Cert(pane) => (pane.view(tab, state, theme), None),
+        Pane::TcpTrace(pane) => (pane.view(tab, state, theme), None),
+        Pane::SnmpWalk(pane) => (pane.view(tab, state, theme), None),
+        Pane::ArpMon(pane) => (pane.view(tab, state, theme), None),
+        Pane::FwTest(pane) => (pane.view(tab, state, theme), None),
+        Pane::NetMap(pane) => (pane.view(tab, state, theme), None),
+        Pane::OpenPorts(pane) => (pane.view(tab, state, theme), None),
+        Pane::NetIf(pane) => (pane.view(tab, state, theme), None),
+        Pane::Routes(pane) => (pane.view(tab, state, theme), None),
+        Pane::Wifi(pane) => (pane.view(tab, state, theme), None),
+        Pane::Hosts(pane) => (pane.view(tab, state, theme), None),
+        Pane::Services(pane) => (pane.view(tab, state, theme), None),
     };
     column![
         header(tab, title, actions),

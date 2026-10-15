@@ -52,9 +52,23 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(
         ToolId::ALL,
         [
+            ToolId::Ping,
+            ToolId::Dns,
+            ToolId::Cert,
+            ToolId::PortScan,
             ToolId::SubnetCalculator,
             ToolId::IpConverter,
+            ToolId::HttpStatus,
+            ToolId::Whois,
+            ToolId::HttpHeaders,
+            ToolId::BannerGrabber,
+            ToolId::TcpTrace,
+            ToolId::SnmpWalk,
+            ToolId::ArpMon,
+            ToolId::FwTest,
+            ToolId::NetMap,
             ToolId::NetworkCalculator,
+            ToolId::TcpPing,
             ToolId::Hash,
             ToolId::Hmac,
             ToolId::Password,
@@ -81,9 +95,36 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Uuid,
             ToolId::Ulid,
             ToolId::Crontab,
+            ToolId::Hosts,
             ToolId::SshConfig,
+            ToolId::Services,
+            ToolId::WakeOnLan,
+            ToolId::OpenPorts,
+            ToolId::NetIf,
+            ToolId::Routes,
+            ToolId::DnsBatch,
+            ToolId::Wifi,
         ]
     );
+    assert_eq!(ToolId::Ping.code(), "PING");
+    assert!(ToolId::Ping.is_network());
+    assert_eq!(ToolId::Dns.code(), "DNS");
+    assert_eq!(ToolId::Dns.prefixes(), ["dns", "nslookup", "dig"]);
+    assert_eq!(ToolId::DnsBatch.code(), "DNSBATCH");
+    assert_eq!(ToolId::DnsBatch.category(), ToolCategory::External);
+    assert_eq!(ToolId::PortScan.code(), "PORTSCAN");
+    assert!(ToolId::PortScan.is_network());
+    assert_eq!(ToolId::HttpHeaders.code(), "HTTPHEADERS");
+    assert_eq!(ToolId::HttpStatus.code(), "HTTP");
+    assert_eq!(ToolId::Whois.code(), "WHOIS");
+    assert_eq!(ToolId::BannerGrabber.code(), "BANNER");
+    assert_eq!(ToolId::TcpPing.code(), "TCPPING");
+    assert_eq!(ToolId::WakeOnLan.code(), "WOL");
+    assert_eq!(ToolId::WakeOnLan.category(), ToolCategory::External);
+    assert!(ToolId::TcpPing.is_network());
+    assert!(ToolId::BannerGrabber.is_network());
+    assert!(ToolId::Whois.is_network());
+    assert!(!ToolId::HttpStatus.is_network());
     assert_eq!(ToolId::SubnetCalculator.code(), "SUBNET");
     assert_eq!(
         ToolId::NetworkCalculator.prefixes(),
@@ -172,7 +213,21 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
         .iter()
         .all(|tool| tool.category() == ToolCategory::Security)
     );
-    assert_eq!(ToolId::from_code("PING"), None, "not ported");
+    assert_eq!(ToolId::from_code("PING"), Some(ToolId::Ping));
+    assert_eq!(ToolId::from_code("TCPTRACE"), Some(ToolId::TcpTrace));
+    assert_eq!(ToolId::from_code("OPENPORTS"), Some(ToolId::OpenPorts));
+    assert_eq!(ToolId::OpenPorts.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("NETIF"), Some(ToolId::NetIf));
+    assert_eq!(ToolId::NetIf.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("ROUTES"), Some(ToolId::Routes));
+    assert_eq!(ToolId::Routes.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("WIFI"), Some(ToolId::Wifi));
+    assert_eq!(ToolId::Wifi.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("HOSTS"), Some(ToolId::Hosts));
+    assert_eq!(ToolId::Hosts.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("SERVICES"), Some(ToolId::Services));
+    assert_eq!(ToolId::Services.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("LOGVIEW"), None, "not ported");
 }
 
 #[test]
