@@ -26,6 +26,7 @@ use std::time::Duration;
 use super::banner_grab::clean_banner;
 use super::default_creds::escape_csv;
 use super::net_command::{self, RunEnd};
+use super::net_host::checked_host;
 
 /// Default maximum number of hops.
 pub const DEFAULT_MAX_HOPS: usize = 30;
@@ -91,13 +92,10 @@ pub fn validate_inputs(
     host_text: &str,
     max_hops_text: &str,
 ) -> Result<TraceInputs, TraceInputError> {
-    let host = host_text.trim();
-    if host.is_empty() {
+    if host_text.trim().is_empty() {
         return Err(TraceInputError::HostRequired);
     }
-    if !net_command::is_valid_address(host) {
-        return Err(TraceInputError::InvalidHost);
-    }
+    let host = checked_host(host_text).ok_or(TraceInputError::InvalidHost)?;
 
     let max_hops = if let Ok(parsed) = max_hops_text.trim().parse::<usize>() {
         if (MIN_MAX_HOPS..=MAX_MAX_HOPS).contains(&parsed) {
@@ -109,10 +107,7 @@ pub fn validate_inputs(
         DEFAULT_MAX_HOPS
     };
 
-    Ok(TraceInputs {
-        host: host.to_owned(),
-        max_hops,
-    })
+    Ok(TraceInputs { host, max_hops })
 }
 
 /// Formats successful latencies into "*" / "N ms" / "min/avg/max ms".

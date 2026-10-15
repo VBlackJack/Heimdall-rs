@@ -33,7 +33,7 @@ use heimdall_core::tools::cert_inspector::{
     self, CertExpirationStatus, CertInspectionSummary, DEFAULT_PORT, MAX_CONCURRENT_PROBES,
     MAX_SCAN_PORTS, PROBE_TIMEOUT_MS,
 };
-use heimdall_core::tools::net_command;
+use heimdall_core::tools::net_host::checked_host;
 
 use super::network_run::RunSlot;
 use super::{CopySlot, ToolPane};
@@ -248,10 +248,10 @@ impl CertInspectorPane {
             self.error = Some(fl!("ui-tool-cert-error-host-required"));
             return Step::None;
         }
-        if !net_command::is_valid_address(&host) {
+        let Some(host) = checked_host(&host) else {
             self.error = Some(fl!("ui-tool-cert-error-invalid-host"));
             return Step::None;
-        }
+        };
         let ports = if self.ports.trim().is_empty() {
             vec![DEFAULT_PORT]
         } else {

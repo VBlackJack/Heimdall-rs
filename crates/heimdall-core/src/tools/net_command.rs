@@ -14,22 +14,17 @@
  * limitations under the License.
  */
 
-//! What the network tools of the third batch share: a host checked before it reaches a
-//! probe or a command line, as the C# `InputValidator.Validate(host, "Address")`; a system
-//! program run by its whole path, with a deadline and a stop; probes run a bounded number
-//! at a time, as the C# `SemaphoreSlim` around its probes; and a stop that holds while a
-//! probe waits.
+//! What the network tools of the third batch share: a system program run by its whole
+//! path, with a deadline and a stop; and probes run a bounded number at a time, as the C#
+//! `SemaphoreSlim` around its probes, a stop holding while a probe waits. Hosts are checked
+//! by [`super::net_host::checked_host`] before they reach a probe or a command line.
 
 use std::io::{BufRead as _, BufReader};
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
-
-/// The longest DNS name, in characters (RFC 1035 section 3.1, without the root's dot).
-pub const MAX_HOST_NAME_LEN: usize = 253;
 
 /// How often a running program or a waiting probe looks at its stop and its deadline.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -41,32 +36,6 @@ pub const MAX_OUTPUT_LINES: usize = 10_000;
 /// Where a Unix system program is looked for, in order, as the files crate's privileged
 /// commands do: never the `PATH` whoever starts Heimdall sets.
 const UNIX_SYSTEM_FOLDERS: [&str; 4] = ["/usr/sbin", "/usr/bin", "/sbin", "/bin"];
-
-/// Character sequences never valid inside a DNS name, as the C# `InvalidDnsSequences`.
-const INVALID_DNS_SEQUENCES: [&str; 3] = ["..", ".-", "-."];
-
-/// Whether `host` is an IP address or a DNS name, as the C# `"Address"` pattern accepts:
-/// letters, digits, hyphens and dots, starting with a letter or a digit and ending with
-/// neither a dot nor a hyphen. A host starting with `-` is refused, so it is never read as
-/// an option by the program it is given to.
-#[must_use]
-pub fn is_valid_address(host: &str) -> bool {
-    if host.parse::<IpAddr>().is_ok() {
-        return true;
-    }
-    let Some(first) = host.chars().next() else {
-        return false;
-    };
-    host.len() <= MAX_HOST_NAME_LEN
-        && first.is_ascii_alphanumeric()
-        && !host.ends_with(['.', '-'])
-        && host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
-        && !INVALID_DNS_SEQUENCES
-            .iter()
-            .any(|sequence| host.contains(sequence))
-}
 
 /// A system program by its whole path: `windows_name` in Windows' system folder, as
 /// Windows says where it is; elsewhere `unix_name` in the first of the system folders
@@ -227,40 +196,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
-    use super::{RunEnd, for_each_bounded, is_valid_address, run_lines, system_tool};
-
-    #[test]
-    fn an_address_is_an_ip_or_a_dns_name_never_an_option() {
-        for valid in [
-            "10.0.0.1",
-            "2001:db8::1",
-            "::1",
-            "files.lab",
-            "srv-01.corp.example.com",
-            "1e100.net",
-            "localhost",
-        ] {
-            assert!(is_valid_address(valid), "{valid}");
-        }
-        for refused in [
-            "",
-            "-n",
-            "--help",
-            "host name",
-            "a..b",
-            "a.-b",
-            "a-.b",
-            "host.",
-            "host-",
-            ".host",
-            "h\u{e9}te.lab",
-            "host;rm",
-            "host\u{0}",
-        ] {
-            assert!(!is_valid_address(refused), "{refused:?}");
-        }
-        assert!(!is_valid_address(&"a".repeat(super::MAX_HOST_NAME_LEN + 1)));
-    }
+    use super::{RunEnd, for_each_bounded, run_lines, system_tool};
 
     #[test]
     fn bounded_jobs_never_run_more_than_asked_and_all_results_come_back() {

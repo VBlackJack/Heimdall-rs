@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 
 use super::default_creds::escape_csv;
 use super::net_command;
+use super::net_host::checked_host;
 
 /// Default TCP connection timeout in milliseconds, as the C# `ConnectTimeoutMs`.
 pub const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 3000;
@@ -131,10 +132,7 @@ pub fn validate_inputs(hosts_text: &str, ports_text: &str) -> Result<FwInputs, F
         return Err(FwInputError::NoHosts);
     }
     let typed_count = typed.len();
-    let mut hosts: Vec<String> = typed
-        .into_iter()
-        .filter(|host| net_command::is_valid_address(host))
-        .collect();
+    let mut hosts: Vec<String> = typed.iter().filter_map(|host| checked_host(host)).collect();
     if hosts.is_empty() {
         return Err(FwInputError::InvalidHost);
     }

@@ -26,7 +26,7 @@ use iced::widget::{column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 use zeroize::Zeroizing;
 
-use heimdall_core::tools::net_command;
+use heimdall_core::tools::net_host::checked_host;
 use heimdall_core::tools::snmp_walker::{
     self, DEFAULT_COMMUNITY, DEFAULT_OID, DEFAULT_PORT, DEFAULT_TIMEOUT_MS, MAX_COMMUNITY_LEN,
     MAX_WALK_RESULTS, SnmpEntry, WalkEnd, WalkError,
@@ -246,10 +246,10 @@ impl SnmpWalkerPane {
             self.error = Some(fl!("ui-tool-snmpwalk-error-host-required"));
             return Step::None;
         }
-        if !net_command::is_valid_address(&host) {
+        let Some(host) = checked_host(&host) else {
             self.error = Some(fl!("ui-tool-snmpwalk-error-invalid-host"));
             return Step::None;
-        }
+        };
         let community = match self.community.trim() {
             "" => DEFAULT_COMMUNITY,
             typed => typed,
