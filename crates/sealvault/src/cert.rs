@@ -313,7 +313,6 @@ const IPV4_LEN: usize = 4;
 /// Bytes of an IPv6 address in a subject alternative name.
 const IPV6_LEN: usize = 16;
 
-
 /// OID content octets (no tag or length) of the public key algorithms whose key size is
 /// decided by the algorithm, not by the length of the public key bytes.
 const OID_RSA_ENCRYPTION: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
