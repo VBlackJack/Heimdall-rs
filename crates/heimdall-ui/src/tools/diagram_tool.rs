@@ -18,7 +18,10 @@
 //! art), started from a template or opened from a file, edited, saved and copied. Unlike
 //! the C# `DiagramEditorView`, which embeds the draw.io editor, nothing is drawn here: the
 //! source is for whatever renders its format. A template or a file never replaces changes
-//! not saved without asking first, as the C# `ToolDiagramUnsavedMessage`.
+//! not saved without asking first, as the C# `ToolDiagramUnsavedMessage`; nor does closing
+//! the tab, as the C# `CanClose` (`DiagramEditorView.xaml.cs:668-702`). A save is written
+//! beside the file then renamed over it, one at a time, and its end applies only to the
+//! document saved, clearing its changes only when none came after it.
 
 use std::path::PathBuf;
 
@@ -56,8 +59,8 @@ pub enum DiagramMessage {
     SaveAs,
     /// Where to save, picked; `None` when cancelled.
     SaveTo(Option<PathBuf>),
-    /// The text saved to this file, or why not.
-    Saved(Result<PathBuf, FileError>),
+    /// The save `.0` wrote its text to this file, or why not.
+    Saved(SaveTicket, Result<PathBuf, FileError>),
     /// Something done in the editor.
     Edit(Action),
     /// Copy the source.
@@ -73,6 +76,13 @@ pub enum FileError {
     Failed(String),
 }
 
+/// Which save a completion answers: the document saved, and its edits then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SaveTicket {
+    document: u64,
+    revision: u64,
+}
+
 /// What an update asks of its tab.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -84,8 +94,17 @@ pub enum Outcome {
     Open,
     /// The save dialog, a file of this format offered.
     AskSave(DiagramFormat),
-    /// This text written to this file.
-    Save(PathBuf, String),
+    /// This text written to this file, by the save `ticket`.
+    Save {
+        /// The file.
+        path: PathBuf,
+        /// The text.
+        source: String,
+        /// Which save it is.
+        ticket: SaveTicket,
+    },
+    /// The tab's close asked again, its document saved as asked before closing.
+    Close,
 }
 
 impl Outcome {
@@ -95,9 +114,17 @@ impl Outcome {
             Self::Done | Self::Copy(_) => Task::none(),
             Self::Open => pick_file(tab, main),
             Self::AskSave(format) => pick_save(tab, main, format),
-            Self::Save(path, source) => Task::perform(write_file(path, source), move |saved| {
-                Message::Tool(tab, ToolMessage::Diagram(DiagramMessage::Saved(saved)))
+            Self::Save {
+                path,
+                source,
+                ticket,
+            } => Task::perform(write_file(path, source), move |saved| {
+                Message::Tool(
+                    tab,
+                    ToolMessage::Diagram(DiagramMessage::Saved(ticket, saved)),
+                )
             }),
+            Self::Close => Task::done(Message::App(heimdall_app::Message::RequestCloseTab(tab))),
         }
     }
 }
@@ -127,6 +154,16 @@ pub struct DiagramPane {
     file: Option<PathBuf>,
     /// Changes not saved.
     dirty: bool,
+    /// The document shown, numbered: a template or a file opened is another one.
+    document: u64,
+    /// The edits made, numbered: a save clears `dirty` only when none came after it.
+    revision: u64,
+    /// The save running: one at a time, so two never write the same file at once.
+    saving: Option<SaveTicket>,
+    /// Where to save once the save running is done: asked meanwhile.
+    save_next: Option<PathBuf>,
+    /// The tab's close asked again once the save asked before closing is done.
+    close_after_save: bool,
     /// A replacement waiting for the user to confirm it.
     pending: Option<Replace>,
     status: Status,
@@ -141,6 +178,11 @@ impl Default for DiagramPane {
             format: first.format,
             file: None,
             dirty: false,
+            document: 0,
+            revision: 0,
+            saving: None,
+            save_next: None,
+            close_after_save: false,
             pending: None,
             status: Status::None,
         }
@@ -160,40 +202,123 @@ impl DiagramPane {
             }
             DiagramMessage::CancelReplace => self.pending = None,
             DiagramMessage::Opened(Some(Ok((path, source)))) => {
+                self.another_document();
                 self.editor = Content::with_text(&source);
                 self.format = DiagramFormat::of_path(&path);
                 self.file = Some(path);
-                self.dirty = false;
                 self.status = Status::None;
             }
             DiagramMessage::Opened(Some(Err(error))) => self.status = Status::OpenFailed(error),
-            DiagramMessage::Opened(None) | DiagramMessage::SaveTo(None) => {}
-            DiagramMessage::Save => {
-                return match &self.file {
-                    Some(path) => Outcome::Save(path.clone(), self.editor.text()),
-                    None => Outcome::AskSave(self.format),
-                };
-            }
+            DiagramMessage::Opened(None) => {}
+            // No file picked: a close waiting for this save is not asked any more.
+            DiagramMessage::SaveTo(None) => self.close_after_save = false,
+            DiagramMessage::Save => return self.save(),
             DiagramMessage::SaveAs => return Outcome::AskSave(self.format),
-            DiagramMessage::SaveTo(Some(path)) => {
-                return Outcome::Save(path, self.editor.text());
-            }
-            DiagramMessage::Saved(Ok(path)) => {
-                self.format = DiagramFormat::of_path(&path);
-                self.file = Some(path.clone());
-                self.dirty = false;
-                self.status = Status::Saved(path);
-            }
-            DiagramMessage::Saved(Err(error)) => self.status = Status::SaveFailed(error),
+            DiagramMessage::SaveTo(Some(path)) => return self.save_to(path),
+            DiagramMessage::Saved(ticket, saved) => return self.saved(ticket, saved),
             DiagramMessage::Edit(action) => {
                 if action.is_edit() {
                     self.dirty = true;
+                    self.revision += 1;
+                    // Typing again after "Save" before closing: the close is the user's again.
+                    self.close_after_save = false;
                 }
                 self.editor.perform(action);
             }
             DiagramMessage::Copy => return Outcome::Copy(self.editor.text()),
         }
         Outcome::Done
+    }
+
+    /// Saved to the diagram's file, or the user asked where when it has none, as the C# Save.
+    fn save(&mut self) -> Outcome {
+        match self.file.clone() {
+            Some(path) => self.save_to(path),
+            None => Outcome::AskSave(self.format),
+        }
+    }
+
+    /// The text written to `path`, now, or once the save running is done: two saves never
+    /// write at once, and the later one writes the text as it is when it starts.
+    fn save_to(&mut self, path: PathBuf) -> Outcome {
+        if self.saving.is_some() {
+            self.save_next = Some(path);
+            return Outcome::Done;
+        }
+        let ticket = SaveTicket {
+            document: self.document,
+            revision: self.revision,
+        };
+        self.saving = Some(ticket);
+        Outcome::Save {
+            path,
+            source: self.editor.text(),
+            ticket,
+        }
+    }
+
+    /// The save `ticket` done: applied to the document it saved alone, its changes cleared
+    /// only when none came after it; then the save asked meanwhile, or the close waiting.
+    fn saved(&mut self, ticket: SaveTicket, saved: Result<PathBuf, FileError>) -> Outcome {
+        if self.saving != Some(ticket) {
+            return Outcome::Done;
+        }
+        self.saving = None;
+        let shown = ticket.document == self.document;
+        let ok = saved.is_ok();
+        match saved {
+            Ok(path) if shown => {
+                self.format = DiagramFormat::of_path(&path);
+                self.file = Some(path.clone());
+                if ticket.revision == self.revision {
+                    self.dirty = false;
+                }
+                self.status = Status::Saved(path);
+            }
+            // Another document's: written, nothing of the one shown changes.
+            Ok(_) => {}
+            // Said whichever document it was: the user believes it saved.
+            Err(error) => {
+                self.close_after_save = false;
+                self.status = Status::SaveFailed(error);
+            }
+        }
+        if let Some(next) = self.save_next.take() {
+            return self.save_to(next);
+        }
+        if ok && std::mem::take(&mut self.close_after_save) {
+            return Outcome::Close;
+        }
+        Outcome::Done
+    }
+
+    /// Saved before its tab closes, as the C# `CanClose` Save: the close asked again once
+    /// written, at once when nothing is to be saved; asked where for a diagram never saved.
+    pub fn save_before_close(&mut self) -> Outcome {
+        self.close_after_save = true;
+        if self.dirty {
+            self.save()
+        } else if self.saving.is_some() {
+            Outcome::Done
+        } else {
+            self.close_after_save = false;
+            Outcome::Close
+        }
+    }
+
+    /// The document's name when closing the tab would lose changes, or a save still
+    /// running; `None` when nothing would be lost.
+    #[must_use]
+    pub fn unsaved(&self) -> Option<String> {
+        (self.dirty || self.saving.is_some()).then(|| self.file_name())
+    }
+
+    /// Another document shown from now: what was waiting for the one before is let go.
+    fn another_document(&mut self) {
+        self.document += 1;
+        self.dirty = false;
+        self.save_next = None;
+        self.close_after_save = false;
     }
 
     /// `replace` done at once when nothing would be lost, else asked first.
@@ -211,10 +336,10 @@ impl DiagramPane {
         match replace {
             Replace::Template(kind) => {
                 let template = diagram_editor::template(kind);
+                self.another_document();
                 self.editor = Content::with_text(template.content);
                 self.format = template.format;
                 self.file = None;
-                self.dirty = false;
                 self.status = Status::None;
                 Outcome::Done
             }
@@ -222,16 +347,20 @@ impl DiagramPane {
         }
     }
 
-    /// The name the header shows: the file's, or untitled; marked when changed.
-    fn document_name(&self) -> String {
-        let name = self
-            .file
+    /// The file's name, or untitled.
+    fn file_name(&self) -> String {
+        self.file
             .as_ref()
             .and_then(|path| path.file_name())
             .map_or_else(
                 || fl!("ui-tool-diagram-untitled"),
                 |name| name.to_string_lossy().into_owned(),
-            );
+            )
+    }
+
+    /// The name the header shows: the file's, or untitled; marked when changed.
+    fn document_name(&self) -> String {
+        let name = self.file_name();
         if self.dirty {
             fl!("ui-tool-diagram-modified", name = name)
         } else {
@@ -431,12 +560,17 @@ fn pick_save(tab: TabId, main: Option<window::Id>, format: DiagramFormat) -> Tas
     })
 }
 
-/// Writes `source` to `path`: the path written, or why not.
+/// Writes `source` to `path` beside it, then renamed over it, so a failure or a crash never
+/// leaves the file truncated as writing over it in place could: the path written, or why
+/// not.
 pub async fn write_file(path: PathBuf, source: String) -> Result<PathBuf, FileError> {
-    tokio::fs::write(&path, source)
-        .await
-        .map(|()| path)
-        .map_err(|error| FileError::Failed(error.to_string()))
+    let failed = |error: &dyn std::fmt::Display| FileError::Failed(error.to_string());
+    tokio::task::spawn_blocking(move || {
+        heimdall_core::store::replace_user_file(&path, source.as_bytes()).map(|()| path)
+    })
+    .await
+    .map_err(|error| failed(&error))?
+    .map_err(|error| failed(&error))
 }
 
 #[cfg(test)]
@@ -497,16 +631,131 @@ mod tests {
             Outcome::AskSave(DiagramFormat::Mermaid)
         );
         let path = PathBuf::from("net.dot");
-        let Outcome::Save(to, source) = pane.update(DiagramMessage::SaveTo(Some(path.clone())))
-        else {
-            panic!("a save");
-        };
+        let (to, source, ticket) = save(pane.update(DiagramMessage::SaveTo(Some(path.clone()))));
         assert_eq!(to, path);
         assert!(source.starts_with('x'));
-        pane.update(DiagramMessage::Saved(Ok(path.clone())));
+        pane.update(DiagramMessage::Saved(ticket, Ok(path.clone())));
         assert!(!pane.dirty);
         assert_eq!(pane.format, DiagramFormat::Dot);
-        assert!(matches!(pane.update(DiagramMessage::Save), Outcome::Save(to, _) if to == path));
+        assert_eq!(save(pane.update(DiagramMessage::Save)).0, path);
+    }
+
+    /// The file, text and ticket of the save `outcome` asks for.
+    fn save(outcome: Outcome) -> (PathBuf, String, SaveTicket) {
+        let Outcome::Save {
+            path,
+            source,
+            ticket,
+        } = outcome
+        else {
+            panic!("a save, not {outcome:?}");
+        };
+        (path, source, ticket)
+    }
+
+    /// A diagram saved once to `d.mmd`, typed into since: the save running.
+    fn saving(pane: &mut DiagramPane) -> (PathBuf, SaveTicket) {
+        let path = PathBuf::from("d.mmd");
+        typed(pane, "a ");
+        let (_, _, ticket) = save(pane.update(DiagramMessage::SaveTo(Some(path.clone()))));
+        (path, ticket)
+    }
+
+    #[test]
+    fn a_save_ending_after_more_edits_keeps_them_marked_unsaved() {
+        let mut pane = DiagramPane::default();
+        let (path, ticket) = saving(&mut pane);
+        typed(&mut pane, "b ");
+        pane.update(DiagramMessage::Saved(ticket, Ok(path.clone())));
+        assert!(pane.dirty, "the edit made while it ran is not on disk");
+        assert_eq!(pane.file, Some(path));
+        assert!(pane.unsaved().is_some());
+    }
+
+    #[test]
+    fn a_save_ending_after_another_document_is_shown_leaves_that_one_alone() {
+        let mut pane = DiagramPane::default();
+        let (path, ticket) = saving(&mut pane);
+        pane.update(DiagramMessage::Template(TemplateKind::AsciiTopology));
+        pane.update(DiagramMessage::ConfirmReplace);
+        typed(&mut pane, "new ");
+        pane.update(DiagramMessage::Saved(ticket, Ok(path)));
+        assert_eq!(pane.file, None, "the template is never given the old file");
+        assert!(pane.dirty);
+        assert_eq!(pane.format, DiagramFormat::Ascii);
+        // A failure is said whichever document it was.
+        let (_, ticket) = saving(&mut pane);
+        pane.update(DiagramMessage::Template(TemplateKind::CloudVpc));
+        pane.update(DiagramMessage::ConfirmReplace);
+        let failed = FileError::Failed("disk full".to_owned());
+        pane.update(DiagramMessage::Saved(ticket, Err(failed.clone())));
+        assert_eq!(pane.status, Status::SaveFailed(failed));
+    }
+
+    #[test]
+    fn a_second_save_waits_for_the_first_then_writes_the_text_as_it_is_then() {
+        let mut pane = DiagramPane::default();
+        let (path, first) = saving(&mut pane);
+        typed(&mut pane, "b ");
+        assert_eq!(
+            pane.update(DiagramMessage::SaveTo(Some(path.clone()))),
+            Outcome::Done,
+            "not two at once"
+        );
+        typed(&mut pane, "c ");
+        let (to, source, second) =
+            save(pane.update(DiagramMessage::Saved(first, Ok(path.clone()))));
+        assert_eq!(to, path);
+        assert!(source.starts_with("a b c "), "{source}");
+        assert!(pane.dirty);
+        // The first one's end, told twice, is no longer this save's.
+        assert_eq!(
+            pane.update(DiagramMessage::Saved(first, Ok(path.clone()))),
+            Outcome::Done
+        );
+        assert!(pane.dirty);
+        pane.update(DiagramMessage::Saved(second, Ok(path)));
+        assert!(!pane.dirty);
+        assert_eq!(pane.unsaved(), None);
+    }
+
+    #[test]
+    fn save_before_closing_asks_the_close_again_once_written_only() {
+        let mut pane = DiagramPane::default();
+        assert_eq!(pane.unsaved(), None);
+        assert_eq!(pane.save_before_close(), Outcome::Close, "nothing to save");
+        typed(&mut pane, "x");
+        assert!(pane.unsaved().is_some());
+        // Never saved: where is asked; no file picked, no close.
+        assert_eq!(
+            pane.save_before_close(),
+            Outcome::AskSave(DiagramFormat::Mermaid)
+        );
+        pane.update(DiagramMessage::SaveTo(None));
+        assert!(!pane.close_after_save);
+        pane.save_before_close();
+        let path = PathBuf::from("net.mmd");
+        let (_, _, ticket) = save(pane.update(DiagramMessage::SaveTo(Some(path.clone()))));
+        let failed = FileError::Failed("denied".to_owned());
+        assert_eq!(
+            pane.update(DiagramMessage::Saved(ticket, Err(failed))),
+            Outcome::Done,
+            "a failed save never closes the tab"
+        );
+        assert!(pane.dirty);
+        let (_, _, ticket) = save(pane.update(DiagramMessage::SaveTo(Some(path.clone()))));
+        assert_eq!(
+            pane.update(DiagramMessage::Saved(ticket, Ok(path.clone()))),
+            Outcome::Done,
+            "a plain save closes nothing"
+        );
+        typed(&mut pane, "y");
+        let (_, _, ticket) = save(pane.save_before_close());
+        assert_eq!(
+            pane.update(DiagramMessage::Saved(ticket, Ok(path))),
+            Outcome::Close
+        );
+        assert_eq!(pane.unsaved(), None);
     }
 
     #[test]
@@ -520,6 +769,20 @@ mod tests {
         assert_eq!(pane.editor.text(), "@startuml\n@enduml");
         pane.update(DiagramMessage::Opened(Some(Err(FileError::TooLarge))));
         assert_eq!(pane.status, Status::OpenFailed(FileError::TooLarge));
+    }
+
+    #[tokio::test]
+    async fn a_file_saved_over_is_replaced_whole() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("d.mmd");
+        std::fs::write(&path, "graph TD\n  a --> b\n  b --> c\n").expect("written");
+        assert_eq!(
+            write_file(path.clone(), "x".to_owned()).await,
+            Ok(path.clone())
+        );
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "x");
+        let left: Vec<_> = std::fs::read_dir(dir.path()).expect("listed").collect();
+        assert_eq!(left.len(), 1, "no temporary file left");
     }
 
     #[tokio::test]

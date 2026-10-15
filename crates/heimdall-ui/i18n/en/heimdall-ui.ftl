@@ -1995,6 +1995,8 @@ ui-editor-notice-failed = Failed to save: { $reason }
 ui-dialog-discard-editor-title = Unsaved Changes
 ui-dialog-discard-editor-body = File has unsaved changes. Close anyway?
 ui-dialog-close-editor-body = The editor on "{ $name }" has unsaved changes. Close and discard them?
+ui-dialog-close-tool-body = "{ $name }" has unsaved changes. Save them before closing the tab?
+ui-dialog-close-tool-discard = Discard
 ui-dialog-unsaved-editors = { $count ->
     [one] { $count } editor holds unsaved changes, which would be lost.
    *[other] { $count } editors hold unsaved changes, which would be lost.
@@ -5047,6 +5049,9 @@ ui-tool-notes-empty-body = Create a note or select one from the list.
 ui-tool-notes-error-no-folder = This system gives Heimdall no data folder to keep notes in.
 ui-tool-notes-error-list = Cannot read the notes: { $error }
 ui-tool-notes-error-save = Cannot save the note: { $error }
+ui-tool-notes-unsaved-blocked = This note could not be saved. Retry, or discard its changes to go on.
+ui-tool-notes-retry = Retry
+ui-tool-notes-discard = Discard changes
 
 ## Diagram editor
 ui-tool-diagram-name = Diagram Editor

@@ -768,7 +768,13 @@ impl App {
     /// first guard any of them raises, in the C# order; whether a question was asked.
     pub(super) fn ask_before_closing(&mut self, closed: TabId, panes: &[TabId]) -> bool {
         let tabs: Vec<&Tab> = panes.iter().filter_map(|id| self.tab(*id)).collect();
-        let dialog = if let Some(tab) = tabs.iter().find(|tab| tab.holds_unsaved_text()) {
+        let dialog = if let Some(name) = tabs.iter().find_map(|tab| tab.tool_unsaved()) {
+            // A tool's document would be lost: Save offered, as the C# tool's `CanClose`.
+            Dialog::ConfirmCloseTool {
+                tab: closed,
+                name: name.to_owned(),
+            }
+        } else if let Some(tab) = tabs.iter().find(|tab| tab.holds_unsaved_text()) {
             // Its editor's text would be lost: said first, as the C# close guard.
             let name = tab
                 .files

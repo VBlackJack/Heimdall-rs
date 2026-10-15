@@ -2572,7 +2572,7 @@ impl Shell {
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
         ) || (matches!(message, Message::TypeAhead(_)) && !self.tree_focused);
         let effects = match message {
-            Message::App(message) => self.app.update(message),
+            Message::App(message) => self.update_app(message),
             Message::Editor(message) => self.editors.update(message, &mut self.app),
             message @ (Message::Field { .. }
             | Message::FocusField { .. }
@@ -2786,7 +2786,9 @@ impl Shell {
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
             Message::Tool(tab, message) => {
-                return self.tools.update(tab, message, self.main_window);
+                let task = self.tools.update(tab, message, self.main_window);
+                self.tools.report_unsaved(&mut self.app);
+                return task;
             }
             Message::ToolsFilter(typed) => {
                 self.tools_filter = typed;
@@ -3090,6 +3092,17 @@ impl Shell {
         })
     }
 
+    /// Hands `message` to the core; one asking to close tabs or the window has the tool
+    /// tabs' notes written first, as the C# Notes `CanClose`, so the core's close guard asks
+    /// only about changes that could not be written.
+    fn update_app(&mut self, message: AppMessage) -> Vec<Effect> {
+        if asks_to_close(&message) {
+            self.tools.save_before_closing();
+            self.tools.report_unsaved(&mut self.app);
+        }
+        self.app.update(message)
+    }
+
     /// Closes the open menu, then hands `message` to the core.
     fn closing_menu(&mut self, message: AppMessage) -> Vec<Effect> {
         self.menu = None;
@@ -3102,7 +3115,7 @@ impl Shell {
             self.search.clear();
             self.tree_focused = true;
         }
-        self.app.update(message)
+        self.update_app(message)
     }
 
     /// Hands the gateway dialog to the core with the password and passphrase typed, which
@@ -3411,7 +3424,7 @@ impl Shell {
                 return Vec::new();
             }
         };
-        self.app.update(message)
+        self.update_app(message)
     }
 
     /// Opens the search bar over `tab`'s terminal, or closes it when open; only a tab
@@ -4498,6 +4511,11 @@ impl Shell {
             Effect::FocusWindow(key) => self.window_of(key).map_or_else(Task::none, focus_window),
             Effect::FocusMainWindow => {
                 main_window_task(main).then(|main| main.map_or_else(Task::none, focus_window))
+            }
+            Effect::SaveTool(tab) => {
+                let task = self.tools.save_before_close(tab, main);
+                self.tools.report_unsaved(&mut self.app);
+                task
             }
             Effect::Exit => self.exit(),
         }
@@ -11312,6 +11330,38 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
     dialog_parts::question(severity, title, body, action)
 }
 
+/// Whether `message` asks to close tabs or the window, each way the window has: a tab's
+/// close button or Ctrl+W, a pane's, a tab menu's group, a window of its own, the window.
+fn asks_to_close(message: &AppMessage) -> bool {
+    matches!(
+        message,
+        AppMessage::RequestCloseTab(_)
+            | AppMessage::WindowCloseRequested
+            | AppMessage::Split(SplitMessage::ClosePane(_))
+            | AppMessage::Float(heimdall_app::FloatMessage::CloseRequested(_))
+            | AppMessage::TabMenu(heimdall_app::TabMenuMessage::Close { .. })
+    )
+}
+
+/// Whether to save a tool's document before its tab closes, as the C# tool's three-way
+/// question (`DiagramEditorView.xaml.cs:668-702`): Cancel, Discard, which closes the tab and
+/// loses the changes, and Save, which closes it once they are written.
+fn close_tool_dialog(name: &str) -> Element<'_, Message> {
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-discard-editor-title"),
+        dialog_parts::body(fl!("ui-dialog-close-tool-body", name = name)),
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(fl!("ui-dialog-close-tool-discard"), styles::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+            dialog_parts::action(fl!("ui-editor-save"), styles::primary).on_press(Message::App(
+                AppMessage::Tools(ToolsMessage::SaveBeforeClose),
+            )),
+        ]),
+    )
+}
+
 /// The dialogs about a tab: closing it or others, naming it, pasting several lines in it.
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (severity, title, body, action) = match dialog {
@@ -11324,6 +11374,7 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             preview,
             ..
         } => return paste_dialog(*lines, *command, preview),
+        Dialog::ConfirmCloseTool { name, .. } => return close_tool_dialog(name),
         Dialog::ConfirmDisconnectDesktop { name, .. } => (
             Severity::Warning,
             fl!("ui-desktop-disconnect-title"),
@@ -13035,6 +13086,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmCloseTransfers { .. }
         | Dialog::ConfirmCloseEdits { .. }
         | Dialog::ConfirmCloseEditor { .. }
+        | Dialog::ConfirmCloseTool { .. }
         | Dialog::ConfirmDiscardEditor { .. }
         | Dialog::ConfirmDownloadBinary { .. }
         | Dialog::ConfirmOpenLink { .. }

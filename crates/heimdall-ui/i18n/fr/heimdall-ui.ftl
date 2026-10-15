@@ -1818,6 +1818,8 @@ ui-editor-notice-failed = Échec de l'enregistrement : { $reason }
 ui-dialog-discard-editor-title = Modifications non enregistrées
 ui-dialog-discard-editor-body = Le fichier a des modifications non enregistrées. Fermer quand même ?
 ui-dialog-close-editor-body = L'éditeur sur "{ $name }" a des modifications non enregistrées. Fermer et les abandonner ?
+ui-dialog-close-tool-body = "{ $name }" a des modifications non enregistrées. Les enregistrer avant de fermer l'onglet ?
+ui-dialog-close-tool-discard = Abandonner
 ui-dialog-unsaved-editors = { $count ->
     [one] { $count } éditeur a des modifications non enregistrées, qui seraient perdues.
    *[other] { $count } éditeurs ont des modifications non enregistrées, qui seraient perdues.
@@ -5100,6 +5102,9 @@ ui-tool-notes-empty-body = Créez une note ou sélectionnez-en une dans la liste
 ui-tool-notes-error-no-folder = Ce système ne donne à Heimdall aucun dossier de données où garder les notes.
 ui-tool-notes-error-list = Impossible de lire les notes : { $error }
 ui-tool-notes-error-save = Impossible d'enregistrer la note : { $error }
+ui-tool-notes-unsaved-blocked = Cette note n'a pas pu être enregistrée. Réessayez, ou abandonnez ses modifications pour continuer.
+ui-tool-notes-retry = Réessayer
+ui-tool-notes-discard = Abandonner les modifications
 
 ## Éditeur de diagrammes
 ui-tool-diagram-name = Éditeur de diagrammes
