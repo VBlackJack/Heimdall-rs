@@ -210,6 +210,15 @@ impl App {
         if !self.can_paste(tab_id) {
             return Vec::new();
         }
+        // Into the folder shown: not while its listing is on its way.
+        let into = if self.is_local_browser_files(tab_id) {
+            Side::Local
+        } else {
+            Side::Remote
+        };
+        if !self.takes_into_shown(tab_id, into) {
+            return Vec::new();
+        }
         if let Some(effects) = self.paste_local_files(tab_id) {
             return effects;
         }

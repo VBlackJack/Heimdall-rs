@@ -114,7 +114,7 @@ impl App {
         };
         let path = RemotePath::from(directory.as_str());
         files.remote.leave();
-        vec![super::files_sudo::remote_listing(files, pane, client, path)]
+        super::files_sudo::remote_listing(files, pane, client, path)
     }
 
     /// Local browser `pane` goes to the folder `shell` last reported, unless it names no

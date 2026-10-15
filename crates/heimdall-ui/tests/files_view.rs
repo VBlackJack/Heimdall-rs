@@ -792,6 +792,88 @@ async fn this_computers_menu_uploads_what_the_servers_downloads() {
 }
 
 #[tokio::test]
+async fn while_a_folder_is_listed_nothing_offers_to_put_anything_into_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let to_files = |message| Message::App(AppMessage::Files(message));
+    let clicked = |shell: &Shell, label: &str| {
+        let mut ui = simulator(shell);
+        ui.find(label).expect(label);
+        ui.click(label).ok();
+        files_messages(ui)
+    };
+    let _ = shell.update(to_files(FilesMessage::Select {
+        tab,
+        side: Side::Local,
+        index: 1,
+    }));
+    // Into "logs": its listing on its way, the entries of the folder before still shown.
+    let _ = shell.update(to_files(FilesMessage::Open {
+        tab,
+        side: Side::Remote,
+        index: 0,
+    }));
+    // Upload, between the panes, sends into the server's folder named: faded.
+    let messages = clicked(&shell, "Upload");
+    assert!(messages.is_empty(), "{messages:?}");
+    // The server's pane alone: its New folder and Upload are faded too.
+    let _ = shell.update(to_files(FilesMessage::ToggleLocal { tab }));
+    for label in ["New folder", "Upload"] {
+        let messages = clicked(&shell, label);
+        assert!(messages.is_empty(), "{label}: {messages:?}");
+    }
+    // Listed: they act again.
+    list_remote(&mut shell, tab, Vec::new());
+    assert!(matches!(
+        clicked(&shell, "New folder").as_slice(),
+        [FilesMessage::AskNewFolder {
+            side: Side::Remote,
+            ..
+        }]
+    ));
+    assert!(matches!(
+        clicked(&shell, "Upload").as_slice(),
+        [FilesMessage::UploadHere { .. }]
+    ));
+}
+
+#[tokio::test]
+async fn the_folders_menu_greys_what_puts_something_into_it_while_it_is_listed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, tab) = files_tab(dir.path()).await;
+    let chosen = |folder_pending: bool, label: &str| {
+        let settings = Settings {
+            fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+            ..Settings::default()
+        };
+        let mut ui = common::simulator(
+            settings,
+            WINDOW,
+            heimdall_ui::tree_view::files_entry_menu(
+                (tab, Side::Remote),
+                None,
+                heimdall_ui::tree_view::FilesTabFacts {
+                    folder_pending,
+                    ..sftp_tab(true, true)
+                },
+            ),
+        );
+        ui.find(label).expect(label);
+        ui.click(label).ok();
+        ui.into_messages()
+            .filter(|message| matches!(message, Message::MenuChoice(_)))
+            .count()
+    };
+    for label in ["New Folder", "Upload here...", "Paste"] {
+        assert_eq!(chosen(true, label), 0, "{label}: greyed while listed");
+        assert_eq!(chosen(false, label), 1, "{label}");
+    }
+    // What does not put anything into the folder stays offered.
+    assert_eq!(chosen(true, "Refresh"), 1);
+}
+
+#[tokio::test]
 async fn after_an_entrys_menu_the_arrows_still_move_through_the_files() {
     use heimdall_app::files::FilesKey;
     use heimdall_ui::tree_view::TreeMenu;
@@ -1840,6 +1922,7 @@ fn sftp_tab(can_paste: bool, over_ssh: bool) -> heimdall_ui::tree_view::FilesTab
         sftp: true,
         over_ssh,
         local_only: false,
+        folder_pending: false,
     }
 }
 
@@ -2146,6 +2229,7 @@ async fn an_ftp_tabs_entry_menu_edits_cuts_and_copies_as_the_csharp_but_never_ru
         sftp: false,
         over_ssh: false,
         local_only: false,
+        folder_pending: false,
     };
     let menu = |facts| {
         let settings = Settings {
