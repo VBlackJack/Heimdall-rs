@@ -4134,14 +4134,14 @@ ui-tool-defaultcreds-help =
     3. Click Scan
 
     Protocols tested:
-    - SSH (common root/admin passwords)
+    - SSH (service reachable only, credentials not tested)
     - HTTP Basic Authentication
     - FTP (anonymous, admin)
     - SNMP (community strings)
-    - MySQL, PostgreSQL, MSSQL (default database credentials)
-    - VNC (common passwords)
+    - PostgreSQL (passwordless access); MySQL, MSSQL (service reachable only, credentials not tested)
+    - VNC (service reachable only, credentials not tested)
     - Telnet
-    - Redis (no-auth detection)
+    - Redis (service reachable only, credentials not tested)
 
     Safety:
     - Rate-limited (1 attempt/second per service)
@@ -4279,3 +4279,11 @@ ui-tool-smb-help =
     Security checks:
     - SMB signing disabled (relay attack risk)
     - SMBv1 detected (EternalBlue vulnerability)
+
+# --- Review follow-ups (#402): security tools ---
+ui-tool-defaultcreds-status-not-tested = Not tested
+ui-tool-defaultcreds-detail-not-tested = { $service } reachable, credentials not tested
+ui-tool-defaultcreds-empty = (empty)
+ui-tool-defaultcreds-timeout-connect = Connection timed out
+ui-tool-defaultcreds-timeout-write = Write timed out
+ui-tool-defaultcreds-timeout-read = Read timed out

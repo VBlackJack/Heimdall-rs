@@ -4181,14 +4181,14 @@ ui-tool-defaultcreds-help =
     3. Cliquez sur Scanner
 
     Protocoles testés :
-    - SSH (mots de passe root/admin courants)
+    - SSH (service joignable uniquement, identifiants non testés)
     - Authentification HTTP Basic
     - FTP (anonymous, admin)
     - SNMP (chaînes de communauté)
-    - MySQL, PostgreSQL, MSSQL (identifiants de base de données par défaut)
-    - VNC (mots de passe courants)
+    - PostgreSQL (accès sans mot de passe) ; MySQL, MSSQL (service joignable uniquement, identifiants non testés)
+    - VNC (service joignable uniquement, identifiants non testés)
     - Telnet
-    - Redis (détection sans authentification)
+    - Redis (service joignable uniquement, identifiants non testés)
 
     Sécurité :
     - Limité en débit (1 tentative/seconde par service)
@@ -4326,3 +4326,11 @@ ui-tool-smb-help =
     Vérifications de sécurité :
     - Signature SMB désactivée (risque d'attaque par relais)
     - SMBv1 détecté (vulnérabilité EternalBlue)
+
+# --- Review follow-ups (#402): security tools ---
+ui-tool-defaultcreds-status-not-tested = Non testé
+ui-tool-defaultcreds-detail-not-tested = { $service } joignable, identifiants non testés
+ui-tool-defaultcreds-empty = (vide)
+ui-tool-defaultcreds-timeout-connect = Délai de connexion dépassé
+ui-tool-defaultcreds-timeout-write = Délai d'écriture dépassé
+ui-tool-defaultcreds-timeout-read = Délai de lecture dépassé

@@ -4175,14 +4175,14 @@ ui-tool-defaultcreds-help =
     3. Haz clic en Escanear
 
     Protocolos probados:
-    - SSH (contraseñas comunes de root/admin)
+    - SSH (solo servicio accesible, credenciales no probadas)
     - Autenticación básica HTTP
     - FTP (anónimo, admin)
     - SNMP (cadenas de comunidad)
-    - MySQL, PostgreSQL, MSSQL (credenciales de base de datos predeterminadas)
-    - VNC (contraseñas comunes)
+    - PostgreSQL (acceso sin contraseña); MySQL, MSSQL (solo servicio accesible, credenciales no probadas)
+    - VNC (solo servicio accesible, credenciales no probadas)
     - Telnet
-    - Redis (detección de ausencia de autenticación)
+    - Redis (solo servicio accesible, credenciales no probadas)
 
     Seguridad:
     - Limitado en frecuencia (1 intento/segundo por servicio)
@@ -4320,3 +4320,11 @@ ui-tool-smb-help =
     Comprobaciones de seguridad:
     - Firma SMB desactivada (riesgo de ataque de retransmisión)
     - SMBv1 detectado (vulnerabilidad EternalBlue)
+
+# --- Review follow-ups (#402): security tools ---
+ui-tool-defaultcreds-status-not-tested = No probado
+ui-tool-defaultcreds-detail-not-tested = { $service } accesible, credenciales no probadas
+ui-tool-defaultcreds-empty = (vacío)
+ui-tool-defaultcreds-timeout-connect = Tiempo de conexión agotado
+ui-tool-defaultcreds-timeout-write = Tiempo de escritura agotado
+ui-tool-defaultcreds-timeout-read = Tiempo de lectura agotado

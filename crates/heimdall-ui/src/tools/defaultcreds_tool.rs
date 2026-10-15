@@ -36,7 +36,7 @@ use heimdall_app::TabId;
 use heimdall_core::tools::base64_codec;
 use heimdall_core::tools::default_creds::{
     self, CredTestResult, CredTestStatus, PORT_PROBE_TIMEOUT_MS, RATE_LIMIT_DELAY_MS,
-    SERVICE_PORTS, build_csv_export, build_report_text, build_summary_text,
+    SERVICE_PORTS, build_csv_export, build_report_text, count_defaults_and_services,
     is_http_success_response, status_to_detail,
 };
 use iced::futures::SinkExt as _;
@@ -249,7 +249,18 @@ impl DefaultCredsPane {
 
     fn recompute_exports(&mut self) {
         let loc = |k: &str| localize_key(k);
-        self.summary_text = build_summary_text(&self.results, Some(&loc));
+        let (defaults, services) = count_defaults_and_services(&self.results);
+        // The summary uses the Fluent plural directly, so the counts, plural forms and
+        // word order come from the locale instead of a hand-built "{0} on {1}" template.
+        self.summary_text = if defaults == 0 {
+            fl!("ui-tool-defaultcreds-no-defaults")
+        } else {
+            fl!(
+                "ui-tool-defaultcreds-summary",
+                defaults = defaults,
+                services = services
+            )
+        };
         self.report_text = build_report_text(&self.results, Some(&loc));
         self.csv_text = build_csv_export(&self.results, Some(&loc));
     }
@@ -463,7 +474,7 @@ impl DefaultCredsPane {
         for r in &self.results {
             let pass_display = if self.show_passwords {
                 if r.password.is_empty() {
-                    "(empty)".to_string()
+                    fl!("ui-tool-defaultcreds-empty")
                 } else {
                     r.password.clone()
                 }
@@ -483,6 +494,12 @@ impl DefaultCredsPane {
                     palette.success.weak.color,
                     palette.success.strong.text,
                     palette.success.base.color,
+                ),
+                CredTestStatus::NotTested => (
+                    fl!("ui-tool-defaultcreds-status-not-tested"),
+                    palette.secondary.weak.color,
+                    palette.secondary.strong.text,
+                    palette.secondary.base.color,
                 ),
                 CredTestStatus::Error => (
                     fl!("ui-tool-defaultcreds-status-error"),
@@ -556,19 +573,11 @@ impl DefaultCredsPane {
     }
 }
 
-/// Helper mapping translation keys for engine formatters.
+/// Helper mapping the engine's report and CSV formatter keys to localized strings.
+/// The summary is formatted in `recompute_exports` with the Fluent plural directly,
+/// so no "{0} on {1}" / "{0} services" word-order templates live here.
 fn localize_key(key: &str) -> String {
     match key {
-        "ToolDefCredSummary" => "{0} on {1}".to_string(),
-        "ToolDefCredSummaryCredentials" => {
-            fl!("ui-tool-defaultcreds-summary", defaults = 2, services = 1)
-        }
-        "ToolDefCredSummaryCredentialsOne" => {
-            fl!("ui-tool-defaultcreds-summary", defaults = 1, services = 1)
-        }
-        "ToolDefCredSummaryServices" => "{0} services".to_string(),
-        "ToolDefCredSummaryServicesOne" => "{0} service".to_string(),
-        "ToolDefCredNoDefaults" => fl!("ui-tool-defaultcreds-no-defaults"),
         "ToolDefCredColService" => fl!("ui-tool-defaultcreds-col-service"),
         "ToolDefCredColPort" => fl!("ui-tool-defaultcreds-col-port"),
         "ToolDefCredColUser" => fl!("ui-tool-defaultcreds-col-user"),
@@ -577,9 +586,13 @@ fn localize_key(key: &str) -> String {
         "ToolDefCredColDetail" => fl!("ui-tool-defaultcreds-col-detail"),
         "ToolDefCredStatusDefault" => fl!("ui-tool-defaultcreds-status-default"),
         "ToolDefCredStatusChanged" => fl!("ui-tool-defaultcreds-status-changed"),
+        "ToolDefCredStatusNotTested" => fl!("ui-tool-defaultcreds-status-not-tested"),
         "ToolDefCredStatusError" => fl!("ui-tool-defaultcreds-status-error"),
         "ToolDefCredDetailAccepted" => fl!("ui-tool-defaultcreds-detail-accepted", service = "{0}"),
         "ToolDefCredDetailRejected" => fl!("ui-tool-defaultcreds-detail-rejected", service = "{0}"),
+        "ToolDefCredDetailNotTested" => {
+            fl!("ui-tool-defaultcreds-detail-not-tested", service = "{0}")
+        }
         _ => key.to_string(),
     }
 }
@@ -710,27 +723,25 @@ async fn test_credential(
         _ => Ok(false),
     };
 
-    match outcome {
-        Ok(accepted) => CredTestResult {
-            service: service.to_string(),
-            port,
-            username: user.to_string(),
-            password: pass.to_string(),
-            status: if accepted {
-                CredTestStatus::Default
-            } else {
-                CredTestStatus::Changed
-            },
-            error_detail: None,
-        },
-        Err(err) => CredTestResult {
-            service: service.to_string(),
-            port,
-            username: user.to_string(),
-            password: pass.to_string(),
-            status: CredTestStatus::Error,
-            error_detail: Some(err),
-        },
+    // SSH, MySQL, MSSQL, Redis and VNC probes only confirm the service answers; they do
+    // not submit the credential pair. Their reachable outcome is reported as "not tested"
+    // and never counted as a finding, so "accepted" is reserved for a verified login.
+    let verifies_credentials = matches!(service, "Telnet" | "HTTP" | "FTP" | "SNMP" | "PostgreSQL");
+
+    let status = match (&outcome, verifies_credentials) {
+        (Ok(true), true) => CredTestStatus::Default,
+        (Ok(true), false) => CredTestStatus::NotTested,
+        (Ok(false), _) => CredTestStatus::Changed,
+        (Err(_), _) => CredTestStatus::Error,
+    };
+
+    CredTestResult {
+        service: service.to_string(),
+        port,
+        username: user.to_string(),
+        password: pass.to_string(),
+        status,
+        error_detail: outcome.err(),
     }
 }
 
@@ -738,18 +749,18 @@ async fn test_credential(
 async fn test_redis(host: &str, port: u16) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     timeout(CONNECT_TIMEOUT, stream.write_all(b"PING\r\n"))
         .await
-        .map_err(|_| "Write timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-write"))?
         .map_err(|e| e.to_string())?;
 
     let mut buf = [0u8; 256];
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     let resp = String::from_utf8_lossy(&buf[..n]);
@@ -760,7 +771,7 @@ async fn test_redis(host: &str, port: u16) -> Result<bool, String> {
 async fn test_ftp(host: &str, port: u16, user: &str, pass: &str) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     let mut buf = [0u8; 512];
@@ -769,7 +780,7 @@ async fn test_ftp(host: &str, port: u16, user: &str, pass: &str) -> Result<bool,
     let user_cmd = format!("USER {user}\r\n");
     timeout(CONNECT_TIMEOUT, stream.write_all(user_cmd.as_bytes()))
         .await
-        .map_err(|_| "Write timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-write"))?
         .map_err(|e| e.to_string())?;
 
     let _ = timeout(CONNECT_TIMEOUT, stream.read(&mut buf)).await;
@@ -777,12 +788,12 @@ async fn test_ftp(host: &str, port: u16, user: &str, pass: &str) -> Result<bool,
     let pass_cmd = format!("PASS {pass}\r\n");
     timeout(CONNECT_TIMEOUT, stream.write_all(pass_cmd.as_bytes()))
         .await
-        .map_err(|_| "Write timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-write"))?
         .map_err(|e| e.to_string())?;
 
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     let resp = String::from_utf8_lossy(&buf[..n]);
@@ -793,13 +804,13 @@ async fn test_ftp(host: &str, port: u16, user: &str, pass: &str) -> Result<bool,
 async fn test_vnc(host: &str, port: u16) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     let mut buf = [0u8; 256];
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     let banner = String::from_utf8_lossy(&buf[..n]);
@@ -809,12 +820,12 @@ async fn test_vnc(host: &str, port: u16) -> Result<bool, String> {
 
     timeout(CONNECT_TIMEOUT, stream.write_all(&buf[..n]))
         .await
-        .map_err(|_| "Write timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-write"))?
         .map_err(|e| e.to_string())?;
 
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     if n > 0 {
@@ -833,7 +844,7 @@ async fn test_vnc(host: &str, port: u16) -> Result<bool, String> {
 async fn test_http_basic(host: &str, port: u16, user: &str, pass: &str) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     let raw_creds = format!("{user}:{pass}");
@@ -842,13 +853,13 @@ async fn test_http_basic(host: &str, port: u16, user: &str, pass: &str) -> Resul
 
     timeout(CONNECT_TIMEOUT, stream.write_all(req.as_bytes()))
         .await
-        .map_err(|_| "Write timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-write"))?
         .map_err(|e| e.to_string())?;
 
     let mut buf = [0u8; 512];
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     let resp = String::from_utf8_lossy(&buf[..n]);
@@ -859,7 +870,7 @@ async fn test_http_basic(host: &str, port: u16, user: &str, pass: &str) -> Resul
 async fn test_telnet(host: &str, port: u16, user: &str, pass: &str) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     let mut buf = [0u8; 1024];
@@ -868,7 +879,7 @@ async fn test_telnet(host: &str, port: u16, user: &str, pass: &str) -> Result<bo
     let user_line = format!("{user}\r\n");
     timeout(CONNECT_TIMEOUT, stream.write_all(user_line.as_bytes()))
         .await
-        .map_err(|_| "Write timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-write"))?
         .map_err(|e| e.to_string())?;
 
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -877,13 +888,13 @@ async fn test_telnet(host: &str, port: u16, user: &str, pass: &str) -> Result<bo
     let pass_line = format!("{pass}\r\n");
     timeout(CONNECT_TIMEOUT, stream.write_all(pass_line.as_bytes()))
         .await
-        .map_err(|_| "Write timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-write"))?
         .map_err(|e| e.to_string())?;
 
     tokio::time::sleep(Duration::from_millis(300)).await;
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     let resp = String::from_utf8_lossy(&buf[..n]).to_lowercase();
@@ -897,7 +908,7 @@ async fn test_telnet(host: &str, port: u16, user: &str, pass: &str) -> Result<bo
 async fn test_postgresql(host: &str, port: u16, user: &str) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     let params = format!("user\0{user}\0database\0{user}\0\0");
@@ -910,13 +921,13 @@ async fn test_postgresql(host: &str, port: u16, user: &str) -> Result<bool, Stri
 
     timeout(CONNECT_TIMEOUT, stream.write_all(&msg))
         .await
-        .map_err(|_| "Write timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-write"))?
         .map_err(|e| e.to_string())?;
 
     let mut buf = [0u8; 1024];
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     if n >= 9 && buf[0] == b'R' {
@@ -931,13 +942,13 @@ async fn test_postgresql(host: &str, port: u16, user: &str) -> Result<bool, Stri
 async fn test_mysql(host: &str, port: u16) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     let mut buf = [0u8; 1024];
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     // MySQL protocol handshake version 10 (0x0a)
@@ -948,7 +959,7 @@ async fn test_mysql(host: &str, port: u16) -> Result<bool, String> {
 async fn test_mssql(host: &str, port: u16) -> Result<bool, String> {
     let _stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     Ok(false)
@@ -1003,13 +1014,13 @@ async fn test_snmp(host: &str, community: &str) -> Result<bool, String> {
 async fn test_ssh(host: &str, port: u16) -> Result<bool, String> {
     let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect((host, port)))
         .await
-        .map_err(|_| "Connection timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-connect"))?
         .map_err(|e| e.to_string())?;
 
     let mut buf = [0u8; 256];
     let n = timeout(CONNECT_TIMEOUT, stream.read(&mut buf))
         .await
-        .map_err(|_| "Read timed out".to_string())?
+        .map_err(|_| fl!("ui-tool-defaultcreds-timeout-read"))?
         .map_err(|e| e.to_string())?;
 
     let banner = String::from_utf8_lossy(&buf[..n]);
