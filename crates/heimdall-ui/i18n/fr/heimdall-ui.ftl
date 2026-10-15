@@ -1465,8 +1465,7 @@ ui-files-item-count = { $count ->
 ui-files-item-count-filtered = { $count ->
     [one] { $shown }/{ $count } élément
    *[other] { $shown }/{ $count } éléments
-ui-files-item-count = { $count } éléments
-ui-files-item-count-filtered = { $shown }/{ $count } éléments
+}
 ui-files-hidden-unsafe = { $count ->
     [one] { $count } élément masqué : son nom ne peut pas être utilisé ici sans risque
    *[other] { $count } éléments masqués : leurs noms ne peuvent pas être utilisés ici sans risque
@@ -4427,7 +4426,6 @@ ui-tool-wol-help =
     4. Cliquez sur Envoyer le Wake-on-LAN.
 
 ui-tool-whois-name = Recherche WHOIS
-ui-tool-whois-description = Interrogation des serveurs WHOIS pour domaines et adresses IP
 ui-tool-whois-description = Interrogation des serveurs WHOIS pour les domaines et les adresses IP
 ui-tool-whois-domain-placeholder = example.com ou 1.1.1.1
 ui-tool-whois-btn-lookup = Rechercher

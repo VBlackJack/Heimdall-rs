@@ -1462,8 +1462,7 @@ ui-files-item-count = { $count ->
 ui-files-item-count-filtered = { $count ->
     [one] { $shown }/{ $count } elemento
    *[other] { $shown }/{ $count } elementos
-ui-files-item-count = { $count } elementos
-ui-files-item-count-filtered = { $shown }/{ $count } elementos
+}
 ui-files-hidden-unsafe = { $count ->
     [one] { $count } elemento oculto: su nombre no es seguro de usar aquí
    *[other] { $count } elementos ocultos: sus nombres no son seguros de usar aquí

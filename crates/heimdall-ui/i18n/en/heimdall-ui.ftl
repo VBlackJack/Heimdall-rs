@@ -1641,8 +1641,7 @@ ui-files-item-count = { $count ->
 ui-files-item-count-filtered = { $count ->
     [one] { $shown }/{ $count } item
    *[other] { $shown }/{ $count } items
-ui-files-item-count = { $count } items
-ui-files-item-count-filtered = { $shown }/{ $count } items
+}
 ui-files-hidden-unsafe = { $count ->
     [one] { $count } entry hidden: its name is not safe to use here
    *[other] { $count } entries hidden: their names are not safe to use here
