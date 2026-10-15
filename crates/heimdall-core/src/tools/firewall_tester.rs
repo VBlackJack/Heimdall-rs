@@ -333,12 +333,14 @@ mod tests {
             let gone = TcpListener::bind("127.0.0.1:0").expect("bind");
             gone.local_addr().expect("addr").port()
         };
+        // Windows retries a refused loopback connection for about two seconds before
+        // saying so: the timeout leaves it room.
         assert_eq!(
-            probe_host_port("127.0.0.1", open, 2000).status,
+            probe_host_port("127.0.0.1", open, 5000).status,
             FwProbeStatus::Open
         );
         assert_eq!(
-            probe_host_port("127.0.0.1", closed, 2000).status,
+            probe_host_port("127.0.0.1", closed, 5000).status,
             FwProbeStatus::Closed
         );
     }

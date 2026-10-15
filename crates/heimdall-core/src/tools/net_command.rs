@@ -43,7 +43,7 @@ const UNIX_SYSTEM_FOLDERS: [&str; 4] = ["/usr/sbin", "/usr/bin", "/sbin", "/bin"
 #[must_use]
 pub fn system_tool(windows_name: &str, unix_name: &str) -> Option<PathBuf> {
     if cfg!(windows) {
-        crate::paths::system_program(windows_name)
+        crate::paths::system_program(windows_name).filter(|program| program.is_file())
     } else {
         UNIX_SYSTEM_FOLDERS
             .iter()
@@ -288,10 +288,11 @@ mod tests {
         let stop = AtomicBool::new(false);
         let started = Instant::now();
         let mut lines = Vec::new();
+        // Long enough for a shell to start on a busy machine, far below the wait.
         let end = run_lines(
             &program,
             &[flag, waiting],
-            Duration::from_millis(500),
+            Duration::from_secs(5),
             &stop,
             |line| lines.push(line.trim().to_owned()),
         );
