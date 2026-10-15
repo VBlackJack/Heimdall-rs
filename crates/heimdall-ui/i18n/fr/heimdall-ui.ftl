@@ -4625,3 +4625,118 @@ ui-tool-headers-help =
     - Permissions-Policy
     - Drapeaux de sécurité des cookies (Secure, HttpOnly, SameSite)
     - Divulgation d'informations serveur (Server, X-Powered-By, X-AspNet-Version)
+
+## Inspecteur de certificat SSL/TLS
+ui-tool-cert-name = Inspecteur de certificat SSL/TLS
+ui-tool-cert-description = Inspecter les chaines de certificats SSL/TLS, SAN, validite et proprietes cryptographiques
+ui-tool-cert-host = Hote
+ui-tool-cert-host-watermark = example.com ou IP
+ui-tool-cert-ports = Ports
+ui-tool-cert-ports-watermark = 443, 8443
+ui-tool-cert-inspect = Inspecter
+ui-tool-cert-inspecting = Inspection en cours...
+ui-tool-cert-copy-details = Copier les details
+ui-tool-cert-copy-csv = Copier CSV
+ui-tool-cert-subject = Sujet
+ui-tool-cert-issuer = Emetteur
+ui-tool-cert-valid-from = Valide depuis
+ui-tool-cert-valid-to = Valide jusqu'a
+ui-tool-cert-days-remaining = Jours restants
+ui-tool-cert-tls-version = Version TLS
+ui-tool-cert-key-size = Taille de cle
+ui-tool-cert-hostname-match = Correspondance d'hote
+ui-tool-cert-sans = SANs
+ui-tool-cert-match-yes = Conforme
+ui-tool-cert-match-no = Discordance
+ui-tool-cert-status-valid = Valide
+ui-tool-cert-status-warning = Expire bientot
+ui-tool-cert-status-expired = Expire
+ui-tool-cert-error-host-required = Veuillez saisir un nom d'hote cible.
+
+## Traceroute TCP
+ui-tool-tcptrace-name = Traceroute TCP
+ui-tool-tcptrace-description = Decouvrir les sauts reseau et la latence le long du chemin TCP vers une destination
+ui-tool-tcptrace-host = Hote cible
+ui-tool-tcptrace-host-watermark = example.com ou IP
+ui-tool-tcptrace-max-hops = Sauts max
+ui-tool-tcptrace-start = Demarrer le trace
+ui-tool-tcptrace-stop = Arreter
+ui-tool-tcptrace-copy-csv = Exporter CSV
+ui-tool-tcptrace-col-hop = Saut
+ui-tool-tcptrace-col-address = Adresse
+ui-tool-tcptrace-col-hostname = Nom d'hote
+ui-tool-tcptrace-col-latency = Latence
+ui-tool-tcptrace-col-status = Statut
+ui-tool-tcptrace-status-reply = Reponse
+ui-tool-tcptrace-status-timeout = Delai depasse
+ui-tool-tcptrace-status-destination = Destination
+ui-tool-tcptrace-error-host-required = Veuillez saisir un hote cible.
+
+## Explorateur MIB SNMP
+ui-tool-snmpwalk-name = Explorateur MIB SNMP
+ui-tool-snmpwalk-description = Interroger et parcourir les arbres MIB SNMPv2c pour les metriques systeme et interface
+ui-tool-snmpwalk-host = Hote cible
+ui-tool-snmpwalk-host-watermark = 192.168.1.1
+ui-tool-snmpwalk-community = Communaute
+ui-tool-snmpwalk-oid = OID racine
+ui-tool-snmpwalk-start = Demarrer le parcours
+ui-tool-snmpwalk-stop = Arreter
+ui-tool-snmpwalk-copy-csv = Exporter CSV
+ui-tool-snmpwalk-col-oid = OID
+ui-tool-snmpwalk-col-name = Nom
+ui-tool-snmpwalk-col-type = Type
+ui-tool-snmpwalk-col-value = Valeur
+ui-tool-snmpwalk-error-host-required = Veuillez saisir un hote cible SNMP.
+
+## Moniteur de table ARP
+ui-tool-arpmon-name = Moniteur de table ARP
+ui-tool-arpmon-description = Inspecter le cache ARP local, resoudre les fabricants et detecter les anomalies reseau
+ui-tool-arpmon-scan = Scanner maintenant
+ui-tool-arpmon-scanning = Scan en cours...
+ui-tool-arpmon-copy-csv = Exporter CSV
+ui-tool-arpmon-col-ip = Adresse IP
+ui-tool-arpmon-col-mac = Adresse MAC
+ui-tool-arpmon-col-vendor = Fabricant
+ui-tool-arpmon-col-status = Statut
+ui-tool-arpmon-col-first-seen = Premiere detection
+ui-tool-arpmon-col-last-seen = Derniere detection
+ui-tool-arpmon-status-new = Nouveau
+ui-tool-arpmon-status-known = Connu
+ui-tool-arpmon-status-changed = Modifie
+ui-tool-arpmon-status-conflict = Conflit
+
+## Testeur de sortie pare-feu
+ui-tool-fwtest-name = Testeur de sortie pare-feu
+ui-tool-fwtest-description = Tester la connectivite sortante a travers les ports du pare-feu avec mesure de latence
+ui-tool-fwtest-hosts = Hotes cibles
+ui-tool-fwtest-hosts-watermark = Un hote par ligne (ex : 1.1.1.1)
+ui-tool-fwtest-ports = Ports de test
+ui-tool-fwtest-ports-watermark = 80,443,8080
+ui-tool-fwtest-start = Tester la sortie
+ui-tool-fwtest-stop = Arreter
+ui-tool-fwtest-copy-csv = Exporter matrice CSV
+ui-tool-fwtest-total = Sondes totales
+ui-tool-fwtest-open = Ouvert
+ui-tool-fwtest-closed = Ferme
+ui-tool-fwtest-timeout = Filtre
+ui-tool-fwtest-error-hosts-required = Veuillez saisir au moins un hote cible.
+
+## Cartographie reseau
+ui-tool-netmap-name = Cartographie reseau
+ui-tool-netmap-description = Decouvrir les hotes actifs d'un sous-reseau, les services ouverts et classifier les roles
+ui-tool-netmap-subnet = CIDR sous-reseau
+ui-tool-netmap-subnet-watermark = 192.168.1.0/24
+ui-tool-netmap-discover = Decouvrir le reseau
+ui-tool-netmap-discovering = Decouverte en cours...
+ui-tool-netmap-copy-csv = Exporter CSV
+ui-tool-netmap-hosts-scanned = Scannes
+ui-tool-netmap-hosts-up = Hotes actifs
+ui-tool-netmap-ports-open = Ports ouverts
+ui-tool-netmap-col-ip = Adresse IP
+ui-tool-netmap-col-hostname = Nom d'hote
+ui-tool-netmap-col-mac = MAC
+ui-tool-netmap-col-vendor = Fabricant
+ui-tool-netmap-col-role = Role
+ui-tool-netmap-col-ports = Ports ouverts
+ui-tool-netmap-col-latency = Latence
+ui-tool-netmap-error-cidr-required = Veuillez saisir un CIDR de sous-reseau valide (ex : 192.168.1.0/24).
