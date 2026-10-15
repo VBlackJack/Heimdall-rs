@@ -29,12 +29,12 @@
 )]
 
 use heimdall_app::TabId;
-use heimdall_app::network_tools;
+use heimdall_app::net_tools::{self, banner};
 use heimdall_app::reachability::DownReason;
 use heimdall_core::tools::banner_grab::{
     self, BannerProbeResult, CONNECT_TIMEOUT, ExportLabels, MAX_CONCURRENT, READ_TIMEOUT,
 };
-use heimdall_core::tools::net_input;
+use heimdall_core::tools::net_host;
 use iced::futures::{SinkExt as _, StreamExt as _};
 use iced::task::Handle;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
@@ -54,9 +54,6 @@ const DB_PORTS: &str = "1433,1521,3306,5432,6379,27017";
 
 /// Results buffered between the run and the pane.
 const CHANNEL_SIZE: usize = 32;
-
-/// The port looked up with the host: each probe sets its own.
-const LOOKUP_PORT: u16 = 0;
 
 /// Messages emitted by the Banner Grabber tool.
 #[derive(Debug, Clone)]
@@ -94,7 +91,7 @@ pub enum BannerMessage {
 enum Problem {
     /// No host, the C# `ToolValidationHostRequired`.
     HostRequired,
-    /// Not a host the C# `InputValidator` "Address" rule accepts, the C# `ErrorInvalidHost`.
+    /// Not a host [`net_host::checked_host`] takes, the C# `ErrorInvalidHost`.
     InvalidHost,
     /// No port could be read, the C# `ToolValidationPortRangeRequired`.
     PortRangeRequired,
@@ -244,23 +241,23 @@ impl BannerPane {
         if self.running.is_some() {
             return Applied::None;
         }
-        let host = self.host.trim().to_string();
         let ports = banner_grab::parse_ports(&self.ports);
-        let problem = if host.is_empty() {
+        let host = net_host::checked_host(&self.host);
+        let problem = if self.host.trim().is_empty() {
             Some(Problem::HostRequired)
-        } else if !net_input::is_address(&host) {
+        } else if host.is_none() {
             Some(Problem::InvalidHost)
         } else if ports.is_empty() {
             Some(Problem::PortRangeRequired)
         } else {
             None
         };
-        if let Some(problem) = problem {
-            self.problem = Some(problem);
+        let (Some(host), None) = (host, problem.clone()) else {
+            self.problem = problem;
             self.results.clear();
             self.total = 0;
             return Applied::None;
-        }
+        };
 
         self.run += 1;
         self.problem = None;
@@ -530,15 +527,14 @@ fn grabs(
     run: u64,
 ) -> impl iced::futures::Stream<Item = BannerMessage> {
     iced::stream::channel(CHANNEL_SIZE, async move |mut out| {
-        let addresses = match network_tools::resolve(&host, LOOKUP_PORT, CONNECT_TIMEOUT).await {
-            Ok(addresses) => addresses,
-            Err(reason) => {
-                let _ = out.send(BannerMessage::Unresolved(run, reason)).await;
-                return;
-            }
+        let Ok(addresses) = net_tools::resolve(&host, CONNECT_TIMEOUT).await else {
+            let _ = out
+                .send(BannerMessage::Unresolved(run, DownReason::Dns))
+                .await;
+            return;
         };
         let mut probes = iced::futures::stream::iter(ports)
-            .map(|port| network_tools::grab_banner(&addresses, port, CONNECT_TIMEOUT, READ_TIMEOUT))
+            .map(|port| banner::grab(&addresses, port, CONNECT_TIMEOUT, READ_TIMEOUT))
             .buffer_unordered(MAX_CONCURRENT);
         while let Some(result) = probes.next().await {
             if out.send(BannerMessage::Probed(run, result)).await.is_err() {

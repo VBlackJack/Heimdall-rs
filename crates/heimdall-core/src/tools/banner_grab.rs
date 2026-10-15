@@ -16,7 +16,7 @@
 
 //! The banner grabber's engine, as the C# `BannerGrabEngine`: the port list read, the banner
 //! cleaned, the service told from the port and the banner, and the results written out. The
-//! probes themselves are `heimdall_app::network_tools`'.
+//! probes themselves are `heimdall_app::net_tools`'.
 
 use std::collections::BTreeSet;
 use std::time::Duration;

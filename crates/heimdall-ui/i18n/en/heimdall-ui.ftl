@@ -4386,7 +4386,6 @@ ui-tool-wol-help =
 
 ui-tool-whois-name = WHOIS Lookup
 ui-tool-whois-description = Query WHOIS servers to look up domain and IP registration data
-ui-tool-whois-domain-label = Domain or IP Address
 ui-tool-whois-domain-placeholder = example.com or 1.1.1.1
 ui-tool-whois-btn-lookup = Lookup
 ui-tool-whois-btn-copy = Copy output

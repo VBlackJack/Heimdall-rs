@@ -4434,7 +4434,6 @@ ui-tool-wol-help =
 
 ui-tool-whois-name = Recherche WHOIS
 ui-tool-whois-description = Interrogation des serveurs WHOIS pour les domaines et les adresses IP
-ui-tool-whois-domain-label = Domaine ou adresse IP
 ui-tool-whois-domain-placeholder = example.com ou 1.1.1.1
 ui-tool-whois-btn-lookup = Rechercher
 ui-tool-whois-btn-copy = Copier le rapport

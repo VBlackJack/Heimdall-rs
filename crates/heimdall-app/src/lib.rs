@@ -51,7 +51,6 @@ pub mod local_properties;
 pub mod macro_player;
 pub mod mstsc_driver;
 pub mod net_tools;
-pub mod network_tools;
 pub mod notes;
 mod paste_guard;
 mod post_connect;

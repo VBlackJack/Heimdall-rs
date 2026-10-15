@@ -28,12 +28,12 @@
 )]
 
 use heimdall_app::TabId;
-use heimdall_app::network_tools;
+use heimdall_app::net_tools::{self, tcp_ping as probe};
 use heimdall_app::reachability::DownReason;
-use heimdall_core::tools::net_input;
 use heimdall_core::tools::tcp_ping::{
     self, CONNECT_TIMEOUT, DEFAULT_COUNT, DEFAULT_PORT, DELAY_BETWEEN_PROBES, TcpPingSummary,
 };
+use heimdall_core::tools::{net_host, net_input};
 use iced::futures::SinkExt as _;
 use iced::task::Handle;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
@@ -88,7 +88,7 @@ pub enum TcpPingMessage {
 enum Problem {
     /// No host, the C# `ToolValidationHostRequired`.
     HostRequired,
-    /// Not a host the C# `InputValidator` "Address" rule accepts, `ToolValidationInvalidHost`.
+    /// Not a host [`net_host::checked_host`] takes, the C# `ToolValidationInvalidHost`.
     InvalidHost,
     /// Not a port from 1 to 65535.
     InvalidPort,
@@ -225,21 +225,20 @@ impl TcpPingPane {
         if self.running.is_some() {
             return Applied::None;
         }
-        let host = self.host.trim().to_owned();
-        let checked = if host.is_empty() {
+        let checked = if self.host.trim().is_empty() {
             Err(Problem::HostRequired)
-        } else if !net_input::is_address(&host) {
-            Err(Problem::InvalidHost)
-        } else {
+        } else if let Some(host) = net_host::checked_host(&self.host) {
             net_input::parse_port(&self.port)
                 .ok_or(Problem::InvalidPort)
                 .and_then(|port| {
                     tcp_ping::parse_count(&self.count)
-                        .map(|count| (port, count))
+                        .map(|count| (host, port, count))
                         .ok_or(Problem::InvalidCount)
                 })
+        } else {
+            Err(Problem::InvalidHost)
         };
-        let (port, count) = match checked {
+        let (host, port, count) = match checked {
             Ok(checked) => checked,
             Err(problem) => {
                 self.problem = Some(problem);
@@ -250,7 +249,12 @@ impl TcpPingPane {
         self.run += 1;
         self.problem = None;
         self.probes.clear();
-        self.target = format!("{host}:{port}");
+        // An IPv6 address is bracketed before its port, as a socket address writes it.
+        self.target = if host.contains(':') {
+            format!("[{host}]:{port}")
+        } else {
+            format!("{host}:{port}")
+        };
         self.total = count;
         let (task, handle) =
             Task::run(probes(host, port, count, self.run), |message| message).abortable();
@@ -496,15 +500,14 @@ fn probes(
     run: u64,
 ) -> impl iced::futures::Stream<Item = TcpPingMessage> {
     iced::stream::channel(CHANNEL_SIZE, async move |mut out| {
-        let addresses = match network_tools::resolve(&host, port, CONNECT_TIMEOUT).await {
-            Ok(addresses) => addresses,
-            Err(reason) => {
-                let _ = out.send(TcpPingMessage::Unresolved(run, reason)).await;
-                return;
-            }
+        let Ok(addresses) = net_tools::resolve(&host, CONNECT_TIMEOUT).await else {
+            let _ = out
+                .send(TcpPingMessage::Unresolved(run, DownReason::Dns))
+                .await;
+            return;
         };
         for seq in 1..=count {
-            let outcome = network_tools::connect_time(&addresses, CONNECT_TIMEOUT)
+            let outcome = probe::connect_time(&addresses, port, CONNECT_TIMEOUT)
                 .await
                 .map(|elapsed| elapsed.as_secs_f64() * MILLIS_PER_SECOND);
             if out

@@ -16,12 +16,11 @@
 
 //! The WHOIS tool's query and server, as the C# `WhoisLookupViewModel` and
 //! `WhoisServerResolver`: what is asked, of which server, within which bounds. The exchange
-//! itself is `heimdall_app::network_tools`'.
+//! itself is `heimdall_app::net_tools`'.
 
-use std::net::IpAddr;
 use std::time::Duration;
 
-use super::net_input;
+use super::net_host;
 
 /// Port of the WHOIS protocol (RFC 3912).
 pub const WHOIS_PORT: u16 = 43;
@@ -70,18 +69,13 @@ pub fn resolve_whois_server(domain: &str) -> &'static str {
 }
 
 /// What is asked for `typed`, as the C# `WhoisLookupViewModel.LookupAsync` accepts it
-/// (`InputValidator.ValidateDomain` or `IPAddress.TryParse`): an IP address, IPv4 or IPv6, as
-/// typed; else a name the [`net_input::is_address`] rule accepts once a leading wildcard and
-/// dots are stripped, the form the C# `TryCanonicalizeDomain` approves, which is what is sent.
-/// `None` for anything else: nothing that could add a line to the query is ever sent.
+/// (`InputValidator.ValidateDomain` or `IPAddress.TryParse`): once a leading wildcard and
+/// dots are stripped, as the C# `TryCanonicalizeDomain`, a host [`net_host::checked_host`]
+/// takes, which is what is sent. `None` for anything else: nothing that could add a line to
+/// the query is ever sent.
 #[must_use]
 pub fn whois_query(typed: &str) -> Option<String> {
-    let typed = typed.trim();
-    if typed.parse::<IpAddr>().is_ok() {
-        return Some(typed.to_owned());
-    }
-    let canonical = typed.trim_start_matches(['*', '.']);
-    net_input::is_address(canonical).then(|| canonical.to_owned())
+    net_host::checked_host(typed.trim().trim_start_matches(['*', '.']))
 }
 
 #[cfg(test)]

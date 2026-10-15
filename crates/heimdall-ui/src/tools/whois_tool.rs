@@ -28,7 +28,7 @@
 )]
 
 use heimdall_app::TabId;
-use heimdall_app::network_tools::{self, WhoisFailure, WhoisReply};
+use heimdall_app::net_tools::whois::{self as lookup, WhoisFailure, WhoisReply};
 use heimdall_core::tools::whois::{self, MAX_REPLY_BYTES};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
@@ -133,7 +133,7 @@ impl WhoisPane {
                 let server = whois::resolve_whois_server(&query);
                 Applied::Run(Task::perform(
                     async move {
-                        let reply = network_tools::whois(server, &query).await;
+                        let reply = lookup::lookup(server, &query).await;
                         (query, reply)
                     },
                     |(query, reply)| WhoisMessage::LookupDone(query, reply),

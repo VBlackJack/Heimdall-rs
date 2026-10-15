@@ -17,7 +17,7 @@
 //! The TCP ping tool's settings and summary, as the C# `TcpPingViewModel` and
 //! `TcpPingSummary`: how many probes, how long each may take, the pause between them, and
 //! the minimum, average and maximum of the answers. The probes themselves are
-//! `heimdall_app::network_tools`'.
+//! `heimdall_app::net_tools`'.
 
 use std::time::Duration;
 
