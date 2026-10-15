@@ -180,6 +180,18 @@ pub enum ToolId {
     FwTest,
     /// The network topology and cartography scanner, the C# `NETMAP`.
     NetMap,
+    /// The open TCP/UDP ports and sockets monitor, the C# `OPENPORTS`.
+    OpenPorts,
+    /// The network interfaces snapshot and speed inspector, the C# `NETIF`.
+    NetIf,
+    /// The IPv4 routing table inspector, the C# `ROUTES`.
+    Routes,
+    /// The nearby Wi-Fi network scanner, the C# `WIFI`.
+    Wifi,
+    /// The system hosts file editor, the C# `HOSTS`.
+    Hosts,
+    /// The Windows service status dashboard and controller, the C# `SERVICES`.
+    Services,
 }
 
 /// What the registry says of a tool.
@@ -228,7 +240,7 @@ impl ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 52] = [
         Self::Ping,
         Self::Dns,
         Self::Cert,
@@ -272,9 +284,15 @@ impl ToolId {
         Self::Uuid,
         Self::Ulid,
         Self::Crontab,
+        Self::Hosts,
         Self::SshConfig,
+        Self::Services,
         Self::WakeOnLan,
+        Self::OpenPorts,
+        Self::NetIf,
+        Self::Routes,
         Self::DnsBatch,
+        Self::Wifi,
     ];
 
     /// Its entry, as the C# registry's (`ToolRegistry.cs:62-109`).
@@ -427,6 +445,32 @@ impl ToolId {
                 "NETMAP",
                 ToolCategory::Network,
                 &["netmap", "cartography", "discover"],
+            ),
+            Self::OpenPorts => ToolDescriptor::local(
+                "OPENPORTS",
+                ToolCategory::External,
+                &["openports", "ports", "netstat", "connections"],
+            ),
+            Self::NetIf => ToolDescriptor::local(
+                "NETIF",
+                ToolCategory::External,
+                &["netif", "interfaces", "nic", "adapter"],
+            ),
+            Self::Routes => ToolDescriptor::local(
+                "ROUTES",
+                ToolCategory::External,
+                &["routes", "route", "routing"],
+            ),
+            Self::Wifi => ToolDescriptor::local(
+                "WIFI",
+                ToolCategory::External,
+                &["wifi", "wlan", "ssid", "wireless"],
+            ),
+            Self::Hosts => ToolDescriptor::local("HOSTS", ToolCategory::System, &["hosts"]),
+            Self::Services => ToolDescriptor::local(
+                "SERVICES",
+                ToolCategory::System,
+                &["services", "svc", "systemctl"],
             ),
         }
     }

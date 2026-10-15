@@ -95,9 +95,15 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Uuid,
             ToolId::Ulid,
             ToolId::Crontab,
+            ToolId::Hosts,
             ToolId::SshConfig,
+            ToolId::Services,
             ToolId::WakeOnLan,
+            ToolId::OpenPorts,
+            ToolId::NetIf,
+            ToolId::Routes,
             ToolId::DnsBatch,
+            ToolId::Wifi,
         ]
     );
     assert_eq!(ToolId::Ping.code(), "PING");
@@ -209,6 +215,18 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     );
     assert_eq!(ToolId::from_code("PING"), Some(ToolId::Ping));
     assert_eq!(ToolId::from_code("TCPTRACE"), Some(ToolId::TcpTrace));
+    assert_eq!(ToolId::from_code("OPENPORTS"), Some(ToolId::OpenPorts));
+    assert_eq!(ToolId::OpenPorts.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("NETIF"), Some(ToolId::NetIf));
+    assert_eq!(ToolId::NetIf.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("ROUTES"), Some(ToolId::Routes));
+    assert_eq!(ToolId::Routes.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("WIFI"), Some(ToolId::Wifi));
+    assert_eq!(ToolId::Wifi.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("HOSTS"), Some(ToolId::Hosts));
+    assert_eq!(ToolId::Hosts.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("SERVICES"), Some(ToolId::Services));
+    assert_eq!(ToolId::Services.category(), ToolCategory::System);
     assert_eq!(ToolId::from_code("LOGVIEW"), None, "not ported");
 }
 

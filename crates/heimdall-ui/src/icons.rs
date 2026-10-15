@@ -231,6 +231,10 @@ pub enum Icon {
     ToolFirewallTester,
     /// `Geo.Tool.NetMap`: connected nodes, the network cartography tool.
     ToolNetMap,
+    /// `Geo.Tool.HostsFileEditor`: a document with pencil, the hosts file editor.
+    ToolHostsFileEditor,
+    /// `Geo.Tool.ServiceStatusDashboard`: a server rack dashboard, the service status tool.
+    ToolServiceStatus,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
     /// The `Resolution` glyph (`E740`): a screen with its corners, an RDP session's
@@ -244,7 +248,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 90] = [
+    pub const ALL: [Self; 92] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -331,6 +335,8 @@ impl Icon {
         Self::ToolArpMonitor,
         Self::ToolFirewallTester,
         Self::ToolNetMap,
+        Self::ToolHostsFileEditor,
+        Self::ToolServiceStatus,
         Self::Monitor,
         Self::Resolution,
         Self::Keyboard,
@@ -613,6 +619,12 @@ impl Icon {
             Self::ToolNetMap => {
                 "M8,2 A6,6 0 1 1 8,14 A6,6 0 1 1 8,2 Z M8,8 L12,4 M4,5 A1.5,1.5 0 1 1 4,6.5 Z M12,3 A1.5,1.5 0 1 1 12,4.5 Z M11,10 A1.5,1.5 0 1 1 11,11.5 Z M5,11 A1.5,1.5 0 1 1 5,12.5 Z M8,8 L11,10 M8,8 L5,11 M8,8 L4,5"
             }
+            Self::ToolHostsFileEditor => {
+                "M3,1 L13,1 L13,15 L3,15 Z M5,4 L11,4 M5,6.5 L11,6.5 M5,9 L8,9 M14,6 L10,10 L9.5,12.5 L12,12 L16,8 Z"
+            }
+            Self::ToolServiceStatus => {
+                "M1,2 L15,2 L15,14 L1,14 Z M1,4.5 L15,4.5 M3,7 L13,7 L13,8.5 L3,8.5 Z M3,9.5 L10,9.5 L10,11 L3,11 Z M3,12 L7,12 L7,13 L3,13 Z"
+            }
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
             Self::Resolution => {
                 "M1.5,2.5 L14.5,2.5 L14.5,11.5 L1.5,11.5 Z M5.5,14 L10.5,14                  M4,7 L4,5 L6,5 M12,7 L12,9 L10,9"
@@ -696,6 +708,8 @@ impl Icon {
             | Self::ToolArpMonitor
             | Self::ToolFirewallTester
             | Self::ToolNetMap
+            | Self::ToolHostsFileEditor
+            | Self::ToolServiceStatus
             // These hold open lines too, which a fill would lose; the ULID's blocks are
             // closed, filled as the UUID's.
             | Self::ToolSubnet

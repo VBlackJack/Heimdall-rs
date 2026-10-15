@@ -4734,3 +4734,144 @@ ui-tool-netmap-col-role = Rol
 ui-tool-netmap-col-ports = Puertos abiertos
 ui-tool-netmap-col-latency = Latencia
 ui-tool-netmap-error-cidr-required = Por favor introduzca un CIDR de subred valido (p. ej. 192.168.1.0/24).
+
+## Puertos abiertos
+ui-tool-openports-name = Puertos abiertos
+ui-tool-openports-description = Inspeccionar puertos TCP/UDP activos y sockets con identificacion de procesos
+ui-tool-openports-title = Puertos abiertos
+ui-tool-openports-help =
+    Lista todos los puertos TCP y UDP abiertos en la maquina local mediante netstat.
+
+    Muestra el proceso y el PID de cada conexion.
+
+    Use el filtro para buscar por proceso, direccion, puerto o estado.
+ui-tool-openports-refresh = Actualizar
+ui-tool-openports-scanning = Actualizando...
+ui-tool-openports-copy-csv = Exportar CSV
+ui-tool-openports-filter-placeholder = Filtrar por proceso, direccion, puerto, estado...
+ui-tool-openports-status = { $count } conexiones a las { $time }
+ui-tool-openports-empty-state = Haga clic en Actualizar para listar los puertos abiertos y conexiones.
+ui-tool-openports-col-proto = Protocolo
+ui-tool-openports-col-local-addr = Direccion local
+ui-tool-openports-col-local-port = Puerto local
+ui-tool-openports-col-remote-addr = Direccion remota
+ui-tool-openports-col-remote-port = Puerto remoto
+ui-tool-openports-col-state = Estado
+ui-tool-openports-col-pid = PID
+ui-tool-openports-col-process = Proceso
+
+## Interfaces de red
+ui-tool-netif-name = Interfaces de red
+ui-tool-netif-description = Listar adaptadores de red con velocidad, direccion MAC, IPv4, pasarela y estado DHCP
+ui-tool-netif-title = Interfaces de red
+ui-tool-netif-help =
+    Lista todas las interfaces de red de la maquina local usando ipconfig /all.
+
+    Muestra nombre, tipo, estado, velocidad, direccion MAC, IPv4, mascara, pasarela y DHCP.
+ui-tool-netif-refresh = Actualizar
+ui-tool-netif-scanning = Actualizando...
+ui-tool-netif-copy-csv = Exportar CSV
+ui-tool-netif-status = { $count } interfaces a las { $time }
+ui-tool-netif-empty-state = Haga clic en Actualizar para inspeccionar las interfaces de red.
+ui-tool-netif-col-name = Nombre
+ui-tool-netif-col-type = Tipo
+ui-tool-netif-col-status = Estado
+ui-tool-netif-col-speed = Velocidad
+ui-tool-netif-col-mac = MAC
+ui-tool-netif-col-ipv4 = IPv4
+ui-tool-netif-col-subnet = Subred
+ui-tool-netif-col-gateway = Pasarela
+ui-tool-netif-col-dhcp = DHCP
+
+## Tabla de rutas
+ui-tool-routes-name = Tabla de rutas
+ui-tool-routes-description = Mostrar la tabla de rutas IPv4 activas con destinos, mascaras, pasarelas y metricas
+ui-tool-routes-title = Tabla de rutas
+ui-tool-routes-help =
+    Muestra la tabla de enrutamiento IPv4 activa interpretando la salida de route print.
+
+    Muestra destino, mascara de red, pasarela, interfaz y metrica de cada ruta.
+ui-tool-routes-refresh = Actualizar
+ui-tool-routes-scanning = Actualizando...
+ui-tool-routes-copy-csv = Exportar CSV
+ui-tool-routes-status = { $count } rutas a las { $time }
+ui-tool-routes-empty-state = Haga clic en Actualizar para inspeccionar las rutas IPv4.
+ui-tool-routes-col-dest = Destino
+ui-tool-routes-col-mask = Mascara de red
+ui-tool-routes-col-gateway = Pasarela
+ui-tool-routes-col-interface = Interfaz
+ui-tool-routes-col-metric = Metrica
+
+## Redes Wi-Fi
+ui-tool-wifi-name = Redes Wi-Fi
+ui-tool-wifi-description = Escanear redes inalambricas cercanas con BSSID, intensidad de senal, canal y cifrado
+ui-tool-wifi-title = Redes Wi-Fi
+ui-tool-wifi-help =
+    Escanea redes Wi-Fi cercanas usando netsh wlan show networks mode=bssid.
+
+    Muestra SSID, BSSID (MAC), intensidad de senal, canal, autenticacion, cifrado y tipo de radio.
+ui-tool-wifi-scan = Escanear
+ui-tool-wifi-scanning = Escaneando...
+ui-tool-wifi-copy-csv = Exportar CSV
+ui-tool-wifi-status = { $count } redes a las { $time }
+ui-tool-wifi-empty-state = Haga clic en Escanear para descubrir las redes Wi-Fi al alcance.
+ui-tool-wifi-col-ssid = SSID
+ui-tool-wifi-col-bssid = BSSID
+ui-tool-wifi-col-signal = Senal
+ui-tool-wifi-col-channel = Canal
+ui-tool-wifi-col-auth = Autenticacion
+ui-tool-wifi-col-encryption = Cifrado
+ui-tool-wifi-col-radio = Tipo de radio
+
+## Editor del archivo hosts
+ui-tool-hosts-name = Editor del archivo hosts
+ui-tool-hosts-description = Ver, alternar y editar las asignaciones de dominios en el archivo hosts
+ui-tool-hosts-title = Editor del archivo hosts
+ui-tool-hosts-help =
+    Edita el archivo hosts del sistema con validacion de sintaxis.
+
+    Vea y edite las entradas. Guardar los cambios requiere privilegios de administrador.
+ui-tool-hosts-reload = Recargar
+ui-tool-hosts-save = Guardar cambios
+ui-tool-hosts-copy-all = Copiar hosts
+ui-tool-hosts-btn-add = Anadir
+ui-tool-hosts-btn-delete = Eliminar
+ui-tool-hosts-invalid-ip = Formato de direccion IP invalido.
+ui-tool-hosts-missing-host = El nombre de host no puede estar vacio.
+ui-tool-hosts-loaded = { $count } entradas cargadas desde { $path }
+ui-tool-hosts-save-success = Archivo hosts guardado correctamente.
+ui-tool-hosts-save-failed = Error al guardar el archivo hosts: { $error }
+ui-tool-hosts-empty-state = No se encontraron entradas en el archivo hosts.
+ui-tool-hosts-loading-hint = Haga clic en Recargar para leer el archivo hosts.
+ui-tool-hosts-col-enabled = Activo
+ui-tool-hosts-col-ip = Direccion IP
+ui-tool-hosts-col-hostname = Nombre de host
+ui-tool-hosts-col-comment = Comentario
+ui-tool-hosts-col-action = Accion
+
+## Panel de estado de servicios
+ui-tool-services-name = Panel de estado de servicios
+ui-tool-services-description = Supervisar los servicios en segundo plano de Windows y controlar su estado
+ui-tool-services-title = Panel de estado de servicios
+ui-tool-services-help =
+    Supervisa el estado de los servicios de Windows con controles de inicio y detencion.
+
+    Vea los servicios en ejecucion, su estado y el tipo de inicio. Inicie, detenga o reinicie servicios directamente.
+ui-tool-services-refresh = Actualizar
+ui-tool-services-scanning = Actualizando...
+ui-tool-services-copy-csv = Exportar CSV
+ui-tool-services-filter-placeholder = Filtrar por nombre de servicio o mostrado...
+ui-tool-services-running-only = Solo en ejecucion
+ui-tool-services-total = Total:
+ui-tool-services-running-label = En ejecucion:
+ui-tool-services-stopped-label = Detenidos:
+ui-tool-services-col-name = Nombre del servicio
+ui-tool-services-col-display-name = Nombre visible
+ui-tool-services-col-status = Estado
+ui-tool-services-col-start-type = Tipo de inicio
+ui-tool-services-col-actions = Acciones
+ui-tool-services-act-start = Iniciar
+ui-tool-services-act-stop = Detener
+ui-tool-services-act-restart = Reiniciar
+ui-tool-services-empty-state = Haga clic en Actualizar para inspeccionar los servicios de Windows.
+ui-tool-services-action-success = Accion de servicio completada con exito.
