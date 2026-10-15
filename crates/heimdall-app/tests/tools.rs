@@ -54,6 +54,7 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
         [
             ToolId::Ping,
             ToolId::Dns,
+            ToolId::Cert,
             ToolId::PortScan,
             ToolId::SubnetCalculator,
             ToolId::IpConverter,
@@ -61,6 +62,11 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Whois,
             ToolId::HttpHeaders,
             ToolId::BannerGrabber,
+            ToolId::TcpTrace,
+            ToolId::SnmpWalk,
+            ToolId::ArpMon,
+            ToolId::FwTest,
+            ToolId::NetMap,
             ToolId::NetworkCalculator,
             ToolId::TcpPing,
             ToolId::Hash,
@@ -202,7 +208,8 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
         .all(|tool| tool.category() == ToolCategory::Security)
     );
     assert_eq!(ToolId::from_code("PING"), Some(ToolId::Ping));
-    assert_eq!(ToolId::from_code("TCPTRACE"), None, "not ported");
+    assert_eq!(ToolId::from_code("TCPTRACE"), Some(ToolId::TcpTrace));
+    assert_eq!(ToolId::from_code("LOGVIEW"), None, "not ported");
 }
 
 #[test]

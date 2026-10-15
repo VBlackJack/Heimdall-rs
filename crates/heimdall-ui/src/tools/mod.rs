@@ -28,9 +28,11 @@
 
 #![allow(clippy::all, clippy::pedantic)]
 
+mod arp_monitor_tool;
 mod banner_tool;
 mod base64_tool;
 pub mod catalog;
+mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
 mod crontab_tool;
@@ -42,6 +44,7 @@ mod diff_tool;
 mod dns_batch_tool;
 mod dns_tool;
 mod dnssec_tool;
+mod firewall_tester_tool;
 mod hash_tool;
 mod hmac_tool;
 mod http_headers_tool;
@@ -51,6 +54,7 @@ mod json_tool;
 mod jwt_tool;
 mod key_parts;
 mod network_calculator_tool;
+mod network_cartography_tool;
 mod password_tool;
 mod ping_tool;
 mod placement_bar;
@@ -59,11 +63,13 @@ mod pwdaudit_tool;
 mod regex_tool;
 mod secnumcloud_tool;
 mod smb_tool;
+mod snmp_walker_tool;
 mod ssh_config_tool;
 mod sshaudit_tool;
 mod sshkey_tool;
 mod subnet_tool;
 mod tcp_ping_tool;
+mod tcp_traceroute_tool;
 mod text_case_tool;
 mod tlsaudit_tool;
 mod totp_tool;
@@ -84,8 +90,10 @@ use iced::widget::text_editor::{self, Action, Content};
 use iced::widget::{Column, button, column, container, row, scrollable, text, tooltip};
 use iced::{Color, Element, Length, Task, Theme, window};
 
+pub use arp_monitor_tool::ArpMonitorMessage;
 pub use banner_tool::BannerMessage;
 pub use base64_tool::Base64Message;
+pub use cert_inspector_tool::CertInspectorMessage;
 pub use certgen_tool::{
     CertCopy, CertGenMessage, CertSave, Generated as GeneratedCertificates, KeySizeChoice,
 };
@@ -98,6 +106,7 @@ pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_di
 pub use dns_batch_tool::DnsBatchMessage;
 pub use dns_tool::DnsMessage;
 pub use dnssec_tool::{DnsSecMessage, Outcome as DnsSecOutcome};
+pub use firewall_tester_tool::FirewallTesterMessage;
 pub use hash_tool::HashMessage;
 pub use hmac_tool::HmacMessage;
 pub use http_headers_tool::HttpHeadersMessage;
@@ -106,6 +115,7 @@ pub use ip_converter_tool::{IpConverterMessage, IpField};
 pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
 pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
+pub use network_cartography_tool::NetworkCartographyMessage;
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
 pub use ping_tool::PingMessage;
 pub use port_scan_tool::PortScanMessage;
@@ -113,6 +123,7 @@ pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
 pub use secnumcloud_tool::{Outcome as SecNumCloudOutcome, SecNumCloudMessage};
 pub use smb_tool::{Outcome as SmbOutcome, SmbMessage};
+pub use snmp_walker_tool::SnmpWalkerMessage;
 pub use ssh_config_tool::{SshConfigMessage, SshField};
 pub use sshaudit_tool::{
     LoadedFile as SshAuditLoadedFile, Outcome as SshAuditOutcome, SshAuditMessage,
@@ -120,6 +131,7 @@ pub use sshaudit_tool::{
 pub use sshkey_tool::{AlgorithmChoice, SshCopy, SshKeyMessage, SshSave};
 pub use subnet_tool::{SubnetField, SubnetMessage};
 pub use tcp_ping_tool::TcpPingMessage;
+pub use tcp_traceroute_tool::TcpTracerouteMessage;
 pub use text_case_tool::TextCaseMessage;
 pub use tlsaudit_tool::{Outcome as TlsAuditOutcome, TlsAuditMessage};
 pub use totp_tool::TotpMessage;
@@ -248,6 +260,12 @@ pub fn label(tool: ToolId) -> String {
         ToolId::DnsBatch => fl!("ui-tool-dnsbatch-name"),
         ToolId::PortScan => fl!("ui-tool-portscan-name"),
         ToolId::HttpHeaders => fl!("ui-tool-headers-name"),
+        ToolId::Cert => fl!("ui-tool-cert-name"),
+        ToolId::TcpTrace => fl!("ui-tool-tcptrace-name"),
+        ToolId::SnmpWalk => fl!("ui-tool-snmpwalk-name"),
+        ToolId::ArpMon => fl!("ui-tool-arpmon-name"),
+        ToolId::FwTest => fl!("ui-tool-fwtest-name"),
+        ToolId::NetMap => fl!("ui-tool-netmap-name"),
     }
 }
 
@@ -295,6 +313,12 @@ pub fn description(tool: ToolId) -> String {
         ToolId::DnsBatch => fl!("ui-tool-dnsbatch-description"),
         ToolId::PortScan => fl!("ui-tool-portscan-description"),
         ToolId::HttpHeaders => fl!("ui-tool-headers-description"),
+        ToolId::Cert => fl!("ui-tool-cert-description"),
+        ToolId::TcpTrace => fl!("ui-tool-tcptrace-description"),
+        ToolId::SnmpWalk => fl!("ui-tool-snmpwalk-description"),
+        ToolId::ArpMon => fl!("ui-tool-arpmon-description"),
+        ToolId::FwTest => fl!("ui-tool-fwtest-description"),
+        ToolId::NetMap => fl!("ui-tool-netmap-description"),
     }
 }
 
@@ -341,6 +365,12 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::Dns | ToolId::DnsBatch => Icon::ToolDnsLookup,
         ToolId::PortScan => Icon::ToolPortScanner,
         ToolId::HttpHeaders => Icon::ToolHttpHeaders,
+        ToolId::Cert => Icon::ToolCertInspector,
+        ToolId::TcpTrace => Icon::ToolTraceroute,
+        ToolId::SnmpWalk => Icon::ToolSnmpWalker,
+        ToolId::ArpMon => Icon::ToolArpMonitor,
+        ToolId::FwTest => Icon::ToolFirewallTester,
+        ToolId::NetMap => Icon::ToolNetMap,
     }
 }
 
@@ -518,6 +548,20 @@ pub enum CopySlot {
     PortScanCsv,
     /// The HTTP header analyzer report text.
     HttpHeadersReport,
+    /// The SSL/TLS certificate details text.
+    CertDetails,
+    /// The SSL/TLS certificate scan CSV export.
+    CertCsv,
+    /// The TCP traceroute CSV export.
+    TcpTraceCsv,
+    /// The SNMP walk CSV export.
+    SnmpWalkCsv,
+    /// The ARP table monitor CSV export.
+    ArpMonCsv,
+    /// The firewall egress tester CSV export.
+    FwTestCsv,
+    /// The network cartography CSV export.
+    NetMapCsv,
 }
 
 /// What a tool's tab is asked.
@@ -609,6 +653,18 @@ pub enum ToolMessage {
     PortScan(PortScanMessage),
     /// The HTTP header analyzer tool's.
     HttpHeaders(HttpHeadersMessage),
+    /// The SSL/TLS certificate inspector tool's.
+    Cert(CertInspectorMessage),
+    /// The TCP traceroute tool's.
+    TcpTrace(TcpTracerouteMessage),
+    /// The SNMP MIB walker tool's.
+    SnmpWalk(SnmpWalkerMessage),
+    /// The ARP table monitor tool's.
+    ArpMon(ArpMonitorMessage),
+    /// The firewall egress tester tool's.
+    FwTest(FirewallTesterMessage),
+    /// The network cartography tool's.
+    NetMap(NetworkCartographyMessage),
 }
 
 /// A tool's own state.
@@ -654,6 +710,12 @@ enum Pane {
     DnsBatch(dns_batch_tool::DnsBatchPane),
     PortScan(port_scan_tool::PortScanPane),
     HttpHeaders(http_headers_tool::HttpHeadersPane),
+    Cert(cert_inspector_tool::CertInspectorPane),
+    TcpTrace(tcp_traceroute_tool::TcpTraceroutePane),
+    SnmpWalk(snmp_walker_tool::SnmpWalkerPane),
+    ArpMon(arp_monitor_tool::ArpMonitorPane),
+    FwTest(firewall_tester_tool::FirewallTesterPane),
+    NetMap(network_cartography_tool::NetworkCartographyPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -715,6 +777,14 @@ impl ToolPane {
             ToolId::DnsBatch => Pane::DnsBatch(dns_batch_tool::DnsBatchPane::default()),
             ToolId::PortScan => Pane::PortScan(port_scan_tool::PortScanPane::default()),
             ToolId::HttpHeaders => Pane::HttpHeaders(http_headers_tool::HttpHeadersPane::default()),
+            ToolId::Cert => Pane::Cert(cert_inspector_tool::CertInspectorPane::default()),
+            ToolId::TcpTrace => Pane::TcpTrace(tcp_traceroute_tool::TcpTraceroutePane::default()),
+            ToolId::SnmpWalk => Pane::SnmpWalk(snmp_walker_tool::SnmpWalkerPane::default()),
+            ToolId::ArpMon => Pane::ArpMon(arp_monitor_tool::ArpMonitorPane::default()),
+            ToolId::FwTest => Pane::FwTest(firewall_tester_tool::FirewallTesterPane::default()),
+            ToolId::NetMap => {
+                Pane::NetMap(network_cartography_tool::NetworkCartographyPane::default())
+            }
         };
         Self {
             pane,
@@ -1031,6 +1101,60 @@ impl ToolPanes {
                     http_headers_tool::Outcome::None => Task::none(),
                 };
             }
+            (ToolMessage::Cert(message), Pane::Cert(pane)) => {
+                return match pane.update(tab, message) {
+                    cert_inspector_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    cert_inspector_tool::Outcome::Task(task) => task,
+                    cert_inspector_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::TcpTrace(message), Pane::TcpTrace(pane)) => {
+                return match pane.update(tab, message) {
+                    tcp_traceroute_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    tcp_traceroute_tool::Outcome::Task(task) => task,
+                    tcp_traceroute_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::SnmpWalk(message), Pane::SnmpWalk(pane)) => {
+                return match pane.update(tab, message) {
+                    snmp_walker_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    snmp_walker_tool::Outcome::Task(task) => task,
+                    snmp_walker_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::ArpMon(message), Pane::ArpMon(pane)) => {
+                return match pane.update(tab, message) {
+                    arp_monitor_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    arp_monitor_tool::Outcome::Task(task) => task,
+                    arp_monitor_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::FwTest(message), Pane::FwTest(pane)) => {
+                return match pane.update(tab, message) {
+                    firewall_tester_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    firewall_tester_tool::Outcome::Task(task) => task,
+                    firewall_tester_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::NetMap(message), Pane::NetMap(pane)) => {
+                return match pane.update(tab, message) {
+                    network_cartography_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    network_cartography_tool::Outcome::Task(task) => task,
+                    network_cartography_tool::Outcome::None => Task::none(),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -1168,6 +1292,27 @@ pub fn view<'a>(
         ToolId::DnsBatch => (fl!("ui-tool-dnsbatch-name"), fl!("ui-tool-dnsbatch-help")),
         ToolId::PortScan => (fl!("ui-tool-portscan-name"), fl!("ui-tool-portscan-help")),
         ToolId::HttpHeaders => (fl!("ui-tool-headers-name"), fl!("ui-tool-headers-help")),
+        ToolId::Cert => (fl!("ui-tool-cert-name"), fl!("ui-tool-cert-description")),
+        ToolId::TcpTrace => (
+            fl!("ui-tool-tcptrace-name"),
+            fl!("ui-tool-tcptrace-description"),
+        ),
+        ToolId::SnmpWalk => (
+            fl!("ui-tool-snmpwalk-name"),
+            fl!("ui-tool-snmpwalk-description"),
+        ),
+        ToolId::ArpMon => (
+            fl!("ui-tool-arpmon-name"),
+            fl!("ui-tool-arpmon-description"),
+        ),
+        ToolId::FwTest => (
+            fl!("ui-tool-fwtest-name"),
+            fl!("ui-tool-fwtest-description"),
+        ),
+        ToolId::NetMap => (
+            fl!("ui-tool-netmap-name"),
+            fl!("ui-tool-netmap-description"),
+        ),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -1210,6 +1355,12 @@ pub fn view<'a>(
         Pane::DnsBatch(pane) => (pane.view(tab, state, theme), None),
         Pane::PortScan(pane) => (pane.view(tab, state, theme), None),
         Pane::HttpHeaders(pane) => (pane.view(tab, state, theme), None),
+        Pane::Cert(pane) => (pane.view(tab, state, theme), None),
+        Pane::TcpTrace(pane) => (pane.view(tab, state, theme), None),
+        Pane::SnmpWalk(pane) => (pane.view(tab, state, theme), None),
+        Pane::ArpMon(pane) => (pane.view(tab, state, theme), None),
+        Pane::FwTest(pane) => (pane.view(tab, state, theme), None),
+        Pane::NetMap(pane) => (pane.view(tab, state, theme), None),
     };
     column![
         header(tab, title, actions),
