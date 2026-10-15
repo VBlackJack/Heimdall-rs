@@ -4907,7 +4907,6 @@ ui-tool-services-error-action-failed = La acción sobre el servicio falló (cód
 ui-tool-services-error-action-failed-detail = La acción sobre el servicio falló: { $error }
 ui-tool-services-error-list-failed = No se pudieron cargar los servicios: { $error }
 ui-tool-services-exit-code-none = ninguno
-ui-tool-services-action-success = Accion de servicio completada con exito.
 
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Nombre de host o dirección IP no válidos. Solo se permiten letras, dígitos, puntos y guiones.

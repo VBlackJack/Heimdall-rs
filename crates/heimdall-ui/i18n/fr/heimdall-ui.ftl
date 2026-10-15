@@ -4913,7 +4913,6 @@ ui-tool-services-error-action-failed = L'action sur le service a échoué (code 
 ui-tool-services-error-action-failed-detail = L'action sur le service a échoué : { $error }
 ui-tool-services-error-list-failed = Échec du chargement des services : { $error }
 ui-tool-services-exit-code-none = aucun
-ui-tool-services-action-success = Action de service terminee avec succes.
 
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Nom d'hôte ou adresse IP invalide. Seuls les lettres, chiffres, points et tirets sont autorisés.
