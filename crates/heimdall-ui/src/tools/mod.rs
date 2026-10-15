@@ -35,11 +35,14 @@ pub mod catalog;
 mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
+mod command_library_tool;
+mod cron_job_tool;
 mod crontab_tool;
 mod crypto_parts;
 mod cve_tool;
 mod datetime_tool;
 mod defaultcreds_tool;
+mod diagram_tool;
 mod diff_tool;
 mod dns_batch_tool;
 mod dns_tool;
@@ -54,14 +57,17 @@ mod ip_converter_tool;
 mod json_tool;
 mod jwt_tool;
 mod key_parts;
+mod log_viewer_tool;
 mod network_calculator_tool;
 mod network_cartography_tool;
 mod network_interfaces_tool;
+mod notes_tool;
 mod open_ports_tool;
 mod password_tool;
 mod ping_tool;
 mod placement_bar;
 mod port_scan_tool;
+mod privilege_launcher_tool;
 mod pwdaudit_tool;
 mod regex_tool;
 mod route_table_tool;
@@ -104,10 +110,13 @@ pub use certgen_tool::{
     CertCopy, CertGenMessage, CertSave, Generated as GeneratedCertificates, KeySizeChoice,
 };
 pub use chmod_tool::ChmodMessage;
+pub use command_library_tool::CommandLibraryMessage;
+pub use cron_job_tool::CronJobMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
 pub use cve_tool::{CveMessage, Outcome as CveOutcome};
 pub use datetime_tool::{DateField, DateTimeMessage, ZoneChoice};
 pub use defaultcreds_tool::{DefaultCredsMessage, Outcome as DefaultCredsOutcome};
+pub use diagram_tool::DiagramMessage;
 pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_diff};
 pub use dns_batch_tool::DnsBatchMessage;
 pub use dns_tool::DnsMessage;
@@ -121,13 +130,16 @@ pub use http_status_tool::HttpStatusMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
 pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
+pub use log_viewer_tool::LogViewerMessage;
 pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
 pub use network_cartography_tool::NetworkCartographyMessage;
 pub use network_interfaces_tool::NetIfMessage;
+pub use notes_tool::NotesMessage;
 pub use open_ports_tool::OpenPortsMessage;
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
 pub use ping_tool::PingMessage;
 pub use port_scan_tool::PortScanMessage;
+pub use privilege_launcher_tool::PrivilegeLauncherMessage;
 pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
 pub use route_table_tool::RouteTableMessage;
@@ -284,6 +296,12 @@ pub fn label(tool: ToolId) -> String {
         ToolId::Wifi => fl!("ui-tool-wifi-name"),
         ToolId::Hosts => fl!("ui-tool-hosts-name"),
         ToolId::Services => fl!("ui-tool-services-name"),
+        ToolId::LogView => fl!("ui-tool-logview-name"),
+        ToolId::CronJob => fl!("ui-tool-cronjob-name"),
+        ToolId::Notes => fl!("ui-tool-notes-name"),
+        ToolId::Diagram => fl!("ui-tool-diagram-name"),
+        ToolId::CmdLib => fl!("ui-tool-cmdlib-name"),
+        ToolId::PrivLaunch => fl!("ui-tool-privlaunch-name"),
     }
 }
 
@@ -343,6 +361,12 @@ pub fn description(tool: ToolId) -> String {
         ToolId::Wifi => fl!("ui-tool-wifi-description"),
         ToolId::Hosts => fl!("ui-tool-hosts-description"),
         ToolId::Services => fl!("ui-tool-services-description"),
+        ToolId::LogView => fl!("ui-tool-logview-description"),
+        ToolId::CronJob => fl!("ui-tool-cronjob-description"),
+        ToolId::Notes => fl!("ui-tool-notes-description"),
+        ToolId::Diagram => fl!("ui-tool-diagram-description"),
+        ToolId::CmdLib => fl!("ui-tool-cmdlib-description"),
+        ToolId::PrivLaunch => fl!("ui-tool-privlaunch-description"),
     }
 }
 
@@ -401,6 +425,12 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::Wifi => Icon::ToolSubnet,
         ToolId::Hosts => Icon::ToolHostsFileEditor,
         ToolId::Services => Icon::ToolServiceStatus,
+        ToolId::LogView => Icon::ToolLogViewer,
+        ToolId::CronJob => Icon::ToolCronJobManager,
+        ToolId::Notes => Icon::ToolNotes,
+        ToolId::Diagram => Icon::ToolDiagram,
+        ToolId::CmdLib => Icon::ToolCommandLibrary,
+        ToolId::PrivLaunch => Icon::ToolPrivilegeLauncher,
     }
 }
 
@@ -604,6 +634,16 @@ pub enum CopySlot {
     HostsFileText,
     /// The service status dashboard CSV export.
     ServicesCsv,
+    /// The log viewer text export.
+    LogViewText,
+    /// The cron job schedule / CSV export.
+    CronJobExport,
+    /// The notes markdown / HTML export.
+    NotesExport,
+    /// The diagram source export.
+    DiagramSource,
+    /// The command library snippet command.
+    CmdLibCommand,
 }
 
 /// What a tool's tab is asked.
@@ -719,6 +759,18 @@ pub enum ToolMessage {
     Hosts(HostsMessage),
     /// The service status dashboard tool's.
     Services(ServiceStatusMessage),
+    /// The log viewer tool's.
+    LogView(LogViewerMessage),
+    /// The cron job manager tool's.
+    CronJob(CronJobMessage),
+    /// The notes scratchpad tool's.
+    Notes(NotesMessage),
+    /// The diagram editor tool's.
+    Diagram(DiagramMessage),
+    /// The command library tool's.
+    CmdLib(CommandLibraryMessage),
+    /// The elevated privilege launcher tool's.
+    PrivLaunch(PrivilegeLauncherMessage),
 }
 
 /// A tool's own state.
@@ -776,6 +828,12 @@ enum Pane {
     Wifi(wifi_networks_tool::WifiNetworksPane),
     Hosts(hosts_editor_tool::HostsEditorPane),
     Services(service_status_tool::ServiceStatusPane),
+    LogView(log_viewer_tool::LogViewerPane),
+    CronJob(cron_job_tool::CronJobPane),
+    Notes(notes_tool::NotesPane),
+    Diagram(diagram_tool::DiagramPane),
+    CmdLib(command_library_tool::CommandLibraryPane),
+    PrivLaunch(privilege_launcher_tool::PrivilegeLauncherPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -851,6 +909,14 @@ impl ToolPane {
             ToolId::Wifi => Pane::Wifi(wifi_networks_tool::WifiNetworksPane::default()),
             ToolId::Hosts => Pane::Hosts(hosts_editor_tool::HostsEditorPane::default()),
             ToolId::Services => Pane::Services(service_status_tool::ServiceStatusPane::default()),
+            ToolId::LogView => Pane::LogView(log_viewer_tool::LogViewerPane::default()),
+            ToolId::CronJob => Pane::CronJob(cron_job_tool::CronJobPane::default()),
+            ToolId::Notes => Pane::Notes(notes_tool::NotesPane::default()),
+            ToolId::Diagram => Pane::Diagram(diagram_tool::DiagramPane::default()),
+            ToolId::CmdLib => Pane::CmdLib(command_library_tool::CommandLibraryPane::default()),
+            ToolId::PrivLaunch => {
+                Pane::PrivLaunch(privilege_launcher_tool::PrivilegeLauncherPane::default())
+            }
         };
         Self {
             pane,
@@ -1273,6 +1339,52 @@ impl ToolPanes {
                     service_status_tool::Outcome::None => Task::none(),
                 };
             }
+            (ToolMessage::LogView(message), Pane::LogView(pane)) => {
+                return match pane.update(tab, message) {
+                    log_viewer_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    log_viewer_tool::Outcome::Task(task) => task,
+                    log_viewer_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::CronJob(message), Pane::CronJob(pane)) => {
+                return match pane.update(tab, message) {
+                    cron_job_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    cron_job_tool::Outcome::Task(task) => task,
+                    cron_job_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Notes(message), Pane::Notes(pane)) => {
+                return match pane.update(tab, message) {
+                    notes_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    notes_tool::Outcome::Task(task) => task,
+                    notes_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Diagram(message), Pane::Diagram(pane)) => {
+                return match pane.update(tab, message) {
+                    diagram_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    diagram_tool::Outcome::Task(task) => task,
+                    diagram_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::CmdLib(message), Pane::CmdLib(pane)) => {
+                return match pane.update(tab, message) {
+                    command_library_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    command_library_tool::Outcome::Task(task) => task,
+                    command_library_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::PrivLaunch(message), Pane::PrivLaunch(pane)) => {
+                return match pane.update(tab, message) {
+                    privilege_launcher_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    privilege_launcher_tool::Outcome::Task(task) => task,
+                    privilege_launcher_tool::Outcome::None => Task::none(),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -1440,6 +1552,15 @@ pub fn view<'a>(
         ToolId::Wifi => (fl!("ui-tool-wifi-title"), fl!("ui-tool-wifi-help")),
         ToolId::Hosts => (fl!("ui-tool-hosts-title"), fl!("ui-tool-hosts-help")),
         ToolId::Services => (fl!("ui-tool-services-title"), fl!("ui-tool-services-help")),
+        ToolId::LogView => (fl!("ui-tool-logview-title"), fl!("ui-tool-logview-help")),
+        ToolId::CronJob => (fl!("ui-tool-cronjob-title"), fl!("ui-tool-cronjob-help")),
+        ToolId::Notes => (fl!("ui-tool-notes-title"), fl!("ui-tool-notes-help")),
+        ToolId::Diagram => (fl!("ui-tool-diagram-title"), fl!("ui-tool-diagram-help")),
+        ToolId::CmdLib => (fl!("ui-tool-cmdlib-title"), fl!("ui-tool-cmdlib-help")),
+        ToolId::PrivLaunch => (
+            fl!("ui-tool-privlaunch-title"),
+            fl!("ui-tool-privlaunch-help"),
+        ),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -1494,6 +1615,12 @@ pub fn view<'a>(
         Pane::Wifi(pane) => (pane.view(tab, state, theme), None),
         Pane::Hosts(pane) => (pane.view(tab, state, theme), None),
         Pane::Services(pane) => (pane.view(tab, state, theme), None),
+        Pane::LogView(pane) => (pane.view(tab, state, theme), None),
+        Pane::CronJob(pane) => (pane.view(tab, state, theme), None),
+        Pane::Notes(pane) => (pane.view(tab, state, theme), None),
+        Pane::Diagram(pane) => (pane.view(tab, state, theme), None),
+        Pane::CmdLib(pane) => (pane.view(tab, state, theme), None),
+        Pane::PrivLaunch(pane) => (pane.view(tab, state, theme), None),
     };
     column![
         header(tab, title, actions),

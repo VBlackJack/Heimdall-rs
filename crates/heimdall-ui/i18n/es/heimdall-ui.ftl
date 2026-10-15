@@ -4875,3 +4875,131 @@ ui-tool-services-act-stop = Detener
 ui-tool-services-act-restart = Reiniciar
 ui-tool-services-empty-state = Haga clic en Actualizar para inspeccionar los servicios de Windows.
 ui-tool-services-action-success = Accion de servicio completada con exito.
+
+## Visor de registros
+ui-tool-logview-name = Visor de registros
+ui-tool-logview-description = Ver archivos de registro con seguimiento en vivo, desplazamiento automatico y filtro regex
+ui-tool-logview-title = Visor de registros
+ui-tool-logview-help =
+    Inspecciona archivos de registro en tiempo real con seguimiento continuo, desplazamiento automatico y filtros regex.
+
+    Compatible con codificaciones UTF-8, ASCII, UTF-16 y Windows-1252.
+ui-tool-logview-path-placeholder = Ruta del archivo de registro...
+ui-tool-logview-btn-load = Cargar
+ui-tool-logview-btn-clear = Limpiar
+ui-tool-logview-btn-copy = Copiar registro
+ui-tool-logview-chk-tail = Seguimiento en vivo
+ui-tool-logview-chk-autoscroll = Desplazamiento automatico
+ui-tool-logview-filter-placeholder = Filtro de texto o regex...
+ui-tool-logview-chk-casesensitive = Coincidir mayusculas
+ui-tool-logview-chk-regex = Regex
+ui-tool-logview-status = { $lines } lineas ({ $bytes } bytes)
+ui-tool-logview-empty-state = Especifique una ruta de archivo y haga clic en Cargar para inspeccionar el contenido.
+
+## Administrador de tareas cron
+ui-tool-cronjob-name = Administrador de tareas cron
+ui-tool-cronjob-description = Analizar expresiones crontab, calcular proximas ejecuciones e inspeccionar tareas programadas de Windows
+ui-tool-cronjob-title = Administrador de tareas cron
+ui-tool-cronjob-help =
+    Analiza expresiones crontab en lenguaje natural e inspecciona tareas programadas del sistema.
+
+    Incluye ajustes predefinidos para reglas de recurrencia comunes y calculo de las proximas 5 ejecuciones.
+ui-tool-cronjob-tab-crontab = Expresion crontab
+ui-tool-cronjob-tab-schtasks = Tareas programadas
+ui-tool-cronjob-expr-placeholder = Ingrese expresion crontab (ej. */15 * * * *)...
+ui-tool-cronjob-preset-every-min = Cada minuto
+ui-tool-cronjob-preset-hourly = Cada hora
+ui-tool-cronjob-preset-daily = Diario medianoche
+ui-tool-cronjob-preset-weekly = Semanal lunes
+ui-tool-cronjob-schedule-title = Descripcion de programacion
+ui-tool-cronjob-next-runs-title = Proximas ejecuciones programadas:
+ui-tool-cronjob-btn-refresh = Actualizar tareas
+ui-tool-cronjob-btn-copy-csv = Exportar CSV
+ui-tool-cronjob-filter-placeholder = Filtrar tareas programadas...
+ui-tool-cronjob-col-taskname = Nombre de la tarea
+ui-tool-cronjob-col-nextrun = Proxima ejecucion
+ui-tool-cronjob-col-status = Estado
+ui-tool-cronjob-col-lastrun = Ultima ejecucion
+ui-tool-cronjob-col-lastresult = Ultimo resultado
+ui-tool-cronjob-empty-tasks = Haga clic en Actualizar tareas para inspeccionar las tareas programadas del sistema.
+
+## Bloc de notas
+ui-tool-notes-name = Bloc de notas
+ui-tool-notes-description = Notas personales y bloc de notas con formato Markdown y organizacion por etiquetas
+ui-tool-notes-title = Bloc de notas
+ui-tool-notes-help =
+    Almacene y organice notas tecnicas personales con filtrado por etiquetas y soporte para Markdown.
+
+    Bloc de notas rapido para salidas de comandos, credenciales y documentacion con exportacion a HTML y Markdown.
+ui-tool-notes-search-placeholder = Buscar notas...
+ui-tool-notes-btn-new = Nueva nota
+ui-tool-notes-title-placeholder = Titulo de la nota...
+ui-tool-notes-tags-placeholder = Etiquetas (separadas por comas)...
+ui-tool-notes-content-placeholder = Ingrese notas en markdown aqui...
+ui-tool-notes-btn-copy-md = Copiar Markdown
+ui-tool-notes-btn-copy-html = Copier HTML
+ui-tool-notes-btn-delete = Eliminar nota
+ui-tool-notes-no-selection = Seleccione una nota de la lista o haga clic en Nueva nota.
+ui-tool-notes-count = { $count } notas
+
+## Editor de diagramas
+ui-tool-diagram-name = Editor de diagramas
+ui-tool-diagram-description = Crear diagramas de arquitectura y topologia de red con Mermaid, Graphviz y ASCII
+ui-tool-diagram-title = Editor de diagrammes
+ui-tool-diagram-help =
+    Disene diagramas de arquitectura y topologias de red usando Mermaid, Graphviz DOT o ASCII.
+
+    Incluye plantillas para DMZ perimetral, VPC en la nube y Active Directory.
+ui-tool-diagram-template-select = Plantilla:
+ui-tool-diagram-template-perimeter = DMZ perimetral
+ui-tool-diagram-template-cloud = VPC en la nube
+ui-tool-diagram-template-ascii = Topologia de red ASCII
+ui-tool-diagram-template-ad = Active Directory
+ui-tool-diagram-status-dirty = Modificado
+ui-tool-diagram-status-saved = Guardado
+ui-tool-diagram-btn-load-template = Cargar plantilla
+ui-tool-diagram-btn-copy-source = Copiar codigo
+ui-tool-diagram-btn-clear = Limpiar
+ui-tool-diagram-editor-header = Codigo fuente del diagrama:
+ui-tool-diagram-preview-header = Vista previa del diagrama:
+
+## Biblioteca de comandos
+ui-tool-cmdlib-name = Biblioteca de comandos
+ui-tool-cmdlib-description = Catalogo de comandos sysadmin, red y seguridad con parametros interactivos
+ui-tool-cmdlib-title = Biblioteca de comandos
+ui-tool-cmdlib-help =
+    Busque y ejecute fragmentos de comandos con sustitucion interactiva de parametros.
+
+    Filtre por plataforma (Linux, Windows, multiplataforma) o busque por palabras clave.
+ui-tool-cmdlib-search-placeholder = Buscar comandos por nombre, etiqueta o descripcion...
+ui-tool-cmdlib-platform-all = Todas las plataformas
+ui-tool-cmdlib-platform-linux = Linux
+ui-tool-cmdlib-platform-windows = Windows
+ui-tool-cmdlib-platform-cross = Multiplataforma
+ui-tool-cmdlib-category-all = Todas las categorias
+ui-tool-cmdlib-btn-copy = Copiar comando
+ui-tool-cmdlib-empty = Ningun comando coincide con los filtros seleccionados.
+ui-tool-cmdlib-rendered-label = Comando generado:
+ui-tool-cmdlib-count = { $count } fragmentos
+
+## Lanzador con privilegios elevados
+ui-tool-privlaunch-name = Lanzador con privilegios elevados
+ui-tool-privlaunch-description = Iniciar herramientas administrativas y procesos con privilegios UAC o root
+ui-tool-privlaunch-title = Lanzador con privilegios elevados
+ui-tool-privlaunch-help =
+    Inicia consolas de administracion y ejecutables personalizados con privilegios elevados.
+
+    Proporciona accesos directos con un clic para herramientas estandar de administracion de Windows y ejecucion arbitraria.
+ui-tool-privlaunch-banner-elevated = Heimdall se esta ejecutando actualmente con privilegios de administrador elevados.
+ui-tool-privlaunch-banner-standard = Heimdall se esta ejecutando actualmente con privilegios de usuario estandar.
+ui-tool-privlaunch-warning = Advertencia: La ejecucion de procesos con privilegios elevados otorga control administrativo total sobre el sistema operativo.
+ui-tool-privlaunch-quick-title = Consolas administrativas rapidas:
+ui-tool-privlaunch-custom-title = Iniciar ejecutable personalizado:
+ui-tool-privlaunch-exe-placeholder = Ruta de ejecutable o comando (ej. powershell.exe)...
+ui-tool-privlaunch-args-placeholder = Argumentos de linea de comandos (opcional)...
+ui-tool-privlaunch-privilege-label = Nivel de privilegio:
+ui-tool-privlaunch-priv-user = Usuario actual elevado
+ui-tool-privlaunch-priv-system = SYSTEM / Root
+ui-tool-privlaunch-btn-launch = Iniciar elevado
+ui-tool-privlaunch-success = Proceso iniciado con exito con privilegios elevados.
+ui-tool-privlaunch-failed = Error al iniciar el proceso elevado: { $error }

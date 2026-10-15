@@ -4834,3 +4834,131 @@ ui-tool-services-act-stop = Stop
 ui-tool-services-act-restart = Restart
 ui-tool-services-empty-state = Click Refresh to inspect Windows system services.
 ui-tool-services-action-success = Service action completed successfully.
+
+## Log Viewer
+ui-tool-logview-name = Log Viewer
+ui-tool-logview-description = View log files with tailing, auto-scroll, and regex search filter
+ui-tool-logview-title = Log Viewer
+ui-tool-logview-help =
+    Inspect log files in real time with continuous tailing, automatic scrolling, and regex filtering.
+
+    Supports UTF-8, ASCII, UTF-16, and Windows-1252 encodings.
+ui-tool-logview-path-placeholder = Enter log file path...
+ui-tool-logview-btn-load = Load
+ui-tool-logview-btn-clear = Clear
+ui-tool-logview-btn-copy = Copy Log
+ui-tool-logview-chk-tail = Live Tail
+ui-tool-logview-chk-autoscroll = Auto-scroll
+ui-tool-logview-filter-placeholder = Filter text or regex...
+ui-tool-logview-chk-casesensitive = Match Case
+ui-tool-logview-chk-regex = Regex
+ui-tool-logview-status = { $lines } lines ({ $bytes } bytes)
+ui-tool-logview-empty-state = Specify a log file path and click Load to inspect contents.
+
+## Cron Job Manager
+ui-tool-cronjob-name = Cron Job Manager
+ui-tool-cronjob-description = Parse crontab expressions, calculate next run dates, and inspect Windows scheduled tasks
+ui-tool-cronjob-title = Cron Job Manager
+ui-tool-cronjob-help =
+    Parse crontab expressions into natural language schedules and inspect system scheduled tasks.
+
+    Includes presets for common recurrence rules and next 5 run calculations.
+ui-tool-cronjob-tab-crontab = Crontab Expression
+ui-tool-cronjob-tab-schtasks = Scheduled Tasks
+ui-tool-cronjob-expr-placeholder = Enter crontab expression (e.g. */15 * * * *)...
+ui-tool-cronjob-preset-every-min = Every minute
+ui-tool-cronjob-preset-hourly = Hourly
+ui-tool-cronjob-preset-daily = Daily midnight
+ui-tool-cronjob-preset-weekly = Weekly Monday
+ui-tool-cronjob-schedule-title = Schedule Description
+ui-tool-cronjob-next-runs-title = Next Scheduled Executions:
+ui-tool-cronjob-btn-refresh = Refresh Tasks
+ui-tool-cronjob-btn-copy-csv = Export CSV
+ui-tool-cronjob-filter-placeholder = Filter scheduled tasks...
+ui-tool-cronjob-col-taskname = Task Name
+ui-tool-cronjob-col-nextrun = Next Run Time
+ui-tool-cronjob-col-status = Status
+ui-tool-cronjob-col-lastrun = Last Run Time
+ui-tool-cronjob-col-lastresult = Last Result
+ui-tool-cronjob-empty-tasks = Click Refresh Tasks to inspect scheduled system tasks.
+
+## Notes Scratchpad
+ui-tool-notes-name = Notes Scratchpad
+ui-tool-notes-description = Personal notes and scratchpad with markdown formatting and tag organization
+ui-tool-notes-title = Notes Scratchpad
+ui-tool-notes-help =
+    Store and organize personal engineering notes with tag filtering and markdown support.
+
+    Quick scratchpad for command outputs, credentials, and documentation with HTML and Markdown export.
+ui-tool-notes-search-placeholder = Search notes...
+ui-tool-notes-btn-new = New Note
+ui-tool-notes-title-placeholder = Note title...
+ui-tool-notes-tags-placeholder = Tags (comma-separated)...
+ui-tool-notes-content-placeholder = Enter markdown notes here...
+ui-tool-notes-btn-copy-md = Copy Markdown
+ui-tool-notes-btn-copy-html = Copy HTML
+ui-tool-notes-btn-delete = Delete Note
+ui-tool-notes-no-selection = Select a note from the list or click New Note to create one.
+ui-tool-notes-count = { $count } notes
+
+## Diagram Editor
+ui-tool-diagram-name = Diagram Editor
+ui-tool-diagram-description = Create architecture and network topology diagrams with Mermaid, Graphviz, and ASCII
+ui-tool-diagram-title = Diagram Editor
+ui-tool-diagram-help =
+    Design architecture diagrams and network topologies using Mermaid, Graphviz DOT, or ASCII.
+
+    Includes perimeter DMZ, cloud VPC, and Active Directory templates.
+ui-tool-diagram-template-select = Template:
+ui-tool-diagram-template-perimeter = DMZ Perimeter
+ui-tool-diagram-template-cloud = Cloud VPC
+ui-tool-diagram-template-ascii = ASCII Network Topology
+ui-tool-diagram-template-ad = Active Directory
+ui-tool-diagram-status-dirty = Modified
+ui-tool-diagram-status-saved = Saved
+ui-tool-diagram-btn-load-template = Load Template
+ui-tool-diagram-btn-copy-source = Copy Source
+ui-tool-diagram-btn-clear = Clear
+ui-tool-diagram-editor-header = Diagram Source Code:
+ui-tool-diagram-preview-header = Diagram Preview:
+
+## Command Snippet Library
+ui-tool-cmdlib-name = Command Snippet Library
+ui-tool-cmdlib-description = Curated catalog of sysadmin, network, and security commands with interactive parameters
+ui-tool-cmdlib-title = Command Snippet Library
+ui-tool-cmdlib-help =
+    Search and execute curated command snippets with interactive parameter substitution.
+
+    Filter by platform (Linux, Windows, Cross-Platform) or search by keyword and category.
+ui-tool-cmdlib-search-placeholder = Search commands by name, tag, or description...
+ui-tool-cmdlib-platform-all = All Platforms
+ui-tool-cmdlib-platform-linux = Linux
+ui-tool-cmdlib-platform-windows = Windows
+ui-tool-cmdlib-platform-cross = Cross-Platform
+ui-tool-cmdlib-category-all = All Categories
+ui-tool-cmdlib-btn-copy = Copy Command
+ui-tool-cmdlib-empty = No command snippets match the selected filters.
+ui-tool-cmdlib-rendered-label = Rendered Command:
+ui-tool-cmdlib-count = { $count } snippets
+
+## Elevated Privilege Launcher
+ui-tool-privlaunch-name = Elevated Privilege Launcher
+ui-tool-privlaunch-description = Launch administrative tools and processes with elevated UAC or root privileges
+ui-tool-privlaunch-title = Elevated Privilege Launcher
+ui-tool-privlaunch-help =
+    Launch administrative management consoles and custom executables with elevated privileges.
+
+    Provides one-click shortcuts for standard Windows management tools and arbitrary command execution.
+ui-tool-privlaunch-banner-elevated = Heimdall is currently running with elevated administrative privileges.
+ui-tool-privlaunch-banner-standard = Heimdall is currently running with standard user privileges.
+ui-tool-privlaunch-warning = Warning: Executing processes with elevated privileges grants full administrative control over the operating system.
+ui-tool-privlaunch-quick-title = Quick Administrative Consoles:
+ui-tool-privlaunch-custom-title = Launch Custom Executable:
+ui-tool-privlaunch-exe-placeholder = Executable path or command (e.g. powershell.exe)...
+ui-tool-privlaunch-args-placeholder = Command-line arguments (optional)...
+ui-tool-privlaunch-privilege-label = Privilege Level:
+ui-tool-privlaunch-priv-user = Current User Elevated
+ui-tool-privlaunch-priv-system = SYSTEM / Root
+ui-tool-privlaunch-btn-launch = Launch Elevated
+ui-tool-privlaunch-success = Process launched successfully with elevated privileges.
+ui-tool-privlaunch-failed = Failed to launch elevated process: { $error }

@@ -192,6 +192,18 @@ pub enum ToolId {
     Hosts,
     /// The Windows service status dashboard and controller, the C# `SERVICES`.
     Services,
+    /// The log file viewer with tailing and regex filter, the C# `LOGVIEW`.
+    LogView,
+    /// The cron job manager and task scheduler, the C# `CRONJOB`.
+    CronJob,
+    /// The notes and scratchpad editor, the C# `NOTES`.
+    Notes,
+    /// The architecture and topology diagram editor, the C# `DIAGRAM`.
+    Diagram,
+    /// The command snippet and script library, the C# `CMDLIB`.
+    CmdLib,
+    /// The elevated privilege process launcher, the C# `PRIVLAUNCH`.
+    PrivLaunch,
 }
 
 /// What the registry says of a tool.
@@ -240,7 +252,7 @@ impl ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 52] = [
+    pub const ALL: [Self; 58] = [
         Self::Ping,
         Self::Dns,
         Self::Cert,
@@ -284,9 +296,15 @@ impl ToolId {
         Self::Uuid,
         Self::Ulid,
         Self::Crontab,
+        Self::LogView,
         Self::Hosts,
         Self::SshConfig,
+        Self::CronJob,
         Self::Services,
+        Self::Notes,
+        Self::Diagram,
+        Self::CmdLib,
+        Self::PrivLaunch,
         Self::WakeOnLan,
         Self::OpenPorts,
         Self::NetIf,
@@ -471,6 +489,51 @@ impl ToolId {
                 "SERVICES",
                 ToolCategory::System,
                 &["services", "svc", "systemctl"],
+            ),
+            Self::LogView => {
+                ToolDescriptor::local("LOGVIEW", ToolCategory::System, &["log", "tail", "logview"])
+            }
+            Self::CronJob => ToolDescriptor::local(
+                "CRONJOB",
+                ToolCategory::System,
+                &["cronjob", "crontab-manager", "tasks"],
+            ),
+            Self::Notes => ToolDescriptor::local(
+                "NOTES",
+                ToolCategory::System,
+                &["notes", "note", "markdown", "md", "confluence"],
+            ),
+            Self::Diagram => ToolDescriptor::local(
+                "DIAGRAM",
+                ToolCategory::System,
+                &["diagram", "drawio", "schema"],
+            ),
+            Self::CmdLib => ToolDescriptor::local(
+                "CMDLIB",
+                ToolCategory::System,
+                &[
+                    "cmd",
+                    "command",
+                    "library",
+                    "snippet",
+                    "twinshell",
+                    "cheat",
+                    "cheatsheet",
+                    "powershell",
+                    "bash",
+                ],
+            ),
+            Self::PrivLaunch => ToolDescriptor::local(
+                "PRIVLAUNCH",
+                ToolCategory::System,
+                &[
+                    "privlaunch",
+                    "sudo",
+                    "nsudo",
+                    "elevate",
+                    "system",
+                    "trustedinstaller",
+                ],
             ),
         }
     }
