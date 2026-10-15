@@ -2838,8 +2838,9 @@ impl Shell {
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
-        // The tool tabs' states follow their tabs.
+        // The tool tabs' states follow their tabs, and those just opened start their work.
         self.tools.sync(&self.app);
+        tasks.push(self.tools.opening());
         // What the detail panel says of the session selected, read again once it changed.
         self.app.refresh_detail();
         // The diagnostics log as the settings say now.

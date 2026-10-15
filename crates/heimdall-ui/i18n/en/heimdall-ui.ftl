@@ -4367,6 +4367,14 @@ ui-tool-http-help =
     - Type in the filter box to search by numeric code or name.
     - Click any entry to copy its code and name to the clipboard.
 
+ui-tool-net-error-host-required = Please enter a hostname or IP address.
+ui-tool-net-error-invalid-host = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-net-error-port = The port must be a number between 1 and 65535.
+ui-tool-net-error-port-range = Please enter a port or port range.
+ui-tool-net-reason-other = Connection failed: { $detail }
+ui-tool-net-no-value = -
+ui-tool-net-millis = { $ms } ms
+
 ui-tool-tcpping-name = TCP Ping
 ui-tool-tcpping-description = Measure TCP connection latency to a specific host and port
 ui-tool-tcpping-host-label = Host
@@ -4377,8 +4385,10 @@ ui-tool-tcpping-btn-start = Start
 ui-tool-tcpping-btn-stop = Stop
 ui-tool-tcpping-btn-copy = Copy results
 ui-tool-tcpping-summary = Min: { $min } ms, Avg: { $avg } ms, Max: { $max } ms, Lost: { $lost }/{ $total } ({ $pct }%)
+ui-tool-tcpping-summary-all-lost = Min: -, Avg: -, Max: -, Lost: { $lost }/{ $total } ({ $pct }%)
+ui-tool-tcpping-probe-ok = [{ $seq }/{ $total }] { $target } - { $ms } ms
+ui-tool-tcpping-probe-failed = [{ $seq }/{ $total }] { $target } - FAILED: { $reason }
 ui-tool-tcpping-empty-state = Enter a host and port, then click Start to measure TCP handshake latency
-ui-tool-tcpping-error-host-required = Please enter a host name or IP address.
 ui-tool-tcpping-error-count = Count must be a number between 1 and 10000.
 ui-tool-tcpping-help =
     TCP Ping Tool
@@ -4389,20 +4399,24 @@ ui-tool-tcpping-help =
     Usage:
     1. Enter target host name or IP address.
     2. Enter port number (default: 443).
-    3. Specify number of probes to send (default: 10).
-    4. Click Start to begin probing.
+    3. Specify number of probes to send (default: 10, at most 10000).
+    4. Click Start to begin probing; Stop ends the run at once.
+
+    The host name is looked up once, before the first probe: the times shown are the
+    handshakes alone. Probes are one second apart, and each has five seconds to answer.
 
 ui-tool-wol-name = Wake-on-LAN
 ui-tool-wol-description = Send magic packets to power on sleeping devices across the network
 ui-tool-wol-mac-label = MAC Address
 ui-tool-wol-mac-placeholder = AA:BB:CC:DD:EE:FF
 ui-tool-wol-broadcast-label = Broadcast Address
-ui-tool-wol-broadcast-placeholder = 255.255.255.255
 ui-tool-wol-port-label = UDP Port
 ui-tool-wol-btn-send = Send Wake-on-LAN
+ui-tool-wol-status-sending = Sending magic packet...
 ui-tool-wol-status-sent = Magic packet sent to { $mac } via { $dest }
 ui-tool-wol-status-error = Failed to send packet: { $error }
 ui-tool-wol-error-invalid-mac = Invalid MAC address. Use format AA:BB:CC:DD:EE:FF or AABBCCDDEEFF.
+ui-tool-wol-error-invalid-broadcast = Invalid broadcast address. Enter an IPv4 or IPv6 address.
 ui-tool-wol-help =
     Wake-on-LAN
 
@@ -4415,29 +4429,37 @@ ui-tool-wol-help =
 
     Usage:
     1. Enter target machine's MAC address.
-    2. Optionally adjust broadcast address (default: 255.255.255.255).
-    3. Click Send Wake-on-LAN.
+    2. Optionally adjust the broadcast address, an IP address (default: 255.255.255.255).
+    3. Optionally adjust the UDP port, from 1 to 65535 (default: 9).
+    4. Click Send Wake-on-LAN.
 
 ui-tool-whois-name = WHOIS Lookup
 ui-tool-whois-description = Query WHOIS servers to look up domain and IP registration data
-ui-tool-whois-domain-label = Domain or IP Address
 ui-tool-whois-domain-placeholder = example.com or 1.1.1.1
 ui-tool-whois-btn-lookup = Lookup
 ui-tool-whois-btn-copy = Copy output
 ui-tool-whois-empty-state = Enter a domain name or IP address to query WHOIS registration data
 ui-tool-whois-status-querying = Querying WHOIS server...
 ui-tool-whois-status-complete = Query completed in { $elapsed } ms
+ui-tool-whois-result-header = WHOIS results for { $domain }
+ui-tool-whois-truncated = The reply was longer than { $kib } KiB: only its beginning is shown.
 ui-tool-whois-error-required = Please enter a domain name or IP address.
+ui-tool-whois-error-invalid = Invalid domain name or IP address.
+ui-tool-whois-error-timeout = WHOIS query timed out. The WHOIS server may be unreachable or rate-limiting requests.
+ui-tool-whois-error-failed = WHOIS query failed: { $reason }. Try again or use a different domain/IP.
 ui-tool-whois-help =
     WHOIS Lookup
 
-    Queries WHOIS servers directly over TCP port 43 to retrieve domain registration,
-    registrar data, name servers, and network allocation details.
+    Queries a WHOIS server directly over TCP port 43 for domain registration data:
+    registrar, dates, name servers.
 
-    Features:
-    - Automatic TLD referral resolution (.com, .org, .fr, .io, .dev, etc.)
-    - Direct TCP port 43 querying
-    - Offline fallback to IANA registry
+    How it works:
+    - The server is chosen by the domain's TLD from a built-in list (com, net, org, fr,
+      io, dev and others); whois.iana.org is asked for any other TLD and for an IP
+      address.
+    - The reply is shown as the server sent it: a referral to another server is not
+      followed.
+    - The whole lookup has 10 seconds, and at most 64 KiB of the reply is kept.
 
 ui-tool-banner-name = Banner Grabber
 ui-tool-banner-description = Probe network ports to capture service banners and software versions
@@ -4459,7 +4481,6 @@ ui-tool-banner-preset-mail = Mail
 ui-tool-banner-preset-database = Database
 ui-tool-banner-empty-state = Enter a host and port list, then click Grab Banners to inspect service banners
 ui-tool-banner-progress = { $completed } / { $total } ports probed
-ui-tool-banner-error-host-required = Please enter a target host.
 ui-tool-banner-help =
     Banner Grabber
 
@@ -4469,6 +4490,7 @@ ui-tool-banner-help =
     Features:
     - Custom port lists and port ranges (e.g. 80,443,8000-8005)
     - Presets for Common, Web, Mail, and Database ports
+    - 20 ports probed at a time, each result shown as it comes; Stop ends the scan at once
     - Automatic service fingerprinting (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
     - Export results to CSV or formatted text
 
@@ -4850,7 +4872,7 @@ ui-tool-hosts-title = Hosts File Editor
 ui-tool-hosts-help =
     Edits the system hosts file with syntax validation.
 
-    View and edit host entries. Changes require administrator privileges to save.
+    The file is read when the tool opens. Entries can be enabled, disabled, removed or added; comments, aliases and line endings are kept as they are. Saving requires administrator privileges, keeps a dated backup copy beside the file, and is refused if another program changed the file since it was read.
 ui-tool-hosts-reload = Reload
 ui-tool-hosts-save = Save Changes
 ui-tool-hosts-copy-all = Copy Hosts
@@ -4858,11 +4880,20 @@ ui-tool-hosts-btn-add = Add Entry
 ui-tool-hosts-btn-delete = Delete
 ui-tool-hosts-invalid-ip = Invalid IP address format.
 ui-tool-hosts-missing-host = Hostname cannot be empty.
+ui-tool-hosts-invalid-host = Invalid hostname: use letters, digits, dots, hyphens or underscores, without spaces or '#'.
+ui-tool-hosts-invalid-comment = A comment cannot contain a line break or a control character.
 ui-tool-hosts-loaded = Loaded { $count } entries from { $path }
-ui-tool-hosts-save-success = Hosts file saved successfully.
+ui-tool-hosts-save-success = Hosts file saved. Backup copy of the previous version: { $backup }
+ui-tool-hosts-unchanged = No changes to save: the hosts file was left as it is.
 ui-tool-hosts-save-failed = Failed to save hosts file: { $error }
+ui-tool-hosts-error-not-found = Hosts file not found.
+ui-tool-hosts-error-read-denied = Access denied (read). Run as administrator.
+ui-tool-hosts-error-read = The hosts file could not be read: { $error }
+ui-tool-hosts-error-admin-required = Cannot write the hosts file. Run Heimdall as administrator to save changes.
+ui-tool-hosts-error-changed = The hosts file was changed by another program since it was read. Nothing was written: reload it, then make your changes again.
+ui-tool-hosts-error-backup = The backup copy could not be written, so the hosts file was not changed: { $error }
 ui-tool-hosts-empty-state = No entries found in the hosts file.
-ui-tool-hosts-loading-hint = Click Reload to load entries from the hosts file.
+ui-tool-hosts-loading-hint = Reading the hosts file...
 ui-tool-hosts-col-enabled = Active
 ui-tool-hosts-col-ip = IP Address
 ui-tool-hosts-col-hostname = Hostname
@@ -4876,7 +4907,7 @@ ui-tool-services-title = Service Status Dashboard
 ui-tool-services-help =
     Monitors Windows background service status with start and stop controls.
 
-    View running services, their operational status, and startup type. Start, stop, or restart services directly.
+    View running services, their operational status, and startup type. Start, stop, or restart a service: Windows asks for administrator rights first, and the action only runs on a service of the list just read.
 ui-tool-services-refresh = Refresh
 ui-tool-services-scanning = Refreshing...
 ui-tool-services-copy-csv = Export CSV
@@ -4895,6 +4926,17 @@ ui-tool-services-act-stop = Stop
 ui-tool-services-act-restart = Restart
 ui-tool-services-empty-state = Click Refresh to inspect Windows system services.
 ui-tool-services-action-success = Service action completed successfully.
+ui-tool-services-error-invalid-name = This service name holds characters that cannot be passed safely to the system: no action was run.
+ui-tool-services-error-unknown-name = This service is not in the list just read: refresh the list, then try again.
+ui-tool-services-error-no-powershell = Windows PowerShell could not be found in the system folder.
+ui-tool-services-error-no-systemctl = systemctl could not be found in /usr/bin or /bin.
+ui-tool-services-error-not-started = The command could not be started: { $error }
+ui-tool-services-error-timeout = The command did not finish in time and was stopped. An action may still complete: refresh the list to check.
+ui-tool-services-error-not-elevated = The action was not run: the administrator prompt was declined, or Windows could not start it.
+ui-tool-services-error-action-failed = The action on the service failed (exit code { $code }).
+ui-tool-services-error-action-failed-detail = The action on the service failed: { $error }
+ui-tool-services-error-list-failed = Failed to load services: { $error }
+ui-tool-services-exit-code-none = none
 
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.

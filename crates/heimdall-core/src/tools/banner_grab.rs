@@ -14,21 +14,26 @@
  * limitations under the License.
  */
 
-//! TCP banner grabbing engine, service fingerprinting, and port parser.
+//! The banner grabber's engine, as the C# `BannerGrabEngine`: the port list read, the banner
+//! cleaned, the service told from the port and the banner, and the results written out. The
+//! probes themselves are `heimdall_app::net_tools`'.
 
 use std::collections::BTreeSet;
-use std::io::Read;
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// Maximum bytes to read from a banner response.
+use super::default_creds::sanitize_csv_cell;
+
+/// Most bytes read of a banner, the C# `BannerMaxBytes`.
 pub const BANNER_MAX_BYTES: usize = 512;
 
-/// Default connection timeout for banner probing in milliseconds.
-pub const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 2000;
+/// Time a port has to accept the connection, the C# `ConnectTimeoutMs`.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(2000);
 
-/// Default banner read timeout in milliseconds.
-pub const DEFAULT_READ_TIMEOUT_MS: u64 = 2000;
+/// Time an open port has to send its banner, the C# `BannerReadTimeoutMs`.
+pub const READ_TIMEOUT: Duration = Duration::from_millis(2000);
+
+/// Ports probed at once, the C# `MaxConcurrent`.
+pub const MAX_CONCURRENT: usize = 20;
 
 /// Parses a comma-separated or range-based port specification (e.g. "21,22,80,443,8000-8005").
 #[must_use]
@@ -93,10 +98,10 @@ pub fn clean_banner(raw: &str) -> Option<String> {
     }
 }
 
-/// Common default service name for a well-known port.
+/// The service a well-known port usually runs, if it is one.
 #[must_use]
-pub fn default_port_service(port: u16) -> &'static str {
-    match port {
+pub fn default_port_service(port: u16) -> Option<&'static str> {
+    Some(match port {
         21 => "FTP",
         22 => "SSH",
         23 => "Telnet",
@@ -122,17 +127,18 @@ pub fn default_port_service(port: u16) -> &'static str {
         8080 => "HTTP-Alt",
         8443 => "HTTPS-Alt",
         27017 => "MongoDB",
-        _ => "Unknown",
-    }
+        _ => return None,
+    })
 }
 
-/// Identifies the network service from port and inspected banner content.
+/// The service on `port`, told from its banner when one names a known server, else from
+/// the port, else the port number itself, as the C# `IdentifyService`.
 #[must_use]
 pub fn identify_service(port: u16, banner: Option<&str>) -> String {
-    let base = default_port_service(port);
+    let base = default_port_service(port).map_or_else(|| port.to_string(), str::to_owned);
 
     let Some(b) = banner else {
-        return base.to_string();
+        return base;
     };
 
     let lower = b.to_ascii_lowercase();
@@ -183,120 +189,148 @@ pub fn identify_service(port: u16, banner: Option<&str>) -> String {
         return "FileZilla FTP".to_string();
     }
 
-    base.to_string()
+    base
 }
 
-/// Outcome of banner probing on a single port.
+/// What a port answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BannerProbeResult {
-    /// Port probed.
+    /// The port.
     pub port: u16,
-    /// Service identification.
+    /// The service, as [`identify_service`] tells it.
     pub service: String,
-    /// Response time formatted as string (e.g. "12 ms" or "-").
-    pub response_time: String,
-    /// Captured banner content if open and returned data.
+    /// How long the connection took, in milliseconds; `None` when the port did not accept it.
+    pub response_ms: Option<u64>,
+    /// What the server sent first, made safe and cleaned, if anything.
     pub banner: Option<String>,
 }
 
-/// Probes a single host:port for banner data synchronously.
-#[must_use]
-pub fn probe_port_banner(
-    host: &str,
-    port: u16,
-    connect_timeout_ms: u64,
-    read_timeout_ms: u64,
-) -> BannerProbeResult {
-    let start = Instant::now();
-    let conn_dur = Duration::from_millis(connect_timeout_ms);
-    let read_dur = Duration::from_millis(read_timeout_ms);
-
-    let Ok(mut addrs) = (host, port).to_socket_addrs() else {
-        let service = identify_service(port, None);
-        return BannerProbeResult {
+impl BannerProbeResult {
+    /// A port that did not accept the connection.
+    #[must_use]
+    pub fn closed(port: u16) -> Self {
+        Self {
             port,
-            service,
-            response_time: "-".to_string(),
+            service: identify_service(port, None),
+            response_ms: None,
             banner: None,
-        };
-    };
-
-    let Some(addr) = addrs.next() else {
-        let service = identify_service(port, None);
-        return BannerProbeResult {
-            port,
-            service,
-            response_time: "-".to_string(),
-            banner: None,
-        };
-    };
-
-    match TcpStream::connect_timeout(&addr, conn_dur) {
-        Ok(mut stream) => {
-            let elapsed_ms = start.elapsed().as_millis();
-            let response_time = format!("{elapsed_ms} ms");
-
-            let _ = stream.set_read_timeout(Some(read_dur));
-            let mut buffer = [0u8; BANNER_MAX_BYTES];
-            let banner = match stream.read(&mut buffer) {
-                Ok(n) if n > 0 => {
-                    let raw = String::from_utf8_lossy(&buffer[..n]);
-                    clean_banner(&raw)
-                }
-                _ => None,
-            };
-
-            let service = identify_service(port, banner.as_deref());
-            BannerProbeResult {
-                port,
-                service,
-                response_time,
-                banner,
-            }
         }
-        _ => {
-            let service = identify_service(port, None);
-            BannerProbeResult {
-                port,
-                service,
-                response_time: "-".to_string(),
-                banner: None,
-            }
+    }
+
+    /// A port that accepted the connection in `millis`, having sent `banner`.
+    #[must_use]
+    pub fn open(port: u16, millis: u64, banner: Option<String>) -> Self {
+        Self {
+            port,
+            service: identify_service(port, banner.as_deref()),
+            response_ms: Some(millis),
+            banner,
         }
     }
 }
 
-/// Formats a list of banner probe results as CSV text.
+/// The words the exports are written with, in the user's language, as the C# passes its
+/// localizer to `BuildCsvExport` and `BuildClipboardText`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportLabels {
+    /// The port column's header.
+    pub port: String,
+    /// The service column's header.
+    pub service: String,
+    /// The banner column's header.
+    pub banner: String,
+    /// The time column's header.
+    pub time: String,
+    /// What stands for no value.
+    pub none: String,
+}
+
+/// Width of the port column of [`build_clipboard_text`], as the C#.
+const CLIPBOARD_PORT_WIDTH: usize = 8;
+
+/// Width of the service column of [`build_clipboard_text`], as the C#.
+const CLIPBOARD_SERVICE_WIDTH: usize = 20;
+
+/// Width of the time column of [`build_clipboard_text`], as the C#.
+const CLIPBOARD_TIME_WIDTH: usize = 12;
+
+/// Length of the rule under the header of [`build_clipboard_text`], as the C#.
+const CLIPBOARD_RULE_LENGTH: usize = 72;
+
+/// One CSV cell: made unable to start a spreadsheet formula, as the C#
+/// `InputValidator.SanitizeCsvCell`, then quoted (RFC 4180).
+fn csv_cell(value: &str) -> String {
+    format!("\"{}\"", sanitize_csv_cell(value).replace('"', "\"\""))
+}
+
+/// `results` as CSV, ordered by port, in the C# columns (port, service, banner, time);
+/// `time` writes a time in milliseconds; `labels.none` is not used. Every cell, the headers too, goes through
+/// [`csv_cell`]: a banner is the server's words.
 #[must_use]
-pub fn build_csv_export(results: &[BannerProbeResult]) -> String {
-    let mut out = String::from("Port,Service,Response Time,Banner\n");
-    for r in results {
-        let banner_escaped = match &r.banner {
-            Some(b) => format!("\"{}\"", b.replace('"', "\"\"")),
-            None => String::new(),
-        };
-        out.push_str(&format!(
-            "{},{},{},{}\n",
-            r.port, r.service, r.response_time, banner_escaped
-        ));
+pub fn build_csv_export(
+    results: &[BannerProbeResult],
+    labels: &ExportLabels,
+    time: impl Fn(u64) -> String,
+    line_end: &str,
+) -> String {
+    let mut sorted: Vec<&BannerProbeResult> = results.iter().collect();
+    sorted.sort_by_key(|result| result.port);
+    let mut out = [&labels.port, &labels.service, &labels.banner, &labels.time]
+        .map(|header| csv_cell(header))
+        .join(",");
+    out.push_str(line_end);
+    for result in sorted {
+        // A closed port's time is an empty cell: the "no value" mark would be read as a
+        // formula sign and come out quoted.
+        let time = result.response_ms.map_or_else(String::new, &time);
+        let row = [
+            result.port.to_string(),
+            result.service.clone(),
+            result.banner.clone().unwrap_or_default(),
+            time,
+        ]
+        .map(|cell| csv_cell(&cell))
+        .join(",");
+        out.push_str(&row);
+        out.push_str(line_end);
     }
     out
 }
 
-/// Formats a list of banner probe results as tabulated plain text.
+/// `results` as aligned text, as the C# `BuildClipboardText`; `time` writes a time in
+/// milliseconds.
 #[must_use]
-pub fn build_clipboard_text(results: &[BannerProbeResult]) -> String {
-    let mut out = String::new();
-    out.push_str(&format!(
-        "{:<8} {:<18} {:<12} {}\n",
-        "Port", "Service", "Time", "Banner"
-    ));
-    out.push_str(&format!("{}\n", "-".repeat(60)));
-    for r in results {
-        let b = r.banner.as_deref().unwrap_or("-");
+pub fn build_clipboard_text(
+    results: &[BannerProbeResult],
+    labels: &ExportLabels,
+    time: impl Fn(u64) -> String,
+    line_end: &str,
+) -> String {
+    let mut out = format!(
+        "{:<pw$}{:<sw$}{:<tw$}{}{line_end}",
+        labels.port,
+        labels.service,
+        labels.time,
+        labels.banner,
+        pw = CLIPBOARD_PORT_WIDTH,
+        sw = CLIPBOARD_SERVICE_WIDTH,
+        tw = CLIPBOARD_TIME_WIDTH,
+    );
+    out.push_str(&"-".repeat(CLIPBOARD_RULE_LENGTH));
+    out.push_str(line_end);
+    for result in results {
+        let time = result
+            .response_ms
+            .map_or_else(|| labels.none.clone(), &time);
+        let banner = result.banner.as_deref().unwrap_or(&labels.none);
         out.push_str(&format!(
-            "{:<8} {:<18} {:<12} {}\n",
-            r.port, r.service, r.response_time, b
+            "{:<pw$}{:<sw$}{:<tw$}{banner}{line_end}",
+            result.port,
+            result.service,
+            time,
+            pw = CLIPBOARD_PORT_WIDTH,
+            sw = CLIPBOARD_SERVICE_WIDTH,
+            tw = CLIPBOARD_TIME_WIDTH,
         ));
     }
     out
@@ -329,19 +363,50 @@ mod tests {
         assert_eq!(identify_service(22, Some("SSH-2.0-OpenSSH_8.9")), "OpenSSH");
         assert_eq!(identify_service(80, Some("Server: nginx/1.18.0")), "nginx");
         assert_eq!(identify_service(22, None), "SSH");
-        assert_eq!(identify_service(9999, None), "Unknown");
+        // An unknown port is named by its number, as the C#: no English word to translate.
+        assert_eq!(identify_service(9999, None), "9999");
+    }
+
+    fn labels() -> ExportLabels {
+        ExportLabels {
+            port: "Port".into(),
+            service: "Service".into(),
+            banner: "Banner".into(),
+            time: "Time".into(),
+            none: "-".into(),
+        }
     }
 
     #[test]
-    fn test_csv_export() {
-        let results = vec![BannerProbeResult {
-            port: 22,
-            service: "OpenSSH".into(),
-            response_time: "5 ms".into(),
-            banner: Some("SSH-2.0-OpenSSH_8.9".into()),
-        }];
-        let csv = build_csv_export(&results);
-        assert!(csv.contains("Port,Service,Response Time,Banner"));
-        assert!(csv.contains("22,OpenSSH,5 ms,\"SSH-2.0-OpenSSH_8.9\""));
+    fn the_csv_export_quotes_every_cell_and_defuses_formulas() {
+        let results = vec![
+            BannerProbeResult::open(22, 5, Some("SSH-2.0-OpenSSH_8.9".into())),
+            BannerProbeResult::open(80, 7, Some("=HYPERLINK(\"http://x\")".into())),
+            BannerProbeResult::closed(21),
+        ];
+        let csv = build_csv_export(&results, &labels(), |ms| format!("{ms} ms"), "\n");
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "\"Port\",\"Service\",\"Banner\",\"Time\"",
+                "\"21\",\"FTP\",\"\",\"\"",
+                "\"22\",\"OpenSSH\",\"SSH-2.0-OpenSSH_8.9\",\"5 ms\"",
+                "\"80\",\"HTTP\",\"'=HYPERLINK(\"\"http://x\"\")\",\"7 ms\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_clipboard_text_is_aligned_in_the_given_words() {
+        let results = vec![BannerProbeResult::closed(9999)];
+        let text = build_clipboard_text(&results, &labels(), |ms| format!("{ms} ms"), "\n");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines[0],
+            format!("{:<8}{:<20}{:<12}Banner", "Port", "Service", "Time")
+        );
+        assert_eq!(lines[1], "-".repeat(72));
+        assert_eq!(lines[2], format!("{:<8}{:<20}{:<12}-", "9999", "9999", "-"));
     }
 }

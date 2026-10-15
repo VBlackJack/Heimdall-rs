@@ -14,119 +14,118 @@
  * limitations under the License.
  */
 
-//! Wake-on-LAN magic packet generator and UDP broadcast transmitter.
+//! What the Wake-on-LAN tool sends and where, as the C# `WakeOnLanViewModel` checks it: the
+//! card's MAC address, the broadcast address and the UDP port. The packet is
+//! [`MacAddress::magic_packet`], sent by `heimdall_app::wake_on_lan`.
 
-use std::net::UdpSocket;
+use std::net::{IpAddr, SocketAddr};
 
-/// Magic packet length: 6 bytes synchronization prefix (0xFF) + 16 repetitions of 6-byte MAC.
-pub const MAGIC_PACKET_LENGTH: usize = 6 + (16 * 6);
+use super::net_input;
+use crate::metadata::MacAddress;
 
-/// Default UDP broadcast port for Wake-on-LAN (standard is 9, alternate is 7).
+/// Default UDP port, the C# `WakeOnLanViewModel.DefaultPort` (the discard port).
 pub const DEFAULT_WOL_PORT: u16 = 9;
 
-/// Default broadcast destination address.
+/// Default destination, the C# `WakeOnLanViewModel.DefaultBroadcastAddress`.
 pub const DEFAULT_BROADCAST_ADDRESS: &str = "255.255.255.255";
 
-/// Parses a MAC address from common representation formats into 6 raw bytes.
+/// Why the typed fields cannot be sent, in the order the C# checks them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WolInputError {
+    /// Not a MAC address, the C# `ToolWolErrorInvalidMac`.
+    InvalidMac,
+    /// Not an IP address, the C# `ToolWolErrorInvalidBroadcast`.
+    InvalidBroadcast,
+    /// Not a port from 1 to 65535.
+    InvalidPort,
+}
+
+/// The card and the address its packet goes to, from the typed fields: a MAC address
+/// ([`MacAddress`]'s reading: twelve ASCII hexadecimal digits, `:`, `-` or `.` between them),
+/// an IP address literal (the C# `IPAddress.TryParse`: no name is looked up) and a port.
 ///
-/// Supports:
-/// - Colon separated: `00:11:22:33:44:55`
-/// - Hyphen separated: `00-11-22-33-44-55`
-/// - Dot separated: `0011.2233.4455`
-/// - Raw hexadecimal: `001122334455`
-#[must_use]
-pub fn parse_mac_address(input: &str) -> Option<[u8; 6]> {
-    let cleaned: String = input
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != ':' && *c != '-' && *c != '.')
-        .collect();
-
-    if cleaned.len() != 12 {
-        return None;
-    }
-
-    let mut bytes = [0u8; 6];
-    for i in 0..6 {
-        let chunk = &cleaned[i * 2..(i * 2) + 2];
-        bytes[i] = u8::from_str_radix(chunk, 16).ok()?;
-    }
-
-    Some(bytes)
-}
-
-/// Normalizes a parsed or string MAC address into canonical colon-separated uppercase format.
-#[must_use]
-pub fn format_mac_address(bytes: &[u8; 6]) -> String {
-    format!(
-        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
-    )
-}
-
-/// Constructs a 102-byte Wake-on-LAN magic packet for the specified MAC address.
-#[must_use]
-pub fn build_magic_packet(mac: &[u8; 6]) -> [u8; MAGIC_PACKET_LENGTH] {
-    let mut packet = [0xFFu8; MAGIC_PACKET_LENGTH];
-
-    for i in 0..16 {
-        let start = 6 + (i * 6);
-        packet[start..start + 6].copy_from_slice(mac);
-    }
-
-    packet
-}
-
-/// Sends a Wake-on-LAN magic packet over UDP broadcast.
-pub fn send_magic_packet(mac: &[u8; 6], broadcast_addr: &str, port: u16) -> Result<(), String> {
-    let packet = build_magic_packet(mac);
-    let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
-    socket.set_broadcast(true).map_err(|e| e.to_string())?;
-
-    let destination = format!("{broadcast_addr}:{port}");
-    socket
-        .send_to(&packet, &destination)
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
+/// # Errors
+///
+/// The first field that cannot be read, as [`WolInputError`] says.
+pub fn destination(
+    mac: &str,
+    broadcast: &str,
+    port: &str,
+) -> Result<(MacAddress, SocketAddr), WolInputError> {
+    let mac = mac
+        .parse::<MacAddress>()
+        .map_err(|_| WolInputError::InvalidMac)?;
+    let address = broadcast
+        .trim()
+        .parse::<IpAddr>()
+        .map_err(|_| WolInputError::InvalidBroadcast)?;
+    let port = net_input::parse_port(port).ok_or(WolInputError::InvalidPort)?;
+    Ok((mac, SocketAddr::new(address, port)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const MAC: [u8; 6] = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+
     #[test]
-    fn test_parse_mac_address_formats() {
-        let expected = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
-
-        assert_eq!(parse_mac_address("00:11:22:33:44:55"), Some(expected));
-        assert_eq!(parse_mac_address("00-11-22-33-44-55"), Some(expected));
-        assert_eq!(parse_mac_address("0011.2233.4455"), Some(expected));
-        assert_eq!(parse_mac_address("001122334455"), Some(expected));
-        assert_eq!(parse_mac_address("  00:11:22:33:44:55  "), Some(expected));
-
-        assert_eq!(parse_mac_address("00:11:22"), None);
-        assert_eq!(parse_mac_address("invalid-mac"), None);
+    fn the_usual_mac_formats_are_read() {
+        for typed in [
+            "00:11:22:33:44:55",
+            "00-11-22-33-44-55",
+            "0011.2233.4455",
+            "001122334455",
+            "  00:11:22:33:44:55  ",
+        ] {
+            let (mac, _) = destination(typed, DEFAULT_BROADCAST_ADDRESS, "9").expect(typed);
+            assert_eq!(mac.0, MAC, "{typed}");
+        }
     }
 
     #[test]
-    fn test_format_mac_address() {
-        let bytes = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
-        assert_eq!(format_mac_address(&bytes), "AA:BB:CC:DD:EE:FF");
+    fn a_mac_of_other_characters_is_refused_without_a_panic() {
+        // Twelve bytes but not twelve ASCII digits: a byte-length check then byte slicing
+        // panicked on the first, and `u8::from_str_radix` takes the sign of the second.
+        for typed in [
+            "0\u{00E9}000000000",
+            "+1+1+1+1+1+1",
+            "00:11:22",
+            "invalid-mac",
+            "",
+        ] {
+            assert_eq!(
+                destination(typed, DEFAULT_BROADCAST_ADDRESS, "9"),
+                Err(WolInputError::InvalidMac),
+                "{typed}"
+            );
+        }
     }
 
     #[test]
-    fn test_build_magic_packet() {
-        let mac = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
-        let packet = build_magic_packet(&mac);
-
-        assert_eq!(packet.len(), MAGIC_PACKET_LENGTH);
-        // First 6 bytes must be 0xFF
-        assert_eq!(&packet[0..6], &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-
-        // Next 16 * 6 bytes must repeat the MAC
-        for i in 0..16 {
-            let offset = 6 + (i * 6);
-            assert_eq!(&packet[offset..offset + 6], &mac);
+    fn the_broadcast_must_be_an_ip_literal_and_the_port_in_range() {
+        let mac = "00:11:22:33:44:55";
+        assert_eq!(
+            destination(mac, " 192.168.1.255 ", "7").map(|(_, to)| to),
+            Ok("192.168.1.255:7".parse().expect("address"))
+        );
+        assert_eq!(
+            destination(mac, "ff02::1", "9").map(|(_, to)| to),
+            Ok("[ff02::1]:9".parse().expect("address"))
+        );
+        for broadcast in ["broadcast.example", "", "255.255.255.256"] {
+            assert_eq!(
+                destination(mac, broadcast, "9"),
+                Err(WolInputError::InvalidBroadcast),
+                "{broadcast}"
+            );
+        }
+        for port in ["", "0", "65536", "nine"] {
+            assert_eq!(
+                destination(mac, DEFAULT_BROADCAST_ADDRESS, port),
+                Err(WolInputError::InvalidPort),
+                "{port}"
+            );
         }
     }
 }

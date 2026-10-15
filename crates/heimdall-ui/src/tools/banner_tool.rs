@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-//! Banner Grabber tool pane for probing network ports and inspecting service banners.
+//! Banner Grabber tool pane for probing network ports and inspecting service banners, as
+//! the C# `BannerGrabViewModel`: [`MAX_CONCURRENT`] ports probed at once, each result shown
+//! as it comes, and Stop ends the run at once.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -27,9 +29,14 @@
 )]
 
 use heimdall_app::TabId;
+use heimdall_app::net_tools::{self, banner};
+use heimdall_app::reachability::DownReason;
 use heimdall_core::tools::banner_grab::{
-    self, BannerProbeResult, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_READ_TIMEOUT_MS,
+    self, BannerProbeResult, CONNECT_TIMEOUT, ExportLabels, MAX_CONCURRENT, READ_TIMEOUT,
 };
+use heimdall_core::tools::net_host;
+use iced::futures::{SinkExt as _, StreamExt as _};
+use iced::task::Handle;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
@@ -44,6 +51,9 @@ const DEFAULT_PORTS: &str = "21,22,23,25,80,110,143,443,3306,3389,5432,6379,8080
 const WEB_PORTS: &str = "80,443,8000,8080,8443,8888,9000,9090";
 const MAIL_PORTS: &str = "25,110,143,465,587,993,995";
 const DB_PORTS: &str = "1433,1521,3306,5432,6379,27017";
+
+/// Results buffered between the run and the pane.
+const CHANNEL_SIZE: usize = 32;
 
 /// Messages emitted by the Banner Grabber tool.
 #[derive(Debug, Clone)]
@@ -64,12 +74,29 @@ pub enum BannerMessage {
     Start,
     /// Stop current scan.
     Stop,
-    /// All probes finished.
-    Finished(Vec<BannerProbeResult>),
+    /// A port of run `.0` was probed.
+    Probed(u64, BannerProbeResult),
+    /// The host of run `.0` could not be looked up.
+    Unresolved(u64, DownReason),
+    /// Run `.0` probed all its ports.
+    Finished(u64),
     /// Copy tabulated text to clipboard.
     CopyResults,
     /// Export CSV to clipboard.
     ExportCsv,
+}
+
+/// What the tool says went wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Problem {
+    /// No host, the C# `ToolValidationHostRequired`.
+    HostRequired,
+    /// Not a host [`net_host::checked_host`] takes, the C# `ErrorInvalidHost`.
+    InvalidHost,
+    /// No port could be read, the C# `ToolValidationPortRangeRequired`.
+    PortRangeRequired,
+    /// The host's name could not be looked up.
+    Unresolved(DownReason),
 }
 
 /// The Banner Grabber tool pane state.
@@ -77,10 +104,14 @@ pub enum BannerMessage {
 pub struct BannerPane {
     host: String,
     ports: String,
-    running: bool,
-    error: Option<String>,
+    /// The run whose results are shown: those of an earlier one are let go.
+    run: u64,
+    /// The run under way, aborted when stopped or when the tab closes.
+    running: Option<Handle>,
+    problem: Option<Problem>,
+    /// The results of the run shown, ordered by port.
     results: Vec<BannerProbeResult>,
-    completed: usize,
+    /// Ports the run shown probes.
     total: usize,
 }
 
@@ -89,10 +120,10 @@ impl Default for BannerPane {
         Self {
             host: String::new(),
             ports: DEFAULT_PORTS.to_string(),
-            running: false,
-            error: None,
+            run: 0,
+            running: None,
+            problem: None,
             results: Vec::new(),
-            completed: 0,
             total: 0,
         }
     }
@@ -106,104 +137,144 @@ pub enum Outcome {
     Copy(CopySlot, String),
 }
 
+/// What a message did, before its tab is known.
+#[derive(Debug)]
+enum Applied {
+    None,
+    Run(Task<BannerMessage>),
+    Copy(CopySlot, String),
+}
+
 impl BannerPane {
     /// Handles tool messages.
     pub fn update(&mut self, tab: TabId, message: BannerMessage) -> Outcome {
+        match self.apply(message) {
+            Applied::None => Outcome::None,
+            Applied::Run(task) => Outcome::Task(
+                task.map(move |message| Message::Tool(tab, ToolMessage::Banner(message))),
+            ),
+            Applied::Copy(slot, content) => Outcome::Copy(slot, content),
+        }
+    }
+
+    /// Handles a message, as [`Self::update`] without the tab.
+    fn apply(&mut self, message: BannerMessage) -> Applied {
         match message {
             BannerMessage::HostChanged(val) => {
                 self.host = val;
-                self.error = None;
-                Outcome::None
+                self.problem = None;
+                Applied::None
             }
             BannerMessage::PortsChanged(val) => {
                 self.ports = val;
-                self.error = None;
-                Outcome::None
+                self.problem = None;
+                Applied::None
             }
             BannerMessage::SelectPresetCommon => {
                 self.ports = DEFAULT_PORTS.to_string();
-                Outcome::None
+                Applied::None
             }
             BannerMessage::SelectPresetWeb => {
                 self.ports = WEB_PORTS.to_string();
-                Outcome::None
+                Applied::None
             }
             BannerMessage::SelectPresetMail => {
                 self.ports = MAIL_PORTS.to_string();
-                Outcome::None
+                Applied::None
             }
             BannerMessage::SelectPresetDb => {
                 self.ports = DB_PORTS.to_string();
-                Outcome::None
+                Applied::None
             }
-            BannerMessage::Start => {
-                let host = self.host.trim().to_string();
-                if host.is_empty() {
-                    self.error = Some(fl!("ui-tool-banner-error-host-required"));
-                    return Outcome::None;
-                }
-
-                let ports = banner_grab::parse_ports(&self.ports);
-                if ports.is_empty() {
-                    self.error = Some(fl!("ui-tool-banner-error-host-required"));
-                    return Outcome::None;
-                }
-
-                self.running = true;
-                self.error = None;
-                self.results.clear();
-                self.completed = 0;
-                self.total = ports.len();
-
-                let task = Task::perform(
-                    async move {
-                        let mut results = Vec::with_capacity(ports.len());
-                        for port in ports {
-                            let h = host.clone();
-                            let res = tokio::task::spawn_blocking(move || {
-                                banner_grab::probe_port_banner(
-                                    &h,
-                                    port,
-                                    DEFAULT_CONNECT_TIMEOUT_MS,
-                                    DEFAULT_READ_TIMEOUT_MS,
-                                )
-                            })
-                            .await
-                            .unwrap_or_else(|_| BannerProbeResult {
-                                port,
-                                service: banner_grab::identify_service(port, None),
-                                response_time: "-".into(),
-                                banner: None,
-                            });
-                            results.push(res);
-                        }
-                        results
-                    },
-                    move |results| {
-                        Message::Tool(tab, ToolMessage::Banner(BannerMessage::Finished(results)))
-                    },
-                );
-
-                Outcome::Task(task)
-            }
+            BannerMessage::Start => self.start(),
             BannerMessage::Stop => {
-                self.running = false;
-                Outcome::None
+                if let Some(running) = self.running.take() {
+                    running.abort();
+                }
+                Applied::None
             }
-            BannerMessage::Finished(results) => {
-                self.running = false;
-                self.completed = results.len();
-                self.results = results;
-                Outcome::None
+            BannerMessage::Probed(run, result) => {
+                if run == self.run && self.running.is_some() {
+                    let at = self
+                        .results
+                        .partition_point(|shown| shown.port < result.port);
+                    self.results.insert(at, result);
+                }
+                Applied::None
             }
-            BannerMessage::CopyResults => {
-                let text = banner_grab::build_clipboard_text(&self.results);
-                Outcome::Copy(CopySlot::BannerGrabResults, text)
+            BannerMessage::Unresolved(run, reason) => {
+                if run == self.run && self.running.is_some() {
+                    self.running = None;
+                    self.problem = Some(Problem::Unresolved(reason));
+                }
+                Applied::None
             }
-            BannerMessage::ExportCsv => {
-                let csv = banner_grab::build_csv_export(&self.results);
-                Outcome::Copy(CopySlot::BannerGrabCsv, csv)
+            BannerMessage::Finished(run) => {
+                if run == self.run {
+                    self.running = None;
+                }
+                Applied::None
             }
+            BannerMessage::CopyResults => Applied::Copy(
+                CopySlot::BannerGrabResults,
+                banner_grab::build_clipboard_text(
+                    &self.results,
+                    &export_labels(),
+                    millis_text,
+                    super::NEW_LINE,
+                ),
+            ),
+            BannerMessage::ExportCsv => Applied::Copy(
+                CopySlot::BannerGrabCsv,
+                banner_grab::build_csv_export(
+                    &self.results,
+                    &export_labels(),
+                    millis_text,
+                    super::NEW_LINE,
+                ),
+            ),
+        }
+    }
+
+    /// Starts a run, the inputs checked in the C# `GrabAsync` order.
+    fn start(&mut self) -> Applied {
+        if self.running.is_some() {
+            return Applied::None;
+        }
+        let ports = banner_grab::parse_ports(&self.ports);
+        let host = net_host::checked_host(&self.host);
+        let problem = if self.host.trim().is_empty() {
+            Some(Problem::HostRequired)
+        } else if host.is_none() {
+            Some(Problem::InvalidHost)
+        } else if ports.is_empty() {
+            Some(Problem::PortRangeRequired)
+        } else {
+            None
+        };
+        let (Some(host), None) = (host, problem.clone()) else {
+            self.problem = problem;
+            self.results.clear();
+            self.total = 0;
+            return Applied::None;
+        };
+
+        self.run += 1;
+        self.problem = None;
+        self.results.clear();
+        self.total = ports.len();
+        let (task, handle) = Task::run(grabs(host, ports, self.run), |message| message).abortable();
+        self.running = Some(handle.abort_on_drop());
+        Applied::Run(task)
+    }
+
+    /// What the tool says went wrong, in the user's language.
+    fn problem_text(problem: &Problem) -> String {
+        match problem {
+            Problem::HostRequired => fl!("ui-tool-net-error-host-required"),
+            Problem::InvalidHost => fl!("ui-tool-net-error-invalid-host"),
+            Problem::PortRangeRequired => fl!("ui-tool-net-error-port-range"),
+            Problem::Unresolved(reason) => super::down_reason_text(reason),
         }
     }
 
@@ -215,6 +286,7 @@ impl BannerPane {
         theme: &Theme,
     ) -> Element<'a, Message> {
         let colors = crate::themes::colors_of(theme);
+        let no_value = fl!("ui-tool-net-no-value");
 
         let host_input = column![
             text(fl!("ui-tool-banner-host-label"))
@@ -246,7 +318,7 @@ impl BannerPane {
         .width(Length::FillPortion(4))
         .spacing(spacing::XS);
 
-        let grab_btn = if self.running {
+        let grab_btn = if self.running.is_some() {
             button(
                 text(fl!("ui-tool-banner-btn-stop"))
                     .size(font_size::BODY)
@@ -311,15 +383,19 @@ impl BannerPane {
 
         let mut body_col = column![controls_row, presets_row].spacing(spacing::SM);
 
-        if let Some(err) = &self.error {
-            body_col = body_col.push(text(err).size(font_size::BODY).color(colors.red));
+        if let Some(problem) = &self.problem {
+            body_col = body_col.push(
+                text(Self::problem_text(problem))
+                    .size(font_size::BODY)
+                    .color(colors.red),
+            );
         }
 
-        if !self.results.is_empty() || self.running {
+        if !self.results.is_empty() || self.running.is_some() {
             let actions_row = row![
                 text(fl!(
                     "ui-tool-banner-progress",
-                    completed = self.completed,
+                    completed = self.results.len(),
                     total = self.total
                 ))
                 .size(font_size::CAPTION)
@@ -371,12 +447,13 @@ impl BannerPane {
             );
 
             for r in &self.results {
-                let banner_str = r.banner.as_deref().unwrap_or("-");
+                let banner_str = r.banner.clone().unwrap_or_else(|| no_value.clone());
                 let banner_color = if r.banner.is_some() {
                     colors.green
                 } else {
                     colors.comment
                 };
+                let time = r.response_ms.map_or_else(|| no_value.clone(), millis_text);
 
                 table_rows = table_rows.push(
                     row![
@@ -388,7 +465,7 @@ impl BannerPane {
                             .size(font_size::CAPTION)
                             .font(super::BOX_FONT)
                             .width(Length::Fixed(120.0)),
-                        text(&r.response_time)
+                        text(time)
                             .size(font_size::CAPTION)
                             .font(super::BOX_FONT)
                             .width(Length::Fixed(80.0)),
@@ -423,5 +500,110 @@ impl BannerPane {
             .max_width(super::CONTENT_MAX_WIDTH);
 
         content.into()
+    }
+}
+
+/// A time in milliseconds, in the user's language.
+fn millis_text(millis: u64) -> String {
+    fl!("ui-tool-net-millis", ms = millis)
+}
+
+/// The words of the exports, in the user's language, as the C# localizes its columns.
+fn export_labels() -> ExportLabels {
+    ExportLabels {
+        port: fl!("ui-tool-banner-col-port"),
+        service: fl!("ui-tool-banner-col-service"),
+        banner: fl!("ui-tool-banner-col-banner"),
+        time: fl!("ui-tool-banner-col-time"),
+        none: fl!("ui-tool-net-no-value"),
+    }
+}
+
+/// The probes of a run, as the C# `BannerGrabService.GrabAsync`: the host looked up once,
+/// then [`MAX_CONCURRENT`] ports at a time, each result sent back as it ends.
+fn grabs(
+    host: String,
+    ports: Vec<u16>,
+    run: u64,
+) -> impl iced::futures::Stream<Item = BannerMessage> {
+    iced::stream::channel(CHANNEL_SIZE, async move |mut out| {
+        let Ok(addresses) = net_tools::resolve(&host, CONNECT_TIMEOUT).await else {
+            let _ = out
+                .send(BannerMessage::Unresolved(run, DownReason::Dns))
+                .await;
+            return;
+        };
+        let mut probes = iced::futures::stream::iter(ports)
+            .map(|port| banner::grab(&addresses, port, CONNECT_TIMEOUT, READ_TIMEOUT))
+            .buffer_unordered(MAX_CONCURRENT);
+        while let Some(result) = probes.next().await {
+            if out.send(BannerMessage::Probed(run, result)).await.is_err() {
+                return;
+            }
+        }
+        let _ = out.send(BannerMessage::Finished(run)).await;
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn started(pane: &mut BannerPane) -> Handle {
+        pane.apply(BannerMessage::HostChanged("localhost".to_owned()));
+        assert!(matches!(pane.apply(BannerMessage::Start), Applied::Run(_)));
+        pane.running.clone().expect("a run under way")
+    }
+
+    #[test]
+    fn results_come_one_by_one_in_port_order() {
+        let mut pane = BannerPane::default();
+        drop(started(&mut pane));
+        pane.apply(BannerMessage::Probed(
+            pane.run,
+            BannerProbeResult::closed(80),
+        ));
+        pane.apply(BannerMessage::Probed(
+            pane.run,
+            BannerProbeResult::closed(22),
+        ));
+        let ports: Vec<u16> = pane.results.iter().map(|result| result.port).collect();
+        assert_eq!(ports, [22, 80]);
+        assert!(pane.running.is_some());
+        pane.apply(BannerMessage::Finished(pane.run));
+        assert!(pane.running.is_none());
+    }
+
+    #[test]
+    fn stop_aborts_the_run_and_a_stale_run_is_ignored() {
+        let mut pane = BannerPane::default();
+        let first = started(&mut pane);
+        let old = pane.run;
+        pane.apply(BannerMessage::Stop);
+        assert!(first.is_aborted());
+        assert!(pane.running.is_none());
+        pane.apply(BannerMessage::Probed(old, BannerProbeResult::closed(22)));
+        assert!(pane.results.is_empty());
+
+        drop(started(&mut pane));
+        pane.apply(BannerMessage::Probed(old, BannerProbeResult::closed(23)));
+        pane.apply(BannerMessage::Finished(old));
+        assert!(pane.results.is_empty());
+        assert!(pane.running.is_some(), "the new run goes on");
+    }
+
+    #[test]
+    fn the_inputs_are_checked_as_the_csharp() {
+        let mut pane = BannerPane::default();
+        let refused = |pane: &mut BannerPane, problem: Problem| {
+            assert!(matches!(pane.apply(BannerMessage::Start), Applied::None));
+            assert_eq!(pane.problem, Some(problem));
+        };
+        refused(&mut pane, Problem::HostRequired);
+        pane.apply(BannerMessage::HostChanged("bad host".to_owned()));
+        refused(&mut pane, Problem::InvalidHost);
+        pane.apply(BannerMessage::HostChanged("example.com".to_owned()));
+        pane.apply(BannerMessage::PortsChanged("0, x, 70000".to_owned()));
+        refused(&mut pane, Problem::PortRangeRequired);
     }
 }
