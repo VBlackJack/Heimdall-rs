@@ -232,14 +232,39 @@ impl Minute {
 /// `yyyy-MM-dd HH:mm (ddd)`. None when a field cannot be read.
 #[must_use]
 pub fn next_runs(fields: &[String; FIELD_COUNT], now: Minute, count: usize) -> Vec<String> {
+    runs(fields, now, count, false)
+}
+
+/// [`next_runs`] as a crontab reads its day of the week, as the cron job manager's C#
+/// `CronScheduleCalculator` (`Heimdall.Core/CronJob/CronScheduleCalculator.cs:85-142`) does:
+/// 7 is Sunday, as 0 is.
+#[must_use]
+pub fn crontab_next_runs(fields: &[String; FIELD_COUNT], now: Minute, count: usize) -> Vec<String> {
+    runs(fields, now, count, true)
+}
+
+/// The day of the week a crontab may write Sunday as, besides 0.
+const SUNDAY_AS_SEVEN: i64 = 7;
+
+/// The next `count` minutes after `now` that `fields` match; with `sunday_seven`, a day of
+/// the week of 7 matches Sunday.
+fn runs(
+    fields: &[String; FIELD_COUNT],
+    now: Minute,
+    count: usize,
+    sunday_seven: bool,
+) -> Vec<String> {
     let expanded: Option<Vec<BTreeSet<i64>>> = fields
         .iter()
         .zip(FIELD_RANGES)
         .map(|(field, (min, max))| expand(field, min, max))
         .collect();
-    let Some(sets) = expanded else {
+    let Some(mut sets) = expanded else {
         return Vec::new();
     };
+    if sunday_seven && sets[4].remove(&SUNDAY_AS_SEVEN) {
+        sets[4].insert(0);
+    }
     let mut runs = Vec::new();
     for minute in (now.minutes + 1..).take(MAX_MINUTES_SCANNED) {
         if runs.len() >= count {

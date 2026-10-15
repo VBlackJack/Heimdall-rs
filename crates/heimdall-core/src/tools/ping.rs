@@ -31,7 +31,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 use super::net_host;
 
 /// Maximum number of data points retained in the live latency graph.
@@ -476,12 +476,12 @@ pub fn build_csv_export(results: &[PingProbeResult]) -> String {
             csv,
             "{},{},{},{},{},{},{}",
             r.seq,
-            escape_csv(&r.timestamp),
-            escape_csv(&r.ip_or_host),
+            quoted(&r.timestamp),
+            quoted(&r.ip_or_host),
             r.status.label(),
             lat_str,
             r.ttl,
-            escape_csv(r.detail.code())
+            quoted(r.detail.code())
         );
     }
     csv

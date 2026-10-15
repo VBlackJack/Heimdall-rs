@@ -22,7 +22,7 @@
 use std::fmt::Write as _;
 use std::io::ErrorKind;
 
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 use super::net_host;
 
 /// Standard preset of popular network service ports.
@@ -220,7 +220,7 @@ pub fn format_port_scan_csv(results: &[PortProbeResult]) -> String {
             csv,
             "{},{},{},{}",
             r.port,
-            escape_csv(r.service),
+            quoted(r.service),
             r.status.label(),
             lat_str
         );

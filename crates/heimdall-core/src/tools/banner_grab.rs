@@ -21,8 +21,6 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use super::default_creds::sanitize_csv_cell;
-
 /// Most bytes read of a banner, the C# `BannerMaxBytes`.
 pub const BANNER_MAX_BYTES: usize = 512;
 
@@ -260,7 +258,7 @@ const CLIPBOARD_RULE_LENGTH: usize = 72;
 /// One CSV cell: made unable to start a spreadsheet formula, as the C#
 /// `InputValidator.SanitizeCsvCell`, then quoted (RFC 4180).
 fn csv_cell(value: &str) -> String {
-    format!("\"{}\"", sanitize_csv_cell(value).replace('"', "\"\""))
+    super::csv_cell::quoted(value)
 }
 
 /// `results` as CSV, ordered by port, in the C# columns (port, service, banner, time);

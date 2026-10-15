@@ -235,6 +235,16 @@ pub enum Icon {
     ToolHostsFileEditor,
     /// `Geo.Tool.ServiceStatusDashboard`: a server rack dashboard, the service status tool.
     ToolServiceStatus,
+    /// `Geo.Tool.LogViewer`: a document with text lines and an arrow, the log viewer.
+    ToolLogViewer,
+    /// `Geo.Tool.CronJobManager`: a clock with brackets, the cron job manager.
+    ToolCronJobManager,
+    /// `Geo.Tool.Notes`: a document with folded corner and pencil, the notes scratchpad.
+    ToolNotes,
+    /// `Geo.Tool.Diagram`: four connected nodes, the diagram editor.
+    ToolDiagram,
+    /// `Geo.Tool.CommandLibrary`: a document and shelf, the command snippet library.
+    ToolCommandLibrary,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
     /// The `Resolution` glyph (`E740`): a screen with its corners, an RDP session's
@@ -248,7 +258,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 92] = [
+    pub const ALL: [Self; 97] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -337,6 +347,11 @@ impl Icon {
         Self::ToolNetMap,
         Self::ToolHostsFileEditor,
         Self::ToolServiceStatus,
+        Self::ToolLogViewer,
+        Self::ToolCronJobManager,
+        Self::ToolNotes,
+        Self::ToolDiagram,
+        Self::ToolCommandLibrary,
         Self::Monitor,
         Self::Resolution,
         Self::Keyboard,
@@ -625,6 +640,21 @@ impl Icon {
             Self::ToolServiceStatus => {
                 "M1,2 L15,2 L15,14 L1,14 Z M1,4.5 L15,4.5 M3,7 L13,7 L13,8.5 L3,8.5 Z M3,9.5 L10,9.5 L10,11 L3,11 Z M3,12 L7,12 L7,13 L3,13 Z"
             }
+            Self::ToolLogViewer => {
+                "M3,1 L13,1 L13,15 L3,15 Z M5,4 L11,4 M5,6.5 L11,6.5 M5,9 L8,9 M10,8 L10,13 L14,10.5 Z"
+            }
+            Self::ToolCronJobManager => {
+                "M8,2 A6,6 0 1 1 8,14 A6,6 0 1 1 8,2 Z M8,4.5 L8,8 L10.5,10 M1,5 L3,5 L3,11 L1,11 M15,5 L13,5 L13,11 L15,11"
+            }
+            Self::ToolNotes => {
+                "M3,1 L11,1 L13,3 L13,15 L3,15 Z M11,1 L11,3 L13,3 M5,5 L11,5 M5,7.5 L10,7.5 M5,10 L8,10 M14,9 L10,13 L8.5,13.5 L9,12 L13,8 Z"
+            }
+            Self::ToolDiagram => {
+                "M2,2 L6,2 L6,6 L2,6 Z M10,2 L14,2 L14,6 L10,6 Z M2,10 L6,10 L6,14 L2,14 Z M10,10 L14,10 L14,14 L10,14 Z M6,4 L10,4 M4,6 L4,10 M12,6 L12,10 M6,12 L10,12"
+            }
+            Self::ToolCommandLibrary => {
+                "M1,2 L11,2 L11,14 L1,14 Z M3,5 L5,5 M6,5 L9,5 M3,7 L9,7 M3,9 L7,9 M3,11 L9,11 M12,4 L15,4 L15,13 L11,13 M12,4 L12,13"
+            }
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
             Self::Resolution => {
                 "M1.5,2.5 L14.5,2.5 L14.5,11.5 L1.5,11.5 Z M5.5,14 L10.5,14                  M4,7 L4,5 L6,5 M12,7 L12,9 L10,9"
@@ -710,6 +740,11 @@ impl Icon {
             | Self::ToolNetMap
             | Self::ToolHostsFileEditor
             | Self::ToolServiceStatus
+            | Self::ToolLogViewer
+            | Self::ToolCronJobManager
+            | Self::ToolNotes
+            | Self::ToolDiagram
+            | Self::ToolCommandLibrary
             // These hold open lines too, which a fill would lose; the ULID's blocks are
             // closed, filled as the UUID's.
             | Self::ToolSubnet

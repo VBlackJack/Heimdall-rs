@@ -4931,6 +4931,219 @@ ui-tool-services-error-action-failed-detail = L'action sur le service a échoué
 ui-tool-services-error-list-failed = Échec du chargement des services : { $error }
 ui-tool-services-exit-code-none = aucun
 
+## Visionneuse de logs
+ui-tool-logview-name = Visionneuse de logs
+ui-tool-logview-description = Afficher un fichier journal, filtrer ses lignes et suivre ce qui s'y ajoute
+ui-tool-logview-title = Visionneuse de logs / Tail
+ui-tool-logview-help =
+    Visionneuse de logs
+
+    Affiche les 10 000 dernières lignes d'un fichier journal, lues dans l'encodage choisi.
+
+    Utilisation :
+    Parcourez pour choisir un fichier ou saisissez son chemin puis appuyez sur Entrée. Filtrer garde les lignes qui contiennent le texte saisi, ou qui correspondent à l'expression régulière quand Expression régulière est coché. Tail lit ce qui s'ajoute toutes les demi-secondes ; un fichier qui raccourcit est relu depuis son début. Seule la fin d'un très gros fichier est lue.
+ui-tool-logview-path-placeholder = Chemin du fichier journal
+ui-tool-logview-browse = Parcourir
+ui-tool-logview-open = Ouvrir
+ui-tool-logview-tail = Tail
+ui-tool-logview-filter-placeholder = Texte de filtre
+ui-tool-logview-filter = Filtrer
+ui-tool-logview-clear = Effacer
+ui-tool-logview-case-sensitive = Sensible à la casse
+ui-tool-logview-regex = Expression régulière
+ui-tool-logview-encoding = Encodage :
+ui-tool-logview-encoding-utf8 = UTF-8
+ui-tool-logview-encoding-ascii = ASCII
+ui-tool-logview-encoding-utf16 = UTF-16
+ui-tool-logview-encoding-windows1252 = Windows-1252
+ui-tool-logview-auto-scroll = Suivre la dernière ligne
+ui-tool-logview-tail-active = Tail actif
+ui-tool-logview-copy = Copier
+ui-tool-logview-file-filter = Fichiers journaux
+ui-tool-logview-empty-state = Parcourez ou saisissez le chemin d'un fichier journal pour l'afficher
+ui-tool-logview-no-matches = Aucune ligne de log ne correspond au filtre actuel
+ui-tool-logview-stats =
+    { $total ->
+        [one] { $shown } / { $total } ligne | { $size } Ko | Dernière mise à jour : { $time }
+       *[other] { $shown } / { $total } lignes | { $size } Ko | Dernière mise à jour : { $time }
+    }
+ui-tool-logview-error-not-found = Fichier introuvable.
+ui-tool-logview-error-open = Impossible d'ouvrir le fichier : { $error }
+ui-tool-logview-error-regex = Expression régulière invalide.
+
+## Gestionnaire de tâches cron
+ui-tool-cronjob-name = Gestionnaire de tâches cron
+ui-tool-cronjob-description = Analyser une crontab et lister les tâches planifiées de Windows
+ui-tool-cronjob-title = Gestionnaire de tâches cron
+ui-tool-cronjob-help =
+    Gestionnaire de tâches cron
+
+    Lit une crontab et les tâches planifiées de cet ordinateur.
+
+    Utilisation :
+    Collez la sortie de crontab -l puis appuyez sur Analyser : chaque planification est listée avec sa commande, sa prochaine exécution et ce qu'elle fait ; sélectionnez-en une pour voir ses cinq prochaines exécutions. Tâches Windows liste les tâches planifiées de cet ordinateur avec leur statut et leur dernier résultat. Copier place la liste affichée dans le presse-papiers, une ligne par entrée.
+ui-tool-cronjob-tab-paste = Coller crontab
+ui-tool-cronjob-tab-tasks = Tâches Windows
+ui-tool-cronjob-paste-instructions = Collez la sortie brute de crontab (depuis crontab -l via un terminal SSH) pour analyser les entrées.
+ui-tool-cronjob-paste-placeholder = Contenu de la crontab
+ui-tool-cronjob-parse = Analyser
+ui-tool-cronjob-clear = Effacer
+ui-tool-cronjob-refresh = Actualiser
+ui-tool-cronjob-copy = Copier
+ui-tool-cronjob-col-schedule = Planification
+ui-tool-cronjob-col-command = Commande
+ui-tool-cronjob-col-next-run = Prochaine exécution
+ui-tool-cronjob-col-description = Description
+ui-tool-cronjob-col-task-name = Nom de la tâche
+ui-tool-cronjob-col-status = Statut
+ui-tool-cronjob-col-last-run = Dernière exécution
+ui-tool-cronjob-col-last-result = Dernier résultat
+ui-tool-cronjob-detail-header = Détails de l'entrée
+ui-tool-cronjob-detail-schedule = Planification : { $schedule }
+ui-tool-cronjob-detail-command = Commande : { $command }
+ui-tool-cronjob-detail-next-runs = Prochaines exécutions :
+ui-tool-cronjob-empty-state = Collez une crontab pour lister ses planifications
+ui-tool-cronjob-tasks-empty = Actualisez pour lister les tâches planifiées de Windows
+ui-tool-cronjob-loading = Chargement des tâches planifiées...
+ui-tool-cronjob-error-empty = Veuillez coller le contenu de crontab à analyser.
+ui-tool-cronjob-error-no-entry = Aucune entrée crontab valide trouvée.
+ui-tool-cronjob-error-timeout = Le chargement des tâches a expiré.
+ui-tool-cronjob-error-failed = Échec du chargement des tâches : { $error }
+ui-tool-cronjob-error-unsupported = Les tâches planifiées ne peuvent être listées que sous Windows.
+ui-tool-cronjob-error-no-system-folder = Windows n'a pas donné son dossier système : les tâches planifiées ne peuvent pas être listées.
+ui-tool-cronjob-status-parsed =
+    { $count ->
+        [one] { $count } entrée analysée.
+       *[other] { $count } entrées analysées.
+    }
+ui-tool-cronjob-status-tasks =
+    { $count ->
+        [one] { $count } tâche planifiée trouvée.
+       *[other] { $count } tâches planifiées trouvées.
+    }
+
+## Notes
+ui-tool-notes-name = Notes
+ui-tool-notes-description = Notes de travail en Markdown gardées en fichiers, avec étiquettes et export HTML
+ui-tool-notes-title = Notes de travail
+ui-tool-notes-help =
+    Notes
+
+    Des notes de travail en Markdown, chacune dans son fichier du dossier des notes des données de Heimdall.
+
+    Utilisation :
+    Nouveau crée une note ; la première ligne qui commence par "# " est son titre, et une ligne comme "> tags: réseau, prod" donne ses étiquettes. Une note est enregistrée peu après chaque modification, quand une autre est sélectionnée et quand l'onglet se ferme. La recherche trouve une note par son texte, son titre ou son nom de fichier. La note affichée se copie en Markdown ou en page HTML.
+ui-tool-notes-new-title = Note de travail
+ui-tool-notes-search-placeholder = Rechercher dans les notes
+ui-tool-notes-new = Nouveau
+ui-tool-notes-count =
+    { $count ->
+        [one] { $count } note
+       *[other] { $count } notes
+    }
+ui-tool-notes-delete = Supprimer
+ui-tool-notes-delete-confirm = Supprimer la note "{ $title }" ?
+ui-tool-notes-cancel = Annuler
+ui-tool-notes-copy-markdown = Copier en Markdown
+ui-tool-notes-copy-html = Copier en HTML
+ui-tool-notes-content-placeholder = Écrivez la note en Markdown
+ui-tool-notes-empty-title = Aucune note sélectionnée
+ui-tool-notes-empty-body = Créez une note ou sélectionnez-en une dans la liste.
+ui-tool-notes-error-no-folder = Ce système ne donne à Heimdall aucun dossier de données où garder les notes.
+ui-tool-notes-error-list = Impossible de lire les notes : { $error }
+ui-tool-notes-error-save = Impossible d'enregistrer la note : { $error }
+
+## Éditeur de diagrammes
+ui-tool-diagram-name = Éditeur de diagrammes
+ui-tool-diagram-description = Éditer le texte source d'un diagramme (Mermaid, Graphviz, PlantUML ou ASCII) à partir de modèles
+ui-tool-diagram-title = Éditeur de diagrammes
+ui-tool-diagram-help =
+    Éditeur de diagrammes
+
+    Un éditeur de texte pour la source d'un diagramme, en Mermaid, Graphviz DOT, PlantUML ou art ASCII. Il ne dessine pas le diagramme : collez la source dans un outil ou une page qui affiche son format.
+
+    Utilisation :
+    Partez d'un modèle ou ouvrez un fichier texte. Enregistrer écrit dans le fichier courant ; Enregistrer sous en demande un nouveau. Un modèle ou un fichier ne remplace jamais des modifications non enregistrées sans le demander d'abord.
+ui-tool-diagram-templates = Modèles
+ui-tool-diagram-template-perimeter = Périmètre et DMZ
+ui-tool-diagram-template-cloud = VPC cloud
+ui-tool-diagram-template-ascii = Topologie réseau en ASCII
+ui-tool-diagram-template-ad = Active Directory
+ui-tool-diagram-format-mermaid = Mermaid
+ui-tool-diagram-format-dot = Graphviz DOT
+ui-tool-diagram-format-plantuml = PlantUML
+ui-tool-diagram-format-ascii = Art ASCII
+ui-tool-diagram-open = Ouvrir
+ui-tool-diagram-save = Enregistrer
+ui-tool-diagram-save-as = Enregistrer sous
+ui-tool-diagram-copy = Copier
+ui-tool-diagram-untitled = Diagramme sans titre
+ui-tool-diagram-modified = { $name } (modifié)
+ui-tool-diagram-confirm-replace = Ce diagramme contient des modifications non enregistrées. Le remplacer quand même ?
+ui-tool-diagram-replace = Remplacer
+ui-tool-diagram-keep = Garder mes modifications
+ui-tool-diagram-placeholder = Source du diagramme
+ui-tool-diagram-open-title = Ouvrir un diagramme
+ui-tool-diagram-save-title = Enregistrer le diagramme
+ui-tool-diagram-default-file-name = diagramme
+ui-tool-diagram-saved = Enregistré dans { $path }
+ui-tool-diagram-error-open = Impossible d'ouvrir le diagramme : { $error }
+ui-tool-diagram-error-save = Impossible d'enregistrer le diagramme : { $error }
+ui-tool-diagram-error-too-large = le fichier est trop volumineux pour être ouvert
+
+## Bibliothèque de commandes
+ui-tool-cmdlib-name = Bibliothèque de commandes
+ui-tool-cmdlib-description = Commandes d'administration, de réseau et de sécurité avec leurs valeurs renseignées
+ui-tool-cmdlib-title = Bibliothèque de commandes
+ui-tool-cmdlib-help =
+    Bibliothèque de commandes
+
+    Des commandes courantes d'administration, de réseau et de sécurité, prêtes à copier.
+
+    Utilisation :
+    Choisissez une plateforme ou saisissez un mot pour trouver une commande. Saisissez ses valeurs : la commande les montre telle qu'elle sera copiée. Une valeur laissée vide prend l'exemple affiché.
+ui-tool-cmdlib-search-placeholder = Rechercher des commandes
+ui-tool-cmdlib-platform-all = Toutes les plateformes
+ui-tool-cmdlib-platform-linux = Linux
+ui-tool-cmdlib-platform-windows = Windows
+ui-tool-cmdlib-platform-cross = Multiplateforme
+ui-tool-cmdlib-category-network = Réseau
+ui-tool-cmdlib-category-system = Système
+ui-tool-cmdlib-category-services = Services
+ui-tool-cmdlib-category-security = Sécurité
+ui-tool-cmdlib-category-diagnostics = Diagnostic
+ui-tool-cmdlib-param-host = Hôte
+ui-tool-cmdlib-param-port = Port
+ui-tool-cmdlib-param-local-port = Port local
+ui-tool-cmdlib-param-port-range = Ports
+ui-tool-cmdlib-param-service = Service
+ui-tool-cmdlib-copy = Copier
+ui-tool-cmdlib-empty = Aucune commande ne correspond aux filtres.
+ui-tool-cmdlib-count =
+    { $count ->
+        [one] { $count } commande
+       *[other] { $count } commandes
+    }
+ui-tool-cmdlib-snippet-listening-ports = Lister les sockets à l'écoute
+ui-tool-cmdlib-snippet-listening-ports-description = Affiche les sockets TCP et UDP à l'écoute, avec leur processus.
+ui-tool-cmdlib-snippet-kill-port = Arrêter le processus d'un port
+ui-tool-cmdlib-snippet-kill-port-description = Termine le processus à l'écoute sur un port TCP.
+ui-tool-cmdlib-snippet-journal-follow = Suivre le journal d'un service
+ui-tool-cmdlib-snippet-journal-follow-description = Affiche le journal systemd d'un service au fur et à mesure.
+ui-tool-cmdlib-snippet-cert-expiry = Dates du certificat TLS distant
+ui-tool-cmdlib-snippet-cert-expiry-description = Se connecte en TLS et affiche le sujet et les dates de validité du certificat du serveur.
+ui-tool-cmdlib-snippet-test-connection = Tester un port TCP
+ui-tool-cmdlib-snippet-test-connection-description = Vérifie avec PowerShell qu'un hôte répond sur un port TCP.
+ui-tool-cmdlib-snippet-port-owner = Trouver le processus d'un port
+ui-tool-cmdlib-snippet-port-owner-description = Affiche l'état et le processus propriétaire d'un port TCP local.
+ui-tool-cmdlib-snippet-restart-service = Redémarrer un service Windows
+ui-tool-cmdlib-snippet-restart-service-description = Arrête puis démarre un service Windows.
+ui-tool-cmdlib-snippet-flush-dns = Vider le cache DNS
+ui-tool-cmdlib-snippet-flush-dns-description = Vide le cache du client DNS de Windows.
+ui-tool-cmdlib-snippet-mtr = Qualité du chemin réseau
+ui-tool-cmdlib-snippet-mtr-description = Envoie 50 sondes à chaque saut pour mesurer les pertes et la latence.
+ui-tool-cmdlib-snippet-nmap = Versions des services avec Nmap
+ui-tool-cmdlib-snippet-nmap-description = Interroge les ports ouverts pour connaître le service et sa version.
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Nom d'hôte ou adresse IP invalide. Seuls les lettres, chiffres, points et tirets sont autorisés.
 ui-tool-ping-latency = { $ms } ms

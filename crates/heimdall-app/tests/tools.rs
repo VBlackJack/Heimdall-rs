@@ -95,9 +95,14 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Uuid,
             ToolId::Ulid,
             ToolId::Crontab,
+            ToolId::LogView,
             ToolId::Hosts,
             ToolId::SshConfig,
+            ToolId::CronJob,
             ToolId::Services,
+            ToolId::Notes,
+            ToolId::Diagram,
+            ToolId::CmdLib,
             ToolId::WakeOnLan,
             ToolId::OpenPorts,
             ToolId::NetIf,
@@ -227,7 +232,17 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(ToolId::Hosts.category(), ToolCategory::System);
     assert_eq!(ToolId::from_code("SERVICES"), Some(ToolId::Services));
     assert_eq!(ToolId::Services.category(), ToolCategory::System);
-    assert_eq!(ToolId::from_code("LOGVIEW"), None, "not ported");
+    assert_eq!(ToolId::from_code("LOGVIEW"), Some(ToolId::LogView));
+    assert_eq!(ToolId::LogView.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("CRONJOB"), Some(ToolId::CronJob));
+    assert_eq!(ToolId::CronJob.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("NOTES"), Some(ToolId::Notes));
+    assert_eq!(ToolId::Notes.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("DIAGRAM"), Some(ToolId::Diagram));
+    assert_eq!(ToolId::Diagram.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("CMDLIB"), Some(ToolId::CmdLib));
+    assert_eq!(ToolId::CmdLib.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("PRIVLAUNCH"), None, "not ported");
 }
 
 #[test]
