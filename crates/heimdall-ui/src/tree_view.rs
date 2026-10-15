@@ -564,7 +564,8 @@ pub fn owned_row(
                 tooltip::Position::Right,
             )
             .delay(ROW_TOOLTIP_DELAY)
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ),
     ]
     .into()
@@ -676,9 +677,6 @@ fn row_tooltip(profile: &ProfileSummary, reach: Option<&Verdict>) -> String {
     lines.join("\n")
 }
 
-/// Opacity of a menu entry that cannot be chosen.
-const DISABLED_ALPHA: f32 = 0.4;
-
 /// A menu entry as the C# menu draws one: plain text, the whole row lit under the pointer,
 /// faded when it cannot be chosen.
 fn menu_style(theme: &Theme, status: button::Status) -> button::Style {
@@ -699,7 +697,12 @@ fn menu_style(theme: &Theme, status: button::Status) -> button::Style {
             ..plain
         },
         button::Status::Disabled => button::Style {
-            text_color: palette.background.base.text.scale_alpha(DISABLED_ALPHA),
+            // The C# `TextDisabledBrush`, the secondary text, at `OpacityDisabled`.
+            text_color: palette
+                .secondary
+                .base
+                .color
+                .scale_alpha(crate::tokens::OPACITY_DISABLED),
             ..plain
         },
     }
@@ -952,7 +955,8 @@ fn open_in_split_entry<'a>(id: &ProfileId, splittable: bool) -> Element<'a, Mess
         text(fl!("ui-split-open-in-split-disabled")).size(font_size::BODY_LARGE),
         tooltip::Position::Right,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -983,7 +987,8 @@ fn connect_with_entry<'a>(id: &ProfileId) -> Element<'a, Message> {
         text(fl!("ui-tree-connect-with-tooltip")).size(font_size::BODY_LARGE),
         tooltip::Position::Right,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -1709,7 +1714,8 @@ pub fn resolution_entries<'a>(
                 text(fl!("ui-resolution-larger-than-window")).size(font_size::BODY_LARGE),
                 tooltip::Position::Left,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into()
         } else {
             preset

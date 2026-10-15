@@ -221,7 +221,12 @@ impl SmbPane {
 
         // 2. Loading indicator
         if self.is_enumerating {
-            body_col = body_col.push(progress_bar(0.0..=1.0, 0.5).length(Length::Fill).girth(4.0));
+            body_col = body_col.push(
+                progress_bar(0.0..=1.0, 0.5)
+                    .length(Length::Fill)
+                    .girth(4.0)
+                    .style(styles::progress),
+            );
         }
 
         // 3. Error line

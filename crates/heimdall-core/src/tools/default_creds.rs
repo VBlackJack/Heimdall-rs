@@ -271,28 +271,6 @@ pub fn status_to_detail(
     }
 }
 
-/// Sanitizes a value for safe inclusion in CSV cells by prefixing formula-triggering
-/// characters with a single quote, preventing spreadsheet formula injection.
-#[must_use]
-pub fn sanitize_csv_cell(value: &str) -> String {
-    if value.is_empty() {
-        return String::new();
-    }
-    let first = value.chars().next().unwrap_or('\0');
-    if matches!(first, '=' | '+' | '-' | '@' | '\t' | '\r' | '\n') {
-        format!("'{value}")
-    } else {
-        value.to_string()
-    }
-}
-
-/// Escapes a CSV cell value with double quotes and escaping embedded quotes.
-#[must_use]
-pub fn escape_csv(value: &str) -> String {
-    let sanitized = sanitize_csv_cell(value).replace('"', "\"\"");
-    format!("\"{sanitized}\"")
-}
-
 /// Builds a summary line for the current results.
 #[must_use]
 pub fn build_summary_text(
@@ -449,12 +427,12 @@ pub fn build_csv_export(
 
         out.push_str(&format!(
             "{},{},{},{},{},{}\n",
-            escape_csv(&r.service),
+            super::csv_cell::quoted(&r.service),
             r.port,
-            escape_csv(&r.username),
-            escape_csv(&r.password),
-            escape_csv(&status_label),
-            escape_csv(&detail)
+            super::csv_cell::quoted(&r.username),
+            super::csv_cell::quoted(&r.password),
+            super::csv_cell::quoted(&status_label),
+            super::csv_cell::quoted(&detail)
         ));
     }
 
