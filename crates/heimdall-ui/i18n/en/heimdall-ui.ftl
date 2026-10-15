@@ -1636,6 +1636,18 @@ ui-files-sudo-on = Sudo mode enabled - browsing as root
 ui-files-sudo-off = Sudo mode disabled
 ui-files-item-count = { $count } items
 ui-files-item-count-filtered = { $shown }/{ $count } items
+ui-files-hidden-unsafe = { $count ->
+    [one] { $count } entry hidden: its name is not safe to use here
+   *[other] { $count } entries hidden: their names are not safe to use here
+}
+ui-files-hidden-unsafe-terminal = { $count ->
+    [one] { $count } entry hidden: its name is not safe to use here; use the terminal
+   *[other] { $count } entries hidden: their names are not safe to use here; use the terminal
+}
+ui-files-unread-lines = { $count ->
+    [one] { $count } line of the listing could not be read
+   *[other] { $count } lines of the listing could not be read
+}
 
 ## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
 ui-files-drop-items = { $count ->
