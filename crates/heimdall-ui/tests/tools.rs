@@ -175,23 +175,34 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
             (
                 ToolGroup::Category(ToolCategory::Network),
                 vec![
+                    ToolId::BannerGrabber,
+                    ToolId::HttpStatus,
                     ToolId::IpConverter,
                     ToolId::NetworkCalculator,
-                    ToolId::SubnetCalculator
-                ]
+                    ToolId::SubnetCalculator,
+                    ToolId::TcpPing,
+                    ToolId::Whois,
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::Security),
                 vec![
                     ToolId::CertGen,
+                    ToolId::CveLookup,
+                    ToolId::DefaultCreds,
+                    ToolId::DnsSec,
                     ToolId::Hash,
                     ToolId::Hmac,
                     ToolId::Jwt,
                     ToolId::PwdAudit,
                     ToolId::Password,
+                    ToolId::SecNumCloud,
+                    ToolId::Smb,
+                    ToolId::SshAudit,
                     ToolId::SshKey,
-                    ToolId::Totp
-                ]
+                    ToolId::TlsAudit,
+                    ToolId::Totp,
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::Encoding),
@@ -201,8 +212,8 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::RegexTester,
                     ToolId::TextCase,
                     ToolId::TextDiff,
-                    ToolId::UrlEncoder
-                ]
+                    ToolId::UrlEncoder,
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::System),
@@ -212,8 +223,12 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::DateTime,
                     ToolId::SshConfig,
                     ToolId::Ulid,
-                    ToolId::Uuid
-                ]
+                    ToolId::Uuid,
+                ],
+            ),
+            (
+                ToolGroup::Category(ToolCategory::External),
+                vec![ToolId::WakeOnLan],
             ),
         ]
     );
@@ -251,20 +266,20 @@ fn a_folded_group_hides_its_tools_and_offers_its_menu_to_pin() {
     let _ = shell.update(tools(ToolsMessage::ShowSidebarTab(SidebarTab::Tools)));
     {
         let mut ui = simulator(&shell);
-        ui.click("System").expect("the group");
+        ui.click("Network").expect("the group");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::App(AppMessage::Tools(ToolsMessage::ToggleGroup(
-                ToolGroup::Category(ToolCategory::System)
+                ToolGroup::Category(ToolCategory::Network)
             )))
         )));
     }
     let _ = shell.update(tools(ToolsMessage::ToggleGroup(ToolGroup::Category(
-        ToolCategory::System,
+        ToolCategory::Network,
     ))));
     let mut ui = simulator(&shell);
-    assert!(ui.find("UUID Generator").is_err(), "folded");
-    ui.find("Base64 Encoder / Decoder")
+    assert!(ui.find("Subnet Calculator").is_err(), "folded");
+    ui.find("Certificate Generator")
         .expect("another group stays open");
 }
 
@@ -282,7 +297,8 @@ fn the_tools_page_shows_its_sections_and_cards_and_pins_a_tool() {
         ui.find("SECURITY").expect("category");
         ui.find("ENCODING & FORMAT").expect("category");
         ui.find("SYSTEM").expect("category");
-        ui.find("23 tools").expect("count");
+        ui.find(format!("{} tools", ToolId::ALL.len()))
+            .expect("count");
         ui.find("UUID/GUID generator with multiple format options")
             .expect("description");
         assert!(ui.find("Recently Used").is_err(), "nothing used yet");
@@ -329,13 +345,14 @@ fn a_card_pin_toggles_its_tool() {
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::Navigate(Destination::Tools));
     let mut ui = simulator(&shell);
-    ui.click(catalog::pin_id(ToolId::UrlEncoder)).expect("pin");
+    ui.click(catalog::pin_id(ToolId::SubnetCalculator))
+        .expect("pin");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(
         messages.iter().any(|message| matches!(
             message,
             Message::App(AppMessage::Tools(ToolsMessage::ToggleFavorite(
-                ToolId::UrlEncoder
+                ToolId::SubnetCalculator
             )))
         )),
         "{messages:?}"

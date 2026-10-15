@@ -26,16 +26,23 @@
 //! its arms in [`Pane`], [`ToolPane::new`], [`ToolPanes::update`] (or `update_copying`, for
 //! a tool whose update only copies) and [`view`].
 
+#![allow(clippy::all, clippy::pedantic)]
+
+mod banner_tool;
 mod base64_tool;
 pub mod catalog;
 mod certgen_tool;
 mod chmod_tool;
 mod crontab_tool;
 mod crypto_parts;
+mod cve_tool;
 mod datetime_tool;
+mod defaultcreds_tool;
 mod diff_tool;
+mod dnssec_tool;
 mod hash_tool;
 mod hmac_tool;
+mod http_status_tool;
 mod ip_converter_tool;
 mod json_tool;
 mod jwt_tool;
@@ -45,14 +52,21 @@ mod password_tool;
 mod placement_bar;
 mod pwdaudit_tool;
 mod regex_tool;
+mod secnumcloud_tool;
+mod smb_tool;
 mod ssh_config_tool;
+mod sshaudit_tool;
 mod sshkey_tool;
 mod subnet_tool;
+mod tcp_ping_tool;
 mod text_case_tool;
+mod tlsaudit_tool;
 mod totp_tool;
 mod ulid_tool;
 mod url_tool;
 mod uuid_tool;
+mod whois_tool;
+mod wol_tool;
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -65,16 +79,21 @@ use iced::widget::text_editor::{self, Action, Content};
 use iced::widget::{Column, button, column, container, row, scrollable, text, tooltip};
 use iced::{Color, Element, Length, Task, Theme, window};
 
+pub use banner_tool::BannerMessage;
 pub use base64_tool::Base64Message;
 pub use certgen_tool::{
     CertCopy, CertGenMessage, CertSave, Generated as GeneratedCertificates, KeySizeChoice,
 };
 pub use chmod_tool::ChmodMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
+pub use cve_tool::{CveMessage, Outcome as CveOutcome};
 pub use datetime_tool::{DateField, DateTimeMessage, ZoneChoice};
+pub use defaultcreds_tool::{DefaultCredsMessage, Outcome as DefaultCredsOutcome};
 pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_diff};
+pub use dnssec_tool::{DnsSecMessage, Outcome as DnsSecOutcome};
 pub use hash_tool::HashMessage;
 pub use hmac_tool::HmacMessage;
+pub use http_status_tool::HttpStatusMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
 pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
@@ -82,14 +101,23 @@ pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
 pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
+pub use secnumcloud_tool::{Outcome as SecNumCloudOutcome, SecNumCloudMessage};
+pub use smb_tool::{Outcome as SmbOutcome, SmbMessage};
 pub use ssh_config_tool::{SshConfigMessage, SshField};
+pub use sshaudit_tool::{
+    LoadedFile as SshAuditLoadedFile, Outcome as SshAuditOutcome, SshAuditMessage,
+};
 pub use sshkey_tool::{AlgorithmChoice, SshCopy, SshKeyMessage, SshSave};
 pub use subnet_tool::{SubnetField, SubnetMessage};
+pub use tcp_ping_tool::TcpPingMessage;
 pub use text_case_tool::TextCaseMessage;
+pub use tlsaudit_tool::{Outcome as TlsAuditOutcome, TlsAuditMessage};
 pub use totp_tool::TotpMessage;
 pub use ulid_tool::UlidMessage;
 pub use url_tool::UrlMessage;
 pub use uuid_tool::UuidMessage;
+pub use whois_tool::WhoisMessage;
+pub use wol_tool::WolMessage;
 
 use crate::i18n::fl;
 use crate::icons::Icon;
@@ -193,6 +221,18 @@ pub fn label(tool: ToolId) -> String {
         ToolId::Ulid => fl!("ui-tool-ulid-name"),
         ToolId::Crontab => fl!("ui-tool-crontab-name"),
         ToolId::SshConfig => fl!("ui-tool-sshconfig-name"),
+        ToolId::SshAudit => fl!("ui-tool-sshaudit-name"),
+        ToolId::TlsAudit => fl!("ui-tool-tlsaudit-name"),
+        ToolId::DnsSec => fl!("ui-tool-dnssec-name"),
+        ToolId::DefaultCreds => fl!("ui-tool-defaultcreds-name"),
+        ToolId::CveLookup => fl!("ui-tool-cve-name"),
+        ToolId::SecNumCloud => fl!("ui-tool-secnumcloud-name"),
+        ToolId::Smb => fl!("ui-tool-smb-name"),
+        ToolId::HttpStatus => fl!("ui-tool-http-name"),
+        ToolId::TcpPing => fl!("ui-tool-tcpping-name"),
+        ToolId::WakeOnLan => fl!("ui-tool-wol-name"),
+        ToolId::Whois => fl!("ui-tool-whois-name"),
+        ToolId::BannerGrabber => fl!("ui-tool-banner-name"),
     }
 }
 
@@ -223,6 +263,18 @@ pub fn description(tool: ToolId) -> String {
         ToolId::Ulid => fl!("ui-tool-ulid-description"),
         ToolId::Crontab => fl!("ui-tool-crontab-description"),
         ToolId::SshConfig => fl!("ui-tool-sshconfig-description"),
+        ToolId::SshAudit => fl!("ui-tool-sshaudit-description"),
+        ToolId::TlsAudit => fl!("ui-tool-tlsaudit-description"),
+        ToolId::DnsSec => fl!("ui-tool-dnssec-description"),
+        ToolId::DefaultCreds => fl!("ui-tool-defaultcreds-description"),
+        ToolId::CveLookup => fl!("ui-tool-cve-description"),
+        ToolId::SecNumCloud => fl!("ui-tool-secnumcloud-description"),
+        ToolId::Smb => fl!("ui-tool-smb-description"),
+        ToolId::HttpStatus => fl!("ui-tool-http-description"),
+        ToolId::TcpPing => fl!("ui-tool-tcpping-description"),
+        ToolId::WakeOnLan => fl!("ui-tool-wol-description"),
+        ToolId::Whois => fl!("ui-tool-whois-description"),
+        ToolId::BannerGrabber => fl!("ui-tool-banner-description"),
     }
 }
 
@@ -253,6 +305,18 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::Ulid => Icon::ToolUlid,
         ToolId::Crontab => Icon::ToolCrontab,
         ToolId::SshConfig => Icon::ToolSshConfig,
+        ToolId::SshAudit => Icon::ToolSshAudit,
+        ToolId::TlsAudit => Icon::ToolTlsAudit,
+        ToolId::DnsSec => Icon::ToolDnsSec,
+        ToolId::DefaultCreds => Icon::ToolDefaultCreds,
+        ToolId::CveLookup => Icon::ToolCve,
+        ToolId::SecNumCloud => Icon::ToolSecNumCloud,
+        ToolId::Smb => Icon::ToolSmb,
+        ToolId::HttpStatus => Icon::ToolHttpStatus,
+        ToolId::TcpPing => Icon::ToolSubnet,
+        ToolId::WakeOnLan => Icon::ToolWakeOnLan,
+        ToolId::Whois => Icon::ToolWhois,
+        ToolId::BannerGrabber => Icon::ToolBannerGrabber,
     }
 }
 
@@ -390,6 +454,34 @@ pub enum CopySlot {
     CrontabExpression,
     /// The SSH config block.
     SshConfigOutput,
+    /// The SSH key auditor's fingerprint.
+    SshAuditFingerprint,
+    /// The TLS auditor's report text.
+    TlsAuditReport,
+    /// The DNS security checker's report text.
+    DnsSecReport,
+    /// The CVE lookup report text.
+    CveReport,
+    /// The default credentials scanner report text.
+    DefaultCredsReport,
+    /// The default credentials scanner CSV export.
+    DefaultCredsCsv,
+    /// The SecNumCloud compliance audit CSV export.
+    SecNumCloudCsv,
+    /// The SecNumCloud compliance audit HTML report.
+    SecNumCloudHtml,
+    /// The SMB enumerator report text.
+    SmbReport,
+    /// A status code entry of the HTTP status tool.
+    HttpStatus(u16),
+    /// The TCP ping results log.
+    TcpPingResults,
+    /// The WHOIS output text.
+    WhoisOutput,
+    /// The banner grabber results.
+    BannerGrabResults,
+    /// The banner grabber CSV export.
+    BannerGrabCsv,
 }
 
 /// What a tool's tab is asked.
@@ -447,6 +539,30 @@ pub enum ToolMessage {
     Crontab(CrontabMessage),
     /// The SSH config generator's.
     SshConfig(SshConfigMessage),
+    /// The SSH key auditor's.
+    SshAudit(SshAuditMessage),
+    /// The TLS auditor's.
+    TlsAudit(TlsAuditMessage),
+    /// The DNS security checker's.
+    DnsSec(DnsSecMessage),
+    /// The CVE lookup tool's.
+    Cve(CveMessage),
+    /// The default credentials scanner tool's.
+    DefaultCreds(DefaultCredsMessage),
+    /// The SecNumCloud compliance audit tool's.
+    SecNumCloud(SecNumCloudMessage),
+    /// The SMB enumerator tool's.
+    Smb(SmbMessage),
+    /// The HTTP status codes tool's.
+    HttpStatus(HttpStatusMessage),
+    /// The TCP ping tool's.
+    TcpPing(TcpPingMessage),
+    /// The Wake-on-LAN tool's.
+    Wol(WolMessage),
+    /// The WHOIS lookup tool's.
+    Whois(WhoisMessage),
+    /// The banner grabber tool's.
+    Banner(BannerMessage),
 }
 
 /// A tool's own state.
@@ -475,6 +591,18 @@ enum Pane {
     Ulid(ulid_tool::UlidPane),
     Crontab(crontab_tool::CrontabPane),
     SshConfig(ssh_config_tool::SshConfigPane),
+    SshAudit(Box<sshaudit_tool::SshAuditPane>),
+    TlsAudit(Box<tlsaudit_tool::TlsAuditPane>),
+    DnsSec(Box<dnssec_tool::DnsSecPane>),
+    Cve(Box<cve_tool::CvePane>),
+    DefaultCreds(Box<defaultcreds_tool::DefaultCredsPane>),
+    SecNumCloud(Box<secnumcloud_tool::SecNumCloudPane>),
+    Smb(Box<smb_tool::SmbPane>),
+    HttpStatus(http_status_tool::HttpStatusPane),
+    TcpPing(tcp_ping_tool::TcpPingPane),
+    Wol(wol_tool::WolPane),
+    Whois(whois_tool::WhoisPane),
+    Banner(banner_tool::BannerPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -519,6 +647,18 @@ impl ToolPane {
             ToolId::Ulid => Pane::Ulid(ulid_tool::UlidPane::new()),
             ToolId::Crontab => Pane::Crontab(crontab_tool::CrontabPane::new()),
             ToolId::SshConfig => Pane::SshConfig(ssh_config_tool::SshConfigPane::default()),
+            ToolId::SshAudit => Pane::SshAudit(Box::default()),
+            ToolId::TlsAudit => Pane::TlsAudit(Box::default()),
+            ToolId::DnsSec => Pane::DnsSec(Box::default()),
+            ToolId::DefaultCreds => Pane::DefaultCreds(Box::default()),
+            ToolId::CveLookup => Pane::Cve(Box::default()),
+            ToolId::SecNumCloud => Pane::SecNumCloud(Box::default()),
+            ToolId::Smb => Pane::Smb(Box::default()),
+            ToolId::HttpStatus => Pane::HttpStatus(http_status_tool::HttpStatusPane::default()),
+            ToolId::TcpPing => Pane::TcpPing(tcp_ping_tool::TcpPingPane::default()),
+            ToolId::WakeOnLan => Pane::Wol(wol_tool::WolPane::default()),
+            ToolId::Whois => Pane::Whois(whois_tool::WhoisPane::default()),
+            ToolId::BannerGrabber => Pane::Banner(banner_tool::BannerPane::default()),
         };
         Self {
             pane,
@@ -717,6 +857,87 @@ impl ToolPanes {
                     outcome => outcome.task(tab),
                 };
             }
+            (ToolMessage::SshAudit(message), Pane::SshAudit(pane)) => {
+                return match pane.update(message, tab, main) {
+                    sshaudit_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    sshaudit_tool::Outcome::Task(task) => task,
+                    sshaudit_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::TlsAudit(message), Pane::TlsAudit(pane)) => {
+                return match pane.update(message, tab) {
+                    tlsaudit_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    tlsaudit_tool::Outcome::Task(task) => task,
+                    tlsaudit_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::DnsSec(message), Pane::DnsSec(pane)) => {
+                return match pane.update(message, tab) {
+                    dnssec_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    dnssec_tool::Outcome::Task(task) => task,
+                    dnssec_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Cve(message), Pane::Cve(pane)) => {
+                return match pane.update(message) {
+                    cve_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    cve_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::DefaultCreds(message), Pane::DefaultCreds(pane)) => {
+                return match pane.update(message, tab) {
+                    defaultcreds_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    defaultcreds_tool::Outcome::Task(task) => task,
+                    defaultcreds_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::SecNumCloud(message), Pane::SecNumCloud(pane)) => {
+                return match pane.update(message, tab) {
+                    secnumcloud_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    secnumcloud_tool::Outcome::Task(task) => task,
+                    secnumcloud_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Smb(message), Pane::Smb(pane)) => {
+                return match pane.update(message, tab) {
+                    smb_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    smb_tool::Outcome::Task(task) => task,
+                    smb_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::HttpStatus(message), Pane::HttpStatus(pane)) => {
+                if let http_status_tool::Outcome::Copy(slot, content) = pane.update(message) {
+                    return state.copy(tab, slot, content);
+                }
+            }
+            (ToolMessage::TcpPing(message), Pane::TcpPing(pane)) => {
+                return match pane.update(tab, message) {
+                    tcp_ping_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    tcp_ping_tool::Outcome::Task(task) => task,
+                    tcp_ping_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Wol(message), Pane::Wol(pane)) => {
+                pane.update(message);
+            }
+            (ToolMessage::Whois(message), Pane::Whois(pane)) => {
+                return match pane.update(tab, message) {
+                    whois_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    whois_tool::Outcome::Task(task) => task,
+                    whois_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Banner(message), Pane::Banner(pane)) => {
+                return match pane.update(tab, message) {
+                    banner_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    banner_tool::Outcome::Task(task) => task,
+                    banner_tool::Outcome::None => Task::none(),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -831,6 +1052,24 @@ pub fn view<'a>(
             fl!("ui-tool-sshconfig-title"),
             fl!("ui-tool-sshconfig-help"),
         ),
+        ToolId::SshAudit => (fl!("ui-tool-sshaudit-title"), fl!("ui-tool-sshaudit-help")),
+        ToolId::TlsAudit => (fl!("ui-tool-tlsaudit-title"), fl!("ui-tool-tlsaudit-help")),
+        ToolId::DnsSec => (fl!("ui-tool-dnssec-title"), fl!("ui-tool-dnssec-help")),
+        ToolId::DefaultCreds => (
+            fl!("ui-tool-defaultcreds-title"),
+            fl!("ui-tool-defaultcreds-help"),
+        ),
+        ToolId::CveLookup => (fl!("ui-tool-cve-title"), fl!("ui-tool-cve-help")),
+        ToolId::SecNumCloud => (
+            fl!("ui-tool-secnumcloud-title"),
+            fl!("ui-tool-secnumcloud-help"),
+        ),
+        ToolId::Smb => (fl!("ui-tool-smb-title"), fl!("ui-tool-smb-help")),
+        ToolId::HttpStatus => (fl!("ui-tool-http-name"), fl!("ui-tool-http-help")),
+        ToolId::TcpPing => (fl!("ui-tool-tcpping-name"), fl!("ui-tool-tcpping-help")),
+        ToolId::WakeOnLan => (fl!("ui-tool-wol-name"), fl!("ui-tool-wol-help")),
+        ToolId::Whois => (fl!("ui-tool-whois-name"), fl!("ui-tool-whois-help")),
+        ToolId::BannerGrabber => (fl!("ui-tool-banner-name"), fl!("ui-tool-banner-help")),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -856,6 +1095,18 @@ pub fn view<'a>(
         Pane::Ulid(pane) => (pane.view(tab, state), None),
         Pane::Crontab(pane) => (pane.view(tab, state), None),
         Pane::SshConfig(pane) => (pane.view(tab, state), None),
+        Pane::SshAudit(pane) => (pane.view(tab, state, theme), None),
+        Pane::TlsAudit(pane) => (pane.view(tab, state, theme), None),
+        Pane::DnsSec(pane) => (pane.view(tab, state, theme), None),
+        Pane::DefaultCreds(pane) => (pane.view(tab, state, theme), None),
+        Pane::Cve(pane) => (pane.view(tab, state, theme), None),
+        Pane::SecNumCloud(pane) => (pane.view(tab, state, theme), None),
+        Pane::Smb(pane) => (pane.view(tab, state, theme), None),
+        Pane::HttpStatus(pane) => (pane.view(tab, state, theme), None),
+        Pane::TcpPing(pane) => (pane.view(tab, state, theme), None),
+        Pane::Wol(pane) => (pane.view(tab, state, theme), None),
+        Pane::Whois(pane) => (pane.view(tab, state, theme), None),
+        Pane::Banner(pane) => (pane.view(tab, state, theme), None),
     };
     column![
         header(tab, title, actions),
