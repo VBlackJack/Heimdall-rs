@@ -22,7 +22,7 @@ use heimdall_files::{RemotePath, RemoteSession};
 
 use super::files_edit::{SudoAction, is_password_error};
 use super::{App, Effect, Notice};
-use crate::files::{FilesError, FilesPane, ListingRequest, RemoteEntry, Side};
+use crate::files::{FilesError, FilesPane, ListingRequest, RemoteListing, Side};
 use crate::ids::TabId;
 
 /// The listing of the server's folder `path` in `tab`: as root while its sudo mode is on,
@@ -90,7 +90,7 @@ impl App {
         tab: TabId,
         request: ListingRequest,
         path: RemotePath,
-        result: Result<(RemotePath, Vec<RemoteEntry>), FilesError>,
+        result: Result<RemoteListing, FilesError>,
     ) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();

@@ -1197,6 +1197,9 @@ struct PaneParts<'p, E> {
     counts: (usize, usize),
     loading: bool,
     error: Option<&'p FilesError>,
+    /// What its last listing left out, and whether a terminal on the server is at hand to
+    /// reach what it hid: over SSH, not over FTP.
+    left_out: (heimdall_files::LeftOut, bool),
     focused: bool,
     /// Where the pane can go besides up.
     moves: Moves,
@@ -1471,6 +1474,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         counts: (total, unhidden),
         loading,
         error,
+        left_out,
         focused,
         moves,
         batch,
@@ -1534,7 +1538,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         (chosen, chosen_size(entries, selected, marked)),
     );
     pane_frame(
-        pane_notes(content, tab, (toggles.sudo, error, batch))
+        pane_notes(content, tab, (toggles.sudo, error, left_out, batch))
             .push(listing)
             .push(pane_rule())
             .push(footer),
@@ -1545,14 +1549,16 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
 }
 
 /// What a pane says above its entries: listed as root, as the C# status says it while the
-/// sudo mode is on; why the last listing failed; where its delete or change of permissions
-/// is.
+/// sudo mode is on; why the last listing failed; how many entries it hid, their names not
+/// safe to use here, and how many of its lines did not read, where the C# only writes a
+/// warning to its log; where its delete or change of permissions is.
 fn pane_notes<'a>(
     mut content: Column<'a, Message>,
     tab: TabId,
-    (sudo, error, batch): (
+    (sudo, error, (left_out, terminal), batch): (
         Option<bool>,
         Option<&FilesError>,
+        (heimdall_files::LeftOut, bool),
         Option<&heimdall_app::files::Batch>,
     ),
 ) -> Column<'a, Message> {
@@ -1566,10 +1572,32 @@ fn pane_notes<'a>(
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(font_size::CAPTION));
     }
+    for note in left_out_notes(left_out, terminal) {
+        content = content.push(text(note).size(font_size::CAPTION).style(text::warning));
+    }
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
     }
     content
+}
+
+/// What a pane says of what its listing left out: the counts alone, the names and lines
+/// being what cannot be shown safely. The terminal is advised only where there is one, over
+/// SSH; an FTP tab has none.
+fn left_out_notes(left_out: heimdall_files::LeftOut, terminal: bool) -> Vec<String> {
+    let mut notes = Vec::new();
+    let count = left_out.unsafe_names;
+    if count > 0 {
+        notes.push(if terminal {
+            fl!("ui-files-hidden-unsafe-terminal", count = count)
+        } else {
+            fl!("ui-files-hidden-unsafe", count = count)
+        });
+    }
+    if left_out.unread_lines > 0 {
+        notes.push(fl!("ui-files-unread-lines", count = left_out.unread_lines));
+    }
+    notes
 }
 
 /// The size of the files among the entries chosen, as the C# selection line adds them;
@@ -1895,6 +1923,7 @@ pub fn view(
         counts: files_pane.local.counts(),
         loading: files_pane.local.loading,
         error: files_pane.local.error.as_ref(),
+        left_out: (files_pane.local.left_out, false),
         focused: files_pane.focus == Side::Local,
         moves: Moves {
             back: files_pane.local.can_go_back(),
@@ -1927,6 +1956,7 @@ pub fn view(
         counts: files_pane.remote.counts(),
         loading: files_pane.remote.loading,
         error: files_pane.remote.error.as_ref(),
+        left_out: (files_pane.remote.left_out, files_pane.shell.is_some()),
         focused: files_pane.focus == Side::Remote,
         moves: Moves {
             back: files_pane.remote.can_go_back(),
@@ -2094,6 +2124,60 @@ fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Messa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_listing_left_out_is_counted_and_the_terminal_advised_only_over_ssh() {
+        let left_out = heimdall_files::LeftOut {
+            unsafe_names: 2,
+            unread_lines: 3,
+        };
+        assert_eq!(
+            left_out_notes(left_out, true),
+            [
+                "2 entries hidden: their names are not safe to use here; use the terminal",
+                "3 lines of the listing could not be read",
+            ]
+        );
+        assert_eq!(
+            left_out_notes(left_out, false),
+            [
+                "2 entries hidden: their names are not safe to use here",
+                "3 lines of the listing could not be read",
+            ]
+        );
+        let one = heimdall_files::LeftOut {
+            unsafe_names: 1,
+            unread_lines: 1,
+        };
+        assert_eq!(
+            left_out_notes(one, false),
+            [
+                "1 entry hidden: its name is not safe to use here",
+                "1 line of the listing could not be read",
+            ]
+        );
+        assert!(left_out_notes(heimdall_files::LeftOut::default(), true).is_empty());
+    }
+
+    /// An FTP tab has no terminal: in no language does the wording it shows advise one.
+    #[test]
+    fn the_wording_without_a_terminal_names_none_in_any_language() {
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for language in heimdall_i18n::SUPPORTED_LANGUAGES {
+            let path = heimdall_i18n::ftl_path(crate_root, language, env!("CARGO_PKG_NAME"));
+            let source = std::fs::read_to_string(&path).expect("readable");
+            let message: Vec<&str> = source
+                .lines()
+                .skip_while(|line| !line.starts_with("ui-files-hidden-unsafe = "))
+                .take_while(|line| *line != "}")
+                .collect();
+            assert!(message.len() > 1, "{language}: {message:?}");
+            assert!(
+                message.iter().all(|line| !line.contains("terminal")),
+                "{language}: {message:?}"
+            );
+        }
+    }
 
     fn named(key: Named) -> keyboard::Key {
         keyboard::Key::Named(key)
