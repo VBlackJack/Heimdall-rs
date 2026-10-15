@@ -36,6 +36,8 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use heimdall_sftp::path::{display_bytes, is_child_name};
+
 use crate::privileged::{Sudo, SudoScript, hex, prelude};
 use crate::server_copy::{TOKEN_LEN, Unquotable, quote};
 use crate::{ItemKind, RemoteItem, Special};
@@ -298,6 +300,9 @@ pub struct SudoListing {
     pub folder: Vec<u8>,
     /// Its entries, in the order `find` wrote them.
     pub entries: Vec<ListedEntry>,
+    /// Names that are not one clean segment, left out: counted, never kept, so that the
+    /// user can be told some entries are not shown.
+    pub hidden_unsafe: usize,
 }
 
 /// The listing a list script's `output` brings, ended by the line `done`; `None` when it is
@@ -314,13 +319,29 @@ pub fn list_output(output: &[u8], done: &[u8]) -> Option<SudoListing> {
     if !rest.is_empty() {
         return None;
     }
-    let entries = records
+    // A name that is not one clean segment is left out, the rest of the listing kept, as
+    // the C# `SudoDirectoryListing` skips it.
+    let (records, unsafe_names): (Vec<_>, Vec<_>) = records
         .iter()
+        .partition(|record| record.last().is_some_and(|name| is_child_name(name)));
+    if !unsafe_names.is_empty() {
+        // A warning naming the folder, as the C# `SftpBrowser.ListDirectoryAsync`: an entry
+        // a listing hides may be what an administrator looks for. Server data: the count
+        // only, never the names.
+        log::warn!(
+            "sudo listing of {:?} left out {} entry name(s) that are not one clean segment",
+            display_bytes(folder),
+            unsafe_names.len()
+        );
+    }
+    let entries = records
+        .into_iter()
         .map(listed_entry)
         .collect::<Option<Vec<_>>>()?;
     Some(SudoListing {
         folder: folder.to_vec(),
         entries,
+        hidden_unsafe: unsafe_names.len(),
     })
 }
 
@@ -350,6 +371,7 @@ fn listed_entry(record: &[&[u8]; FIELDS]) -> Option<ListedEntry> {
             modified: modified(time),
             permissions: Some(permissions & 0o7777),
             owner: small(owner),
+            owner_name: None,
             group: small(group),
         },
         inode: number(inode)?,
@@ -454,7 +476,11 @@ mod tests {
             b"d\x0012\x00755\x000\x000\x004096\x001700000000.5000000000\x00logs\x00",
         );
         output
-            .extend_from_slice(b"f\x0013\x004644\x001000\x0010\x005\x001700000001\x00a\nb.txt\x00");
+            .extend_from_slice(b"f\x0013\x004644\x001000\x0010\x005\x001700000001\x00a b.txt\x00");
+        // Names that are not one clean segment: left out, the listing kept.
+        output.extend_from_slice(b"f\x0015\x00644\x000\x000\x001\x001700000001\x00a\nb.txt\x00");
+        output.extend_from_slice(b"f\x0016\x00644\x000\x000\x001\x001700000001\x00..\x00");
+        output.extend_from_slice(b"f\x0017\x00644\x000\x000\x001\x001700000001\x00a\\b\x00");
         output.extend_from_slice(b"c\x0014\x00620\x000\x005\x000\x001700000002.25\x00tty\x00");
         output.extend_from_slice(done);
         let listing = list_output(&output, done).expect("listed");
@@ -462,6 +488,7 @@ mod tests {
         let [logs, file, tty] = listing.entries.as_slice() else {
             panic!("{listing:?}");
         };
+        assert_eq!(listing.hidden_unsafe, 3, "counted, so the user is told");
         assert_eq!(
             (logs.item.kind, logs.inode, logs.item.permissions),
             (ItemKind::Directory, 12, Some(0o755))
@@ -470,7 +497,7 @@ mod tests {
             logs.item.modified,
             Some(UNIX_EPOCH + Duration::from_millis(1_700_000_000_500))
         );
-        assert_eq!(file.item.name, b"a\nb.txt", "a line end in a name is kept");
+        assert_eq!(file.item.name, b"a b.txt", "a space in a name is kept");
         assert_eq!(
             (
                 file.item.permissions,
@@ -482,8 +509,9 @@ mod tests {
         );
         assert_eq!(tty.item.kind, ItemKind::Other(Special::Device));
         assert_eq!(
-            list_output(b"/srv\0", b"").map(|listing| listing.entries.len()),
-            Some(0),
+            list_output(b"/srv\0", b"")
+                .map(|listing| (listing.entries.len(), listing.hidden_unsafe)),
+            Some((0, 0)),
             "an empty folder"
         );
         let cut = &output[..output.len() - done.len() - 4];

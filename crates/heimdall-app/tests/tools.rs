@@ -47,13 +47,28 @@ fn open(app: &mut App, tool: ToolId) {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(
         ToolId::ALL,
         [
+            ToolId::Ping,
+            ToolId::Dns,
+            ToolId::Cert,
+            ToolId::PortScan,
             ToolId::SubnetCalculator,
             ToolId::IpConverter,
+            ToolId::HttpStatus,
+            ToolId::Whois,
+            ToolId::HttpHeaders,
+            ToolId::BannerGrabber,
+            ToolId::TcpTrace,
+            ToolId::SnmpWalk,
+            ToolId::ArpMon,
+            ToolId::FwTest,
+            ToolId::NetMap,
             ToolId::NetworkCalculator,
+            ToolId::TcpPing,
             ToolId::Hash,
             ToolId::Hmac,
             ToolId::Password,
@@ -62,6 +77,13 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Jwt,
             ToolId::Totp,
             ToolId::PwdAudit,
+            ToolId::SshAudit,
+            ToolId::TlsAudit,
+            ToolId::DnsSec,
+            ToolId::Smb,
+            ToolId::DefaultCreds,
+            ToolId::CveLookup,
+            ToolId::SecNumCloud,
             ToolId::Base64,
             ToolId::UrlEncoder,
             ToolId::JsonFormatter,
@@ -73,9 +95,36 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Uuid,
             ToolId::Ulid,
             ToolId::Crontab,
+            ToolId::Hosts,
             ToolId::SshConfig,
+            ToolId::Services,
+            ToolId::WakeOnLan,
+            ToolId::OpenPorts,
+            ToolId::NetIf,
+            ToolId::Routes,
+            ToolId::DnsBatch,
+            ToolId::Wifi,
         ]
     );
+    assert_eq!(ToolId::Ping.code(), "PING");
+    assert!(ToolId::Ping.is_network());
+    assert_eq!(ToolId::Dns.code(), "DNS");
+    assert_eq!(ToolId::Dns.prefixes(), ["dns", "nslookup", "dig"]);
+    assert_eq!(ToolId::DnsBatch.code(), "DNSBATCH");
+    assert_eq!(ToolId::DnsBatch.category(), ToolCategory::External);
+    assert_eq!(ToolId::PortScan.code(), "PORTSCAN");
+    assert!(ToolId::PortScan.is_network());
+    assert_eq!(ToolId::HttpHeaders.code(), "HTTPHEADERS");
+    assert_eq!(ToolId::HttpStatus.code(), "HTTP");
+    assert_eq!(ToolId::Whois.code(), "WHOIS");
+    assert_eq!(ToolId::BannerGrabber.code(), "BANNER");
+    assert_eq!(ToolId::TcpPing.code(), "TCPPING");
+    assert_eq!(ToolId::WakeOnLan.code(), "WOL");
+    assert_eq!(ToolId::WakeOnLan.category(), ToolCategory::External);
+    assert!(ToolId::TcpPing.is_network());
+    assert!(ToolId::BannerGrabber.is_network());
+    assert!(ToolId::Whois.is_network());
+    assert!(!ToolId::HttpStatus.is_network());
     assert_eq!(ToolId::SubnetCalculator.code(), "SUBNET");
     assert_eq!(
         ToolId::NetworkCalculator.prefixes(),
@@ -87,6 +136,9 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(ToolId::from_code("tool:datetime"), Some(ToolId::DateTime));
     assert_eq!(ToolId::Totp.prefixes(), ["totp", "otp", "2fa"]);
     assert_eq!(ToolId::Jwt.code(), "JWT");
+    assert_eq!(ToolId::Smb.code(), "SMBENUM");
+    assert_eq!(ToolId::Smb.prefixes(), ["smb", "ntlm", "netbios"]);
+    assert!(ToolId::Smb.is_network());
     assert!(
         [ToolId::Hash, ToolId::Hmac, ToolId::Jwt, ToolId::Totp]
             .iter()
@@ -102,7 +154,47 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(ToolId::TextDiff.category(), ToolCategory::Encoding);
     assert_eq!(ToolId::Base64.category(), ToolCategory::Encoding);
     assert_eq!(ToolId::Uuid.category(), ToolCategory::System);
-    assert!(ToolId::ALL.iter().all(|tool| !tool.is_network()));
+    assert!(ToolId::TlsAudit.is_network());
+    assert!(ToolId::DnsSec.is_network());
+    assert_eq!(ToolId::DnsSec.code(), "DNSSEC");
+    assert_eq!(ToolId::DnsSec.category(), ToolCategory::Security);
+    assert_eq!(
+        ToolId::DnsSec.prefixes(),
+        ["dnssec", "spf", "dmarc", "dkim"]
+    );
+    assert!(ToolId::DefaultCreds.is_network());
+    assert_eq!(ToolId::DefaultCreds.code(), "DEFAULTCREDS");
+    assert_eq!(ToolId::DefaultCreds.category(), ToolCategory::Security);
+    assert_eq!(ToolId::DefaultCreds.prefixes(), ["defaultcreds", "creds"]);
+    assert_eq!(
+        ToolId::from_code("defaultcreds"),
+        Some(ToolId::DefaultCreds)
+    );
+    assert_eq!(
+        ToolId::from_code("TOOL:DEFAULTCREDS"),
+        Some(ToolId::DefaultCreds)
+    );
+    assert!(!ToolId::CveLookup.is_network());
+    assert_eq!(ToolId::CveLookup.code(), "CVELOOKUP");
+    assert_eq!(ToolId::CveLookup.category(), ToolCategory::Security);
+    assert_eq!(
+        ToolId::CveLookup.prefixes(),
+        ["cve", "vuln", "vulnerability"]
+    );
+    assert_eq!(ToolId::from_code("cvelookup"), Some(ToolId::CveLookup));
+    assert!(!ToolId::SecNumCloud.is_network());
+    assert_eq!(ToolId::SecNumCloud.code(), "SECNUMCLOUD");
+    assert_eq!(ToolId::SecNumCloud.category(), ToolCategory::Security);
+    assert_eq!(
+        ToolId::SecNumCloud.prefixes(),
+        ["secnumcloud", "audit", "compliance", "anssi"]
+    );
+    assert_eq!(ToolId::from_code("secnumcloud"), Some(ToolId::SecNumCloud));
+    assert_eq!(
+        ToolId::from_code("TOOL:SECNUMCLOUD"),
+        Some(ToolId::SecNumCloud)
+    );
+    assert!(!ToolId::SshAudit.is_network());
     // Looked up as the C# registry looks up, case aside and its prefix taken off.
     assert_eq!(ToolId::from_code("urlenc"), Some(ToolId::UrlEncoder));
     assert_eq!(ToolId::from_code("TOOL:uuid"), Some(ToolId::Uuid));
@@ -121,7 +213,21 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
         .iter()
         .all(|tool| tool.category() == ToolCategory::Security)
     );
-    assert_eq!(ToolId::from_code("PING"), None, "not ported");
+    assert_eq!(ToolId::from_code("PING"), Some(ToolId::Ping));
+    assert_eq!(ToolId::from_code("TCPTRACE"), Some(ToolId::TcpTrace));
+    assert_eq!(ToolId::from_code("OPENPORTS"), Some(ToolId::OpenPorts));
+    assert_eq!(ToolId::OpenPorts.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("NETIF"), Some(ToolId::NetIf));
+    assert_eq!(ToolId::NetIf.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("ROUTES"), Some(ToolId::Routes));
+    assert_eq!(ToolId::Routes.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("WIFI"), Some(ToolId::Wifi));
+    assert_eq!(ToolId::Wifi.category(), ToolCategory::External);
+    assert_eq!(ToolId::from_code("HOSTS"), Some(ToolId::Hosts));
+    assert_eq!(ToolId::Hosts.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("SERVICES"), Some(ToolId::Services));
+    assert_eq!(ToolId::Services.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("LOGVIEW"), None, "not ported");
 }
 
 #[test]

@@ -28,6 +28,7 @@ use heimdall_app::files::{EntryKind, RemoteEntry, Side, copy_across};
 use heimdall_app::integrated_edit::{open, save};
 use heimdall_app::{App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message, Notice, TabId};
 use heimdall_core::profile::{FtpProfile, ProfileId};
+use heimdall_files::LeftOut;
 use heimdall_files::{FtpClient, FtpSecurity, FtpTarget, RemotePath, RemoteSession};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -104,11 +105,13 @@ fn ftp_tab(app: &mut App, id: &str, client: RemoteSession, entries: Vec<RemoteEn
             shell: None,
         },
     });
+    let request = remote_request(app, tab);
     files(
         app,
         FilesMessage::RemoteListed {
             tab,
-            result: Ok((RemotePath::from("/"), entries)),
+            request,
+            result: Ok((RemotePath::from("/"), entries, LeftOut::default())),
         },
     );
     tab
@@ -127,6 +130,7 @@ fn file(name: &str, size: u64) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     }
@@ -265,6 +269,43 @@ async fn an_ftp_file_opens_in_the_integrated_editor_and_its_save_is_written_back
         .map(|entry| entry.expect("entry").file_name())
         .collect();
     assert_eq!(left.len(), 1, "no temporary file nor backup left: {left:?}");
+}
+
+// A name holding a backslash is a file name on a UNIX file system alone.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_ftp_listing_counts_the_names_it_hides_for_the_pane_to_say() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("kept"), b"1").expect("file");
+    std::fs::write(root.path().join("..\\x"), b"1").expect("unsafe name");
+    std::fs::create_dir(root.path().join("clean")).expect("folder");
+    std::fs::write(root.path().join("clean").join("a"), b"1").expect("file");
+    let port = serve(root.path()).await;
+
+    let (_, entries, left_out) = tokio::time::timeout(
+        STEP,
+        heimdall_app::files::list_remote(session(port).await, RemotePath::from("/")),
+    )
+    .await
+    .expect("in time")
+    .expect("listed");
+    let names: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
+    assert_eq!(names, ["clean", "kept"]);
+    assert_eq!(
+        left_out,
+        LeftOut {
+            unsafe_names: 1,
+            unread_lines: 0
+        }
+    );
+    let (_, _, none) = tokio::time::timeout(
+        STEP,
+        heimdall_app::files::list_remote(session(port).await, RemotePath::from("/clean")),
+    )
+    .await
+    .expect("in time")
+    .expect("listed");
+    assert!(!none.any(), "a clean folder hides nothing");
 }
 
 #[tokio::test]
@@ -697,4 +738,46 @@ async fn a_plain_ftp_session_is_said_to_be_in_clear_and_an_ftps_one_is_not() {
         "{:?}",
         app.notice()
     );
+}
+
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
+fn remote_request(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
 }

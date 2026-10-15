@@ -1526,6 +1526,8 @@ pub enum Effect {
         client: heimdall_files::RemoteSession,
         /// Folder.
         path: heimdall_files::RemotePath,
+        /// Which listing, sent back with it.
+        request: crate::files::ListingRequest,
     },
     /// List a local folder, then send [`FilesMessage::LocalListed`].
     ListLocal {
@@ -1533,6 +1535,8 @@ pub enum Effect {
         tab: TabId,
         /// Folder.
         path: PathBuf,
+        /// Which listing, sent back with it.
+        request: crate::files::ListingRequest,
     },
     /// Carry out the entry of a delete or a change of permissions being worked on, then send
     /// [`FilesMessage::BatchStepDone`].
@@ -1737,6 +1741,8 @@ pub enum Effect {
         path: heimdall_files::RemotePath,
         /// The password sudo took for the tab.
         password: Option<crate::sudo_edit::SudoPassword>,
+        /// Which listing, sent back with it.
+        request: crate::files::ListingRequest,
     },
     /// Copy entries of the server on the server, one after another, then send
     /// [`FilesMessage::Copied`].
@@ -1928,7 +1934,9 @@ impl fmt::Debug for Effect {
             Self::ListRemote { tab, path, .. } => {
                 write!(f, "ListRemote({}, {path:?})", tab.value())
             }
-            Self::ListLocal { tab, path } => write!(f, "ListLocal({}, {path:?})", tab.value()),
+            Self::ListLocal { tab, path, .. } => {
+                write!(f, "ListLocal({}, {path:?})", tab.value())
+            }
             Self::FileBatchStep { tab, side, .. } => {
                 write!(f, "FileBatchStep({}, {side:?})", tab.value())
             }

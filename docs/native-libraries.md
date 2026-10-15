@@ -11,15 +11,16 @@ The binary is pure Rust except for the libraries below. It brings no GTK, no lib
 (neither linked nor opened), no OpenSSL, no fontconfig or FreeType library: D-Bus is spoken by `zbus`, TLS by
 `rustls` on `ring`, fonts are parsed by `fontdb` and `ttf-parser`.
 
-Inventory taken from `Cargo.lock` at commit `c6c8463` (`master`, 2026-10-10), target
-`x86_64-unknown-linux-gnu`, release profile. A dependency bump can change it: see
+Inventory taken from `Cargo.lock` at commit `49ee6f4` (`master`, 2026-10-13), target
+`x86_64-unknown-linux-gnu`, release profile, default features. A dependency bump can change it: see
 [Keeping this page true](#keeping-this-page-true).
 
 ## Summary
 
 | Category | Libraries |
 |---|---|
-| Linked: in `DT_NEEDED`, the binary does not start without them | `libc.so.6`, `libm.so.6`, `libgcc_s.so.1`, `ld-linux-x86-64.so.2` (glibc and the GCC runtime), `libasound.so.2` (ALSA) |
+| Linked: in `DT_NEEDED`, the binary does not start without them | `libc.so.6`, `libm.so.6`, `libgcc_s.so.1`, `ld-linux-x86-64.so.2` (glibc and the GCC runtime) |
+| Linked only in a build with the `audio` feature | `libasound.so.2` (ALSA) |
 | `dlopen`, required in a Wayland session | `libwayland-client.so.0`, `libxkbcommon.so.0` |
 | `dlopen`, required in an X11 session | `libX11.so.6`, `libX11-xcb.so.1`, `libXcursor.so.1`, `libXi.so.6`, `libxcb.so.1`, `libxkbcommon.so.0`, `libxkbcommon-x11.so.0` |
 | `dlopen`, optional with a fallback | `libvulkan.so.1`, `libEGL.so.1`, `libwayland-egl.so.1` |
@@ -41,14 +42,13 @@ The three ways a library is reached:
 | Math library | `libm.so.6` | Rust standard library | Floating-point functions |
 | GCC runtime | `libgcc_s.so.1` | Rust standard library | Stack unwinding support |
 | Dynamic loader | `ld-linux-x86-64.so.2` | Rust standard library | Program interpreter (`PT_INTERP`) |
-| ALSA | `libasound.so.2` | `alsa-sys` 0.4.0, through `alsa` 0.11.0 and `cpal` 0.17.3, from `heimdall-rdp` | Plays an RDP server's sound on this computer |
+| ALSA, only with the `audio` feature | `libasound.so.2` | `alsa-sys` 0.4.0, through `alsa` 0.11.0 and `cpal` 0.18.2, from `heimdall-rdp` | Plays an RDP server's sound on this computer |
 
-Measured on a release build of this commit (`cargo build --release --locked -p
-heimdall-ui`, AlmaLinux 9, glibc 2.34):
+Measured on a release build of this commit with default features (`cargo build
+--release --locked -p heimdall-ui`, AlmaLinux 9, glibc 2.34):
 
 ```text
 $ readelf -d heimdall-rs | grep NEEDED
- 0x0000000000000001 (NEEDED)             Shared library: [libasound.so.2]
  0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
  0x0000000000000001 (NEEDED)             Shared library: [libm.so.6]
  0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
@@ -59,11 +59,19 @@ $ readelf -l heimdall-rs | grep interpreter
 No `RPATH` or `RUNPATH` is set. `x11-dl` asks for `libdl` at link time, but with glibc
 2.34 and later `dlopen` lives in `libc.so.6` and no `libdl.so.2` entry is recorded.
 
-`libasound.so.2` is the only linked library outside glibc and the GCC runtime. It is
-linked even when no RDP session plays sound: `alsa-sys` asks `pkg-config` for `alsa` with
-dynamic linking (`build.rs` line 7). Building therefore needs `alsa-lib-devel` (Fedora,
-RHEL, AlmaLinux) or `libasound2-dev` (Debian, Ubuntu), and running needs `alsa-lib` or
-`libasound2`. See [Planned change: RDP audio](#planned-change-rdp-audio).
+A default build links nothing outside glibc and the GCC runtime, and needs no C
+development package: every other library on this page is opened at run time (the build
+scripts of `wayland-sys` and `tiny-xlib` link nothing when their `dlopen` feature is on,
+as it is here). Only a C compiler is needed, for `ring` (section 7).
+
+RDP sound is the Cargo feature `audio` of `heimdall-ui` (forwarded to `heimdall-rdp`), off
+by default on Linux and always on on Windows. A Linux build that asks for it
+(`cargo build --release -p heimdall-ui --features audio`) links `libasound.so.2` even when
+no RDP session plays sound: `alsa-sys` asks `pkg-config` for `alsa` with dynamic linking
+(`build.rs` line 7). That build needs `alsa-lib-devel` (Fedora, RHEL, AlmaLinux) or
+`libasound2-dev` (Debian, Ubuntu), and running it needs `alsa-lib` or `libasound2`.
+Without the feature, RDP sessions work but the server's sound is not played on this
+computer; the RDP options say so. See section 6.
 
 ## 2. Windowing in a Wayland session
 
@@ -149,12 +157,15 @@ nothing). The dialog itself is drawn by the desktop's portal (`xdg-desktop-porta
 
 | Library | soname | Loaded by | How | When |
 |---|---|---|---|---|
-| ALSA | `libasound.so.2` | `alsa-sys` 0.4.0 | Linked | Always, see section 1 |
+| ALSA | `libasound.so.2` | `alsa-sys` 0.4.0 | Linked | Only in a build with the `audio` feature, see section 1 |
 
-`cpal` 0.17.3 uses ALSA only on Linux: its `jack` feature is off and no PulseAudio or
-PipeWire crate is in the tree. ALSA itself may then load its own plugins
+`cpal` 0.18.2 uses ALSA only on Linux: its `jack`, `pulseaudio` and `pipewire` features
+are off, so no JACK, PulseAudio or PipeWire crate is in the tree. ALSA itself may then load its own plugins
 (`libasound_module_pcm_pulse.so`, `libasound_module_pcm_pipewire.so`, and so on) according
 to the host's `/etc/alsa` configuration, when sound is played.
+
+Until commit `9f27424` (2026-10-10), sound was not optional and every Linux build linked
+ALSA.
 
 ## 7. C code compiled into the binary
 
@@ -182,7 +193,9 @@ libraries and keep it in the binary:
 
 A binary built on one distribution and run on another therefore still finds the
 libraries by soname; on a host with the same layout, `tiny-xlib` opens them by absolute
-path.
+path. On a build host without the X11 development files (`x11.pc`, `x11-xcb.pc`), the
+probe fails, no directory is kept, and both crates open the plain soname only; the build
+does not fail.
 
 ## How to verify on a target host
 
@@ -209,13 +222,6 @@ ICED_BACKEND=tiny-skia strace -f -e trace=openat ./heimdall-rs 2>&1 | grep -E '\
 ```
 
 `ldd` runs the dynamic loader on the file; on an untrusted binary prefer `readelf -d`.
-
-## Planned change: RDP audio
-
-RDP sound will become an optional Cargo feature (`alsa`), as the owner has planned. A
-build without it will have no `libasound.so.2` in `DT_NEEDED`, leaving glibc and the GCC
-runtime as the only linked libraries, and will need no ALSA package to build or run. RDP
-sessions will still work; the server's sound will not be played on this computer.
 
 ## Windows
 

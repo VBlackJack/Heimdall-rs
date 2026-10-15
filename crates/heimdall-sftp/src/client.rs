@@ -39,7 +39,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::path::RemotePath;
+use crate::path::{RemotePath, is_child_name};
 use crate::protocol::{
     Attributes, Extensions, NameEntry, Request, Response, SFTP_VERSION, StatusCode,
 };
@@ -144,6 +144,16 @@ pub struct DirEntry {
     pub name: Vec<u8>,
     /// Attributes, as far as the server sent them.
     pub attributes: Attributes,
+}
+
+/// A directory listed: the entries kept, and how many names were left out as unsafe to use.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DirListing {
+    /// Every entry kept, without `.` and `..`.
+    pub entries: Vec<DirEntry>,
+    /// Names that are not one clean segment ([`is_child_name`]), left out: counted, never
+    /// kept, so that the user can be told some entries are not shown.
+    pub hidden_unsafe: usize,
 }
 
 /// The response type a request waits for; a status is always acceptable.
@@ -704,6 +714,27 @@ impl SftpClient {
     ///
     /// [`SftpError`], [`SftpError::ListingTooLarge`] past the configured limit.
     pub async fn read_dir(&self, path: &RemotePath) -> Result<Vec<DirEntry>, SftpError> {
+        Ok(self.read_dir_logged(path, log::Level::Debug).await?.entries)
+    }
+
+    /// As [`Self::read_dir`], for a pane to show: with how many names were left out as not
+    /// one clean segment, warned of in the log with the folder, as the C#
+    /// `SftpBrowser.ListDirectoryAsync` warns. [`Self::read_dir`], which walks run once per
+    /// folder, says it at debug level only.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_dir`].
+    pub async fn read_dir_counted(&self, path: &RemotePath) -> Result<DirListing, SftpError> {
+        self.read_dir_logged(path, log::Level::Warn).await
+    }
+
+    /// The listing of `path`, the names it left out said in the log at `level`.
+    async fn read_dir_logged(
+        &self,
+        path: &RemotePath,
+        level: log::Level,
+    ) -> Result<DirListing, SftpError> {
         let request_path = path.clone();
         let handle = self
             .expect_handle(|id| Request::Opendir {
@@ -713,14 +744,25 @@ impl SftpClient {
             .await?;
         let listed = self.read_dir_pages(&handle).await;
         let closed = self.close(&handle).await;
-        let entries = listed?;
+        let listing = listed?;
         closed?;
-        Ok(entries)
+        if listing.hidden_unsafe > 0 {
+            // The folder named: an entry a listing hides may be what an administrator looks
+            // for. Server data: the count only, never the names.
+            log::log!(
+                level,
+                "SFTP listing of {:?} left out {} entry name(s) that are not one clean segment",
+                path.display(),
+                listing.hidden_unsafe
+            );
+        }
+        Ok(listing)
     }
 
-    async fn read_dir_pages(&self, handle: &Handle) -> Result<Vec<DirEntry>, SftpError> {
+    async fn read_dir_pages(&self, handle: &Handle) -> Result<DirListing, SftpError> {
         let mut entries = Vec::new();
-        loop {
+        let mut unsafe_names = 0usize;
+        let entries = loop {
             let request_handle = handle.0.clone();
             let page = self
                 .request(Expect::Name, |id| Request::Readdir {
@@ -739,6 +781,13 @@ impl SftpClient {
                         if filename == b"." || filename == b".." {
                             continue;
                         }
+                        // A name that is not one clean segment never enters a listing, as
+                        // the C# `SftpBrowser.IsListableEntryName`: joined to a folder, it
+                        // would reach outside it.
+                        if !is_child_name(&filename) {
+                            unsafe_names += 1;
+                            continue;
+                        }
                         if entries.len() == self.inner.max_listing_entries {
                             return Err(SftpError::ListingTooLarge(entries.len()));
                         }
@@ -751,11 +800,15 @@ impl SftpClient {
                 Response::Status {
                     code: StatusCode::Eof,
                     ..
-                } => return Ok(entries),
+                } => break entries,
                 Response::Status { code, message, .. } => return Err(status_error(code, message)),
                 _ => return Err(unexpected()),
             }
-        }
+        };
+        Ok(DirListing {
+            entries,
+            hidden_unsafe: unsafe_names,
+        })
     }
 
     /// Creates directory `path`.

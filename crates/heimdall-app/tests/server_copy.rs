@@ -26,6 +26,7 @@ use std::sync::Arc;
 use heimdall_app::files::{CopySource, EntryKind, FilesError, RemoteEntry, Side, copy_remote};
 use heimdall_app::{App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message, Notice, TabId};
 use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
@@ -102,6 +103,7 @@ fn entry(name: &str, kind: EntryKind) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     }
@@ -154,10 +156,12 @@ fn tab(dir: &Path, client: RemoteSession, shell: Option<Connection>) -> (App, Ta
         attempt,
         event: ConnectionEvent::FilesReady { client, shell },
     });
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![
@@ -165,6 +169,7 @@ fn tab(dir: &Path, client: RemoteSession, shell: Option<Connection>) -> (App, Ta
                     entry("a.txt", EntryKind::File),
                     entry("link", EntryKind::Link),
                 ],
+                LeftOut::default(),
             )),
         },
     );
@@ -320,6 +325,70 @@ async fn without_a_connection_to_run_on_nothing_is_copied_any_other_way() {
         [(RemotePath::from("/srv/a.txt"), Err(FilesError::CopyRefused))],
         "the first failure stops the rest"
     );
+}
+
+#[tokio::test]
+async fn a_duplicate_lands_next_to_its_entry_and_a_paste_in_the_folder_shown() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), idle_client().await, Some(connection));
+    let side = Side::Remote;
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side,
+            index: 1,
+        },
+    );
+    files(&mut app, FilesMessage::Copy { tab });
+    // "logs" opened: its listing on its way, the entries of "/srv" still shown.
+    files(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side,
+            index: 0,
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side,
+            index: 1,
+        },
+    );
+    let (sources, folder, duplicate) = copy_of(&files(&mut app, FilesMessage::Duplicate { tab }));
+    assert_eq!(
+        (sources, folder, duplicate),
+        (
+            vec![source("/srv/a.txt", false)],
+            RemotePath::from("/srv"),
+            true
+        )
+    );
+    files(
+        &mut app,
+        FilesMessage::Copied {
+            tab,
+            results: Vec::new(),
+            duplicate: true,
+        },
+    );
+    // The listing failed: the folder shown is "/srv" again, where a paste goes.
+    let request = remote_request(&mut app, tab);
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            request,
+            result: Err(FilesError::CopyRefused),
+        },
+    );
+    let (_, folder, duplicate) = copy_of(&files(&mut app, FilesMessage::Paste { tab }));
+    assert_eq!((folder, duplicate), (RemotePath::from("/srv"), false));
 }
 
 #[cfg(unix)]
@@ -604,4 +673,46 @@ async fn a_file_opened_with_sudo_is_watched_with_the_password_and_its_save_said(
         app.notice(),
         Some(&Notice::FilesSavedWithSudo("a.txt".to_owned()))
     );
+}
+
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
+fn remote_request(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
 }

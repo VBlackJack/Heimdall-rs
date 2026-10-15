@@ -31,7 +31,8 @@ embedded web engine.
 
 | Crate | Role |
 |---|---|
-| `heimdall-core` | Server profiles, settings, paths, credential vault |
+| `heimdall-core` | Server profiles, settings, paths, credential vault, tool engines |
+| `heimdall-app` | Application state, tab lifecycle, session manager, tool registry |
 | `heimdall-i18n` | Supported languages and the check that keeps them complete |
 | `heimdall-net` | TCP connections to a host by name, Happy Eyeballs (RFC 8305) |
 | `heimdall-ssh` | SSH sessions, tunnels, jump hosts |
@@ -48,14 +49,28 @@ embedded web engine.
 Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` and
 `heimdall-net` only.
 
+## Built-in Tools
+
+Heimdall embeds 30 offline sysadmin and security assessment tools:
+
+- **Security & Compliance:** SSH Key Auditor, SSL/TLS Auditor, DNS Security Checker (DNSSEC/DANE), ANSSI SecNumCloud v3.2 Auditor, SMB Enumerator, Default Credentials Scanner, Offline CVE & CISA KEV Lookup, Password Auditor, Password Generator, SSH Key Generator, Certificate Generator.
+- **Network:** Subnet Calculator, IP Converter, Network Calculator.
+- **System:** Chmod Calculator, Date & Time Converter, Crontab Builder, SSH Config Generator.
+- **Encoding & Tokens:** Hash Computer, HMAC Generator, JWT Debugger, TOTP Generator, Base64 Encoder/Decoder, URL Encoder/Decoder, JSON Formatter, Regex Tester, Text Diff, Text Case Converter, UUID Generator, ULID Generator.
+
 ## Build
 
-On Linux, the build needs the development packages of xkbcommon, Wayland, X11
-and fontconfig. Running it also needs `libxkbcommon-x11` and a Vulkan or OpenGL
-driver, such as Mesa. On Windows, the build needs the MSVC build tools.
+On Linux, the default build needs no C development package, only a C compiler
+(`gcc` or `clang`, for `ring`): the windowing libraries are opened at run time, not
+linked. RDP sound is off by default there; a build that asks for it with
+`--features audio` (`cargo build -p heimdall-ui --features audio`) links ALSA and needs
+`alsa-lib-devel` (Fedora, RHEL, AlmaLinux) or `libasound2-dev` (Debian, Ubuntu). On
+Windows, the build needs the MSVC build tools, and RDP sound is always built in.
 
-The C libraries the binary links or loads at run time on Linux, and when, are listed in
-[Native libraries](docs/native-libraries.md).
+Running on Linux needs the libraries the desktop loads at run time: `libxkbcommon`,
+`libxkbcommon-x11` and the Wayland or X11 client libraries, and a Vulkan or OpenGL
+driver, such as Mesa (without one, the window is drawn in software). Which libraries,
+and when, is listed in [Native libraries](docs/native-libraries.md).
 
 ```bash
 cargo run --package heimdall-ui

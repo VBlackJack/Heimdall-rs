@@ -161,24 +161,126 @@ fn the_session_mode_offers_the_tab_then_remote_desktop_connection() {
         .expect("explained");
 }
 
+/// The resolution card of `draft` on a computer with `monitors`.
+fn resolution_on<'a>(draft: &'a ProfileDraft, monitors: &[Monitor]) -> common::Drawn<'a> {
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    common::simulator(
+        settings,
+        WINDOW,
+        heimdall_ui::rdp_options::resolution(draft, monitors, |field| {
+            iced::widget::text_input("", draft.value(field)).into()
+        }),
+    )
+}
+
+/// What the resolution mode list of `draft` sends, entry by entry, on `monitors`: its menu
+/// tried down to the multi-monitor box, the first thing below that sends a choice too.
+fn modes_offered(draft: &ProfileDraft, monitors: &[Monitor]) -> Vec<String> {
+    let bottom = resolution_on(draft, monitors)
+        .find("Enable multi-monitor mode")
+        .expect("the box")
+        .bounds()
+        .y;
+    choices_within(
+        "Resolution mode",
+        &|| resolution_on(draft, monitors),
+        bottom,
+    )
+    .into_iter()
+    .filter(|said| said.starts_with("ProfileChoice("))
+    .collect()
+}
+
+fn said(choice: ProfileChoice) -> String {
+    format!("{:?}", AppMessage::ProfileChoice(choice))
+}
+
 #[test]
-fn the_resolution_modes_are_offered_in_the_csharp_order_without_multi_monitor() {
-    let draft = ProfileDraft::new_for(DraftProtocol::Rdp);
-    let expected: Vec<String> = Resolution::ALL
+fn the_resolution_modes_are_the_csharp_combo_s_in_its_order_auto_only_shown() {
+    let mut fit = own_options();
+    fit.choose(ProfileChoice::Resolution(Resolution::FitWindow));
+    // Several screens: multi-monitor offered last, spanning them as the C# mode does.
+    let offered = modes_offered(&fit, &SCREENS);
+    let mut expected: Vec<String> = Resolution::LISTED[..3]
         .iter()
-        .map(|mode| {
-            format!(
-                "{:?}",
-                AppMessage::ProfileChoice(ProfileChoice::Resolution(*mode))
-            )
-        })
+        .map(|mode| said(ProfileChoice::Resolution(*mode)))
         .collect();
-    // Only the list's own: a click below its menu may reach the boxes further down.
-    let offered: Vec<String> = choices_in("Resolution mode", &|| resolution(&draft))
-        .into_iter()
-        .filter(|said| said.starts_with("ProfileChoice(Resolution("))
-        .collect();
+    expected.push(said(ProfileChoice::MultiMonitor(true)));
     assert_eq!(offered, expected);
+    // One screen: listed, out of reach, as the C# item disabled; picked, the mode stays.
+    let offered = modes_offered(&fit, &SCREENS[..1]);
+    assert_eq!(
+        offered.last(),
+        Some(&said(ProfileChoice::Resolution(Resolution::FitWindow)))
+    );
+    assert_eq!(offered.len(), 4, "{offered:?}");
+    assert!(
+        !offered.contains(&said(ProfileChoice::MultiMonitor(true))),
+        "{offered:?}"
+    );
+    // A profile in the automatic mode, a new one's: shown, never offered.
+    let auto = ProfileDraft::new_for(DraftProtocol::Rdp);
+    assert_eq!(auto.rdp_options.resolution, Resolution::Auto);
+    assert_eq!(modes_offered(&auto, &SCREENS), expected);
+}
+
+/// `draft` after each choice the resolution mode list of `draft` sends on `monitors`, entry
+/// by entry, down to the multi-monitor box.
+fn modes_picked(draft: &ProfileDraft, monitors: &[Monitor]) -> Vec<ProfileDraft> {
+    let bottom = resolution_on(draft, monitors)
+        .find("Enable multi-monitor mode")
+        .expect("the box")
+        .bounds()
+        .y;
+    let bounds = resolution_on(draft, monitors)
+        .find("Resolution mode")
+        .expect("the list")
+        .bounds();
+    let list = Point::new(bounds.x + INTO_LIST, bounds.y + bounds.height + INTO_LIST);
+    let mut picked = Vec::new();
+    let mut y = list.y;
+    while y < bottom {
+        let mut ui = resolution_on(draft, monitors);
+        click(&mut ui, list);
+        click(&mut ui, Point::new(list.x, y));
+        for message in ui.into_messages() {
+            if let Message::App(AppMessage::ProfileChoice(choice)) = message {
+                let mut after = draft.clone();
+                after.choose(choice);
+                picked.push(after);
+            }
+        }
+        y += STEP;
+    }
+    picked
+}
+
+#[test]
+fn multi_monitor_picked_with_several_screens_is_the_profile_s_mode_spanning_them() {
+    let mut fit = own_options();
+    fit.choose(ProfileChoice::Resolution(Resolution::FitWindow));
+    let modes = |monitors: &[Monitor]| -> Vec<Resolution> {
+        modes_picked(&fit, monitors)
+            .iter()
+            .map(|after| after.rdp_options.resolution)
+            .collect()
+    };
+    let spanning: Vec<ProfileDraft> = modes_picked(&fit, &SCREENS)
+        .into_iter()
+        .filter(|after| after.rdp_options.resolution == Resolution::MultiMonitor)
+        .collect();
+    assert!(!spanning.is_empty(), "{:?}", modes(&SCREENS));
+    assert!(
+        spanning
+            .iter()
+            .all(|after| after.spans_monitors() && after.rdp_extras.multi_monitor),
+        "as the C# OnRdpResolutionModeChanged"
+    );
+    // One screen: never the mode, whatever entry is picked.
+    assert!(!modes(&SCREENS[..1]).contains(&Resolution::MultiMonitor));
 }
 
 #[test]

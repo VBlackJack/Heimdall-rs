@@ -44,6 +44,7 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use heimdall_sftp::RemotePath;
+use heimdall_sftp::path::is_child_name;
 use heimdall_sftp::transfer::Fingerprint;
 use suppaftp::list::{File as Listed, ListParser};
 use suppaftp::tokio::{AsyncRustlsConnector, AsyncRustlsFtpStream};
@@ -54,7 +55,7 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ItemKind, Refusal, RemoteError, RemoteItem};
+use crate::{ItemKind, LeftOut, Listing, Refusal, RemoteError, RemoteItem};
 
 /// Suffix of a file being downloaded, as for SFTP.
 const PART_SUFFIX: &str = ".heimdall-part";
@@ -259,14 +260,33 @@ impl FtpClient {
     /// [`RemoteError`] from the server.
     pub async fn list(&self, path: &RemotePath) -> Result<Vec<RemoteItem>, RemoteError> {
         let mut control = self.control.lock().await;
-        self.list_locked(&mut control, path).await
+        Ok(self
+            .list_locked(&mut control, path, log::Level::Debug)
+            .await?
+            .items)
     }
 
+    /// As [`Self::list`], for a pane to show: with what was left out, and warned of in the
+    /// log with the folder.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server.
+    pub async fn list_counted(&self, path: &RemotePath) -> Result<Listing, RemoteError> {
+        let mut control = self.control.lock().await;
+        self.list_locked(&mut control, path, log::Level::Warn).await
+    }
+
+    /// The listing of `path`, what it left out said in the log at `level`: a warning for the
+    /// listing a pane shows, as the C# `SftpBrowser.ListDirectoryAsync` warns; debug for the
+    /// lookups and walks that list a folder once per entry, which would repeat it hundreds
+    /// of times.
     async fn list_locked(
         &self,
         control: &mut AsyncRustlsFtpStream,
         path: &RemotePath,
-    ) -> Result<Vec<RemoteItem>, RemoteError> {
+        level: log::Level,
+    ) -> Result<Listing, RemoteError> {
         let folder = text(path);
         let lines = if self.machine_listing {
             control.mlsd(Some(&folder)).await
@@ -274,7 +294,29 @@ impl FtpClient {
             control.list(Some(&folder)).await
         }
         .map_err(|e| ftp_error(&e))?;
-        Ok(items(&lines, self.machine_listing))
+        let listing = read_lines(&lines, self.machine_listing);
+        // The folder named: an entry a listing hides may be what an administrator looks for.
+        // Server data: the counts only, never the lines or names themselves.
+        let LeftOut {
+            unsafe_names,
+            unread_lines,
+        } = listing.left_out;
+        if unread_lines > 0 {
+            log::log!(
+                level,
+                "FTP listing of {:?} left out {unread_lines} line(s) that do not read",
+                path.display()
+            );
+        }
+        if unsafe_names > 0 {
+            log::log!(
+                level,
+                "FTP listing of {:?} left out {unsafe_names} entry name(s) that are not one \
+                 clean segment",
+                path.display()
+            );
+        }
+        Ok(listing)
     }
 
     /// The entry at `path`, looked up in its folder's listing; `None` when there is none.
@@ -288,8 +330,9 @@ impl FtpClient {
         };
         let name = name.to_vec();
         Ok(self
-            .list_locked(control, &path.parent())
+            .list_locked(control, &path.parent(), log::Level::Debug)
             .await?
+            .items
             .into_iter()
             .find(|entry| entry.name == name))
     }
@@ -373,7 +416,11 @@ impl FtpClient {
                 continue;
             }
             pending.push((folder.clone(), true));
-            for entry in self.list_locked(&mut control, &folder).await? {
+            for entry in self
+                .list_locked(&mut control, &folder, log::Level::Debug)
+                .await?
+                .items
+            {
                 visited += 1;
                 if visited > MAX_ENTRIES {
                     return Err(RemoteError::TooLarge);
@@ -829,22 +876,352 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 /// The entries a listing's `lines` describe: machine lines (`MLSD`) or human ones (`LIST`,
-/// UNIX or DOS format); `.` and `..`, and lines that do not read, left out.
-fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
-    lines
+/// UNIX or DOS format); `.` and `..`, lines that do not read, and names that are not one
+/// clean segment (`is_child_name`, as the C# `FtpBrowser.MapFtpItemToFileInfo`) left out
+/// and counted.
+fn read_lines(lines: &[String], machine: bool) -> Listing {
+    let (mut unread, mut unsafe_names) = (0usize, 0usize);
+    let listed: Vec<RemoteItem> = lines
         .iter()
         .filter_map(|line| {
-            if machine {
-                ListParser::parse_mlsd(line).ok()
-            } else {
-                ListParser::parse_posix(line)
-                    .or_else(|_| ListParser::parse_dos(line))
-                    .ok()
+            let read = entry(line, machine);
+            if read.is_none() && !summary(line) {
+                unread += 1;
             }
+            read
         })
-        .filter(|listed| !matches!(listed.name(), "." | ".."))
-        .map(|listed| item(&listed))
-        .collect()
+        .filter(|item| !matches!(item.name.as_slice(), b"." | b".."))
+        .filter(|item| {
+            let safe = is_child_name(&item.name);
+            unsafe_names += usize::from(!safe);
+            safe
+        })
+        .collect();
+    Listing {
+        items: listed,
+        left_out: LeftOut {
+            unsafe_names,
+            unread_lines: unread,
+        },
+    }
+}
+
+/// The entry one listing line describes, if it reads.
+fn entry(line: &str, machine: bool) -> Option<RemoteItem> {
+    let (listed, owner, tolerated) = if machine {
+        let listed = ListParser::parse_mlsd(line).ok()?;
+        (listed, machine_owner(line), None)
+    } else if let Ok(listed) = ListParser::parse_posix(line) {
+        let owner = Owner {
+            name: unix_owner(line),
+            ..Owner::default()
+        };
+        // The strict parser's date is the sixth field: mode, links, owner, group, size.
+        let name = exact_name(line, &fields(line), STRICT_DATE_FIELD, listed.is_symlink());
+        (listed, owner, Some(Tolerated::strict(name)))
+    } else if let Some(tolerated) = tolerated(line) {
+        let listed = ListParser::parse_posix(&tolerated.line).ok()?;
+        // The owner read from the line the parser read, as for a strict line.
+        let owner = Owner {
+            name: unix_owner(&tolerated.line),
+            ..Owner::default()
+        };
+        (listed, owner, Some(tolerated))
+    } else {
+        // A DOS line names no owner.
+        (ListParser::parse_dos(line).ok()?, Owner::default(), None)
+    };
+    let mut entry = item(&listed);
+    entry.owner = entry.owner.or(owner.number);
+    entry.owner_name = owner.name;
+    if let Some(tolerated) = tolerated {
+        // The exact name only where it is the parser's own, its leading spaces kept: any
+        // other is a line read another way than the parser read it, whose name stands.
+        if let Some(name) = tolerated
+            .name
+            .filter(|name| name.trim_start() == listed.name())
+        {
+            entry.name = name.into_bytes();
+        }
+        if let Some(special) = tolerated.special {
+            entry.kind = ItemKind::Other(special);
+        }
+        if tolerated.device {
+            // A device's line gives its major and minor numbers, not a size.
+            entry.size = None;
+        }
+    }
+    Some(entry)
+}
+
+/// Whether `line` is the `total N` summary a UNIX listing starts with, no entry.
+fn summary(line: &str) -> bool {
+    line.trim().is_empty() || line.split(' ').next() == Some("total")
+}
+
+/// A UNIX `LIST` line the parser refuses, rewritten into one it reads, as the C#
+/// (`FluentFTP`) lists it: what the rewrite took out of the line is kept here, with the
+/// entry's exact name, which the parser does not keep.
+#[derive(Debug, PartialEq, Eq)]
+struct Tolerated {
+    /// The line rewritten, its date and name left exactly as the server gave them.
+    line: String,
+    /// The name exactly as the line gives it (`exact_name`), when it could be found.
+    name: Option<String>,
+    /// What the type character the parser does not read names.
+    special: Option<crate::Special>,
+    /// Whether the line gave a device's major and minor numbers where a size goes.
+    device: bool,
+}
+
+impl Tolerated {
+    /// What is kept of a line the strict parser reads: its exact name only.
+    fn strict(name: Option<String>) -> Self {
+        Self {
+            line: String::new(),
+            name,
+            special: None,
+            device: false,
+        }
+    }
+}
+
+/// The index of a strict line's date among its fields: after the mode, the link count,
+/// the owner, the group and the size.
+const STRICT_DATE_FIELD: usize = 5;
+
+/// The fields read before the date of a line the parser refuses: mode, links, owner, group,
+/// a device's two numbers, then month, day and time, and the start of the name. Bounds the
+/// work on a server's line.
+const TOLERATED_FIELDS: usize = 12;
+
+/// The length of a mode with its type character: `-rw-r--r--`.
+const MODE_LENGTH: usize = 10;
+
+/// The group a line without one is given: not a number, so no group number is read.
+const NO_GROUP: &str = "-";
+
+/// A UNIX `LIST` line the strict parser refuses, rewritten when what it refuses is one of
+/// the shapes real servers send:
+/// - a mode followed by an ACL or extended attribute mark: `-rw-r--r--+`, `drwxr-xr-x@`,
+///   `-rw-r--r--.` (`SELinux`);
+/// - a type it does not read: a device (`b`, `c`), a pipe (`p`), a socket (`s`), with a
+///   device's `major, minor` where the size goes;
+/// - no group column.
+///
+/// None when the line is none of these. The fields are parted by spaces only, as the
+/// parser's `([^ ]+)` parts them, and the line from its date on is kept as is, so the name
+/// (spaces, a link's `->`) is read exactly as the parser reads it.
+fn tolerated(line: &str) -> Option<Tolerated> {
+    let fields = fields(line);
+    let names: Vec<&str> = fields.iter().map(|(_, field)| *field).collect();
+    let field = |at: usize| names.get(at).copied();
+    // The date: a month, a day, a time or a year, then a name. Never before the group.
+    let date = (3..fields.len()).find(|&at| {
+        field(at).is_some_and(month)
+            && field(at + 1).is_some_and(|day| digits(day, 1, 2))
+            && field(at + 2).is_some_and(time_or_year)
+            && field(at + 3).is_some()
+    })?;
+    let (date_start, _) = *fields.get(date)?;
+    let (mode, links, owner) = (field(0)?, field(1)?, field(2)?);
+    let middle = names.get(3..date)?;
+
+    let (kind, special) = mode_type(mode.chars().next()?)?;
+    let permissions = mode.get(1..MODE_LENGTH)?;
+    let marked = match mode.get(MODE_LENGTH..)? {
+        "" => false,
+        "+" | "@" | "." => true,
+        _ => return None,
+    };
+
+    // A size, or a device's `major, minor` or `major,minor`, then what is before it.
+    let (rest, size, device) = match middle {
+        [rest @ .., major, minor]
+            if major
+                .strip_suffix(',')
+                .is_some_and(|major| digits(major, 1, usize::MAX))
+                && digits(minor, 1, usize::MAX) =>
+        {
+            (rest, "0", true)
+        }
+        [rest @ .., numbers] if device_numbers(numbers) => (rest, "0", true),
+        [rest @ .., size] if digits(size, 1, usize::MAX) => (rest, *size, false),
+        _ => return None,
+    };
+    let group = match rest {
+        [] => NO_GROUP,
+        [group] => group,
+        _ => return None,
+    };
+    if device && special != Some(crate::Special::Device) {
+        // Major and minor numbers belong to a device's line only: another's is broken.
+        return None;
+    }
+    if !(marked || special.is_some() || device || rest.is_empty()) {
+        // None of the shapes this reads: the parser's refusal stands.
+        return None;
+    }
+    let rewritten = [mode, links, owner, group, size];
+    if !digits(links, 1, usize::MAX)
+        || rewritten
+            .iter()
+            .any(|field| field.contains(char::is_whitespace))
+    {
+        return None;
+    }
+    Some(Tolerated {
+        line: format!(
+            "{kind}{permissions} {links} {owner} {group} {size} {}",
+            line.get(date_start..)?
+        ),
+        name: exact_name(line, &fields, date, kind == 'l'),
+        special,
+        device,
+    })
+}
+
+/// The first fields of `line` with where each starts, parted by spaces only, as the
+/// parser's `([^ ]+)` parts them; at most [`TOLERATED_FIELDS`], which bounds the work on
+/// a server's line.
+fn fields(line: &str) -> Vec<(usize, &str)> {
+    let mut fields = Vec::with_capacity(TOLERATED_FIELDS);
+    let mut start = 0usize;
+    for field in line.split(' ') {
+        if !field.is_empty() {
+            fields.push((start, field));
+            if fields.len() == TOLERATED_FIELDS {
+                break;
+            }
+        }
+        start += field.len() + 1;
+    }
+    fields
+}
+
+/// The entry's name exactly as `line` gives it: what follows the time or year of the date
+/// at field `date` and the single space `ls` writes after it. The parser's `\s+(.+)` takes
+/// every space before the name, so ` a` and `a` would be one entry, and a delete or a
+/// download would reach the other. A link's name stops at the first ` -> `, as the parser
+/// stops it. None when the date is not there or a tab follows it: the parser's name then.
+fn exact_name(line: &str, fields: &[(usize, &str)], date: usize, is_link: bool) -> Option<String> {
+    let field = |at: usize| fields.get(at).map(|(_, field)| *field);
+    let dated = field(date).is_some_and(month)
+        && field(date + 1).is_some_and(|day| digits(day, 1, 2))
+        && field(date + 2).is_some_and(time_or_year);
+    if !dated {
+        return None;
+    }
+    let (start, time) = fields.get(date + 2)?;
+    let name_start = start + time.len() + 1;
+    // Fields parted by anything but spaces are not where these fields say.
+    if line
+        .get(..name_start)?
+        .contains(|character: char| character.is_whitespace() && character != ' ')
+    {
+        return None;
+    }
+    let name = line.get(start + time.len()..)?.strip_prefix(' ')?;
+    let name = if is_link {
+        name.split(" -> ").next()?
+    } else {
+        name
+    };
+    Some(name.to_owned())
+}
+
+/// The type character the parser reads for a mode's first one, and what an entry of a type
+/// it does not read is, as the C# `ClassifyFtpEntry` names it (`FtpBrowser.cs`): such an
+/// entry is read as a file, then named for what it is.
+fn mode_type(first: char) -> Option<(char, Option<crate::Special>)> {
+    use crate::Special;
+
+    match first {
+        '-' | 'd' | 'l' => Some((first, None)),
+        'b' | 'c' => Some(('-', Some(Special::Device))),
+        'p' => Some(('-', Some(Special::Pipe))),
+        's' => Some(('-', Some(Special::Socket))),
+        // A type stated the C# does not recognise either: never a regular file.
+        _ if first.is_ascii_alphabetic() => Some(('-', Some(Special::Unknown))),
+        _ => None,
+    }
+}
+
+/// Whether `said` is a month as `ls` writes it, `Sep`: three ASCII letters.
+fn month(said: &str) -> bool {
+    said.len() == 3 && said.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+/// Whether `said` is a time, `10:00`, or a year, `2025`, as `ls` writes a date's last part.
+fn time_or_year(said: &str) -> bool {
+    match said.split_once(':') {
+        Some((hours, minutes)) => digits(hours, 1, 2) && digits(minutes, 1, 2),
+        None => digits(said, 4, 4),
+    }
+}
+
+/// Whether `said` is a device's `major,minor` given as one field.
+fn device_numbers(said: &str) -> bool {
+    said.split_once(',')
+        .is_some_and(|(major, minor)| digits(major, 1, usize::MAX) && digits(minor, 1, usize::MAX))
+}
+
+/// Whether `said` is between `least` and `most` ASCII digits.
+fn digits(said: &str, least: usize, most: usize) -> bool {
+    (least..=most).contains(&said.len()) && said.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// What a listing line says of its owner beyond what the parser reads.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Owner {
+    /// A user number the parser does not read: `MLSD`'s `UNIX.owner` given as a number, as
+    /// `ProFTPD` sends it.
+    number: Option<u32>,
+    /// The owner's name.
+    name: Option<String>,
+}
+
+/// The facts of an `MLSD` line naming its owner, the most explicit first: `UNIX.ownername`,
+/// as `ProFTPD` writes it, then `UNIX.owner`.
+const OWNER_FACTS: [&str; 2] = ["unix.ownername", "unix.owner"];
+
+/// The owner's name a `LIST` line in UNIX format gives, as the C# keeps it in
+/// `FtpListItem.RawOwner`: its third field, after the mode and the link count, the fields
+/// parted by spaces only, as the parser's `([^ ]+)` parts them. A number is the owner's user
+/// number, which the parser already reads: no name then. A listing without the owner
+/// column (`ls -g`) or without the link count puts another field third, read as the owner.
+fn unix_owner(line: &str) -> Option<String> {
+    owner_name(line.split(' ').filter(|field| !field.is_empty()).nth(2)?)
+}
+
+/// What an `MLSD` line says of its owner in its facts, before the space that starts the
+/// name of the entry; facts are named whatever their case. Its name, the most explicit
+/// fact first; and `UNIX.owner` as a number, the user number.
+fn machine_owner(line: &str) -> Owner {
+    let Some((facts, _)) = line.split_once(' ') else {
+        return Owner::default();
+    };
+    let facts: Vec<(&str, &str)> = facts
+        .split(';')
+        .filter_map(|fact| fact.split_once('='))
+        .collect();
+    let value = |wanted: &str| {
+        facts
+            .iter()
+            .find(|(fact, _)| fact.eq_ignore_ascii_case(wanted))
+            .map(|(_, value)| *value)
+    };
+    Owner {
+        number: value(OWNER_FACTS[1]).and_then(|said| said.parse().ok()),
+        name: OWNER_FACTS
+            .iter()
+            .find_map(|wanted| value(wanted).and_then(owner_name)),
+    }
+}
+
+/// `said` as an owner's name: none when empty, or a number, which is a user number.
+fn owner_name(said: &str) -> Option<String> {
+    (!said.is_empty() && said.parse::<u32>().is_err()).then(|| said.to_owned())
 }
 
 /// Whether a delete goes into an entry of `kind` rather than deleting it: only a folder. A
@@ -885,6 +1262,7 @@ fn item(listed: &Listed) -> RemoteItem {
         modified: (modified > UNIX_EPOCH).then_some(modified),
         permissions: Some(mode),
         owner: listed.uid(),
+        owner_name: None,
         group: listed.gid(),
     }
 }
@@ -935,8 +1313,12 @@ mod tests {
     use suppaftp::types::Response;
     use suppaftp::{FtpError, Status};
 
-    use super::{ftp_error, items, walks};
-    use crate::{ItemKind, Refusal, RemoteError};
+    use super::{Owner, ftp_error, machine_owner, read_lines, tolerated, unix_owner, walks};
+    use crate::{ItemKind, LeftOut, Refusal, RemoteError, RemoteItem};
+
+    fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
+        read_lines(lines, machine).items
+    }
 
     fn kinds(lines: &[&str], machine: bool) -> Vec<(String, ItemKind)> {
         let lines: Vec<String> = lines.iter().map(|line| (*line).to_owned()).collect();
@@ -987,6 +1369,478 @@ mod tests {
                 ("notes.txt".to_owned(), ItemKind::File),
             ]
         );
+    }
+
+    fn owners(lines: &[&str], machine: bool) -> Vec<(Option<u32>, Option<String>)> {
+        let lines: Vec<String> = lines.iter().map(|line| (*line).to_owned()).collect();
+        items(&lines, machine)
+            .into_iter()
+            .map(|item| (item.owner, item.owner_name))
+            .collect()
+    }
+
+    #[test]
+    fn a_unix_listing_keeps_the_owner_name_the_server_gives() {
+        let listed = owners(
+            &[
+                "drwxr-xr-x    2 www-data ftp          4096 Sep 29 10:00 logs",
+                "-rw-r--r--    1 1000     1000           12 Sep 29 10:00 notes.txt",
+                "lrwxrwxrwx    1 Admin    ftp             4 Sep 29 10:00 link -> logs",
+            ],
+            false,
+        );
+        assert_eq!(
+            listed,
+            [
+                (None, Some("www-data".to_owned())),
+                // A number is the user number, read as such: no name.
+                (Some(1000), None),
+                (None, Some("Admin".to_owned())),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dos_listing_names_no_owner() {
+        let listed = owners(&["10-13-26  10:00AM       <DIR>          logs"], false);
+        assert_eq!(listed, [(None, None)]);
+    }
+
+    #[test]
+    fn a_machine_listing_names_the_owner_by_its_facts_the_most_explicit_first() {
+        let listed = owners(
+            &[
+                "type=file;size=1;UNIX.owner=1000;UNIX.ownername=alice;UNIX.uid=1000; a",
+                "type=file;size=1;unix.owner=bob; b",
+                "type=file;size=1;unix.uid=1001;unix.owner=1001; c",
+                "type=file;size=1; d",
+                // ProFTPD's number, which the parser does not read: the user number.
+                "type=file;UNIX.owner=1000; e",
+                // A ";" in the name is no fact of its owner.
+                "type=file;size=1; f;UNIX.owner=eve;UNIX.ownername=mallory",
+                "type=file;size=1; g;UNIX.owner=7",
+            ],
+            true,
+        );
+        assert_eq!(
+            listed[..5],
+            [
+                (Some(1000), Some("alice".to_owned())),
+                (None, Some("bob".to_owned())),
+                (Some(1001), None),
+                (None, None),
+                (Some(1000), None),
+            ]
+        );
+        // Whatever the parser makes of the name itself, no owner is taken from it.
+        assert_eq!(listed[5..], [(None, None), (None, None)]);
+    }
+
+    #[test]
+    fn an_owner_is_taken_from_a_rewritten_line_where_the_server_put_it() {
+        // An ACL mark after the mode and a device's two numbers: the line is rewritten for
+        // the parser, and its owner is still the server's third field, never another one.
+        for (line, owner) in [
+            (
+                "-rw-r--r--+  1 julien   staff          12 Sep 29 10:00 acl.txt",
+                "julien",
+            ),
+            (
+                "crw-r--r--   1 root     root       4,   1 Sep 29 10:00 tty1",
+                "root",
+            ),
+        ] {
+            assert_eq!(
+                owners(&[line], false),
+                [(None, Some(owner.to_owned()))],
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_owner_field_is_read_where_its_line_puts_it() {
+        assert_eq!(
+            unix_owner("-rw-r--r-- 1 julien staff 12 Sep 29 10:00 a b c").as_deref(),
+            Some("julien")
+        );
+        assert_eq!(unix_owner("-rw-r--r-- 1"), None);
+        // Fields parted by spaces only, as the parser parts them: a tab or a no-break
+        // space stays inside the owner.
+        assert_eq!(
+            unix_owner("-rw-r--r-- 1 a\tb staff 12 Sep 29 10:00 f").as_deref(),
+            Some("a\tb")
+        );
+        assert_eq!(
+            unix_owner("-rw-r--r-- 1 j\u{a0}d staff 12 Sep 29 10:00 f").as_deref(),
+            Some("j\u{a0}d")
+        );
+        assert_eq!(
+            owners(&["-rw-r--r-- 1 a\tb staff 12 Sep 29 10:00 f"], false),
+            [(None, Some("a\tb".to_owned()))],
+            "the parser reads the same line"
+        );
+        // The entry's name is never read as a fact, even with a "=" in it.
+        assert_eq!(
+            machine_owner("type=file;size=1; unix.owner=eve"),
+            Owner::default()
+        );
+        assert_eq!(machine_owner("no-facts"), Owner::default());
+    }
+
+    type Read = (String, ItemKind, Option<u64>, Option<u32>, Option<String>);
+
+    fn read(line: &str) -> Vec<Read> {
+        items(&[line.to_owned()], false)
+            .into_iter()
+            .map(|item| {
+                (
+                    String::from_utf8_lossy(&item.name).into_owned(),
+                    item.kind,
+                    item.size,
+                    item.group,
+                    item.owner_name,
+                )
+            })
+            .collect()
+    }
+
+    fn named(
+        name: &str,
+        kind: ItemKind,
+        size: Option<u64>,
+        group: Option<u32>,
+        owner: &str,
+    ) -> Read {
+        (name.to_owned(), kind, size, group, Some(owner.to_owned()))
+    }
+
+    #[test]
+    fn a_unix_listing_keeps_the_entries_the_strict_parser_refuses_as_the_c_sharp_lists_them() {
+        use crate::Special;
+
+        let device = ItemKind::Other(Special::Device);
+        for (line, expected) in [
+            // A Linux ACL mark, a macOS extended attribute one, an SELinux context one.
+            (
+                "-rw-r--r--+ 1 alice staff 12 Sep 29 10:00 f",
+                named("f", ItemKind::File, Some(12), None, "alice"),
+            ),
+            (
+                "drwxr-xr-x@ 3 bob staff 96 Oct 1 2025 d",
+                named("d", ItemKind::Directory, Some(96), None, "bob"),
+            ),
+            (
+                "-rw-r--r--.  1 carol    50     5 Sep 29 10:00 se",
+                named("se", ItemKind::File, Some(5), Some(50), "carol"),
+            ),
+            // Devices: their major and minor numbers are no size.
+            (
+                "crw-rw-rw- 1 root root 1, 3 Oct 1 10:00 null",
+                named("null", device, None, None, "root"),
+            ),
+            (
+                "brw-rw----   1 root     disk       8,   0 Oct  1 10:00 sda",
+                named("sda", device, None, None, "root"),
+            ),
+            (
+                "crw--w----+ 1 root tty 4,1 Oct 1 10:00 tty1",
+                named("tty1", device, None, None, "root"),
+            ),
+            (
+                "crw-rw-rw- 1 root 1, 3 Oct 1 10:00 null",
+                named("null", device, None, None, "root"),
+            ),
+            // A pipe, a socket, and a type the C# does not name either.
+            (
+                "prw-r--r-- 1 dave staff 0 Oct 1 10:00 fifo",
+                named(
+                    "fifo",
+                    ItemKind::Other(Special::Pipe),
+                    Some(0),
+                    None,
+                    "dave",
+                ),
+            ),
+            (
+                "srwxrwxrwx 1 dave staff 0 Oct 1 10:00 sock",
+                named(
+                    "sock",
+                    ItemKind::Other(Special::Socket),
+                    Some(0),
+                    None,
+                    "dave",
+                ),
+            ),
+            (
+                "Drw-r--r-- 1 dave staff 0 Oct 1 10:00 door",
+                named(
+                    "door",
+                    ItemKind::Other(Special::Unknown),
+                    Some(0),
+                    None,
+                    "dave",
+                ),
+            ),
+            // No group column; the name keeps its spaces.
+            (
+                "-rw-r--r-- 1 erin 12 Sep 29 10:00 no group.txt",
+                named("no group.txt", ItemKind::File, Some(12), None, "erin"),
+            ),
+            (
+                "-rw-r--r--    1 erin          12 Sep 29 10:00  two  spaces ",
+                named(" two  spaces ", ItemKind::File, Some(12), None, "erin"),
+            ),
+            // A link with a mark: its name stops at the "->", as for a strict line.
+            (
+                "lrwxrwxrwx@ 1 frank staff 4 Sep 29 10:00 my link -> some target",
+                named("my link", ItemKind::Link, Some(4), None, "frank"),
+            ),
+        ] {
+            assert_eq!(read(line), [expected], "{line}");
+        }
+        // A number for the owner is its user number, as for a strict line.
+        let numbered = items(
+            &["-rw-r--r--+ 1 1000 1000 12 Sep 29 10:00 f".to_owned()],
+            false,
+        );
+        assert_eq!(
+            numbered
+                .iter()
+                .map(|item| (item.owner, item.group, item.owner_name.clone()))
+                .collect::<Vec<_>>(),
+            [(Some(1000), Some(1000), None)]
+        );
+    }
+
+    #[test]
+    fn a_rewritten_line_keeps_its_date_and_name_exactly() {
+        let line = "-rw-r--r--+   1 alice  staff   12 Sep 29 10:00   a  b -> c";
+        assert_eq!(
+            tolerated(line).map(|tolerated| tolerated.line).as_deref(),
+            Some("-rw-r--r-- 1 alice staff 12 Sep 29 10:00   a  b -> c")
+        );
+        // A line the strict parser reads is never rewritten into another.
+        assert_eq!(
+            tolerated("-rw-r--r-- 1 alice staff 12 Sep 29 10:00 f"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_line_no_shape_reads_stays_left_out() {
+        for line in [
+            "",
+            "total 3",
+            "-rw-r--r--+",
+            "-rw-r--r--! 1 alice staff 12 Sep 29 10:00 f",
+            "-rw-r--r--++ 1 alice staff 12 Sep 29 10:00 f",
+            "-rw-r--r--+ 1 alice staff twelve Sep 29 10:00 f",
+            "-rw-r--r--+ x alice staff 12 Sep 29 10:00 f",
+            "-rw-r--r--+ 1 alice staff 12 Sep 29 10:00",
+            "-rw-r--r--+ 1 alice two groups 12 Sep 29 10:00 f",
+            "crw-rw-rw- 1 root root 1, Oct 1 10:00 null",
+            "crw-rw-rw- 1 root root ,3 Oct 1 10:00 null",
+            "-rw-r--r--+ 1 alice staff 12 Sep 99 10:00 f",
+            "-rw-r--r--+ 1 alice staff 12 Sép 29 10:00 f",
+            "-rw-r--r--+ 1 a\tb staff 12 Sep 29 10:00 f",
+            "-rwXr--r--+ 1 alice staff 12 Sep 29 10:00 f",
+            "é-rw-r--r-- 1 alice staff 12 Sep 29 10:00 f",
+            "-rw-r--r-é 1 alice staff 12 Sep 29 10:00 f",
+            // A device's numbers on a file's line, and an ISO date no parser reads.
+            "-rw-r--r-- 1 u g 1, 3 Oct 1 10:00 f",
+            "-rw-r--r--+ 1 u g 1,3 Oct 1 10:00 f",
+            "-rw-r--r-- 1 u g 12 2025-10-01 10:00 f",
+            "-rw-r--r--+ 1 u g 12 2025-10-01 10:00 f",
+        ] {
+            assert_eq!(read(line), [], "{line:?}");
+        }
+    }
+
+    #[test]
+    fn a_name_keeps_its_leading_spaces_so_two_entries_never_collide() {
+        let listed = kinds(
+            &[
+                "-rw-r--r-- 1 alice staff 1 Sep 29 10:00 a",
+                "-rw-r--r-- 1 alice staff 2 Sep 29 10:00  a",
+                "-rw-r--r--+ 1 alice staff 3 Sep 29 10:00   a",
+                "lrwxrwxrwx 1 alice staff 4 Sep 29 10:00  l -> a",
+            ],
+            false,
+        );
+        assert_eq!(
+            listed,
+            [
+                ("a".to_owned(), ItemKind::File),
+                (" a".to_owned(), ItemKind::File),
+                ("  a".to_owned(), ItemKind::File),
+                (" l".to_owned(), ItemKind::Link),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_is_read_after_the_date_whatever_it_holds() {
+        for (line, name, owner) in [
+            // A name holding a date: the first date is the line's.
+            (
+                "-rw-r--r--+ 1 a s 12 Sep 29 10:00 Oct 1 2020 x",
+                "Oct 1 2020 x",
+                "a",
+            ),
+            (
+                "-rw-r--r-- 1 a s 12 Sep 29 10:00 Oct 1 2020 x",
+                "Oct 1 2020 x",
+                "a",
+            ),
+            // A group that reads as a month is still the group.
+            ("-rw-r--r--+ 1 a Mar 12 Sep 29 10:00 x", "x", "a"),
+            ("-rw-r--r--+ 1 a Mar 1 Sep 29 2020 x", "x", "a"),
+        ] {
+            let read: Vec<(String, Option<String>)> = read(line)
+                .into_iter()
+                .map(|(name, _, _, _, owner)| (name, owner))
+                .collect();
+            assert_eq!(read, [(name.to_owned(), Some(owner.to_owned()))], "{line}");
+        }
+    }
+
+    #[test]
+    fn a_name_that_is_not_one_clean_segment_never_enters_a_listing() {
+        // A hostile server's names, joined to a folder, would reach outside it: left out
+        // as the C# `SftpPathGuard.IsValidChildName` leaves them out.
+        let unix = [
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 ../../etc/passwd",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 a/b",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 ..\\x",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00  .. ",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 a\u{1b}[2J",
+            "-rw-r--r--+ 1 a s 1 Sep 29 10:00 /root",
+            "lrwxrwxrwx 1 a s 1 Sep 29 10:00 ../x -> y",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 kept",
+        ];
+        assert_eq!(kinds(&unix, false), [("kept".to_owned(), ItemKind::File)]);
+        let machine = [
+            "type=file;size=1; ../x",
+            "type=file;size=1; a\\b",
+            "type=dir; /",
+            "type=file;size=1; kept",
+        ];
+        assert_eq!(kinds(&machine, true), [("kept".to_owned(), ItemKind::File)]);
+        assert_eq!(
+            kinds(&["10-13-26  10:00AM                 1 ..\\x"], false),
+            []
+        );
+    }
+
+    #[test]
+    fn the_names_a_listing_leaves_out_are_counted_apart_from_the_lines_that_do_not_read() {
+        let lines: Vec<String> = [
+            "total 3",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 a/b",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 ..\\x",
+            "drwxr-xr-x 1 a s 1 Sep 29 10:00 ..",
+            "not a listing line",
+            "-rw-r--r-- 1 a s 1 Sep 29 10:00 kept",
+        ]
+        .iter()
+        .map(|line| (*line).to_owned())
+        .collect();
+        let read = read_lines(&lines, false);
+        assert_eq!(read.items.len(), 1);
+        // `..` is no entry, and the summary line is no line left out.
+        assert_eq!(
+            read.left_out,
+            LeftOut {
+                unsafe_names: 2,
+                unread_lines: 1
+            }
+        );
+        let clean = read_lines(&lines[5..], false);
+        assert!(!clean.left_out.any());
+    }
+
+    #[test]
+    fn no_listing_line_panics_the_parser() {
+        // Fragments of real lines, and characters that cut them where no parser expects:
+        // a seeded xorshift picks them, the same lines every run.
+        const PIECES: [&str; 24] = [
+            "-rw-r--r--",
+            "crw-rw-rw-",
+            "drwxr-xr-x",
+            "+",
+            "@",
+            ".",
+            " ",
+            "  ",
+            "1",
+            "1,",
+            "3",
+            "root",
+            "staff",
+            "12",
+            "Sep",
+            "29",
+            "10:00",
+            "2025",
+            "->",
+            "é",
+            "\t",
+            "\u{a0}",
+            "total",
+            ",",
+        ];
+        const LINES: usize = 20_000;
+        const MOST_PIECES: u64 = 24;
+        const READS: [&str; 2] = [
+            "crw-rw-rw-+ 1 root 1, 3 Oct 1 10:00 a b -> c",
+            "lrwxrwxrwx@ 1 root staff 4 Oct 1 10:00  a -> b -> c",
+        ];
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut read_lines = 0usize;
+        for round in 0..LINES {
+            let pick = |at: u64| {
+                usize::try_from(at)
+                    .ok()
+                    .and_then(|at| PIECES.get(at % PIECES.len()))
+            };
+            let line: String = if round % 2 == 0 {
+                // Pieces put together.
+                let count = next() % MOST_PIECES;
+                (0..count).filter_map(|_| pick(next()).copied()).collect()
+            } else {
+                // A line that reads, a piece put in it anywhere.
+                let mut line = String::from(READS[round / 2 % READS.len()]);
+                let at = usize::try_from(next()).unwrap_or_default() % (line.len() + 1);
+                let at = (0..=at)
+                    .rev()
+                    .find(|&at| line.is_char_boundary(at))
+                    .unwrap_or_default();
+                line.insert_str(at, pick(next()).copied().unwrap_or_default());
+                line
+            };
+            for item in items(std::slice::from_ref(&line), false) {
+                read_lines += 1;
+                // Whatever the line, the name read is the line's own, never cut or moved.
+                let name = String::from_utf8_lossy(&item.name);
+                if item.kind == ItemKind::Link {
+                    assert!(
+                        line.contains(&format!("{name} -> ")) || line.ends_with(&*name),
+                        "{line:?}: {name:?}"
+                    );
+                } else {
+                    assert!(line.ends_with(&*name), "{line:?}: {name:?}");
+                }
+            }
+        }
+        // The lines a piece left readable did read: the loop did reach the parsers.
+        assert!(read_lines > 0);
     }
 
     #[test]

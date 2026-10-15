@@ -149,7 +149,7 @@ impl App {
         let Some(client) = files.client.clone() else {
             return Vec::new();
         };
-        let remote = files.remote.path.join(&entry.name);
+        let remote = files.remote.entries_folder().join(&entry.name);
         let id = EditorId::fresh();
         files.editor = Some(IntegratedEdit {
             id,
@@ -218,7 +218,7 @@ impl App {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        let path = files.remote.path.clone();
+        let path = files.remote.entries_folder().clone();
         let Some(index) = files
             .remote
             .entries

@@ -30,7 +30,8 @@ use std::time::SystemTime;
 use heimdall_app::external_edit::EditSession;
 use heimdall_app::files::{
     Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
-    SortColumn, Special, Transfer, TransferState, local_segments, remote_segments, symbolic_mode,
+    SortColumn, Special, Transfer, TransferState, local_segments, owner_text, remote_segments,
+    symbolic_mode,
 };
 use heimdall_app::local_properties::LocalProperties;
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
@@ -44,6 +45,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Font, Length, Theme};
 
+use crate::ellipsis;
 use crate::i18n::fl;
 use crate::icons::{self, Hue, Icon, Tint};
 use crate::shell::Message;
@@ -65,8 +67,13 @@ const MODIFIED_WIDTH: f32 = 130.0;
 /// Width of the permissions column until resized, in logical pixels.
 const PERMISSIONS_WIDTH: f32 = 90.0;
 
-/// Width of the owner column until resized, in logical pixels.
-const OWNER_WIDTH: f32 = 55.0;
+/// Width of the owner column until resized, in logical pixels, as the C#
+/// `EmbeddedSftpView.xaml` column's.
+const OWNER_WIDTH: f32 = 90.0;
+
+/// The owner column's cell when the server said no owner, as the C# FTP listing's
+/// (`FtpBrowser.cs` `MapFtpItemToFileInfo`).
+const UNKNOWN_OWNER: &str = "-";
 
 /// Narrowest the size column is resized to, in logical pixels.
 const SIZE_MIN_WIDTH: f32 = 40.0;
@@ -445,12 +452,9 @@ fn kind_name(kind: EntryKind) -> String {
     }
 }
 
-/// `line` with what `entry` is, as the C# row's tooltip: its name, its type, its size, when
-/// it changed to the second, and its permissions.
-fn row_tooltip<'a, E: Listed>(
-    line: iced::widget::Button<'a, Message>,
-    entry: &E,
-) -> Element<'a, Message> {
+/// What `entry` is, as the C# row's tooltip says it: its name, its type, its size, when it
+/// changed to the second, its permissions and its owner.
+fn row_tooltip_lines<E: Listed>(entry: &E) -> Vec<String> {
     let mut lines = vec![
         entry.label().to_owned(),
         fl!("ui-files-tooltip-type", kind = kind_name(entry.kind())),
@@ -467,9 +471,22 @@ fn row_tooltip<'a, E: Listed>(
             permissions = symbolic_mode(mode)
         ));
     }
+    // The owner, which its column may cut, as the C# owner cell's tooltip says it whole.
+    let owner = owner_text(entry);
+    if !owner.is_empty() {
+        lines.push(fl!("ui-files-tooltip-owner", owner = owner));
+    }
+    lines
+}
+
+/// `line` with [`row_tooltip_lines`] in its tooltip.
+fn row_tooltip<'a, E: Listed>(
+    line: iced::widget::Button<'a, Message>,
+    entry: &E,
+) -> Element<'a, Message> {
     tooltip(
         line,
-        text(lines.join("\n")).size(font_size::CAPTION),
+        text(row_tooltip_lines(entry).join("\n")).size(font_size::CAPTION),
         tooltip::Position::FollowCursor,
     )
     .delay(ROW_TOOLTIP_DELAY)
@@ -517,7 +534,13 @@ pub fn properties<'a>(
                 .map(|mode| format!("{} ({mode:o})", symbolic_mode(mode)))
                 .unwrap_or_default(),
         ),
-        (fl!("ui-files-properties-owner"), number(properties.owner)),
+        (
+            fl!("ui-files-properties-owner"),
+            properties
+                .owner_name
+                .clone()
+                .unwrap_or_else(|| number(properties.owner)),
+        ),
         (fl!("ui-files-properties-group"), number(properties.group)),
         (fl!("ui-files-properties-path"), properties.path.clone()),
     ];
@@ -623,7 +646,14 @@ fn cell_text<E: Listed>(entry: &E, column: SortColumn) -> String {
         },
         SortColumn::Modified => entry.modified().map(modified_text).unwrap_or_default(),
         SortColumn::Permissions => entry.permissions().map(symbolic_mode).unwrap_or_default(),
-        SortColumn::Owner => entry.owner().map(|uid| uid.to_string()).unwrap_or_default(),
+        SortColumn::Owner => {
+            let owner = owner_text(entry);
+            if owner.is_empty() {
+                UNKNOWN_OWNER.to_owned()
+            } else {
+                owner
+            }
+        }
     }
 }
 
@@ -673,11 +703,12 @@ fn headers<'a, E: Listed>(
         .iter()
         .zip(laid.iter().copied())
         .map(|(column, width)| {
+            // On one line, ended with an ellipsis where the column ends, as the C# header's.
             button(
-                text(column_title(*column, sort))
+                ellipsis::text(column_title(*column, sort))
+                    .width(Length::Fill)
                     .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .wrapping(text::Wrapping::None),
+                    .style(text::secondary),
             )
             .style(styles::subtle)
             .padding(0)
@@ -798,7 +829,9 @@ fn entry_row<'a, E: Listed>(
     let on_press = files(FilesMessage::Select { tab, side, index });
     let mut cells = row![].spacing(spacing::SM);
     for (column, width) in columns.iter().zip(laid.iter().copied()) {
-        let cell = text(cell_text(entry, *column)).wrapping(text::Wrapping::None);
+        // On one line, ended with an ellipsis where the column ends, as the C# cells'
+        // `TextTrimming="CharacterEllipsis"`; the row's tooltip says the whole of it.
+        let cell = ellipsis::text(cell_text(entry, *column)).width(Length::Fill);
         let cell: Element<'a, Message> = match cell_size(*column) {
             Some(small) => cell.size(small).into(),
             None => row![entry_icon(entry, side), cell]
@@ -1164,6 +1197,9 @@ struct PaneParts<'p, E> {
     counts: (usize, usize),
     loading: bool,
     error: Option<&'p FilesError>,
+    /// What its last listing left out, and whether a terminal on the server is at hand to
+    /// reach what it hid: over SSH, not over FTP.
+    left_out: (heimdall_files::LeftOut, bool),
     focused: bool,
     /// Where the pane can go besides up.
     moves: Moves,
@@ -1438,6 +1474,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         counts: (total, unhidden),
         loading,
         error,
+        left_out,
         focused,
         moves,
         batch,
@@ -1501,7 +1538,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         (chosen, chosen_size(entries, selected, marked)),
     );
     pane_frame(
-        pane_notes(content, tab, (toggles.sudo, error, batch))
+        pane_notes(content, tab, (toggles.sudo, error, left_out, batch))
             .push(listing)
             .push(pane_rule())
             .push(footer),
@@ -1512,14 +1549,16 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
 }
 
 /// What a pane says above its entries: listed as root, as the C# status says it while the
-/// sudo mode is on; why the last listing failed; where its delete or change of permissions
-/// is.
+/// sudo mode is on; why the last listing failed; how many entries it hid, their names not
+/// safe to use here, and how many of its lines did not read, where the C# only writes a
+/// warning to its log; where its delete or change of permissions is.
 fn pane_notes<'a>(
     mut content: Column<'a, Message>,
     tab: TabId,
-    (sudo, error, batch): (
+    (sudo, error, (left_out, terminal), batch): (
         Option<bool>,
         Option<&FilesError>,
+        (heimdall_files::LeftOut, bool),
         Option<&heimdall_app::files::Batch>,
     ),
 ) -> Column<'a, Message> {
@@ -1533,10 +1572,32 @@ fn pane_notes<'a>(
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(font_size::CAPTION));
     }
+    for note in left_out_notes(left_out, terminal) {
+        content = content.push(text(note).size(font_size::CAPTION).style(text::warning));
+    }
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
     }
     content
+}
+
+/// What a pane says of what its listing left out: the counts alone, the names and lines
+/// being what cannot be shown safely. The terminal is advised only where there is one, over
+/// SSH; an FTP tab has none.
+fn left_out_notes(left_out: heimdall_files::LeftOut, terminal: bool) -> Vec<String> {
+    let mut notes = Vec::new();
+    let count = left_out.unsafe_names;
+    if count > 0 {
+        notes.push(if terminal {
+            fl!("ui-files-hidden-unsafe-terminal", count = count)
+        } else {
+            fl!("ui-files-hidden-unsafe", count = count)
+        });
+    }
+    if left_out.unread_lines > 0 {
+        notes.push(fl!("ui-files-unread-lines", count = left_out.unread_lines));
+    }
+    notes
 }
 
 /// The size of the files among the entries chosen, as the C# selection line adds them;
@@ -1862,6 +1923,7 @@ pub fn view(
         counts: files_pane.local.counts(),
         loading: files_pane.local.loading,
         error: files_pane.local.error.as_ref(),
+        left_out: (files_pane.local.left_out, false),
         focused: files_pane.focus == Side::Local,
         moves: Moves {
             back: files_pane.local.can_go_back(),
@@ -1894,6 +1956,7 @@ pub fn view(
         counts: files_pane.remote.counts(),
         loading: files_pane.remote.loading,
         error: files_pane.remote.error.as_ref(),
+        left_out: (files_pane.remote.left_out, files_pane.shell.is_some()),
         focused: files_pane.focus == Side::Remote,
         moves: Moves {
             back: files_pane.remote.can_go_back(),
@@ -2062,6 +2125,60 @@ fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Messa
 mod tests {
     use super::*;
 
+    #[test]
+    fn what_a_listing_left_out_is_counted_and_the_terminal_advised_only_over_ssh() {
+        let left_out = heimdall_files::LeftOut {
+            unsafe_names: 2,
+            unread_lines: 3,
+        };
+        assert_eq!(
+            left_out_notes(left_out, true),
+            [
+                "2 entries hidden: their names are not safe to use here; use the terminal",
+                "3 lines of the listing could not be read",
+            ]
+        );
+        assert_eq!(
+            left_out_notes(left_out, false),
+            [
+                "2 entries hidden: their names are not safe to use here",
+                "3 lines of the listing could not be read",
+            ]
+        );
+        let one = heimdall_files::LeftOut {
+            unsafe_names: 1,
+            unread_lines: 1,
+        };
+        assert_eq!(
+            left_out_notes(one, false),
+            [
+                "1 entry hidden: its name is not safe to use here",
+                "1 line of the listing could not be read",
+            ]
+        );
+        assert!(left_out_notes(heimdall_files::LeftOut::default(), true).is_empty());
+    }
+
+    /// An FTP tab has no terminal: in no language does the wording it shows advise one.
+    #[test]
+    fn the_wording_without_a_terminal_names_none_in_any_language() {
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for language in heimdall_i18n::SUPPORTED_LANGUAGES {
+            let path = heimdall_i18n::ftl_path(crate_root, language, env!("CARGO_PKG_NAME"));
+            let source = std::fs::read_to_string(&path).expect("readable");
+            let message: Vec<&str> = source
+                .lines()
+                .skip_while(|line| !line.starts_with("ui-files-hidden-unsafe = "))
+                .take_while(|line| *line != "}")
+                .collect();
+            assert!(message.len() > 1, "{language}: {message:?}");
+            assert!(
+                message.iter().all(|line| !line.contains("terminal")),
+                "{language}: {message:?}"
+            );
+        }
+    }
+
     fn named(key: Named) -> keyboard::Key {
         keyboard::Key::Named(key)
     }
@@ -2082,6 +2199,54 @@ mod tests {
         fn modified(&self) -> Option<SystemTime> {
             None
         }
+    }
+
+    /// An entry of a server's list with only an owner: its number, its name.
+    struct Owned(Option<u32>, Option<&'static str>);
+
+    impl Owned {
+        /// Every owned entry's name.
+        const LABEL: &'static str = "notes.txt";
+    }
+
+    impl Listed for Owned {
+        fn kind(&self) -> EntryKind {
+            EntryKind::File
+        }
+        fn label(&self) -> &str {
+            Self::LABEL
+        }
+        fn size(&self) -> Option<u64> {
+            None
+        }
+        fn modified(&self) -> Option<SystemTime> {
+            None
+        }
+        fn owner(&self) -> Option<u32> {
+            self.0
+        }
+        fn owner_name(&self) -> Option<&str> {
+            self.1
+        }
+    }
+
+    #[test]
+    fn the_owner_column_says_the_name_else_the_number_else_a_dash_as_the_csharp() {
+        let cell = |owned: &Owned| cell_text(owned, SortColumn::Owner);
+        assert_eq!(cell(&Owned(Some(33), Some("www-data"))), "www-data");
+        assert_eq!(cell(&Owned(Some(1000), None)), "1000");
+        assert_eq!(cell(&Owned(None, None)), UNKNOWN_OWNER);
+    }
+
+    #[test]
+    fn the_row_tooltip_says_the_owner_when_there_is_one() {
+        let lines = row_tooltip_lines(&Owned(Some(33), Some("www-data")));
+        assert_eq!(
+            lines.last(),
+            Some(&fl!("ui-files-tooltip-owner", owner = "www-data"))
+        );
+        // Its name and its type only: no owner line, no dash.
+        assert_eq!(row_tooltip_lines(&Owned(None, None)).len(), 2);
     }
 
     #[test]

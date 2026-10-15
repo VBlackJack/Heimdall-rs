@@ -28,8 +28,8 @@ use heimdall_files::RemoteSession;
 
 use crate::files::{
     Batch, BatchKind, Direction, EntryKind, FileOperation, FileProperties, FilesError, FilesKey,
-    FilesPane, PlanRequest, PlannedRoot, Side, SortColumn, Transfer, TransferEvent, TransferId,
-    TransferRequest, TransferState, Waiting, download_name, octal_mode, typed_name,
+    FilesPane, ListingRequest, PlanRequest, PlannedRoot, Side, SortColumn, Transfer, TransferEvent,
+    TransferId, TransferRequest, TransferState, Waiting, download_name, octal_mode, typed_name,
 };
 use crate::ids::TabId;
 use crate::sudo_mode::SudoAccess;
@@ -44,13 +44,17 @@ pub enum FilesMessage {
     RemoteListed {
         /// Tab.
         tab: TabId,
-        /// The folder, absolute, and its entries; or why not.
-        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+        /// Which listing.
+        request: ListingRequest,
+        /// The folder, absolute, its entries, and what was left out; or why not.
+        result: Result<crate::files::RemoteListing, FilesError>,
     },
     /// A local listing arrived.
     LocalListed {
         /// Tab.
         tab: TabId,
+        /// Which listing.
+        request: ListingRequest,
         /// The folder and its entries; or why not.
         result: Result<(PathBuf, Vec<crate::files::LocalEntry>), FilesError>,
     },
@@ -389,10 +393,12 @@ pub enum FilesMessage {
     SudoListed {
         /// Tab.
         tab: TabId,
+        /// Which listing.
+        request: ListingRequest,
         /// The folder asked for.
         path: RemotePath,
-        /// The folder, absolute, and its entries; or why not.
-        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+        /// The folder, absolute, its entries, and what was left out; or why not.
+        result: Result<crate::files::RemoteListing, FilesError>,
     },
     /// Show the folder of an edit's local copy.
     EditOpenFolder {
@@ -702,13 +708,13 @@ impl std::fmt::Debug for FilesMessage {
     #[expect(clippy::too_many_lines, reason = "one arm per message")]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RemoteListed { tab, result } => write!(
+            Self::RemoteListed { tab, result, .. } => write!(
                 f,
                 "RemoteListed({}, {})",
                 tab.value(),
-                result.as_ref().map_or(0, |(_, entries)| entries.len())
+                result.as_ref().map_or(0, |(_, entries, _)| entries.len())
             ),
-            Self::LocalListed { tab, result } => write!(
+            Self::LocalListed { tab, result, .. } => write!(
                 f,
                 "LocalListed({}, {})",
                 tab.value(),
@@ -791,7 +797,7 @@ impl std::fmt::Debug for FilesMessage {
                 f,
                 "SudoListed({}, {})",
                 tab.value(),
-                result.as_ref().map_or(0, |(_, entries)| entries.len())
+                result.as_ref().map_or(0, |(_, entries, _)| entries.len())
             ),
             Self::EditStop { tab, .. } => write!(f, "EditStop({})", tab.value()),
             Self::EditsChecked { tab, results } => {
@@ -957,6 +963,16 @@ fn name_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
     name.to_string_lossy().into_owned().into_bytes()
 }
 
+/// The listing of the local folder `path` in `tab`, the local pane's latest: any other one
+/// on its way is not shown.
+pub(super) fn local_listing(files: &mut FilesPane, tab: TabId, path: PathBuf) -> Effect {
+    Effect::ListLocal {
+        tab,
+        path,
+        request: files.local.ask_listing(),
+    }
+}
+
 impl App {
     pub(super) fn files_mut(&mut self, tab: TabId) -> Option<&mut FilesPane> {
         self.tab_mut(tab)?.files.as_deref_mut()
@@ -984,17 +1000,14 @@ impl App {
             }
         }
         let mut effects = Vec::new();
+        // As root when the sudo mode stayed on through a reconnection: the C# keeps it
+        // (`EmbeddedSftpViewModel.SudoMode` is only changed by its toggle).
         if let Some(client) = files.client.clone() {
-            effects.push(Effect::ListRemote {
-                tab,
-                client,
-                path: files.remote.path.clone(),
-            });
+            let path = files.remote.path.clone();
+            effects.push(super::files_sudo::remote_listing(files, tab, client, path));
         }
-        effects.push(Effect::ListLocal {
-            tab,
-            path: files.local.path.clone(),
-        });
+        let path = files.local.path.clone();
+        effects.push(local_listing(files, tab, path));
         effects
     }
 
@@ -1007,18 +1020,12 @@ impl App {
                 let Some(client) = files.client.clone() else {
                     return Vec::new();
                 };
-                files.remote.loading = true;
-                files.remote.discard_listing = false;
                 let path = files.remote.path.clone();
                 vec![super::files_sudo::remote_listing(files, tab, client, path)]
             }
             Side::Local => {
-                files.local.loading = true;
-                files.local.discard_listing = false;
-                vec![Effect::ListLocal {
-                    tab,
-                    path: files.local.path.clone(),
-                }]
+                let path = files.local.path.clone();
+                vec![local_listing(files, tab, path)]
             }
         }
     }
@@ -1029,32 +1036,31 @@ impl App {
     pub(super) fn remote_listed(
         &mut self,
         tab: TabId,
-        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+        request: ListingRequest,
+        result: Result<crate::files::RemoteListing, FilesError>,
     ) -> Vec<Effect> {
         let mut not_a_folder = None;
         if let Some(files) = self.files_mut(tab) {
             let pane = &mut files.remote;
-            // Given up with Escape: the folder shown stays.
-            if std::mem::take(&mut pane.discard_listing) {
+            // Asked for before another one, or given up with Escape: the folder shown stays.
+            if !pane.awaits(request) {
                 return Vec::new();
             }
-            pane.loading = false;
-            match (result, pane.entering_link.take()) {
-                (Ok((path, entries)), _) => {
+            match result {
+                Ok((path, entries, left_out)) => {
+                    pane.answered();
+                    pane.entering_link = None;
                     pane.arrived(&path);
                     pane.path = path;
                     pane.show(entries);
+                    // Said for this folder alone: the next listing says it again or not.
+                    pane.left_out = left_out;
                     pane.error = None;
                 }
-                (Err(_), Some((from, name))) => {
-                    pane.not_arrived();
-                    pane.path = from;
-                    not_a_folder = Some(name);
-                }
-                (Err(error), None) => {
-                    pane.not_arrived();
-                    pane.error = Some(error);
-                }
+                Err(error) => match pane.listing_failed() {
+                    Some(name) => not_a_folder = Some(name),
+                    None => pane.error = Some(error),
+                },
             }
         }
         if let Some(name) = not_a_folder {
@@ -1067,26 +1073,31 @@ impl App {
     fn local_listed(
         &mut self,
         tab: TabId,
+        request: ListingRequest,
         result: Result<(PathBuf, Vec<crate::files::LocalEntry>), FilesError>,
     ) -> Vec<Effect> {
+        // Asked for before another one, or given up with Escape: the folder shown stays.
+        if !self
+            .files_mut(tab)
+            .is_some_and(|files| files.local.awaits(request))
+        {
+            return Vec::new();
+        }
         if result.is_err() && self.local_browser_start_failed(tab) {
             return self.list(tab, Side::Local);
         }
         if let Some(files) = self.files_mut(tab) {
             let pane = &mut files.local;
-            if std::mem::take(&mut pane.discard_listing) {
-                return Vec::new();
-            }
-            pane.loading = false;
             match result {
                 Ok((path, entries)) => {
+                    pane.answered();
                     pane.arrived(&path);
                     pane.path = path;
                     pane.show(entries);
                     pane.error = None;
                 }
                 Err(error) => {
-                    pane.not_arrived();
+                    pane.listing_failed();
                     pane.error = Some(error);
                 }
             }
@@ -1103,9 +1114,22 @@ impl App {
             files.focus = side;
         }
         match message {
-            FilesMessage::RemoteListed { tab, result } => self.remote_listed(tab, result),
-            FilesMessage::SudoListed { tab, path, result } => self.sudo_listed(tab, path, result),
-            FilesMessage::LocalListed { tab, result } => self.local_listed(tab, result),
+            FilesMessage::RemoteListed {
+                tab,
+                request,
+                result,
+            } => self.remote_listed(tab, request, result),
+            FilesMessage::SudoListed {
+                tab,
+                request,
+                path,
+                result,
+            } => self.sudo_listed(tab, request, path, result),
+            FilesMessage::LocalListed {
+                tab,
+                request,
+                result,
+            } => self.local_listed(tab, request, result),
             FilesMessage::Select { tab, side, index } => self.select(tab, side, index),
             FilesMessage::AskNewFolder { tab, side } => self.ask(tab, side, NameAction::NewFolder),
             FilesMessage::AskRename { tab, side } => self.ask(tab, side, NameAction::Rename),
@@ -1479,8 +1503,6 @@ impl App {
         };
         files.focus = Side::Remote;
         files.remote.leave();
-        files.remote.loading = true;
-        files.remote.discard_listing = false;
         vec![super::files_sudo::remote_listing(files, tab, client, path)]
     }
 
@@ -1494,12 +1516,19 @@ impl App {
                 .remote
                 .selected
                 .and_then(|index| files.remote.entries.get(index))
-                .map(|entry| files.remote.path.join(&entry.name).display()),
+                .map(|entry| files.remote.entries_folder().join(&entry.name).display()),
             Side::Local => files
                 .local
                 .selected
                 .and_then(|index| files.local.entries.get(index))
-                .map(|entry| files.local.path.join(&entry.name).display().to_string()),
+                .map(|entry| {
+                    files
+                        .local
+                        .entries_folder()
+                        .join(&entry.name)
+                        .display()
+                        .to_string()
+                }),
         };
         let Some(path) = path else {
             return Vec::new();
@@ -1561,8 +1590,6 @@ impl App {
                     files.remote.path.join(typed.as_bytes())
                 };
                 files.remote.leave();
-                files.remote.loading = true;
-                files.remote.discard_listing = false;
                 vec![super::files_sudo::remote_listing(files, tab, client, path)]
             }
             Side::Local => {
@@ -1576,9 +1603,7 @@ impl App {
                 // Joining an absolute path gives that path.
                 let path = files.local.path.join(typed);
                 files.local.leave();
-                files.local.loading = true;
-                files.local.discard_listing = false;
-                vec![Effect::ListLocal { tab, path }]
+                vec![local_listing(files, tab, path)]
             }
         }
     }
@@ -1788,7 +1813,7 @@ impl App {
                     return Vec::new();
                 };
                 if entry.kind == EntryKind::Directory {
-                    let path = files.remote.path.join(&entry.name);
+                    let path = files.remote.entries_folder().join(&entry.name);
                     files.remote.leave();
                     files.remote.path = path;
                     return self.list(tab, side);
@@ -1796,12 +1821,19 @@ impl App {
                 // The listing does not say what a link points at; listing it tells. A link is
                 // never downloaded from here, as in the C# Files tab.
                 if entry.kind == EntryKind::Link {
-                    let from = files.remote.path.clone();
+                    let from = files.remote.entries_folder().clone();
                     let path = from.join(&entry.name);
-                    files.remote.entering_link = Some((from, entry.label.clone()));
+                    let name = entry.label.clone();
                     files.remote.leave();
                     files.remote.path = path;
-                    return self.list(tab, side);
+                    let effects = self.list(tab, side);
+                    // Tied to this listing: asking for another one forgets it.
+                    if !effects.is_empty()
+                        && let Some(files) = self.files_mut(tab)
+                    {
+                        files.remote.entering_link = Some((from, name));
+                    }
+                    return effects;
                 }
                 files.remote.select_only(Some(index));
                 // A text file is opened in the integrated editor, as the C# opens it.
@@ -1815,7 +1847,7 @@ impl App {
                     return Vec::new();
                 };
                 if entry.kind == EntryKind::Directory {
-                    let path = files.local.path.join(&entry.name);
+                    let path = files.local.entries_folder().join(&entry.name);
                     files.local.leave();
                     files.local.path = path;
                     return self.list(tab, side);
@@ -2276,6 +2308,8 @@ impl App {
 
 impl App {
     /// The selected entry of a pane: its label, both path forms, and whether it is a folder.
+    /// Its paths are in the folder it was listed from, not in one whose listing is on its
+    /// way or failed: the entries shown are still those of the first.
     fn selected(&mut self, tab: TabId, side: Side) -> Option<(String, RemotePath, PathBuf, bool)> {
         let files = self.files_mut(tab)?;
         match side {
@@ -2283,7 +2317,7 @@ impl App {
                 let entry = files.remote.entries.get(files.remote.selected?)?;
                 Some((
                     entry.label.clone(),
-                    files.remote.path.join(&entry.name),
+                    files.remote.entries_folder().join(&entry.name),
                     PathBuf::new(),
                     entry.kind == EntryKind::Directory,
                 ))
@@ -2293,7 +2327,7 @@ impl App {
                 Some((
                     entry.label.clone(),
                     RemotePath::default(),
-                    files.local.path.join(&entry.name),
+                    files.local.entries_folder().join(&entry.name),
                     entry.kind == EntryKind::Directory,
                 ))
             }
@@ -2321,8 +2355,9 @@ impl App {
             modified: entry.modified,
             permissions: entry.permissions,
             owner: entry.owner,
+            owner_name: entry.owner_name.clone(),
             group: entry.group,
-            path: crate::text::server_text(&pane.path.join(&entry.name).display()),
+            path: crate::text::server_text(&pane.entries_folder().join(&entry.name).display()),
         };
         self.dialog = Some(Dialog::FileProperties(Box::new(properties)));
     }
@@ -2341,7 +2376,7 @@ impl App {
                 .map(|entry| {
                     (
                         entry.label.clone(),
-                        files.remote.path.join(&entry.name),
+                        files.remote.entries_folder().join(&entry.name),
                         PathBuf::new(),
                         entry.kind == EntryKind::Directory,
                     )
@@ -2356,7 +2391,7 @@ impl App {
                     (
                         entry.label.clone(),
                         RemotePath::default(),
-                        files.local.path.join(&entry.name),
+                        files.local.entries_folder().join(&entry.name),
                         entry.kind == EntryKind::Directory,
                     )
                 })
@@ -2385,7 +2420,7 @@ impl App {
                     .chosen()
                     .into_iter()
                     .filter_map(|index| pane.entries.get(index))
-                    .map(|entry| (entry.label.clone(), pane.path.join(&entry.name)))
+                    .map(|entry| (entry.label.clone(), pane.entries_folder().join(&entry.name)))
                     .collect();
                 (PendingKind::Permissions { remotes }, value)
             }
@@ -2470,7 +2505,7 @@ impl App {
             .into_iter()
             .filter_map(|index| pane.entries.get(index))
             .map(|entry| {
-                let path = pane.path.join(&entry.name);
+                let path = pane.entries_folder().join(&entry.name);
                 deletable_as_root(path.as_bytes(), home.as_ref().map(RemotePath::as_bytes)).ok()?;
                 let removal = FileOperation::RemoteSudoRemove {
                     access: access.clone(),
@@ -2826,15 +2861,17 @@ impl App {
         }
         let destination = (
             match (onto, into) {
-                (Side::Local, Some(index)) => {
-                    files.local.path.join(&files.local.entries[index].name)
-                }
+                (Side::Local, Some(index)) => files
+                    .local
+                    .entries_folder()
+                    .join(&files.local.entries[index].name),
                 _ => files.local.path.clone(),
             },
             match (onto, into) {
-                (Side::Remote, Some(index)) => {
-                    files.remote.path.join(&files.remote.entries[index].name)
-                }
+                (Side::Remote, Some(index)) => files
+                    .remote
+                    .entries_folder()
+                    .join(&files.remote.entries[index].name),
                 _ => files.remote.path.clone(),
             },
         );
@@ -2870,17 +2907,22 @@ impl App {
                     return Vec::new();
                 };
                 let pane = &files.remote;
-                let target = pane.path.join(&pane.entries[folder].name);
+                let target = pane.entries_folder().join(&pane.entries[folder].name);
                 let moves = chosen
                     .iter()
                     .filter_map(|index| pane.entries.get(*index))
-                    .map(|entry| (pane.path.join(&entry.name), target.join(&entry.name)))
+                    .map(|entry| {
+                        (
+                            pane.entries_folder().join(&entry.name),
+                            target.join(&entry.name),
+                        )
+                    })
                     .collect();
                 vec![Effect::MoveRemote { tab, client, moves }]
             }
             Side::Local => {
                 let pane = &files.local;
-                let target = pane.path.join(&pane.entries[folder].name);
+                let target = pane.entries_folder().join(&pane.entries[folder].name);
                 chosen
                     .iter()
                     .filter_map(|index| pane.entries.get(*index))
@@ -2888,7 +2930,7 @@ impl App {
                         tab,
                         side,
                         operation: Box::new(FileOperation::LocalRename {
-                            from: pane.path.join(&entry.name),
+                            from: pane.entries_folder().join(&entry.name),
                             to: target.join(&entry.name),
                         }),
                     })
