@@ -365,6 +365,9 @@ fn a_card_pin_toggles_its_tool() {
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::Navigate(Destination::Tools));
     let mut ui = simulator(&shell);
+    // A card the window shows without scrolling: the network tools of batch 1 put the
+    // Encoding section, the URL encoder clicked before, below the simulated window, where a
+    // click finds nothing.
     ui.click(catalog::pin_id(ToolId::SubnetCalculator))
         .expect("pin");
     let messages: Vec<Message> = ui.into_messages().collect();

@@ -4334,129 +4334,159 @@ ui-tool-smb-help =
     - SMBv1 détecté (vulnérabilité EternalBlue)
 
 ui-tool-http-name = Codes de statut HTTP
-ui-tool-http-description = Guide de reference des codes de statut HTTP avec filtrage
+ui-tool-http-description = Guide de référence des codes de statut HTTP avec filtrage par catégorie
 ui-tool-http-filter-placeholder = Rechercher par code ou description...
 ui-tool-http-copy-hint = Cliquer pour copier
 ui-tool-http-no-results = Aucun code correspondant
-ui-tool-http-cat-1xx = 1xx Informationnel
-ui-tool-http-cat-2xx = 2xx Succes
+ui-tool-http-cat-1xx = 1xx Information
+ui-tool-http-cat-2xx = 2xx Succès
 ui-tool-http-cat-3xx = 3xx Redirection
 ui-tool-http-cat-4xx = 4xx Erreur client
 ui-tool-http-cat-5xx = 5xx Erreur serveur
 ui-tool-http-help =
     Codes de statut HTTP
 
-    Guide de reference pour les codes de statut HTTP standard.
+    Guide de référence des codes de statut HTTP standard.
 
-    Categories :
-    - 1xx : Informationnel (requete recue, traitement en cours)
-    - 2xx : Succes (action recue, comprise et acceptee)
-    - 3xx : Redirection (actions supplementaires requises)
-    - 4xx : Erreur client (syntaxe incorrecte ou impossible a traiter)
-    - 5xx : Erreur serveur (le serveur n'a pas pu traiter la requete)
+    Catégories :
+    - 1xx : Information (requête reçue, traitement en cours)
+    - 2xx : Succès (action reçue, comprise et acceptée)
+    - 3xx : Redirection (une action supplémentaire est nécessaire)
+    - 4xx : Erreur client (syntaxe incorrecte ou requête impossible à satisfaire)
+    - 5xx : Erreur serveur (le serveur n'a pas pu traiter une requête apparemment valide)
 
     Utilisation :
-    - Saisissez un terme dans la barre de recherche pour filtrer par code ou nom.
-    - Cliquez sur une entree pour copier le code et son intitule dans le presse-papiers.
+    - Saisissez un terme dans la zone de recherche pour filtrer par code ou par nom.
+    - Cliquez sur une entrée pour copier son code et son intitulé dans le presse-papiers.
+
+ui-tool-net-error-host-required = Veuillez entrer un nom d'hôte ou une adresse IP.
+ui-tool-net-error-invalid-host = Nom d'hôte ou adresse IP invalide. Seuls les lettres, chiffres, points et tirets sont autorisés.
+ui-tool-net-error-port = Le port doit être un nombre compris entre 1 et 65535.
+ui-tool-net-error-port-range = Veuillez entrer un port ou une plage de ports.
+ui-tool-net-reason-other = Échec de la connexion : { $detail }
+ui-tool-net-no-value = -
+ui-tool-net-millis = { $ms } ms
 
 ui-tool-tcpping-name = TCP Ping
-ui-tool-tcpping-description = Mesure de la latence de connexion TCP vers un hote et un port
-ui-tool-tcpping-host-label = Hote
+ui-tool-tcpping-description = Mesure de la latence de connexion TCP vers un hôte et un port
+ui-tool-tcpping-host-label = Hôte
 ui-tool-tcpping-host-placeholder = example.com ou 192.168.1.1
 ui-tool-tcpping-port-label = Port
 ui-tool-tcpping-count-label = Nombre
-ui-tool-tcpping-btn-start = Demarrer
-ui-tool-tcpping-btn-stop = Arreter
-ui-tool-tcpping-btn-copy = Copier les resultats
-ui-tool-tcpping-summary = Min : { $min } ms, Moy : { $avg } ms, Max : { $max } ms, Perdus : { $lost }/{ $total } ({ $pct }%)
-ui-tool-tcpping-empty-state = Entrez un hote et un port, puis cliquez sur Demarrer pour mesurer la latence de connexion
-ui-tool-tcpping-error-host-required = Veuillez saisir un nom d'hote ou une adresse IP.
-ui-tool-tcpping-error-count = Le nombre doit etre compris entre 1 et 10000.
+ui-tool-tcpping-btn-start = Démarrer
+ui-tool-tcpping-btn-stop = Arrêter
+ui-tool-tcpping-btn-copy = Copier les résultats
+ui-tool-tcpping-summary = Min : { $min } ms, Moy : { $avg } ms, Max : { $max } ms, Perdus : { $lost }/{ $total } ({ $pct } %)
+ui-tool-tcpping-summary-all-lost = Min : -, Moy : -, Max : -, Perdus : { $lost }/{ $total } ({ $pct } %)
+ui-tool-tcpping-probe-ok = [{ $seq }/{ $total }] { $target } - { $ms } ms
+ui-tool-tcpping-probe-failed = [{ $seq }/{ $total }] { $target } - ÉCHEC : { $reason }
+ui-tool-tcpping-empty-state = Entrez un hôte et un port, puis cliquez sur Démarrer pour mesurer la latence de connexion TCP
+ui-tool-tcpping-error-count = Le nombre doit être compris entre 1 et 10000.
 ui-tool-tcpping-help =
     Outil TCP Ping
 
-    Mesure la latence de connexion TCP vers un hote et un port cibles.
-    Contrairement au ping ICMP, le ping TCP traverse les pare-feu bloquant les paquets echo ICMP.
+    Mesure la latence de la poignée de main TCP vers un hôte et un port cibles.
+    Contrairement au ping ICMP, le ping TCP traverse les pare-feu qui bloquent les requêtes echo ICMP.
 
     Utilisation :
-    1. Saisissez l'hote ou l'adresse IP cible.
-    2. Saisissez le numero de port (par defaut : 443).
-    3. Indiquez le nombre de sondes a envoyer (par defaut : 10).
-    4. Cliquez sur Demarrer pour lancer la mesure.
+    1. Saisissez le nom d'hôte ou l'adresse IP cible.
+    2. Saisissez le numéro de port (par défaut : 443).
+    3. Indiquez le nombre de sondes à envoyer (par défaut : 10, au plus 10000).
+    4. Cliquez sur Démarrer pour lancer la mesure ; Arrêter y met fin aussitôt.
+
+    Le nom d'hôte est résolu une seule fois, avant la première sonde : les temps affichés
+    sont ceux de la seule poignée de main. Les sondes sont espacées d'une seconde, et
+    chacune dispose de cinq secondes pour obtenir une réponse.
 
 ui-tool-wol-name = Wake-on-LAN
-ui-tool-wol-description = Envoi de paquets magiques pour allumer des machines sur le reseau
+ui-tool-wol-description = Envoi de paquets magiques pour allumer des machines sur le réseau
 ui-tool-wol-mac-label = Adresse MAC
 ui-tool-wol-mac-placeholder = AA:BB:CC:DD:EE:FF
 ui-tool-wol-broadcast-label = Adresse de diffusion
-ui-tool-wol-broadcast-placeholder = 255.255.255.255
 ui-tool-wol-port-label = Port UDP
-ui-tool-wol-btn-send = Envoyer Wake-on-LAN
-ui-tool-wol-status-sent = Paquet magique envoye a { $mac } via { $dest }
-ui-tool-wol-status-error = Erreur d'envoi : { $error }
+ui-tool-wol-btn-send = Envoyer le Wake-on-LAN
+ui-tool-wol-status-sending = Envoi du paquet magique...
+ui-tool-wol-status-sent = Paquet magique envoyé à { $mac } via { $dest }
+ui-tool-wol-status-error = Échec de l'envoi du paquet : { $error }
 ui-tool-wol-error-invalid-mac = Adresse MAC invalide. Format : AA:BB:CC:DD:EE:FF ou AABBCCDDEEFF.
+ui-tool-wol-error-invalid-broadcast = Adresse de diffusion invalide. Saisissez une adresse IPv4 ou IPv6.
 ui-tool-wol-help =
     Wake-on-LAN
 
-    Transmet des paquets de diffusion magiques UDP pour reveiller des machines distantes.
+    Envoie des paquets magiques UDP en diffusion pour réveiller des machines du réseau.
 
-    Prerequis :
-    - La machine cible doit avoir active le Wake-on-LAN dans son BIOS/UEFI.
-    - La carte reseau doit supporter le WOL et etre sous tension.
-    - Le commutateur ou routeur doit autoriser les paquets UDP broadcast.
+    Prérequis :
+    - Le Wake-on-LAN doit être activé dans le BIOS/UEFI de la machine cible.
+    - La carte réseau doit prendre en charge le WOL et rester alimentée.
+    - Le commutateur ou le routeur doit laisser passer les paquets UDP de diffusion.
 
     Utilisation :
     1. Saisissez l'adresse MAC de la machine cible.
-    2. Ajustez si necessaire l'adresse de diffusion (par defaut : 255.255.255.255).
-    3. Cliquez sur Envoyer Wake-on-LAN.
+    2. Ajustez si nécessaire l'adresse de diffusion, une adresse IP (par défaut : 255.255.255.255).
+    3. Ajustez si nécessaire le port UDP, de 1 à 65535 (par défaut : 9).
+    4. Cliquez sur Envoyer le Wake-on-LAN.
 
 ui-tool-whois-name = Recherche WHOIS
 ui-tool-whois-description = Interrogation des serveurs WHOIS pour domaines et adresses IP
+ui-tool-whois-description = Interrogation des serveurs WHOIS pour les domaines et les adresses IP
 ui-tool-whois-domain-placeholder = example.com ou 1.1.1.1
 ui-tool-whois-btn-lookup = Rechercher
 ui-tool-whois-btn-copy = Copier le rapport
-ui-tool-whois-empty-state = Entrez un domaine ou une adresse IP pour interroger les donnees d'enregistrement WHOIS
-ui-tool-whois-status-querying = Interrogation du serveur WHOIS en cours...
-ui-tool-whois-status-complete = Requete terminee en { $elapsed } ms
-ui-tool-whois-error-required = Veuillez saisir un domaine ou une adresse IP.
+ui-tool-whois-empty-state = Saisissez un domaine ou une adresse IP pour interroger les données d'enregistrement WHOIS
+ui-tool-whois-status-querying = Interrogation du serveur WHOIS...
+ui-tool-whois-status-complete = Requête terminée en { $elapsed } ms
+ui-tool-whois-result-header = Résultats WHOIS pour { $domain }
+ui-tool-whois-truncated = La réponse dépassait { $kib } Kio : seul son début est affiché.
+ui-tool-whois-error-required = Veuillez entrer un nom de domaine ou une adresse IP.
+ui-tool-whois-error-invalid = Nom de domaine ou adresse IP non valide.
+ui-tool-whois-error-timeout = La requête WHOIS a expiré. Le serveur WHOIS est peut-être inaccessible ou limite les requêtes.
+ui-tool-whois-error-failed = La requête WHOIS a échoué : { $reason }. Réessayez ou utilisez un autre domaine/IP.
 ui-tool-whois-help =
     Recherche WHOIS
 
-    Interroge directement les serveurs WHOIS via le port TCP 43 pour obtenir les donnees
-    d'enregistrement de domaine, le registrar, les serveurs DNS et l'attribution IP.
+    Interroge directement un serveur WHOIS sur le port TCP 43 pour obtenir les données
+    d'enregistrement d'un domaine : registrar, dates, serveurs de noms.
 
-    Fonctionnalites :
-    - Resolution automatique du serveur WHOIS par TLD (.com, .org, .fr, .io, .dev, etc.)
-    - Requete TCP directe sur le port 43
-    - Repli hors-ligne vers le registre IANA
+    Fonctionnement :
+    - Le serveur est choisi selon le TLD du domaine dans une liste intégrée (com, net, org,
+      fr, io, dev et d'autres) ; whois.iana.org est interrogé pour tout autre TLD et pour
+      une adresse IP.
+    - La réponse est affichée telle que le serveur l'envoie : un renvoi vers un autre
+      serveur n'est pas suivi.
+    - La recherche entière dispose de 10 secondes, et 64 Kio de la réponse au plus sont conservés.
 
-ui-tool-banner-name = Capture de bannieres
-ui-tool-banner-description = Sonde de ports reseau pour capturer bannieres et versions logicielles
-ui-tool-banner-host-label = Hote cible
+ui-tool-banner-name = Capture de bannières
+ui-tool-banner-description = Sondage des ports réseau pour capturer les bannières et versions des services
+ui-tool-banner-host-label = Hôte cible
 ui-tool-banner-host-placeholder = example.com ou 192.168.1.1
 ui-tool-banner-ports-label = Ports
 ui-tool-banner-ports-placeholder = 21,22,25,80,443,3306,8080
 ui-tool-banner-btn-grab = Capturer
-ui-tool-banner-btn-stop = Arreter
-ui-tool-banner-btn-copy = Copier les resultats
-ui-tool-banner-btn-export = Exporter CSV
+ui-tool-banner-btn-stop = Arrêter
+ui-tool-banner-btn-copy = Copier les résultats
+ui-tool-banner-btn-export = Exporter en CSV
 ui-tool-banner-col-port = Port
 ui-tool-banner-col-service = Service
 ui-tool-banner-col-time = Temps
-ui-tool-banner-col-banner = Banniere
-ui-tool-banner-preset-common = Standard
+ui-tool-banner-col-banner = Bannière
+ui-tool-banner-preset-common = Usuels
 ui-tool-banner-preset-web = Web
-ui-tool-banner-preset-mail = Mail
-ui-tool-banner-preset-database = Base de donnees
-ui-tool-banner-empty-state = Entrez un hote et des ports pour capturer les bannieres de service
-ui-tool-banner-progress = { $completed } / { $total } ports sondes
-ui-tool-banner-error-host-required = Veuillez saisir un hote cible.
+ui-tool-banner-preset-mail = Messagerie
+ui-tool-banner-preset-database = Bases de données
+ui-tool-banner-empty-state = Saisissez un hôte et des ports pour capturer les bannières des services
+ui-tool-banner-progress = { $completed } / { $total } ports sondés
 ui-tool-banner-help =
-    Capture de bannieres
+    Capture de bannières
 
-    Sonde les ports reseau ouverts et lit les bannieres d'accueil initiales pour identifier
-    les logiciels actifs, les daemons et leurs numeros de version exacts.
+    Sonde les ports réseau ouverts et lit leur bannière d'accueil pour identifier les
+    logiciels en service, les démons et leurs numéros de version.
 
+    Fonctionnalités :
+    - Listes et plages de ports personnalisables (ex. : 80,443,8000-8005)
+    - Préréglages pour les ports usuels, Web, de messagerie et de bases de données
+    - 20 ports sondés à la fois, chaque résultat affiché dès qu'il arrive ; Arrêter met fin au sondage aussitôt
+    - Identification automatique des services (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
+    - Export des résultats en CSV ou en texte mis en forme
     Fonctionnalites :
     - Liste et plages de ports personnalisables (ex : 80,443,8000-8005)
     - Profils predefinis pour ports Usuels, Web, Mail et Bases de donnees
@@ -4827,58 +4857,78 @@ ui-tool-wifi-col-auth = Authentification
 ui-tool-wifi-col-encryption = Chiffrement
 ui-tool-wifi-col-radio = Type radio
 
-## Editeur de fichier hosts
-ui-tool-hosts-name = Editeur de fichier hosts
+## Éditeur du fichier hosts
+ui-tool-hosts-name = Éditeur du fichier hosts
 ui-tool-hosts-description = Visualiser, basculer et modifier les associations de domaines du fichier hosts
-ui-tool-hosts-title = Editeur de fichier hosts
+ui-tool-hosts-title = Éditeur du fichier hosts
 ui-tool-hosts-help =
-    Edite le fichier hosts systeme avec validation syntaxique.
+    Édite le fichier hosts du système avec validation syntaxique.
 
-    Visualisez et modifiez les entrees. L'enregistrement necessite les privileges administrateur.
+    Le fichier est lu à l'ouverture de l'outil. Les entrées peuvent être activées, désactivées, supprimées ou ajoutées ; les commentaires, les alias et les fins de ligne sont conservés tels quels. L'enregistrement nécessite les privilèges administrateur, garde une copie de sauvegarde datée à côté du fichier, et est refusé si un autre programme a modifié le fichier depuis sa lecture.
 ui-tool-hosts-reload = Recharger
 ui-tool-hosts-save = Enregistrer
 ui-tool-hosts-copy-all = Copier hosts
 ui-tool-hosts-btn-add = Ajouter
 ui-tool-hosts-btn-delete = Supprimer
 ui-tool-hosts-invalid-ip = Format d'adresse IP invalide.
-ui-tool-hosts-missing-host = Le nom d'hote ne peut pas etre vide.
-ui-tool-hosts-loaded = { $count } entrees chargees depuis { $path }
-ui-tool-hosts-save-success = Fichier hosts enregistre avec succes.
-ui-tool-hosts-save-failed = Echec de l'enregistrement du fichier hosts : { $error }
-ui-tool-hosts-empty-state = Aucune entree trouvee dans le fichier hosts.
-ui-tool-hosts-loading-hint = Cliquez sur Recharger pour lire le fichier hosts.
+ui-tool-hosts-missing-host = Le nom d'hôte ne peut pas être vide.
+ui-tool-hosts-invalid-host = Nom d'hôte invalide : utilisez des lettres, des chiffres, des points, des tirets ou des soulignés, sans espace ni '#'.
+ui-tool-hosts-invalid-comment = Un commentaire ne peut pas contenir de saut de ligne ni de caractère de contrôle.
+ui-tool-hosts-loaded = { $count } entrées chargées depuis { $path }
+ui-tool-hosts-save-success = Fichier hosts enregistré. Copie de sauvegarde de la version précédente : { $backup }
+ui-tool-hosts-unchanged = Aucune modification à enregistrer : le fichier hosts est resté tel quel.
+ui-tool-hosts-save-failed = Échec de l'enregistrement du fichier hosts : { $error }
+ui-tool-hosts-error-not-found = Fichier hosts introuvable.
+ui-tool-hosts-error-read-denied = Accès refusé (lecture). Exécutez en tant qu'administrateur.
+ui-tool-hosts-error-read = Le fichier hosts n'a pas pu être lu : { $error }
+ui-tool-hosts-error-admin-required = Impossible d'écrire le fichier hosts. Lancez Heimdall en tant qu'administrateur pour enregistrer les modifications.
+ui-tool-hosts-error-changed = Un autre programme a modifié le fichier hosts depuis sa lecture. Rien n'a été écrit : rechargez-le, puis refaites vos modifications.
+ui-tool-hosts-error-backup = La copie de sauvegarde n'a pas pu être écrite, le fichier hosts n'a donc pas été modifié : { $error }
+ui-tool-hosts-empty-state = Aucune entrée trouvée dans le fichier hosts.
+ui-tool-hosts-loading-hint = Lecture du fichier hosts...
 ui-tool-hosts-col-enabled = Actif
 ui-tool-hosts-col-ip = Adresse IP
-ui-tool-hosts-col-hostname = Nom d'hote
+ui-tool-hosts-col-hostname = Nom d'hôte
 ui-tool-hosts-col-comment = Commentaire
 ui-tool-hosts-col-action = Action
 
 ## Tableau de bord des services
 ui-tool-services-name = Tableau de bord des services
-ui-tool-services-description = Surveiller les services d'arriere-plan Windows et controler leur etat
+ui-tool-services-description = Surveiller les services d'arrière-plan Windows et contrôler leur état
 ui-tool-services-title = Tableau de bord des services
 ui-tool-services-help =
-    Surveille le statut des services Windows avec commandes de demarrage et d'arret.
+    Surveille le statut des services Windows avec commandes de démarrage et d'arrêt.
 
-    Visualisez les services actifs, leur statut et type de demarrage. Demarrez, arretez ou redemarrez directement.
+    Visualisez les services actifs, leur statut et leur type de démarrage. Démarrez, arrêtez ou redémarrez un service : Windows demande d'abord les droits administrateur, et l'action ne porte que sur un service de la liste qui vient d'être lue.
 ui-tool-services-refresh = Actualiser
 ui-tool-services-scanning = Actualisation...
 ui-tool-services-copy-csv = Exporter CSV
-ui-tool-services-filter-placeholder = Filtrer par nom de service ou affichage...
-ui-tool-services-running-only = En cours seulement
+ui-tool-services-filter-placeholder = Filtrer par nom de service ou nom d'affichage...
+ui-tool-services-running-only = En cours uniquement
 ui-tool-services-total = Total :
 ui-tool-services-running-label = En cours :
-ui-tool-services-stopped-label = Arretes :
+ui-tool-services-stopped-label = Arrêtés :
 ui-tool-services-col-name = Nom du service
-ui-tool-services-col-display-name = Nom affiche
+ui-tool-services-col-display-name = Nom d'affichage
 ui-tool-services-col-status = Statut
-ui-tool-services-col-start-type = Type de demarrage
+ui-tool-services-col-start-type = Type de démarrage
 ui-tool-services-col-actions = Actions
-ui-tool-services-act-start = Demarrer
-ui-tool-services-act-stop = Arreter
-ui-tool-services-act-restart = Redemarrer
+ui-tool-services-act-start = Démarrer
+ui-tool-services-act-stop = Arrêter
+ui-tool-services-act-restart = Redémarrer
 ui-tool-services-empty-state = Cliquez sur Actualiser pour inspecter les services Windows.
-ui-tool-services-action-success = Action de service terminee avec succes.
+ui-tool-services-action-success = Action sur le service terminée avec succès.
+ui-tool-services-error-invalid-name = Ce nom de service contient des caractères qui ne peuvent pas être transmis sans risque au système : aucune action n'a été lancée.
+ui-tool-services-error-unknown-name = Ce service ne figure pas dans la liste qui vient d'être lue : actualisez la liste, puis réessayez.
+ui-tool-services-error-no-powershell = Windows PowerShell est introuvable dans le dossier système.
+ui-tool-services-error-no-systemctl = systemctl est introuvable dans /usr/bin et /bin.
+ui-tool-services-error-not-started = La commande n'a pas pu être lancée : { $error }
+ui-tool-services-error-timeout = La commande ne s'est pas terminée à temps et a été arrêtée. Une action peut encore aboutir : actualisez la liste pour le vérifier.
+ui-tool-services-error-not-elevated = L'action n'a pas été lancée : la demande de droits administrateur a été refusée, ou Windows n'a pas pu la démarrer.
+ui-tool-services-error-action-failed = L'action sur le service a échoué (code de sortie { $code }).
+ui-tool-services-error-action-failed-detail = L'action sur le service a échoué : { $error }
+ui-tool-services-error-list-failed = Échec du chargement des services : { $error }
+ui-tool-services-exit-code-none = aucun
 
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Nom d'hôte ou adresse IP invalide. Seuls les lettres, chiffres, points et tirets sont autorisés.

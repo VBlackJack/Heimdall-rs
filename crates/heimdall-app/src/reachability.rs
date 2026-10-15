@@ -130,18 +130,42 @@ pub async fn check(host: String, port: u16, timeout: Duration) -> Verdict {
     match test_within(host, port, false, timeout, CancellationToken::new()).await {
         // Under a millisecond is still an answer that took time, as the C# says it.
         Ok(reached) => Verdict::Up(reached.millis.max(1)),
-        Err(Unreached::DnsTimeout | Unreached::DnsFailed(_) | Unreached::DnsNoResults) => {
-            Verdict::Down(DownReason::Dns)
+        Err(unreached) => Verdict::Down(reason(unreached)),
+    }
+}
+
+/// Why no address answered, as the background check tells it.
+#[must_use]
+pub fn down_reason(failure: &heimdall_net::Failure) -> DownReason {
+    reason(unreached(failure))
+}
+
+/// Why an exchange failed, from the system's error, as the background check tells it.
+#[must_use]
+pub fn reason_of_error(error: &std::io::Error) -> DownReason {
+    reason_of_kind(error.kind(), &error.to_string())
+}
+
+/// [`Unreached`] as the background check's reasons.
+fn reason(unreached: Unreached) -> DownReason {
+    match unreached {
+        Unreached::DnsTimeout | Unreached::DnsFailed(_) | Unreached::DnsNoResults => {
+            DownReason::Dns
         }
-        Err(Unreached::TcpTimeout(_) | Unreached::Cancelled) => Verdict::Down(DownReason::Timeout),
-        Err(Unreached::TcpFailed { detail, kind, .. }) => Verdict::Down(match kind {
-            std::io::ErrorKind::ConnectionRefused => DownReason::Refused,
-            std::io::ErrorKind::HostUnreachable | std::io::ErrorKind::NetworkUnreachable => {
-                DownReason::Unreachable
-            }
-            std::io::ErrorKind::TimedOut => DownReason::Timeout,
-            _ => DownReason::Other(crate::server_text(&detail)),
-        }),
+        Unreached::TcpTimeout(_) | Unreached::Cancelled => DownReason::Timeout,
+        Unreached::TcpFailed { detail, kind, .. } => reason_of_kind(kind, &detail),
+    }
+}
+
+/// The reason an error of `kind` says, `detail` made safe for any other kind.
+fn reason_of_kind(kind: std::io::ErrorKind, detail: &str) -> DownReason {
+    match kind {
+        std::io::ErrorKind::ConnectionRefused => DownReason::Refused,
+        std::io::ErrorKind::HostUnreachable | std::io::ErrorKind::NetworkUnreachable => {
+            DownReason::Unreachable
+        }
+        std::io::ErrorKind::TimedOut => DownReason::Timeout,
+        _ => DownReason::Other(crate::server_text(detail)),
     }
 }
 
