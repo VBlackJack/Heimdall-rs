@@ -30,7 +30,6 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use data_encoding::BASE64;
 use thiserror::Error;
 
 /// How long the service list may take, as the C# view model's `CancelAfter(30s)`.
@@ -380,15 +379,14 @@ pub fn checked_service_name<'a>(
 /// `PowerShellSingleQuotedString.Quote`.
 #[must_use]
 pub fn powershell_single_quoted(text: &str) -> String {
-    format!("'{}'", crate::winrm::quoted_content(text))
+    crate::powershell::quote(text)
 }
 
 /// `script` as `-EncodedCommand` takes it: its UTF-16LE bytes in base64, as the C#
 /// `Convert.ToBase64String(Encoding.Unicode.GetBytes(script))`.
 #[must_use]
 pub fn encoded_command(script: &str) -> String {
-    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    BASE64.encode(&bytes)
+    crate::powershell::encode_command(script)
 }
 
 /// The script the elevated `PowerShell` runs: the cmdlet of `action` on the service `name`,
@@ -844,7 +842,7 @@ getty@.service enabled enabled
             script,
             "$ErrorActionPreference = 'Stop'; Restart-Service -Name 'wuauserv'"
         );
-        let decoded = BASE64
+        let decoded = data_encoding::BASE64
             .decode(encoded_command(&script).as_bytes())
             .expect("base64");
         let units: Vec<u16> = decoded

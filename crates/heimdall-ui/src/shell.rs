@@ -2216,6 +2216,8 @@ impl Shell {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
         subscriptions.extend(self.background_ticks());
+        // The tool tabs following a file.
+        subscriptions.push(self.tools.subscription());
         // The idle time measured while the workspace can lock by itself, as the C# idle
         // timer. Where it is not the computer's, the window's own input is always counted:
         // counted only once a threshold is set, the time before would count as idle, and
