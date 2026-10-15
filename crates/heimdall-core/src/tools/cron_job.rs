@@ -400,7 +400,9 @@ pub fn tasks_clipboard_text(tasks: &[ScheduledTask]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::process::Command;
+    #[cfg(unix)]
     use std::time::Instant;
 
     use super::*;
