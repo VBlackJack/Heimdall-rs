@@ -46,8 +46,8 @@ pub enum FilesMessage {
         tab: TabId,
         /// Which listing.
         request: ListingRequest,
-        /// The folder, absolute, and its entries; or why not.
-        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+        /// The folder, absolute, its entries, and what was left out; or why not.
+        result: Result<crate::files::RemoteListing, FilesError>,
     },
     /// A local listing arrived.
     LocalListed {
@@ -397,8 +397,8 @@ pub enum FilesMessage {
         request: ListingRequest,
         /// The folder asked for.
         path: RemotePath,
-        /// The folder, absolute, and its entries; or why not.
-        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+        /// The folder, absolute, its entries, and what was left out; or why not.
+        result: Result<crate::files::RemoteListing, FilesError>,
     },
     /// Show the folder of an edit's local copy.
     EditOpenFolder {
@@ -712,7 +712,7 @@ impl std::fmt::Debug for FilesMessage {
                 f,
                 "RemoteListed({}, {})",
                 tab.value(),
-                result.as_ref().map_or(0, |(_, entries)| entries.len())
+                result.as_ref().map_or(0, |(_, entries, _)| entries.len())
             ),
             Self::LocalListed { tab, result, .. } => write!(
                 f,
@@ -797,7 +797,7 @@ impl std::fmt::Debug for FilesMessage {
                 f,
                 "SudoListed({}, {})",
                 tab.value(),
-                result.as_ref().map_or(0, |(_, entries)| entries.len())
+                result.as_ref().map_or(0, |(_, entries, _)| entries.len())
             ),
             Self::EditStop { tab, .. } => write!(f, "EditStop({})", tab.value()),
             Self::EditsChecked { tab, results } => {
@@ -1064,7 +1064,7 @@ impl App {
         &mut self,
         tab: TabId,
         request: ListingRequest,
-        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+        result: Result<crate::files::RemoteListing, FilesError>,
     ) -> Vec<Effect> {
         let mut effects: Vec<Effect> = self
             .files_mut(tab)
@@ -1082,7 +1082,7 @@ impl App {
         &mut self,
         tab: TabId,
         request: ListingRequest,
-        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+        result: Result<crate::files::RemoteListing, FilesError>,
     ) -> Vec<Effect> {
         let mut not_a_folder = None;
         if let Some(files) = self.files_mut(tab) {
@@ -1092,12 +1092,14 @@ impl App {
                 return Vec::new();
             }
             match result {
-                Ok((path, entries)) => {
+                Ok((path, entries, left_out)) => {
                     pane.answered();
                     pane.entering_link = None;
                     pane.arrived(&path);
                     pane.path = path;
                     pane.show(entries);
+                    // Said for this folder alone: the next listing says it again or not.
+                    pane.left_out = left_out;
                     pane.error = None;
                 }
                 Err(error) => match pane.listing_failed() {

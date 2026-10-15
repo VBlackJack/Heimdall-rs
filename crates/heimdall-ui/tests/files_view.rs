@@ -32,6 +32,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
@@ -167,6 +168,7 @@ async fn files_tab_attempt(dir: &Path) -> (App, TabId, AttemptId) {
                 remote("logs", EntryKind::Directory, 0),
                 remote("backup.tar.gz", EntryKind::File, 5 * 1024 * 1024 + 99),
             ],
+            LeftOut::default(),
         )),
     }));
     let request = local_request(&mut core, tab);
@@ -617,6 +619,7 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
                     group: None,
                     inode: None,
                 }],
+                LeftOut::default(),
             )),
         },
     )));
@@ -1065,6 +1068,7 @@ async fn the_servers_permissions_and_properties_dialogs_show() {
                     group: Some(50),
                     inode: None,
                 }],
+                LeftOut::default(),
             )),
         },
     )));
@@ -1642,6 +1646,7 @@ async fn an_empty_pane_says_why_and_offers_the_way_out_as_the_csharp() {
             result: Ok((
                 RemotePath::from("/home/admin"),
                 vec![remote(".profile", EntryKind::File, 10)],
+                LeftOut::default(),
             )),
         },
     )));
@@ -1729,6 +1734,7 @@ async fn second_files_tab(core: &mut App, dir: &Path) -> TabId {
         result: Ok((
             RemotePath::from("/srv"),
             vec![remote("inbox", EntryKind::Directory, 0)],
+            LeftOut::default(),
         )),
     }));
     let request = local_request(core, tab);
@@ -1938,9 +1944,147 @@ fn list_remote(shell: &mut Shell, tab: TabId, entries: Vec<RemoteEntry>) {
         FilesMessage::RemoteListed {
             tab,
             request,
-            result: Ok((RemotePath::from("/srv"), entries)),
+            result: Ok((RemotePath::from("/srv"), entries, LeftOut::default())),
         },
     )));
+}
+
+/// The next request the client sends, `None` once it is gone.
+async fn next_request(server: &mut tokio::io::DuplexStream) -> Option<Request> {
+    let mut length = [0; 4];
+    server.read_exact(&mut length).await.ok()?;
+    let mut body = vec![0; u32::from_be_bytes(length) as usize];
+    server.read_exact(&mut body).await.ok()?;
+    Some(Request::decode(&body).expect("well formed"))
+}
+
+/// An SFTP session whose server names every folder `/srv` and lists `names` in it.
+async fn listing_client(names: &'static [&'static [u8]]) -> RemoteSession {
+    use heimdall_sftp::protocol::{Attributes, NameEntry, StatusCode};
+
+    let name_entry = |name: &[u8]| NameEntry {
+        filename: name.to_vec(),
+        longname: Vec::new(),
+        attributes: Attributes::default(),
+    };
+    let (client_end, mut server) = tokio::io::duplex(4096);
+    tokio::spawn(async move {
+        assert!(matches!(
+            next_request(&mut server).await,
+            Some(Request::Init { .. })
+        ));
+        let version = Response::Version {
+            version: SFTP_VERSION,
+            extensions: Vec::new(),
+        };
+        server.write_all(&version.encode()).await.expect("version");
+        let mut paged = false;
+        while let Some(request) = next_request(&mut server).await {
+            let status = |id, code| Response::Status {
+                id,
+                code,
+                message: Vec::new(),
+            };
+            let response = match request {
+                Request::Realpath { id, .. } => Response::Name {
+                    id,
+                    entries: vec![name_entry(b"/srv")],
+                },
+                Request::Opendir { id, .. } => Response::Handle {
+                    id,
+                    handle: b"d".to_vec(),
+                },
+                Request::Readdir { id, .. } if !paged => {
+                    paged = true;
+                    Response::Name {
+                        id,
+                        entries: names.iter().map(|name| name_entry(name)).collect(),
+                    }
+                }
+                Request::Readdir { id, .. } => status(id, StatusCode::Eof),
+                Request::Close { id, .. } => status(id, StatusCode::Ok),
+                other => panic!("unexpected {other:?}"),
+            };
+            server.write_all(&response.encode()).await.expect("sent");
+        }
+    });
+    RemoteSession::Sftp(
+        SftpClient::start(client_end, ClientConfig::default())
+            .await
+            .expect("started"),
+    )
+}
+
+#[tokio::test]
+async fn a_listing_says_how_many_entries_it_hid_never_their_names_until_the_next_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    // A name a buggy script made, with a line end, and one a hostile server lists to reach
+    // outside the folder: neither can be used here, both are counted.
+    let client = listing_client(&[b"kept", b"evil\nname", b"..\\escape"]).await;
+    let listed = heimdall_app::files::list_remote(client, RemotePath::from("/srv")).await;
+    let request = shell_remote_request(&mut shell, tab);
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::RemoteListed {
+            tab,
+            request,
+            result: listed,
+        },
+    )));
+    let labels: Vec<String> = shell
+        .app()
+        .tab(tab)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files")
+        .remote
+        .entries
+        .iter()
+        .map(|entry| entry.label.clone())
+        .collect();
+    assert_eq!(labels, ["kept"], "the rest listed");
+    // No SSH shell under this tab: no terminal is advised. Which wording where is checked
+    // with the pane's notes themselves.
+    let notice = "2 entries hidden: their names are not safe to use here";
+    let mut ui = simulator(&shell);
+    ui.find(notice).expect("said, the count alone");
+    for raw in ["evil\nname", "evil", "..\\escape", "escape"] {
+        assert!(ui.find(raw).is_err(), "{raw:?} is never shown");
+    }
+    drop(ui);
+
+    let request = shell_remote_request(&mut shell, tab);
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::RemoteListed {
+            tab,
+            request,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![remote("kept", EntryKind::File, 1)],
+                LeftOut {
+                    unsafe_names: 1,
+                    unread_lines: 2,
+                },
+            )),
+        },
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("1 entry hidden: its name is not safe to use here")
+        .expect("one");
+    ui.find("2 lines of the listing could not be read")
+        .expect("an FTP listing's lines that do not read");
+    drop(ui);
+    list_remote(&mut shell, tab, vec![remote("kept", EntryKind::File, 1)]);
+    let mut ui = simulator(&shell);
+    assert!(
+        ui.find(notice).is_err(),
+        "a listing hiding none says nothing"
+    );
+    assert!(
+        ui.find("1 entry hidden: its name is not safe to use here")
+            .is_err()
+    );
+    assert!(ui.find("2 lines of the listing could not be read").is_err());
 }
 
 #[tokio::test]

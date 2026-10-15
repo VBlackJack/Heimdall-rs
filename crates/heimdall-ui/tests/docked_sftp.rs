@@ -32,6 +32,7 @@ use heimdall_app::{
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::settings::SftpBrowser;
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
@@ -154,7 +155,11 @@ async fn docked(dir: &Path) -> (App, TabId, AttemptId) {
     core.update(AppMessage::Files(FilesMessage::RemoteListed {
         tab: pane,
         request,
-        result: Ok((RemotePath::from("/home/admin"), Vec::new())),
+        result: Ok((
+            RemotePath::from("/home/admin"),
+            Vec::new(),
+            LeftOut::default(),
+        )),
     }));
     let request = local_request(&mut core, pane);
     core.update(AppMessage::Files(FilesMessage::LocalListed {
@@ -345,6 +350,7 @@ async fn letters_typed_search_the_docked_sftp_pane_once_it_has_the_keyboard() {
                 remote("logs", EntryKind::Directory),
                 remote("report.pdf", EntryKind::File),
             ],
+            LeftOut::default(),
         )),
     }));
     let mut shell = Shell::with_app(core);

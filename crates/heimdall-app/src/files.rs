@@ -30,8 +30,8 @@ use std::time::{Duration, Instant, SystemTime};
 /// What an entry that is neither a file, a folder nor a link is.
 pub use heimdall_files::Special;
 use heimdall_files::{
-    ItemKind, LocalName, LocalNameError, Plan, Ready, Refusal, RemoteError, RemoteItem, RemotePath,
-    RemoteSession, Root, Rules, display_bytes,
+    ItemKind, LeftOut, LocalName, LocalNameError, Plan, Ready, Refusal, RemoteError, RemoteItem,
+    RemotePath, RemoteSession, Root, Rules, display_bytes,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -560,6 +560,10 @@ pub struct Pane<P, E> {
     request: ListingRequest,
     /// Why the last listing failed.
     pub error: Option<FilesError>,
+    /// What the last listing shown left out: entries whose names are not safe to use here,
+    /// never named, and lines of an FTP listing that do not read; said in the pane. Only a
+    /// server's listing leaves anything out.
+    pub left_out: LeftOut,
     /// A folder typed in its path bar, not gone to yet.
     pub typed: Option<String>,
     /// How its entries are sorted.
@@ -709,6 +713,7 @@ impl<P, E> Pane<P, E> {
             loading: true,
             request: ListingRequest::NONE,
             error: None,
+            left_out: LeftOut::default(),
             typed: None,
             sort: Sort::default(),
             entering_link: None,
@@ -1651,6 +1656,9 @@ pub fn download_name(remote_name: &[u8]) -> Result<LocalName, FilesError> {
 
 // ---- the work the UI runs for the application's effects -------------------------------
 
+/// A remote folder listed: the folder, absolute; its entries, sorted; and what was left out.
+pub type RemoteListing = (RemotePath, Vec<RemoteEntry>, LeftOut);
+
 /// Lists remote folder `path`, first resolved to its absolute form.
 ///
 /// # Errors
@@ -1659,18 +1667,22 @@ pub fn download_name(remote_name: &[u8]) -> Result<LocalName, FilesError> {
 pub async fn list_remote(
     client: RemoteSession,
     path: RemotePath,
-) -> Result<(RemotePath, Vec<RemoteEntry>), FilesError> {
+) -> Result<RemoteListing, FilesError> {
     let absolute = client
         .canonical(&path)
         .await
         .map_err(|e| FilesError::from(&e))?;
     let listed = client
-        .list(&absolute)
+        .list_counted(&absolute)
         .await
         .map_err(|e| FilesError::from(&e))?;
-    let mut entries: Vec<RemoteEntry> = listed.into_iter().map(RemoteEntry::from_listing).collect();
+    let mut entries: Vec<RemoteEntry> = listed
+        .items
+        .into_iter()
+        .map(RemoteEntry::from_listing)
+        .collect();
     sort_remote(&mut entries);
-    Ok((absolute, entries))
+    Ok((absolute, entries, listed.left_out))
 }
 
 /// The kind of a local entry of `file_type`, a link not followed.
