@@ -232,6 +232,8 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::Chmod,
                     ToolId::Crontab,
                     ToolId::DateTime,
+                    ToolId::Hosts,
+                    ToolId::Services,
                     ToolId::SshConfig,
                     ToolId::Ulid,
                     ToolId::Uuid,
@@ -239,7 +241,14 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
             ),
             (
                 ToolGroup::Category(ToolCategory::External),
-                vec![ToolId::DnsBatch, ToolId::WakeOnLan],
+                vec![
+                    ToolId::DnsBatch,
+                    ToolId::NetIf,
+                    ToolId::OpenPorts,
+                    ToolId::Routes,
+                    ToolId::WakeOnLan,
+                    ToolId::Wifi,
+                ],
             ),
         ]
     );

@@ -47,6 +47,7 @@ mod dnssec_tool;
 mod firewall_tester_tool;
 mod hash_tool;
 mod hmac_tool;
+mod hosts_editor_tool;
 mod http_headers_tool;
 mod http_status_tool;
 mod ip_converter_tool;
@@ -55,13 +56,17 @@ mod jwt_tool;
 mod key_parts;
 mod network_calculator_tool;
 mod network_cartography_tool;
+mod network_interfaces_tool;
+mod open_ports_tool;
 mod password_tool;
 mod ping_tool;
 mod placement_bar;
 mod port_scan_tool;
 mod pwdaudit_tool;
 mod regex_tool;
+mod route_table_tool;
 mod secnumcloud_tool;
+mod service_status_tool;
 mod smb_tool;
 mod snmp_walker_tool;
 mod ssh_config_tool;
@@ -77,6 +82,7 @@ mod ulid_tool;
 mod url_tool;
 mod uuid_tool;
 mod whois_tool;
+mod wifi_networks_tool;
 mod wol_tool;
 
 use std::collections::HashMap;
@@ -109,6 +115,7 @@ pub use dnssec_tool::{DnsSecMessage, Outcome as DnsSecOutcome};
 pub use firewall_tester_tool::FirewallTesterMessage;
 pub use hash_tool::HashMessage;
 pub use hmac_tool::HmacMessage;
+pub use hosts_editor_tool::HostsMessage;
 pub use http_headers_tool::HttpHeadersMessage;
 pub use http_status_tool::HttpStatusMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
@@ -116,12 +123,16 @@ pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
 pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
 pub use network_cartography_tool::NetworkCartographyMessage;
+pub use network_interfaces_tool::NetIfMessage;
+pub use open_ports_tool::OpenPortsMessage;
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
 pub use ping_tool::PingMessage;
 pub use port_scan_tool::PortScanMessage;
 pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
+pub use route_table_tool::RouteTableMessage;
 pub use secnumcloud_tool::{Outcome as SecNumCloudOutcome, SecNumCloudMessage};
+pub use service_status_tool::ServiceStatusMessage;
 pub use smb_tool::{Outcome as SmbOutcome, SmbMessage};
 pub use snmp_walker_tool::SnmpWalkerMessage;
 pub use ssh_config_tool::{SshConfigMessage, SshField};
@@ -139,6 +150,7 @@ pub use ulid_tool::UlidMessage;
 pub use url_tool::UrlMessage;
 pub use uuid_tool::UuidMessage;
 pub use whois_tool::WhoisMessage;
+pub use wifi_networks_tool::WifiMessage;
 pub use wol_tool::WolMessage;
 
 use crate::i18n::fl;
@@ -266,6 +278,12 @@ pub fn label(tool: ToolId) -> String {
         ToolId::ArpMon => fl!("ui-tool-arpmon-name"),
         ToolId::FwTest => fl!("ui-tool-fwtest-name"),
         ToolId::NetMap => fl!("ui-tool-netmap-name"),
+        ToolId::OpenPorts => fl!("ui-tool-openports-name"),
+        ToolId::NetIf => fl!("ui-tool-netif-name"),
+        ToolId::Routes => fl!("ui-tool-routes-name"),
+        ToolId::Wifi => fl!("ui-tool-wifi-name"),
+        ToolId::Hosts => fl!("ui-tool-hosts-name"),
+        ToolId::Services => fl!("ui-tool-services-name"),
     }
 }
 
@@ -319,6 +337,12 @@ pub fn description(tool: ToolId) -> String {
         ToolId::ArpMon => fl!("ui-tool-arpmon-description"),
         ToolId::FwTest => fl!("ui-tool-fwtest-description"),
         ToolId::NetMap => fl!("ui-tool-netmap-description"),
+        ToolId::OpenPorts => fl!("ui-tool-openports-description"),
+        ToolId::NetIf => fl!("ui-tool-netif-description"),
+        ToolId::Routes => fl!("ui-tool-routes-description"),
+        ToolId::Wifi => fl!("ui-tool-wifi-description"),
+        ToolId::Hosts => fl!("ui-tool-hosts-description"),
+        ToolId::Services => fl!("ui-tool-services-description"),
     }
 }
 
@@ -371,6 +395,12 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::ArpMon => Icon::ToolArpMonitor,
         ToolId::FwTest => Icon::ToolFirewallTester,
         ToolId::NetMap => Icon::ToolNetMap,
+        ToolId::OpenPorts => Icon::ToolPortScanner,
+        ToolId::NetIf => Icon::ToolSubnet,
+        ToolId::Routes => Icon::ToolTraceroute,
+        ToolId::Wifi => Icon::ToolSubnet,
+        ToolId::Hosts => Icon::ToolHostsFileEditor,
+        ToolId::Services => Icon::ToolServiceStatus,
     }
 }
 
@@ -562,6 +592,18 @@ pub enum CopySlot {
     FwTestCsv,
     /// The network cartography CSV export.
     NetMapCsv,
+    /// The open TCP/UDP ports CSV export.
+    OpenPortsCsv,
+    /// The network interfaces CSV export.
+    NetIfCsv,
+    /// The routing table CSV export.
+    RoutesCsv,
+    /// The Wi-Fi scanner CSV export.
+    WifiCsv,
+    /// The serialized hosts file text.
+    HostsFileText,
+    /// The service status dashboard CSV export.
+    ServicesCsv,
 }
 
 /// What a tool's tab is asked.
@@ -665,6 +707,18 @@ pub enum ToolMessage {
     FwTest(FirewallTesterMessage),
     /// The network cartography tool's.
     NetMap(NetworkCartographyMessage),
+    /// The open ports tool's.
+    OpenPorts(OpenPortsMessage),
+    /// The network interfaces tool's.
+    NetIf(NetIfMessage),
+    /// The routing table tool's.
+    Routes(RouteTableMessage),
+    /// The Wi-Fi scanner tool's.
+    Wifi(WifiMessage),
+    /// The hosts file editor tool's.
+    Hosts(HostsMessage),
+    /// The service status dashboard tool's.
+    Services(ServiceStatusMessage),
 }
 
 /// A tool's own state.
@@ -716,6 +770,12 @@ enum Pane {
     ArpMon(arp_monitor_tool::ArpMonitorPane),
     FwTest(firewall_tester_tool::FirewallTesterPane),
     NetMap(network_cartography_tool::NetworkCartographyPane),
+    OpenPorts(open_ports_tool::OpenPortsPane),
+    NetIf(network_interfaces_tool::NetIfPane),
+    Routes(route_table_tool::RouteTablePane),
+    Wifi(wifi_networks_tool::WifiNetworksPane),
+    Hosts(hosts_editor_tool::HostsEditorPane),
+    Services(service_status_tool::ServiceStatusPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -785,6 +845,12 @@ impl ToolPane {
             ToolId::NetMap => {
                 Pane::NetMap(network_cartography_tool::NetworkCartographyPane::default())
             }
+            ToolId::OpenPorts => Pane::OpenPorts(open_ports_tool::OpenPortsPane::default()),
+            ToolId::NetIf => Pane::NetIf(network_interfaces_tool::NetIfPane::default()),
+            ToolId::Routes => Pane::Routes(route_table_tool::RouteTablePane::default()),
+            ToolId::Wifi => Pane::Wifi(wifi_networks_tool::WifiNetworksPane::default()),
+            ToolId::Hosts => Pane::Hosts(hosts_editor_tool::HostsEditorPane::default()),
+            ToolId::Services => Pane::Services(service_status_tool::ServiceStatusPane::default()),
         };
         Self {
             pane,
@@ -1155,6 +1221,58 @@ impl ToolPanes {
                     network_cartography_tool::Outcome::None => Task::none(),
                 };
             }
+            (ToolMessage::OpenPorts(message), Pane::OpenPorts(pane)) => {
+                return match pane.update(tab, message) {
+                    open_ports_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    open_ports_tool::Outcome::Task(task) => task,
+                    open_ports_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::NetIf(message), Pane::NetIf(pane)) => {
+                return match pane.update(tab, message) {
+                    network_interfaces_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    network_interfaces_tool::Outcome::Task(task) => task,
+                    network_interfaces_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Routes(message), Pane::Routes(pane)) => {
+                return match pane.update(tab, message) {
+                    route_table_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    route_table_tool::Outcome::Task(task) => task,
+                    route_table_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Wifi(message), Pane::Wifi(pane)) => {
+                return match pane.update(tab, message) {
+                    wifi_networks_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    wifi_networks_tool::Outcome::Task(task) => task,
+                    wifi_networks_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Hosts(message), Pane::Hosts(pane)) => {
+                return match pane.update(tab, message) {
+                    hosts_editor_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    hosts_editor_tool::Outcome::Task(task) => task,
+                    hosts_editor_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Services(message), Pane::Services(pane)) => {
+                return match pane.update(tab, message) {
+                    service_status_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    service_status_tool::Outcome::Task(task) => task,
+                    service_status_tool::Outcome::None => Task::none(),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -1313,6 +1431,15 @@ pub fn view<'a>(
             fl!("ui-tool-netmap-name"),
             fl!("ui-tool-netmap-description"),
         ),
+        ToolId::OpenPorts => (
+            fl!("ui-tool-openports-title"),
+            fl!("ui-tool-openports-help"),
+        ),
+        ToolId::NetIf => (fl!("ui-tool-netif-title"), fl!("ui-tool-netif-help")),
+        ToolId::Routes => (fl!("ui-tool-routes-title"), fl!("ui-tool-routes-help")),
+        ToolId::Wifi => (fl!("ui-tool-wifi-title"), fl!("ui-tool-wifi-help")),
+        ToolId::Hosts => (fl!("ui-tool-hosts-title"), fl!("ui-tool-hosts-help")),
+        ToolId::Services => (fl!("ui-tool-services-title"), fl!("ui-tool-services-help")),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -1361,6 +1488,12 @@ pub fn view<'a>(
         Pane::ArpMon(pane) => (pane.view(tab, state, theme), None),
         Pane::FwTest(pane) => (pane.view(tab, state, theme), None),
         Pane::NetMap(pane) => (pane.view(tab, state, theme), None),
+        Pane::OpenPorts(pane) => (pane.view(tab, state, theme), None),
+        Pane::NetIf(pane) => (pane.view(tab, state, theme), None),
+        Pane::Routes(pane) => (pane.view(tab, state, theme), None),
+        Pane::Wifi(pane) => (pane.view(tab, state, theme), None),
+        Pane::Hosts(pane) => (pane.view(tab, state, theme), None),
+        Pane::Services(pane) => (pane.view(tab, state, theme), None),
     };
     column![
         header(tab, title, actions),
