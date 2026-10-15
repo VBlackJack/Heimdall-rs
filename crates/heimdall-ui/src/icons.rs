@@ -213,6 +213,12 @@ pub enum Icon {
     ToolWhois,
     /// `Geo.Tool.BannerGrabber`: a terminal window with prompt, the banner grabber.
     ToolBannerGrabber,
+    /// `Geo.Tool.DnsLookup`: a globe with grid lines, the DNS lookup and batch tools.
+    ToolDnsLookup,
+    /// `Geo.Tool.PortScanner`: port bars and magnifying glass, the port scanner.
+    ToolPortScanner,
+    /// `Geo.Tool.HttpHeaders`: a shield with checkmark, the HTTP header analyzer.
+    ToolHttpHeaders,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
     /// The `Resolution` glyph (`E740`): a screen with its corners, an RDP session's
@@ -226,7 +232,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 81] = [
+    pub const ALL: [Self; 84] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -304,6 +310,9 @@ impl Icon {
         Self::ToolWakeOnLan,
         Self::ToolWhois,
         Self::ToolBannerGrabber,
+        Self::ToolDnsLookup,
+        Self::ToolPortScanner,
+        Self::ToolHttpHeaders,
         Self::Monitor,
         Self::Resolution,
         Self::Keyboard,
@@ -561,6 +570,13 @@ impl Icon {
                 "M3,1 L13,1 L13,15 L3,15 Z M8,6 A2.5,2.5 0 1 1 8,11 L10,11 L10,8 A1,1 0 0 0 8,8 A1,1 0 0 1 8,6 Z"
             }
             Self::ToolBannerGrabber => "M1,3 L15,3 L15,13 L1,13 Z M3,6 L6,8 L3,10 M7,10 L12,10",
+            Self::ToolDnsLookup => {
+                "M8,1 A7,7 0 1 1 8,15 A7,7 0 1 1 8,1 Z M1,8 L15,8 M8,1 C5,4 5,12 8,15 M8,1 C11,4 11,12 8,15 M2.5,5 L13.5,5 M2.5,11 L13.5,11"
+            }
+            Self::ToolPortScanner => {
+                "M2,4 L4,4 L4,13 L2,13 Z M5,6 L7,6 L7,13 L5,13 Z M8,2 L10,2 L10,13 L8,13 Z M12,8 A3,3 0 1 1 12,12 A3,3 0 1 1 12,8 Z M14.5,12.5 L16,14"
+            }
+            Self::ToolHttpHeaders => "M2,2 L14,2 L14,11 L8,14 L2,11 Z M5,6 L7,8 L11,4",
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
             Self::Resolution => {
                 "M1.5,2.5 L14.5,2.5 L14.5,11.5 L1.5,11.5 Z M5.5,14 L10.5,14                  M4,7 L4,5 L6,5 M12,7 L12,9 L10,9"
@@ -635,6 +651,9 @@ impl Icon {
             | Self::ToolWakeOnLan
             | Self::ToolWhois
             | Self::ToolBannerGrabber
+            | Self::ToolDnsLookup
+            | Self::ToolPortScanner
+            | Self::ToolHttpHeaders
             // These hold open lines too, which a fill would lose; the ULID's blocks are
             // closed, filled as the UUID's.
             | Self::ToolSubnet
@@ -1418,10 +1437,11 @@ mod tests {
                 bounds.width > 1.0 && bounds.height > 1.0,
                 "{icon:?}: {bounds:?}"
             );
-            // The C#'s own magnifier of the regex tester reaches past the box; WPF stretches
-            // it into its square as the outline's bounds are fitted here.
+            // The C#'s own magnifier of the regex tester and port scanner reaches past the box;
+            // WPF stretches it into its square as the outline's bounds are fitted here.
             assert!(
                 icon == Icon::ToolRegex
+                    || icon == Icon::ToolPortScanner
                     || (bounds.x >= -EPSILON
                         && bounds.y >= -EPSILON
                         && bounds.x + bounds.width <= BOX + 0.01

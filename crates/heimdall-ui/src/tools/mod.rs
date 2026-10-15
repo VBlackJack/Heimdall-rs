@@ -39,9 +39,12 @@ mod cve_tool;
 mod datetime_tool;
 mod defaultcreds_tool;
 mod diff_tool;
+mod dns_batch_tool;
+mod dns_tool;
 mod dnssec_tool;
 mod hash_tool;
 mod hmac_tool;
+mod http_headers_tool;
 mod http_status_tool;
 mod ip_converter_tool;
 mod json_tool;
@@ -49,7 +52,9 @@ mod jwt_tool;
 mod key_parts;
 mod network_calculator_tool;
 mod password_tool;
+mod ping_tool;
 mod placement_bar;
+mod port_scan_tool;
 mod pwdaudit_tool;
 mod regex_tool;
 mod secnumcloud_tool;
@@ -90,15 +95,20 @@ pub use cve_tool::{CveMessage, Outcome as CveOutcome};
 pub use datetime_tool::{DateField, DateTimeMessage, ZoneChoice};
 pub use defaultcreds_tool::{DefaultCredsMessage, Outcome as DefaultCredsOutcome};
 pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_diff};
+pub use dns_batch_tool::DnsBatchMessage;
+pub use dns_tool::DnsMessage;
 pub use dnssec_tool::{DnsSecMessage, Outcome as DnsSecOutcome};
 pub use hash_tool::HashMessage;
 pub use hmac_tool::HmacMessage;
+pub use http_headers_tool::HttpHeadersMessage;
 pub use http_status_tool::HttpStatusMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
 pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
 pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
+pub use ping_tool::PingMessage;
+pub use port_scan_tool::PortScanMessage;
 pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
 pub use secnumcloud_tool::{Outcome as SecNumCloudOutcome, SecNumCloudMessage};
@@ -233,6 +243,11 @@ pub fn label(tool: ToolId) -> String {
         ToolId::WakeOnLan => fl!("ui-tool-wol-name"),
         ToolId::Whois => fl!("ui-tool-whois-name"),
         ToolId::BannerGrabber => fl!("ui-tool-banner-name"),
+        ToolId::Ping => fl!("ui-tool-ping-name"),
+        ToolId::Dns => fl!("ui-tool-dns-name"),
+        ToolId::DnsBatch => fl!("ui-tool-dnsbatch-name"),
+        ToolId::PortScan => fl!("ui-tool-portscan-name"),
+        ToolId::HttpHeaders => fl!("ui-tool-headers-name"),
     }
 }
 
@@ -275,6 +290,11 @@ pub fn description(tool: ToolId) -> String {
         ToolId::WakeOnLan => fl!("ui-tool-wol-description"),
         ToolId::Whois => fl!("ui-tool-whois-description"),
         ToolId::BannerGrabber => fl!("ui-tool-banner-description"),
+        ToolId::Ping => fl!("ui-tool-ping-description"),
+        ToolId::Dns => fl!("ui-tool-dns-description"),
+        ToolId::DnsBatch => fl!("ui-tool-dnsbatch-description"),
+        ToolId::PortScan => fl!("ui-tool-portscan-description"),
+        ToolId::HttpHeaders => fl!("ui-tool-headers-description"),
     }
 }
 
@@ -317,6 +337,10 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::WakeOnLan => Icon::ToolWakeOnLan,
         ToolId::Whois => Icon::ToolWhois,
         ToolId::BannerGrabber => Icon::ToolBannerGrabber,
+        ToolId::Ping => Icon::ToolSubnet,
+        ToolId::Dns | ToolId::DnsBatch => Icon::ToolDnsLookup,
+        ToolId::PortScan => Icon::ToolPortScanner,
+        ToolId::HttpHeaders => Icon::ToolHttpHeaders,
     }
 }
 
@@ -482,6 +506,18 @@ pub enum CopySlot {
     BannerGrabResults,
     /// The banner grabber CSV export.
     BannerGrabCsv,
+    /// The ICMP ping results text.
+    PingResults,
+    /// The ICMP ping CSV export.
+    PingCsv,
+    /// The DNS lookup output text.
+    DnsOutput,
+    /// The DNS batch resolver CSV export.
+    DnsBatchCsv,
+    /// The TCP port scanner CSV export.
+    PortScanCsv,
+    /// The HTTP header analyzer report text.
+    HttpHeadersReport,
 }
 
 /// What a tool's tab is asked.
@@ -563,6 +599,16 @@ pub enum ToolMessage {
     Whois(WhoisMessage),
     /// The banner grabber tool's.
     Banner(BannerMessage),
+    /// The ICMP ping tool's.
+    Ping(PingMessage),
+    /// The DNS lookup tool's.
+    Dns(DnsMessage),
+    /// The DNS batch resolver tool's.
+    DnsBatch(DnsBatchMessage),
+    /// The TCP port scanner tool's.
+    PortScan(PortScanMessage),
+    /// The HTTP header analyzer tool's.
+    HttpHeaders(HttpHeadersMessage),
 }
 
 /// A tool's own state.
@@ -603,6 +649,11 @@ enum Pane {
     Wol(wol_tool::WolPane),
     Whois(whois_tool::WhoisPane),
     Banner(banner_tool::BannerPane),
+    Ping(ping_tool::PingPane),
+    Dns(dns_tool::DnsPane),
+    DnsBatch(dns_batch_tool::DnsBatchPane),
+    PortScan(port_scan_tool::PortScanPane),
+    HttpHeaders(http_headers_tool::HttpHeadersPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -659,6 +710,11 @@ impl ToolPane {
             ToolId::WakeOnLan => Pane::Wol(wol_tool::WolPane::default()),
             ToolId::Whois => Pane::Whois(whois_tool::WhoisPane::default()),
             ToolId::BannerGrabber => Pane::Banner(banner_tool::BannerPane::default()),
+            ToolId::Ping => Pane::Ping(ping_tool::PingPane::default()),
+            ToolId::Dns => Pane::Dns(dns_tool::DnsPane::default()),
+            ToolId::DnsBatch => Pane::DnsBatch(dns_batch_tool::DnsBatchPane::default()),
+            ToolId::PortScan => Pane::PortScan(port_scan_tool::PortScanPane::default()),
+            ToolId::HttpHeaders => Pane::HttpHeaders(http_headers_tool::HttpHeadersPane::default()),
         };
         Self {
             pane,
@@ -938,6 +994,43 @@ impl ToolPanes {
                     banner_tool::Outcome::None => Task::none(),
                 };
             }
+            (ToolMessage::Ping(message), Pane::Ping(pane)) => {
+                return match pane.update(tab, message) {
+                    ping_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    ping_tool::Outcome::Task(task) => task,
+                    ping_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::Dns(message), Pane::Dns(pane)) => {
+                return match pane.update(tab, message) {
+                    dns_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    dns_tool::Outcome::Task(task) => task,
+                    dns_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::DnsBatch(message), Pane::DnsBatch(pane)) => {
+                return match pane.update(tab, message) {
+                    dns_batch_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    dns_batch_tool::Outcome::Task(task) => task,
+                    dns_batch_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::PortScan(message), Pane::PortScan(pane)) => {
+                return match pane.update(tab, message) {
+                    port_scan_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    port_scan_tool::Outcome::Task(task) => task,
+                    port_scan_tool::Outcome::None => Task::none(),
+                };
+            }
+            (ToolMessage::HttpHeaders(message), Pane::HttpHeaders(pane)) => {
+                return match pane.update(tab, message) {
+                    http_headers_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    http_headers_tool::Outcome::Task(task) => task,
+                    http_headers_tool::Outcome::None => Task::none(),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -1070,6 +1163,11 @@ pub fn view<'a>(
         ToolId::WakeOnLan => (fl!("ui-tool-wol-name"), fl!("ui-tool-wol-help")),
         ToolId::Whois => (fl!("ui-tool-whois-name"), fl!("ui-tool-whois-help")),
         ToolId::BannerGrabber => (fl!("ui-tool-banner-name"), fl!("ui-tool-banner-help")),
+        ToolId::Ping => (fl!("ui-tool-ping-name"), fl!("ui-tool-ping-help")),
+        ToolId::Dns => (fl!("ui-tool-dns-name"), fl!("ui-tool-dns-help")),
+        ToolId::DnsBatch => (fl!("ui-tool-dnsbatch-name"), fl!("ui-tool-dnsbatch-help")),
+        ToolId::PortScan => (fl!("ui-tool-portscan-name"), fl!("ui-tool-portscan-help")),
+        ToolId::HttpHeaders => (fl!("ui-tool-headers-name"), fl!("ui-tool-headers-help")),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -1107,6 +1205,11 @@ pub fn view<'a>(
         Pane::Wol(pane) => (pane.view(tab, state, theme), None),
         Pane::Whois(pane) => (pane.view(tab, state, theme), None),
         Pane::Banner(pane) => (pane.view(tab, state, theme), None),
+        Pane::Ping(pane) => (pane.view(tab, state, theme), None),
+        Pane::Dns(pane) => (pane.view(tab, state, theme), None),
+        Pane::DnsBatch(pane) => (pane.view(tab, state, theme), None),
+        Pane::PortScan(pane) => (pane.view(tab, state, theme), None),
+        Pane::HttpHeaders(pane) => (pane.view(tab, state, theme), None),
     };
     column![
         header(tab, title, actions),

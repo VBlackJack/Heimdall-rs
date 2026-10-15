@@ -479,7 +479,7 @@ fn the_tools_are_found_with_the_sessions_a_command_word_first() {
         all[0],
         (
             QuickGroup::Category(ToolCategory::Network),
-            "SUBNET".to_owned()
+            "PING".to_owned()
         )
     );
     // A host found nowhere is offered under Quick Connect.

@@ -158,6 +158,16 @@ pub enum ToolId {
     Whois,
     /// The TCP banner grabber, the C# `BANNER`.
     BannerGrabber,
+    /// The ICMP ping latency monitor, the C# `PING`.
+    Ping,
+    /// The DNS record lookup tool, the C# `DNS`.
+    Dns,
+    /// The batch DNS resolver, the C# `DNSBATCH`.
+    DnsBatch,
+    /// The TCP port scanner, the C# `PORTSCAN`.
+    PortScan,
+    /// The HTTP header analyzer and security scorer, the C# `HTTPHEADERS`.
+    HttpHeaders,
 }
 
 /// What the registry says of a tool.
@@ -206,13 +216,17 @@ impl ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 35] = [
+    pub const ALL: [Self; 40] = [
+        Self::Ping,
+        Self::Dns,
+        Self::PortScan,
         Self::SubnetCalculator,
         Self::IpConverter,
-        Self::NetworkCalculator,
         Self::HttpStatus,
         Self::Whois,
+        Self::HttpHeaders,
         Self::BannerGrabber,
+        Self::NetworkCalculator,
         Self::TcpPing,
         Self::Hash,
         Self::Hmac,
@@ -242,6 +256,7 @@ impl ToolId {
         Self::Crontab,
         Self::SshConfig,
         Self::WakeOnLan,
+        Self::DnsBatch,
     ];
 
     /// Its entry, as the C# registry's (`ToolRegistry.cs:62-109`).
@@ -356,6 +371,23 @@ impl ToolId {
             Self::WakeOnLan => {
                 ToolDescriptor::local("WOL", ToolCategory::External, &["wol", "wake", "wakeonlan"])
             }
+            Self::Ping => ToolDescriptor::network("PING", ToolCategory::Network, &["ping"]),
+            Self::Dns => {
+                ToolDescriptor::network("DNS", ToolCategory::Network, &["dns", "nslookup", "dig"])
+            }
+            Self::DnsBatch => ToolDescriptor::local(
+                "DNSBATCH",
+                ToolCategory::External,
+                &["dnsbatch", "resolve", "resolver"],
+            ),
+            Self::PortScan => {
+                ToolDescriptor::network("PORTSCAN", ToolCategory::Network, &["portscan", "scan"])
+            }
+            Self::HttpHeaders => ToolDescriptor::network(
+                "HTTPHEADERS",
+                ToolCategory::Network,
+                &["headers", "httpheaders", "secheaders"],
+            ),
         }
     }
 

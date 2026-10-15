@@ -4451,3 +4451,171 @@ ui-tool-banner-help =
     - Ajustes predefinidos para puertos Comunes, Web, Correo y Bases de datos
     - Detección automática de huellas (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
     - Exportación de resultados a CSV o texto formateado
+
+ui-tool-ping-name = Monitor Ping
+ui-tool-ping-description = Monitor de ping ICMP continuo con estadísticas de latencia y gráficos en vivo
+ui-tool-ping-host = Host de destino
+ui-tool-ping-host-watermark = example.com o 192.168.1.1
+ui-tool-ping-timeout = Tiempo de espera (ms)
+ui-tool-ping-timeout-watermark = 2000
+ui-tool-ping-count = Recuento
+ui-tool-ping-count-watermark = 4
+ui-tool-ping-start = Iniciar Ping
+ui-tool-ping-stop = Detener
+ui-tool-ping-min = Mín
+ui-tool-ping-avg = Med
+ui-tool-ping-max = Máx
+ui-tool-ping-jitter = Jitter
+ui-tool-ping-loss = Pérdida de paquetes
+ui-tool-ping-sent = Enviados/Recibidos
+ui-tool-ping-results-title = Historial de sondeos
+ui-tool-ping-copy-results = Copiar resultados
+ui-tool-ping-copy-csv = Exportar CSV
+ui-tool-ping-status-timeout = Tiempo agotado
+ui-tool-ping-status-error = Error
+ui-tool-ping-error-host-required = Por favor introduzca un host o dirección IP de destino.
+ui-tool-ping-error-timeout-invalid = El tiempo de espera debe estar entre 100 ms y 30000 ms.
+ui-tool-ping-error-count-invalid = El recuento debe estar entre 0 y 100000.
+ui-tool-ping-help =
+    Monitor Ping
+
+    Envía paquetes ICMP Echo Request a un host de destino para comprobar la latencia de ida y vuelta,
+    la pérdida de paquetes y la estabilidad de la red.
+
+    Características:
+    - Tiempo de espera y recuento de paquetes configurables (0 para monitoreo continuo)
+    - Estadísticas en tiempo real: mínimo, promedio, máximo, jitter y porcentaje de pérdida
+    - Tabla de historial con número de secuencia, marcas de tiempo, TTL y distintivos de estado
+    - Exportación de resultados a texto formateado o planilla CSV
+
+ui-tool-dns-name = Consulta DNS
+ui-tool-dns-description = Consultar tipos de registros DNS en servidores estándar o personalizados
+ui-tool-dns-host = Dominio o nombre de host
+ui-tool-dns-host-watermark = example.com
+ui-tool-dns-type = Tipo de registro
+ui-tool-dns-server = Servidor DNS
+ui-tool-dns-lookup = Consultar DNS
+ui-tool-dns-searching = Consultando...
+ui-tool-dns-copy = Copiar salida
+ui-tool-dns-results-title = Resultados DNS para { $host } ({ $record_type }, { $time } ms)
+ui-tool-dns-aliases = Alias:
+ui-tool-dns-no-records = No se devolvieron registros.
+ui-tool-dns-error-host-required = Por favor introduzca un nombre de dominio.
+ui-tool-dns-help =
+    Consulta DNS
+
+    Consulta servidores DNS (Domain Name System) para inspeccionar registros de cualquier dominio o IP.
+
+    Características:
+    - Tipos de registros estándar: A, AAAA, MX, CNAME, TXT, NS, PTR, SOA, SRV, ANY
+    - Ajustes predefinidos de servidores públicos (Cloudflare, Google, Quad9, OpenDNS)
+    - Tiempo de respuesta y seguimiento de la cadena de alias
+    - Salida formateada y clara con copia al portapapeles con un clic
+
+ui-tool-dnsbatch-name = Resolución DNS por lotes
+ui-tool-dnsbatch-description = Resolver múltiples nombres de host simultáneamente en direcciones IPv4 e IPv6
+ui-tool-dnsbatch-hostnames-label = Nombres de host a resolver (uno por línea o separados por comas)
+ui-tool-dnsbatch-resolve = Resolver lote
+ui-tool-dnsbatch-resolving = Resolviendo...
+ui-tool-dnsbatch-copy-csv = Exportar CSV
+ui-tool-dnsbatch-total = Total
+ui-tool-dnsbatch-resolved = Resuelto
+ui-tool-dnsbatch-failed = Fallido
+ui-tool-dnsbatch-results-title = Resultados del lote
+ui-tool-dnsbatch-status-resolved = Resuelto
+ui-tool-dnsbatch-status-failed = Fallido
+ui-tool-dnsbatch-status-pending = Pendiente
+ui-tool-dnsbatch-error-required = Por favor introduzca al menos un nombre de host para resolver.
+ui-tool-dnsbatch-help =
+    Resolución DNS por lotes
+
+    Resuelve grandes lotes de nombres de host y dominios en paralelo hacia sus direcciones IPv4 e IPv6.
+
+    Características:
+    - Entrada flexible multilínea o separada por comas
+    - Resolución asíncrona concurrente
+    - Resumen desglosado de consultas resueltas y fallidas
+    - Exportación a planilla CSV con estado y duración de respuesta
+
+ui-tool-portscan-name = Escáner de puertos
+ui-tool-portscan-description = Escanear puertos TCP de destino para detectar servicios abiertos y filtrado de firewall
+ui-tool-portscan-host = Host de destino
+ui-tool-portscan-host-watermark = example.com o 192.168.1.1
+ui-tool-portscan-ports = Rango de puertos
+ui-tool-portscan-ports-watermark = 20-80,443
+ui-tool-portscan-timeout = Tiempo de espera (ms)
+ui-tool-portscan-timeout-watermark = 1000
+ui-tool-portscan-start = Iniciar escaneo
+ui-tool-portscan-stop = Detener
+ui-tool-portscan-copy-csv = Exportar CSV
+ui-tool-portscan-total = Total
+ui-tool-portscan-open = Abierto
+ui-tool-portscan-closed = Cerrado
+ui-tool-portscan-filtered = Filtrado
+ui-tool-portscan-results-title = Resultados del escaneo de puertos
+ui-tool-portscan-status-open = Abierto
+ui-tool-portscan-status-closed = Cerrado
+ui-tool-portscan-status-filtered = Filtrado
+ui-tool-portscan-error-host-required = Por favor introduzca un host de destino.
+ui-tool-portscan-error-ports-invalid = Por favor introduzca un número o rango de puertos válido (p. ej. 80,443,8000-8080).
+ui-tool-portscan-help =
+    Escáner de puertos
+
+    Sondea puertos TCP en hosts de destino para mapear servicios de red abiertos, reglas de firewall
+    y puertos filtrados.
+
+    Características:
+    - Ajustes predefinidos para servicios comunes (SSH, HTTP, HTTPS, RDP, MySQL, etc.)
+    - Soporte para números, listas y rangos de puertos personalizados (p. ej. 1-1024)
+    - Clasificación en tiempo real en Abierto, Cerrado y Filtrado
+    - Resumen de métricas y exportación CSV
+
+ui-tool-headers-name = Analizador de cabeceras HTTP
+ui-tool-headers-description = Inspeccionar cabeceras HTTP, detectar divulgación de información y puntuar seguridad
+ui-tool-headers-url = URL de destino
+ui-tool-headers-url-watermark = https://example.com
+ui-tool-headers-analyze = Analizar cabeceras
+ui-tool-headers-analyzing = Analizando...
+ui-tool-headers-copy-report = Copiar informe completo
+ui-tool-headers-sec-headers-title = Evaluación de cabeceras de seguridad
+ui-tool-headers-disclosure-title = Divulgación de información
+ui-tool-headers-raw-title = Cabeceras de respuesta sin procesar
+ui-tool-headers-status-pass = CORRECTO
+ui-tool-headers-status-warn = ADVERTENCIA
+ui-tool-headers-status-fail = FALLIDO
+ui-tool-headers-status-clean = LIMPIO
+ui-tool-headers-status-exposed = EXPUESTO
+ui-tool-headers-missing = (ausente)
+ui-tool-headers-not-exposed = (no expuesto)
+ui-tool-headers-grade-aplus = Sobresaliente: todas las cabeceras de seguridad clave aplicadas con las mejores prácticas.
+ui-tool-headers-grade-a = Excelente: cabeceras de seguridad modernas y robustas presentes.
+ui-tool-headers-grade-b = Bueno: omisiones menores en cabeceras de defensa del navegador moderno.
+ui-tool-headers-grade-c = Moderado: faltan varias cabeceras de seguridad fundamentales.
+ui-tool-headers-grade-d = Deficiente: faltan la mayoría de las protecciones de seguridad estándar.
+ui-tool-headers-grade-f = Crítico: no se detectaron cabeceras de seguridad modernas.
+ui-tool-headers-rec-hsts = Recomendación: habilitar Strict-Transport-Security con max-age=31536000 e includeSubDomains.
+ui-tool-headers-rec-csp = Recomendación: definir una Content-Security-Policy restrictiva para prevenir XSS e inyección de código.
+ui-tool-headers-rec-xfo = Recomendación: establecer X-Frame-Options en DENY o SAMEORIGIN para evitar clickjacking.
+ui-tool-headers-rec-xcto = Recomendación: establecer X-Content-Type-Options en nosniff para prevenir ataques de rastreo MIME.
+ui-tool-headers-rec-referrer = Recomendación: configurar Referrer-Policy en strict-origin-when-cross-origin.
+ui-tool-headers-rec-permissions = Recomendación: configurar Permissions-Policy para restringir API sensibles del navegador.
+ui-tool-headers-rec-xxss = Recomendación: establecer X-XSS-Protection en 0 o confiar en Content-Security-Policy.
+ui-tool-headers-rec-cookie = Recomendación: establecer Secure, HttpOnly y SameSite=Lax/Strict en las cookies.
+ui-tool-headers-rec-disclosure = Recomendación: deshabilitar o sanitizar la cabecera del servidor para ocultar versiones internas de software.
+ui-tool-headers-error-url-required = Por favor introduzca una URL de destino.
+ui-tool-headers-error-invalid-url = Por favor introduzca una URL HTTP o HTTPS válida.
+ui-tool-headers-help =
+    Analizador de cabeceras HTTP
+
+    Obtiene cabeceras de respuesta HTTP y evalúa la postura de seguridad, las políticas de defensa
+    del navegador y la divulgación de información del servidor.
+
+    Cabeceras evaluadas:
+    - Strict-Transport-Security (HSTS)
+    - Content-Security-Policy (CSP)
+    - X-Frame-Options (Defensa contra clickjacking)
+    - X-Content-Type-Options (nosniff)
+    - Referrer-Policy
+    - Permissions-Policy
+    - Indicadores de seguridad en cookies (Secure, HttpOnly, SameSite)
+    - Divulgación de información del servidor (Server, X-Powered-By, X-AspNet-Version)
