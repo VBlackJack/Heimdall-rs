@@ -520,6 +520,7 @@ ui-files-upload-button = Envoyer
 ui-files-upload-files-tooltip = Envoyer des fichiers
 ui-files-download-selected-tooltip = Télécharger la sélection (Ctrl+Maj+D)
 ui-files-loading = Chargement...
+ui-files-listing-in-progress-tooltip = Chargement du dossier en cours : attendez qu'il s'affiche
 ui-files-empty = Dossier vide
 ui-files-cancel-button = Annuler
 ui-files-transfers-title = Transferts
@@ -2361,6 +2362,7 @@ ui-status-dropped-folder = Dossier { $name } déplacé. Ctrl+Z l'annule.
 ui-status-drop-refused = Un dossier de ce nom s'y trouve déjà : rien n'a été déplacé.
 ui-status-move-undone = Déplacement annulé.
 ui-status-listing-cancelled = Chargement annulé.
+ui-status-listing-in-progress = Chargement du dossier en cours : attendez qu'il s'affiche, puis réessayez.
 ui-status-session-limit = Le maximum de { $max } sessions distantes intégrées est déjà ouvert. Fermez une session avant d'en ouvrir une autre.
 ui-status-sftp-auto-open-failed = Ouverture automatique SFTP échouée : { $reason }
 ui-status-sftp-browser-disabled = Le navigateur SFTP intégré est désactivé dans les paramètres.
@@ -4187,14 +4189,14 @@ ui-tool-defaultcreds-help =
     3. Cliquez sur Scanner
 
     Protocoles testés :
-    - SSH (mots de passe root/admin courants)
+    - SSH (service joignable uniquement, identifiants non testés)
     - Authentification HTTP Basic
     - FTP (anonymous, admin)
     - SNMP (chaînes de communauté)
-    - MySQL, PostgreSQL, MSSQL (identifiants de base de données par défaut)
-    - VNC (mots de passe courants)
+    - PostgreSQL (accès sans mot de passe) ; MySQL, MSSQL (service joignable uniquement, identifiants non testés)
+    - VNC (service joignable uniquement, identifiants non testés)
     - Telnet
-    - Redis (détection sans authentification)
+    - Redis (service joignable uniquement, identifiants non testés)
 
     Sécurité :
     - Limité en débit (1 tentative/seconde par service)
@@ -4204,7 +4206,7 @@ ui-tool-secnumcloud-name = Audit SecNumCloud
 ui-tool-secnumcloud-description = Audit de conformité SecNumCloud v3.2 sur le réseau, la crypto, les accès et l'exploitation
 ui-tool-secnumcloud-title = Audit de conformité SecNumCloud v3.2
 ui-tool-secnumcloud-scope-label = Périmètre d'audit
-ui-tool-secnumcloud-scope-placeholder = 10.0.1.0/24 ou un hôte par ligne
+ui-tool-secnumcloud-scope-placeholder = Un hôte ou une adresse IP par ligne
 ui-tool-secnumcloud-depth-label = Profondeur
 ui-tool-secnumcloud-depth-quick = Rapide
 ui-tool-secnumcloud-depth-standard = Standard
@@ -4243,7 +4245,7 @@ ui-tool-secnumcloud-ops04-name = Inventaire des services
 ui-tool-secnumcloud-btn-copy-csv = Copier CSV
 ui-tool-secnumcloud-btn-copy-html = Copier HTML
 ui-tool-secnumcloud-empty-state = Saisissez un sous-réseau ou une liste d'hôtes pour lancer un audit de conformité SecNumCloud
-ui-tool-secnumcloud-error-scope = Saisissez au moins un hôte cible ou un sous-réseau.
+ui-tool-secnumcloud-error-scope = Saisissez au moins un hôte cible.
 ui-tool-secnumcloud-phase-discovery = Phase 1/5 : Découverte réseau...
 ui-tool-secnumcloud-phase-network = Phase 2/5 : Contrôles de sécurité réseau...
 ui-tool-secnumcloud-phase-crypto = Phase 3/5 : Contrôles de cryptographie...
@@ -4257,7 +4259,7 @@ ui-tool-secnumcloud-help =
     Audit de sécurité automatisé selon les exigences ANSSI SecNumCloud v3.2.
 
     Périmètre :
-    Saisissez un sous-réseau CIDR (ex. 10.0.1.0/24) pour une découverte automatique des hôtes, ou une liste d'hôtes (un par ligne) pour un audit ciblé.
+    Saisissez les hôtes à auditer, un nom d'hôte ou une adresse IP par ligne. Les plages CIDR ne sont pas développées et sont refusées.
 
     Chapitres audités :
     - Sécurité réseau (Ch.9) : Inventaire des ports, en-têtes HTTP, cloisonnement
@@ -4330,6 +4332,55 @@ ui-tool-smb-help =
 
     Vérifications de sécurité :
     - Signature SMB désactivée (risque d'attaque par relais)
+    - Dialecte SMB2/SMB3 négocié
+
+# --- Review follow-ups (#402): security tools ---
+ui-tool-defaultcreds-status-not-tested = Non testé
+ui-tool-defaultcreds-detail-not-tested = { $service } joignable, identifiants non testés
+ui-tool-defaultcreds-empty = (vide)
+ui-tool-defaultcreds-timeout-connect = Délai de connexion dépassé
+ui-tool-defaultcreds-timeout-write = Délai d'écriture dépassé
+ui-tool-defaultcreds-timeout-read = Délai de lecture dépassé
+ui-tool-dnssec-report-record = Enregistrement
+ui-tool-dnssec-report-detail = Détail
+ui-tool-dnssec-error-nslookup-missing = nslookup est introuvable. Installez-le (bind-utils / dnsutils sous Linux) ou assurez-vous qu'il est dans le PATH.
+ui-tool-secnumcloud-error-cidr = Les plages CIDR ne sont pas développées. Saisissez des hôtes individuels, un par ligne.
+ui-tool-secnumcloud-clause = Clause { $clause }
+ui-tool-secnumcloud-unknown = inconnu
+ui-tool-secnumcloud-net01-summary = { $open } ports ouverts recensés sur { $hosts } hôtes.
+ui-tool-secnumcloud-net01-evidence = { $count } ports ouverts : { $ports }
+ui-tool-secnumcloud-net02-pass = Aucun service superflu ou non standard détecté.
+ui-tool-secnumcloud-net02-warn = { $count } ports non standard trouvés - à examiner selon la nécessité opérationnelle.
+ui-tool-secnumcloud-net02-evidence = Ports non standard : { $ports }
+ui-tool-secnumcloud-net03-skipped = Aucun service HTTP/HTTPS à vérifier.
+ui-tool-secnumcloud-net03-pass = Les { $count } services web possèdent les en-têtes de sécurité requis.
+ui-tool-secnumcloud-net03-fail = { $missing } services web sur { $checked } n'ont pas les en-têtes de sécurité requis (HSTS, CSP, XFO, XCTO).
+ui-tool-secnumcloud-net03-evidence = Port { $port } : en-têtes manquants : { $headers }
+ui-tool-secnumcloud-net04-summary = { $count } sous-réseaux détectés. Vérifiez la segmentation réseau selon les recommandations de l'ANSSI.
+ui-tool-secnumcloud-cry01-skipped = Aucun service TLS à vérifier.
+ui-tool-secnumcloud-cry01-pass = { $count } points d'accès TLS vérifiés pour des protocoles acceptables.
+ui-tool-secnumcloud-cry02-pass = Aucune suite de chiffrement faible négociée sur les points d'accès audités.
+ui-tool-secnumcloud-cry03-pass = Tous les certificats capturés sont dans leur période de validité.
+ui-tool-secnumcloud-cry04-skipped = Aucun service SSH à vérifier.
+ui-tool-secnumcloud-cry04-fail = { $weak } serveurs SSH sur { $checked } proposent des algorithmes de clé faibles.
+ui-tool-secnumcloud-cry04-pass = Les { $checked } serveurs SSH utilisent des algorithmes de clé acceptables.
+ui-tool-secnumcloud-cry04-evidence = Port 22 : algorithme de clé d'hôte SSH faible (DSA) détecté
+ui-tool-secnumcloud-acc01-pass = Aucun identifiant par défaut accepté sur les services audités.
+ui-tool-secnumcloud-acc02-skipped = Aucun service SMB à vérifier.
+ui-tool-secnumcloud-acc02-pass = { $count } services SMB évalués pour la signature des messages.
+ui-tool-secnumcloud-acc03-skipped = Aucun service SNMP à vérifier.
+ui-tool-secnumcloud-acc03-pass = Aucune chaîne de communauté SNMP par défaut acceptée.
+ui-tool-secnumcloud-ops01-skipped = Aucun domaine public configuré dans la portée pour les vérifications DNS.
+ui-tool-secnumcloud-ops02-skipped = Aucun domaine public configuré dans la portée pour les vérifications CAA.
+ui-tool-secnumcloud-ops03-pass = Aucune CVE connue de gravité élevée identifiée dans les bannières de service analysées.
+ui-tool-secnumcloud-ops03-fail = { $count } CVE connues identifiées sur les services analysés.
+ui-tool-secnumcloud-ops03-evidence = Port { $port } : { $software } { $version } affecté par { $cve } ({ $severity })
+ui-tool-secnumcloud-ops04-summary = { $count } services recensés sur { $hosts } hôtes.
+ui-tool-secnumcloud-ops04-evidence = Port { $port } : { $service }
+ui-tool-secnumcloud-html-doc-title = Rapport d'audit SecNumCloud
+ui-tool-secnumcloud-html-heading = SecNumCloud v3.2 - Rapport d'audit de conformité
+ui-tool-secnumcloud-html-clause = Clause
+ui-tool-secnumcloud-html-generated-by = Généré par Heimdall
     - SMBv1 détecté (vulnérabilité EternalBlue)
 
 ui-tool-http-name = Codes de statut HTTP

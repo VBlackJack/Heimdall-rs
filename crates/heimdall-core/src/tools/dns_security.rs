@@ -202,6 +202,46 @@ pub fn normalize_domain_input(raw: &str) -> String {
     value.trim().to_owned()
 }
 
+/// The longest a DNS name may be, in characters.
+pub const MAX_DOMAIN_LEN: usize = 255;
+
+/// The longest a single DNS label may be, in characters.
+pub const MAX_LABEL_LEN: usize = 63;
+
+/// Whether `domain` is a lookup name safe to hand to `nslookup`: ASCII letters, digits,
+/// hyphen and underscore in labels, no label starting or ending with a hyphen (so it can
+/// never be read as a command-line option), dots between labels, an optional leading
+/// wildcard or dot stripped first, and the length limits of RFC 1035.
+///
+/// Mirrors the C# `DnsSecurityService.IsValidLookupDomain`
+/// (`Heimdall.App/Services/DnsSecurityService.cs`), minus its `InputValidator.ValidateDomain`
+/// fast path: the rules enforced here are the same.
+#[must_use]
+pub fn is_valid_lookup_domain(domain: &str) -> bool {
+    let trimmed = domain.trim().trim_start_matches(['*', '.']);
+    if trimmed.is_empty() || trimmed.len() > MAX_DOMAIN_LEN {
+        return false;
+    }
+    if trimmed.contains("..") || trimmed.contains(".-") || trimmed.contains("-.") {
+        return false;
+    }
+
+    let labels: Vec<&str> = trimmed.split('.').filter(|l| !l.is_empty()).collect();
+    if labels.is_empty() {
+        return false;
+    }
+
+    labels.iter().all(|label| {
+        !label.is_empty()
+            && label.len() <= MAX_LABEL_LEN
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    })
+}
+
 /// Extracts the first TXT record line containing the supplied marker from raw DNS output.
 #[must_use]
 pub fn extract_record(raw: &str, marker: &str) -> String {
@@ -646,6 +686,28 @@ mod tests {
             "domain.net"
         );
         assert_eq!(normalize_domain_input(""), "");
+    }
+
+    #[test]
+    fn is_valid_lookup_domain_accepts_names_and_rejects_option_injection() {
+        assert!(is_valid_lookup_domain("example.com"));
+        assert!(is_valid_lookup_domain("sub.domain.example.org"));
+        assert!(is_valid_lookup_domain("_dmarc.example.com"));
+        assert!(is_valid_lookup_domain("selector1._domainkey.example.com"));
+        assert!(is_valid_lookup_domain("example.com.")); // trailing dot allowed
+        assert!(is_valid_lookup_domain("*.example.com")); // leading wildcard stripped
+
+        // A target that reaches nslookup as an option must be refused.
+        assert!(!is_valid_lookup_domain("-type=A"));
+        assert!(!is_valid_lookup_domain("-example.com"));
+        assert!(!is_valid_lookup_domain("example.com -all"));
+        assert!(!is_valid_lookup_domain("exam ple.com"));
+        assert!(!is_valid_lookup_domain(""));
+        assert!(!is_valid_lookup_domain("exa..mple.com"));
+        assert!(!is_valid_lookup_domain("bad-.example.com"));
+        assert!(!is_valid_lookup_domain("s\u{e9}rveur.example.com")); // non-ASCII
+        let too_long = format!("{}.com", "a".repeat(MAX_LABEL_LEN + 1));
+        assert!(!is_valid_lookup_domain(&too_long));
     }
 
     #[test]

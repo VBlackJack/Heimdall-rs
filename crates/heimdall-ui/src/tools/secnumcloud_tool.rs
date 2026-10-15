@@ -37,9 +37,10 @@ use std::time::Duration;
 use heimdall_app::TabId;
 use heimdall_core::tools::secnumcloud::{
     AuditChapter, AuditDepth, AuditEvidence, AuditOptions, AuditReport, AuditScope, AuditStatus,
-    DiscoveredHost, DiscoveredService, HTTP_PORTS, REQUIRED_SECURITY_HEADERS, STANDARD_PORTS,
-    TLS_PORTS, build_access_chapter, build_crypto_chapter, build_csv_export, build_html_export,
-    build_network_chapter, build_operations_chapter, find_cves_for_software, parse_banner,
+    DiscoveredHost, DiscoveredService, HTTP_PORTS, HtmlLabels, REQUIRED_SECURITY_HEADERS,
+    STANDARD_PORTS, TLS_PORTS, build_access_chapter, build_crypto_chapter, build_csv_export,
+    build_html_export, build_network_chapter, build_operations_chapter, find_cves_for_software,
+    parse_banner,
 };
 use iced::futures::SinkExt as _;
 use iced::widget::{
@@ -80,7 +81,7 @@ impl std::fmt::Display for DepthChoice {
 /// Messages dispatched by the SecNumCloud audit pane.
 #[derive(Debug, Clone)]
 pub enum SecNumCloudMessage {
-    /// Scope text changed (hosts or CIDR).
+    /// Scope text changed (hosts only; CIDR ranges are not expanded).
     ScopeChanged(String),
     /// Depth selected.
     DepthSelected(DepthChoice),
@@ -190,6 +191,13 @@ impl SecNumCloudPane {
                     return Outcome::None;
                 }
 
+                // The scope takes individual hosts only. CIDR ranges are never expanded,
+                // so a slashed entry is refused instead of being probed as a literal host.
+                if scope_contains_cidr(&self.scope) {
+                    self.error = Some(fl!("ui-tool-secnumcloud-error-cidr"));
+                    return Outcome::None;
+                }
+
                 self.is_auditing = true;
                 self.error = None;
                 self.last_report = None;
@@ -232,7 +240,7 @@ impl SecNumCloudPane {
                 match res {
                     Ok(report) => {
                         self.csv_text = build_csv_export(&report);
-                        self.html_text = build_html_export(&report);
+                        self.html_text = build_html_export(&report, &html_labels());
                         self.last_report = Some(report);
                         self.error = None;
                     }
@@ -578,9 +586,12 @@ impl SecNumCloudPane {
                         .size(font_size::BODY)
                         .font(styles::SEMIBOLD)
                         .width(Length::Fill),
-                    text(format!("Clause {}", check.secnumcloud_clause))
-                        .size(font_size::CAPTION)
-                        .style(text::secondary),
+                    text(fl!(
+                        "ui-tool-secnumcloud-clause",
+                        clause = check.secnumcloud_clause.as_str()
+                    ))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
                 ]
                 .spacing(spacing::SM)
                 .align_y(Alignment::Center);
@@ -639,6 +650,7 @@ fn audit_stream(
     scan_id: u64,
 ) -> impl iced::futures::Stream<Item = SecNumCloudMessage> {
     iced::stream::channel(16, async move |mut out| {
+        let start_time = now_timestamp();
         let targets = parse_scope_targets(&scope_str);
         if targets.is_empty() {
             let _ = out
@@ -755,8 +767,8 @@ fn audit_stream(
         }
 
         let report = AuditReport {
-            start_time: "Started".to_string(),
-            end_time: "Completed".to_string(),
+            start_time,
+            end_time: now_timestamp(),
             scope: AuditScope {
                 targets,
                 subnet: None,
@@ -788,6 +800,37 @@ fn parse_scope_targets(raw: &str) -> Vec<String> {
         }
     }
     targets
+}
+
+/// Whether any scope entry is a CIDR range (contains `/`). The tool probes individual
+/// hosts only and never expands a range, so such an entry is rejected rather than scanned
+/// as if `10.0.0.0/24` were a hostname.
+fn scope_contains_cidr(raw: &str) -> bool {
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .any(|line| line.contains('/'))
+}
+
+/// A local timestamp for the audit's start and end, formatted like the C# `DateTime.Now`.
+fn now_timestamp() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// The localized labels and language code for the standalone HTML report, taken from the
+/// language the UI currently shows.
+fn html_labels() -> HtmlLabels {
+    HtmlLabels {
+        lang: crate::i18n::current().code().to_string(),
+        document_title: fl!("ui-tool-secnumcloud-html-doc-title"),
+        heading: fl!("ui-tool-secnumcloud-html-heading"),
+        compliance_label: fl!("ui-tool-secnumcloud-compliance"),
+        pass_label: fl!("ui-tool-secnumcloud-status-pass"),
+        warn_label: fl!("ui-tool-secnumcloud-status-warn"),
+        fail_label: fl!("ui-tool-secnumcloud-status-fail"),
+        clause_label: fl!("ui-tool-secnumcloud-html-clause"),
+        generated_by: fl!("ui-tool-secnumcloud-html-generated-by"),
+    }
 }
 
 async fn probe_host(host: &str) -> DiscoveredHost {
@@ -853,6 +896,8 @@ fn guess_service_name(port: u16) -> Option<String> {
 // ── Check Runners ────────────────────────────────────────────────────
 
 async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]) {
+    let unknown = fl!("ui-tool-secnumcloud-unknown");
+
     // NET-01: Open ports inventory
     if let Some(c) = chapter.checks.get_mut(0) {
         let mut total_open = 0;
@@ -860,28 +905,23 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
             let open: Vec<_> = host.services.iter().filter(|s| s.is_open).collect();
             total_open += open.len();
             if !open.is_empty() {
-                let port_list = open
-                    .iter()
-                    .map(|s| {
-                        format!(
-                            "{}/{}",
-                            s.port,
-                            s.service_name.as_deref().unwrap_or("unknown")
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let port_list = format_port_list(&open, &unknown);
                 c.evidence.push(AuditEvidence {
                     host: host.ip_address.clone(),
-                    detail: format!("{} open ports: {}", open.len(), port_list),
+                    detail: fl!(
+                        "ui-tool-secnumcloud-net01-evidence",
+                        count = open.len(),
+                        ports = port_list.as_str()
+                    ),
                     raw_data: String::new(),
                 });
             }
         }
         c.status = AuditStatus::Pass;
-        c.summary = format!(
-            "Inventoried {total_open} open ports across {} hosts.",
-            hosts.len()
+        c.summary = fl!(
+            "ui-tool-secnumcloud-net01-summary",
+            open = total_open,
+            hosts = hosts.len()
         );
     }
 
@@ -896,32 +936,23 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
                 .collect();
             non_standard_count += non_std.len();
             if !non_std.is_empty() {
-                let port_list = non_std
-                    .iter()
-                    .map(|s| {
-                        format!(
-                            "{}/{}",
-                            s.port,
-                            s.service_name.as_deref().unwrap_or("unknown")
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let port_list = format_port_list(&non_std, &unknown);
                 c.evidence.push(AuditEvidence {
                     host: host.ip_address.clone(),
-                    detail: format!("Non-standard ports: {port_list}"),
+                    detail: fl!(
+                        "ui-tool-secnumcloud-net02-evidence",
+                        ports = port_list.as_str()
+                    ),
                     raw_data: String::new(),
                 });
             }
         }
         if non_standard_count == 0 {
             c.status = AuditStatus::Pass;
-            c.summary = "No unnecessary or non-standard services detected.".to_string();
+            c.summary = fl!("ui-tool-secnumcloud-net02-pass");
         } else {
             c.status = AuditStatus::Warning;
-            c.summary = format!(
-                "{non_standard_count} non-standard ports found - review for operational necessity."
-            );
+            c.summary = fl!("ui-tool-secnumcloud-net02-warn", count = non_standard_count);
         }
     }
 
@@ -940,12 +971,13 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
                 let missing = fetch_missing_headers(&host.ip_address, svc.port).await;
                 if !missing.is_empty() {
                     missing_count += 1;
+                    let headers = missing.join(", ");
                     c.evidence.push(AuditEvidence {
                         host: host.ip_address.clone(),
-                        detail: format!(
-                            "Port {}: missing headers: {}",
-                            svc.port,
-                            missing.join(", ")
+                        detail: fl!(
+                            "ui-tool-secnumcloud-net03-evidence",
+                            port = svc.port,
+                            headers = headers.as_str()
                         ),
                         raw_data: String::new(),
                     });
@@ -955,14 +987,16 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
 
         if checked_count == 0 {
             c.status = AuditStatus::Skipped;
-            c.summary = "No HTTP/HTTPS services found to check.".to_string();
+            c.summary = fl!("ui-tool-secnumcloud-net03-skipped");
         } else if missing_count == 0 {
             c.status = AuditStatus::Pass;
-            c.summary = format!("All {checked_count} web services have required security headers.");
+            c.summary = fl!("ui-tool-secnumcloud-net03-pass", count = checked_count);
         } else {
             c.status = AuditStatus::Fail;
-            c.summary = format!(
-                "{missing_count} web services out of {checked_count} are missing required security headers (HSTS, CSP, XFO, XCTO)."
+            c.summary = fl!(
+                "ui-tool-secnumcloud-net03-fail",
+                missing = missing_count,
+                checked = checked_count
             );
         }
     }
@@ -981,11 +1015,24 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
         } else {
             AuditStatus::Warning
         };
-        c.summary = format!(
-            "Detected {} subnets. Verify network segmentation according to ANSSI guidelines.",
-            subnets.len()
-        );
+        c.summary = fl!("ui-tool-secnumcloud-net04-summary", count = subnets.len());
     }
+}
+
+/// Formats a list of open services as `port/name`, with a localized fallback for a
+/// service whose name could not be guessed.
+fn format_port_list(services: &[&DiscoveredService], unknown: &str) -> String {
+    services
+        .iter()
+        .map(|s| {
+            format!(
+                "{}/{}",
+                s.port,
+                s.service_name.as_deref().unwrap_or(unknown)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 async fn fetch_missing_headers(host: &str, port: u16) -> Vec<String> {
@@ -1019,26 +1066,23 @@ async fn run_crypto_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
             .collect();
         if tls_svcs.is_empty() {
             c.status = AuditStatus::Skipped;
-            c.summary = "No TLS services found to check.".to_string();
+            c.summary = fl!("ui-tool-secnumcloud-cry01-skipped");
         } else {
             c.status = AuditStatus::Pass;
-            c.summary = format!(
-                "All {} TLS endpoints verified for acceptable protocols.",
-                tls_svcs.len()
-            );
+            c.summary = fl!("ui-tool-secnumcloud-cry01-pass", count = tls_svcs.len());
         }
     }
 
     // CRY-02: Weak cipher suites
     if let Some(c) = chapter.checks.get_mut(1) {
         c.status = AuditStatus::Pass;
-        c.summary = "No weak cipher suites negotiated across audited endpoints.".to_string();
+        c.summary = fl!("ui-tool-secnumcloud-cry02-pass");
     }
 
     // CRY-03: Certificate validity
     if let Some(c) = chapter.checks.get_mut(2) {
         c.status = AuditStatus::Pass;
-        c.summary = "All captured certificates are within validity period.".to_string();
+        c.summary = fl!("ui-tool-secnumcloud-cry03-pass");
     }
 
     // CRY-04: SSH key strength
@@ -1053,8 +1097,7 @@ async fn run_crypto_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
                         weak_ssh += 1;
                         c.evidence.push(AuditEvidence {
                             host: host.ip_address.clone(),
-                            detail: "Port 22: weak SSH host key algorithm (DSA) detected"
-                                .to_string(),
+                            detail: fl!("ui-tool-secnumcloud-cry04-evidence"),
                             raw_data: b.clone(),
                         });
                     }
@@ -1063,14 +1106,17 @@ async fn run_crypto_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
         }
         if checked_ssh == 0 {
             c.status = AuditStatus::Skipped;
-            c.summary = "No SSH services found to check.".to_string();
+            c.summary = fl!("ui-tool-secnumcloud-cry04-skipped");
         } else if weak_ssh > 0 {
             c.status = AuditStatus::Fail;
-            c.summary =
-                format!("{weak_ssh} SSH servers out of {checked_ssh} offer weak key algorithms.");
+            c.summary = fl!(
+                "ui-tool-secnumcloud-cry04-fail",
+                weak = weak_ssh,
+                checked = checked_ssh
+            );
         } else {
             c.status = AuditStatus::Pass;
-            c.summary = format!("All {checked_ssh} SSH servers use acceptable key algorithms.");
+            c.summary = fl!("ui-tool-secnumcloud-cry04-pass", checked = checked_ssh);
         }
     }
 }
@@ -1079,7 +1125,7 @@ async fn run_access_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
     // ACC-01: Default credentials
     if let Some(c) = chapter.checks.get_mut(0) {
         c.status = AuditStatus::Pass;
-        c.summary = "No default credentials accepted across audited services.".to_string();
+        c.summary = fl!("ui-tool-secnumcloud-acc01-pass");
     }
 
     // ACC-02: SMB signing
@@ -1090,13 +1136,10 @@ async fn run_access_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
             .collect();
         if smb_svcs.is_empty() {
             c.status = AuditStatus::Skipped;
-            c.summary = "No SMB services found to check.".to_string();
+            c.summary = fl!("ui-tool-secnumcloud-acc02-skipped");
         } else {
             c.status = AuditStatus::Pass;
-            c.summary = format!(
-                "{} SMB services evaluated for message signing.",
-                smb_svcs.len()
-            );
+            c.summary = fl!("ui-tool-secnumcloud-acc02-pass", count = smb_svcs.len());
         }
     }
 
@@ -1108,25 +1151,27 @@ async fn run_access_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost])
             .collect();
         if snmp_svcs.is_empty() {
             c.status = AuditStatus::Skipped;
-            c.summary = "No SNMP services found to check.".to_string();
+            c.summary = fl!("ui-tool-secnumcloud-acc03-skipped");
         } else {
             c.status = AuditStatus::Pass;
-            c.summary = "No default SNMP community strings accepted.".to_string();
+            c.summary = fl!("ui-tool-secnumcloud-acc03-pass");
         }
     }
 }
 
 async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]) {
+    let unknown = fl!("ui-tool-secnumcloud-unknown");
+
     // OPS-01: SPF/DKIM/DMARC records
     if let Some(c) = chapter.checks.get_mut(0) {
         c.status = AuditStatus::Skipped;
-        c.summary = "No public domains configured in target scope for DNS checks.".to_string();
+        c.summary = fl!("ui-tool-secnumcloud-ops01-skipped");
     }
 
     // OPS-02: CAA records
     if let Some(c) = chapter.checks.get_mut(1) {
         c.status = AuditStatus::Skipped;
-        c.summary = "No public domains configured in target scope for CAA checks.".to_string();
+        c.summary = fl!("ui-tool-secnumcloud-ops02-skipped");
     }
 
     // OPS-03: Known CVE detection
@@ -1141,9 +1186,13 @@ async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHo
                             matched_cves += 1;
                             c.evidence.push(AuditEvidence {
                                 host: host.ip_address.clone(),
-                                detail: format!(
-                                    "Port {}: {} {} affected by {} ({})",
-                                    svc.port, software, version, cve.id, cve.severity
+                                detail: fl!(
+                                    "ui-tool-secnumcloud-ops03-evidence",
+                                    port = svc.port,
+                                    software = software,
+                                    version = version.as_str(),
+                                    cve = cve.id,
+                                    severity = cve.severity
                                 ),
                                 raw_data: cve.summary.to_string(),
                             });
@@ -1154,11 +1203,10 @@ async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHo
         }
         if matched_cves == 0 {
             c.status = AuditStatus::Pass;
-            c.summary =
-                "No known high-severity CVEs matched across scanned service banners.".to_string();
+            c.summary = fl!("ui-tool-secnumcloud-ops03-pass");
         } else {
             c.status = AuditStatus::Fail;
-            c.summary = format!("{matched_cves} known CVEs matched across scanned services.");
+            c.summary = fl!("ui-tool-secnumcloud-ops03-fail", count = matched_cves);
         }
     }
 
@@ -1170,16 +1218,20 @@ async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHo
                 count += 1;
                 c.evidence.push(AuditEvidence {
                     host: host.ip_address.clone(),
-                    detail: format!(
-                        "Port {}: {}",
-                        svc.port,
-                        svc.service_name.as_deref().unwrap_or("unknown")
+                    detail: fl!(
+                        "ui-tool-secnumcloud-ops04-evidence",
+                        port = svc.port,
+                        service = svc.service_name.as_deref().unwrap_or(&unknown)
                     ),
                     raw_data: svc.banner.clone().unwrap_or_default(),
                 });
             }
         }
         c.status = AuditStatus::Pass;
-        c.summary = format!("Inventoried {count} services across {} hosts.", hosts.len());
+        c.summary = fl!(
+            "ui-tool-secnumcloud-ops04-summary",
+            count = count,
+            hosts = hosts.len()
+        );
     }
 }

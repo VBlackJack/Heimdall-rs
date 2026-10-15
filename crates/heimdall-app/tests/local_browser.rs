@@ -1944,9 +1944,11 @@ fn an_entry_is_opened_and_copied_from_the_folder_listed_while_another_is_on_its_
             "{effects:?}"
         );
     }
-    // Pasted, it goes into the folder shown: the one asked for.
-    let (sources, folder) = pasted(&paste(&mut app, pane, std::slice::from_ref(&photo)), pane);
-    assert_eq!((sources, folder), (vec![photo.clone()], from.join("sub")));
+    // Pasted while "sub" is on its way: nothing goes into a folder whose entries are not
+    // shown yet, and the status says why.
+    let effects = app.update(Message::Files(FilesMessage::Paste { tab: pane }));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(app.notice(), Some(&heimdall_app::Notice::ListingInProgress));
     // Opening "sub" again lists "sub", not a "sub" inside it.
     let index = index_of(&app, pane, "sub");
     let effects = opened(&mut app, pane, index);

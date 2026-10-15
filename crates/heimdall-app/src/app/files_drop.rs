@@ -80,6 +80,11 @@ impl App {
         if !self.takes_drop_across((from_tab, from), (tab, onto)) {
             return Vec::new();
         }
+        // Beside the entries, into the folder shown: not while its listing is on its way. A
+        // folder entry dropped on is its own destination.
+        if !self.drops_on_folder(tab, onto, into) && !self.takes_into_shown(tab, onto) {
+            return Vec::new();
+        }
         match from {
             Side::Local => {
                 let paths = self.chosen_local_paths(from_tab);
@@ -113,6 +118,27 @@ impl App {
             .filter_map(|index| local.entries.get(index))
             .map(|entry| local.entries_folder().join(&entry.name))
             .collect()
+    }
+
+    /// Whether a drop on pane `side` of `tab` at `into` lands now: on a folder entry, into
+    /// that folder; beside the entries or on a file, into the folder shown, not while the
+    /// pane names another folder whose listing is on its way.
+    #[must_use]
+    pub fn drop_lands(&self, tab: TabId, side: Side, into: Option<usize>) -> bool {
+        self.drops_on_folder(tab, side, into) || !self.files_awaits_other_folder(tab, side)
+    }
+
+    /// Whether a drop on pane `side` of `tab` at `into` is on one of its folder entries,
+    /// rather than on the folder it shows.
+    fn drops_on_folder(&self, tab: TabId, side: Side, into: Option<usize>) -> bool {
+        let Some(files) = self.tab(tab).and_then(|found| found.files.as_deref()) else {
+            return false;
+        };
+        let kind = into.and_then(|index| match side {
+            Side::Remote => files.remote.entries.get(index).map(|entry| entry.kind),
+            Side::Local => files.local.entries.get(index).map(|entry| entry.kind),
+        });
+        kind == Some(EntryKind::Directory)
     }
 
     /// The server's folder a drop on `tab` goes into: its folder entry at `into`, or the

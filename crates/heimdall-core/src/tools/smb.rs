@@ -54,6 +54,9 @@ pub const SMB2_MAGIC: [u8; 4] = [0xFE, b'S', b'M', b'B'];
 /// NTLMSSP signature: `"NTLMSSP\0"`.
 pub const NTLMSSP_SIGNATURE: [u8; 8] = [b'N', b'T', b'L', b'M', b'S', b'S', b'P', 0x00];
 
+/// NTLMSSP `NEGOTIATE_VERSION` flag: when set, an 8-byte Version field is present.
+pub const NTLMSSP_NEGOTIATE_VERSION: u32 = 0x0200_0000;
+
 /// Formats a 16-bit SMB dialect revision code into a human-readable string.
 #[must_use]
 pub fn format_dialect(dialect: u16) -> String {
@@ -522,8 +525,12 @@ pub fn parse_ntlm_type2(data: &[u8]) -> Option<NtlmInfo> {
         offset += av_len;
     }
 
+    // The 8-byte Version field at offset 48 is only present when the server set the
+    // NTLMSSP_NEGOTIATE_VERSION flag (bit 0x0200_0000) in NegotiateFlags at offset 20;
+    // otherwise those bytes belong to another field and must not be read as a version.
+    let negotiate_flags = u32::from_le_bytes([data[20], data[21], data[22], data[23]]);
     let mut os_build = None;
-    if data.len() >= 56 {
+    if negotiate_flags & NTLMSSP_NEGOTIATE_VERSION != 0 && data.len() >= 56 {
         let major = data[48];
         let minor = data[49];
         let build = u16::from_le_bytes([data[50], data[51]]);
@@ -657,18 +664,16 @@ pub fn build_security_findings(
             ));
         }
 
-        if smb.dialect_revision < MIN_SECURE_DIALECT {
-            findings.push(SmbFinding::new(
-                SmbFindingSeverity::Critical,
-                "ToolSmbV1Detected",
-            ));
-        } else {
-            findings.push(SmbFinding::with_args(
-                SmbFindingSeverity::Success,
-                "ToolSmbModernDialect",
-                vec![format_dialect(smb.dialect_revision)],
-            ));
-        }
+        // The negotiate request only offers SMB2+ dialects, so the response can never
+        // carry an SMBv1 revision: a server that speaks only SMBv1 fails the SMB2 parse
+        // earlier and produces no SmbNegotiateInfo. There is therefore no SMBv1 finding
+        // here; detecting SMBv1 would require a separate SMB1 negotiate, which this tool
+        // deliberately does not send.
+        findings.push(SmbFinding::with_args(
+            SmbFindingSeverity::Success,
+            "ToolSmbModernDialect",
+            vec![format_dialect(smb.dialect_revision)],
+        ));
     }
 
     if netbios_failed {
@@ -912,6 +917,9 @@ mod tests {
         msg[0..8].copy_from_slice(&NTLMSSP_SIGNATURE);
         msg[8..12].copy_from_slice(&2u32.to_le_bytes()); // Type 2
 
+        // NegotiateFlags with NEGOTIATE_VERSION set, so the Version field is read.
+        msg[20..24].copy_from_slice(&NTLMSSP_NEGOTIATE_VERSION.to_le_bytes());
+
         // Version: 10.0.19041 at offset 48
         msg[48] = 10;
         msg[49] = 0;
@@ -970,10 +978,10 @@ mod tests {
     }
 
     #[test]
-    fn security_findings_detects_signing_disabled_and_smbv1() {
+    fn security_findings_detect_signing_and_never_emit_smbv1() {
         let mut smb = SmbNegotiateInfo {
             server_guid: None,
-            dialect_revision: DIALECT_SMB1,
+            dialect_revision: DIALECT_SMB202,
             signing_required: false,
             signing_enabled: true,
             system_time: None,
@@ -988,9 +996,17 @@ mod tests {
                 .any(|f| f.message_key == "ToolSmbSigningDisabled"
                     && f.severity == SmbFindingSeverity::Warning)
         );
+        // An SMB2 negotiate response can never report SMBv1, so the finding is never built.
         assert!(
-            findings.iter().any(|f| f.message_key == "ToolSmbV1Detected"
-                && f.severity == SmbFindingSeverity::Critical)
+            findings
+                .iter()
+                .all(|f| f.message_key != "ToolSmbV1Detected")
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message_key == "ToolSmbModernDialect"
+                    && f.severity == SmbFindingSeverity::Success)
         );
         assert!(
             findings
@@ -1015,6 +1031,24 @@ mod tests {
                 .any(|f| f.message_key == "ToolSmbModernDialect"
                     && f.severity == SmbFindingSeverity::Success)
         );
+    }
+
+    #[test]
+    fn parse_ntlm_type2_omits_os_build_without_version_flag() {
+        // Same layout as the AV-pair test but with NegotiateFlags left at zero: the
+        // Version bytes must be ignored.
+        let mut msg = vec![0u8; 100];
+        msg[0..8].copy_from_slice(&NTLMSSP_SIGNATURE);
+        msg[8..12].copy_from_slice(&2u32.to_le_bytes());
+        msg[48] = 10;
+        msg[49] = 0;
+        msg[50..52].copy_from_slice(&19041u16.to_le_bytes());
+        let target_info_off = 56u32;
+        msg[44..48].copy_from_slice(&target_info_off.to_le_bytes());
+        msg[40..42].copy_from_slice(&0u16.to_le_bytes());
+
+        let info = parse_ntlm_type2(&msg).expect("parsing succeeds");
+        assert_eq!(info.os_build, None);
     }
 
     #[test]

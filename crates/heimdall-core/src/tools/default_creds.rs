@@ -48,10 +48,13 @@ pub const PORT_PROBE_TIMEOUT_MS: u64 = 2000;
 /// Credential test result status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CredTestStatus {
-    /// Default or factory credential was accepted.
+    /// Default or factory credential was verified as accepted.
     Default,
     /// Credential was rejected or changed.
     Changed,
+    /// The service answered but the probe did not verify the credential pair
+    /// (SSH, MySQL, MSSQL, Redis, VNC): reachability only, never a finding.
+    NotTested,
     /// Credential test failed due to an operational error.
     Error,
 }
@@ -220,6 +223,7 @@ pub fn status_to_label(
     let key = match status {
         CredTestStatus::Default => "ToolDefCredStatusDefault",
         CredTestStatus::Changed => "ToolDefCredStatusChanged",
+        CredTestStatus::NotTested => "ToolDefCredStatusNotTested",
         CredTestStatus::Error => "ToolDefCredStatusError",
     };
     localize.map_or_else(|| key.to_string(), |loc| loc(key))
@@ -247,6 +251,16 @@ pub fn status_to_detail(
             let key = "ToolDefCredDetailRejected";
             localize.map_or_else(
                 || format!("{service} rejected"),
+                |loc| {
+                    let template = loc(key);
+                    template.replace("{0}", service)
+                },
+            )
+        }
+        CredTestStatus::NotTested => {
+            let key = "ToolDefCredDetailNotTested";
+            localize.map_or_else(
+                || format!("{service} reachable, credentials not tested"),
                 |loc| {
                     let template = loc(key);
                     template.replace("{0}", service)
@@ -319,6 +333,27 @@ pub fn build_summary_text(
     )
 }
 
+/// Counts the verified default-credential findings and the distinct services they
+/// affect. Only [`CredTestStatus::Default`] is a finding: reachability-only outcomes
+/// ([`CredTestStatus::NotTested`]) are never counted. Returns `(defaults, services)`.
+#[must_use]
+pub fn count_defaults_and_services(results: &[CredTestResult]) -> (usize, usize) {
+    let default_count = results
+        .iter()
+        .filter(|r| r.status == CredTestStatus::Default)
+        .count();
+
+    let mut services_seen = std::collections::HashSet::new();
+    for r in results
+        .iter()
+        .filter(|r| r.status == CredTestStatus::Default)
+    {
+        services_seen.insert((r.service.as_str(), r.port));
+    }
+
+    (default_count, services_seen.len())
+}
+
 /// Builds a plain-text tabular report for clipboard export.
 #[must_use]
 pub fn build_report_text(
@@ -327,12 +362,15 @@ pub fn build_report_text(
 ) -> String {
     let mut out = String::new();
 
-    let col_svc = localize.map_or_else(|| "Service", |loc| loc("ToolDefCredColService").leak());
-    let col_port = localize.map_or_else(|| "Port", |loc| loc("ToolDefCredColPort").leak());
-    let col_user = localize.map_or_else(|| "User", |loc| loc("ToolDefCredColUser").leak());
-    let col_pass = localize.map_or_else(|| "Password", |loc| loc("ToolDefCredColPass").leak());
-    let col_status = localize.map_or_else(|| "Status", |loc| loc("ToolDefCredColStatus").leak());
-    let col_detail = localize.map_or_else(|| "Detail", |loc| loc("ToolDefCredColDetail").leak());
+    let col_svc =
+        localize.map_or_else(|| "Service".to_string(), |loc| loc("ToolDefCredColService"));
+    let col_port = localize.map_or_else(|| "Port".to_string(), |loc| loc("ToolDefCredColPort"));
+    let col_user = localize.map_or_else(|| "User".to_string(), |loc| loc("ToolDefCredColUser"));
+    let col_pass = localize.map_or_else(|| "Password".to_string(), |loc| loc("ToolDefCredColPass"));
+    let col_status =
+        localize.map_or_else(|| "Status".to_string(), |loc| loc("ToolDefCredColStatus"));
+    let col_detail =
+        localize.map_or_else(|| "Detail".to_string(), |loc| loc("ToolDefCredColDetail"));
 
     out.push_str(&format!(
         "{col_svc:<12}{col_port:<8}{col_user:<16}{col_pass:<16}{col_status:<12}{col_detail}\n"
@@ -421,9 +459,11 @@ mod tests {
             "ToolDefCredColDetail" => "Detail".to_string(),
             "ToolDefCredStatusDefault" => "Default".to_string(),
             "ToolDefCredStatusChanged" => "Changed".to_string(),
+            "ToolDefCredStatusNotTested" => "Not tested".to_string(),
             "ToolDefCredStatusError" => "Error".to_string(),
             "ToolDefCredDetailAccepted" => "{0} accepted".to_string(),
             "ToolDefCredDetailRejected" => "{0} rejected".to_string(),
+            "ToolDefCredDetailNotTested" => "{0} reachable, credentials not tested".to_string(),
             _ => key.to_string(),
         }
     }
@@ -485,6 +525,31 @@ mod tests {
 
         let summary = build_summary_text(&results, Some(&test_localize));
         assert_eq!(summary, "2 defaults on 2 services");
+    }
+
+    #[test]
+    fn not_tested_detail_says_reachable_not_accepted() {
+        let detail = status_to_detail(CredTestStatus::NotTested, "SSH", Some(&test_localize));
+        assert!(detail.contains("SSH"));
+        assert!(detail.contains("not tested"));
+        assert!(!detail.contains("accepted"));
+        assert_eq!(
+            status_to_label(CredTestStatus::NotTested, None),
+            "ToolDefCredStatusNotTested"
+        );
+    }
+
+    #[test]
+    fn count_defaults_and_services_ignores_not_tested() {
+        let results = vec![
+            make_result("SSH", 22, CredTestStatus::NotTested),
+            make_result("SSH", 22, CredTestStatus::NotTested),
+            make_result("FTP", 21, CredTestStatus::Default),
+            make_result("HTTP", 80, CredTestStatus::Changed),
+        ];
+        let (defaults, services) = count_defaults_and_services(&results);
+        assert_eq!(defaults, 1);
+        assert_eq!(services, 1);
     }
 
     #[test]

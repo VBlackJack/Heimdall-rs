@@ -200,9 +200,9 @@ impl App {
 
     /// Copies `paths`, files and folders of this computer, into the folder local file
     /// browser `tab` shows, as [`crate::local_paste::paste`] does; the folder is listed
-    /// again once done.
+    /// again once done. Nothing while that folder's listing is on its way.
     pub(super) fn paste_into_browser(&mut self, tab: TabId, paths: Vec<PathBuf>) -> Vec<Effect> {
-        if paths.is_empty() {
+        if paths.is_empty() || !self.takes_into_shown(tab, Side::Local) {
             return Vec::new();
         }
         let Some(files) = self.files_mut(tab).filter(|files| files.local_only) else {
