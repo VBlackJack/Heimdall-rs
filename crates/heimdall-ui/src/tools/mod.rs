@@ -35,11 +35,14 @@ pub mod catalog;
 mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
+mod command_library_tool;
+mod cron_job_tool;
 mod crontab_tool;
 mod crypto_parts;
 mod cve_tool;
 mod datetime_tool;
 mod defaultcreds_tool;
+mod diagram_tool;
 mod diff_tool;
 mod dns_batch_tool;
 mod dns_tool;
@@ -54,9 +57,11 @@ mod ip_converter_tool;
 mod json_tool;
 mod jwt_tool;
 mod key_parts;
+mod log_viewer_tool;
 mod network_calculator_tool;
 mod network_cartography_tool;
 mod network_interfaces_tool;
+mod notes_tool;
 mod open_ports_tool;
 mod password_tool;
 mod ping_tool;
@@ -91,11 +96,12 @@ use std::time::Duration;
 
 use heimdall_app::tools::{ToolCategory, ToolGroup, ToolId};
 use heimdall_app::{App, TabId};
+use heimdall_core::tools::command_library::SnippetId;
 use heimdall_core::tools::hash_computer::HashAlgorithm;
 use iced::advanced::text::highlighter::PlainText;
 use iced::widget::text_editor::{self, Action, Content};
 use iced::widget::{Column, button, column, container, row, scrollable, text, tooltip};
-use iced::{Color, Element, Length, Task, Theme, window};
+use iced::{Color, Element, Length, Subscription, Task, Theme, window};
 
 pub use arp_monitor_tool::ArpMonitorMessage;
 pub use banner_tool::BannerMessage;
@@ -105,10 +111,13 @@ pub use certgen_tool::{
     CertCopy, CertGenMessage, CertSave, Generated as GeneratedCertificates, KeySizeChoice,
 };
 pub use chmod_tool::ChmodMessage;
+pub use command_library_tool::CommandLibraryMessage;
+pub use cron_job_tool::CronJobMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
 pub use cve_tool::{CveMessage, Outcome as CveOutcome};
 pub use datetime_tool::{DateField, DateTimeMessage, ZoneChoice};
 pub use defaultcreds_tool::{DefaultCredsMessage, Outcome as DefaultCredsOutcome};
+pub use diagram_tool::DiagramMessage;
 pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_diff};
 pub use dns_batch_tool::DnsBatchMessage;
 pub use dns_tool::DnsMessage;
@@ -122,9 +131,11 @@ pub use http_status_tool::HttpStatusMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
 pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
+pub use log_viewer_tool::LogViewerMessage;
 pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
 pub use network_cartography_tool::NetworkCartographyMessage;
 pub use network_interfaces_tool::NetIfMessage;
+pub use notes_tool::NotesMessage;
 pub use open_ports_tool::OpenPortsMessage;
 pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
 pub use ping_tool::PingMessage;
@@ -285,6 +296,11 @@ pub fn label(tool: ToolId) -> String {
         ToolId::Wifi => fl!("ui-tool-wifi-name"),
         ToolId::Hosts => fl!("ui-tool-hosts-name"),
         ToolId::Services => fl!("ui-tool-services-name"),
+        ToolId::LogView => fl!("ui-tool-logview-name"),
+        ToolId::CronJob => fl!("ui-tool-cronjob-name"),
+        ToolId::Notes => fl!("ui-tool-notes-name"),
+        ToolId::Diagram => fl!("ui-tool-diagram-name"),
+        ToolId::CmdLib => fl!("ui-tool-cmdlib-name"),
     }
 }
 
@@ -344,6 +360,11 @@ pub fn description(tool: ToolId) -> String {
         ToolId::Wifi => fl!("ui-tool-wifi-description"),
         ToolId::Hosts => fl!("ui-tool-hosts-description"),
         ToolId::Services => fl!("ui-tool-services-description"),
+        ToolId::LogView => fl!("ui-tool-logview-description"),
+        ToolId::CronJob => fl!("ui-tool-cronjob-description"),
+        ToolId::Notes => fl!("ui-tool-notes-description"),
+        ToolId::Diagram => fl!("ui-tool-diagram-description"),
+        ToolId::CmdLib => fl!("ui-tool-cmdlib-description"),
     }
 }
 
@@ -402,6 +423,11 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::Wifi => Icon::ToolSubnet,
         ToolId::Hosts => Icon::ToolHostsFileEditor,
         ToolId::Services => Icon::ToolServiceStatus,
+        ToolId::LogView => Icon::ToolLogViewer,
+        ToolId::CronJob => Icon::ToolCronJobManager,
+        ToolId::Notes => Icon::ToolNotes,
+        ToolId::Diagram => Icon::ToolDiagram,
+        ToolId::CmdLib => Icon::ToolCommandLibrary,
     }
 }
 
@@ -605,6 +631,18 @@ pub enum CopySlot {
     HostsFileText,
     /// The service status dashboard CSV export.
     ServicesCsv,
+    /// The log viewer's lines shown.
+    LogViewText,
+    /// The cron job manager's list.
+    CronJobExport,
+    /// The note shown, as Markdown.
+    NotesMarkdown,
+    /// The note shown, as an HTML document.
+    NotesHtml,
+    /// The diagram's source.
+    DiagramSource,
+    /// The command of a snippet of the command library.
+    CmdLibCommand(SnippetId),
 }
 
 /// What a tool's tab is asked.
@@ -720,6 +758,16 @@ pub enum ToolMessage {
     Hosts(HostsMessage),
     /// The service status dashboard tool's.
     Services(ServiceStatusMessage),
+    /// The log viewer tool's.
+    LogView(LogViewerMessage),
+    /// The cron job manager tool's.
+    CronJob(CronJobMessage),
+    /// The notes scratchpad tool's.
+    Notes(NotesMessage),
+    /// The diagram editor tool's.
+    Diagram(DiagramMessage),
+    /// The command library tool's.
+    CmdLib(CommandLibraryMessage),
 }
 
 /// A tool's own state.
@@ -777,6 +825,11 @@ enum Pane {
     Wifi(wifi_networks_tool::WifiNetworksPane),
     Hosts(hosts_editor_tool::HostsEditorPane),
     Services(service_status_tool::ServiceStatusPane),
+    LogView(log_viewer_tool::LogViewerPane),
+    CronJob(cron_job_tool::CronJobPane),
+    Notes(notes_tool::NotesPane),
+    Diagram(diagram_tool::DiagramPane),
+    CmdLib(command_library_tool::CommandLibraryPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -852,6 +905,11 @@ impl ToolPane {
             ToolId::Wifi => Pane::Wifi(wifi_networks_tool::WifiNetworksPane::default()),
             ToolId::Hosts => Pane::Hosts(hosts_editor_tool::HostsEditorPane::default()),
             ToolId::Services => Pane::Services(service_status_tool::ServiceStatusPane::default()),
+            ToolId::LogView => Pane::LogView(log_viewer_tool::LogViewerPane::default()),
+            ToolId::CronJob => Pane::CronJob(cron_job_tool::CronJobPane::default()),
+            ToolId::Notes => Pane::Notes(notes_tool::NotesPane::default()),
+            ToolId::Diagram => Pane::Diagram(diagram_tool::DiagramPane::default()),
+            ToolId::CmdLib => Pane::CmdLib(command_library_tool::CommandLibraryPane::default()),
         };
         Self {
             pane,
@@ -906,8 +964,12 @@ impl ToolPanes {
         self.panes.retain(|id, state| {
             let open = app.tab(*id).and_then(heimdall_app::Tab::tool).is_some();
             // A tab closing writes down what it keeps, as the C# views' `Unloaded`.
-            if !open && let Pane::Password(pane) = &mut state.pane {
-                pane.closing();
+            if !open {
+                match &mut state.pane {
+                    Pane::Password(pane) => pane.closing(),
+                    Pane::Notes(pane) => pane.closing(),
+                    _ => {}
+                }
             }
             open
         });
@@ -941,6 +1003,25 @@ impl ToolPanes {
     #[must_use]
     pub fn get(&self, tab: TabId) -> Option<&ToolPane> {
         self.panes.get(&tab)
+    }
+
+    /// The timers of the tool tabs that follow something: each log viewer tailing its
+    /// file looked at every [`TAIL_INTERVAL`](heimdall_core::tools::log_viewer::TAIL_INTERVAL),
+    /// as the C# `_tailTimer`.
+    #[must_use]
+    pub fn subscription(&self) -> Subscription<Message> {
+        Subscription::batch(self.panes.iter().filter_map(|(tab, state)| {
+            match &state.pane {
+                Pane::LogView(pane) if pane.tailing() => Some(
+                    iced::time::every(heimdall_core::tools::log_viewer::TAIL_INTERVAL)
+                        .with(*tab)
+                        .map(|(tab, _)| {
+                            Message::Tool(tab, ToolMessage::LogView(LogViewerMessage::TailTick))
+                        }),
+                ),
+                _ => None,
+            }
+        }))
     }
 
     /// Applies `message` to tool tab `tab`; the window `main` holds the file dialogs.
@@ -1296,6 +1377,36 @@ impl ToolPanes {
                     service_status_tool::Outcome::None => Task::none(),
                 };
             }
+            (ToolMessage::LogView(message), Pane::LogView(pane)) => {
+                return match pane.update(message) {
+                    log_viewer_tool::Outcome::Copy(content) => {
+                        state.copy(tab, CopySlot::LogViewText, content)
+                    }
+                    outcome => outcome.task(tab, main),
+                };
+            }
+            (ToolMessage::CronJob(message), Pane::CronJob(pane)) => {
+                return match pane.update(message) {
+                    cron_job_tool::Outcome::Copy(content) => {
+                        state.copy(tab, CopySlot::CronJobExport, content)
+                    }
+                    outcome => outcome.task(tab),
+                };
+            }
+            (ToolMessage::Notes(message), Pane::Notes(pane)) => {
+                return match pane.update(message) {
+                    notes_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    outcome => outcome.task(tab),
+                };
+            }
+            (ToolMessage::Diagram(message), Pane::Diagram(pane)) => {
+                return match pane.update(message) {
+                    diagram_tool::Outcome::Copy(content) => {
+                        state.copy(tab, CopySlot::DiagramSource, content)
+                    }
+                    outcome => outcome.task(tab, main),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -1318,6 +1429,7 @@ fn update_copying(message: ToolMessage, pane: &mut Pane) -> Option<(CopySlot, St
         (ToolMessage::Ulid(message), Pane::Ulid(pane)) => pane.update(message),
         (ToolMessage::Crontab(message), Pane::Crontab(pane)) => pane.update(message),
         (ToolMessage::SshConfig(message), Pane::SshConfig(pane)) => pane.update(message),
+        (ToolMessage::CmdLib(message), Pane::CmdLib(pane)) => pane.update(message),
         _ => None,
     }
 }
@@ -1463,6 +1575,11 @@ pub fn view<'a>(
         ToolId::Wifi => (fl!("ui-tool-wifi-title"), fl!("ui-tool-wifi-help")),
         ToolId::Hosts => (fl!("ui-tool-hosts-title"), fl!("ui-tool-hosts-help")),
         ToolId::Services => (fl!("ui-tool-services-title"), fl!("ui-tool-services-help")),
+        ToolId::LogView => (fl!("ui-tool-logview-title"), fl!("ui-tool-logview-help")),
+        ToolId::CronJob => (fl!("ui-tool-cronjob-title"), fl!("ui-tool-cronjob-help")),
+        ToolId::Notes => (fl!("ui-tool-notes-title"), fl!("ui-tool-notes-help")),
+        ToolId::Diagram => (fl!("ui-tool-diagram-title"), fl!("ui-tool-diagram-help")),
+        ToolId::CmdLib => (fl!("ui-tool-cmdlib-title"), fl!("ui-tool-cmdlib-help")),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -1517,6 +1634,11 @@ pub fn view<'a>(
         Pane::Wifi(pane) => (pane.view(tab, state, theme), None),
         Pane::Hosts(pane) => (pane.view(tab, state, theme), None),
         Pane::Services(pane) => (pane.view(tab, state, theme), None),
+        Pane::LogView(pane) => (pane.view(tab, state), None),
+        Pane::CronJob(pane) => (pane.view(tab, state), None),
+        Pane::Notes(pane) => (pane.view(tab, state), None),
+        Pane::Diagram(pane) => (pane.view(tab, state), None),
+        Pane::CmdLib(pane) => (pane.view(tab, state), None),
     };
     column![
         header(tab, title, actions),

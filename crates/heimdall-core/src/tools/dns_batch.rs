@@ -21,7 +21,7 @@
 use std::fmt::Write as _;
 use std::net::IpAddr;
 
-use super::default_creds::escape_csv;
+use super::csv_cell::quoted;
 
 /// Hostnames resolved in one batch at most: a longer list is refused, not cut.
 pub const MAX_BATCH_HOSTS: usize = 1000;
@@ -252,12 +252,12 @@ pub fn format_batch_csv(results: &[DnsBatchItemResult]) -> String {
         let _ = writeln!(
             csv,
             "{},{},{},{},{},{}",
-            escape_csv(&r.hostname),
+            quoted(&r.hostname),
             r.status.label(),
-            escape_csv(&r.ipv4.join("; ")),
-            escape_csv(&r.ipv6.join("; ")),
+            quoted(&r.ipv4.join("; ")),
+            quoted(&r.ipv6.join("; ")),
             r.elapsed_ms,
-            escape_csv(r.error.as_ref().map_or("", DnsBatchFailure::code))
+            quoted(r.error.as_ref().map_or("", DnsBatchFailure::code))
         );
     }
     csv

@@ -4929,6 +4929,219 @@ ui-tool-services-error-action-failed-detail = La acción sobre el servicio fall�
 ui-tool-services-error-list-failed = No se pudieron cargar los servicios: { $error }
 ui-tool-services-exit-code-none = ninguno
 
+## Visor de registros
+ui-tool-logview-name = Visor de registros
+ui-tool-logview-description = Ver un archivo de registro, filtrar sus líneas y seguir lo que se le añade
+ui-tool-logview-title = Visor de registros / seguimiento
+ui-tool-logview-help =
+    Visor de registros
+
+    Muestra las últimas 10 000 líneas de un archivo de registro, leídas en la codificación elegida.
+
+    Uso:
+    Examina para elegir un archivo o escribe su ruta y pulsa Intro. Filtrar conserva las líneas que contienen el texto escrito, o que coinciden con él como expresión regular cuando Expresión regular está marcada. Seguir lee lo que se añade cada medio segundo; un archivo que se acorta se vuelve a leer desde el principio. De un archivo muy grande solo se lee el final.
+ui-tool-logview-path-placeholder = Ruta del archivo de registro
+ui-tool-logview-browse = Examinar
+ui-tool-logview-open = Abrir
+ui-tool-logview-tail = Seguir
+ui-tool-logview-filter-placeholder = Texto de filtro
+ui-tool-logview-filter = Filtrar
+ui-tool-logview-clear = Borrar
+ui-tool-logview-case-sensitive = Distinguir mayúsculas y minúsculas
+ui-tool-logview-regex = Expresión regular
+ui-tool-logview-encoding = Codificación:
+ui-tool-logview-encoding-utf8 = UTF-8
+ui-tool-logview-encoding-ascii = ASCII
+ui-tool-logview-encoding-utf16 = UTF-16
+ui-tool-logview-encoding-windows1252 = Windows-1252
+ui-tool-logview-auto-scroll = Seguir la última línea
+ui-tool-logview-tail-active = Seguimiento activo
+ui-tool-logview-copy = Copiar
+ui-tool-logview-file-filter = Archivos de registro
+ui-tool-logview-empty-state = Busca o introduce la ruta de un archivo de registro para empezar a verlo
+ui-tool-logview-no-matches = Ninguna línea de registro coincide con el filtro actual
+ui-tool-logview-stats =
+    { $total ->
+        [one] { $shown } / { $total } línea | { $size } KB | Última actualización: { $time }
+       *[other] { $shown } / { $total } líneas | { $size } KB | Última actualización: { $time }
+    }
+ui-tool-logview-error-not-found = Archivo no encontrado.
+ui-tool-logview-error-open = No se puede abrir el archivo: { $error }
+ui-tool-logview-error-regex = Expresión regular no válida.
+
+## Gestor de tareas cron
+ui-tool-cronjob-name = Gestor de tareas cron
+ui-tool-cronjob-description = Analizar un crontab y listar las tareas programadas de Windows
+ui-tool-cronjob-title = Gestor de tareas cron
+ui-tool-cronjob-help =
+    Gestor de tareas cron
+
+    Lee un crontab y las tareas programadas de este equipo.
+
+    Uso:
+    Pega la salida de crontab -l y pulsa Interpretar: cada programación se lista con su comando, su próxima ejecución y lo que hace; selecciona una para ver sus cinco próximas ejecuciones. Tareas de Windows lista las tareas programadas de este equipo con su estado y su último resultado. Copiar pone la lista mostrada en el portapapeles, una fila por línea.
+ui-tool-cronjob-tab-paste = Pegar crontab
+ui-tool-cronjob-tab-tasks = Tareas de Windows
+ui-tool-cronjob-paste-instructions = Pega la salida en bruto de crontab (de crontab -l vía terminal SSH) para interpretar y analizar las entradas.
+ui-tool-cronjob-paste-placeholder = Contenido del crontab
+ui-tool-cronjob-parse = Interpretar
+ui-tool-cronjob-clear = Borrar
+ui-tool-cronjob-refresh = Actualizar
+ui-tool-cronjob-copy = Copiar
+ui-tool-cronjob-col-schedule = Programación
+ui-tool-cronjob-col-command = Comando
+ui-tool-cronjob-col-next-run = Próxima ejecución
+ui-tool-cronjob-col-description = Descripción
+ui-tool-cronjob-col-task-name = Nombre de la tarea
+ui-tool-cronjob-col-status = Estado
+ui-tool-cronjob-col-last-run = Última ejecución
+ui-tool-cronjob-col-last-result = Último resultado
+ui-tool-cronjob-detail-header = Detalles de la entrada
+ui-tool-cronjob-detail-schedule = Programación: { $schedule }
+ui-tool-cronjob-detail-command = Comando: { $command }
+ui-tool-cronjob-detail-next-runs = Próximas ejecuciones:
+ui-tool-cronjob-empty-state = Pega un crontab para listar sus programaciones
+ui-tool-cronjob-tasks-empty = Actualiza para listar las tareas programadas de Windows
+ui-tool-cronjob-loading = Cargando tareas programadas...
+ui-tool-cronjob-error-empty = Pega el contenido de crontab para interpretarlo.
+ui-tool-cronjob-error-no-entry = No se encontraron entradas de crontab válidas.
+ui-tool-cronjob-error-timeout = Se agotó el tiempo de espera al cargar las tareas.
+ui-tool-cronjob-error-failed = No se pudieron cargar las tareas: { $error }
+ui-tool-cronjob-error-unsupported = Las tareas programadas solo se pueden listar en Windows.
+ui-tool-cronjob-error-no-system-folder = Windows no indicó su carpeta del sistema: no se pueden listar las tareas programadas.
+ui-tool-cronjob-status-parsed =
+    { $count ->
+        [one] { $count } entrada interpretada.
+       *[other] { $count } entradas interpretadas.
+    }
+ui-tool-cronjob-status-tasks =
+    { $count ->
+        [one] { $count } tarea programada encontrada.
+       *[other] { $count } tareas programadas encontradas.
+    }
+
+## Notas
+ui-tool-notes-name = Notas
+ui-tool-notes-description = Notas de trabajo en Markdown guardadas como archivos, con etiquetas y exportación HTML
+ui-tool-notes-title = Notas de trabajo
+ui-tool-notes-help =
+    Notas
+
+    Notas de trabajo en Markdown, cada una en su archivo de la carpeta de notas de los datos de Heimdall.
+
+    Uso:
+    Nueva crea una nota; la primera línea que empieza por "# " es su título, y una línea como "> tags: red, prod" da sus etiquetas. Una nota se guarda poco después de cada cambio, al seleccionar otra y al cerrar la pestaña. La búsqueda encuentra una nota por su texto, su título o su nombre de archivo. La nota mostrada se copia en Markdown o como página HTML.
+ui-tool-notes-new-title = Nota de trabajo
+ui-tool-notes-search-placeholder = Buscar notas
+ui-tool-notes-new = Nueva
+ui-tool-notes-count =
+    { $count ->
+        [one] { $count } nota
+       *[other] { $count } notas
+    }
+ui-tool-notes-delete = Eliminar
+ui-tool-notes-delete-confirm = ¿Eliminar la nota "{ $title }"?
+ui-tool-notes-cancel = Cancelar
+ui-tool-notes-copy-markdown = Copiar en Markdown
+ui-tool-notes-copy-html = Copiar en HTML
+ui-tool-notes-content-placeholder = Escribe la nota en Markdown
+ui-tool-notes-empty-title = Ninguna nota seleccionada
+ui-tool-notes-empty-body = Crea una nota o selecciona una de la lista.
+ui-tool-notes-error-no-folder = Este sistema no da a Heimdall ninguna carpeta de datos donde guardar las notas.
+ui-tool-notes-error-list = No se pueden leer las notas: { $error }
+ui-tool-notes-error-save = No se puede guardar la nota: { $error }
+
+## Editor de diagramas
+ui-tool-diagram-name = Editor de diagramas
+ui-tool-diagram-description = Editar el texto fuente de un diagrama (Mermaid, Graphviz, PlantUML o ASCII) a partir de plantillas
+ui-tool-diagram-title = Editor de diagramas
+ui-tool-diagram-help =
+    Editor de diagramas
+
+    Un editor de texto para la fuente de un diagrama, en Mermaid, Graphviz DOT, PlantUML o arte ASCII. No dibuja el diagrama: pega la fuente en una herramienta o una página que muestre su formato.
+
+    Uso:
+    Empieza con una plantilla o abre un archivo de texto. Guardar escribe en el archivo actual; Guardar como pide uno nuevo. Una plantilla o un archivo nunca reemplaza cambios sin guardar sin preguntar antes.
+ui-tool-diagram-templates = Plantillas
+ui-tool-diagram-template-perimeter = Perímetro y DMZ
+ui-tool-diagram-template-cloud = VPC en la nube
+ui-tool-diagram-template-ascii = Topología de red en ASCII
+ui-tool-diagram-template-ad = Active Directory
+ui-tool-diagram-format-mermaid = Mermaid
+ui-tool-diagram-format-dot = Graphviz DOT
+ui-tool-diagram-format-plantuml = PlantUML
+ui-tool-diagram-format-ascii = Arte ASCII
+ui-tool-diagram-open = Abrir
+ui-tool-diagram-save = Guardar
+ui-tool-diagram-save-as = Guardar como
+ui-tool-diagram-copy = Copiar
+ui-tool-diagram-untitled = Diagrama sin título
+ui-tool-diagram-modified = { $name } (modificado)
+ui-tool-diagram-confirm-replace = Este diagrama tiene cambios sin guardar. ¿Reemplazarlo de todos modos?
+ui-tool-diagram-replace = Reemplazar
+ui-tool-diagram-keep = Conservar mis cambios
+ui-tool-diagram-placeholder = Fuente del diagrama
+ui-tool-diagram-open-title = Abrir un diagrama
+ui-tool-diagram-save-title = Guardar el diagrama
+ui-tool-diagram-default-file-name = diagrama
+ui-tool-diagram-saved = Guardado en { $path }
+ui-tool-diagram-error-open = No se pudo abrir el diagrama: { $error }
+ui-tool-diagram-error-save = No se pudo guardar el diagrama: { $error }
+ui-tool-diagram-error-too-large = el archivo es demasiado grande para abrirlo
+
+## Biblioteca de comandos
+ui-tool-cmdlib-name = Biblioteca de comandos
+ui-tool-cmdlib-description = Comandos de administración, red y seguridad con sus valores rellenados
+ui-tool-cmdlib-title = Biblioteca de comandos
+ui-tool-cmdlib-help =
+    Biblioteca de comandos
+
+    Comandos habituales de administración, red y seguridad, listos para copiar.
+
+    Uso:
+    Elige una plataforma o escribe una palabra para encontrar un comando. Escribe sus valores: el comando los muestra tal como se copiará. Un valor vacío toma el ejemplo mostrado.
+ui-tool-cmdlib-search-placeholder = Buscar comandos
+ui-tool-cmdlib-platform-all = Todas las plataformas
+ui-tool-cmdlib-platform-linux = Linux
+ui-tool-cmdlib-platform-windows = Windows
+ui-tool-cmdlib-platform-cross = Multiplataforma
+ui-tool-cmdlib-category-network = Red
+ui-tool-cmdlib-category-system = Sistema
+ui-tool-cmdlib-category-services = Servicios
+ui-tool-cmdlib-category-security = Seguridad
+ui-tool-cmdlib-category-diagnostics = Diagnóstico
+ui-tool-cmdlib-param-host = Host
+ui-tool-cmdlib-param-port = Puerto
+ui-tool-cmdlib-param-local-port = Puerto local
+ui-tool-cmdlib-param-port-range = Puertos
+ui-tool-cmdlib-param-service = Servicio
+ui-tool-cmdlib-copy = Copiar
+ui-tool-cmdlib-empty = Ningún comando coincide con los filtros.
+ui-tool-cmdlib-count =
+    { $count ->
+        [one] { $count } comando
+       *[other] { $count } comandos
+    }
+ui-tool-cmdlib-snippet-listening-ports = Listar los sockets a la escucha
+ui-tool-cmdlib-snippet-listening-ports-description = Muestra los sockets TCP y UDP a la escucha, con su proceso.
+ui-tool-cmdlib-snippet-kill-port = Terminar el proceso de un puerto
+ui-tool-cmdlib-snippet-kill-port-description = Termina el proceso a la escucha en un puerto TCP.
+ui-tool-cmdlib-snippet-journal-follow = Seguir el diario de un servicio
+ui-tool-cmdlib-snippet-journal-follow-description = Muestra el diario systemd de un servicio a medida que se escribe.
+ui-tool-cmdlib-snippet-cert-expiry = Fechas del certificado TLS remoto
+ui-tool-cmdlib-snippet-cert-expiry-description = Se conecta por TLS y muestra el sujeto y las fechas de validez del certificado del servidor.
+ui-tool-cmdlib-snippet-test-connection = Probar un puerto TCP
+ui-tool-cmdlib-snippet-test-connection-description = Comprueba con PowerShell que un host responde en un puerto TCP.
+ui-tool-cmdlib-snippet-port-owner = Encontrar el proceso de un puerto
+ui-tool-cmdlib-snippet-port-owner-description = Muestra el estado y el proceso propietario de un puerto TCP local.
+ui-tool-cmdlib-snippet-restart-service = Reiniciar un servicio de Windows
+ui-tool-cmdlib-snippet-restart-service-description = Detiene e inicia un servicio de Windows.
+ui-tool-cmdlib-snippet-flush-dns = Vaciar la caché DNS
+ui-tool-cmdlib-snippet-flush-dns-description = Vacía la caché del cliente DNS de Windows.
+ui-tool-cmdlib-snippet-mtr = Calidad de la ruta de red
+ui-tool-cmdlib-snippet-mtr-description = Envía 50 sondas a cada salto para medir las pérdidas y la latencia.
+ui-tool-cmdlib-snippet-nmap = Versiones de servicios con Nmap
+ui-tool-cmdlib-snippet-nmap-description = Sondea los puertos abiertos para conocer el servicio y su versión.
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Nombre de host o dirección IP no válidos. Solo se permiten letras, dígitos, puntos y guiones.
 ui-tool-ping-latency = { $ms } ms
