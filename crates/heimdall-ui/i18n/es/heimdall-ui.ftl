@@ -4319,7 +4319,7 @@ ui-tool-smb-help =
 
     Comprobaciones de seguridad:
     - Firma SMB desactivada (riesgo de ataque de retransmisión)
-    - SMBv1 detectado (vulnerabilidad EternalBlue)
+    - Dialecto SMB2/SMB3 negociado
 
 # --- Review follow-ups (#402): security tools ---
 ui-tool-defaultcreds-status-not-tested = No probado

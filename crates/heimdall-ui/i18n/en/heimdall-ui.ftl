@@ -4278,7 +4278,7 @@ ui-tool-smb-help =
 
     Security checks:
     - SMB signing disabled (relay attack risk)
-    - SMBv1 detected (EternalBlue vulnerability)
+    - Negotiated SMB2/SMB3 dialect
 
 # --- Review follow-ups (#402): security tools ---
 ui-tool-defaultcreds-status-not-tested = Not tested

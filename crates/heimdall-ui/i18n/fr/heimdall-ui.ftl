@@ -4325,7 +4325,7 @@ ui-tool-smb-help =
 
     Vérifications de sécurité :
     - Signature SMB désactivée (risque d'attaque par relais)
-    - SMBv1 détecté (vulnérabilité EternalBlue)
+    - Dialecte SMB2/SMB3 négocié
 
 # --- Review follow-ups (#402): security tools ---
 ui-tool-defaultcreds-status-not-tested = Non testé

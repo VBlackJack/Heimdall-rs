@@ -53,6 +53,12 @@ use crate::tokens::{font_size, spacing};
 const SMB_TIMEOUT: Duration = Duration::from_millis(3000);
 const NETBIOS_TIMEOUT: Duration = Duration::from_millis(1500);
 
+/// TCP port of SMB over the NetBIOS-less transport.
+const SMB_PORT: u16 = 445;
+
+/// UDP port of the NetBIOS name service.
+const NETBIOS_NS_PORT: u16 = 137;
+
 /// Messages dispatched by the SMB enumerator view.
 #[derive(Debug, Clone)]
 pub enum SmbMessage {
@@ -435,11 +441,21 @@ async fn probe_netbios(
     dur: Duration,
 ) -> (Option<String>, Option<String>, Option<String>, bool) {
     let query_task = async {
-        let socket = UdpSocket::bind("0.0.0.0:0").await.ok()?;
-        let target_addr = format!("{host}:137");
-        socket.connect(&target_addr).await.ok()?;
+        // Resolve the target first so the UDP socket is bound to the matching address
+        // family: an IPv4 wildcard socket cannot reach an IPv6 target and vice versa.
+        let target = tokio::net::lookup_host((host, NETBIOS_NS_PORT))
+            .await
+            .ok()?
+            .next()?;
+        let bind_addr = if target.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
+        let socket = UdpSocket::bind(bind_addr).await.ok()?;
+        socket.connect(target).await.ok()?;
 
-        let query = build_netbios_nbstat_query(0x1337);
+        let query = build_netbios_nbstat_query(nbstat_transaction_id());
         socket.send(&query).await.ok()?;
 
         let mut buf = vec![0u8; 1024];
@@ -462,8 +478,11 @@ async fn probe_smb_and_ntlm(
     dur: Duration,
 ) -> Result<(Option<NtlmInfo>, Option<SmbNegotiateInfo>), String> {
     let probe_task = async {
-        let addr = format!("{host}:445");
-        let mut stream = TcpStream::connect(&addr).await.map_err(|e| e.to_string())?;
+        // `(host, port)` resolves IPv4, IPv6 literals and hostnames correctly, where
+        // `format!("{host}:445")` would mangle an IPv6 literal such as `::1`.
+        let mut stream = TcpStream::connect((host, SMB_PORT))
+            .await
+            .map_err(|e| e.to_string())?;
 
         // 1. SMB2 Negotiate
         let negotiate_body = build_smb2_negotiate();
@@ -537,6 +556,21 @@ async fn read_netbios_message(stream: &mut TcpStream) -> Result<Vec<u8>, std::io
     Ok(data)
 }
 
+/// A random 16-bit NetBIOS transaction id so a reply can be matched to its query and a
+/// fixed id cannot be spoofed. Uses the workspace generator (sealvault); a time-based
+/// fallback keeps the probe working if the system generator is briefly unavailable.
+fn nbstat_transaction_id() -> u16 {
+    sealvault::random::array::<2>().map_or_else(
+        |_| {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos());
+            (nanos & 0xFFFF) as u16
+        },
+        |bytes| u16::from_be_bytes(bytes),
+    )
+}
+
 fn localize_key(key: &str) -> String {
     match key {
         "ToolSmbReportIdentity" => fl!("ui-tool-smb-report-identity"),
@@ -560,6 +594,9 @@ fn localize_key(key: &str) -> String {
         "ToolSmbSigningDisabled" => fl!("ui-tool-smb-signing-disabled"),
         "ToolSmbSigningEnabled" => fl!("ui-tool-smb-signing-enabled"),
         "ToolSmbV1Detected" => fl!("ui-tool-smb-v1-detected"),
+        // The report formatter substitutes the dialect for the "{0}" placeholder, so the
+        // template must carry one; `build_report` replaces it with the finding argument.
+        "ToolSmbModernDialect" => fl!("ui-tool-smb-modern-dialect", dialect = "{0}"),
         "ToolSmbNetBiosFailed" => fl!("ui-tool-smb-netbios-failed"),
         other => other.to_string(),
     }
@@ -582,4 +619,85 @@ fn localize_finding(finding: &heimdall_core::tools::smb::SmbFinding) -> String {
 fn field_str(opt: &Option<String>) -> String {
     opt.clone()
         .unwrap_or_else(|| fl!("ui-tool-smb-not-available"))
+}
+
+#[cfg(test)]
+mod tests {
+    use heimdall_core::tools::smb::{
+        DIALECT_SMB311, SmbEnumerationResult, SmbFinding, SmbFindingSeverity, SmbNegotiateInfo,
+        build_report, build_security_findings,
+    };
+
+    use super::localize_key;
+
+    /// Every message key the report formatter and the findings builder can emit, so the
+    /// test fails if a new key is added without a `localize_key` arm (as `ToolSmbModernDialect`
+    /// once lacked one and leaked its raw key into the report).
+    const EMITTABLE_KEYS: &[&str] = &[
+        "ToolSmbReportIdentity",
+        "ToolSmbComputerName",
+        "ToolSmbDomain",
+        "ToolSmbDnsName",
+        "ToolSmbDnsDomain",
+        "ToolSmbForest",
+        "ToolSmbOsBuild",
+        "ToolSmbMac",
+        "ToolSmbReportProtocol",
+        "ToolSmbDialect",
+        "ToolSmbSigning",
+        "ToolSmbServerGuid",
+        "ToolSmbSystemTime",
+        "ToolSmbBootTime",
+        "ToolSmbYes",
+        "ToolSmbNo",
+        "ToolSmbNotAvailable",
+        "ToolSmbReportFindings",
+        "ToolSmbSigningEnabled",
+        "ToolSmbSigningDisabled",
+        "ToolSmbModernDialect",
+        "ToolSmbNetBiosFailed",
+    ];
+
+    #[test]
+    fn every_emittable_key_is_localized() {
+        for key in EMITTABLE_KEYS {
+            let localized = localize_key(key);
+            assert_ne!(&localized, key, "key `{key}` has no localize_key arm");
+            assert!(!localized.is_empty(), "key `{key}` localizes to empty");
+        }
+    }
+
+    #[test]
+    fn report_never_shows_a_raw_key() {
+        // A modern dialect finding is the one that previously leaked "ToolSmbModernDialect".
+        let smb = SmbNegotiateInfo {
+            server_guid: Some("guid".to_owned()),
+            dialect_revision: DIALECT_SMB311,
+            signing_required: true,
+            signing_enabled: true,
+            system_time: None,
+            server_start_time: None,
+            capabilities: 0,
+        };
+        let findings: Vec<SmbFinding> = build_security_findings(None, Some(&smb), false);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message_key == "ToolSmbModernDialect"
+                    && f.severity == SmbFindingSeverity::Success)
+        );
+
+        let result = SmbEnumerationResult {
+            dialect_raw: Some(DIALECT_SMB311),
+            dialect: Some("SMB 3.1.1".to_owned()),
+            signing_required: Some(true),
+            findings,
+            ..SmbEnumerationResult::default()
+        };
+        let report = build_report(&result, localize_key);
+        assert!(
+            !report.contains("ToolSmb"),
+            "report leaked a raw message key"
+        );
+    }
 }
