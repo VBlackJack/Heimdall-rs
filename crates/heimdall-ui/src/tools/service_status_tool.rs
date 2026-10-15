@@ -21,7 +21,7 @@ use heimdall_app::TabId;
 use iced::widget::{button, checkbox, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
-use heimdall_core::tools::service_status::{self, ServiceAction, ServiceEntry};
+use heimdall_core::tools::service_status::{self, ServiceAction, ServiceEntry, ServiceError};
 
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
@@ -38,7 +38,7 @@ pub enum ServiceStatusMessage {
     /// Refresh service status list now.
     Refresh,
     /// Refresh completed with service entries.
-    Finished(Result<Vec<ServiceEntry>, String>),
+    Finished(Result<Vec<ServiceEntry>, ServiceError>),
     /// Filter query text changed.
     FilterChanged(String),
     /// Toggle whether to show only running services.
@@ -46,7 +46,7 @@ pub enum ServiceStatusMessage {
     /// Trigger a service action (Start, Stop, Restart).
     TriggerAction(String, ServiceAction),
     /// Service action completed.
-    ActionResult(Result<(), String>),
+    ActionResult(Result<(), ServiceError>),
     /// Copy CSV export to clipboard.
     CopyCsv,
 }
@@ -83,8 +83,9 @@ impl ServiceStatusPane {
                     async move {
                         tokio::task::spawn_blocking(service_status::run_services_command)
                             .await
-                            .map_err(|e| e.to_string())
-                            .and_then(|r| r)
+                            .unwrap_or_else(|error| {
+                                Err(ServiceError::NotStarted(error.to_string()))
+                            })
                     },
                     move |res| {
                         Message::Tool(
@@ -103,7 +104,7 @@ impl ServiceStatusPane {
             }
             ServiceStatusMessage::Finished(Err(err)) => {
                 self.running = false;
-                self.error = Some(err);
+                self.error = Some(service_error_text(&err));
                 Outcome::None
             }
             ServiceStatusMessage::FilterChanged(f) => {
@@ -115,18 +116,23 @@ impl ServiceStatusPane {
                 Outcome::None
             }
             ServiceStatusMessage::TriggerAction(name, action) => {
+                // One action at a time, and none while the list is read again: the name is
+                // checked against the list as it stands.
+                if self.action_running || self.running {
+                    return Outcome::None;
+                }
                 self.action_running = true;
                 self.error = None;
                 self.status = None;
+                let known = self.services.clone();
 
                 let task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            service_status::run_service_action(action, &name)
+                            service_status::run_service_action(action, &name, &known)
                         })
                         .await
-                        .map_err(|e| e.to_string())
-                        .and_then(|r| r)
+                        .unwrap_or_else(|error| Err(ServiceError::NotStarted(error.to_string())))
                     },
                     move |res| {
                         Message::Tool(
@@ -146,7 +152,7 @@ impl ServiceStatusPane {
             }
             ServiceStatusMessage::ActionResult(Err(err)) => {
                 self.action_running = false;
-                self.error = Some(err);
+                self.error = Some(service_error_text(&err));
                 Outcome::None
             }
             ServiceStatusMessage::CopyCsv => {
@@ -394,5 +400,131 @@ impl ServiceStatusPane {
         }
 
         super::content_column(body)
+    }
+}
+
+/// What `error` says to the user.
+fn service_error_text(error: &ServiceError) -> String {
+    match error {
+        ServiceError::InvalidName => fl!("ui-tool-services-error-invalid-name"),
+        ServiceError::UnknownName => fl!("ui-tool-services-error-unknown-name"),
+        ServiceError::NoPowerShell => fl!("ui-tool-services-error-no-powershell"),
+        ServiceError::NoSystemctl => fl!("ui-tool-services-error-no-systemctl"),
+        ServiceError::NotStarted(detail) => {
+            fl!("ui-tool-services-error-not-started", error = detail.clone())
+        }
+        ServiceError::TimedOut => fl!("ui-tool-services-error-timeout"),
+        ServiceError::NotElevated => fl!("ui-tool-services-error-not-elevated"),
+        ServiceError::ActionFailed { code, detail } if detail.is_empty() => fl!(
+            "ui-tool-services-error-action-failed",
+            code = exit_code_text(*code)
+        ),
+        ServiceError::ActionFailed { detail, .. } => fl!(
+            "ui-tool-services-error-action-failed-detail",
+            error = detail.clone()
+        ),
+        ServiceError::ListFailed { code, detail } => fl!(
+            "ui-tool-services-error-list-failed",
+            error = if detail.is_empty() {
+                exit_code_text(*code)
+            } else {
+                detail.clone()
+            }
+        ),
+    }
+}
+
+/// An exit code as said: none when the command was ended by a signal.
+fn exit_code_text(code: Option<i32>) -> String {
+    code.map_or_else(
+        || fl!("ui-tool-services-exit-code-none"),
+        |code| code.to_string(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use heimdall_app::tools::ToolId;
+    use heimdall_app::{App, AppConfig, Message as AppMessage, ToolsMessage};
+    use heimdall_ssh::AgentSource;
+    use heimdall_term::GridSize;
+
+    use super::*;
+
+    /// A tool tab's identifier, from an application of its own in `dir`.
+    fn tab(dir: &std::path::Path) -> TabId {
+        let mut app = App::new(AppConfig {
+            profiles_file: dir.join("profiles.toml"),
+            known_hosts: dir.join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: GridSize { cols: 80, rows: 24 },
+            files_start: dir.to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        });
+        let _ = app.update(AppMessage::Tools(ToolsMessage::Open {
+            tool: ToolId::Services,
+            title: String::new(),
+        }));
+        app.tabs[0].id
+    }
+
+    #[test]
+    fn one_action_at_a_time_and_its_end_always_frees_the_buttons() {
+        let dir = tempfile::tempdir().expect("dir");
+        let tab = tab(dir.path());
+        let mut pane = ServiceStatusPane::default();
+        let action = || ServiceStatusMessage::TriggerAction("x".to_owned(), ServiceAction::Start);
+        assert!(matches!(pane.update(tab, action()), Outcome::Task(_)));
+        assert!(pane.action_running);
+        assert!(
+            matches!(pane.update(tab, action()), Outcome::None),
+            "a second action waits for the first"
+        );
+
+        let _ = pane.update(
+            tab,
+            ServiceStatusMessage::ActionResult(Err(ServiceError::TimedOut)),
+        );
+        assert!(!pane.action_running);
+        assert_eq!(pane.error, Some(fl!("ui-tool-services-error-timeout")));
+
+        // A refused name is said in words of the user's language, not the command's.
+        assert!(matches!(pane.update(tab, action()), Outcome::Task(_)));
+        let _ = pane.update(
+            tab,
+            ServiceStatusMessage::ActionResult(Err(ServiceError::UnknownName)),
+        );
+        assert!(!pane.action_running);
+        assert_eq!(pane.error, Some(fl!("ui-tool-services-error-unknown-name")));
+    }
+
+    #[test]
+    fn every_error_has_its_own_text() {
+        let errors = [
+            ServiceError::InvalidName,
+            ServiceError::UnknownName,
+            ServiceError::NoPowerShell,
+            ServiceError::NoSystemctl,
+            ServiceError::NotStarted("x".to_owned()),
+            ServiceError::TimedOut,
+            ServiceError::NotElevated,
+            ServiceError::ActionFailed {
+                code: Some(1),
+                detail: String::new(),
+            },
+            ServiceError::ActionFailed {
+                code: Some(1),
+                detail: "denied".to_owned(),
+            },
+            ServiceError::ListFailed {
+                code: None,
+                detail: String::new(),
+            },
+        ];
+        let texts: std::collections::HashSet<String> =
+            errors.iter().map(service_error_text).collect();
+        assert_eq!(texts.len(), errors.len());
+        assert!(texts.iter().all(|text| !text.contains("ui-tool-")));
     }
 }

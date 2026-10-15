@@ -894,6 +894,8 @@ impl ToolPane {
 #[derive(Debug, Default)]
 pub struct ToolPanes {
     panes: HashMap<TabId, ToolPane>,
+    /// Tool tabs made whose opening work, as the C# view's `Initialize`, is still to start.
+    opening: Vec<TabId>,
 }
 
 impl ToolPanes {
@@ -910,11 +912,28 @@ impl ToolPanes {
         });
         for tab in &app.tabs {
             if let Some(tool) = tab.tool() {
-                self.panes
-                    .entry(tab.id)
-                    .or_insert_with(|| ToolPane::new(tool, Some(app.profiles_file())));
+                self.panes.entry(tab.id).or_insert_with(|| {
+                    self.opening.push(tab.id);
+                    ToolPane::new(tool, Some(app.profiles_file()))
+                });
             }
         }
+    }
+
+    /// The work of the tool tabs made since last asked, as the C# view's `Initialize`: the
+    /// Hosts File Editor reads the hosts file.
+    pub fn opening(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for tab in std::mem::take(&mut self.opening) {
+            if let Some(ToolPane {
+                pane: Pane::Hosts(pane),
+                ..
+            }) = self.panes.get_mut(&tab)
+            {
+                tasks.push(pane.open(tab));
+            }
+        }
+        Task::batch(tasks)
     }
 
     /// The state of tool tab `tab`.

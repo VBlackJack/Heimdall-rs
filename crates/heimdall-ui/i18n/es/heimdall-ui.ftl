@@ -4840,45 +4840,54 @@ ui-tool-hosts-name = Editor del archivo hosts
 ui-tool-hosts-description = Ver, alternar y editar las asignaciones de dominios en el archivo hosts
 ui-tool-hosts-title = Editor del archivo hosts
 ui-tool-hosts-help =
-    Edita el archivo hosts del sistema con validacion de sintaxis.
+    Edita el archivo hosts del sistema con validación de sintaxis.
 
-    Vea y edite las entradas. Guardar los cambios requiere privilegios de administrador.
+    El archivo se lee al abrir la herramienta. Las entradas se pueden activar, desactivar, eliminar o añadir; los comentarios, los alias y los finales de línea se conservan tal cual. Guardar requiere privilegios de administrador, deja una copia de seguridad fechada junto al archivo y se rechaza si otro programa modificó el archivo desde que se leyó.
 ui-tool-hosts-reload = Recargar
 ui-tool-hosts-save = Guardar cambios
 ui-tool-hosts-copy-all = Copiar hosts
-ui-tool-hosts-btn-add = Anadir
+ui-tool-hosts-btn-add = Añadir
 ui-tool-hosts-btn-delete = Eliminar
-ui-tool-hosts-invalid-ip = Formato de direccion IP invalido.
-ui-tool-hosts-missing-host = El nombre de host no puede estar vacio.
+ui-tool-hosts-invalid-ip = Formato de dirección IP no válido.
+ui-tool-hosts-missing-host = El nombre de host no puede estar vacío.
+ui-tool-hosts-invalid-host = Nombre de host no válido: use letras, dígitos, puntos, guiones o guiones bajos, sin espacios ni '#'.
+ui-tool-hosts-invalid-comment = Un comentario no puede contener un salto de línea ni un carácter de control.
 ui-tool-hosts-loaded = { $count } entradas cargadas desde { $path }
-ui-tool-hosts-save-success = Archivo hosts guardado correctamente.
-ui-tool-hosts-save-failed = Error al guardar el archivo hosts: { $error }
+ui-tool-hosts-save-success = Archivo hosts guardado. Copia de seguridad de la versión anterior: { $backup }
+ui-tool-hosts-unchanged = No hay cambios que guardar: el archivo hosts se dejó tal cual.
+ui-tool-hosts-save-failed = No se pudo guardar el archivo hosts: { $error }
+ui-tool-hosts-error-not-found = No se encontró el archivo hosts.
+ui-tool-hosts-error-read-denied = Acceso denegado (lectura). Ejecute como administrador.
+ui-tool-hosts-error-read = No se pudo leer el archivo hosts: { $error }
+ui-tool-hosts-error-admin-required = No se puede escribir el archivo hosts. Ejecute Heimdall como administrador para guardar los cambios.
+ui-tool-hosts-error-changed = Otro programa modificó el archivo hosts desde que se leyó. No se escribió nada: recárguelo y vuelva a hacer los cambios.
+ui-tool-hosts-error-backup = No se pudo escribir la copia de seguridad, por lo que el archivo hosts no se modificó: { $error }
 ui-tool-hosts-empty-state = No se encontraron entradas en el archivo hosts.
-ui-tool-hosts-loading-hint = Haga clic en Recargar para leer el archivo hosts.
+ui-tool-hosts-loading-hint = Leyendo el archivo hosts...
 ui-tool-hosts-col-enabled = Activo
-ui-tool-hosts-col-ip = Direccion IP
+ui-tool-hosts-col-ip = Dirección IP
 ui-tool-hosts-col-hostname = Nombre de host
 ui-tool-hosts-col-comment = Comentario
-ui-tool-hosts-col-action = Accion
+ui-tool-hosts-col-action = Acción
 
 ## Panel de estado de servicios
 ui-tool-services-name = Panel de estado de servicios
 ui-tool-services-description = Supervisar los servicios en segundo plano de Windows y controlar su estado
 ui-tool-services-title = Panel de estado de servicios
 ui-tool-services-help =
-    Supervisa el estado de los servicios de Windows con controles de inicio y detencion.
+    Supervisa el estado de los servicios de Windows con controles de inicio y detención.
 
-    Vea los servicios en ejecucion, su estado y el tipo de inicio. Inicie, detenga o reinicie servicios directamente.
+    Vea los servicios en ejecución, su estado y el tipo de inicio. Inicie, detenga o reinicie un servicio: Windows pide primero los derechos de administrador, y la acción solo se aplica a un servicio de la lista recién leída.
 ui-tool-services-refresh = Actualizar
 ui-tool-services-scanning = Actualizando...
 ui-tool-services-copy-csv = Exportar CSV
-ui-tool-services-filter-placeholder = Filtrar por nombre de servicio o mostrado...
-ui-tool-services-running-only = Solo en ejecucion
+ui-tool-services-filter-placeholder = Filtrar por nombre de servicio o nombre para mostrar...
+ui-tool-services-running-only = Solo en ejecución
 ui-tool-services-total = Total:
-ui-tool-services-running-label = En ejecucion:
+ui-tool-services-running-label = En ejecución:
 ui-tool-services-stopped-label = Detenidos:
 ui-tool-services-col-name = Nombre del servicio
-ui-tool-services-col-display-name = Nombre visible
+ui-tool-services-col-display-name = Nombre para mostrar
 ui-tool-services-col-status = Estado
 ui-tool-services-col-start-type = Tipo de inicio
 ui-tool-services-col-actions = Acciones
@@ -4886,7 +4895,18 @@ ui-tool-services-act-start = Iniciar
 ui-tool-services-act-stop = Detener
 ui-tool-services-act-restart = Reiniciar
 ui-tool-services-empty-state = Haga clic en Actualizar para inspeccionar los servicios de Windows.
-ui-tool-services-action-success = Accion de servicio completada con exito.
+ui-tool-services-action-success = Acción de servicio completada con éxito.
+ui-tool-services-error-invalid-name = Este nombre de servicio contiene caracteres que no se pueden pasar al sistema de forma segura: no se ejecutó ninguna acción.
+ui-tool-services-error-unknown-name = Este servicio no está en la lista recién leída: actualice la lista y vuelva a intentarlo.
+ui-tool-services-error-no-powershell = No se encontró Windows PowerShell en la carpeta del sistema.
+ui-tool-services-error-no-systemctl = No se encontró systemctl en /usr/bin ni en /bin.
+ui-tool-services-error-not-started = No se pudo iniciar el comando: { $error }
+ui-tool-services-error-timeout = El comando no terminó a tiempo y se detuvo. Una acción aún puede completarse: actualice la lista para comprobarlo.
+ui-tool-services-error-not-elevated = La acción no se ejecutó: se rechazó la solicitud de derechos de administrador, o Windows no pudo iniciarla.
+ui-tool-services-error-action-failed = La acción sobre el servicio falló (código de salida { $code }).
+ui-tool-services-error-action-failed-detail = La acción sobre el servicio falló: { $error }
+ui-tool-services-error-list-failed = No se pudieron cargar los servicios: { $error }
+ui-tool-services-exit-code-none = ninguno
 
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Nombre de host o dirección IP no válidos. Solo se permiten letras, dígitos, puntos y guiones.
