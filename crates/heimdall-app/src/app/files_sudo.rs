@@ -27,8 +27,9 @@ use crate::ids::TabId;
 
 /// The listing of the server's folder `path` in `tab`: as root while its sudo mode is on,
 /// with the password sudo took for the tab. It is the server pane's latest: any other one on
-/// its way is not shown. Started now when none is on its way; else it waits for that one's
-/// answer, in place of any other waiting, and nothing is started yet.
+/// its way is not shown. Over FTP, whose one control connection lists one folder at a time,
+/// it starts now when none is on its way, else waits for that one's answer in place of any
+/// other waiting; over SFTP and as root it starts at once, a slow listing holding up nothing.
 pub(super) fn remote_listing(
     files: &mut FilesPane,
     tab: TabId,
@@ -36,6 +37,7 @@ pub(super) fn remote_listing(
     path: RemotePath,
 ) -> Vec<Effect> {
     let request = files.remote.ask_listing();
+    let one_at_a_time = matches!(client, RemoteSession::Ftp(_));
     let listing = match files.shell.clone().filter(|_| files.sudo_mode) {
         Some(shell) => Effect::SudoListRemote {
             tab,
@@ -51,6 +53,9 @@ pub(super) fn remote_listing(
             request,
         },
     };
+    if !one_at_a_time {
+        return vec![listing];
+    }
     files
         .remote_listings
         .ask(request, listing)
@@ -101,11 +106,9 @@ impl App {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        // The listing waiting for this one starts now.
-        let next: Vec<Effect> = files.remote_listings.came(request).into_iter().collect();
         // Asked for before another one, or given up with Escape: nothing is shown or asked.
         if !files.sudo_mode || !files.remote.awaits(request) {
-            return next;
+            return Vec::new();
         }
         match result {
             Err(error) if is_password_error(&error) => {
@@ -114,9 +117,9 @@ impl App {
                 files.remote.listing_failed();
                 let name = crate::text::server_text(&path.display());
                 self.sudo_refused(tab, name, SudoAction::List(path), error);
-                next
+                Vec::new()
             }
-            result => self.show_remote_listing(tab, request, result),
+            result => self.remote_listed(tab, request, result),
         }
     }
 

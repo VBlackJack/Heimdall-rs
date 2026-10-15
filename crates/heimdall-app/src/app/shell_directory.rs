@@ -132,7 +132,7 @@ impl App {
             return Vec::new();
         };
         files.local.leave();
-        super::files_tab::local_listing(files, pane, folder)
+        vec![super::files_tab::local_listing(files, pane, folder)]
     }
 
     /// Pane `pane`, and the folder `shell` last reported, when the pane is to go there on

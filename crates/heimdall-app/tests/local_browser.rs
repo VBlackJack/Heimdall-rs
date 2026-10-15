@@ -1949,16 +1949,9 @@ fn an_entry_is_opened_and_copied_from_the_folder_listed_while_another_is_on_its_
     let effects = app.update(Message::Files(FilesMessage::Paste { tab: pane }));
     assert!(effects.is_empty(), "{effects:?}");
     assert_eq!(app.notice(), Some(&heimdall_app::Notice::ListingInProgress));
-    // Opening "sub" again lists "sub", not a "sub" inside it, once the listing on its way
-    // comes.
-    let first = local_request(&mut app, pane);
+    // Opening "sub" again lists "sub", not a "sub" inside it.
     let index = index_of(&app, pane, "sub");
-    assert!(opened(&mut app, pane, index).is_empty(), "it waits");
-    let effects = app.update(Message::Files(FilesMessage::LocalListed {
-        tab: pane,
-        request: first,
-        result: Ok((from.join("sub"), Vec::new())),
-    }));
+    let effects = opened(&mut app, pane, index);
     assert!(
         matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == from.join("sub")),
         "{effects:?}"

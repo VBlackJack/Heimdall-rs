@@ -839,7 +839,7 @@ async fn while_a_folder_is_listed_nothing_offers_to_put_anything_into_it() {
 async fn the_folders_menu_greys_what_puts_something_into_it_while_it_is_listed() {
     let dir = tempfile::tempdir().expect("dir");
     let (_core, tab) = files_tab(dir.path()).await;
-    let chosen = |loading: bool, label: &str| {
+    let chosen = |folder_pending: bool, label: &str| {
         let settings = Settings {
             fonts: FONTS.iter().map(|face| (*face).into()).collect(),
             ..Settings::default()
@@ -851,7 +851,7 @@ async fn the_folders_menu_greys_what_puts_something_into_it_while_it_is_listed()
                 (tab, Side::Remote),
                 None,
                 heimdall_ui::tree_view::FilesTabFacts {
-                    loading,
+                    folder_pending,
                     ..sftp_tab(true, true)
                 },
             ),
@@ -1916,7 +1916,7 @@ fn sftp_tab(can_paste: bool, over_ssh: bool) -> heimdall_ui::tree_view::FilesTab
         sftp: true,
         over_ssh,
         local_only: false,
-        loading: false,
+        folder_pending: false,
     }
 }
 
@@ -2085,7 +2085,7 @@ async fn an_ftp_tabs_entry_menu_edits_cuts_and_copies_as_the_csharp_but_never_ru
         sftp: false,
         over_ssh: false,
         local_only: false,
-        loading: false,
+        folder_pending: false,
     };
     let menu = |facts| {
         let settings = Settings {

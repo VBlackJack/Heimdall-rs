@@ -120,6 +120,14 @@ impl App {
             .collect()
     }
 
+    /// Whether a drop on pane `side` of `tab` at `into` lands now: on a folder entry, into
+    /// that folder; beside the entries or on a file, into the folder shown, not while the
+    /// pane names another folder whose listing is on its way.
+    #[must_use]
+    pub fn drop_lands(&self, tab: TabId, side: Side, into: Option<usize>) -> bool {
+        self.drops_on_folder(tab, side, into) || !self.files_awaits_other_folder(tab, side)
+    }
+
     /// Whether a drop on pane `side` of `tab` at `into` is on one of its folder entries,
     /// rather than on the folder it shows.
     fn drops_on_folder(&self, tab: TabId, side: Side, into: Option<usize>) -> bool {

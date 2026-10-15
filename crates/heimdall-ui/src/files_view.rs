@@ -938,15 +938,15 @@ fn pane_rule<'a>() -> Element<'a, Message> {
 }
 
 /// A pane's toolbar, as the C# file browser's: Back, Up, Home and Refresh as glyphs, then
-/// New folder, faded while the pane's listing is on its way (`loading`), the folder named
-/// not yet the one whose entries are shown; on the server's, its toggles, "sudo" over SSH
+/// New folder, faded while the pane names a folder whose listing is on its way over the
+/// entries of another (`pending`); on the server's, its toggles, "sudo" over SSH
 /// and "cwd" over SFTP, and its bookmarks behind a star; on this computer's in the local
 /// file browser, its own "cwd". Renaming and deleting are in the entries' menu, on F2 and
 /// Delete, as the C#'s. The filter and the hidden-files toggle on the right. The tools
 /// wrap: a narrow pane keeps every one whole.
 fn pane_toolbar<'a>(
     (tab, side): (TabId, Side),
-    (moves, loading): (Moves, bool),
+    (moves, pending): (Moves, bool),
     toggles: PaneToggles,
     (filter, show_hidden): (&str, bool),
 ) -> Element<'a, Message> {
@@ -984,8 +984,8 @@ fn pane_toolbar<'a>(
                 fl!("ui-files-new-folder-button")
             ))
             .style(styles::secondary)
-            .on_press_maybe((!loading).then(|| files(FilesMessage::AskNewFolder { tab, side }))),
-            text(if loading {
+            .on_press_maybe((!pending).then(|| files(FilesMessage::AskNewFolder { tab, side }))),
+            text(if pending {
                 fl!("ui-files-listing-in-progress-tooltip")
             } else {
                 fl!("ui-files-new-folder-tooltip")
@@ -1175,6 +1175,10 @@ fn pane_footer<'a>(
 }
 
 /// What a pane is drawn from, shared by both sides.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag per state of its own: hidden names, a listing, its folder, the focus"
+)]
 struct PaneParts<'p, E> {
     tab: TabId,
     side: Side,
@@ -1202,6 +1206,9 @@ struct PaneParts<'p, E> {
     /// show.
     counts: (usize, usize),
     loading: bool,
+    /// It names a folder whose listing is on its way over the entries of another: nothing
+    /// is put into it until it is shown.
+    folder_pending: bool,
     error: Option<&'p FilesError>,
     focused: bool,
     /// Where the pane can go besides up.
@@ -1476,6 +1483,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         show_hidden,
         counts: (total, unhidden),
         loading,
+        folder_pending,
         error,
         focused,
         moves,
@@ -1527,7 +1535,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     content = content
         .push(pane_toolbar(
             (tab, side),
-            (moves, loading),
+            (moves, folder_pending),
             toggles,
             (filter, show_hidden),
         ))
@@ -1900,6 +1908,7 @@ pub fn view(
         show_hidden: files_pane.local.show_hidden,
         counts: files_pane.local.counts(),
         loading: files_pane.local.loading,
+        folder_pending: files_pane.local.awaits_other_folder(),
         error: files_pane.local.error.as_ref(),
         focused: files_pane.focus == Side::Local,
         moves: Moves {
@@ -1932,6 +1941,7 @@ pub fn view(
         show_hidden: files_pane.remote.show_hidden,
         counts: files_pane.remote.counts(),
         loading: files_pane.remote.loading,
+        folder_pending: files_pane.remote.awaits_other_folder(),
         error: files_pane.remote.error.as_ref(),
         focused: files_pane.focus == Side::Remote,
         moves: Moves {
@@ -2017,10 +2027,10 @@ fn local_toggle<'a>(tab: TabId, shown: bool) -> Element<'a, Message> {
 
 /// Upload and Download over the server's pane alone, as the C# SFTP pane's toolbar: no local
 /// pane to send from or to, Upload asks for files and Download for a folder. Upload goes
-/// into the folder shown: faded while its listing is on its way.
+/// into the folder shown: faded while the pane names another folder, its listing on its way.
 fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
     let connected = files_pane.client.is_some();
-    let loading = files_pane.remote.loading;
+    let loading = files_pane.remote.awaits_other_folder();
     let can_download = connected && !files_pane.remote.chosen().is_empty();
     let action = |label: String, tip: String, message: Option<FilesMessage>| {
         tooltip(
@@ -2051,12 +2061,14 @@ fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
     .spacing(spacing::SM)
 }
 
-/// Upload and Download, between the panes: each sends the selection of its side. Upload
-/// goes into the server's folder shown: faded while its listing is on its way.
+/// Upload and Download, between the panes: each sends the selection of its side into the
+/// folder the other side shows, faded while that side names another folder whose listing is
+/// on its way.
 fn send_buttons(tab: TabId, files_pane: &FilesPane) -> Column<'_, Message> {
-    let uploading = files_pane.remote.loading;
+    let uploading = files_pane.remote.awaits_other_folder();
+    let downloading = files_pane.local.awaits_other_folder();
     let can_upload = files_pane.local.selected.is_some() && !uploading;
-    let can_download = files_pane.remote.selected.is_some();
+    let can_download = files_pane.remote.selected.is_some() && !downloading;
     column![
         while_listing(
             button(text(fl!("ui-files-upload-button")))
@@ -2067,19 +2079,22 @@ fn send_buttons(tab: TabId, files_pane: &FilesPane) -> Column<'_, Message> {
                 }))),
             uploading,
         ),
-        button(text(fl!("ui-files-download-button")))
-            .style(styles::primary)
-            .on_press_maybe(can_download.then(|| files(FilesMessage::Transfer {
-                tab,
-                direction: Direction::Download,
-            }))),
+        while_listing(
+            button(text(fl!("ui-files-download-button")))
+                .style(styles::primary)
+                .on_press_maybe(can_download.then(|| files(FilesMessage::Transfer {
+                    tab,
+                    direction: Direction::Download,
+                }))),
+            downloading,
+        ),
     ]
     .spacing(spacing::SM)
     .align_x(Alignment::Center)
 }
 
-/// `control`, sending into the folder the server's pane shows: while its listing is on its
-/// way (`loading`), it says why it does nothing.
+/// `control`, sending into the folder a pane shows: while the pane names another folder
+/// whose listing is on its way (`loading`), it says why it does nothing.
 fn while_listing<'a>(
     control: impl Into<Element<'a, Message>>,
     loading: bool,

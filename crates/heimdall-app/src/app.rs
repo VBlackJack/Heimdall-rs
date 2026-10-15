@@ -4316,6 +4316,8 @@ impl App {
                 tab.phase = Phase::Failed(error);
                 if let Some(files) = tab.files.as_deref_mut() {
                     files.cancel_waiting();
+                    // A listing on its way went over the session gone: none waits for it.
+                    files.remote_listings.clear();
                     // A listing kept in sight after a drop is read only: nothing it offers
                     // reaches the session gone.
                     files.client = None;

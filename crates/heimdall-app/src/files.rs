@@ -89,12 +89,13 @@ impl ListingRequest {
     }
 }
 
-/// The listings of one pane, coalesced: at most one on its way, and at most one waiting
+/// The listings of an FTP pane, coalesced: at most one on its way, and at most one waiting
 /// for it, the one asked for last. FTP lists every folder through one control connection
-/// (`heimdall_files::ftp`), and sudo starts one `ls` per listing: five Back clicks would
-/// otherwise run five full listings in turn, the one wanted last. A listing on its way is
-/// never stopped, as dropping it while it holds the FTP connection would leave the
-/// connection mid-answer: the next one waits for it instead.
+/// (`heimdall_files::ftp`), one at a time: five Back clicks would otherwise run five full
+/// listings in turn, the one wanted last. A listing on its way is never stopped, as
+/// dropping it while it holds the connection would leave it mid-answer: the next one waits
+/// for it instead. SFTP, sudo and local listings run side by side, the latest shown: one
+/// slow listing never holds up the next.
 #[derive(Debug)]
 pub(crate) struct ListingQueue<T> {
     /// The listing started whose answer has not come yet.
@@ -643,6 +644,14 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
         if self.home.is_none() {
             self.home = Some(path.clone());
         }
+    }
+
+    /// Whether the folder named is not the one whose entries are shown, its listing on its
+    /// way: what lands in "the folder shown" would go into a folder the user has not seen
+    /// yet. A listing of the folder shown again, a refresh, is not one.
+    #[must_use]
+    pub fn awaits_other_folder(&self) -> bool {
+        self.loading && *self.entries_folder() != self.path
     }
 
     /// The listing on its way failed: the history stays as it was, and the folder named goes
@@ -1260,10 +1269,8 @@ pub struct FilesPane {
     /// an SFTP pane; none over FTP, which the C# never lets follow. The local file browser
     /// has one too, following the local shell it is docked beside.
     pub follow: Option<ShellFollow>,
-    /// The server pane's listings, one on its way at most.
+    /// The server pane's listings over FTP, one on its way at most.
     pub(crate) remote_listings: ListingQueue<crate::Effect>,
-    /// This computer's pane's listings, one on its way at most.
-    pub(crate) local_listings: ListingQueue<crate::Effect>,
 }
 
 /// An SFTP pane following the working folder its SSH shell reports (OSC 7), as the C#
@@ -1434,7 +1441,6 @@ impl FilesPane {
             batch: None,
             follow: None,
             remote_listings: ListingQueue::default(),
-            local_listings: ListingQueue::default(),
         }
     }
 
@@ -1479,6 +1485,7 @@ impl FilesPane {
         self.shell = None;
         self.sudo_password = None;
         self.sudo_mode = false;
+        self.remote_listings.clear();
     }
 
     /// Transfers still running, waiting their turn or prepared again.

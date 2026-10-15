@@ -964,16 +964,13 @@ fn name_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
 }
 
 /// The listing of the local folder `path` in `tab`, the local pane's latest: any other one
-/// on its way is not shown. Started now when none is on its way; else it waits for that
-/// one's answer, in place of any other waiting.
-pub(super) fn local_listing(files: &mut FilesPane, tab: TabId, path: PathBuf) -> Vec<Effect> {
-    let request = files.local.ask_listing();
-    let listing = Effect::ListLocal { tab, path, request };
-    files
-        .local_listings
-        .ask(request, listing)
-        .into_iter()
-        .collect()
+/// on its way is not shown.
+pub(super) fn local_listing(files: &mut FilesPane, tab: TabId, path: PathBuf) -> Effect {
+    Effect::ListLocal {
+        tab,
+        path,
+        request: files.local.ask_listing(),
+    }
 }
 
 impl App {
@@ -981,25 +978,25 @@ impl App {
         self.tab_mut(tab)?.files.as_deref_mut()
     }
 
-    /// Whether pane `side` of `tab` waits for a listing: the folder its path bar names is
-    /// then not yet the one whose entries it shows.
+    /// Whether pane `side` of `tab` names a folder whose listing is on its way over the
+    /// entries of another: see [`crate::files::Pane::awaits_other_folder`].
     #[must_use]
-    pub fn files_loading(&self, tab: TabId, side: Side) -> bool {
+    pub fn files_awaits_other_folder(&self, tab: TabId, side: Side) -> bool {
         self.tab(tab)
             .and_then(|found| found.files.as_deref())
             .is_some_and(|files| match side {
-                Side::Remote => files.remote.loading,
-                Side::Local => files.local.loading,
+                Side::Remote => files.remote.awaits_other_folder(),
+                Side::Local => files.local.awaits_other_folder(),
             })
     }
 
     /// Whether something may be put into the folder pane `side` of `tab` shows: not while
-    /// its listing is on its way, the path bar naming the folder asked for over the entries
-    /// of the one before, where a paste, an upload, a new folder or a drop could replace
-    /// files the user has not seen. Refused, the status says so; keys and drops are refused
-    /// as the greyed buttons are.
+    /// the path bar names another folder, its listing on its way, over the entries of the
+    /// one before, where a paste, a transfer, a new folder or a drop could replace files the
+    /// user has not seen. A refresh of the folder shown holds up nothing. Refused, the
+    /// status says so; keys and drops are refused as the greyed buttons are.
     pub(super) fn takes_into_shown(&mut self, tab: TabId, side: Side) -> bool {
-        if !self.files_loading(tab, side) {
+        if !self.files_awaits_other_folder(tab, side) {
             return true;
         }
         self.tell(super::Notice::ListingInProgress);
@@ -1031,7 +1028,6 @@ impl App {
         // A listing on its way went over the session gone: its answer, if one comes, holds
         // nothing up.
         files.remote_listings.clear();
-        files.local_listings.clear();
         // As root when the sudo mode stayed on through a reconnection: the C# keeps it
         // (`EmbeddedSftpViewModel.SudoMode` is only changed by its toggle).
         if let Some(client) = files.client.clone() {
@@ -1039,7 +1035,7 @@ impl App {
             effects.extend(super::files_sudo::remote_listing(files, tab, client, path));
         }
         let path = files.local.path.clone();
-        effects.extend(local_listing(files, tab, path));
+        effects.push(local_listing(files, tab, path));
         effects
     }
 
@@ -1057,14 +1053,14 @@ impl App {
             }
             Side::Local => {
                 let path = files.local.path.clone();
-                local_listing(files, tab, path)
+                vec![local_listing(files, tab, path)]
             }
         }
     }
 
-    /// A remote listing arrived: the one waiting for it starts, and it is shown unless
+    /// A remote listing arrived: over FTP, the one waiting for it starts; it is shown unless
     /// another was asked for since.
-    fn remote_listed(
+    pub(super) fn remote_listed(
         &mut self,
         tab: TabId,
         request: ListingRequest,
@@ -1082,7 +1078,7 @@ impl App {
     /// A remote listing shown, when it is the one awaited. A link being entered that cannot
     /// be listed points at no folder: the pane goes back where it was opened from, as the C#
     /// Files tab stays, and says so.
-    pub(super) fn show_remote_listing(
+    fn show_remote_listing(
         &mut self,
         tab: TabId,
         request: ListingRequest,
@@ -1116,22 +1112,19 @@ impl App {
         Vec::new()
     }
 
-    /// A local listing arrived: the one waiting for it starts, and it is shown unless
-    /// another was asked for since.
+    /// A local listing arrived.
     fn local_listed(
         &mut self,
         tab: TabId,
         request: ListingRequest,
         result: Result<(PathBuf, Vec<crate::files::LocalEntry>), FilesError>,
     ) -> Vec<Effect> {
-        let Some(files) = self.files_mut(tab) else {
+        // Asked for before another one, or given up with Escape: the folder shown stays.
+        if !self
+            .files_mut(tab)
+            .is_some_and(|files| files.local.awaits(request))
+        {
             return Vec::new();
-        };
-        let next: Vec<Effect> = files.local_listings.came(request).into_iter().collect();
-        // Asked for before another one, started now, or given up with Escape: the folder
-        // shown stays. The one awaited has nothing waiting for it.
-        if !files.local.awaits(request) {
-            return next;
         }
         if result.is_err() && self.local_browser_start_failed(tab) {
             return self.list(tab, Side::Local);
@@ -1659,7 +1652,7 @@ impl App {
                 // Joining an absolute path gives that path.
                 let path = files.local.path.join(typed);
                 files.local.leave();
-                local_listing(files, tab, path)
+                vec![local_listing(files, tab, path)]
             }
         }
     }
@@ -1848,7 +1841,6 @@ impl App {
                 let local = files.local.cancel_listing();
                 // Nothing waits any more: the next listing asked for starts at once.
                 files.remote_listings.clear();
-                files.local_listings.clear();
                 if remote || local {
                     self.tell(super::Notice::ListingCancelled);
                 }
@@ -1933,8 +1925,10 @@ impl App {
         match direction {
             Direction::Upload if hidden => self.upload_here(tab),
             Direction::Download if hidden => self.pick_download_folder(tab),
-            // Into the server's folder shown: not while its listing is on its way.
+            // Into the other pane's folder shown: not while another folder's listing is on
+            // its way there.
             Direction::Upload if !self.takes_into_shown(tab, Side::Remote) => Vec::new(),
+            Direction::Download if !self.takes_into_shown(tab, Side::Local) => Vec::new(),
             _ => self.send_chosen(tab, direction, None),
         }
     }
@@ -2622,8 +2616,21 @@ impl App {
                 return self.start_batch(tab, Side::Remote, BatchKind::Delete, targets);
             }
             // Another folder asked for while the name was typed: not made where it was not
-            // asked for.
-            PendingKind::NewFolder if !self.takes_into_shown(tab, side) => return Vec::new(),
+            // asked for. The question stays, the name typed in it, to confirm once listed.
+            PendingKind::NewFolder if !self.takes_into_shown(tab, side) => {
+                self.pending_operation = Some(PendingOperation {
+                    tab,
+                    side,
+                    kind: PendingKind::NewFolder,
+                });
+                self.dialog = Some(Dialog::AskName {
+                    tab,
+                    side,
+                    action: NameAction::NewFolder,
+                    value: typed.unwrap_or_default().to_owned(),
+                });
+                return Vec::new();
+            }
             kind => kind,
         };
         let Some(files) = self.files_mut(tab) else {

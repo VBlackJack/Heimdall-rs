@@ -770,10 +770,7 @@ async fn backspace_refresh_rename_and_delete_act_on_the_focused_pane() {
         matches!(up.as_slice(), [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/"),
         "{up:?}"
     );
-    // Asked while the folder above is on its way: it waits for it, then starts.
     let refreshed = key(&mut app, tab, FilesKey::Refresh);
-    assert!(refreshed.is_empty(), "{refreshed:?}");
-    let refreshed = arrived(&mut app, tab, Side::Remote, asked(&up).0, Ok(("/", &[])));
     assert!(matches!(refreshed.as_slice(), [Effect::ListRemote { .. }]));
 
     key(&mut app, tab, FilesKey::Focus(Side::Local));
@@ -1079,8 +1076,6 @@ async fn entries_selected_together_go_together() {
     // One after the other, as the C# deletes them.
     let removed = run_batch(&mut app, tab, app_confirm());
     assert_eq!(removed, [b"/srv/logs".to_vec(), b"/srv/a.txt".to_vec()]);
-    // Its listing given up, the entries stay chosen and the next run's listing starts.
-    key(&mut app, tab, FilesKey::CancelLoad);
 
     files(
         &mut app,
@@ -1196,15 +1191,6 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
             },
         );
     }
-    // The folder listed again once the file is up: the next drop goes there once it is.
-    let request = remote_request(&mut app, tab);
-    arrived(
-        &mut app,
-        tab,
-        Side::Remote,
-        request,
-        Ok(("/srv", &["report.pdf"])),
-    );
 
     let dropped = drop(&mut app, &folder);
     let sent = planned(&mut app, dropped).await;
@@ -1353,13 +1339,6 @@ async fn cut_entries_are_pasted_by_a_move_into_the_folder_shown() {
         Some(FilesError::IsLink)
     );
     assert!(app.can_paste(tab));
-    arrived(
-        &mut app,
-        tab,
-        Side::Remote,
-        asked(&failed).0,
-        Ok(("/srv/logs", &[])),
-    );
 
     let done = files(
         &mut app,
@@ -2885,13 +2864,9 @@ async fn a_servers_entry_is_moved_and_opened_from_the_folder_it_was_listed_from(
         )]
     );
 
-    // Opening the folder entry again lists it, not a folder of its name inside it: once
-    // the listing on its way comes, the one asked for last.
-    let first = remote_request(&mut app, tab);
-    assert!(another_on_its_way(&mut app, tab, side).is_empty());
-    assert_eq!(shown(&app, tab, side).0, "/srv/logs");
+    // Opening the folder entry again lists it, not a folder of its name inside it.
     assert!(matches!(
-        arrived(&mut app, tab, side, first, Ok(("/srv/logs", &[]))).as_slice(),
+        another_on_its_way(&mut app, tab, side).as_slice(),
         [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/srv/logs"
     ));
 
@@ -2916,9 +2891,8 @@ async fn an_entry_of_this_computer_is_acted_on_in_the_folder_it_was_listed_from(
     let side = Side::Local;
     let docs = dir.path().join("docs");
     let listed = dir.path().join("b.txt");
-    let into_docs = another_on_its_way(&mut app, tab, side);
     assert!(matches!(
-        into_docs.as_slice(),
+        another_on_its_way(&mut app, tab, side).as_slice(),
         [Effect::ListLocal { path, .. }] if *path == docs
     ));
 
@@ -2985,12 +2959,8 @@ async fn an_entry_of_this_computer_is_acted_on_in_the_folder_it_was_listed_from(
     );
     assert_eq!(plan_request(&effects).roots[0].root.local, listed);
 
-    // Opening "docs" again: it waits for the listing on its way, then lists "docs".
-    let first = asked(&into_docs).0;
-    assert!(another_on_its_way(&mut app, tab, side).is_empty());
-    let docs_shown = docs.display().to_string();
     assert!(matches!(
-        arrived(&mut app, tab, side, first, Ok((&docs_shown, &[]))).as_slice(),
+        another_on_its_way(&mut app, tab, side).as_slice(),
         [Effect::ListLocal { path, .. }] if *path == docs
     ));
 }
@@ -3178,36 +3148,14 @@ fn go_to(
     asked(&files(app, FilesMessage::GoTo { tab, side })).0
 }
 
-/// `side` sent to `folder` while another listing is on its way: nothing starts yet, and the
-/// listing that waits is the one the pane awaits.
-fn go_to_waiting(
-    app: &mut App,
-    tab: TabId,
-    side: Side,
-    folder: &str,
-) -> heimdall_app::files::ListingRequest {
-    files(
-        app,
-        FilesMessage::PathEdited {
-            tab,
-            side,
-            text: folder.to_owned(),
-        },
-    );
-    let effects = files(app, FilesMessage::GoTo { tab, side });
-    assert!(effects.is_empty(), "{side:?} {folder}: {effects:?}");
-    awaited_listing(app, tab, side)
-}
-
 /// The listing `request` of `side` arrived: `folder` and the files `names`, or `error`.
-/// What it started: the listing waiting for it, if any.
 fn arrived(
     app: &mut App,
     tab: TabId,
     side: Side,
     request: heimdall_app::files::ListingRequest,
     listed: Result<(&str, &[&str]), FilesError>,
-) -> Vec<Effect> {
+) {
     let message = match side {
         Side::Remote => FilesMessage::RemoteListed {
             tab,
@@ -3238,7 +3186,7 @@ fn arrived(
             }),
         },
     };
-    files(app, message)
+    files(app, message);
 }
 
 /// What `side` shows: the folder named, the labels of its entries, and whether a listing
@@ -3270,7 +3218,7 @@ fn shown(app: &App, tab: TabId, side: Side) -> (String, Vec<String>, bool) {
 }
 
 #[tokio::test]
-async fn one_listing_runs_at_a_time_and_only_the_last_one_asked_for_waits_for_it() {
+async fn the_listing_asked_for_last_is_shown_whatever_order_they_come_in() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut app, tab) = tab(dir.path()).await;
     for side in [Side::Remote, Side::Local] {
@@ -3278,44 +3226,36 @@ async fn one_listing_runs_at_a_time_and_only_the_last_one_asked_for_waits_for_it
             Side::Remote => format!("/srv/{name}"),
             Side::Local => dir.path().join(name).display().to_string(),
         };
-        let before = shown(&app, tab, side);
-        let start = before.0.clone();
+        let start = shown(&app, tab, side).0;
 
-        // Six folders asked for in a row: the first starts, each of the five others waits in
-        // place of the one before, and none starts while the first is on its way.
+        // Two folders asked for one after the other: the second's listing comes first, the
+        // first's after it, and is not shown.
         let first = go_to(&mut app, tab, side, &folder("first"));
-        let mut last = first;
-        for name in ["a", "b", "c", "d", "e"] {
-            last = go_to_waiting(&mut app, tab, side, &folder(name));
-        }
-        assert_ne!(first, last);
-        // The first comes: not shown, and only the last one asked for starts.
-        let started = arrived(&mut app, tab, side, first, Ok((&folder("first"), &["old"])));
-        assert_eq!(asked(&started), (last, folder("e")), "{side:?}");
-        assert_eq!(
-            shown(&app, tab, side),
-            (start.clone(), before.1.clone(), true),
-            "{side:?}: the first is not shown"
+        let second = go_to(&mut app, tab, side, &folder("second"));
+        assert_ne!(first, second);
+        arrived(
+            &mut app,
+            tab,
+            side,
+            second,
+            Ok((&folder("second"), &["new"])),
         );
-        // The last comes: shown, and nothing else starts.
-        let started = arrived(&mut app, tab, side, last, Ok((&folder("e"), &["new"])));
-        assert!(started.is_empty(), "{side:?}: {started:?}");
+        arrived(&mut app, tab, side, first, Ok((&folder("first"), &["old"])));
         assert_eq!(
             shown(&app, tab, side),
-            (folder("e"), vec!["new".to_owned()], false),
+            (folder("second"), vec!["new".to_owned()], false),
             "{side:?}: the one asked for last"
         );
-        // The folder left is the one shown before, never one that never came.
+        // The folder left is the one shown before, never the one that came late.
         let (back, to) = asked(&files(&mut app, FilesMessage::Back { tab, side }));
         assert_eq!(to, start, "{side:?}");
         arrived(&mut app, tab, side, back, Ok((&start, &[])));
 
-        // The listing on its way fails while another waits: no error shown, the folder named
-        // stays, and the other one starts, shown when it comes.
+        // A failure of a listing asked for before another: no error shown, the folder named
+        // stays, the other one still awaited and shown when it comes.
         let failing = go_to(&mut app, tab, side, &folder("gone"));
-        let awaited = go_to_waiting(&mut app, tab, side, &folder("third"));
-        let started = arrived(&mut app, tab, side, failing, Err(FilesError::IsLink));
-        assert_eq!(asked(&started), (awaited, folder("third")), "{side:?}");
+        let awaited = go_to(&mut app, tab, side, &folder("third"));
+        arrived(&mut app, tab, side, failing, Err(FilesError::IsLink));
         assert_eq!(shown(&app, tab, side), (start.clone(), Vec::new(), true));
         assert_eq!(pane_error(&app, tab, side), None, "{side:?}");
         arrived(&mut app, tab, side, awaited, Ok((&folder("third"), &["x"])));
@@ -3324,23 +3264,17 @@ async fn one_listing_runs_at_a_time_and_only_the_last_one_asked_for_waits_for_it
             (folder("third"), vec!["x".to_owned()], false)
         );
 
-        // Given up with Escape, the one waiting too: the next one asked for starts at once.
-        // The one given up, coming after it, starts nothing and is not shown, and the other
-        // one still is when it comes.
+        // Given up with Escape, then another asked for: the one given up, coming between,
+        // is not shown, and the other one still is when it comes.
         let given_up = go_to(&mut app, tab, side, &folder("fourth"));
-        go_to_waiting(&mut app, tab, side, &folder("never"));
         key(&mut app, tab, FilesKey::CancelLoad);
         let next = go_to(&mut app, tab, side, &folder("fifth"));
-        let started = arrived(
+        arrived(
             &mut app,
             tab,
             side,
             given_up,
             Ok((&folder("fourth"), &["late"])),
-        );
-        assert!(
-            started.is_empty(),
-            "{side:?}: the one given up never starts"
         );
         assert_eq!(
             shown(&app, tab, side),
@@ -3527,6 +3461,15 @@ async fn nothing_lands_in_this_computers_folder_named_while_its_listing_is_on_it
             into: None,
         },
     );
+    // Downloaded with its button: into the folder named, refused alike.
+    refused(
+        &mut app,
+        tab,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        },
+    );
     arrived(
         &mut app,
         tab,
@@ -3542,6 +3485,50 @@ async fn nothing_lands_in_this_computers_folder_named_while_its_listing_is_on_it
         },
     );
     assert!(matches!(app.dialog, Some(Dialog::AskName { .. })));
+    app.update(Message::DismissDialog);
+    let sent = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        },
+    );
+    assert_eq!(plan_request(&sent).direction, Direction::Download);
+}
+
+#[tokio::test]
+async fn a_refresh_of_the_folder_shown_holds_nothing_up() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // "a.txt" cut; both panes listed again, as after a transfer, their folders unchanged.
+    select(&mut app, tab, Side::Remote, 1);
+    files(&mut app, FilesMessage::Cut { tab });
+    for side in [Side::Remote, Side::Local] {
+        files(&mut app, FilesMessage::Refresh { tab, side });
+        assert!(shown(&app, tab, side).2, "{side:?}: a listing on its way");
+    }
+    files(
+        &mut app,
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(app.dialog, Some(Dialog::AskName { .. })));
+    app.update(Message::DismissDialog);
+    assert!(matches!(
+        files(&mut app, FilesMessage::UploadHere { tab }).as_slice(),
+        [Effect::PickUploads { .. }]
+    ));
+    select(&mut app, tab, Side::Local, 1);
+    let sent = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+    );
+    assert_eq!(plan_request(&sent).direction, Direction::Upload);
 }
 
 #[tokio::test]
@@ -3553,13 +3540,18 @@ async fn a_new_folder_named_while_another_folder_came_to_be_listed_is_not_made()
     let side = Side::Remote;
     files(&mut app, FilesMessage::AskNewFolder { tab, side });
     files(&mut app, FilesMessage::NameEdited("fresh".to_owned()));
-    // The pane follows its shell, say, to another folder while the name is typed.
-    let request = go_to(&mut app, tab, side, "/srv/logs");
+    // The pane goes into "logs", say after its shell, while the name is typed: confirmed
+    // then, nothing is made, and the question stays with the name typed.
+    let (request, _) = asked(&another_on_its_way(&mut app, tab, side));
     assert!(app.update(Message::ConfirmDialog).is_empty());
     assert_eq!(app.notice(), Some(&Notice::ListingInProgress));
+    assert!(
+        matches!(&app.dialog, Some(Dialog::AskName { value, .. }) if value == "fresh"),
+        "{:?}",
+        app.dialog
+    );
+    // Listed, the same question confirmed makes it there.
     arrived(&mut app, tab, side, request, Ok(("/srv/logs", &[])));
-    files(&mut app, FilesMessage::AskNewFolder { tab, side });
-    files(&mut app, FilesMessage::NameEdited("fresh".to_owned()));
     match operation(&app.update(Message::ConfirmDialog)) {
         FileOperation::RemoteMakeFolder { path, .. } => {
             assert_eq!(path.as_bytes(), b"/srv/logs/fresh");
@@ -3589,9 +3581,8 @@ async fn a_link_entered_then_left_for_another_folder_says_that_folders_failure()
     );
     // The link double-clicked, then another folder asked for before its listing came.
     let (link, _) = asked(&another_on_its_way(&mut app, tab, side));
-    let other = go_to_waiting(&mut app, tab, side, "/srv/y");
-    let started = arrived(&mut app, tab, side, link, Err(FilesError::IsLink));
-    assert_eq!(asked(&started), (other, "/srv/y".to_owned()));
+    let other = go_to(&mut app, tab, side, "/srv/y");
+    arrived(&mut app, tab, side, link, Err(FilesError::IsLink));
     arrived(&mut app, tab, side, other, Err(FilesError::SessionClosed));
     assert_eq!(pane_error(&app, tab, side), Some(FilesError::SessionClosed));
     assert_ne!(

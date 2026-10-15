@@ -364,7 +364,8 @@ fn takes_drops(tab: &Tab) -> bool {
 
 /// Over a Files tab while `count` files are dragged over its window, as the C#
 /// `DescribeExternalDrop`: how many go to which folder of the server, or join the queue
-/// behind the transfer running.
+/// behind the transfer running; that nothing goes while the server's pane names a folder
+/// whose listing is on its way, as the application then refuses the drop.
 fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Element<'a, Message> {
     let items = fl!("ui-files-drop-items", count = count);
     let folder = files.remote.path.display();
@@ -372,7 +373,9 @@ fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Eleme
         .transfers
         .iter()
         .any(|transfer| !transfer.state.ended());
-    let said = if busy {
+    let said = if files.remote.awaits_other_folder() {
+        fl!("ui-files-listing-in-progress-tooltip")
+    } else if busy {
         fl!(
             "ui-files-drop-overlay-queued",
             items = items,
@@ -4842,9 +4845,9 @@ impl Shell {
                     sftp: self.app.files_over_sftp(tab),
                     over_ssh: self.app.can_copy(tab),
                     local_only: files.local_only,
-                    loading: match side {
-                        Side::Remote => files.remote.loading,
-                        Side::Local => files.local.loading,
+                    folder_pending: match side {
+                        Side::Remote => files.remote.awaits_other_folder(),
+                        Side::Local => files.local.awaits_other_folder(),
                     },
                 },
             )
