@@ -39,7 +39,5 @@ x509-cert.workspace = true
 # derive: zeroize_derive is already in the tree, enabled by another crate.
 zeroize = { workspace = true, features = ["derive"] }
 
-[dev-dependencies]
-
 [lints]
 workspace = true
