@@ -14,13 +14,32 @@
  * limitations under the License.
  */
 
-//! DNS record lookup engine: record types, server presets, resolution via standard
-//! query and nslookup parsing, record classification, and timing.
+//! DNS record lookup engine, as the C# `DnsLookupService` and `NslookupOutputParser`: record
+//! types, server presets, input validation, the `nslookup` program's arguments and output.
+//!
+//! An A or AAAA query to the system's resolver goes through the platform resolver, as the
+//! C# `Dns.GetHostEntryAsync`; any other runs the system's `nslookup` by its full path, as
+//! the C# `SystemExecutablePath.InSystemDirectory`, on a host checked first so it can never
+//! be read as an option (`TryValidateLookupInputs`). The lookup itself, bounded in time and
+//! stoppable, runs in `heimdall_app::net_tools`.
 
 use std::fmt;
-use std::net::ToSocketAddrs;
-use std::process::Command;
-use std::time::Instant;
+use std::net::IpAddr;
+use std::path::PathBuf;
+
+use super::net_host;
+
+/// How long a lookup may take, as the C# `DnsLookupViewModel.LookupTimeout`.
+pub const LOOKUP_TIMEOUT_MS: u64 = 5000;
+
+/// The `nslookup` program of Windows, in its system folder, as the C#
+/// `NslookupExecutableName`.
+#[cfg(windows)]
+pub const NSLOOKUP_PROGRAM: &str = "nslookup.exe";
+
+/// Where the `nslookup` program lives on the other systems, tried in order.
+#[cfg(not(windows))]
+pub const NSLOOKUP_PROGRAMS: [&str; 2] = ["/usr/bin/nslookup", "/bin/nslookup"];
 
 /// Supported DNS query record types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -86,7 +105,7 @@ impl fmt::Display for DnsRecordType {
     }
 }
 
-/// Popular public DNS server presets.
+/// Popular public DNS server presets; the view names them in the user's language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DnsServerPreset {
     /// System default resolver.
@@ -123,29 +142,24 @@ impl DnsServerPreset {
         }
     }
 
-    /// English display name with IP for dropdown selection.
+    /// The provider's name, a brand never translated; `None` for the system's resolver,
+    /// which the view names in the user's language.
     #[must_use]
-    pub const fn display_name(self) -> &'static str {
+    pub const fn provider_name(self) -> Option<&'static str> {
         match self {
-            Self::DefaultSystem => "Default System Resolver",
-            Self::Cloudflare => "Cloudflare (1.1.1.1)",
-            Self::Google => "Google (8.8.8.8)",
-            Self::Quad9 => "Quad9 (9.9.9.9)",
-            Self::OpenDns => "OpenDNS (208.67.222.222)",
+            Self::DefaultSystem => None,
+            Self::Cloudflare => Some("Cloudflare"),
+            Self::Google => Some("Google"),
+            Self::Quad9 => Some("Quad9"),
+            Self::OpenDns => Some("OpenDNS"),
         }
-    }
-}
-
-impl fmt::Display for DnsServerPreset {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.display_name())
     }
 }
 
 /// A request to query DNS records.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DnsLookupRequest {
-    /// Target host name or domain.
+    /// Target host name or domain, checked by [`validate_request`].
     pub host: String,
     /// The record type to query.
     pub record_type: DnsRecordType,
@@ -153,7 +167,7 @@ pub struct DnsLookupRequest {
     pub server: Option<String>,
 }
 
-/// The result of a DNS record lookup.
+/// The answer of a DNS record lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DnsLookupResult {
     /// Target host queried.
@@ -162,225 +176,131 @@ pub struct DnsLookupResult {
     pub record_type: DnsRecordType,
     /// DNS server used, if any.
     pub server: Option<String>,
-    /// Extracted answer records.
+    /// The answer, one line each, made safe to show; empty when nothing came back.
     pub records: Vec<String>,
-    /// Any alias (CNAME) records reported.
-    pub aliases: Vec<String>,
     /// Execution duration in milliseconds.
     pub elapsed_ms: u64,
-    /// Raw command or resolver output text.
-    pub raw_output: String,
-    /// Failure error message, if unsuccessful.
-    pub error: Option<String>,
 }
 
-impl DnsLookupResult {
-    /// True if the query resolved records without an error.
-    #[must_use]
-    pub fn is_success(&self) -> bool {
-        self.error.is_none() && (!self.records.is_empty() || !self.raw_output.is_empty())
+/// Why a lookup gave no answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DnsLookupError {
+    /// It ran past [`LOOKUP_TIMEOUT_MS`], as the C# `ToolDnsErrorTimeout`.
+    TimedOut,
+    /// No `nslookup` program where the system keeps it.
+    NoProgram,
+    /// The resolver or the program failed: why, made safe to show, as the C#
+    /// `ToolDnsErrorLookupFailed`.
+    Failed(String),
+}
+
+/// Validates the typed host, as the C# `ValidateDomain` before a lookup; the server comes
+/// from the presets, an address. Returns the request, or an error translation key.
+pub fn validate_request(
+    host_text: &str,
+    record_type: DnsRecordType,
+    server: DnsServerPreset,
+) -> Result<DnsLookupRequest, &'static str> {
+    if host_text.trim().is_empty() {
+        return Err("ui-tool-dns-error-host-required");
     }
+    let host = net_host::checked_host(host_text).ok_or("ui-tool-dns-error-host-invalid")?;
+    Ok(DnsLookupRequest {
+        host,
+        record_type,
+        server: server.server_ip().map(str::to_owned),
+    })
 }
 
-/// Cleans raw nslookup command output by stripping the resolver header block and trailing noise.
+/// Whether `request` goes to the platform resolver rather than to `nslookup`, as the C#
+/// does for an A or AAAA query without a server.
 #[must_use]
-pub fn clean_nslookup_output(raw: &str) -> String {
-    let mut lines: Vec<&str> = raw.lines().map(str::trim).collect();
-
-    // Drop leading "Server: ...", "Address: ..."
-    let mut start_idx = 0;
-    let mut saw_server = false;
-    for (i, line) in lines.iter().enumerate() {
-        if line.starts_with("Server:")
-            || line.starts_with("Address:")
-            || line.starts_with("Addresses:")
-        {
-            saw_server = true;
-        } else if saw_server && line.is_empty() {
-            start_idx = i + 1;
-            break;
-        } else if saw_server && (line.starts_with("Non-authoritative") || line.starts_with("Name:"))
-        {
-            start_idx = i;
-            break;
-        }
-    }
-
-    if start_idx < lines.len() {
-        lines.drain(0..start_idx);
-    }
-
-    // Filter out redundant "Non-authoritative answer:" markers while preserving records
-    let mut cleaned = Vec::new();
-    for line in lines {
-        if line.is_empty() && cleaned.last().is_some_and(|l: &&str| l.is_empty()) {
-            continue;
-        }
-        cleaned.push(line);
-    }
-
-    cleaned.join("\n").trim().to_string()
+pub fn uses_system_resolver(request: &DnsLookupRequest) -> bool {
+    request.server.is_none()
+        && matches!(request.record_type, DnsRecordType::A | DnsRecordType::Aaaa)
 }
 
-/// Resolves standard A or AAAA records using the native platform socket resolver.
-fn resolve_native_socket(host: &str, record_type: DnsRecordType) -> Option<Vec<String>> {
-    let query = format!("{host}:80");
-    let addrs = query.to_socket_addrs().ok()?;
-    let mut records = Vec::new();
-
-    for socket_addr in addrs {
-        let ip = socket_addr.ip();
-        match record_type {
-            DnsRecordType::A if ip.is_ipv4() => {
-                let s = ip.to_string();
-                if !records.contains(&s) {
-                    records.push(s);
-                }
-            }
-            DnsRecordType::Aaaa if ip.is_ipv6() => {
-                let s = ip.to_string();
-                if !records.contains(&s) {
-                    records.push(s);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if records.is_empty() {
-        None
-    } else {
-        Some(records)
-    }
-}
-
-/// Executes a DNS record query synchronously according to `request`.
+/// The addresses of `record_type`'s family among `addresses`, each once, in order.
 #[must_use]
-pub fn query_dns_sync(request: &DnsLookupRequest) -> DnsLookupResult {
-    let host = request.host.trim();
-    if host.is_empty() {
-        return DnsLookupResult {
-            host: String::new(),
-            record_type: request.record_type,
-            server: request.server.clone(),
-            records: Vec::new(),
-            aliases: Vec::new(),
-            elapsed_ms: 0,
-            raw_output: String::new(),
-            error: Some("Host cannot be empty".to_string()),
+pub fn addresses_of_type(
+    addresses: impl IntoIterator<Item = IpAddr>,
+    record_type: DnsRecordType,
+) -> Vec<String> {
+    let mut records: Vec<String> = Vec::new();
+    for address in addresses {
+        let wanted = match record_type {
+            DnsRecordType::Aaaa => address.is_ipv6(),
+            _ => address.is_ipv4(),
         };
-    }
-
-    let start = Instant::now();
-
-    // Fast path: if querying A or AAAA against default system resolver, try native socket resolution first
-    if request.server.is_none()
-        && (request.record_type == DnsRecordType::A || request.record_type == DnsRecordType::Aaaa)
-    {
-        if let Some(records) = resolve_native_socket(host, request.record_type) {
-            let elapsed_ms = start.elapsed().as_millis() as u64;
-            let raw = records.join("\n");
-            return DnsLookupResult {
-                host: host.to_string(),
-                record_type: request.record_type,
-                server: None,
-                records: records.clone(),
-                aliases: Vec::new(),
-                elapsed_ms,
-                raw_output: raw,
-                error: None,
-            };
+        let shown = address.to_string();
+        if wanted && !records.contains(&shown) {
+            records.push(shown);
         }
     }
+    records
+}
 
-    // Full path: invoke system nslookup tool
-    let mut cmd = Command::new("nslookup");
+/// The system's `nslookup` program, by its full path: never one found on the `PATH` or
+/// beside Heimdall. `None` when the system has none where it keeps it.
+#[must_use]
+pub fn nslookup_program() -> Option<PathBuf> {
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
+    return crate::paths::system_program(NSLOOKUP_PROGRAM);
+    #[cfg(not(windows))]
+    return NSLOOKUP_PROGRAMS
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file());
+}
+
+/// The arguments of `nslookup` for `request`, as the C# `CreateLocalNslookupStartInfo`:
+/// the type, the host, the server. The host was checked by [`validate_request`], so it never
+/// starts with "-".
+#[must_use]
+pub fn nslookup_arguments(request: &DnsLookupRequest) -> Vec<String> {
+    let mut arguments = vec![
+        format!("-type={}", request.record_type.wire_format()),
+        request.host.clone(),
+    ];
+    arguments.extend(request.server.clone());
+    arguments
+}
+
+/// The answer in `nslookup`'s output, one trimmed line each, as the C#
+/// `NslookupOutputParser`: the first paragraph, the server that answered, left out, and the
+/// blank lines. The paragraph is told by the blank line that ends it rather than by its
+/// words, which Windows translates (`Serveur :`).
+#[must_use]
+pub fn clean_nslookup_output(raw: &str) -> Vec<String> {
+    let lines: Vec<&str> = raw
+        .lines()
+        .map(str::trim)
+        .skip_while(|line| line.is_empty())
+        .collect();
+    let body = match lines.iter().position(|line| line.is_empty()) {
+        Some(blank) => &lines[blank..],
+        None => &lines[..],
+    };
+    body.iter()
+        .filter(|line| !line.is_empty())
+        .map(|line| (*line).to_owned())
+        .collect()
+}
+
+/// The answer of one `nslookup` run: its output's, else what it said on its error stream,
+/// as the C#.
+#[must_use]
+pub fn nslookup_answer(stdout: &str, stderr: &str) -> Vec<String> {
+    let answer = clean_nslookup_output(stdout);
+    if !answer.is_empty() {
+        return answer;
     }
-    cmd.arg(format!("-type={}", request.record_type.wire_format()));
-    cmd.arg(host);
-    if let Some(srv) = &request.server {
-        cmd.arg(srv);
-    }
-
-    match cmd.output() {
-        Ok(output) => {
-            let elapsed_ms = start.elapsed().as_millis() as u64;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let combined = if stdout.trim().is_empty() {
-                stderr.to_string()
-            } else {
-                stdout.to_string()
-            };
-
-            let cleaned = clean_nslookup_output(&combined);
-            let mut records = Vec::new();
-            let mut aliases = Vec::new();
-
-            for line in cleaned.lines() {
-                let trimmed = line.trim();
-                if let Some(alias) = trimmed.strip_prefix("aliases:") {
-                    aliases.push(alias.trim().to_string());
-                } else if let Some(alias) = trimmed.strip_prefix("canonical name =") {
-                    aliases.push(alias.trim().to_string());
-                } else if trimmed.starts_with("Address:") || trimmed.starts_with("Addresses:") {
-                    let addr = trimmed
-                        .strip_prefix("Addresses:")
-                        .or_else(|| trimmed.strip_prefix("Address:"))
-                        .unwrap_or_default()
-                        .trim();
-                    if !addr.is_empty() {
-                        records.push(addr.to_string());
-                    }
-                } else if !trimmed.is_empty()
-                    && !trimmed.starts_with("Name:")
-                    && !trimmed.starts_with("Non-authoritative")
-                {
-                    records.push(trimmed.to_string());
-                }
-            }
-
-            let error = if !output.status.success() && records.is_empty() && aliases.is_empty() {
-                Some(if cleaned.is_empty() {
-                    "DNS lookup failed".to_string()
-                } else {
-                    cleaned.clone()
-                })
-            } else {
-                None
-            };
-
-            DnsLookupResult {
-                host: host.to_string(),
-                record_type: request.record_type,
-                server: request.server.clone(),
-                records,
-                aliases,
-                elapsed_ms,
-                raw_output: if cleaned.is_empty() {
-                    combined
-                } else {
-                    cleaned
-                },
-                error,
-            }
-        }
-        Err(err) => DnsLookupResult {
-            host: host.to_string(),
-            record_type: request.record_type,
-            server: request.server.clone(),
-            records: Vec::new(),
-            aliases: Vec::new(),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            raw_output: String::new(),
-            error: Some(format!("Failed to execute nslookup: {err}")),
-        },
-    }
+    stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 #[cfg(test)]
@@ -404,29 +324,106 @@ mod tests {
     }
 
     #[test]
-    fn test_clean_nslookup_output() {
+    fn a_host_that_reads_as_an_option_never_reaches_nslookup() {
+        assert_eq!(
+            validate_request("  ", DnsRecordType::Mx, DnsServerPreset::Google),
+            Err("ui-tool-dns-error-host-required")
+        );
+        for host in [
+            "-type=ANY",
+            "-debug example.com",
+            "example.com 8.8.8.8",
+            "a;b",
+        ] {
+            assert_eq!(
+                validate_request(host, DnsRecordType::Mx, DnsServerPreset::Google),
+                Err("ui-tool-dns-error-host-invalid"),
+                "{host}"
+            );
+        }
+        let request = validate_request(" example.com ", DnsRecordType::Mx, DnsServerPreset::Google)
+            .expect("valid");
+        assert_eq!(
+            nslookup_arguments(&request),
+            ["-type=MX", "example.com", "8.8.8.8"]
+        );
+        assert!(!uses_system_resolver(&request));
+    }
+
+    #[test]
+    fn a_and_aaaa_without_a_server_go_to_the_system_resolver() {
+        let request = validate_request(
+            "example.com",
+            DnsRecordType::Aaaa,
+            DnsServerPreset::DefaultSystem,
+        )
+        .expect("valid");
+        assert!(uses_system_resolver(&request));
+        let addresses: Vec<IpAddr> = vec![
+            "93.184.216.34".parse().unwrap(),
+            "2606:2800:220:1::".parse().unwrap(),
+            "2606:2800:220:1::".parse().unwrap(),
+        ];
+        assert_eq!(
+            addresses_of_type(addresses.clone(), DnsRecordType::Aaaa),
+            ["2606:2800:220:1::"]
+        );
+        assert_eq!(
+            addresses_of_type(addresses, DnsRecordType::A),
+            ["93.184.216.34"]
+        );
+    }
+
+    #[test]
+    fn the_server_paragraph_is_left_out_in_english() {
         let raw = "\
 Server:  dns.google
 Address:  8.8.8.8
 
 Non-authoritative answer:
-Name:    example.com
-Addresses:  93.184.216.34
+example.com\tMX preference = 0, mail exchanger = .
 ";
-        let cleaned = clean_nslookup_output(raw);
-        assert!(cleaned.contains("example.com"));
-        assert!(cleaned.contains("93.184.216.34"));
-        assert!(!cleaned.starts_with("Server:"));
+        assert_eq!(
+            clean_nslookup_output(raw),
+            [
+                "Non-authoritative answer:",
+                "example.com\tMX preference = 0, mail exchanger = ."
+            ]
+        );
     }
 
     #[test]
-    fn test_empty_host_returns_error() {
-        let req = DnsLookupRequest {
-            host: "   ".into(),
-            record_type: DnsRecordType::A,
-            server: None,
-        };
-        let res = query_dns_sync(&req);
-        assert!(res.error.is_some());
+    fn the_server_paragraph_is_left_out_in_french_and_on_linux() {
+        let french = "Serveur :   UnKnown\r\nAddress:  192.168.1.1\r\n\r\n\
+                      R\u{fffd}ponse ne faisant pas autorit\u{fffd} :\r\n\
+                      Nom :    example.com\r\nAddresses:  2606:2800:220:1::\r\n          93.184.216.34\r\n\r\n";
+        assert_eq!(
+            clean_nslookup_output(french),
+            [
+                "R\u{fffd}ponse ne faisant pas autorit\u{fffd} :",
+                "Nom :    example.com",
+                "Addresses:  2606:2800:220:1::",
+                "93.184.216.34"
+            ]
+        );
+        let linux = "Server:\t\t127.0.0.53\nAddress:\t127.0.0.53#53\n\n\
+                     Non-authoritative answer:\nexample.com\ttext = \"v=spf1 -all\"\n\n";
+        assert_eq!(
+            clean_nslookup_output(linux),
+            [
+                "Non-authoritative answer:",
+                "example.com\ttext = \"v=spf1 -all\""
+            ]
+        );
+    }
+
+    #[test]
+    fn an_error_stream_answers_when_the_output_says_nothing() {
+        let stdout = "Server:  UnKnown\r\nAddress:  192.168.1.1\r\n\r\n";
+        let stderr = "*** UnKnown can't find nope.invalid: Non-existent domain\r\n";
+        assert_eq!(
+            nslookup_answer(stdout, stderr),
+            ["*** UnKnown can't find nope.invalid: Non-existent domain"]
+        );
     }
 }
