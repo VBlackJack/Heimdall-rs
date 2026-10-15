@@ -27,13 +27,12 @@ use std::time::SystemTime;
 use heimdall_app::TabId;
 use heimdall_core::tools::date_time::Instant;
 use heimdall_core::tools::log_viewer::{
-    self, FilterSpec, LogChunk, LogEncoding, MAX_DISPLAY_LINES, Severity,
+    self, FilterSpec, LogChunk, LogEncoding, LogFilter, MAX_DISPLAY_LINES, Severity,
 };
 use iced::advanced::text::highlighter::{self, Highlighter};
 use iced::widget::text_editor::{Action, Content, Motion};
 use iced::widget::{checkbox, column, pick_list, row, text, text_editor, text_input};
 use iced::{Element, Font, Length, Task, Theme, window};
-use regex::Regex;
 
 use super::{CopySlot, ToolMessage, ToolPane};
 use crate::file_dialog::{self, FileDialog};
@@ -180,7 +179,7 @@ pub struct LogViewerPane {
     /// The filter typed, and the one applied with its expression.
     filter: FilterSpec,
     applied: FilterSpec,
-    regex: Option<Regex>,
+    regex: Option<LogFilter>,
     problem: Option<Problem>,
 }
 
@@ -648,7 +647,7 @@ impl LogMark {
 
 /// The marks of the lines shown: each line by its severity, then the filter's matches.
 pub struct LogHighlighter {
-    regex: Option<Regex>,
+    regex: Option<LogFilter>,
     line: usize,
 }
 
@@ -684,9 +683,9 @@ impl Highlighter for LogHighlighter {
         if let Some(regex) = &self.regex {
             marks.extend(
                 regex
-                    .find_iter(line)
-                    .filter(|found| !found.is_empty())
-                    .map(|found| (found.range(), LogMark::Match)),
+                    .matches(line)
+                    .into_iter()
+                    .map(|range| (range, LogMark::Match)),
             );
         }
         marks.into_iter()

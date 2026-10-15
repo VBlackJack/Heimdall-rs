@@ -25,6 +25,7 @@
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::ops::Range;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -342,7 +343,7 @@ impl FilterSpec {
     /// # Errors
     ///
     /// [`InvalidFilter`] when a regular expression does not compile.
-    pub fn compile(&self) -> Result<Option<Regex>, InvalidFilter> {
+    pub fn compile(&self) -> Result<Option<LogFilter>, InvalidFilter> {
         let query = self.query.trim();
         if query.is_empty() {
             return Ok(None);
@@ -356,8 +357,30 @@ impl FilterSpec {
             .case_insensitive(!self.case_sensitive)
             .size_limit(FILTER_SIZE_LIMIT)
             .build()
-            .map(Some)
+            .map(|regex| Some(LogFilter(regex)))
             .map_err(|_| InvalidFilter)
+    }
+}
+
+/// A filter compiled, used for every line until the filter changes.
+#[derive(Debug, Clone)]
+pub struct LogFilter(Regex);
+
+impl LogFilter {
+    /// Whether it keeps `line`.
+    #[must_use]
+    pub fn is_match(&self, line: &str) -> bool {
+        self.0.is_match(line)
+    }
+
+    /// Where it matches in `line`, in bytes, empty matches left out.
+    #[must_use]
+    pub fn matches(&self, line: &str) -> Vec<Range<usize>> {
+        self.0
+            .find_iter(line)
+            .filter(|found| !found.is_empty())
+            .map(|found| found.range())
+            .collect()
     }
 }
 
@@ -492,6 +515,7 @@ mod tests {
         let regex = plain.compile().expect("valid").expect("a filter");
         assert!(regex.is_match("xA.Bx"));
         assert!(!regex.is_match("aXb"), "a dot typed is a dot");
+        assert_eq!(regex.matches("a.b A.B"), [0..3, 4..7]);
         let pattern = FilterSpec {
             query: r"status=\d{3}".to_owned(),
             case_sensitive: true,

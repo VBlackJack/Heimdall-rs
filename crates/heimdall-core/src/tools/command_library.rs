@@ -120,7 +120,7 @@ impl CommandSnippet {
     /// The command, each `{key}` replaced by the value `value_of` gives for it, its default
     /// when none or a blank one is given.
     #[must_use]
-    pub fn render<'v>(&self, value_of: impl Fn(&str) -> Option<&'v str>) -> String {
+    pub fn render<'v>(&self, value_of: impl Fn(&'static str) -> Option<&'v str>) -> String {
         let mut result = self.template.to_owned();
         for p in self.parameters {
             let val = value_of(p.key)
