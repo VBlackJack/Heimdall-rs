@@ -260,6 +260,7 @@ impl NetCalcPane {
             })
             .size(font_size::BODY)
             .text_size(font_size::BODY)
+            .style(styles::radio)
         };
         let modes = row![
             mode(fl!("ui-tool-netcalc-mode-supernet"), NetCalcMode::Supernet),

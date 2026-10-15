@@ -836,7 +836,8 @@ impl PasswordPane {
             text(fl!("ui-tool-password-preset-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         let save = tooltip(
             super::action_button(
                 fl!("ui-tool-password-save-preset"),
@@ -846,7 +847,8 @@ impl PasswordPane {
             text(fl!("ui-tool-password-save-preset-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         let delete = tooltip(
             super::action_button(
                 fl!("ui-tool-password-delete-preset"),
@@ -857,7 +859,8 @@ impl PasswordPane {
             text(fl!("ui-tool-password-delete-preset-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         let advanced = tooltip(
             super::action_button(
                 fl!("ui-tool-password-advanced"),
@@ -867,7 +870,8 @@ impl PasswordPane {
             text(fl!("ui-tool-password-advanced-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         let first = row![
             super::field_label(fl!("ui-tool-password-mode")),
             mode,
@@ -1085,7 +1089,8 @@ impl PasswordPane {
                 text(fl!("ui-tool-password-generate-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Left,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             super::copy_button(
                 fl!("ui-tool-password-copy"),
                 state.copied(CopySlot::PasswordMain),
@@ -1131,7 +1136,7 @@ impl PasswordPane {
             .girth(STRENGTH_HEIGHT)
             .style(move |theme: &Theme| progress_bar::Style {
                 bar: iced::Background::Color(strength_color(level, theme)),
-                ..progress_bar::primary(theme)
+                ..styles::progress(theme)
             });
         let mut panel = column![
             bar,
@@ -1193,7 +1198,9 @@ impl PasswordPane {
                 .size(font_size::BODY)
                 .font(styles::SEMIBOLD)
                 .width(VALUE_WIDTH),
-            slider(range, slider_value(value), on_change).step(step),
+            slider(range, slider_value(value), on_change)
+                .step(step)
+                .style(styles::slider),
         ]
         .spacing(spacing::SM)
         .align_y(Alignment::Center)
@@ -1584,7 +1591,8 @@ impl PasswordPane {
                     text(tip).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box)
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip)
                 .into(),
                 None => pressed.into(),
             }
@@ -1609,7 +1617,8 @@ impl PasswordPane {
                         text(fl!("ui-tool-password-blocks-hint")).size(font_size::CAPTION),
                         tooltip::Position::Bottom,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 )
             },
         );
@@ -1868,7 +1877,8 @@ impl PasswordPane {
                 text(fl!("ui-tool-password-clear-history-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .align_y(Alignment::Center);
         let history = self.engine.history();

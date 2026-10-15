@@ -70,7 +70,7 @@ pub fn card(macros: &[TerminalMacro]) -> Element<'_, Message> {
         .padding(spacing::MD)
         .max_width(CARD_WIDTH)
         .width(Length::Fill)
-        .style(container::bordered_box)
+        .style(styles::panel)
         .into()
 }
 
@@ -208,7 +208,7 @@ fn entry_card(index: usize, count: usize, entry: &EntryDraft) -> Element<'_, Mes
     container(content)
         .padding(spacing::MD / 2.0)
         .width(Length::Fill)
-        .style(container::bordered_box)
+        .style(styles::panel)
         .into()
 }
 

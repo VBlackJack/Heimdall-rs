@@ -51,7 +51,7 @@ use crate::icons::{self, Hue, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
 use crate::texts;
-use crate::tokens::{BORDER_WIDTH, OPACITY_DISABLED, font_size, spacing};
+use crate::tokens::{BORDER_WIDTH, FOCUS_BORDER_WIDTH, OPACITY_DISABLED, font_size, spacing};
 use crate::tree_row::{Mark, RowChrome};
 use crate::tree_view::TreeMenu;
 
@@ -114,9 +114,6 @@ const LOCAL_COLUMNS: &[SortColumn] = &[SortColumn::Name, SortColumn::Size, SortC
 
 /// Tallest the transfer list grows before it scrolls, in logical pixels.
 const TRANSFERS_HEIGHT: f32 = 160.0;
-
-/// Width of the border of the pane with the focus, in logical pixels.
-const FOCUS_BORDER_WIDTH: f32 = 2.0;
 
 /// Font of a path, as the C# `FontFamilyMonospace`: the terminal's, always embedded.
 const PATH_FONT: Font = Font::with_name(crate::terminal_view::FONT_FAMILY);
@@ -490,7 +487,8 @@ fn row_tooltip<'a, E: Listed>(
         tooltip::Position::FollowCursor,
     )
     .delay(ROW_TOOLTIP_DELAY)
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -904,7 +902,8 @@ fn glyph_button<'a>(
         text(tip).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -987,7 +986,8 @@ fn pane_toolbar<'a>(
             text(fl!("ui-files-new-folder-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
     ]
     .spacing(spacing::XS)
     .align_y(Alignment::Center);
@@ -1037,7 +1037,8 @@ fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
         text(tip).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -1051,7 +1052,8 @@ fn sudo_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
         text(fl!("ui-files-sudo-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -1125,7 +1127,8 @@ fn pane_narrowing<'a>(
             text(fl!("ui-files-hidden-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
     )
     .spacing(spacing::SM)
     .align_y(Alignment::Center)
@@ -1608,8 +1611,7 @@ fn pane_frame(
         .height(Length::Fill)
         .style(move |theme: &Theme| {
             // The window's background, as the C# list's: a row is lit over it.
-            let mut style = container::bordered_box(theme);
-            style.background = Some(theme.palette().background.into());
+            let mut style = styles::panel(theme);
             if whole_target {
                 // A drag over it: where its entries would go.
                 style.border.color = theme.extended_palette().success.base.color;
@@ -1826,7 +1828,8 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
             line = line.push(
                 iced::widget::progress_bar(0.0..=1.0, share)
                     .length(Length::FillPortion(1))
-                    .girth(8.0),
+                    .girth(8.0)
+                    .style(styles::progress),
             );
         }
         line = line.push(small(
@@ -1855,7 +1858,8 @@ fn security_notice<'a>(notice: String) -> Element<'a, Message> {
         text(notice).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -2005,7 +2009,8 @@ fn local_toggle<'a>(tab: TabId, shown: bool) -> Element<'a, Message> {
         text(fl!("ui-files-local-toggle-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -2022,7 +2027,8 @@ fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
             text(tip).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
     };
     row![
         action(

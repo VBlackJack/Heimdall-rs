@@ -380,6 +380,23 @@ fn opening_a_tool_shows_its_tab_on_the_sessions_page_once() {
 }
 
 #[test]
+fn tab_moves_between_a_tool_s_fields_as_wpf_moves_through_its_controls() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(!shell.tab_moves_focus(), "no tab, no page: Tab is free");
+    let _ = shell.update(Message::Navigate(Destination::Tools));
+    let _ = shell.update(Message::OpenTool(ToolId::Hmac));
+    assert!(
+        matches!(shell.app().tabs[0].profile, TabProfile::Tool(ToolId::Hmac)),
+        "the tool's tab has the keyboard"
+    );
+    assert!(
+        shell.tab_moves_focus(),
+        "from one of the tool's fields to the next"
+    );
+}
+
+#[test]
 fn the_base64_tool_encodes_from_its_button_and_shows_its_help() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));

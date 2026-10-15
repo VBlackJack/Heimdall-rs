@@ -276,8 +276,8 @@ fn cut_cell<'a>(value: &str, shown: usize, whole: String) -> Element<'a, Message
     tooltip(
         text(cut).size(font_size::CAPTION),
         container(text(whole).size(font_size::CAPTION))
-            .padding(spacing::XS)
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         tooltip::Position::Top,
     )
     .into()
@@ -303,7 +303,7 @@ fn card<'a>(
         .spacing(spacing::SM),
     )
     .padding(spacing::MD)
-    .style(container::bordered_box)
+    .style(styles::panel)
     .into()
 }
 

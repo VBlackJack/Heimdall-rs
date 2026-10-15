@@ -900,7 +900,8 @@ fn header(
                 text(fl!("ui-tool-help-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         )
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
@@ -917,7 +918,8 @@ fn help_panel<'a>(tab: TabId, help: String) -> Element<'a, Message> {
         row![
             scrollable(text(help).size(font_size::BODY).style(text::secondary))
                 .height(Length::Shrink)
-                .width(Length::Fill),
+                .width(Length::Fill)
+                .style(styles::scrollbars),
             tooltip(
                 crate::icons::button(Icon::Close)
                     .style(styles::subtle)
@@ -925,7 +927,8 @@ fn help_panel<'a>(tab: TabId, help: String) -> Element<'a, Message> {
                 text(fl!("ui-tool-help-close")).size(font_size::CAPTION),
                 tooltip::Position::Left,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::SM),
     )
@@ -953,7 +956,8 @@ fn copy_button<'a>(
         text(fl!("ui-tool-copy-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 

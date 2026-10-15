@@ -28,7 +28,7 @@ use heimdall_app::TabId;
 use heimdall_core::tools::password_audit::{
     self, AuditPolicy, Criterion, Detail, PasswordAnalysis, Pattern, ScoreLabel,
 };
-use iced::widget::{column, container, pick_list, progress_bar, row, text, text_input, tooltip};
+use iced::widget::{column, pick_list, progress_bar, row, text, text_input, tooltip};
 use iced::{Alignment, Color, Element, Length, Theme};
 use zeroize::Zeroizing;
 
@@ -230,7 +230,8 @@ impl PwdAuditPane {
                 text(eye_tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::XS)
         .align_y(Alignment::Center);
@@ -284,7 +285,7 @@ impl PwdAuditPane {
         let bar = progress_bar(0.0..=SCORE_MAX, f32::from(analysis.score))
             .girth(BAR_HEIGHT)
             .style(move |theme: &Theme| {
-                let default = progress_bar::primary(theme);
+                let default = crate::styles::progress(theme);
                 progress_bar::Style {
                     bar: iced::Background::Color(Self::score_color(label, theme)),
                     ..default

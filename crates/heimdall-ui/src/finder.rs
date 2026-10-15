@@ -111,12 +111,8 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
                 .style(styles::subtle)
                 .on_press(Message::FinderClose(tab)),
         );
-    container(
-        container(bar)
-            .padding(spacing::XS)
-            .style(container::bordered_box),
-    )
-    .align_right(Length::Fill)
-    .padding(spacing::XS)
-    .into()
+    container(container(bar).padding(spacing::XS).style(styles::panel))
+        .align_right(Length::Fill)
+        .padding(spacing::XS)
+        .into()
 }
