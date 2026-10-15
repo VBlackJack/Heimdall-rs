@@ -4433,3 +4433,427 @@ ui-tool-banner-help =
     - 20 ports probed at a time, each result shown as it comes; Stop ends the scan at once
     - Automatic service fingerprinting (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
     - Export results to CSV or formatted text
+
+ui-tool-ping-name = Ping Monitor
+ui-tool-ping-description = Continuous ICMP ping monitor with running latency statistics and live graphing
+ui-tool-ping-host = Target Host
+ui-tool-ping-host-watermark = example.com or 192.168.1.1
+ui-tool-ping-timeout = Timeout (ms)
+ui-tool-ping-timeout-watermark = 2000
+ui-tool-ping-count = Count
+ui-tool-ping-count-watermark = 4
+ui-tool-ping-start = Start Ping
+ui-tool-ping-stop = Stop
+ui-tool-ping-min = Min
+ui-tool-ping-avg = Avg
+ui-tool-ping-max = Max
+ui-tool-ping-jitter = Jitter
+ui-tool-ping-loss = Packet Loss
+ui-tool-ping-sent = Sent/Recv
+ui-tool-ping-results-title = Probe History
+ui-tool-ping-copy-results = Copy Results
+ui-tool-ping-copy-csv = Export CSV
+ui-tool-ping-status-timeout = Timed out
+ui-tool-ping-status-error = Error
+ui-tool-ping-error-host-required = Please enter a target host or IP address.
+ui-tool-ping-error-timeout-invalid = Timeout must be between 100 ms and 30000 ms.
+ui-tool-ping-error-count-invalid = Count must be between 0 and 100000.
+ui-tool-ping-help =
+    Ping Monitor
+
+    Sends ICMP Echo Request packets to a target host to test round-trip latency,
+    packet loss, and network stability.
+
+    Features:
+    - Configurable timeout and packet count (0 for continuous monitoring)
+    - Real-time statistics: minimum, average, maximum, jitter, and loss percentage
+    - History table with sequence number, timestamps, TTL, and status badges
+    - Export results to formatted text or CSV spreadsheet
+
+ui-tool-dns-name = DNS Lookup
+ui-tool-dns-description = Query DNS record types against standard or custom name servers
+ui-tool-dns-host = Domain or Hostname
+ui-tool-dns-host-watermark = example.com
+ui-tool-dns-type = Record Type
+ui-tool-dns-server = DNS Server
+ui-tool-dns-lookup = Query DNS
+ui-tool-dns-searching = Querying...
+ui-tool-dns-copy = Copy Output
+ui-tool-dns-results-title = DNS Results for { $host } ({ $record_type }, { $time } ms)
+ui-tool-dns-aliases = Aliases:
+ui-tool-dns-no-records = No records returned.
+ui-tool-dns-error-host-required = Please enter a domain name.
+ui-tool-dns-help =
+    DNS Lookup
+
+    Queries Domain Name System (DNS) servers to inspect DNS records for any domain or IP.
+
+    Features:
+    - Standard record types: A, AAAA, MX, CNAME, TXT, NS, PTR, SOA, SRV, ANY
+    - Public nameserver presets (Cloudflare, Google, Quad9, OpenDNS)
+    - Response timing and alias chain tracking
+    - Clean formatted output with one-click clipboard copy
+
+ui-tool-dnsbatch-name = DNS Batch Resolver
+ui-tool-dnsbatch-description = Resolve multiple hostnames concurrently into IPv4 and IPv6 addresses
+ui-tool-dnsbatch-hostnames-label = Hostnames to resolve (one per line or comma-separated)
+ui-tool-dnsbatch-resolve = Resolve Batch
+ui-tool-dnsbatch-resolving = Resolving...
+ui-tool-dnsbatch-copy-csv = Export CSV
+ui-tool-dnsbatch-total = Total
+ui-tool-dnsbatch-resolved = Resolved
+ui-tool-dnsbatch-failed = Failed
+ui-tool-dnsbatch-results-title = Batch Results
+ui-tool-dnsbatch-status-resolved = Resolved
+ui-tool-dnsbatch-status-failed = Failed
+ui-tool-dnsbatch-status-pending = Pending
+ui-tool-dnsbatch-error-required = Please enter at least one hostname to resolve.
+ui-tool-dnsbatch-help =
+    DNS Batch Resolver
+
+    Resolves large batches of hostnames and domains in parallel to their IPv4 and IPv6 addresses.
+
+    Features:
+    - Flexible multiline and comma-separated input
+    - Concurrent asynchronous resolution
+    - Summary breakdown of resolved versus failed queries
+    - CSV spreadsheet export with status and response duration
+
+ui-tool-portscan-name = Port Scanner
+ui-tool-portscan-description = Scan target TCP ports to detect open services and firewall filtering
+ui-tool-portscan-host = Target Host
+ui-tool-portscan-host-watermark = example.com or 192.168.1.1
+ui-tool-portscan-ports = Port Range
+ui-tool-portscan-ports-watermark = 20-80,443
+ui-tool-portscan-timeout = Timeout (ms)
+ui-tool-portscan-timeout-watermark = 1000
+ui-tool-portscan-start = Start Scan
+ui-tool-portscan-stop = Stop
+ui-tool-portscan-copy-csv = Export CSV
+ui-tool-portscan-total = Total
+ui-tool-portscan-open = Open
+ui-tool-portscan-closed = Closed
+ui-tool-portscan-filtered = Filtered
+ui-tool-portscan-results-title = Port Scan Results
+ui-tool-portscan-status-open = Open
+ui-tool-portscan-status-closed = Closed
+ui-tool-portscan-status-filtered = Filtered
+ui-tool-portscan-error-host-required = Please enter a target host.
+ui-tool-portscan-error-ports-invalid = Please enter a valid port number or range (e.g. 80,443,8000-8080).
+ui-tool-portscan-help =
+    Port Scanner
+
+    Probes TCP ports on target hosts to map open network services, firewall rules,
+    and filtered ports.
+
+    Features:
+    - Presets for common services (SSH, HTTP, HTTPS, RDP, MySQL, etc.)
+    - Support for custom port numbers, lists, and ranges (e.g. 1-1024)
+    - Real-time classification into Open, Closed, and Filtered
+    - Summary metrics and CSV export
+
+ui-tool-headers-name = HTTP Header Analyzer
+ui-tool-headers-description = Inspect HTTP response headers, detect information disclosure, and score security headers
+ui-tool-headers-url = Target URL
+ui-tool-headers-url-watermark = https://example.com
+ui-tool-headers-analyze = Analyze Headers
+ui-tool-headers-analyzing = Analyzing...
+ui-tool-headers-copy-report = Copy Full Report
+ui-tool-headers-sec-headers-title = Security Headers Evaluation
+ui-tool-headers-disclosure-title = Information Disclosure
+ui-tool-headers-raw-title = Raw Response Headers
+ui-tool-headers-status-pass = PASS
+ui-tool-headers-status-warn = WARN
+ui-tool-headers-status-fail = FAIL
+ui-tool-headers-status-clean = CLEAN
+ui-tool-headers-status-exposed = EXPOSED
+ui-tool-headers-missing = (missing)
+ui-tool-headers-not-exposed = (not exposed)
+ui-tool-headers-grade-aplus = Outstanding: all key security headers enforced with best practices.
+ui-tool-headers-grade-a = Excellent: robust modern security headers in place.
+ui-tool-headers-grade-b = Good: minor omissions in modern browser defense headers.
+ui-tool-headers-grade-c = Moderate: several foundational security headers are missing.
+ui-tool-headers-grade-d = Poor: missing most standard security protections.
+ui-tool-headers-grade-f = Critical: no modern security headers detected.
+ui-tool-headers-rec-hsts = Recommendation: enable Strict-Transport-Security with max-age=31536000 and includeSubDomains.
+ui-tool-headers-rec-csp = Recommendation: define a restrictive Content-Security-Policy to prevent XSS and code injection.
+ui-tool-headers-rec-xfo = Recommendation: set X-Frame-Options to DENY or SAMEORIGIN to prevent clickjacking.
+ui-tool-headers-rec-xcto = Recommendation: set X-Content-Type-Options to nosniff to prevent MIME-sniffing attacks.
+ui-tool-headers-rec-referrer = Recommendation: configure Referrer-Policy to strict-origin-when-cross-origin.
+ui-tool-headers-rec-permissions = Recommendation: configure Permissions-Policy to restrict sensitive browser APIs.
+ui-tool-headers-rec-xxss = Recommendation: set X-XSS-Protection to 0 or rely on Content-Security-Policy.
+ui-tool-headers-rec-cookie = Recommendation: set Secure, HttpOnly, and SameSite=Lax/Strict on cookies.
+ui-tool-headers-rec-disclosure = Recommendation: disable or sanitize server header to hide internal software versions.
+ui-tool-headers-error-url-required = Please enter a target URL.
+ui-tool-headers-error-invalid-url = Please enter a valid HTTP or HTTPS URL.
+ui-tool-headers-help =
+    HTTP Header Analyzer
+
+    Fetches HTTP response headers and evaluates security posture, browser defense policies,
+    and server information disclosure.
+
+    Evaluated Headers:
+    - Strict-Transport-Security (HSTS)
+    - Content-Security-Policy (CSP)
+    - X-Frame-Options (Clickjacking defense)
+    - X-Content-Type-Options (nosniff)
+    - Referrer-Policy
+    - Permissions-Policy
+    - Cookie security flags (Secure, HttpOnly, SameSite)
+    - Server information disclosure (Server, X-Powered-By, X-AspNet-Version)
+
+## SSL/TLS Certificate Inspector
+ui-tool-cert-name = SSL/TLS Certificate Inspector
+ui-tool-cert-description = Inspect remote SSL/TLS certificate chains, SANs, validity, and cryptographic properties
+ui-tool-cert-host = Host
+ui-tool-cert-host-watermark = example.com or IP
+ui-tool-cert-ports = Ports
+ui-tool-cert-ports-watermark = 443, 8443
+ui-tool-cert-inspect = Inspect
+ui-tool-cert-inspecting = Inspecting...
+ui-tool-cert-copy-details = Copy Details
+ui-tool-cert-copy-csv = Copy CSV
+ui-tool-cert-subject = Subject
+ui-tool-cert-issuer = Issuer
+ui-tool-cert-valid-from = Valid From
+ui-tool-cert-valid-to = Valid To
+ui-tool-cert-days-remaining = Days Remaining
+ui-tool-cert-tls-version = TLS Version
+ui-tool-cert-key-size = Key Size
+ui-tool-cert-hostname-match = Hostname Match
+ui-tool-cert-sans = SANs
+ui-tool-cert-match-yes = Match
+ui-tool-cert-match-no = Mismatch
+ui-tool-cert-status-valid = Valid
+ui-tool-cert-status-warning = Expiring Soon
+ui-tool-cert-status-expired = Expired
+ui-tool-cert-error-host-required = Please enter a target hostname.
+
+## TCP Traceroute
+ui-tool-tcptrace-name = TCP Traceroute
+ui-tool-tcptrace-description = Discover network hops and latency along the TCP path to a destination
+ui-tool-tcptrace-host = Target Host
+ui-tool-tcptrace-host-watermark = example.com or IP
+ui-tool-tcptrace-max-hops = Max Hops
+ui-tool-tcptrace-start = Start Trace
+ui-tool-tcptrace-stop = Stop
+ui-tool-tcptrace-copy-csv = Export CSV
+ui-tool-tcptrace-col-hop = Hop
+ui-tool-tcptrace-col-address = Address
+ui-tool-tcptrace-col-hostname = Hostname
+ui-tool-tcptrace-col-latency = Latency
+ui-tool-tcptrace-col-status = Status
+ui-tool-tcptrace-status-reply = Reply
+ui-tool-tcptrace-status-timeout = Timeout
+ui-tool-tcptrace-status-destination = Destination
+ui-tool-tcptrace-error-host-required = Please enter a target host.
+
+## SNMP MIB Walker
+ui-tool-snmpwalk-name = SNMP MIB Walker
+ui-tool-snmpwalk-description = Query and traverse SNMPv2c MIB trees for system and interface metrics
+ui-tool-snmpwalk-host = Target Host
+ui-tool-snmpwalk-host-watermark = 192.168.1.1
+ui-tool-snmpwalk-community = Community
+ui-tool-snmpwalk-oid = Root OID
+ui-tool-snmpwalk-start = Start Walk
+ui-tool-snmpwalk-stop = Stop
+ui-tool-snmpwalk-copy-csv = Export CSV
+ui-tool-snmpwalk-col-oid = OID
+ui-tool-snmpwalk-col-name = Name
+ui-tool-snmpwalk-col-type = Type
+ui-tool-snmpwalk-col-value = Value
+ui-tool-snmpwalk-error-host-required = Please enter an SNMP target host.
+
+## ARP Table Monitor
+ui-tool-arpmon-name = ARP Table Monitor
+ui-tool-arpmon-description = Inspect local ARP cache, resolve hardware vendors, and detect network anomalies
+ui-tool-arpmon-scan = Scan Now
+ui-tool-arpmon-scanning = Scanning...
+ui-tool-arpmon-copy-csv = Export CSV
+ui-tool-arpmon-col-ip = IP Address
+ui-tool-arpmon-col-mac = MAC Address
+ui-tool-arpmon-col-vendor = Vendor
+ui-tool-arpmon-col-status = Status
+ui-tool-arpmon-col-first-seen = First Seen
+ui-tool-arpmon-col-last-seen = Last Seen
+ui-tool-arpmon-status-new = New
+ui-tool-arpmon-status-known = Known
+ui-tool-arpmon-status-changed = Changed
+ui-tool-arpmon-status-conflict = Conflict
+
+## Firewall Egress Tester
+ui-tool-fwtest-name = Firewall Egress Tester
+ui-tool-fwtest-description = Test outbound connectivity across firewall ports with latency measurement
+ui-tool-fwtest-hosts = Target Hosts
+ui-tool-fwtest-hosts-watermark = One host per line (e.g. 1.1.1.1)
+ui-tool-fwtest-ports = Test Ports
+ui-tool-fwtest-ports-watermark = 80,443,8080
+ui-tool-fwtest-start = Test Egress
+ui-tool-fwtest-stop = Stop
+ui-tool-fwtest-copy-csv = Export Matrix CSV
+ui-tool-fwtest-total = Total Probes
+ui-tool-fwtest-open = Open
+ui-tool-fwtest-closed = Closed
+ui-tool-fwtest-timeout = Filtered
+ui-tool-fwtest-error-hosts-required = Please enter at least one target host.
+
+## Network Cartography
+ui-tool-netmap-name = Network Cartography
+ui-tool-netmap-description = Discover live subnet hosts, open services, and classify device roles
+ui-tool-netmap-subnet = Subnet CIDR
+ui-tool-netmap-subnet-watermark = 192.168.1.0/24
+ui-tool-netmap-discover = Discover Network
+ui-tool-netmap-discovering = Discovering...
+ui-tool-netmap-copy-csv = Export CSV
+ui-tool-netmap-hosts-scanned = Scanned
+ui-tool-netmap-hosts-up = Active Hosts
+ui-tool-netmap-ports-open = Open Ports
+ui-tool-netmap-col-ip = IP Address
+ui-tool-netmap-col-hostname = Hostname
+ui-tool-netmap-col-mac = MAC
+ui-tool-netmap-col-vendor = Vendor
+ui-tool-netmap-col-role = Role
+ui-tool-netmap-col-ports = Open Ports
+ui-tool-netmap-col-latency = Latency
+ui-tool-netmap-error-cidr-required = Please enter a valid subnet CIDR (e.g. 192.168.1.0/24).
+
+## Open Ports
+ui-tool-openports-name = Open Ports
+ui-tool-openports-description = Inspect active TCP and UDP listening ports and sockets with process identification
+ui-tool-openports-title = Open Ports
+ui-tool-openports-help =
+    Lists all open TCP and UDP ports on the local machine using netstat.
+
+    Shows owning process name and PID for each connection.
+
+    Use the filter to search by process name, address, port, or connection state.
+ui-tool-openports-refresh = Refresh
+ui-tool-openports-scanning = Refreshing...
+ui-tool-openports-copy-csv = Export CSV
+ui-tool-openports-filter-placeholder = Filter by process, address, port, state...
+ui-tool-openports-status = { $count } connections at { $time }
+ui-tool-openports-empty-state = Click Refresh to inspect open ports and active connections.
+ui-tool-openports-col-proto = Protocol
+ui-tool-openports-col-local-addr = Local Address
+ui-tool-openports-col-local-port = Local Port
+ui-tool-openports-col-remote-addr = Remote Address
+ui-tool-openports-col-remote-port = Remote Port
+ui-tool-openports-col-state = State
+ui-tool-openports-col-pid = PID
+ui-tool-openports-col-process = Process
+
+## Network Interfaces
+ui-tool-netif-name = Network Interfaces
+ui-tool-netif-description = List all network adapters with link speed, MAC address, IPv4, gateway, and DHCP status
+ui-tool-netif-title = Network Interfaces
+ui-tool-netif-help =
+    Lists all network interfaces on the local machine using ipconfig /all.
+
+    Shows name, type, operational status, link speed, MAC address, IPv4, subnet mask, gateway, and DHCP status.
+ui-tool-netif-refresh = Refresh
+ui-tool-netif-scanning = Refreshing...
+ui-tool-netif-copy-csv = Export CSV
+ui-tool-netif-status = { $count } interfaces at { $time }
+ui-tool-netif-empty-state = Click Refresh to inspect local network interfaces.
+ui-tool-netif-col-name = Name
+ui-tool-netif-col-type = Type
+ui-tool-netif-col-status = Status
+ui-tool-netif-col-speed = Speed
+ui-tool-netif-col-mac = MAC
+ui-tool-netif-col-ipv4 = IPv4
+ui-tool-netif-col-subnet = Subnet
+ui-tool-netif-col-gateway = Gateway
+ui-tool-netif-col-dhcp = DHCP
+
+## Route Table
+ui-tool-routes-name = Route Table
+ui-tool-routes-description = Display active IPv4 routing table destinations, subnet masks, gateways, and metrics
+ui-tool-routes-title = Route Table
+ui-tool-routes-help =
+    Displays the active IPv4 routing table by parsing route print output.
+
+    Shows destination, netmask, gateway, interface, and metric for each route.
+ui-tool-routes-refresh = Refresh
+ui-tool-routes-scanning = Refreshing...
+ui-tool-routes-copy-csv = Export CSV
+ui-tool-routes-status = { $count } routes at { $time }
+ui-tool-routes-empty-state = Click Refresh to inspect active IPv4 routes.
+ui-tool-routes-col-dest = Destination
+ui-tool-routes-col-mask = Netmask
+ui-tool-routes-col-gateway = Gateway
+ui-tool-routes-col-interface = Interface
+ui-tool-routes-col-metric = Metric
+
+## Wi-Fi Scanner
+ui-tool-wifi-name = Wi-Fi Networks
+ui-tool-wifi-description = Scan nearby wireless networks, BSSID, signal strength, channel, and encryption
+ui-tool-wifi-title = Wi-Fi Networks
+ui-tool-wifi-help =
+    Scans nearby Wi-Fi networks using netsh wlan show networks mode=bssid.
+
+    Shows SSID, BSSID (MAC), signal strength, channel, authentication, encryption, and radio type.
+ui-tool-wifi-scan = Scan
+ui-tool-wifi-scanning = Scanning...
+ui-tool-wifi-copy-csv = Export CSV
+ui-tool-wifi-status = { $count } networks at { $time }
+ui-tool-wifi-empty-state = Click Scan to discover nearby Wi-Fi networks in range.
+ui-tool-wifi-col-ssid = SSID
+ui-tool-wifi-col-bssid = BSSID
+ui-tool-wifi-col-signal = Signal
+ui-tool-wifi-col-channel = Channel
+ui-tool-wifi-col-auth = Authentication
+ui-tool-wifi-col-encryption = Encryption
+ui-tool-wifi-col-radio = Radio Type
+
+## Hosts File Editor
+ui-tool-hosts-name = Hosts File Editor
+ui-tool-hosts-description = View, toggle, and edit operating system hosts file domain mappings
+ui-tool-hosts-title = Hosts File Editor
+ui-tool-hosts-help =
+    Edits the system hosts file with syntax validation.
+
+    View and edit host entries. Changes require administrator privileges to save.
+ui-tool-hosts-reload = Reload
+ui-tool-hosts-save = Save Changes
+ui-tool-hosts-copy-all = Copy Hosts
+ui-tool-hosts-btn-add = Add Entry
+ui-tool-hosts-btn-delete = Delete
+ui-tool-hosts-invalid-ip = Invalid IP address format.
+ui-tool-hosts-missing-host = Hostname cannot be empty.
+ui-tool-hosts-loaded = Loaded { $count } entries from { $path }
+ui-tool-hosts-save-success = Hosts file saved successfully.
+ui-tool-hosts-save-failed = Failed to save hosts file: { $error }
+ui-tool-hosts-empty-state = No entries found in the hosts file.
+ui-tool-hosts-loading-hint = Click Reload to load entries from the hosts file.
+ui-tool-hosts-col-enabled = Active
+ui-tool-hosts-col-ip = IP Address
+ui-tool-hosts-col-hostname = Hostname
+ui-tool-hosts-col-comment = Comment
+ui-tool-hosts-col-action = Action
+
+## Service Status Dashboard
+ui-tool-services-name = Service Status Dashboard
+ui-tool-services-description = Monitor Windows background services and control service state
+ui-tool-services-title = Service Status Dashboard
+ui-tool-services-help =
+    Monitors Windows background service status with start and stop controls.
+
+    View running services, their operational status, and startup type. Start, stop, or restart services directly.
+ui-tool-services-refresh = Refresh
+ui-tool-services-scanning = Refreshing...
+ui-tool-services-copy-csv = Export CSV
+ui-tool-services-filter-placeholder = Filter by service or display name...
+ui-tool-services-running-only = Running only
+ui-tool-services-total = Total:
+ui-tool-services-running-label = Running:
+ui-tool-services-stopped-label = Stopped:
+ui-tool-services-col-name = Service Name
+ui-tool-services-col-display-name = Display Name
+ui-tool-services-col-status = Status
+ui-tool-services-col-start-type = Start Type
+ui-tool-services-col-actions = Actions
+ui-tool-services-act-start = Start
+ui-tool-services-act-stop = Stop
+ui-tool-services-act-restart = Restart
+ui-tool-services-empty-state = Click Refresh to inspect Windows system services.
+ui-tool-services-action-success = Service action completed successfully.
