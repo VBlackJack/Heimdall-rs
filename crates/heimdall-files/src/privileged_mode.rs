@@ -36,7 +36,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use heimdall_sftp::path::is_child_name;
+use heimdall_sftp::path::{display_bytes, is_child_name};
 
 use crate::privileged::{Sudo, SudoScript, hex, prelude};
 use crate::server_copy::{TOKEN_LEN, Unquotable, quote};
@@ -300,6 +300,9 @@ pub struct SudoListing {
     pub folder: Vec<u8>,
     /// Its entries, in the order `find` wrote them.
     pub entries: Vec<ListedEntry>,
+    /// Names that are not one clean segment, left out: counted, never kept, so that the
+    /// user can be told some entries are not shown.
+    pub hidden_unsafe: usize,
 }
 
 /// The listing a list script's `output` brings, ended by the line `done`; `None` when it is
@@ -322,9 +325,12 @@ pub fn list_output(output: &[u8], done: &[u8]) -> Option<SudoListing> {
         .iter()
         .partition(|record| record.last().is_some_and(|name| is_child_name(name)));
     if !unsafe_names.is_empty() {
-        // Server data: the count only, never the names.
-        log::debug!(
-            "sudo listing: {} entry name(s) not one clean segment, left out",
+        // A warning naming the folder, as the C# `SftpBrowser.ListDirectoryAsync`: an entry
+        // a listing hides may be what an administrator looks for. Server data: the count
+        // only, never the names.
+        log::warn!(
+            "sudo listing of {:?} left out {} entry name(s) that are not one clean segment",
+            display_bytes(folder),
             unsafe_names.len()
         );
     }
@@ -335,6 +341,7 @@ pub fn list_output(output: &[u8], done: &[u8]) -> Option<SudoListing> {
     Some(SudoListing {
         folder: folder.to_vec(),
         entries,
+        hidden_unsafe: unsafe_names.len(),
     })
 }
 
@@ -481,6 +488,7 @@ mod tests {
         let [logs, file, tty] = listing.entries.as_slice() else {
             panic!("{listing:?}");
         };
+        assert_eq!(listing.hidden_unsafe, 3, "counted, so the user is told");
         assert_eq!(
             (logs.item.kind, logs.inode, logs.item.permissions),
             (ItemKind::Directory, 12, Some(0o755))
@@ -501,8 +509,9 @@ mod tests {
         );
         assert_eq!(tty.item.kind, ItemKind::Other(Special::Device));
         assert_eq!(
-            list_output(b"/srv\0", b"").map(|listing| listing.entries.len()),
-            Some(0),
+            list_output(b"/srv\0", b"")
+                .map(|listing| (listing.entries.len(), listing.hidden_unsafe)),
+            Some((0, 0)),
             "an empty folder"
         );
         let cut = &output[..output.len() - done.len() - 4];

@@ -341,10 +341,11 @@ async fn an_endless_listing_stops_at_the_limit_and_its_handle_is_closed() {
 }
 
 #[tokio::test]
-async fn a_listing_leaves_out_every_name_that_is_not_one_clean_segment() {
+async fn a_listing_leaves_out_every_name_that_is_not_one_clean_segment_and_counts_them() {
     let (client, mut server) = client().await;
     let asking = client.clone();
-    let listing = tokio::spawn(async move { asking.read_dir(&RemotePath::from("/")).await });
+    let listing =
+        tokio::spawn(async move { asking.read_dir_counted(&RemotePath::from("/")).await });
     let mut paged = false;
     while let Some(request) = within(read_request(&mut server)).await {
         let id = request_id(&request);
@@ -395,14 +396,15 @@ async fn a_listing_leaves_out_every_name_that_is_not_one_clean_segment() {
             other => panic!("unexpected {other:?}"),
         }
     }
-    let names: Vec<Vec<u8>> = within(listing)
-        .await
-        .expect("joined")
-        .expect("listed")
+    let listing = within(listing).await.expect("joined").expect("listed");
+    let names: Vec<Vec<u8>> = listing
+        .entries
         .into_iter()
         .map(|entry| entry.name)
         .collect();
     assert_eq!(names, [b"kept".to_vec(), b" kept".to_vec()]);
+    // Counted, so the user is told: `.` and `..` are no entries and are not.
+    assert_eq!(listing.hidden_unsafe, 6);
 }
 
 #[tokio::test]
