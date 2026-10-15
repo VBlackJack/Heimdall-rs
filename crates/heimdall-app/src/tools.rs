@@ -168,6 +168,18 @@ pub enum ToolId {
     PortScan,
     /// The HTTP header analyzer and security scorer, the C# `HTTPHEADERS`.
     HttpHeaders,
+    /// The SSL/TLS certificate inspector, the C# `CERT`.
+    Cert,
+    /// The TCP traceroute path discovery tool, the C# `TCPTRACE`.
+    TcpTrace,
+    /// The SNMP MIB tree walker, the C# `SNMPWALK`.
+    SnmpWalk,
+    /// The ARP table anomaly monitor, the C# `ARPMON`.
+    ArpMon,
+    /// The firewall egress connectivity tester, the C# `FWTEST`.
+    FwTest,
+    /// The network topology and cartography scanner, the C# `NETMAP`.
+    NetMap,
 }
 
 /// What the registry says of a tool.
@@ -216,9 +228,10 @@ impl ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 46] = [
         Self::Ping,
         Self::Dns,
+        Self::Cert,
         Self::PortScan,
         Self::SubnetCalculator,
         Self::IpConverter,
@@ -226,6 +239,11 @@ impl ToolId {
         Self::Whois,
         Self::HttpHeaders,
         Self::BannerGrabber,
+        Self::TcpTrace,
+        Self::SnmpWalk,
+        Self::ArpMon,
+        Self::FwTest,
+        Self::NetMap,
         Self::NetworkCalculator,
         Self::TcpPing,
         Self::Hash,
@@ -387,6 +405,28 @@ impl ToolId {
                 "HTTPHEADERS",
                 ToolCategory::Network,
                 &["headers", "httpheaders", "secheaders"],
+            ),
+            Self::Cert => ToolDescriptor::network("CERT", ToolCategory::Network, &["cert", "ssl"]),
+            Self::TcpTrace => ToolDescriptor::network(
+                "TCPTRACE",
+                ToolCategory::Network,
+                &["trace", "traceroute", "tracert"],
+            ),
+            Self::SnmpWalk => {
+                ToolDescriptor::network("SNMPWALK", ToolCategory::Network, &["snmp", "snmpwalk"])
+            }
+            Self::ArpMon => {
+                ToolDescriptor::local("ARPMON", ToolCategory::Network, &["arp", "arpmon"])
+            }
+            Self::FwTest => ToolDescriptor::local(
+                "FWTEST",
+                ToolCategory::Network,
+                &["fw", "firewall", "fwtest"],
+            ),
+            Self::NetMap => ToolDescriptor::local(
+                "NETMAP",
+                ToolCategory::Network,
+                &["netmap", "cartography", "discover"],
             ),
         }
     }

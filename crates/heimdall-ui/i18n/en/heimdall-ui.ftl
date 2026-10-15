@@ -4578,3 +4578,118 @@ ui-tool-headers-help =
     - Permissions-Policy
     - Cookie security flags (Secure, HttpOnly, SameSite)
     - Server information disclosure (Server, X-Powered-By, X-AspNet-Version)
+
+## SSL/TLS Certificate Inspector
+ui-tool-cert-name = SSL/TLS Certificate Inspector
+ui-tool-cert-description = Inspect remote SSL/TLS certificate chains, SANs, validity, and cryptographic properties
+ui-tool-cert-host = Host
+ui-tool-cert-host-watermark = example.com or IP
+ui-tool-cert-ports = Ports
+ui-tool-cert-ports-watermark = 443, 8443
+ui-tool-cert-inspect = Inspect
+ui-tool-cert-inspecting = Inspecting...
+ui-tool-cert-copy-details = Copy Details
+ui-tool-cert-copy-csv = Copy CSV
+ui-tool-cert-subject = Subject
+ui-tool-cert-issuer = Issuer
+ui-tool-cert-valid-from = Valid From
+ui-tool-cert-valid-to = Valid To
+ui-tool-cert-days-remaining = Days Remaining
+ui-tool-cert-tls-version = TLS Version
+ui-tool-cert-key-size = Key Size
+ui-tool-cert-hostname-match = Hostname Match
+ui-tool-cert-sans = SANs
+ui-tool-cert-match-yes = Match
+ui-tool-cert-match-no = Mismatch
+ui-tool-cert-status-valid = Valid
+ui-tool-cert-status-warning = Expiring Soon
+ui-tool-cert-status-expired = Expired
+ui-tool-cert-error-host-required = Please enter a target hostname.
+
+## TCP Traceroute
+ui-tool-tcptrace-name = TCP Traceroute
+ui-tool-tcptrace-description = Discover network hops and latency along the TCP path to a destination
+ui-tool-tcptrace-host = Target Host
+ui-tool-tcptrace-host-watermark = example.com or IP
+ui-tool-tcptrace-max-hops = Max Hops
+ui-tool-tcptrace-start = Start Trace
+ui-tool-tcptrace-stop = Stop
+ui-tool-tcptrace-copy-csv = Export CSV
+ui-tool-tcptrace-col-hop = Hop
+ui-tool-tcptrace-col-address = Address
+ui-tool-tcptrace-col-hostname = Hostname
+ui-tool-tcptrace-col-latency = Latency
+ui-tool-tcptrace-col-status = Status
+ui-tool-tcptrace-status-reply = Reply
+ui-tool-tcptrace-status-timeout = Timeout
+ui-tool-tcptrace-status-destination = Destination
+ui-tool-tcptrace-error-host-required = Please enter a target host.
+
+## SNMP MIB Walker
+ui-tool-snmpwalk-name = SNMP MIB Walker
+ui-tool-snmpwalk-description = Query and traverse SNMPv2c MIB trees for system and interface metrics
+ui-tool-snmpwalk-host = Target Host
+ui-tool-snmpwalk-host-watermark = 192.168.1.1
+ui-tool-snmpwalk-community = Community
+ui-tool-snmpwalk-oid = Root OID
+ui-tool-snmpwalk-start = Start Walk
+ui-tool-snmpwalk-stop = Stop
+ui-tool-snmpwalk-copy-csv = Export CSV
+ui-tool-snmpwalk-col-oid = OID
+ui-tool-snmpwalk-col-name = Name
+ui-tool-snmpwalk-col-type = Type
+ui-tool-snmpwalk-col-value = Value
+ui-tool-snmpwalk-error-host-required = Please enter an SNMP target host.
+
+## ARP Table Monitor
+ui-tool-arpmon-name = ARP Table Monitor
+ui-tool-arpmon-description = Inspect local ARP cache, resolve hardware vendors, and detect network anomalies
+ui-tool-arpmon-scan = Scan Now
+ui-tool-arpmon-scanning = Scanning...
+ui-tool-arpmon-copy-csv = Export CSV
+ui-tool-arpmon-col-ip = IP Address
+ui-tool-arpmon-col-mac = MAC Address
+ui-tool-arpmon-col-vendor = Vendor
+ui-tool-arpmon-col-status = Status
+ui-tool-arpmon-col-first-seen = First Seen
+ui-tool-arpmon-col-last-seen = Last Seen
+ui-tool-arpmon-status-new = New
+ui-tool-arpmon-status-known = Known
+ui-tool-arpmon-status-changed = Changed
+ui-tool-arpmon-status-conflict = Conflict
+
+## Firewall Egress Tester
+ui-tool-fwtest-name = Firewall Egress Tester
+ui-tool-fwtest-description = Test outbound connectivity across firewall ports with latency measurement
+ui-tool-fwtest-hosts = Target Hosts
+ui-tool-fwtest-hosts-watermark = One host per line (e.g. 1.1.1.1)
+ui-tool-fwtest-ports = Test Ports
+ui-tool-fwtest-ports-watermark = 80,443,8080
+ui-tool-fwtest-start = Test Egress
+ui-tool-fwtest-stop = Stop
+ui-tool-fwtest-copy-csv = Export Matrix CSV
+ui-tool-fwtest-total = Total Probes
+ui-tool-fwtest-open = Open
+ui-tool-fwtest-closed = Closed
+ui-tool-fwtest-timeout = Filtered
+ui-tool-fwtest-error-hosts-required = Please enter at least one target host.
+
+## Network Cartography
+ui-tool-netmap-name = Network Cartography
+ui-tool-netmap-description = Discover live subnet hosts, open services, and classify device roles
+ui-tool-netmap-subnet = Subnet CIDR
+ui-tool-netmap-subnet-watermark = 192.168.1.0/24
+ui-tool-netmap-discover = Discover Network
+ui-tool-netmap-discovering = Discovering...
+ui-tool-netmap-copy-csv = Export CSV
+ui-tool-netmap-hosts-scanned = Scanned
+ui-tool-netmap-hosts-up = Active Hosts
+ui-tool-netmap-ports-open = Open Ports
+ui-tool-netmap-col-ip = IP Address
+ui-tool-netmap-col-hostname = Hostname
+ui-tool-netmap-col-mac = MAC
+ui-tool-netmap-col-vendor = Vendor
+ui-tool-netmap-col-role = Role
+ui-tool-netmap-col-ports = Open Ports
+ui-tool-netmap-col-latency = Latency
+ui-tool-netmap-error-cidr-required = Please enter a valid subnet CIDR (e.g. 192.168.1.0/24).

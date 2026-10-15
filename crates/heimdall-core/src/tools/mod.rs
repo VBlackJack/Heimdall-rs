@@ -21,8 +21,10 @@
 
 #![allow(clippy::all, clippy::pedantic)]
 
+pub mod arp_monitor;
 pub mod banner_grab;
 pub mod base64_codec;
+pub mod cert_inspector;
 pub mod certificate_generator;
 pub mod cron_builder;
 pub mod cve_lookup;
@@ -32,6 +34,7 @@ pub mod diff_engine;
 pub mod dns_batch;
 pub mod dns_lookup;
 pub mod dns_security;
+pub mod firewall_tester;
 pub mod hash_computer;
 pub mod hmac_computer;
 pub mod http_headers;
@@ -41,6 +44,7 @@ pub mod ip_codec;
 pub mod json_codec;
 pub mod jwt_parser;
 pub mod network_calculator;
+pub mod network_cartography;
 pub mod number_text;
 pub mod password_audit;
 pub mod password_generator;
@@ -56,11 +60,13 @@ pub mod regex_engine;
 pub mod secnumcloud;
 pub mod secure_random;
 pub mod smb;
+pub mod snmp_walker;
 pub mod ssh_config;
 pub mod ssh_key_audit;
 pub mod ssh_key_generator;
 pub mod subnet_calculator;
 pub mod tcp_ping;
+pub mod tcp_traceroute;
 pub mod text_case_codec;
 pub mod time_zone_rules;
 pub mod tls_audit;

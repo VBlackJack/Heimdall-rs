@@ -219,6 +219,18 @@ pub enum Icon {
     ToolPortScanner,
     /// `Geo.Tool.HttpHeaders`: a shield with checkmark, the HTTP header analyzer.
     ToolHttpHeaders,
+    /// `Geo.Tool.CertInspector`: a shield with magnifier, the SSL/TLS certificate inspector.
+    ToolCertInspector,
+    /// `Geo.Tool.Traceroute`: nodes along a path, the TCP traceroute tool.
+    ToolTraceroute,
+    /// `Geo.Tool.SnmpWalker`: a tree hierarchy, the SNMP walker tool.
+    ToolSnmpWalker,
+    /// `Geo.Tool.ArpMonitor`: concentric radar arcs, the ARP monitor tool.
+    ToolArpMonitor,
+    /// `Geo.Tool.FirewallTester`: a brick wall grid, the firewall egress tester.
+    ToolFirewallTester,
+    /// `Geo.Tool.NetMap`: connected nodes, the network cartography tool.
+    ToolNetMap,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
     /// The `Resolution` glyph (`E740`): a screen with its corners, an RDP session's
@@ -232,7 +244,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 84] = [
+    pub const ALL: [Self; 90] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -313,6 +325,12 @@ impl Icon {
         Self::ToolDnsLookup,
         Self::ToolPortScanner,
         Self::ToolHttpHeaders,
+        Self::ToolCertInspector,
+        Self::ToolTraceroute,
+        Self::ToolSnmpWalker,
+        Self::ToolArpMonitor,
+        Self::ToolFirewallTester,
+        Self::ToolNetMap,
         Self::Monitor,
         Self::Resolution,
         Self::Keyboard,
@@ -577,6 +595,24 @@ impl Icon {
                 "M2,4 L4,4 L4,13 L2,13 Z M5,6 L7,6 L7,13 L5,13 Z M8,2 L10,2 L10,13 L8,13 Z M12,8 A3,3 0 1 1 12,12 A3,3 0 1 1 12,8 Z M14.5,12.5 L16,14"
             }
             Self::ToolHttpHeaders => "M2,2 L14,2 L14,11 L8,14 L2,11 Z M5,6 L7,8 L11,4",
+            Self::ToolCertInspector => {
+                "M8,1 L14,3 L14,8 C14,12 8,15 8,15 C8,15 2,12 2,8 L2,3 Z M10,6 A2.5,2.5 0 1 1 10,10 A2.5,2.5 0 1 1 10,6 Z M12,10.5 L14,12.5"
+            }
+            Self::ToolTraceroute => {
+                "M2,8 A1.5,1.5 0 1,1 5,8 L7,8 A1.5,1.5 0 1,1 10,8 L12,8 A1.5,1.5 0 1,1 15,8"
+            }
+            Self::ToolSnmpWalker => {
+                "M8,2 L8,5 M8,5 L4,7 M8,5 L12,7 M4,7 L4,9 M4,9 L2,11 M4,9 L6,11 M12,7 L12,9 M12,9 L10,11 M12,9 L14,11"
+            }
+            Self::ToolArpMonitor => {
+                "M8,8 L8,2 A6,6 0 1,1 2,8 A6,6 0 1,1 14,8 M8,8 A4,4 0 0,1 12,8 M8,8 A2,2 0 0,1 10,8"
+            }
+            Self::ToolFirewallTester => {
+                "M1,3 L15,3 L15,13 L1,13 Z M1,6 L15,6 M1,9 L15,9 M5,3 L5,6 M10,3 L10,6 M3,6 L3,9 M8,6 L8,9 M13,6 L13,9 M5,9 L5,13 M10,9 L10,13"
+            }
+            Self::ToolNetMap => {
+                "M8,2 A6,6 0 1 1 8,14 A6,6 0 1 1 8,2 Z M8,8 L12,4 M4,5 A1.5,1.5 0 1 1 4,6.5 Z M12,3 A1.5,1.5 0 1 1 12,4.5 Z M11,10 A1.5,1.5 0 1 1 11,11.5 Z M5,11 A1.5,1.5 0 1 1 5,12.5 Z M8,8 L11,10 M8,8 L5,11 M8,8 L4,5"
+            }
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
             Self::Resolution => {
                 "M1.5,2.5 L14.5,2.5 L14.5,11.5 L1.5,11.5 Z M5.5,14 L10.5,14                  M4,7 L4,5 L6,5 M12,7 L12,9 L10,9"
@@ -654,6 +690,12 @@ impl Icon {
             | Self::ToolDnsLookup
             | Self::ToolPortScanner
             | Self::ToolHttpHeaders
+            | Self::ToolCertInspector
+            | Self::ToolTraceroute
+            | Self::ToolSnmpWalker
+            | Self::ToolArpMonitor
+            | Self::ToolFirewallTester
+            | Self::ToolNetMap
             // These hold open lines too, which a fill would lose; the ULID's blocks are
             // closed, filled as the UUID's.
             | Self::ToolSubnet

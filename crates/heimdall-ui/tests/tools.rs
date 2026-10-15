@@ -162,6 +162,7 @@ fn ctrl_shift_t_toggles_the_sidebar_tab_and_the_choice_is_kept() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
@@ -175,16 +176,22 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
             (
                 ToolGroup::Category(ToolCategory::Network),
                 vec![
+                    ToolId::ArpMon,
                     ToolId::BannerGrabber,
                     ToolId::Dns,
+                    ToolId::FwTest,
                     ToolId::HttpHeaders,
                     ToolId::HttpStatus,
                     ToolId::IpConverter,
                     ToolId::NetworkCalculator,
+                    ToolId::NetMap,
                     ToolId::Ping,
                     ToolId::PortScan,
+                    ToolId::SnmpWalk,
+                    ToolId::Cert,
                     ToolId::SubnetCalculator,
                     ToolId::TcpPing,
+                    ToolId::TcpTrace,
                     ToolId::Whois,
                 ],
             ),
