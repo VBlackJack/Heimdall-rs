@@ -14,22 +14,29 @@
  * limitations under the License.
  */
 
-//! WHOIS client protocol engine and referral server resolver.
+//! The WHOIS tool's query and server, as the C# `WhoisLookupViewModel` and
+//! `WhoisServerResolver`: what is asked, of which server, within which bounds. The exchange
+//! itself is `heimdall_app::net_tools`'.
 
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// Standard port for WHOIS protocol (TCP 43).
+use super::net_host;
+
+/// Port of the WHOIS protocol (RFC 3912).
 pub const WHOIS_PORT: u16 = 43;
 
-/// Default timeout for WHOIS server connection and response.
-pub const DEFAULT_WHOIS_TIMEOUT: Duration = Duration::from_secs(10);
+/// One deadline for the whole lookup (name, connection, query and reply), as the C#
+/// `WhoisLookupService.QueryTimeout` linked to the caller's token.
+pub const WHOIS_DEADLINE: Duration = Duration::from_secs(10);
 
-/// IANA global referral WHOIS server.
+/// Most bytes of a reply kept: a registry's answer is a few KiB, a server sending more is
+/// cut there rather than read without end.
+pub const MAX_REPLY_BYTES: usize = 64 * 1024;
+
+/// IANA's WHOIS server, asked for a TLD the table does not name, as the C#.
 pub const IANA_WHOIS_SERVER: &str = "whois.iana.org";
 
-/// Resolves the canonical WHOIS server hostname for a given domain or IP string.
+/// The WHOIS server of `domain`'s TLD, as the C# `WhoisServerResolver.GetWhoisServer`.
 #[must_use]
 pub fn resolve_whois_server(domain: &str) -> &'static str {
     let trimmed = domain.trim();
@@ -61,110 +68,14 @@ pub fn resolve_whois_server(domain: &str) -> &'static str {
     }
 }
 
-/// Request parameters for a WHOIS query.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WhoisLookupRequest {
-    /// Domain name or IP address to lookup.
-    pub domain: String,
-}
-
-/// Response from a WHOIS lookup attempt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WhoisLookupResult {
-    /// Target domain queried.
-    pub domain: String,
-    /// Raw response output from the WHOIS server.
-    pub output: String,
-    /// Query round-trip duration in milliseconds.
-    pub elapsed_ms: u64,
-    /// True if query completed successfully.
-    pub success: bool,
-    /// Error message if lookup failed.
-    pub error: Option<String>,
-}
-
-/// Queries a WHOIS server directly over TCP port 43.
+/// What is asked for `typed`, as the C# `WhoisLookupViewModel.LookupAsync` accepts it
+/// (`InputValidator.ValidateDomain` or `IPAddress.TryParse`): once a leading wildcard and
+/// dots are stripped, as the C# `TryCanonicalizeDomain`, a host [`net_host::checked_host`]
+/// takes, which is what is sent. `None` for anything else: nothing that could add a line to
+/// the query is ever sent.
 #[must_use]
-pub fn lookup_whois(request: &WhoisLookupRequest) -> WhoisLookupResult {
-    let domain = request.domain.trim();
-    if domain.is_empty() {
-        return WhoisLookupResult {
-            domain: String::new(),
-            output: String::new(),
-            elapsed_ms: 0,
-            success: false,
-            error: Some("Domain or IP address cannot be empty".to_string()),
-        };
-    }
-
-    let server = resolve_whois_server(domain);
-    let start = Instant::now();
-    let Ok(mut addrs) = (server, WHOIS_PORT).to_socket_addrs() else {
-        return WhoisLookupResult {
-            domain: domain.to_string(),
-            output: String::new(),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            success: false,
-            error: Some(format!("Could not resolve WHOIS server {server}")),
-        };
-    };
-
-    let Some(addr) = addrs.next() else {
-        return WhoisLookupResult {
-            domain: domain.to_string(),
-            output: String::new(),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            success: false,
-            error: Some("No address found for WHOIS server".to_string()),
-        };
-    };
-
-    let mut stream = match TcpStream::connect_timeout(&addr, DEFAULT_WHOIS_TIMEOUT) {
-        Ok(s) => s,
-        Err(e) => {
-            return WhoisLookupResult {
-                domain: domain.to_string(),
-                output: String::new(),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-                success: false,
-                error: Some(e.to_string()),
-            };
-        }
-    };
-
-    let _ = stream.set_read_timeout(Some(DEFAULT_WHOIS_TIMEOUT));
-    let _ = stream.set_write_timeout(Some(DEFAULT_WHOIS_TIMEOUT));
-
-    let query = format!("{domain}\r\n");
-    if let Err(e) = stream.write_all(query.as_bytes()) {
-        return WhoisLookupResult {
-            domain: domain.to_string(),
-            output: String::new(),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            success: false,
-            error: Some(e.to_string()),
-        };
-    }
-
-    let mut response = Vec::new();
-    if let Err(e) = stream.read_to_end(&mut response) {
-        return WhoisLookupResult {
-            domain: domain.to_string(),
-            output: String::new(),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            success: false,
-            error: Some(e.to_string()),
-        };
-    }
-
-    let output = String::from_utf8_lossy(&response).to_string();
-    WhoisLookupResult {
-        domain: domain.to_string(),
-        output,
-        elapsed_ms: start.elapsed().as_millis() as u64,
-        success: true,
-        error: None,
-    }
+pub fn whois_query(typed: &str) -> Option<String> {
+    net_host::checked_host(typed.trim().trim_start_matches(['*', '.']))
 }
 
 #[cfg(test)]
@@ -186,9 +97,19 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_domain_result() {
-        let req = WhoisLookupRequest { domain: "".into() };
-        let res = lookup_whois(&req);
-        assert!(!res.success);
+    fn the_query_is_a_checked_name_or_an_ip_address() {
+        assert_eq!(whois_query(" example.com "), Some("example.com".to_owned()));
+        assert_eq!(whois_query("*.example.com"), Some("example.com".to_owned()));
+        assert_eq!(whois_query("1.1.1.1"), Some("1.1.1.1".to_owned()));
+        assert_eq!(whois_query("2001:db8::1"), Some("2001:db8::1".to_owned()));
+        for bad in [
+            "",
+            "example.com\r\nevil",
+            "a..com",
+            "-a.com",
+            "exa mple.com",
+        ] {
+            assert_eq!(whois_query(bad), None, "{bad:?}");
+        }
     }
 }
