@@ -52,12 +52,16 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(
         ToolId::ALL,
         [
+            ToolId::Ping,
+            ToolId::Dns,
+            ToolId::PortScan,
             ToolId::SubnetCalculator,
             ToolId::IpConverter,
-            ToolId::NetworkCalculator,
             ToolId::HttpStatus,
             ToolId::Whois,
+            ToolId::HttpHeaders,
             ToolId::BannerGrabber,
+            ToolId::NetworkCalculator,
             ToolId::TcpPing,
             ToolId::Hash,
             ToolId::Hmac,
@@ -87,8 +91,18 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::Crontab,
             ToolId::SshConfig,
             ToolId::WakeOnLan,
+            ToolId::DnsBatch,
         ]
     );
+    assert_eq!(ToolId::Ping.code(), "PING");
+    assert!(ToolId::Ping.is_network());
+    assert_eq!(ToolId::Dns.code(), "DNS");
+    assert_eq!(ToolId::Dns.prefixes(), ["dns", "nslookup", "dig"]);
+    assert_eq!(ToolId::DnsBatch.code(), "DNSBATCH");
+    assert_eq!(ToolId::DnsBatch.category(), ToolCategory::External);
+    assert_eq!(ToolId::PortScan.code(), "PORTSCAN");
+    assert!(ToolId::PortScan.is_network());
+    assert_eq!(ToolId::HttpHeaders.code(), "HTTPHEADERS");
     assert_eq!(ToolId::HttpStatus.code(), "HTTP");
     assert_eq!(ToolId::Whois.code(), "WHOIS");
     assert_eq!(ToolId::BannerGrabber.code(), "BANNER");
@@ -187,7 +201,8 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
         .iter()
         .all(|tool| tool.category() == ToolCategory::Security)
     );
-    assert_eq!(ToolId::from_code("PING"), None, "not ported");
+    assert_eq!(ToolId::from_code("PING"), Some(ToolId::Ping));
+    assert_eq!(ToolId::from_code("TCPTRACE"), None, "not ported");
 }
 
 #[test]

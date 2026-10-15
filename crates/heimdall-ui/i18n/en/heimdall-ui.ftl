@@ -4410,3 +4410,171 @@ ui-tool-banner-help =
     - Presets for Common, Web, Mail, and Database ports
     - Automatic service fingerprinting (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
     - Export results to CSV or formatted text
+
+ui-tool-ping-name = Ping Monitor
+ui-tool-ping-description = Continuous ICMP ping monitor with running latency statistics and live graphing
+ui-tool-ping-host = Target Host
+ui-tool-ping-host-watermark = example.com or 192.168.1.1
+ui-tool-ping-timeout = Timeout (ms)
+ui-tool-ping-timeout-watermark = 2000
+ui-tool-ping-count = Count
+ui-tool-ping-count-watermark = 4
+ui-tool-ping-start = Start Ping
+ui-tool-ping-stop = Stop
+ui-tool-ping-min = Min
+ui-tool-ping-avg = Avg
+ui-tool-ping-max = Max
+ui-tool-ping-jitter = Jitter
+ui-tool-ping-loss = Packet Loss
+ui-tool-ping-sent = Sent/Recv
+ui-tool-ping-results-title = Probe History
+ui-tool-ping-copy-results = Copy Results
+ui-tool-ping-copy-csv = Export CSV
+ui-tool-ping-status-timeout = Timed out
+ui-tool-ping-status-error = Error
+ui-tool-ping-error-host-required = Please enter a target host or IP address.
+ui-tool-ping-error-timeout-invalid = Timeout must be between 100 ms and 30000 ms.
+ui-tool-ping-error-count-invalid = Count must be between 0 and 100000.
+ui-tool-ping-help =
+    Ping Monitor
+
+    Sends ICMP Echo Request packets to a target host to test round-trip latency,
+    packet loss, and network stability.
+
+    Features:
+    - Configurable timeout and packet count (0 for continuous monitoring)
+    - Real-time statistics: minimum, average, maximum, jitter, and loss percentage
+    - History table with sequence number, timestamps, TTL, and status badges
+    - Export results to formatted text or CSV spreadsheet
+
+ui-tool-dns-name = DNS Lookup
+ui-tool-dns-description = Query DNS record types against standard or custom name servers
+ui-tool-dns-host = Domain or Hostname
+ui-tool-dns-host-watermark = example.com
+ui-tool-dns-type = Record Type
+ui-tool-dns-server = DNS Server
+ui-tool-dns-lookup = Query DNS
+ui-tool-dns-searching = Querying...
+ui-tool-dns-copy = Copy Output
+ui-tool-dns-results-title = DNS Results for { $host } ({ $record_type }, { $time } ms)
+ui-tool-dns-aliases = Aliases:
+ui-tool-dns-no-records = No records returned.
+ui-tool-dns-error-host-required = Please enter a domain name.
+ui-tool-dns-help =
+    DNS Lookup
+
+    Queries Domain Name System (DNS) servers to inspect DNS records for any domain or IP.
+
+    Features:
+    - Standard record types: A, AAAA, MX, CNAME, TXT, NS, PTR, SOA, SRV, ANY
+    - Public nameserver presets (Cloudflare, Google, Quad9, OpenDNS)
+    - Response timing and alias chain tracking
+    - Clean formatted output with one-click clipboard copy
+
+ui-tool-dnsbatch-name = DNS Batch Resolver
+ui-tool-dnsbatch-description = Resolve multiple hostnames concurrently into IPv4 and IPv6 addresses
+ui-tool-dnsbatch-hostnames-label = Hostnames to resolve (one per line or comma-separated)
+ui-tool-dnsbatch-resolve = Resolve Batch
+ui-tool-dnsbatch-resolving = Resolving...
+ui-tool-dnsbatch-copy-csv = Export CSV
+ui-tool-dnsbatch-total = Total
+ui-tool-dnsbatch-resolved = Resolved
+ui-tool-dnsbatch-failed = Failed
+ui-tool-dnsbatch-results-title = Batch Results
+ui-tool-dnsbatch-status-resolved = Resolved
+ui-tool-dnsbatch-status-failed = Failed
+ui-tool-dnsbatch-status-pending = Pending
+ui-tool-dnsbatch-error-required = Please enter at least one hostname to resolve.
+ui-tool-dnsbatch-help =
+    DNS Batch Resolver
+
+    Resolves large batches of hostnames and domains in parallel to their IPv4 and IPv6 addresses.
+
+    Features:
+    - Flexible multiline and comma-separated input
+    - Concurrent asynchronous resolution
+    - Summary breakdown of resolved versus failed queries
+    - CSV spreadsheet export with status and response duration
+
+ui-tool-portscan-name = Port Scanner
+ui-tool-portscan-description = Scan target TCP ports to detect open services and firewall filtering
+ui-tool-portscan-host = Target Host
+ui-tool-portscan-host-watermark = example.com or 192.168.1.1
+ui-tool-portscan-ports = Port Range
+ui-tool-portscan-ports-watermark = 20-80,443
+ui-tool-portscan-timeout = Timeout (ms)
+ui-tool-portscan-timeout-watermark = 1000
+ui-tool-portscan-start = Start Scan
+ui-tool-portscan-stop = Stop
+ui-tool-portscan-copy-csv = Export CSV
+ui-tool-portscan-total = Total
+ui-tool-portscan-open = Open
+ui-tool-portscan-closed = Closed
+ui-tool-portscan-filtered = Filtered
+ui-tool-portscan-results-title = Port Scan Results
+ui-tool-portscan-status-open = Open
+ui-tool-portscan-status-closed = Closed
+ui-tool-portscan-status-filtered = Filtered
+ui-tool-portscan-error-host-required = Please enter a target host.
+ui-tool-portscan-error-ports-invalid = Please enter a valid port number or range (e.g. 80,443,8000-8080).
+ui-tool-portscan-help =
+    Port Scanner
+
+    Probes TCP ports on target hosts to map open network services, firewall rules,
+    and filtered ports.
+
+    Features:
+    - Presets for common services (SSH, HTTP, HTTPS, RDP, MySQL, etc.)
+    - Support for custom port numbers, lists, and ranges (e.g. 1-1024)
+    - Real-time classification into Open, Closed, and Filtered
+    - Summary metrics and CSV export
+
+ui-tool-headers-name = HTTP Header Analyzer
+ui-tool-headers-description = Inspect HTTP response headers, detect information disclosure, and score security headers
+ui-tool-headers-url = Target URL
+ui-tool-headers-url-watermark = https://example.com
+ui-tool-headers-analyze = Analyze Headers
+ui-tool-headers-analyzing = Analyzing...
+ui-tool-headers-copy-report = Copy Full Report
+ui-tool-headers-sec-headers-title = Security Headers Evaluation
+ui-tool-headers-disclosure-title = Information Disclosure
+ui-tool-headers-raw-title = Raw Response Headers
+ui-tool-headers-status-pass = PASS
+ui-tool-headers-status-warn = WARN
+ui-tool-headers-status-fail = FAIL
+ui-tool-headers-status-clean = CLEAN
+ui-tool-headers-status-exposed = EXPOSED
+ui-tool-headers-missing = (missing)
+ui-tool-headers-not-exposed = (not exposed)
+ui-tool-headers-grade-aplus = Outstanding: all key security headers enforced with best practices.
+ui-tool-headers-grade-a = Excellent: robust modern security headers in place.
+ui-tool-headers-grade-b = Good: minor omissions in modern browser defense headers.
+ui-tool-headers-grade-c = Moderate: several foundational security headers are missing.
+ui-tool-headers-grade-d = Poor: missing most standard security protections.
+ui-tool-headers-grade-f = Critical: no modern security headers detected.
+ui-tool-headers-rec-hsts = Recommendation: enable Strict-Transport-Security with max-age=31536000 and includeSubDomains.
+ui-tool-headers-rec-csp = Recommendation: define a restrictive Content-Security-Policy to prevent XSS and code injection.
+ui-tool-headers-rec-xfo = Recommendation: set X-Frame-Options to DENY or SAMEORIGIN to prevent clickjacking.
+ui-tool-headers-rec-xcto = Recommendation: set X-Content-Type-Options to nosniff to prevent MIME-sniffing attacks.
+ui-tool-headers-rec-referrer = Recommendation: configure Referrer-Policy to strict-origin-when-cross-origin.
+ui-tool-headers-rec-permissions = Recommendation: configure Permissions-Policy to restrict sensitive browser APIs.
+ui-tool-headers-rec-xxss = Recommendation: set X-XSS-Protection to 0 or rely on Content-Security-Policy.
+ui-tool-headers-rec-cookie = Recommendation: set Secure, HttpOnly, and SameSite=Lax/Strict on cookies.
+ui-tool-headers-rec-disclosure = Recommendation: disable or sanitize server header to hide internal software versions.
+ui-tool-headers-error-url-required = Please enter a target URL.
+ui-tool-headers-error-invalid-url = Please enter a valid HTTP or HTTPS URL.
+ui-tool-headers-help =
+    HTTP Header Analyzer
+
+    Fetches HTTP response headers and evaluates security posture, browser defense policies,
+    and server information disclosure.
+
+    Evaluated Headers:
+    - Strict-Transport-Security (HSTS)
+    - Content-Security-Policy (CSP)
+    - X-Frame-Options (Clickjacking defense)
+    - X-Content-Type-Options (nosniff)
+    - Referrer-Policy
+    - Permissions-Policy
+    - Cookie security flags (Secure, HttpOnly, SameSite)
+    - Server information disclosure (Server, X-Powered-By, X-AspNet-Version)
