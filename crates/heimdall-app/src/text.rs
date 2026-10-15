@@ -23,10 +23,15 @@
 //! `ServerPromptText`: they sit in a Heimdall dialog, so they must not be able to lay
 //! themselves out as Heimdall's own text. See [`server_prompt_text`].
 //!
+//! A report a server wrote (a WHOIS reply, a service banner) keeps its lines: see
+//! [`server_report_text`].
+//!
 //! A command about to be run is shown the other way: nothing removed, nothing cut, every
 //! invisible character written out.
 
 use std::fmt::Write as _;
+use std::iter::Peekable;
+use std::str::Chars;
 
 /// Longest server text shown, in characters.
 pub const MAX_SERVER_TEXT_CHARS: usize = 256;
@@ -132,11 +137,110 @@ pub fn visible_text(text: &str) -> String {
     shown
 }
 
+/// The character that starts a terminal escape sequence.
+const ESCAPE: char = '\u{1B}';
+
+/// The 8-bit control sequence introducer, `ESC [` in one character.
+const CSI: char = '\u{9B}';
+
+/// The 8-bit introducers of a string sequence: device control, start of string, operating
+/// system command, privacy message, application program command.
+const STRING_INTRODUCERS: [char; 5] = ['\u{90}', '\u{98}', '\u{9D}', '\u{9E}', '\u{9F}'];
+
+/// What ends a string sequence besides `ESC \`: the bell, and the 8-bit string terminator.
+const STRING_TERMINATORS: [char; 2] = ['\u{7}', '\u{9C}'];
+
+/// `text`, a report a server wrote (a WHOIS reply, a service banner), made safe to show and
+/// to copy while keeping its lines: a terminal escape sequence is removed whole, not only its
+/// escape character (a control sequence to its final byte, an operating system command or
+/// another string to its terminator); `\r\n` and a lone `\r` become `\n`; tabs stay; every
+/// other control character and every [`INVISIBLE`] one (bidirectional controls, zero-width
+/// characters, the byte order mark, tags, the line and paragraph separators) is dropped.
+/// Not cut: the caller bounds what it reads.
+#[must_use]
+pub fn server_report_text(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            ESCAPE => match chars.next() {
+                Some('[') => skip_control_sequence(&mut chars),
+                Some(']' | 'P' | 'X' | '^' | '_') => skip_string(&mut chars),
+                // Any other: a sequence of two characters, both dropped.
+                _ => {}
+            },
+            CSI => skip_control_sequence(&mut chars),
+            c if STRING_INTRODUCERS.contains(&c) => skip_string(&mut chars),
+            '\r' => {
+                let _ = chars.next_if_eq(&'\n');
+                kept.push('\n');
+            }
+            '\n' | '\t' => kept.push(c),
+            c if c.is_control() || is_invisible(c) => {}
+            c => kept.push(c),
+        }
+    }
+    kept
+}
+
+/// Skips the rest of a control sequence: its parameter and intermediate bytes, then its
+/// final byte.
+fn skip_control_sequence(chars: &mut Peekable<Chars<'_>>) {
+    while chars
+        .next_if(|c| ('\u{20}'..='\u{3F}').contains(c))
+        .is_some()
+    {}
+    let _ = chars.next_if(|c| ('\u{40}'..='\u{7E}').contains(c));
+}
+
+/// Skips the rest of a string sequence: to its terminator, or to the end.
+fn skip_string(chars: &mut Peekable<Chars<'_>>) {
+    while let Some(c) = chars.next() {
+        if STRING_TERMINATORS.contains(&c) {
+            return;
+        }
+        if c == ESCAPE {
+            let _ = chars.next_if_eq(&'\\');
+            return;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_SERVER_TEXT_CHARS, TRUNCATION_MARKER, server_prompt_text, server_text, visible_text,
+        MAX_SERVER_TEXT_CHARS, TRUNCATION_MARKER, server_prompt_text, server_report_text,
+        server_text, visible_text,
     };
+
+    #[test]
+    fn escape_sequences_in_a_server_report_are_removed_whole() {
+        assert_eq!(
+            server_report_text("a\u{1b}[1;31mred\u{1b}[0m b\u{9b}2Jc"),
+            "ared bc"
+        );
+        assert_eq!(
+            server_report_text(
+                "\u{1b}]0;title\u{7}x\u{1b}]8;;http://e\u{1b}\\link\u{1b}]8;;\u{1b}\\"
+            ),
+            "xlink"
+        );
+        assert_eq!(server_report_text("\u{1b}Pq#0;2\u{1b}\\ok\u{1b}c"), "ok");
+        assert_eq!(server_report_text("cut\u{1b}]0;never ended"), "cut");
+    }
+
+    #[test]
+    fn a_server_report_keeps_its_lines_and_drops_the_invisible() {
+        assert_eq!(server_report_text("l1\r\nl2\rl3\n\tx"), "l1\nl2\nl3\n\tx");
+        assert_eq!(
+            server_report_text("\u{202E}\u{200B}\u{FEFF}a\u{7}\u{0}b\u{2028}"),
+            "ab"
+        );
+        assert_eq!(
+            server_report_text("Registrant: Société пароль"),
+            "Registrant: Société пароль"
+        );
+    }
 
     #[test]
     fn a_server_prompt_cannot_start_a_line_of_its_own() {

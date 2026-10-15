@@ -1,0 +1,70 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! One probe of the TCPPING tool, as the C# `TcpPingService.ProbeAsync`: a TCP connection
+//! to every address the host resolved to, before the run and once ([`super::resolve`]), the
+//! first that answers winning (`heimdall_net`). Only the handshake is timed.
+
+use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, Instant};
+
+use crate::reachability::{self, DownReason};
+
+/// How long the handshake with the first of `addresses` to answer on `port` took, within
+/// `timeout`.
+///
+/// # Errors
+///
+/// Why no address answered.
+pub async fn connect_time(
+    addresses: &[IpAddr],
+    port: u16,
+    timeout: Duration,
+) -> Result<Duration, DownReason> {
+    let targets: Vec<SocketAddr> = addresses
+        .iter()
+        .map(|address| SocketAddr::new(*address, port))
+        .collect();
+    let started = Instant::now();
+    match heimdall_net::connect_addresses(&targets, Some(timeout)).await {
+        Ok(_connected) => Ok(started.elapsed()),
+        Err(failure) => Err(reachability::down_reason(&failure)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_listening_port_answers_and_a_closed_one_does_not() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let loopback = [IpAddr::V4(Ipv4Addr::LOCALHOST)];
+        let elapsed = connect_time(&loopback, port, Duration::from_secs(5)).await;
+        assert!(elapsed.is_ok(), "{elapsed:?}");
+        drop(listener);
+        // Windows tries a refused connection again for about two seconds.
+        let refused = connect_time(&loopback, port, Duration::from_secs(5)).await;
+        assert!(refused.is_err(), "{refused:?}");
+    }
+}

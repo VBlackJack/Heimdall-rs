@@ -50,6 +50,7 @@ pub mod json_codec;
 pub mod jwt_parser;
 pub mod log_viewer;
 pub mod net_host;
+pub mod net_input;
 pub mod network_calculator;
 pub mod network_cartography;
 pub mod network_interfaces;

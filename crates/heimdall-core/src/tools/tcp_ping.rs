@@ -14,142 +14,93 @@
  * limitations under the License.
  */
 
-//! TCP ping probe engine and latency statistics.
+//! The TCP ping tool's settings and summary, as the C# `TcpPingViewModel` and
+//! `TcpPingSummary`: how many probes, how long each may take, the pause between them, and
+//! the minimum, average and maximum of the answers. The probes themselves are
+//! `heimdall_app::net_tools`'.
 
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// Status of a TCP ping probe attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TcpPingProbeStatus {
-    /// Handshake completed successfully within timeout.
-    Success,
-    /// Connection failed, timed out, or refused.
-    Failed,
-}
+/// Default port, the C# `TcpPingViewModel.DefaultPort`.
+pub const DEFAULT_PORT: u16 = 443;
 
-/// Request parameters for a single TCP ping probe.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TcpPingProbeRequest {
-    /// Target host name or IP address.
-    pub host: String,
-    /// Target TCP port.
-    pub port: u16,
-    /// Sequence counter (1-based).
-    pub seq: usize,
-    /// Connection timeout in milliseconds.
-    pub timeout_ms: u64,
-}
+/// Default number of probes, the C# `DefaultCount`.
+pub const DEFAULT_COUNT: usize = 10;
 
-/// Result of a single TCP ping probe.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TcpPingProbeResult {
-    /// Sequence number of this probe.
-    pub seq: usize,
-    /// Target host queried.
-    pub host: String,
-    /// Target port queried.
-    pub port: u16,
-    /// Round-trip handshake latency in milliseconds.
-    pub latency_ms: f64,
-    /// Status outcome.
-    pub status: TcpPingProbeStatus,
-    /// Optional failure error message.
-    pub error_message: Option<String>,
-}
+/// Fewest probes, the C# `MinCount`.
+pub const MIN_COUNT: usize = 1;
 
-impl TcpPingProbeResult {
-    /// Creates a successful probe result.
-    #[must_use]
-    pub fn ok(seq: usize, host: String, port: u16, latency_ms: f64) -> Self {
-        Self {
-            seq,
-            host,
-            port,
-            latency_ms,
-            status: TcpPingProbeStatus::Success,
-            error_message: None,
-        }
+/// Most probes, the C# `MaxCount`.
+pub const MAX_COUNT: usize = 10_000;
+
+/// Time a probe has to connect, the C# `ConnectTimeoutMs`.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(5000);
+
+/// Pause between two probes, the C# `DelayBetweenPingsMs`.
+pub const DELAY_BETWEEN_PROBES: Duration = Duration::from_millis(1000);
+
+/// The number of probes `typed` asks for, from [`MIN_COUNT`] to [`MAX_COUNT`].
+#[must_use]
+pub fn parse_count(typed: &str) -> Option<usize> {
+    let typed = typed.trim();
+    if typed.is_empty() || !typed.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
     }
-
-    /// Creates a failed probe result.
-    #[must_use]
-    pub fn failed(seq: usize, host: String, port: u16, error_message: impl Into<String>) -> Self {
-        Self {
-            seq,
-            host,
-            port,
-            latency_ms: -1.0,
-            status: TcpPingProbeStatus::Failed,
-            error_message: Some(error_message.into()),
-        }
-    }
+    typed
+        .parse::<usize>()
+        .ok()
+        .filter(|count| (MIN_COUNT..=MAX_COUNT).contains(count))
 }
 
-/// Aggregated latency statistics across multiple TCP ping probes.
+/// Latency statistics over the probes of a run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TcpPingSummary {
-    /// Minimum latency observed in milliseconds.
+    /// Shortest answer, in milliseconds; 0 when none answered.
     pub min_ms: f64,
-    /// Average latency observed in milliseconds.
+    /// Average answer, in milliseconds; 0 when none answered.
     pub avg_ms: f64,
-    /// Maximum latency observed in milliseconds.
+    /// Longest answer, in milliseconds; 0 when none answered.
     pub max_ms: f64,
-    /// Count of failed / lost probes.
+    /// Probes that got no answer.
     pub lost: usize,
-    /// Total probes issued.
+    /// Probes sent.
     pub total: usize,
 }
 
 impl TcpPingSummary {
-    /// Computes summary statistics from a slice of probe results.
+    /// The statistics of `latencies`, one per probe: its time in milliseconds, or `None` for a
+    /// probe lost. `None` for no probe at all.
     #[must_use]
-    pub fn from_probes(probes: &[TcpPingProbeResult]) -> Option<Self> {
-        if probes.is_empty() {
+    pub fn from_latencies(latencies: &[Option<f64>]) -> Option<Self> {
+        if latencies.is_empty() {
             return None;
         }
-
-        let mut min = f64::MAX;
-        let mut max = 0.0f64;
-        let mut total_latency = 0.0f64;
-        let mut success_count = 0;
-        let mut lost = 0;
-
-        for probe in probes {
-            if probe.status == TcpPingProbeStatus::Success && probe.latency_ms >= 0.0 {
-                success_count += 1;
-                total_latency += probe.latency_ms;
-                if probe.latency_ms < min {
-                    min = probe.latency_ms;
-                }
-                if probe.latency_ms > max {
-                    max = probe.latency_ms;
-                }
-            } else {
-                lost += 1;
-            }
-        }
-
-        let avg = if success_count > 0 {
-            total_latency / (success_count as f64)
+        let answered: Vec<f64> = latencies.iter().filter_map(|latency| *latency).collect();
+        let lost = latencies.len() - answered.len();
+        let (min_ms, avg_ms, max_ms) = if answered.is_empty() {
+            (0.0, 0.0, 0.0)
         } else {
-            0.0
+            let min = answered.iter().copied().fold(f64::MAX, f64::min);
+            let max = answered.iter().copied().fold(0.0, f64::max);
+            let avg = answered.iter().sum::<f64>() / answered.len() as f64;
+            (min, avg, max)
         };
-
-        if success_count == 0 {
-            min = 0.0;
-        }
-
         Some(Self {
-            min_ms: min,
-            avg_ms: avg,
-            max_ms: max,
+            min_ms,
+            avg_ms,
+            max_ms,
             lost,
-            total: probes.len(),
+            total: latencies.len(),
         })
     }
 
-    /// Computes the loss percentage (0.0 to 100.0).
+    /// Whether no probe got an answer: the C# then shows no time.
+    #[must_use]
+    pub fn all_lost(&self) -> bool {
+        self.lost == self.total
+    }
+
+    /// The share of probes lost, from 0 to 100.
     #[must_use]
     pub fn loss_percentage(&self) -> f64 {
         if self.total == 0 {
@@ -160,76 +111,38 @@ impl TcpPingSummary {
     }
 }
 
-/// Executes a single TCP connection handshake probe synchronously.
-#[must_use]
-pub fn probe_tcp(request: &TcpPingProbeRequest) -> TcpPingProbeResult {
-    let start = Instant::now();
-    let timeout = Duration::from_millis(request.timeout_ms);
-    let Ok(mut addrs) = (request.host.as_str(), request.port).to_socket_addrs() else {
-        return TcpPingProbeResult::failed(
-            request.seq,
-            request.host.clone(),
-            request.port,
-            "DNS resolution failed",
-        );
-    };
-
-    let Some(addr) = addrs.next() else {
-        return TcpPingProbeResult::failed(
-            request.seq,
-            request.host.clone(),
-            request.port,
-            "No address found",
-        );
-    };
-
-    match TcpStream::connect_timeout(&addr, timeout) {
-        Ok(_stream) => {
-            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-            TcpPingProbeResult::ok(request.seq, request.host.clone(), request.port, elapsed_ms)
-        }
-        Err(err) => TcpPingProbeResult::failed(
-            request.seq,
-            request.host.clone(),
-            request.port,
-            err.to_string(),
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_summary_calculation() {
-        let probes = vec![
-            TcpPingProbeResult::ok(1, "localhost".into(), 80, 10.0),
-            TcpPingProbeResult::ok(2, "localhost".into(), 80, 20.0),
-            TcpPingProbeResult::ok(3, "localhost".into(), 80, 30.0),
-            TcpPingProbeResult::failed(4, "localhost".into(), 80, "Timeout"),
-        ];
-
-        let summary = TcpPingSummary::from_probes(&probes).expect("summary exists");
+    fn the_summary_counts_answers_and_losses() {
+        let summary = TcpPingSummary::from_latencies(&[Some(10.0), Some(20.0), Some(30.0), None])
+            .expect("summary exists");
         assert_eq!(summary.total, 4);
         assert_eq!(summary.lost, 1);
         assert_eq!(summary.min_ms, 10.0);
         assert_eq!(summary.max_ms, 30.0);
         assert_eq!(summary.avg_ms, 20.0);
+        assert!(!summary.all_lost());
         assert!((summary.loss_percentage() - 25.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_summary_all_failed() {
-        let probes = vec![
-            TcpPingProbeResult::failed(1, "localhost".into(), 80, "Refused"),
-            TcpPingProbeResult::failed(2, "localhost".into(), 80, "Timeout"),
-        ];
-
-        let summary = TcpPingSummary::from_probes(&probes).expect("summary exists");
-        assert_eq!(summary.total, 2);
-        assert_eq!(summary.lost, 2);
+    fn a_run_without_answers_has_no_time() {
+        let summary = TcpPingSummary::from_latencies(&[None, None]).expect("summary exists");
+        assert!(summary.all_lost());
         assert_eq!(summary.avg_ms, 0.0);
         assert_eq!(summary.loss_percentage(), 100.0);
+        assert_eq!(TcpPingSummary::from_latencies(&[]), None);
+    }
+
+    #[test]
+    fn the_count_is_checked_as_the_csharp() {
+        assert_eq!(parse_count(" 10 "), Some(10));
+        assert_eq!(parse_count("10000"), Some(MAX_COUNT));
+        for bad in ["", "0", "10001", "-1", "+5", "ten"] {
+            assert_eq!(parse_count(bad), None, "{bad}");
+        }
     }
 }
