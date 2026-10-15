@@ -53,10 +53,11 @@ Seul `heimdall-ui` dépend d'iced. Les crates de protocole ne dépendent que de
 
 ## Outils intégrés
 
-Heimdall intègre 30 outils d'administration système et d'audit de sécurité. La
-plupart fonctionnent entièrement hors-ligne, mais l'Auditeur SSL/TLS, le
+Heimdall intègre 30 outils d'administration système et d'audit de sécurité. Tous
+ne sont pas hors-ligne : les outils réseau, comme l'Auditeur SSL/TLS, le
 Vérificateur de sécurité DNS, l'Énumérateur SMB, le Scanner d'identifiants par
-défaut et l'Auditeur SecNumCloud se connectent aux hôtes que vous indiquez.
+défaut et l'Auditeur SecNumCloud, se connectent aux hôtes que vous indiquez ; les
+autres fonctionnent entièrement hors-ligne.
 
 La Recherche CVE utilise une base embarquée et constituée à la main de 68 entrées
 (63 CVE distinctes) pour des logiciels d'infrastructure courants, couvrant 2015 à
