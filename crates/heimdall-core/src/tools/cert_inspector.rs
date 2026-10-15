@@ -17,19 +17,28 @@
 //! Pure analysis engine for X.509 certificate inspection, matching the C#
 //! `Heimdall.Core.Security.CertInspectorEngine`.
 //!
-//! Provides hostname matching with wildcard support, SAN extraction, expiration evaluation,
-//! certificate chain building, plain-text details formatting, CSV export generation,
-//! and direct TLS probing.
+//! Provides hostname matching with wildcard support, expiration evaluation, the summary of
+//! the chain a server presented (read through `sealvault::cert`, the handshake made by the
+//! caller), and CSV export generation.
 
-use std::fmt;
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
-
-use super::tls_audit::{self, TlsProtocol};
+use super::banner_grab::clean_banner;
+use super::default_creds::escape_csv;
 
 /// Default warning threshold in days before certificate expiry.
 pub const DEFAULT_WARNING_THRESHOLD_DAYS: i64 = 30;
+/// Probes run at the same time in a scan, as the C# `MaxConcurrentProbes`.
+pub const MAX_CONCURRENT_PROBES: usize = 10;
+/// The longest a connection and its handshake take, as the C# `ConnectionTimeout` and
+/// `PerPortTimeout`.
+pub const PROBE_TIMEOUT_MS: u64 = 10_000;
+/// The port inspected when none is typed: HTTPS.
+pub const DEFAULT_PORT: u16 = 443;
+/// The most ports one scan inspects: far above the C# extended preset's 28, far below a
+/// range typed by mistake (`1-65535`), which would take hours.
+pub const MAX_SCAN_PORTS: usize = 100;
+
+/// Seconds in a day.
+const SECONDS_PER_DAY: i64 = 86_400;
 
 /// Certificate expiration status for color-coded display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,16 +46,6 @@ pub enum CertExpirationStatus {
     Valid,
     Warning,
     Expired,
-}
-
-impl fmt::Display for CertExpirationStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Valid => write!(f, "Valid"),
-            Self::Warning => write!(f, "Warning"),
-            Self::Expired => write!(f, "Expired"),
-        }
-    }
 }
 
 /// A single element in the certificate chain.
@@ -68,6 +67,7 @@ pub struct CertInspectionSummary {
     pub thumbprint: String,
     pub sig_algorithm: String,
     pub key_size_bits: usize,
+    /// The subject alternative names, DNS names then addresses; empty when there is none.
     pub sans: Vec<String>,
     pub tls_version: String,
     pub hostname_matches: bool,
@@ -83,11 +83,11 @@ pub fn matches_hostname(pattern: &str, host: &str) -> bool {
         return true;
     }
 
-    if let Some(suffix) = pattern.strip_prefix("*.") {
-        if let Some(dot_idx) = host.find('.') {
-            let host_suffix = &host[dot_idx + 1..];
-            return suffix.eq_ignore_ascii_case(host_suffix);
-        }
+    if let Some(suffix) = pattern.strip_prefix("*.")
+        && let Some(dot_idx) = host.find('.')
+        && dot_idx > 0
+    {
+        return suffix.eq_ignore_ascii_case(&host[dot_idx + 1..]);
     }
 
     false
@@ -97,8 +97,9 @@ pub fn matches_hostname(pattern: &str, host: &str) -> bool {
 #[must_use]
 pub fn extract_cn(subject: &str) -> String {
     const PREFIX: &str = "CN=";
-    let lower = subject.to_ascii_uppercase();
-    if let Some(start) = lower.find(PREFIX) {
+    // ASCII upper-casing keeps every byte where it was: the index found is the subject's.
+    let upper = subject.to_ascii_uppercase();
+    if let Some(start) = upper.find(PREFIX) {
         let after = &subject[start + PREFIX.len()..];
         if let Some(end) = after.find(',') {
             after[..end].trim().to_owned()
@@ -142,6 +143,15 @@ pub fn determine_expiration_status(
     }
 }
 
+/// Whole days from `now` to `not_after`, both Unix seconds, rounded down: a certificate
+/// that expired an hour ago has -1 days left, never 0, so it reads as expired.
+#[must_use]
+pub fn days_remaining(not_after: u64, now: u64) -> i64 {
+    let not_after = i64::try_from(not_after).unwrap_or(i64::MAX);
+    let now = i64::try_from(now).unwrap_or(i64::MAX);
+    not_after.saturating_sub(now).div_euclid(SECONDS_PER_DAY)
+}
+
 /// Parses a comma-separated list of ports and ranges (e.g. "80,443,8000-8010").
 /// Returns an ordered deduplicated list of valid ports.
 #[must_use]
@@ -157,191 +167,154 @@ pub fn parse_ports(input: &str) -> Vec<u16> {
         if let Some((start_s, end_s)) = seg.split_once('-') {
             if let (Ok(start), Ok(end)) =
                 (start_s.trim().parse::<u16>(), end_s.trim().parse::<u16>())
+                && start >= 1
+                && start <= end
             {
-                if start >= 1 && start <= end {
-                    for p in start..=end {
-                        ports.insert(p);
-                    }
-                }
+                ports.extend(start..=end);
             }
-        } else if let Ok(port) = seg.parse::<u16>() {
-            if port >= 1 {
-                ports.insert(port);
-            }
+        } else if let Ok(port) = seg.parse::<u16>()
+            && port >= 1
+        {
+            ports.insert(port);
         }
     }
 
     ports.into_iter().collect()
 }
 
-/// Builds a plain-text report for a single certificate (for clipboard copying).
-#[must_use]
-pub fn build_details_text(summary: &CertInspectionSummary, host: &str) -> String {
-    let mut out = String::new();
-    out.push_str(&format!("Host: {}:{}\n", host, summary.port));
-    out.push_str(&format!("TLS Version: {}\n", summary.tls_version));
-    out.push_str(&format!(
-        "Hostname Match: {}\n",
-        if summary.hostname_matches {
-            "Yes"
-        } else {
-            "No"
-        }
-    ));
-    out.push_str(&format!("Subject: {}\n", summary.subject));
-    out.push_str(&format!("Issuer: {}\n", summary.issuer));
-    out.push_str(&format!("Valid From: {}\n", summary.not_before));
-    out.push_str(&format!(
-        "Valid To: {} ({} days remaining)\n",
-        summary.not_after, summary.days_remaining
-    ));
-    out.push_str(&format!("Serial: {}\n", summary.serial));
-    out.push_str(&format!("SHA-256: {}\n", summary.thumbprint));
-    out.push_str(&format!("Signature Algorithm: {}\n", summary.sig_algorithm));
-    out.push_str(&format!(
-        "Key Size: {}\n",
-        if summary.key_size_bits > 0 {
-            format!("{} bits", summary.key_size_bits)
-        } else {
-            "-".to_owned()
-        }
-    ));
-
-    let sans_filtered: Vec<&str> = summary
-        .sans
-        .iter()
-        .map(String::as_str)
-        .filter(|s| *s != "-")
-        .collect();
-    if !sans_filtered.is_empty() {
-        out.push_str(&format!("SANs: {}\n", sans_filtered.join(", ")));
-    }
-
-    out
+/// Text a server wrote, made fit to show and copy: control characters out.
+fn shown(raw: &str) -> String {
+    clean_banner(raw).unwrap_or_default()
 }
 
-/// Builds CSV content for a collection of scan results.
+/// The summary of the chain `chain` (DER, the server's own certificate first) that the
+/// server at `host`:`port` presented in a handshake of `tls_version`, at `now` (Unix
+/// seconds), as the C# `BuildSummary`; `None` when its first certificate does not decode.
 #[must_use]
-pub fn build_scan_csv(results: &[CertInspectionSummary]) -> String {
-    let mut out = String::new();
-    out.push_str("Port,Subject,Issuer,ValidFrom,ValidTo,DaysRemaining,TlsVersion,KeySize,HostnameMatch,SANs\n");
+pub fn build_summary(
+    chain: &[Vec<u8>],
+    tls_version: &str,
+    host: &str,
+    port: u16,
+    now: u64,
+) -> Option<CertInspectionSummary> {
+    let leaf_der = chain.first()?;
+    let leaf = sealvault::cert::inspect(leaf_der)?;
+    let thumbprint = sealvault::hash::sha256(leaf_der)
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect();
+    let sans: Vec<String> = leaf
+        .alt_names
+        .iter()
+        .map(|name| shown(name))
+        .filter(|name| !name.is_empty())
+        .collect();
+    let subject = shown(&leaf.subject);
+    let hostname_matches = check_hostname_match(&sans, &extract_cn(&subject), host);
+    let days = days_remaining(leaf.not_after_unix, now);
+    // Past its last second it is expired, whatever the days rounded say.
+    let expiration_status = if now > leaf.not_after_unix {
+        CertExpirationStatus::Expired
+    } else {
+        determine_expiration_status(days, DEFAULT_WARNING_THRESHOLD_DAYS)
+    };
+    let chain = chain
+        .iter()
+        .filter_map(|der| sealvault::cert::inspect(der))
+        .map(|element| CertChainElement {
+            subject: shown(&element.subject),
+            expiry: element.not_after,
+        })
+        .collect();
+
+    Some(CertInspectionSummary {
+        subject,
+        issuer: shown(&leaf.issuer),
+        not_before: leaf.not_before,
+        not_after: leaf.not_after,
+        days_remaining: days,
+        serial: leaf.serial,
+        thumbprint,
+        sig_algorithm: leaf.signature_algorithm,
+        key_size_bits: leaf.key_size_bits,
+        sans,
+        tls_version: tls_version.to_owned(),
+        hostname_matches,
+        expiration_status,
+        chain,
+        port,
+    })
+}
+
+/// The column names of [`build_scan_csv`], in order.
+pub const SCAN_CSV_COLUMNS: usize = 10;
+
+/// Builds CSV content for a collection of scan results under the column names `header`
+/// (port, subject, issuer, valid from, valid to, days remaining, TLS version, key size,
+/// hostname match, SANs), the match said `yes` or `no`; every text cell sanitized against
+/// formulas and quoted, as the C# `BuildScanCsv`.
+#[must_use]
+pub fn build_scan_csv(
+    results: &[CertInspectionSummary],
+    header: [&str; SCAN_CSV_COLUMNS],
+    (yes, no): (&str, &str),
+) -> String {
+    let mut out = header.map(escape_csv).join(",");
+    out.push('\n');
 
     for r in results {
-        let sans_joined = r.sans.join("; ");
-        let safe_subject = r.subject.replace('"', "\"\"");
-        let safe_issuer = r.issuer.replace('"', "\"\"");
-        let safe_sans = sans_joined.replace('"', "\"\"");
-
         out.push_str(&format!(
-            "{},\"{}\",\"{}\",{},{},{},{},{},{},\"{}\"\n",
+            "{},{},{},{},{},{},{},{},{},{}\n",
             r.port,
-            safe_subject,
-            safe_issuer,
-            r.not_before,
-            r.not_after,
+            escape_csv(&r.subject),
+            escape_csv(&r.issuer),
+            escape_csv(&r.not_before),
+            escape_csv(&r.not_after),
             r.days_remaining,
-            r.tls_version,
+            escape_csv(&r.tls_version),
             r.key_size_bits,
-            if r.hostname_matches { "Yes" } else { "No" },
-            safe_sans
+            escape_csv(if r.hostname_matches { yes } else { no }),
+            escape_csv(&r.sans.join("; "))
         ));
     }
 
     out
 }
 
-/// Probes a target host and port via direct TLS handshake, extracting and analyzing
-/// the server certificate.
-pub fn probe_cert(host: &str, port: u16, timeout_ms: u64) -> Result<CertInspectionSummary, String> {
-    let addr_str = format!("{}:{}", host, port);
-    let socket_addrs: Vec<_> = addr_str
-        .to_socket_addrs()
-        .map_err(|e| format!("DNS resolution failed for {}: {}", host, e))?
-        .collect();
-
-    if socket_addrs.is_empty() {
-        return Err(format!("No address resolved for {}", host));
-    }
-
-    let timeout = Duration::from_millis(timeout_ms.max(500));
-    let mut stream = TcpStream::connect_timeout(&socket_addrs[0], timeout)
-        .map_err(|e| format!("Connection to {}:{} timed out or failed: {}", host, port, e))?;
-
-    stream.set_read_timeout(Some(timeout)).ok();
-    stream.set_write_timeout(Some(timeout)).ok();
-
-    // Send TLS 1.2 ClientHello
-    let cipher_ids: Vec<u16> = tls_audit::KNOWN_TLS12_CIPHER_SUITES
-        .iter()
-        .map(|c| c.id)
-        .collect();
-    let hello = tls_audit::build_client_hello(TlsProtocol::Tls12, host, &cipher_ids);
-    stream
-        .write_all(&hello)
-        .map_err(|e| format!("Failed to send TLS handshake to {}:{}: {}", host, port, e))?;
-
-    let mut buf = vec![0u8; 16384];
-    let n = stream.read(&mut buf).map_err(|e| {
-        format!(
-            "Failed to read TLS handshake response from {}:{}: {}",
-            host, port, e
-        )
-    })?;
-
-    if n == 0 {
-        return Err(format!("Empty response from {}:{}", host, port));
-    }
-
-    let cert_der = tls_audit::extract_certificate_from_handshake(&buf[..n]).ok_or_else(|| {
-        format!(
-            "No certificate found in TLS handshake from {}:{}",
-            host, port
-        )
-    })?;
-
-    let summary = sealvault::cert::inspect(&cert_der)
-        .ok_or_else(|| "Failed to parse X.509 certificate DER".to_owned())?;
-
-    let thumbprint_bytes = sealvault::hash::sha256(&cert_der);
-    let thumbprint = thumbprint_bytes
-        .iter()
-        .map(|b| format!("{:02X}", b))
-        .collect::<String>();
-
-    let cn = extract_cn(&summary.subject);
-    let sans = vec![cn.clone()]; // Default SAN to CN if not separately extracted
-    let hostname_matches = check_hostname_match(&sans, &cn, host);
-
-    // Estimate days remaining from expiry date
-    let days_remaining = 90; // Default placeholder when date parsing is handled by UI
-    let expiration_status =
-        determine_expiration_status(days_remaining, DEFAULT_WARNING_THRESHOLD_DAYS);
-
-    Ok(CertInspectionSummary {
-        subject: summary.subject.clone(),
-        issuer: summary.issuer.clone(),
-        not_before: "-".to_owned(),
-        not_after: summary.not_after,
-        days_remaining,
-        serial: "-".to_owned(),
-        thumbprint,
-        sig_algorithm: "SHA256withRSA".to_owned(),
-        key_size_bits: summary.key_size_bits,
-        sans,
-        tls_version: "TLS 1.2".to_owned(),
-        hostname_matches,
-        expiration_status,
-        chain: vec![CertChainElement {
-            subject: summary.subject,
-            expiry: "-".to_owned(),
-        }],
-        port,
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
+    use sealvault::cert::{AltName, Name, Profile, SigningKey, Spec, self_signed};
+    use sealvault::keys::KeyPair;
+
     use super::*;
+
+    /// 2026-01-02 03:04:05 UTC.
+    const NOW: u64 = 1_767_323_045;
+
+    /// One test key for every certificate: an RSA key takes a while to make.
+    static KEY: LazyLock<SigningKey> = LazyLock::new(|| {
+        let pair = KeyPair::rsa(2048).expect("made");
+        SigningKey::rsa_sha256(pair.pkcs8_der()).expect("RSA")
+    });
+
+    /// A certificate for `cn` with `names`, valid from `not_before` to `not_after`.
+    fn certificate(cn: &str, names: Vec<AltName>, not_before: u64, not_after: u64) -> Vec<u8> {
+        let spec = Spec {
+            subject: Name {
+                common_name: cn.to_owned(),
+                organization: Some("Lab".to_owned()),
+                country: None,
+            },
+            not_before,
+            not_after,
+            serial: vec![0x0A, 0x0B],
+            profile: Profile::TlsLeaf(names),
+        };
+        self_signed(&spec, &KEY).expect("signed")
+    }
 
     #[test]
     fn hostname_wildcard_matching() {
@@ -349,6 +322,7 @@ mod tests {
         assert!(matches_hostname("*.example.com", "sub.example.com"));
         assert!(!matches_hostname("*.example.com", "example.com"));
         assert!(!matches_hostname("*.example.com", "deep.sub.example.com"));
+        assert!(!matches_hostname("*.example.com", ".example.com"));
         assert!(matches_hostname("example.com", "example.com"));
         assert!(matches_hostname("EXAMPLE.COM", "example.com"));
     }
@@ -357,6 +331,11 @@ mod tests {
     fn extract_cn_from_subject() {
         assert_eq!(extract_cn("CN=example.com, O=MyOrg, C=US"), "example.com");
         assert_eq!(extract_cn("O=MyOrg, CN=api.test.org"), "api.test.org");
+        assert_eq!(extract_cn("cn=lower.org,O=x"), "lower.org");
+        assert_eq!(
+            extract_cn("O=Soci\u{e9}t\u{e9}, CN=caf\u{e9}.lab"),
+            "caf\u{e9}.lab"
+        );
         assert_eq!(extract_cn("O=MyOrg"), "");
     }
 
@@ -406,6 +385,17 @@ mod tests {
     }
 
     #[test]
+    fn days_remaining_round_down_so_an_hour_past_is_a_day_past() {
+        let day = SECONDS_PER_DAY as u64;
+        assert_eq!(days_remaining(NOW + 10 * day, NOW), 10);
+        assert_eq!(days_remaining(NOW + 10 * day - 1, NOW), 9);
+        assert_eq!(days_remaining(NOW, NOW), 0);
+        assert_eq!(days_remaining(NOW - 3600, NOW), -1);
+        assert_eq!(days_remaining(NOW - 400 * day, NOW), -400);
+        assert_eq!(days_remaining(u64::MAX, 0), i64::MAX / SECONDS_PER_DAY);
+    }
+
+    #[test]
     fn port_parsing_ranges_and_lists() {
         assert_eq!(parse_ports("443"), vec![443]);
         assert_eq!(parse_ports("80, 443, 8443"), vec![80, 443, 8443]);
@@ -415,13 +405,106 @@ mod tests {
             vec![443, 8000, 8001, 8002]
         );
         assert_eq!(parse_ports("invalid, 0, 999999"), Vec::<u16>::new());
+        assert_eq!(parse_ports("1-65535").len(), 65535);
+    }
+
+    #[test]
+    fn a_valid_certificate_reports_its_real_dates_names_and_algorithm() {
+        let day = SECONDS_PER_DAY as u64;
+        let der = certificate(
+            "files.lab",
+            vec![
+                AltName::Dns("files.lab".to_owned()),
+                AltName::Dns("*.files.lab".to_owned()),
+                AltName::Ip("10.0.0.5".parse().expect("IP")),
+            ],
+            NOW - day,
+            NOW + 200 * day,
+        );
+        let summary =
+            build_summary(&[der.clone()], "TLS 1.3", "www.files.lab", 8443, NOW).expect("read");
+        assert_eq!(summary.days_remaining, 200);
+        assert_eq!(summary.expiration_status, CertExpirationStatus::Valid);
+        assert_eq!(summary.sans, ["files.lab", "*.files.lab", "10.0.0.5"]);
+        assert!(summary.hostname_matches, "the wildcard SAN");
+        assert_eq!(summary.sig_algorithm, "sha256RSA");
+        assert_eq!(summary.serial, "0A0B");
+        assert_eq!(summary.tls_version, "TLS 1.3");
+        assert_eq!(summary.key_size_bits, 2048);
+        assert_eq!(summary.port, 8443);
+        assert_eq!(summary.not_before, "2026-01-01T03:04:05Z");
+        assert_eq!(summary.not_after, "2026-07-21T03:04:05Z");
+        assert_eq!(summary.thumbprint.len(), 64);
+        assert_eq!(summary.chain.len(), 1);
+        assert!(summary.subject.contains("CN=files.lab"));
+        let by_address = build_summary(&[der], "TLS 1.2", "10.0.0.5", 443, NOW).expect("read");
+        assert!(by_address.hostname_matches, "the IP address SAN");
+    }
+
+    #[test]
+    fn an_expired_certificate_is_shown_expired_with_its_days_past() {
+        let day = SECONDS_PER_DAY as u64;
+        let long_ago = certificate("old.lab", Vec::new(), NOW - 400 * day, NOW - 30 * day);
+        let summary = build_summary(&[long_ago], "TLS 1.2", "old.lab", 443, NOW).expect("read");
+        assert_eq!(summary.days_remaining, -30);
+        assert_eq!(summary.expiration_status, CertExpirationStatus::Expired);
+        assert!(
+            summary.hostname_matches,
+            "by its common name, having no SAN"
+        );
+        assert!(summary.sans.is_empty());
+        let an_hour_ago = certificate("old.lab", Vec::new(), NOW - 400 * day, NOW - 3600);
+        let summary = build_summary(&[an_hour_ago], "TLS 1.2", "old.lab", 443, NOW).expect("read");
+        assert_eq!(summary.expiration_status, CertExpirationStatus::Expired);
+        let soon = certificate("old.lab", Vec::new(), NOW - day, NOW + 10 * day);
+        let summary = build_summary(&[soon], "TLS 1.2", "old.lab", 443, NOW).expect("read");
+        assert_eq!(summary.expiration_status, CertExpirationStatus::Warning);
+    }
+
+    #[test]
+    fn the_names_of_the_certificate_decide_the_match_not_its_common_name_alone() {
+        let day = SECONDS_PER_DAY as u64;
+        let der = certificate(
+            "files.lab",
+            vec![AltName::Dns("files.lab".to_owned())],
+            NOW - day,
+            NOW + day * 90,
+        );
+        let summary = build_summary(&[der], "TLS 1.3", "mail.lab", 443, NOW).expect("read");
+        assert!(
+            !summary.hostname_matches,
+            "neither the SAN nor the CN is mail.lab"
+        );
+    }
+
+    #[test]
+    fn the_whole_chain_is_listed_and_what_is_no_certificate_refused() {
+        let day = SECONDS_PER_DAY as u64;
+        let leaf = certificate("leaf.lab", Vec::new(), NOW - day, NOW + day);
+        let issuer = certificate("issuer.lab", Vec::new(), NOW - day, NOW + 2 * day);
+        let summary = build_summary(
+            &[leaf, issuer, b"junk".to_vec()],
+            "TLS 1.3",
+            "leaf.lab",
+            443,
+            NOW,
+        )
+        .expect("read");
+        let subjects: Vec<bool> = summary
+            .chain
+            .iter()
+            .map(|element| element.subject.contains("CN=leaf.lab"))
+            .collect();
+        assert_eq!(subjects, [true, false], "what does not decode is left out");
+        assert!(build_summary(&[], "TLS 1.3", "x", 443, NOW).is_none());
+        assert!(build_summary(&[b"junk".to_vec()], "TLS 1.3", "x", 443, NOW).is_none());
     }
 
     #[test]
     fn scan_csv_formatting() {
         let summaries = vec![CertInspectionSummary {
-            subject: "CN=test.com".to_owned(),
-            issuer: "CN=CA".to_owned(),
+            subject: "=CN=test.com".to_owned(),
+            issuer: "CN=CA \"root\"".to_owned(),
             not_before: "2026-01-01".to_owned(),
             not_after: "2027-01-01".to_owned(),
             days_remaining: 300,
@@ -429,7 +512,7 @@ mod tests {
             thumbprint: "ABCD".to_owned(),
             sig_algorithm: "SHA256".to_owned(),
             key_size_bits: 2048,
-            sans: vec!["test.com".to_owned()],
+            sans: vec!["test.com".to_owned(), "www.test.com".to_owned()],
             tls_version: "TLS 1.3".to_owned(),
             hostname_matches: true,
             expiration_status: CertExpirationStatus::Valid,
@@ -437,9 +520,14 @@ mod tests {
             port: 443,
         }];
 
-        let csv = build_scan_csv(&summaries);
-        assert!(csv.contains(
-            "443,\"CN=test.com\",\"CN=CA\",2026-01-01,2027-01-01,300,TLS 1.3,2048,Yes,\"test.com\""
-        ));
+        let header = ["P", "S", "I", "F", "T", "D", "V", "K", "M", "N"];
+        let csv = build_scan_csv(&summaries, header, ("Yes", "No"));
+        assert!(csv.starts_with("\"P\",\"S\",\"I\",\"F\",\"T\",\"D\",\"V\",\"K\",\"M\",\"N\"\n"));
+        assert!(
+            csv.contains(
+                "443,\"'=CN=test.com\",\"CN=CA \"\"root\"\"\",\"2026-01-01\",\"2027-01-01\",300,\"TLS 1.3\",2048,\"Yes\",\"test.com; www.test.com\""
+            ),
+            "{csv}"
+        );
     }
 }

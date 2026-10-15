@@ -57,6 +57,7 @@ mod key_parts;
 mod network_calculator_tool;
 mod network_cartography_tool;
 mod network_interfaces_tool;
+mod network_run;
 mod open_ports_tool;
 mod password_tool;
 mod ping_tool;

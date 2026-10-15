@@ -4587,7 +4587,6 @@ ui-tool-cert-host-watermark = example.com or IP
 ui-tool-cert-ports = Ports
 ui-tool-cert-ports-watermark = 443, 8443
 ui-tool-cert-inspect = Inspect
-ui-tool-cert-inspecting = Inspecting...
 ui-tool-cert-copy-details = Copy Details
 ui-tool-cert-copy-csv = Copy CSV
 ui-tool-cert-subject = Subject
@@ -4662,7 +4661,7 @@ ui-tool-arpmon-status-conflict = Conflict
 ui-tool-fwtest-name = Firewall Egress Tester
 ui-tool-fwtest-description = Test outbound connectivity across firewall ports with latency measurement
 ui-tool-fwtest-hosts = Target Hosts
-ui-tool-fwtest-hosts-watermark = One host per line (e.g. 1.1.1.1)
+ui-tool-fwtest-hosts-watermark = Hosts separated by commas or spaces (e.g. 1.1.1.1, 8.8.8.8)
 ui-tool-fwtest-ports = Test Ports
 ui-tool-fwtest-ports-watermark = 80,443,8080
 ui-tool-fwtest-start = Test Egress
@@ -4680,7 +4679,6 @@ ui-tool-netmap-description = Discover live subnet hosts, open services, and clas
 ui-tool-netmap-subnet = Subnet CIDR
 ui-tool-netmap-subnet-watermark = 192.168.1.0/24
 ui-tool-netmap-discover = Discover Network
-ui-tool-netmap-discovering = Discovering...
 ui-tool-netmap-copy-csv = Export CSV
 ui-tool-netmap-hosts-scanned = Scanned
 ui-tool-netmap-hosts-up = Active Hosts
@@ -4834,3 +4832,108 @@ ui-tool-services-act-stop = Stop
 ui-tool-services-act-restart = Restart
 ui-tool-services-empty-state = Click Refresh to inspect Windows system services.
 ui-tool-services-action-success = Service action completed successfully.
+
+## Network tools, third batch: review follow-ups
+ui-tool-cert-stop = Stop
+ui-tool-cert-col-port = Port
+ui-tool-cert-sig-alg = Signature Algorithm
+ui-tool-cert-serial = Serial Number
+ui-tool-cert-sha256 = SHA-256 Fingerprint
+ui-tool-cert-chain = Chain
+ui-tool-cert-chain-element = { $subject } (expires { $expiry })
+ui-tool-cert-port-title = Port { $port }: { $name }
+ui-tool-cert-port-header = === Port { $port } ===
+ui-tool-cert-detail-host = Host
+ui-tool-cert-key-bits = { $bits } bits
+ui-tool-cert-days-left =
+    { $count ->
+        [one] { $count } day remaining
+       *[other] { $count } days remaining
+    }
+ui-tool-cert-days-expired =
+    { $count ->
+        [one] expired { $count } day ago
+       *[other] expired { $count } days ago
+    }
+ui-tool-cert-progress = { $done } of { $total } ports probed
+ui-tool-cert-scan-found =
+    { $certificates ->
+        [one] { $certificates } certificate found
+       *[other] { $certificates } certificates found
+    } on { $ports ->
+        [one] { $ports } port probed.
+       *[other] { $ports } ports probed.
+    }
+ui-tool-cert-stopped = Inspection stopped: { $found }
+ui-tool-cert-error-invalid-host = Enter an IP address or a host name.
+ui-tool-cert-error-invalid-port = Enter ports from 1 to 65535, separated by commas, or ranges such as 8000-8010.
+ui-tool-cert-error-too-many-ports = { $count } ports typed: at most { $max } are inspected at once.
+ui-tool-cert-error-connection = Connection to { $host }:{ $port } failed: { $detail }
+ui-tool-cert-error-handshake = TLS handshake with { $host }:{ $port } failed: { $detail }
+ui-tool-cert-error-no-certificate = The server presented no certificate.
+ui-tool-cert-error-unreadable = The certificate presented could not be read.
+ui-tool-cert-error-timeout = The server did not answer in time.
+ui-tool-tcptrace-error-invalid-host = Enter an IP address or a host name.
+ui-tool-tcptrace-error-not-found = The system's traceroute program was not found.
+ui-tool-tcptrace-error-failed = The trace could not run.
+ui-tool-tcptrace-stopped = Trace stopped.
+ui-tool-tcptrace-timed-out = The trace took too long and was ended.
+ui-tool-tcptrace-no-hops = No hop answered.
+ui-tool-tcptrace-hop-count =
+    { $count ->
+        [one] { $count } hop
+       *[other] { $count } hops
+    }
+ui-tool-snmpwalk-community-watermark = Empty: { $community }
+ui-tool-snmpwalk-stopped = Walk stopped.
+ui-tool-snmpwalk-agent-silent = The agent stopped answering: the entries read are kept.
+ui-tool-snmpwalk-entry-count =
+    { $count ->
+        [one] { $count } entry
+       *[other] { $count } entries
+    }
+ui-tool-snmpwalk-error-invalid-host = Enter an IP address or a host name.
+ui-tool-snmpwalk-error-invalid-oid = Enter a numeric OID such as 1.3.6.1.2.1.1.
+ui-tool-snmpwalk-error-community-too-long = The community is limited to { $max } bytes.
+ui-tool-snmpwalk-error-unresolved = The host name could not be resolved.
+ui-tool-snmpwalk-error-socket = The SNMP request could not be sent.
+ui-tool-snmpwalk-error-no-response = The agent did not answer: check the host, the community and that SNMP v2c is enabled.
+ui-tool-snmpwalk-error-failed = The walk could not run.
+ui-tool-arpmon-error-read = The ARP table could not be read.
+ui-tool-arpmon-vendor-unknown = Unknown
+ui-tool-fwtest-stopped = Test stopped.
+ui-tool-fwtest-error-invalid-host = None of the hosts typed is an IP address or a host name.
+ui-tool-fwtest-error-no-ports = Enter at least one port from 1 to 65535.
+ui-tool-fwtest-error-failed = The test could not run.
+ui-tool-fwtest-limited = Invalid hosts are left out, and a test probes at most { $max_hosts } hosts and { $max_ports } ports.
+ui-tool-fwtest-progress = { $done } of { $total } probes done
+ui-tool-fwtest-unresolved = Not resolved
+ui-tool-fwtest-unresolved-count =
+    { $count ->
+        [one] { $count } probe could not resolve its host name.
+       *[other] { $count } probes could not resolve their host name.
+    }
+ui-tool-fwtest-col-host = Host
+ui-tool-fwtest-col-port = Port
+ui-tool-fwtest-col-status = Status
+ui-tool-fwtest-col-latency = Latency
+ui-tool-fwtest-latency-ms = { $ms } ms
+ui-tool-fwtest-cell-open-ms = { $label } ({ $ms } ms)
+ui-tool-fwtest-not-tested = Not tested
+ui-tool-netmap-stop = Stop
+ui-tool-netmap-stopped = Discovery stopped.
+ui-tool-netmap-error-failed = The discovery could not run.
+ui-tool-netmap-error-prefix = Enter a subnet from /{ $min } to /{ $max }.
+ui-tool-netmap-warning-large = { $count } hosts to probe: this can take a long time.
+ui-tool-netmap-scan-anyway = Scan Anyway
+ui-tool-netmap-progress = { $done } of { $total } hosts probed
+ui-tool-netmap-latency-ms = { $ms } ms
+ui-tool-netmap-role-directory = Domain Controller / Directory
+ui-tool-netmap-role-database = Database Server
+ui-tool-netmap-role-mail = Mail Server
+ui-tool-netmap-role-file = File / Storage Server
+ui-tool-netmap-role-web = Web Server
+ui-tool-netmap-role-remote = Remote Management Host
+ui-tool-netmap-role-appliance = Network Gateway / Appliance
+ui-tool-netmap-role-active = Active Node
+ui-tool-netmap-role-no-ports = Host (No Port Open)
