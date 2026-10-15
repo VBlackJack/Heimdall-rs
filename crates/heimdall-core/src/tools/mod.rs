@@ -72,6 +72,7 @@ pub mod ssh_config;
 pub mod ssh_key_audit;
 pub mod ssh_key_generator;
 pub mod subnet_calculator;
+pub mod system_listing;
 pub mod tcp_ping;
 pub mod tcp_traceroute;
 pub mod text_case_codec;
