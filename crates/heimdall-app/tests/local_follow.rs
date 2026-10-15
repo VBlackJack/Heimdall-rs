@@ -37,6 +37,7 @@ use heimdall_app::{
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::settings::SftpBrowser;
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::{RemotePath, RemoteSession};
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, SftpClient};
@@ -558,7 +559,11 @@ async fn an_ssh_shells_report_drives_its_sftp_pane_alone_and_a_local_one_its_bro
     app.update(Message::Files(FilesMessage::RemoteListed {
         tab: sftp,
         request,
-        result: Ok((RemotePath::from(REMOTE_HOME), Vec::new())),
+        result: Ok((
+            RemotePath::from(REMOTE_HOME),
+            Vec::new(),
+            LeftOut::default(),
+        )),
     }));
     let request = local_request(&mut app, sftp);
     app.update(Message::Files(FilesMessage::LocalListed {

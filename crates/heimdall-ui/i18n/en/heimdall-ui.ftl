@@ -1636,6 +1636,18 @@ ui-files-sudo-on = Sudo mode enabled - browsing as root
 ui-files-sudo-off = Sudo mode disabled
 ui-files-item-count = { $count } items
 ui-files-item-count-filtered = { $shown }/{ $count } items
+ui-files-hidden-unsafe = { $count ->
+    [one] { $count } entry hidden: its name is not safe to use here
+   *[other] { $count } entries hidden: their names are not safe to use here
+}
+ui-files-hidden-unsafe-terminal = { $count ->
+    [one] { $count } entry hidden: its name is not safe to use here; use the terminal
+   *[other] { $count } entries hidden: their names are not safe to use here; use the terminal
+}
+ui-files-unread-lines = { $count ->
+    [one] { $count } line of the listing could not be read
+   *[other] { $count } lines of the listing could not be read
+}
 
 ## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
 ui-files-drop-items = { $count ->
@@ -4461,7 +4473,7 @@ ui-tool-banner-help =
     - Export results to CSV or formatted text
 
 ui-tool-ping-name = Ping Monitor
-ui-tool-ping-description = Continuous ICMP ping monitor with running latency statistics and live graphing
+ui-tool-ping-description = Continuous ICMP ping monitor with running latency statistics
 ui-tool-ping-host = Target Host
 ui-tool-ping-host-watermark = example.com or 192.168.1.1
 ui-tool-ping-timeout = Timeout (ms)
@@ -4552,7 +4564,7 @@ ui-tool-portscan-host-watermark = example.com or 192.168.1.1
 ui-tool-portscan-ports = Port Range
 ui-tool-portscan-ports-watermark = 20-80,443
 ui-tool-portscan-timeout = Timeout (ms)
-ui-tool-portscan-timeout-watermark = 1000
+ui-tool-portscan-timeout-watermark = 2000
 ui-tool-portscan-start = Start Scan
 ui-tool-portscan-stop = Stop
 ui-tool-portscan-copy-csv = Export CSV
@@ -4883,3 +4895,56 @@ ui-tool-services-act-stop = Stop
 ui-tool-services-act-restart = Restart
 ui-tool-services-empty-state = Click Refresh to inspect Windows system services.
 ui-tool-services-action-success = Service action completed successfully.
+
+## Network tools batch 2: review follow-ups
+ui-tool-ping-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-ping-latency = { $ms } ms
+ui-tool-ping-detail-unreachable = Destination host unreachable
+ui-tool-ping-detail-unresolved = Host not found
+ui-tool-ping-detail-no-program = The system ping program was not found.
+ui-tool-ping-detail-failed = Ping failed: { $reason }
+ui-tool-ping-copy-header = --- Ping statistics for { $host } ---
+ui-tool-ping-copy-counts = Sent = { $sent }, Received = { $received }, Lost = { $lost } ({ $loss }% loss)
+ui-tool-ping-copy-times = Min = { $min } ms, Max = { $max } ms, Avg = { $avg } ms, Jitter = { $jitter } ms
+ui-tool-ping-copy-line = [{ $time }] { $host }: { $status }, TTL={ $ttl }
+ui-tool-ping-loss-value = { $loss } %
+ui-tool-ping-shown-last = Showing the last { $shown } of { $total } probes. The exports hold them all.
+ui-tool-ping-seq = #{ $seq }
+ui-tool-ping-ttl = TTL: { $ttl }
+ui-tool-portscan-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-portscan-error-timeout-invalid = Timeout must be between 100 ms and 10000 ms.
+ui-tool-portscan-error-unresolved = The host name could not be resolved.
+ui-tool-portscan-error-unresolved-reason = The host name could not be resolved: { $reason }
+ui-tool-portscan-large-warning = You are about to scan { $count } ports. This may take a long time. Continue?
+ui-tool-portscan-confirm = Scan anyway
+ui-tool-portscan-progress = { $done } of { $total } ports scanned
+ui-tool-portscan-shown-open = Showing the { $shown } open ports of { $total } scanned. The CSV export holds every port.
+ui-tool-portscan-latency = { $ms } ms
+ui-tool-portscan-no-latency = -
+ui-tool-portscan-port = Port { $port }
+ui-tool-dns-server-preset = { $name } ({ $address })
+ui-tool-dns-server-system = Default System Resolver
+ui-tool-dns-error-timeout = Query timed out after 5 seconds. Check that the DNS server is reachable.
+ui-tool-dns-error-no-program = The system nslookup program was not found.
+ui-tool-dns-error-failed = Lookup failed: { $reason }. Verify the domain name and try a different record type.
+ui-tool-dns-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-dns-stop = Stop
+ui-tool-dnsbatch-no-address = No address found
+ui-tool-dnsbatch-timed-out = Timed out
+ui-tool-dnsbatch-error-too-many = { $count } hostnames entered: at most { $max } can be resolved at once.
+ui-tool-dnsbatch-stop = Stop
+ui-tool-dnsbatch-progress = { $done } of { $total } hostnames resolved
+ui-tool-dnsbatch-time = { $ms } ms
+ui-tool-headers-report-title = === HTTP Header Security Report: { $target } ===
+ui-tool-headers-report-grade = Grade: { $grade }
+ui-tool-headers-cookie-missing = Missing flags: { $flags }
+ui-tool-headers-certificate-trusted = TLS certificate: trusted by this computer.
+ui-tool-headers-certificate-untrusted = TLS certificate not trusted: { $reason } The headers below were read all the same.
+ui-tool-headers-error-timeout = The request timed out after 15 seconds.
+ui-tool-headers-error-unresolved = The host name { $host } could not be resolved.
+ui-tool-headers-error-connection = Connection failed: { $reason }
+ui-tool-headers-error-tls = The TLS handshake failed: { $reason }
+ui-tool-headers-error-certificate = The server presented another certificate during the analysis: { $reason }
+ui-tool-headers-error-empty = The server closed the connection without answering.
+ui-tool-headers-http-status = HTTP Status: { $code }
+ui-tool-headers-stop = Stop
