@@ -579,6 +579,28 @@ mod tests {
         assert!(lines[1].starts_with("\"b.lab\""));
     }
 
+    #[tokio::test]
+    async fn a_refused_port_is_closed_not_filtered() {
+        use std::net::{Ipv4Addr, SocketAddr};
+
+        // The port stays taken by a socket bound but not listening, so a parallel test
+        // cannot listen on it in between: the connection is refused, never accepted.
+        let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+        socket
+            .bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .expect("bind");
+        let port = socket.local_addr().expect("addr").port();
+        // Windows tries a refused connection again for about two seconds: the timeout
+        // leaves it room.
+        let probed = tokio::task::spawn_blocking(move || {
+            firewall_tester::probe_host_port("127.0.0.1", port, 5000)
+        })
+        .await
+        .expect("probed");
+        assert_eq!(probed.status, FwProbeStatus::Closed);
+        drop(socket);
+    }
+
     #[test]
     fn a_stop_tells_the_probes_and_lets_late_results_go() {
         let mut pane = FirewallTesterPane::default();

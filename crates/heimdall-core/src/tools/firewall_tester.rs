@@ -326,23 +326,14 @@ mod tests {
     }
 
     #[test]
-    fn an_open_port_and_a_refused_one_are_told_apart() {
+    fn an_open_port_is_open() {
+        // A refused port is checked by the firewall tester's view tests, which hold it
+        // reserved with a socket bound but not listening.
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let open = listener.local_addr().expect("addr").port();
-        let closed = {
-            let gone = TcpListener::bind("127.0.0.1:0").expect("bind");
-            gone.local_addr().expect("addr").port()
-        };
-        // Windows retries a refused loopback connection for about two seconds before
-        // saying so: the timeout leaves it room.
-        assert_eq!(
-            probe_host_port("127.0.0.1", open, 5000).status,
-            FwProbeStatus::Open
-        );
-        assert_eq!(
-            probe_host_port("127.0.0.1", closed, 5000).status,
-            FwProbeStatus::Closed
-        );
+        let probed = probe_host_port("127.0.0.1", open, 5000);
+        assert_eq!(probed.status, FwProbeStatus::Open);
+        assert!(probed.latency_ms.is_some());
     }
 
     #[test]
