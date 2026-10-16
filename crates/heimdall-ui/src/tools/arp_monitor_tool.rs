@@ -356,7 +356,7 @@ impl ArpMonitorPane {
             body = body.push(self.entries_card());
         }
 
-        super::content_column(body)
+        super::table_column(body)
     }
 
     /// The alerts, oldest first, and their dismiss button, as the C# alert banner: an

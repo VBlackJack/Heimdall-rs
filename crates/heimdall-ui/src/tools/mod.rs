@@ -197,6 +197,11 @@ const HELP_PADDING: f32 = 12.0;
 /// Widest a tool's content is drawn, as the C# `ToolContentMaxWidth`.
 const CONTENT_MAX_WIDTH: f32 = 700.0;
 
+/// Widest a tool's content is drawn when it is a table of many columns: at
+/// [`CONTENT_MAX_WIDTH`] the ARP monitor's seven columns left its vendor column about 60
+/// pixels, its names drawn over the status.
+const TABLE_MAX_WIDTH: f32 = 1100.0;
+
 /// Padding inside a text box, as the C# `PaddingInput` (8 across, 6 down).
 const INPUT_PADDING: [f32; 2] = [6.0, 8.0];
 
@@ -1914,6 +1919,18 @@ fn status_line<'a>(said: Option<(String, bool)>) -> Element<'a, Message> {
             .into(),
         None => column![].into(),
     }
+}
+
+/// A tool's content holding a table of many columns: as [`content_column`], at most
+/// [`TABLE_MAX_WIDTH`] wide.
+fn table_column(content: Column<'_, Message>) -> Element<'_, Message> {
+    styles::scroll(
+        container(content.max_width(TABLE_MAX_WIDTH))
+            .padding(spacing::LG)
+            .width(Length::Fill),
+    )
+    .height(Length::Fill)
+    .into()
 }
 
 /// A tool's content that fills its tab, as the C# tool grids under the header.
