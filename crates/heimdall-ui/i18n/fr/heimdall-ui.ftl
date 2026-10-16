@@ -4797,7 +4797,7 @@ ui-tool-arpmon-col-status = Statut
 ui-tool-arpmon-col-first-seen = Première détection
 ui-tool-arpmon-col-last-seen = Dernière détection
 ui-tool-arpmon-status-new = Nouveau
-ui-tool-arpmon-status-known = Connu
+ui-tool-arpmon-status-stable = Stable
 ui-tool-arpmon-status-changed = Modifié
 ui-tool-arpmon-status-conflict = Conflit
 
@@ -4805,7 +4805,7 @@ ui-tool-arpmon-status-conflict = Conflit
 ui-tool-fwtest-name = Testeur de sortie pare-feu
 ui-tool-fwtest-description = Tester la connectivité sortante à travers les ports du pare-feu, avec mesure de latence
 ui-tool-fwtest-hosts = Hôtes cibles
-ui-tool-fwtest-hosts-watermark = Hôtes séparés par des virgules ou des espaces (ex. : 1.1.1.1, 8.8.8.8)
+ui-tool-fwtest-hosts-watermark = Un hôte par ligne, ou séparés par des virgules (ex. : 1.1.1.1, 8.8.8.8)
 ui-tool-fwtest-ports = Ports à tester
 ui-tool-fwtest-ports-watermark = 80,443,8080
 ui-tool-fwtest-start = Tester la sortie
@@ -5113,6 +5113,97 @@ ui-tool-netmap-role-remote = Hôte d'administration à distance
 ui-tool-netmap-role-appliance = Passerelle / équipement réseau
 ui-tool-netmap-role-active = Noeud actif
 ui-tool-netmap-role-no-ports = Hôte (aucun port ouvert)
+ui-tool-mac-vendor-randomized = Privée (MAC aléatoire)
+ui-tool-arpmon-status-gone = Disparu
+ui-tool-arpmon-start = Démarrer
+ui-tool-arpmon-stop = Arrêter
+ui-tool-arpmon-interval = Rafraîchissement
+ui-tool-arpmon-interval-secs = { $secs } s
+ui-tool-arpmon-dismiss-alert = Fermer
+ui-tool-arpmon-alert-title = Anomalie ARP détectée
+ui-tool-arpmon-changes-title = Changements de la table ARP
+ui-tool-arpmon-alert-mac-changed = L'adresse MAC de { $ip } est passée de { $previous } à { $current } (possible usurpation ARP)
+ui-tool-arpmon-alert-conflict = { $ip } est revendiquée par plusieurs adresses MAC à la fois : { $macs } (possible usurpation ARP)
+ui-tool-arpmon-alert-new =
+    { $count ->
+        [one] { $count } nouvel hôte : { $list }
+       *[other] { $count } nouveaux hôtes : { $list }
+    }
+ui-tool-arpmon-alert-gone =
+    { $count ->
+        [one] { $count } hôte disparu : { $list }
+       *[other] { $count } hôtes disparus : { $list }
+    }
+ui-tool-arpmon-alert-more = { $list } et { $more } autres
+ui-tool-arpmon-mac-was = auparavant { $mac }
+ui-tool-arpmon-mac-also = aussi { $macs }
+ui-tool-arpmon-total =
+    { $count ->
+        [one] { $count } entrée
+       *[other] { $count } entrées
+    }
+ui-tool-arpmon-last-refresh = Dernier rafraîchissement : { $time }
+ui-tool-arpmon-empty = Cliquez sur Démarrer pour surveiller la table ARP locale, ou sur Analyser maintenant pour la lire une fois.
+ui-tool-arpmon-empty-running = Surveillance active : en attente d'entrées dans la table ARP locale.
+ui-tool-netmap-reverse-dns = DNS inverse
+ui-tool-netmap-use-kb = Utiliser la base de connaissances
+ui-tool-netmap-kb-empty = Base de connaissances : vide
+ui-tool-netmap-kb-stats =
+    { $count ->
+        [one] Base de connaissances : { $count } hôte, mise à jour { $updated }
+       *[other] Base de connaissances : { $count } hôtes, mise à jour { $updated }
+    }
+ui-tool-netmap-kb-just-now = à l'instant
+ui-tool-netmap-kb-minutes-ago = il y a { $count } min
+ui-tool-netmap-kb-hours-ago = il y a { $count } h
+ui-tool-netmap-kb-days-ago =
+    { $count ->
+        [one] il y a { $count } jour
+       *[other] il y a { $count } jours
+    }
+ui-tool-netmap-kb-clear = Effacer la base de connaissances
+ui-tool-netmap-kb-keep = Conserver
+ui-tool-netmap-kb-clear-confirm = Effacer toutes les données d'hôtes accumulées dans la base de connaissances ?
+ui-tool-netmap-kb-cleared = Base de connaissances effacée.
+ui-tool-netmap-error-kb-clear = La base de connaissances n'a pas pu être effacée : { $reason }
+ui-tool-netmap-saved = Analyse enregistrée dans l'historique.
+ui-tool-netmap-history-entry = { $time } - { $subnet }
+ui-tool-netmap-compare-with = Comparer avec
+ui-tool-netmap-compare = Comparer
+ui-tool-netmap-diff-none = Aucun changement depuis cette analyse.
+ui-tool-netmap-diff-new =
+    { $count ->
+        [one] { $count } nouvel hôte
+       *[other] { $count } nouveaux hôtes
+    }
+ui-tool-netmap-diff-removed =
+    { $count ->
+        [one] { $count } hôte disparu
+       *[other] { $count } hôtes disparus
+    }
+ui-tool-netmap-diff-changed =
+    { $count ->
+        [one] { $count } hôte modifié
+       *[other] { $count } hôtes modifiés
+    }
+ui-tool-netmap-error-history-read = Cette analyse de l'historique n'a pas pu être lue.
+ui-tool-netmap-naming =
+    { $count ->
+        [one] Lecture de la table ARP et recherche du nom de { $count } hôte...
+       *[other] Lecture de la table ARP et recherche des noms de { $count } hôtes...
+    }
+ui-tool-snmpwalk-test-communities = Tester les communautés courantes
+ui-tool-snmpwalk-testing = Test en cours...
+ui-tool-snmpwalk-test-stopped = Test des communautés arrêté.
+ui-tool-snmpwalk-accepted-count =
+    { $count ->
+        [one] { $count } communauté acceptée
+       *[other] { $count } communautés acceptées
+    }
+ui-tool-snmpwalk-col-status = Statut
+ui-tool-snmpwalk-col-sys-name = sysName
+ui-tool-snmpwalk-community-accepted = Acceptée
+ui-tool-snmpwalk-community-rejected = Pas de réponse
 ## Visionneuse de logs
 ui-tool-logview-name = Visionneuse de logs
 ui-tool-logview-description = Afficher un fichier journal, filtrer ses lignes et suivre ce qui s'y ajoute

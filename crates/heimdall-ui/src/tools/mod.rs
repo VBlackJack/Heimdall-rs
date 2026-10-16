@@ -197,6 +197,11 @@ const HELP_PADDING: f32 = 12.0;
 /// Widest a tool's content is drawn, as the C# `ToolContentMaxWidth`.
 const CONTENT_MAX_WIDTH: f32 = 700.0;
 
+/// Widest a tool's content is drawn when it is a table of many columns: at
+/// [`CONTENT_MAX_WIDTH`] the ARP monitor's seven columns left its vendor column about 60
+/// pixels, its names drawn over the status.
+const TABLE_MAX_WIDTH: f32 = 1100.0;
+
 /// Padding inside a text box, as the C# `PaddingInput` (8 across, 6 down).
 const INPUT_PADDING: [f32; 2] = [6.0, 8.0];
 
@@ -897,9 +902,9 @@ impl ToolPane {
             ToolId::SnmpWalk => Pane::SnmpWalk(snmp_walker_tool::SnmpWalkerPane::default()),
             ToolId::ArpMon => Pane::ArpMon(arp_monitor_tool::ArpMonitorPane::default()),
             ToolId::FwTest => Pane::FwTest(firewall_tester_tool::FirewallTesterPane::default()),
-            ToolId::NetMap => {
-                Pane::NetMap(network_cartography_tool::NetworkCartographyPane::default())
-            }
+            ToolId::NetMap => Pane::NetMap(network_cartography_tool::NetworkCartographyPane::new(
+                heimdall_core::paths::data_dir(),
+            )),
             ToolId::OpenPorts => Pane::OpenPorts(open_ports_tool::OpenPortsPane::default()),
             ToolId::NetIf => Pane::NetIf(network_interfaces_tool::NetIfPane::default()),
             ToolId::Routes => Pane::Routes(route_table_tool::RouteTablePane::default()),
@@ -1030,16 +1035,15 @@ impl ToolPanes {
     }
 
     /// The work of the tool tabs made since last asked, as the C# view's `Initialize`: the
-    /// Hosts File Editor reads the hosts file.
+    /// Hosts File Editor reads the hosts file, the Network Cartography its scan history and
+    /// its knowledge base.
     pub fn opening(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
         for tab in std::mem::take(&mut self.opening) {
-            if let Some(ToolPane {
-                pane: Pane::Hosts(pane),
-                ..
-            }) = self.panes.get_mut(&tab)
-            {
-                tasks.push(pane.open(tab));
+            match self.panes.get_mut(&tab).map(|state| &mut state.pane) {
+                Some(Pane::Hosts(pane)) => tasks.push(pane.open(tab)),
+                Some(Pane::NetMap(pane)) => tasks.push(pane.open(tab)),
+                _ => {}
             }
         }
         Task::batch(tasks)
@@ -1053,7 +1057,8 @@ impl ToolPanes {
 
     /// The timers of the tool tabs that follow something: each log viewer tailing its
     /// file looked at every [`TAIL_INTERVAL`](heimdall_core::tools::log_viewer::TAIL_INTERVAL),
-    /// as the C# `_tailTimer`.
+    /// as the C# `_tailTimer`; each ARP monitor monitoring reads its table every interval
+    /// chosen, as the C# polling loop.
     #[must_use]
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(self.panes.iter().filter_map(|(tab, state)| {
@@ -1063,6 +1068,13 @@ impl ToolPanes {
                         .with(*tab)
                         .map(|(tab, _)| {
                             Message::Tool(tab, ToolMessage::LogView(LogViewerMessage::TailTick))
+                        }),
+                ),
+                Pane::ArpMon(pane) if pane.monitoring() => Some(
+                    iced::time::every(pane.interval())
+                        .with(*tab)
+                        .map(|(tab, _)| {
+                            Message::Tool(tab, ToolMessage::ArpMon(ArpMonitorMessage::Tick))
                         }),
                 ),
                 _ => None,
@@ -1790,6 +1802,17 @@ fn copy_button<'a>(
     .into()
 }
 
+/// The hardware vendor a MAC address names, as the ARP monitor and the cartography say it:
+/// empty when unknown.
+fn vendor_label(vendor: Option<heimdall_core::tools::mac_vendor::MacVendor>) -> String {
+    use heimdall_core::tools::mac_vendor::MacVendor;
+    match vendor {
+        Some(MacVendor::Named(name)) => name.to_owned(),
+        Some(MacVendor::Randomized) => fl!("ui-tool-mac-vendor-randomized"),
+        None => String::new(),
+    }
+}
+
 /// Why a network tool's probe got no answer, in the user's language: the reasons of the
 /// tree's reachability check, the system's words led by what they are.
 fn down_reason_text(reason: &heimdall_app::reachability::DownReason) -> String {
@@ -1896,6 +1919,18 @@ fn status_line<'a>(said: Option<(String, bool)>) -> Element<'a, Message> {
             .into(),
         None => column![].into(),
     }
+}
+
+/// A tool's content holding a table of many columns: as [`content_column`], at most
+/// [`TABLE_MAX_WIDTH`] wide.
+fn table_column(content: Column<'_, Message>) -> Element<'_, Message> {
+    styles::scroll(
+        container(content.max_width(TABLE_MAX_WIDTH))
+            .padding(spacing::LG)
+            .width(Length::Fill),
+    )
+    .height(Length::Fill)
+    .into()
 }
 
 /// A tool's content that fills its tab, as the C# tool grids under the header.

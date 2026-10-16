@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use heimdall_app::TabId;
-use iced::widget::{column, container, row, text, text_input};
+use iced::widget::{column, container, row, text, text_editor, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 use heimdall_core::tools::firewall_tester::{
@@ -36,11 +36,14 @@ use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
 
+/// Height of the hosts box, as the C# `TxtHosts` (`Height="80"`).
+const HOSTS_BOX_HEIGHT: f32 = 80.0;
+
 /// Messages emitted by the firewall tester view.
 #[derive(Debug, Clone)]
 pub enum FirewallTesterMessage {
-    /// Target hosts input changed.
-    HostsChanged(String),
+    /// An action in the hosts box, one host per line as the C# `TxtHosts`.
+    HostsAction(text_editor::Action),
     /// Ports input changed.
     PortsChanged(String),
     /// Start test.
@@ -58,7 +61,8 @@ pub enum FirewallTesterMessage {
 /// The Firewall Egress Tester tool pane state.
 #[derive(Debug)]
 pub struct FirewallTesterPane {
-    hosts: String,
+    /// The hosts box: several lines, as the C# `AcceptsReturn` box.
+    hosts: text_editor::Content,
     ports: String,
     run: RunSlot,
     error: Option<String>,
@@ -77,7 +81,7 @@ pub struct FirewallTesterPane {
 impl Default for FirewallTesterPane {
     fn default() -> Self {
         Self {
-            hosts: String::new(),
+            hosts: text_editor::Content::new(),
             ports: "80,443,8080".to_string(),
             run: RunSlot::default(),
             error: None,
@@ -142,9 +146,11 @@ impl FirewallTesterPane {
     /// What `message` changes, and what it asks.
     fn apply(&mut self, message: FirewallTesterMessage) -> Step {
         match message {
-            FirewallTesterMessage::HostsChanged(val) => {
-                self.hosts = val;
-                self.error = None;
+            FirewallTesterMessage::HostsAction(action) => {
+                if action.is_edit() {
+                    self.error = None;
+                }
+                self.hosts.perform(action);
                 Step::None
             }
             FirewallTesterMessage::PortsChanged(val) => {
@@ -207,17 +213,18 @@ impl FirewallTesterPane {
         if self.run.running() {
             return Step::None;
         }
-        let inputs = match firewall_tester::validate_inputs(&self.hosts, &self.ports) {
-            Ok(inputs) => inputs,
-            Err(error) => {
-                self.error = Some(match error {
-                    FwInputError::NoHosts => fl!("ui-tool-fwtest-error-hosts-required"),
-                    FwInputError::InvalidHost => fl!("ui-tool-fwtest-error-invalid-host"),
-                    FwInputError::NoPorts => fl!("ui-tool-fwtest-error-no-ports"),
-                });
-                return Step::None;
-            }
-        };
+        let inputs =
+            match firewall_tester::validate_inputs(&super::box_text(&self.hosts), &self.ports) {
+                Ok(inputs) => inputs,
+                Err(error) => {
+                    self.error = Some(match error {
+                        FwInputError::NoHosts => fl!("ui-tool-fwtest-error-hosts-required"),
+                        FwInputError::InvalidHost => fl!("ui-tool-fwtest-error-invalid-host"),
+                        FwInputError::NoPorts => fl!("ui-tool-fwtest-error-no-ports"),
+                    });
+                    return Step::None;
+                }
+            };
         self.error = None;
         self.notice = (inputs.hosts_left_out > 0 || inputs.ports_left_out > 0).then(|| {
             fl!(
@@ -255,13 +262,9 @@ impl FirewallTesterPane {
     ) -> Element<'a, Message> {
         let send = move |msg| Message::Tool(tab, super::ToolMessage::FwTest(msg));
 
-        let hosts_input = text_input(&fl!("ui-tool-fwtest-hosts-watermark"), &self.hosts)
-            .font(super::BOX_FONT)
-            .size(font_size::BODY_LARGE)
-            .padding(super::INPUT_PADDING)
-            .style(styles::text_input)
-            .on_input(move |v| send(FirewallTesterMessage::HostsChanged(v)))
-            .width(Length::FillPortion(3));
+        let hosts_input = super::text_box(&self.hosts, Some(fl!("ui-tool-fwtest-hosts-watermark")))
+            .on_action(move |action| send(FirewallTesterMessage::HostsAction(action)))
+            .height(Length::Fixed(HOSTS_BOX_HEIGHT));
 
         let ports_input = text_input(&fl!("ui-tool-fwtest-ports-watermark"), &self.ports)
             .font(super::BOX_FONT)
@@ -295,7 +298,7 @@ impl FirewallTesterPane {
             container(action_btn).align_y(Alignment::End),
         ]
         .spacing(spacing::SM)
-        .align_y(Alignment::End);
+        .align_y(Alignment::Start);
 
         let input_card = container(column![inputs_row])
             .padding(spacing::MD)
@@ -516,13 +519,31 @@ mod tests {
         }
     }
 
+    /// `hosts` typed in the hosts box, replacing what it held.
+    fn type_hosts(pane: &mut FirewallTesterPane, hosts: &str) {
+        pane.apply(FirewallTesterMessage::HostsAction(
+            text_editor::Action::SelectAll,
+        ));
+        pane.apply(FirewallTesterMessage::HostsAction(
+            text_editor::Action::Edit(text_editor::Edit::Paste(Arc::new(hosts.to_owned()))),
+        ));
+    }
+
     fn started(pane: &mut FirewallTesterPane, hosts: &str, ports: &str) -> (u64, Arc<AtomicBool>) {
-        pane.apply(FirewallTesterMessage::HostsChanged(hosts.to_owned()));
+        type_hosts(pane, hosts);
         pane.apply(FirewallTesterMessage::PortsChanged(ports.to_owned()));
         match pane.apply(FirewallTesterMessage::Start) {
             Step::Test(run, stop) => (run, stop),
             other => panic!("no test: {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_hosts_box_holds_one_host_per_line_as_the_csharp() {
+        let mut pane = FirewallTesterPane::default();
+        started(&mut pane, "a.lab\nb.lab\n\n  c.lab, a.lab\n", "80");
+        assert_eq!(pane.last_hosts, ["a.lab", "b.lab", "c.lab"]);
+        assert_eq!(pane.total, 3);
     }
 
     #[test]
@@ -567,7 +588,7 @@ mod tests {
         assert_eq!(order, [("b.lab", 80), ("a.lab", 80), ("a.lab", 443)]);
         assert_eq!(pane.summary.unresolved, 1);
         pane.apply(FirewallTesterMessage::Ended(run, true));
-        pane.apply(FirewallTesterMessage::HostsChanged("other.lab".to_owned()));
+        type_hosts(&mut pane, "other.lab");
         pane.apply(FirewallTesterMessage::PortsChanged("22".to_owned()));
         let Step::Copy(CopySlot::FwTestCsv, csv) = pane.apply(FirewallTesterMessage::CopyCsv)
         else {

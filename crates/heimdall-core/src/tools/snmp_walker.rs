@@ -48,6 +48,28 @@ pub const DEFAULT_OID: &str = "1.3.6.1.2.1.1";
 pub const MAX_COMMUNITY_LEN: usize = 255;
 /// The most sub-identifiers of an OID (RFC 2578 section 3.5).
 pub const MAX_OID_ARCS: usize = 128;
+/// The communities a community test tries, in order, as the C#
+/// `NetworkToolPresets.SnmpCommonCommunities`.
+pub const COMMON_COMMUNITIES: [&str; 12] = [
+    "public",
+    "private",
+    "community",
+    "default",
+    "snmp",
+    "monitor",
+    "admin",
+    "manager",
+    "test",
+    "cisco",
+    "secret",
+    "write",
+];
+/// How long a community test waits for each answer, as the C# `QuerySnmpAsync(host,
+/// community, 2000, ct)`.
+pub const COMMUNITY_TIMEOUT_MS: u64 = 2000;
+/// What a community test asks: the subtree of `sysName`, whose value the C# shows beside an
+/// accepted community.
+const SYS_NAME_SUBTREE: &str = "1.3.6.1.2.1.1.5";
 
 /// The largest UDP payload a reply can carry.
 const MAX_DATAGRAM: usize = 65_535;
@@ -113,6 +135,16 @@ pub enum WalkEnd {
     Stopped,
     /// The agent stopped answering: what it said before is kept, as the C#.
     TimedOut,
+}
+
+/// What one community of a community test came to, as the C# `CommunityResult`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommunityResult {
+    pub community: String,
+    /// The agent answered it.
+    pub accepted: bool,
+    /// The `sysName` it gave, when it gave one.
+    pub sys_name: Option<String>,
 }
 
 /// Static map of well-known MIB-2 OIDs to friendly names.
@@ -789,6 +821,56 @@ pub fn walk(
     Ok(WalkEnd::Complete)
 }
 
+/// Tries each of `communities` on the agent at `host`:`port`, one after the other as the
+/// C# `TestCommunitiesAsync`, each waiting `timeout_ms` for its answer: a community the
+/// agent answers is accepted, with the `sysName` it gives; one it leaves unanswered is
+/// rejected, as SNMPv2c agents stay silent to a wrong one. `on_result` is told of each as it
+/// ends. Better than the C#, which says only those accepted, every community tried is told.
+///
+/// # Errors
+///
+/// [`WalkError::Unresolved`] or [`WalkError::Socket`] when no request can be sent, which no
+/// other community would change.
+pub fn test_communities(
+    host: &str,
+    port: u16,
+    communities: &[&str],
+    timeout_ms: u64,
+    stop: &AtomicBool,
+    mut on_result: impl FnMut(CommunityResult),
+) -> Result<WalkEnd, WalkError> {
+    for community in communities {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(WalkEnd::Stopped);
+        }
+        let mut sys_name = None;
+        let accepted = match walk(
+            host,
+            port,
+            community,
+            SYS_NAME_SUBTREE,
+            1,
+            timeout_ms,
+            stop,
+            |entry| sys_name = Some(entry.value),
+        ) {
+            Ok(WalkEnd::Stopped) => return Ok(WalkEnd::Stopped),
+            // An answer, even one saying the subtree is empty or not in the view.
+            Ok(WalkEnd::Complete | WalkEnd::TimedOut) => true,
+            Err(WalkError::NoResponse | WalkError::CommunityTooLong | WalkError::InvalidOid) => {
+                false
+            }
+            Err(error @ (WalkError::Unresolved | WalkError::Socket)) => return Err(error),
+        };
+        on_result(CommunityResult {
+            community: (*community).to_owned(),
+            accepted,
+            sys_name: sys_name.filter(|name| !name.is_empty()),
+        });
+    }
+    Ok(WalkEnd::Complete)
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::UdpSocket;
@@ -1162,6 +1244,98 @@ mod tests {
         assert_eq!(
             walk("127.0.0.1", port, &long, "1.3", 10, 300, &stop, |_| {}),
             Err(WalkError::CommunityTooLong)
+        );
+        drop(silent);
+    }
+
+    /// A fake agent on the loopback answering only the community `accepted`, its `sysName.0`
+    /// being `name`, and silent to any other, as an SNMPv2c agent; it reads `requests`.
+    fn community_agent(accepted: &'static str, name: &'static [u8], requests: usize) -> u16 {
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let port = socket.local_addr().expect("addr").port();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("timeout");
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 2048];
+            for _ in 0..requests {
+                let Ok((len, from)) = socket.recv_from(&mut buffer) else {
+                    return;
+                };
+                let data = &buffer[..len];
+                let message = asn1_read_tlv(data, 0).expect("message").content;
+                let version = asn1_read_tlv(message, 0).expect("version");
+                let community = asn1_read_tlv(message, version.consumed).expect("community");
+                if community.content != accepted.as_bytes() {
+                    continue;
+                }
+                let (id, _) = parse_request(data);
+                let reply = response(id, &[1, 3, 6, 1, 2, 1, 1, 5, 0], TAG_OCTET_STRING, name);
+                let _ = socket.send_to(&reply, from);
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_community_test_tries_each_and_says_the_accepted_ones_with_their_sys_name() {
+        let port = community_agent("monitor", b"core-sw1", COMMON_COMMUNITIES.len());
+        let stop = AtomicBool::new(false);
+        let mut results = Vec::new();
+        let end = test_communities(
+            "127.0.0.1",
+            port,
+            &["public", "monitor", "secret"],
+            300,
+            &stop,
+            |result| results.push(result),
+        );
+        assert_eq!(end, Ok(WalkEnd::Complete));
+        let said: Vec<(&str, bool, Option<&str>)> = results
+            .iter()
+            .map(|r| (r.community.as_str(), r.accepted, r.sys_name.as_deref()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("public", false, None),
+                ("monitor", true, Some("core-sw1")),
+                ("secret", false, None)
+            ]
+        );
+        assert_eq!(COMMON_COMMUNITIES[0], DEFAULT_COMMUNITY);
+    }
+
+    #[test]
+    fn a_stopped_community_test_tries_no_more_and_an_unknown_host_is_said() {
+        let silent = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let port = silent.local_addr().expect("addr").port();
+        let stop = AtomicBool::new(true);
+        let mut tried = 0;
+        assert_eq!(
+            test_communities("127.0.0.1", port, &COMMON_COMMUNITIES, 300, &stop, |_| {
+                tried += 1;
+            }),
+            Ok(WalkEnd::Stopped)
+        );
+        assert_eq!(tried, 0);
+        let stop = AtomicBool::new(false);
+        assert_eq!(
+            test_communities(
+                "no-such-host.invalid",
+                port,
+                &COMMON_COMMUNITIES,
+                300,
+                &stop,
+                |_| {
+                    tried += 1;
+                }
+            ),
+            Err(WalkError::Unresolved)
+        );
+        assert_eq!(
+            tried, 0,
+            "no community said rejected for a host that is none"
         );
         drop(silent);
     }

@@ -97,9 +97,9 @@ pub struct FwInputs {
     pub ports_left_out: usize,
 }
 
-/// Parses host input into unique, trimmed host strings: one per line as the C#, and, the
-/// box being a single line here, also separated by commas, semicolons or spaces, which no
-/// host contains.
+/// Parses host input into unique, trimmed host strings: one per line as the C#
+/// `FirewallProbeEngine.ParseHosts`, and also separated by commas, semicolons or spaces on a
+/// line, which no host contains.
 #[must_use]
 pub fn parse_hosts(input: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -298,6 +298,17 @@ mod tests {
             parse_hosts("a.lab, b.lab;c.lab  a.lab"),
             ["a.lab", "b.lab", "c.lab"],
             "one line holds several hosts"
+        );
+        assert_eq!(
+            parse_hosts(
+                "a.lab
+
+  b.lab	
+c.lab, d.lab
+"
+            ),
+            ["a.lab", "b.lab", "c.lab", "d.lab"],
+            "the lines of the box, Windows line ends and blank lines included"
         );
     }
 

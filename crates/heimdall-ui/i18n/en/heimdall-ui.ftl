@@ -4744,7 +4744,7 @@ ui-tool-arpmon-col-status = Status
 ui-tool-arpmon-col-first-seen = First Seen
 ui-tool-arpmon-col-last-seen = Last Seen
 ui-tool-arpmon-status-new = New
-ui-tool-arpmon-status-known = Known
+ui-tool-arpmon-status-stable = Stable
 ui-tool-arpmon-status-changed = Changed
 ui-tool-arpmon-status-conflict = Conflict
 
@@ -4752,7 +4752,7 @@ ui-tool-arpmon-status-conflict = Conflict
 ui-tool-fwtest-name = Firewall Egress Tester
 ui-tool-fwtest-description = Test outbound connectivity across firewall ports with latency measurement
 ui-tool-fwtest-hosts = Target Hosts
-ui-tool-fwtest-hosts-watermark = Hosts separated by commas or spaces (e.g. 1.1.1.1, 8.8.8.8)
+ui-tool-fwtest-hosts-watermark = One host per line, or separated by commas (e.g. 1.1.1.1, 8.8.8.8)
 ui-tool-fwtest-ports = Test Ports
 ui-tool-fwtest-ports-watermark = 80,443,8080
 ui-tool-fwtest-start = Test Egress
@@ -5060,6 +5060,97 @@ ui-tool-netmap-role-remote = Remote Management Host
 ui-tool-netmap-role-appliance = Network Gateway / Appliance
 ui-tool-netmap-role-active = Active Node
 ui-tool-netmap-role-no-ports = Host (No Port Open)
+ui-tool-mac-vendor-randomized = Private (randomized MAC)
+ui-tool-arpmon-status-gone = Gone
+ui-tool-arpmon-start = Start
+ui-tool-arpmon-stop = Stop
+ui-tool-arpmon-interval = Refresh
+ui-tool-arpmon-interval-secs = { $secs } sec
+ui-tool-arpmon-dismiss-alert = Dismiss
+ui-tool-arpmon-alert-title = ARP anomaly detected
+ui-tool-arpmon-changes-title = ARP table changes
+ui-tool-arpmon-alert-mac-changed = MAC address of { $ip } changed from { $previous } to { $current } (possible ARP spoofing)
+ui-tool-arpmon-alert-conflict = { $ip } is claimed by several MAC addresses at once: { $macs } (possible ARP spoofing)
+ui-tool-arpmon-alert-new =
+    { $count ->
+        [one] { $count } new host: { $list }
+       *[other] { $count } new hosts: { $list }
+    }
+ui-tool-arpmon-alert-gone =
+    { $count ->
+        [one] { $count } host gone: { $list }
+       *[other] { $count } hosts gone: { $list }
+    }
+ui-tool-arpmon-alert-more = { $list } and { $more } more
+ui-tool-arpmon-mac-was = was { $mac }
+ui-tool-arpmon-mac-also = also { $macs }
+ui-tool-arpmon-total =
+    { $count ->
+        [one] { $count } entry
+       *[other] { $count } entries
+    }
+ui-tool-arpmon-last-refresh = Last refresh: { $time }
+ui-tool-arpmon-empty = Click Start to monitor the local ARP table, or Scan Now to read it once.
+ui-tool-arpmon-empty-running = Monitoring is active: waiting for entries in the local ARP table.
+ui-tool-netmap-reverse-dns = Reverse DNS
+ui-tool-netmap-use-kb = Use knowledge base
+ui-tool-netmap-kb-empty = Knowledge base: empty
+ui-tool-netmap-kb-stats =
+    { $count ->
+        [one] Knowledge base: { $count } host, updated { $updated }
+       *[other] Knowledge base: { $count } hosts, updated { $updated }
+    }
+ui-tool-netmap-kb-just-now = just now
+ui-tool-netmap-kb-minutes-ago = { $count } min ago
+ui-tool-netmap-kb-hours-ago = { $count } h ago
+ui-tool-netmap-kb-days-ago =
+    { $count ->
+        [one] { $count } day ago
+       *[other] { $count } days ago
+    }
+ui-tool-netmap-kb-clear = Clear Knowledge Base
+ui-tool-netmap-kb-keep = Keep
+ui-tool-netmap-kb-clear-confirm = Clear all the host data gathered in the knowledge base?
+ui-tool-netmap-kb-cleared = Knowledge base cleared.
+ui-tool-netmap-error-kb-clear = The knowledge base could not be cleared: { $reason }
+ui-tool-netmap-saved = Scan saved to the history.
+ui-tool-netmap-history-entry = { $time } - { $subnet }
+ui-tool-netmap-compare-with = Compare with
+ui-tool-netmap-compare = Compare
+ui-tool-netmap-diff-none = No change since that scan.
+ui-tool-netmap-diff-new =
+    { $count ->
+        [one] { $count } new host
+       *[other] { $count } new hosts
+    }
+ui-tool-netmap-diff-removed =
+    { $count ->
+        [one] { $count } host gone
+       *[other] { $count } hosts gone
+    }
+ui-tool-netmap-diff-changed =
+    { $count ->
+        [one] { $count } host changed
+       *[other] { $count } hosts changed
+    }
+ui-tool-netmap-error-history-read = That scan of the history could not be read.
+ui-tool-netmap-naming =
+    { $count ->
+        [one] Reading the ARP table and looking up the name of { $count } host...
+       *[other] Reading the ARP table and looking up the names of { $count } hosts...
+    }
+ui-tool-snmpwalk-test-communities = Test Common Communities
+ui-tool-snmpwalk-testing = Testing...
+ui-tool-snmpwalk-test-stopped = Community test stopped.
+ui-tool-snmpwalk-accepted-count =
+    { $count ->
+        [one] { $count } community accepted
+       *[other] { $count } communities accepted
+    }
+ui-tool-snmpwalk-col-status = Status
+ui-tool-snmpwalk-col-sys-name = sysName
+ui-tool-snmpwalk-community-accepted = Accepted
+ui-tool-snmpwalk-community-rejected = No answer
 ## Log viewer
 ui-tool-logview-name = Log Viewer
 ui-tool-logview-description = View a log file, filter its lines and follow what is appended
