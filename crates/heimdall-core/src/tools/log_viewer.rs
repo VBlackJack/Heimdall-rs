@@ -19,11 +19,14 @@
 //! split on `\n` with their `\r` dropped, the file read again from its start when it got
 //! shorter, the newest 10,000 lines kept.
 //!
+//! Unlike the C#, a file that took the place of the one followed (a log rotated) is read
+//! from its start too, however long it is: see [`FileIdentity`].
+//!
 //! Unlike the C#, which reads the whole file, at most [`MAX_READ_BYTES`] are read at once:
 //! the end of a larger file, or of what was appended since the last read. A last line not
 //! yet ended is read again once it is, rather than shown twice.
 
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::path::Path;
@@ -47,11 +50,11 @@ const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 /// The UTF-16 little-endian byte order mark.
 const UTF16LE_BOM: &[u8] = &[0xFF, 0xFE];
 
-/// The longest byte order mark looked for.
-const MAX_BOM_LENGTH: usize = 3;
-
 /// Bytes of a UTF-16 code unit.
 const UTF16_UNIT: usize = 2;
+
+/// The bytes of a file's start kept to tell it from another that takes its place.
+const HEAD_FINGERPRINT_BYTES: u64 = 1024;
 
 /// What ASCII puts in place of a byte it does not have, as .NET's `Encoding.ASCII`.
 const ASCII_REPLACEMENT: char = '?';
@@ -138,11 +141,62 @@ pub fn byte_order_mark(start: &[u8]) -> Option<(LogEncoding, usize)> {
     }
 }
 
+/// What tells the file followed from another that took its place at its path, a log
+/// rotated by a rename or rewritten, though the new one is as long or longer: its device
+/// and inode on Unix; everywhere, its first bytes, at most [`HEAD_FINGERPRINT_BYTES`].
+/// Windows' file index needs an API that is not stable Rust and its creation time survives
+/// a rename-and-create within seconds (file tunnelling), so there the first bytes alone
+/// tell: a new log starting with the very bytes of the old one is taken as the same file.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FileIdentity {
+    /// The device and inode, where the system gives them.
+    node: Option<(u64, u64)>,
+    /// The file's first bytes.
+    head: Vec<u8>,
+}
+
+impl FileIdentity {
+    /// Whether `now` is the file this identity was taken of: the same node when both are
+    /// known, and the same first bytes as far as both go, a file that grew included.
+    fn is_same_file(&self, now: &Self) -> bool {
+        if let (Some(before), Some(after)) = (self.node, now.node)
+            && before != after
+        {
+            return false;
+        }
+        let common = self.head.len().min(now.head.len());
+        self.head[..common] == now.head[..common]
+    }
+}
+
+/// The device and inode of a file, on Unix.
+#[cfg(unix)]
+fn node(metadata: &Metadata) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt as _;
+    Some((metadata.dev(), metadata.ino()))
+}
+
+/// None elsewhere: see [`FileIdentity`].
+#[cfg(not(unix))]
+fn node(_metadata: &Metadata) -> Option<(u64, u64)> {
+    None
+}
+
+/// Where the next read of a file starts: the offset, in the file it was taken in.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LogPosition {
+    /// The byte the read starts at.
+    pub offset: u64,
+    /// The file it is an offset of; `None` for a first read.
+    pub identity: Option<FileIdentity>,
+}
+
 /// What one read of a log file brought.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogChunk {
-    /// The file is shorter than the offset read from: it was read again from its start, and
-    /// the lines shown before are gone, as the C# clears them.
+    /// The file is shorter than the offset read from, or another file took its place: it
+    /// was read again from its start, and the lines shown before are gone, as the C# clears
+    /// them.
     pub restarted: bool,
     /// More than [`MAX_READ_BYTES`] were there: the lines before the last ones were skipped.
     pub skipped: bool,
@@ -160,39 +214,68 @@ pub struct LogChunk {
     pub file_len: u64,
     /// When the file was last written, when the system says.
     pub modified: Option<SystemTime>,
+    /// The file read.
+    pub identity: FileIdentity,
 }
 
-/// The lines of the file at `path` from byte `offset`, read in `encoding`, as the C#
-/// `LoadFile` (from 0) and `ReadNewContent` (from the last position) read them.
+impl LogChunk {
+    /// Where the read after this one starts.
+    #[must_use]
+    pub fn next_position(&self) -> LogPosition {
+        LogPosition {
+            offset: self.next_offset,
+            identity: Some(self.identity.clone()),
+        }
+    }
+}
+
+/// The lines of the file at `path` from `position`, read in `encoding`, as the C#
+/// `LoadFile` (from 0) and `ReadNewContent` (from the last position) read them; from its
+/// start when it is shorter than the position's offset or not the file the position was
+/// taken in.
 ///
 /// # Errors
 ///
 /// The file cannot be opened, measured or read.
-pub fn read_from(path: &Path, encoding: LogEncoding, offset: u64) -> io::Result<LogChunk> {
-    read_capped(path, encoding, offset, MAX_READ_BYTES)
+pub fn read_from(
+    path: &Path,
+    encoding: LogEncoding,
+    position: &LogPosition,
+) -> io::Result<LogChunk> {
+    read_capped(path, encoding, position, MAX_READ_BYTES)
 }
 
 /// [`read_from`], reading at most `max_bytes` at once.
 fn read_capped(
     path: &Path,
     encoding: LogEncoding,
-    offset: u64,
+    position: &LogPosition,
     max_bytes: u64,
 ) -> io::Result<LogChunk> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     let file_len = metadata.len();
     let modified = metadata.modified().ok();
-    let restarted = file_len < offset;
-    let mut start = if restarted { 0 } else { offset };
+    let mut head = Vec::new();
+    (&mut file)
+        .take(file_len.min(HEAD_FINGERPRINT_BYTES))
+        .read_to_end(&mut head)?;
+    let identity = FileIdentity {
+        node: node(&metadata),
+        head,
+    };
+    let replaced = position
+        .identity
+        .as_ref()
+        .is_some_and(|before| !before.is_same_file(&identity));
+    let restarted = file_len < position.offset || replaced;
+    let mut start = if restarted { 0 } else { position.offset };
     let mut encoding = encoding;
-    if start == 0 {
-        let mut head = [0_u8; MAX_BOM_LENGTH];
-        let read = read_up_to(&mut file, &mut head)?;
-        if let Some((named, length)) = byte_order_mark(&head[..read]) {
-            encoding = named;
-            start = u64::try_from(length).unwrap_or(0);
-        }
+    if start == 0
+        && let Some((named, length)) = byte_order_mark(&identity.head)
+    {
+        encoding = named;
+        start = u64::try_from(length).unwrap_or(0);
     }
     let mut chunk = LogChunk {
         restarted,
@@ -204,6 +287,7 @@ fn read_capped(
         encoding,
         file_len,
         modified,
+        identity,
     };
     if file_len <= start {
         return Ok(chunk);
@@ -239,18 +323,6 @@ fn read_capped(
     let keep_from = lines.len().saturating_sub(MAX_DISPLAY_LINES);
     chunk.lines = lines.into_iter().skip(keep_from).collect();
     Ok(chunk)
-}
-
-/// Reads into `buffer` until it is full or the file ends; how many bytes were read.
-fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
-    let mut filled = 0;
-    while filled < buffer.len() {
-        match file.read(&mut buffer[filled..])? {
-            0 => break,
-            read => filled += read,
-        }
-    }
-    Ok(filled)
 }
 
 /// Where the first line of `bytes` ends: the index after its newline.
@@ -402,10 +474,15 @@ mod tests {
         file.flush().expect("flushed");
     }
 
+    /// A first read's position.
+    fn start() -> LogPosition {
+        LogPosition::default()
+    }
+
     #[test]
     fn lines_split_on_lf_and_crlf_and_the_offset_follows_the_ended_lines() {
         let file = file_with(b"one\r\ntwo\nthree\r\n");
-        let chunk = read_from(file.path(), LogEncoding::Utf8, 0).expect("read");
+        let chunk = read_from(file.path(), LogEncoding::Utf8, &start()).expect("read");
         assert_eq!(chunk.lines, ["one", "two", "three"]);
         assert_eq!(chunk.read, 3);
         assert!(!chunk.open_last);
@@ -416,27 +493,71 @@ mod tests {
     #[test]
     fn a_line_not_yet_ended_is_read_again_once_it_is_never_twice() {
         let mut file = file_with(b"first\nsec");
-        let chunk = read_from(file.path(), LogEncoding::Utf8, 0).expect("read");
+        let chunk = read_from(file.path(), LogEncoding::Utf8, &start()).expect("read");
         assert_eq!(chunk.lines, ["first", "sec"]);
         assert!(chunk.open_last);
         assert_eq!(chunk.next_offset, 6, "the open line is read again");
         append(&mut file, b"ond\nthird\n");
-        let next = read_from(file.path(), LogEncoding::Utf8, chunk.next_offset).expect("read");
+        let next = read_from(file.path(), LogEncoding::Utf8, &chunk.next_position()).expect("read");
+        assert!(!next.restarted, "a file that grew is the same file");
         assert_eq!(next.lines, ["second", "third"]);
         assert!(!next.open_last);
         assert_eq!(next.next_offset, 19);
-        let idle = read_from(file.path(), LogEncoding::Utf8, next.next_offset).expect("read");
-        assert!(idle.lines.is_empty());
+        let idle = read_from(file.path(), LogEncoding::Utf8, &next.next_position()).expect("read");
+        assert!(idle.lines.is_empty() && !idle.restarted);
         assert_eq!(idle.next_offset, 19);
     }
 
     #[test]
     fn a_file_that_got_shorter_is_read_again_from_its_start() {
         let file = file_with(b"new\n");
-        let chunk = read_from(file.path(), LogEncoding::Utf8, 100).expect("read");
+        let past_the_end = LogPosition {
+            offset: 100,
+            identity: None,
+        };
+        let chunk = read_from(file.path(), LogEncoding::Utf8, &past_the_end).expect("read");
         assert!(chunk.restarted);
         assert_eq!(chunk.lines, ["new"]);
         assert_eq!(chunk.next_offset, 4);
+    }
+
+    #[test]
+    fn a_file_rotated_in_place_of_the_one_followed_is_read_from_its_start() {
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join("app.log");
+        std::fs::write(&path, b"2026-10-16 old one\n2026-10-16 old two\n").expect("written");
+        let chunk = read_from(&path, LogEncoding::Utf8, &start()).expect("read");
+        assert_eq!(chunk.lines.len(), 2);
+        // Rotated: a new file, longer than the offset, renamed over the path.
+        let rotated = folder.path().join("app.log.new");
+        std::fs::write(
+            &rotated,
+            b"2026-10-17 new one\n2026-10-17 new two\n2026-10-17 new three\n",
+        )
+        .expect("written");
+        std::fs::rename(&rotated, &path).expect("renamed");
+        let next = read_from(&path, LogEncoding::Utf8, &chunk.next_position()).expect("read");
+        assert!(next.restarted);
+        assert_eq!(
+            next.lines,
+            [
+                "2026-10-17 new one",
+                "2026-10-17 new two",
+                "2026-10-17 new three"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_file_rewritten_as_long_is_read_from_its_start() {
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join("app.log");
+        std::fs::write(&path, b"aaaa\nbbbb\n").expect("written");
+        let chunk = read_from(&path, LogEncoding::Utf8, &start()).expect("read");
+        std::fs::write(&path, b"cccc\ndddd\n").expect("rewritten");
+        let next = read_from(&path, LogEncoding::Utf8, &chunk.next_position()).expect("read");
+        assert!(next.restarted);
+        assert_eq!(next.lines, ["cccc", "dddd"]);
     }
 
     #[test]
@@ -444,7 +565,7 @@ mod tests {
         // 25 lines of 10 bytes, read 95 bytes at a time: the cut line is dropped.
         let text: String = (0..25).map(|index| format!("line {index:04}\n")).collect();
         let file = file_with(text.as_bytes());
-        let chunk = read_capped(file.path(), LogEncoding::Utf8, 0, 95).expect("read");
+        let chunk = read_capped(file.path(), LogEncoding::Utf8, &start(), 95).expect("read");
         assert!(chunk.skipped);
         assert_eq!(
             chunk.lines,
@@ -460,7 +581,7 @@ mod tests {
         let count = MAX_DISPLAY_LINES + 5;
         let text: String = (0..count).map(|index| format!("{index}\n")).collect();
         let file = file_with(text.as_bytes());
-        let chunk = read_from(file.path(), LogEncoding::Utf8, 0).expect("read");
+        let chunk = read_from(file.path(), LogEncoding::Utf8, &start()).expect("read");
         assert_eq!(chunk.read, count);
         assert_eq!(chunk.lines.len(), MAX_DISPLAY_LINES);
         assert_eq!(chunk.lines.first().map(String::as_str), Some("5"));
@@ -469,7 +590,7 @@ mod tests {
     #[test]
     fn a_line_longer_than_a_read_is_taken_once() {
         let file = file_with(&[b'x'; 64]);
-        let chunk = read_capped(file.path(), LogEncoding::Utf8, 0, 32).expect("read");
+        let chunk = read_capped(file.path(), LogEncoding::Utf8, &start(), 32).expect("read");
         assert_eq!(chunk.lines.len(), 1);
         assert!(!chunk.open_last);
         assert_eq!(chunk.next_offset, 64);
@@ -478,11 +599,11 @@ mod tests {
     #[test]
     fn the_byte_order_mark_names_the_encoding_and_is_not_shown() {
         let file = file_with(b"\xEF\xBB\xBFcaf\xC3\xA9\n");
-        let chunk = read_from(file.path(), LogEncoding::Windows1252, 0).expect("read");
+        let chunk = read_from(file.path(), LogEncoding::Windows1252, &start()).expect("read");
         assert_eq!(chunk.encoding, LogEncoding::Utf8);
         assert_eq!(chunk.lines, ["caf\u{e9}"]);
         let utf16 = file_with(b"\xFF\xFEa\x00\r\x00\n\x00b\x00\n\x00");
-        let chunk = read_from(utf16.path(), LogEncoding::Utf8, 0).expect("read");
+        let chunk = read_from(utf16.path(), LogEncoding::Utf8, &start()).expect("read");
         assert_eq!(chunk.encoding, LogEncoding::Utf16Le);
         assert_eq!(chunk.lines, ["a", "b"]);
         assert_eq!(chunk.next_offset, 12);

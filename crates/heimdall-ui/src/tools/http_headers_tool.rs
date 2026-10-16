@@ -81,6 +81,9 @@ pub enum Outcome {
     Copy(CopySlot, String),
 }
 
+/// Bytes in a kibibyte, for the most the header section may take.
+const BYTES_PER_KIB: usize = 1024;
+
 /// A text of the report, in the user's words.
 fn report_text(said: ReportText<'_>) -> String {
     match said {
@@ -99,6 +102,7 @@ fn report_text(said: ReportText<'_>) -> String {
         ReportText::Missing => fl!("ui-tool-headers-missing"),
         ReportText::NotExposed => fl!("ui-tool-headers-not-exposed"),
         ReportText::MissingFlags(flags) => fl!("ui-tool-headers-cookie-missing", flags = flags),
+        ReportText::Reason(key) => reason_text(key),
     }
 }
 
@@ -128,6 +132,11 @@ fn fetch_error(error: &HttpFetchError, host: &str) -> String {
             reason = validation_issue(*issue)
         ),
         HttpFetchError::Empty => fl!("ui-tool-headers-error-empty"),
+        HttpFetchError::Oversized => {
+            let kib: usize = http_headers::MAX_RESPONSE_BYTES / BYTES_PER_KIB;
+            fl!("ui-tool-headers-error-oversized", kib = kib)
+        }
+        HttpFetchError::Incomplete => fl!("ui-tool-headers-error-incomplete"),
     }
 }
 
@@ -217,14 +226,14 @@ impl HttpHeadersPane {
 
     /// The answer of the latest fetch shown: its evaluation and report, or why it failed.
     fn finished(&mut self, answer: Result<HttpFetch, HttpFetchError>) {
-        let (url, host) = self
+        let (url, host, https) = self
             .target
             .as_ref()
-            .map(|target| (target.url(), target.host.clone()))
+            .map(|target| (target.url(), target.host.clone(), target.https))
             .unwrap_or_default();
         match answer {
             Ok(fetched) => {
-                let evaluation = http_headers::evaluate_headers(&fetched.info.headers);
+                let evaluation = http_headers::evaluate_headers(&fetched.info.headers, https);
                 let certificate = certificate_text(fetched.certificate);
                 self.report_text = http_headers::build_text_report(
                     &url,
@@ -418,6 +427,14 @@ impl HttpHeadersPane {
                     .align_y(Alignment::Center)
                 ];
 
+                if let Some(reason) = check.reason_key {
+                    row_col = row_col.push(
+                        text(reason_text(reason))
+                            .size(font_size::CAPTION)
+                            .style(text::warning),
+                    );
+                }
+
                 if let Some(flags) = &check.detail {
                     row_col = row_col.push(
                         text(fl!(
@@ -533,6 +550,37 @@ fn recommendation_text(key: &'static str) -> String {
     }
 }
 
+/// Why a header present is not a pass, in the user's words.
+fn reason_text(key: &str) -> String {
+    match key {
+        "ui-tool-headers-reason-hsts-http" => fl!("ui-tool-headers-reason-hsts-http"),
+        "ui-tool-headers-reason-hsts-max-age-invalid" => {
+            fl!("ui-tool-headers-reason-hsts-max-age-invalid")
+        }
+        "ui-tool-headers-reason-hsts-max-age-zero" => {
+            fl!("ui-tool-headers-reason-hsts-max-age-zero")
+        }
+        "ui-tool-headers-reason-hsts-max-age-short" => fl!(
+            "ui-tool-headers-reason-hsts-max-age-short",
+            seconds = http_headers::HSTS_MIN_MAX_AGE_SECONDS
+        ),
+        "ui-tool-headers-reason-csp-empty" => fl!("ui-tool-headers-reason-csp-empty"),
+        "ui-tool-headers-reason-csp-no-script" => fl!("ui-tool-headers-reason-csp-no-script"),
+        "ui-tool-headers-reason-csp-unsafe" => fl!("ui-tool-headers-reason-csp-unsafe"),
+        "ui-tool-headers-reason-xfo-allow-from" => fl!("ui-tool-headers-reason-xfo-allow-from"),
+        "ui-tool-headers-reason-xfo-invalid" => fl!("ui-tool-headers-reason-xfo-invalid"),
+        "ui-tool-headers-reason-xcto-invalid" => fl!("ui-tool-headers-reason-xcto-invalid"),
+        "ui-tool-headers-reason-referrer-invalid" => {
+            fl!("ui-tool-headers-reason-referrer-invalid")
+        }
+        "ui-tool-headers-reason-referrer-unsafe" => fl!("ui-tool-headers-reason-referrer-unsafe"),
+        "ui-tool-headers-reason-permissions-empty" => {
+            fl!("ui-tool-headers-reason-permissions-empty")
+        }
+        _ => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,6 +652,59 @@ mod tests {
         );
         assert!(pane.report_text.contains(&finding), "{}", pane.report_text);
         assert!(pane.report_text.contains("Server: test"));
+    }
+
+    #[test]
+    fn every_reason_and_new_error_has_its_words() {
+        for key in [
+            "ui-tool-headers-reason-hsts-http",
+            "ui-tool-headers-reason-hsts-max-age-invalid",
+            "ui-tool-headers-reason-hsts-max-age-zero",
+            "ui-tool-headers-reason-hsts-max-age-short",
+            "ui-tool-headers-reason-csp-empty",
+            "ui-tool-headers-reason-csp-no-script",
+            "ui-tool-headers-reason-csp-unsafe",
+            "ui-tool-headers-reason-xfo-allow-from",
+            "ui-tool-headers-reason-xfo-invalid",
+            "ui-tool-headers-reason-xcto-invalid",
+            "ui-tool-headers-reason-referrer-invalid",
+            "ui-tool-headers-reason-referrer-unsafe",
+            "ui-tool-headers-reason-permissions-empty",
+        ] {
+            assert!(!reason_text(key).is_empty(), "{key}");
+        }
+        for error in [HttpFetchError::Oversized, HttpFetchError::Incomplete] {
+            assert!(!fetch_error(&error, "a").is_empty());
+        }
+    }
+
+    #[test]
+    fn a_weak_value_is_said_in_the_view_and_the_report() {
+        let mut pane = typed("https://example.com/");
+        started(&mut pane);
+        pane.apply(HttpHeadersMessage::Finished(
+            pane.run,
+            Ok(HttpFetch {
+                info: parse_http_response(
+                    "HTTP/1.1 200 OK\r\nStrict-Transport-Security: max-age=0\r\n\r\n",
+                ),
+                certificate: CertificateCheck::Trusted,
+            }),
+        ));
+        let hsts = pane
+            .evaluation
+            .as_ref()
+            .and_then(|evaluation| {
+                evaluation
+                    .security_checks
+                    .iter()
+                    .find(|check| check.name == "Strict-Transport-Security")
+            })
+            .cloned()
+            .expect("checked");
+        assert_eq!(hsts.status, HeaderCheckStatus::Fail);
+        let said = fl!("ui-tool-headers-reason-hsts-max-age-zero");
+        assert!(pane.report_text.contains(&said), "{}", pane.report_text);
     }
 
     #[test]

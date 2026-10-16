@@ -2929,6 +2929,7 @@ ui-tool-crontab-desc-custom = Planification personnalisée : { $expression }
 ui-tool-crontab-error-field-count = Une expression cron doit comporter exactement 5 champs séparés par des espaces
 ui-tool-crontab-error-invalid-field = Caractères invalides dans le champ "{ $field }" : { $value }
 ui-tool-crontab-error-out-of-range = Les valeurs du champ "{ $field }" doivent être entre { $min } et { $max }
+ui-tool-crontab-error-malformed-field = Le champ "{ $field }" n'est ni un nombre, ni une plage, ni un pas : { $value }
 ui-tool-crontab-help =
     Constructeur Crontab
 
@@ -4691,6 +4692,19 @@ ui-tool-headers-rec-permissions = Recommandation : configurer Permissions-Policy
 ui-tool-headers-rec-xxss = Recommandation : définir X-XSS-Protection à 0 ou s'appuyer sur Content-Security-Policy.
 ui-tool-headers-rec-cookie = Recommandation : définir Secure, HttpOnly et SameSite=Lax/Strict sur les cookies.
 ui-tool-headers-rec-disclosure = Recommandation : désactiver ou masquer l'en-tête serveur pour cacher les versions logicielles internes.
+ui-tool-headers-reason-hsts-http = Les navigateurs ignorent cet en-tête en HTTP simple : analysez l'adresse HTTPS.
+ui-tool-headers-reason-hsts-max-age-invalid = max-age est absent, répété ou n'est pas un nombre : les navigateurs ignorent cet en-tête.
+ui-tool-headers-reason-hsts-max-age-zero = max-age=0 demande aux navigateurs d'oublier la politique HTTPS uniquement.
+ui-tool-headers-reason-hsts-max-age-short = max-age est inférieur à { $seconds } secondes (six mois).
+ui-tool-headers-reason-csp-empty = La politique est vide et ne restreint rien.
+ui-tool-headers-reason-csp-no-script = Ni script-src ni default-src : les scripts ne sont pas restreints.
+ui-tool-headers-reason-csp-unsafe = Les scripts autorisent 'unsafe-inline' sans nonce ni empreinte, ou 'unsafe-eval'.
+ui-tool-headers-reason-xfo-allow-from = Les navigateurs actuels ignorent ALLOW-FROM : utilisez la directive frame-ancestors de la CSP.
+ui-tool-headers-reason-xfo-invalid = La valeur n'est ni DENY ni SAMEORIGIN : les navigateurs ignorent cet en-tête.
+ui-tool-headers-reason-xcto-invalid = La valeur n'est pas nosniff : les navigateurs ignorent cet en-tête.
+ui-tool-headers-reason-referrer-invalid = Aucune politique connue : les navigateurs ignorent cet en-tête.
+ui-tool-headers-reason-referrer-unsafe = Cette politique envoie l'URL complète aux autres sites.
+ui-tool-headers-reason-permissions-empty = La politique est vide et ne restreint rien.
 ui-tool-headers-error-url-required = Veuillez saisir une URL cible.
 ui-tool-headers-error-invalid-url = Veuillez saisir une URL HTTP ou HTTPS valide.
 ui-tool-headers-help =
@@ -4711,114 +4725,116 @@ ui-tool-headers-help =
 
 ## Inspecteur de certificat SSL/TLS
 ui-tool-cert-name = Inspecteur de certificat SSL/TLS
-ui-tool-cert-description = Inspecter les chaines de certificats SSL/TLS, SAN, validite et proprietes cryptographiques
-ui-tool-cert-host = Hote
+ui-tool-cert-description = Inspecter les chaînes de certificats SSL/TLS, les SAN, la validité et les propriétés cryptographiques
+ui-tool-cert-host = Hôte
 ui-tool-cert-host-watermark = example.com ou IP
 ui-tool-cert-ports = Ports
 ui-tool-cert-ports-watermark = 443, 8443
 ui-tool-cert-inspect = Inspecter
-ui-tool-cert-inspecting = Inspection en cours...
-ui-tool-cert-copy-details = Copier les details
-ui-tool-cert-copy-csv = Copier CSV
+ui-tool-cert-copy-details = Copier les détails
+ui-tool-cert-copy-csv = Copier en CSV
 ui-tool-cert-subject = Sujet
-ui-tool-cert-issuer = Emetteur
+ui-tool-cert-issuer = Émetteur
 ui-tool-cert-valid-from = Valide depuis
-ui-tool-cert-valid-to = Valide jusqu'a
+ui-tool-cert-valid-to = Valide jusqu'au
 ui-tool-cert-days-remaining = Jours restants
 ui-tool-cert-tls-version = Version TLS
-ui-tool-cert-key-size = Taille de cle
-ui-tool-cert-sans = SANs
+ui-tool-cert-key-size = Taille de clé
+ui-tool-cert-hostname-match = Correspondance du nom d'hôte
+ui-tool-cert-sans = SAN
 ui-tool-cert-match-yes = Conforme
-ui-tool-cert-match-no = Discordance
+ui-tool-cert-match-no = Non conforme
 ui-tool-cert-status-valid = Valide
-ui-tool-cert-status-warning = Expire bientot
-ui-tool-cert-status-expired = Expire
-ui-tool-cert-error-host-required = Veuillez saisir un nom d'hote cible.
+ui-tool-cert-status-warning = Expire bientôt
+ui-tool-cert-status-expired = Expiré
+ui-tool-cert-error-host-required = Veuillez saisir le nom de l'hôte cible.
 
 ## Traceroute TCP
 ui-tool-tcptrace-name = Traceroute TCP
-ui-tool-tcptrace-description = Decouvrir les sauts reseau et la latence le long du chemin TCP vers une destination
-ui-tool-tcptrace-host = Hote cible
+ui-tool-tcptrace-description = Découvrir les sauts réseau et leur latence sur le chemin vers une destination
+ui-tool-tcptrace-host = Hôte cible
 ui-tool-tcptrace-host-watermark = example.com ou IP
-ui-tool-tcptrace-max-hops = Sauts max
-ui-tool-tcptrace-start = Demarrer le trace
-ui-tool-tcptrace-stop = Arreter
-ui-tool-tcptrace-copy-csv = Exporter CSV
+ui-tool-tcptrace-max-hops = Sauts maximum
+ui-tool-tcptrace-start = Démarrer le traçage
+ui-tool-tcptrace-stop = Arrêter
+ui-tool-tcptrace-copy-csv = Exporter en CSV
 ui-tool-tcptrace-col-hop = Saut
 ui-tool-tcptrace-col-address = Adresse
-ui-tool-tcptrace-col-hostname = Nom d'hote
+ui-tool-tcptrace-col-hostname = Nom d'hôte
 ui-tool-tcptrace-col-latency = Latence
 ui-tool-tcptrace-col-status = Statut
-ui-tool-tcptrace-status-reply = Reponse
-ui-tool-tcptrace-status-timeout = Delai depasse
+ui-tool-tcptrace-status-reply = Réponse
+ui-tool-tcptrace-status-timeout = Délai dépassé
 ui-tool-tcptrace-status-destination = Destination
-ui-tool-tcptrace-error-host-required = Veuillez saisir un hote cible.
+ui-tool-tcptrace-error-host-required = Veuillez saisir un hôte cible.
 
 ## Explorateur MIB SNMP
 ui-tool-snmpwalk-name = Explorateur MIB SNMP
-ui-tool-snmpwalk-description = Interroger et parcourir les arbres MIB SNMPv2c pour les metriques systeme et interface
-ui-tool-snmpwalk-host = Hote cible
+ui-tool-snmpwalk-description = Interroger et parcourir les arbres MIB SNMPv2c pour les métriques système et réseau
+ui-tool-snmpwalk-host = Hôte cible
 ui-tool-snmpwalk-host-watermark = 192.168.1.1
-ui-tool-snmpwalk-community = Communaute
+ui-tool-snmpwalk-community = Communauté
 ui-tool-snmpwalk-oid = OID racine
-ui-tool-snmpwalk-start = Demarrer le parcours
-ui-tool-snmpwalk-stop = Arreter
-ui-tool-snmpwalk-copy-csv = Exporter CSV
+ui-tool-snmpwalk-start = Démarrer le parcours
+ui-tool-snmpwalk-stop = Arrêter
+ui-tool-snmpwalk-copy-csv = Exporter en CSV
 ui-tool-snmpwalk-col-oid = OID
 ui-tool-snmpwalk-col-name = Nom
 ui-tool-snmpwalk-col-type = Type
 ui-tool-snmpwalk-col-value = Valeur
-ui-tool-snmpwalk-error-host-required = Veuillez saisir un hote cible SNMP.
+ui-tool-snmpwalk-error-host-required = Veuillez saisir l'hôte SNMP cible.
 
 ## Moniteur de table ARP
 ui-tool-arpmon-name = Moniteur de table ARP
-ui-tool-arpmon-description = Inspecter le cache ARP local, resoudre les fabricants et detecter les anomalies reseau
-ui-tool-arpmon-scan = Scanner maintenant
-ui-tool-arpmon-scanning = Scan en cours...
-ui-tool-arpmon-copy-csv = Exporter CSV
+ui-tool-arpmon-description = Inspecter le cache ARP local, identifier les fabricants et détecter les anomalies réseau
+ui-tool-arpmon-scan = Analyser maintenant
+ui-tool-arpmon-scanning = Analyse en cours...
+ui-tool-arpmon-copy-csv = Exporter en CSV
 ui-tool-arpmon-col-ip = Adresse IP
 ui-tool-arpmon-col-mac = Adresse MAC
 ui-tool-arpmon-col-vendor = Fabricant
 ui-tool-arpmon-col-status = Statut
-ui-tool-arpmon-col-first-seen = Premiere detection
-ui-tool-arpmon-col-last-seen = Derniere detection
+ui-tool-arpmon-col-first-seen = Première détection
+ui-tool-arpmon-col-last-seen = Dernière détection
 ui-tool-arpmon-status-new = Nouveau
 ui-tool-arpmon-status-known = Connu
-ui-tool-arpmon-status-changed = Modifie
+ui-tool-arpmon-status-changed = Modifié
 ui-tool-arpmon-status-conflict = Conflit
 
 ## Testeur de sortie pare-feu
 ui-tool-fwtest-name = Testeur de sortie pare-feu
-ui-tool-fwtest-description = Tester la connectivite sortante a travers les ports du pare-feu avec mesure de latence
-ui-tool-fwtest-hosts = Hotes cibles
-ui-tool-fwtest-hosts-watermark = Un hote par ligne (ex : 1.1.1.1)
-ui-tool-fwtest-ports = Ports de test
+ui-tool-fwtest-description = Tester la connectivité sortante à travers les ports du pare-feu, avec mesure de latence
+ui-tool-fwtest-hosts = Hôtes cibles
+ui-tool-fwtest-hosts-watermark = Hôtes séparés par des virgules ou des espaces (ex. : 1.1.1.1, 8.8.8.8)
+ui-tool-fwtest-ports = Ports à tester
 ui-tool-fwtest-ports-watermark = 80,443,8080
 ui-tool-fwtest-start = Tester la sortie
-ui-tool-fwtest-stop = Arreter
-ui-tool-fwtest-copy-csv = Exporter matrice CSV
-ui-tool-fwtest-total = Sondes totales
+ui-tool-fwtest-stop = Arrêter
+ui-tool-fwtest-copy-csv = Exporter la matrice en CSV
+ui-tool-fwtest-total = Sondes au total
 ui-tool-fwtest-open = Ouvert
-ui-tool-fwtest-closed = Ferme
-ui-tool-fwtest-timeout = Filtre
-ui-tool-fwtest-error-hosts-required = Veuillez saisir au moins un hote cible.
+ui-tool-fwtest-closed = Fermé
+ui-tool-fwtest-timeout = Filtré
+ui-tool-fwtest-error-hosts-required = Veuillez saisir au moins un hôte cible.
 
-## Cartographie reseau
-ui-tool-netmap-name = Cartographie reseau
-ui-tool-netmap-description = Decouvrir les hotes actifs d'un sous-reseau, les services ouverts et classifier les roles
-ui-tool-netmap-subnet = CIDR sous-reseau
+## Cartographie réseau
+ui-tool-netmap-name = Cartographie réseau
+ui-tool-netmap-description = Découvrir les hôtes actifs d'un sous-réseau et leurs services ouverts, et classer leurs rôles
+ui-tool-netmap-subnet = Sous-réseau (CIDR)
 ui-tool-netmap-subnet-watermark = 192.168.1.0/24
-ui-tool-netmap-discover = Decouvrir le reseau
-ui-tool-netmap-discovering = Decouverte en cours...
-ui-tool-netmap-copy-csv = Exporter CSV
-ui-tool-netmap-hosts-scanned = Scannes
-ui-tool-netmap-hosts-up = Hotes actifs
+ui-tool-netmap-discover = Découvrir le réseau
+ui-tool-netmap-copy-csv = Exporter en CSV
+ui-tool-netmap-hosts-scanned = Hôtes analysés
+ui-tool-netmap-hosts-up = Hôtes actifs
 ui-tool-netmap-ports-open = Ports ouverts
 ui-tool-netmap-col-ip = Adresse IP
-ui-tool-netmap-col-role = Role
+ui-tool-netmap-col-hostname = Nom d'hôte
+ui-tool-netmap-col-mac = MAC
+ui-tool-netmap-col-vendor = Fabricant
+ui-tool-netmap-col-role = Rôle
 ui-tool-netmap-col-ports = Ports ouverts
 ui-tool-netmap-col-latency = Latence
-ui-tool-netmap-error-cidr-required = Veuillez saisir un CIDR de sous-reseau valide (ex : 192.168.1.0/24).
+ui-tool-netmap-error-cidr-required = Veuillez saisir un sous-réseau valide en notation CIDR (ex. : 192.168.1.0/24).
 
 ## Ports ouverts
 ui-tool-openports-name = Ports ouverts
@@ -4981,6 +4997,110 @@ ui-tool-services-error-action-failed-detail = L'action sur le service a échoué
 ui-tool-services-error-list-failed = Échec du chargement des services : { $error }
 ui-tool-services-exit-code-none = aucun
 
+## Outils réseau, troisième lot : suites de la revue
+ui-tool-cert-stop = Arrêter
+ui-tool-cert-col-port = Port
+ui-tool-cert-sig-alg = Algorithme de signature
+ui-tool-cert-serial = Numéro de série
+ui-tool-cert-sha256 = Empreinte SHA-256
+ui-tool-cert-chain = Chaîne
+ui-tool-cert-chain-element = { $subject } (expire le { $expiry })
+ui-tool-cert-port-title = Port { $port } : { $name }
+ui-tool-cert-port-header = === Port { $port } ===
+ui-tool-cert-detail-host = Hôte
+ui-tool-cert-key-bits = { $bits } bits
+ui-tool-cert-days-left =
+    { $count ->
+        [one] { $count } jour restant
+       *[other] { $count } jours restants
+    }
+ui-tool-cert-days-expired =
+    { $count ->
+        [one] expiré depuis { $count } jour
+       *[other] expiré depuis { $count } jours
+    }
+ui-tool-cert-progress = Ports sondés : { $done } sur { $total }
+ui-tool-cert-scan-found =
+    { $certificates ->
+        [one] { $certificates } certificat trouvé
+       *[other] { $certificates } certificats trouvés
+    } sur { $ports ->
+        [one] { $ports } port sondé.
+       *[other] { $ports } ports sondés.
+    }
+ui-tool-cert-stopped = Inspection arrêtée : { $found }
+ui-tool-cert-error-invalid-host = Saisissez une adresse IP ou un nom d'hôte.
+ui-tool-cert-error-invalid-port = Saisissez des ports de 1 à 65535, séparés par des virgules, ou des plages comme 8000-8010.
+ui-tool-cert-error-too-many-ports = { $count } ports saisis : { $max } au plus sont inspectés à la fois.
+ui-tool-cert-error-connection = La connexion à { $host }:{ $port } a échoué : { $detail }
+ui-tool-cert-error-handshake = La négociation TLS avec { $host }:{ $port } a échoué : { $detail }
+ui-tool-cert-error-no-certificate = Le serveur n'a présenté aucun certificat.
+ui-tool-cert-error-unreadable = Le certificat présenté est illisible.
+ui-tool-cert-error-timeout = Le serveur n'a pas répondu à temps.
+ui-tool-tcptrace-error-invalid-host = Saisissez une adresse IP ou un nom d'hôte.
+ui-tool-tcptrace-error-not-found = Le programme traceroute du système est introuvable.
+ui-tool-tcptrace-error-failed = Le traçage n'a pas pu s'exécuter.
+ui-tool-tcptrace-stopped = Traçage arrêté.
+ui-tool-tcptrace-timed-out = Le traçage a trop duré et a été interrompu.
+ui-tool-tcptrace-no-hops = Aucun saut n'a répondu.
+ui-tool-tcptrace-hop-count =
+    { $count ->
+        [one] { $count } saut
+       *[other] { $count } sauts
+    }
+ui-tool-snmpwalk-community-watermark = Vide : { $community }
+ui-tool-snmpwalk-stopped = Parcours arrêté.
+ui-tool-snmpwalk-agent-silent = L'agent ne répond plus : les entrées lues sont conservées.
+ui-tool-snmpwalk-entry-count =
+    { $count ->
+        [one] { $count } entrée
+       *[other] { $count } entrées
+    }
+ui-tool-snmpwalk-error-invalid-host = Saisissez une adresse IP ou un nom d'hôte.
+ui-tool-snmpwalk-error-invalid-oid = Saisissez un OID numérique comme 1.3.6.1.2.1.1.
+ui-tool-snmpwalk-error-community-too-long = La communauté est limitée à { $max } octets.
+ui-tool-snmpwalk-error-unresolved = Le nom d'hôte n'a pas pu être résolu.
+ui-tool-snmpwalk-error-socket = La requête SNMP n'a pas pu être envoyée.
+ui-tool-snmpwalk-error-no-response = L'agent n'a pas répondu : vérifiez l'hôte, la communauté et que SNMP v2c est activé.
+ui-tool-snmpwalk-error-failed = Le parcours n'a pas pu s'exécuter.
+ui-tool-arpmon-error-read = La table ARP n'a pas pu être lue.
+ui-tool-arpmon-vendor-unknown = Inconnu
+ui-tool-fwtest-stopped = Test arrêté.
+ui-tool-fwtest-error-invalid-host = Aucun des hôtes saisis n'est une adresse IP ou un nom d'hôte.
+ui-tool-fwtest-error-no-ports = Saisissez au moins un port de 1 à 65535.
+ui-tool-fwtest-error-failed = Le test n'a pas pu s'exécuter.
+ui-tool-fwtest-limited = Les hôtes invalides sont écartés, et un test sonde au plus { $max_hosts } hôtes et { $max_ports } ports.
+ui-tool-fwtest-progress = Sondes effectuées : { $done } sur { $total }
+ui-tool-fwtest-unresolved = Non résolu
+ui-tool-fwtest-unresolved-count =
+    { $count ->
+        [one] { $count } sonde n'a pas pu résoudre son nom d'hôte.
+       *[other] { $count } sondes n'ont pas pu résoudre leur nom d'hôte.
+    }
+ui-tool-fwtest-col-host = Hôte
+ui-tool-fwtest-col-port = Port
+ui-tool-fwtest-col-status = Statut
+ui-tool-fwtest-col-latency = Latence
+ui-tool-fwtest-latency-ms = { $ms } ms
+ui-tool-fwtest-cell-open-ms = { $label } ({ $ms } ms)
+ui-tool-fwtest-not-tested = Non testé
+ui-tool-netmap-stop = Arrêter
+ui-tool-netmap-stopped = Découverte arrêtée.
+ui-tool-netmap-error-failed = La découverte n'a pas pu s'exécuter.
+ui-tool-netmap-error-prefix = Saisissez un sous-réseau de /{ $min } à /{ $max }.
+ui-tool-netmap-warning-large = { $count } hôtes à sonder : cela peut prendre longtemps.
+ui-tool-netmap-scan-anyway = Analyser quand même
+ui-tool-netmap-progress = Hôtes sondés : { $done } sur { $total }
+ui-tool-netmap-latency-ms = { $ms } ms
+ui-tool-netmap-role-directory = Contrôleur de domaine / annuaire
+ui-tool-netmap-role-database = Serveur de bases de données
+ui-tool-netmap-role-mail = Serveur de messagerie
+ui-tool-netmap-role-file = Serveur de fichiers / stockage
+ui-tool-netmap-role-web = Serveur web
+ui-tool-netmap-role-remote = Hôte d'administration à distance
+ui-tool-netmap-role-appliance = Passerelle / équipement réseau
+ui-tool-netmap-role-active = Noeud actif
+ui-tool-netmap-role-no-ports = Hôte (aucun port ouvert)
 ## Visionneuse de logs
 ui-tool-logview-name = Visionneuse de logs
 ui-tool-logview-description = Afficher un fichier journal, filtrer ses lignes et suivre ce qui s'y ajoute
@@ -5057,6 +5177,7 @@ ui-tool-cronjob-tasks-empty = Actualisez pour lister les tâches planifiées de 
 ui-tool-cronjob-loading = Chargement des tâches planifiées...
 ui-tool-cronjob-error-empty = Veuillez coller le contenu de crontab à analyser.
 ui-tool-cronjob-error-no-entry = Aucune entrée crontab valide trouvée.
+ui-tool-cronjob-invalid-schedule = Planification invalide : { $reason }
 ui-tool-cronjob-error-timeout = Le chargement des tâches a expiré.
 ui-tool-cronjob-error-failed = Échec du chargement des tâches : { $error }
 ui-tool-cronjob-error-unsupported = Les tâches planifiées ne peuvent être listées que sous Windows.
@@ -5247,5 +5368,7 @@ ui-tool-headers-error-connection = Échec de la connexion : { $reason }
 ui-tool-headers-error-tls = Échec de la négociation TLS : { $reason }
 ui-tool-headers-error-certificate = Le serveur a présenté un autre certificat pendant l'analyse : { $reason }
 ui-tool-headers-error-empty = Le serveur a fermé la connexion sans répondre.
+ui-tool-headers-error-oversized = Les en-têtes de la réponse dépassent { $kib } Kio : ils n'ont pas été analysés.
+ui-tool-headers-error-incomplete = Le serveur a fermé la connexion avant la fin des en-têtes de la réponse : ils n'ont pas été analysés.
 ui-tool-headers-http-status = Statut HTTP : { $code }
 ui-tool-headers-stop = Arrêter

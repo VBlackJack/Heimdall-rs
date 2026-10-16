@@ -32,6 +32,15 @@ pub const ANY: &str = "*";
 /// The bounds of each field, in order, as the C# `ranges` (`CrontabBuilderView.xaml.cs:285`).
 pub const FIELD_RANGES: [(i64, i64); FIELD_COUNT] = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 6)];
 
+/// The bounds of each field as a crontab reads them: the day of the week up to 7, which is
+/// Sunday as 0 is, as Vixie cron and the C# `CronScheduleCalculator` take it.
+pub const CRONTAB_FIELD_RANGES: [(i64, i64); FIELD_COUNT] =
+    [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)];
+
+/// The day of the month and the day of the week, in the fields.
+const DAY_OF_MONTH: usize = 2;
+const DAY_OF_WEEK: usize = 4;
+
 /// Runs listed ahead, as the C# `NextRunsCount`.
 pub const NEXT_RUNS_COUNT: usize = 5;
 
@@ -64,10 +73,20 @@ pub enum CronProblem {
         /// What it holds.
         text: String,
     },
-    /// Field `field`'s values are out of its bounds, as `ToolCronValidationOutOfRange`.
+    /// Field `field`'s values are out of its bounds, as `ToolCronValidationOutOfRange`; a
+    /// range running backwards, a step of 0 or past the field's largest value included.
     OutOfRange {
         /// Which field.
         field: usize,
+    },
+    /// Field `field` holds only characters it may, but is not `*`, a number or a range, each
+    /// with a step or not, in a list: `1-`, `1/2/3`, `1,,2`. The C# reads such a field as it
+    /// can; here it is refused.
+    Malformed {
+        /// Which field.
+        field: usize,
+        /// What it holds.
+        text: String,
     },
 }
 
@@ -105,11 +124,46 @@ pub fn validate(text: &str) -> Option<CronProblem> {
             text: (*part).to_owned(),
         });
     }
+    check_values(&parts, &FIELD_RANGES)
+}
+
+/// [`validate`] as a crontab reads its fields, a day of the week of 7 being Sunday.
+#[must_use]
+pub fn crontab_validate(text: &str) -> Option<CronProblem> {
+    let parts = split(text);
+    if parts.len() != FIELD_COUNT {
+        return Some(CronProblem::FieldCount);
+    }
+    if let Some((field, part)) = parts
+        .iter()
+        .enumerate()
+        .find(|(_, part)| !is_valid_field(part))
+    {
+        return Some(CronProblem::InvalidField {
+            field,
+            text: (*part).to_owned(),
+        });
+    }
+    check_values(&parts, &CRONTAB_FIELD_RANGES)
+}
+
+/// The first field of `parts` that is malformed, or whose values leave its bounds in
+/// `ranges`, each checked before anything is expanded.
+fn check_values(parts: &[&str], ranges: &[(i64, i64); FIELD_COUNT]) -> Option<CronProblem> {
     parts
         .iter()
-        .zip(FIELD_RANGES)
-        .position(|(part, (min, max))| !field_in_range(part, min, max))
-        .map(|field| CronProblem::OutOfRange { field })
+        .zip(ranges)
+        .enumerate()
+        .find_map(
+            |(field, (part, (min, max)))| match expand(part, *min, *max) {
+                Ok(_) => None,
+                Err(FieldError::Syntax) => Some(CronProblem::Malformed {
+                    field,
+                    text: (*part).to_owned(),
+                }),
+                Err(FieldError::Range) => Some(CronProblem::OutOfRange { field }),
+            },
+        )
 }
 
 /// `text` split on spaces, empty parts dropped, as .NET's `Split(' ', RemoveEmptyEntries)`.
@@ -135,69 +189,57 @@ fn number(text: &str) -> Option<i64> {
     text.parse::<i32>().ok().map(i64::from)
 }
 
-/// Whether the numbers of `field` are within `min` and `max`, as the C#
-/// `ValidateFieldRange` (`CrontabBuilderView.xaml.cs:317-349`), with its leniency: the
-/// start of a step that is not a number is not checked.
-fn field_in_range(field: &str, min: i64, max: i64) -> bool {
-    if field == ANY {
-        return true;
+/// Why a field cannot be expanded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FieldError {
+    /// It is not `*`, a number or a range, each with a step or not, in a list.
+    Syntax,
+    /// A value, a range or a step leaves the field's bounds, or a range runs backwards.
+    Range,
+}
+
+/// A value of a field: digits only. A number too large for any field reads as the largest,
+/// so its bounds refuse it.
+fn value(text: &str) -> Result<i64, FieldError> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(FieldError::Syntax);
     }
-    let within = |value: i64| (min..=max).contains(&value);
-    field.split(',').all(|part| {
-        if part.contains('/') {
-            let pieces: Vec<&str> = part.split('/').collect();
-            if pieces.len() != 2 {
-                return false;
-            }
-            if pieces[0] != ANY && number(pieces[0]).is_some_and(|start| !within(start)) {
-                return false;
-            }
-            number(pieces[1]).is_some_and(|step| step > 0)
-        } else if part.contains('-') {
-            let pieces: Vec<&str> = part.split('-').collect();
-            pieces.len() == 2 && pieces.iter().all(|piece| number(piece).is_some_and(within))
-        } else {
-            number(part).is_some_and(within)
-        }
-    })
+    Ok(text.parse::<i64>().unwrap_or(i64::MAX))
 }
 
 /// The values `field` matches between `min` and `max`, as the C# `ExpandField`
-/// (`CrontabBuilderView.xaml.cs:518-562`); `None` when it cannot be read.
-fn expand(field: &str, min: i64, max: i64) -> Option<BTreeSet<i64>> {
-    if field == ANY {
-        return Some((min..=max).collect());
-    }
+/// (`CrontabBuilderView.xaml.cs:518-562`) reads it, without its leniencies: each part of the
+/// list is `*`, a number or a range `a-b`, with a step `/n` or not; `a/n` runs from `a` to
+/// the field's end, as the C#. Every bound is checked before a value is expanded, so
+/// `0-2147483647` is refused, not counted out; a malformed part is refused, never read as
+/// the field's start as the C# does with `10-20/5`; a step is 1 to the field's largest
+/// value.
+fn expand(field: &str, min: i64, max: i64) -> Result<BTreeSet<i64>, FieldError> {
     let mut values = BTreeSet::new();
     for part in field.split(',') {
-        if part.contains('/') {
-            let pieces: Vec<&str> = part.split('/').collect();
-            if pieces.len() != 2 {
-                return None;
-            }
-            let step = number(pieces[1]).filter(|step| *step > 0)?;
-            let start = if pieces[0] == ANY {
-                min
-            } else {
-                number(pieces[0]).unwrap_or(min)
-            };
-            let mut value = start;
-            while value <= max {
-                values.insert(value);
-                value += step;
-            }
-        } else if part.contains('-') {
-            let pieces: Vec<&str> = part.split('-').collect();
-            if pieces.len() != 2 {
-                return None;
-            }
-            let (start, end) = (number(pieces[0])?, number(pieces[1])?);
-            values.extend(start..=end);
+        let (base, step) = match part.split_once('/') {
+            Some((base, step)) => (base, Some(value(step)?)),
+            None => (part, None),
+        };
+        let (start, end) = if base == ANY {
+            (min, max)
+        } else if let Some((first, last)) = base.split_once('-') {
+            (value(first)?, value(last)?)
         } else {
-            values.insert(number(part)?);
+            let single = value(base)?;
+            (single, if step.is_some() { max } else { single })
+        };
+        if start < min || end > max || start > end {
+            return Err(FieldError::Range);
         }
+        let step = step.unwrap_or(1);
+        if step < 1 || step > max {
+            return Err(FieldError::Range);
+        }
+        let step = usize::try_from(step).map_err(|_| FieldError::Range)?;
+        values.extend((start..=end).step_by(step));
     }
-    Some(values)
+    Ok(values)
 }
 
 /// A date and time to the minute, on this computer's wall clock.
@@ -227,9 +269,10 @@ impl Minute {
 
 /// The next `count` minutes after `now` that `fields` match, as the C# `CalculateNextRuns`
 /// (`CrontabBuilderView.xaml.cs:475-516`): from the minute after now, each minute tried in
-/// turn for about a year, a minute matching when its month, day, hour, minute and weekday
-/// all do; each written `2026-10-09 14:05 (Fri)`, as the invariant culture's
-/// `yyyy-MM-dd HH:mm (ddd)`. None when a field cannot be read.
+/// turn for about a year, a minute matching when its month, day, hour and minute all do, its
+/// day by the day of the month or of the week as cron reads them; each written
+/// `2026-10-09 14:05 (Fri)`, as the invariant culture's `yyyy-MM-dd HH:mm (ddd)`. None when
+/// a field is malformed or out of its bounds.
 #[must_use]
 pub fn next_runs(fields: &[String; FIELD_COUNT], now: Minute, count: usize) -> Vec<String> {
     runs(fields, now, count, false)
@@ -254,28 +297,44 @@ fn runs(
     count: usize,
     sunday_seven: bool,
 ) -> Vec<String> {
-    let expanded: Option<Vec<BTreeSet<i64>>> = fields
+    let ranges = if sunday_seven {
+        CRONTAB_FIELD_RANGES
+    } else {
+        FIELD_RANGES
+    };
+    let expanded: Result<Vec<BTreeSet<i64>>, FieldError> = fields
         .iter()
-        .zip(FIELD_RANGES)
+        .zip(ranges)
         .map(|(field, (min, max))| expand(field, min, max))
         .collect();
-    let Some(mut sets) = expanded else {
+    let Ok(mut sets) = expanded else {
         return Vec::new();
     };
-    if sunday_seven && sets[4].remove(&SUNDAY_AS_SEVEN) {
-        sets[4].insert(0);
+    if sunday_seven && sets[DAY_OF_WEEK].remove(&SUNDAY_AS_SEVEN) {
+        sets[DAY_OF_WEEK].insert(0);
     }
+    // When both days are restricted, a day matching either runs, as Vixie cron reads them
+    // (`0 9 1 * 1`: every 1st and every Monday); a field starting with `*` counts as
+    // unrestricted, as there. The C# requires both.
+    let either_day =
+        !fields[DAY_OF_MONTH].starts_with(ANY) && !fields[DAY_OF_WEEK].starts_with(ANY);
     let mut runs = Vec::new();
     for minute in (now.minutes + 1..).take(MAX_MINUTES_SCANNED) {
         if runs.len() >= count {
             break;
         }
         let clock = Minute { minutes: minute }.clock();
-        let matches = sets[3].contains(&i64::from(clock.month))
-            && sets[2].contains(&i64::from(clock.day))
+        let month_day = sets[DAY_OF_MONTH].contains(&i64::from(clock.day));
+        let week_day = sets[DAY_OF_WEEK].contains(&i64::from(clock.weekday));
+        let day = if either_day {
+            month_day || week_day
+        } else {
+            month_day && week_day
+        };
+        let matches = day
+            && sets[3].contains(&i64::from(clock.month))
             && sets[1].contains(&i64::from(clock.hour))
-            && sets[0].contains(&i64::from(clock.minute))
-            && sets[4].contains(&i64::from(clock.weekday));
+            && sets[0].contains(&i64::from(clock.minute));
         if matches {
             runs.push(format!(
                 "{:04}-{:02}-{:02} {:02}:{:02} ({})",

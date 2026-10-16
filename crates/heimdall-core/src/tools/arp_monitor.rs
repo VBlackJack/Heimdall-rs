@@ -22,8 +22,25 @@
 //! and CSV export.
 
 use std::collections::HashMap;
-use std::fmt;
 use std::net::IpAddr;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
+
+use super::csv_cell::quoted;
+use super::net_command::{self, RunEnd};
+
+/// How long `arp -a` may run, as the C# `WaitForExit(5000)`.
+pub const ARP_DEADLINE: Duration = Duration::from_secs(5);
+/// The Windows program, in the system folder.
+pub const WINDOWS_PROGRAM: &str = "arp.exe";
+/// The Unix program, in a system folder.
+pub const UNIX_PROGRAM: &str = "arp";
+/// The argument that dumps the whole table, which is what the parsers expect.
+const ARP_ARGUMENTS: [&str; 1] = ["-a"];
+/// Linux's own view of the table, read when it is there.
+const PROC_NET_ARP: &str = "/proc/net/arp";
+/// Hexadecimal digits of an OUI, the first three octets of a MAC address.
+const OUI_DIGITS: usize = 6;
 
 /// Anomaly status of an ARP table entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,37 +51,34 @@ pub enum ArpStatus {
     Conflict,
 }
 
-impl fmt::Display for ArpStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::New => write!(f, "New"),
-            Self::Known => write!(f, "Known"),
-            Self::Changed => write!(f, "Changed"),
-            Self::Conflict => write!(f, "Conflict"),
-        }
-    }
-}
-
 /// A monitored ARP entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArpEntry {
     pub ip: String,
     pub mac: String,
+    /// The hardware vendor its OUI names; empty when unknown, which the view says.
     pub vendor: String,
     pub status: ArpStatus,
     pub first_seen: String,
     pub last_seen: String,
 }
 
-/// Resolves a MAC address to a known vendor based on its OUI (first 3 octets).
+/// Resolves a MAC address to a known vendor based on its OUI (first 3 octets); `None` when
+/// unknown. Only hexadecimal digits are read, so a MAC address that is not one, written in
+/// another alphabet, is unknown and never cut inside a character.
 #[must_use]
-pub fn lookup_mac_vendor(mac: &str) -> &'static str {
-    let clean = mac.replace(['-', ':', '.'], "").to_ascii_uppercase();
-    if clean.len() < 6 {
-        return "Unknown";
+pub fn lookup_mac_vendor(mac: &str) -> Option<&'static str> {
+    let oui: String = mac
+        .chars()
+        .filter(|c| !matches!(c, '-' | ':' | '.'))
+        .take(OUI_DIGITS)
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if oui.len() < OUI_DIGITS || !oui.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
     }
 
-    match &clean[..6] {
+    let vendor = match oui.as_str() {
         "000C29" | "005056" | "000569" => "VMware",
         "00155D" => "Microsoft Hyper-V",
         "B827EB" | "DC2632" | "E45F01" | "28CDC9" => "Raspberry Pi",
@@ -80,8 +94,9 @@ pub fn lookup_mac_vendor(mac: &str) -> &'static str {
         "0014D1" | "D807B6" => "TP-Link",
         "E4F042" | "9055DE" => "Ubiquiti Networks",
         "00180A" => "Cisco Meraki",
-        _ => "Unknown",
-    }
+        _ => return None,
+    };
+    Some(vendor)
 }
 
 /// Parses Windows `arp -a` output into IP-MAC pairs.
@@ -167,7 +182,7 @@ pub fn detect_changes(
 
     for (ip, mac) in current_raw {
         seen_ips.insert(ip.as_str());
-        let vendor = lookup_mac_vendor(mac).to_owned();
+        let vendor = lookup_mac_vendor(mac).unwrap_or_default().to_owned();
 
         if let Some(&prev) = prev_map.get(ip.as_str()) {
             if prev.mac.eq_ignore_ascii_case(mac) {
@@ -213,53 +228,57 @@ pub fn detect_changes(
     result
 }
 
-/// Builds CSV export content for ARP entries.
+/// Builds CSV export content for ARP entries under the column names `header` (IP, MAC,
+/// vendor, status, first seen, last seen), each status said by `status_label`; every text
+/// cell sanitized against formulas and quoted.
 #[must_use]
-pub fn build_arp_csv(entries: &[ArpEntry]) -> String {
-    let mut out = String::new();
-    out.push_str("IP,MAC,Vendor,Status,FirstSeen,LastSeen\n");
+pub fn build_arp_csv(
+    entries: &[ArpEntry],
+    header: [&str; 6],
+    status_label: impl Fn(ArpStatus) -> String,
+) -> String {
+    let mut out = header.map(quoted).join(",");
+    out.push('\n');
 
     for e in entries {
-        let safe_vendor = e.vendor.replace('"', "\"\"");
         out.push_str(&format!(
-            "{},{},\"{}\",{},{},{}\n",
-            e.ip, e.mac, safe_vendor, e.status, e.first_seen, e.last_seen
+            "{},{},{},{},{},{}\n",
+            quoted(&e.ip),
+            quoted(&e.mac),
+            quoted(&e.vendor),
+            quoted(&status_label(e.status)),
+            quoted(&e.first_seen),
+            quoted(&e.last_seen)
         ));
     }
 
     out
 }
 
-/// Reads the current system ARP cache table.
-pub fn read_system_arp_table() -> Vec<(String, String)> {
-    use std::process::Command;
-
-    #[cfg(windows)]
+/// Reads the current system ARP cache table: `/proc/net/arp` on Linux, else the system's
+/// `arp -a` run by its whole path, ended past [`ARP_DEADLINE`] or when `stop` is set.
+/// `None` when the table could not be read at all.
+#[must_use]
+pub fn read_system_arp_table(stop: &AtomicBool) -> Option<Vec<(String, String)>> {
+    if cfg!(target_os = "linux")
+        && let Ok(content) = std::fs::read_to_string(PROC_NET_ARP)
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let mut cmd = Command::new("arp");
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.arg("-a");
-        if let Ok(output) = cmd.output() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            return parse_windows_arp(&text);
-        }
-        Vec::new()
+        return Some(parse_linux_proc_net_arp(&content));
     }
-    #[cfg(not(windows))]
-    {
-        if let Ok(content) = std::fs::read_to_string("/proc/net/arp") {
-            return parse_linux_proc_net_arp(&content);
-        }
-        let mut cmd = Command::new("arp");
-        cmd.arg("-a");
-        if let Ok(output) = cmd.output() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            return parse_windows_arp(&text);
-        }
-        Vec::new()
+    let program = net_command::system_tool(WINDOWS_PROGRAM, UNIX_PROGRAM)?;
+    let mut output = String::new();
+    let end = net_command::run_lines(&program, &ARP_ARGUMENTS, ARP_DEADLINE, stop, |line| {
+        output.push_str(line);
+        output.push('\n');
+    });
+    if end == RunEnd::NotStarted {
+        return None;
     }
+    Some(if cfg!(target_os = "macos") {
+        parse_macos_arp(&output)
+    } else {
+        parse_windows_arp(&output)
+    })
 }
 
 #[cfg(test)]
@@ -294,9 +313,46 @@ mod tests {
 
     #[test]
     fn oui_vendor_lookup() {
-        assert_eq!(lookup_mac_vendor("00-50-56-11-22-33"), "VMware");
-        assert_eq!(lookup_mac_vendor("b8:27:eb:aa:bb:cc"), "Raspberry Pi");
-        assert_eq!(lookup_mac_vendor("ff-ff-ff-ff-ff-ff"), "Unknown");
+        assert_eq!(lookup_mac_vendor("00-50-56-11-22-33"), Some("VMware"));
+        assert_eq!(lookup_mac_vendor("b8:27:eb:aa:bb:cc"), Some("Raspberry Pi"));
+        assert_eq!(lookup_mac_vendor("ff-ff-ff-ff-ff-ff"), None);
+    }
+
+    #[test]
+    fn a_mac_address_in_another_alphabet_is_unknown_never_a_panic() {
+        // Each of these used to be cut at its sixth byte, inside a character.
+        for mac in [
+            "\u{e9}\u{e9}\u{e9}\u{e9}",
+            "00-5\u{e9}-56-11",
+            "\u{1f600}\u{1f600}",
+            "\u{fffd}\u{fffd}-\u{fffd}",
+            "00",
+            "",
+        ] {
+            assert_eq!(lookup_mac_vendor(mac), None, "{mac:?}");
+        }
+        let lossy = String::from_utf8_lossy(b"  192.168.1.9  00-50-\xff\xfe-11-22-33  dynamic");
+        assert!(parse_windows_arp(&lossy).is_empty());
+    }
+
+    #[test]
+    fn arp_csv_is_sanitized_and_quoted() {
+        let entries = vec![ArpEntry {
+            ip: "10.0.0.1".to_owned(),
+            mac: "00-50-56-01-02-03".to_owned(),
+            vendor: "=HYPERLINK(\"x\")".to_owned(),
+            status: ArpStatus::New,
+            first_seen: "10:00".to_owned(),
+            last_seen: "10:00".to_owned(),
+        }];
+        let csv = build_arp_csv(&entries, ["IP", "MAC", "V", "S", "F", "L"], |status| {
+            format!("{status:?}")
+        });
+        assert!(csv.starts_with("\"IP\",\"MAC\",\"V\",\"S\",\"F\",\"L\"\n"));
+        assert!(
+            csv.contains("\"10.0.0.1\",\"00-50-56-01-02-03\",\"'=HYPERLINK(\"\"x\"\")\",\"New\""),
+            "{csv}"
+        );
     }
 
     #[test]
