@@ -71,11 +71,16 @@ pub fn resolve_whois_server(domain: &str) -> &'static str {
 /// What is asked for `typed`, as the C# `WhoisLookupViewModel.LookupAsync` accepts it
 /// (`InputValidator.ValidateDomain` or `IPAddress.TryParse`): once a leading wildcard and
 /// dots are stripped, as the C# `TryCanonicalizeDomain`, a host [`net_host::checked_host`]
-/// takes, which is what is sent. `None` for anything else: nothing that could add a line to
-/// the query is ever sent.
+/// takes, which is what is sent, without the root's trailing dot a registry would not know.
+/// `None` for anything else: nothing that could add a line to the query is ever sent.
 #[must_use]
 pub fn whois_query(typed: &str) -> Option<String> {
-    net_host::checked_host(typed.trim().trim_start_matches(['*', '.']))
+    net_host::checked_host(typed.trim().trim_start_matches(['*', '.'])).map(|host| {
+        match host.strip_suffix('.') {
+            Some(name) => name.to_owned(),
+            None => host,
+        }
+    })
 }
 
 #[cfg(test)]
@@ -100,6 +105,8 @@ mod tests {
     fn the_query_is_a_checked_name_or_an_ip_address() {
         assert_eq!(whois_query(" example.com "), Some("example.com".to_owned()));
         assert_eq!(whois_query("*.example.com"), Some("example.com".to_owned()));
+        assert_eq!(whois_query("example.com."), Some("example.com".to_owned()));
+        assert_eq!(whois_query("3com.com"), Some("3com.com".to_owned()));
         assert_eq!(whois_query("1.1.1.1"), Some("1.1.1.1".to_owned()));
         assert_eq!(whois_query("2001:db8::1"), Some("2001:db8::1".to_owned()));
         for bad in [

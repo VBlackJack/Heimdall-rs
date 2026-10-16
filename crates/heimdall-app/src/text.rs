@@ -125,9 +125,25 @@ const INVISIBLE: [(char, char); 16] = [
 /// someone is about to agree to run.
 #[must_use]
 pub fn visible_text(text: &str) -> String {
+    written_out(text, false)
+}
+
+/// [`visible_text`] for one line of a file shown as text, a log's: its tabs kept, as they
+/// align its columns and show as what they are; every other control character (a lone
+/// `\r`, an escape), and every format, separator or bidirectional one (`U+202A` to
+/// `U+202E`, `U+2066` to `U+2069`), written out.
+#[must_use]
+pub fn visible_line(text: &str) -> String {
+    written_out(text, true)
+}
+
+/// `text` with every character that would not show as itself written out, tabs kept when
+/// `keep_tabs`.
+fn written_out(text: &str, keep_tabs: bool) -> String {
     let mut shown = String::with_capacity(text.len());
     for c in text.chars() {
-        let hidden = c.is_control() || (c.is_whitespace() && c != ' ') || is_invisible(c);
+        let hidden = !(keep_tabs && c == '\t')
+            && (c.is_control() || (c.is_whitespace() && c != ' ') || is_invisible(c));
         if hidden {
             let _ = write!(shown, "\\u{{{:04X}}}", u32::from(c));
         } else {
@@ -210,7 +226,7 @@ fn skip_string(chars: &mut Peekable<Chars<'_>>) {
 mod tests {
     use super::{
         MAX_SERVER_TEXT_CHARS, TRUNCATION_MARKER, server_prompt_text, server_report_text,
-        server_text, visible_text,
+        server_text, visible_line, visible_text,
     };
 
     #[test]
@@ -299,6 +315,18 @@ mod tests {
         let long = "x".repeat(10_000) + "tail";
         assert!(visible_text(&long).ends_with("tail"), "nothing is cut");
         assert_eq!(visible_text(r#"C:\a b\x.exe "é""#), r#"C:\a b\x.exe "é""#);
+    }
+
+    #[test]
+    fn a_line_shown_keeps_its_tabs_and_writes_out_the_rest() {
+        assert_eq!(
+            visible_line("a\tb\rc\u{1b}[2J\u{202A}\u{202E}\u{2066}\u{2069}\u{0}\u{7F}"),
+            format!(
+                "a\tb{}",
+                r"\u{000D}c\u{001B}[2J\u{202A}\u{202E}\u{2066}\u{2069}\u{0000}\u{007F}"
+            )
+        );
+        assert_eq!(visible_line("caf\u{e9} \u{43f}"), "caf\u{e9} \u{43f}");
     }
 
     #[test]
