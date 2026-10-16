@@ -208,14 +208,16 @@ pub fn read_note(path: &Path) -> io::Result<Note> {
 ///
 /// The folder or the file cannot be written.
 pub fn save_note(path: &Path, content: &str) -> io::Result<Option<SystemTime>> {
-    let folder = path
+    if path
         .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "a note needs a folder"))?;
-    fs::create_dir_all(folder)?;
-    let mut temp = tempfile::NamedTempFile::new_in(folder)?;
-    temp.write_all(content.as_bytes())?;
-    temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|error| error.error)?;
+        .is_none_or(|folder| folder.as_os_str().is_empty())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a note needs a folder",
+        ));
+    }
+    crate::store::replace_file(path, content.as_bytes())?;
     Ok(fs::metadata(path).and_then(|meta| meta.modified()).ok())
 }
 

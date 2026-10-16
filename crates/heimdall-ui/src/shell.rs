@@ -2593,7 +2593,7 @@ impl Shell {
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
         ) || (matches!(message, Message::TypeAhead(_)) && !self.tree_focused);
         let effects = match message {
-            Message::App(message) => self.app.update(message),
+            Message::App(message) => self.update_app(message),
             Message::Editor(message) => self.editors.update(message, &mut self.app),
             message @ (Message::Field { .. }
             | Message::FocusField { .. }
@@ -2659,7 +2659,12 @@ impl Shell {
                 self.relist_monitors();
                 Vec::new()
             }
-            Message::MainWindowClosed => return iced::exit(),
+            Message::MainWindowClosed => {
+                // Said, so that a log ending without it or another end of its own tells of a
+                // process ended from outside: killed, or a native crash.
+                log::info!("the main window closed: Heimdall stops");
+                return iced::exit();
+            }
             Message::BringForward => return self.main_window.map_or_else(Task::none, focus_window),
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
@@ -2814,7 +2819,9 @@ impl Shell {
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
             Message::Tool(tab, message) => {
-                return self.tools.update(tab, message, self.main_window);
+                let task = self.tools.update(tab, message, self.main_window);
+                self.tools.report_unsaved(&mut self.app);
+                return task;
             }
             Message::ToolsFilter(typed) => {
                 self.tools_filter = typed;
@@ -3118,6 +3125,17 @@ impl Shell {
         })
     }
 
+    /// Hands `message` to the core; one asking to close tabs or the window has the tool
+    /// tabs' notes written first, as the C# Notes `CanClose`, so the core's close guard asks
+    /// only about changes that could not be written.
+    fn update_app(&mut self, message: AppMessage) -> Vec<Effect> {
+        if asks_to_close(&message) {
+            self.tools.save_before_closing();
+            self.tools.report_unsaved(&mut self.app);
+        }
+        self.app.update(message)
+    }
+
     /// Closes the open menu, then hands `message` to the core.
     fn closing_menu(&mut self, message: AppMessage) -> Vec<Effect> {
         self.menu = None;
@@ -3130,7 +3148,7 @@ impl Shell {
             self.search.clear();
             self.tree_focused = true;
         }
-        self.app.update(message)
+        self.update_app(message)
     }
 
     /// Hands the gateway dialog to the core with the password and passphrase typed, which
@@ -3439,7 +3457,7 @@ impl Shell {
                 return Vec::new();
             }
         };
-        self.app.update(message)
+        self.update_app(message)
     }
 
     /// Opens the search bar over `tab`'s terminal, or closes it when open; only a tab
@@ -4527,6 +4545,11 @@ impl Shell {
             Effect::FocusMainWindow => {
                 main_window_task(main).then(|main| main.map_or_else(Task::none, focus_window))
             }
+            Effect::SaveTool(tab) => {
+                let task = self.tools.save_before_close(tab, main);
+                self.tools.report_unsaved(&mut self.app);
+                task
+            }
             Effect::Exit => self.exit(),
         }
     }
@@ -4535,6 +4558,7 @@ impl Shell {
     /// its place and size are the ones it had before: the ones kept when it was last shown
     /// as a window.
     fn exit(&self) -> Task<Message> {
+        log::info!("Heimdall quits as asked");
         let Some((path, left)) = self.window_memory.clone() else {
             return iced::exit();
         };
@@ -5906,40 +5930,22 @@ impl Shell {
                     .update(AppMessage::Settings(SettingsMessage::ExternalEditor(typed))),
                 None => Vec::new(),
             },
+            // Applied as soon as what is typed is in the range, as the C# fields bound on
+            // `PropertyChanged` take it (`MainWindow.xaml:3059`): leaving the field with Tab
+            // or a click keeps what it shows. Enter applies it as well.
             Message::FontSizeEdited(typed) => {
                 self.font_size_typed = Some(typed);
-                Vec::new()
+                self.apply_font_size()
             }
-            Message::FontSizeApply => {
-                // A size out of the range stays typed, the C# message under it.
-                let Some(size) = self
-                    .typed_font_size()
-                    .filter(|size| heimdall_core::settings::terminal_font_size_accepted(*size))
-                else {
-                    return Vec::new();
-                };
-                self.font_size_typed = None;
-                self.app
-                    .update(AppMessage::Settings(SettingsMessage::TerminalFontSize(
-                        size,
-                    )))
-            }
+            Message::FontSizeApply => self.apply_font_size(),
+            // As the font size, each as its C# field (`MainWindow.xaml:3246`, the RDP
+            // keep-alive's at 3856, the `CommitNumericText` of `SettingsViewModel.cs:4260`):
+            // typed toward 5000 ms, "5", "50" and "500" are under its range and stay typed.
             Message::SessionFieldEdited(field, typed) => {
                 self.session_typed[field.index()] = Some(typed);
-                Vec::new()
+                self.apply_session_field(field)
             }
-            Message::SessionFieldApply(field) => {
-                // Out of the range, it stays typed, the C# message under it.
-                let Some(seconds) = self
-                    .typed_session(field)
-                    .filter(|seconds| field.accepted(*seconds))
-                else {
-                    return Vec::new();
-                };
-                self.session_typed[field.index()] = None;
-                self.app
-                    .update(AppMessage::Settings(field.applied(seconds)))
-            }
+            Message::SessionFieldApply(field) => self.apply_session_field(field),
             _ => match self.log_directory.take() {
                 Some(typed) => {
                     self.app
@@ -5950,6 +5956,43 @@ impl Shell {
                 None => Vec::new(),
             },
         }
+    }
+
+    /// Applies the font size typed when it is in the range, what is typed then dropped, so
+    /// that the field shows the size set; one out of the range stays typed, the C# message
+    /// under it. The size it already is changes nothing.
+    fn apply_font_size(&mut self) -> Vec<Effect> {
+        let Some(size) = self
+            .typed_font_size()
+            .filter(|size| heimdall_core::settings::terminal_font_size_accepted(*size))
+        else {
+            return Vec::new();
+        };
+        self.font_size_typed = None;
+        if size == self.app.settings().terminal_font_size {
+            return Vec::new();
+        }
+        self.app
+            .update(AppMessage::Settings(SettingsMessage::TerminalFontSize(
+                size,
+            )))
+    }
+
+    /// Applies `field`'s value typed when it is in its range, what is typed then dropped, so
+    /// that the field shows the value set; one out of its range stays typed, the C# message
+    /// under it. The value it already is changes nothing.
+    fn apply_session_field(&mut self, field: SessionField) -> Vec<Effect> {
+        let Some(value) = self
+            .typed_session(field)
+            .filter(|value| field.accepted(*value))
+        else {
+            return Vec::new();
+        };
+        self.session_typed[field.index()] = None;
+        if value == field.value(self.app.settings()) {
+            return Vec::new();
+        }
+        self.app.update(AppMessage::Settings(field.applied(value)))
     }
 
     /// The font size typed, as a number; `None` when nothing is typed or it is not one.
@@ -11341,6 +11384,38 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
     dialog_parts::question(severity, title, body, action)
 }
 
+/// Whether `message` asks to close tabs or the window, each way the window has: a tab's
+/// close button or Ctrl+W, a pane's, a tab menu's group, a window of its own, the window.
+fn asks_to_close(message: &AppMessage) -> bool {
+    matches!(
+        message,
+        AppMessage::RequestCloseTab(_)
+            | AppMessage::WindowCloseRequested
+            | AppMessage::Split(SplitMessage::ClosePane(_))
+            | AppMessage::Float(heimdall_app::FloatMessage::CloseRequested(_))
+            | AppMessage::TabMenu(heimdall_app::TabMenuMessage::Close { .. })
+    )
+}
+
+/// Whether to save a tool's document before its tab closes, as the C# tool's three-way
+/// question (`DiagramEditorView.xaml.cs:668-702`): Cancel, Discard, which closes the tab and
+/// loses the changes, and Save, which closes it once they are written.
+fn close_tool_dialog(name: &str) -> Element<'_, Message> {
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-discard-editor-title"),
+        dialog_parts::body(fl!("ui-dialog-close-tool-body", name = name)),
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(fl!("ui-dialog-close-tool-discard"), styles::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+            dialog_parts::action(fl!("ui-editor-save"), styles::primary).on_press(Message::App(
+                AppMessage::Tools(ToolsMessage::SaveBeforeClose),
+            )),
+        ]),
+    )
+}
+
 /// The dialogs about a tab: closing it or others, naming it, pasting several lines in it.
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (severity, title, body, action) = match dialog {
@@ -11353,6 +11428,7 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             preview,
             ..
         } => return paste_dialog(*lines, *command, preview),
+        Dialog::ConfirmCloseTool { name, .. } => return close_tool_dialog(name),
         Dialog::ConfirmDisconnectDesktop { name, .. } => (
             Severity::Warning,
             fl!("ui-desktop-disconnect-title"),
@@ -13064,6 +13140,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmCloseTransfers { .. }
         | Dialog::ConfirmCloseEdits { .. }
         | Dialog::ConfirmCloseEditor { .. }
+        | Dialog::ConfirmCloseTool { .. }
         | Dialog::ConfirmDiscardEditor { .. }
         | Dialog::ConfirmDownloadBinary { .. }
         | Dialog::ConfirmOpenLink { .. }

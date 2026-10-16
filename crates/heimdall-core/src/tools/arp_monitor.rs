@@ -15,11 +15,11 @@
  */
 
 //! Local ARP table parser and anomaly monitor matching the C#
-//! `Heimdall.Core.Network.ArpTableParser`.
+//! `Heimdall.Core.Network.ArpTableParser` and `ArpMonitorViewModel`.
 //!
-//! Provides platform-specific ARP table parsing (Windows, Linux, macOS),
-//! OUI hardware vendor identification, anomaly detection (new devices, MAC changes / spoofing),
-//! and CSV export.
+//! Provides platform-specific ARP table parsing (Windows, Linux, macOS), the hardware vendor
+//! of each address, change detection between two reads of the table (new hosts, MAC address
+//! changes, hosts gone, one address claimed by two MAC addresses), and CSV export.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -27,6 +27,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use super::csv_cell::quoted;
+use super::mac_vendor::{self, MacVendor};
 use super::net_command::{self, RunEnd};
 
 /// How long `arp -a` may run, as the C# `WaitForExit(5000)`.
@@ -35,19 +36,27 @@ pub const ARP_DEADLINE: Duration = Duration::from_secs(5);
 pub const WINDOWS_PROGRAM: &str = "arp.exe";
 /// The Unix program, in a system folder.
 pub const UNIX_PROGRAM: &str = "arp";
+/// The refresh intervals offered, in seconds, as the C# `CmbInterval` items.
+pub const MONITOR_INTERVALS_SECS: [u64; 4] = [5, 10, 30, 60];
+/// The interval chosen at first, as the C# `SelectedIndex="1"` and its 10000 ms fallback.
+pub const DEFAULT_INTERVAL_SECS: u64 = 10;
 /// The argument that dumps the whole table, which is what the parsers expect.
 const ARP_ARGUMENTS: [&str; 1] = ["-a"];
 /// Linux's own view of the table, read when it is there.
 const PROC_NET_ARP: &str = "/proc/net/arp";
-/// Hexadecimal digits of an OUI, the first three octets of a MAC address.
-const OUI_DIGITS: usize = 6;
 
-/// Anomaly status of an ARP table entry.
+/// Status of an ARP table entry since the read before, as the C# `ArpEntryState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArpStatus {
+    /// First seen in this read.
     New,
-    Known,
+    /// Seen again with the same MAC address, as the C# "stable".
+    Stable,
+    /// Seen again with another MAC address: possible ARP spoofing.
     Changed,
+    /// In an earlier read, not in this one; kept with its last sighting, as the C#.
+    Gone,
+    /// Claimed by more than one MAC address in this very read: one of them is lying.
     Conflict,
 }
 
@@ -56,47 +65,46 @@ pub enum ArpStatus {
 pub struct ArpEntry {
     pub ip: String,
     pub mac: String,
-    /// The hardware vendor its OUI names; empty when unknown, which the view says.
-    pub vendor: String,
+    /// The MAC address it had before its last change, as the C# `PreviousMac`.
+    pub previous_mac: Option<String>,
+    /// The other MAC addresses claiming the same IP address, when in [`ArpStatus::Conflict`].
+    pub conflicting_macs: Vec<String>,
+    /// The hardware vendor its MAC address names; `None` when unknown, which the view says.
+    pub vendor: Option<MacVendor>,
     pub status: ArpStatus,
     pub first_seen: String,
     pub last_seen: String,
 }
 
-/// Resolves a MAC address to a known vendor based on its OUI (first 3 octets); `None` when
-/// unknown. Only hexadecimal digits are read, so a MAC address that is not one, written in
-/// another alphabet, is unknown and never cut inside a character.
-#[must_use]
-pub fn lookup_mac_vendor(mac: &str) -> Option<&'static str> {
-    let oui: String = mac
-        .chars()
-        .filter(|c| !matches!(c, '-' | ':' | '.'))
-        .take(OUI_DIGITS)
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
-    if oui.len() < OUI_DIGITS || !oui.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
+/// Something a read of the table found that deserves the user's eye, as the C# alert
+/// banner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArpAlert {
+    /// The MAC address of `ip` changed, as the C# `ToolArpAlertMacChanged`.
+    MacChanged {
+        ip: String,
+        previous: String,
+        current: String,
+    },
+    /// `ip` is claimed by every one of `macs` at once.
+    Conflict { ip: String, macs: Vec<String> },
+    /// Hosts that appeared since the read before.
+    Appeared(Vec<String>),
+    /// Hosts that left the table since the read before.
+    Gone(Vec<String>),
+}
 
-    let vendor = match oui.as_str() {
-        "000C29" | "005056" | "000569" => "VMware",
-        "00155D" => "Microsoft Hyper-V",
-        "B827EB" | "DC2632" | "E45F01" | "28CDC9" => "Raspberry Pi",
-        "001A2B" | "002608" | "708105" => "Cisco Systems",
-        "F81EDF" | "ACDE48" | "3C15C2" | "A483E7" | "F01898" => "Apple",
-        "001E67" | "00216A" | "A4C494" | "ECF451" => "Intel",
-        "D4BED9" | "5CF9DD" | "847BEB" | "B04414" => "Dell",
-        "001E0B" | "3CD92B" | "705A0F" => "HP",
-        "240AC4" | "30AEA4" | "A47B9D" => "Espressif (ESP32/ESP8266)",
-        "001132" => "Synology",
-        "00089B" => "QNAP",
-        "001B67" => "Cisco-Linksys",
-        "0014D1" | "D807B6" => "TP-Link",
-        "E4F042" | "9055DE" => "Ubiquiti Networks",
-        "00180A" => "Cisco Meraki",
-        _ => return None,
-    };
-    Some(vendor)
+/// What one read of the table changed: every entry, in the order first seen, and the alerts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArpRefresh {
+    pub entries: Vec<ArpEntry>,
+    pub alerts: Vec<ArpAlert>,
+}
+
+/// Resolves a MAC address to a known vendor based on its OUI; `None` when unknown.
+#[must_use]
+pub fn lookup_mac_vendor(mac: &str) -> Option<MacVendor> {
+    mac_vendor::lookup(mac)
 }
 
 /// Parses Windows `arp -a` output into IP-MAC pairs.
@@ -165,76 +173,147 @@ pub fn parse_macos_arp(output: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Compares a newly captured ARP scan against known entries to detect changes and anomalies.
+/// The MAC addresses of each IP address of `current_raw`, each once whatever its case, and
+/// the addresses in the order read: a table lists an address once per interface.
+fn macs_by_ip(current_raw: &[(String, String)]) -> (Vec<&str>, HashMap<&str, Vec<&str>>) {
+    let mut order = Vec::new();
+    let mut macs: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (ip, mac) in current_raw {
+        let known = macs.entry(ip.as_str()).or_insert_with(|| {
+            order.push(ip.as_str());
+            Vec::new()
+        });
+        if !known.iter().any(|seen| seen.eq_ignore_ascii_case(mac)) {
+            known.push(mac.as_str());
+        }
+    }
+    (order, macs)
+}
+
+/// `entry` seen in this read with `macs` at `timestamp`: stable, changed or in conflict, its
+/// alert pushed on `alerts`.
+fn seen_again(entry: &mut ArpEntry, macs: &[&str], timestamp: &str, alerts: &mut Vec<ArpAlert>) {
+    entry.last_seen = timestamp.to_owned();
+    if let [mac] = macs {
+        entry.conflicting_macs.clear();
+        if entry.mac.eq_ignore_ascii_case(mac) {
+            entry.status = ArpStatus::Stable;
+        } else {
+            alerts.push(ArpAlert::MacChanged {
+                ip: entry.ip.clone(),
+                previous: entry.mac.clone(),
+                current: (*mac).to_owned(),
+            });
+            entry.previous_mac = Some(std::mem::replace(&mut entry.mac, (*mac).to_owned()));
+            entry.status = ArpStatus::Changed;
+        }
+    } else {
+        // The MAC address shown stays the one it had, when it is among them.
+        let kept = macs
+            .iter()
+            .find(|mac| mac.eq_ignore_ascii_case(&entry.mac))
+            .or_else(|| macs.first())
+            .map_or_else(|| entry.mac.clone(), |mac| (*mac).to_owned());
+        entry.conflicting_macs = macs
+            .iter()
+            .filter(|mac| !mac.eq_ignore_ascii_case(&kept))
+            .map(|mac| (*mac).to_owned())
+            .collect();
+        entry.mac = kept;
+        // Alerted when it begins, not at every read while it lasts.
+        if entry.status != ArpStatus::Conflict {
+            alerts.push(ArpAlert::Conflict {
+                ip: entry.ip.clone(),
+                macs: macs.iter().map(|mac| (*mac).to_owned()).collect(),
+            });
+        }
+        entry.status = ArpStatus::Conflict;
+    }
+    entry.vendor = lookup_mac_vendor(&entry.mac);
+}
+
+/// Compares a newly captured ARP table with the entries shown, as the C# `ApplySnapshot`:
+/// an address seen again is stable with the same MAC address and changed with another, which
+/// raises an alert; one not seen again is gone, kept with its last sighting; one not shown
+/// before is new, after those shown. Better than the C#, which keys the table by address and
+/// so keeps one MAC address of each: an address claimed by two MAC addresses in the same
+/// table is a conflict, and alerted. Hosts appearing or leaving are alerted too, but not on
+/// the first read, when every host is new.
 #[must_use]
 pub fn detect_changes(
     previous: &[ArpEntry],
     current_raw: &[(String, String)],
     timestamp: &str,
-) -> Vec<ArpEntry> {
-    let mut prev_map: HashMap<&str, &ArpEntry> = HashMap::new();
-    for p in previous {
-        prev_map.insert(&p.ip, p);
-    }
+) -> ArpRefresh {
+    let (order, current) = macs_by_ip(current_raw);
+    let mut alerts = Vec::new();
+    let mut entries = Vec::with_capacity(previous.len() + order.len());
+    let mut gone = Vec::new();
 
-    let mut result = Vec::new();
-    let mut seen_ips = std::collections::HashSet::new();
-
-    for (ip, mac) in current_raw {
-        seen_ips.insert(ip.as_str());
-        let vendor = lookup_mac_vendor(mac).unwrap_or_default().to_owned();
-
-        if let Some(&prev) = prev_map.get(ip.as_str()) {
-            if prev.mac.eq_ignore_ascii_case(mac) {
-                result.push(ArpEntry {
-                    ip: ip.clone(),
-                    mac: mac.clone(),
-                    vendor,
-                    status: ArpStatus::Known,
-                    first_seen: prev.first_seen.clone(),
-                    last_seen: timestamp.to_owned(),
-                });
-            } else {
-                // MAC address changed for the same IP (potential ARP spoofing!)
-                result.push(ArpEntry {
-                    ip: ip.clone(),
-                    mac: mac.clone(),
-                    vendor,
-                    status: ArpStatus::Changed,
-                    first_seen: prev.first_seen.clone(),
-                    last_seen: timestamp.to_owned(),
-                });
+    for shown in previous {
+        let mut entry = shown.clone();
+        match current.get(shown.ip.as_str()) {
+            Some(macs) => seen_again(&mut entry, macs, timestamp, &mut alerts),
+            None => {
+                if entry.status != ArpStatus::Gone {
+                    gone.push(entry.ip.clone());
+                }
+                entry.status = ArpStatus::Gone;
+                entry.conflicting_macs.clear();
             }
+        }
+        entries.push(entry);
+    }
+
+    let mut appeared = Vec::new();
+    for ip in order {
+        if previous.iter().any(|shown| shown.ip == ip) {
+            continue;
+        }
+        let Some(macs) = current.get(ip) else {
+            continue;
+        };
+        let mut entry = ArpEntry {
+            ip: ip.to_owned(),
+            mac: macs
+                .first()
+                .map(|mac| (*mac).to_owned())
+                .unwrap_or_default(),
+            previous_mac: None,
+            conflicting_macs: Vec::new(),
+            vendor: None,
+            status: ArpStatus::New,
+            first_seen: timestamp.to_owned(),
+            last_seen: timestamp.to_owned(),
+        };
+        if macs.len() > 1 {
+            seen_again(&mut entry, macs, timestamp, &mut alerts);
         } else {
-            // New host observed
-            result.push(ArpEntry {
-                ip: ip.clone(),
-                mac: mac.clone(),
-                vendor,
-                status: ArpStatus::New,
-                first_seen: timestamp.to_owned(),
-                last_seen: timestamp.to_owned(),
-            });
+            entry.vendor = lookup_mac_vendor(&entry.mac);
         }
+        appeared.push(entry.ip.clone());
+        entries.push(entry);
     }
 
-    // Retain entries that were not seen in this scan as known (historical)
-    for p in previous {
-        if !seen_ips.contains(p.ip.as_str()) {
-            result.push(p.clone());
+    if !previous.is_empty() {
+        if !appeared.is_empty() {
+            alerts.push(ArpAlert::Appeared(appeared));
+        }
+        if !gone.is_empty() {
+            alerts.push(ArpAlert::Gone(gone));
         }
     }
-
-    result
+    ArpRefresh { entries, alerts }
 }
 
 /// Builds CSV export content for ARP entries under the column names `header` (IP, MAC,
-/// vendor, status, first seen, last seen), each status said by `status_label`; every text
-/// cell sanitized against formulas and quoted.
+/// vendor, status, first seen, last seen), each vendor said by `vendor_label` and each
+/// status by `status_label`; every text cell sanitized against formulas and quoted.
 #[must_use]
 pub fn build_arp_csv(
     entries: &[ArpEntry],
     header: [&str; 6],
+    vendor_label: impl Fn(Option<MacVendor>) -> String,
     status_label: impl Fn(ArpStatus) -> String,
 ) -> String {
     let mut out = header.map(quoted).join(",");
@@ -245,7 +324,7 @@ pub fn build_arp_csv(
             "{},{},{},{},{},{}\n",
             quoted(&e.ip),
             quoted(&e.mac),
-            quoted(&e.vendor),
+            quoted(&vendor_label(e.vendor)),
             quoted(&status_label(e.status)),
             quoted(&e.first_seen),
             quoted(&e.last_seen)
@@ -313,41 +392,32 @@ mod tests {
 
     #[test]
     fn oui_vendor_lookup() {
-        assert_eq!(lookup_mac_vendor("00-50-56-11-22-33"), Some("VMware"));
-        assert_eq!(lookup_mac_vendor("b8:27:eb:aa:bb:cc"), Some("Raspberry Pi"));
-        assert_eq!(lookup_mac_vendor("ff-ff-ff-ff-ff-ff"), None);
+        assert_eq!(
+            lookup_mac_vendor("00-50-56-11-22-33"),
+            Some(MacVendor::Named("VMware"))
+        );
+        assert_eq!(
+            lookup_mac_vendor("b8:27:eb:aa:bb:cc"),
+            Some(MacVendor::Named("Raspberry Pi"))
+        );
+        assert_eq!(lookup_mac_vendor("01-00-5e-00-00-16"), None);
     }
 
     #[test]
-    fn a_mac_address_in_another_alphabet_is_unknown_never_a_panic() {
-        // Each of these used to be cut at its sixth byte, inside a character.
-        for mac in [
-            "\u{e9}\u{e9}\u{e9}\u{e9}",
-            "00-5\u{e9}-56-11",
-            "\u{1f600}\u{1f600}",
-            "\u{fffd}\u{fffd}-\u{fffd}",
-            "00",
-            "",
-        ] {
-            assert_eq!(lookup_mac_vendor(mac), None, "{mac:?}");
-        }
+    fn a_mac_address_in_another_alphabet_is_never_parsed() {
         let lossy = String::from_utf8_lossy(b"  192.168.1.9  00-50-\xff\xfe-11-22-33  dynamic");
         assert!(parse_windows_arp(&lossy).is_empty());
     }
 
     #[test]
     fn arp_csv_is_sanitized_and_quoted() {
-        let entries = vec![ArpEntry {
-            ip: "10.0.0.1".to_owned(),
-            mac: "00-50-56-01-02-03".to_owned(),
-            vendor: "=HYPERLINK(\"x\")".to_owned(),
-            status: ArpStatus::New,
-            first_seen: "10:00".to_owned(),
-            last_seen: "10:00".to_owned(),
-        }];
-        let csv = build_arp_csv(&entries, ["IP", "MAC", "V", "S", "F", "L"], |status| {
-            format!("{status:?}")
-        });
+        let entries = vec![entry("10.0.0.1", "00-50-56-01-02-03", ArpStatus::New)];
+        let csv = build_arp_csv(
+            &entries,
+            ["IP", "MAC", "V", "S", "F", "L"],
+            |_| "=HYPERLINK(\"x\")".to_owned(),
+            |status| format!("{status:?}"),
+        );
         assert!(csv.starts_with("\"IP\",\"MAC\",\"V\",\"S\",\"F\",\"L\"\n"));
         assert!(
             csv.contains("\"10.0.0.1\",\"00-50-56-01-02-03\",\"'=HYPERLINK(\"\"x\"\")\",\"New\""),
@@ -355,31 +425,201 @@ mod tests {
         );
     }
 
-    #[test]
-    fn change_detection_new_and_changed() {
-        let prev = vec![ArpEntry {
-            ip: "10.0.0.1".to_owned(),
-            mac: "00-50-56-01-02-03".to_owned(),
-            vendor: "VMware".to_owned(),
-            status: ArpStatus::Known,
+    fn entry(ip: &str, mac: &str, status: ArpStatus) -> ArpEntry {
+        ArpEntry {
+            ip: ip.to_owned(),
+            mac: mac.to_owned(),
+            previous_mac: None,
+            conflicting_macs: Vec::new(),
+            vendor: lookup_mac_vendor(mac),
+            status,
             first_seen: "10:00".to_owned(),
             last_seen: "10:00".to_owned(),
-        }];
+        }
+    }
 
-        // Case 1: same MAC -> Known
-        let current_same = vec![("10.0.0.1".to_owned(), "00-50-56-01-02-03".to_owned())];
-        let res_same = detect_changes(&prev, &current_same, "10:05");
-        assert_eq!(res_same[0].status, ArpStatus::Known);
-        assert_eq!(res_same[0].last_seen, "10:05");
+    fn table(rows: &[(&str, &str)]) -> Vec<(String, String)> {
+        rows.iter()
+            .map(|(ip, mac)| ((*ip).to_owned(), (*mac).to_owned()))
+            .collect()
+    }
 
-        // Case 2: different MAC -> Changed
-        let current_changed = vec![("10.0.0.1".to_owned(), "B8-27-EB-01-02-03".to_owned())];
-        let res_changed = detect_changes(&prev, &current_changed, "10:06");
-        assert_eq!(res_changed[0].status, ArpStatus::Changed);
+    fn statuses(refresh: &ArpRefresh) -> Vec<(&str, ArpStatus)> {
+        refresh
+            .entries
+            .iter()
+            .map(|entry| (entry.ip.as_str(), entry.status))
+            .collect()
+    }
 
-        // Case 3: new IP -> New
-        let current_new = vec![("10.0.0.2".to_owned(), "B8-27-EB-01-02-03".to_owned())];
-        let res_new = detect_changes(&prev, &current_new, "10:07");
-        assert_eq!(res_new[0].status, ArpStatus::New);
+    #[test]
+    fn change_detection_new_stable_changed_and_gone() {
+        let prev = vec![
+            entry("10.0.0.1", "00-50-56-01-02-03", ArpStatus::Stable),
+            entry("10.0.0.2", "00-50-56-01-02-04", ArpStatus::New),
+        ];
+
+        // Same MAC address, whatever its case: stable, seen now, first seen kept.
+        let res = detect_changes(
+            &prev,
+            &table(&[
+                ("10.0.0.1", "00-50-56-01-02-03"),
+                ("10.0.0.2", "00-50-56-01-02-04"),
+            ]),
+            "10:05",
+        );
+        assert_eq!(
+            statuses(&res),
+            [
+                ("10.0.0.1", ArpStatus::Stable),
+                ("10.0.0.2", ArpStatus::Stable)
+            ],
+            "a new host is stable at the next read, as the C#"
+        );
+        assert_eq!(res.entries[0].last_seen, "10:05");
+        assert_eq!(res.entries[0].first_seen, "10:00");
+        assert!(res.alerts.is_empty());
+
+        // Another MAC address: changed, the old one kept and alerted.
+        let res = detect_changes(
+            &prev,
+            &table(&[
+                ("10.0.0.1", "B8-27-EB-01-02-03"),
+                ("10.0.0.2", "00-50-56-01-02-04"),
+            ]),
+            "10:06",
+        );
+        assert_eq!(res.entries[0].status, ArpStatus::Changed);
+        assert_eq!(res.entries[0].mac, "B8-27-EB-01-02-03");
+        assert_eq!(
+            res.entries[0].previous_mac.as_deref(),
+            Some("00-50-56-01-02-03")
+        );
+        assert_eq!(
+            res.entries[0].vendor,
+            Some(MacVendor::Named("Raspberry Pi")),
+            "the vendor follows the MAC address"
+        );
+        assert_eq!(
+            res.alerts,
+            [ArpAlert::MacChanged {
+                ip: "10.0.0.1".to_owned(),
+                previous: "00-50-56-01-02-03".to_owned(),
+                current: "B8-27-EB-01-02-03".to_owned(),
+            }]
+        );
+
+        // A new address after those shown, one missing gone with its last sighting.
+        let res = detect_changes(
+            &prev,
+            &table(&[
+                ("10.0.0.3", "B8-27-EB-01-02-05"),
+                ("10.0.0.1", "00-50-56-01-02-03"),
+            ]),
+            "10:07",
+        );
+        assert_eq!(
+            statuses(&res),
+            [
+                ("10.0.0.1", ArpStatus::Stable),
+                ("10.0.0.2", ArpStatus::Gone),
+                ("10.0.0.3", ArpStatus::New)
+            ]
+        );
+        assert_eq!(res.entries[1].last_seen, "10:00", "its last sighting kept");
+        assert_eq!(
+            res.alerts,
+            [
+                ArpAlert::Appeared(vec!["10.0.0.3".to_owned()]),
+                ArpAlert::Gone(vec!["10.0.0.2".to_owned()])
+            ]
+        );
+
+        // Still gone: said once, not at every read; back again, stable.
+        let again = detect_changes(
+            &res.entries,
+            &table(&[
+                ("10.0.0.1", "00-50-56-01-02-03"),
+                ("10.0.0.3", "B8-27-EB-01-02-05"),
+            ]),
+            "10:08",
+        );
+        assert_eq!(again.entries[1].status, ArpStatus::Gone);
+        assert!(again.alerts.is_empty(), "{:?}", again.alerts);
+        let back = detect_changes(
+            &again.entries,
+            &table(&[("10.0.0.2", "00-50-56-01-02-04")]),
+            "10:09",
+        );
+        assert_eq!(back.entries[1].status, ArpStatus::Stable);
+        assert_eq!(back.entries[1].last_seen, "10:09");
+    }
+
+    #[test]
+    fn the_first_read_alerts_nothing_but_conflicts() {
+        let res = detect_changes(
+            &[],
+            &table(&[
+                ("10.0.0.1", "00-50-56-01-02-03"),
+                ("10.0.0.2", "00-50-56-01-02-04"),
+            ]),
+            "10:00",
+        );
+        assert_eq!(
+            statuses(&res),
+            [("10.0.0.1", ArpStatus::New), ("10.0.0.2", ArpStatus::New)]
+        );
+        assert!(res.alerts.is_empty(), "every host is new on the first read");
+    }
+
+    #[test]
+    fn an_address_claimed_by_two_mac_addresses_is_a_conflict_alerted_once() {
+        let prev = vec![entry("10.0.0.1", "00-50-56-01-02-03", ArpStatus::Stable)];
+        let both = table(&[
+            ("10.0.0.1", "B8-27-EB-01-02-03"),
+            ("10.0.0.1", "00-50-56-01-02-03"),
+            ("10.0.0.1", "00-50-56-01-02-03"),
+        ]);
+        let res = detect_changes(&prev, &both, "10:05");
+        assert_eq!(res.entries.len(), 1, "one entry per address");
+        let conflict = &res.entries[0];
+        assert_eq!(conflict.status, ArpStatus::Conflict);
+        assert_eq!(
+            conflict.mac, "00-50-56-01-02-03",
+            "the one it had stays shown"
+        );
+        assert_eq!(conflict.conflicting_macs, ["B8-27-EB-01-02-03"]);
+        assert_eq!(
+            res.alerts,
+            [ArpAlert::Conflict {
+                ip: "10.0.0.1".to_owned(),
+                macs: vec![
+                    "B8-27-EB-01-02-03".to_owned(),
+                    "00-50-56-01-02-03".to_owned()
+                ],
+            }]
+        );
+        let lasting = detect_changes(&res.entries, &both, "10:06");
+        assert_eq!(lasting.entries[0].status, ArpStatus::Conflict);
+        assert!(lasting.alerts.is_empty(), "alerted when it begins");
+        let over = detect_changes(
+            &lasting.entries,
+            &table(&[("10.0.0.1", "00-50-56-01-02-03")]),
+            "10:07",
+        );
+        assert_eq!(over.entries[0].status, ArpStatus::Stable);
+        assert!(over.entries[0].conflicting_macs.is_empty());
+
+        // A new address in conflict from its first read.
+        let first = detect_changes(
+            &[],
+            &table(&[
+                ("10.0.0.9", "00-50-56-01-02-03"),
+                ("10.0.0.9", "00-50-56-01-02-09"),
+            ]),
+            "10:00",
+        );
+        assert_eq!(first.entries[0].status, ArpStatus::Conflict);
+        assert_eq!(first.alerts.len(), 1);
     }
 }

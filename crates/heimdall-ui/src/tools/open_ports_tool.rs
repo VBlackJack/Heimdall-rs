@@ -17,12 +17,14 @@
 //! The Open Ports tool view: local TCP/UDP listening ports and active sockets
 //! enumeration with owning process resolution, search filter, and CSV export.
 
-use heimdall_app::TabId;
+use heimdall_app::{TabId, server_text};
 use iced::widget::{column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
-use heimdall_core::tools::open_ports::{self, PortEntry};
+use heimdall_core::tools::open_ports::{self, IDLE_PID, PortEntry};
+use heimdall_core::tools::system_listing::ListingError;
 
+use super::system_tables::{listing_error_text, read_time_now};
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -37,8 +39,8 @@ const MAX_DISPLAY_ROWS: usize = 300;
 pub enum OpenPortsMessage {
     /// Refresh the socket list now.
     Refresh,
-    /// Refresh finished with results.
-    Finished(Vec<PortEntry>),
+    /// Refresh finished with the sockets, or why they could not be read.
+    Finished(Result<Vec<PortEntry>, ListingError>),
     /// Filter query text changed.
     FilterChanged(String),
     /// Copy CSV export to clipboard.
@@ -74,9 +76,11 @@ impl OpenPortsPane {
 
                 let task = Task::perform(
                     async move {
-                        tokio::task::spawn_blocking(open_ports::run_netstat_command)
+                        tokio::task::spawn_blocking(open_ports::run_open_ports)
                             .await
-                            .unwrap_or_default()
+                            .unwrap_or_else(|error| {
+                                Err(ListingError::NotStarted(error.to_string()))
+                            })
                     },
                     move |res| {
                         Message::Tool(
@@ -88,18 +92,19 @@ impl OpenPortsPane {
 
                 Outcome::Task(task)
             }
-            OpenPortsMessage::Finished(res) => {
+            OpenPortsMessage::Finished(Ok(ports)) => {
                 self.running = false;
-                self.last_count = res.len();
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let hour = (secs / 3600) % 24;
-                let min = (secs / 60) % 60;
-                let sec = secs % 60;
-                self.last_time = Some(format!("{hour:02}:{min:02}:{sec:02}"));
-                self.ports = res;
+                self.last_count = ports.len();
+                self.last_time = Some(read_time_now());
+                self.ports = ports;
+                Outcome::None
+            }
+            OpenPortsMessage::Finished(Err(error)) => {
+                // A failure is said, never shown as an empty list.
+                self.running = false;
+                self.error = Some(listing_error_text(&error));
+                self.ports.clear();
+                self.last_time = None;
                 Outcome::None
             }
             OpenPortsMessage::FilterChanged(filter) => {
@@ -114,7 +119,8 @@ impl OpenPortsPane {
                     .cloned()
                     .collect();
                 if !matching.is_empty() {
-                    let csv = open_ports::build_open_ports_csv(&matching);
+                    let csv =
+                        open_ports::build_open_ports_csv(&matching, &column_titles(), process_text);
                     Outcome::Copy(CopySlot::OpenPortsCsv, csv)
                 } else {
                     Outcome::None
@@ -129,14 +135,14 @@ impl OpenPortsPane {
         if q.is_empty() {
             true
         } else {
-            p.protocol.to_lowercase().contains(&q)
+            p.protocol.name().to_lowercase().contains(&q)
                 || p.local_address.to_lowercase().contains(&q)
                 || p.local_port.to_string().contains(&q)
                 || p.remote_address.to_lowercase().contains(&q)
                 || p.remote_port.to_string().contains(&q)
-                || p.state.to_lowercase().contains(&q)
-                || p.pid.to_string().contains(&q)
-                || p.process_name.to_lowercase().contains(&q)
+                || p.state.name().to_lowercase().contains(&q)
+                || p.pid.is_some_and(|pid| pid.to_string().contains(&q))
+                || process_text(p).to_lowercase().contains(&q)
         }
     }
 
@@ -210,39 +216,31 @@ impl OpenPortsPane {
             .filter(|p| self.matches_filter(p))
             .collect();
         if !matching.is_empty() {
+            let [
+                proto,
+                local_addr,
+                local_port,
+                remote_addr,
+                remote_port,
+                state_title,
+                pid,
+                process,
+            ] = column_titles();
+            let title = |label: String, width: Length| {
+                text(label)
+                    .size(font_size::CAPTION)
+                    .style(text::secondary)
+                    .width(width)
+            };
             let table_headers = row![
-                text(fl!("ui-tool-openports-col-proto"))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .width(Length::Fixed(60.0)),
-                text(fl!("ui-tool-openports-col-local-addr"))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .width(Length::Fixed(140.0)),
-                text(fl!("ui-tool-openports-col-local-port"))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .width(Length::Fixed(80.0)),
-                text(fl!("ui-tool-openports-col-remote-addr"))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .width(Length::Fixed(140.0)),
-                text(fl!("ui-tool-openports-col-remote-port"))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .width(Length::Fixed(80.0)),
-                text(fl!("ui-tool-openports-col-state"))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .width(Length::Fixed(90.0)),
-                text(fl!("ui-tool-openports-col-pid"))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .width(Length::Fixed(60.0)),
-                text(fl!("ui-tool-openports-col-process"))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .width(Length::FillPortion(2)),
+                title(proto, Length::Fixed(60.0)),
+                title(local_addr, Length::Fixed(140.0)),
+                title(local_port, Length::Fixed(80.0)),
+                title(remote_addr, Length::Fixed(140.0)),
+                title(remote_port, Length::Fixed(80.0)),
+                title(state_title, Length::Fixed(90.0)),
+                title(pid, Length::Fixed(60.0)),
+                title(process, Length::FillPortion(2)),
             ]
             .spacing(spacing::SM);
 
@@ -250,7 +248,7 @@ impl OpenPortsPane {
 
             for p in matching.iter().take(MAX_DISPLAY_ROWS) {
                 let r = row![
-                    text(&p.protocol)
+                    text(p.protocol.name())
                         .size(font_size::BODY)
                         .font(super::BOX_FONT)
                         .width(Length::Fixed(60.0)),
@@ -274,15 +272,15 @@ impl OpenPortsPane {
                     .size(font_size::BODY)
                     .font(super::BOX_FONT)
                     .width(Length::Fixed(80.0)),
-                    text(&p.state)
+                    text(p.state.name())
                         .size(font_size::BODY)
                         .font(super::BOX_FONT)
                         .width(Length::Fixed(90.0)),
-                    text(p.pid.to_string())
+                    text(p.pid.map(|pid| pid.to_string()).unwrap_or_default())
                         .size(font_size::BODY)
                         .font(super::BOX_FONT)
                         .width(Length::Fixed(60.0)),
-                    text(&p.process_name)
+                    text(process_text(p))
                         .size(font_size::BODY)
                         .font(super::BOX_FONT)
                         .width(Length::FillPortion(2)),
@@ -297,10 +295,143 @@ impl OpenPortsPane {
                 .style(styles::card);
 
             body = body.push(card);
-        } else if !self.running && self.ports.is_empty() {
+        } else if !self.running && self.ports.is_empty() && self.error.is_none() {
             body = body.push(super::empty_state(fl!("ui-tool-openports-empty-state")));
         }
 
         super::content_column(body)
+    }
+}
+
+/// The table's column titles, in the user's language: the view's and the CSV export's.
+fn column_titles() -> [String; 8] {
+    [
+        fl!("ui-tool-openports-col-proto"),
+        fl!("ui-tool-openports-col-local-addr"),
+        fl!("ui-tool-openports-col-local-port"),
+        fl!("ui-tool-openports-col-remote-addr"),
+        fl!("ui-tool-openports-col-remote-port"),
+        fl!("ui-tool-openports-col-state"),
+        fl!("ui-tool-openports-col-pid"),
+        fl!("ui-tool-openports-col-process"),
+    ]
+}
+
+/// The process owning a socket as shown: its name made safe to show; as the C#
+/// `ResolveProcessName`, its identifier in brackets when it has no name any more (a process
+/// gone since), the idle process named in the user's language; nothing when the system does
+/// not say which process it is.
+fn process_text(entry: &PortEntry) -> String {
+    match (&entry.process_name, entry.pid) {
+        (Some(name), _) => server_text(name),
+        (None, Some(IDLE_PID)) => fl!("ui-tool-openports-process-idle"),
+        (None, Some(pid)) => fl!("ui-tool-openports-process-pid", pid = pid),
+        (None, None) => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use heimdall_app::tools::ToolId;
+    use heimdall_app::{App, AppConfig, Message as AppMessage, ToolsMessage};
+    use heimdall_core::tools::open_ports::{PortState, Protocol};
+    use heimdall_ssh::AgentSource;
+    use heimdall_term::GridSize;
+
+    use super::*;
+
+    /// A tool tab's identifier, from an application of its own in `dir`.
+    fn tab(dir: &std::path::Path) -> TabId {
+        let mut app = App::new(AppConfig {
+            profiles_file: dir.join("profiles.toml"),
+            known_hosts: dir.join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: GridSize { cols: 80, rows: 24 },
+            files_start: dir.to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        });
+        let _ = app.update(AppMessage::Tools(ToolsMessage::Open {
+            tool: ToolId::OpenPorts,
+            title: String::new(),
+        }));
+        app.tabs[0].id
+    }
+
+    fn entry(pid: Option<u32>, process_name: Option<&str>) -> PortEntry {
+        PortEntry {
+            protocol: Protocol::Tcp,
+            local_address: "0.0.0.0".to_owned(),
+            local_port: 135,
+            remote_address: "0.0.0.0".to_owned(),
+            remote_port: 0,
+            state: PortState::Listen,
+            pid,
+            process_name: process_name.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_process_is_named_or_said_by_its_identifier_in_the_users_language() {
+        assert_eq!(process_text(&entry(Some(4), Some("System"))), "System");
+        assert_eq!(
+            process_text(&entry(Some(0), None)),
+            fl!("ui-tool-openports-process-idle")
+        );
+        assert_eq!(process_text(&entry(Some(4242), None)), "[4242]");
+        assert_eq!(process_text(&entry(None, None)), "");
+        assert_eq!(
+            process_text(&entry(Some(1), Some("evil\u{202E}gpj.exe"))),
+            "evilgpj.exe"
+        );
+    }
+
+    #[test]
+    fn a_failed_listing_is_said_not_shown_as_no_port() {
+        let dir = tempfile::tempdir().expect("dir");
+        let tab = tab(dir.path());
+        let mut pane = OpenPortsPane::default();
+        let _ = pane.update(
+            tab,
+            OpenPortsMessage::Finished(Ok(vec![entry(Some(4), Some("System"))])),
+        );
+        assert_eq!(pane.ports.len(), 1);
+        assert!(pane.last_time.is_some());
+        let _ = pane.update(tab, OpenPortsMessage::Finished(Err(ListingError::TimedOut)));
+        assert_eq!(pane.error, Some(fl!("ui-tool-systable-error-timeout")));
+        assert!(pane.ports.is_empty());
+        assert_eq!(pane.last_time, None);
+        assert!(!pane.running);
+    }
+
+    #[test]
+    fn the_csv_export_has_the_users_column_titles_and_quoted_cells() {
+        let dir = tempfile::tempdir().expect("dir");
+        let tab = tab(dir.path());
+        let mut pane = OpenPortsPane::default();
+        let _ = pane.update(
+            tab,
+            OpenPortsMessage::Finished(Ok(vec![entry(Some(0), None)])),
+        );
+        let Outcome::Copy(CopySlot::OpenPortsCsv, csv) =
+            pane.update(tab, OpenPortsMessage::CopyCsv)
+        else {
+            panic!("a CSV export");
+        };
+        let mut lines = csv.lines();
+        assert_eq!(
+            lines.next(),
+            Some(format!("\"{}\"", column_titles().join("\",\"")).as_str())
+        );
+        assert_eq!(
+            lines.next(),
+            Some(
+                format!(
+                    "\"TCP\",\"0.0.0.0\",\"135\",\"0.0.0.0\",\"0\",\"LISTEN\",\"0\",\"{}\"",
+                    fl!("ui-tool-openports-process-idle")
+                )
+                .as_str()
+            )
+        );
     }
 }

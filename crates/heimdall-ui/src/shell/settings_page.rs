@@ -1369,8 +1369,9 @@ impl Shell {
         line.into()
     }
 
-    /// A number typed and applied with Enter, its unit after it, what is said of it under
-    /// it, and its rule while what is typed is out of its range; greyed when not `enabled`.
+    /// A number applied as soon as what is typed is in its range, its unit after it, what is
+    /// said of it under it, and its rule while what is typed is out of its range; greyed
+    /// when not `enabled`.
     fn number_row(&self, field: SessionField, enabled: bool) -> Element<'_, Message> {
         let shown = field.value(self.app.settings()).to_string();
         let typed = self.session_typed[field.index()].clone().unwrap_or(shown);
@@ -1404,8 +1405,8 @@ impl Shell {
         body.into()
     }
 
-    /// The terminals' font size, applied with Enter; one out of the range stays typed, the
-    /// C# message under it.
+    /// The terminals' font size, applied as soon as what is typed is in the range; one out
+    /// of the range stays typed, the C# message under it.
     fn font_size_row(&self) -> Element<'_, Message> {
         let shown = self.app.settings().terminal_font_size.to_string();
         let typed = self.font_size_typed.clone().unwrap_or(shown);

@@ -1821,6 +1821,8 @@ ui-editor-notice-failed = Échec de l'enregistrement : { $reason }
 ui-dialog-discard-editor-title = Modifications non enregistrées
 ui-dialog-discard-editor-body = Le fichier a des modifications non enregistrées. Fermer quand même ?
 ui-dialog-close-editor-body = L'éditeur sur "{ $name }" a des modifications non enregistrées. Fermer et les abandonner ?
+ui-dialog-close-tool-body = "{ $name }" a des modifications non enregistrées. Les enregistrer avant de fermer l'onglet ?
+ui-dialog-close-tool-discard = Abandonner
 ui-dialog-unsaved-editors = { $count ->
     [one] { $count } éditeur a des modifications non enregistrées, qui seraient perdues.
    *[other] { $count } éditeurs ont des modifications non enregistrées, qui seraient perdues.
@@ -3786,6 +3788,8 @@ ui-rdp-letterbox-hint = Fixe { $width }x{ $height } - redimensionnez la fenêtre
 ui-settings-rdp-connect-timeout = Délai du watchdog de connexion RDP (0 = désactivé)
 ui-settings-rdp-resize-delay = Délai de stabilisation de la résolution après connexion (0 = désactivé)
 ui-settings-rdp-resize-delay-refused = Le délai de redimensionnement RDP doit être nul ou compris entre { $min } et { $max } ms.
+ui-settings-rdp-keep-alive-interval = Intervalle de maintien de session
+ui-settings-rdp-keep-alive-interval-refused = L'intervalle de maintien de connexion RDP doit être compris entre { $min } et { $max } ms.
 ui-settings-rdp-connect-timeout-off = Désactivé
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Rendre le clavier depuis un bureau distant
@@ -4798,7 +4802,7 @@ ui-tool-arpmon-col-status = Statut
 ui-tool-arpmon-col-first-seen = Première détection
 ui-tool-arpmon-col-last-seen = Dernière détection
 ui-tool-arpmon-status-new = Nouveau
-ui-tool-arpmon-status-known = Connu
+ui-tool-arpmon-status-stable = Stable
 ui-tool-arpmon-status-changed = Modifié
 ui-tool-arpmon-status-conflict = Conflit
 
@@ -4806,7 +4810,7 @@ ui-tool-arpmon-status-conflict = Conflit
 ui-tool-fwtest-name = Testeur de sortie pare-feu
 ui-tool-fwtest-description = Tester la connectivité sortante à travers les ports du pare-feu, avec mesure de latence
 ui-tool-fwtest-hosts = Hôtes cibles
-ui-tool-fwtest-hosts-watermark = Hôtes séparés par des virgules ou des espaces (ex. : 1.1.1.1, 8.8.8.8)
+ui-tool-fwtest-hosts-watermark = Un hôte par ligne, ou séparés par des virgules (ex. : 1.1.1.1, 8.8.8.8)
 ui-tool-fwtest-ports = Ports à tester
 ui-tool-fwtest-ports-watermark = 80,443,8080
 ui-tool-fwtest-start = Tester la sortie
@@ -4839,42 +4843,48 @@ ui-tool-netmap-error-cidr-required = Veuillez saisir un sous-réseau valide en n
 
 ## Ports ouverts
 ui-tool-openports-name = Ports ouverts
-ui-tool-openports-description = Inspecter les ports TCP/UDP actifs et sockets avec identification des processus
+ui-tool-openports-description = Inspecter les ports TCP et UDP actifs et les sockets avec identification des processus
 ui-tool-openports-title = Ports ouverts
 ui-tool-openports-help =
-    Liste tous les ports TCP et UDP ouverts sur la machine locale via netstat.
+    Liste les ports TCP et UDP ouverts de cet ordinateur avec le processus qui détient chacun.
 
-    Affiche le nom du processus et le PID pour chaque connexion.
+    Sous Windows, les tables viennent de Windows PowerShell (Get-NetTCPConnection, Get-NetUDPEndpoint, Get-Process) ; sous Linux, de ss, qui ne nomme les processus des autres utilisateurs qu'à root.
 
-    Utilisez le filtre pour rechercher par processus, adresse, port ou etat.
+    Utilisez le filtre pour rechercher par processus, adresse, port ou état.
 ui-tool-openports-refresh = Actualiser
 ui-tool-openports-scanning = Actualisation...
 ui-tool-openports-copy-csv = Exporter CSV
-ui-tool-openports-filter-placeholder = Filtrer par processus, adresse, port, etat...
-ui-tool-openports-status = { $count } connexions a { $time }
-ui-tool-openports-empty-state = Cliquez sur Actualiser pour lister les ports ouverts et connexions.
+ui-tool-openports-filter-placeholder = Filtrer par processus, adresse, port, état...
+ui-tool-openports-status = { $count ->
+    [one] { $count } connexion à { $time }
+   *[other] { $count } connexions à { $time }
+}
+ui-tool-openports-empty-state = Cliquez sur Actualiser pour lister les ports ouverts et les connexions.
 ui-tool-openports-col-proto = Protocole
 ui-tool-openports-col-local-addr = Adresse locale
 ui-tool-openports-col-local-port = Port local
 ui-tool-openports-col-remote-addr = Adresse distante
 ui-tool-openports-col-remote-port = Port distant
-ui-tool-openports-col-state = Etat
+ui-tool-openports-col-state = État
 ui-tool-openports-col-pid = PID
 ui-tool-openports-col-process = Processus
 
-## Interfaces reseau
-ui-tool-netif-name = Interfaces reseau
-ui-tool-netif-description = Lister les cartes reseau avec vitesse, adresse MAC, IPv4, passerelle et statut DHCP
-ui-tool-netif-title = Interfaces reseau
+## Interfaces réseau
+ui-tool-netif-name = Interfaces réseau
+ui-tool-netif-description = Lister les cartes réseau avec vitesse, adresse MAC, IPv4, passerelle et statut DHCP
+ui-tool-netif-title = Interfaces réseau
 ui-tool-netif-help =
-    Liste toutes les interfaces reseau de la machine locale via ipconfig /all.
+    Liste les interfaces réseau de cet ordinateur telles que le système les décrit : type, état opérationnel, vitesse de liaison, adresse MAC, adresse IPv4, masque, passerelle et DHCP.
 
-    Affiche nom, type, statut, vitesse, adresse MAC, IPv4, masque, passerelle et DHCP.
+    Une vitesse que le système ne connaît pas est affichée comme inconnue, jamais devinée. Sous Linux, les informations viennent de ip et de /sys/class/net.
 ui-tool-netif-refresh = Actualiser
 ui-tool-netif-scanning = Actualisation...
 ui-tool-netif-copy-csv = Exporter CSV
-ui-tool-netif-status = { $count } interfaces a { $time }
-ui-tool-netif-empty-state = Cliquez sur Actualiser pour inspecter les interfaces reseau.
+ui-tool-netif-status = { $count ->
+    [one] { $count } interface à { $time }
+   *[other] { $count } interfaces à { $time }
+}
+ui-tool-netif-empty-state = Cliquez sur Actualiser pour inspecter les interfaces réseau.
 ui-tool-netif-col-name = Nom
 ui-tool-netif-col-type = Type
 ui-tool-netif-col-status = Statut
@@ -4887,43 +4897,49 @@ ui-tool-netif-col-dhcp = DHCP
 
 ## Table de routage
 ui-tool-routes-name = Table de routage
-ui-tool-routes-description = Afficher la table de routage IPv4 active avec destinations, masques, passerelles et metriques
+ui-tool-routes-description = Afficher la table de routage IPv4 active avec destinations, masques, passerelles et métriques
 ui-tool-routes-title = Table de routage
 ui-tool-routes-help =
-    Affiche la table de routage IPv4 active via la sortie de route print.
+    Affiche la table de routage IPv4 active : destination, masque, passerelle, adresse de l'interface et métrique de chaque route.
 
-    Montre destination, masque, passerelle, interface et metrique pour chaque route.
+    Sous Windows, la table vient de Get-NetRoute, la métrique incluant celle de l'interface comme route print l'affiche ; sous Linux, de ip route.
 ui-tool-routes-refresh = Actualiser
 ui-tool-routes-scanning = Actualisation...
 ui-tool-routes-copy-csv = Exporter CSV
-ui-tool-routes-status = { $count } routes a { $time }
+ui-tool-routes-status = { $count ->
+    [one] { $count } route à { $time }
+   *[other] { $count } routes à { $time }
+}
 ui-tool-routes-empty-state = Cliquez sur Actualiser pour inspecter les routes IPv4.
 ui-tool-routes-col-dest = Destination
 ui-tool-routes-col-mask = Masque
 ui-tool-routes-col-gateway = Passerelle
 ui-tool-routes-col-interface = Interface
-ui-tool-routes-col-metric = Metrique
+ui-tool-routes-col-metric = Métrique
 
-## Reseaux Wi-Fi
-ui-tool-wifi-name = Reseaux Wi-Fi
-ui-tool-wifi-description = Scanner les reseaux sans fil proches avec BSSID, puissance du signal, canal et chiffrement
-ui-tool-wifi-title = Reseaux Wi-Fi
+## Réseaux Wi-Fi
+ui-tool-wifi-name = Réseaux Wi-Fi
+ui-tool-wifi-description = Scanner les réseaux sans fil proches avec BSSID, puissance du signal, canal et chiffrement
+ui-tool-wifi-title = Réseaux Wi-Fi
 ui-tool-wifi-help =
-    Scanne les reseaux Wi-Fi a proximite via netsh wlan show networks mode=bssid.
+    Scanne les réseaux Wi-Fi à proximité via netsh wlan show networks mode=bssid, ou nmcli sous Linux.
 
-    Affiche SSID, BSSID (MAC), puissance du signal, canal, authentification, chiffrement et type radio.
+    Affiche SSID, BSSID (MAC), puissance du signal, canal, authentification, chiffrement et type de radio. Windows peut exiger l'autorisation de localisation pour lister les points d'accès.
 ui-tool-wifi-scan = Scanner
 ui-tool-wifi-scanning = Scan en cours...
 ui-tool-wifi-copy-csv = Exporter CSV
-ui-tool-wifi-status = { $count } reseaux a { $time }
-ui-tool-wifi-empty-state = Cliquez sur Scanner pour detecter les reseaux Wi-Fi a portee.
+ui-tool-wifi-status = { $count ->
+    [one] { $count } réseau à { $time }
+   *[other] { $count } réseaux à { $time }
+}
+ui-tool-wifi-empty-state = Cliquez sur Scanner pour détecter les réseaux Wi-Fi à portée.
 ui-tool-wifi-col-ssid = SSID
 ui-tool-wifi-col-bssid = BSSID
 ui-tool-wifi-col-signal = Signal
 ui-tool-wifi-col-channel = Canal
 ui-tool-wifi-col-auth = Authentification
 ui-tool-wifi-col-encryption = Chiffrement
-ui-tool-wifi-col-radio = Type radio
+ui-tool-wifi-col-radio = Type de radio
 
 ## Éditeur du fichier hosts
 ui-tool-hosts-name = Éditeur du fichier hosts
@@ -5102,6 +5118,97 @@ ui-tool-netmap-role-remote = Hôte d'administration à distance
 ui-tool-netmap-role-appliance = Passerelle / équipement réseau
 ui-tool-netmap-role-active = Noeud actif
 ui-tool-netmap-role-no-ports = Hôte (aucun port ouvert)
+ui-tool-mac-vendor-randomized = Privée (MAC aléatoire)
+ui-tool-arpmon-status-gone = Disparu
+ui-tool-arpmon-start = Démarrer
+ui-tool-arpmon-stop = Arrêter
+ui-tool-arpmon-interval = Rafraîchissement
+ui-tool-arpmon-interval-secs = { $secs } s
+ui-tool-arpmon-dismiss-alert = Fermer
+ui-tool-arpmon-alert-title = Anomalie ARP détectée
+ui-tool-arpmon-changes-title = Changements de la table ARP
+ui-tool-arpmon-alert-mac-changed = L'adresse MAC de { $ip } est passée de { $previous } à { $current } (possible usurpation ARP)
+ui-tool-arpmon-alert-conflict = { $ip } est revendiquée par plusieurs adresses MAC à la fois : { $macs } (possible usurpation ARP)
+ui-tool-arpmon-alert-new =
+    { $count ->
+        [one] { $count } nouvel hôte : { $list }
+       *[other] { $count } nouveaux hôtes : { $list }
+    }
+ui-tool-arpmon-alert-gone =
+    { $count ->
+        [one] { $count } hôte disparu : { $list }
+       *[other] { $count } hôtes disparus : { $list }
+    }
+ui-tool-arpmon-alert-more = { $list } et { $more } autres
+ui-tool-arpmon-mac-was = auparavant { $mac }
+ui-tool-arpmon-mac-also = aussi { $macs }
+ui-tool-arpmon-total =
+    { $count ->
+        [one] { $count } entrée
+       *[other] { $count } entrées
+    }
+ui-tool-arpmon-last-refresh = Dernier rafraîchissement : { $time }
+ui-tool-arpmon-empty = Cliquez sur Démarrer pour surveiller la table ARP locale, ou sur Analyser maintenant pour la lire une fois.
+ui-tool-arpmon-empty-running = Surveillance active : en attente d'entrées dans la table ARP locale.
+ui-tool-netmap-reverse-dns = DNS inverse
+ui-tool-netmap-use-kb = Utiliser la base de connaissances
+ui-tool-netmap-kb-empty = Base de connaissances : vide
+ui-tool-netmap-kb-stats =
+    { $count ->
+        [one] Base de connaissances : { $count } hôte, mise à jour { $updated }
+       *[other] Base de connaissances : { $count } hôtes, mise à jour { $updated }
+    }
+ui-tool-netmap-kb-just-now = à l'instant
+ui-tool-netmap-kb-minutes-ago = il y a { $count } min
+ui-tool-netmap-kb-hours-ago = il y a { $count } h
+ui-tool-netmap-kb-days-ago =
+    { $count ->
+        [one] il y a { $count } jour
+       *[other] il y a { $count } jours
+    }
+ui-tool-netmap-kb-clear = Effacer la base de connaissances
+ui-tool-netmap-kb-keep = Conserver
+ui-tool-netmap-kb-clear-confirm = Effacer toutes les données d'hôtes accumulées dans la base de connaissances ?
+ui-tool-netmap-kb-cleared = Base de connaissances effacée.
+ui-tool-netmap-error-kb-clear = La base de connaissances n'a pas pu être effacée : { $reason }
+ui-tool-netmap-saved = Analyse enregistrée dans l'historique.
+ui-tool-netmap-history-entry = { $time } - { $subnet }
+ui-tool-netmap-compare-with = Comparer avec
+ui-tool-netmap-compare = Comparer
+ui-tool-netmap-diff-none = Aucun changement depuis cette analyse.
+ui-tool-netmap-diff-new =
+    { $count ->
+        [one] { $count } nouvel hôte
+       *[other] { $count } nouveaux hôtes
+    }
+ui-tool-netmap-diff-removed =
+    { $count ->
+        [one] { $count } hôte disparu
+       *[other] { $count } hôtes disparus
+    }
+ui-tool-netmap-diff-changed =
+    { $count ->
+        [one] { $count } hôte modifié
+       *[other] { $count } hôtes modifiés
+    }
+ui-tool-netmap-error-history-read = Cette analyse de l'historique n'a pas pu être lue.
+ui-tool-netmap-naming =
+    { $count ->
+        [one] Lecture de la table ARP et recherche du nom de { $count } hôte...
+       *[other] Lecture de la table ARP et recherche des noms de { $count } hôtes...
+    }
+ui-tool-snmpwalk-test-communities = Tester les communautés courantes
+ui-tool-snmpwalk-testing = Test en cours...
+ui-tool-snmpwalk-test-stopped = Test des communautés arrêté.
+ui-tool-snmpwalk-accepted-count =
+    { $count ->
+        [one] { $count } communauté acceptée
+       *[other] { $count } communautés acceptées
+    }
+ui-tool-snmpwalk-col-status = Statut
+ui-tool-snmpwalk-col-sys-name = sysName
+ui-tool-snmpwalk-community-accepted = Acceptée
+ui-tool-snmpwalk-community-rejected = Pas de réponse
 ## Visionneuse de logs
 ui-tool-logview-name = Visionneuse de logs
 ui-tool-logview-description = Afficher un fichier journal, filtrer ses lignes et suivre ce qui s'y ajoute
@@ -5224,6 +5331,9 @@ ui-tool-notes-empty-body = Créez une note ou sélectionnez-en une dans la liste
 ui-tool-notes-error-no-folder = Ce système ne donne à Heimdall aucun dossier de données où garder les notes.
 ui-tool-notes-error-list = Impossible de lire les notes : { $error }
 ui-tool-notes-error-save = Impossible d'enregistrer la note : { $error }
+ui-tool-notes-unsaved-blocked = Cette note n'a pas pu être enregistrée. Réessayez, ou abandonnez ses modifications pour continuer.
+ui-tool-notes-retry = Réessayer
+ui-tool-notes-discard = Abandonner les modifications
 
 ## Éditeur de diagrammes
 ui-tool-diagram-name = Éditeur de diagrammes
@@ -5370,3 +5480,35 @@ ui-tool-headers-error-oversized = Les en-têtes de la réponse dépassent { $kib
 ui-tool-headers-error-incomplete = Le serveur a fermé la connexion avant la fin des en-têtes de la réponse : ils n'ont pas été analysés.
 ui-tool-headers-http-status = Statut HTTP : { $code }
 ui-tool-headers-stop = Arrêter
+ui-tool-systable-error-not-available = Cette information ne peut pas être lue sur ce système.
+ui-tool-systable-error-not-started = La commande n'a pas pu être lancée : { $error }
+ui-tool-systable-error-timeout = La commande ne s'est pas terminée à temps et a été arrêtée.
+ui-tool-systable-error-failed = La commande a échoué (code de sortie { $code }).
+ui-tool-systable-error-failed-detail = La commande a échoué : { $error }
+ui-tool-systable-error-unreadable = La sortie de la commande n'a pas pu être lue : { $error }
+ui-tool-systable-exit-code-none = aucun
+ui-tool-openports-process-idle = Processus inactif du système
+ui-tool-openports-process-pid = [{ $pid }]
+ui-tool-netif-kind-ethernet = Ethernet
+ui-tool-netif-kind-wireless = Wi-Fi
+ui-tool-netif-kind-loopback = Bouclage
+ui-tool-netif-kind-tunnel = Tunnel
+ui-tool-netif-kind-ppp = PPP
+ui-tool-netif-kind-mobile = Haut débit mobile
+ui-tool-netif-kind-unknown = Inconnu
+ui-tool-netif-kind-other = Autre ({ $code })
+ui-tool-netif-status-up = Active
+ui-tool-netif-status-down = Inactive
+ui-tool-netif-status-testing = En test
+ui-tool-netif-status-unknown = Inconnu
+ui-tool-netif-status-dormant = En veille
+ui-tool-netif-status-not-present = Absente
+ui-tool-netif-status-lower-layer-down = Couche inférieure inactive
+ui-tool-netif-speed-kbps = { $value } kbit/s
+ui-tool-netif-speed-mbps = { $value } Mbit/s
+ui-tool-netif-speed-gbps = { $value } Gbit/s
+ui-tool-netif-speed-unknown = Inconnue
+ui-tool-netif-dhcp-yes = DHCP
+ui-tool-netif-dhcp-no = Statique
+ui-tool-netif-dhcp-unknown = Inconnu
+ui-tool-routes-on-link = Sur la liaison

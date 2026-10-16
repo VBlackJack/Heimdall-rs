@@ -1835,6 +1835,9 @@ pub enum Effect {
         /// When.
         deadline: Instant,
     },
+    /// Save the document of tool tab `.0`, as its close question's Save asks, then ask
+    /// again to close it once written.
+    SaveTool(TabId),
     /// Quit the application.
     Exit,
 }
@@ -2018,6 +2021,7 @@ impl fmt::Debug for Effect {
             Self::CloseWindow(key) => write!(f, "CloseWindow({})", key.value()),
             Self::FocusWindow(key) => write!(f, "FocusWindow({})", key.value()),
             Self::FocusMainWindow => f.write_str("FocusMainWindow"),
+            Self::SaveTool(tab) => write!(f, "SaveTool({})", tab.value()),
             Self::Exit => f.write_str("Exit"),
         }
     }
@@ -2177,6 +2181,9 @@ pub struct Tab {
     auto_answered: Vec<(AttemptId, ProfileId)>,
     /// How the tab opens again, for Reconnect.
     reopen: reconnect::Reopen,
+    /// For a tool's tab, the name of the document it holds whose changes are not saved,
+    /// or still being saved, as the window says; closing the tab asks first.
+    tool_unsaved: Option<String>,
     /// Whether the tunnels panel was opened or closed while this tab was shown, as the C#
     /// `TunnelsPanelManualOverride`: it wins over its profile's choice.
     pub(crate) tunnels_panel: Option<bool>,
@@ -2369,6 +2376,7 @@ impl Tab {
             tunnels_panel: None,
             opened: std::time::SystemTime::now(),
             reopen: reconnect::Reopen::of(&profile),
+            tool_unsaved: None,
             post_connect: None,
             macro_recording: None,
             macro_playing: None,
@@ -2410,13 +2418,22 @@ impl Tab {
         }
     }
 
-    /// Whether the tab's integrated editor holds text not saved, or being saved.
+    /// Whether the tab's integrated editor, or its tool's document, holds text not saved,
+    /// or being saved.
     #[must_use]
     pub fn holds_unsaved_text(&self) -> bool {
-        self.files
-            .as_ref()
-            .and_then(|files| files.editor.as_ref())
-            .is_some_and(|edit| edit.dirty || edit.saving)
+        self.tool_unsaved.is_some()
+            || self
+                .files
+                .as_ref()
+                .and_then(|files| files.editor.as_ref())
+                .is_some_and(|edit| edit.dirty || edit.saving)
+    }
+
+    /// For a tool's tab, the name of its document whose changes are not saved.
+    #[must_use]
+    pub fn tool_unsaved(&self) -> Option<&str> {
+        self.tool_unsaved.as_deref()
     }
 
     fn stop(&mut self) {
@@ -2699,6 +2716,14 @@ pub enum Dialog {
         name: String,
         /// The server's file.
         remote: heimdall_files::RemotePath,
+    },
+    /// Close a tool's tab whose document's changes are not saved, as the C# tool's
+    /// `CanClose` asks: Save, Discard or Cancel.
+    ConfirmCloseTool {
+        /// Tab.
+        tab: TabId,
+        /// The document, as the question names it.
+        name: String,
     },
     /// Close the integrated editor and lose its text not saved, as the C# "Unsaved
     /// Changes".
@@ -3140,6 +3165,9 @@ impl Dialog {
                 | Self::ConfirmOpenRunnable { .. }
                 // A key trusted for good is a click too, as a session's own key card.
                 | Self::TunnelHostKey { .. }
+                // A document's changes are lost by a click alone, never by an Enter meant
+                // for its editor.
+                | Self::ConfirmCloseTool { .. }
         )
     }
 }
@@ -4892,6 +4920,7 @@ impl App {
                 Dialog::ConfirmCloseTab(tab)
                 | Dialog::ConfirmCloseTransfers { tab, .. }
                 | Dialog::ConfirmCloseEditor { tab, .. }
+                | Dialog::ConfirmCloseTool { tab, .. }
                 | Dialog::ConfirmCloseEdits { tab, .. },
             ) => {
                 // Asked about one pane alone: its split stays.

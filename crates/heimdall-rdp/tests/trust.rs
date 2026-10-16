@@ -168,6 +168,7 @@ fn config(known_hosts: &Path, accepted: Option<AcceptedCertificate>, port: u16) 
         security: Security::Nla,
         known_hosts: KnownRdpHosts::new(known_hosts),
         accepted,
+        keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
         timeouts: Timeouts {
             connect: WAIT,
             handshake: WAIT,

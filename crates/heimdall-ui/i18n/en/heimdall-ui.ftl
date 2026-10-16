@@ -1998,6 +1998,8 @@ ui-editor-notice-failed = Failed to save: { $reason }
 ui-dialog-discard-editor-title = Unsaved Changes
 ui-dialog-discard-editor-body = File has unsaved changes. Close anyway?
 ui-dialog-close-editor-body = The editor on "{ $name }" has unsaved changes. Close and discard them?
+ui-dialog-close-tool-body = "{ $name }" has unsaved changes. Save them before closing the tab?
+ui-dialog-close-tool-discard = Discard
 ui-dialog-unsaved-editors = { $count ->
     [one] { $count } editor holds unsaved changes, which would be lost.
    *[other] { $count } editors hold unsaved changes, which would be lost.
@@ -3793,6 +3795,8 @@ ui-rdp-letterbox-hint = Fixed { $width }x{ $height } - resize the window or chan
 ui-settings-rdp-connect-timeout = RDP connection watchdog timeout (0 = off)
 ui-settings-rdp-resize-delay = Resolution stabilization delay after connect (0 = off)
 ui-settings-rdp-resize-delay-refused = RDP resize delay must be zero or between { $min } and { $max } ms.
+ui-settings-rdp-keep-alive-interval = Session keep-alive interval
+ui-settings-rdp-keep-alive-interval-refused = RDP keep-alive interval must be between { $min } and { $max } ms.
 ui-settings-rdp-connect-timeout-off = Off
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Give the keyboard back from a remote desktop
@@ -4745,7 +4749,7 @@ ui-tool-arpmon-col-status = Status
 ui-tool-arpmon-col-first-seen = First Seen
 ui-tool-arpmon-col-last-seen = Last Seen
 ui-tool-arpmon-status-new = New
-ui-tool-arpmon-status-known = Known
+ui-tool-arpmon-status-stable = Stable
 ui-tool-arpmon-status-changed = Changed
 ui-tool-arpmon-status-conflict = Conflict
 
@@ -4753,7 +4757,7 @@ ui-tool-arpmon-status-conflict = Conflict
 ui-tool-fwtest-name = Firewall Egress Tester
 ui-tool-fwtest-description = Test outbound connectivity across firewall ports with latency measurement
 ui-tool-fwtest-hosts = Target Hosts
-ui-tool-fwtest-hosts-watermark = Hosts separated by commas or spaces (e.g. 1.1.1.1, 8.8.8.8)
+ui-tool-fwtest-hosts-watermark = One host per line, or separated by commas (e.g. 1.1.1.1, 8.8.8.8)
 ui-tool-fwtest-ports = Test Ports
 ui-tool-fwtest-ports-watermark = 80,443,8080
 ui-tool-fwtest-start = Test Egress
@@ -4789,16 +4793,19 @@ ui-tool-openports-name = Open Ports
 ui-tool-openports-description = Inspect active TCP and UDP listening ports and sockets with process identification
 ui-tool-openports-title = Open Ports
 ui-tool-openports-help =
-    Lists all open TCP and UDP ports on the local machine using netstat.
+    Lists the open TCP and UDP ports of this computer with the process that owns each.
 
-    Shows owning process name and PID for each connection.
+    On Windows the tables come from Windows PowerShell (Get-NetTCPConnection, Get-NetUDPEndpoint, Get-Process); on Linux from ss, which names other users' processes only to root.
 
     Use the filter to search by process name, address, port, or connection state.
 ui-tool-openports-refresh = Refresh
 ui-tool-openports-scanning = Refreshing...
 ui-tool-openports-copy-csv = Export CSV
 ui-tool-openports-filter-placeholder = Filter by process, address, port, state...
-ui-tool-openports-status = { $count } connections at { $time }
+ui-tool-openports-status = { $count ->
+    [one] { $count } connection at { $time }
+   *[other] { $count } connections at { $time }
+}
 ui-tool-openports-empty-state = Click Refresh to inspect open ports and active connections.
 ui-tool-openports-col-proto = Protocol
 ui-tool-openports-col-local-addr = Local Address
@@ -4814,13 +4821,16 @@ ui-tool-netif-name = Network Interfaces
 ui-tool-netif-description = List all network adapters with link speed, MAC address, IPv4, gateway, and DHCP status
 ui-tool-netif-title = Network Interfaces
 ui-tool-netif-help =
-    Lists all network interfaces on the local machine using ipconfig /all.
+    Lists the network interfaces of this computer as the system reports them: type, operational status, link speed, MAC address, IPv4 address, subnet mask, gateway, and DHCP.
 
-    Shows name, type, operational status, link speed, MAC address, IPv4, subnet mask, gateway, and DHCP status.
+    A speed the system does not know is shown as unknown, never guessed. On Linux the facts come from ip and /sys/class/net.
 ui-tool-netif-refresh = Refresh
 ui-tool-netif-scanning = Refreshing...
 ui-tool-netif-copy-csv = Export CSV
-ui-tool-netif-status = { $count } interfaces at { $time }
+ui-tool-netif-status = { $count ->
+    [one] { $count } interface at { $time }
+   *[other] { $count } interfaces at { $time }
+}
 ui-tool-netif-empty-state = Click Refresh to inspect local network interfaces.
 ui-tool-netif-col-name = Name
 ui-tool-netif-col-type = Type
@@ -4837,13 +4847,16 @@ ui-tool-routes-name = Route Table
 ui-tool-routes-description = Display active IPv4 routing table destinations, subnet masks, gateways, and metrics
 ui-tool-routes-title = Route Table
 ui-tool-routes-help =
-    Displays the active IPv4 routing table by parsing route print output.
+    Displays the active IPv4 routing table: destination, netmask, gateway, interface address, and metric of each route.
 
-    Shows destination, netmask, gateway, interface, and metric for each route.
+    On Windows the table comes from Get-NetRoute, the metric including the interface's as route print shows it; on Linux from ip route.
 ui-tool-routes-refresh = Refresh
 ui-tool-routes-scanning = Refreshing...
 ui-tool-routes-copy-csv = Export CSV
-ui-tool-routes-status = { $count } routes at { $time }
+ui-tool-routes-status = { $count ->
+    [one] { $count } route at { $time }
+   *[other] { $count } routes at { $time }
+}
 ui-tool-routes-empty-state = Click Refresh to inspect active IPv4 routes.
 ui-tool-routes-col-dest = Destination
 ui-tool-routes-col-mask = Netmask
@@ -4856,13 +4869,16 @@ ui-tool-wifi-name = Wi-Fi Networks
 ui-tool-wifi-description = Scan nearby wireless networks, BSSID, signal strength, channel, and encryption
 ui-tool-wifi-title = Wi-Fi Networks
 ui-tool-wifi-help =
-    Scans nearby Wi-Fi networks using netsh wlan show networks mode=bssid.
+    Scans nearby Wi-Fi networks using netsh wlan show networks mode=bssid, or nmcli on Linux.
 
-    Shows SSID, BSSID (MAC), signal strength, channel, authentication, encryption, and radio type.
+    Shows SSID, BSSID (MAC), signal strength, channel, authentication, encryption, and radio type. Windows may need the location permission to list the access points.
 ui-tool-wifi-scan = Scan
 ui-tool-wifi-scanning = Scanning...
 ui-tool-wifi-copy-csv = Export CSV
-ui-tool-wifi-status = { $count } networks at { $time }
+ui-tool-wifi-status = { $count ->
+    [one] { $count } network at { $time }
+   *[other] { $count } networks at { $time }
+}
 ui-tool-wifi-empty-state = Click Scan to discover nearby Wi-Fi networks in range.
 ui-tool-wifi-col-ssid = SSID
 ui-tool-wifi-col-bssid = BSSID
@@ -5049,6 +5065,97 @@ ui-tool-netmap-role-remote = Remote Management Host
 ui-tool-netmap-role-appliance = Network Gateway / Appliance
 ui-tool-netmap-role-active = Active Node
 ui-tool-netmap-role-no-ports = Host (No Port Open)
+ui-tool-mac-vendor-randomized = Private (randomized MAC)
+ui-tool-arpmon-status-gone = Gone
+ui-tool-arpmon-start = Start
+ui-tool-arpmon-stop = Stop
+ui-tool-arpmon-interval = Refresh
+ui-tool-arpmon-interval-secs = { $secs } sec
+ui-tool-arpmon-dismiss-alert = Dismiss
+ui-tool-arpmon-alert-title = ARP anomaly detected
+ui-tool-arpmon-changes-title = ARP table changes
+ui-tool-arpmon-alert-mac-changed = MAC address of { $ip } changed from { $previous } to { $current } (possible ARP spoofing)
+ui-tool-arpmon-alert-conflict = { $ip } is claimed by several MAC addresses at once: { $macs } (possible ARP spoofing)
+ui-tool-arpmon-alert-new =
+    { $count ->
+        [one] { $count } new host: { $list }
+       *[other] { $count } new hosts: { $list }
+    }
+ui-tool-arpmon-alert-gone =
+    { $count ->
+        [one] { $count } host gone: { $list }
+       *[other] { $count } hosts gone: { $list }
+    }
+ui-tool-arpmon-alert-more = { $list } and { $more } more
+ui-tool-arpmon-mac-was = was { $mac }
+ui-tool-arpmon-mac-also = also { $macs }
+ui-tool-arpmon-total =
+    { $count ->
+        [one] { $count } entry
+       *[other] { $count } entries
+    }
+ui-tool-arpmon-last-refresh = Last refresh: { $time }
+ui-tool-arpmon-empty = Click Start to monitor the local ARP table, or Scan Now to read it once.
+ui-tool-arpmon-empty-running = Monitoring is active: waiting for entries in the local ARP table.
+ui-tool-netmap-reverse-dns = Reverse DNS
+ui-tool-netmap-use-kb = Use knowledge base
+ui-tool-netmap-kb-empty = Knowledge base: empty
+ui-tool-netmap-kb-stats =
+    { $count ->
+        [one] Knowledge base: { $count } host, updated { $updated }
+       *[other] Knowledge base: { $count } hosts, updated { $updated }
+    }
+ui-tool-netmap-kb-just-now = just now
+ui-tool-netmap-kb-minutes-ago = { $count } min ago
+ui-tool-netmap-kb-hours-ago = { $count } h ago
+ui-tool-netmap-kb-days-ago =
+    { $count ->
+        [one] { $count } day ago
+       *[other] { $count } days ago
+    }
+ui-tool-netmap-kb-clear = Clear Knowledge Base
+ui-tool-netmap-kb-keep = Keep
+ui-tool-netmap-kb-clear-confirm = Clear all the host data gathered in the knowledge base?
+ui-tool-netmap-kb-cleared = Knowledge base cleared.
+ui-tool-netmap-error-kb-clear = The knowledge base could not be cleared: { $reason }
+ui-tool-netmap-saved = Scan saved to the history.
+ui-tool-netmap-history-entry = { $time } - { $subnet }
+ui-tool-netmap-compare-with = Compare with
+ui-tool-netmap-compare = Compare
+ui-tool-netmap-diff-none = No change since that scan.
+ui-tool-netmap-diff-new =
+    { $count ->
+        [one] { $count } new host
+       *[other] { $count } new hosts
+    }
+ui-tool-netmap-diff-removed =
+    { $count ->
+        [one] { $count } host gone
+       *[other] { $count } hosts gone
+    }
+ui-tool-netmap-diff-changed =
+    { $count ->
+        [one] { $count } host changed
+       *[other] { $count } hosts changed
+    }
+ui-tool-netmap-error-history-read = That scan of the history could not be read.
+ui-tool-netmap-naming =
+    { $count ->
+        [one] Reading the ARP table and looking up the name of { $count } host...
+       *[other] Reading the ARP table and looking up the names of { $count } hosts...
+    }
+ui-tool-snmpwalk-test-communities = Test Common Communities
+ui-tool-snmpwalk-testing = Testing...
+ui-tool-snmpwalk-test-stopped = Community test stopped.
+ui-tool-snmpwalk-accepted-count =
+    { $count ->
+        [one] { $count } community accepted
+       *[other] { $count } communities accepted
+    }
+ui-tool-snmpwalk-col-status = Status
+ui-tool-snmpwalk-col-sys-name = sysName
+ui-tool-snmpwalk-community-accepted = Accepted
+ui-tool-snmpwalk-community-rejected = No answer
 ## Log viewer
 ui-tool-logview-name = Log Viewer
 ui-tool-logview-description = View a log file, filter its lines and follow what is appended
@@ -5171,6 +5278,9 @@ ui-tool-notes-empty-body = Create a note or select one from the list.
 ui-tool-notes-error-no-folder = This system gives Heimdall no data folder to keep notes in.
 ui-tool-notes-error-list = Cannot read the notes: { $error }
 ui-tool-notes-error-save = Cannot save the note: { $error }
+ui-tool-notes-unsaved-blocked = This note could not be saved. Retry, or discard its changes to go on.
+ui-tool-notes-retry = Retry
+ui-tool-notes-discard = Discard changes
 
 ## Diagram editor
 ui-tool-diagram-name = Diagram Editor
@@ -5317,3 +5427,35 @@ ui-tool-headers-error-oversized = The response headers exceed { $kib } KiB: they
 ui-tool-headers-error-incomplete = The server closed the connection before the end of the response headers: they were not analyzed.
 ui-tool-headers-http-status = HTTP Status: { $code }
 ui-tool-headers-stop = Stop
+ui-tool-systable-error-not-available = This information cannot be read on this system.
+ui-tool-systable-error-not-started = The command could not be started: { $error }
+ui-tool-systable-error-timeout = The command did not finish in time and was stopped.
+ui-tool-systable-error-failed = The command failed (exit code { $code }).
+ui-tool-systable-error-failed-detail = The command failed: { $error }
+ui-tool-systable-error-unreadable = The command's output could not be read: { $error }
+ui-tool-systable-exit-code-none = none
+ui-tool-openports-process-idle = System Idle
+ui-tool-openports-process-pid = [{ $pid }]
+ui-tool-netif-kind-ethernet = Ethernet
+ui-tool-netif-kind-wireless = Wi-Fi
+ui-tool-netif-kind-loopback = Loopback
+ui-tool-netif-kind-tunnel = Tunnel
+ui-tool-netif-kind-ppp = PPP
+ui-tool-netif-kind-mobile = Mobile broadband
+ui-tool-netif-kind-unknown = Unknown
+ui-tool-netif-kind-other = Other ({ $code })
+ui-tool-netif-status-up = Up
+ui-tool-netif-status-down = Down
+ui-tool-netif-status-testing = Testing
+ui-tool-netif-status-unknown = Unknown
+ui-tool-netif-status-dormant = Dormant
+ui-tool-netif-status-not-present = Not present
+ui-tool-netif-status-lower-layer-down = Lower layer down
+ui-tool-netif-speed-kbps = { $value } Kbps
+ui-tool-netif-speed-mbps = { $value } Mbps
+ui-tool-netif-speed-gbps = { $value } Gbps
+ui-tool-netif-speed-unknown = Unknown
+ui-tool-netif-dhcp-yes = DHCP
+ui-tool-netif-dhcp-no = Static
+ui-tool-netif-dhcp-unknown = Unknown
+ui-tool-routes-on-link = On-link

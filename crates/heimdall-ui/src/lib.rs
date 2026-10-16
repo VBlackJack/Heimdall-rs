@@ -252,5 +252,11 @@ pub fn run() -> iced::Result {
     heimdall_app::x11_server::shared().stop();
     // The folder owned until the windows are gone, then freed for the next launch.
     drop(instance);
+    // The last line of a run that ended by itself: a log without it was ended from outside,
+    // or by a crash the system reports.
+    match &ran {
+        Ok(()) => log::info!("Heimdall stopped"),
+        Err(error) => log::error!("Heimdall stopped: {error}"),
+    }
     ran
 }
