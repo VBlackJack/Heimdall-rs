@@ -150,7 +150,14 @@ fn private_file() -> OpenOptions {
     options
 }
 
-fn open_log(dir: &Path) -> std::io::Result<File> {
+/// The log file of `dir`, opened to add to it, and why it is not restricted to the user
+/// when it is not.
+///
+/// It is restricted on Windows to the user, the Administrators and SYSTEM before a line is
+/// written in it, as the C# `FileLogger` restricts its file, should its folder not have been.
+/// Restriction failing, it is written all the same with its folder's access, as the C# goes
+/// on: what the code logs is redacted, and a log is the one trace a user can send.
+fn open_log(dir: &Path) -> std::io::Result<(File, Option<std::io::Error>)> {
     fs::create_dir_all(dir)?;
     let path = dir.join(LOG_FILE_NAME);
     if fs::metadata(&path).is_ok_and(|meta| meta.len() > MAX_LOG_BYTES) {
@@ -158,7 +165,10 @@ fn open_log(dir: &Path) -> std::io::Result<File> {
         // run without a log.
         let _ = fs::rename(&path, dir.join(PREVIOUS_LOG_FILE_NAME));
     }
-    private_file().append(true).open(path)
+    match heimdall_core::tools::private_file::open_private_log(&path) {
+        Ok(file) => Ok((file, None)),
+        Err(unrestricted) => Ok((private_file().append(true).open(path)?, Some(unrestricted))),
+    }
 }
 
 /// Starts logging to `dir` and writes crash reports there. Without a directory, or when
@@ -168,7 +178,9 @@ pub fn init(dir: Option<PathBuf>) {
         return;
     };
     let (own, others) = levels(std::env::var(LEVEL_VARIABLE).ok().as_deref());
-    if let Ok(file) = open_log(&dir) {
+    let mut unrestricted = None;
+    if let Ok((file, error)) = open_log(&dir) {
+        unrestricted = error;
         let logger = FileLogger {
             file: Mutex::new(file),
             own,
@@ -179,6 +191,9 @@ pub fn init(dir: Option<PathBuf>) {
         }
     }
     install_panic_hook(dir);
+    if let Some(error) = unrestricted {
+        log::warn!("the diagnostics log is not restricted to the user: {error}");
+    }
     log::info!(
         "Heimdall {} started on {} {}",
         env!("CARGO_PKG_VERSION"),
@@ -294,6 +309,19 @@ mod tests {
         assert_eq!(printable(&long).chars().count(), MAX_PANIC_MESSAGE_CHARS);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn on_windows_the_log_is_restricted_before_a_line_is_written() {
+        let dir = tempfile::tempdir().expect("dir");
+        let (file, unrestricted) = super::open_log(dir.path()).expect("opened");
+        drop(file);
+        assert!(unrestricted.is_none(), "{unrestricted:?}");
+        // Opened again at the next start: restricted again, still written.
+        let (file, unrestricted) = super::open_log(dir.path()).expect("opened again");
+        drop(file);
+        assert!(unrestricted.is_none(), "{unrestricted:?}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn only_the_owner_reads_the_log() {
@@ -301,7 +329,9 @@ mod tests {
 
         use super::open_log;
         let dir = tempfile::tempdir().expect("dir");
-        drop(open_log(dir.path()).expect("opened"));
+        let (file, unrestricted) = open_log(dir.path()).expect("opened");
+        assert!(unrestricted.is_none(), "{unrestricted:?}");
+        drop(file);
         let mode = std::fs::metadata(dir.path().join(super::LOG_FILE_NAME))
             .expect("exists")
             .permissions()
