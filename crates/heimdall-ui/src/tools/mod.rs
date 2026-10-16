@@ -79,6 +79,7 @@ mod ssh_config_tool;
 mod sshaudit_tool;
 mod sshkey_tool;
 mod subnet_tool;
+mod system_tables;
 mod tcp_ping_tool;
 mod tcp_traceroute_tool;
 mod text_case_tool;

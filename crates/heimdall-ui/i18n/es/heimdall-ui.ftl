@@ -4825,24 +4825,27 @@ ui-tool-netmap-error-cidr-required = Introduzca una subred válida en notación 
 
 ## Puertos abiertos
 ui-tool-openports-name = Puertos abiertos
-ui-tool-openports-description = Inspeccionar puertos TCP/UDP activos y sockets con identificacion de procesos
+ui-tool-openports-description = Inspeccionar puertos TCP y UDP activos y sockets con identificación de procesos
 ui-tool-openports-title = Puertos abiertos
 ui-tool-openports-help =
-    Lista todos los puertos TCP y UDP abiertos en la maquina local mediante netstat.
+    Lista los puertos TCP y UDP abiertos de este equipo con el proceso propietario de cada uno.
 
-    Muestra el proceso y el PID de cada conexion.
+    En Windows, las tablas proceden de Windows PowerShell (Get-NetTCPConnection, Get-NetUDPEndpoint, Get-Process); en Linux, de ss, que solo muestra los procesos de otros usuarios a root.
 
-    Use el filtro para buscar por proceso, direccion, puerto o estado.
+    Use el filtro para buscar por proceso, dirección, puerto o estado.
 ui-tool-openports-refresh = Actualizar
 ui-tool-openports-scanning = Actualizando...
 ui-tool-openports-copy-csv = Exportar CSV
-ui-tool-openports-filter-placeholder = Filtrar por proceso, direccion, puerto, estado...
-ui-tool-openports-status = { $count } conexiones a las { $time }
-ui-tool-openports-empty-state = Haga clic en Actualizar para listar los puertos abiertos y conexiones.
+ui-tool-openports-filter-placeholder = Filtrar por proceso, dirección, puerto, estado...
+ui-tool-openports-status = { $count ->
+    [one] { $count } conexión a las { $time }
+   *[other] { $count } conexiones a las { $time }
+}
+ui-tool-openports-empty-state = Haga clic en Actualizar para listar los puertos abiertos y las conexiones.
 ui-tool-openports-col-proto = Protocolo
-ui-tool-openports-col-local-addr = Direccion local
+ui-tool-openports-col-local-addr = Dirección local
 ui-tool-openports-col-local-port = Puerto local
-ui-tool-openports-col-remote-addr = Direccion remota
+ui-tool-openports-col-remote-addr = Dirección remota
 ui-tool-openports-col-remote-port = Puerto remoto
 ui-tool-openports-col-state = Estado
 ui-tool-openports-col-pid = PID
@@ -4850,16 +4853,19 @@ ui-tool-openports-col-process = Proceso
 
 ## Interfaces de red
 ui-tool-netif-name = Interfaces de red
-ui-tool-netif-description = Listar adaptadores de red con velocidad, direccion MAC, IPv4, pasarela y estado DHCP
+ui-tool-netif-description = Listar adaptadores de red con velocidad, dirección MAC, IPv4, puerta de enlace y estado DHCP
 ui-tool-netif-title = Interfaces de red
 ui-tool-netif-help =
-    Lista todas las interfaces de red de la maquina local usando ipconfig /all.
+    Lista las interfaces de red de este equipo tal como las describe el sistema: tipo, estado operativo, velocidad del enlace, dirección MAC, dirección IPv4, máscara, puerta de enlace y DHCP.
 
-    Muestra nombre, tipo, estado, velocidad, direccion MAC, IPv4, mascara, pasarela y DHCP.
+    Una velocidad que el sistema no conoce se muestra como desconocida, nunca se adivina. En Linux, los datos proceden de ip y de /sys/class/net.
 ui-tool-netif-refresh = Actualizar
 ui-tool-netif-scanning = Actualizando...
 ui-tool-netif-copy-csv = Exportar CSV
-ui-tool-netif-status = { $count } interfaces a las { $time }
+ui-tool-netif-status = { $count ->
+    [one] { $count } interfaz a las { $time }
+   *[other] { $count } interfaces a las { $time }
+}
 ui-tool-netif-empty-state = Haga clic en Actualizar para inspeccionar las interfaces de red.
 ui-tool-netif-col-name = Nombre
 ui-tool-netif-col-type = Tipo
@@ -4868,46 +4874,52 @@ ui-tool-netif-col-speed = Velocidad
 ui-tool-netif-col-mac = MAC
 ui-tool-netif-col-ipv4 = IPv4
 ui-tool-netif-col-subnet = Subred
-ui-tool-netif-col-gateway = Pasarela
+ui-tool-netif-col-gateway = Puerta de enlace
 ui-tool-netif-col-dhcp = DHCP
 
 ## Tabla de rutas
 ui-tool-routes-name = Tabla de rutas
-ui-tool-routes-description = Mostrar la tabla de rutas IPv4 activas con destinos, mascaras, pasarelas y metricas
+ui-tool-routes-description = Mostrar la tabla de rutas IPv4 activas con destinos, máscaras, puertas de enlace y métricas
 ui-tool-routes-title = Tabla de rutas
 ui-tool-routes-help =
-    Muestra la tabla de enrutamiento IPv4 activa interpretando la salida de route print.
+    Muestra la tabla de enrutamiento IPv4 activa: destino, máscara de red, puerta de enlace, dirección de la interfaz y métrica de cada ruta.
 
-    Muestra destino, mascara de red, pasarela, interfaz y metrica de cada ruta.
+    En Windows, la tabla procede de Get-NetRoute, con la métrica de la interfaz incluida como la muestra route print; en Linux, de ip route.
 ui-tool-routes-refresh = Actualizar
 ui-tool-routes-scanning = Actualizando...
 ui-tool-routes-copy-csv = Exportar CSV
-ui-tool-routes-status = { $count } rutas a las { $time }
+ui-tool-routes-status = { $count ->
+    [one] { $count } ruta a las { $time }
+   *[other] { $count } rutas a las { $time }
+}
 ui-tool-routes-empty-state = Haga clic en Actualizar para inspeccionar las rutas IPv4.
 ui-tool-routes-col-dest = Destino
-ui-tool-routes-col-mask = Mascara de red
-ui-tool-routes-col-gateway = Pasarela
+ui-tool-routes-col-mask = Máscara de red
+ui-tool-routes-col-gateway = Puerta de enlace
 ui-tool-routes-col-interface = Interfaz
-ui-tool-routes-col-metric = Metrica
+ui-tool-routes-col-metric = Métrica
 
 ## Redes Wi-Fi
 ui-tool-wifi-name = Redes Wi-Fi
-ui-tool-wifi-description = Escanear redes inalambricas cercanas con BSSID, intensidad de senal, canal y cifrado
+ui-tool-wifi-description = Escanear redes inalámbricas cercanas con BSSID, intensidad de señal, canal y cifrado
 ui-tool-wifi-title = Redes Wi-Fi
 ui-tool-wifi-help =
-    Escanea redes Wi-Fi cercanas usando netsh wlan show networks mode=bssid.
+    Escanea las redes Wi-Fi cercanas mediante netsh wlan show networks mode=bssid, o nmcli en Linux.
 
-    Muestra SSID, BSSID (MAC), intensidad de senal, canal, autenticacion, cifrado y tipo de radio.
+    Muestra SSID, BSSID (MAC), intensidad de señal, canal, autenticación, cifrado y tipo de radio. Windows puede requerir el permiso de ubicación para listar los puntos de acceso.
 ui-tool-wifi-scan = Escanear
 ui-tool-wifi-scanning = Escaneando...
 ui-tool-wifi-copy-csv = Exportar CSV
-ui-tool-wifi-status = { $count } redes a las { $time }
+ui-tool-wifi-status = { $count ->
+    [one] { $count } red a las { $time }
+   *[other] { $count } redes a las { $time }
+}
 ui-tool-wifi-empty-state = Haga clic en Escanear para descubrir las redes Wi-Fi al alcance.
 ui-tool-wifi-col-ssid = SSID
 ui-tool-wifi-col-bssid = BSSID
-ui-tool-wifi-col-signal = Senal
+ui-tool-wifi-col-signal = Señal
 ui-tool-wifi-col-channel = Canal
-ui-tool-wifi-col-auth = Autenticacion
+ui-tool-wifi-col-auth = Autenticación
 ui-tool-wifi-col-encryption = Cifrado
 ui-tool-wifi-col-radio = Tipo de radio
 
@@ -5356,3 +5368,35 @@ ui-tool-headers-error-oversized = Las cabeceras de la respuesta superan { $kib }
 ui-tool-headers-error-incomplete = El servidor cerró la conexión antes del final de las cabeceras de la respuesta: no se analizaron.
 ui-tool-headers-http-status = Estado HTTP: { $code }
 ui-tool-headers-stop = Detener
+ui-tool-systable-error-not-available = Esta información no se puede leer en este sistema.
+ui-tool-systable-error-not-started = No se pudo iniciar el comando: { $error }
+ui-tool-systable-error-timeout = El comando no terminó a tiempo y se detuvo.
+ui-tool-systable-error-failed = El comando falló (código de salida { $code }).
+ui-tool-systable-error-failed-detail = El comando falló: { $error }
+ui-tool-systable-error-unreadable = No se pudo leer la salida del comando: { $error }
+ui-tool-systable-exit-code-none = ninguno
+ui-tool-openports-process-idle = Proceso inactivo del sistema
+ui-tool-openports-process-pid = [{ $pid }]
+ui-tool-netif-kind-ethernet = Ethernet
+ui-tool-netif-kind-wireless = Wi-Fi
+ui-tool-netif-kind-loopback = Bucle invertido
+ui-tool-netif-kind-tunnel = Túnel
+ui-tool-netif-kind-ppp = PPP
+ui-tool-netif-kind-mobile = Banda ancha móvil
+ui-tool-netif-kind-unknown = Desconocido
+ui-tool-netif-kind-other = Otro ({ $code })
+ui-tool-netif-status-up = Activa
+ui-tool-netif-status-down = Inactiva
+ui-tool-netif-status-testing = En prueba
+ui-tool-netif-status-unknown = Desconocido
+ui-tool-netif-status-dormant = En espera
+ui-tool-netif-status-not-present = Ausente
+ui-tool-netif-status-lower-layer-down = Capa inferior inactiva
+ui-tool-netif-speed-kbps = { $value } kbit/s
+ui-tool-netif-speed-mbps = { $value } Mbit/s
+ui-tool-netif-speed-gbps = { $value } Gbit/s
+ui-tool-netif-speed-unknown = Desconocida
+ui-tool-netif-dhcp-yes = DHCP
+ui-tool-netif-dhcp-no = Estática
+ui-tool-netif-dhcp-unknown = Desconocido
+ui-tool-routes-on-link = En vínculo
