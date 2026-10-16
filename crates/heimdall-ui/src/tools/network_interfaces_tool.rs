@@ -24,7 +24,7 @@ use iced::{Alignment, Element, Length, Task, Theme};
 use heimdall_core::tools::network_interfaces::{
     self, InterfaceKind, NicSnapshot, OperStatus, SpeedUnit,
 };
-use heimdall_core::tools::system_listing::ListingError;
+use heimdall_core::tools::system_program::ProgramError;
 
 use super::system_tables::{listing_error_text, read_time_now};
 use super::{CopySlot, ToolPane};
@@ -39,7 +39,7 @@ pub enum NetIfMessage {
     /// Refresh interface list now.
     Refresh,
     /// Refresh completed with the interfaces, or why they could not be read.
-    Finished(Result<Vec<NicSnapshot>, ListingError>),
+    Finished(Result<Vec<NicSnapshot>, ProgramError>),
     /// Copy CSV export to clipboard.
     CopyCsv,
 }
@@ -75,7 +75,7 @@ impl NetIfPane {
                         tokio::task::spawn_blocking(network_interfaces::run_interfaces_command)
                             .await
                             .unwrap_or_else(|error| {
-                                Err(ListingError::NotStarted(error.to_string()))
+                                Err(ProgramError::NotStarted(error.to_string()))
                             })
                     },
                     move |res| {
@@ -439,7 +439,7 @@ mod tests {
             )
         );
 
-        let _ = pane.update(tab, NetIfMessage::Finished(Err(ListingError::NotAvailable)));
+        let _ = pane.update(tab, NetIfMessage::Finished(Err(ProgramError::NotAvailable)));
         assert_eq!(
             pane.error,
             Some(fl!("ui-tool-systable-error-not-available"))

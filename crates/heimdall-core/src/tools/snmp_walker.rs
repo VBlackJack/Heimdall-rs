@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 
 use super::banner_grab::clean_banner;
 use super::csv_cell::quoted;
-use super::net_command::POLL_INTERVAL;
+use super::system_program::POLL_INTERVAL;
 
 /// Default SNMP UDP port.
 pub const DEFAULT_PORT: u16 = 161;

@@ -25,12 +25,13 @@
 
 use serde::Deserialize;
 
-use super::system_listing::{self, ListingError, one_or_many, text_or_null};
+use super::system_listing::{self, one_or_many, text_or_null};
+use super::system_program::{self, ProgramError};
 
 /// Lists the TCP connections, the UDP endpoints and the processes as JSON, the TCP state as
 /// its number. A table with no row is not a failure (`Get-NetTCPConnection` reports an
 /// `ObjectNotFound` error then); any other error is. No double quote: see
-/// [`system_listing::run_powershell`].
+/// [`system_program::run_powershell`].
 #[cfg(windows)]
 const LISTING_SCRIPT: &str = "$tcpErrors = $null; $udpErrors = $null; \
      $tcp = @(Get-NetTCPConnection -ErrorAction SilentlyContinue -ErrorVariable tcpErrors | \
@@ -269,7 +270,7 @@ struct WindowsListing {
 /// # Errors
 ///
 /// The JSON is not the listing's.
-pub fn parse_windows_listing(json: &str) -> Result<Vec<PortEntry>, ListingError> {
+pub fn parse_windows_listing(json: &str) -> Result<Vec<PortEntry>, ProgramError> {
     let listing: WindowsListing = system_listing::parse_json(json)?;
     let names: std::collections::HashMap<u32, String> = listing
         .processes
@@ -406,22 +407,22 @@ fn ss_process(column: &str) -> (Option<String>, Option<u32>) {
 ///
 /// The system has no way to list them, or the listing could not be started, did not end in
 /// time, failed, or wrote something else than asked.
-pub fn run_open_ports() -> Result<Vec<PortEntry>, ListingError> {
+pub fn run_open_ports() -> Result<Vec<PortEntry>, ProgramError> {
     #[cfg(windows)]
     {
-        let json = system_listing::run_powershell(LISTING_SCRIPT, system_listing::LIST_TIME_LIMIT)?;
+        let json = system_program::run_powershell(LISTING_SCRIPT, system_listing::LIST_TIME_LIMIT)?;
         parse_windows_listing(&json)
     }
     #[cfg(target_os = "linux")]
     {
-        let ss = system_listing::find_program(&SS_CANDIDATES).ok_or(ListingError::NotAvailable)?;
+        let ss = system_program::find_program(&SS_CANDIDATES).ok_or(ProgramError::NotAvailable)?;
         let output =
-            system_listing::run_linux(&ss, &SS_ARGUMENTS, system_listing::LIST_TIME_LIMIT)?;
+            system_program::run_linux(&ss, &SS_ARGUMENTS, system_listing::LIST_TIME_LIMIT)?;
         Ok(parse_ss(&output))
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
-        Err(ListingError::NotAvailable)
+        Err(ProgramError::NotAvailable)
     }
 }
 
@@ -511,7 +512,7 @@ mod tests {
         );
         assert!(matches!(
             parse_windows_listing("Get-NetTCPConnection : Accès refusé"),
-            Err(ListingError::Unreadable(_))
+            Err(ProgramError::Unreadable(_))
         ));
     }
 

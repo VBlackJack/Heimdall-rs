@@ -23,12 +23,13 @@
 
 use serde::Deserialize;
 
-use super::system_listing::{self, ListingError, one_or_many, text_or_null};
+use super::system_listing::{self, one_or_many, text_or_null};
+use super::system_program::{self, ProgramError};
 
 /// Reads every interface through the call the C# makes, written as JSON: the interface type
 /// and the operational status as their .NET numbers, the speed in bits per second (-1 when
 /// unknown), the first IPv4 address, its mask and the first IPv4 gateway, as the C#
-/// `ToSnapshot`. No double quote: see [`system_listing::run_powershell`].
+/// `ToSnapshot`. No double quote: see [`system_program::run_powershell`].
 #[cfg(windows)]
 const LISTING_SCRIPT: &str = "$rows = @(foreach ($nic in \
      [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) { \
@@ -265,7 +266,7 @@ struct WindowsListing {
 /// # Errors
 ///
 /// The JSON is not the listing's.
-pub fn parse_windows_listing(json: &str) -> Result<Vec<NicSnapshot>, ListingError> {
+pub fn parse_windows_listing(json: &str) -> Result<Vec<NicSnapshot>, ProgramError> {
     let listing: WindowsListing = system_listing::parse_json(json)?;
     Ok(listing
         .interfaces
@@ -351,7 +352,7 @@ pub fn parse_ip_json(
     addresses: &str,
     routes: &str,
     facts: impl Fn(&str) -> LinkFacts,
-) -> Result<Vec<NicSnapshot>, ListingError> {
+) -> Result<Vec<NicSnapshot>, ProgramError> {
     let links: Vec<IpLink> = system_listing::parse_json(addresses)?;
     let routes: Vec<IpGatewayRoute> = system_listing::parse_json(routes)?;
     Ok(links
@@ -411,25 +412,25 @@ fn sysfs_facts(name: &str) -> LinkFacts {
 ///
 /// The system has no way to list them, or the listing could not be started, did not end in
 /// time, failed, or wrote something else than asked.
-pub fn run_interfaces_command() -> Result<Vec<NicSnapshot>, ListingError> {
+pub fn run_interfaces_command() -> Result<Vec<NicSnapshot>, ProgramError> {
     #[cfg(windows)]
     {
-        let json = system_listing::run_powershell(LISTING_SCRIPT, system_listing::LIST_TIME_LIMIT)?;
+        let json = system_program::run_powershell(LISTING_SCRIPT, system_listing::LIST_TIME_LIMIT)?;
         parse_windows_listing(&json)
     }
     #[cfg(target_os = "linux")]
     {
-        let ip = system_listing::find_program(&system_listing::IP_CANDIDATES)
-            .ok_or(ListingError::NotAvailable)?;
+        let ip = system_program::find_program(&system_listing::IP_CANDIDATES)
+            .ok_or(ProgramError::NotAvailable)?;
         let limit = system_listing::LIST_TIME_LIMIT;
-        let addresses = system_listing::run_linux(&ip, &["-j", "addr"], limit)?;
+        let addresses = system_program::run_linux(&ip, &["-j", "addr"], limit)?;
         let routes =
-            system_listing::run_linux(&ip, &["-j", "-4", "route", "show", "table", "main"], limit)?;
+            system_program::run_linux(&ip, &["-j", "-4", "route", "show", "table", "main"], limit)?;
         parse_ip_json(&addresses, &routes, sysfs_facts)
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
-        Err(ListingError::NotAvailable)
+        Err(ProgramError::NotAvailable)
     }
 }
 
@@ -518,7 +519,7 @@ mod tests {
         assert_eq!(list[0].speed_bps, Some(1_000_000_000));
         assert!(matches!(
             parse_windows_listing(""),
-            Err(ListingError::Unreadable(_))
+            Err(ProgramError::Unreadable(_))
         ));
     }
 

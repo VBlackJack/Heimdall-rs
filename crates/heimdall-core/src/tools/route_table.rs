@@ -27,11 +27,12 @@ use std::net::Ipv4Addr;
 
 use serde::Deserialize;
 
-use super::system_listing::{self, ListingError, one_or_many, text_or_null};
+use super::system_listing::{self, one_or_many, text_or_null};
+use super::system_program::{self, ProgramError};
 
 /// Lists the active IPv4 routes and the interfaces' IPv4 addresses as JSON. A table with no
 /// row is not a failure; any other error is. No double quote: see
-/// [`system_listing::run_powershell`].
+/// [`system_program::run_powershell`].
 #[cfg(windows)]
 const LISTING_SCRIPT: &str = "$routeErrors = $null; $addressErrors = $null; \
      $routes = @(Get-NetRoute -AddressFamily IPv4 -PolicyStore ActiveStore \
@@ -135,7 +136,7 @@ struct WindowsListing {
 /// # Errors
 ///
 /// The JSON is not the listing's.
-pub fn parse_windows_listing(json: &str) -> Result<Vec<RouteEntry>, ListingError> {
+pub fn parse_windows_listing(json: &str) -> Result<Vec<RouteEntry>, ProgramError> {
     let listing: WindowsListing = system_listing::parse_json(json)?;
     let mut routes: Vec<RouteEntry> = listing
         .routes
@@ -189,7 +190,7 @@ struct IpRoute {
 /// # Errors
 ///
 /// The JSON is not what `ip` writes.
-pub fn parse_ip_route_json(json: &str) -> Result<Vec<RouteEntry>, ListingError> {
+pub fn parse_ip_route_json(json: &str) -> Result<Vec<RouteEntry>, ProgramError> {
     let listed: Vec<IpRoute> = system_listing::parse_json(json)?;
     let mut routes: Vec<RouteEntry> = listed
         .into_iter()
@@ -218,17 +219,17 @@ pub fn parse_ip_route_json(json: &str) -> Result<Vec<RouteEntry>, ListingError> 
 ///
 /// The system has no way to list them, or the listing could not be started, did not end in
 /// time, failed, or wrote something else than asked.
-pub fn run_route_command() -> Result<Vec<RouteEntry>, ListingError> {
+pub fn run_route_command() -> Result<Vec<RouteEntry>, ProgramError> {
     #[cfg(windows)]
     {
-        let json = system_listing::run_powershell(LISTING_SCRIPT, system_listing::LIST_TIME_LIMIT)?;
+        let json = system_program::run_powershell(LISTING_SCRIPT, system_listing::LIST_TIME_LIMIT)?;
         parse_windows_listing(&json)
     }
     #[cfg(target_os = "linux")]
     {
-        let ip = system_listing::find_program(&system_listing::IP_CANDIDATES)
-            .ok_or(ListingError::NotAvailable)?;
-        let json = system_listing::run_linux(
+        let ip = system_program::find_program(&system_listing::IP_CANDIDATES)
+            .ok_or(ProgramError::NotAvailable)?;
+        let json = system_program::run_linux(
             &ip,
             &["-j", "-4", "route", "show", "table", "main"],
             system_listing::LIST_TIME_LIMIT,
@@ -237,7 +238,7 @@ pub fn run_route_command() -> Result<Vec<RouteEntry>, ListingError> {
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
-        Err(ListingError::NotAvailable)
+        Err(ProgramError::NotAvailable)
     }
 }
 
@@ -336,7 +337,7 @@ mod tests {
         );
         assert!(matches!(
             parse_windows_listing("Get-NetRoute : Accès refusé"),
-            Err(ListingError::Unreadable(_))
+            Err(ProgramError::Unreadable(_))
         ));
     }
 
