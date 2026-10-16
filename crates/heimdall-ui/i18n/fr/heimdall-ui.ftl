@@ -2930,6 +2930,7 @@ ui-tool-crontab-desc-custom = Planification personnalisée : { $expression }
 ui-tool-crontab-error-field-count = Une expression cron doit comporter exactement 5 champs séparés par des espaces
 ui-tool-crontab-error-invalid-field = Caractères invalides dans le champ "{ $field }" : { $value }
 ui-tool-crontab-error-out-of-range = Les valeurs du champ "{ $field }" doivent être entre { $min } et { $max }
+ui-tool-crontab-error-malformed-field = Le champ "{ $field }" n'est ni un nombre, ni une plage, ni un pas : { $value }
 ui-tool-crontab-help =
     Constructeur Crontab
 
@@ -4692,6 +4693,19 @@ ui-tool-headers-rec-permissions = Recommandation : configurer Permissions-Policy
 ui-tool-headers-rec-xxss = Recommandation : définir X-XSS-Protection à 0 ou s'appuyer sur Content-Security-Policy.
 ui-tool-headers-rec-cookie = Recommandation : définir Secure, HttpOnly et SameSite=Lax/Strict sur les cookies.
 ui-tool-headers-rec-disclosure = Recommandation : désactiver ou masquer l'en-tête serveur pour cacher les versions logicielles internes.
+ui-tool-headers-reason-hsts-http = Les navigateurs ignorent cet en-tête en HTTP simple : analysez l'adresse HTTPS.
+ui-tool-headers-reason-hsts-max-age-invalid = max-age est absent, répété ou n'est pas un nombre : les navigateurs ignorent cet en-tête.
+ui-tool-headers-reason-hsts-max-age-zero = max-age=0 demande aux navigateurs d'oublier la politique HTTPS uniquement.
+ui-tool-headers-reason-hsts-max-age-short = max-age est inférieur à { $seconds } secondes (six mois).
+ui-tool-headers-reason-csp-empty = La politique est vide et ne restreint rien.
+ui-tool-headers-reason-csp-no-script = Ni script-src ni default-src : les scripts ne sont pas restreints.
+ui-tool-headers-reason-csp-unsafe = Les scripts autorisent 'unsafe-inline' sans nonce ni empreinte, ou 'unsafe-eval'.
+ui-tool-headers-reason-xfo-allow-from = Les navigateurs actuels ignorent ALLOW-FROM : utilisez la directive frame-ancestors de la CSP.
+ui-tool-headers-reason-xfo-invalid = La valeur n'est ni DENY ni SAMEORIGIN : les navigateurs ignorent cet en-tête.
+ui-tool-headers-reason-xcto-invalid = La valeur n'est pas nosniff : les navigateurs ignorent cet en-tête.
+ui-tool-headers-reason-referrer-invalid = Aucune politique connue : les navigateurs ignorent cet en-tête.
+ui-tool-headers-reason-referrer-unsafe = Cette politique envoie l'URL complète aux autres sites.
+ui-tool-headers-reason-permissions-empty = La politique est vide et ne restreint rien.
 ui-tool-headers-error-url-required = Veuillez saisir une URL cible.
 ui-tool-headers-error-invalid-url = Veuillez saisir une URL HTTP ou HTTPS valide.
 ui-tool-headers-help =
@@ -5164,6 +5178,7 @@ ui-tool-cronjob-tasks-empty = Actualisez pour lister les tâches planifiées de 
 ui-tool-cronjob-loading = Chargement des tâches planifiées...
 ui-tool-cronjob-error-empty = Veuillez coller le contenu de crontab à analyser.
 ui-tool-cronjob-error-no-entry = Aucune entrée crontab valide trouvée.
+ui-tool-cronjob-invalid-schedule = Planification invalide : { $reason }
 ui-tool-cronjob-error-timeout = Le chargement des tâches a expiré.
 ui-tool-cronjob-error-failed = Échec du chargement des tâches : { $error }
 ui-tool-cronjob-error-unsupported = Les tâches planifiées ne peuvent être listées que sous Windows.
@@ -5351,5 +5366,7 @@ ui-tool-headers-error-connection = Échec de la connexion : { $reason }
 ui-tool-headers-error-tls = Échec de la négociation TLS : { $reason }
 ui-tool-headers-error-certificate = Le serveur a présenté un autre certificat pendant l'analyse : { $reason }
 ui-tool-headers-error-empty = Le serveur a fermé la connexion sans répondre.
+ui-tool-headers-error-oversized = Les en-têtes de la réponse dépassent { $kib } Kio : ils n'ont pas été analysés.
+ui-tool-headers-error-incomplete = Le serveur a fermé la connexion avant la fin des en-têtes de la réponse : ils n'ont pas été analysés.
 ui-tool-headers-http-status = Statut HTTP : { $code }
 ui-tool-headers-stop = Arrêter

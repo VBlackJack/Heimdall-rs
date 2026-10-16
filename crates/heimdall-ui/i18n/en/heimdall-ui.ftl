@@ -3104,6 +3104,7 @@ ui-tool-crontab-desc-custom = Custom schedule: { $expression }
 ui-tool-crontab-error-field-count = A cron expression must have exactly 5 fields separated by spaces
 ui-tool-crontab-error-invalid-field = Invalid characters in field "{ $field }": { $value }
 ui-tool-crontab-error-out-of-range = Field "{ $field }" values must be between { $min } and { $max }
+ui-tool-crontab-error-malformed-field = Field "{ $field }" is not a number, a range or a step: { $value }
 ui-tool-crontab-help =
     Crontab Builder
 
@@ -4639,6 +4640,19 @@ ui-tool-headers-rec-permissions = Recommendation: configure Permissions-Policy t
 ui-tool-headers-rec-xxss = Recommendation: set X-XSS-Protection to 0 or rely on Content-Security-Policy.
 ui-tool-headers-rec-cookie = Recommendation: set Secure, HttpOnly, and SameSite=Lax/Strict on cookies.
 ui-tool-headers-rec-disclosure = Recommendation: disable or sanitize server header to hide internal software versions.
+ui-tool-headers-reason-hsts-http = Browsers ignore this header over plain HTTP: analyze the HTTPS address.
+ui-tool-headers-reason-hsts-max-age-invalid = max-age is missing, repeated or not a number: browsers ignore this header.
+ui-tool-headers-reason-hsts-max-age-zero = max-age=0 tells browsers to forget the HTTPS-only policy.
+ui-tool-headers-reason-hsts-max-age-short = max-age is shorter than { $seconds } seconds (six months).
+ui-tool-headers-reason-csp-empty = The policy is empty and restricts nothing.
+ui-tool-headers-reason-csp-no-script = Neither script-src nor default-src: scripts are not restricted.
+ui-tool-headers-reason-csp-unsafe = Scripts allow 'unsafe-inline' without a nonce or a hash, or 'unsafe-eval'.
+ui-tool-headers-reason-xfo-allow-from = Current browsers ignore ALLOW-FROM: use the frame-ancestors directive of the CSP.
+ui-tool-headers-reason-xfo-invalid = The value is neither DENY nor SAMEORIGIN: browsers ignore this header.
+ui-tool-headers-reason-xcto-invalid = The value is not nosniff: browsers ignore this header.
+ui-tool-headers-reason-referrer-invalid = No known policy: browsers ignore this header.
+ui-tool-headers-reason-referrer-unsafe = This policy sends the full URL to other sites.
+ui-tool-headers-reason-permissions-empty = The policy is empty and restricts nothing.
 ui-tool-headers-error-url-required = Please enter a target URL.
 ui-tool-headers-error-invalid-url = Please enter a valid HTTP or HTTPS URL.
 ui-tool-headers-help =
@@ -5111,6 +5125,7 @@ ui-tool-cronjob-tasks-empty = Refresh to list the Windows scheduled tasks
 ui-tool-cronjob-loading = Loading scheduled tasks...
 ui-tool-cronjob-error-empty = Please paste crontab content to parse.
 ui-tool-cronjob-error-no-entry = No valid crontab entries found.
+ui-tool-cronjob-invalid-schedule = Invalid schedule: { $reason }
 ui-tool-cronjob-error-timeout = Loading tasks timed out.
 ui-tool-cronjob-error-failed = Failed to load tasks: { $error }
 ui-tool-cronjob-error-unsupported = Scheduled tasks can only be listed on Windows.
@@ -5298,5 +5313,7 @@ ui-tool-headers-error-connection = Connection failed: { $reason }
 ui-tool-headers-error-tls = The TLS handshake failed: { $reason }
 ui-tool-headers-error-certificate = The server presented another certificate during the analysis: { $reason }
 ui-tool-headers-error-empty = The server closed the connection without answering.
+ui-tool-headers-error-oversized = The response headers exceed { $kib } KiB: they were not analyzed.
+ui-tool-headers-error-incomplete = The server closed the connection before the end of the response headers: they were not analyzed.
 ui-tool-headers-http-status = HTTP Status: { $code }
 ui-tool-headers-stop = Stop

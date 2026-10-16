@@ -23,7 +23,7 @@
 
 use std::time::Duration;
 
-use super::cron_builder::{self, Description, FIELD_COUNT, Minute};
+use super::cron_builder::{self, CronProblem, Description, FIELD_COUNT, Minute};
 use super::csv_cell;
 
 /// Runs shown for the entry selected, as the C# `NextRunsCount`.
@@ -40,6 +40,10 @@ const SCHTASKS_ARGUMENTS: [&str; 4] = ["/query", "/fo", "CSV", "/v"];
 
 /// What separates the cells of a row copied, as the C# `BuildClipboardText`.
 const CELL_SEPARATOR: char = '\t';
+
+/// What a tab, a carriage return or a line feed inside a cell becomes, so a cell can never
+/// make a column or a row of its own.
+const CELL_BREAK_REPLACEMENT: char = ' ';
 
 /// The columns of the verbose CSV the C# finds by their English names.
 const TASK_NAME_COLUMN: &str = "TaskName";
@@ -72,22 +76,29 @@ impl CrontabEntry {
         cron_builder::join(&self.fields)
     }
 
-    /// What its schedule does, as the C# `CronDescriber`; a schedule the builder cannot read
-    /// is shown as written.
+    /// What is wrong with its schedule, as a crontab reads it; `None` when nothing is. The
+    /// C# `CronScheduleCalculator` lists no run for such a schedule and says nothing more.
+    #[must_use]
+    pub fn problem(&self) -> Option<CronProblem> {
+        cron_builder::crontab_validate(&self.schedule())
+    }
+
+    /// What its schedule does, as the C# `CronDescriber`; a schedule that is not valid is
+    /// shown as written.
     #[must_use]
     pub fn description(&self) -> Description {
-        if cron_builder::parse(&self.schedule()).is_some() {
+        if self.problem().is_none() {
             cron_builder::describe(&self.fields)
         } else {
             Description::Custom(self.schedule())
         }
     }
 
-    /// Its next `count` runs after `now`, a day of the week of 7 being Sunday; none when a
-    /// field cannot be read, as the C# `CronScheduleCalculator`.
+    /// Its next `count` runs after `now`, a day of the week of 7 being Sunday; none when its
+    /// schedule is not valid.
     #[must_use]
     pub fn next_runs(&self, now: Minute, count: usize) -> Vec<String> {
-        if cron_builder::parse(&self.schedule()).is_none() {
+        if self.problem().is_some() {
             return Vec::new();
         }
         cron_builder::crontab_next_runs(&self.fields, now, count)
@@ -370,11 +381,26 @@ mod timed {
 }
 
 /// One row copied: its cells sanitized and joined by tabs, as the C# `BuildClipboardText`.
+/// Unlike the C#, which only looks at a cell's start, a tab, carriage return or line feed
+/// inside a cell becomes a space first: `echo ok<TAB>=1+1` stays one cell, and a spreadsheet
+/// never reads its `=1+1` as a formula of a cell of its own.
 #[must_use]
 pub fn clipboard_row(cells: &[&str]) -> String {
     let mut row = cells
         .iter()
-        .map(|cell| csv_cell::sanitize(cell))
+        .map(|cell| {
+            let flat: String = cell
+                .chars()
+                .map(|c| {
+                    if matches!(c, '\t' | '\r' | '\n') {
+                        CELL_BREAK_REPLACEMENT
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            csv_cell::sanitize(&flat)
+        })
         .collect::<Vec<_>>()
         .join(&CELL_SEPARATOR.to_string());
     row.push('\n');
@@ -532,6 +558,75 @@ PATH=/usr/bin:/bin
         assert_eq!(
             tasks_clipboard_text(&tasks),
             "'=HYPERLINK(\"x\")\tReady\tN/A\t'-\t0\n"
+        );
+    }
+
+    #[test]
+    fn a_tab_or_a_line_break_inside_a_cell_makes_no_cell_of_its_own() {
+        let row = clipboard_row(&["* * * * *", "echo ok\t=1+1", "a\r\n+b\nc", "\t-1"]);
+        assert_eq!(row, "* * * * *\techo ok =1+1\ta  +b c\t' -1\n");
+        assert_eq!(row.matches(CELL_SEPARATOR).count(), 3);
+        assert_eq!(row.matches('\n').count(), 1);
+        let tasks = [ScheduledTask {
+            name: "\\T\tx".to_owned(),
+            status: "Ready\n=cmd".to_owned(),
+            next_run: String::new(),
+            last_run: String::new(),
+            last_result: String::new(),
+        }];
+        assert_eq!(tasks_clipboard_text(&tasks), "\\T x\tReady =cmd\t\t\t\n");
+    }
+
+    #[test]
+    fn a_schedule_out_of_bounds_is_refused_not_counted_out() {
+        let now = minute(1_792_066_020);
+        let entries = parse_crontab(
+            "0-2147483647 * * * * echo\n*/0 * * * * a\n10-20/5 * * * * b\n0 0 * * 0-7 c\n",
+        );
+        assert_eq!(
+            entries[0].problem(),
+            Some(CronProblem::OutOfRange { field: 0 })
+        );
+        assert!(entries[0].next_runs(now, 1).is_empty());
+        assert_eq!(
+            entries[0].description(),
+            Description::Custom("0-2147483647 * * * *".to_owned())
+        );
+        assert_eq!(
+            entries[1].problem(),
+            Some(CronProblem::OutOfRange { field: 0 })
+        );
+        assert_eq!(entries[2].problem(), None);
+        assert_eq!(
+            entries[2].next_runs(now, 4),
+            [
+                "2026-10-15 12:10 (Thu)",
+                "2026-10-15 12:15 (Thu)",
+                "2026-10-15 12:20 (Thu)",
+                "2026-10-15 13:10 (Thu)"
+            ]
+        );
+        assert_eq!(entries[3].problem(), None, "7 is Sunday in a crontab");
+    }
+
+    #[test]
+    fn a_day_of_the_month_and_of_the_week_both_restricted_run_on_either() {
+        // 2026-10-15 12:07 UTC is a Thursday; 2026-11-01 a Sunday.
+        let now = minute(1_792_066_020);
+        let entries = parse_crontab("0 9 1 * 1 a\n0 9 */2 * 1 b\n");
+        assert_eq!(
+            entries[0].next_runs(now, 4),
+            [
+                "2026-10-19 09:00 (Mon)",
+                "2026-10-26 09:00 (Mon)",
+                "2026-11-01 09:00 (Sun)",
+                "2026-11-02 09:00 (Mon)"
+            ]
+        );
+        // A day of the month starting with `*` is unrestricted: both must match, as Vixie.
+        assert_eq!(
+            entries[1].next_runs(now, 2),
+            ["2026-10-19 09:00 (Mon)", "2026-11-09 09:00 (Mon)"]
         );
     }
 
