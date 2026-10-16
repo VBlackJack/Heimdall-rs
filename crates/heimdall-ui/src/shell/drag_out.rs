@@ -20,7 +20,9 @@
 //!
 //! A press on a local entry held, the pointer leaving its window hands the drag to the
 //! system: the shell's drag loop runs on the event loop's thread, through
-//! [`window::run`], until the files are dropped or the drag given up. That loop takes the
+//! [`window::run`], until the files are dropped or the drag given up; dropped, they are
+//! copied by Explorer on its own thread, so that its copy and its questions (a file of
+//! that name already there) never hold the application's windows. That loop takes the
 //! release, which the window never sees: the press is forgotten when the pointer leaves,
 //! so that nothing follows the pointer until the next press.
 //!

@@ -258,9 +258,10 @@ pub fn failure(error: &DragError) -> Option<DragOutFailure> {
     match error {
         DragError::Empty => None,
         DragError::SeveralFolders => Some(DragOutFailure::SeveralFolders),
-        DragError::Unsupported | DragError::NoWindow | DragError::NotSingleThreaded => {
-            Some(DragOutFailure::Unavailable)
-        }
+        DragError::Unsupported
+        | DragError::NoWindow
+        | DragError::NotSingleThreaded
+        | DragError::Synchronous => Some(DragOutFailure::Unavailable),
         DragError::InvalidPath(path) => Some(DragOutFailure::Refused(path.display().to_string())),
         DragError::Shell { code, message } => {
             Some(DragOutFailure::Refused(if message.trim().is_empty() {
@@ -361,6 +362,7 @@ mod tests {
             DragError::Unsupported,
             DragError::NoWindow,
             DragError::NotSingleThreaded,
+            DragError::Synchronous,
         ] {
             assert_eq!(failure(&unavailable), Some(DragOutFailure::Unavailable));
         }

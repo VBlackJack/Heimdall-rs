@@ -65,6 +65,10 @@ pub enum DragError {
     /// The thread is not in a single-threaded COM apartment, as a drag needs.
     #[error("the calling thread is not in a single-threaded COM apartment")]
     NotSingleThreaded,
+    /// The drop could not be made asynchronous: it would hold the window's thread, every
+    /// window of the application with it, for as long as the target takes the files.
+    #[error("the shell would not let the files be dropped asynchronously")]
+    Synchronous,
     /// The shell refused, with this code and this message.
     #[error("the shell refused ({code:#010x}): {message}")]
     Shell {
@@ -101,7 +105,9 @@ pub fn common_folder(paths: &[PathBuf]) -> Result<&Path, DragError> {
 
 /// Drags `paths` out of the window `window`, a Win32 window handle, as a copy, until the
 /// files are dropped or the drag is given up; the system's drag loop runs meanwhile, and
-/// the window's messages are dispatched from it.
+/// the window's messages are dispatched from it. The drop is offered asynchronously, as
+/// from Explorer: a target taking it so, Explorer first, copies the files on a thread of
+/// its own once dropped, its questions included, rather than holding this one until done.
 ///
 /// To be called on the thread that owns `window`, in a single-threaded COM apartment, the
 /// left mouse button held: the event loop's thread, whose window library initialised OLE.
@@ -111,6 +117,7 @@ pub fn common_folder(paths: &[PathBuf]) -> Result<&Path, DragError> {
 ///
 /// Those of [`common_folder`]; [`DragError::NoWindow`] for a null handle;
 /// [`DragError::NotSingleThreaded`] off a single-threaded apartment;
+/// [`DragError::Synchronous`] when the drop cannot be made asynchronous;
 /// [`DragError::Shell`] when the shell refuses a path or the drag;
 /// [`DragError::Unsupported`] on a system other than Windows.
 pub fn drag_files(window: isize, paths: &[PathBuf]) -> Result<DragOutcome, DragError> {

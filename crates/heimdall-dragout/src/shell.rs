@@ -28,11 +28,25 @@
 //! While the loop runs, the window is not redrawn: winit, inside its handler, answers a
 //! paint message by asking for another (winit 0.30 `event_loop.rs`, `WM_PAINT`), so the
 //! thread may stay busy until the drag ends.
+//!
+//! The drop is asynchronous, as Explorer makes its own drags: a drag and drop is otherwise
+//! synchronous, the target doing the whole copy inside its `IDropTarget::Drop`, any
+//! question it asks included, while the source's thread waits in the drag loop ("Handling
+//! Shell Data Transfer Scenarios", "Dragging and Dropping Shell Objects Asynchronously").
+//! Here that thread is the event loop's: a file dropped on Explorer where one of its name
+//! already was froze every window of the application, input ignored and nothing redrawn,
+//! until Explorer's "Replace or Skip Files" was answered (manual test of 2026-10-16). The
+//! shell's data object only goes asynchronous when made on a thread with a thread
+//! reference, which it holds until the target's copy ends (`SHSetThreadRef`); the event
+//! loop's thread is given one before its first data object, as the shell's own threads
+//! have one.
 
+use std::cell::OnceCell;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicI32;
 
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{E_UNEXPECTED, HWND};
 use windows::Win32::System::Com::{
     APTTYPE, APTTYPE_MAINSTA, APTTYPE_STA, APTTYPEQUALIFIER, CoGetApartmentType, IBindCtx,
     IDataObject,
@@ -40,9 +54,10 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::Ole::{DROPEFFECT_COPY, DROPEFFECT_NONE, IDropSource};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    BHID_DataObject, ILFree, SHCreateShellItemArrayFromIDLists, SHDoDragDrop, SHParseDisplayName,
+    BHID_DataObject, IDataObjectAsyncCapability, ILFree, SHCreateShellItemArrayFromIDLists,
+    SHCreateThreadRef, SHDoDragDrop, SHGetThreadRef, SHParseDisplayName, SHSetThreadRef,
 };
-use windows::core::PCWSTR;
+use windows::core::{IUnknown, Interface, PCWSTR};
 
 use crate::{DragError, DragOutcome};
 
@@ -110,10 +125,15 @@ fn id_list(path: &Path) -> Result<IdList, DragError> {
     // Owned before the answer is read: a list written despite a failure is freed too.
     let owned = (!list.is_null()).then_some(IdList(list));
     parsed.map_err(|error| shell_error(&error))?;
-    owned.ok_or_else(|| DragError::Shell {
-        code: windows::Win32::Foundation::E_UNEXPECTED.0,
+    owned.ok_or_else(unexpected)
+}
+
+/// The shell answered success without the object it was asked for.
+fn unexpected() -> DragError {
+    DragError::Shell {
+        code: E_UNEXPECTED.0,
         message: String::new(),
-    })
+    }
 }
 
 /// The shell's data object of `paths`, all in one folder: the same Explorer drags, file
@@ -137,10 +157,96 @@ pub(crate) fn data_object(paths: &[PathBuf]) -> Result<IDataObject, DragError> {
         .map_err(|error| shell_error(&error))
 }
 
+/// `data` dropped asynchronously: the target returns from its drop at once and takes the
+/// files on a thread of its own, its progress and its questions included, as from
+/// Explorer's own drags; the source's thread is free again as soon as the drag loop ends.
+/// The shell's data object takes care of the end of that operation itself.
+///
+/// # Errors
+///
+/// [`DragError::Synchronous`] when the data object stays synchronous, as one made on a
+/// thread without a thread reference ([`thread_ref`]) does: its drop would hold this
+/// thread for as long as the target takes.
+pub(crate) fn asynchronous(data: &IDataObject) -> Result<(), DragError> {
+    let capability: IDataObjectAsyncCapability =
+        data.cast().map_err(|error| shell_error(&error))?;
+    // SAFETY: `capability` is a live interface of the data object, held until the call
+    // returns; the flag is passed by value.
+    unsafe { capability.SetAsyncMode(true) }.map_err(|error| shell_error(&error))?;
+    // SAFETY: as above; the call only writes its own result.
+    let mode = unsafe { capability.GetAsyncMode() }.map_err(|error| shell_error(&error))?;
+    if mode.as_bool() {
+        Ok(())
+    } else {
+        Err(DragError::Synchronous)
+    }
+}
+
+/// The thread reference this crate gave its thread, while the thread lasts: the shell's
+/// data objects hold it, through `SHGetThreadRef`, while a target copies their files on
+/// its own thread.
+struct ThreadRef(Option<IUnknown>);
+
+impl ThreadRef {
+    /// The thread's reference: the one it already has, left as it is, or a new one set.
+    fn set() -> Result<Self, DragError> {
+        // SAFETY: no argument; the reference returned, if any, is owned by the result and
+        // released when dropped.
+        if unsafe { SHGetThreadRef() }.is_ok() {
+            return Ok(Self(None));
+        }
+        // The object counts its references in this number and frees itself at zero, which
+        // can be after this thread is gone, a target still copying: the number is left for
+        // the rest of the process, four bytes once per thread.
+        let count: &'static AtomicI32 = Box::leak(Box::new(AtomicI32::new(0)));
+        let mut object = None;
+        // SAFETY: `count` lives until the process ends and the object only changes it by
+        // interlocked operations, as an `AtomicI32` of the same layout; `object` is a live
+        // local the call writes the new object to, owned by this function from then on.
+        unsafe { SHCreateThreadRef(count.as_ptr(), &raw mut object) }
+            .map_err(|error| shell_error(&error))?;
+        let object = object.ok_or_else(unexpected)?;
+        // SAFETY: the thread's slot keeps `object` without a reference of its own: `drop`
+        // empties it before `object` is released; the call only stores the pointer.
+        unsafe { SHSetThreadRef(&object) }.map_err(|error| shell_error(&error))?;
+        Ok(Self(Some(object)))
+    }
+}
+
+impl Drop for ThreadRef {
+    fn drop(&mut self) {
+        if self.0.is_some() {
+            // SAFETY: empties this thread's slot, which holds the object of `self.0`, before
+            // that object is released with `self`; no pointer is given.
+            let _ = unsafe { SHSetThreadRef(None::<&IUnknown>) };
+        }
+    }
+}
+
+thread_local! {
+    /// The thread reference of this thread, once a drag needed one.
+    static THREAD_REF: OnceCell<ThreadRef> = const { OnceCell::new() };
+}
+
+/// This thread with a thread reference, for good: set by its first drag, before the data
+/// objects it makes, which take it when made.
+pub(crate) fn thread_ref() -> Result<(), DragError> {
+    THREAD_REF.with(|cell| {
+        if cell.get().is_none() {
+            let _ = cell.set(ThreadRef::set()?);
+        }
+        Ok(())
+    })
+}
+
 /// The drag of `paths` out of the window `window`, a copy, until dropped or given up.
+/// A data object that cannot be dropped asynchronously is not dragged: its drop would hold
+/// the window's thread for as long as the target takes.
 pub(crate) fn drag(window: isize, paths: &[PathBuf]) -> Result<DragOutcome, DragError> {
     single_threaded()?;
+    thread_ref()?;
     let data = data_object(paths)?;
+    asynchronous(&data)?;
     // A window handle is a number the system checks, never memory read here.
     let owner = HWND(std::ptr::without_provenance_mut(window.cast_unsigned()));
     // SAFETY: on a single-threaded apartment, as checked above; `data` is a live data
@@ -219,6 +325,51 @@ mod tests {
             let offered = unsafe { data.QueryGetData(&raw const format) };
             assert!(offered.is_ok(), "a file drop: {offered:?}");
             drop(data);
+            drop(apartment);
+        })
+        .join()
+        .expect("ran");
+    }
+
+    /// Whether `data` is dropped asynchronously.
+    fn async_mode(data: &IDataObject) -> bool {
+        let capability: IDataObjectAsyncCapability = data.cast().expect("the capability");
+        // SAFETY: `capability` is live for the call, which only writes its own result.
+        unsafe { capability.GetAsyncMode() }
+            .expect("a mode")
+            .as_bool()
+    }
+
+    /// The freeze of the manual test of 2026-10-16: the shell's data object is dropped
+    /// synchronously unless told otherwise, so the target's copy, and its "Replace or Skip
+    /// Files" question, held the event loop's thread. Made on a thread without a thread
+    /// reference, it stays so even when told otherwise; the one dragged is asynchronous.
+    #[test]
+    fn the_files_are_dropped_asynchronously() {
+        let dir = tempfile::tempdir().expect("dir");
+        let paths = [dir.path().join("binaire.bin")];
+        std::fs::write(&paths[0], b"x").expect("written");
+        std::thread::spawn(move || {
+            let apartment = Apartment::enter();
+            let data = data_object(&paths).expect("a data object");
+            assert!(!async_mode(&data), "synchronous by default");
+            let capability: IDataObjectAsyncCapability = data.cast().expect("the capability");
+            // SAFETY: `capability` is live for the call; the flag is passed by value.
+            unsafe { capability.SetAsyncMode(true) }.expect("accepted");
+            assert!(
+                !async_mode(&data),
+                "still synchronous without a thread reference"
+            );
+            assert_eq!(asynchronous(&data), Err(DragError::Synchronous));
+            thread_ref().expect("a thread reference");
+            let dragged = data_object(&paths).expect("a data object");
+            asynchronous(&dragged).expect("made asynchronous");
+            assert!(async_mode(&dragged));
+            // A second drag on the same thread keeps its reference.
+            thread_ref().expect("the same reference");
+            let again = data_object(&paths).expect("a second data object");
+            asynchronous(&again).expect("made asynchronous");
+            drop((capability, again, dragged, data));
             drop(apartment);
         })
         .join()
