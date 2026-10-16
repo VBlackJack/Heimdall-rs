@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use super::csv_cell::quoted;
 use super::mac_vendor::{self, MacVendor};
-use super::net_command::{self, RunEnd};
+use super::system_program::{self, ProgramError};
 
 /// How long `arp -a` may run, as the C# `WaitForExit(5000)`.
 pub const ARP_DEADLINE: Duration = Duration::from_secs(5);
@@ -344,13 +344,13 @@ pub fn read_system_arp_table(stop: &AtomicBool) -> Option<Vec<(String, String)>>
     {
         return Some(parse_linux_proc_net_arp(&content));
     }
-    let program = net_command::system_tool(WINDOWS_PROGRAM, UNIX_PROGRAM)?;
+    let program = system_program::system_tool(WINDOWS_PROGRAM, UNIX_PROGRAM)?;
     let mut output = String::new();
-    let end = net_command::run_lines(&program, &ARP_ARGUMENTS, ARP_DEADLINE, stop, |line| {
+    let end = system_program::run_lines(&program, &ARP_ARGUMENTS, ARP_DEADLINE, stop, |line| {
         output.push_str(line);
         output.push('\n');
     });
-    if end == RunEnd::NotStarted {
+    if matches!(end, Err(ProgramError::NotStarted(_))) {
         return None;
     }
     Some(if cfg!(target_os = "macos") {

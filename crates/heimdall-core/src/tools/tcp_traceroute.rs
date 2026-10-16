@@ -25,8 +25,8 @@ use std::time::Duration;
 
 use super::banner_grab::clean_banner;
 use super::csv_cell::quoted;
-use super::net_command::{self, RunEnd};
 use super::net_host::checked_host;
+use super::system_program::{self, ProgramError, RunEnd};
 
 /// Default maximum number of hops.
 pub const DEFAULT_MAX_HOPS: usize = 30;
@@ -274,9 +274,9 @@ pub fn run_traceroute(
     max_hops: usize,
     stop: &AtomicBool,
     mut on_hop: impl FnMut(TraceHopResult),
-) -> RunEnd {
-    let Some(program) = net_command::system_tool(WINDOWS_PROGRAM, UNIX_PROGRAM) else {
-        return RunEnd::NotStarted;
+) -> Result<RunEnd, ProgramError> {
+    let Some(program) = system_program::system_tool(WINDOWS_PROGRAM, UNIX_PROGRAM) else {
+        return Err(ProgramError::NotAvailable);
     };
     let hops = max_hops.to_string();
     let wait_ms = PROBE_WAIT_MS.to_string();
@@ -288,7 +288,7 @@ pub fn run_traceroute(
     } else {
         vec!["-n", "-m", &hops, "-w", &wait_secs, host]
     };
-    net_command::run_lines(&program, &args, trace_deadline(max_hops), stop, |line| {
+    system_program::run_lines(&program, &args, trace_deadline(max_hops), stop, |line| {
         if let Some(hop) = parse_traceroute_line(line) {
             on_hop(hop);
         }

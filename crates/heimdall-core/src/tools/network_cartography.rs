@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 
 use super::csv_cell::quoted;
 use super::mac_vendor::{self, MacVendor};
-use super::{arp_monitor, dns_lookup, net_command, net_host, ping};
+use super::{arp_monitor, dns_lookup, net_host, ping, probe_pool, system_program};
 
 /// Quick scan ports for network cartography.
 pub const QUICK_RECON_PORTS: [u16; 12] =
@@ -183,7 +183,8 @@ fn program_output(
     stop: &AtomicBool,
 ) -> String {
     let mut output = String::new();
-    net_command::run_lines(program, args, deadline, stop, |line| {
+    // How it ended changes nothing: what it printed, if anything, is what is read.
+    let _ = system_program::run_lines(program, args, deadline, stop, |line| {
         output.push_str(line);
         output.push('\n');
     });
@@ -487,7 +488,7 @@ pub fn discover(
         jobs.extend(QUICK_RECON_PORTS.iter().map(|port| Probe::Port(*ip, *port)));
     }
     let mut progress: HashMap<Ipv4Addr, HostProgress> = HashMap::new();
-    net_command::for_each_bounded(
+    probe_pool::for_each_bounded(
         jobs,
         MAX_CONCURRENCY,
         stop,
@@ -566,7 +567,7 @@ pub fn discover(
         .collect();
     on_event(DiscoveryEvent::Naming(to_name.len()));
     let mut names: HashMap<usize, String> = HashMap::new();
-    net_command::for_each_bounded(
+    probe_pool::for_each_bounded(
         to_name,
         MAX_CONCURRENCY,
         stop,
