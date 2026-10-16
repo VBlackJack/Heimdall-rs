@@ -62,13 +62,14 @@ mod tests {
         let loopback = [IpAddr::V4(Ipv4Addr::LOCALHOST)];
         let elapsed = connect_time(&loopback, port, Duration::from_secs(5)).await;
         assert!(elapsed.is_ok(), "{elapsed:?}");
-        drop(listener);
-        // The port stays taken by a socket bound but not listening, so a parallel test
-        // cannot listen on it in between: the connection is refused, never accepted.
+        // The closed port is another one, held by a socket bound but not
+        // listening: no parallel test can listen on it, and the first port, left in
+        // TIME_WAIT by the connection above, is never bound again (Linux refuses that).
         let socket = TcpSocket::new_v4().expect("socket");
         socket
-            .bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
-            .expect("rebind the closed port");
+            .bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .expect("bind a closed port");
+        let port = socket.local_addr().expect("closed address").port();
         // Windows tries a refused connection again for about two seconds.
         let refused = connect_time(&loopback, port, Duration::from_secs(5)).await;
         assert!(refused.is_err(), "{refused:?}");
