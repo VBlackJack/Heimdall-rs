@@ -44,6 +44,9 @@ pub enum ToolsMessage {
     ToggleSidebarTab,
     /// Fold or unfold a group of the sidebar's tools.
     ToggleGroup(ToolGroup),
+    /// The close question of a tool's tab answered Save: its document saved, then the
+    /// close asked again.
+    SaveBeforeClose,
 }
 
 impl Tab {
@@ -94,6 +97,14 @@ impl App {
             .favorites
             .iter()
             .any(|code| code.eq_ignore_ascii_case(tool.code()))
+    }
+
+    /// Tool tab `tab` holds the document `name` with changes not saved, or nothing to lose
+    /// (`None`): the window says it after each change, so closing the tab asks first.
+    pub fn set_tool_unsaved(&mut self, tab: TabId, name: Option<String>) {
+        if let Some(found) = self.tab_mut(tab).filter(|found| found.tool().is_some()) {
+            found.tool_unsaved = name;
+        }
     }
 
     /// Whether `tab` shows a tool.
@@ -148,6 +159,16 @@ impl App {
                 self.save_tools(|tools| tools.show_tools_panel = tab == SidebarTab::Tools);
                 Vec::new()
             }
+            ToolsMessage::SaveBeforeClose => match self.dialog.take() {
+                Some(Dialog::ConfirmCloseTool { tab, .. }) => {
+                    self.closing_pane = None;
+                    vec![Effect::SaveTool(tab)]
+                }
+                other => {
+                    self.dialog = other;
+                    Vec::new()
+                }
+            },
             ToolsMessage::ToggleGroup(group) => {
                 let key = group.key();
                 let open = self.tool_group_open(group);
