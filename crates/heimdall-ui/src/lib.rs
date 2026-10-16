@@ -180,6 +180,11 @@ pub fn run() -> iced::Result {
         return Ok(());
     };
     let watched = instance.as_ref().map(|guard| guard.dir().to_owned());
+    // The notes earlier builds wrote from the session tree beside the profiles (in the
+    // roaming folder), copied into the one notes folder the Notes tool lists (in the local
+    // one); by the one instance running, before any note is opened, as a note's file is its
+    // identity. Nothing written over, the originals left in place.
+    heimdall_core::tools::notes_storage::copy_old_notes();
     i18n::init();
     // The connection files Remote Desktop Connection was given by a run that ended before
     // removing them, swept beside the start.
