@@ -23,7 +23,10 @@ use std::path::Path;
 use heimdall_app::tools::{
     MAX_RECENT_TOOLS, RecentTools, SidebarTab, ToolCategory, ToolGroup, ToolId, toggle_favorite,
 };
-use heimdall_app::{App, AppConfig, Message, Phase, TabProfile, ToolsMessage};
+use heimdall_app::{
+    App, AppConfig, Dialog, Effect, Message, Phase, TabGroup, TabMenuMessage, TabProfile,
+    ToolsMessage,
+};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 
@@ -384,4 +387,91 @@ fn a_network_tool_would_inherit_the_selected_session_host() {
     assert_eq!(app.tool_target_host(), None, "none selected");
     app.selected_profile = Some(ProfileId::new("web"));
     assert_eq!(app.tool_target_host().as_deref(), Some("web.lab"));
+}
+
+#[test]
+fn a_tool_tab_holding_unsaved_changes_asks_save_discard_or_cancel_first() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    open(&mut app, ToolId::Diagram);
+    let tab = app.tabs[0].id;
+    app.set_tool_unsaved(tab, Some("net.mmd".to_owned()));
+    assert!(app.tabs[0].holds_unsaved_text());
+    let _ = app.update(Message::RequestCloseTab(tab));
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::ConfirmCloseTool {
+            tab,
+            name: "net.mmd".to_owned()
+        })
+    );
+    assert!(
+        !app.dialog.as_ref().is_some_and(Dialog::confirms_on_enter),
+        "lost by a click alone"
+    );
+    // Cancel: the tab stays, its changes with it.
+    let _ = app.update(Message::DismissDialog);
+    assert_eq!(app.tabs.len(), 1);
+    // Save: the window saves, then asks to close again; the tab stays meanwhile.
+    let _ = app.update(Message::RequestCloseTab(tab));
+    let effects = app.update(Message::Tools(ToolsMessage::SaveBeforeClose));
+    assert!(
+        matches!(effects.as_slice(), [Effect::SaveTool(saved)] if *saved == tab),
+        "{effects:?}"
+    );
+    assert_eq!(app.dialog, None);
+    assert_eq!(app.tabs.len(), 1);
+    // Saved: it closes without asking.
+    app.set_tool_unsaved(tab, None);
+    let _ = app.update(Message::RequestCloseTab(tab));
+    assert_eq!(app.dialog, None);
+    assert!(app.tabs.is_empty());
+}
+
+#[test]
+fn discarding_a_tool_tabs_unsaved_changes_closes_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    open(&mut app, ToolId::Notes);
+    let tab = app.tabs[0].id;
+    app.set_tool_unsaved(tab, Some("Ops".to_owned()));
+    let _ = app.update(Message::RequestCloseTab(tab));
+    assert!(matches!(app.dialog, Some(Dialog::ConfirmCloseTool { .. })));
+    let _ = app.update(Message::ConfirmDialog);
+    assert!(app.tabs.is_empty());
+    // Saved without a question asked: nothing happens.
+    let effects = app.update(Message::Tools(ToolsMessage::SaveBeforeClose));
+    assert!(effects.is_empty());
+}
+
+#[test]
+fn quitting_or_closing_tabs_together_counts_the_tool_tabs_unsaved_changes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    open(&mut app, ToolId::Uuid);
+    open(&mut app, ToolId::Diagram);
+    let (uuid, diagram) = (app.tabs[0].id, app.tabs[1].id);
+    app.set_tool_unsaved(diagram, Some("net.mmd".to_owned()));
+    let _ = app.update(Message::WindowCloseRequested);
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::ConfirmExit {
+            live: 0,
+            unsaved: 1
+        })
+    );
+    let _ = app.update(Message::DismissDialog);
+    let _ = app.update(Message::TabMenu(TabMenuMessage::Close {
+        tab: uuid,
+        group: TabGroup::Others,
+    }));
+    assert!(
+        matches!(
+            app.dialog,
+            Some(Dialog::ConfirmCloseTabs { unsaved: 1, .. })
+        ),
+        "{:?}",
+        app.dialog
+    );
+    assert_eq!(app.tabs.len(), 2, "nothing closed before it is answered");
 }

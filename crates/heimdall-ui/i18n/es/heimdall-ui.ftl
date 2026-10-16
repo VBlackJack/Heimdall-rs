@@ -1815,6 +1815,8 @@ ui-editor-notice-failed = Error al guardar: { $reason }
 ui-dialog-discard-editor-title = Cambios sin guardar
 ui-dialog-discard-editor-body = El archivo tiene cambios sin guardar. ¿Cerrar de todos modos?
 ui-dialog-close-editor-body = El editor de "{ $name }" tiene cambios sin guardar. ¿Cerrar y descartarlos?
+ui-dialog-close-tool-body = "{ $name }" tiene cambios sin guardar. ¿Guardarlos antes de cerrar la pestaña?
+ui-dialog-close-tool-discard = Descartar
 ui-dialog-unsaved-editors = { $count ->
     [one] { $count } editor tiene cambios sin guardar, que se perderían.
    *[other] { $count } editores tienen cambios sin guardar, que se perderían.
@@ -5222,6 +5224,9 @@ ui-tool-notes-empty-body = Crea una nota o selecciona una de la lista.
 ui-tool-notes-error-no-folder = Este sistema no da a Heimdall ninguna carpeta de datos donde guardar las notas.
 ui-tool-notes-error-list = No se pueden leer las notas: { $error }
 ui-tool-notes-error-save = No se puede guardar la nota: { $error }
+ui-tool-notes-unsaved-blocked = No se pudo guardar esta nota. Vuelve a intentarlo o descarta sus cambios para continuar.
+ui-tool-notes-retry = Reintentar
+ui-tool-notes-discard = Descartar los cambios
 
 ## Editor de diagramas
 ui-tool-diagram-name = Editor de diagramas

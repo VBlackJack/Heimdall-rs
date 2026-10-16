@@ -18,7 +18,8 @@
 //! Markdown file per note under `<data>/config/notes`, listed newest first with the title of
 //! its first heading, its tags and the date of its file; the note selected edited and saved
 //! 850 ms after the last change, as the C# `_saveTimer`, and when another is selected or the
-//! tab closes; copied as Markdown or as HTML.
+//! tab closes; copied as Markdown or as HTML. Changes that cannot be written are never let
+//! go: the note stays shown, and the tab open, until they are saved or discarded.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -68,6 +69,12 @@ pub enum NotesMessage {
     CopyMarkdown,
     /// Copy the note as an HTML document.
     CopyHtml,
+    /// Try again the save that kept another note from being shown or made.
+    RetrySave,
+    /// Drop the changes that could not be saved, then go on to what was asked.
+    DiscardChanges,
+    /// Stay on the note whose changes could not be saved.
+    KeepEditing,
 }
 
 /// What an update asks of its tab.
@@ -106,6 +113,16 @@ enum Status {
     WriteFailed(String),
 }
 
+/// What waits for the changes of the note shown to be written: they could not be, and going
+/// on would lose them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Leave {
+    /// Show the note in this file.
+    Select(PathBuf),
+    /// Make a new note.
+    New,
+}
+
 /// The notes tool's state.
 #[derive(Debug)]
 pub struct NotesPane {
@@ -121,6 +138,8 @@ pub struct NotesPane {
     /// Changes not yet on disk.
     dirty: bool,
     confirm_delete: bool,
+    /// Where the user asked to go while the note shown could not be saved.
+    blocked: Option<Leave>,
     status: Status,
 }
 
@@ -144,6 +163,7 @@ impl NotesPane {
             changes: 0,
             dirty: false,
             confirm_delete: false,
+            blocked: None,
             status: Status::None,
         };
         pane.reload();
@@ -171,11 +191,24 @@ impl NotesPane {
             NotesMessage::Search(typed) => self.search = typed,
             NotesMessage::Select(path) => {
                 if self.selected.as_ref() != Some(&path) {
-                    self.flush();
-                    self.show(&path);
+                    self.leave(Leave::Select(path));
                 }
             }
-            NotesMessage::New => self.create(),
+            NotesMessage::New => self.leave(Leave::New),
+            NotesMessage::RetrySave => {
+                if self.flush()
+                    && let Some(leave) = self.blocked.take()
+                {
+                    self.go(leave);
+                }
+            }
+            NotesMessage::DiscardChanges => {
+                self.discard();
+                if let Some(leave) = self.blocked.take() {
+                    self.go(leave);
+                }
+            }
+            NotesMessage::KeepEditing => self.blocked = None,
             NotesMessage::Edit(action) => {
                 let edit = action.is_edit();
                 self.editor.perform(action);
@@ -186,6 +219,7 @@ impl NotesPane {
                 }
             }
             NotesMessage::SaveDue(change) => {
+                // Failed, it is said, and the changes wait for the next save.
                 if change == self.changes {
                     self.flush();
                 }
@@ -208,6 +242,61 @@ impl NotesPane {
     /// The tab closing: the note shown saved, as the C# `TrySaveSynchronously`.
     pub fn closing(&mut self) {
         self.flush();
+    }
+
+    /// The changes of the note shown written now, as the C# `CanClose` does before its tab
+    /// closes (`NotesToolView.xaml.cs:107`); whether nothing is left unsaved.
+    pub fn save_now(&mut self) -> bool {
+        self.flush()
+    }
+
+    /// The title of the note shown when its changes are not on disk, which closing the tab
+    /// would lose; `None` when nothing would be lost.
+    #[must_use]
+    pub fn unsaved(&self) -> Option<String> {
+        if !self.dirty {
+            return None;
+        }
+        self.current().map(|note| note.title())
+    }
+
+    /// The note shown left for `leave` once its changes are on disk; kept, its changes with
+    /// it, while they cannot be written, until they are or the user discards them.
+    fn leave(&mut self, leave: Leave) {
+        if self.flush() {
+            self.blocked = None;
+            self.go(leave);
+        } else {
+            self.confirm_delete = false;
+            self.blocked = Some(leave);
+        }
+    }
+
+    /// `leave` done, nothing left unsaved.
+    fn go(&mut self, leave: Leave) {
+        match leave {
+            Leave::Select(path) => self.show(&path),
+            Leave::New => self.create(),
+        }
+    }
+
+    /// The changes of the note shown dropped, as the user asked: the note as last saved.
+    fn discard(&mut self) {
+        // A save waiting for them would write them after all: it is let go.
+        self.changes += 1;
+        self.dirty = false;
+        if let Some(content) = self.current_saved().map(|note| note.content.clone()) {
+            self.editor = Content::with_text(&content);
+        }
+        if matches!(self.status, Status::WriteFailed(_)) {
+            self.status = Status::None;
+        }
+    }
+
+    /// The note shown as it was last read or saved.
+    fn current_saved(&self) -> Option<&Note> {
+        let path = self.selected.as_ref()?;
+        self.notes.iter().find(|note| &note.path == path)
     }
 
     /// The note in `path` shown in the editor.
@@ -236,13 +325,14 @@ impl NotesPane {
         })
     }
 
-    /// The changes of the note shown written to its file, now.
-    fn flush(&mut self) {
+    /// The changes of the note shown written to its file, now; whether nothing is left
+    /// unsaved. A failure is said, and the changes kept.
+    fn flush(&mut self) -> bool {
         if !self.dirty {
-            return;
+            return true;
         }
         let Some(path) = self.selected.clone() else {
-            return;
+            return true;
         };
         let content = self.editor_text();
         match notes_storage::save_note(&path, &content) {
@@ -261,14 +351,18 @@ impl NotesPane {
                 if matches!(self.status, Status::WriteFailed(_)) {
                     self.status = Status::None;
                 }
+                true
             }
-            Err(error) => self.status = Status::WriteFailed(error.to_string()),
+            Err(error) => {
+                self.status = Status::WriteFailed(error.to_string());
+                false
+            }
         }
     }
 
-    /// A new note made, listed first and shown, as the C# blank note.
+    /// A new note made, listed first and shown, as the C# blank note; the note shown was
+    /// saved before.
     fn create(&mut self) {
-        self.flush();
         let Some(dir) = self.dir.clone() else {
             self.status = Status::NoFolder;
             return;
@@ -289,6 +383,7 @@ impl NotesPane {
     /// The note shown deleted, its pending save dropped, as the C# `DeleteCurrentNoteAsync`.
     fn delete(&mut self) {
         self.confirm_delete = false;
+        self.blocked = None;
         let Some(path) = self.selected.take() else {
             return;
         };
@@ -397,7 +492,28 @@ impl NotesPane {
         .width(LIST_WIDTH)
         .height(Length::Fill);
         let note: Element<'a, Message> = if self.selected.is_some() {
-            let actions = if self.confirm_delete {
+            let actions = if self.blocked.is_some() {
+                row![
+                    text(fl!("ui-tool-notes-unsaved-blocked"))
+                        .size(font_size::BODY)
+                        .style(text::danger),
+                    super::action_button(
+                        fl!("ui-tool-notes-retry"),
+                        true,
+                        Some(send(NotesMessage::RetrySave))
+                    ),
+                    super::action_button(
+                        fl!("ui-tool-notes-discard"),
+                        false,
+                        Some(send(NotesMessage::DiscardChanges))
+                    ),
+                    super::action_button(
+                        fl!("ui-tool-notes-cancel"),
+                        false,
+                        Some(send(NotesMessage::KeepEditing))
+                    ),
+                ]
+            } else if self.confirm_delete {
                 let title = self.current().map(|note| note.title()).unwrap_or_default();
                 row![
                     text(fl!("ui-tool-notes-delete-confirm", title = title))
@@ -570,6 +686,172 @@ mod tests {
         };
         assert!(html.contains("<h1>&lt;T&gt;</h1>"));
         assert!(html.contains("#&lt;x&gt;"));
+    }
+
+    /// The note in `path` made impossible to write: a folder stands where its file goes.
+    fn unwritable(path: &Path) {
+        std::fs::remove_file(path).expect("removed");
+        std::fs::create_dir(path).expect("a folder in its place");
+    }
+
+    /// Two notes, `a.md` shown, typed into, its file then unwritable.
+    fn failing_pane(dir: &Path) -> (NotesPane, PathBuf, PathBuf) {
+        let (a, b) = (dir.join("a.md"), dir.join("b.md"));
+        notes_storage::save_note(
+            &a, "# A
+",
+        )
+        .expect("saved");
+        notes_storage::save_note(
+            &b, "# B
+",
+        )
+        .expect("saved");
+        let mut pane = NotesPane::new(Some(dir.to_owned()));
+        pane.update(NotesMessage::Select(a.clone()));
+        assert_eq!(pane.selected, Some(a.clone()));
+        let _ = typed(&mut pane, "mine ");
+        unwritable(&a);
+        (pane, a, b)
+    }
+
+    #[test]
+    fn a_note_that_cannot_be_saved_is_kept_shown_when_another_is_selected() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut pane, a, b) = failing_pane(dir.path());
+        pane.update(NotesMessage::Select(b.clone()));
+        assert_eq!(pane.selected, Some(a.clone()), "not left");
+        assert_eq!(
+            pane.editor_text(),
+            "mine # A
+",
+            "its changes kept"
+        );
+        assert!(pane.dirty);
+        assert!(matches!(pane.status, Status::WriteFailed(_)));
+        assert_eq!(pane.blocked, Some(Leave::Select(b.clone())));
+        // Retried while it still fails: still kept.
+        pane.update(NotesMessage::RetrySave);
+        assert_eq!(pane.selected, Some(a.clone()));
+        // Writable again: saved, then the note asked for shown.
+        std::fs::remove_dir(&a).expect("folder gone");
+        pane.update(NotesMessage::RetrySave);
+        assert_eq!(
+            std::fs::read_to_string(&a).expect("read"),
+            "mine # A
+"
+        );
+        assert_eq!(pane.selected, Some(b));
+        assert_eq!(
+            pane.editor_text(),
+            "# B
+"
+        );
+        assert_eq!(pane.blocked, None);
+        assert_eq!(pane.status, Status::None);
+    }
+
+    #[test]
+    fn changes_that_cannot_be_saved_go_only_when_discarded() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut pane, a, b) = failing_pane(dir.path());
+        pane.update(NotesMessage::Select(b.clone()));
+        pane.update(NotesMessage::KeepEditing);
+        assert_eq!(pane.blocked, None);
+        assert_eq!(pane.selected, Some(a.clone()), "still the note edited");
+        assert_eq!(
+            pane.editor_text(),
+            "mine # A
+"
+        );
+        let Outcome::SaveLater(change) = typed(&mut pane, "more ") else {
+            panic!("a save waited for");
+        };
+        pane.update(NotesMessage::Select(b.clone()));
+        pane.update(NotesMessage::DiscardChanges);
+        assert_eq!(pane.selected, Some(b.clone()));
+        assert!(!pane.dirty);
+        assert_eq!(pane.status, Status::None);
+        std::fs::remove_dir(&a).expect("folder gone");
+        pane.update(NotesMessage::SaveDue(change));
+        assert!(
+            !a.exists(),
+            "a save waiting never writes what was discarded"
+        );
+        assert_eq!(
+            pane.editor_text(),
+            "# B
+"
+        );
+    }
+
+    #[test]
+    fn no_new_note_replaces_changes_that_cannot_be_saved() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut pane, a, _) = failing_pane(dir.path());
+        pane.update(NotesMessage::New);
+        assert_eq!(pane.notes.len(), 2, "none made");
+        assert_eq!(pane.selected, Some(a.clone()));
+        assert_eq!(pane.blocked, Some(Leave::New));
+        std::fs::remove_dir(&a).expect("folder gone");
+        pane.update(NotesMessage::RetrySave);
+        assert_eq!(pane.notes.len(), 3, "made once saved");
+        assert_ne!(pane.selected, Some(a.clone()));
+        assert_eq!(
+            std::fs::read_to_string(&a).expect("read"),
+            "mine # A
+"
+        );
+    }
+
+    #[test]
+    fn a_note_that_cannot_be_saved_is_said_unsaved_to_its_tab_closing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (mut pane, a, _) = failing_pane(dir.path());
+        assert_eq!(pane.unsaved(), Some("a".to_owned()));
+        assert!(!pane.save_now(), "refused, as the C# CanClose");
+        assert_eq!(pane.unsaved(), Some("a".to_owned()));
+        std::fs::remove_dir(&a).expect("folder gone");
+        assert!(pane.save_now());
+        assert_eq!(pane.unsaved(), None);
+    }
+
+    #[test]
+    fn a_save_due_after_another_note_is_shown_writes_nothing_into_it() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (a, b) = (dir.path().join("a.md"), dir.path().join("b.md"));
+        notes_storage::save_note(
+            &a, "# A
+",
+        )
+        .expect("saved");
+        notes_storage::save_note(
+            &b, "# B
+",
+        )
+        .expect("saved");
+        let mut pane = NotesPane::new(Some(dir.path().to_owned()));
+        pane.update(NotesMessage::Select(a.clone()));
+        let Outcome::SaveLater(change) = typed(&mut pane, "a ") else {
+            panic!("a save waited for");
+        };
+        pane.update(NotesMessage::Select(b.clone()));
+        assert_eq!(
+            std::fs::read_to_string(&a).expect("read"),
+            "a # A
+"
+        );
+        pane.update(NotesMessage::SaveDue(change));
+        assert_eq!(
+            std::fs::read_to_string(&b).expect("read"),
+            "# B
+"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&a).expect("read"),
+            "a # A
+"
+        );
     }
 
     #[test]

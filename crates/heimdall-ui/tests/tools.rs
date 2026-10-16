@@ -507,6 +507,62 @@ fn a_tool_tab_closed_lets_its_state_go() {
 }
 
 #[test]
+fn a_diagram_with_changes_not_saved_asks_before_its_tab_or_the_window_closes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::Diagram);
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    assert!(
+        shell.app().tabs.is_empty(),
+        "nothing changed: closed at once"
+    );
+    let (mut shell, tab) = opened(dir.path(), ToolId::Diagram);
+    let _ = shell.update(Message::Tool(
+        tab,
+        ToolMessage::Diagram(tools::DiagramMessage::Edit(paste("mine "))),
+    ));
+    assert!(shell.app().tabs[0].holds_unsaved_text());
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    assert!(matches!(
+        shell.app().dialog,
+        Some(heimdall_app::Dialog::ConfirmCloseTool { .. })
+    ));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("\"Untitled diagram\" has unsaved changes. Save them before closing the tab?")
+            .expect("the question");
+    }
+    // Save: the file asked where, the tab kept until it is written.
+    let _ = shell.update(tools(ToolsMessage::SaveBeforeClose));
+    assert_eq!(shell.app().dialog, None);
+    assert_eq!(shell.app().tabs.len(), 1);
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Cancel").expect("Cancel");
+        ui.click("Discard").expect("Discard");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    assert_eq!(shell.app().tabs.len(), 1, "cancelled: kept");
+    let _ = shell.update(Message::App(AppMessage::WindowCloseRequested));
+    assert!(
+        matches!(
+            shell.app().dialog,
+            Some(heimdall_app::Dialog::ConfirmExit { unsaved: 1, .. })
+        ),
+        "{:?}",
+        shell.app().dialog
+    );
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert!(shell.app().tabs.is_empty(), "discarded: closed");
+}
+
+#[test]
 fn every_tool_has_a_name_a_description_and_texts_in_every_language() {
     for tool in ToolId::ALL {
         assert!(!tools::label(tool).is_empty());

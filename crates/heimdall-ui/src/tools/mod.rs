@@ -926,6 +926,15 @@ impl ToolPane {
         self.help
     }
 
+    /// The name of the document closing it would lose, or `None`.
+    fn unsaved(&self) -> Option<String> {
+        match &self.pane {
+            Pane::Notes(pane) => pane.unsaved(),
+            Pane::Diagram(pane) => pane.unsaved(),
+            _ => None,
+        }
+    }
+
     /// The copy button of `slot` shows its check mark.
     fn copied(&self, slot: CopySlot) -> bool {
         self.copied.is_some_and(|(shown, _)| shown == slot)
@@ -981,6 +990,42 @@ impl ToolPanes {
                     ToolPane::new(tool, Some(app.profiles_file()))
                 });
             }
+        }
+    }
+
+    /// The documents the tool tabs would lose if closed now, told to the core, so closing a
+    /// tab or the window asks first, as the C# tools' `CanClose`.
+    pub fn report_unsaved(&self, app: &mut App) {
+        for (tab, state) in &self.panes {
+            app.set_tool_unsaved(*tab, state.unsaved());
+        }
+    }
+
+    /// A close asked: the notes written now, as the C# Notes `CanClose`
+    /// (`NotesToolView.xaml.cs:107`); what cannot be written stays unsaved, and asked about.
+    pub fn save_before_closing(&mut self) {
+        for state in self.panes.values_mut() {
+            if let Pane::Notes(pane) = &mut state.pane {
+                pane.save_now();
+            }
+        }
+    }
+
+    /// Tool tab `tab`'s document saved, as its close question's Save asks, then its close
+    /// asked again once written; a failure is said in the tab, which stays open.
+    pub fn save_before_close(&mut self, tab: TabId, main: Option<window::Id>) -> Task<Message> {
+        let close = || Task::done(Message::App(heimdall_app::Message::RequestCloseTab(tab)));
+        match self.panes.get_mut(&tab).map(|state| &mut state.pane) {
+            Some(Pane::Notes(pane)) => {
+                if pane.save_now() {
+                    close()
+                } else {
+                    Task::none()
+                }
+            }
+            Some(Pane::Diagram(pane)) => pane.save_before_close().task(tab, main),
+            Some(_) => close(),
+            None => Task::none(),
         }
     }
 
