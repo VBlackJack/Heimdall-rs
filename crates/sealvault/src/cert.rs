@@ -23,7 +23,7 @@
 //! signs certificates and revocation lists, both critical. No subject key identifier is
 //! written, as .NET's `CertificateRequest` writes none unless asked.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -262,18 +262,56 @@ fn encoding(error: impl fmt::Display) -> Error {
     Error::Encoding(error.to_string())
 }
 
-/// Summary of an X.509 certificate's key properties.
+/// Summary of an X.509 certificate's key properties, as the C# certificate inspector reads
+/// them from an `X509Certificate2` (`CertInspectorEngine.BuildSummary`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertificateSummary {
     /// The subject name.
     pub subject: String,
     /// The issuer name.
     pub issuer: String,
-    /// The expiration time formatted as a string.
+    /// The first moment it is valid, as the certificate writes it (RFC 3339, UTC).
+    pub not_before: String,
+    /// The expiration time formatted as a string (RFC 3339, UTC).
     pub not_after: String,
+    /// The first second it is valid, Unix time.
+    pub not_before_unix: u64,
+    /// The last second it is valid, Unix time.
+    pub not_after_unix: u64,
+    /// The serial number, upper-case hexadecimal without separators, as .NET's
+    /// `SerialNumber` shows it.
+    pub serial: String,
+    /// The signature algorithm, by the friendly name .NET gives it when it has one, else its
+    /// dotted OID.
+    pub signature_algorithm: String,
+    /// The DNS names then the IP addresses of the subject alternative name extension, in
+    /// that order, as the C# `ExtractSans` lists them.
+    pub alt_names: Vec<String>,
     /// The public key size in bits, or 0 if unsupported/unknown.
     pub key_size_bits: usize,
 }
+
+/// Signature algorithm OIDs and the friendly names .NET's `Oid.FriendlyName` gives them.
+const SIGNATURE_ALGORITHMS: &[(&str, &str)] = &[
+    ("1.2.840.113549.1.1.4", "md5RSA"),
+    ("1.2.840.113549.1.1.5", "sha1RSA"),
+    ("1.2.840.113549.1.1.10", "RSASSA-PSS"),
+    ("1.2.840.113549.1.1.11", "sha256RSA"),
+    ("1.2.840.113549.1.1.12", "sha384RSA"),
+    ("1.2.840.113549.1.1.13", "sha512RSA"),
+    ("1.2.840.10045.4.1", "sha1ECDSA"),
+    ("1.2.840.10045.4.3.2", "sha256ECDSA"),
+    ("1.2.840.10045.4.3.3", "sha384ECDSA"),
+    ("1.2.840.10045.4.3.4", "sha512ECDSA"),
+    ("1.3.101.112", "Ed25519"),
+    ("1.3.101.113", "Ed448"),
+];
+
+/// Bytes of an IPv4 address in a subject alternative name.
+const IPV4_LEN: usize = 4;
+
+/// Bytes of an IPv6 address in a subject alternative name.
+const IPV6_LEN: usize = 16;
 
 /// OID content octets (no tag or length) of the public key algorithms whose key size is
 /// decided by the algorithm, not by the length of the public key bytes.
@@ -293,7 +331,8 @@ const OID_P521: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x23];
 const ED25519_BITS: usize = 256;
 const ED448_BITS: usize = 456;
 
-/// Inspects a DER-encoded X.509 certificate and extracts a summary of its key properties.
+/// Inspects a DER-encoded X.509 certificate and extracts a summary of its key properties;
+/// `None` when it is not a certificate.
 #[must_use]
 pub fn inspect(der: &[u8]) -> Option<CertificateSummary> {
     use rsa::pkcs1::DecodeRsaPublicKey as _;
@@ -305,7 +344,20 @@ pub fn inspect(der: &[u8]) -> Option<CertificateSummary> {
     let tbs = cert.tbs_certificate();
     let subject = tbs.subject().to_string();
     let issuer = tbs.issuer().to_string();
-    let not_after = tbs.validity().not_after.to_string();
+    let validity = tbs.validity();
+    let serial = tbs
+        .serial_number()
+        .as_bytes()
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02X}");
+            hex
+        });
+    let signature_oid = cert.signature_algorithm().oid.to_string();
+    let signature_algorithm = SIGNATURE_ALGORITHMS
+        .iter()
+        .find(|(oid, _)| *oid == signature_oid)
+        .map_or_else(|| signature_oid.clone(), |(_, name)| (*name).to_owned());
     let spki = tbs.subject_public_key_info();
 
     // The key size is decided by the algorithm OID (and, for EC and DSA, the algorithm
@@ -338,9 +390,44 @@ pub fn inspect(der: &[u8]) -> Option<CertificateSummary> {
     Some(CertificateSummary {
         subject,
         issuer,
-        not_after,
+        not_before: validity.not_before.to_string(),
+        not_after: validity.not_after.to_string(),
+        not_before_unix: validity.not_before.to_unix_duration().as_secs(),
+        not_after_unix: validity.not_after.to_unix_duration().as_secs(),
+        serial,
+        signature_algorithm,
+        alt_names: alt_names(tbs),
         key_size_bits,
     })
+}
+
+/// The DNS names, then the IP addresses, of `tbs`'s subject alternative name extension;
+/// none when it has none or it does not decode, as the C# reads only what decodes.
+fn alt_names(tbs: &x509_cert::TbsCertificate) -> Vec<String> {
+    use x509_cert::ext::pkix::SubjectAltName;
+    use x509_cert::ext::pkix::name::GeneralName;
+
+    let Ok(Some((_, SubjectAltName(names)))) = tbs.get_extension::<SubjectAltName>() else {
+        return Vec::new();
+    };
+    let dns = names.iter().filter_map(|name| match name {
+        GeneralName::DnsName(dns) => Some(dns.to_string()),
+        _ => None,
+    });
+    let addresses = names.iter().filter_map(|name| match name {
+        GeneralName::IpAddress(bytes) => ip_address(bytes.as_bytes()).map(|ip| ip.to_string()),
+        _ => None,
+    });
+    dns.chain(addresses).collect()
+}
+
+/// The address of an IP address alternative name's `bytes`: four for IPv4, sixteen for IPv6.
+fn ip_address(bytes: &[u8]) -> Option<IpAddr> {
+    match bytes.len() {
+        IPV4_LEN => <[u8; IPV4_LEN]>::try_from(bytes).ok().map(IpAddr::from),
+        IPV6_LEN => <[u8; IPV6_LEN]>::try_from(bytes).ok().map(IpAddr::from),
+        _ => None,
+    }
 }
 
 /// The field size of the EC named curve in `params` (a DER `OBJECT IDENTIFIER`), or 0 when
@@ -603,6 +690,47 @@ mod tests {
         assert!(summary.subject.contains("server.local"));
         // RSA 2048 is read from the modulus, decided by the rsaEncryption OID.
         assert_eq!(summary.key_size_bits, 2048);
+    }
+
+    #[test]
+    fn inspect_reads_the_dates_serial_algorithm_and_alternative_names_written() {
+        let (_, key) = key();
+        let mut leaf = spec(
+            "server.local",
+            Profile::TlsLeaf(vec![
+                AltName::Ip("10.0.0.1".parse().expect("IP")),
+                AltName::Dns("server.local".to_owned()),
+                AltName::Ip("2001:db8::1".parse().expect("IP")),
+                AltName::Dns("*.server.local".to_owned()),
+            ]),
+        );
+        leaf.serial = vec![0x01, 0xAB, 0x0C];
+        let der = self_signed(&leaf, &key).expect("signed");
+        let summary = super::inspect(&der).expect("inspected");
+        assert_eq!(summary.not_before_unix, NOW);
+        assert_eq!(summary.not_after_unix, NOW + YEAR);
+        assert_eq!(summary.not_before, "2026-01-02T03:04:05Z");
+        assert_eq!(summary.serial, "01AB0C");
+        assert_eq!(summary.signature_algorithm, "sha256RSA");
+        assert_eq!(
+            summary.alt_names,
+            ["server.local", "*.server.local", "10.0.0.1", "2001:db8::1"],
+            "the DNS names first, then the addresses, as the C#"
+        );
+    }
+
+    #[test]
+    fn inspect_lists_no_alternative_name_when_there_is_none_and_refuses_what_is_no_certificate() {
+        let (_, key) = key();
+        let der = self_signed(&spec("ca", Profile::Authority), &key).expect("signed");
+        assert!(
+            super::inspect(&der)
+                .expect("inspected")
+                .alt_names
+                .is_empty()
+        );
+        assert!(super::inspect(b"not a certificate").is_none());
+        assert!(super::inspect(&der[..der.len() / 2]).is_none(), "cut short");
     }
 
     #[test]
