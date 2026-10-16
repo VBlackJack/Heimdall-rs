@@ -23,7 +23,7 @@
 //! signs certificates and revocation lists, both critical. No subject key identifier is
 //! written, as .NET's `CertificateRequest` writes none unless asked.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -262,6 +262,244 @@ fn encoding(error: impl fmt::Display) -> Error {
     Error::Encoding(error.to_string())
 }
 
+/// Summary of an X.509 certificate's key properties, as the C# certificate inspector reads
+/// them from an `X509Certificate2` (`CertInspectorEngine.BuildSummary`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateSummary {
+    /// The subject name.
+    pub subject: String,
+    /// The issuer name.
+    pub issuer: String,
+    /// The first moment it is valid, as the certificate writes it (RFC 3339, UTC).
+    pub not_before: String,
+    /// The expiration time formatted as a string (RFC 3339, UTC).
+    pub not_after: String,
+    /// The first second it is valid, Unix time.
+    pub not_before_unix: u64,
+    /// The last second it is valid, Unix time.
+    pub not_after_unix: u64,
+    /// The serial number, upper-case hexadecimal without separators, as .NET's
+    /// `SerialNumber` shows it.
+    pub serial: String,
+    /// The signature algorithm, by the friendly name .NET gives it when it has one, else its
+    /// dotted OID.
+    pub signature_algorithm: String,
+    /// The DNS names then the IP addresses of the subject alternative name extension, in
+    /// that order, as the C# `ExtractSans` lists them.
+    pub alt_names: Vec<String>,
+    /// The public key size in bits, or 0 if unsupported/unknown.
+    pub key_size_bits: usize,
+}
+
+/// Signature algorithm OIDs and the friendly names .NET's `Oid.FriendlyName` gives them.
+const SIGNATURE_ALGORITHMS: &[(&str, &str)] = &[
+    ("1.2.840.113549.1.1.4", "md5RSA"),
+    ("1.2.840.113549.1.1.5", "sha1RSA"),
+    ("1.2.840.113549.1.1.10", "RSASSA-PSS"),
+    ("1.2.840.113549.1.1.11", "sha256RSA"),
+    ("1.2.840.113549.1.1.12", "sha384RSA"),
+    ("1.2.840.113549.1.1.13", "sha512RSA"),
+    ("1.2.840.10045.4.1", "sha1ECDSA"),
+    ("1.2.840.10045.4.3.2", "sha256ECDSA"),
+    ("1.2.840.10045.4.3.3", "sha384ECDSA"),
+    ("1.2.840.10045.4.3.4", "sha512ECDSA"),
+    ("1.3.101.112", "Ed25519"),
+    ("1.3.101.113", "Ed448"),
+];
+
+/// Bytes of an IPv4 address in a subject alternative name.
+const IPV4_LEN: usize = 4;
+
+/// Bytes of an IPv6 address in a subject alternative name.
+const IPV6_LEN: usize = 16;
+
+/// OID content octets (no tag or length) of the public key algorithms whose key size is
+/// decided by the algorithm, not by the length of the public key bytes.
+const OID_RSA_ENCRYPTION: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
+const OID_RSASSA_PSS: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A];
+const OID_EC_PUBLIC_KEY: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
+const OID_ED25519: &[u8] = &[0x2B, 0x65, 0x70];
+const OID_ED448: &[u8] = &[0x2B, 0x65, 0x71];
+const OID_DSA: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x38, 0x04, 0x01];
+
+/// EC named-curve OID content octets and the field size they denote.
+const OID_P256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+const OID_P384: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x22];
+const OID_P521: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x23];
+
+/// Key size in bits of Ed25519 and Ed448, which carry no size parameter.
+const ED25519_BITS: usize = 256;
+const ED448_BITS: usize = 456;
+
+/// Inspects a DER-encoded X.509 certificate and extracts a summary of its key properties;
+/// `None` when it is not a certificate.
+#[must_use]
+pub fn inspect(der: &[u8]) -> Option<CertificateSummary> {
+    use rsa::pkcs1::DecodeRsaPublicKey as _;
+    use rsa::traits::PublicKeyParts as _;
+    use x509_cert::Certificate;
+    use x509_cert::der::{Decode as _, Encode as _};
+
+    let cert = Certificate::from_der(der).ok()?;
+    let tbs = cert.tbs_certificate();
+    let subject = tbs.subject().to_string();
+    let issuer = tbs.issuer().to_string();
+    let validity = tbs.validity();
+    let serial = tbs
+        .serial_number()
+        .as_bytes()
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02X}");
+            hex
+        });
+    let signature_oid = cert.signature_algorithm().oid.to_string();
+    let signature_algorithm = SIGNATURE_ALGORITHMS
+        .iter()
+        .find(|(oid, _)| *oid == signature_oid)
+        .map_or_else(|| signature_oid.clone(), |(_, name)| (*name).to_owned());
+    let spki = tbs.subject_public_key_info();
+
+    // The key size is decided by the algorithm OID (and, for EC and DSA, the algorithm
+    // parameters), never by the raw byte length of the public key: a point encoding's
+    // byte count does not reliably map to a curve, and an RSA modulus is read exactly.
+    let oid = spki.algorithm.oid.as_bytes();
+    let params_der = spki
+        .algorithm
+        .parameters
+        .as_ref()
+        .and_then(|p| p.to_der().ok());
+
+    let key_size_bits = if oid == OID_RSA_ENCRYPTION || oid == OID_RSASSA_PSS {
+        spki.subject_public_key
+            .as_bytes()
+            .and_then(|bytes| rsa::RsaPublicKey::from_pkcs1_der(bytes).ok())
+            .map_or(0, |k| k.size() * 8)
+    } else if oid == OID_ED25519 {
+        ED25519_BITS
+    } else if oid == OID_ED448 {
+        ED448_BITS
+    } else if oid == OID_EC_PUBLIC_KEY {
+        ec_curve_bits(params_der.as_deref())
+    } else if oid == OID_DSA {
+        dsa_prime_bits(params_der.as_deref())
+    } else {
+        0
+    };
+
+    Some(CertificateSummary {
+        subject,
+        issuer,
+        not_before: validity.not_before.to_string(),
+        not_after: validity.not_after.to_string(),
+        not_before_unix: validity.not_before.to_unix_duration().as_secs(),
+        not_after_unix: validity.not_after.to_unix_duration().as_secs(),
+        serial,
+        signature_algorithm,
+        alt_names: alt_names(tbs),
+        key_size_bits,
+    })
+}
+
+/// The DNS names, then the IP addresses, of `tbs`'s subject alternative name extension;
+/// none when it has none or it does not decode, as the C# reads only what decodes.
+fn alt_names(tbs: &x509_cert::TbsCertificate) -> Vec<String> {
+    use x509_cert::ext::pkix::SubjectAltName;
+    use x509_cert::ext::pkix::name::GeneralName;
+
+    let Ok(Some((_, SubjectAltName(names)))) = tbs.get_extension::<SubjectAltName>() else {
+        return Vec::new();
+    };
+    let dns = names.iter().filter_map(|name| match name {
+        GeneralName::DnsName(dns) => Some(dns.to_string()),
+        _ => None,
+    });
+    let addresses = names.iter().filter_map(|name| match name {
+        GeneralName::IpAddress(bytes) => ip_address(bytes.as_bytes()).map(|ip| ip.to_string()),
+        _ => None,
+    });
+    dns.chain(addresses).collect()
+}
+
+/// The address of an IP address alternative name's `bytes`: four for IPv4, sixteen for IPv6.
+fn ip_address(bytes: &[u8]) -> Option<IpAddr> {
+    match bytes.len() {
+        IPV4_LEN => <[u8; IPV4_LEN]>::try_from(bytes).ok().map(IpAddr::from),
+        IPV6_LEN => <[u8; IPV6_LEN]>::try_from(bytes).ok().map(IpAddr::from),
+        _ => None,
+    }
+}
+
+/// The field size of the EC named curve in `params` (a DER `OBJECT IDENTIFIER`), or 0 when
+/// the curve is absent or unrecognised.
+fn ec_curve_bits(params: Option<&[u8]>) -> usize {
+    match read_der_tlv(params.unwrap_or(&[])) {
+        Some((0x06, curve_oid, _)) if curve_oid == OID_P256 => 256,
+        Some((0x06, curve_oid, _)) if curve_oid == OID_P384 => 384,
+        Some((0x06, curve_oid, _)) if curve_oid == OID_P521 => 521,
+        _ => 0,
+    }
+}
+
+/// The bit length of the DSA prime `p` from `params` (a DER `SEQUENCE { p, q, g }`), which
+/// is the DSA key size, or 0 when the parameters cannot be read.
+fn dsa_prime_bits(params: Option<&[u8]>) -> usize {
+    let Some((0x30, seq, _)) = read_der_tlv(params.unwrap_or(&[])) else {
+        return 0;
+    };
+    match read_der_tlv(seq) {
+        Some((0x02, p, _)) => der_integer_bit_length(p),
+        _ => 0,
+    }
+}
+
+/// Reads one DER tag-length-value from `input`, returning `(tag, value, rest)`.
+fn read_der_tlv(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+    if input.len() < 2 {
+        return None;
+    }
+    let tag = input[0];
+    let len_byte = input[1];
+    let mut idx = 2;
+    let length = if len_byte & 0x80 == 0 {
+        len_byte as usize
+    } else {
+        let octets = (len_byte & 0x7F) as usize;
+        if octets == 0 || octets > 4 || idx + octets > input.len() {
+            return None;
+        }
+        let mut len = 0usize;
+        for &b in &input[idx..idx + octets] {
+            len = (len << 8) | (b as usize);
+        }
+        idx += octets;
+        len
+    };
+    if idx + length > input.len() {
+        return None;
+    }
+    Some((tag, &input[idx..idx + length], &input[idx + length..]))
+}
+
+/// The bit length of a DER `INTEGER`'s value octets, leading sign and zero bytes removed.
+fn der_integer_bit_length(value: &[u8]) -> usize {
+    let mut offset = 0;
+    while offset < value.len() && value[offset] == 0 {
+        offset += 1;
+    }
+    if offset >= value.len() {
+        return 0;
+    }
+    let remaining = value.len() - offset;
+    let mut top = value[offset];
+    let mut top_bits = 0;
+    while top > 0 {
+        top_bits += 1;
+        top >>= 1;
+    }
+    (remaining - 1) * 8 + top_bits
+}
+
 #[cfg(test)]
 mod tests {
     use rsa::pkcs1::EncodeRsaPublicKey as _;
@@ -441,5 +679,101 @@ mod tests {
             Profile::TlsLeaf(vec![AltName::Dns("s\u{e9}rveur".to_owned())]),
         );
         assert!(self_signed(&leaf, &key).is_err());
+    }
+
+    #[test]
+    fn inspect_der_certificate() {
+        let (_, key) = key();
+        let leaf = spec("server.local", Profile::TlsLeaf(Vec::new()));
+        let der = self_signed(&leaf, &key).expect("signed");
+        let summary = super::inspect(&der).expect("inspected");
+        assert!(summary.subject.contains("server.local"));
+        // RSA 2048 is read from the modulus, decided by the rsaEncryption OID.
+        assert_eq!(summary.key_size_bits, 2048);
+    }
+
+    #[test]
+    fn inspect_reads_the_dates_serial_algorithm_and_alternative_names_written() {
+        let (_, key) = key();
+        let mut leaf = spec(
+            "server.local",
+            Profile::TlsLeaf(vec![
+                AltName::Ip("10.0.0.1".parse().expect("IP")),
+                AltName::Dns("server.local".to_owned()),
+                AltName::Ip("2001:db8::1".parse().expect("IP")),
+                AltName::Dns("*.server.local".to_owned()),
+            ]),
+        );
+        leaf.serial = vec![0x01, 0xAB, 0x0C];
+        let der = self_signed(&leaf, &key).expect("signed");
+        let summary = super::inspect(&der).expect("inspected");
+        assert_eq!(summary.not_before_unix, NOW);
+        assert_eq!(summary.not_after_unix, NOW + YEAR);
+        assert_eq!(summary.not_before, "2026-01-02T03:04:05Z");
+        assert_eq!(summary.serial, "01AB0C");
+        assert_eq!(summary.signature_algorithm, "sha256RSA");
+        assert_eq!(
+            summary.alt_names,
+            ["server.local", "*.server.local", "10.0.0.1", "2001:db8::1"],
+            "the DNS names first, then the addresses, as the C#"
+        );
+    }
+
+    #[test]
+    fn inspect_lists_no_alternative_name_when_there_is_none_and_refuses_what_is_no_certificate() {
+        let (_, key) = key();
+        let der = self_signed(&spec("ca", Profile::Authority), &key).expect("signed");
+        assert!(
+            super::inspect(&der)
+                .expect("inspected")
+                .alt_names
+                .is_empty()
+        );
+        assert!(super::inspect(b"not a certificate").is_none());
+        assert!(super::inspect(&der[..der.len() / 2]).is_none(), "cut short");
+    }
+
+    #[test]
+    fn ec_curve_bits_decided_by_named_curve_oid() {
+        // OBJECT IDENTIFIER TLVs for the three supported curves.
+        let p256 = [0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+        let p384 = [0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22];
+        let p521 = [0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23];
+        assert_eq!(super::ec_curve_bits(Some(&p256)), 256);
+        assert_eq!(super::ec_curve_bits(Some(&p384)), 384);
+        assert_eq!(super::ec_curve_bits(Some(&p521)), 521);
+        // An unknown curve or absent parameters yields 0, not a byte-length guess.
+        let unknown = [0x06, 0x03, 0x2B, 0x65, 0x70];
+        assert_eq!(super::ec_curve_bits(Some(&unknown)), 0);
+        assert_eq!(super::ec_curve_bits(None), 0);
+    }
+
+    #[test]
+    fn der_integer_bit_length_strips_sign_and_zero_bytes() {
+        assert_eq!(super::der_integer_bit_length(&[0x00]), 0);
+        assert_eq!(super::der_integer_bit_length(&[0x01]), 1);
+        assert_eq!(super::der_integer_bit_length(&[0xFF]), 8);
+        // A DER positive integer with a leading 0x00 sign byte: 0x80 0x00 is 16 bits.
+        assert_eq!(super::der_integer_bit_length(&[0x00, 0x80, 0x00]), 16);
+    }
+
+    #[test]
+    fn dsa_prime_bits_reads_prime_from_parameters() {
+        // SEQUENCE { INTEGER p (256-bit), INTEGER q = 2, INTEGER g = 2 }.
+        let mut p_value = vec![0x00, 0x80];
+        p_value.extend_from_slice(&[0x00; 31]); // 0x00 sign byte + 32 bytes, top bit set -> 256 bits
+        let mut p_int = vec![0x02, u8::try_from(p_value.len()).expect("short length")];
+        p_int.extend_from_slice(&p_value);
+        let q_int = [0x02, 0x01, 0x02];
+        let g_int = [0x02, 0x01, 0x02];
+
+        let mut content = p_int;
+        content.extend_from_slice(&q_int);
+        content.extend_from_slice(&g_int);
+        let mut seq = vec![0x30, u8::try_from(content.len()).expect("short length")];
+        seq.extend_from_slice(&content);
+
+        assert_eq!(super::dsa_prime_bits(Some(&seq)), 256);
+        assert_eq!(super::dsa_prime_bits(None), 0);
     }
 }

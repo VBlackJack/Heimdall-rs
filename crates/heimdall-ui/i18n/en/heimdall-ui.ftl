@@ -10,7 +10,6 @@ ui-window-title-test-data = { $title } [test data: { $folder }]
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Tools
 ui-sidebar-empty = No saved profile yet.
-ui-sidebar-settings-button = Settings
 ui-desktop-send-keys = Send keys
 ui-desktop-send-keys-tooltip = Send keys to remote
 ui-desktop-anti-idle = Anti-idle
@@ -62,7 +61,6 @@ ui-settings-tab-terminal = Terminal
 ui-settings-tab-ssh = SSH
 ui-settings-tab-rdp = RDP
 ui-settings-tab-security = Security
-ui-settings-security = Security
 ui-settings-posture-title = Security overview
 ui-settings-posture-description = The choices on this panel that affect security, as they stand now. A line that needs attention says why and leads to the setting.
 ui-settings-posture-summary-none = No risky setting
@@ -194,7 +192,10 @@ ui-scheduled-field-enabled = Enabled
 ui-scheduled-next-run-daily = Next execution: { $day } at { $time }
 ui-scheduled-next-run-today = today
 ui-scheduled-next-run-tomorrow = tomorrow
-ui-scheduled-next-run-interval = Next execution: in { $minutes } minutes (every { $minutes } min)
+ui-scheduled-next-run-interval = { $minutes ->
+    [one] Next execution: in { $minutes } minute (every { $minutes } min)
+   *[other] Next execution: in { $minutes } minutes (every { $minutes } min)
+}
 ui-scheduled-problem-server = Please select a session.
 ui-scheduled-problem-time = Invalid time format. Use HH:mm (24-hour).
 ui-scheduled-problem-interval = Interval must be a positive number of minutes.
@@ -646,6 +647,7 @@ ui-files-upload-button = Upload
 ui-files-upload-files-tooltip = Upload files
 ui-files-download-selected-tooltip = Download the selected entries (Ctrl+Shift+D)
 ui-files-loading = Loading...
+ui-files-listing-in-progress-tooltip = Listing in progress: wait for the folder to load
 ui-files-empty = Empty folder
 ui-files-cancel-button = Cancel
 ui-files-transfers-title = Transfers
@@ -708,7 +710,6 @@ ui-profile-edit-title = Edit Session
 ui-profile-field-name = Display name *
 ui-profile-field-group = Folder
 ui-profile-field-host = Server *
-ui-profile-field-port = Port
 ui-profile-field-username = Username
 ui-profile-field-key = SSH key
 ui-profile-optional = optional
@@ -1634,8 +1635,26 @@ ui-files-follow-tooltip = Follow the SSH terminal directory
 ui-files-follow-local-tooltip = Follow the terminal directory
 ui-files-sudo-on = Sudo mode enabled - browsing as root
 ui-files-sudo-off = Sudo mode disabled
-ui-files-item-count = { $count } items
-ui-files-item-count-filtered = { $shown }/{ $count } items
+ui-files-item-count = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+}
+ui-files-item-count-filtered = { $count ->
+    [one] { $shown }/{ $count } item
+   *[other] { $shown }/{ $count } items
+}
+ui-files-hidden-unsafe = { $count ->
+    [one] { $count } entry hidden: its name is not safe to use here
+   *[other] { $count } entries hidden: their names are not safe to use here
+}
+ui-files-hidden-unsafe-terminal = { $count ->
+    [one] { $count } entry hidden: its name is not safe to use here; use the terminal
+   *[other] { $count } entries hidden: their names are not safe to use here; use the terminal
+}
+ui-files-unread-lines = { $count ->
+    [one] { $count } line of the listing could not be read
+   *[other] { $count } lines of the listing could not be read
+}
 
 ## Files dragged from Explorer over a Files tab, as the C# `DescribeExternalDrop`.
 ui-files-drop-items = { $count ->
@@ -1840,7 +1859,10 @@ ui-resolution-save-default-unavailable = Cannot save a default resolution for th
 ## The SSH agent chip of the profile form, as the C# one.
 ui-agent-chip-off = No SSH agent detected
 ui-agent-chip-warn = SSH agent: { $agent } (no keys loaded)
-ui-agent-chip-ok = SSH agent: { $agent } ({ $count } keys)
+ui-agent-chip-ok = { $count ->
+    [one] SSH agent: { $agent } ({ $count } key)
+   *[other] SSH agent: { $agent } ({ $count } keys)
+}
 ui-agent-chip-tooltip = Click to re-scan SSH agents
 ui-files-menu-cut = Cut
 ui-files-menu-paste = Paste
@@ -1973,6 +1995,8 @@ ui-editor-notice-failed = Failed to save: { $reason }
 ui-dialog-discard-editor-title = Unsaved Changes
 ui-dialog-discard-editor-body = File has unsaved changes. Close anyway?
 ui-dialog-close-editor-body = The editor on "{ $name }" has unsaved changes. Close and discard them?
+ui-dialog-close-tool-body = "{ $name }" has unsaved changes. Save them before closing the tab?
+ui-dialog-close-tool-discard = Discard
 ui-dialog-unsaved-editors = { $count ->
     [one] { $count } editor holds unsaved changes, which would be lost.
    *[other] { $count } editors hold unsaved changes, which would be lost.
@@ -2034,7 +2058,10 @@ ui-status-keys-sent = { $keys } sent to remote
 ui-status-keys-not-sent = Could not send keys to the remote session.
 ui-files-state-queued = Queued
 ui-files-state-preparing = Preparing transfer...
-ui-files-state-scanning = Scanning folders: { $count } entries found...
+ui-files-state-scanning = { $count ->
+    [one] Scanning folders: { $count } entry found...
+   *[other] Scanning folders: { $count } entries found...
+}
 ui-files-retry-button = Retry
 ui-files-clear-finished-button = Clear finished
 ui-files-error-interrupted = The transfer stopped unexpectedly.
@@ -2161,7 +2188,6 @@ ui-dialog-apply-ssh-mode-title = Apply to all saved SSH sessions?
 ui-dialog-apply-ssh-mode-body = { $changes } of { $total } saved SSH sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
 ui-dialog-apply-rdp-mode-title = Apply to all saved RDP sessions?
 ui-dialog-apply-rdp-mode-body = { $changes } of { $total } saved RDP sessions will switch to the { $mode } mode, and { $mode } becomes the default for new sessions. This cannot be undone.
-ui-settings-tab-about = About
 ui-about-version = Version { $version }
 ui-about-tagline = Secure RDP/SSH/SFTP connection manager
 ui-about-section-system = System
@@ -2297,8 +2323,14 @@ ui-status-files-permissions-partial = { $failed ->
     [one] Permissions could not be changed on { $failed } item out of { $total }. "{ $name }": { $reason }
    *[other] Permissions could not be changed on { $failed } items out of { $total }. First, "{ $name }": { $reason }
 }
-ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
-ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-status-files-delete-stopped = { $total ->
+    [one] Deletion cancelled: { $done } of { $total } item deleted.
+   *[other] Deletion cancelled: { $done } of { $total } items deleted.
+}
+ui-status-files-permissions-stopped = { $total ->
+    [one] Permission change cancelled: { $done } of { $total } item changed.
+   *[other] Permission change cancelled: { $done } of { $total } items changed.
+}
 ui-macros-menu = Macros
 ui-macros-record = Record macro
 ui-macros-stop-recording = { $count ->
@@ -2506,6 +2538,7 @@ ui-status-dropped-folder = Moved the folder { $name }. Ctrl+Z undoes it.
 ui-status-drop-refused = A folder of that name is already there: nothing was moved.
 ui-status-move-undone = Move undone.
 ui-status-listing-cancelled = Loading cancelled.
+ui-status-listing-in-progress = Listing in progress: wait for the folder to load, then try again.
 ui-status-session-limit = The maximum of { $max } remote embedded sessions is already open. Close a session before opening another.
 ui-status-sftp-auto-open-failed = SFTP auto-open failed: { $reason }
 ui-status-sftp-browser-disabled = The integrated SFTP browser is disabled in settings.
@@ -3055,7 +3088,6 @@ ui-tool-crontab-day-3 = Wednesday
 ui-tool-crontab-day-4 = Thursday
 ui-tool-crontab-day-5 = Friday
 ui-tool-crontab-day-6 = Saturday
-ui-tool-crontab-expression = Cron Expression
 ui-tool-crontab-copy = Copy
 ui-tool-crontab-manual-edit = Manual edit (5-field cron expression)
 ui-tool-crontab-placeholder = { "* * * * *" }
@@ -3071,6 +3103,7 @@ ui-tool-crontab-desc-custom = Custom schedule: { $expression }
 ui-tool-crontab-error-field-count = A cron expression must have exactly 5 fields separated by spaces
 ui-tool-crontab-error-invalid-field = Invalid characters in field "{ $field }": { $value }
 ui-tool-crontab-error-out-of-range = Field "{ $field }" values must be between { $min } and { $max }
+ui-tool-crontab-error-malformed-field = Field "{ $field }" is not a number, a range or a step: { $value }
 ui-tool-crontab-help =
     Crontab Builder
 
@@ -3269,7 +3302,6 @@ ui-tool-password-title = Password Generator
 ui-tool-password-generate = Generate
 ui-tool-password-generate-tooltip = Generate new password
 ui-tool-password-copy = Copy
-ui-tool-password-copy-tooltip = Copy password to clipboard
 ui-tool-password-length = Length
 ui-tool-password-total-length = Total length: { $count } characters
 ui-tool-password-uppercase = Uppercase (A-Z)
@@ -3307,7 +3339,7 @@ ui-tool-password-strength-weak = Weak
 ui-tool-password-strength-fair = Fair
 ui-tool-password-strength-good = Good
 ui-tool-password-strength-strong = Strong
-ui-tool-password-bits = bits
+ui-tool-password-bits = { $bits } bits
 ui-tool-password-issue-too-short = Too short (< 8 characters)
 ui-tool-password-issue-no-upper = No uppercase letters
 ui-tool-password-issue-no-lower = No lowercase letters
@@ -3338,8 +3370,7 @@ ui-tool-password-advanced-tooltip = Open the advanced options
 ui-tool-password-preset-label = Preset:
 ui-tool-password-preset-tooltip = Pick a preset, or Save to keep the settings you have now
 ui-tool-password-preset-custom = Custom
-ui-tool-password-presets-built-in = Built in
-ui-tool-password-presets-saved = Saved
+ui-tool-password-presets-saved = Saved: { $name }
 ui-tool-password-preset-pin4 = PIN 4
 ui-tool-password-preset-pin6 = PIN 6
 ui-tool-password-preset-wifi = WiFi
@@ -3362,7 +3393,6 @@ ui-tool-password-entropy-floor = Minimum strength:
 ui-tool-password-entropy-floor-off = No minimum
 ui-tool-password-phonetic = Phonetic:
 ui-tool-password-copy-phonetic = Copy phonetic
-ui-tool-password-copy-phonetic-tooltip = Copy phonetic spelling
 ui-tool-password-keyboard-hint = Enter: regenerate - Escape: clear
 ui-tool-password-quick-length = Quick:
 ui-tool-password-history = Recent passwords
@@ -3612,7 +3642,6 @@ ui-tool-password-crack-centuries =
        *[other] { $count } centuries
     }
 ui-tool-password-remember-settings-note = Reopens the tool where you left it. Kept on this computer, in the Heimdall settings folder, readable by your account alone.
-ui-tool-password-save-failed = Saving failed: { $error }
 ui-tool-sshkey-error = Key generation failed: { $error }
 ui-tool-sshkey-save-failed = Saving failed: { $error }
 ui-tool-certgen-save-failed = Saving failed: { $error }
@@ -3623,6 +3652,7 @@ ui-error-credential-guard-required = Credential Guard is required but not enable
 ui-profile-resolution-auto = Auto (recommended)
 ui-profile-resolution-auto-desc = Heimdall picks the best mode based on the host monitor and whether the session is fullscreen or windowed.
 ui-profile-resolution-multi-monitor = Multi-monitor
+ui-profile-resolution-multi-monitor-unavailable = Multi-monitor (requires multiple monitors)
 ui-resolution-mode-auto = Auto
 ui-resolution-mode-multi-monitor = Multi-monitor
 ui-profile-aspect-ratio = Aspect ratio
@@ -3645,6 +3675,7 @@ ui-files-tooltip-type = Type: { $kind }
 ui-files-tooltip-size = Size: { $size }
 ui-files-tooltip-modified = Modified: { $at }
 ui-files-tooltip-permissions = Permissions: { $permissions }
+ui-files-tooltip-owner = Owner: { $owner }
 ui-files-tooltip-time = { $day } { $time } UTC
 ui-tree-expand-all = Expand all
 ui-tree-collapse-all = Collapse all
@@ -3851,3 +3882,1486 @@ ui-profile-path-session-vnc = VNC session
 ui-profile-path-session-telnet = Telnet session
 ui-profile-path-session-citrix = Citrix session
 ui-profile-path-session-local = Local shell
+
+ui-tool-sshaudit-name = SSH Key Auditor
+ui-tool-sshaudit-description = Analyzes SSH key security and provides recommendations
+ui-tool-sshaudit-title = SSH Key Auditor
+ui-tool-sshaudit-input = Paste SSH key (public or private, OpenSSH or PEM format)
+ui-tool-sshaudit-browse = Browse...
+ui-tool-sshaudit-details = Key Details
+ui-tool-sshaudit-findings = Security Findings
+ui-tool-sshaudit-algorithm = Algorithm
+ui-tool-sshaudit-key-size = Key Size
+ui-tool-sshaudit-fingerprint = Fingerprint
+ui-tool-sshaudit-format = Format
+ui-tool-sshaudit-type = Type
+ui-tool-sshaudit-public = Public key
+ui-tool-sshaudit-private = Private key
+ui-tool-sshaudit-encrypted = Encrypted
+ui-tool-sshaudit-yes = Yes
+ui-tool-sshaudit-no = No
+ui-tool-sshaudit-strong = Strong
+ui-tool-sshaudit-acceptable = Acceptable
+ui-tool-sshaudit-weak = Weak
+ui-tool-sshaudit-deprecated = Deprecated
+ui-tool-sshaudit-bits = { $bits } bits
+ui-tool-sshaudit-copy-fingerprint = Copy fingerprint
+ui-tool-sshaudit-empty-state = Paste an SSH key or browse for a key file to audit its security
+ui-tool-sshaudit-parse-error = Could not parse the provided key. Ensure it is a valid SSH public or private key.
+ui-tool-sshaudit-file-too-large = The file is larger than { $limit } bytes and cannot be audited.
+ui-tool-sshaudit-file-read-error = The key file could not be read: { $error }
+ui-tool-sshaudit-finding-ed25519 = Ed25519 is the recommended algorithm - fast, secure, compact
+ui-tool-sshaudit-finding-rsa-strong = RSA key size is strong ({ $bits } bits)
+ui-tool-sshaudit-finding-rsa-ok = RSA 2048-bit meets minimum requirements but 4096 is recommended
+ui-tool-sshaudit-finding-rsa-weak = RSA key is too short ({ $bits } bits) - minimum 2048 required
+ui-tool-sshaudit-finding-dsa = DSA is deprecated and should not be used - migrate to Ed25519
+ui-tool-sshaudit-finding-ecdsa-strong = ECDSA with { $bits }-bit curve is strong
+ui-tool-sshaudit-finding-ecdsa-ok = ECDSA 256-bit is acceptable - consider Ed25519 for better performance
+ui-tool-sshaudit-finding-unencrypted = Private key is not encrypted - add a passphrase for protection
+ui-tool-sshaudit-finding-encrypted = Private key is encrypted with a passphrase
+ui-tool-sshaudit-finding-old-format = Old PEM format uses weak MD5-based encryption - convert to OpenSSH format
+ui-tool-sshaudit-help =
+    SSH Key Auditor
+
+    Analyzes SSH key security and provides recommendations.
+
+    Usage:
+    1. Paste an SSH key (public or private) into the text area, OR
+    2. Click Browse to load a key file
+
+    Supported formats:
+    - OpenSSH public keys (ssh-rsa, ssh-ed25519, ecdsa-sha2-*)
+    - OpenSSH private keys
+    - PEM format (PKCS#1, PKCS#8)
+
+    Security checks:
+    - Algorithm strength (Ed25519 > ECDSA > RSA > DSA)
+    - Key size adequacy (RSA: min 2048, recommended 4096)
+    - Encryption status (unencrypted private keys flagged)
+    - Format security (old PEM encryption vs modern OpenSSH)
+
+ui-tool-tlsaudit-name = TLS Auditor
+ui-tool-tlsaudit-description = Audits TLS protocols, cipher suites, and certificates
+ui-tool-tlsaudit-title = SSL/TLS Auditor
+ui-tool-tlsaudit-host = Host
+ui-tool-tlsaudit-port = Port
+ui-tool-tlsaudit-audit = Audit
+ui-tool-tlsaudit-cancel = Cancel
+ui-tool-tlsaudit-grade = Grade
+ui-tool-tlsaudit-protocols = Protocol Support
+ui-tool-tlsaudit-ciphers = Cipher Suites (TLS 1.2)
+ui-tool-tlsaudit-supported = Supported
+ui-tool-tlsaudit-not-supported = Not supported
+ui-tool-tlsaudit-strong = Strong
+ui-tool-tlsaudit-acceptable = Acceptable
+ui-tool-tlsaudit-weak = Weak
+ui-tool-tlsaudit-findings = Findings
+ui-tool-tlsaudit-finding-ssl3 = SSL 3.0 is supported - vulnerable to POODLE attack
+ui-tool-tlsaudit-finding-tls10 = TLS 1.0 is supported - deprecated since 2020
+ui-tool-tlsaudit-finding-tls11 = TLS 1.1 is supported - deprecated since 2020
+ui-tool-tlsaudit-finding-no-tls13 = TLS 1.3 is not supported - recommended for best security
+ui-tool-tlsaudit-finding-weak-cipher = Weak cipher suite detected: { $suite }
+ui-tool-tlsaudit-finding-no-pfs = Non-PFS cipher suites accepted (no ECDHE/DHE key exchange)
+ui-tool-tlsaudit-finding-all-good = Strong TLS configuration - only modern protocols and ciphers
+ui-tool-tlsaudit-cert-section = Certificate
+ui-tool-tlsaudit-cert-subject = Subject
+ui-tool-tlsaudit-cert-issuer = Issuer
+ui-tool-tlsaudit-cert-expires = Expires
+ui-tool-tlsaudit-cert-key-size = Key size
+ui-tool-tlsaudit-bits = { $bits } bits
+ui-tool-tlsaudit-progress = Testing { $step }...
+ui-tool-tlsaudit-progress-ciphers = Enumerating cipher suites...
+ui-tool-tlsaudit-copy-report = Copy report
+ui-tool-tlsaudit-empty-state = Enter a host and port to audit its TLS configuration
+ui-tool-tlsaudit-error-host-required = Host is required
+ui-tool-tlsaudit-error-invalid-port = Port must be between 1 and 65535
+ui-tool-tlsaudit-error-connection = Connection failed: { $error }
+ui-tool-tlsaudit-report-title = SSL/TLS Audit Report: { $host }:{ $port }
+ui-tool-tlsaudit-report-grade = Grade: { $grade }
+ui-tool-tlsaudit-report-protocols = === Protocol Support ===
+ui-tool-tlsaudit-report-ciphers = === Cipher Suites (TLS 1.2) ===
+ui-tool-tlsaudit-report-cert = === Certificate ===
+ui-tool-tlsaudit-report-findings = === Findings ===
+ui-tool-tlsaudit-help =
+    SSL/TLS Auditor
+
+    Audits a server's TLS configuration, cipher suites, and certificate.
+
+    Usage:
+    1. Enter a target hostname or IP address
+    2. Enter the target port (default: 443)
+    3. Click Audit to run the probe
+
+    Checks performed:
+    - Protocol support (SSL 3.0, TLS 1.0, 1.1, 1.2, 1.3)
+    - TLS 1.2 cipher suite enumeration (PFS, key exchange, encryption strength)
+    - Server certificate inspection (subject, issuer, validity, key length)
+    - Security grade calculation (A+ through F) and recommendations
+
+ui-tool-dnssec-name = DNS Security Checker
+ui-tool-dnssec-description = Checks SPF, DKIM, DMARC, CAA, DNSSEC, and MX records
+ui-tool-dnssec-title = DNS Security Checker
+ui-tool-dnssec-domain = Domain
+ui-tool-dnssec-domain-watermark = example.com
+ui-tool-dnssec-check = Check
+ui-tool-dnssec-cancel = Cancel
+ui-tool-dnssec-copy-report = Copy report
+ui-tool-dnssec-empty-state = Enter a domain to analyze its DNS security records
+ui-tool-dnssec-summary-all-pass = All checks passed ({ $passed }/{ $total })
+ui-tool-dnssec-summary-good = Good security posture ({ $passed }/{ $total })
+ui-tool-dnssec-summary-partial = Partial security coverage ({ $passed }/{ $total })
+ui-tool-dnssec-summary-bad = Poor security posture ({ $passed }/{ $total })
+ui-tool-dnssec-pass = Pass
+ui-tool-dnssec-warn = Warning
+ui-tool-dnssec-fail = Fail
+ui-tool-dnssec-no-record = No record found
+ui-tool-dnssec-progress = Querying { $record } for { $domain }...
+ui-tool-dnssec-error-domain-required = Domain is required
+ui-tool-dnssec-error-invalid-domain = Invalid domain name format
+ui-tool-dnssec-finding-missing = Record missing or not configured
+ui-tool-dnssec-finding-spf-permissive = SPF policy uses +all (permissive - any server can send mail)
+ui-tool-dnssec-finding-spf-neutral = SPF policy uses ?all (neutral - no enforcement)
+ui-tool-dnssec-finding-spf-no-all = SPF record lacks an all mechanism
+ui-tool-dnssec-finding-spf-good = SPF record restricts unauthorized senders
+ui-tool-dnssec-finding-dmarc-none = DMARC policy is none (monitoring only, no rejection)
+ui-tool-dnssec-finding-dmarc-enforced = DMARC policy enforces { $policy }
+ui-tool-dnssec-finding-dmarc-pct-zero = DMARC policy set to { $policy } but pct=0 (not enforced)
+ui-tool-dnssec-finding-dkim-found = DKIM public key configured for selector { $selector }
+ui-tool-dnssec-finding-dkim-revoked = DKIM key for selector { $selector } has empty public key (revoked)
+ui-tool-dnssec-finding-dkim-none = No DKIM records found for common selectors
+ui-tool-dnssec-finding-caa-missing = CAA record missing (any Certificate Authority may issue certificates)
+ui-tool-dnssec-finding-caa-present = CAA authorizes: { $issuers }
+ui-tool-dnssec-finding-dnssec-present = DNSSEC enabled with cryptographic signatures
+ui-tool-dnssec-finding-dnssec-missing = DNSSEC is not enabled
+ui-tool-dnssec-finding-mx-servers = Mail exchangers: { $servers }
+ui-tool-dnssec-finding-no-mx = No MX records found
+ui-tool-dnssec-finding-error = Error: { $error }
+ui-tool-dnssec-report-title = === DNS Security Report for { $domain } ===
+ui-tool-dnssec-report-summary = Summary: { $passed } / { $total } checks passed
+ui-tool-dnssec-help =
+    DNS Security Checker
+
+    Audits domain security posture across six key DNS controls.
+
+    Usage:
+    1. Enter a domain name (e.g. example.com)
+    2. Click Check to query DNS records
+
+    Controls evaluated:
+    - SPF: Validates authorized email sending servers
+    - DKIM: Checks cryptographic signatures for outgoing email
+    - DMARC: Verifies alignment and rejection policies (none, quarantine, reject)
+    - CAA: Verifies authorized Certificate Authorities for TLS issuance
+    - DNSSEC: Checks DNS response cryptographic authenticity
+    - MX: Identifies mail delivery endpoints
+
+## The offline CVE lookup tool, as the C# CveLookupView.
+ui-tool-cve-name = CVE Lookup
+ui-tool-cve-description = Searches an offline database of known vulnerabilities for common infrastructure software
+ui-tool-cve-title = CVE Lookup
+ui-tool-cve-input-placeholder = Software and version (or paste banner)
+ui-tool-cve-btn-search = Search
+ui-tool-cve-summary = { $count ->
+    [one] { $count } CVE found for { $query }
+   *[other] { $count } CVEs found for { $query }
+}
+ui-tool-cve-no-results = No known CVEs found for this software version.
+ui-tool-cve-empty-state = Enter a software name and version to search for known vulnerabilities
+ui-tool-cve-db-info = Offline database: { $cves } CVEs covering { $products } products
+ui-tool-cve-col-affected = Affected Versions
+ui-tool-cve-severity-critical = Critical
+ui-tool-cve-severity-high = High
+ui-tool-cve-severity-medium = Medium
+ui-tool-cve-severity-low = Low
+ui-tool-cve-btn-copy = Copy report
+ui-tool-cve-help =
+    CVE Lookup
+
+    Searches an offline database of known vulnerabilities for common infrastructure software.
+
+    Usage:
+    1. Enter a software name and version (e.g. 'OpenSSH 8.9')
+    2. Or paste a service banner (e.g. 'SSH-2.0-OpenSSH_8.9p1')
+    3. Click Search
+
+    The tool auto-detects software names and versions from common banner formats (HTTP Server headers, SSH banners, FTP greetings, etc.).
+
+    CVSS Scoring:
+    - Critical (9.0-10.0): Immediate patching required
+    - High (7.0-8.9): Patch at next opportunity
+    - Medium (4.0-6.9): Schedule patching
+    - Low (0.1-3.9): Monitor only
+
+    Database:
+    Offline curated database covering OpenSSH, Apache, nginx, MySQL, PostgreSQL, Redis, ProFTPD, and more. No internet connection required.
+
+
+
+## The Default Credentials Scanner tool, as the C# DefaultCredentialView.
+ui-tool-defaultcreds-name = Default Credentials Scanner
+ui-tool-defaultcreds-description = Tests common default credentials against detected services on a target host
+ui-tool-defaultcreds-title = Default Credentials Scanner
+ui-tool-defaultcreds-host-label = Host
+ui-tool-defaultcreds-host-placeholder = Hostname or IP address
+ui-tool-defaultcreds-btn-scan = Scan
+ui-tool-defaultcreds-btn-stop = Stop
+ui-tool-defaultcreds-auto-detect = Auto-detect services
+ui-tool-defaultcreds-show-passwords = Show passwords
+ui-tool-defaultcreds-warning = Use only on systems you own or have explicit authorization to test.
+ui-tool-defaultcreds-col-service = Service
+ui-tool-defaultcreds-col-port = Port
+ui-tool-defaultcreds-col-user = Username
+ui-tool-defaultcreds-col-pass = Password
+ui-tool-defaultcreds-col-status = Status
+ui-tool-defaultcreds-col-detail = Detail
+ui-tool-defaultcreds-status-default = Default!
+ui-tool-defaultcreds-status-changed = Changed
+ui-tool-defaultcreds-status-error = Error
+ui-tool-defaultcreds-detecting = Detecting services...
+ui-tool-defaultcreds-testing = Testing { $service } { $user }:{ $pass }...
+ui-tool-defaultcreds-summary = { $defaults ->
+    [one] { $defaults } default credential found on { $services ->
+        [one] { $services } service
+       *[other] { $services } services
+    }
+   *[other] { $defaults } default credentials found on { $services ->
+        [one] { $services } service
+       *[other] { $services } services
+    }
+}
+ui-tool-defaultcreds-no-defaults = No default credentials found - all tested services appear secured.
+ui-tool-defaultcreds-btn-copy = Copy report
+ui-tool-defaultcreds-btn-export = Export CSV
+ui-tool-defaultcreds-empty-state = Enter a host to scan for default credentials on common services
+ui-tool-defaultcreds-error-host-required = A hostname or IP address is required.
+ui-tool-defaultcreds-detail-accepted = { $service } accepted default credentials
+ui-tool-defaultcreds-detail-rejected = { $service } rejected credentials
+ui-tool-defaultcreds-help =
+    Default Credential Scanner
+
+    Tests common default credentials against services detected on a target host.
+
+    Usage:
+    1. Enter a hostname or IP
+    2. Enable 'Auto-detect services' to scan common ports first
+    3. Click Scan
+
+    Protocols tested:
+    - SSH (service reachable only, credentials not tested)
+    - HTTP Basic Authentication
+    - FTP (anonymous, admin)
+    - SNMP (community strings)
+    - PostgreSQL (passwordless access); MySQL, MSSQL (service reachable only, credentials not tested)
+    - VNC (service reachable only, credentials not tested)
+    - Telnet
+    - Redis (service reachable only, credentials not tested)
+
+    Safety:
+    - Rate-limited (1 attempt/second per service)
+    - Only tests well-known default credentials
+    - Does NOT perform brute-force attacks
+ui-tool-secnumcloud-name = SecNumCloud Audit
+ui-tool-secnumcloud-description = SecNumCloud v3.2 compliance audit across network, crypto, access, and operations
+ui-tool-secnumcloud-title = SecNumCloud v3.2 Compliance Audit
+ui-tool-secnumcloud-scope-label = Audit Scope
+ui-tool-secnumcloud-scope-placeholder = One host or IP address per line
+ui-tool-secnumcloud-depth-label = Depth
+ui-tool-secnumcloud-depth-quick = Quick
+ui-tool-secnumcloud-depth-standard = Standard
+ui-tool-secnumcloud-depth-deep = Deep
+ui-tool-secnumcloud-chk-network = Network (Ch.9)
+ui-tool-secnumcloud-chk-crypto = Cryptography (Ch.10)
+ui-tool-secnumcloud-chk-access = Access Control (Ch.11)
+ui-tool-secnumcloud-chk-operations = Operations (Ch.12)
+ui-tool-secnumcloud-btn-start = Start Audit
+ui-tool-secnumcloud-btn-stop = Stop
+ui-tool-secnumcloud-compliance = Compliance
+ui-tool-secnumcloud-status-pass = Pass
+ui-tool-secnumcloud-status-warn = Warning
+ui-tool-secnumcloud-status-fail = Fail
+ui-tool-secnumcloud-status-error = Error
+ui-tool-secnumcloud-status-skipped = Skipped
+ui-tool-secnumcloud-ch-network = Network Security
+ui-tool-secnumcloud-ch-crypto = Cryptography
+ui-tool-secnumcloud-ch-access = Access Control
+ui-tool-secnumcloud-ch-operations = Operations Security
+ui-tool-secnumcloud-net01-name = Open ports inventory
+ui-tool-secnumcloud-net02-name = Unnecessary services
+ui-tool-secnumcloud-net03-name = HTTP security headers
+ui-tool-secnumcloud-net04-name = Network segmentation
+ui-tool-secnumcloud-cry01-name = TLS protocol versions
+ui-tool-secnumcloud-cry02-name = Weak cipher suites
+ui-tool-secnumcloud-cry03-name = Certificate validity
+ui-tool-secnumcloud-cry04-name = SSH key strength
+ui-tool-secnumcloud-acc01-name = Default credentials
+ui-tool-secnumcloud-acc02-name = SMB signing
+ui-tool-secnumcloud-acc03-name = SNMP community strings
+ui-tool-secnumcloud-ops01-name = SPF/DKIM/DMARC records
+ui-tool-secnumcloud-ops02-name = CAA records
+ui-tool-secnumcloud-ops03-name = Known CVE detection
+ui-tool-secnumcloud-ops04-name = Service inventory
+ui-tool-secnumcloud-btn-copy-csv = Copy CSV
+ui-tool-secnumcloud-btn-copy-html = Copy HTML
+ui-tool-secnumcloud-empty-state = Enter a subnet or host list to start a SecNumCloud compliance audit
+ui-tool-secnumcloud-error-scope = Enter at least one target host.
+ui-tool-secnumcloud-phase-discovery = Phase 1/5: Network discovery...
+ui-tool-secnumcloud-phase-network = Phase 2/5: Network security checks...
+ui-tool-secnumcloud-phase-crypto = Phase 3/5: Cryptography checks...
+ui-tool-secnumcloud-phase-access = Phase 4/5: Access control checks...
+ui-tool-secnumcloud-phase-operations = Phase 5/5: Operations checks...
+ui-tool-secnumcloud-phase-complete = Audit complete.
+ui-tool-secnumcloud-summary = { $compliance }% compliance ({ $pass } pass, { $warn } warn, { $fail } fail)
+ui-tool-secnumcloud-help =
+    SecNumCloud v3.2 Compliance Audit
+
+    Automated security audit against ANSSI SecNumCloud v3.2 requirements.
+
+    Scope:
+    Enter the hosts to audit, one host name or IP address per line. CIDR ranges are not expanded and are refused.
+
+    Chapters audited:
+    - Network Security (Ch.9): Port inventory, HTTP headers, segmentation
+    - Cryptography (Ch.10): TLS versions, cipher suites, certificates, SSH keys
+    - Access Control (Ch.11): Default credentials, SMB signing, SNMP communities
+    - Operations (Ch.12): SPF/DKIM/DMARC, CAA, CVE lookup, service inventory
+
+    Depth:
+    - Quick: Essential checks only (~2 min)
+    - Standard: Full audit (~5 min)
+    - Deep: Extended enumeration (~15 min)
+
+    Exports:
+    - HTML: Standalone report for auditors
+    - CSV: Evidence data for GRC tools
+
+ui-tool-smb-name = SMB Enumerator
+ui-tool-smb-description = SMB protocol enumerator with signing and version detection
+ui-tool-smb-title = SMB Enumerator
+ui-tool-smb-host-label = Host
+ui-tool-smb-host-placeholder = 192.168.1.100 or hostname
+ui-tool-smb-btn-enum = Enumerate
+ui-tool-smb-btn-stop = Stop
+ui-tool-smb-btn-copy = Copy report
+ui-tool-smb-empty-state = Enter a hostname or IP to enumerate SMB information
+ui-tool-smb-card-identity = Host Identity
+ui-tool-smb-card-protocol = SMB Protocol
+ui-tool-smb-card-findings = Security Findings
+ui-tool-smb-computer-name = Computer Name
+ui-tool-smb-domain = Domain
+ui-tool-smb-dns-name = DNS Name
+ui-tool-smb-dns-domain = DNS Domain
+ui-tool-smb-forest = Forest
+ui-tool-smb-os-build = OS Build
+ui-tool-smb-mac = MAC Address
+ui-tool-smb-dialect = SMB Dialect
+ui-tool-smb-signing = Signing Required
+ui-tool-smb-server-guid = Server GUID
+ui-tool-smb-system-time = System Time
+ui-tool-smb-boot-time = Boot Time
+ui-tool-smb-yes = Yes
+ui-tool-smb-no = No
+ui-tool-smb-not-available = N/A
+ui-tool-smb-signing-disabled = SMB signing is not required - vulnerable to relay attacks
+ui-tool-smb-signing-enabled = SMB signing is required
+ui-tool-smb-v1-detected = SMBv1 dialect detected - deprecated and vulnerable (EternalBlue)
+ui-tool-smb-modern-dialect = Using modern SMB dialect: { $dialect }
+ui-tool-smb-netbios-failed = NetBIOS query timed out (UDP 137 may be blocked)
+ui-tool-smb-error-connection = Could not connect to port 445: { $error }
+ui-tool-smb-error-ntlm = NTLM probe failed: { $error }
+ui-tool-smb-error-host-required = Enter a host to enumerate.
+ui-tool-smb-report-identity = === Host Identity ===
+ui-tool-smb-report-protocol = === SMB Protocol ===
+ui-tool-smb-report-findings = === Security Findings ===
+ui-tool-smb-help =
+    SMB Enumerator
+
+    Extracts host identity and SMB protocol information without credentials.
+
+    Usage:
+    1. Enter a hostname or IP address
+    2. Click Enumerate
+
+    Information extracted:
+    - Computer name, domain, DNS names (via NTLM negotiation)
+    - OS build number
+    - MAC address (via NetBIOS)
+    - SMB dialect version, signing requirements
+    - Server GUID, system time, boot time
+
+    Security checks:
+    - SMB signing disabled (relay attack risk)
+    - Negotiated SMB2/SMB3 dialect
+
+# --- Review follow-ups (#402): security tools ---
+ui-tool-defaultcreds-status-not-tested = Not tested
+ui-tool-defaultcreds-detail-not-tested = { $service } reachable, credentials not tested
+ui-tool-defaultcreds-empty = (empty)
+ui-tool-defaultcreds-timeout-connect = Connection timed out
+ui-tool-defaultcreds-timeout-write = Write timed out
+ui-tool-defaultcreds-timeout-read = Read timed out
+ui-tool-dnssec-report-record = Record
+ui-tool-dnssec-report-detail = Detail
+ui-tool-dnssec-error-nslookup-missing = nslookup was not found. Install it (bind-utils / dnsutils on Linux) or ensure it is on PATH.
+ui-tool-secnumcloud-error-cidr = CIDR ranges are not expanded. Enter individual hosts, one per line.
+ui-tool-secnumcloud-clause = Clause { $clause }
+ui-tool-secnumcloud-unknown = unknown
+ui-tool-secnumcloud-net01-summary = Inventoried { $open } open ports across { $hosts } hosts.
+ui-tool-secnumcloud-net01-evidence = { $count } open ports: { $ports }
+ui-tool-secnumcloud-net02-pass = No unnecessary or non-standard services detected.
+ui-tool-secnumcloud-net02-warn = { $count } non-standard ports found - review for operational necessity.
+ui-tool-secnumcloud-net02-evidence = Non-standard ports: { $ports }
+ui-tool-secnumcloud-net03-skipped = No HTTP/HTTPS services found to check.
+ui-tool-secnumcloud-net03-pass = All { $count } web services have the required security headers.
+ui-tool-secnumcloud-net03-fail = { $missing } web services out of { $checked } are missing required security headers (HSTS, CSP, XFO, XCTO).
+ui-tool-secnumcloud-net03-evidence = Port { $port }: missing headers: { $headers }
+ui-tool-secnumcloud-net04-summary = Detected { $count } subnets. Verify network segmentation according to ANSSI guidelines.
+ui-tool-secnumcloud-cry01-skipped = No TLS services found to check.
+ui-tool-secnumcloud-cry01-pass = All { $count } TLS endpoints verified for acceptable protocols.
+ui-tool-secnumcloud-cry02-pass = No weak cipher suites negotiated across audited endpoints.
+ui-tool-secnumcloud-cry03-pass = All captured certificates are within their validity period.
+ui-tool-secnumcloud-cry04-skipped = No SSH services found to check.
+ui-tool-secnumcloud-cry04-fail = { $weak } SSH servers out of { $checked } offer weak key algorithms.
+ui-tool-secnumcloud-cry04-pass = All { $checked } SSH servers use acceptable key algorithms.
+ui-tool-secnumcloud-cry04-evidence = Port 22: weak SSH host key algorithm (DSA) detected
+ui-tool-secnumcloud-acc01-pass = No default credentials accepted across audited services.
+ui-tool-secnumcloud-acc02-skipped = No SMB services found to check.
+ui-tool-secnumcloud-acc02-pass = { $count } SMB services evaluated for message signing.
+ui-tool-secnumcloud-acc03-skipped = No SNMP services found to check.
+ui-tool-secnumcloud-acc03-pass = No default SNMP community strings accepted.
+ui-tool-secnumcloud-ops01-skipped = No public domains configured in target scope for DNS checks.
+ui-tool-secnumcloud-ops02-skipped = No public domains configured in target scope for CAA checks.
+ui-tool-secnumcloud-ops03-pass = No known high-severity CVEs matched across scanned service banners.
+ui-tool-secnumcloud-ops03-fail = { $count } known CVEs matched across scanned services.
+ui-tool-secnumcloud-ops03-evidence = Port { $port }: { $software } { $version } affected by { $cve } ({ $severity })
+ui-tool-secnumcloud-ops04-summary = Inventoried { $count } services across { $hosts } hosts.
+ui-tool-secnumcloud-ops04-evidence = Port { $port }: { $service }
+ui-tool-secnumcloud-html-doc-title = SecNumCloud Audit Report
+ui-tool-secnumcloud-html-heading = SecNumCloud v3.2 - Compliance Audit Report
+ui-tool-secnumcloud-html-clause = Clause
+ui-tool-secnumcloud-html-generated-by = Generated by Heimdall
+    - SMBv1 detected (EternalBlue vulnerability)
+
+ui-tool-http-name = HTTP Status Codes
+ui-tool-http-description = Reference guide for HTTP status codes with category filtering
+ui-tool-http-filter-placeholder = Search by code or description...
+ui-tool-http-copy-hint = Click code to copy
+ui-tool-http-no-results = No matching status codes
+ui-tool-http-cat-1xx = 1xx Informational
+ui-tool-http-cat-2xx = 2xx Success
+ui-tool-http-cat-3xx = 3xx Redirection
+ui-tool-http-cat-4xx = 4xx Client Error
+ui-tool-http-cat-5xx = 5xx Server Error
+ui-tool-http-help =
+    HTTP Status Codes Reference
+
+    Quick reference guide for standard HTTP response status codes.
+
+    Categories:
+    - 1xx: Informational (request received, continuing process)
+    - 2xx: Success (action successfully received, understood, accepted)
+    - 3xx: Redirection (further action must be taken)
+    - 4xx: Client Error (request contains bad syntax or cannot be fulfilled)
+    - 5xx: Server Error (server failed to fulfill an apparently valid request)
+
+    Usage:
+    - Type in the filter box to search by numeric code or name.
+    - Click any entry to copy its code and name to the clipboard.
+
+ui-tool-net-error-host-required = Please enter a hostname or IP address.
+ui-tool-net-error-invalid-host = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-net-error-port = The port must be a number between 1 and 65535.
+ui-tool-net-error-port-range = Please enter a port or port range.
+ui-tool-net-reason-other = Connection failed: { $detail }
+ui-tool-net-no-value = -
+ui-tool-net-millis = { $ms } ms
+
+ui-tool-tcpping-name = TCP Ping
+ui-tool-tcpping-description = Measure TCP connection latency to a specific host and port
+ui-tool-tcpping-host-label = Host
+ui-tool-tcpping-host-placeholder = example.com or 192.168.1.1
+ui-tool-tcpping-port-label = Port
+ui-tool-tcpping-count-label = Count
+ui-tool-tcpping-btn-start = Start
+ui-tool-tcpping-btn-stop = Stop
+ui-tool-tcpping-btn-copy = Copy results
+ui-tool-tcpping-summary = Min: { $min } ms, Avg: { $avg } ms, Max: { $max } ms, Lost: { $lost }/{ $total } ({ $pct }%)
+ui-tool-tcpping-summary-all-lost = Min: -, Avg: -, Max: -, Lost: { $lost }/{ $total } ({ $pct }%)
+ui-tool-tcpping-probe-ok = [{ $seq }/{ $total }] { $target } - { $ms } ms
+ui-tool-tcpping-probe-failed = [{ $seq }/{ $total }] { $target } - FAILED: { $reason }
+ui-tool-tcpping-empty-state = Enter a host and port, then click Start to measure TCP handshake latency
+ui-tool-tcpping-error-count = Count must be a number between 1 and 10000.
+ui-tool-tcpping-help =
+    TCP Ping Tool
+
+    Measures TCP connection handshake latency to a target host and port.
+    Unlike ICMP ping, TCP ping works through firewalls that block ICMP echo requests.
+
+    Usage:
+    1. Enter target host name or IP address.
+    2. Enter port number (default: 443).
+    3. Specify number of probes to send (default: 10, at most 10000).
+    4. Click Start to begin probing; Stop ends the run at once.
+
+    The host name is looked up once, before the first probe: the times shown are the
+    handshakes alone. Probes are one second apart, and each has five seconds to answer.
+
+ui-tool-wol-name = Wake-on-LAN
+ui-tool-wol-description = Send magic packets to power on sleeping devices across the network
+ui-tool-wol-mac-label = MAC Address
+ui-tool-wol-mac-placeholder = AA:BB:CC:DD:EE:FF
+ui-tool-wol-broadcast-label = Broadcast Address
+ui-tool-wol-port-label = UDP Port
+ui-tool-wol-btn-send = Send Wake-on-LAN
+ui-tool-wol-status-sending = Sending magic packet...
+ui-tool-wol-status-sent = Magic packet sent to { $mac } via { $dest }
+ui-tool-wol-status-error = Failed to send packet: { $error }
+ui-tool-wol-error-invalid-mac = Invalid MAC address. Use format AA:BB:CC:DD:EE:FF or AABBCCDDEEFF.
+ui-tool-wol-error-invalid-broadcast = Invalid broadcast address. Enter an IPv4 or IPv6 address.
+ui-tool-wol-help =
+    Wake-on-LAN
+
+    Transmits UDP magic broadcast packets to wake sleeping machines on the network.
+
+    Requirements:
+    - Target machine must have Wake-on-LAN enabled in BIOS/UEFI.
+    - Network card must support WOL and be connected to network power.
+    - Router/switch must allow UDP broadcast packets.
+
+    Usage:
+    1. Enter target machine's MAC address.
+    2. Optionally adjust the broadcast address, an IP address (default: 255.255.255.255).
+    3. Optionally adjust the UDP port, from 1 to 65535 (default: 9).
+    4. Click Send Wake-on-LAN.
+
+ui-tool-whois-name = WHOIS Lookup
+ui-tool-whois-description = Query WHOIS servers to look up domain and IP registration data
+ui-tool-whois-domain-placeholder = example.com or 1.1.1.1
+ui-tool-whois-btn-lookup = Lookup
+ui-tool-whois-btn-copy = Copy output
+ui-tool-whois-empty-state = Enter a domain name or IP address to query WHOIS registration data
+ui-tool-whois-status-querying = Querying WHOIS server...
+ui-tool-whois-status-complete = Query completed in { $elapsed } ms
+ui-tool-whois-result-header = WHOIS results for { $domain }
+ui-tool-whois-truncated = The reply was longer than { $kib } KiB: only its beginning is shown.
+ui-tool-whois-error-required = Please enter a domain name or IP address.
+ui-tool-whois-error-invalid = Invalid domain name or IP address.
+ui-tool-whois-error-timeout = WHOIS query timed out. The WHOIS server may be unreachable or rate-limiting requests.
+ui-tool-whois-error-failed = WHOIS query failed: { $reason }. Try again or use a different domain/IP.
+ui-tool-whois-help =
+    WHOIS Lookup
+
+    Queries a WHOIS server directly over TCP port 43 for domain registration data:
+    registrar, dates, name servers.
+
+    How it works:
+    - The server is chosen by the domain's TLD from a built-in list (com, net, org, fr,
+      io, dev and others); whois.iana.org is asked for any other TLD and for an IP
+      address.
+    - The reply is shown as the server sent it: a referral to another server is not
+      followed.
+    - The whole lookup has 10 seconds, and at most 64 KiB of the reply is kept.
+
+ui-tool-banner-name = Banner Grabber
+ui-tool-banner-description = Probe network ports to capture service banners and software versions
+ui-tool-banner-host-label = Target Host
+ui-tool-banner-host-placeholder = example.com or 192.168.1.1
+ui-tool-banner-ports-label = Ports
+ui-tool-banner-ports-placeholder = 21,22,25,80,443,3306,8080
+ui-tool-banner-btn-grab = Grab Banners
+ui-tool-banner-btn-stop = Stop
+ui-tool-banner-btn-copy = Copy results
+ui-tool-banner-btn-export = Export CSV
+ui-tool-banner-col-port = Port
+ui-tool-banner-col-service = Service
+ui-tool-banner-col-time = Time
+ui-tool-banner-col-banner = Banner
+ui-tool-banner-preset-common = Common
+ui-tool-banner-preset-web = Web
+ui-tool-banner-preset-mail = Mail
+ui-tool-banner-preset-database = Database
+ui-tool-banner-empty-state = Enter a host and port list, then click Grab Banners to inspect service banners
+ui-tool-banner-progress = { $completed } / { $total } ports probed
+ui-tool-banner-help =
+    Banner Grabber
+
+    Probes open network ports and reads initial greeting banners to identify
+    running software, server daemons, and exact version numbers.
+
+    Features:
+    - Custom port lists and port ranges (e.g. 80,443,8000-8005)
+    - Presets for Common, Web, Mail, and Database ports
+    - 20 ports probed at a time, each result shown as it comes; Stop ends the scan at once
+    - Automatic service fingerprinting (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
+    - Export results to CSV or formatted text
+
+ui-tool-ping-name = Ping Monitor
+ui-tool-ping-description = Continuous ICMP ping monitor with running latency statistics
+ui-tool-ping-host = Target Host
+ui-tool-ping-host-watermark = example.com or 192.168.1.1
+ui-tool-ping-timeout = Timeout (ms)
+ui-tool-ping-timeout-watermark = 2000
+ui-tool-ping-count = Count
+ui-tool-ping-count-watermark = 4
+ui-tool-ping-start = Start Ping
+ui-tool-ping-stop = Stop
+ui-tool-ping-min = Min
+ui-tool-ping-avg = Avg
+ui-tool-ping-max = Max
+ui-tool-ping-jitter = Jitter
+ui-tool-ping-loss = Packet Loss
+ui-tool-ping-sent = Sent/Recv
+ui-tool-ping-results-title = Probe History
+ui-tool-ping-copy-results = Copy Results
+ui-tool-ping-copy-csv = Export CSV
+ui-tool-ping-status-timeout = Timed out
+ui-tool-ping-error-host-required = Please enter a target host or IP address.
+ui-tool-ping-error-timeout-invalid = Timeout must be between 100 ms and 30000 ms.
+ui-tool-ping-error-count-invalid = Count must be between 0 and 100000.
+ui-tool-ping-help =
+    Ping Monitor
+
+    Sends ICMP Echo Request packets to a target host to test round-trip latency,
+    packet loss, and network stability.
+
+    Features:
+    - Configurable timeout and packet count (0 for continuous monitoring)
+    - Real-time statistics: minimum, average, maximum, jitter, and loss percentage
+    - History table with sequence number, timestamps, TTL, and status badges
+    - Export results to formatted text or CSV spreadsheet
+
+ui-tool-dns-name = DNS Lookup
+ui-tool-dns-description = Query DNS record types against standard or custom name servers
+ui-tool-dns-host = Domain or Hostname
+ui-tool-dns-host-watermark = example.com
+ui-tool-dns-type = Record Type
+ui-tool-dns-server = DNS Server
+ui-tool-dns-lookup = Query DNS
+ui-tool-dns-searching = Querying...
+ui-tool-dns-copy = Copy Output
+ui-tool-dns-results-title = DNS Results for { $host } ({ $record_type }, { $time } ms)
+ui-tool-dns-no-records = No records returned.
+ui-tool-dns-error-host-required = Please enter a domain name.
+ui-tool-dns-help =
+    DNS Lookup
+
+    Queries Domain Name System (DNS) servers to inspect DNS records for any domain or IP.
+
+    Features:
+    - Standard record types: A, AAAA, MX, CNAME, TXT, NS, PTR, SOA, SRV, ANY
+    - Public nameserver presets (Cloudflare, Google, Quad9, OpenDNS)
+    - Response timing and alias chain tracking
+    - Clean formatted output with one-click clipboard copy
+
+ui-tool-dnsbatch-name = DNS Batch Resolver
+ui-tool-dnsbatch-description = Resolve multiple hostnames concurrently into IPv4 and IPv6 addresses
+ui-tool-dnsbatch-hostnames-label = Hostnames to resolve (one per line or comma-separated)
+ui-tool-dnsbatch-resolve = Resolve Batch
+ui-tool-dnsbatch-copy-csv = Export CSV
+ui-tool-dnsbatch-total = Total
+ui-tool-dnsbatch-resolved = Resolved
+ui-tool-dnsbatch-failed = Failed
+ui-tool-dnsbatch-results-title = Batch Results
+ui-tool-dnsbatch-status-resolved = Resolved
+ui-tool-dnsbatch-status-failed = Failed
+ui-tool-dnsbatch-status-pending = Pending
+ui-tool-dnsbatch-error-required = Please enter at least one hostname to resolve.
+ui-tool-dnsbatch-help =
+    DNS Batch Resolver
+
+    Resolves large batches of hostnames and domains in parallel to their IPv4 and IPv6 addresses.
+
+    Features:
+    - Flexible multiline and comma-separated input
+    - Concurrent asynchronous resolution
+    - Summary breakdown of resolved versus failed queries
+    - CSV spreadsheet export with status and response duration
+
+ui-tool-portscan-name = Port Scanner
+ui-tool-portscan-description = Scan target TCP ports to detect open services and firewall filtering
+ui-tool-portscan-host = Target Host
+ui-tool-portscan-host-watermark = example.com or 192.168.1.1
+ui-tool-portscan-ports = Port Range
+ui-tool-portscan-ports-watermark = 20-80,443
+ui-tool-portscan-timeout = Timeout (ms)
+ui-tool-portscan-timeout-watermark = 2000
+ui-tool-portscan-start = Start Scan
+ui-tool-portscan-stop = Stop
+ui-tool-portscan-copy-csv = Export CSV
+ui-tool-portscan-total = Total
+ui-tool-portscan-open = Open
+ui-tool-portscan-closed = Closed
+ui-tool-portscan-filtered = Filtered
+ui-tool-portscan-results-title = Port Scan Results
+ui-tool-portscan-status-open = Open
+ui-tool-portscan-status-closed = Closed
+ui-tool-portscan-status-filtered = Filtered
+ui-tool-portscan-error-host-required = Please enter a target host.
+ui-tool-portscan-error-ports-invalid = Please enter a valid port number or range (e.g. 80,443,8000-8080).
+ui-tool-portscan-help =
+    Port Scanner
+
+    Probes TCP ports on target hosts to map open network services, firewall rules,
+    and filtered ports.
+
+    Features:
+    - Presets for common services (SSH, HTTP, HTTPS, RDP, MySQL, etc.)
+    - Support for custom port numbers, lists, and ranges (e.g. 1-1024)
+    - Real-time classification into Open, Closed, and Filtered
+    - Summary metrics and CSV export
+
+ui-tool-headers-name = HTTP Header Analyzer
+ui-tool-headers-description = Inspect HTTP response headers, detect information disclosure, and score security headers
+ui-tool-headers-url = Target URL
+ui-tool-headers-url-watermark = https://example.com
+ui-tool-headers-analyze = Analyze Headers
+ui-tool-headers-analyzing = Analyzing...
+ui-tool-headers-copy-report = Copy Full Report
+ui-tool-headers-sec-headers-title = Security Headers Evaluation
+ui-tool-headers-disclosure-title = Information Disclosure
+ui-tool-headers-raw-title = Raw Response Headers
+ui-tool-headers-status-pass = PASS
+ui-tool-headers-status-warn = WARN
+ui-tool-headers-status-fail = FAIL
+ui-tool-headers-status-clean = CLEAN
+ui-tool-headers-status-exposed = EXPOSED
+ui-tool-headers-missing = (missing)
+ui-tool-headers-not-exposed = (not exposed)
+ui-tool-headers-grade-aplus = Outstanding: all key security headers enforced with best practices.
+ui-tool-headers-grade-a = Excellent: robust modern security headers in place.
+ui-tool-headers-grade-b = Good: minor omissions in modern browser defense headers.
+ui-tool-headers-grade-c = Moderate: several foundational security headers are missing.
+ui-tool-headers-grade-d = Poor: missing most standard security protections.
+ui-tool-headers-grade-f = Critical: no modern security headers detected.
+ui-tool-headers-rec-hsts = Recommendation: enable Strict-Transport-Security with max-age=31536000 and includeSubDomains.
+ui-tool-headers-rec-csp = Recommendation: define a restrictive Content-Security-Policy to prevent XSS and code injection.
+ui-tool-headers-rec-xfo = Recommendation: set X-Frame-Options to DENY or SAMEORIGIN to prevent clickjacking.
+ui-tool-headers-rec-xcto = Recommendation: set X-Content-Type-Options to nosniff to prevent MIME-sniffing attacks.
+ui-tool-headers-rec-referrer = Recommendation: configure Referrer-Policy to strict-origin-when-cross-origin.
+ui-tool-headers-rec-permissions = Recommendation: configure Permissions-Policy to restrict sensitive browser APIs.
+ui-tool-headers-rec-xxss = Recommendation: set X-XSS-Protection to 0 or rely on Content-Security-Policy.
+ui-tool-headers-rec-cookie = Recommendation: set Secure, HttpOnly, and SameSite=Lax/Strict on cookies.
+ui-tool-headers-rec-disclosure = Recommendation: disable or sanitize server header to hide internal software versions.
+ui-tool-headers-reason-hsts-http = Browsers ignore this header over plain HTTP: analyze the HTTPS address.
+ui-tool-headers-reason-hsts-max-age-invalid = max-age is missing, repeated or not a number: browsers ignore this header.
+ui-tool-headers-reason-hsts-max-age-zero = max-age=0 tells browsers to forget the HTTPS-only policy.
+ui-tool-headers-reason-hsts-max-age-short = max-age is shorter than { $seconds } seconds (six months).
+ui-tool-headers-reason-csp-empty = The policy is empty and restricts nothing.
+ui-tool-headers-reason-csp-no-script = Neither script-src nor default-src: scripts are not restricted.
+ui-tool-headers-reason-csp-unsafe = Scripts allow 'unsafe-inline' without a nonce or a hash, or 'unsafe-eval'.
+ui-tool-headers-reason-xfo-allow-from = Current browsers ignore ALLOW-FROM: use the frame-ancestors directive of the CSP.
+ui-tool-headers-reason-xfo-invalid = The value is neither DENY nor SAMEORIGIN: browsers ignore this header.
+ui-tool-headers-reason-xcto-invalid = The value is not nosniff: browsers ignore this header.
+ui-tool-headers-reason-referrer-invalid = No known policy: browsers ignore this header.
+ui-tool-headers-reason-referrer-unsafe = This policy sends the full URL to other sites.
+ui-tool-headers-reason-permissions-empty = The policy is empty and restricts nothing.
+ui-tool-headers-error-url-required = Please enter a target URL.
+ui-tool-headers-error-invalid-url = Please enter a valid HTTP or HTTPS URL.
+ui-tool-headers-help =
+    HTTP Header Analyzer
+
+    Fetches HTTP response headers and evaluates security posture, browser defense policies,
+    and server information disclosure.
+
+    Evaluated Headers:
+    - Strict-Transport-Security (HSTS)
+    - Content-Security-Policy (CSP)
+    - X-Frame-Options (Clickjacking defense)
+    - X-Content-Type-Options (nosniff)
+    - Referrer-Policy
+    - Permissions-Policy
+    - Cookie security flags (Secure, HttpOnly, SameSite)
+    - Server information disclosure (Server, X-Powered-By, X-AspNet-Version)
+
+## SSL/TLS Certificate Inspector
+ui-tool-cert-name = SSL/TLS Certificate Inspector
+ui-tool-cert-description = Inspect remote SSL/TLS certificate chains, SANs, validity, and cryptographic properties
+ui-tool-cert-host = Host
+ui-tool-cert-host-watermark = example.com or IP
+ui-tool-cert-ports = Ports
+ui-tool-cert-ports-watermark = 443, 8443
+ui-tool-cert-inspect = Inspect
+ui-tool-cert-copy-details = Copy Details
+ui-tool-cert-copy-csv = Copy CSV
+ui-tool-cert-subject = Subject
+ui-tool-cert-issuer = Issuer
+ui-tool-cert-valid-from = Valid From
+ui-tool-cert-valid-to = Valid To
+ui-tool-cert-days-remaining = Days Remaining
+ui-tool-cert-tls-version = TLS Version
+ui-tool-cert-key-size = Key Size
+ui-tool-cert-hostname-match = Hostname Match
+ui-tool-cert-sans = SANs
+ui-tool-cert-match-yes = Match
+ui-tool-cert-match-no = Mismatch
+ui-tool-cert-status-valid = Valid
+ui-tool-cert-status-warning = Expiring Soon
+ui-tool-cert-status-expired = Expired
+ui-tool-cert-error-host-required = Please enter a target hostname.
+
+## TCP Traceroute
+ui-tool-tcptrace-name = TCP Traceroute
+ui-tool-tcptrace-description = Discover network hops and latency along the TCP path to a destination
+ui-tool-tcptrace-host = Target Host
+ui-tool-tcptrace-host-watermark = example.com or IP
+ui-tool-tcptrace-max-hops = Max Hops
+ui-tool-tcptrace-start = Start Trace
+ui-tool-tcptrace-stop = Stop
+ui-tool-tcptrace-copy-csv = Export CSV
+ui-tool-tcptrace-col-hop = Hop
+ui-tool-tcptrace-col-address = Address
+ui-tool-tcptrace-col-hostname = Hostname
+ui-tool-tcptrace-col-latency = Latency
+ui-tool-tcptrace-col-status = Status
+ui-tool-tcptrace-status-reply = Reply
+ui-tool-tcptrace-status-timeout = Timeout
+ui-tool-tcptrace-status-destination = Destination
+ui-tool-tcptrace-error-host-required = Please enter a target host.
+
+## SNMP MIB Walker
+ui-tool-snmpwalk-name = SNMP MIB Walker
+ui-tool-snmpwalk-description = Query and traverse SNMPv2c MIB trees for system and interface metrics
+ui-tool-snmpwalk-host = Target Host
+ui-tool-snmpwalk-host-watermark = 192.168.1.1
+ui-tool-snmpwalk-community = Community
+ui-tool-snmpwalk-oid = Root OID
+ui-tool-snmpwalk-start = Start Walk
+ui-tool-snmpwalk-stop = Stop
+ui-tool-snmpwalk-copy-csv = Export CSV
+ui-tool-snmpwalk-col-oid = OID
+ui-tool-snmpwalk-col-name = Name
+ui-tool-snmpwalk-col-type = Type
+ui-tool-snmpwalk-col-value = Value
+ui-tool-snmpwalk-error-host-required = Please enter an SNMP target host.
+
+## ARP Table Monitor
+ui-tool-arpmon-name = ARP Table Monitor
+ui-tool-arpmon-description = Inspect local ARP cache, resolve hardware vendors, and detect network anomalies
+ui-tool-arpmon-scan = Scan Now
+ui-tool-arpmon-scanning = Scanning...
+ui-tool-arpmon-copy-csv = Export CSV
+ui-tool-arpmon-col-ip = IP Address
+ui-tool-arpmon-col-mac = MAC Address
+ui-tool-arpmon-col-vendor = Vendor
+ui-tool-arpmon-col-status = Status
+ui-tool-arpmon-col-first-seen = First Seen
+ui-tool-arpmon-col-last-seen = Last Seen
+ui-tool-arpmon-status-new = New
+ui-tool-arpmon-status-known = Known
+ui-tool-arpmon-status-changed = Changed
+ui-tool-arpmon-status-conflict = Conflict
+
+## Firewall Egress Tester
+ui-tool-fwtest-name = Firewall Egress Tester
+ui-tool-fwtest-description = Test outbound connectivity across firewall ports with latency measurement
+ui-tool-fwtest-hosts = Target Hosts
+ui-tool-fwtest-hosts-watermark = Hosts separated by commas or spaces (e.g. 1.1.1.1, 8.8.8.8)
+ui-tool-fwtest-ports = Test Ports
+ui-tool-fwtest-ports-watermark = 80,443,8080
+ui-tool-fwtest-start = Test Egress
+ui-tool-fwtest-stop = Stop
+ui-tool-fwtest-copy-csv = Export Matrix CSV
+ui-tool-fwtest-total = Total Probes
+ui-tool-fwtest-open = Open
+ui-tool-fwtest-closed = Closed
+ui-tool-fwtest-timeout = Filtered
+ui-tool-fwtest-error-hosts-required = Please enter at least one target host.
+
+## Network Cartography
+ui-tool-netmap-name = Network Cartography
+ui-tool-netmap-description = Discover live subnet hosts, open services, and classify device roles
+ui-tool-netmap-subnet = Subnet CIDR
+ui-tool-netmap-subnet-watermark = 192.168.1.0/24
+ui-tool-netmap-discover = Discover Network
+ui-tool-netmap-copy-csv = Export CSV
+ui-tool-netmap-hosts-scanned = Scanned
+ui-tool-netmap-hosts-up = Active Hosts
+ui-tool-netmap-ports-open = Open Ports
+ui-tool-netmap-col-ip = IP Address
+ui-tool-netmap-col-hostname = Hostname
+ui-tool-netmap-col-mac = MAC
+ui-tool-netmap-col-vendor = Vendor
+ui-tool-netmap-col-role = Role
+ui-tool-netmap-col-ports = Open Ports
+ui-tool-netmap-col-latency = Latency
+ui-tool-netmap-error-cidr-required = Please enter a valid subnet CIDR (e.g. 192.168.1.0/24).
+
+## Open Ports
+ui-tool-openports-name = Open Ports
+ui-tool-openports-description = Inspect active TCP and UDP listening ports and sockets with process identification
+ui-tool-openports-title = Open Ports
+ui-tool-openports-help =
+    Lists the open TCP and UDP ports of this computer with the process that owns each.
+
+    On Windows the tables come from Windows PowerShell (Get-NetTCPConnection, Get-NetUDPEndpoint, Get-Process); on Linux from ss, which names other users' processes only to root.
+
+    Use the filter to search by process name, address, port, or connection state.
+ui-tool-openports-refresh = Refresh
+ui-tool-openports-scanning = Refreshing...
+ui-tool-openports-copy-csv = Export CSV
+ui-tool-openports-filter-placeholder = Filter by process, address, port, state...
+ui-tool-openports-status = { $count ->
+    [one] { $count } connection at { $time }
+   *[other] { $count } connections at { $time }
+}
+ui-tool-openports-empty-state = Click Refresh to inspect open ports and active connections.
+ui-tool-openports-col-proto = Protocol
+ui-tool-openports-col-local-addr = Local Address
+ui-tool-openports-col-local-port = Local Port
+ui-tool-openports-col-remote-addr = Remote Address
+ui-tool-openports-col-remote-port = Remote Port
+ui-tool-openports-col-state = State
+ui-tool-openports-col-pid = PID
+ui-tool-openports-col-process = Process
+
+## Network Interfaces
+ui-tool-netif-name = Network Interfaces
+ui-tool-netif-description = List all network adapters with link speed, MAC address, IPv4, gateway, and DHCP status
+ui-tool-netif-title = Network Interfaces
+ui-tool-netif-help =
+    Lists the network interfaces of this computer as the system reports them: type, operational status, link speed, MAC address, IPv4 address, subnet mask, gateway, and DHCP.
+
+    A speed the system does not know is shown as unknown, never guessed. On Linux the facts come from ip and /sys/class/net.
+ui-tool-netif-refresh = Refresh
+ui-tool-netif-scanning = Refreshing...
+ui-tool-netif-copy-csv = Export CSV
+ui-tool-netif-status = { $count ->
+    [one] { $count } interface at { $time }
+   *[other] { $count } interfaces at { $time }
+}
+ui-tool-netif-empty-state = Click Refresh to inspect local network interfaces.
+ui-tool-netif-col-name = Name
+ui-tool-netif-col-type = Type
+ui-tool-netif-col-status = Status
+ui-tool-netif-col-speed = Speed
+ui-tool-netif-col-mac = MAC
+ui-tool-netif-col-ipv4 = IPv4
+ui-tool-netif-col-subnet = Subnet
+ui-tool-netif-col-gateway = Gateway
+ui-tool-netif-col-dhcp = DHCP
+
+## Route Table
+ui-tool-routes-name = Route Table
+ui-tool-routes-description = Display active IPv4 routing table destinations, subnet masks, gateways, and metrics
+ui-tool-routes-title = Route Table
+ui-tool-routes-help =
+    Displays the active IPv4 routing table: destination, netmask, gateway, interface address, and metric of each route.
+
+    On Windows the table comes from Get-NetRoute, the metric including the interface's as route print shows it; on Linux from ip route.
+ui-tool-routes-refresh = Refresh
+ui-tool-routes-scanning = Refreshing...
+ui-tool-routes-copy-csv = Export CSV
+ui-tool-routes-status = { $count ->
+    [one] { $count } route at { $time }
+   *[other] { $count } routes at { $time }
+}
+ui-tool-routes-empty-state = Click Refresh to inspect active IPv4 routes.
+ui-tool-routes-col-dest = Destination
+ui-tool-routes-col-mask = Netmask
+ui-tool-routes-col-gateway = Gateway
+ui-tool-routes-col-interface = Interface
+ui-tool-routes-col-metric = Metric
+
+## Wi-Fi Scanner
+ui-tool-wifi-name = Wi-Fi Networks
+ui-tool-wifi-description = Scan nearby wireless networks, BSSID, signal strength, channel, and encryption
+ui-tool-wifi-title = Wi-Fi Networks
+ui-tool-wifi-help =
+    Scans nearby Wi-Fi networks using netsh wlan show networks mode=bssid, or nmcli on Linux.
+
+    Shows SSID, BSSID (MAC), signal strength, channel, authentication, encryption, and radio type. Windows may need the location permission to list the access points.
+ui-tool-wifi-scan = Scan
+ui-tool-wifi-scanning = Scanning...
+ui-tool-wifi-copy-csv = Export CSV
+ui-tool-wifi-status = { $count ->
+    [one] { $count } network at { $time }
+   *[other] { $count } networks at { $time }
+}
+ui-tool-wifi-empty-state = Click Scan to discover nearby Wi-Fi networks in range.
+ui-tool-wifi-col-ssid = SSID
+ui-tool-wifi-col-bssid = BSSID
+ui-tool-wifi-col-signal = Signal
+ui-tool-wifi-col-channel = Channel
+ui-tool-wifi-col-auth = Authentication
+ui-tool-wifi-col-encryption = Encryption
+ui-tool-wifi-col-radio = Radio Type
+
+## Hosts File Editor
+ui-tool-hosts-name = Hosts File Editor
+ui-tool-hosts-description = View, toggle, and edit operating system hosts file domain mappings
+ui-tool-hosts-title = Hosts File Editor
+ui-tool-hosts-help =
+    Edits the system hosts file with syntax validation.
+
+    The file is read when the tool opens. Entries can be enabled, disabled, removed or added; comments, aliases and line endings are kept as they are. Saving requires administrator privileges, keeps a dated backup copy beside the file, and is refused if another program changed the file since it was read.
+ui-tool-hosts-reload = Reload
+ui-tool-hosts-save = Save Changes
+ui-tool-hosts-copy-all = Copy Hosts
+ui-tool-hosts-btn-add = Add Entry
+ui-tool-hosts-btn-delete = Delete
+ui-tool-hosts-invalid-ip = Invalid IP address format.
+ui-tool-hosts-missing-host = Hostname cannot be empty.
+ui-tool-hosts-invalid-host = Invalid hostname: use letters, digits, dots, hyphens or underscores, without spaces or '#'.
+ui-tool-hosts-invalid-comment = A comment cannot contain a line break or a control character.
+ui-tool-hosts-loaded = Loaded { $count } entries from { $path }
+ui-tool-hosts-save-success = Hosts file saved. Backup copy of the previous version: { $backup }
+ui-tool-hosts-unchanged = No changes to save: the hosts file was left as it is.
+ui-tool-hosts-save-failed = Failed to save hosts file: { $error }
+ui-tool-hosts-error-not-found = Hosts file not found.
+ui-tool-hosts-error-read-denied = Access denied (read). Run as administrator.
+ui-tool-hosts-error-read = The hosts file could not be read: { $error }
+ui-tool-hosts-error-admin-required = Cannot write the hosts file. Run Heimdall as administrator to save changes.
+ui-tool-hosts-error-changed = The hosts file was changed by another program since it was read. Nothing was written: reload it, then make your changes again.
+ui-tool-hosts-error-backup = The backup copy could not be written, so the hosts file was not changed: { $error }
+ui-tool-hosts-empty-state = No entries found in the hosts file.
+ui-tool-hosts-loading-hint = Reading the hosts file...
+ui-tool-hosts-col-enabled = Active
+ui-tool-hosts-col-ip = IP Address
+ui-tool-hosts-col-hostname = Hostname
+ui-tool-hosts-col-comment = Comment
+ui-tool-hosts-col-action = Action
+
+## Service Status Dashboard
+ui-tool-services-name = Service Status Dashboard
+ui-tool-services-description = Monitor Windows background services and control service state
+ui-tool-services-title = Service Status Dashboard
+ui-tool-services-help =
+    Monitors Windows background service status with start and stop controls.
+
+    View running services, their operational status, and startup type. Start, stop, or restart a service: Windows asks for administrator rights first, and the action only runs on a service of the list just read.
+ui-tool-services-refresh = Refresh
+ui-tool-services-scanning = Refreshing...
+ui-tool-services-copy-csv = Export CSV
+ui-tool-services-filter-placeholder = Filter by service or display name...
+ui-tool-services-running-only = Running only
+ui-tool-services-total = Total:
+ui-tool-services-running-label = Running:
+ui-tool-services-stopped-label = Stopped:
+ui-tool-services-col-name = Service Name
+ui-tool-services-col-display-name = Display Name
+ui-tool-services-col-status = Status
+ui-tool-services-col-start-type = Start Type
+ui-tool-services-col-actions = Actions
+ui-tool-services-act-start = Start
+ui-tool-services-act-stop = Stop
+ui-tool-services-act-restart = Restart
+ui-tool-services-empty-state = Click Refresh to inspect Windows system services.
+ui-tool-services-action-success = Service action completed successfully.
+ui-tool-services-error-invalid-name = This service name holds characters that cannot be passed safely to the system: no action was run.
+ui-tool-services-error-unknown-name = This service is not in the list just read: refresh the list, then try again.
+ui-tool-services-error-no-powershell = Windows PowerShell could not be found in the system folder.
+ui-tool-services-error-no-systemctl = systemctl could not be found in /usr/bin or /bin.
+ui-tool-services-error-not-started = The command could not be started: { $error }
+ui-tool-services-error-timeout = The command did not finish in time and was stopped. An action may still complete: refresh the list to check.
+ui-tool-services-error-not-elevated = The action was not run: the administrator prompt was declined, or Windows could not start it.
+ui-tool-services-error-action-failed = The action on the service failed (exit code { $code }).
+ui-tool-services-error-action-failed-detail = The action on the service failed: { $error }
+ui-tool-services-error-list-failed = Failed to load services: { $error }
+ui-tool-services-exit-code-none = none
+
+## Network tools, third batch: review follow-ups
+ui-tool-cert-stop = Stop
+ui-tool-cert-col-port = Port
+ui-tool-cert-sig-alg = Signature Algorithm
+ui-tool-cert-serial = Serial Number
+ui-tool-cert-sha256 = SHA-256 Fingerprint
+ui-tool-cert-chain = Chain
+ui-tool-cert-chain-element = { $subject } (expires { $expiry })
+ui-tool-cert-port-title = Port { $port }: { $name }
+ui-tool-cert-port-header = === Port { $port } ===
+ui-tool-cert-detail-host = Host
+ui-tool-cert-key-bits = { $bits } bits
+ui-tool-cert-days-left =
+    { $count ->
+        [one] { $count } day remaining
+       *[other] { $count } days remaining
+    }
+ui-tool-cert-days-expired =
+    { $count ->
+        [one] expired { $count } day ago
+       *[other] expired { $count } days ago
+    }
+ui-tool-cert-progress = { $done } of { $total } ports probed
+ui-tool-cert-scan-found =
+    { $certificates ->
+        [one] { $certificates } certificate found
+       *[other] { $certificates } certificates found
+    } on { $ports ->
+        [one] { $ports } port probed.
+       *[other] { $ports } ports probed.
+    }
+ui-tool-cert-stopped = Inspection stopped: { $found }
+ui-tool-cert-error-invalid-host = Enter an IP address or a host name.
+ui-tool-cert-error-invalid-port = Enter ports from 1 to 65535, separated by commas, or ranges such as 8000-8010.
+ui-tool-cert-error-too-many-ports = { $count } ports typed: at most { $max } are inspected at once.
+ui-tool-cert-error-connection = Connection to { $host }:{ $port } failed: { $detail }
+ui-tool-cert-error-handshake = TLS handshake with { $host }:{ $port } failed: { $detail }
+ui-tool-cert-error-no-certificate = The server presented no certificate.
+ui-tool-cert-error-unreadable = The certificate presented could not be read.
+ui-tool-cert-error-timeout = The server did not answer in time.
+ui-tool-tcptrace-error-invalid-host = Enter an IP address or a host name.
+ui-tool-tcptrace-error-not-found = The system's traceroute program was not found.
+ui-tool-tcptrace-error-failed = The trace could not run.
+ui-tool-tcptrace-stopped = Trace stopped.
+ui-tool-tcptrace-timed-out = The trace took too long and was ended.
+ui-tool-tcptrace-no-hops = No hop answered.
+ui-tool-tcptrace-hop-count =
+    { $count ->
+        [one] { $count } hop
+       *[other] { $count } hops
+    }
+ui-tool-snmpwalk-community-watermark = Empty: { $community }
+ui-tool-snmpwalk-stopped = Walk stopped.
+ui-tool-snmpwalk-agent-silent = The agent stopped answering: the entries read are kept.
+ui-tool-snmpwalk-entry-count =
+    { $count ->
+        [one] { $count } entry
+       *[other] { $count } entries
+    }
+ui-tool-snmpwalk-error-invalid-host = Enter an IP address or a host name.
+ui-tool-snmpwalk-error-invalid-oid = Enter a numeric OID such as 1.3.6.1.2.1.1.
+ui-tool-snmpwalk-error-community-too-long = The community is limited to { $max } bytes.
+ui-tool-snmpwalk-error-unresolved = The host name could not be resolved.
+ui-tool-snmpwalk-error-socket = The SNMP request could not be sent.
+ui-tool-snmpwalk-error-no-response = The agent did not answer: check the host, the community and that SNMP v2c is enabled.
+ui-tool-snmpwalk-error-failed = The walk could not run.
+ui-tool-arpmon-error-read = The ARP table could not be read.
+ui-tool-arpmon-vendor-unknown = Unknown
+ui-tool-fwtest-stopped = Test stopped.
+ui-tool-fwtest-error-invalid-host = None of the hosts typed is an IP address or a host name.
+ui-tool-fwtest-error-no-ports = Enter at least one port from 1 to 65535.
+ui-tool-fwtest-error-failed = The test could not run.
+ui-tool-fwtest-limited = Invalid hosts are left out, and a test probes at most { $max_hosts } hosts and { $max_ports } ports.
+ui-tool-fwtest-progress = { $done } of { $total } probes done
+ui-tool-fwtest-unresolved = Not resolved
+ui-tool-fwtest-unresolved-count =
+    { $count ->
+        [one] { $count } probe could not resolve its host name.
+       *[other] { $count } probes could not resolve their host name.
+    }
+ui-tool-fwtest-col-host = Host
+ui-tool-fwtest-col-port = Port
+ui-tool-fwtest-col-status = Status
+ui-tool-fwtest-col-latency = Latency
+ui-tool-fwtest-latency-ms = { $ms } ms
+ui-tool-fwtest-cell-open-ms = { $label } ({ $ms } ms)
+ui-tool-fwtest-not-tested = Not tested
+ui-tool-netmap-stop = Stop
+ui-tool-netmap-stopped = Discovery stopped.
+ui-tool-netmap-error-failed = The discovery could not run.
+ui-tool-netmap-error-prefix = Enter a subnet from /{ $min } to /{ $max }.
+ui-tool-netmap-warning-large = { $count } hosts to probe: this can take a long time.
+ui-tool-netmap-scan-anyway = Scan Anyway
+ui-tool-netmap-progress = { $done } of { $total } hosts probed
+ui-tool-netmap-latency-ms = { $ms } ms
+ui-tool-netmap-role-directory = Domain Controller / Directory
+ui-tool-netmap-role-database = Database Server
+ui-tool-netmap-role-mail = Mail Server
+ui-tool-netmap-role-file = File / Storage Server
+ui-tool-netmap-role-web = Web Server
+ui-tool-netmap-role-remote = Remote Management Host
+ui-tool-netmap-role-appliance = Network Gateway / Appliance
+ui-tool-netmap-role-active = Active Node
+ui-tool-netmap-role-no-ports = Host (No Port Open)
+## Log viewer
+ui-tool-logview-name = Log Viewer
+ui-tool-logview-description = View a log file, filter its lines and follow what is appended
+ui-tool-logview-title = Log Viewer / Tail
+ui-tool-logview-help =
+    Log Viewer
+
+    Shows the newest 10,000 lines of a log file, read in the encoding chosen.
+
+    Usage:
+    Browse for a file or type its path and press Enter. Filter keeps the lines that contain the text typed, or that match it as a regular expression when Regex is checked. Tail reads what is appended every half second; a file that gets shorter is read again from its start. Only the end of a very large file is read.
+ui-tool-logview-path-placeholder = Log file path
+ui-tool-logview-browse = Browse
+ui-tool-logview-open = Open
+ui-tool-logview-tail = Tail
+ui-tool-logview-filter-placeholder = Filter text
+ui-tool-logview-filter = Filter
+ui-tool-logview-clear = Clear
+ui-tool-logview-case-sensitive = Case sensitive
+ui-tool-logview-regex = Regular expression
+ui-tool-logview-encoding = Encoding:
+ui-tool-logview-encoding-utf8 = UTF-8
+ui-tool-logview-encoding-ascii = ASCII
+ui-tool-logview-encoding-utf16 = UTF-16
+ui-tool-logview-encoding-windows1252 = Windows-1252
+ui-tool-logview-auto-scroll = Follow the last line
+ui-tool-logview-tail-active = Tail active
+ui-tool-logview-copy = Copy
+ui-tool-logview-file-filter = Log files
+ui-tool-logview-empty-state = Browse or enter a log file path to start viewing
+ui-tool-logview-no-matches = No log lines match the current filter
+ui-tool-logview-stats =
+    { $total ->
+        [one] { $shown } / { $total } line | { $size } KB | Last update: { $time }
+       *[other] { $shown } / { $total } lines | { $size } KB | Last update: { $time }
+    }
+ui-tool-logview-error-not-found = File not found.
+ui-tool-logview-error-open = Cannot open file: { $error }
+ui-tool-logview-error-regex = Invalid regular expression.
+
+## Cron job manager
+ui-tool-cronjob-name = Cron Job Manager
+ui-tool-cronjob-description = Analyze a crontab and list the Windows scheduled tasks
+ui-tool-cronjob-title = Cron Job Manager
+ui-tool-cronjob-help =
+    Cron Job Manager
+
+    Reads a crontab and the scheduled tasks of this computer.
+
+    Usage:
+    Paste the output of crontab -l and press Parse: each schedule is listed with its command, its next run and what it does; select one to see its next five runs. Windows Tasks lists the scheduled tasks of this computer with their status and their last result. Copy puts the list shown on the clipboard, one row a line.
+ui-tool-cronjob-tab-paste = Paste Crontab
+ui-tool-cronjob-tab-tasks = Windows Tasks
+ui-tool-cronjob-paste-instructions = Paste raw crontab output (from crontab -l via SSH terminal) to parse and analyze entries.
+ui-tool-cronjob-paste-placeholder = Crontab content
+ui-tool-cronjob-parse = Parse
+ui-tool-cronjob-clear = Clear
+ui-tool-cronjob-refresh = Refresh
+ui-tool-cronjob-copy = Copy
+ui-tool-cronjob-col-schedule = Schedule
+ui-tool-cronjob-col-command = Command
+ui-tool-cronjob-col-next-run = Next Run
+ui-tool-cronjob-col-description = Description
+ui-tool-cronjob-col-task-name = Task Name
+ui-tool-cronjob-col-status = Status
+ui-tool-cronjob-col-last-run = Last Run
+ui-tool-cronjob-col-last-result = Last Result
+ui-tool-cronjob-detail-header = Entry Details
+ui-tool-cronjob-detail-schedule = Schedule: { $schedule }
+ui-tool-cronjob-detail-command = Command: { $command }
+ui-tool-cronjob-detail-next-runs = Next runs:
+ui-tool-cronjob-empty-state = Paste a crontab to list its schedules
+ui-tool-cronjob-tasks-empty = Refresh to list the Windows scheduled tasks
+ui-tool-cronjob-loading = Loading scheduled tasks...
+ui-tool-cronjob-error-empty = Please paste crontab content to parse.
+ui-tool-cronjob-error-no-entry = No valid crontab entries found.
+ui-tool-cronjob-invalid-schedule = Invalid schedule: { $reason }
+ui-tool-cronjob-error-timeout = Loading tasks timed out.
+ui-tool-cronjob-error-failed = Failed to load tasks: { $error }
+ui-tool-cronjob-error-unsupported = Scheduled tasks can only be listed on Windows.
+ui-tool-cronjob-error-no-system-folder = Windows did not give its system folder: the scheduled tasks cannot be listed.
+ui-tool-cronjob-status-parsed =
+    { $count ->
+        [one] { $count } entry parsed.
+       *[other] { $count } entries parsed.
+    }
+ui-tool-cronjob-status-tasks =
+    { $count ->
+        [one] { $count } scheduled task found.
+       *[other] { $count } scheduled tasks found.
+    }
+
+## Notes
+ui-tool-notes-name = Notes
+ui-tool-notes-description = Markdown work notes kept as files, with tags and HTML export
+ui-tool-notes-title = Work Notes
+ui-tool-notes-help =
+    Notes
+
+    Work notes in Markdown, one file each in the notes folder of Heimdall's data.
+
+    Usage:
+    New makes a note; the first line starting with "# " is its title, and a line such as "> tags: network, prod" gives its tags. A note is saved shortly after each change, when another is selected and when the tab closes. Search finds a note by its text, its title or its file name. The note shown is copied as Markdown or as an HTML page.
+ui-tool-notes-new-title = Working Note
+ui-tool-notes-search-placeholder = Search notes
+ui-tool-notes-new = New
+ui-tool-notes-count =
+    { $count ->
+        [one] { $count } note
+       *[other] { $count } notes
+    }
+ui-tool-notes-delete = Delete
+ui-tool-notes-delete-confirm = Delete note "{ $title }"?
+ui-tool-notes-cancel = Cancel
+ui-tool-notes-copy-markdown = Copy Markdown
+ui-tool-notes-copy-html = Copy HTML
+ui-tool-notes-content-placeholder = Write the note in Markdown
+ui-tool-notes-empty-title = No note selected
+ui-tool-notes-empty-body = Create a note or select one from the list.
+ui-tool-notes-error-no-folder = This system gives Heimdall no data folder to keep notes in.
+ui-tool-notes-error-list = Cannot read the notes: { $error }
+ui-tool-notes-error-save = Cannot save the note: { $error }
+ui-tool-notes-unsaved-blocked = This note could not be saved. Retry, or discard its changes to go on.
+ui-tool-notes-retry = Retry
+ui-tool-notes-discard = Discard changes
+
+## Diagram editor
+ui-tool-diagram-name = Diagram Editor
+ui-tool-diagram-description = Edit a diagram's source text (Mermaid, Graphviz, PlantUML or ASCII) from templates
+ui-tool-diagram-title = Diagram Editor
+ui-tool-diagram-help =
+    Diagram Editor
+
+    A text editor for the source of a diagram, in Mermaid, Graphviz DOT, PlantUML or ASCII art. It does not draw the diagram: paste the source in a tool or a page that renders its format.
+
+    Usage:
+    Start from a template or open a text file. Save writes to the current file; Save As asks for a new one. A template or a file never replaces changes that are not saved without asking first.
+ui-tool-diagram-templates = Templates
+ui-tool-diagram-template-perimeter = Perimeter and DMZ
+ui-tool-diagram-template-cloud = Cloud VPC
+ui-tool-diagram-template-ascii = ASCII network topology
+ui-tool-diagram-template-ad = Active Directory
+ui-tool-diagram-format-mermaid = Mermaid
+ui-tool-diagram-format-dot = Graphviz DOT
+ui-tool-diagram-format-plantuml = PlantUML
+ui-tool-diagram-format-ascii = ASCII art
+ui-tool-diagram-open = Open
+ui-tool-diagram-save = Save
+ui-tool-diagram-save-as = Save As
+ui-tool-diagram-copy = Copy
+ui-tool-diagram-untitled = Untitled diagram
+ui-tool-diagram-modified = { $name } (modified)
+ui-tool-diagram-confirm-replace = This diagram has changes that are not saved. Replace it anyway?
+ui-tool-diagram-replace = Replace
+ui-tool-diagram-keep = Keep my changes
+ui-tool-diagram-placeholder = Diagram source
+ui-tool-diagram-open-title = Open a diagram
+ui-tool-diagram-save-title = Save the diagram
+ui-tool-diagram-default-file-name = diagram
+ui-tool-diagram-saved = Saved to { $path }
+ui-tool-diagram-error-open = Could not open the diagram: { $error }
+ui-tool-diagram-error-save = Could not save the diagram: { $error }
+ui-tool-diagram-error-too-large = the file is too large to open
+
+## Command snippet library
+ui-tool-cmdlib-name = Command Snippet Library
+ui-tool-cmdlib-description = Administration, network and security commands with their values filled in
+ui-tool-cmdlib-title = Command Snippet Library
+ui-tool-cmdlib-help =
+    Command Snippet Library
+
+    Common administration, network and security commands, ready to copy.
+
+    Usage:
+    Choose a platform or type a word to find a command. Type its values: the command shows them as it will be copied. A value left empty takes the example shown.
+ui-tool-cmdlib-search-placeholder = Search commands
+ui-tool-cmdlib-platform-all = All platforms
+ui-tool-cmdlib-platform-linux = Linux
+ui-tool-cmdlib-platform-windows = Windows
+ui-tool-cmdlib-platform-cross = Cross-platform
+ui-tool-cmdlib-category-network = Network
+ui-tool-cmdlib-category-system = System
+ui-tool-cmdlib-category-services = Services
+ui-tool-cmdlib-category-security = Security
+ui-tool-cmdlib-category-diagnostics = Diagnostics
+ui-tool-cmdlib-param-host = Host
+ui-tool-cmdlib-param-port = Port
+ui-tool-cmdlib-param-local-port = Local port
+ui-tool-cmdlib-param-port-range = Ports
+ui-tool-cmdlib-param-service = Service
+ui-tool-cmdlib-copy = Copy
+ui-tool-cmdlib-empty = No command matches the filters.
+ui-tool-cmdlib-count =
+    { $count ->
+        [one] { $count } command
+       *[other] { $count } commands
+    }
+ui-tool-cmdlib-snippet-listening-ports = List listening sockets
+ui-tool-cmdlib-snippet-listening-ports-description = Shows the TCP and UDP sockets listening, with their process.
+ui-tool-cmdlib-snippet-kill-port = Kill the process on a port
+ui-tool-cmdlib-snippet-kill-port-description = Ends the process listening on a TCP port.
+ui-tool-cmdlib-snippet-journal-follow = Follow a service's journal
+ui-tool-cmdlib-snippet-journal-follow-description = Shows the systemd journal of a service as it is written.
+ui-tool-cmdlib-snippet-cert-expiry = Remote TLS certificate dates
+ui-tool-cmdlib-snippet-cert-expiry-description = Connects with TLS and shows the subject and validity dates of the server's certificate.
+ui-tool-cmdlib-snippet-test-connection = Test a TCP port
+ui-tool-cmdlib-snippet-test-connection-description = Checks with PowerShell that a host answers on a TCP port.
+ui-tool-cmdlib-snippet-port-owner = Find the process of a port
+ui-tool-cmdlib-snippet-port-owner-description = Shows the state and the owning process of a local TCP port.
+ui-tool-cmdlib-snippet-restart-service = Restart a Windows service
+ui-tool-cmdlib-snippet-restart-service-description = Stops and starts a Windows service.
+ui-tool-cmdlib-snippet-flush-dns = Flush the DNS cache
+ui-tool-cmdlib-snippet-flush-dns-description = Empties the DNS client cache of Windows.
+ui-tool-cmdlib-snippet-mtr = Network path quality
+ui-tool-cmdlib-snippet-mtr-description = Sends 50 probes to each hop to measure loss and latency.
+ui-tool-cmdlib-snippet-nmap = Service versions with Nmap
+ui-tool-cmdlib-snippet-nmap-description = Probes open ports for the service and version behind them.
+## Network tools batch 2: review follow-ups
+ui-tool-ping-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-ping-latency = { $ms } ms
+ui-tool-ping-detail-unreachable = Destination host unreachable
+ui-tool-ping-detail-unresolved = Host not found
+ui-tool-ping-detail-no-program = The system ping program was not found.
+ui-tool-ping-detail-failed = Ping failed: { $reason }
+ui-tool-ping-copy-header = --- Ping statistics for { $host } ---
+ui-tool-ping-copy-counts = Sent = { $sent }, Received = { $received }, Lost = { $lost } ({ $loss }% loss)
+ui-tool-ping-copy-times = Min = { $min } ms, Max = { $max } ms, Avg = { $avg } ms, Jitter = { $jitter } ms
+ui-tool-ping-copy-line = [{ $time }] { $host }: { $status }, TTL={ $ttl }
+ui-tool-ping-loss-value = { $loss } %
+ui-tool-ping-shown-last = Showing the last { $shown } of { $total } probes. The exports hold them all.
+ui-tool-ping-seq = #{ $seq }
+ui-tool-ping-ttl = TTL: { $ttl }
+ui-tool-portscan-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-portscan-error-timeout-invalid = Timeout must be between 100 ms and 10000 ms.
+ui-tool-portscan-error-unresolved = The host name could not be resolved.
+ui-tool-portscan-error-unresolved-reason = The host name could not be resolved: { $reason }
+ui-tool-portscan-large-warning = You are about to scan { $count } ports. This may take a long time. Continue?
+ui-tool-portscan-confirm = Scan anyway
+ui-tool-portscan-progress = { $done } of { $total } ports scanned
+ui-tool-portscan-shown-open = Showing the { $shown } open ports of { $total } scanned. The CSV export holds every port.
+ui-tool-portscan-latency = { $ms } ms
+ui-tool-portscan-no-latency = -
+ui-tool-portscan-port = Port { $port }
+ui-tool-dns-server-preset = { $name } ({ $address })
+ui-tool-dns-server-system = Default System Resolver
+ui-tool-dns-error-timeout = Query timed out after 5 seconds. Check that the DNS server is reachable.
+ui-tool-dns-error-no-program = The system nslookup program was not found.
+ui-tool-dns-error-failed = Lookup failed: { $reason }. Verify the domain name and try a different record type.
+ui-tool-dns-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
+ui-tool-dns-stop = Stop
+ui-tool-dnsbatch-no-address = No address found
+ui-tool-dnsbatch-timed-out = Timed out
+ui-tool-dnsbatch-error-too-many = { $count } hostnames entered: at most { $max } can be resolved at once.
+ui-tool-dnsbatch-stop = Stop
+ui-tool-dnsbatch-progress = { $done } of { $total } hostnames resolved
+ui-tool-dnsbatch-time = { $ms } ms
+ui-tool-headers-report-title = === HTTP Header Security Report: { $target } ===
+ui-tool-headers-report-grade = Grade: { $grade }
+ui-tool-headers-cookie-missing = Missing flags: { $flags }
+ui-tool-headers-certificate-trusted = TLS certificate: trusted by this computer.
+ui-tool-headers-certificate-untrusted = TLS certificate not trusted: { $reason } The headers below were read all the same.
+ui-tool-headers-error-timeout = The request timed out after 15 seconds.
+ui-tool-headers-error-unresolved = The host name { $host } could not be resolved.
+ui-tool-headers-error-connection = Connection failed: { $reason }
+ui-tool-headers-error-tls = The TLS handshake failed: { $reason }
+ui-tool-headers-error-certificate = The server presented another certificate during the analysis: { $reason }
+ui-tool-headers-error-empty = The server closed the connection without answering.
+ui-tool-headers-error-oversized = The response headers exceed { $kib } KiB: they were not analyzed.
+ui-tool-headers-error-incomplete = The server closed the connection before the end of the response headers: they were not analyzed.
+ui-tool-headers-http-status = HTTP Status: { $code }
+ui-tool-headers-stop = Stop
+ui-tool-systable-error-not-available = This information cannot be read on this system.
+ui-tool-systable-error-not-started = The command could not be started: { $error }
+ui-tool-systable-error-timeout = The command did not finish in time and was stopped.
+ui-tool-systable-error-failed = The command failed (exit code { $code }).
+ui-tool-systable-error-failed-detail = The command failed: { $error }
+ui-tool-systable-error-unreadable = The command's output could not be read: { $error }
+ui-tool-systable-exit-code-none = none
+ui-tool-openports-process-idle = System Idle
+ui-tool-openports-process-pid = [{ $pid }]
+ui-tool-netif-kind-ethernet = Ethernet
+ui-tool-netif-kind-wireless = Wi-Fi
+ui-tool-netif-kind-loopback = Loopback
+ui-tool-netif-kind-tunnel = Tunnel
+ui-tool-netif-kind-ppp = PPP
+ui-tool-netif-kind-mobile = Mobile broadband
+ui-tool-netif-kind-unknown = Unknown
+ui-tool-netif-kind-other = Other ({ $code })
+ui-tool-netif-status-up = Up
+ui-tool-netif-status-down = Down
+ui-tool-netif-status-testing = Testing
+ui-tool-netif-status-unknown = Unknown
+ui-tool-netif-status-dormant = Dormant
+ui-tool-netif-status-not-present = Not present
+ui-tool-netif-status-lower-layer-down = Lower layer down
+ui-tool-netif-speed-kbps = { $value } Kbps
+ui-tool-netif-speed-mbps = { $value } Mbps
+ui-tool-netif-speed-gbps = { $value } Gbps
+ui-tool-netif-speed-unknown = Unknown
+ui-tool-netif-dhcp-yes = DHCP
+ui-tool-netif-dhcp-no = Static
+ui-tool-netif-dhcp-unknown = Unknown
+ui-tool-routes-on-link = On-link

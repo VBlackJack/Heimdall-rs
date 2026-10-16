@@ -28,6 +28,7 @@ use heimdall_app::files::{EntryKind, RemoteEntry, Side, copy_across};
 use heimdall_app::integrated_edit::{open, save};
 use heimdall_app::{App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message, Notice, TabId};
 use heimdall_core::profile::{FtpProfile, ProfileId};
+use heimdall_files::LeftOut;
 use heimdall_files::{FtpClient, FtpSecurity, FtpTarget, RemotePath, RemoteSession};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -91,6 +92,16 @@ fn app(dir: &Path, profiles: Vec<FtpProfile>) -> App {
 
 /// The FTP tab of profile `id`, connected with `client`, its server's `/` listing `entries`.
 fn ftp_tab(app: &mut App, id: &str, client: RemoteSession, entries: Vec<RemoteEntry>) -> TabId {
+    ftp_tab_attempt(app, id, client, entries).0
+}
+
+/// [`ftp_tab`], and the attempt its session came from.
+fn ftp_tab_attempt(
+    app: &mut App,
+    id: &str,
+    client: RemoteSession,
+    entries: Vec<RemoteEntry>,
+) -> (TabId, heimdall_app::AttemptId) {
     let effects = app.update(Message::ConnectProfile(ProfileId::new(id)));
     let [Effect::ConnectFtp { tab, attempt, .. }] = effects.as_slice() else {
         panic!("{effects:?}");
@@ -104,14 +115,16 @@ fn ftp_tab(app: &mut App, id: &str, client: RemoteSession, entries: Vec<RemoteEn
             shell: None,
         },
     });
+    let request = remote_request(app, tab);
     files(
         app,
         FilesMessage::RemoteListed {
             tab,
-            result: Ok((RemotePath::from("/"), entries)),
+            request,
+            result: Ok((RemotePath::from("/"), entries, LeftOut::default())),
         },
     );
-    tab
+    (tab, attempt)
 }
 
 fn files(app: &mut App, message: FilesMessage) -> Vec<Effect> {
@@ -127,6 +140,7 @@ fn file(name: &str, size: u64) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     }
@@ -265,6 +279,43 @@ async fn an_ftp_file_opens_in_the_integrated_editor_and_its_save_is_written_back
         .map(|entry| entry.expect("entry").file_name())
         .collect();
     assert_eq!(left.len(), 1, "no temporary file nor backup left: {left:?}");
+}
+
+// A name holding a backslash is a file name on a UNIX file system alone.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_ftp_listing_counts_the_names_it_hides_for_the_pane_to_say() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("kept"), b"1").expect("file");
+    std::fs::write(root.path().join("..\\x"), b"1").expect("unsafe name");
+    std::fs::create_dir(root.path().join("clean")).expect("folder");
+    std::fs::write(root.path().join("clean").join("a"), b"1").expect("file");
+    let port = serve(root.path()).await;
+
+    let (_, entries, left_out) = tokio::time::timeout(
+        STEP,
+        heimdall_app::files::list_remote(session(port).await, RemotePath::from("/")),
+    )
+    .await
+    .expect("in time")
+    .expect("listed");
+    let names: Vec<&str> = entries.iter().map(|entry| entry.label.as_str()).collect();
+    assert_eq!(names, ["clean", "kept"]);
+    assert_eq!(
+        left_out,
+        LeftOut {
+            unsafe_names: 1,
+            unread_lines: 0
+        }
+    );
+    let (_, _, none) = tokio::time::timeout(
+        STEP,
+        heimdall_app::files::list_remote(session(port).await, RemotePath::from("/clean")),
+    )
+    .await
+    .expect("in time")
+    .expect("listed");
+    assert!(!none.any(), "a clean folder hides nothing");
 }
 
 #[tokio::test]
@@ -697,4 +748,217 @@ async fn a_plain_ftp_session_is_said_to_be_in_clear_and_an_ftps_one_is_not() {
         "{:?}",
         app.notice()
     );
+}
+
+/// The server's listing `effects` started alone, and its folder.
+fn started(effects: &[Effect]) -> (heimdall_app::files::ListingRequest, String) {
+    match effects {
+        [Effect::ListRemote { request, path, .. }] => (*request, path.display()),
+        other => panic!("one listing started: {other:?}"),
+    }
+}
+
+/// The server pane of `tab` sent to `folder`, typed in its path bar: what it started.
+fn go_to(app: &mut App, tab: TabId, folder: &str) -> Vec<Effect> {
+    let side = Side::Remote;
+    files(
+        app,
+        FilesMessage::PathEdited {
+            tab,
+            side,
+            text: folder.to_owned(),
+        },
+    );
+    files(app, FilesMessage::GoTo { tab, side })
+}
+
+/// The server's listing `request` of `tab` came: `folder`, empty, or `error`. What it
+/// started: the listing waiting for it, if any.
+fn came(
+    app: &mut App,
+    tab: TabId,
+    request: heimdall_app::files::ListingRequest,
+    listed: Result<&str, heimdall_app::files::FilesError>,
+) -> Vec<Effect> {
+    files(
+        app,
+        FilesMessage::RemoteListed {
+            tab,
+            request,
+            result: listed.map(|folder| (RemotePath::from(folder), Vec::new(), LeftOut::default())),
+        },
+    )
+}
+
+/// The server pane of `tab`: the folder its path bar names, the history, a listing on its
+/// way, and its error.
+fn server_pane(
+    app: &App,
+    tab: TabId,
+) -> (
+    String,
+    Vec<RemotePath>,
+    bool,
+    Option<heimdall_app::files::FilesError>,
+) {
+    let files = app
+        .tab(tab)
+        .and_then(|t| t.files.as_deref())
+        .expect("files");
+    (
+        files.remote.path.display(),
+        files.remote.history.clone(),
+        files.remote.loading,
+        files.remote.error.clone(),
+    )
+}
+
+#[tokio::test]
+async fn an_ftp_pane_lists_one_folder_at_a_time_and_only_the_last_one_asked_for_waits() {
+    let root = tempfile::tempdir().expect("root");
+    let port = serve(root.path()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), vec![profile("f", port)]);
+    let tab = ftp_tab(&mut app, "f", session(port).await, Vec::new());
+    let (deep, _) = started(&go_to(&mut app, tab, "/a/b/c/d/e/f"));
+    assert!(came(&mut app, tab, deep, Ok("/a/b/c/d/e/f")).is_empty());
+    let side = Side::Remote;
+
+    // Up once: its listing starts. Five more Up clicks while it runs, as fast as one
+    // clicks: the path bar follows each at once, and no listing starts over the one
+    // control connection.
+    let (first, to) = started(&files(&mut app, FilesMessage::Up { tab, side }));
+    assert_eq!(to, "/a/b/c/d/e");
+    for folder in ["/a/b/c/d", "/a/b/c", "/a/b", "/a", "/"] {
+        let effects = files(&mut app, FilesMessage::Up { tab, side });
+        assert!(effects.is_empty(), "{folder}: {effects:?}");
+        assert_eq!(server_pane(&app, tab).0, folder);
+    }
+    let last = remote_request(&mut app, tab);
+    // The first comes: not shown, and only the last one asked for starts, never the four
+    // between.
+    let next = came(&mut app, tab, first, Ok("/a/b/c/d/e"));
+    assert_eq!(started(&next), (last, "/".to_owned()));
+    assert!(server_pane(&app, tab).2, "the last one on its way");
+    // It comes: shown, the folder shown before it one step back, nothing else started.
+    assert!(came(&mut app, tab, last, Ok("/")).is_empty());
+    assert_eq!(
+        server_pane(&app, tab),
+        (
+            "/".to_owned(),
+            vec![RemotePath::from("/"), RemotePath::from("/a/b/c/d/e/f")],
+            false,
+            None
+        )
+    );
+
+    // The one on its way fails while another waits: no error said, the other starts.
+    let (failing, _) = started(&go_to(&mut app, tab, "/gone"));
+    assert!(go_to(&mut app, tab, "/b").is_empty());
+    let waiting = remote_request(&mut app, tab);
+    let next = came(
+        &mut app,
+        tab,
+        failing,
+        Err(heimdall_app::files::FilesError::IsLink),
+    );
+    assert_eq!(started(&next), (waiting, "/b".to_owned()));
+    assert_eq!(server_pane(&app, tab).3, None);
+    assert!(came(&mut app, tab, waiting, Ok("/b")).is_empty());
+    assert_eq!(server_pane(&app, tab).0, "/b");
+}
+
+#[tokio::test]
+async fn escape_or_a_new_ftp_session_starts_the_next_listing_at_once() {
+    let root = tempfile::tempdir().expect("root");
+    let port = serve(root.path()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), vec![profile("f", port)]);
+    let (tab, attempt) = ftp_tab_attempt(&mut app, "f", session(port).await, Vec::new());
+
+    // Escape gives up the one on its way and the one waiting: the next starts at once, and
+    // the one given up, coming after, starts nothing.
+    let (given_up, _) = started(&go_to(&mut app, tab, "/x"));
+    assert!(go_to(&mut app, tab, "/never").is_empty());
+    files(
+        &mut app,
+        FilesMessage::Key {
+            tab,
+            key: heimdall_app::files::FilesKey::CancelLoad,
+        },
+    );
+    let (next, to) = started(&go_to(&mut app, tab, "/y"));
+    assert_eq!(to, "/y");
+    assert!(came(&mut app, tab, given_up, Ok("/x")).is_empty());
+    assert!(server_pane(&app, tab).2, "\"/y\" still on its way");
+
+    // Another one waits for "/y" when the session drops and opens again: the new session
+    // lists at once, nothing held up by a listing sent over the one gone.
+    assert!(go_to(&mut app, tab, "/z").is_empty());
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(heimdall_app::UiError::Timeout),
+    });
+    let again = app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::FilesReady {
+            client: session(port).await,
+            shell: None,
+        },
+    });
+    assert!(
+        matches!(
+            again.as_slice(),
+            [Effect::ListRemote { .. }, Effect::ListLocal { .. }]
+        ),
+        "{again:?}"
+    );
+    assert!(
+        came(&mut app, tab, next, Ok("/y")).is_empty(),
+        "gone with it"
+    );
+}
+
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
+fn remote_request(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
 }

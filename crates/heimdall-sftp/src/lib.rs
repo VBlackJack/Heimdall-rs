@@ -27,5 +27,7 @@ pub mod transfer;
 pub mod tree;
 pub mod wire;
 
-pub use client::{ClientConfig, Closed, DirEntry, Handle, Limits, SftpClient, SftpError};
+pub use client::{
+    ClientConfig, Closed, DirEntry, DirListing, Handle, Limits, SftpClient, SftpError,
+};
 pub use path::RemotePath;

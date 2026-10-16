@@ -128,7 +128,7 @@ fn step_row(index: usize, step: &PostConnectStep, selected: bool) -> Element<'_,
     .align_y(Alignment::End);
     let framed = container(fields).padding(ROW_PADDING).width(Length::Fill);
     let framed = if selected {
-        framed.style(container::bordered_box)
+        framed.style(styles::panel)
     } else {
         framed
     };

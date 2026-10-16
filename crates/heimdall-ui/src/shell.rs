@@ -92,6 +92,7 @@ pub use settings_page::search_field_id as settings_search_field_id;
 
 use crate::desktop_view::DesktopView;
 use crate::dialog_parts::{self, Severity};
+use crate::dialog_place::anchored;
 use crate::files_view;
 use crate::finder::Finder;
 use crate::floating_view::{FloatEvent, FloatingWindow};
@@ -122,14 +123,15 @@ use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, Spl
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
 
-/// Width of the profile list, in logical pixels.
+/// Width of the profile list, in logical pixels, as the C# `SessionTreeColumn`'s.
 const SIDEBAR_WIDTH: f32 = 260.0;
 /// Narrowest the sidebar is dragged to, as the C# column's minimum.
-const SIDEBAR_MIN_WIDTH: f32 = 180.0;
-/// Widest it is dragged to.
-const SIDEBAR_MAX_WIDTH: f32 = 600.0;
-/// Width of the handle between the sidebar and the sessions, dragged to resize it.
-const SPLITTER_WIDTH: f32 = 4.0;
+const SIDEBAR_MIN_WIDTH: f32 = 243.0;
+/// Widest it is dragged to, as the C# column's maximum.
+const SIDEBAR_MAX_WIDTH: f32 = 500.0;
+/// Width of the handle between the sidebar and the sessions, dragged to resize it, as the
+/// C# `GridSplitter`'s.
+const SPLITTER_WIDTH: f32 = 6.0;
 
 /// Space between the terminal and the panels around it, in logical pixels.
 const TERMINAL_MARGIN: f32 = 6.0;
@@ -280,11 +282,11 @@ const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
 /// hover time, WPF's default for the C# box.
 const SEARCH_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
-/// Opacity of the veil behind a dialog.
-const VEIL_ALPHA: f32 = 0.6;
+/// Opacity of the veil behind a dialog, as the C# `OverlayBackground` (`#B3000000`).
+const VEIL_ALPHA: f32 = 0.7;
 
-/// Widest the settings' cards grow.
-const SETTINGS_WIDTH: f32 = 720.0;
+/// Widest the settings' cards grow, as the C# `SettingsContentMaxWidth`.
+const SETTINGS_WIDTH: f32 = 900.0;
 
 /// Window events and the window's shortcuts.
 /// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N.
@@ -363,7 +365,8 @@ fn takes_drops(tab: &Tab) -> bool {
 
 /// Over a Files tab while `count` files are dragged over its window, as the C#
 /// `DescribeExternalDrop`: how many go to which folder of the server, or join the queue
-/// behind the transfer running.
+/// behind the transfer running; that nothing goes while the server's pane names a folder
+/// whose listing is on its way, as the application then refuses the drop.
 fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Element<'a, Message> {
     let items = fl!("ui-files-drop-items", count = count);
     let folder = files.remote.path.display();
@@ -371,7 +374,9 @@ fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Eleme
         .transfers
         .iter()
         .any(|transfer| !transfer.state.ended());
-    let said = if busy {
+    let said = if files.remote.awaits_other_folder() {
+        fl!("ui-files-listing-in-progress-tooltip")
+    } else if busy {
         fl!(
             "ui-files-drop-overlay-queued",
             items = items,
@@ -388,7 +393,7 @@ fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Eleme
         container(
             container(text(said).size(font_size::TITLE))
                 .padding(spacing::MD)
-                .style(container::bordered_box),
+                .style(styles::panel),
         )
         .center(Length::Fill),
     )
@@ -1313,7 +1318,8 @@ fn transcript_mark<'a>(tab: &Tab) -> Option<Element<'a, Message>> {
             text(fl!("ui-tab-recording-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     })
 }
@@ -2213,6 +2219,8 @@ impl Shell {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
         subscriptions.extend(self.background_ticks());
+        // The tool tabs following a file.
+        subscriptions.push(self.tools.subscription());
         // The idle time measured while the workspace can lock by itself, as the C# idle
         // timer. Where it is not the computer's, the window's own input is always counted:
         // counted only once a threshold is set, the time before would count as idle, and
@@ -2564,7 +2572,7 @@ impl Shell {
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
         ) || (matches!(message, Message::TypeAhead(_)) && !self.tree_focused);
         let effects = match message {
-            Message::App(message) => self.app.update(message),
+            Message::App(message) => self.update_app(message),
             Message::Editor(message) => self.editors.update(message, &mut self.app),
             message @ (Message::Field { .. }
             | Message::FocusField { .. }
@@ -2778,7 +2786,9 @@ impl Shell {
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
             Message::Tool(tab, message) => {
-                return self.tools.update(tab, message, self.main_window);
+                let task = self.tools.update(tab, message, self.main_window);
+                self.tools.report_unsaved(&mut self.app);
+                return task;
             }
             Message::ToolsFilter(typed) => {
                 self.tools_filter = typed;
@@ -2837,8 +2847,9 @@ impl Shell {
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
-        // The tool tabs' states follow their tabs.
+        // The tool tabs' states follow their tabs, and those just opened start their work.
         self.tools.sync(&self.app);
+        tasks.push(self.tools.opening());
         // What the detail panel says of the session selected, read again once it changed.
         self.app.refresh_detail();
         // The diagnostics log as the settings say now.
@@ -3081,6 +3092,17 @@ impl Shell {
         })
     }
 
+    /// Hands `message` to the core; one asking to close tabs or the window has the tool
+    /// tabs' notes written first, as the C# Notes `CanClose`, so the core's close guard asks
+    /// only about changes that could not be written.
+    fn update_app(&mut self, message: AppMessage) -> Vec<Effect> {
+        if asks_to_close(&message) {
+            self.tools.save_before_closing();
+            self.tools.report_unsaved(&mut self.app);
+        }
+        self.app.update(message)
+    }
+
     /// Closes the open menu, then hands `message` to the core.
     fn closing_menu(&mut self, message: AppMessage) -> Vec<Effect> {
         self.menu = None;
@@ -3093,7 +3115,7 @@ impl Shell {
             self.search.clear();
             self.tree_focused = true;
         }
-        self.app.update(message)
+        self.update_app(message)
     }
 
     /// Hands the gateway dialog to the core with the password and passphrase typed, which
@@ -3267,11 +3289,22 @@ impl Shell {
 
     /// Whether Tab and Shift+Tab move the keyboard between the main window's fields: under
     /// a dialog, and on a page of the navigation that is not a tab's (the settings, the
-    /// tunnels, About), Quick Connect closed. A tab shown keeps Tab: a terminal's, or a
-    /// Files tab's other pane.
+    /// tunnels, About) or in a tool's tab, Quick Connect closed. Any other tab shown keeps
+    /// Tab: a terminal's, or a Files tab's other pane.
     #[must_use]
     pub fn tab_moves_focus(&self) -> bool {
-        self.app.dialog.is_some() || (self.palette.is_none() && self.page_over_tab())
+        self.app.dialog.is_some()
+            || (self.palette.is_none() && (self.page_over_tab() || self.tool_has_keys()))
+    }
+
+    /// Whether the pane with the keyboard is a tool's, on the tabs' page: a form whose fields
+    /// Tab goes through, as WPF moves through a tool's controls.
+    fn tool_has_keys(&self) -> bool {
+        self.page == Page::Tab
+            && self
+                .app
+                .active_tab()
+                .is_some_and(|tab| matches!(tab.profile, TabProfile::Tool(_)))
     }
 
     /// Whether a page of the navigation is shown in place of the tab: the settings, the
@@ -3391,7 +3424,7 @@ impl Shell {
                 return Vec::new();
             }
         };
-        self.app.update(message)
+        self.update_app(message)
     }
 
     /// Opens the search bar over `tab`'s terminal, or closes it when open; only a tab
@@ -4479,6 +4512,11 @@ impl Shell {
             Effect::FocusMainWindow => {
                 main_window_task(main).then(|main| main.map_or_else(Task::none, focus_window))
             }
+            Effect::SaveTool(tab) => {
+                let task = self.tools.save_before_close(tab, main);
+                self.tools.report_unsaved(&mut self.app);
+                task
+            }
             Effect::Exit => self.exit(),
         }
     }
@@ -4579,7 +4617,9 @@ impl Shell {
                 } else {
                     card(content)
                 };
-                center(card).into()
+                // Centred when it opens, then kept at its place while it grows, as a WPF
+                // window with SizeToContent: a line appearing does not move it.
+                anchored(card, std::mem::discriminant(dialog)).into()
             }))
             .id(dialog_area_id())
             .style(move |theme: &Theme| container::Style {
@@ -4639,7 +4679,8 @@ impl Shell {
                         text(fl!("ui-fullscreen-exit-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Left,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 )
                 .padding(spacing::MD)
                 .width(Length::Fill)
@@ -4839,6 +4880,10 @@ impl Shell {
                     sftp: self.app.files_over_sftp(tab),
                     over_ssh: self.app.can_copy(tab),
                     local_only: files.local_only,
+                    folder_pending: match side {
+                        Side::Remote => files.remote.awaits_other_folder(),
+                        Side::Local => files.local.awaits_other_folder(),
+                    },
                 },
             )
         } else if let TreeMenu::Folder(path) = menu {
@@ -5053,6 +5098,7 @@ impl Shell {
             container(
                 text(APP_NAME)
                     .size(font_size::LARGE)
+                    .font(styles::BOLD)
                     .style(|theme: &Theme| text::Style {
                         color: Some(theme.extended_palette().primary.base.color),
                     })
@@ -5063,16 +5109,16 @@ impl Shell {
         .align_y(iced::Alignment::Center);
         for destination in Destination::ALL {
             let active = destination == shown;
-            // The page shown in the accent colour, a line under it, as the C# tabs.
-            let entry = button(text(destination.label()))
-                .style(move |theme: &Theme, status| {
-                    let mut style = styles::subtle(theme, status);
-                    if active {
-                        style.text_color = theme.extended_palette().primary.base.color;
-                    }
-                    style
-                })
-                .on_press(Message::Navigate(destination));
+            // As the C# `ToolbarTabStyle`: the secondary text, the page shown in the text
+            // colour and semi-bold with an accent line under it, lit under the pointer.
+            let entry = button(text(destination.label()).font(if active {
+                styles::SEMIBOLD
+            } else {
+                crate::UI_FONT
+            }))
+            .padding([spacing::SM, spacing::MD])
+            .style(styles::sidebar_tab(active))
+            .on_press(Message::Navigate(destination));
             let underline = container(iced::widget::space())
                 .height(NAV_UNDERLINE)
                 .width(Length::Fill)
@@ -5091,50 +5137,59 @@ impl Shell {
                 text(fl!("ui-nav-quick-connect-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         );
-        container(bar)
-            .padding([spacing::XS, spacing::MD])
-            .width(Length::Fill)
-            .style(container::bordered_box)
-            .into()
+        // The C# toolbar: the window's background, its edge below it.
+        column![
+            container(bar)
+                .padding([spacing::XS, spacing::MD])
+                .width(Length::Fill)
+                .style(styles::bar),
+            styles::edge_line(),
+        ]
+        .into()
     }
 
     /// A tab still connecting: to what, through which gateways, and a way to stop.
     fn connecting_card<'a>(&self, tab: &'a Tab) -> Element<'a, Message> {
-        center(card(
-            column![
-                text(match (tab.retry, tab.profile.endpoint()) {
-                    (Some(retry), _) => reconnecting(retry),
-                    (None, Some((host, port))) => fl!(
-                        "ui-connect-progress",
-                        target = target(host, port, tab.profile.username())
-                    ),
-                    (None, None) => fl!("ui-local-starting", name = tab.profile.name()),
-                }),
-                // Through which gateways, as the C# loading overlay says it.
-                Some(self.app.tab_route(tab))
-                    .filter(|route| !route.is_empty())
-                    .map(|route| text(fl!(
-                        "ui-connect-via",
-                        route = route
-                            .iter()
-                            .map(|name| server_text(name))
-                            .collect::<Vec<_>>()
-                            .join(&fl!("ui-route-test-separator"))
-                    ))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)),
-            ]
-            // The C# header's health, phase and time elapsed, for an RDP session.
-            .push(rdp_status(tab))
-            .push(
-                button(text(fl!("ui-connect-cancel-button")))
-                    .style(styles::secondary)
-                    .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-            )
-            .spacing(spacing::SM),
-        ))
+        tab_card(
+            tab.id,
+            TabCard::Connecting,
+            card(
+                column![
+                    text(match (tab.retry, tab.profile.endpoint()) {
+                        (Some(retry), _) => reconnecting(retry),
+                        (None, Some((host, port))) => fl!(
+                            "ui-connect-progress",
+                            target = target(host, port, tab.profile.username())
+                        ),
+                        (None, None) => fl!("ui-local-starting", name = tab.profile.name()),
+                    }),
+                    // Through which gateways, as the C# loading overlay says it.
+                    Some(self.app.tab_route(tab))
+                        .filter(|route| !route.is_empty())
+                        .map(|route| text(fl!(
+                            "ui-connect-via",
+                            route = route
+                                .iter()
+                                .map(|name| server_text(name))
+                                .collect::<Vec<_>>()
+                                .join(&fl!("ui-route-test-separator"))
+                        ))
+                        .size(font_size::CAPTION)
+                        .style(text::secondary)),
+                ]
+                // The C# header's health, phase and time elapsed, for an RDP session.
+                .push(rdp_status(tab))
+                .push(
+                    button(text(fl!("ui-connect-cancel-button")))
+                        .style(styles::secondary)
+                        .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+                )
+                .spacing(spacing::SM),
+            ),
+        )
         .into()
     }
 
@@ -5177,7 +5232,8 @@ impl Shell {
             text(fl!("ui-tunnels-toggle-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     }
 
@@ -5211,7 +5267,8 @@ impl Shell {
                 .size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             tooltip(
                 crate::status_bar::glyph_button(
                     Icon::List,
@@ -5223,7 +5280,8 @@ impl Shell {
                 text(fl!("ui-broadcast-scope-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center)
@@ -5246,7 +5304,8 @@ impl Shell {
                 text(fl!("ui-sidebar-hide-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
@@ -5259,7 +5318,8 @@ impl Shell {
                 text(fl!("ui-sidebar-lock-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
         });
         // The Tools tab: its filter, its context and its tools, as the C#
         // `SidebarToolsContent`, in place of the tree.
@@ -5301,7 +5361,7 @@ impl Shell {
         let zone = container(text(fl!("ui-tree-no-folder-zone")).size(font_size::CAPTION))
             .width(Length::Fill)
             .padding([4.0, 6.0])
-            .style(container::bordered_box);
+            .style(styles::panel);
         Some(
             tooltip(
                 crate::tree_drag::drop_zone(
@@ -5312,7 +5372,8 @@ impl Shell {
                 text(fl!("ui-tree-no-folder-zone-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         )
     }
@@ -5459,7 +5520,8 @@ impl Shell {
                 text(remove).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into()
         }))
         .spacing(spacing::XS)
@@ -5657,7 +5719,8 @@ impl Shell {
             tooltip::Position::Top,
         )
         .delay(SEARCH_TOOLTIP_DELAY)
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         // Put away by the click that starts typing, as a WPF tooltip by its control's click.
         let field = crate::press_tooltip::hide_on_press(field);
         let clear = (!self.search.is_empty()).then(|| {
@@ -5676,7 +5739,8 @@ impl Shell {
                     text(fl!("ui-tree-search-clear")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             )
             .align_right(Length::Fill)
             .center_y(Length::Fill)
@@ -5693,7 +5757,8 @@ impl Shell {
                 text(tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
         };
         let glyph = |icon| center(icons::icon(icon, Tint::Text, icons::GLYPH_SIDE)).into();
         // The filters: a dot in the accent while one leaves sessions out, as the C#'s.
@@ -6985,7 +7050,8 @@ impl Shell {
                 ],
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         )
     }
@@ -7028,7 +7094,8 @@ impl Shell {
                     text(fl!("ui-tab-pinned-badge")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             );
         }
         // One long server title cannot take the whole strip: it ends with an ellipsis.
@@ -7082,7 +7149,8 @@ impl Shell {
                     text(fl!("ui-broadcast-target-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box)
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip)
                 .into(),
             );
         }
@@ -7119,7 +7187,8 @@ impl Shell {
                     text(fl!("ui-sidebar-show-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             );
         }
         let shown = self.shown_tab_id();
@@ -7132,22 +7201,29 @@ impl Shell {
             // faded but on the tab selected or pointed at. It takes the press, which selecting
             // the tab then does not see.
             let quiet = !active && self.tab_hover != Some(tab.id);
+            // Named as the C# button's accessible name, in a tooltip.
             let close = container(
-                button(center(icons::faded(
-                    Icon::Close,
-                    Tint::Text,
-                    font_size::SMALL_CAPTION,
-                    if quiet {
-                        styles::CLOSE_REST_OPACITY
-                    } else {
-                        1.0
-                    },
-                )))
-                .width(TAB_CLOSE_SIDE)
-                .height(TAB_CLOSE_SIDE)
-                .padding(0.0)
-                .style(styles::close_mark(quiet))
-                .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+                tooltip(
+                    button(center(icons::faded(
+                        Icon::Close,
+                        Tint::Text,
+                        font_size::SMALL_CAPTION,
+                        if quiet {
+                            styles::CLOSE_REST_OPACITY
+                        } else {
+                            1.0
+                        },
+                    )))
+                    .width(TAB_CLOSE_SIDE)
+                    .height(TAB_CLOSE_SIDE)
+                    .padding(0.0)
+                    .style(styles::close_mark(quiet))
+                    .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+                    text(fl!("ui-session-close-button")).size(font_size::CAPTION),
+                    tooltip::Position::Bottom,
+                )
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             )
             .id(tab_close_id(tab.id));
             let label = self.tab_heading(tab, active).push(close);
@@ -7337,7 +7413,12 @@ impl Shell {
             return crate::citrix_view::view(profile, pane, SessionState::of(tab), tab.id, &offer);
         }
         if let Some(prompt) = tab.prompts.front() {
-            return center(card(self.question(tab, prompt))).into();
+            return tab_card(
+                tab.id,
+                TabCard::Question(prompt.question),
+                card(self.question(tab, prompt)),
+            )
+            .into();
         }
         if let Some(pane) = &tab.elevated {
             return self.elevated_card(tab, pane);
@@ -7401,7 +7482,12 @@ impl Shell {
                 if let Some(reason) = tab.end_reason.as_ref().and_then(texts::rdp_ending) {
                     ended = ended.push(text(reason));
                 }
-                center(card(ended.push(self.session_actions(tab).wrap()))).into()
+                tab_card(
+                    tab.id,
+                    TabCard::Ended,
+                    card(ended.push(self.session_actions(tab).wrap())),
+                )
+                .into()
             }
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
@@ -7431,9 +7517,13 @@ impl Shell {
                 } else {
                     texts::error(error)
                 };
-                center(card(
-                    column![text(said), self.session_actions(tab).wrap()].spacing(spacing::SM),
-                ))
+                tab_card(
+                    tab.id,
+                    TabCard::Stopped,
+                    card(
+                        column![text(said), self.session_actions(tab).wrap()].spacing(spacing::SM),
+                    ),
+                )
                 .into()
             }
             // Dropped once open: what it showed stays in sight, the failure under it.
@@ -7477,7 +7567,7 @@ impl Shell {
                 .wrapping(text::Wrapping::None),
         )
         .padding([0.0, spacing::XS])
-        .style(container::bordered_box);
+        .style(styles::panel);
         let mut body = column![
             row![badge, text(name).size(font_size::TITLE)]
                 .spacing(spacing::SM)
@@ -7509,7 +7599,7 @@ impl Shell {
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
         );
-        center(card(body.push(actions.wrap()))).into()
+        tab_card(tab.id, TabCard::Elevated, card(body.push(actions.wrap()))).into()
     }
 
     /// A session that dropped once open, as the C# "View output" leaves its output readable
@@ -7574,13 +7664,17 @@ impl Shell {
             body = body.push(self.failure_details(tab.id, &details));
         }
         // Buttons go to the next line whole when a translation is long, never cut.
-        center(card(
-            body.push(
-                self.failure_actions(tab, error)
-                    .wrap()
-                    .vertical_spacing(spacing::SM),
+        tab_card(
+            tab.id,
+            TabCard::Failed,
+            card(
+                body.push(
+                    self.failure_actions(tab, error)
+                        .wrap()
+                        .vertical_spacing(spacing::SM),
+                ),
             ),
-        ))
+        )
         .into()
     }
 
@@ -7695,7 +7789,8 @@ impl Shell {
                         text(fl!("ui-error-report-anonymous-hint")).size(font_size::CAPTION),
                         tooltip::Position::Bottom,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 );
         }
         if let Some(profile) = self
@@ -7888,7 +7983,8 @@ impl Shell {
                 text(said).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into()
         };
         let icon = |icon, button: SessionButton, message| -> Element<'a, Message> {
@@ -7962,7 +8058,8 @@ impl Shell {
                 text(fl!("ui-desktop-send-keys-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Right,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             // The C# Send keys menu's "Keyboard shortcuts...".
             button(text(fl!("ui-desktop-shortcuts")).size(font_size::CAPTION))
                 .style(styles::subtle)
@@ -7998,7 +8095,8 @@ impl Shell {
                 text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         )
         .push(rdp_status(tab))
         .extend(self.desktop_indicators(tab, pane))
@@ -8030,7 +8128,8 @@ impl Shell {
                     text(fl!("ui-desktop-stabilizing-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box)
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip)
                 .into(),
             );
         }
@@ -8049,7 +8148,8 @@ impl Shell {
                     text(fl!("ui-desktop-anti-idle-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box)
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip)
                 .into(),
             );
         }
@@ -8283,41 +8383,47 @@ fn host_key_card<'a>(
             ],
         ),
     };
-    center(card(
-        column![
-            // As the C# `HostKeyPromptDialog`: the warning's icon beside its title.
-            dialog_parts::header(Severity::Warning, dialog_parts::title(heading)),
-            body,
-            row![
-                // A fingerprint is one word too long for the card: broken where it must be.
-                text(label)
-                    .font(iced::Font::MONOSPACE)
-                    .wrapping(text::Wrapping::WordOrGlyph)
-                    .width(Length::Fill),
-                button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION))
+    tab_card(
+        tab,
+        TabCard::HostKey,
+        card(
+            column![
+                // As the C# `HostKeyPromptDialog`: the warning's icon beside its title.
+                dialog_parts::header(Severity::Warning, dialog_parts::title(heading)),
+                body,
+                row![
+                    // A fingerprint is one word too long for the card: broken where it must be.
+                    text(label)
+                        .font(iced::Font::MONOSPACE)
+                        .wrapping(text::Wrapping::WordOrGlyph)
+                        .width(Length::Fill),
+                    button(
+                        text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION)
+                    )
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::CopyHostKeyFingerprint(tab))),
+                ]
+                .spacing(spacing::SM)
+                .align_y(iced::alignment::Vertical::Center),
             ]
-            .spacing(spacing::SM)
-            .align_y(iced::alignment::Vertical::Center),
-        ]
-        .push(key_line)
-        .push(
-            row![
-                dialog_parts::action(reject, styles::secondary).on_press(Message::App(
-                    AppMessage::HostKeyDecision { tab, accept: false }
-                )),
-                dialog_parts::action(once, styles::secondary)
-                    .on_press(Message::App(AppMessage::HostKeyTrustOnce(tab))),
-                dialog_parts::action(accept, styles::primary).on_press(Message::App(
-                    AppMessage::HostKeyDecision { tab, accept: true }
-                )),
-            ]
-            .spacing(spacing::SM)
-            .wrap(),
-        )
-        .spacing(spacing::SM),
-    ))
+            .push(key_line)
+            .push(
+                row![
+                    dialog_parts::action(reject, styles::secondary).on_press(Message::App(
+                        AppMessage::HostKeyDecision { tab, accept: false }
+                    )),
+                    dialog_parts::action(once, styles::secondary)
+                        .on_press(Message::App(AppMessage::HostKeyTrustOnce(tab))),
+                    dialog_parts::action(accept, styles::primary).on_press(Message::App(
+                        AppMessage::HostKeyDecision { tab, accept: true }
+                    )),
+                ]
+                .spacing(spacing::SM)
+                .wrap(),
+            )
+            .spacing(spacing::SM),
+        ),
+    )
     .into()
 }
 
@@ -8420,6 +8526,38 @@ fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         .into()
 }
 
+/// Which card a tab shows in place of its session: another one, or another question, is
+/// centred anew; the same one keeps its top while it grows, as a dialog does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabCard {
+    /// A question, by its identifier.
+    Question(QuestionId),
+    /// The question about an unknown key.
+    HostKey,
+    /// Still connecting.
+    Connecting,
+    /// Waiting to open again by itself.
+    Countdown,
+    /// A remote desktop that ended.
+    Ended,
+    /// Stopped by the user.
+    Stopped,
+    /// An elevated local shell's state.
+    Elevated,
+    /// A session that failed.
+    Failed,
+}
+
+/// `card`, the card `kind` of tab `tab`, centred in the tab, then kept at its place while it
+/// grows: a line appearing in it does not move it.
+fn tab_card(
+    tab: TabId,
+    kind: TabCard,
+    card: Element<'_, Message>,
+) -> crate::dialog_place::Anchored<'_, Message, (TabId, TabCard)> {
+    anchored(card, (tab, kind))
+}
+
 /// A session action's label, kept on one line: a card moves the whole button instead.
 fn action_label<'a>(label: String) -> iced::widget::Text<'a> {
     text(label).wrapping(text::Wrapping::None)
@@ -8456,17 +8594,23 @@ fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message
 /// The handle between the sidebar and the sessions, dragged to resize the sidebar, as the
 /// C# `GridSplitter`.
 fn splitter<'a>() -> Element<'a, Message> {
-    mouse_area(
+    // The card colour at rest, the accent under the pointer, as the C# splitter's brushes.
+    let handle = |lit: bool| {
         container(iced::widget::space().width(SPLITTER_WIDTH))
             .height(Length::Fill)
-            .style(|theme: &Theme| container::Style {
-                background: Some(theme.extended_palette().background.strong.color.into()),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(if lit {
+                    theme.extended_palette().primary.base.color.into()
+                } else {
+                    styles::card_color(theme).into()
+                }),
                 ..container::Style::default()
-            }),
-    )
-    .on_press(Message::SidebarDragStart)
-    .interaction(iced::mouse::Interaction::ResizingHorizontally)
-    .into()
+            })
+    };
+    mouse_area(iced::widget::hover(handle(false), handle(true)))
+        .on_press(Message::SidebarDragStart)
+        .interaction(iced::mouse::Interaction::ResizingHorizontally)
+        .into()
 }
 
 /// Opens `target`, a folder or a web address, with the system; one it cannot open is
@@ -8643,7 +8787,8 @@ fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, M
                 text(fl!("ui-desktop-save-files-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         );
     }
@@ -8687,7 +8832,8 @@ fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, 
             text(fl!("ui-session-vnc-quality")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into(),
     )
 }
@@ -8705,7 +8851,8 @@ fn vnc_overlay<'a>(tab: &Tab, pane: &'a DesktopPane, fit: bool) -> Option<Elemen
             text(said).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     };
     let mut controls = row![].spacing(spacing::XS).align_y(iced::Alignment::Center);
@@ -9467,7 +9614,8 @@ fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Me
                         text(fl!("ui-profile-password-clear-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Top,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 ]
                 .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
@@ -10287,7 +10435,8 @@ fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Colum
                         text(fl!("ui-profile-passphrase-clear-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Top,
                     )
-                    .style(container::rounded_box),
+                    .padding(styles::TOOLTIP_PADDING)
+                    .style(styles::tooltip),
                 ]
                 .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
@@ -10724,7 +10873,8 @@ fn protocol_line<'a>(protocol: DraftProtocol, adding: bool) -> Element<'a, Messa
             text(fl!("ui-profile-protocol-change-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     } else {
         container(chip).padding(CHIP_PADDING).into()
@@ -11180,6 +11330,38 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
     dialog_parts::question(severity, title, body, action)
 }
 
+/// Whether `message` asks to close tabs or the window, each way the window has: a tab's
+/// close button or Ctrl+W, a pane's, a tab menu's group, a window of its own, the window.
+fn asks_to_close(message: &AppMessage) -> bool {
+    matches!(
+        message,
+        AppMessage::RequestCloseTab(_)
+            | AppMessage::WindowCloseRequested
+            | AppMessage::Split(SplitMessage::ClosePane(_))
+            | AppMessage::Float(heimdall_app::FloatMessage::CloseRequested(_))
+            | AppMessage::TabMenu(heimdall_app::TabMenuMessage::Close { .. })
+    )
+}
+
+/// Whether to save a tool's document before its tab closes, as the C# tool's three-way
+/// question (`DiagramEditorView.xaml.cs:668-702`): Cancel, Discard, which closes the tab and
+/// loses the changes, and Save, which closes it once they are written.
+fn close_tool_dialog(name: &str) -> Element<'_, Message> {
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-discard-editor-title"),
+        dialog_parts::body(fl!("ui-dialog-close-tool-body", name = name)),
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(fl!("ui-dialog-close-tool-discard"), styles::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+            dialog_parts::action(fl!("ui-editor-save"), styles::primary).on_press(Message::App(
+                AppMessage::Tools(ToolsMessage::SaveBeforeClose),
+            )),
+        ]),
+    )
+}
+
 /// The dialogs about a tab: closing it or others, naming it, pasting several lines in it.
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (severity, title, body, action) = match dialog {
@@ -11192,6 +11374,7 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             preview,
             ..
         } => return paste_dialog(*lines, *command, preview),
+        Dialog::ConfirmCloseTool { name, .. } => return close_tool_dialog(name),
         Dialog::ConfirmDisconnectDesktop { name, .. } => (
             Severity::Warning,
             fl!("ui-desktop-disconnect-title"),
@@ -11398,18 +11581,22 @@ fn countdown_card(
     retry: Retry,
     status: Option<Element<'_, Message>>,
 ) -> Element<'_, Message> {
-    center(card(
-        column![
-            text(reconnecting(retry)).size(font_size::TITLE),
-            text(fl!(
-                "ui-session-reconnecting-in",
-                seconds = seconds_left(retry)
-            )),
-        ]
-        .push(status)
-        .push(cancel_retry_button(tab))
-        .spacing(spacing::SM),
-    ))
+    tab_card(
+        tab,
+        TabCard::Countdown,
+        card(
+            column![
+                text(reconnecting(retry)).size(font_size::TITLE),
+                text(fl!(
+                    "ui-session-reconnecting-in",
+                    seconds = seconds_left(retry)
+                )),
+            ]
+            .push(status)
+            .push(cancel_retry_button(tab))
+            .spacing(spacing::SM),
+        ),
+    )
     .into()
 }
 
@@ -11651,7 +11838,8 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
         .size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -11664,6 +11852,7 @@ fn sudo_task(effect: Effect) -> Task<Message> {
             shell,
             path,
             password,
+            request,
         } => Task::perform(
             {
                 let path = path.clone();
@@ -11682,6 +11871,7 @@ fn sudo_task(effect: Effect) -> Task<Message> {
             move |result| {
                 Message::App(AppMessage::Files(FilesMessage::SudoListed {
                     tab,
+                    request,
                     path: path.clone(),
                     result,
                 }))
@@ -11848,17 +12038,27 @@ fn edit_task(effect: Effect) -> Task<Message> {
 #[expect(clippy::too_many_lines, reason = "one arm per effect")]
 fn files_task(effect: Effect, journal: Option<OperationJournal>) -> Task<Message> {
     match effect {
-        Effect::ListRemote { tab, client, path } => {
-            Task::perform(list_remote(client, path), move |result| {
-                Message::App(AppMessage::Files(FilesMessage::RemoteListed {
+        Effect::ListRemote {
+            tab,
+            client,
+            path,
+            request,
+        } => Task::perform(list_remote(client, path), move |result| {
+            Message::App(AppMessage::Files(FilesMessage::RemoteListed {
+                tab,
+                request,
+                result,
+            }))
+        }),
+        Effect::ListLocal { tab, path, request } => {
+            Task::perform(list_local(path), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::LocalListed {
                     tab,
+                    request,
                     result,
                 }))
             })
         }
-        Effect::ListLocal { tab, path } => Task::perform(list_local(path), move |result| {
-            Message::App(AppMessage::Files(FilesMessage::LocalListed { tab, result }))
-        }),
         Effect::PlanTransfer { tab, request } => {
             let planned = (*request).clone();
             // Started inside the task, like a transfer: spawning needs the runtime.
@@ -12886,6 +13086,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmCloseTransfers { .. }
         | Dialog::ConfirmCloseEdits { .. }
         | Dialog::ConfirmCloseEditor { .. }
+        | Dialog::ConfirmCloseTool { .. }
         | Dialog::ConfirmDiscardEditor { .. }
         | Dialog::ConfirmDownloadBinary { .. }
         | Dialog::ConfirmOpenLink { .. }

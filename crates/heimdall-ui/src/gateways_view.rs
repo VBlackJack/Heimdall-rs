@@ -122,7 +122,7 @@ fn card(content: Column<'_, Message>) -> Element<'_, Message> {
         .padding(spacing::MD)
         .max_width(CARD_WIDTH)
         .width(Length::Fill)
-        .style(container::bordered_box)
+        .style(styles::panel)
         .into()
 }
 

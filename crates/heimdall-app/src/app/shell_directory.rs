@@ -114,9 +114,7 @@ impl App {
         };
         let path = RemotePath::from(directory.as_str());
         files.remote.leave();
-        files.remote.loading = true;
-        files.remote.discard_listing = false;
-        vec![super::files_sudo::remote_listing(files, pane, client, path)]
+        super::files_sudo::remote_listing(files, pane, client, path)
     }
 
     /// Local browser `pane` goes to the folder `shell` last reported, unless it names no
@@ -134,12 +132,7 @@ impl App {
             return Vec::new();
         };
         files.local.leave();
-        files.local.loading = true;
-        files.local.discard_listing = false;
-        vec![Effect::ListLocal {
-            tab: pane,
-            path: folder,
-        }]
+        vec![super::files_tab::local_listing(files, pane, folder)]
     }
 
     /// Pane `pane`, and the folder `shell` last reported, when the pane is to go there on

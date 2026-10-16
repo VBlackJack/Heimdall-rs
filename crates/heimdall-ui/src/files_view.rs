@@ -30,7 +30,8 @@ use std::time::SystemTime;
 use heimdall_app::external_edit::EditSession;
 use heimdall_app::files::{
     Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
-    SortColumn, Special, Transfer, TransferState, local_segments, remote_segments, symbolic_mode,
+    SortColumn, Special, Transfer, TransferState, local_segments, owner_text, remote_segments,
+    symbolic_mode,
 };
 use heimdall_app::local_properties::LocalProperties;
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
@@ -44,12 +45,13 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Font, Length, Theme};
 
+use crate::ellipsis;
 use crate::i18n::fl;
 use crate::icons::{self, Hue, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
 use crate::texts;
-use crate::tokens::{BORDER_WIDTH, OPACITY_DISABLED, font_size, spacing};
+use crate::tokens::{BORDER_WIDTH, FOCUS_BORDER_WIDTH, OPACITY_DISABLED, font_size, spacing};
 use crate::tree_row::{Mark, RowChrome};
 use crate::tree_view::TreeMenu;
 
@@ -65,8 +67,13 @@ const MODIFIED_WIDTH: f32 = 130.0;
 /// Width of the permissions column until resized, in logical pixels.
 const PERMISSIONS_WIDTH: f32 = 90.0;
 
-/// Width of the owner column until resized, in logical pixels.
-const OWNER_WIDTH: f32 = 55.0;
+/// Width of the owner column until resized, in logical pixels, as the C#
+/// `EmbeddedSftpView.xaml` column's.
+const OWNER_WIDTH: f32 = 90.0;
+
+/// The owner column's cell when the server said no owner, as the C# FTP listing's
+/// (`FtpBrowser.cs` `MapFtpItemToFileInfo`).
+const UNKNOWN_OWNER: &str = "-";
 
 /// Narrowest the size column is resized to, in logical pixels.
 const SIZE_MIN_WIDTH: f32 = 40.0;
@@ -107,9 +114,6 @@ const LOCAL_COLUMNS: &[SortColumn] = &[SortColumn::Name, SortColumn::Size, SortC
 
 /// Tallest the transfer list grows before it scrolls, in logical pixels.
 const TRANSFERS_HEIGHT: f32 = 160.0;
-
-/// Width of the border of the pane with the focus, in logical pixels.
-const FOCUS_BORDER_WIDTH: f32 = 2.0;
 
 /// Font of a path, as the C# `FontFamilyMonospace`: the terminal's, always embedded.
 const PATH_FONT: Font = Font::with_name(crate::terminal_view::FONT_FAMILY);
@@ -445,12 +449,9 @@ fn kind_name(kind: EntryKind) -> String {
     }
 }
 
-/// `line` with what `entry` is, as the C# row's tooltip: its name, its type, its size, when
-/// it changed to the second, and its permissions.
-fn row_tooltip<'a, E: Listed>(
-    line: iced::widget::Button<'a, Message>,
-    entry: &E,
-) -> Element<'a, Message> {
+/// What `entry` is, as the C# row's tooltip says it: its name, its type, its size, when it
+/// changed to the second, its permissions and its owner.
+fn row_tooltip_lines<E: Listed>(entry: &E) -> Vec<String> {
     let mut lines = vec![
         entry.label().to_owned(),
         fl!("ui-files-tooltip-type", kind = kind_name(entry.kind())),
@@ -467,13 +468,27 @@ fn row_tooltip<'a, E: Listed>(
             permissions = symbolic_mode(mode)
         ));
     }
+    // The owner, which its column may cut, as the C# owner cell's tooltip says it whole.
+    let owner = owner_text(entry);
+    if !owner.is_empty() {
+        lines.push(fl!("ui-files-tooltip-owner", owner = owner));
+    }
+    lines
+}
+
+/// `line` with [`row_tooltip_lines`] in its tooltip.
+fn row_tooltip<'a, E: Listed>(
+    line: iced::widget::Button<'a, Message>,
+    entry: &E,
+) -> Element<'a, Message> {
     tooltip(
         line,
-        text(lines.join("\n")).size(font_size::CAPTION),
+        text(row_tooltip_lines(entry).join("\n")).size(font_size::CAPTION),
         tooltip::Position::FollowCursor,
     )
     .delay(ROW_TOOLTIP_DELAY)
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -517,7 +532,13 @@ pub fn properties<'a>(
                 .map(|mode| format!("{} ({mode:o})", symbolic_mode(mode)))
                 .unwrap_or_default(),
         ),
-        (fl!("ui-files-properties-owner"), number(properties.owner)),
+        (
+            fl!("ui-files-properties-owner"),
+            properties
+                .owner_name
+                .clone()
+                .unwrap_or_else(|| number(properties.owner)),
+        ),
         (fl!("ui-files-properties-group"), number(properties.group)),
         (fl!("ui-files-properties-path"), properties.path.clone()),
     ];
@@ -623,7 +644,14 @@ fn cell_text<E: Listed>(entry: &E, column: SortColumn) -> String {
         },
         SortColumn::Modified => entry.modified().map(modified_text).unwrap_or_default(),
         SortColumn::Permissions => entry.permissions().map(symbolic_mode).unwrap_or_default(),
-        SortColumn::Owner => entry.owner().map(|uid| uid.to_string()).unwrap_or_default(),
+        SortColumn::Owner => {
+            let owner = owner_text(entry);
+            if owner.is_empty() {
+                UNKNOWN_OWNER.to_owned()
+            } else {
+                owner
+            }
+        }
     }
 }
 
@@ -673,11 +701,12 @@ fn headers<'a, E: Listed>(
         .iter()
         .zip(laid.iter().copied())
         .map(|(column, width)| {
+            // On one line, ended with an ellipsis where the column ends, as the C# header's.
             button(
-                text(column_title(*column, sort))
+                ellipsis::text(column_title(*column, sort))
+                    .width(Length::Fill)
                     .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .wrapping(text::Wrapping::None),
+                    .style(text::secondary),
             )
             .style(styles::subtle)
             .padding(0)
@@ -798,7 +827,9 @@ fn entry_row<'a, E: Listed>(
     let on_press = files(FilesMessage::Select { tab, side, index });
     let mut cells = row![].spacing(spacing::SM);
     for (column, width) in columns.iter().zip(laid.iter().copied()) {
-        let cell = text(cell_text(entry, *column)).wrapping(text::Wrapping::None);
+        // On one line, ended with an ellipsis where the column ends, as the C# cells'
+        // `TextTrimming="CharacterEllipsis"`; the row's tooltip says the whole of it.
+        let cell = ellipsis::text(cell_text(entry, *column)).width(Length::Fill);
         let cell: Element<'a, Message> = match cell_size(*column) {
             Some(small) => cell.size(small).into(),
             None => row![entry_icon(entry, side), cell]
@@ -871,7 +902,8 @@ fn glyph_button<'a>(
         text(tip).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -905,14 +937,15 @@ fn pane_rule<'a>() -> Element<'a, Message> {
 }
 
 /// A pane's toolbar, as the C# file browser's: Back, Up, Home and Refresh as glyphs, then
-/// New folder; on the server's, its toggles, "sudo" over SSH and "cwd" over SFTP, and its
-/// bookmarks behind a star; on this computer's in the local file browser, its own "cwd".
-/// Renaming and deleting are in the entries' menu, on F2 and Delete, as the C#'s. The
-/// filter and the hidden-files toggle on the right. The tools wrap: a narrow pane keeps
-/// every one whole.
+/// New folder, faded while the pane names a folder whose listing is on its way over the
+/// entries of another (`pending`); on the server's, its toggles, "sudo" over SSH
+/// and "cwd" over SFTP, and its bookmarks behind a star; on this computer's in the local
+/// file browser, its own "cwd". Renaming and deleting are in the entries' menu, on F2 and
+/// Delete, as the C#'s. The filter and the hidden-files toggle on the right. The tools
+/// wrap: a narrow pane keeps every one whole.
 fn pane_toolbar<'a>(
     (tab, side): (TabId, Side),
-    moves: Moves,
+    (moves, pending): (Moves, bool),
     toggles: PaneToggles,
     (filter, show_hidden): (&str, bool),
 ) -> Element<'a, Message> {
@@ -950,11 +983,17 @@ fn pane_toolbar<'a>(
                 fl!("ui-files-new-folder-button")
             ))
             .style(styles::secondary)
-            .on_press(files(FilesMessage::AskNewFolder { tab, side })),
-            text(fl!("ui-files-new-folder-tooltip")).size(font_size::CAPTION),
+            .on_press_maybe((!pending).then(|| files(FilesMessage::AskNewFolder { tab, side }))),
+            text(if pending {
+                fl!("ui-files-listing-in-progress-tooltip")
+            } else {
+                fl!("ui-files-new-folder-tooltip")
+            })
+            .size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
     ]
     .spacing(spacing::XS)
     .align_y(Alignment::Center);
@@ -1004,7 +1043,8 @@ fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
         text(tip).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -1018,7 +1058,8 @@ fn sudo_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
         text(fl!("ui-files-sudo-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -1092,7 +1133,8 @@ fn pane_narrowing<'a>(
             text(fl!("ui-files-hidden-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
     )
     .spacing(spacing::SM)
     .align_y(Alignment::Center)
@@ -1136,6 +1178,10 @@ fn pane_footer<'a>(
 }
 
 /// What a pane is drawn from, shared by both sides.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag per state of its own: hidden names, a listing, its folder, the focus"
+)]
 struct PaneParts<'p, E> {
     tab: TabId,
     side: Side,
@@ -1163,7 +1209,13 @@ struct PaneParts<'p, E> {
     /// show.
     counts: (usize, usize),
     loading: bool,
+    /// It names a folder whose listing is on its way over the entries of another: nothing
+    /// is put into it until it is shown.
+    folder_pending: bool,
     error: Option<&'p FilesError>,
+    /// What its last listing left out, and whether a terminal on the server is at hand to
+    /// reach what it hid: over SSH, not over FTP.
+    left_out: (heimdall_files::LeftOut, bool),
     focused: bool,
     /// Where the pane can go besides up.
     moves: Moves,
@@ -1437,7 +1489,9 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         show_hidden,
         counts: (total, unhidden),
         loading,
+        folder_pending,
         error,
+        left_out,
         focused,
         moves,
         batch,
@@ -1488,7 +1542,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     content = content
         .push(pane_toolbar(
             (tab, side),
-            moves,
+            (moves, folder_pending),
             toggles,
             (filter, show_hidden),
         ))
@@ -1501,7 +1555,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         (chosen, chosen_size(entries, selected, marked)),
     );
     pane_frame(
-        pane_notes(content, tab, (toggles.sudo, error, batch))
+        pane_notes(content, tab, (toggles.sudo, error, left_out, batch))
             .push(listing)
             .push(pane_rule())
             .push(footer),
@@ -1512,14 +1566,16 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
 }
 
 /// What a pane says above its entries: listed as root, as the C# status says it while the
-/// sudo mode is on; why the last listing failed; where its delete or change of permissions
-/// is.
+/// sudo mode is on; why the last listing failed; how many entries it hid, their names not
+/// safe to use here, and how many of its lines did not read, where the C# only writes a
+/// warning to its log; where its delete or change of permissions is.
 fn pane_notes<'a>(
     mut content: Column<'a, Message>,
     tab: TabId,
-    (sudo, error, batch): (
+    (sudo, error, (left_out, terminal), batch): (
         Option<bool>,
         Option<&FilesError>,
+        (heimdall_files::LeftOut, bool),
         Option<&heimdall_app::files::Batch>,
     ),
 ) -> Column<'a, Message> {
@@ -1533,10 +1589,32 @@ fn pane_notes<'a>(
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(font_size::CAPTION));
     }
+    for note in left_out_notes(left_out, terminal) {
+        content = content.push(text(note).size(font_size::CAPTION).style(text::warning));
+    }
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
     }
     content
+}
+
+/// What a pane says of what its listing left out: the counts alone, the names and lines
+/// being what cannot be shown safely. The terminal is advised only where there is one, over
+/// SSH; an FTP tab has none.
+fn left_out_notes(left_out: heimdall_files::LeftOut, terminal: bool) -> Vec<String> {
+    let mut notes = Vec::new();
+    let count = left_out.unsafe_names;
+    if count > 0 {
+        notes.push(if terminal {
+            fl!("ui-files-hidden-unsafe-terminal", count = count)
+        } else {
+            fl!("ui-files-hidden-unsafe", count = count)
+        });
+    }
+    if left_out.unread_lines > 0 {
+        notes.push(fl!("ui-files-unread-lines", count = left_out.unread_lines));
+    }
+    notes
 }
 
 /// The size of the files among the entries chosen, as the C# selection line adds them;
@@ -1575,8 +1653,7 @@ fn pane_frame(
         .height(Length::Fill)
         .style(move |theme: &Theme| {
             // The window's background, as the C# list's: a row is lit over it.
-            let mut style = container::bordered_box(theme);
-            style.background = Some(theme.palette().background.into());
+            let mut style = styles::panel(theme);
             if whole_target {
                 // A drag over it: where its entries would go.
                 style.border.color = theme.extended_palette().success.base.color;
@@ -1793,7 +1870,8 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
             line = line.push(
                 iced::widget::progress_bar(0.0..=1.0, share)
                     .length(Length::FillPortion(1))
-                    .girth(8.0),
+                    .girth(8.0)
+                    .style(styles::progress),
             );
         }
         line = line.push(small(
@@ -1822,7 +1900,8 @@ fn security_notice<'a>(notice: String) -> Element<'a, Message> {
         text(notice).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -1861,7 +1940,9 @@ pub fn view(
         show_hidden: files_pane.local.show_hidden,
         counts: files_pane.local.counts(),
         loading: files_pane.local.loading,
+        folder_pending: files_pane.local.awaits_other_folder(),
         error: files_pane.local.error.as_ref(),
+        left_out: (files_pane.local.left_out, false),
         focused: files_pane.focus == Side::Local,
         moves: Moves {
             back: files_pane.local.can_go_back(),
@@ -1893,7 +1974,9 @@ pub fn view(
         show_hidden: files_pane.remote.show_hidden,
         counts: files_pane.remote.counts(),
         loading: files_pane.remote.loading,
+        folder_pending: files_pane.remote.awaits_other_folder(),
         error: files_pane.remote.error.as_ref(),
+        left_out: (files_pane.remote.left_out, files_pane.shell.is_some()),
         focused: files_pane.focus == Side::Remote,
         moves: Moves {
             back: files_pane.remote.can_go_back(),
@@ -1972,14 +2055,17 @@ fn local_toggle<'a>(tab: TabId, shown: bool) -> Element<'a, Message> {
         text(fl!("ui-files-local-toggle-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
 /// Upload and Download over the server's pane alone, as the C# SFTP pane's toolbar: no local
-/// pane to send from or to, Upload asks for files and Download for a folder.
+/// pane to send from or to, Upload asks for files and Download for a folder. Upload goes
+/// into the folder shown: faded while the pane names another folder, its listing on its way.
 fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
     let connected = files_pane.client.is_some();
+    let loading = files_pane.remote.awaits_other_folder();
     let can_download = connected && !files_pane.remote.chosen().is_empty();
     let action = |label: String, tip: String, message: Option<FilesMessage>| {
         tooltip(
@@ -1989,13 +2075,18 @@ fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
             text(tip).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
     };
     row![
         action(
             fl!("ui-files-upload-button"),
-            fl!("ui-files-upload-files-tooltip"),
-            connected.then_some(FilesMessage::UploadHere { tab }),
+            if loading {
+                fl!("ui-files-listing-in-progress-tooltip")
+            } else {
+                fl!("ui-files-upload-files-tooltip")
+            },
+            (connected && !loading).then_some(FilesMessage::UploadHere { tab }),
         ),
         action(
             fl!("ui-files-download-button"),
@@ -2006,26 +2097,54 @@ fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
     .spacing(spacing::SM)
 }
 
-/// Upload and Download, between the panes: each sends the selection of its side.
+/// Upload and Download, between the panes: each sends the selection of its side into the
+/// folder the other side shows, faded while that side names another folder whose listing is
+/// on its way.
 fn send_buttons(tab: TabId, files_pane: &FilesPane) -> Column<'_, Message> {
-    let can_upload = files_pane.local.selected.is_some();
-    let can_download = files_pane.remote.selected.is_some();
+    let uploading = files_pane.remote.awaits_other_folder();
+    let downloading = files_pane.local.awaits_other_folder();
+    let can_upload = files_pane.local.selected.is_some() && !uploading;
+    let can_download = files_pane.remote.selected.is_some() && !downloading;
     column![
-        button(text(fl!("ui-files-upload-button")))
-            .style(styles::primary)
-            .on_press_maybe(can_upload.then(|| files(FilesMessage::Transfer {
-                tab,
-                direction: Direction::Upload,
-            }))),
-        button(text(fl!("ui-files-download-button")))
-            .style(styles::primary)
-            .on_press_maybe(can_download.then(|| files(FilesMessage::Transfer {
-                tab,
-                direction: Direction::Download,
-            }))),
+        while_listing(
+            button(text(fl!("ui-files-upload-button")))
+                .style(styles::primary)
+                .on_press_maybe(can_upload.then(|| files(FilesMessage::Transfer {
+                    tab,
+                    direction: Direction::Upload,
+                }))),
+            uploading,
+        ),
+        while_listing(
+            button(text(fl!("ui-files-download-button")))
+                .style(styles::primary)
+                .on_press_maybe(can_download.then(|| files(FilesMessage::Transfer {
+                    tab,
+                    direction: Direction::Download,
+                }))),
+            downloading,
+        ),
     ]
     .spacing(spacing::SM)
     .align_x(Alignment::Center)
+}
+
+/// `control`, sending into the folder a pane shows: while the pane names another folder
+/// whose listing is on its way (`loading`), it says why it does nothing.
+fn while_listing<'a>(
+    control: impl Into<Element<'a, Message>>,
+    loading: bool,
+) -> Element<'a, Message> {
+    if !loading {
+        return control.into();
+    }
+    tooltip(
+        control,
+        text(fl!("ui-files-listing-in-progress-tooltip")).size(font_size::CAPTION),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box)
+    .into()
 }
 
 /// The transfers, newest first, under their title and "Clear finished" once one has ended.
@@ -2062,6 +2181,60 @@ fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Messa
 mod tests {
     use super::*;
 
+    #[test]
+    fn what_a_listing_left_out_is_counted_and_the_terminal_advised_only_over_ssh() {
+        let left_out = heimdall_files::LeftOut {
+            unsafe_names: 2,
+            unread_lines: 3,
+        };
+        assert_eq!(
+            left_out_notes(left_out, true),
+            [
+                "2 entries hidden: their names are not safe to use here; use the terminal",
+                "3 lines of the listing could not be read",
+            ]
+        );
+        assert_eq!(
+            left_out_notes(left_out, false),
+            [
+                "2 entries hidden: their names are not safe to use here",
+                "3 lines of the listing could not be read",
+            ]
+        );
+        let one = heimdall_files::LeftOut {
+            unsafe_names: 1,
+            unread_lines: 1,
+        };
+        assert_eq!(
+            left_out_notes(one, false),
+            [
+                "1 entry hidden: its name is not safe to use here",
+                "1 line of the listing could not be read",
+            ]
+        );
+        assert!(left_out_notes(heimdall_files::LeftOut::default(), true).is_empty());
+    }
+
+    /// An FTP tab has no terminal: in no language does the wording it shows advise one.
+    #[test]
+    fn the_wording_without_a_terminal_names_none_in_any_language() {
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for language in heimdall_i18n::SUPPORTED_LANGUAGES {
+            let path = heimdall_i18n::ftl_path(crate_root, language, env!("CARGO_PKG_NAME"));
+            let source = std::fs::read_to_string(&path).expect("readable");
+            let message: Vec<&str> = source
+                .lines()
+                .skip_while(|line| !line.starts_with("ui-files-hidden-unsafe = "))
+                .take_while(|line| *line != "}")
+                .collect();
+            assert!(message.len() > 1, "{language}: {message:?}");
+            assert!(
+                message.iter().all(|line| !line.contains("terminal")),
+                "{language}: {message:?}"
+            );
+        }
+    }
+
     fn named(key: Named) -> keyboard::Key {
         keyboard::Key::Named(key)
     }
@@ -2082,6 +2255,54 @@ mod tests {
         fn modified(&self) -> Option<SystemTime> {
             None
         }
+    }
+
+    /// An entry of a server's list with only an owner: its number, its name.
+    struct Owned(Option<u32>, Option<&'static str>);
+
+    impl Owned {
+        /// Every owned entry's name.
+        const LABEL: &'static str = "notes.txt";
+    }
+
+    impl Listed for Owned {
+        fn kind(&self) -> EntryKind {
+            EntryKind::File
+        }
+        fn label(&self) -> &str {
+            Self::LABEL
+        }
+        fn size(&self) -> Option<u64> {
+            None
+        }
+        fn modified(&self) -> Option<SystemTime> {
+            None
+        }
+        fn owner(&self) -> Option<u32> {
+            self.0
+        }
+        fn owner_name(&self) -> Option<&str> {
+            self.1
+        }
+    }
+
+    #[test]
+    fn the_owner_column_says_the_name_else_the_number_else_a_dash_as_the_csharp() {
+        let cell = |owned: &Owned| cell_text(owned, SortColumn::Owner);
+        assert_eq!(cell(&Owned(Some(33), Some("www-data"))), "www-data");
+        assert_eq!(cell(&Owned(Some(1000), None)), "1000");
+        assert_eq!(cell(&Owned(None, None)), UNKNOWN_OWNER);
+    }
+
+    #[test]
+    fn the_row_tooltip_says_the_owner_when_there_is_one() {
+        let lines = row_tooltip_lines(&Owned(Some(33), Some("www-data")));
+        assert_eq!(
+            lines.last(),
+            Some(&fl!("ui-files-tooltip-owner", owner = "www-data"))
+        );
+        // Its name and its type only: no owner line, no dash.
+        assert_eq!(row_tooltip_lines(&Owned(None, None)).len(), 2);
     }
 
     #[test]

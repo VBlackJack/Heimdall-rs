@@ -977,9 +977,15 @@ pub enum Resolution {
 }
 
 impl Resolution {
-    /// Every mode a tab offers, in the order the C# list shows them; multi-monitor is the
-    /// Windows client's.
-    pub const ALL: [Self; 4] = [Self::FitWindow, Self::Fixed, Self::SmartSizing, Self::Auto];
+    /// The modes the profile's list offers, in the order of the C# `ServerDialog.xaml`
+    /// combo (`DlgSrv_RdpResolutionModeCombo`); the automatic mode is not among them, reached
+    /// by the C# "Switch to Auto" alone.
+    pub const LISTED: [Self; 4] = [
+        Self::FitWindow,
+        Self::Fixed,
+        Self::SmartSizing,
+        Self::MultiMonitor,
+    ];
 
     /// The mode of a new profile, as the C# dialog's.
     pub const NEW_PROFILE: Self = Self::Auto;

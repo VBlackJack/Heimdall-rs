@@ -32,9 +32,11 @@ use heimdall_app::files::{EntryKind, FileOperation, FilesError, RemoteEntry, Sid
 use heimdall_app::sudo_edit::SudoPassword;
 use heimdall_app::sudo_mode::{SudoAccess, chmod_or_sudo, sudo_list, sudo_remove};
 use heimdall_app::{
-    App, AppConfig, ConnectionEvent, Dialog, Effect, FilesMessage, Message, SudoAction, TabId,
+    App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, FilesMessage, Message, SudoAction,
+    TabId, UiError,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_files::LeftOut;
 use heimdall_files::privileged::Sudo;
 use heimdall_files::{Refusal, RemoteSession};
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
@@ -157,9 +159,12 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
     let folder = dir.path().join("secret");
     std::fs::create_dir(&folder).expect("folder");
     std::fs::create_dir(folder.join("logs")).expect("logs");
-    std::fs::write(folder.join("it's a\nname"), b"12345").expect("file");
+    std::fs::write(folder.join("it's a name"), b"12345").expect("file");
+    // A name that is not one clean segment never enters the listing, as the C#
+    // `SudoDirectoryListing` skips it.
+    std::fs::write(folder.join("a\nline"), b"1").expect("unsafe name");
     std::fs::set_permissions(
-        folder.join("it's a\nname"),
+        folder.join("it's a name"),
         std::fs::Permissions::from_mode(0o640),
     )
     .expect("mode");
@@ -173,7 +178,7 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
         sudo_list(&connection, &remote(&folder), Some(b"wrong"), sudo).await,
         Err(FilesError::SudoPasswordRejected)
     );
-    let (listed, entries) = sudo_list(
+    let (listed, entries, left_out) = sudo_list(
         &connection,
         &remote(&dir.path().join("link")),
         Some(PASSWORD.as_bytes()),
@@ -186,11 +191,12 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
     let [logs, file] = entries.as_slice() else {
         panic!("{entries:?}");
     };
+    assert_eq!(left_out.unsafe_names, 1, "counted, so the pane says it");
     assert_eq!(
         (logs.label.as_str(), logs.kind),
         ("logs", EntryKind::Directory)
     );
-    assert_eq!(file.name, b"it's a\nname", "the exact bytes");
+    assert_eq!(file.name, b"it's a name", "the exact bytes");
     assert_eq!(
         (file.kind, file.size, file.permissions),
         (EntryKind::File, Some(5), Some(0o640))
@@ -198,7 +204,7 @@ async fn a_folder_is_listed_as_root_with_the_password_and_each_entry_its_inode()
     assert_eq!(
         file.inode,
         Some(
-            std::fs::metadata(folder.join("it's a\nname"))
+            std::fs::metadata(folder.join("it's a name"))
                 .expect("there")
                 .ino()
         )
@@ -416,6 +422,7 @@ fn entry(name: &str, kind: EntryKind, inode: u64) -> RemoteEntry {
         modified: None,
         permissions: Some(0o644),
         owner: None,
+        owner_name: None,
         group: None,
         inode: Some(inode),
     }
@@ -423,6 +430,12 @@ fn entry(name: &str, kind: EntryKind, inode: u64) -> RemoteEntry {
 
 /// A Files tab with `/srv` listed, and `shell` as its SSH connection, if any.
 async fn tab(dir: &Path, shell: Option<Connection>) -> (App, TabId) {
+    let (app, tab, _) = opened(dir, shell).await;
+    (app, tab)
+}
+
+/// [`tab`], with the connection attempt that opened it.
+async fn opened(dir: &Path, shell: Option<Connection>) -> (App, TabId, AttemptId) {
     let profiles_file = dir.join("profiles.toml");
     let mut store = heimdall_core::store::ProfileStore::open(&profiles_file).expect("store");
     store.merge([SshProfile {
@@ -471,17 +484,20 @@ async fn tab(dir: &Path, shell: Option<Connection>) -> (App, TabId) {
             shell,
         },
     });
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![entry("logs", EntryKind::Directory, 0)],
+                LeftOut::default(),
             )),
         },
     );
-    (app, tab)
+    (app, tab, attempt)
 }
 
 fn files(app: &mut App, message: FilesMessage) -> Vec<Effect> {
@@ -496,12 +512,14 @@ fn pane(app: &App, tab: TabId) -> &heimdall_app::files::FilesPane {
 
 /// What `tab` lists as root, as a listing on its way would bring it.
 fn listed_as_root(app: &mut App, tab: TabId, path: &str, entries: Vec<RemoteEntry>) {
+    let request = remote_request(app, tab);
     files(
         app,
         FilesMessage::SudoListed {
             tab,
+            request,
             path: RemotePath::from(path),
-            result: Ok((RemotePath::from(path), entries)),
+            result: Ok((RemotePath::from(path), entries, LeftOut::default())),
         },
     );
 }
@@ -543,10 +561,12 @@ async fn the_sudo_toggle_asks_the_password_once_and_turning_it_off_forgets_it() 
         "listed as root: {on:?}"
     );
     assert!(pane(&app, tab).sudo_mode);
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::SudoListed {
             tab,
+            request,
             path: srv.clone(),
             result: Err(FilesError::SudoPasswordNeeded),
         },
@@ -628,10 +648,12 @@ async fn a_password_not_given_leaves_the_sudo_mode_off() {
     let connection = shell(&server, dir.path()).await;
     let (mut app, tab) = tab(dir.path(), Some(connection)).await;
     files(&mut app, FilesMessage::ToggleSudo { tab });
+    let request = remote_request(&mut app, tab);
     files(
         &mut app,
         FilesMessage::SudoListed {
             tab,
+            request,
             path: RemotePath::from("/srv"),
             result: Err(FilesError::SudoPasswordNeeded),
         },
@@ -643,6 +665,232 @@ async fn a_password_not_given_leaves_the_sudo_mode_off() {
         "listed as the account: {dismissed:?}"
     );
     assert!(!pane(&app, tab).sudo_mode);
+}
+
+#[tokio::test]
+async fn a_listing_as_root_says_how_many_entries_it_hid_until_the_next_listing() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), Some(connection)).await;
+    assert!(!pane(&app, tab).remote.left_out.any(), "none hidden");
+    files(&mut app, FilesMessage::ToggleSudo { tab });
+    let srv = RemotePath::from("/srv");
+    let request = remote_request(&mut app, tab);
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request,
+            path: srv.clone(),
+            result: Ok((
+                srv,
+                vec![entry("kept", EntryKind::File, 1)],
+                LeftOut {
+                    unsafe_names: 2,
+                    unread_lines: 0,
+                },
+            )),
+        },
+    );
+    let remote = &pane(&app, tab).remote;
+    assert_eq!(
+        remote.left_out.unsafe_names, 2,
+        "the count, to be said in the pane"
+    );
+    assert_eq!(remote.entries.len(), 1, "the hidden ones never listed");
+    listed_as_root(
+        &mut app,
+        tab,
+        "/srv",
+        vec![entry("kept", EntryKind::File, 1)],
+    );
+    assert!(!pane(&app, tab).remote.left_out.any(), "cleared");
+}
+
+#[tokio::test]
+async fn a_listing_as_root_asked_for_before_another_is_neither_shown_nor_asks_a_password() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), Some(connection)).await;
+    let asked = |effects: &[Effect]| match effects {
+        [Effect::SudoListRemote { request, .. }] => *request,
+        other => panic!("{other:?}"),
+    };
+    let srv = RemotePath::from("/srv");
+    let first = asked(&files(&mut app, FilesMessage::ToggleSudo { tab }));
+    let second = asked(&files(
+        &mut app,
+        FilesMessage::Refresh {
+            tab,
+            side: Side::Remote,
+        },
+    ));
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request: second,
+            path: srv.clone(),
+            result: Ok((
+                srv.clone(),
+                vec![entry("fresh", EntryKind::File, 1)],
+                LeftOut::default(),
+            )),
+        },
+    );
+    // The first one comes last, wanting a password: nothing is asked, nothing changes.
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request: first,
+            path: srv.clone(),
+            result: Err(FilesError::SudoPasswordNeeded),
+        },
+    );
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request: first,
+            path: srv.clone(),
+            result: Ok((
+                srv,
+                vec![entry("stale", EntryKind::File, 2)],
+                LeftOut::default(),
+            )),
+        },
+    );
+    let remote = &pane(&app, tab).remote;
+    assert_eq!(remote.entries.len(), 1);
+    assert_eq!(remote.entries[0].label, "fresh", "the one asked for last");
+    assert!(!remote.loading);
+    assert_eq!(remote.error, None);
+}
+
+#[tokio::test]
+async fn the_sudo_mode_kept_through_a_reconnection_lists_as_root_again() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab, attempt) = opened(dir.path(), Some(connection.clone())).await;
+    files(&mut app, FilesMessage::ToggleSudo { tab });
+    listed_as_root(&mut app, tab, "/srv", Vec::new());
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::Timeout),
+    });
+    assert!(pane(&app, tab).sudo_mode, "kept, as the C# keeps it");
+    let effects = app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::FilesReady {
+            client: answering(StatusCode::NoSuchFile).await,
+            shell: Some(connection),
+        },
+    });
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SudoListRemote { path, .. } if path.as_bytes() == b"/srv"
+        )),
+        "{effects:?}"
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ListRemote { .. })),
+        "{effects:?}"
+    );
+}
+
+#[tokio::test]
+async fn while_sudo_asks_its_password_the_folder_named_is_the_one_shown() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), Some(connection)).await;
+    files(&mut app, FilesMessage::ToggleSudo { tab });
+    listed_as_root(
+        &mut app,
+        tab,
+        "/srv",
+        vec![entry("logs", EntryKind::Directory, 0)],
+    );
+    let opened = files(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    let [Effect::SudoListRemote { request, path, .. }] = opened.as_slice() else {
+        panic!("{opened:?}");
+    };
+    let (request, logs) = (*request, path.clone());
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request,
+            path: logs.clone(),
+            result: Err(FilesError::SudoPasswordNeeded),
+        },
+    );
+    assert!(matches!(&app.dialog, Some(Dialog::SudoPassword { .. })));
+    let remote = &pane(&app, tab).remote;
+    assert_eq!(remote.path, RemotePath::from("/srv"), "the folder shown");
+    assert_eq!(remote.entries_folder(), &remote.path);
+    assert!(!remote.loading);
+
+    // Given: the folder asked for is listed, and left from the one shown.
+    let again = files(
+        &mut app,
+        FilesMessage::SudoPasswordGiven {
+            tab,
+            password: SudoPassword::new(PASSWORD),
+        },
+    );
+    assert!(
+        matches!(again.as_slice(), [Effect::SudoListRemote { path, .. }] if *path == logs),
+        "{again:?}"
+    );
+    listed_as_root(&mut app, tab, "/srv/logs", Vec::new());
+    let remote = &pane(&app, tab).remote;
+    assert_eq!(remote.path, logs);
+    assert_eq!(remote.history, [RemotePath::from("/srv")]);
+
+    // Asked again and not given: the sudo mode goes off, the folder shown stays named.
+    files(
+        &mut app,
+        FilesMessage::Up {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    let request = remote_request(&mut app, tab);
+    files(
+        &mut app,
+        FilesMessage::SudoListed {
+            tab,
+            request,
+            path: RemotePath::from("/srv"),
+            result: Err(FilesError::SudoPasswordNeeded),
+        },
+    );
+    let remote = &pane(&app, tab).remote;
+    assert_eq!(remote.path, logs);
+    assert_eq!(remote.entries_folder(), &remote.path);
+    let dismissed = app.update(Message::DismissDialog);
+    assert!(
+        matches!(dismissed.as_slice(), [Effect::ListRemote { path, .. }] if *path == logs),
+        "{dismissed:?}"
+    );
 }
 
 #[tokio::test]
@@ -816,4 +1064,100 @@ async fn permissions_fall_back_to_sudo_only_while_the_mode_is_on() {
         vec![entry("app.sh", EntryKind::File, 5)],
     );
     assert!(change(&mut app), "the mode on: as root where refused");
+}
+
+#[tokio::test]
+async fn a_delete_as_root_takes_the_entry_from_the_folder_it_was_listed_from() {
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), Some(connection)).await;
+    files(&mut app, FilesMessage::ToggleSudo { tab });
+    listed_as_root(
+        &mut app,
+        tab,
+        "/srv",
+        vec![
+            entry("logs", EntryKind::Directory, 99),
+            entry("f00", EntryKind::File, 100),
+        ],
+    );
+    // "logs" opened: its listing on its way, the entries of "/srv" still shown.
+    files(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    assert_eq!(pane(&app, tab).remote.path, RemotePath::from("/srv/logs"));
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side: Side::Remote,
+            index: 1,
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    let deleting = app.update(Message::ConfirmDialog);
+    let [Effect::FileBatchStep { operation, .. }] = deleting.as_slice() else {
+        panic!("{deleting:?}");
+    };
+    match operation.as_ref() {
+        FileOperation::RemoteSudoRemove { path, inode, .. } => {
+            assert_eq!(path.as_bytes(), b"/srv/f00");
+            assert_eq!(*inode, Some(100));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
+fn remote_request(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
 }

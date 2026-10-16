@@ -392,7 +392,7 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
             .max_height(LIST_HEIGHT)
             .padding(spacing::SM)
             .width(Length::Fill)
-            .style(container::bordered_box),
+            .style(styles::panel),
     )
     .max_width(PALETTE_WIDTH)
     .into()

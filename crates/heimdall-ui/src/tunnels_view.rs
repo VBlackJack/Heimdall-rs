@@ -30,6 +30,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Border, Element, Font, Length, Theme};
 
+use crate::ellipsis::{self, Ellipsis};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -274,7 +275,8 @@ pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, 
             text(fl!("ui-tunnels-collapse-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
     ]
     .spacing(spacing::SM)
     .align_y(Alignment::Center);
@@ -287,7 +289,7 @@ pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, 
     .padding(PANEL_PADDING)
     .height(PANEL_HEIGHT)
     .width(Length::Fill)
-    .style(container::bordered_box)
+    .style(styles::panel)
     .into()
 }
 
@@ -312,7 +314,8 @@ pub fn page<'a>(
             text(fl!("ui-tunnels-close-selected-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
         close_all(
             button(text(fl!("ui-tunnels-close-all")))
                 .style(styles::danger)
@@ -352,7 +355,8 @@ fn close_all(button: iced::widget::Button<'_, Message>) -> Element<'_, Message> 
         text(fl!("ui-tunnels-close-all-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -373,6 +377,33 @@ impl Place {
     fn started(self) -> bool {
         matches!(self, Self::Page { .. })
     }
+}
+
+/// A cell of a row: on one line, ended with an ellipsis where its column ends, as a C# grid
+/// cell's, however long what it says.
+fn cell<'a>(value: String) -> Ellipsis<'a> {
+    ellipsis::text(value).size(font_size::CAPTION)
+}
+
+/// `cell`, the whole of `value` in its tooltip, as the C# cells cut short say it; nothing
+/// to say for an empty one.
+fn said_whole(cell: Ellipsis<'_>, value: String) -> Element<'_, Message> {
+    if value.is_empty() {
+        return cell.into();
+    }
+    tooltip(
+        cell,
+        text(value).size(font_size::CAPTION),
+        tooltip::Position::Top,
+    )
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
+    .into()
+}
+
+/// A text cell of `width`, its whole value in its tooltip: see [`said_whole`].
+fn text_cell<'a>(value: String, width: impl Into<Length>) -> Element<'a, Message> {
+    said_whole(cell(value.clone()).width(width), value)
 }
 
 /// The tunnels opened by hand, then the sessions' routes under their own title: what Close
@@ -406,7 +437,6 @@ fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], place: Place) -> Ele
 /// A session's route: its health, its gateways, its tab, no local port, the server it
 /// reaches; nothing to close but its tab, which a click shows.
 fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
-    let cell = |value: String| text(value).size(font_size::CAPTION);
     let gateways = route
         .route
         .iter()
@@ -415,15 +445,16 @@ fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
         .join(&fl!("ui-route-test-separator"));
     let line = row![
         status_dot(route.interrupted),
-        cell(gateways).width(Length::Fill),
-        cell(server_text(&route.title)).width(LABEL_WIDTH),
+        text_cell(gateways, Length::Fill),
+        text_cell(server_text(&route.title), LABEL_WIDTH),
         tooltip(
             cell(fl!("ui-tunnels-session-route-local")).width(LOCAL_WIDTH),
             text(fl!("ui-tunnels-session-route-local-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
-        .style(container::rounded_box),
-        cell(server_text(&route.remote.0)).width(Length::Fill),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
+        text_cell(server_text(&route.remote.0), Length::Fill),
         cell(route.remote.1.to_string()).width(PORT_WIDTH),
     ]
     .push(started.then(|| cell(route.started_clock()).width(STARTED_WIDTH)))
@@ -438,7 +469,7 @@ fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
 
 /// The column titles, as the C# grid's; `started` on the page, which has the room.
 fn columns<'a>(started: bool) -> Element<'a, Message> {
-    let title = |label: String| text(label).size(font_size::CAPTION).style(text::secondary);
+    let title = |label: String| cell(label).style(text::secondary);
     row![
         space().width(DOT_SIDE),
         title(fl!("ui-tunnels-column-gateway")).width(Length::Fill),
@@ -458,21 +489,20 @@ fn columns<'a>(started: bool) -> Element<'a, Message> {
 /// of the C# grid, the row selected marked as a session selected in the tree.
 fn tunnel_row(open: &Tunnel, place: Place) -> Element<'_, Message> {
     let started = place.started();
-    let cell = |value: String| text(value).size(font_size::CAPTION);
     let interrupted = open.interrupted;
     let line = row![
         status_dot(interrupted),
-        cell(server_text(&open.gateway_name)).width(Length::Fill),
-        cell(
+        text_cell(server_text(&open.gateway_name), Length::Fill),
+        text_cell(
             open.spec
                 .label
                 .as_deref()
                 .map(server_text)
-                .unwrap_or_default()
-        )
-        .width(LABEL_WIDTH),
+                .unwrap_or_default(),
+            LABEL_WIDTH
+        ),
         cell(open.local.port().to_string()).width(LOCAL_WIDTH),
-        cell(server_text(&open.spec.remote_host)).width(Length::Fill),
+        text_cell(server_text(&open.spec.remote_host), Length::Fill),
         cell(open.spec.remote_port.to_string()).width(PORT_WIDTH),
     ]
     .push(started.then(|| cell(open.started_clock()).width(STARTED_WIDTH)))
@@ -485,7 +515,8 @@ fn tunnel_row(open: &Tunnel, place: Place) -> Element<'_, Message> {
             text(fl!("ui-tunnels-close-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Left,
         )
-        .style(container::rounded_box),
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip),
     )
     .spacing(spacing::SM)
     .align_y(Alignment::Center);
@@ -543,7 +574,8 @@ fn status_dot<'a>(interrupted: bool) -> Element<'a, Message> {
         text(label).size(font_size::CAPTION),
         tooltip::Position::Right,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 

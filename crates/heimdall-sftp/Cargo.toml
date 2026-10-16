@@ -13,6 +13,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# log: a listing's unsafe names counted, already the workspace's logger.
+log.workspace = true
 thiserror.workspace = true
 # fs: the local side of transfers.
 tokio = { workspace = true, features = ["fs"] }

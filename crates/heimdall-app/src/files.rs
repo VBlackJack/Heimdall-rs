@@ -30,8 +30,8 @@ use std::time::{Duration, Instant, SystemTime};
 /// What an entry that is neither a file, a folder nor a link is.
 pub use heimdall_files::Special;
 use heimdall_files::{
-    ItemKind, LocalName, LocalNameError, Plan, Ready, Refusal, RemoteError, RemoteItem, RemotePath,
-    RemoteSession, Root, Rules, display_bytes,
+    ItemKind, LeftOut, LocalName, LocalNameError, Plan, Ready, Refusal, RemoteError, RemoteItem,
+    RemotePath, RemoteSession, Root, Rules, display_bytes,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -62,6 +62,94 @@ impl TransferId {
     #[must_use]
     pub fn value(self) -> u64 {
         self.0
+    }
+}
+
+/// Identifies a listing asked for, for the life of the process: the pane shows only the
+/// one asked for last, as the C# load gate (`EmbeddedSftpViewModel.LoadDirectoryCoreAsync`)
+/// never applies two loads. Folders cannot tell them apart: the first remote listing asks
+/// for "." and comes back as the home folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ListingRequest(u64);
+
+impl ListingRequest {
+    /// A new identifier, never used before; only a pane asks for one.
+    fn fresh() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// No listing: never asked for, so never the one awaited.
+    const NONE: Self = Self(0);
+
+    /// The number, for logs.
+    #[must_use]
+    pub fn value(self) -> u64 {
+        self.0
+    }
+}
+
+/// The listings of an FTP pane, coalesced: at most one on its way, and at most one waiting
+/// for it, the one asked for last. FTP lists every folder through one control connection
+/// (`heimdall_files::ftp`), one at a time: five Back clicks would otherwise run five full
+/// listings in turn, the one wanted last. A listing on its way is never stopped, as
+/// dropping it while it holds the connection would leave it mid-answer: the next one waits
+/// for it instead. SFTP, sudo and local listings run side by side, the latest shown: one
+/// slow listing never holds up the next.
+#[derive(Debug)]
+pub(crate) struct ListingQueue<T> {
+    /// The listing started whose answer has not come yet.
+    in_flight: Option<ListingRequest>,
+    /// The listing asked for while another was on its way, started once that one's answer
+    /// comes; a later one takes its place.
+    waiting: Option<(ListingRequest, T)>,
+}
+
+impl<T> Default for ListingQueue<T> {
+    fn default() -> Self {
+        Self {
+            in_flight: None,
+            waiting: None,
+        }
+    }
+}
+
+impl<T> ListingQueue<T> {
+    /// `listing`, asked for as `request`: handed back to start now when none is on its way;
+    /// else kept, in place of any kept before, until the one on its way comes.
+    pub(crate) fn ask(&mut self, request: ListingRequest, listing: T) -> Option<T> {
+        if self.in_flight.is_none() {
+            self.in_flight = Some(request);
+            return Some(listing);
+        }
+        if let Some((replaced, _)) = self.waiting.replace((request, listing)) {
+            log::debug!(
+                "listing {} never started: {} is asked for after it",
+                replaced.value(),
+                request.value()
+            );
+        }
+        None
+    }
+
+    /// The answer of `request` came: the listing waiting for it, if any, handed back to
+    /// start now. An answer of a listing this queue no longer follows, started before
+    /// Escape or a reconnection, changes nothing.
+    pub(crate) fn came(&mut self, request: ListingRequest) -> Option<T> {
+        if self.in_flight != Some(request) {
+            return None;
+        }
+        self.in_flight = None;
+        let (next, listing) = self.waiting.take()?;
+        self.in_flight = Some(next);
+        Some(listing)
+    }
+
+    /// Forgets the listing on its way and the one waiting: Escape gave them up, or the
+    /// session they were asked of is gone.
+    pub(crate) fn clear(&mut self) {
+        self.in_flight = None;
+        self.waiting = None;
     }
 }
 
@@ -176,6 +264,8 @@ pub struct RemoteEntry {
     pub permissions: Option<u32>,
     /// The owner's user number.
     pub owner: Option<u32>,
+    /// The owner's name an FTP server gave, made safe.
+    pub owner_name: Option<String>,
     /// The group's number.
     pub group: Option<u32>,
     /// Its inode, when listed as root: what a delete through sudo checks again.
@@ -199,6 +289,7 @@ impl RemoteEntry {
             modified: item.modified,
             permissions: item.permissions,
             owner: item.owner,
+            owner_name: item.owner_name.as_deref().map(server_text),
             group: item.group,
             inode: None,
         }
@@ -280,10 +371,43 @@ pub trait Listed {
     fn permissions(&self) -> Option<u32> {
         None
     }
-    /// Owner.
+    /// Owner's user number.
     fn owner(&self) -> Option<u32> {
         None
     }
+    /// Owner's name, when the server gave one.
+    fn owner_name(&self) -> Option<&str> {
+        None
+    }
+}
+
+/// The owner `entry` shows: the name the server gave, as the C# FTP listing shows it, else
+/// the user number, as the C# SFTP listing shows it; nothing when neither was said.
+#[must_use]
+pub fn owner_text<E: Listed>(entry: &E) -> String {
+    entry.owner_name().map_or_else(
+        || entry.owner().map(|uid| uid.to_string()).unwrap_or_default(),
+        str::to_owned,
+    )
+}
+
+/// How the owner column orders `a` and `b`: those with no name first, by user number, none
+/// before any; then those named, by name whatever its case, then as written, then by
+/// number. A listing gives names or numbers, so each is ordered as it reads: numbers as
+/// numbers, 33 before 1000, where the C# compared their texts. Nothing is allocated: a sort
+/// compares many times.
+fn owner_order<E: Listed>(a: &E, b: &E) -> std::cmp::Ordering {
+    let by_name = match (a.owner_name(), b.owner_name()) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(a), Some(b)) => a
+            .chars()
+            .flat_map(char::to_lowercase)
+            .cmp(b.chars().flat_map(char::to_lowercase))
+            .then_with(|| a.cmp(b)),
+    };
+    by_name.then_with(|| a.owner().cmp(&b.owner()))
 }
 
 impl Listed for RemoteEntry {
@@ -304,6 +428,9 @@ impl Listed for RemoteEntry {
     }
     fn owner(&self) -> Option<u32> {
         self.owner
+    }
+    fn owner_name(&self) -> Option<&str> {
+        self.owner_name.as_deref()
     }
 }
 
@@ -332,7 +459,7 @@ pub fn sort_entries<E: Listed>(entries: &mut [E], sort: Sort) {
             SortColumn::Size => a.size().cmp(&b.size()),
             SortColumn::Modified => a.modified().cmp(&b.modified()),
             SortColumn::Permissions => a.permissions().cmp(&b.permissions()),
-            SortColumn::Owner => a.owner().cmp(&b.owner()),
+            SortColumn::Owner => owner_order(a, b),
         };
         let by_column = if sort.descending {
             by_column.reverse()
@@ -428,10 +555,15 @@ pub struct Pane<P, E> {
     cursor: Option<usize>,
     /// A listing is on its way.
     pub loading: bool,
-    /// A listing given up with Escape is still on its way: it is not shown when it comes.
-    pub(crate) discard_listing: bool,
+    /// The listing asked for last: any other that comes, one asked for before or given up
+    /// with Escape, is not shown.
+    request: ListingRequest,
     /// Why the last listing failed.
     pub error: Option<FilesError>,
+    /// What the last listing shown left out: entries whose names are not safe to use here,
+    /// never named, and lines of an FTP listing that do not read; said in the pane. Only a
+    /// server's listing leaves anything out.
+    pub left_out: LeftOut,
     /// A folder typed in its path bar, not gone to yet.
     pub typed: Option<String>,
     /// How its entries are sorted.
@@ -448,7 +580,7 @@ pub struct Pane<P, E> {
     /// How the listing on its way was asked for.
     navigation: Option<Navigation<P>>,
     /// The folder the entries shown were listed from, once one was: the folder shown, but
-    /// while another folder's listing is on its way, or after it failed, the one before.
+    /// while another folder's listing is on its way, the one before.
     listed: Option<P>,
     /// The type-ahead going on over its entries shown.
     search: TypeAhead,
@@ -469,9 +601,10 @@ enum Navigation<P> {
 
 impl<P: Clone + PartialEq, E> Pane<P, E> {
     /// The folder shown is about to be left for another, by `path` or by a listing: kept in
-    /// the history once the other is shown.
+    /// the history once the other is shown. The folder whose entries are shown, as the C#
+    /// pushes its `CurrentPath`: not one whose listing is still on its way.
     pub(crate) fn leave(&mut self) {
-        self.navigation = Some(Navigation::Away(self.path.clone()));
+        self.navigation = Some(Navigation::Away(self.entries_folder().clone()));
     }
 
     /// Goes back to the last folder of the history, taken out of it once shown; `false`
@@ -480,7 +613,8 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
         let Some(previous) = self.history.last().cloned() else {
             return false;
         };
-        let left = std::mem::replace(&mut self.path, previous);
+        let left = self.entries_folder().clone();
+        self.path = previous;
         self.navigation = Some(Navigation::Back(left));
         true
     }
@@ -516,9 +650,32 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
         }
     }
 
-    /// The listing on its way failed: the history stays as it was.
+    /// Whether the folder named is not the one whose entries are shown, its listing on its
+    /// way: what lands in "the folder shown" would go into a folder the user has not seen
+    /// yet. A listing of the folder shown again, a refresh, is not one.
+    #[must_use]
+    pub fn awaits_other_folder(&self) -> bool {
+        self.loading && *self.entries_folder() != self.path
+    }
+
+    /// The listing on its way failed: the history stays as it was, and the folder named goes
+    /// back to the one whose entries are shown, as the C# path bar does
+    /// (`EmbeddedSftpViewModel.LoadDirectoryCoreAsync`): an action on "the folder shown" never
+    /// goes to a folder that could not be listed.
     pub(crate) fn not_arrived(&mut self) {
         self.navigation = None;
+        self.path = self.entries_folder().clone();
+    }
+
+    /// The listing awaited failed: as [`Self::not_arrived`], and the pane back in the folder
+    /// a link being entered was opened from. The link's name, when it was one: it points at
+    /// no folder.
+    pub(crate) fn listing_failed(&mut self) -> Option<String> {
+        self.answered();
+        self.not_arrived();
+        let (from, name) = self.entering_link.take()?;
+        self.path = from;
+        Some(name)
     }
 
     /// Stops waiting for the listing on its way, as the C# Escape: the folder shown stays
@@ -529,7 +686,8 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
             return false;
         }
         self.loading = false;
-        self.discard_listing = true;
+        // The listing on its way is no longer the one awaited.
+        self.request = ListingRequest::NONE;
         match self.navigation.take() {
             Some(Navigation::Away(left) | Navigation::Back(left)) => self.path = left,
             None => {}
@@ -553,8 +711,9 @@ impl<P, E> Pane<P, E> {
             marked: BTreeSet::new(),
             cursor: None,
             loading: true,
-            discard_listing: false,
+            request: ListingRequest::NONE,
             error: None,
+            left_out: LeftOut::default(),
             typed: None,
             sort: Sort::default(),
             entering_link: None,
@@ -567,11 +726,47 @@ impl<P, E> Pane<P, E> {
     }
 
     /// The folder the entries shown are in: the one they were listed from, which is not
-    /// the folder shown while another's listing is on its way or after it failed; the
-    /// folder shown before any listing.
+    /// the folder named while another's listing is on its way; the folder named before any
+    /// listing.
     #[must_use]
     pub fn entries_folder(&self) -> &P {
         self.listed.as_ref().unwrap_or(&self.path)
+    }
+
+    /// A listing is asked for: the pane waits for it, and for no other one asked before. A
+    /// link being entered is the listing asked for before: forgotten.
+    pub(crate) fn ask_listing(&mut self) -> ListingRequest {
+        self.loading = true;
+        self.entering_link = None;
+        self.request = ListingRequest::fresh();
+        self.request
+    }
+
+    /// The listing awaited arrived: none is awaited any more, and the same one coming again
+    /// is not shown.
+    pub(crate) fn answered(&mut self) {
+        self.loading = false;
+        self.request = ListingRequest::NONE;
+    }
+
+    /// The listing asked for last, the only one shown when it comes.
+    #[must_use]
+    pub fn listing_request(&self) -> ListingRequest {
+        self.request
+    }
+
+    /// Whether `request` is the listing awaited; one that is not is left unshown, and said
+    /// in the log.
+    pub(crate) fn awaits(&self, request: ListingRequest) -> bool {
+        let awaited = request != ListingRequest::NONE && request == self.request;
+        if !awaited {
+            log::debug!(
+                "listing {} dropped: {} is the one awaited",
+                request.value(),
+                self.request.value()
+            );
+        }
+        awaited
     }
 
     /// Whether Back has a folder to go to.
@@ -1079,6 +1274,8 @@ pub struct FilesPane {
     /// an SFTP pane; none over FTP, which the C# never lets follow. The local file browser
     /// has one too, following the local shell it is docked beside.
     pub follow: Option<ShellFollow>,
+    /// The server pane's listings over FTP, one on its way at most.
+    pub(crate) remote_listings: ListingQueue<crate::Effect>,
 }
 
 /// An SFTP pane following the working folder its SSH shell reports (OSC 7), as the C#
@@ -1248,6 +1445,7 @@ impl FilesPane {
             editor: None,
             batch: None,
             follow: None,
+            remote_listings: ListingQueue::default(),
         }
     }
 
@@ -1292,6 +1490,7 @@ impl FilesPane {
         self.shell = None;
         self.sudo_password = None;
         self.sudo_mode = false;
+        self.remote_listings.clear();
     }
 
     /// Transfers still running, waiting their turn or prepared again.
@@ -1457,6 +1656,9 @@ pub fn download_name(remote_name: &[u8]) -> Result<LocalName, FilesError> {
 
 // ---- the work the UI runs for the application's effects -------------------------------
 
+/// A remote folder listed: the folder, absolute; its entries, sorted; and what was left out.
+pub type RemoteListing = (RemotePath, Vec<RemoteEntry>, LeftOut);
+
 /// Lists remote folder `path`, first resolved to its absolute form.
 ///
 /// # Errors
@@ -1465,18 +1667,22 @@ pub fn download_name(remote_name: &[u8]) -> Result<LocalName, FilesError> {
 pub async fn list_remote(
     client: RemoteSession,
     path: RemotePath,
-) -> Result<(RemotePath, Vec<RemoteEntry>), FilesError> {
+) -> Result<RemoteListing, FilesError> {
     let absolute = client
         .canonical(&path)
         .await
         .map_err(|e| FilesError::from(&e))?;
     let listed = client
-        .list(&absolute)
+        .list_counted(&absolute)
         .await
         .map_err(|e| FilesError::from(&e))?;
-    let mut entries: Vec<RemoteEntry> = listed.into_iter().map(RemoteEntry::from_listing).collect();
+    let mut entries: Vec<RemoteEntry> = listed
+        .items
+        .into_iter()
+        .map(RemoteEntry::from_listing)
+        .collect();
     sort_remote(&mut entries);
-    Ok((absolute, entries))
+    Ok((absolute, entries, listed.left_out))
 }
 
 /// The kind of a local entry of `file_type`, a link not followed.
@@ -1881,6 +2087,8 @@ pub struct FileProperties {
     pub permissions: Option<u32>,
     /// Its owner's user number.
     pub owner: Option<u32>,
+    /// Its owner's name an FTP server gave, made safe.
+    pub owner_name: Option<String>,
     /// Its group's number.
     pub group: Option<u32>,
     /// Its whole path, made safe.
@@ -2307,7 +2515,8 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use super::{
-        EntryKind, Pane, RemoteEntry, Sort, SortColumn, sort_entries, sort_remote, symbolic_mode,
+        EntryKind, ListingQueue, ListingRequest, Pane, RemoteEntry, Sort, SortColumn, owner_text,
+        sort_entries, sort_remote, symbolic_mode,
     };
 
     /// A file listed with its size, time, mode and owner.
@@ -2319,6 +2528,21 @@ mod tests {
             modified: Some(UNIX_EPOCH + Duration::from_secs(at)),
             permissions: Some(mode),
             owner: Some(owner),
+            owner_name: None,
+            group: None,
+        })
+    }
+
+    /// A file an FTP server listed with its owner's name and maybe a user number.
+    fn owned_by(name: &str, owner: Option<&str>, uid: Option<u32>) -> RemoteEntry {
+        RemoteEntry::from_listing(RemoteItem {
+            name: name.as_bytes().to_vec(),
+            kind: ItemKind::File,
+            size: None,
+            modified: None,
+            permissions: None,
+            owner: uid,
+            owner_name: owner.map(str::to_owned),
             group: None,
         })
     }
@@ -2401,6 +2625,60 @@ mod tests {
             "dir b d C a",
             "the folder first, the other way too"
         );
+    }
+
+    #[test]
+    fn the_owner_shown_is_the_name_given_else_the_user_number() {
+        assert_eq!(
+            owner_text(&owned_by("a", Some("www-data"), Some(33))),
+            "www-data"
+        );
+        assert_eq!(owner_text(&owned_by("b", None, Some(1000))), "1000");
+        assert_eq!(owner_text(&owned_by("c", None, None)), "");
+        // A name from the server is made safe before it is shown.
+        assert_eq!(
+            owner_text(&owned_by("d", Some("ev\u{202e}il\n"), None)),
+            "evil"
+        );
+    }
+
+    #[test]
+    fn owners_sort_by_number_unnamed_first_then_by_name_whatever_its_case() {
+        let mut entries = vec![
+            owned_by("named-bob", Some("bob"), None),
+            owned_by("uid-1000", None, Some(1000)),
+            owned_by("named-Alice", Some("Alice"), None),
+            owned_by("unknown", None, None),
+            owned_by("named-alice", Some("alice"), Some(7)),
+            owned_by("uid-33", None, Some(33)),
+        ];
+        sort_entries(
+            &mut entries,
+            Sort {
+                column: SortColumn::Owner,
+                descending: false,
+            },
+        );
+        assert_eq!(
+            labels(&entries),
+            [
+                "unknown",
+                "uid-33",
+                "uid-1000",
+                "named-Alice",
+                "named-alice",
+                "named-bob"
+            ],
+            "numbers as numbers, 33 before 1000; Alice before alice as written"
+        );
+        sort_entries(
+            &mut entries,
+            Sort {
+                column: SortColumn::Owner,
+                descending: true,
+            },
+        );
+        assert_eq!(labels(&entries)[0], "named-bob");
     }
 
     fn pane(names: &[&str]) -> Pane<(), RemoteEntry> {
@@ -2555,9 +2833,96 @@ mod tests {
         assert_eq!(pane.entries_folder(), &first, "the other one on its way");
         pane.not_arrived();
         assert_eq!(pane.entries_folder(), &first, "nor after it failed");
+        assert_eq!(
+            pane.path, first,
+            "the folder named again, as the entries shown"
+        );
         pane.leave();
+        pane.path = second.clone();
         pane.arrived(&second);
         assert_eq!(pane.entries_folder(), &second, "listed");
+    }
+
+    #[test]
+    fn the_history_keeps_the_folder_shown_never_one_still_on_its_way() {
+        let [first, second, third] = ["first", "second", "third"].map(std::path::PathBuf::from);
+        let mut pane: Pane<std::path::PathBuf, RemoteEntry> = Pane::new(first.clone());
+        pane.arrived(&first);
+        pane.leave();
+        pane.path = second.clone();
+        // Left again before "second" came: "first" is still the folder shown.
+        pane.leave();
+        pane.path = third.clone();
+        pane.arrived(&third);
+        assert_eq!(pane.history, std::slice::from_ref(&first));
+        // Back while another listing is on its way, given up: the folder shown, "third",
+        // is named again, not the one that never came.
+        pane.leave();
+        pane.path = second;
+        assert!(pane.back());
+        assert_eq!(pane.path, first);
+        pane.loading = true;
+        assert!(pane.cancel_listing());
+        assert_eq!(pane.path, third);
+    }
+
+    #[test]
+    fn only_the_listing_asked_for_last_is_awaited() {
+        let mut pane: Pane<std::path::PathBuf, RemoteEntry> =
+            Pane::new(std::path::PathBuf::from("first"));
+        assert!(!pane.awaits(pane.listing_request()), "none asked for yet");
+        let first = pane.ask_listing();
+        let second = pane.ask_listing();
+        assert!(pane.loading);
+        assert!(!pane.awaits(first), "asked for before another");
+        assert!(pane.awaits(second));
+        assert!(pane.cancel_listing());
+        assert!(!pane.awaits(second), "given up");
+        let third = pane.ask_listing();
+        assert!(
+            !pane.awaits(second),
+            "given up, even with another on its way"
+        );
+        assert!(pane.awaits(third));
+        pane.answered();
+        assert!(!pane.loading);
+        assert!(!pane.awaits(third), "answered once");
+    }
+
+    #[test]
+    fn one_listing_runs_at_a_time_and_only_the_last_one_asked_for_waits() {
+        let mut queue: ListingQueue<&str> = ListingQueue::default();
+        let [first, second, third, fourth] = [(); 4].map(|()| ListingRequest::fresh());
+        assert_eq!(queue.ask(first, "first"), Some("first"), "none on its way");
+        assert_eq!(queue.ask(second, "second"), None, "waits for the first");
+        assert_eq!(queue.ask(third, "third"), None, "takes the second's place");
+        assert_eq!(
+            queue.came(second),
+            None,
+            "never started: no answer of its own"
+        );
+        assert_eq!(queue.came(first), Some("third"), "the last one asked for");
+        assert_eq!(queue.came(first), None, "the same answer twice");
+        assert_eq!(queue.ask(fourth, "fourth"), None, "the third is on its way");
+        assert_eq!(queue.came(third), Some("fourth"));
+        assert_eq!(queue.came(fourth), None, "nothing waits");
+        assert_eq!(
+            queue.ask(first, "again"),
+            Some("again"),
+            "nothing on its way"
+        );
+    }
+
+    #[test]
+    fn a_cleared_queue_starts_the_next_listing_at_once() {
+        let mut queue: ListingQueue<&str> = ListingQueue::default();
+        let [first, second, third] = [(); 3].map(|()| ListingRequest::fresh());
+        assert!(queue.ask(first, "first").is_some());
+        assert!(queue.ask(second, "second").is_none());
+        queue.clear();
+        assert_eq!(queue.ask(third, "third"), Some("third"));
+        assert_eq!(queue.came(first), None, "given up: the third goes on");
+        assert_eq!(queue.ask(second, "second"), None, "the third is on its way");
     }
 
     fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {
@@ -2568,6 +2933,7 @@ mod tests {
             modified: None,
             permissions: None,
             owner: None,
+            owner_name: None,
             group: None,
         })
     }

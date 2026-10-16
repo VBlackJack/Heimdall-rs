@@ -769,7 +769,7 @@ pub fn size(bytes: u64) -> String {
     } else {
         (value / (KIB * KIB * KIB), 3)
     };
-    let shown = format!("{value:.1}");
+    let shown = crate::i18n::decimal(value, 1);
     match unit {
         1 => fl!("ui-files-size-kib", value = shown),
         2 => fl!("ui-files-size-mib", value = shown),

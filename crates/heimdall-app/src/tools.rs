@@ -134,6 +134,74 @@ pub enum ToolId {
     Crontab,
     /// The SSH config generator, the C# `SSHCONFIG`.
     SshConfig,
+    /// The SSH key auditor, the C# `SSHAUDIT`.
+    SshAudit,
+    /// The TLS auditor, the C# `TLSAUDIT`.
+    TlsAudit,
+    /// The DNS security checker, the C# `DNSSEC`.
+    DnsSec,
+    /// The default credentials scanner, the C# `DEFAULTCREDS`.
+    DefaultCreds,
+    /// The offline CVE lookup engine, the C# `CVELOOKUP`.
+    CveLookup,
+    /// The `SecNumCloud` v3.2 compliance audit, the C# `SECNUMCLOUD`.
+    SecNumCloud,
+    /// The SMB protocol enumerator, the C# `SMBENUM`.
+    Smb,
+    /// The HTTP status codes reference, the C# `HTTP`.
+    HttpStatus,
+    /// The TCP ping latency probe, the C# `TCPPING`.
+    TcpPing,
+    /// The Wake-on-LAN magic packet tool, the C# `WOL`.
+    WakeOnLan,
+    /// The WHOIS domain lookup tool, the C# `WHOIS`.
+    Whois,
+    /// The TCP banner grabber, the C# `BANNER`.
+    BannerGrabber,
+    /// The ICMP ping latency monitor, the C# `PING`.
+    Ping,
+    /// The DNS record lookup tool, the C# `DNS`.
+    Dns,
+    /// The batch DNS resolver, the C# `DNSBATCH`.
+    DnsBatch,
+    /// The TCP port scanner, the C# `PORTSCAN`.
+    PortScan,
+    /// The HTTP header analyzer and security scorer, the C# `HTTPHEADERS`.
+    HttpHeaders,
+    /// The SSL/TLS certificate inspector, the C# `CERT`.
+    Cert,
+    /// The TCP traceroute path discovery tool, the C# `TCPTRACE`.
+    TcpTrace,
+    /// The SNMP MIB tree walker, the C# `SNMPWALK`.
+    SnmpWalk,
+    /// The ARP table anomaly monitor, the C# `ARPMON`.
+    ArpMon,
+    /// The firewall egress connectivity tester, the C# `FWTEST`.
+    FwTest,
+    /// The network topology and cartography scanner, the C# `NETMAP`.
+    NetMap,
+    /// The open TCP/UDP ports and sockets monitor, the C# `OPENPORTS`.
+    OpenPorts,
+    /// The network interfaces snapshot and speed inspector, the C# `NETIF`.
+    NetIf,
+    /// The IPv4 routing table inspector, the C# `ROUTES`.
+    Routes,
+    /// The nearby Wi-Fi network scanner, the C# `WIFI`.
+    Wifi,
+    /// The system hosts file editor, the C# `HOSTS`.
+    Hosts,
+    /// The Windows service status dashboard and controller, the C# `SERVICES`.
+    Services,
+    /// The log file viewer with tailing and regex filter, the C# `LOGVIEW`.
+    LogView,
+    /// The cron job manager and task scheduler, the C# `CRONJOB`.
+    CronJob,
+    /// The notes and scratchpad editor, the C# `NOTES`.
+    Notes,
+    /// The architecture and topology diagram editor, the C# `DIAGRAM`.
+    Diagram,
+    /// The command snippet and script library, the C# `CMDLIB`.
+    CmdLib,
 }
 
 /// What the registry says of a tool.
@@ -164,14 +232,42 @@ impl ToolDescriptor {
             network: false,
         }
     }
+
+    /// The entry of a tool that reaches a host.
+    const fn network(
+        code: &'static str,
+        category: ToolCategory,
+        prefixes: &'static [&'static str],
+    ) -> Self {
+        Self {
+            code,
+            category,
+            prefixes,
+            network: true,
+        }
+    }
 }
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 57] = [
+        Self::Ping,
+        Self::Dns,
+        Self::Cert,
+        Self::PortScan,
         Self::SubnetCalculator,
         Self::IpConverter,
+        Self::HttpStatus,
+        Self::Whois,
+        Self::HttpHeaders,
+        Self::BannerGrabber,
+        Self::TcpTrace,
+        Self::SnmpWalk,
+        Self::ArpMon,
+        Self::FwTest,
+        Self::NetMap,
         Self::NetworkCalculator,
+        Self::TcpPing,
         Self::Hash,
         Self::Hmac,
         Self::Password,
@@ -180,6 +276,13 @@ impl ToolId {
         Self::Jwt,
         Self::Totp,
         Self::PwdAudit,
+        Self::SshAudit,
+        Self::TlsAudit,
+        Self::DnsSec,
+        Self::Smb,
+        Self::DefaultCreds,
+        Self::CveLookup,
+        Self::SecNumCloud,
         Self::Base64,
         Self::UrlEncoder,
         Self::JsonFormatter,
@@ -191,11 +294,25 @@ impl ToolId {
         Self::Uuid,
         Self::Ulid,
         Self::Crontab,
+        Self::LogView,
+        Self::Hosts,
         Self::SshConfig,
+        Self::CronJob,
+        Self::Services,
+        Self::Notes,
+        Self::Diagram,
+        Self::CmdLib,
+        Self::WakeOnLan,
+        Self::OpenPorts,
+        Self::NetIf,
+        Self::Routes,
+        Self::DnsBatch,
+        Self::Wifi,
     ];
 
     /// Its entry, as the C# registry's (`ToolRegistry.cs:62-109`).
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one arm per tool")]
     pub const fn descriptor(self) -> ToolDescriptor {
         match self {
             Self::SubnetCalculator => {
@@ -231,6 +348,41 @@ impl ToolId {
                 ToolCategory::Security,
                 &["pwdaudit", "password-audit", "passcheck"],
             ),
+            Self::SshAudit => ToolDescriptor::local(
+                "SSHAUDIT",
+                ToolCategory::Security,
+                &["sshaudit", "keyaudit"],
+            ),
+            Self::TlsAudit => ToolDescriptor::network(
+                "TLSAUDIT",
+                ToolCategory::Security,
+                &["tlsaudit", "sslaudit"],
+            ),
+            Self::DnsSec => ToolDescriptor::network(
+                "DNSSEC",
+                ToolCategory::Security,
+                &["dnssec", "spf", "dmarc", "dkim"],
+            ),
+            Self::Smb => ToolDescriptor::network(
+                "SMBENUM",
+                ToolCategory::Security,
+                &["smb", "ntlm", "netbios"],
+            ),
+            Self::DefaultCreds => ToolDescriptor::network(
+                "DEFAULTCREDS",
+                ToolCategory::Security,
+                &["defaultcreds", "creds"],
+            ),
+            Self::CveLookup => ToolDescriptor::local(
+                "CVELOOKUP",
+                ToolCategory::Security,
+                &["cve", "vuln", "vulnerability"],
+            ),
+            Self::SecNumCloud => ToolDescriptor::local(
+                "SECNUMCLOUD",
+                ToolCategory::Security,
+                &["secnumcloud", "audit", "compliance", "anssi"],
+            ),
             Self::Base64 => ToolDescriptor::local("BASE64", ToolCategory::Encoding, &["base64"]),
             Self::UrlEncoder => {
                 ToolDescriptor::local("URLENC", ToolCategory::Encoding, &["url", "urlencode"])
@@ -254,6 +406,119 @@ impl ToolId {
                 "SSHCONFIG",
                 ToolCategory::System,
                 &["sshconfig", "ssh-config"],
+            ),
+            Self::HttpStatus => {
+                ToolDescriptor::local("HTTP", ToolCategory::Network, &["http", "status"])
+            }
+            Self::Whois => ToolDescriptor::network("WHOIS", ToolCategory::Network, &["whois"]),
+            Self::BannerGrabber => {
+                ToolDescriptor::network("BANNER", ToolCategory::Network, &["banner", "grab"])
+            }
+            Self::TcpPing => ToolDescriptor::network(
+                "TCPPING",
+                ToolCategory::Network,
+                &["tcpping", "tcping", "portping"],
+            ),
+            Self::WakeOnLan => {
+                ToolDescriptor::local("WOL", ToolCategory::External, &["wol", "wake", "wakeonlan"])
+            }
+            Self::Ping => ToolDescriptor::network("PING", ToolCategory::Network, &["ping"]),
+            Self::Dns => {
+                ToolDescriptor::network("DNS", ToolCategory::Network, &["dns", "nslookup", "dig"])
+            }
+            Self::DnsBatch => ToolDescriptor::local(
+                "DNSBATCH",
+                ToolCategory::External,
+                &["dnsbatch", "resolve", "resolver"],
+            ),
+            Self::PortScan => {
+                ToolDescriptor::network("PORTSCAN", ToolCategory::Network, &["portscan", "scan"])
+            }
+            Self::HttpHeaders => ToolDescriptor::network(
+                "HTTPHEADERS",
+                ToolCategory::Network,
+                &["headers", "httpheaders", "secheaders"],
+            ),
+            Self::Cert => ToolDescriptor::network("CERT", ToolCategory::Network, &["cert", "ssl"]),
+            Self::TcpTrace => ToolDescriptor::network(
+                "TCPTRACE",
+                ToolCategory::Network,
+                &["trace", "traceroute", "tracert"],
+            ),
+            Self::SnmpWalk => {
+                ToolDescriptor::network("SNMPWALK", ToolCategory::Network, &["snmp", "snmpwalk"])
+            }
+            Self::ArpMon => {
+                ToolDescriptor::local("ARPMON", ToolCategory::Network, &["arp", "arpmon"])
+            }
+            Self::FwTest => ToolDescriptor::local(
+                "FWTEST",
+                ToolCategory::Network,
+                &["fw", "firewall", "fwtest"],
+            ),
+            Self::NetMap => ToolDescriptor::local(
+                "NETMAP",
+                ToolCategory::Network,
+                &["netmap", "cartography", "discover"],
+            ),
+            Self::OpenPorts => ToolDescriptor::local(
+                "OPENPORTS",
+                ToolCategory::External,
+                &["openports", "ports", "netstat", "connections"],
+            ),
+            Self::NetIf => ToolDescriptor::local(
+                "NETIF",
+                ToolCategory::External,
+                &["netif", "interfaces", "nic", "adapter"],
+            ),
+            Self::Routes => ToolDescriptor::local(
+                "ROUTES",
+                ToolCategory::External,
+                &["routes", "route", "routing"],
+            ),
+            Self::Wifi => ToolDescriptor::local(
+                "WIFI",
+                ToolCategory::External,
+                &["wifi", "wlan", "ssid", "wireless"],
+            ),
+            Self::Hosts => ToolDescriptor::local("HOSTS", ToolCategory::System, &["hosts"]),
+            Self::Services => ToolDescriptor::local(
+                "SERVICES",
+                ToolCategory::System,
+                &["services", "svc", "systemctl"],
+            ),
+            Self::LogView => {
+                ToolDescriptor::local("LOGVIEW", ToolCategory::System, &["log", "tail", "logview"])
+            }
+            Self::CronJob => ToolDescriptor::local(
+                "CRONJOB",
+                ToolCategory::System,
+                &["cronjob", "crontab-manager", "tasks"],
+            ),
+            Self::Notes => ToolDescriptor::local(
+                "NOTES",
+                ToolCategory::System,
+                &["notes", "note", "markdown", "md", "confluence"],
+            ),
+            Self::Diagram => ToolDescriptor::local(
+                "DIAGRAM",
+                ToolCategory::System,
+                &["diagram", "drawio", "schema"],
+            ),
+            Self::CmdLib => ToolDescriptor::local(
+                "CMDLIB",
+                ToolCategory::System,
+                &[
+                    "cmd",
+                    "command",
+                    "library",
+                    "snippet",
+                    "twinshell",
+                    "cheat",
+                    "cheatsheet",
+                    "powershell",
+                    "bash",
+                ],
             ),
         }
     }

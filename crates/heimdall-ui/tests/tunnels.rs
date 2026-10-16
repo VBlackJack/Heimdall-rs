@@ -148,12 +148,17 @@ fn the_dialog_names_its_gateway_and_says_what_is_missing_until_nothing_is() {
 /// Opens a tunnel to `wiki.lab:443` on local port 9443, labelled "wiki", through `bastion`,
 /// as the dialog then the attempt would: the first tunnel of the run.
 fn opened_tunnel(shell: &mut Shell) -> TunnelId {
+    labelled_tunnel(shell, "wiki")
+}
+
+/// A tunnel opened through the bastion, named `label`.
+fn labelled_tunnel(shell: &mut Shell, label: &str) -> TunnelId {
     let _ = shell.update(tunnel(TunnelMessage::New));
     for (field, value) in [
         (TunnelField::RemoteHost, "wiki.lab"),
         (TunnelField::RemotePort, "443"),
         (TunnelField::LocalPort, "9443"),
-        (TunnelField::Label, "wiki"),
+        (TunnelField::Label, label),
     ] {
         let _ = shell.update(tunnel(TunnelMessage::Field {
             field,
@@ -228,6 +233,60 @@ fn an_open_tunnel_is_a_row_with_the_csharp_columns_its_menu_and_its_close_button
     ui.find("No active tunnels").expect("closed");
     ui.find("Tunnel on port 9443 closed.")
         .expect("the C# status line");
+}
+
+#[test]
+fn a_long_label_stays_on_one_line_cut_by_its_column_as_a_csharp_grid_cell() {
+    use heimdall_ui::shell::Destination;
+
+    const LABEL: &str = "TestEnv Linux A (SSH, admin via gateway)";
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path(), vec![bastion()]);
+    labelled_tunnel(&mut shell, LABEL);
+    let _ = shell.update(Message::Navigate(Destination::Tunnels));
+    let mut ui = simulator(&shell);
+    // Read whole, as a C# `TextBlock`'s `Text`, though drawn cut.
+    let label = ui.find(LABEL).expect("the whole label").bounds();
+    let port = ui.find("9443").expect("a one-line cell").bounds();
+    assert!(
+        (label.height - port.height).abs() < 1.0,
+        "one line: {label:?} against {port:?}"
+    );
+    assert!(label.width <= 90.0 + 1.0, "within its column: {label:?}");
+}
+
+#[test]
+fn a_text_cell_opens_a_tooltip_under_the_pointer_a_port_cell_none() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path(), vec![bastion()]);
+    opened_tunnel(&mut shell);
+    // The panel's rows light nothing under the pointer: only a tooltip changes the frame.
+    let _ = shell.update(tunnel(TunnelMessage::TogglePanel));
+    let mut ui = simulator(&shell);
+    let theme = iced::Theme::Dark;
+    let moved = |ui: &mut common::Drawn<'_>, at: iced::Point| {
+        ui.point_at(at);
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position: at,
+        })]);
+    };
+    let frame = |ui: &mut common::Drawn<'_>, name: &str| {
+        ui.snapshot(&theme)
+            .expect("drawn")
+            .matches_image(dir.path().join(name))
+            .expect("compared")
+    };
+    let (label, port) = (
+        ui.find("wiki").expect("the label").bounds().center(),
+        ui.find("9443").expect("the local port").bounds().center(),
+    );
+    moved(&mut ui, iced::Point::ORIGIN);
+    assert!(frame(&mut ui, "plain.png"), "the plain window, written");
+    moved(&mut ui, port);
+    assert!(frame(&mut ui, "plain.png"), "a port says nothing more");
+    moved(&mut ui, iced::Point::ORIGIN);
+    moved(&mut ui, label);
+    assert!(!frame(&mut ui, "plain.png"), "the label's tooltip shown");
 }
 
 #[test]

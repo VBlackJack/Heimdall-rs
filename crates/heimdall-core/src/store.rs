@@ -1189,21 +1189,60 @@ impl ProfileStore {
 /// Writes `text` to `path` through a temporary file beside it, so an interruption never
 /// leaves a truncated file behind.
 pub(crate) fn write_atomic(path: &Path, text: &str) -> Result<(), StoreError> {
+    replace(path, text.as_bytes(), None).map_err(|source| StoreError::Io {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+/// Writes `bytes` to `path` through a temporary file beside it, synced, then renamed over
+/// the file: an interruption leaves the old file or the new one, never a truncated one. The
+/// folder is made when missing; the file written is private to its owner.
+///
+/// # Errors
+///
+/// The folder, the temporary file or the rename fails.
+pub fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace(path, bytes, None)
+}
+
+/// [`replace_file`] for a file the user picked: written where a link at `path` leads, its
+/// permissions (its mode, on Unix) kept, and a read-only one refused, as writing over it in
+/// place would; only the truncation is gone.
+///
+/// # Errors
+///
+/// The file is read-only, or the folder, the temporary file or the rename fails.
+pub fn replace_user_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let target = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => fs::canonicalize(path)?,
+        _ => path.to_owned(),
+    };
+    let permissions = match fs::metadata(&target) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    if permissions.as_ref().is_some_and(fs::Permissions::readonly) {
+        return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+    }
+    replace(&target, bytes, permissions)
+}
+
+/// The write of [`replace_file`], the temporary file given `permissions` before the rename.
+fn replace(path: &Path, bytes: &[u8], permissions: Option<fs::Permissions>) -> io::Result<()> {
     let dir = path
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let io_error = |path: &Path| {
-        let path = path.to_owned();
-        move |source| StoreError::Io { path, source }
-    };
-    fs::create_dir_all(dir).map_err(io_error(dir))?;
-    let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(io_error(dir))?;
-    temp.write_all(text.as_bytes())
-        .map_err(io_error(temp.path()))?;
-    temp.as_file().sync_all().map_err(io_error(temp.path()))?;
-    temp.persist(path)
-        .map_err(|error| io_error(path)(error.error))?;
+    fs::create_dir_all(dir)?;
+    let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    if let Some(permissions) = permissions {
+        temp.as_file().set_permissions(permissions)?;
+    }
+    temp.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 

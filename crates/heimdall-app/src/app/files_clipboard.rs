@@ -102,7 +102,7 @@ impl App {
                 any_kind || matches!(entry.kind, EntryKind::File | EntryKind::Directory)
             })
             .map(|entry| CopySource {
-                path: files.remote.path.join(&entry.name),
+                path: files.remote.entries_folder().join(&entry.name),
                 folder: entry.kind == EntryKind::Directory,
             })
             .collect()
@@ -210,6 +210,15 @@ impl App {
         if !self.can_paste(tab_id) {
             return Vec::new();
         }
+        // Into the folder shown: not while its listing is on its way.
+        let into = if self.is_local_browser_files(tab_id) {
+            Side::Local
+        } else {
+            Side::Remote
+        };
+        if !self.takes_into_shown(tab_id, into) {
+            return Vec::new();
+        }
         if let Some(effects) = self.paste_local_files(tab_id) {
             return effects;
         }
@@ -302,7 +311,9 @@ impl App {
         self.copy_into_shown(tab_id, sources, true)
     }
 
-    /// Copies `sources` into the folder `tab_id` shows, unless a copy runs there already.
+    /// Copies `sources` into the folder `tab_id` shows, unless a copy runs there already. A
+    /// duplicate goes next to its entries, into the folder they were listed from, even while
+    /// another folder's listing is on its way.
     fn copy_into_shown(
         &mut self,
         tab_id: TabId,
@@ -328,7 +339,11 @@ impl App {
             client,
             shell,
             sources,
-            folder: files.remote.path.clone(),
+            folder: if duplicate {
+                files.remote.entries_folder().clone()
+            } else {
+                files.remote.path.clone()
+            },
             cancel,
             duplicate,
         }]

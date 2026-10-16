@@ -25,7 +25,8 @@ use heimdall_core::profile::{
     SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 use heimdall_core::store::{
-    MergeReport, PROFILE_FILE_VERSION, ProfileStore, RouteError, StoreError,
+    MergeReport, PROFILE_FILE_VERSION, ProfileStore, RouteError, StoreError, replace_file,
+    replace_user_file,
 };
 
 fn profile(id: &str, host: &str) -> SshProfile {
@@ -1241,4 +1242,89 @@ fn every_rdp_profile_takes_a_mode() {
         store.ssh_profiles()[0].ssh_mode.is_embedded(),
         "SSH untouched"
     );
+}
+
+/// The files of `dir`, by name.
+fn names_in(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .expect("listed")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_file_replaced_is_the_new_text_whole_and_leaves_no_temporary_file() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("sub").join("d.mmd");
+    replace_file(
+        &path,
+        b"graph TD
+",
+    )
+    .expect("made with its folder");
+    replace_user_file(&path, b"x").expect("replaced");
+    assert_eq!(fs::read(&path).expect("read"), b"x");
+    assert_eq!(names_in(&dir.path().join("sub")), ["d.mmd"]);
+}
+
+#[test]
+fn a_failed_replace_leaves_the_old_file_untouched() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("taken");
+    // A folder where the file goes: the rename fails, after the text was written aside.
+    fs::create_dir(&path).expect("folder");
+    fs::write(path.join("kept"), "old").expect("written");
+    assert!(replace_user_file(&path, b"new").is_err());
+    assert_eq!(fs::read_to_string(path.join("kept")).expect("read"), "old");
+    assert_eq!(names_in(dir.path()), ["taken"], "no temporary file left");
+}
+
+#[test]
+fn a_read_only_user_file_is_refused_as_writing_over_it_would_be() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("d.mmd");
+    fs::write(&path, "old").expect("written");
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&path, permissions.clone()).expect("read-only");
+    let error = replace_user_file(&path, b"new").expect_err("refused");
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(fs::read_to_string(&path).expect("read"), "old");
+    // Writable again, so the folder can be removed on every platform.
+    #[expect(
+        clippy::permissions_set_readonly_false,
+        reason = "the test's own file, made writable to be removed"
+    )]
+    permissions.set_readonly(false);
+    fs::set_permissions(&path, permissions).expect("writable");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_user_file_keeps_its_mode_and_a_link_to_it_stays_a_link() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("d.mmd");
+    fs::write(&path, "old").expect("written");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).expect("mode");
+    let link = dir.path().join("link.mmd");
+    std::os::unix::fs::symlink(&path, &link).expect("link");
+    replace_user_file(&link, b"new").expect("replaced");
+    assert!(
+        fs::symlink_metadata(&link)
+            .expect("metadata")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read_to_string(&path).expect("read"), "new");
+    let mode = fs::metadata(&path).expect("metadata").permissions().mode();
+    assert_eq!(mode & 0o777, 0o640);
 }

@@ -162,6 +162,7 @@ fn ctrl_shift_t_toggles_the_sidebar_tab_and_the_choice_is_kept() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
@@ -175,23 +176,44 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
             (
                 ToolGroup::Category(ToolCategory::Network),
                 vec![
+                    ToolId::ArpMon,
+                    ToolId::BannerGrabber,
+                    ToolId::Dns,
+                    ToolId::FwTest,
+                    ToolId::HttpHeaders,
+                    ToolId::HttpStatus,
                     ToolId::IpConverter,
                     ToolId::NetworkCalculator,
-                    ToolId::SubnetCalculator
-                ]
+                    ToolId::NetMap,
+                    ToolId::Ping,
+                    ToolId::PortScan,
+                    ToolId::SnmpWalk,
+                    ToolId::Cert,
+                    ToolId::SubnetCalculator,
+                    ToolId::TcpPing,
+                    ToolId::TcpTrace,
+                    ToolId::Whois,
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::Security),
                 vec![
                     ToolId::CertGen,
+                    ToolId::CveLookup,
+                    ToolId::DefaultCreds,
+                    ToolId::DnsSec,
                     ToolId::Hash,
                     ToolId::Hmac,
                     ToolId::Jwt,
                     ToolId::PwdAudit,
                     ToolId::Password,
+                    ToolId::SecNumCloud,
+                    ToolId::Smb,
+                    ToolId::SshAudit,
                     ToolId::SshKey,
-                    ToolId::Totp
-                ]
+                    ToolId::TlsAudit,
+                    ToolId::Totp,
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::Encoding),
@@ -201,19 +223,37 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::RegexTester,
                     ToolId::TextCase,
                     ToolId::TextDiff,
-                    ToolId::UrlEncoder
-                ]
+                    ToolId::UrlEncoder,
+                ],
             ),
             (
                 ToolGroup::Category(ToolCategory::System),
                 vec![
                     ToolId::Chmod,
+                    ToolId::CmdLib,
+                    ToolId::CronJob,
                     ToolId::Crontab,
                     ToolId::DateTime,
+                    ToolId::Diagram,
+                    ToolId::Hosts,
+                    ToolId::LogView,
+                    ToolId::Notes,
+                    ToolId::Services,
                     ToolId::SshConfig,
                     ToolId::Ulid,
-                    ToolId::Uuid
-                ]
+                    ToolId::Uuid,
+                ],
+            ),
+            (
+                ToolGroup::Category(ToolCategory::External),
+                vec![
+                    ToolId::DnsBatch,
+                    ToolId::NetIf,
+                    ToolId::OpenPorts,
+                    ToolId::Routes,
+                    ToolId::WakeOnLan,
+                    ToolId::Wifi,
+                ],
             ),
         ]
     );
@@ -251,20 +291,20 @@ fn a_folded_group_hides_its_tools_and_offers_its_menu_to_pin() {
     let _ = shell.update(tools(ToolsMessage::ShowSidebarTab(SidebarTab::Tools)));
     {
         let mut ui = simulator(&shell);
-        ui.click("System").expect("the group");
+        ui.click("Network").expect("the group");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::App(AppMessage::Tools(ToolsMessage::ToggleGroup(
-                ToolGroup::Category(ToolCategory::System)
+                ToolGroup::Category(ToolCategory::Network)
             )))
         )));
     }
     let _ = shell.update(tools(ToolsMessage::ToggleGroup(ToolGroup::Category(
-        ToolCategory::System,
+        ToolCategory::Network,
     ))));
     let mut ui = simulator(&shell);
-    assert!(ui.find("UUID Generator").is_err(), "folded");
-    ui.find("Base64 Encoder / Decoder")
+    assert!(ui.find("Subnet Calculator").is_err(), "folded");
+    ui.find("Certificate Generator")
         .expect("another group stays open");
 }
 
@@ -282,14 +322,15 @@ fn the_tools_page_shows_its_sections_and_cards_and_pins_a_tool() {
         ui.find("SECURITY").expect("category");
         ui.find("ENCODING & FORMAT").expect("category");
         ui.find("SYSTEM").expect("category");
-        ui.find("23 tools").expect("count");
+        ui.find(format!("{} tools", ToolId::ALL.len()))
+            .expect("count");
         ui.find("UUID/GUID generator with multiple format options")
             .expect("description");
         assert!(ui.find("Recently Used").is_err(), "nothing used yet");
-        ui.click("Base64 Encoder / Decoder").expect("card");
+        ui.click("Subnet Calculator").expect("card");
         assert!(
             ui.into_messages()
-                .any(|message| matches!(message, Message::OpenTool(ToolId::Base64)))
+                .any(|message| matches!(message, Message::OpenTool(ToolId::SubnetCalculator)))
         );
     }
     let _ = shell.update(tools(ToolsMessage::ToggleFavorite(ToolId::Base64)));
@@ -329,13 +370,17 @@ fn a_card_pin_toggles_its_tool() {
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::Navigate(Destination::Tools));
     let mut ui = simulator(&shell);
-    ui.click(catalog::pin_id(ToolId::UrlEncoder)).expect("pin");
+    // A card the window shows without scrolling: the network tools of batch 1 put the
+    // Encoding section, the URL encoder clicked before, below the simulated window, where a
+    // click finds nothing.
+    ui.click(catalog::pin_id(ToolId::SubnetCalculator))
+        .expect("pin");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(
         messages.iter().any(|message| matches!(
             message,
             Message::App(AppMessage::Tools(ToolsMessage::ToggleFavorite(
-                ToolId::UrlEncoder
+                ToolId::SubnetCalculator
             )))
         )),
         "{messages:?}"
@@ -377,6 +422,23 @@ fn opening_a_tool_shows_its_tab_on_the_sessions_page_once() {
         .expect("the tool, on the Sessions page");
     ui.find("Batch Generation").expect("its batch");
     ui.find("Generate Batch").expect("its button");
+}
+
+#[test]
+fn tab_moves_between_a_tool_s_fields_as_wpf_moves_through_its_controls() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(!shell.tab_moves_focus(), "no tab, no page: Tab is free");
+    let _ = shell.update(Message::Navigate(Destination::Tools));
+    let _ = shell.update(Message::OpenTool(ToolId::Hmac));
+    assert!(
+        matches!(shell.app().tabs[0].profile, TabProfile::Tool(ToolId::Hmac)),
+        "the tool's tab has the keyboard"
+    );
+    assert!(
+        shell.tab_moves_focus(),
+        "from one of the tool's fields to the next"
+    );
 }
 
 #[test]
@@ -442,6 +504,62 @@ fn a_tool_tab_closed_lets_its_state_go() {
     assert!(shell.app().tabs.is_empty());
     // A message for it now finds nothing to change.
     let _ = shell.update(Message::Tool(tab, ToolMessage::ToggleHelp));
+}
+
+#[test]
+fn a_diagram_with_changes_not_saved_asks_before_its_tab_or_the_window_closes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::Diagram);
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    assert!(
+        shell.app().tabs.is_empty(),
+        "nothing changed: closed at once"
+    );
+    let (mut shell, tab) = opened(dir.path(), ToolId::Diagram);
+    let _ = shell.update(Message::Tool(
+        tab,
+        ToolMessage::Diagram(tools::DiagramMessage::Edit(paste("mine "))),
+    ));
+    assert!(shell.app().tabs[0].holds_unsaved_text());
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    assert!(matches!(
+        shell.app().dialog,
+        Some(heimdall_app::Dialog::ConfirmCloseTool { .. })
+    ));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("\"Untitled diagram\" has unsaved changes. Save them before closing the tab?")
+            .expect("the question");
+    }
+    // Save: the file asked where, the tab kept until it is written.
+    let _ = shell.update(tools(ToolsMessage::SaveBeforeClose));
+    assert_eq!(shell.app().dialog, None);
+    assert_eq!(shell.app().tabs.len(), 1);
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Cancel").expect("Cancel");
+        ui.click("Discard").expect("Discard");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    assert_eq!(shell.app().tabs.len(), 1, "cancelled: kept");
+    let _ = shell.update(Message::App(AppMessage::WindowCloseRequested));
+    assert!(
+        matches!(
+            shell.app().dialog,
+            Some(heimdall_app::Dialog::ConfirmExit { unsaved: 1, .. })
+        ),
+        "{:?}",
+        shell.app().dialog
+    );
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert!(shell.app().tabs.is_empty(), "discarded: closed");
 }
 
 #[test]
