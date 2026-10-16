@@ -609,6 +609,8 @@ pub enum Message {
         /// Text, if the clipboard held any.
         text: Option<String>,
     },
+    /// Entries of a local pane could not be dragged out of the window, for this reason.
+    DragOutFailed(crate::files::DragOutFailure),
     /// No file dialog could be shown, or its answer could not be used: what the user is
     /// told, in their language.
     FileDialogFailed(String),
@@ -1053,6 +1055,7 @@ impl fmt::Debug for Message {
             Self::ClipboardText { tab, .. } => write!(f, "ClipboardText({}, ..)", tab.value()),
             Self::FileDialogFailed(_) => f.write_str("FileDialogFailed"),
             Self::ScreenshotTaken { copied } => write!(f, "ScreenshotTaken({copied})"),
+            Self::DragOutFailed(failure) => write!(f, "DragOutFailed({failure:?})"),
             Self::ClipboardFiles { tab, paths } => {
                 write!(f, "ClipboardFiles({}, {})", tab.value(), paths.len())
             }
@@ -3712,6 +3715,10 @@ impl App {
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
+            Message::DragOutFailed(failure) => {
+                self.tell(Notice::DragOutFailed(failure));
+                Vec::new()
+            }
             Message::FileDialogFailed(said) => {
                 self.tell(Notice::FileDialogFailed(said));
                 Vec::new()
