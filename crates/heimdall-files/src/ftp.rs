@@ -624,12 +624,35 @@ impl FtpClient {
         }
         .await;
         if let Err(error) = replaced {
-            let _ = control.rm(text(&temporary)).await;
+            self.remove_temporary_locked(&mut control, &temporary).await;
             return Err(error);
         }
         self.fingerprint_locked(&mut control, path)
             .await
             .map(|(_, fingerprint)| fingerprint)
+    }
+
+    /// Removes `temporary`, the upload file of a write that did not land, best effort: a
+    /// file that stays there is said in the log, as the C#
+    /// `FtpBrowser.RollbackUploadTempFileAsync` warns (FtpBrowser.cs:1039). One that is not
+    /// there, the data never sent, is no failure, as the C# looks before it deletes. The
+    /// path and the server's reply only: never the session's host, user or password.
+    async fn remove_temporary_locked(
+        &self,
+        control: &mut AsyncRustlsFtpStream,
+        temporary: &RemotePath,
+    ) {
+        let Err(error) = control.rm(text(temporary)).await else {
+            return;
+        };
+        if matches!(self.entry_locked(control, temporary).await, Ok(None)) {
+            return;
+        }
+        log::warn!(
+            "FTP temporary upload file {:?} could not be removed: {:?}",
+            temporary.display(),
+            error.to_string()
+        );
     }
 
     /// Whether `path` is still the regular file `expected` describes.
@@ -830,7 +853,7 @@ async fn upload_locked(
     }
     .await;
     if sent.is_err() {
-        let _ = control.rm(text(&temporary)).await;
+        client.remove_temporary_locked(control, &temporary).await;
     }
     sent
 }

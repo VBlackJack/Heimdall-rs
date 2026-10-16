@@ -57,8 +57,11 @@ pub enum ProbeError {
     Connect(String),
     /// The host is neither a DNS name nor an address the handshake can name.
     Name,
-    /// The TLS handshake failed: no TLS there, or a version or cipher not spoken. Its words.
+    /// The TLS handshake failed: no TLS there, or a cipher not spoken. Its words.
     Handshake(String),
+    /// The server speaks only TLS 1.1 or older, which Heimdall refuses (owner decision of
+    /// 2026-10-16): said plainly rather than as rustls words its refusal.
+    ObsoleteVersion,
     /// The server presented no certificate.
     NoCertificate,
     /// The certificate presented does not decode.
@@ -589,6 +592,9 @@ fn failure_text(host: &str, port: u16, error: &ProbeError) -> String {
             port = port,
             detail = detail.as_str()
         ),
+        ProbeError::ObsoleteVersion => {
+            fl!("ui-tool-cert-error-obsolete-tls", host = host, port = port)
+        }
         ProbeError::NoCertificate => fl!("ui-tool-cert-error-no-certificate"),
         ProbeError::Unreadable => fl!("ui-tool-cert-error-unreadable"),
         ProbeError::Timeout => fl!("ui-tool-cert-error-timeout"),
@@ -615,7 +621,13 @@ async fn probe(host: String, port: u16) -> Result<Box<CertInspectionSummary>, Pr
         let tls = heimdall_tls::inspection_connector()
             .connect(name, tcp)
             .await
-            .map_err(|error| ProbeError::Handshake(detail(&error.to_string())))?;
+            .map_err(|error| {
+                if heimdall_tls::failed_on_obsolete_version(&error) {
+                    ProbeError::ObsoleteVersion
+                } else {
+                    ProbeError::Handshake(detail(&error.to_string()))
+                }
+            })?;
         let chain =
             heimdall_tls::presented_chain(tls.get_ref().1).ok_or(ProbeError::NoCertificate)?;
         let now = SystemTime::now()
@@ -782,6 +794,49 @@ mod tests {
         pane.apply(CertInspectorMessage::Done(run));
         assert!(pane.error.is_none(), "a scan skips what failed, as the C#");
         assert!(pane.notice.is_some());
+    }
+
+    /// A server speaking TLS 1.0 alone, on a port of the loopback: it answers the first
+    /// client hello with a server hello choosing TLS 1.0 (`0x0301`), as an old appliance.
+    async fn tls10_only_server() -> u16 {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        const TLS10: [u8; 2] = [0x03, 0x01];
+        const RSA_AES_128_CBC_SHA: [u8; 2] = [0x00, 0x2F];
+        const RANDOM_LEN: usize = 32;
+        const CLIENT_HELLO_READ: usize = 4096;
+        let mut hello = TLS10.to_vec();
+        hello.extend([0x5A; RANDOM_LEN]);
+        // No session identifier, the suite, no compression, no extension.
+        hello.extend([0, RSA_AES_128_CBC_SHA[0], RSA_AES_128_CBC_SHA[1], 0]);
+        let mut message = vec![0x02, 0, 0, u8::try_from(hello.len()).expect("short")];
+        message.extend(hello);
+        let mut record = vec![0x16, TLS10[0], TLS10[1]];
+        record.extend(u16::try_from(message.len()).expect("short").to_be_bytes());
+        record.extend(message);
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        tokio::spawn(async move {
+            let (mut client, _) = listener.accept().await.expect("client");
+            let mut client_hello = vec![0; CLIENT_HELLO_READ];
+            let _ = client.read(&mut client_hello).await;
+            let _ = client.write_all(&record).await;
+            // Its alert read, the connection closes.
+            let _ = client.read(&mut client_hello).await;
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_server_speaking_only_tls_1_0_is_said_obsolete_not_a_failed_handshake() {
+        let port = tls10_only_server().await;
+        let refusal = probe("127.0.0.1".to_owned(), port)
+            .await
+            .expect_err("refused");
+        assert_eq!(refusal, ProbeError::ObsoleteVersion);
+        let said = failure_text("127.0.0.1", port, &refusal);
+        assert!(said.contains("TLS 1.0"), "{said}");
     }
 
     #[test]

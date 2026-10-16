@@ -41,8 +41,9 @@ cargo build --locked -p heimdall-ui --features test-data-dir
 target\debug\heimdall-rs.exe --data-dir C:\Temp\heimdall-ui-test
 ```
 
-Le dossier doit être un chemin complet ; il est créé s'il n'existe pas. `--data-dir=<dossier>`
-est aussi accepté ; cette forme doit être du texte. Une version de test lancée sans
+Le dossier doit être un chemin complet ; il est créé s'il n'existe pas, avec son dossier
+`home` : un vrai utilisateur en a toujours un, et le volet local de l'onglet Fichiers s'y
+ouvre. `--data-dir=<dossier>` est aussi accepté ; cette forme doit être du texte. Une version de test lancée sans
 `--data-dir`, avec un autre argument, ou avec un dossier refusé affiche la raison et sort
 avec le code 2 : elle ne démarre jamais sur les vrais dossiers.
 

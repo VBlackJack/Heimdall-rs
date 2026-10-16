@@ -494,8 +494,9 @@ pub enum TestDataDirError {
     AlreadySet,
 }
 
-/// Roots every per-user folder of this process in `folder`, made if needed, and files its
-/// credentials under a namespace of `folder`: to be called once, before any folder is asked.
+/// Roots every per-user folder of this process in `folder`, made if needed with its home
+/// folder ([`test_data::HOME`]), and files its credentials under a namespace of `folder`: to
+/// be called once, before any folder is asked.
 ///
 /// The folder is compared with the user's real folders as the file system resolves them
 /// (links followed, `..` resolved, without regard to case): it may neither be, hold nor sit
@@ -518,6 +519,11 @@ pub fn use_test_data_dir(folder: &Path) -> Result<(), TestDataDirError> {
     std::fs::create_dir_all(folder)
         .map_err(|error| TestDataDirError::Unusable(format!("{}: {error}", folder.display())))?;
     refuse_real(folder)?;
+    // A real user's home folder is always there: the local pane of the Files tab opens on
+    // it, and a missing one showed the system's "path not found" in its place.
+    let home = folder.join(test_data::HOME);
+    std::fs::create_dir_all(&home)
+        .map_err(|error| TestDataDirError::Unusable(format!("{}: {error}", home.display())))?;
     let namespace = namespace_of(&comparable(folder));
     TEST_ROOT
         .set(TestRoot {
