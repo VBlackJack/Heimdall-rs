@@ -142,6 +142,95 @@ fn an_rdp_profile_goes_through_its_gateway_unless_direct() {
     );
 }
 
+/// Profile fields of each case of the routing table, and the gateway a protocol that tunnels
+/// then goes through, as `SshGatewayRoute.GatewayIdFor` decides: the direct flag first, then
+/// the profile's own gateway unless blank, then its folder's. "own" is not in the file: the
+/// profile keeps naming it, as the C# keeps it.
+const ROUTE_CASES: [(&str, &str, Option<&str>); 8] = [
+    ("none", "", None),
+    ("profile", r#", "sshGatewayId": "own""#, Some("own")),
+    ("folder", r#", "group": "F""#, Some("folder")),
+    (
+        "both",
+        r#", "sshGatewayId": "own", "group": "F""#,
+        Some("own"),
+    ),
+    (
+        "blank",
+        r#", "sshGatewayId": " ", "group": "F""#,
+        Some("folder"),
+    ),
+    (
+        "direct",
+        r#", "sshGatewayId": "own", "useDirectConnection": true"#,
+        None,
+    ),
+    (
+        "direct-folder",
+        r#", "group": "F", "useDirectConnection": true"#,
+        None,
+    ),
+    (
+        "direct-both",
+        r#", "sshGatewayId": "own", "group": "F", "useDirectConnection": true"#,
+        None,
+    ),
+];
+
+#[test]
+fn every_protocol_takes_the_gateway_the_csharp_route_decides() {
+    fn route<'a>(id: &'a ProfileId, gateway: Option<&'a ProfileId>) -> (&'a str, Option<&'a str>) {
+        (id.as_str(), gateway.map(ProfileId::as_str))
+    }
+    let folder_gateway = r#"{"groupDefaults": {"F": {"sshGatewayId": "folder"}},
+        "sshGateways": [{"id": "folder", "name": "Bastion", "host": "bastion.lab"}]}"#;
+    let expected: Vec<(&str, Option<&str>)> = ROUTE_CASES
+        .iter()
+        .map(|(case, _, gateway)| (*case, *gateway))
+        .collect();
+    for protocol in ["SSH", "SFTP", "RDP", "WINRM", "Telnet", "VNC", "FTP"] {
+        let entries: Vec<String> = ROUTE_CASES
+            .iter()
+            .map(|(case, fields, _)| {
+                format!(
+                    r#"{{"id": "{case}", "remoteServer": "h", "connectionType": "{protocol}"{fields}}}"#
+                )
+            })
+            .collect();
+        let report =
+            import(&servers(&entries.join(",")), Some(folder_gateway)).expect("valid JSON");
+        assert!(
+            report.skipped.is_empty(),
+            "{protocol}: {:?}",
+            report.skipped
+        );
+        let routes: Vec<(&str, Option<&str>)> = match protocol {
+            "SSH" | "SFTP" => report
+                .profiles
+                .iter()
+                .map(|p| route(&p.id, p.gateway.as_ref()))
+                .collect(),
+            "RDP" => report
+                .rdp
+                .iter()
+                .map(|p| route(&p.id, p.gateway.as_ref()))
+                .collect(),
+            "WINRM" => report
+                .winrm
+                .iter()
+                .map(|p| route(&p.id, p.gateway.as_ref()))
+                .collect(),
+            _ => {
+                // `SupportsSshGateway` is false: imported, with no gateway to go through.
+                let imported = report.telnet.len() + report.vnc.len() + report.ftp.len();
+                assert_eq!(imported, ROUTE_CASES.len(), "{protocol}");
+                continue;
+            }
+        };
+        assert_eq!(routes, expected, "{protocol}");
+    }
+}
+
 #[test]
 fn every_skip_reason_is_reported() {
     let json = servers(
