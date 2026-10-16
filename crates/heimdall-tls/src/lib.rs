@@ -15,7 +15,9 @@
  */
 
 //! The certificate check of the TLS clients that must trust a server before any password is
-//! sent: explicit FTPS, as the C# one, and the X509 subtypes of VNC's `VeNCrypt`.
+//! sent: explicit FTPS, as the C# one, and the X509 subtypes of VNC's `VeNCrypt`; and the
+//! handshake of the certificate inspector, which only reads what a server presents (see
+//! [`inspection_connector`]).
 //!
 //! A certificate the system trusts for the server's name goes through; otherwise one the
 //! user trusted for this server, which the caller decides, as it keeps the user's pins;
@@ -44,6 +46,12 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::ThreadId;
+
+mod inspect;
+
+pub use inspect::{
+    PresentedChain, TlsVersion, inspection_connector, inspection_server_name, presented_chain,
+};
 
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::client::WebPkiServerVerifier;

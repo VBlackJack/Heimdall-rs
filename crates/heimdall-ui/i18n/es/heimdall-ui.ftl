@@ -4701,114 +4701,116 @@ ui-tool-headers-help =
 
 ## Inspector de certificados SSL/TLS
 ui-tool-cert-name = Inspector de certificados SSL/TLS
-ui-tool-cert-description = Inspeccionar cadenas de certificados SSL/TLS, SAN, validez y propiedades criptograficas
+ui-tool-cert-description = Inspeccionar cadenas de certificados SSL/TLS, SAN, validez y propiedades criptográficas
 ui-tool-cert-host = Host
 ui-tool-cert-host-watermark = example.com o IP
 ui-tool-cert-ports = Puertos
 ui-tool-cert-ports-watermark = 443, 8443
 ui-tool-cert-inspect = Inspeccionar
-ui-tool-cert-inspecting = Inspeccionando...
 ui-tool-cert-copy-details = Copiar detalles
 ui-tool-cert-copy-csv = Copiar CSV
 ui-tool-cert-subject = Sujeto
 ui-tool-cert-issuer = Emisor
-ui-tool-cert-valid-from = Valido desde
-ui-tool-cert-valid-to = Valido hasta
-ui-tool-cert-days-remaining = Dias restantes
-ui-tool-cert-tls-version = Version TLS
-ui-tool-cert-key-size = Tamano de clave
-ui-tool-cert-sans = SANs
+ui-tool-cert-valid-from = Válido desde
+ui-tool-cert-valid-to = Válido hasta
+ui-tool-cert-days-remaining = Días restantes
+ui-tool-cert-tls-version = Versión TLS
+ui-tool-cert-key-size = Tamaño de clave
+ui-tool-cert-hostname-match = Coincidencia del nombre de host
+ui-tool-cert-sans = SAN
 ui-tool-cert-match-yes = Coincide
-ui-tool-cert-match-no = Discordancia
-ui-tool-cert-status-valid = Valido
+ui-tool-cert-match-no = No coincide
+ui-tool-cert-status-valid = Válido
 ui-tool-cert-status-warning = Caduca pronto
 ui-tool-cert-status-expired = Caducado
-ui-tool-cert-error-host-required = Por favor introduzca un nombre de host de destino.
+ui-tool-cert-error-host-required = Introduzca el nombre del host de destino.
 
 ## Traceroute TCP
 ui-tool-tcptrace-name = Traceroute TCP
-ui-tool-tcptrace-description = Descubrir saltos de red y latencia a lo largo de la ruta TCP hacia un destino
+ui-tool-tcptrace-description = Descubrir los saltos de red y su latencia en la ruta hacia un destino
 ui-tool-tcptrace-host = Host de destino
 ui-tool-tcptrace-host-watermark = example.com o IP
-ui-tool-tcptrace-max-hops = Saltos max
-ui-tool-tcptrace-start = Iniciar traza
+ui-tool-tcptrace-max-hops = Saltos máximos
+ui-tool-tcptrace-start = Iniciar el trazado
 ui-tool-tcptrace-stop = Detener
 ui-tool-tcptrace-copy-csv = Exportar CSV
 ui-tool-tcptrace-col-hop = Salto
-ui-tool-tcptrace-col-address = Direccion
+ui-tool-tcptrace-col-address = Dirección
 ui-tool-tcptrace-col-hostname = Nombre de host
 ui-tool-tcptrace-col-latency = Latencia
 ui-tool-tcptrace-col-status = Estado
 ui-tool-tcptrace-status-reply = Respuesta
 ui-tool-tcptrace-status-timeout = Tiempo agotado
 ui-tool-tcptrace-status-destination = Destino
-ui-tool-tcptrace-error-host-required = Por favor introduzca un host de destino.
+ui-tool-tcptrace-error-host-required = Introduzca un host de destino.
 
 ## Explorador MIB SNMP
 ui-tool-snmpwalk-name = Explorador MIB SNMP
-ui-tool-snmpwalk-description = Consultar y recorrer arboles MIB SNMPv2c para metricas de sistema e interfaces
+ui-tool-snmpwalk-description = Consultar y recorrer árboles MIB SNMPv2c para métricas de sistema y de red
 ui-tool-snmpwalk-host = Host de destino
 ui-tool-snmpwalk-host-watermark = 192.168.1.1
 ui-tool-snmpwalk-community = Comunidad
-ui-tool-snmpwalk-oid = OID raiz
-ui-tool-snmpwalk-start = Iniciar recorrido
+ui-tool-snmpwalk-oid = OID raíz
+ui-tool-snmpwalk-start = Iniciar el recorrido
 ui-tool-snmpwalk-stop = Detener
 ui-tool-snmpwalk-copy-csv = Exportar CSV
 ui-tool-snmpwalk-col-oid = OID
 ui-tool-snmpwalk-col-name = Nombre
 ui-tool-snmpwalk-col-type = Tipo
 ui-tool-snmpwalk-col-value = Valor
-ui-tool-snmpwalk-error-host-required = Por favor introduzca un host SNMP de destino.
+ui-tool-snmpwalk-error-host-required = Introduzca el host SNMP de destino.
 
 ## Monitor de tabla ARP
 ui-tool-arpmon-name = Monitor de tabla ARP
-ui-tool-arpmon-description = Inspeccionar cache ARP local, resolver fabricantes y detectar anomalias de red
-ui-tool-arpmon-scan = Escanear ahora
-ui-tool-arpmon-scanning = Escaneando...
+ui-tool-arpmon-description = Inspeccionar la caché ARP local, identificar fabricantes y detectar anomalías de red
+ui-tool-arpmon-scan = Analizar ahora
+ui-tool-arpmon-scanning = Analizando...
 ui-tool-arpmon-copy-csv = Exportar CSV
-ui-tool-arpmon-col-ip = Direccion IP
-ui-tool-arpmon-col-mac = Direccion MAC
+ui-tool-arpmon-col-ip = Dirección IP
+ui-tool-arpmon-col-mac = Dirección MAC
 ui-tool-arpmon-col-vendor = Fabricante
 ui-tool-arpmon-col-status = Estado
-ui-tool-arpmon-col-first-seen = Primera deteccion
-ui-tool-arpmon-col-last-seen = Ultima deteccion
+ui-tool-arpmon-col-first-seen = Primera detección
+ui-tool-arpmon-col-last-seen = Última detección
 ui-tool-arpmon-status-new = Nuevo
 ui-tool-arpmon-status-known = Conocido
 ui-tool-arpmon-status-changed = Modificado
 ui-tool-arpmon-status-conflict = Conflicto
 
-## Probador de salida de firewall
-ui-tool-fwtest-name = Probador de salida de firewall
-ui-tool-fwtest-description = Probar conectividad saliente a traves de puertos de firewall con medicion de latencia
+## Probador de salida del cortafuegos
+ui-tool-fwtest-name = Probador de salida del cortafuegos
+ui-tool-fwtest-description = Probar la conectividad saliente a través de los puertos del cortafuegos, con medición de latencia
 ui-tool-fwtest-hosts = Hosts de destino
-ui-tool-fwtest-hosts-watermark = Un host por linea (p. ej. 1.1.1.1)
-ui-tool-fwtest-ports = Puertos de prueba
+ui-tool-fwtest-hosts-watermark = Hosts separados por comas o espacios (p. ej. 1.1.1.1, 8.8.8.8)
+ui-tool-fwtest-ports = Puertos a probar
 ui-tool-fwtest-ports-watermark = 80,443,8080
-ui-tool-fwtest-start = Probar salida
+ui-tool-fwtest-start = Probar la salida
 ui-tool-fwtest-stop = Detener
-ui-tool-fwtest-copy-csv = Exportar matriz CSV
-ui-tool-fwtest-total = Sondas totales
+ui-tool-fwtest-copy-csv = Exportar la matriz CSV
+ui-tool-fwtest-total = Sondeos en total
 ui-tool-fwtest-open = Abierto
 ui-tool-fwtest-closed = Cerrado
 ui-tool-fwtest-timeout = Filtrado
-ui-tool-fwtest-error-hosts-required = Por favor introduzca al menos un host de destino.
+ui-tool-fwtest-error-hosts-required = Introduzca al menos un host de destino.
 
-## Cartografia de red
-ui-tool-netmap-name = Cartografia de red
-ui-tool-netmap-description = Descubrir hosts activos en la subred, servicios abiertos y clasificar roles de dispositivos
-ui-tool-netmap-subnet = CIDR de subred
+## Cartografía de red
+ui-tool-netmap-name = Cartografía de red
+ui-tool-netmap-description = Descubrir los hosts activos de una subred y sus servicios abiertos, y clasificar sus roles
+ui-tool-netmap-subnet = Subred (CIDR)
 ui-tool-netmap-subnet-watermark = 192.168.1.0/24
-ui-tool-netmap-discover = Descubrir red
-ui-tool-netmap-discovering = Descubriendo...
+ui-tool-netmap-discover = Descubrir la red
 ui-tool-netmap-copy-csv = Exportar CSV
-ui-tool-netmap-hosts-scanned = Escaneados
+ui-tool-netmap-hosts-scanned = Hosts analizados
 ui-tool-netmap-hosts-up = Hosts activos
 ui-tool-netmap-ports-open = Puertos abiertos
-ui-tool-netmap-col-ip = Direccion IP
+ui-tool-netmap-col-ip = Dirección IP
+ui-tool-netmap-col-hostname = Nombre de host
+ui-tool-netmap-col-mac = MAC
+ui-tool-netmap-col-vendor = Fabricante
 ui-tool-netmap-col-role = Rol
 ui-tool-netmap-col-ports = Puertos abiertos
 ui-tool-netmap-col-latency = Latencia
-ui-tool-netmap-error-cidr-required = Por favor introduzca un CIDR de subred valido (p. ej. 192.168.1.0/24).
+ui-tool-netmap-error-cidr-required = Introduzca una subred válida en notación CIDR (p. ej. 192.168.1.0/24).
 
 ## Puertos abiertos
 ui-tool-openports-name = Puertos abiertos
@@ -4971,6 +4973,110 @@ ui-tool-services-error-action-failed-detail = La acción sobre el servicio fall�
 ui-tool-services-error-list-failed = No se pudieron cargar los servicios: { $error }
 ui-tool-services-exit-code-none = ninguno
 
+## Herramientas de red, tercer lote: seguimiento de la revisión
+ui-tool-cert-stop = Detener
+ui-tool-cert-col-port = Puerto
+ui-tool-cert-sig-alg = Algoritmo de firma
+ui-tool-cert-serial = Número de serie
+ui-tool-cert-sha256 = Huella SHA-256
+ui-tool-cert-chain = Cadena
+ui-tool-cert-chain-element = { $subject } (caduca el { $expiry })
+ui-tool-cert-port-title = Puerto { $port }: { $name }
+ui-tool-cert-port-header = === Puerto { $port } ===
+ui-tool-cert-detail-host = Host
+ui-tool-cert-key-bits = { $bits } bits
+ui-tool-cert-days-left =
+    { $count ->
+        [one] queda { $count } día
+       *[other] quedan { $count } días
+    }
+ui-tool-cert-days-expired =
+    { $count ->
+        [one] caducado hace { $count } día
+       *[other] caducado hace { $count } días
+    }
+ui-tool-cert-progress = Puertos sondeados: { $done } de { $total }
+ui-tool-cert-scan-found =
+    { $certificates ->
+        [one] { $certificates } certificado encontrado
+       *[other] { $certificates } certificados encontrados
+    } en { $ports ->
+        [one] { $ports } puerto sondeado.
+       *[other] { $ports } puertos sondeados.
+    }
+ui-tool-cert-stopped = Inspección detenida: { $found }
+ui-tool-cert-error-invalid-host = Introduzca una dirección IP o un nombre de host.
+ui-tool-cert-error-invalid-port = Introduzca puertos de 1 a 65535, separados por comas, o rangos como 8000-8010.
+ui-tool-cert-error-too-many-ports = { $count } puertos introducidos: se inspeccionan { $max } como máximo a la vez.
+ui-tool-cert-error-connection = La conexión con { $host }:{ $port } ha fallado: { $detail }
+ui-tool-cert-error-handshake = La negociación TLS con { $host }:{ $port } ha fallado: { $detail }
+ui-tool-cert-error-no-certificate = El servidor no ha presentado ningún certificado.
+ui-tool-cert-error-unreadable = El certificado presentado no se puede leer.
+ui-tool-cert-error-timeout = El servidor no ha respondido a tiempo.
+ui-tool-tcptrace-error-invalid-host = Introduzca una dirección IP o un nombre de host.
+ui-tool-tcptrace-error-not-found = No se encuentra el programa traceroute del sistema.
+ui-tool-tcptrace-error-failed = El trazado no se ha podido ejecutar.
+ui-tool-tcptrace-stopped = Trazado detenido.
+ui-tool-tcptrace-timed-out = El trazado ha tardado demasiado y se ha interrumpido.
+ui-tool-tcptrace-no-hops = Ningún salto ha respondido.
+ui-tool-tcptrace-hop-count =
+    { $count ->
+        [one] { $count } salto
+       *[other] { $count } saltos
+    }
+ui-tool-snmpwalk-community-watermark = Vacía: { $community }
+ui-tool-snmpwalk-stopped = Recorrido detenido.
+ui-tool-snmpwalk-agent-silent = El agente ha dejado de responder: se conservan las entradas leídas.
+ui-tool-snmpwalk-entry-count =
+    { $count ->
+        [one] { $count } entrada
+       *[other] { $count } entradas
+    }
+ui-tool-snmpwalk-error-invalid-host = Introduzca una dirección IP o un nombre de host.
+ui-tool-snmpwalk-error-invalid-oid = Introduzca un OID numérico como 1.3.6.1.2.1.1.
+ui-tool-snmpwalk-error-community-too-long = La comunidad está limitada a { $max } bytes.
+ui-tool-snmpwalk-error-unresolved = No se ha podido resolver el nombre de host.
+ui-tool-snmpwalk-error-socket = No se ha podido enviar la solicitud SNMP.
+ui-tool-snmpwalk-error-no-response = El agente no ha respondido: compruebe el host, la comunidad y que SNMP v2c esté activado.
+ui-tool-snmpwalk-error-failed = El recorrido no se ha podido ejecutar.
+ui-tool-arpmon-error-read = No se ha podido leer la tabla ARP.
+ui-tool-arpmon-vendor-unknown = Desconocido
+ui-tool-fwtest-stopped = Prueba detenida.
+ui-tool-fwtest-error-invalid-host = Ninguno de los hosts introducidos es una dirección IP o un nombre de host.
+ui-tool-fwtest-error-no-ports = Introduzca al menos un puerto de 1 a 65535.
+ui-tool-fwtest-error-failed = La prueba no se ha podido ejecutar.
+ui-tool-fwtest-limited = Los hosts no válidos se descartan, y una prueba sondea como máximo { $max_hosts } hosts y { $max_ports } puertos.
+ui-tool-fwtest-progress = Sondeos realizados: { $done } de { $total }
+ui-tool-fwtest-unresolved = No resuelto
+ui-tool-fwtest-unresolved-count =
+    { $count ->
+        [one] { $count } sondeo no ha podido resolver su nombre de host.
+       *[other] { $count } sondeos no han podido resolver su nombre de host.
+    }
+ui-tool-fwtest-col-host = Host
+ui-tool-fwtest-col-port = Puerto
+ui-tool-fwtest-col-status = Estado
+ui-tool-fwtest-col-latency = Latencia
+ui-tool-fwtest-latency-ms = { $ms } ms
+ui-tool-fwtest-cell-open-ms = { $label } ({ $ms } ms)
+ui-tool-fwtest-not-tested = No probado
+ui-tool-netmap-stop = Detener
+ui-tool-netmap-stopped = Descubrimiento detenido.
+ui-tool-netmap-error-failed = El descubrimiento no se ha podido ejecutar.
+ui-tool-netmap-error-prefix = Introduzca una subred de /{ $min } a /{ $max }.
+ui-tool-netmap-warning-large = { $count } hosts por sondear: puede tardar mucho tiempo.
+ui-tool-netmap-scan-anyway = Analizar de todos modos
+ui-tool-netmap-progress = Hosts sondeados: { $done } de { $total }
+ui-tool-netmap-latency-ms = { $ms } ms
+ui-tool-netmap-role-directory = Controlador de dominio / directorio
+ui-tool-netmap-role-database = Servidor de bases de datos
+ui-tool-netmap-role-mail = Servidor de correo
+ui-tool-netmap-role-file = Servidor de archivos / almacenamiento
+ui-tool-netmap-role-web = Servidor web
+ui-tool-netmap-role-remote = Host de administración remota
+ui-tool-netmap-role-appliance = Pasarela / equipo de red
+ui-tool-netmap-role-active = Nodo activo
+ui-tool-netmap-role-no-ports = Host (ningún puerto abierto)
 ## Visor de registros
 ui-tool-logview-name = Visor de registros
 ui-tool-logview-description = Ver un archivo de registro, filtrar sus líneas y seguir lo que se le añade

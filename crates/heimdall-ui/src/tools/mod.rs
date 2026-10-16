@@ -61,6 +61,7 @@ mod log_viewer_tool;
 mod network_calculator_tool;
 mod network_cartography_tool;
 mod network_interfaces_tool;
+mod network_run;
 mod notes_tool;
 mod open_ports_tool;
 mod password_tool;
