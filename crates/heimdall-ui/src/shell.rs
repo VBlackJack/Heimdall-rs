@@ -5910,8 +5910,9 @@ impl Shell {
                 self.apply_font_size()
             }
             Message::FontSizeApply => self.apply_font_size(),
-            // As the font size, each as its C# field (`MainWindow.xaml:3246`, the
-            // `CommitNumericText` of `SettingsViewModel.cs:4260`).
+            // As the font size, each as its C# field (`MainWindow.xaml:3246`, the RDP
+            // keep-alive's at 3856, the `CommitNumericText` of `SettingsViewModel.cs:4260`):
+            // typed toward 5000 ms, "5", "50" and "500" are under its range and stay typed.
             Message::SessionFieldEdited(field, typed) => {
                 self.session_typed[field.index()] = Some(typed);
                 self.apply_session_field(field)
