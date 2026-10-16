@@ -22,7 +22,7 @@ use iced::widget::{column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 use heimdall_core::tools::open_ports::{self, IDLE_PID, PortEntry};
-use heimdall_core::tools::system_listing::ListingError;
+use heimdall_core::tools::system_program::ProgramError;
 
 use super::system_tables::{listing_error_text, read_time_now};
 use super::{CopySlot, ToolPane};
@@ -40,7 +40,7 @@ pub enum OpenPortsMessage {
     /// Refresh the socket list now.
     Refresh,
     /// Refresh finished with the sockets, or why they could not be read.
-    Finished(Result<Vec<PortEntry>, ListingError>),
+    Finished(Result<Vec<PortEntry>, ProgramError>),
     /// Filter query text changed.
     FilterChanged(String),
     /// Copy CSV export to clipboard.
@@ -79,7 +79,7 @@ impl OpenPortsPane {
                         tokio::task::spawn_blocking(open_ports::run_open_ports)
                             .await
                             .unwrap_or_else(|error| {
-                                Err(ListingError::NotStarted(error.to_string()))
+                                Err(ProgramError::NotStarted(error.to_string()))
                             })
                     },
                     move |res| {
@@ -397,7 +397,7 @@ mod tests {
         );
         assert_eq!(pane.ports.len(), 1);
         assert!(pane.last_time.is_some());
-        let _ = pane.update(tab, OpenPortsMessage::Finished(Err(ListingError::TimedOut)));
+        let _ = pane.update(tab, OpenPortsMessage::Finished(Err(ProgramError::TimedOut)));
         assert_eq!(pane.error, Some(fl!("ui-tool-systable-error-timeout")));
         assert!(pane.ports.is_empty());
         assert_eq!(pane.last_time, None);

@@ -30,7 +30,8 @@
 
 use std::cmp::Reverse;
 
-use super::system_listing::{self, ListingError};
+use super::system_listing;
+use super::system_program::{self, ProgramError};
 
 /// `netsh` inside the system folder.
 #[cfg(windows)]
@@ -337,16 +338,16 @@ pub fn parse_nmcli(output: &str) -> Vec<WifiEntry> {
 /// The system has no way to scan them, or the scan could not be started, did not end in
 /// time, or failed (on Windows, `netsh`'s message: the WLAN service stopped, no Wi-Fi
 /// adapter, the location permission refused).
-pub fn run_wifi_command() -> Result<Vec<WifiEntry>, ListingError> {
+pub fn run_wifi_command() -> Result<Vec<WifiEntry>, ProgramError> {
     #[cfg(windows)]
     {
         let netsh =
-            crate::paths::system_program(NETSH_PROGRAM).ok_or(ListingError::NotAvailable)?;
-        let folder = crate::paths::system_dir().ok_or(ListingError::NotAvailable)?;
+            crate::paths::system_program(NETSH_PROGRAM).ok_or(ProgramError::NotAvailable)?;
+        let folder = crate::paths::system_dir().ok_or(ProgramError::NotAvailable)?;
         let mut command = std::process::Command::new(netsh);
         command.args(NETSH_ARGUMENTS).current_dir(folder);
-        let finished = system_listing::run(command, system_listing::WIFI_TIME_LIMIT)?;
-        let output = system_listing::decode_text(&finished.stdout);
+        let finished = system_program::run(command, system_listing::WIFI_TIME_LIMIT)?;
+        let output = system_program::decode_text(&finished.stdout);
         if !finished.success || !is_netsh_listing(&output) {
             return Err(finished.failure());
         }
@@ -355,14 +356,14 @@ pub fn run_wifi_command() -> Result<Vec<WifiEntry>, ListingError> {
     #[cfg(target_os = "linux")]
     {
         let nmcli =
-            system_listing::find_program(&NMCLI_CANDIDATES).ok_or(ListingError::NotAvailable)?;
+            system_program::find_program(&NMCLI_CANDIDATES).ok_or(ProgramError::NotAvailable)?;
         let output =
-            system_listing::run_linux(&nmcli, &NMCLI_ARGUMENTS, system_listing::WIFI_TIME_LIMIT)?;
+            system_program::run_linux(&nmcli, &NMCLI_ARGUMENTS, system_listing::WIFI_TIME_LIMIT)?;
         Ok(parse_nmcli(&output))
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
-        Err(ListingError::NotAvailable)
+        Err(ProgramError::NotAvailable)
     }
 }
 
@@ -529,7 +530,7 @@ SSID 2\u{a0}: =cmd|' /C calc'!A0
     fn a_french_listing_written_in_cp850_reads_once_decoded() {
         // "réseau" and the no-break space as a French console writes them: not UTF-8.
         let bytes = b"\r\nNom de l'interface\xff: Wi-Fi\r\n\r\nSSID 1\xff: Caf\x82\r\n    Type de r\x82seau          : Infrastructure\r\n    Authentification        : WPA2-Personnel\r\n    Chiffrement             : CCMP\r\n    BSSID 1                 : 10:20:30:40:50:60\r\n         Signal             : 70%\r\n         Canal              : 11\r\n";
-        let text = system_listing::decode_text(bytes);
+        let text = system_program::decode_text(bytes);
         let list = parse_netsh(&text);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].bssid, "10:20:30:40:50:60");

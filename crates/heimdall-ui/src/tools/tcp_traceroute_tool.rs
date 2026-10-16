@@ -24,7 +24,7 @@ use heimdall_app::TabId;
 use iced::widget::{column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
-use heimdall_core::tools::net_command::RunEnd;
+use heimdall_core::tools::system_program::{ProgramError, RunEnd};
 use heimdall_core::tools::tcp_traceroute::{
     self, DEFAULT_MAX_HOPS, HopStatus, TraceHopResult, TraceInputError,
 };
@@ -50,7 +50,7 @@ pub enum TcpTracerouteMessage {
     /// A hop of run `.0` was printed.
     Hop(u64, TraceHopResult),
     /// Run `.0` ended as `.1` says; `None` when its work failed.
-    Ended(u64, Option<RunEnd>),
+    Ended(u64, Option<Result<RunEnd, ProgramError>>),
     /// Copy CSV export.
     CopyCsv,
 }
@@ -172,17 +172,20 @@ impl TcpTraceroutePane {
                     return Step::None;
                 }
                 match end {
-                    Some(RunEnd::Exited) if self.hops.is_empty() => {
+                    Some(Ok(RunEnd::Exited)) if self.hops.is_empty() => {
                         self.notice = Some(fl!("ui-tool-tcptrace-no-hops"));
                     }
-                    Some(RunEnd::Exited | RunEnd::Stopped) => {}
-                    Some(RunEnd::TimedOut) => {
+                    Some(Ok(RunEnd::Exited | RunEnd::Stopped)) => {}
+                    Some(Err(ProgramError::TimedOut)) => {
                         self.notice = Some(fl!("ui-tool-tcptrace-timed-out"));
                     }
-                    Some(RunEnd::NotStarted) => {
+                    Some(Err(ProgramError::NotAvailable | ProgramError::NotStarted(_))) => {
                         self.error = Some(fl!("ui-tool-tcptrace-error-not-found"));
                     }
-                    None => self.error = Some(fl!("ui-tool-tcptrace-error-failed")),
+                    // A traceroute is read whatever its exit code: it never fails otherwise.
+                    Some(Err(ProgramError::Failed { .. } | ProgramError::Unreadable(_))) | None => {
+                        self.error = Some(fl!("ui-tool-tcptrace-error-failed"));
+                    }
                 }
                 Step::None
             }
@@ -425,7 +428,7 @@ mod tests {
             matches!(pane.apply(TcpTracerouteMessage::Start), Step::None),
             "one run at a time"
         );
-        pane.apply(TcpTracerouteMessage::Ended(run, Some(RunEnd::Exited)));
+        pane.apply(TcpTracerouteMessage::Ended(run, Some(Ok(RunEnd::Exited))));
         assert!(!pane.run.running());
         let Step::Copy(CopySlot::TcpTraceCsv, csv) = pane.apply(TcpTracerouteMessage::CopyCsv)
         else {
@@ -446,7 +449,7 @@ mod tests {
         );
         assert!(!pane.run.running());
         pane.apply(TcpTracerouteMessage::Hop(run, hop(2)));
-        pane.apply(TcpTracerouteMessage::Ended(run, Some(RunEnd::Stopped)));
+        pane.apply(TcpTracerouteMessage::Ended(run, Some(Ok(RunEnd::Stopped))));
         assert_eq!(pane.hops.len(), 1);
         assert!(pane.notice.is_some());
         // A new run: the old one's messages never reach it.
@@ -466,10 +469,22 @@ mod tests {
         ));
         assert!(pane.error.is_some());
         let (run, _) = started(&mut pane);
-        pane.apply(TcpTracerouteMessage::Ended(run, Some(RunEnd::NotStarted)));
+        pane.apply(TcpTracerouteMessage::Ended(
+            run,
+            Some(Err(ProgramError::NotStarted("x".to_owned()))),
+        ));
         assert!(pane.error.is_some());
         let (run, _) = started(&mut pane);
-        pane.apply(TcpTracerouteMessage::Ended(run, Some(RunEnd::TimedOut)));
+        pane.apply(TcpTracerouteMessage::Ended(
+            run,
+            Some(Err(ProgramError::NotAvailable)),
+        ));
+        assert!(pane.error.is_some());
+        let (run, _) = started(&mut pane);
+        pane.apply(TcpTracerouteMessage::Ended(
+            run,
+            Some(Err(ProgramError::TimedOut)),
+        ));
         assert!(pane.notice.is_some());
     }
 }
