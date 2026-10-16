@@ -20,7 +20,7 @@
 //! status, next run, last run and last result. Either list copied as tab-separated rows.
 
 use heimdall_app::TabId;
-use heimdall_core::tools::cron_builder::Minute;
+use heimdall_core::tools::cron_builder::{CRONTAB_FIELD_RANGES, Minute};
 use heimdall_core::tools::cron_job::{
     self, CrontabEntry, NEXT_RUNS_COUNT, ScheduledTask, TasksError,
 };
@@ -37,6 +37,18 @@ use crate::tokens::{font_size, spacing};
 
 /// What is shown for a schedule with no run, as the C# `"-"`.
 const NO_RUN: &str = "-";
+
+/// What `entry`'s schedule does, or why it is not valid: the C# lists no run for it and
+/// describes it as written, saying nothing of what is wrong.
+fn description(entry: &CrontabEntry) -> String {
+    match entry.problem() {
+        Some(problem) => fl!(
+            "ui-tool-cronjob-invalid-schedule",
+            reason = super::crontab_tool::problem_text(&problem, &CRONTAB_FIELD_RANGES)
+        ),
+        None => super::crontab_tool::describe(&entry.description()),
+    }
+}
 
 /// The height of the crontab box, as the C# paste box.
 const PASTE_HEIGHT: f32 = 140.0;
@@ -257,7 +269,7 @@ impl CronJobPane {
                         &entry.schedule(),
                         &entry.command,
                         &self.next_run(entry),
-                        &super::crontab_tool::describe(&entry.description()),
+                        &description(entry),
                     ])
                 })
                 .collect(),
@@ -362,7 +374,7 @@ impl CronJobPane {
                         entry.schedule(),
                         entry.command.clone(),
                         self.next_run(entry),
-                        super::crontab_tool::describe(&entry.description()),
+                        description(entry),
                     ],
                     &CRON_COLUMNS,
                     false,
@@ -562,6 +574,41 @@ mod tests {
         let copied = pane.clipboard_text();
         assert!(copied.starts_with("*/5 * * * *\t/bin/check\t2026-10-15 12:10 (Thu)\t"));
         assert_eq!(copied.lines().count(), 2);
+    }
+
+    #[test]
+    fn a_schedule_out_of_bounds_is_said_and_has_no_run() {
+        let mut pane = CronJobPane::with_clock(thursday_noon);
+        pasted(
+            &mut pane,
+            "0-2147483647 * * * * echo\n0 9 1-2-3 * * b\n0 0 * * 7 c\n",
+        );
+        assert_eq!(pane.entries.len(), 3);
+        assert_eq!(pane.next_run(&pane.entries[0]), NO_RUN);
+        assert_eq!(
+            description(&pane.entries[0]),
+            fl!(
+                "ui-tool-cronjob-invalid-schedule",
+                reason = fl!(
+                    "ui-tool-crontab-error-out-of-range",
+                    field = fl!("ui-tool-crontab-minute"),
+                    min = 0,
+                    max = 59
+                )
+            )
+        );
+        assert_eq!(
+            description(&pane.entries[1]),
+            fl!(
+                "ui-tool-cronjob-invalid-schedule",
+                reason = fl!(
+                    "ui-tool-crontab-error-malformed-field",
+                    field = fl!("ui-tool-crontab-day-of-month"),
+                    value = "1-2-3"
+                )
+            )
+        );
+        assert_eq!(pane.next_run(&pane.entries[2]), "2026-10-18 00:00 (Sun)");
     }
 
     #[test]

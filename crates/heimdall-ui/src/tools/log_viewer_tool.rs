@@ -17,7 +17,9 @@
 //! The log viewer, as the C# `LogViewerView` (`Views/Tools/LogViewerView.xaml.cs`): a file
 //! opened by its path or picked, its newest 10,000 lines shown in the encoding chosen, a
 //! filter applied on demand with its matches marked, and the file followed every 500 ms
-//! while Tail is on, read again from its start when it got shorter.
+//! while Tail is on, read again from its start when it got shorter or another file took its
+//! place. Unlike the C#, a control or bidirectional character of a line is shown written
+//! out, so a log cannot make its lines read otherwise than they are.
 
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -27,7 +29,8 @@ use std::time::SystemTime;
 use heimdall_app::TabId;
 use heimdall_core::tools::date_time::Instant;
 use heimdall_core::tools::log_viewer::{
-    self, FilterSpec, LogChunk, LogEncoding, LogFilter, MAX_DISPLAY_LINES, Severity,
+    self, FileIdentity, FilterSpec, LogChunk, LogEncoding, LogFilter, LogPosition,
+    MAX_DISPLAY_LINES, Severity,
 };
 use iced::advanced::text::highlighter::{self, Highlighter};
 use iced::widget::text_editor::{Action, Content, Motion};
@@ -99,8 +102,8 @@ pub enum Outcome {
     Copy(String),
     /// The open dialog.
     Browse,
-    /// Read `.0` of `.1` in `.2` from byte `.3`.
-    Read(u64, PathBuf, LogEncoding, u64),
+    /// Read `.0` of `.1` in `.2` from `.3`.
+    Read(u64, PathBuf, LogEncoding, LogPosition),
 }
 
 impl Outcome {
@@ -109,10 +112,10 @@ impl Outcome {
         match self {
             Self::Done | Self::Copy(_) => Task::none(),
             Self::Browse => pick_file(tab, main),
-            Self::Read(read, path, encoding, offset) => Task::perform(
+            Self::Read(read, path, encoding, position) => Task::perform(
                 async move {
                     tokio::task::spawn_blocking(move || {
-                        log_viewer::read_from(&path, encoding, offset).map_err(|error| {
+                        log_viewer::read_from(&path, encoding, &position).map_err(|error| {
                             if error.kind() == std::io::ErrorKind::NotFound {
                                 ReadError::NotFound
                             } else {
@@ -150,6 +153,8 @@ struct OpenFile {
     /// The encoding read with: the one chosen, or the one its byte order mark names.
     encoding: LogEncoding,
     offset: u64,
+    /// The file read, to tell it from another that takes its place; `None` before a read.
+    identity: Option<FileIdentity>,
     /// The last line shown has no end yet: the next read brings it again, whole.
     open_last: bool,
     len: u64,
@@ -277,6 +282,7 @@ impl LogViewerPane {
             path: path.clone(),
             encoding: self.encoding,
             offset: 0,
+            identity: None,
             open_last: false,
             len: 0,
             modified: None,
@@ -288,7 +294,7 @@ impl LogViewerPane {
         self.reads += 1;
         self.reading = Some(self.reads);
         self.refresh_view();
-        Outcome::Read(self.reads, path, self.encoding, 0)
+        Outcome::Read(self.reads, path, self.encoding, LogPosition::default())
     }
 
     /// The next read of the file followed, unless one is running, as the C# timer's tick.
@@ -301,7 +307,15 @@ impl LogViewerPane {
         };
         self.reads += 1;
         self.reading = Some(self.reads);
-        Outcome::Read(self.reads, file.path.clone(), file.encoding, file.offset)
+        Outcome::Read(
+            self.reads,
+            file.path.clone(),
+            file.encoding,
+            LogPosition {
+                offset: file.offset,
+                identity: file.identity.clone(),
+            },
+        )
     }
 
     /// What read `read` brought: its lines added, the oldest let go past the limit.
@@ -338,11 +352,20 @@ impl LogViewerPane {
         let changed = chunk.restarted || !chunk.lines.is_empty() || file.open_last;
         file.encoding = chunk.encoding;
         file.offset = chunk.next_offset;
+        file.identity = Some(chunk.identity);
         file.open_last = chunk.open_last;
         file.len = chunk.file_len;
         file.modified = chunk.modified;
         self.total += chunk.read;
-        self.lines.extend(chunk.lines);
+        // Each line as it shows, its controls and bidirectional characters written out:
+        // the filter, its marks and the copy all see what is shown.
+        self.lines.extend(
+            chunk
+                .lines
+                .iter()
+                .map(String::as_str)
+                .map(heimdall_app::visible_line),
+        );
         while self.lines.len() > MAX_DISPLAY_LINES {
             self.lines.pop_front();
         }
@@ -734,13 +757,14 @@ mod tests {
             encoding: LogEncoding::Utf8,
             file_len: next_offset,
             modified: None,
+            identity: FileIdentity::default(),
         }
     }
 
     fn opened(pane: &mut LogViewerPane) -> u64 {
         pane.update(LogViewerMessage::Path("app.log".to_owned()));
         match pane.update(LogViewerMessage::Open) {
-            Outcome::Read(read, _, _, 0) => read,
+            Outcome::Read(read, _, _, LogPosition { offset: 0, .. }) => read,
             other => panic!("a read from the start, got {other:?}"),
         }
     }
@@ -754,9 +778,19 @@ mod tests {
             Ok(chunk(&["one", "tw"], 2, 4, true)),
         ));
         assert_eq!(pane.lines(), ["one", "tw"]);
-        let Outcome::Read(next, _, _, 4) = pane.update(LogViewerMessage::Tail(true)) else {
+        let Outcome::Read(
+            next,
+            _,
+            _,
+            LogPosition {
+                offset: 4,
+                identity,
+            },
+        ) = pane.update(LogViewerMessage::Tail(true))
+        else {
             panic!("the next read starts at the open line");
         };
+        assert!(identity.is_some(), "of the file read");
         assert!(
             matches!(pane.update(LogViewerMessage::TailTick), Outcome::Done),
             "one read at a time"
@@ -795,6 +829,27 @@ mod tests {
         pane.update(LogViewerMessage::Read(next, Ok(restarted)));
         assert_eq!(pane.lines(), ["new"]);
         assert_eq!(pane.total, 1);
+    }
+
+    #[test]
+    fn controls_and_bidi_characters_of_a_line_are_shown_written_out() {
+        let mut pane = LogViewerPane::default();
+        let read = opened(&mut pane);
+        pane.update(LogViewerMessage::Read(
+            read,
+            Ok(chunk(
+                &["a\tb", "user\u{202E}gnp.exe", "x\u{1b}[2Jy\rz"],
+                3,
+                30,
+                false,
+            )),
+        ));
+        assert_eq!(
+            pane.lines(),
+            ["a\tb", r"user\u{202E}gnp.exe", r"x\u{001B}[2Jy\u{000D}z"]
+        );
+        assert_eq!(pane.view.line_count(), 3, "the line breaks are kept");
+        assert!(!pane.shown_text().contains(['\u{202E}', '\u{1b}', '\r']));
     }
 
     #[test]

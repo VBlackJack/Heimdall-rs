@@ -49,7 +49,7 @@ pub async fn connect_time(
 mod tests {
     use std::net::Ipv4Addr;
 
-    use tokio::net::TcpListener;
+    use tokio::net::{TcpListener, TcpSocket};
 
     use super::*;
 
@@ -63,8 +63,15 @@ mod tests {
         let elapsed = connect_time(&loopback, port, Duration::from_secs(5)).await;
         assert!(elapsed.is_ok(), "{elapsed:?}");
         drop(listener);
+        // The port stays taken by a socket bound but not listening, so a parallel test
+        // cannot listen on it in between: the connection is refused, never accepted.
+        let socket = TcpSocket::new_v4().expect("socket");
+        socket
+            .bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+            .expect("rebind the closed port");
         // Windows tries a refused connection again for about two seconds.
         let refused = connect_time(&loopback, port, Duration::from_secs(5)).await;
         assert!(refused.is_err(), "{refused:?}");
+        drop(socket);
     }
 }

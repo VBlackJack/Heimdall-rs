@@ -17,9 +17,16 @@
 //! Pure traceroute engine matching the C# `Heimdall.Core.Network.TracerouteEngine`.
 //!
 //! Provides input validation, hop probe aggregation, line output parsing for both
-//! Windows (`tracert`) and Linux (`traceroute`), and clipboard/CSV export formatting.
+//! Windows (`tracert`) and Linux (`traceroute`), the system program run by its whole path
+//! under a deadline, and CSV export formatting.
 
-use std::fmt;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
+
+use super::banner_grab::clean_banner;
+use super::csv_cell::quoted;
+use super::net_command::{self, RunEnd};
+use super::net_host::checked_host;
 
 /// Default maximum number of hops.
 pub const DEFAULT_MAX_HOPS: usize = 30;
@@ -29,6 +36,17 @@ pub const MIN_MAX_HOPS: usize = 1;
 pub const MAX_MAX_HOPS: usize = 128;
 /// Default timeout per probe in milliseconds.
 pub const DEFAULT_PING_TIMEOUT_MS: u64 = 3000;
+/// How long `tracert` and `traceroute` wait for each probe's answer, in milliseconds.
+pub const PROBE_WAIT_MS: u64 = 1000;
+/// Probes sent to each hop, as both programs send them by default.
+pub const PROBES_PER_HOP: u64 = 3;
+/// Time granted beyond the probes' own waits for the program to start, resolve the name
+/// and print, in milliseconds.
+pub const DEADLINE_MARGIN_MS: u64 = 10_000;
+/// The Windows program, in the system folder.
+pub const WINDOWS_PROGRAM: &str = "tracert.exe";
+/// The Unix program, in a system folder.
+pub const UNIX_PROGRAM: &str = "traceroute";
 
 /// Status of a trace hop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,16 +54,6 @@ pub enum HopStatus {
     Reply,
     Timeout,
     Destination,
-}
-
-impl fmt::Display for HopStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Reply => write!(f, "Reply"),
-            Self::Timeout => write!(f, "Timeout"),
-            Self::Destination => write!(f, "Destination"),
-        }
-    }
 }
 
 /// A single hop result in the traceroute path.
@@ -65,12 +73,29 @@ pub struct TraceInputs {
     pub max_hops: usize,
 }
 
-/// Validates raw traceroute inputs and normalizes max_hops to a safe range.
-pub fn validate_inputs(host_text: &str, max_hops_text: &str) -> Result<TraceInputs, &'static str> {
-    let host = host_text.trim();
-    if host.is_empty() {
-        return Err("Host is required");
+/// Why traceroute inputs were refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraceInputError {
+    /// No host typed.
+    HostRequired,
+    /// The host is neither an address nor a DNS name.
+    InvalidHost,
+}
+
+/// Validates raw traceroute inputs and normalizes max_hops to a safe range, as the C#
+/// `ValidateInputs`: the host must be an address or a DNS name, never an option.
+///
+/// # Errors
+///
+/// [`TraceInputError`] when the host is missing or invalid.
+pub fn validate_inputs(
+    host_text: &str,
+    max_hops_text: &str,
+) -> Result<TraceInputs, TraceInputError> {
+    if host_text.trim().is_empty() {
+        return Err(TraceInputError::HostRequired);
     }
+    let host = checked_host(host_text).ok_or(TraceInputError::InvalidHost)?;
 
     let max_hops = if let Ok(parsed) = max_hops_text.trim().parse::<usize>() {
         if (MIN_MAX_HOPS..=MAX_MAX_HOPS).contains(&parsed) {
@@ -82,10 +107,7 @@ pub fn validate_inputs(host_text: &str, max_hops_text: &str) -> Result<TraceInpu
         DEFAULT_MAX_HOPS
     };
 
-    Ok(TraceInputs {
-        host: host.to_owned(),
-        max_hops,
-    })
+    Ok(TraceInputs { host, max_hops })
 }
 
 /// Formats successful latencies into "*" / "N ms" / "min/avg/max ms".
@@ -170,7 +192,7 @@ pub fn parse_traceroute_line(line: &str) -> Option<TraceHopResult> {
             if clean.parse::<std::net::IpAddr>().is_ok() {
                 address = clean.to_owned();
             } else if address.is_empty() {
-                hostname = clean.to_owned();
+                hostname = clean_banner(clean).unwrap_or_default();
             }
         }
     }
@@ -206,79 +228,71 @@ pub fn parse_traceroute_line(line: &str) -> Option<TraceHopResult> {
     })
 }
 
-/// Builds plain text of the entire traceroute path.
+/// Builds CSV content for the traceroute path under the column names `header` (hop,
+/// address, hostname, latency, status), each status said by `status_label`; every text cell
+/// sanitized against formulas and quoted.
 #[must_use]
-pub fn build_export_text(hops: &[TraceHopResult], target: &str) -> String {
-    let mut out = String::new();
-    out.push_str(&format!("Traceroute to {}\n\n", target));
-    out.push_str("Hop | Address         | Hostname             | Latency    | Status\n");
-    out.push_str("----+-----------------+----------------------+------------+--------\n");
+pub fn build_export_csv(
+    hops: &[TraceHopResult],
+    header: [&str; 5],
+    status_label: impl Fn(HopStatus) -> String,
+) -> String {
+    let mut out = header.map(quoted).join(",");
+    out.push('\n');
 
     for h in hops {
         out.push_str(&format!(
-            "{:<3} | {:<15} | {:<20} | {:<10} | {}\n",
-            h.hop, h.address, h.hostname, h.latency, h.status
+            "{},{},{},{},{}\n",
+            h.hop,
+            quoted(&h.address),
+            quoted(&h.hostname),
+            quoted(&h.latency),
+            quoted(&status_label(h.status))
         ));
     }
 
     out
 }
 
-/// Builds CSV content for the traceroute path.
+/// The longest a trace of `max_hops` may take: every probe of every hop waited for, and a
+/// margin.
 #[must_use]
-pub fn build_export_csv(hops: &[TraceHopResult]) -> String {
-    let mut out = String::new();
-    out.push_str("Hop,Address,Hostname,Latency,Status\n");
-
-    for h in hops {
-        let safe_host = h.hostname.replace('"', "\"\"");
-        out.push_str(&format!(
-            "{},{},\"{}\",\"{}\",{}\n",
-            h.hop, h.address, safe_host, h.latency, h.status
-        ));
-    }
-
-    out
+pub fn trace_deadline(max_hops: usize) -> Duration {
+    let hops = u64::try_from(max_hops).unwrap_or(u64::MAX);
+    Duration::from_millis(
+        hops.saturating_mul(PROBES_PER_HOP * PROBE_WAIT_MS)
+            .saturating_add(DEADLINE_MARGIN_MS),
+    )
 }
 
-/// Executes a traceroute command against `host` up to `max_hops` using the system traceroute utility.
-pub fn run_traceroute_command(host: &str, max_hops: usize) -> Vec<TraceHopResult> {
-    use std::process::Command;
-
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("tracert");
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            c.creation_flags(CREATE_NO_WINDOW);
-        }
-        c.arg("-d");
-        c.arg("-h").arg(max_hops.to_string());
-        c.arg("-w").arg("1000");
-        c.arg(host);
-        c
+/// Traces the route to `host`, already validated (see [`validate_inputs`]), up to
+/// `max_hops`, with the system's `tracert` or `traceroute` run by its whole path, handing
+/// each hop to `on_hop` as it is printed; ended when `stop` is set or past
+/// [`trace_deadline`].
+pub fn run_traceroute(
+    host: &str,
+    max_hops: usize,
+    stop: &AtomicBool,
+    mut on_hop: impl FnMut(TraceHopResult),
+) -> RunEnd {
+    let Some(program) = net_command::system_tool(WINDOWS_PROGRAM, UNIX_PROGRAM) else {
+        return RunEnd::NotStarted;
+    };
+    let hops = max_hops.to_string();
+    let wait_ms = PROBE_WAIT_MS.to_string();
+    let wait_secs = (PROBE_WAIT_MS / 1000).max(1).to_string();
+    // No name resolution of the hops: the C# shows addresses, and a lookup per hop would
+    // outlast the deadline.
+    let args: Vec<&str> = if cfg!(windows) {
+        vec!["-d", "-h", &hops, "-w", &wait_ms, host]
     } else {
-        let mut c = Command::new("traceroute");
-        c.arg("-n");
-        c.arg("-m").arg(max_hops.to_string());
-        c.arg("-w").arg("1");
-        c.arg(host);
-        c
+        vec!["-n", "-m", &hops, "-w", &wait_secs, host]
     };
-
-    let Ok(output) = cmd.output() else {
-        return Vec::new();
-    };
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut hops = Vec::new();
-    for line in text.lines() {
+    net_command::run_lines(&program, &args, trace_deadline(max_hops), stop, |line| {
         if let Some(hop) = parse_traceroute_line(line) {
-            hops.push(hop);
+            on_hop(hop);
         }
-    }
-    hops
+    })
 }
 
 #[cfg(test)]
@@ -294,7 +308,48 @@ mod tests {
         let res_default = validate_inputs("example.com", "999").unwrap();
         assert_eq!(res_default.max_hops, DEFAULT_MAX_HOPS);
 
-        assert!(validate_inputs("", "10").is_err());
+        assert_eq!(
+            validate_inputs("", "10"),
+            Err(TraceInputError::HostRequired)
+        );
+        assert_eq!(
+            validate_inputs("-h 1 evil", "10"),
+            Err(TraceInputError::InvalidHost),
+            "never read as an option"
+        );
+        assert_eq!(
+            validate_inputs("-w", "10"),
+            Err(TraceInputError::InvalidHost)
+        );
+    }
+
+    #[test]
+    fn the_deadline_covers_every_probe_of_every_hop() {
+        assert_eq!(
+            trace_deadline(30),
+            Duration::from_millis(30 * PROBES_PER_HOP * PROBE_WAIT_MS + DEADLINE_MARGIN_MS)
+        );
+        assert!(trace_deadline(usize::MAX) > trace_deadline(MAX_MAX_HOPS));
+    }
+
+    #[test]
+    fn french_tracert_output_is_read_and_a_hostname_cleaned() {
+        let line = "  3    12 ms    11 ms    13 ms  10.10.0.1";
+        assert_eq!(
+            parse_traceroute_line(line).expect("hop").latency,
+            "11/12/13 ms"
+        );
+        let timeout =
+            "  4     *        *        *     D\u{e9}lai d'attente de la demande d\u{e9}pass\u{e9}.";
+        assert_eq!(
+            parse_traceroute_line(timeout).expect("hop").status,
+            HopStatus::Timeout
+        );
+        assert!(parse_traceroute_line("D\u{e9}termination de l'itin\u{e9}raire vers x").is_none());
+        let named = " 2  gw.lab\u{1b}[31m.x (10.0.0.1)  1.0 ms";
+        let hop = parse_traceroute_line(named).expect("hop");
+        assert_eq!(hop.address, "10.0.0.1");
+        assert!(!hop.hostname.contains('\u{1b}'), "{:?}", hop.hostname);
     }
 
     #[test]
@@ -337,8 +392,12 @@ mod tests {
             status: HopStatus::Reply,
         }];
 
-        let csv = build_export_csv(&hops);
-        assert!(csv.contains("Hop,Address,Hostname,Latency,Status"));
-        assert!(csv.contains("1,10.0.0.1,\"router\",\"1 ms\",Reply"));
+        let csv = build_export_csv(
+            &hops,
+            ["Hop", "Address", "Hostname", "Latency", "Status"],
+            |status| format!("{status:?}"),
+        );
+        assert!(csv.contains("\"Hop\",\"Address\",\"Hostname\",\"Latency\",\"Status\""));
+        assert!(csv.contains("1,\"10.0.0.1\",\"router\",\"1 ms\",\"Reply\""));
     }
 }
