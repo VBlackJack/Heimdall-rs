@@ -19,10 +19,46 @@
 //! then bound again by the server could be taken in between by a test running beside it,
 //! and the test would talk to that test's server.
 
-use std::net::Ipv4Addr;
+use std::future::Future;
+use std::io;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 
+use tokio::net::TcpSocket;
 use unftp_sbe_fs::Filesystem;
+
+/// Binds each passive data port where the system puts it: a port no other socket holds.
+///
+/// libunftp's own binding takes a random port in 49152-65535 with `SO_REUSEADDR` set.
+/// Windows lets two sockets with that option listen on one port, every connection then
+/// going to the first: a data connection could reach another test's server, the transfer
+/// never reaching this one, and the client wait for its reply until the server's 600 s idle
+/// timeout closed the session (CI run 38892908592). Linux refuses the second bind instead.
+#[derive(Debug)]
+struct SystemPort;
+
+impl libunftp::options::Binder for SystemPort {
+    fn bind<'a, 'b>(
+        &'a mut self,
+        local_addr: IpAddr,
+        _passive_ports: RangeInclusive<u16>,
+    ) -> Pin<Box<dyn Future<Output = io::Result<TcpSocket>> + Send + 'b>>
+    where
+        'a: 'b,
+        Self: 'b,
+    {
+        let socket = if local_addr.is_ipv4() {
+            TcpSocket::new_v4()
+        } else {
+            TcpSocket::new_v6()
+        };
+        let bound =
+            socket.and_then(|socket| socket.bind(SocketAddr::new(local_addr, 0)).map(|()| socket));
+        Box::pin(std::future::ready(bound))
+    }
+}
 
 /// Serves `root` over FTP, over explicit FTPS with the certificate and key files `ftps`
 /// names when given, on a free local port; returns the port.
@@ -35,7 +71,8 @@ pub async fn serve(root: &Path, ftps: Option<(PathBuf, PathBuf)>) -> u16 {
         let home = home.clone();
         let mut builder = libunftp::ServerBuilder::new(Box::new(move || {
             Filesystem::new(home.clone()).expect("root")
-        }));
+        }))
+        .binder(SystemPort);
         if let Some((cert, key)) = ftps.clone() {
             builder = builder.ftps(cert, key);
         }
