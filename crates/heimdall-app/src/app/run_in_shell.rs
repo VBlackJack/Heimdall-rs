@@ -97,11 +97,11 @@ impl App {
             return Vec::new();
         };
         let name = entry.name.to_string_lossy().into_owned();
-        let script = files.local.path.join(&entry.name);
+        let script = files.local.entries_folder().join(&entry.name);
         let Some(kind) = script_shell::runnable_here(&name) else {
             return Vec::new();
         };
-        let folder = files.local.path.clone();
+        let folder = files.local.entries_folder().clone();
         match script_run(kind, &script, folder, &name, policy) {
             Ok(shell) => self.ask_script(shell, None),
             Err(error) => files.local.error = Some(error),

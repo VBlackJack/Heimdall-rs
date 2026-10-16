@@ -125,7 +125,7 @@ fn start(
 /// The browser the effects of a shell's start docked, and the folder it lists first.
 fn docked(effects: &[Effect]) -> (TabId, PathBuf) {
     match effects {
-        [Effect::ListLocal { tab, path }] => (*tab, path.clone()),
+        [Effect::ListLocal { tab, path, .. }] => (*tab, path.clone()),
         other => panic!("expected the browser's listing, got {other:?}"),
     }
 }
@@ -146,8 +146,10 @@ fn listed(app: &mut App, pane: TabId, folder: &Path) -> Vec<Effect> {
         size: None,
         modified: None,
     };
+    let request = local_request(app, pane);
     app.update(Message::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((
             folder.to_owned(),
             vec![
@@ -243,15 +245,17 @@ fn a_shell_folder_not_there_leaves_the_browser_in_the_home_folder_as_the_csharp(
     let (pane, folder) = docked(&start(&mut app, shell, &sink));
     assert_eq!(folder, gone);
     let failed = |app: &mut App| {
+        let request = local_request(app, pane);
         app.update(Message::Files(FilesMessage::LocalListed {
             tab: pane,
+            request,
             result: Err(heimdall_app::files::FilesError::Local {
                 detail: "not found".to_owned(),
             }),
         }))
     };
     let effects = failed(&mut app);
-    let [Effect::ListLocal { tab, path }] = effects.as_slice() else {
+    let [Effect::ListLocal { tab, path, .. }] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     assert_eq!(
@@ -785,8 +789,10 @@ fn listed_files(app: &mut App, pane: TabId, folder: &Path, names: &[(&str, bool)
             modified: None,
         });
     }
+    let request = local_request(app, pane);
     app.update(Message::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((folder.to_owned(), entries)),
     }));
 }
@@ -929,8 +935,10 @@ fn listed_as_is(app: &mut App, pane: TabId, folder: &Path) {
             }
         })
         .collect();
+    let request = local_request(app, pane);
     app.update(Message::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((folder.to_owned(), entries)),
     }));
 }
@@ -1220,7 +1228,7 @@ fn copy_then_paste_copies_the_entries_chosen_into_the_folder_shown() {
         result: Ok(()),
     }));
     assert!(
-        matches!(effects.as_slice(), [Effect::ListLocal { tab, path }] if *tab == pane && *path == to),
+        matches!(effects.as_slice(), [Effect::ListLocal { tab, path, .. }] if *tab == pane && *path == to),
         "{effects:?}"
     );
     // The keys do the same, as the C# Ctrl+C and Ctrl+V.
@@ -1438,8 +1446,10 @@ fn scripts_listed(app: &mut App, pane: TabId, folder: &Path, names: &[OsString])
             .iter()
             .map(|name| entry(name.clone(), EntryKind::File)),
     );
+    let request = local_request(app, pane);
     app.update(Message::Files(FilesMessage::LocalListed {
         tab: pane,
+        request,
         result: Ok((folder.to_owned(), entries)),
     }));
 }
@@ -1900,4 +1910,123 @@ fn a_scripts_tab_is_not_offered_again_at_the_next_start() {
         session_snapshot::load(&snapshot).is_none(),
         "no session to reopen: the script runs again only once asked"
     );
+}
+
+#[test]
+fn an_entry_is_opened_and_copied_from_the_folder_listed_while_another_is_on_its_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane) = browser(dir.path(), &sink);
+    let from = dir.path().join("from");
+    std::fs::create_dir_all(from.join("sub")).expect("folders");
+    std::fs::write(from.join("photo.png"), b"png").expect("file");
+    listed_as_is(&mut app, pane, &from);
+    // Into "sub": its listing on its way, the entries of "from" still shown.
+    let sub = index_of(&app, pane, "sub");
+    let effects = opened(&mut app, pane, sub);
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == from.join("sub")),
+        "{effects:?}"
+    );
+
+    let photo = from.join("photo.png");
+    let index = index_of(&app, pane, "photo.png");
+    let effects = opened(&mut app, pane, index);
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenLocalFile { file, .. }] if *file == photo),
+        "the file listed, not one of the folder on its way: {effects:?}"
+    );
+    choose(&mut app, pane, &["photo.png"]);
+    let effects = app.update(Message::Files(FilesMessage::Copy { tab: pane }));
+    if cfg!(windows) {
+        assert!(
+            matches!(effects.as_slice(), [Effect::WriteFileList(paths)] if *paths == [photo.clone()]),
+            "{effects:?}"
+        );
+    }
+    // Pasted while "sub" is on its way: nothing goes into a folder whose entries are not
+    // shown yet, and the status says why.
+    let effects = app.update(Message::Files(FilesMessage::Paste { tab: pane }));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(app.notice(), Some(&heimdall_app::Notice::ListingInProgress));
+    // Opening "sub" again lists "sub", not a "sub" inside it.
+    let index = index_of(&app, pane, "sub");
+    let effects = opened(&mut app, pane, index);
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == from.join("sub")),
+        "{effects:?}"
+    );
+    assert!(sink.take().is_empty());
+}
+
+#[test]
+fn a_script_runs_from_the_folder_listed_while_another_is_on_its_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane, folder) = browser_of_scripts(dir.path(), &RUN_HERE[..1], &sink);
+    let sub = index_of(&app, pane, "sub");
+    let effects = opened(&mut app, pane, sub);
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListLocal { path, .. }] if *path == folder.join("sub")),
+        "{effects:?}"
+    );
+    let name = RUN_HERE[0];
+    let index = index_of(&app, pane, name);
+    let (expected, command, _) = expected_run(name, &folder);
+    assert!(run_in_shell(&mut app, pane, index).is_empty());
+    let question = script_question(&app);
+    assert_eq!(
+        question.command, command,
+        "the script listed, not one in \"sub\""
+    );
+    assert_eq!(
+        question.folder.as_deref(),
+        Some(folder.to_string_lossy().as_ref())
+    );
+    let effects = app.update(Message::ConfirmDialog);
+    let (_, running) = started(&effects).unwrap_or_else(|| panic!("started, {effects:?}"));
+    assert_eq!(running, expected);
+    assert!(sink.take().is_empty());
+}
+
+/// The listing the local pane of `tab` waits for; one asked for by a refresh when none is.
+fn local_request(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    awaited_listing(app, tab, heimdall_app::files::Side::Local)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
 }

@@ -219,7 +219,7 @@ pub fn card<'a>(draft: &'a GatewayDraft, gateways: &'a [SshGateway]) -> Element<
     container(content)
         .padding(spacing::SM)
         .width(Length::Fill)
-        .style(container::bordered_box)
+        .style(styles::panel)
         .into()
 }
 

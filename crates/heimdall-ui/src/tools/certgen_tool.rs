@@ -761,14 +761,16 @@ impl CertGenPane {
                     Some(self.mode),
                     move |mode| send(CertGenMessage::Mode(mode)),
                 )
-                .text_size(font_size::BODY),
+                .text_size(font_size::BODY)
+                .style(styles::radio),
                 radio(
                     fl!("ui-tool-certgen-type-ca-leaf"),
                     CertificateMode::CaLeaf,
                     Some(self.mode),
                     move |mode| send(CertGenMessage::Mode(mode)),
                 )
-                .text_size(font_size::BODY),
+                .text_size(font_size::BODY)
+                .style(styles::radio),
             ]
             .spacing(CHOICE_GAP)
             .into(),

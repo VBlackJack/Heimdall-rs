@@ -76,13 +76,20 @@ struct FileLogger {
     others: LevelFilter,
 }
 
+/// Crates whose most verbose levels write server data as is, capped whatever
+/// `HEIMDALL_LOG` asks: suppaftp logs every listing line it parses at `trace`, which holds
+/// the server's file names.
+const CAPPED_TARGETS: [(&str, LevelFilter); 1] = [("suppaftp", LevelFilter::Debug)];
+
 /// The most verbose level written for `target`.
 fn limit_for(own: LevelFilter, others: LevelFilter, target: &str) -> LevelFilter {
     if target.starts_with(OWN_TARGET_PREFIX) {
-        own
-    } else {
-        others
+        return own;
     }
+    CAPPED_TARGETS
+        .iter()
+        .find(|(prefix, _)| target.starts_with(prefix))
+        .map_or(others, |(_, cap)| others.min(*cap))
 }
 
 impl Log for FileLogger {
@@ -264,6 +271,14 @@ mod tests {
         assert!(written(Some("trace"), "russh::session", Level::Trace));
         assert!(!written(Some("error"), "heimdall_app", Level::Warn));
         assert!(!written(Some("loud"), "russh", Level::Info));
+    }
+
+    #[test]
+    fn the_listing_lines_suppaftp_traces_are_never_written() {
+        assert!(!written(Some("trace"), "suppaftp::list", Level::Trace));
+        assert!(written(Some("trace"), "suppaftp::list", Level::Debug));
+        assert!(!written(None, "suppaftp::list", Level::Info));
+        assert!(written(None, "suppaftp", Level::Warn));
     }
 
     #[test]

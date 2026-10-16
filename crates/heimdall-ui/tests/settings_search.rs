@@ -28,7 +28,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use heimdall_app::{App, AppConfig, Message as AppMessage, SettingsMessage, SystemCredentials};
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    Accent, AppTheme, ColorScheme, ExecutionPolicy, Language, Settings, SftpBrowser, settings_path,
+    Accent, AppTheme, ColorScheme, ExecutionPolicy, Language, RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
+    RDP_KEEP_ALIVE_INTERVAL_MAX_MS, RDP_KEEP_ALIVE_INTERVAL_MIN_MS, Settings, SftpBrowser,
+    settings_path,
 };
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -178,8 +180,18 @@ fn the_search_finds_rows_by_name_hint_heading_or_choice_on_every_tab_whatever_th
         SettingsCard::RdpSession,
         "beside the watchdog"
     );
+    assert_eq!(
+        shell.settings_found("session keep-alive"),
+        [SettingRow::RdpKeepAlive],
+        "the C# RDP Behavior card's keep-alive"
+    );
+    assert_eq!(
+        SettingRow::RdpKeepAlive.card(),
+        SettingsCard::RdpSession,
+        "last of the card, as in the C#"
+    );
 
-    let _ = shell.update(Message::SettingsSearch("keep-alive".to_owned()));
+    let _ = shell.update(Message::SettingsSearch("ssh keep-alive".to_owned()));
     let mut ui = simulator(&shell);
     for said in ["Results: 1", "SSH", "Session", "SSH keep-alive interval"] {
         ui.find(said).expect(said);
@@ -362,6 +374,127 @@ fn a_marker_shows_on_exactly_the_settings_off_their_default() {
 }
 
 #[test]
+fn a_number_is_applied_once_typed_in_its_range_without_enter() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let defaults = Settings::default();
+    let saved = || Settings::load(&settings_path(&dir.path().join("profiles.toml")));
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    // Typed key by key, as the C# field bound on `PropertyChanged` takes it: "4" is out of
+    // the range, so stays typed with its rule and changes nothing.
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::KeepAlive,
+        "4".to_owned(),
+    ));
+    assert_eq!(
+        shell.app().settings().ssh_keep_alive_interval,
+        defaults.ssh_keep_alive_interval
+    );
+    let rule = "SSH keep-alive interval must be between 5 and 600 seconds.";
+    {
+        let mut ui = simulator(&shell);
+        ui.find(rule).expect("its rule while out of it");
+    }
+    // "45" is in it: applied and saved at once, so leaving the field with Tab keeps it.
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::KeepAlive,
+        "45".to_owned(),
+    ));
+    assert_eq!(shell.app().settings().ssh_keep_alive_interval, 45);
+    assert_eq!(saved().expect("saved").ssh_keep_alive_interval, 45);
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find(rule).is_err(), "no rule once in the range");
+        ui.find("45").expect("the value set shown");
+    }
+    // Set elsewhere since, Enter on the field never brings back what was typed.
+    change(&mut shell, SettingsMessage::SshKeepAliveInterval(60));
+    let _ = shell.update(Message::SessionFieldApply(SessionField::KeepAlive));
+    assert_eq!(shell.app().settings().ssh_keep_alive_interval, 60);
+
+    // The terminals' font size the same way.
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let _ = shell.update(Message::FontSizeEdited("7".to_owned()));
+    assert_eq!(
+        shell.app().settings().terminal_font_size,
+        defaults.terminal_font_size
+    );
+    let _ = shell.update(Message::FontSizeEdited("19".to_owned()));
+    assert_eq!(shell.app().settings().terminal_font_size, 19);
+    assert_eq!(saved().expect("saved").terminal_font_size, 19);
+}
+
+#[test]
+fn the_rdp_keep_alive_is_applied_once_typed_in_its_range_and_never_on_the_way() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let file = settings_path(&dir.path().join("profiles.toml"));
+    let _ = shell.update(Message::SettingsTab(SettingRow::RdpKeepAlive.tab()));
+    let rule = format!(
+        "RDP keep-alive interval must be between {RDP_KEEP_ALIVE_INTERVAL_MIN_MS} and {RDP_KEEP_ALIVE_INTERVAL_MAX_MS} ms."
+    );
+    let before = std::fs::read(&file).ok();
+    // Typed toward 5000 key by key: "5", "50" and "500" are under the range, so none is
+    // applied nor saved, its rule said under it.
+    for typed in ["5", "50", "500"] {
+        let _ = shell.update(Message::SessionFieldEdited(
+            SessionField::RdpKeepAlive,
+            typed.to_owned(),
+        ));
+        assert_eq!(
+            shell.app().settings().rdp_keep_alive_interval_ms,
+            RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
+            "{typed}"
+        );
+        assert_eq!(std::fs::read(&file).ok(), before, "{typed} saved nothing");
+        let mut ui = simulator(&shell);
+        ui.find(rule.as_str()).expect(typed);
+    }
+    // "5000" is in it: applied and saved without Enter.
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::RdpKeepAlive,
+        "5000".to_owned(),
+    ));
+    assert_eq!(shell.app().settings().rdp_keep_alive_interval_ms, 5000);
+    assert_eq!(
+        Settings::load(&file)
+            .expect("saved")
+            .rdp_keep_alive_interval_ms,
+        5000
+    );
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find(rule.as_str()).is_err(), "no rule once in the range");
+    }
+    // Unchanged, neither Enter nor the same value typed again saves it again.
+    std::fs::remove_file(&file).expect("removed");
+    let _ = shell.update(Message::SessionFieldApply(SessionField::RdpKeepAlive));
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::RdpKeepAlive,
+        "5000".to_owned(),
+    ));
+    assert!(!file.exists(), "the same value is not saved again");
+    // Enter applies one typed in the range too.
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::RdpKeepAlive,
+        "300001".to_owned(),
+    ));
+    let _ = shell.update(Message::SessionFieldApply(SessionField::RdpKeepAlive));
+    assert_eq!(shell.app().settings().rdp_keep_alive_interval_ms, 5000);
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::RdpKeepAlive,
+        "300000".to_owned(),
+    ));
+    let _ = shell.update(Message::SessionFieldApply(SessionField::RdpKeepAlive));
+    assert_eq!(
+        shell.app().settings().rdp_keep_alive_interval_ms,
+        RDP_KEEP_ALIVE_INTERVAL_MAX_MS
+    );
+}
+
+#[test]
 fn reset_puts_the_default_back_through_the_settings_and_saves_it() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
@@ -373,10 +506,10 @@ fn reset_puts_the_default_back_through_the_settings_and_saves_it() {
         "45".to_owned(),
     ));
     let _ = shell.update(Message::SessionFieldApply(SessionField::KeepAlive));
-    // Typed again, not applied: the reset drops it too.
+    // Typed again out of its range, so not applied: the reset drops it too.
     let _ = shell.update(Message::SessionFieldEdited(
         SessionField::KeepAlive,
-        "50".to_owned(),
+        "601".to_owned(),
     ));
     change(&mut shell, SettingsMessage::SessionLogging(true));
     let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
@@ -409,7 +542,7 @@ fn reset_puts_the_default_back_through_the_settings_and_saves_it() {
 
     let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
     let mut ui = simulator(&shell);
-    assert!(ui.find("50").is_err(), "what was typed is gone");
+    assert!(ui.find("601").is_err(), "what was typed is gone");
     ui.find(defaults.ssh_keep_alive_interval.to_string().as_str())
         .expect("the default shown");
     assert!(ui.find("Modified").is_err());
@@ -910,8 +1043,9 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         );
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
-    // The last row added, the welcome tour's button, holds no path.
-    assert_eq!(SettingRow::ALL.len(), 63, "no row added");
+    // The last rows added, the welcome tour's button and the RDP keep-alive interval, hold
+    // no path.
+    assert_eq!(SettingRow::ALL.len(), 64, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(

@@ -201,7 +201,8 @@ pub fn health_dot<'a>(health: Health) -> Element<'a, Message> {
         text(fl!("ui-rdp-health-tooltip", state = health.label())).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box)
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 
@@ -226,7 +227,8 @@ pub fn stepper<'a>(phase: ConnectPhase) -> Option<Element<'a, Message>> {
             text(progress).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into(),
     )
 }
@@ -477,7 +479,8 @@ pub fn redirection_controls<'a>(
                 text(tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into()
         })
         .collect();
@@ -493,7 +496,8 @@ pub fn redirection_controls<'a>(
                 text(fl!("ui-rdp-redirections-more-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         );
     }

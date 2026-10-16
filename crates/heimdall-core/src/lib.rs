@@ -21,6 +21,7 @@
 #[cfg(all(feature = "test-data-dir", not(debug_assertions)))]
 compile_error!("the test-data-dir feature is for test builds only, never a release build");
 
+pub mod code_page;
 pub mod credential_provider;
 pub mod credentials;
 pub mod export;
@@ -37,6 +38,7 @@ pub mod metadata;
 pub mod paths;
 pub mod pin;
 pub mod post_connect;
+pub mod powershell;
 pub mod profile;
 pub mod scheduled;
 pub mod session_snapshot;

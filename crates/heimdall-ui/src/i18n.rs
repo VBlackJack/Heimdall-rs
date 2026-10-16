@@ -78,6 +78,22 @@ pub fn current() -> Language {
         .unwrap_or(Language::English)
 }
 
+/// `value` with `digits` decimals and the decimal sign of the language shown, as the C#
+/// formats a number with the current culture: `1.5` in English, `1,5` in French and Spanish.
+#[must_use]
+pub fn decimal(value: f64, digits: usize) -> String {
+    decimal_in(value, digits, current())
+}
+
+/// `value` as [`decimal`] writes it in `language`.
+fn decimal_in(value: f64, digits: usize, language: Language) -> String {
+    let text = format!("{value:.digits$}");
+    match language {
+        Language::English => text,
+        Language::French | Language::Spanish => text.replace('.', ","),
+    }
+}
+
 /// Switches `loader` to the best of `requested`. Selecting builds new bundles, which start
 /// with isolation marks on whatever the loader was set to, so they are turned off again.
 fn select(loader: &FluentLanguageLoader, requested: &[LanguageIdentifier]) {
@@ -124,5 +140,13 @@ mod tests {
         select(&loader, &["fr".parse().expect("language tag")]);
         let text = loader.get_args("ui-files-size-kib", HashMap::from([("value", "1.0")]));
         assert_eq!(text, "1.0 Kio");
+    }
+
+    #[test]
+    fn a_decimal_takes_the_language_s_sign() {
+        assert_eq!(decimal_in(1.24, 1, Language::English), "1.2");
+        assert_eq!(decimal_in(1.5, 1, Language::French), "1,5");
+        assert_eq!(decimal_in(1.5, 1, Language::Spanish), "1,5");
+        assert_eq!(decimal_in(12.0, 0, Language::French), "12");
     }
 }

@@ -633,7 +633,8 @@ fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
             .padding(spacing::XS),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box);
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip);
     let (glyph, tint, opacity, tip) = if favorite {
         (
             Icon::FavoriteStarFill,
@@ -659,7 +660,8 @@ fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
         text(tip).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
-    .style(container::rounded_box);
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip);
     stack![
         launch,
         container(container(pin).id(pin_id(tool)))

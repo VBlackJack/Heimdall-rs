@@ -18,6 +18,7 @@
 //! the session shown, or what was just done, and the shortcuts' hint; on the right the
 //! tunnels' and broadcast input's buttons, then how many sessions and tunnels there are.
 
+use heimdall_app::files::DragOutFailure;
 use heimdall_app::windows_hello::HelloRefusal;
 use heimdall_app::{Announced, Announcement, Notice, SessionStatus, server_text};
 use heimdall_core::settings::BroadcastScope;
@@ -27,6 +28,7 @@ use iced::{Element, Length};
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
+use crate::styles;
 use crate::tokens::{font_size, spacing};
 
 /// Room around the bar's text.
@@ -155,6 +157,7 @@ fn files_notice(notice: &Notice) -> String {
         }
         Notice::MoveUndone => fl!("ui-status-move-undone"),
         Notice::ListingCancelled => fl!("ui-status-listing-cancelled"),
+        Notice::ListingInProgress => fl!("ui-status-listing-in-progress"),
         Notice::SessionLimitReached(max) => fl!("ui-status-session-limit", max = (*max)),
         Notice::SftpAutoOpenFailed(error) => fl!(
             "ui-status-sftp-auto-open-failed",
@@ -397,6 +400,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::Reordered { .. }
             | Notice::MoveUndone
             | Notice::ListingCancelled
+            | Notice::ListingInProgress
             | Notice::SessionLimitReached(_)
             | Notice::SftpAutoOpenFailed(_)
             | Notice::SftpBrowserDisabled
@@ -584,6 +588,13 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             }
             Notice::WinRmGatewayNtlm => fl!("ui-status-winrm-gateway-ntlm"),
             Notice::ExplorerHoldsNoFiles => fl!("ui-status-explorer-no-files"),
+            Notice::DragOutFailed(failure) => match failure {
+                DragOutFailure::SeveralFolders => fl!("ui-status-drag-out-several-folders"),
+                DragOutFailure::Unavailable => fl!("ui-status-drag-out-unavailable"),
+                DragOutFailure::Refused(reason) => {
+                    fl!("ui-status-drag-out-failed", reason = reason.as_str())
+                }
+            },
             notice @ (Notice::ResolutionReconnected
             | Notice::ResolutionScaled
             | Notice::StabilizationSkipped
@@ -698,7 +709,8 @@ pub fn view(
             .size(font_size::CAPTION)
             .style(text::secondary),
     ];
-    container(
+    // The C# status bar: the window's background, its edge above it.
+    let bar = container(
         row![
             text(left).size(font_size::CAPTION).style(text::secondary),
             crate::shortcuts_view::hint(font_size::SMALL_CAPTION),
@@ -712,8 +724,8 @@ pub fn view(
     )
     .padding(PADDING)
     .width(Length::Fill)
-    .style(container::bordered_box)
-    .into()
+    .style(styles::bar);
+    iced::widget::column![styles::edge_line(), bar].into()
 }
 
 #[cfg(test)]

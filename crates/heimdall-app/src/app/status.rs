@@ -275,6 +275,8 @@ pub enum Notice {
     },
     /// "Paste from Explorer" found no files copied.
     ExplorerHoldsNoFiles,
+    /// Entries of the local pane could not be dragged out of the window, for this reason.
+    DragOutFailed(crate::files::DragOutFailure),
     /// The entries cut or copied were pasted.
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.
@@ -292,6 +294,8 @@ pub enum Notice {
     DropRefused,
     /// A Files tab's listing on its way was given up with Escape.
     ListingCancelled,
+    /// Nothing was put into a Files tab's folder shown: its listing is still on its way.
+    ListingInProgress,
     /// A session was not opened: this many are open already, the most the settings allow,
     /// as the C# "Embedded session limit reached".
     SessionLimitReached(u32),

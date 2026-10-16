@@ -768,7 +768,8 @@ pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'
             text(said).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
     };
     // Each on one line, ended with an ellipsis past its C# `MaxWidth`, the whole of it in its
     // tooltip, as the C# header's `TextBlock`s.

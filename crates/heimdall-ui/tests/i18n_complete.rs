@@ -121,3 +121,41 @@ fn no_language_file_holds_a_key_twice() {
     }
     assert!(read >= 3, "English, French and Spanish read, got {read}");
 }
+
+/// Every English key is named by the code: `fl!` takes a literal key only, so a key no
+/// source file names is never shown and only costs its translators. Every crate's sources
+/// and tests are read, as a key may be shown by a view and checked by a test.
+#[test]
+fn every_english_key_is_named_by_the_code() {
+    fn read_sources(folder: &Path, sources: &mut String, folders: &mut usize) {
+        for entry in std::fs::read_dir(folder).expect("readable folder") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                *folders += 1;
+                read_sources(&path, sources, folders);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                sources.push_str(&std::fs::read_to_string(&path).expect("source"));
+            }
+        }
+    }
+
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let english = heimdall_i18n::ftl_path(crate_root, "en", env!("CARGO_PKG_NAME"));
+    let source = std::fs::read_to_string(&english).expect("English file");
+    let ids = heimdall_i18n::message_ids(&source).expect("parses");
+    let crates = crate_root.parent().expect("the crates folder");
+    let mut sources = String::new();
+    let mut folders = 0;
+    read_sources(crates, &mut sources, &mut folders);
+    // The walk goes down: a view in a module folder, `shell/settings_page.rs`, is read too.
+    assert!(
+        sources.contains("fn ssh_mode_name("),
+        "a module folder's sources are read"
+    );
+    assert!(folders > 1, "subfolders walked, got {folders}");
+    let unnamed: Vec<&String> = ids
+        .iter()
+        .filter(|id| !sources.contains(&format!("\"{id}\"")))
+        .collect();
+    assert!(unnamed.is_empty(), "keys no code names: {unnamed:#?}");
+}

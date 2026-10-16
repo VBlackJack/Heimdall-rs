@@ -36,6 +36,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::LeftOut;
 use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
@@ -1016,6 +1017,7 @@ fn remote_file(name: &str) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        owner_name: None,
         group: None,
         inode: None,
     }
@@ -1044,11 +1046,14 @@ async fn two_files(dir: &Path) -> TwoFiles {
                 shell: None,
             },
         });
+        let request = remote_request(&mut core, tab);
         core.update(AppMessage::Files(FilesMessage::RemoteListed {
             tab,
+            request,
             result: Ok((
                 RemotePath::from("/srv"),
                 vec![remote_file("notes.txt"), remote_file("old.txt")],
+                LeftOut::default(),
             )),
         }));
         core.update(AppMessage::Files(FilesMessage::Key {
@@ -1613,4 +1618,46 @@ fn drop_said(shell: &Shell, tab: heimdall_app::TabId) -> String {
         .path
         .display();
     format!("Upload 2 items to {folder}")
+}
+
+/// The listing the server pane of `tab` waits for; one asked for by a refresh when none is.
+fn remote_request(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+) -> heimdall_app::files::ListingRequest {
+    awaited_listing(app, tab, heimdall_app::files::Side::Remote)
+}
+
+/// The listing `side` of `tab` waits for. When none is, a refresh asks for one, the focus
+/// left where it was: a listing arrives only when one was asked for.
+fn awaited_listing(
+    app: &mut heimdall_app::App,
+    tab: heimdall_app::TabId,
+    side: heimdall_app::files::Side,
+) -> heimdall_app::files::ListingRequest {
+    use heimdall_app::files::{FilesKey, Side};
+    use heimdall_app::{Effect, FilesMessage, Message};
+
+    let files = app.tab(tab).expect("tab").files.as_deref().expect("files");
+    let pane_waits = match side {
+        Side::Remote => files.remote.loading.then(|| files.remote.listing_request()),
+        Side::Local => files.local.loading.then(|| files.local.listing_request()),
+    };
+    if let Some(request) = pane_waits {
+        return request;
+    }
+    let focus = files.focus;
+    let asked = app.update(Message::Files(FilesMessage::Refresh { tab, side }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(focus),
+    }));
+    match asked.as_slice() {
+        [
+            Effect::ListRemote { request, .. }
+            | Effect::SudoListRemote { request, .. }
+            | Effect::ListLocal { request, .. },
+        ] => *request,
+        other => panic!("no listing asked for: {other:?}"),
+    }
 }

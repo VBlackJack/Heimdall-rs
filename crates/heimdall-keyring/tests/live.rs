@@ -50,9 +50,10 @@ fn a_secret_goes_in_comes_back_whole_and_leaves() {
     assert!(!keyring.remove(name).expect("remove again"), "nothing left");
 }
 
-/// A target name no one uses, for this run.
-fn unused_target() -> String {
-    format!("heimdall-rs-test-generic-{}", std::process::id())
+/// A target name no one uses, for this run and this test: the tests of this file run in
+/// parallel in one process, and one of them creates a credential under its own name.
+fn unused_target(test: &str) -> String {
+    format!("heimdall-rs-test-generic-{}-{test}", std::process::id())
 }
 
 #[test]
@@ -64,7 +65,7 @@ fn a_blank_target_names_no_credential() {
 #[test]
 fn a_target_no_credential_has_is_none() {
     // Reading only: nothing is written to the user's store.
-    let read = heimdall_keyring::read_generic(&unused_target()).expect("the store answers");
+    let read = heimdall_keyring::read_generic(&unused_target("absent")).expect("the store answers");
     assert!(read.is_none());
 }
 
@@ -72,7 +73,7 @@ fn a_target_no_credential_has_is_none() {
 #[test]
 fn away_from_windows_there_is_no_credential_manager() {
     assert!(matches!(
-        heimdall_keyring::read_generic(&unused_target()),
+        heimdall_keyring::read_generic(&unused_target("absent")),
         Err(heimdall_keyring::KeyringError::Unavailable(_))
     ));
 }
@@ -85,7 +86,7 @@ fn a_generic_credential_made_with_cmdkey_is_read_by_its_target_name() {
     if std::env::var_os(LIVE_VARIABLE).is_none() {
         return;
     }
-    let target = unused_target();
+    let target = unused_target("cmdkey");
     let made = Command::new("cmdkey")
         .args([
             format!("/generic:{target}"),

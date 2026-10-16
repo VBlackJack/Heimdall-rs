@@ -171,6 +171,20 @@ pub enum Icon {
     ToolPasswordGenerator,
     /// `Geo.Tool.SshKeyGenerator`: a key, the SSH key generator.
     ToolSshKeyGenerator,
+    /// `Geo.Tool.SshKeyAudit`: a key and its checks, the SSH key auditor.
+    ToolSshAudit,
+    /// `Geo.Tool.TlsAudit`: a padlock, the TLS auditor.
+    ToolTlsAudit,
+    /// `Geo.Tool.DnsSecurity`: a shield with DNS lines, the DNS security checker.
+    ToolDnsSec,
+    /// `Geo.Tool.CveLookup`: a magnifier and document lines, the CVE lookup tool.
+    ToolCve,
+    /// `Geo.Tool.DefaultCreds`: a key with notches, the default credentials scanner.
+    ToolDefaultCreds,
+    /// `Geo.Tool.SecNumCloud`: a shield with checklist, the `SecNumCloud` compliance audit.
+    ToolSecNumCloud,
+    /// `Geo.Tool.SmbEnumerator`: a server with list, the SMB protocol enumerator.
+    ToolSmb,
     /// `Geo.Tool.CertificateGenerator`: a page and its seal, the certificate generator.
     ToolCertificateGenerator,
     /// `Geo.Tool.PasswordAudit`: a shield and its tick, the password audit.
@@ -191,6 +205,46 @@ pub enum Icon {
     ToolCrontab,
     /// `Geo.Tool.SshConfigGenerator`: a page with a prompt, the SSH config generator.
     ToolSshConfig,
+    /// `Geo.Tool.HttpStatus`: a globe with signal lines, the HTTP status codes reference.
+    ToolHttpStatus,
+    /// `Geo.Tool.WakeOnLan`: a lightning bolt within a circle, the Wake-on-LAN tool.
+    ToolWakeOnLan,
+    /// `Geo.Tool.Whois`: an ID badge with question, the WHOIS lookup tool.
+    ToolWhois,
+    /// `Geo.Tool.BannerGrabber`: a terminal window with prompt, the banner grabber.
+    ToolBannerGrabber,
+    /// `Geo.Tool.DnsLookup`: a globe with grid lines, the DNS lookup and batch tools.
+    ToolDnsLookup,
+    /// `Geo.Tool.PortScanner`: port bars and magnifying glass, the port scanner.
+    ToolPortScanner,
+    /// `Geo.Tool.HttpHeaders`: a shield with checkmark, the HTTP header analyzer.
+    ToolHttpHeaders,
+    /// `Geo.Tool.CertInspector`: a shield with magnifier, the SSL/TLS certificate inspector.
+    ToolCertInspector,
+    /// `Geo.Tool.Traceroute`: nodes along a path, the TCP traceroute tool.
+    ToolTraceroute,
+    /// `Geo.Tool.SnmpWalker`: a tree hierarchy, the SNMP walker tool.
+    ToolSnmpWalker,
+    /// `Geo.Tool.ArpMonitor`: concentric radar arcs, the ARP monitor tool.
+    ToolArpMonitor,
+    /// `Geo.Tool.FirewallTester`: a brick wall grid, the firewall egress tester.
+    ToolFirewallTester,
+    /// `Geo.Tool.NetMap`: connected nodes, the network cartography tool.
+    ToolNetMap,
+    /// `Geo.Tool.HostsFileEditor`: a document with pencil, the hosts file editor.
+    ToolHostsFileEditor,
+    /// `Geo.Tool.ServiceStatusDashboard`: a server rack dashboard, the service status tool.
+    ToolServiceStatus,
+    /// `Geo.Tool.LogViewer`: a document with text lines and an arrow, the log viewer.
+    ToolLogViewer,
+    /// `Geo.Tool.CronJobManager`: a clock with brackets, the cron job manager.
+    ToolCronJobManager,
+    /// `Geo.Tool.Notes`: a document with folded corner and pencil, the notes scratchpad.
+    ToolNotes,
+    /// `Geo.Tool.Diagram`: four connected nodes, the diagram editor.
+    ToolDiagram,
+    /// `Geo.Tool.CommandLibrary`: a document and shelf, the command snippet library.
+    ToolCommandLibrary,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
     /// The `Resolution` glyph (`E740`): a screen with its corners, an RDP session's
@@ -204,7 +258,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 70] = [
+    pub const ALL: [Self; 97] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -261,6 +315,13 @@ impl Icon {
         Self::ToolTextCase,
         Self::ToolPasswordGenerator,
         Self::ToolSshKeyGenerator,
+        Self::ToolSshAudit,
+        Self::ToolTlsAudit,
+        Self::ToolDnsSec,
+        Self::ToolCve,
+        Self::ToolDefaultCreds,
+        Self::ToolSecNumCloud,
+        Self::ToolSmb,
         Self::ToolCertificateGenerator,
         Self::ToolPasswordAudit,
         Self::ToolSubnet,
@@ -271,6 +332,26 @@ impl Icon {
         Self::ToolUlid,
         Self::ToolCrontab,
         Self::ToolSshConfig,
+        Self::ToolHttpStatus,
+        Self::ToolWakeOnLan,
+        Self::ToolWhois,
+        Self::ToolBannerGrabber,
+        Self::ToolDnsLookup,
+        Self::ToolPortScanner,
+        Self::ToolHttpHeaders,
+        Self::ToolCertInspector,
+        Self::ToolTraceroute,
+        Self::ToolSnmpWalker,
+        Self::ToolArpMonitor,
+        Self::ToolFirewallTester,
+        Self::ToolNetMap,
+        Self::ToolHostsFileEditor,
+        Self::ToolServiceStatus,
+        Self::ToolLogViewer,
+        Self::ToolCronJobManager,
+        Self::ToolNotes,
+        Self::ToolDiagram,
+        Self::ToolCommandLibrary,
         Self::Monitor,
         Self::Resolution,
         Self::Keyboard,
@@ -489,6 +570,27 @@ impl Icon {
                 "M5,4 A3,3 0 1 1 5,10 A3,3 0 1 1 5,4 Z M8,7 L14,7 L14,9 L12,9 L12,7 M10,9 L10,7 \
                  M4.5,6.5 A1,1 0 1 1 5.5,7.5 A1,1 0 1 1 4.5,6.5 Z"
             }
+            Self::ToolSshAudit | Self::ToolDefaultCreds => {
+                "M6,8 A3,3 0 1,1 6,8.01 M9,8 L14,8 L14,6 M12,8 L12,6"
+            }
+            Self::ToolTlsAudit => {
+                "M5,7 L5,5 A3,3 0 1,1 11,5 L11,7 M4,7 L12,7 L12,14 L4,14 Z M8,10 L8,12"
+            }
+            Self::ToolDnsSec => {
+                "M8,1 L14,4 L14,9 C14,12 11,14.5 8,15.5 C5,14.5 2,12 2,9 L2,4 Z \
+                 M5,7 L11,7 M5,9 L11,9 M5,11 L9,11"
+            }
+            Self::ToolCve => {
+                "M6,4 A4,4 0 1,1 6,12 A4,4 0 1,1 6,4 M9.5,10.5 L14,15 M4,7 L8,7 M4,9 L8,9"
+            }
+            Self::ToolSecNumCloud => {
+                "M8,1 L14,4 L14,9 C14,12 11,14.5 8,15.5 C5,14.5 2,12 2,9 L2,4 Z \
+                 M5,7 L6.5,7 M7.5,7 L11,7 M5,9.5 L6.5,9.5 M7.5,9.5 L11,9.5 M5,12 L6.5,12 M7.5,12 L11,12"
+            }
+            Self::ToolSmb => {
+                "M3,2 L13,2 L13,10 L3,10 Z M5,4 L11,4 M5,6 L11,6 M5,8 L9,8 M3,11 L7,14 L3,14 Z \
+                 M9,11 L13,11 L13,14 L9,14 Z"
+            }
             Self::ToolCertificateGenerator => {
                 "M2,2 L14,2 L14,14 L2,14 Z M4,5 L12,5 M4,7 L10,7 M4,9 L8,9 \
                  M11,9 A2.5,2.5 0 1 1 11,13 A2.5,2.5 0 1 1 11,9 Z M11.8,11.5 L12.5,11 L12.5,12"
@@ -496,6 +598,62 @@ impl Icon {
             Self::ToolPasswordAudit => {
                 "M8,1 L14,4 L14,9 C14,12 11,14.5 8,15.5 C5,14.5 2,12 2,9 L2,4 Z \
                  M5.5,8.5 L7.5,10.5 L11,6.5"
+            }
+            Self::ToolHttpStatus => {
+                "M8,1 A7,7 0 1 1 8,15 A7,7 0 1 1 8,1 Z M1,8 L15,8 M8,1 C5,4 5,12 8,15 M8,1 C11,4 11,12 8,15 M4,5 L6,5 M10,11 L12,11"
+            }
+            Self::ToolWakeOnLan => {
+                "M8,1 A7,7 0 1 1 8,15 A7,7 0 1 1 8,1 Z M9,4 L6.5,8.5 L8.5,8.5 L7,12 L11,7.5 L9,7.5 Z"
+            }
+            Self::ToolWhois => {
+                "M3,1 L13,1 L13,15 L3,15 Z M8,6 A2.5,2.5 0 1 1 8,11 L10,11 L10,8 A1,1 0 0 0 8,8 A1,1 0 0 1 8,6 Z"
+            }
+            Self::ToolBannerGrabber => "M1,3 L15,3 L15,13 L1,13 Z M3,6 L6,8 L3,10 M7,10 L12,10",
+            Self::ToolDnsLookup => {
+                "M8,1 A7,7 0 1 1 8,15 A7,7 0 1 1 8,1 Z M1,8 L15,8 M8,1 C5,4 5,12 8,15 M8,1 C11,4 11,12 8,15 M2.5,5 L13.5,5 M2.5,11 L13.5,11"
+            }
+            Self::ToolPortScanner => {
+                "M2,4 L4,4 L4,13 L2,13 Z M5,6 L7,6 L7,13 L5,13 Z M8,2 L10,2 L10,13 L8,13 Z M12,8 A3,3 0 1 1 12,12 A3,3 0 1 1 12,8 Z M14.5,12.5 L16,14"
+            }
+            Self::ToolHttpHeaders => "M2,2 L14,2 L14,11 L8,14 L2,11 Z M5,6 L7,8 L11,4",
+            Self::ToolCertInspector => {
+                "M8,1 L14,3 L14,8 C14,12 8,15 8,15 C8,15 2,12 2,8 L2,3 Z M10,6 A2.5,2.5 0 1 1 10,10 A2.5,2.5 0 1 1 10,6 Z M12,10.5 L14,12.5"
+            }
+            Self::ToolTraceroute => {
+                "M2,8 A1.5,1.5 0 1,1 5,8 L7,8 A1.5,1.5 0 1,1 10,8 L12,8 A1.5,1.5 0 1,1 15,8"
+            }
+            Self::ToolSnmpWalker => {
+                "M8,2 L8,5 M8,5 L4,7 M8,5 L12,7 M4,7 L4,9 M4,9 L2,11 M4,9 L6,11 M12,7 L12,9 M12,9 L10,11 M12,9 L14,11"
+            }
+            Self::ToolArpMonitor => {
+                "M8,8 L8,2 A6,6 0 1,1 2,8 A6,6 0 1,1 14,8 M8,8 A4,4 0 0,1 12,8 M8,8 A2,2 0 0,1 10,8"
+            }
+            Self::ToolFirewallTester => {
+                "M1,3 L15,3 L15,13 L1,13 Z M1,6 L15,6 M1,9 L15,9 M5,3 L5,6 M10,3 L10,6 M3,6 L3,9 M8,6 L8,9 M13,6 L13,9 M5,9 L5,13 M10,9 L10,13"
+            }
+            Self::ToolNetMap => {
+                "M8,2 A6,6 0 1 1 8,14 A6,6 0 1 1 8,2 Z M8,8 L12,4 M4,5 A1.5,1.5 0 1 1 4,6.5 Z M12,3 A1.5,1.5 0 1 1 12,4.5 Z M11,10 A1.5,1.5 0 1 1 11,11.5 Z M5,11 A1.5,1.5 0 1 1 5,12.5 Z M8,8 L11,10 M8,8 L5,11 M8,8 L4,5"
+            }
+            Self::ToolHostsFileEditor => {
+                "M3,1 L13,1 L13,15 L3,15 Z M5,4 L11,4 M5,6.5 L11,6.5 M5,9 L8,9 M14,6 L10,10 L9.5,12.5 L12,12 L16,8 Z"
+            }
+            Self::ToolServiceStatus => {
+                "M1,2 L15,2 L15,14 L1,14 Z M1,4.5 L15,4.5 M3,7 L13,7 L13,8.5 L3,8.5 Z M3,9.5 L10,9.5 L10,11 L3,11 Z M3,12 L7,12 L7,13 L3,13 Z"
+            }
+            Self::ToolLogViewer => {
+                "M3,1 L13,1 L13,15 L3,15 Z M5,4 L11,4 M5,6.5 L11,6.5 M5,9 L8,9 M10,8 L10,13 L14,10.5 Z"
+            }
+            Self::ToolCronJobManager => {
+                "M8,2 A6,6 0 1 1 8,14 A6,6 0 1 1 8,2 Z M8,4.5 L8,8 L10.5,10 M1,5 L3,5 L3,11 L1,11 M15,5 L13,5 L13,11 L15,11"
+            }
+            Self::ToolNotes => {
+                "M3,1 L11,1 L13,3 L13,15 L3,15 Z M11,1 L11,3 L13,3 M5,5 L11,5 M5,7.5 L10,7.5 M5,10 L8,10 M14,9 L10,13 L8.5,13.5 L9,12 L13,8 Z"
+            }
+            Self::ToolDiagram => {
+                "M2,2 L6,2 L6,6 L2,6 Z M10,2 L14,2 L14,6 L10,6 Z M2,10 L6,10 L6,14 L2,14 Z M10,10 L14,10 L14,14 L10,14 Z M6,4 L10,4 M4,6 L4,10 M12,6 L12,10 M6,12 L10,12"
+            }
+            Self::ToolCommandLibrary => {
+                "M1,2 L11,2 L11,14 L1,14 Z M3,5 L5,5 M6,5 L9,5 M3,7 L9,7 M3,9 L7,9 M3,11 L9,11 M12,4 L15,4 L15,13 L11,13 M12,4 L12,13"
             }
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
             Self::Resolution => {
@@ -558,8 +716,35 @@ impl Icon {
             | Self::ToolTextCase
             | Self::ToolPasswordGenerator
             | Self::ToolSshKeyGenerator
+            | Self::ToolSshAudit
+            | Self::ToolTlsAudit
+            | Self::ToolDnsSec
+            | Self::ToolCve
+            | Self::ToolDefaultCreds
+            | Self::ToolSecNumCloud
+            | Self::ToolSmb
             | Self::ToolCertificateGenerator
             | Self::ToolPasswordAudit
+            | Self::ToolHttpStatus
+            | Self::ToolWakeOnLan
+            | Self::ToolWhois
+            | Self::ToolBannerGrabber
+            | Self::ToolDnsLookup
+            | Self::ToolPortScanner
+            | Self::ToolHttpHeaders
+            | Self::ToolCertInspector
+            | Self::ToolTraceroute
+            | Self::ToolSnmpWalker
+            | Self::ToolArpMonitor
+            | Self::ToolFirewallTester
+            | Self::ToolNetMap
+            | Self::ToolHostsFileEditor
+            | Self::ToolServiceStatus
+            | Self::ToolLogViewer
+            | Self::ToolCronJobManager
+            | Self::ToolNotes
+            | Self::ToolDiagram
+            | Self::ToolCommandLibrary
             // These hold open lines too, which a fill would lose; the ULID's blocks are
             // closed, filled as the UUID's.
             | Self::ToolSubnet
@@ -1343,10 +1528,11 @@ mod tests {
                 bounds.width > 1.0 && bounds.height > 1.0,
                 "{icon:?}: {bounds:?}"
             );
-            // The C#'s own magnifier of the regex tester reaches past the box; WPF stretches
-            // it into its square as the outline's bounds are fitted here.
+            // The C#'s own magnifier of the regex tester and port scanner reaches past the box;
+            // WPF stretches it into its square as the outline's bounds are fitted here.
             assert!(
                 icon == Icon::ToolRegex
+                    || icon == Icon::ToolPortScanner
                     || (bounds.x >= -EPSILON
                         && bounds.y >= -EPSILON
                         && bounds.x + bounds.width <= BOX + 0.01

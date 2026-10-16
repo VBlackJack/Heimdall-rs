@@ -28,7 +28,7 @@ use heimdall_app::TabId;
 use heimdall_core::tools::hash_computer::HashAlgorithm;
 use heimdall_core::tools::hmac_computer::{self, HMAC_ALGORITHMS, HmacOutputFormat};
 use iced::widget::text_editor::{Action, Content};
-use iced::widget::{column, container, pick_list, radio, row, text, text_input, tooltip};
+use iced::widget::{column, pick_list, radio, row, text, text_input, tooltip};
 use iced::{Element, Length};
 use zeroize::Zeroizing;
 
@@ -245,14 +245,16 @@ impl HmacPane {
                 Some(self.format),
                 move |format| send(HmacMessage::Format(format)),
             )
-            .text_size(font_size::BODY),
+            .text_size(font_size::BODY)
+            .style(styles::radio),
             radio(
                 fl!("ui-tool-hmac-format-base64"),
                 HmacOutputFormat::Base64,
                 Some(self.format),
                 move |format| send(HmacMessage::Format(format)),
             )
-            .text_size(font_size::BODY),
+            .text_size(font_size::BODY)
+            .style(styles::radio),
         ]
         .spacing(CHOICE_GAP);
         let output = self.output_row(send, state);
@@ -331,7 +333,8 @@ impl HmacPane {
                 text(fl!("ui-tool-hmac-toggle-key")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::XS)
         .align_y(iced::Alignment::Center)

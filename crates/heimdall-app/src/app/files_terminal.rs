@@ -50,7 +50,7 @@ impl App {
             .filter(|entry| entry.kind == EntryKind::Directory)
             .map_or_else(
                 || remote.path.clone(),
-                |entry| remote.path.join(&entry.name),
+                |entry| remote.entries_folder().join(&entry.name),
             );
         let Some(command) = cd_command(folder.as_bytes()) else {
             return Vec::new();

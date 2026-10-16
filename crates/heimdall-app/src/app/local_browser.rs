@@ -149,7 +149,7 @@ impl App {
         else {
             return false;
         };
-        if files.local.path == home || files.local.discard_listing {
+        if files.local.path == home {
             return false;
         }
         files.local.path = home;
@@ -202,7 +202,7 @@ impl App {
         let Some(entry) = files.local.entries.get(index) else {
             return Vec::new();
         };
-        let file = files.local.path.join(&entry.name);
+        let file = files.local.entries_folder().join(&entry.name);
         let name = entry.name.to_string_lossy().into_owned();
         let kind = entry.kind;
         if !matches!(kind, EntryKind::File | EntryKind::Link) {
@@ -247,5 +247,8 @@ fn chosen_folder(local: &LocalPane) -> PathBuf {
         .selected
         .and_then(|index| local.entries.get(index))
         .filter(|entry| entry.kind == EntryKind::Directory)
-        .map_or_else(|| local.path.clone(), |entry| local.path.join(&entry.name))
+        .map_or_else(
+            || local.path.clone(),
+            |entry| local.entries_folder().join(&entry.name),
+        )
 }

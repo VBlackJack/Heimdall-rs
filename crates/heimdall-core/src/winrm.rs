@@ -62,10 +62,6 @@ const SECRET_NAME: &str = "HeimdallWinRmSecret";
 /// Longest DNS name, in characters.
 const MAX_HOST_NAME_LENGTH: usize = 253;
 
-/// Characters `PowerShell` ends a single-quoted string on: the ASCII quote and the four
-/// typographic single quotes, as its own `EscapeSingleQuotedStringContent` lists them.
-const SINGLE_QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
-
 /// Where `Enter-PSSession` takes the account's password from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PasswordSource {
@@ -215,7 +211,7 @@ fn enter_session(
         }
     }
     if let Some(username) = &profile.username {
-        let name = quoted_content(checked_username(username)?);
+        let name = crate::powershell::escape_content(checked_username(username)?);
         let credential = match password {
             PasswordSource::Prompt => format!(" -Credential '{name}'"),
             PasswordSource::Environment => {
@@ -250,18 +246,6 @@ fn checked_username(username: &str) -> Result<&str, CommandError> {
     } else {
         Ok(username)
     }
-}
-
-/// `text` as the inside of a single-quoted `PowerShell` string: each quote doubled.
-fn quoted_content(text: &str) -> String {
-    let mut quoted = String::with_capacity(text.len());
-    for c in text.chars() {
-        if SINGLE_QUOTES.contains(&c) {
-            quoted.push(c);
-        }
-        quoted.push(c);
-    }
-    quoted
 }
 
 #[cfg(test)]

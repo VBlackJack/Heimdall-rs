@@ -115,7 +115,7 @@ impl App {
             files.remote.error = Some(FilesError::FileTooLarge);
             return Vec::new();
         }
-        let remote = files.remote.path.join(&entry.name);
+        let remote = files.remote.entries_folder().join(&entry.name);
         let editor = match editor(&setting) {
             Ok(editor) => editor,
             Err(refused) => {
@@ -305,7 +305,7 @@ impl App {
         if entry.kind != EntryKind::File {
             return Vec::new();
         }
-        let remote = files.remote.path.join(&entry.name);
+        let remote = files.remote.entries_folder().join(&entry.name);
         let editor = match editor(&setting) {
             Ok(editor) => editor,
             Err(refused) => {

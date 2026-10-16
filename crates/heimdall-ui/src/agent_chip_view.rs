@@ -20,7 +20,7 @@
 use heimdall_app::{AgentChip, Message as AppMessage, server_text};
 use heimdall_ssh::AgentSurvey;
 use iced::Element;
-use iced::widget::{button, container, text, tooltip};
+use iced::widget::{button, text, tooltip};
 
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -85,7 +85,8 @@ pub fn view(chip: &AgentChip) -> Option<Element<'_, Message>> {
             text(fl!("ui-agent-chip-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
-        .style(container::rounded_box)
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into(),
     )
 }

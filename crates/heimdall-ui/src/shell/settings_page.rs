@@ -752,13 +752,15 @@ impl Shell {
                 text(fl!("ui-settings-find-modified-hint")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             tooltip(
                 field,
                 text(fl!("ui-settings-search-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
@@ -771,7 +773,8 @@ impl Shell {
                     text(fl!("ui-settings-search-clear")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
-                .style(container::rounded_box),
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
             );
         }
         header.into()
@@ -942,7 +945,8 @@ impl Shell {
                 .size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
             tooltip(
                 button(
                     row![
@@ -962,7 +966,8 @@ impl Shell {
                 .size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center)
@@ -1364,8 +1369,9 @@ impl Shell {
         line.into()
     }
 
-    /// A number typed and applied with Enter, its unit after it, what is said of it under
-    /// it, and its rule while what is typed is out of its range; greyed when not `enabled`.
+    /// A number applied as soon as what is typed is in its range, its unit after it, what is
+    /// said of it under it, and its rule while what is typed is out of its range; greyed
+    /// when not `enabled`.
     fn number_row(&self, field: SessionField, enabled: bool) -> Element<'_, Message> {
         let shown = field.value(self.app.settings()).to_string();
         let typed = self.session_typed[field.index()].clone().unwrap_or(shown);
@@ -1399,8 +1405,8 @@ impl Shell {
         body.into()
     }
 
-    /// The terminals' font size, applied with Enter; one out of the range stays typed, the
-    /// C# message under it.
+    /// The terminals' font size, applied as soon as what is typed is in the range; one out
+    /// of the range stays typed, the C# message under it.
     fn font_size_row(&self) -> Element<'_, Message> {
         let shown = self.app.settings().terminal_font_size.to_string();
         let typed = self.font_size_typed.clone().unwrap_or(shown);
@@ -1622,7 +1628,8 @@ impl Shell {
             text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         column![
             labelled(
                 row_label(SettingRow::SshDefaultMode),
@@ -1653,7 +1660,8 @@ impl Shell {
             text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
-        .style(container::rounded_box);
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip);
         column![
             labelled(
                 row_label(SettingRow::RdpDefaultMode),
@@ -1730,7 +1738,8 @@ impl Shell {
                 text(fl!("ui-settings-rdp-reset-defaults-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
             .into(),
         }
     }

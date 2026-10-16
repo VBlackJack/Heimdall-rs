@@ -12,15 +12,16 @@ GTK, ni libdbus (ni liée, ni ouverte), ni OpenSSL, ni bibliothèque fontconfig 
 FreeType : D-Bus est parlé par `zbus`, TLS par `rustls` sur `ring`, les polices sont
 lues par `fontdb` et `ttf-parser`.
 
-Inventaire établi depuis le `Cargo.lock` du commit `c6c8463` (`master`, 2026-10-10), cible
-`x86_64-unknown-linux-gnu`, profil de publication. Une mise à jour de dépendance peut le
+Inventaire établi depuis le `Cargo.lock` du commit `49ee6f4` (`master`, 2026-10-13), cible
+`x86_64-unknown-linux-gnu`, profil de publication, fonctionnalités par défaut. Une mise à jour de dépendance peut le
 changer : voir [Garder cette page exacte](#garder-cette-page-exacte).
 
 ## Résumé
 
 | Catégorie | Bibliothèques |
 |---|---|
-| Liées : dans `DT_NEEDED`, le binaire ne démarre pas sans elles | `libc.so.6`, `libm.so.6`, `libgcc_s.so.1`, `ld-linux-x86-64.so.2` (glibc et le support d'exécution de GCC), `libasound.so.2` (ALSA) |
+| Liées : dans `DT_NEEDED`, le binaire ne démarre pas sans elles | `libc.so.6`, `libm.so.6`, `libgcc_s.so.1`, `ld-linux-x86-64.so.2` (glibc et le support d'exécution de GCC) |
+| Liée seulement dans une compilation avec la fonctionnalité `audio` | `libasound.so.2` (ALSA) |
 | `dlopen`, requises dans une session Wayland | `libwayland-client.so.0`, `libxkbcommon.so.0` |
 | `dlopen`, requises dans une session X11 | `libX11.so.6`, `libX11-xcb.so.1`, `libXcursor.so.1`, `libXi.so.6`, `libxcb.so.1`, `libxkbcommon.so.0`, `libxkbcommon-x11.so.0` |
 | `dlopen`, facultatives avec repli | `libvulkan.so.1`, `libEGL.so.1`, `libwayland-egl.so.1` |
@@ -43,14 +44,13 @@ Les trois façons d'atteindre une bibliothèque :
 | Bibliothèque mathématique | `libm.so.6` | Bibliothèque standard de Rust | Fonctions en virgule flottante |
 | Support d'exécution de GCC | `libgcc_s.so.1` | Bibliothèque standard de Rust | Déroulement de pile |
 | Chargeur dynamique | `ld-linux-x86-64.so.2` | Bibliothèque standard de Rust | Interpréteur du programme (`PT_INTERP`) |
-| ALSA | `libasound.so.2` | `alsa-sys` 0.4.0, via `alsa` 0.11.0 et `cpal` 0.17.3, depuis `heimdall-rdp` | Joue sur cet ordinateur le son d'un serveur RDP |
+| ALSA, seulement avec la fonctionnalité `audio` | `libasound.so.2` | `alsa-sys` 0.4.0, via `alsa` 0.11.0 et `cpal` 0.18.2, depuis `heimdall-rdp` | Joue sur cet ordinateur le son d'un serveur RDP |
 
-Mesuré sur une compilation de publication de ce commit (`cargo build --release --locked
--p heimdall-ui`, AlmaLinux 9, glibc 2.34) :
+Mesuré sur une compilation de publication de ce commit avec les fonctionnalités par
+défaut (`cargo build --release --locked -p heimdall-ui`, AlmaLinux 9, glibc 2.34) :
 
 ```text
 $ readelf -d heimdall-rs | grep NEEDED
- 0x0000000000000001 (NEEDED)             Shared library: [libasound.so.2]
  0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
  0x0000000000000001 (NEEDED)             Shared library: [libm.so.6]
  0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
@@ -62,12 +62,21 @@ Aucun `RPATH` ni `RUNPATH` n'est défini. `x11-dl` demande `libdl` à l'édition
 mais depuis glibc 2.34 `dlopen` est dans `libc.so.6` et aucune entrée `libdl.so.2` n'est
 inscrite.
 
-`libasound.so.2` est la seule bibliothèque liée en dehors de glibc et du support
-d'exécution de GCC. Elle est liée même quand aucune session RDP ne joue de son :
-`alsa-sys` demande `alsa` à `pkg-config` en liaison dynamique (`build.rs` ligne 7). La
-compilation demande donc `alsa-lib-devel` (Fedora, RHEL, AlmaLinux) ou `libasound2-dev`
-(Debian, Ubuntu), et l'exécution demande `alsa-lib` ou `libasound2`. Voir
-[Évolution prévue du son RDP](#évolution-prévue-du-son-rdp).
+Une compilation par défaut ne lie rien en dehors de glibc et du support d'exécution de
+GCC, et ne demande aucun paquet de développement C : toutes les autres bibliothèques de
+cette page sont ouvertes à l'exécution (les scripts de compilation de `wayland-sys` et de
+`tiny-xlib` ne lient rien quand leur fonctionnalité `dlopen` est active, comme ici). Seul
+un compilateur C est nécessaire, pour `ring` (section 7).
+
+Le son RDP est la fonctionnalité Cargo `audio` de `heimdall-ui` (transmise à
+`heimdall-rdp`), désactivée par défaut sous Linux et toujours active sous Windows. Une
+compilation Linux qui la demande (`cargo build --release -p heimdall-ui --features audio`)
+lie `libasound.so.2` même quand aucune session RDP ne joue de son : `alsa-sys` demande
+`alsa` à `pkg-config` en liaison dynamique (`build.rs` ligne 7). Cette compilation demande
+`alsa-lib-devel` (Fedora, RHEL, AlmaLinux) ou `libasound2-dev` (Debian, Ubuntu), et son
+exécution demande `alsa-lib` ou `libasound2`. Sans la fonctionnalité, les sessions RDP
+fonctionnent mais le son du serveur n'est pas joué sur cet ordinateur ; les options RDP
+le disent. Voir la section 6.
 
 ## 2. Fenêtrage dans une session Wayland
 
@@ -153,12 +162,16 @@ du bureau (`xdg-desktop-portal-gtk`, `-gnome` ou `-kde`), dans un autre processu
 
 | Bibliothèque | soname | Chargée par | Comment | Quand |
 |---|---|---|---|---|
-| ALSA | `libasound.so.2` | `alsa-sys` 0.4.0 | Liée | Toujours, voir section 1 |
+| ALSA | `libasound.so.2` | `alsa-sys` 0.4.0 | Liée | Seulement dans une compilation avec la fonctionnalité `audio`, voir section 1 |
 
-`cpal` 0.17.3 n'utilise qu'ALSA sous Linux : sa fonctionnalité `jack` est désactivée et
-aucune crate PulseAudio ou PipeWire n'est dans l'arbre. ALSA peut ensuite charger ses
+`cpal` 0.18.2 n'utilise qu'ALSA sous Linux : ses fonctionnalités `jack`, `pulseaudio` et
+`pipewire` sont désactivées, si bien qu'aucune crate JACK, PulseAudio ou PipeWire n'est
+dans l'arbre. ALSA peut ensuite charger ses
 propres greffons (`libasound_module_pcm_pulse.so`, `libasound_module_pcm_pipewire.so`, et
 ainsi de suite) selon la configuration `/etc/alsa` du poste, quand du son est joué.
+
+Jusqu'au commit `9f27424` (2026-10-10), le son n'était pas facultatif et toute
+compilation Linux liait ALSA.
 
 ## 7. Code C compilé dans le binaire
 
@@ -187,7 +200,9 @@ bibliothèques X11 et le conservent dans le binaire :
 
 Un binaire compilé sur une distribution et lancé sur une autre trouve donc toujours les
 bibliothèques par leur soname ; sur un poste de même organisation, `tiny-xlib` les ouvre
-par chemin absolu.
+par chemin absolu. Sur une machine de compilation sans les fichiers de développement X11
+(`x11.pc`, `x11-xcb.pc`), la recherche échoue, aucun répertoire n'est conservé, et les deux
+crates n'ouvrent que le soname seul ; la compilation n'échoue pas.
 
 ## Vérifier sur un poste cible
 
@@ -215,14 +230,6 @@ ICED_BACKEND=tiny-skia strace -f -e trace=openat ./heimdall-rs 2>&1 | grep -E '\
 
 `ldd` fait exécuter le fichier par le chargeur dynamique ; sur un binaire non fiable,
 préférer `readelf -d`.
-
-## Évolution prévue du son RDP
-
-Le son RDP deviendra une fonctionnalité Cargo facultative (`alsa`), comme le propriétaire
-l'a prévu. Une compilation sans elle n'aura pas `libasound.so.2` dans `DT_NEEDED`, ne
-laissant comme bibliothèques liées que glibc et le support d'exécution de GCC, et ne
-demandera aucun paquet ALSA pour compiler ni pour s'exécuter. Les sessions RDP
-fonctionneront toujours ; le son du serveur ne sera pas joué sur cet ordinateur.
 
 ## Windows
 
