@@ -2638,7 +2638,12 @@ impl Shell {
                 self.relist_monitors();
                 Vec::new()
             }
-            Message::MainWindowClosed => return iced::exit(),
+            Message::MainWindowClosed => {
+                // Said, so that a log ending without it or another end of its own tells of a
+                // process ended from outside: killed, or a native crash.
+                log::info!("the main window closed: Heimdall stops");
+                return iced::exit();
+            }
             Message::BringForward => return self.main_window.map_or_else(Task::none, focus_window),
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
@@ -4525,6 +4530,7 @@ impl Shell {
     /// its place and size are the ones it had before: the ones kept when it was last shown
     /// as a window.
     fn exit(&self) -> Task<Message> {
+        log::info!("Heimdall quits as asked");
         let Some((path, left)) = self.window_memory.clone() else {
             return iced::exit();
         };
