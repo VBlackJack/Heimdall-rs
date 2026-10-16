@@ -780,10 +780,108 @@ fn a_cron_expression_is_checked_as_the_csharp_checks_it() {
         cron_builder::validate("*/0 * * * *"),
         Some(CronProblem::OutOfRange { field: 0 })
     );
-    // As the C#: a step's start that is not a number is not checked.
+    // A range with a step is read whole.
     assert_eq!(cron_builder::validate("1-5/2 * * * *"), None);
     assert_eq!(cron_builder::parse("* * * *"), None);
     assert_eq!(cron_builder::parse("* * * * x"), None);
+}
+
+#[test]
+fn a_cron_field_out_of_its_bounds_or_malformed_is_refused_before_it_is_expanded() {
+    for (text, field) in [
+        ("0-2147483647 * * * *", 0),
+        ("* 0-99999999999999999999 * * *", 1),
+        ("* * 0 * *", 2),
+        ("* * * 13 *", 3),
+        ("* * * * 0-7", 4),
+        ("*/60 * * * *", 0),
+        ("*/2147483647 * * * *", 0),
+        ("20-10 * * * *", 0),
+        ("* * 32/2 * *", 2),
+    ] {
+        assert_eq!(
+            cron_builder::validate(text),
+            Some(CronProblem::OutOfRange { field }),
+            "{text}"
+        );
+        assert!(
+            cron_builder::next_runs(
+                &fields(text),
+                Minute::of(&Instant::from_unix_seconds(0).wall_clock(0)),
+                1
+            )
+            .is_empty(),
+            "{text}"
+        );
+    }
+    for (text, field, part) in [
+        ("1- * * * *", 0, "1-"),
+        ("1-2-3 * * * *", 0, "1-2-3"),
+        ("1/2/3 * * * *", 0, "1/2/3"),
+        ("*-5 * * * *", 0, "*-5"),
+        ("1,,2 * * * *", 0, "1,,2"),
+        ("* /5 * * *", 1, "/5"),
+        ("* * * * 1,", 4, "1,"),
+    ] {
+        assert_eq!(
+            cron_builder::validate(text),
+            Some(CronProblem::Malformed {
+                field,
+                text: part.to_owned()
+            }),
+            "{text}"
+        );
+    }
+    // A crontab takes 7 as Sunday; the builder, as the C#, does not.
+    assert_eq!(cron_builder::crontab_validate("0 0 * * 0-7"), None);
+    assert_eq!(
+        cron_builder::crontab_validate("0 0 * * 8"),
+        Some(CronProblem::OutOfRange { field: 4 })
+    );
+}
+
+#[test]
+fn a_stepped_range_runs_within_the_range() {
+    // Friday 2026-10-09 14:05 on the wall clock.
+    let now = Minute::of(&Instant::from_unix_seconds(1_791_554_700).wall_clock(0));
+    assert_eq!(
+        cron_builder::next_runs(&fields("10-20/5 * * * *"), now, 4),
+        [
+            "2026-10-09 14:10 (Fri)",
+            "2026-10-09 14:15 (Fri)",
+            "2026-10-09 14:20 (Fri)",
+            "2026-10-09 15:10 (Fri)"
+        ]
+    );
+    // `a/n` runs from a to the field's end, as the C#.
+    assert_eq!(
+        cron_builder::next_runs(&fields("50/5 14 * * *"), now, 3),
+        [
+            "2026-10-09 14:50 (Fri)",
+            "2026-10-09 14:55 (Fri)",
+            "2026-10-10 14:50 (Sat)"
+        ]
+    );
+}
+
+#[test]
+fn both_days_restricted_run_on_either_as_cron_reads_them() {
+    // Friday 2026-10-09 14:05 on the wall clock; 2026-11-01 is a Sunday.
+    let now = Minute::of(&Instant::from_unix_seconds(1_791_554_700).wall_clock(0));
+    assert_eq!(
+        cron_builder::next_runs(&fields("0 9 1 * 1"), now, 4),
+        [
+            "2026-10-12 09:00 (Mon)",
+            "2026-10-19 09:00 (Mon)",
+            "2026-10-26 09:00 (Mon)",
+            "2026-11-01 09:00 (Sun)"
+        ]
+    );
+    // One of them unrestricted: the other alone decides.
+    assert_eq!(
+        cron_builder::next_runs(&fields("0 9 1 * *"), now, 1),
+        ["2026-11-01 09:00 (Sun)"]
+    );
 }
 
 #[test]

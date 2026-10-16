@@ -120,6 +120,9 @@ pub struct HeaderCheckResult {
     pub status: HeaderCheckStatus,
     /// Localization key for recommendation, if applicable.
     pub recommendation_key: Option<&'static str>,
+    /// Localization key of why a header present is not a pass: its value, not its name, is
+    /// what is wrong (`max-age=0`, an empty policy, an unknown value).
+    pub reason_key: Option<&'static str>,
     /// The cookie flags missing, comma-separated, for the cookie check: the view says it
     /// in the user's language.
     pub detail: Option<String>,
@@ -274,13 +277,43 @@ pub fn parse_target(input: &str) -> Result<HttpTarget, &'static str> {
 }
 
 /// Where the header section of `received` ends, the blank line after it included; `None`
-/// while it has not ended.
+/// while it has not ended. A line may end with a bare LF, as RFC 9112 section 2.2 lets a
+/// recipient read it, so `\n\n` ends it as `\r\n\r\n` does.
 #[must_use]
 pub fn header_end(received: &[u8]) -> Option<usize> {
     received
-        .windows(HEADER_END.len())
-        .position(|window| window == HEADER_END)
-        .map(|start| start + HEADER_END.len())
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| **byte == b'\n')
+        .find_map(|(index, _)| match received.get(index + 1..) {
+            Some([b'\n', ..]) => Some(index + 2),
+            Some([b'\r', b'\n', ..]) => Some(index + 3),
+            _ => None,
+        })
+}
+
+/// The informational statuses, 1xx (RFC 9110 section 15.2).
+const INFORMATIONAL: std::ops::RangeInclusive<u16> = 100..=199;
+
+/// `101 Switching Protocols`: informational, yet the last response on its connection.
+const SWITCHING_PROTOCOLS: u16 = 101;
+
+/// The status code of the response whose header section is `head`; `None` when its first
+/// line names none.
+#[must_use]
+pub fn status_code(head: &[u8]) -> Option<u16> {
+    let line = head.split(|byte| *byte == b'\n').next()?;
+    let code = line
+        .split(u8::is_ascii_whitespace)
+        .find(|word| !word.is_empty() && !word.starts_with(b"HTTP/"))?;
+    std::str::from_utf8(code).ok()?.parse().ok()
+}
+
+/// Whether a response of `code` is an interim one a final response follows on the same
+/// connection, as `103 Early Hints` or `100 Continue`: every 1xx but `101`.
+#[must_use]
+pub fn is_interim(code: u16) -> bool {
+    INFORMATIONAL.contains(&code) && code != SWITCHING_PROTOCOLS
 }
 
 /// Parses a raw HTTP response string into status code, headers, and the header section.
@@ -342,145 +375,269 @@ fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a st
     None
 }
 
-/// Evaluates security headers against modern web defense standards.
+/// What a header present is worth: its status, and the translation key of why when it is
+/// not a pass.
+type Verdict = (HeaderCheckStatus, Option<&'static str>);
+
+/// The check of header `name`: absent, a failure with `recommendation_key`; present, what
+/// `verdict` makes of its value, the recommendation kept unless it passes. The C#
+/// `CheckPresence` passes any value, `max-age=0` and `X-Frame-Options: nonsense` included.
+fn header_check(
+    headers: &[(String, String)],
+    name: &str,
+    display_key: &'static str,
+    recommendation_key: &'static str,
+    verdict: impl Fn(&str) -> Verdict,
+) -> HeaderCheckResult {
+    let (value, status, reason_key) = match find_header(headers, name) {
+        Some(value) => {
+            let (status, reason) = verdict(value);
+            (value.to_string(), status, reason)
+        }
+        None => (String::new(), HeaderCheckStatus::Fail, None),
+    };
+    HeaderCheckResult {
+        name: name.to_string(),
+        display_key,
+        value,
+        status,
+        recommendation_key: (status != HeaderCheckStatus::Pass).then_some(recommendation_key),
+        reason_key,
+        detail: None,
+    }
+}
+
+/// The shortest `max-age` that passes: six months, the threshold of Mozilla's Observatory.
+pub const HSTS_MIN_MAX_AGE_SECONDS: u64 = 15_768_000;
+
+/// The `Strict-Transport-Security` value: read over HTTPS only, as RFC 6797 section 8.1 has
+/// browsers ignore it over plain HTTP; its one `max-age` a number (section 6.1), of which 0
+/// removes the policy (section 6.1.1).
+fn hsts_verdict(value: &str, https: bool) -> Verdict {
+    if !https {
+        return (
+            HeaderCheckStatus::Warn,
+            Some("ui-tool-headers-reason-hsts-http"),
+        );
+    }
+    match hsts_max_age(value) {
+        None => (
+            HeaderCheckStatus::Fail,
+            Some("ui-tool-headers-reason-hsts-max-age-invalid"),
+        ),
+        Some(0) => (
+            HeaderCheckStatus::Fail,
+            Some("ui-tool-headers-reason-hsts-max-age-zero"),
+        ),
+        Some(age) if age < HSTS_MIN_MAX_AGE_SECONDS => (
+            HeaderCheckStatus::Warn,
+            Some("ui-tool-headers-reason-hsts-max-age-short"),
+        ),
+        Some(_) => (HeaderCheckStatus::Pass, None),
+    }
+}
+
+/// The `max-age` of an HSTS value, its directive named once and its value digits, quoted
+/// or not; `None` otherwise, which a browser ignores the header for. A number too large
+/// reads as the largest.
 #[must_use]
-pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderCheckResult> {
+pub fn hsts_max_age(value: &str) -> Option<u64> {
+    let mut ages = value.split(';').filter_map(|directive| {
+        let (name, age) = directive.split_once('=').unwrap_or((directive, ""));
+        name.trim().eq_ignore_ascii_case("max-age").then(|| {
+            let age = age.trim();
+            let age = age
+                .strip_prefix('"')
+                .and_then(|quoted| quoted.strip_suffix('"'))
+                .unwrap_or(age);
+            (!age.is_empty() && age.bytes().all(|byte| byte.is_ascii_digit()))
+                .then(|| age.parse::<u64>().unwrap_or(u64::MAX))
+        })
+    });
+    match (ages.next(), ages.next()) {
+        (Some(age), None) => age,
+        _ => None,
+    }
+}
+
+/// The `Content-Security-Policy` value: an empty policy enforces nothing; the directive
+/// that governs scripts (`script-src`, else `default-src`) is looked for, and an
+/// `'unsafe-inline'` without a nonce nor a hash beside it, or an `'unsafe-eval'`, in it.
+fn csp_verdict(value: &str) -> Verdict {
+    if value.trim().is_empty() {
+        return (
+            HeaderCheckStatus::Fail,
+            Some("ui-tool-headers-reason-csp-empty"),
+        );
+    }
+    let directive = |wanted: &str| {
+        value.split(';').find_map(|directive| {
+            let mut words = directive.split_ascii_whitespace();
+            words
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case(wanted))
+                .then(|| words.map(str::to_ascii_lowercase).collect::<Vec<_>>())
+        })
+    };
+    let Some(sources) = directive("script-src").or_else(|| directive("default-src")) else {
+        return (
+            HeaderCheckStatus::Warn,
+            Some("ui-tool-headers-reason-csp-no-script"),
+        );
+    };
+    let has = |source: &str| sources.iter().any(|word| word == source);
+    let nonce_or_hash = sources.iter().any(|word| {
+        ["'nonce-", "'sha256-", "'sha384-", "'sha512-"]
+            .iter()
+            .any(|prefix| word.starts_with(prefix))
+    });
+    if (has("'unsafe-inline'") && !nonce_or_hash) || has("'unsafe-eval'") {
+        (
+            HeaderCheckStatus::Warn,
+            Some("ui-tool-headers-reason-csp-unsafe"),
+        )
+    } else {
+        (HeaderCheckStatus::Pass, None)
+    }
+}
+
+/// The `X-Frame-Options` value, as the HTML standard reads it: its comma-separated values
+/// all `DENY` or all `SAMEORIGIN`, case aside; `ALLOW-FROM`, which no current browser
+/// applies, a warning; anything else is ignored by browsers, a failure.
+fn xfo_verdict(value: &str) -> Verdict {
+    let mut values: Vec<String> = value
+        .split(',')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .collect();
+    values.dedup();
+    match values.as_slice() {
+        [only] if only == "deny" || only == "sameorigin" => (HeaderCheckStatus::Pass, None),
+        [only] if only.starts_with("allow-from") => (
+            HeaderCheckStatus::Warn,
+            Some("ui-tool-headers-reason-xfo-allow-from"),
+        ),
+        _ => (
+            HeaderCheckStatus::Fail,
+            Some("ui-tool-headers-reason-xfo-invalid"),
+        ),
+    }
+}
+
+/// The `X-Content-Type-Options` value, as the Fetch standard reads it: its first value
+/// `nosniff`, case aside; anything else is ignored by browsers, a failure, where the C#
+/// warns.
+fn xcto_verdict(value: &str) -> Verdict {
+    let first = value.split(',').next().unwrap_or_default().trim();
+    if first.eq_ignore_ascii_case(NOSNIFF_VALUE) {
+        (HeaderCheckStatus::Pass, None)
+    } else {
+        (
+            HeaderCheckStatus::Fail,
+            Some("ui-tool-headers-reason-xcto-invalid"),
+        )
+    }
+}
+
+/// The policies `Referrer-Policy` may name.
+const REFERRER_POLICIES: [&str; 8] = [
+    "no-referrer",
+    "no-referrer-when-downgrade",
+    "same-origin",
+    "origin",
+    "strict-origin",
+    "origin-when-cross-origin",
+    "strict-origin-when-cross-origin",
+    "unsafe-url",
+];
+
+/// The policies that send the whole URL to other sites.
+const LEAKING_REFERRER_POLICIES: [&str; 2] = ["unsafe-url", "no-referrer-when-downgrade"];
+
+/// The `Referrer-Policy` value, as the Referrer Policy standard reads it: the last policy
+/// of the list a browser knows applies; none known, the header is ignored, a failure; a
+/// policy sending the whole URL to other sites, a warning.
+fn referrer_verdict(value: &str) -> Verdict {
+    let policy = value
+        .split(',')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|part| REFERRER_POLICIES.contains(&part.as_str()))
+        .last();
+    match policy {
+        None => (
+            HeaderCheckStatus::Fail,
+            Some("ui-tool-headers-reason-referrer-invalid"),
+        ),
+        Some(policy) if LEAKING_REFERRER_POLICIES.contains(&policy.as_str()) => (
+            HeaderCheckStatus::Warn,
+            Some("ui-tool-headers-reason-referrer-unsafe"),
+        ),
+        Some(_) => (HeaderCheckStatus::Pass, None),
+    }
+}
+
+/// The `Permissions-Policy` value: an empty one restricts nothing.
+fn permissions_verdict(value: &str) -> Verdict {
+    if value.trim().is_empty() {
+        (
+            HeaderCheckStatus::Fail,
+            Some("ui-tool-headers-reason-permissions-empty"),
+        )
+    } else {
+        (HeaderCheckStatus::Pass, None)
+    }
+}
+
+/// Evaluates security headers against modern web defense standards; `https` when they
+/// came over TLS, without which a browser ignores `Strict-Transport-Security`.
+#[must_use]
+pub fn evaluate_security_headers(
+    headers: &[(String, String)],
+    https: bool,
+) -> Vec<HeaderCheckResult> {
     let mut results = Vec::new();
 
-    // 1. HSTS
-    if let Some(val) = find_header(headers, HEADER_HSTS) {
-        results.push(HeaderCheckResult {
-            name: HEADER_HSTS.to_string(),
-            display_key: "ui-tool-headers-hsts",
-            value: val.to_string(),
-            status: HeaderCheckStatus::Pass,
-            recommendation_key: None,
-            detail: None,
-        });
-    } else {
-        results.push(HeaderCheckResult {
-            name: HEADER_HSTS.to_string(),
-            display_key: "ui-tool-headers-hsts",
-            value: String::new(),
-            status: HeaderCheckStatus::Fail,
-            recommendation_key: Some("ui-tool-headers-rec-hsts"),
-            detail: None,
-        });
-    }
-
-    // 2. CSP
-    if let Some(val) = find_header(headers, HEADER_CSP) {
-        results.push(HeaderCheckResult {
-            name: HEADER_CSP.to_string(),
-            display_key: "ui-tool-headers-csp",
-            value: val.to_string(),
-            status: HeaderCheckStatus::Pass,
-            recommendation_key: None,
-            detail: None,
-        });
-    } else {
-        results.push(HeaderCheckResult {
-            name: HEADER_CSP.to_string(),
-            display_key: "ui-tool-headers-csp",
-            value: String::new(),
-            status: HeaderCheckStatus::Fail,
-            recommendation_key: Some("ui-tool-headers-rec-csp"),
-            detail: None,
-        });
-    }
-
-    // 3. XFO
-    if let Some(val) = find_header(headers, HEADER_XFO) {
-        results.push(HeaderCheckResult {
-            name: HEADER_XFO.to_string(),
-            display_key: "ui-tool-headers-xfo",
-            value: val.to_string(),
-            status: HeaderCheckStatus::Pass,
-            recommendation_key: None,
-            detail: None,
-        });
-    } else {
-        results.push(HeaderCheckResult {
-            name: HEADER_XFO.to_string(),
-            display_key: "ui-tool-headers-xfo",
-            value: String::new(),
-            status: HeaderCheckStatus::Fail,
-            recommendation_key: Some("ui-tool-headers-rec-xfo"),
-            detail: None,
-        });
-    }
-
-    // 4. XCTO (nosniff)
-    if let Some(val) = find_header(headers, HEADER_XCTO) {
-        let is_nosniff = val.eq_ignore_ascii_case(NOSNIFF_VALUE);
-        results.push(HeaderCheckResult {
-            name: HEADER_XCTO.to_string(),
-            display_key: "ui-tool-headers-xcto",
-            value: val.to_string(),
-            status: if is_nosniff {
-                HeaderCheckStatus::Pass
-            } else {
-                HeaderCheckStatus::Warn
-            },
-            recommendation_key: if is_nosniff {
-                None
-            } else {
-                Some("ui-tool-headers-rec-xcto")
-            },
-            detail: None,
-        });
-    } else {
-        results.push(HeaderCheckResult {
-            name: HEADER_XCTO.to_string(),
-            display_key: "ui-tool-headers-xcto",
-            value: String::new(),
-            status: HeaderCheckStatus::Fail,
-            recommendation_key: Some("ui-tool-headers-rec-xcto"),
-            detail: None,
-        });
-    }
-
-    // 5. Referrer-Policy
-    if let Some(val) = find_header(headers, HEADER_REFERRER) {
-        results.push(HeaderCheckResult {
-            name: HEADER_REFERRER.to_string(),
-            display_key: "ui-tool-headers-referrer",
-            value: val.to_string(),
-            status: HeaderCheckStatus::Pass,
-            recommendation_key: None,
-            detail: None,
-        });
-    } else {
-        results.push(HeaderCheckResult {
-            name: HEADER_REFERRER.to_string(),
-            display_key: "ui-tool-headers-referrer",
-            value: String::new(),
-            status: HeaderCheckStatus::Fail,
-            recommendation_key: Some("ui-tool-headers-rec-referrer"),
-            detail: None,
-        });
-    }
-
-    // 6. Permissions-Policy
-    if let Some(val) = find_header(headers, HEADER_PERMISSIONS) {
-        results.push(HeaderCheckResult {
-            name: HEADER_PERMISSIONS.to_string(),
-            display_key: "ui-tool-headers-permissions",
-            value: val.to_string(),
-            status: HeaderCheckStatus::Pass,
-            recommendation_key: None,
-            detail: None,
-        });
-    } else {
-        results.push(HeaderCheckResult {
-            name: HEADER_PERMISSIONS.to_string(),
-            display_key: "ui-tool-headers-permissions",
-            value: String::new(),
-            status: HeaderCheckStatus::Fail,
-            recommendation_key: Some("ui-tool-headers-rec-permissions"),
-            detail: None,
-        });
-    }
+    results.push(header_check(
+        headers,
+        HEADER_HSTS,
+        "ui-tool-headers-hsts",
+        "ui-tool-headers-rec-hsts",
+        |value| hsts_verdict(value, https),
+    ));
+    results.push(header_check(
+        headers,
+        HEADER_CSP,
+        "ui-tool-headers-csp",
+        "ui-tool-headers-rec-csp",
+        csp_verdict,
+    ));
+    results.push(header_check(
+        headers,
+        HEADER_XFO,
+        "ui-tool-headers-xfo",
+        "ui-tool-headers-rec-xfo",
+        xfo_verdict,
+    ));
+    results.push(header_check(
+        headers,
+        HEADER_XCTO,
+        "ui-tool-headers-xcto",
+        "ui-tool-headers-rec-xcto",
+        xcto_verdict,
+    ));
+    results.push(header_check(
+        headers,
+        HEADER_REFERRER,
+        "ui-tool-headers-referrer",
+        "ui-tool-headers-rec-referrer",
+        referrer_verdict,
+    ));
+    results.push(header_check(
+        headers,
+        HEADER_PERMISSIONS,
+        "ui-tool-headers-permissions",
+        "ui-tool-headers-rec-permissions",
+        permissions_verdict,
+    ));
 
     // 7. X-XSS-Protection (modern best practice is 0 or absent, 1; mode=block is deprecated)
     if let Some(val) = find_header(headers, HEADER_XXSS) {
@@ -496,6 +653,7 @@ pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderChec
             value: val.to_string(),
             status,
             recommendation_key: rec,
+            reason_key: None,
             detail: None,
         });
     } else {
@@ -505,6 +663,7 @@ pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderChec
             value: String::new(),
             status: HeaderCheckStatus::Pass,
             recommendation_key: None,
+            reason_key: None,
             detail: None,
         });
     }
@@ -523,6 +682,7 @@ pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderChec
             value: String::new(),
             status: HeaderCheckStatus::Pass,
             recommendation_key: None,
+            reason_key: None,
             detail: None,
         });
     } else {
@@ -542,6 +702,7 @@ pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderChec
                 value: cookie_headers.join("\n"),
                 status: HeaderCheckStatus::Pass,
                 recommendation_key: None,
+                reason_key: None,
                 detail: None,
             });
         } else {
@@ -552,6 +713,7 @@ pub fn evaluate_security_headers(headers: &[(String, String)]) -> Vec<HeaderChec
                 value: cookie_headers.join("\n"),
                 status: HeaderCheckStatus::Warn,
                 recommendation_key: Some("ui-tool-headers-rec-cookie"),
+                reason_key: None,
                 detail: Some(detail_text),
             });
         }
@@ -589,6 +751,7 @@ pub fn evaluate_disclosure_headers(headers: &[(String, String)]) -> Vec<HeaderCh
                 value: val.to_string(),
                 status: HeaderCheckStatus::Warn,
                 recommendation_key: Some("ui-tool-headers-rec-disclosure"),
+                reason_key: None,
                 detail: None,
             }
         } else {
@@ -598,6 +761,7 @@ pub fn evaluate_disclosure_headers(headers: &[(String, String)]) -> Vec<HeaderCh
                 value: String::new(),
                 status: HeaderCheckStatus::Pass,
                 recommendation_key: None,
+                reason_key: None,
                 detail: None,
             }
         }
@@ -659,10 +823,11 @@ pub fn calculate_grade(security_results: &[HeaderCheckResult]) -> HttpGrade {
     }
 }
 
-/// Evaluates full header section and computes final report and letter grade.
+/// Evaluates full header section and computes final report and letter grade; `https` when
+/// the headers came over TLS.
 #[must_use]
-pub fn evaluate_headers(headers: &[(String, String)]) -> HeaderEvaluation {
-    let security_checks = evaluate_security_headers(headers);
+pub fn evaluate_headers(headers: &[(String, String)], https: bool) -> HeaderEvaluation {
+    let security_checks = evaluate_security_headers(headers, https);
     let disclosure_checks = evaluate_disclosure_headers(headers);
     let grade = calculate_grade(&security_checks);
 
@@ -696,6 +861,9 @@ pub enum ReportText<'a> {
     NotExposed,
     /// The cookie flags missing.
     MissingFlags(&'a str),
+    /// Why a header present is not a pass: the translation key of
+    /// [`HeaderCheckResult::reason_key`].
+    Reason(&'static str),
 }
 
 /// Builds an exportable plain-text report of the header analysis, its words from `say`, as
@@ -734,6 +902,9 @@ pub fn build_text_report(
             say(ReportText::Status(check.status)),
             check.name
         );
+        if let Some(reason) = check.reason_key {
+            let _ = writeln!(report, "  {}", say(ReportText::Reason(reason)));
+        }
         if let Some(detail) = &check.detail {
             let _ = writeln!(report, "  {}", say(ReportText::MissingFlags(detail)));
         }
@@ -829,6 +1000,192 @@ mod tests {
     fn the_header_section_ends_at_its_blank_line() {
         assert_eq!(header_end(b"HTTP/1.1 200 OK\r\nA: b\r\n\r\nbody"), Some(25));
         assert_eq!(header_end(b"HTTP/1.1 200 OK\r\nA: b\r\n"), None);
+        assert_eq!(header_end(b"HTTP/1.1 200 OK\nA: b\n\nbody"), Some(22));
+        assert_eq!(header_end(b"HTTP/1.1 200 OK\nA: b\n"), None);
+    }
+
+    #[test]
+    fn an_interim_response_is_every_1xx_but_switching_protocols() {
+        assert_eq!(
+            status_code(b"HTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\n"),
+            Some(103)
+        );
+        assert_eq!(status_code(b"HTTP/1.1 200 OK"), Some(200));
+        assert_eq!(status_code(b"garbage"), None);
+        assert!(is_interim(100) && is_interim(103) && is_interim(199));
+        assert!(!is_interim(101) && !is_interim(200) && !is_interim(99));
+    }
+
+    fn check_of(headers: &[(&str, &str)], https: bool, name: &str) -> HeaderCheckResult {
+        let headers: Vec<(String, String)> = headers
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+            .collect();
+        evaluate_security_headers(&headers, https)
+            .into_iter()
+            .find(|check| check.name == name)
+            .unwrap()
+    }
+
+    fn verdict_of(name: &str, value: &str) -> (HeaderCheckStatus, Option<&'static str>) {
+        let check = check_of(&[(name, value)], true, name);
+        (check.status, check.reason_key)
+    }
+
+    #[test]
+    fn a_security_header_is_judged_by_its_value_not_its_name() {
+        use HeaderCheckStatus::{Fail, Pass, Warn};
+        for (name, value, status, reason) in [
+            (
+                HEADER_HSTS,
+                "max-age=31536000; includeSubDomains",
+                Pass,
+                None,
+            ),
+            (HEADER_HSTS, "max-age=\"31536000\"", Pass, None),
+            (
+                HEADER_HSTS,
+                "max-age=0",
+                Fail,
+                Some("ui-tool-headers-reason-hsts-max-age-zero"),
+            ),
+            (
+                HEADER_HSTS,
+                "max-age=300",
+                Warn,
+                Some("ui-tool-headers-reason-hsts-max-age-short"),
+            ),
+            (
+                HEADER_HSTS,
+                "includeSubDomains",
+                Fail,
+                Some("ui-tool-headers-reason-hsts-max-age-invalid"),
+            ),
+            (
+                HEADER_HSTS,
+                "max-age=abc",
+                Fail,
+                Some("ui-tool-headers-reason-hsts-max-age-invalid"),
+            ),
+            (
+                HEADER_HSTS,
+                "max-age=1; max-age=31536000",
+                Fail,
+                Some("ui-tool-headers-reason-hsts-max-age-invalid"),
+            ),
+            (
+                HEADER_CSP,
+                "",
+                Fail,
+                Some("ui-tool-headers-reason-csp-empty"),
+            ),
+            (HEADER_CSP, "default-src 'self'", Pass, None),
+            (
+                HEADER_CSP,
+                "script-src 'self' 'unsafe-inline'",
+                Warn,
+                Some("ui-tool-headers-reason-csp-unsafe"),
+            ),
+            (
+                HEADER_CSP,
+                "script-src 'self' 'unsafe-inline' 'nonce-abc'",
+                Pass,
+                None,
+            ),
+            (
+                HEADER_CSP,
+                "default-src 'self' 'UNSAFE-EVAL'",
+                Warn,
+                Some("ui-tool-headers-reason-csp-unsafe"),
+            ),
+            (
+                HEADER_CSP,
+                "frame-ancestors 'none'",
+                Warn,
+                Some("ui-tool-headers-reason-csp-no-script"),
+            ),
+            (HEADER_XFO, "DENY", Pass, None),
+            (HEADER_XFO, "sameorigin, SAMEORIGIN", Pass, None),
+            (
+                HEADER_XFO,
+                "ALLOW-FROM https://a.example",
+                Warn,
+                Some("ui-tool-headers-reason-xfo-allow-from"),
+            ),
+            (
+                HEADER_XFO,
+                "nonsense",
+                Fail,
+                Some("ui-tool-headers-reason-xfo-invalid"),
+            ),
+            (
+                HEADER_XFO,
+                "DENY, SAMEORIGIN",
+                Fail,
+                Some("ui-tool-headers-reason-xfo-invalid"),
+            ),
+            (HEADER_XCTO, "nosniff", Pass, None),
+            (
+                HEADER_XCTO,
+                "sniff",
+                Fail,
+                Some("ui-tool-headers-reason-xcto-invalid"),
+            ),
+            (
+                HEADER_REFERRER,
+                "strict-origin-when-cross-origin",
+                Pass,
+                None,
+            ),
+            (HEADER_REFERRER, "no-referrer, bogus", Pass, None),
+            (
+                HEADER_REFERRER,
+                "unsafe-url",
+                Warn,
+                Some("ui-tool-headers-reason-referrer-unsafe"),
+            ),
+            (
+                HEADER_REFERRER,
+                "nonsense",
+                Fail,
+                Some("ui-tool-headers-reason-referrer-invalid"),
+            ),
+            (HEADER_PERMISSIONS, "camera=()", Pass, None),
+            (
+                HEADER_PERMISSIONS,
+                "",
+                Fail,
+                Some("ui-tool-headers-reason-permissions-empty"),
+            ),
+        ] {
+            assert_eq!(
+                verdict_of(name, value),
+                (status, reason),
+                "{name}: {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hsts_counts_over_https_only() {
+        let check = check_of(&[(HEADER_HSTS, "max-age=31536000")], false, HEADER_HSTS);
+        assert_eq!(check.status, HeaderCheckStatus::Warn);
+        assert_eq!(check.reason_key, Some("ui-tool-headers-reason-hsts-http"));
+        let check = check_of(&[], true, HEADER_HSTS);
+        assert_eq!(check.status, HeaderCheckStatus::Fail);
+        assert_eq!(check.reason_key, None);
+        assert_eq!(check.recommendation_key, Some("ui-tool-headers-rec-hsts"));
+    }
+
+    #[test]
+    fn the_report_says_why_a_header_present_fails() {
+        let headers = vec![(HEADER_HSTS.to_string(), "max-age=0".to_string())];
+        let evaluation = evaluate_headers(&headers, true);
+        let say = |text: ReportText<'_>| format!("<{text:?}>");
+        let report = build_text_report("https://a/", &evaluation, "", None, &say);
+        assert!(report.contains(
+            "[<Status(Fail)>] Strict-Transport-Security: max-age=0\n  <Reason(\"ui-tool-headers-reason-hsts-max-age-zero\")>\n"
+        ), "{report}");
     }
 
     #[test]
@@ -845,7 +1202,7 @@ mod tests {
             "Set-Cookie".to_string(),
             "insecure_pref=1; HttpOnly; SameSite=Lax".to_string(),
         )];
-        let cookie = evaluate_security_headers(&headers)
+        let cookie = evaluate_security_headers(&headers, true)
             .into_iter()
             .find(|check| check.name == HEADER_SET_COOKIE)
             .unwrap();
@@ -856,7 +1213,7 @@ mod tests {
     #[test]
     fn the_report_takes_its_words_from_the_caller() {
         let headers = vec![("Server".to_string(), "nginx".to_string())];
-        let evaluation = evaluate_headers(&headers);
+        let evaluation = evaluate_headers(&headers, true);
         let say = |text: ReportText<'_>| format!("<{text:?}>");
         let report = build_text_report(
             "https://example.com/",
@@ -895,6 +1252,7 @@ mod tests {
                 value: "val".into(),
                 status: HeaderCheckStatus::Pass,
                 recommendation_key: None,
+                reason_key: None,
                 detail: None,
             },
             HeaderCheckResult {
@@ -903,6 +1261,7 @@ mod tests {
                 value: "val".into(),
                 status: HeaderCheckStatus::Pass,
                 recommendation_key: None,
+                reason_key: None,
                 detail: None,
             },
         ];
@@ -917,6 +1276,7 @@ mod tests {
             value: String::new(),
             status: HeaderCheckStatus::Fail,
             recommendation_key: None,
+            reason_key: None,
             detail: None,
         }];
         assert_eq!(calculate_grade(&results), HttpGrade::F);
@@ -925,7 +1285,7 @@ mod tests {
     #[test]
     fn test_evaluate_headers_disclosure() {
         let headers = vec![("Server".to_string(), "Apache/2.4.41".to_string())];
-        let eval = evaluate_headers(&headers);
+        let eval = evaluate_headers(&headers, true);
         let srv = eval
             .disclosure_checks
             .iter()

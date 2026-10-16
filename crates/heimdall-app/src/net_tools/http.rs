@@ -17,8 +17,10 @@
 //! The request of the HTTPHEADERS tool, as the C# `HttpHeaderService.FetchDirectAsync`:
 //! Heimdall's own HTTP/1.1 client over TCP, and TLS for HTTPS, no program run, no proxy nor
 //! configuration file read. A `HEAD`, then a `GET` when the server refuses it with 405; at
-//! most [`MAX_RESPONSE_BYTES`] read, up to the end of the header section; the whole within
-//! [`FETCH_TIMEOUT_MS`].
+//! most [`MAX_RESPONSE_BYTES`] read, up to the end of the final response's header section,
+//! interim responses (`103 Early Hints`) passed over; the whole within [`FETCH_TIMEOUT_MS`].
+//! A header section that does not end within those bytes, or before the server closes, is
+//! said as such, never graded on what came of it: the C# grades that part.
 //!
 //! The C# takes any certificate. Here the system's check runs, as for every other TLS
 //! client of Heimdall (`heimdall_tls`): a certificate it refuses is a finding of the
@@ -80,6 +82,10 @@ pub enum HttpFetchError {
     Certificate(ValidationIssue),
     /// The server closed the connection without a byte.
     Empty,
+    /// The header section did not end within [`MAX_RESPONSE_BYTES`].
+    Oversized,
+    /// The server closed the connection before the header section ended.
+    Incomplete,
 }
 
 /// The headers of `target`, as the module says.
@@ -227,28 +233,51 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     let failed = |error: io::Error| HttpFetchError::Connection(server_text(&error.to_string()));
     stream.write_all(request.as_bytes()).await.map_err(failed)?;
     stream.flush().await.map_err(failed)?;
-    let received = read_head(&mut stream).await.map_err(failed)?;
-    if received.is_empty() {
-        return Err(HttpFetchError::Empty);
+    match read_head(&mut stream).await.map_err(failed)? {
+        Head::Final(head) => Ok(parse_received(&head)),
+        Head::Empty => Err(HttpFetchError::Empty),
+        Head::Oversized => Err(HttpFetchError::Oversized),
+        Head::Incomplete => Err(HttpFetchError::Incomplete),
     }
-    Ok(parse_received(&received))
 }
 
-/// The start of the response, up to the end of its header section or
-/// [`MAX_RESPONSE_BYTES`], whichever comes first.
-async fn read_head<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Vec<u8>> {
+/// What was read of a response.
+#[derive(Debug, PartialEq, Eq)]
+enum Head {
+    /// The final response's header section, its blank line included.
+    Final(Vec<u8>),
+    /// Nothing: the server closed at once.
+    Empty,
+    /// [`MAX_RESPONSE_BYTES`] read, interim responses included, and no final header
+    /// section ended within them.
+    Oversized,
+    /// The server closed before the final header section ended.
+    Incomplete,
+}
+
+/// The final response's header section, interim responses before it passed over as RFC
+/// 9110 section 15.2 has a client do, all of them within [`MAX_RESPONSE_BYTES`].
+async fn read_head<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Head> {
     let mut received = Vec::with_capacity(READ_CHUNK);
     let mut chunk = [0u8; READ_CHUNK];
-    while received.len() < MAX_RESPONSE_BYTES {
+    // Where the response not yet passed over starts in `received`.
+    let mut start = 0;
+    loop {
+        if let Some(end) = http_headers::header_end(&received[start..]) {
+            let head = &received[start..start + end];
+            if http_headers::status_code(head).is_some_and(http_headers::is_interim) {
+                start += end;
+                continue;
+            }
+            return Ok(Head::Final(head.to_vec()));
+        }
+        if received.len() >= MAX_RESPONSE_BYTES {
+            return Ok(Head::Oversized);
+        }
         let room = (MAX_RESPONSE_BYTES - received.len()).min(READ_CHUNK);
         match stream.read(&mut chunk[..room]).await {
             Ok(0) => break,
-            Ok(read) => {
-                received.extend_from_slice(&chunk[..read]);
-                if http_headers::header_end(&received).is_some() {
-                    break;
-                }
-            }
+            Ok(read) => received.extend_from_slice(&chunk[..read]),
             // A server that closes without TLS's close notice, once it said something.
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof && !received.is_empty() => {
                 break;
@@ -256,13 +285,16 @@ async fn read_head<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Vec<u8>> 
             Err(error) => return Err(error),
         }
     }
-    Ok(received)
+    Ok(if received.is_empty() {
+        Head::Empty
+    } else {
+        Head::Incomplete
+    })
 }
 
-/// The header section of `received`, every line made safe to show, parsed.
-fn parse_received(received: &[u8]) -> HttpResponseInfo {
-    let end = http_headers::header_end(received).unwrap_or(received.len());
-    let text = String::from_utf8_lossy(&received[..end]);
+/// The header section `head`, every line made safe to show, parsed.
+fn parse_received(head: &[u8]) -> HttpResponseInfo {
+    let text = String::from_utf8_lossy(head);
     let shown = shown_lines(text.trim_end_matches(['\r', '\n'])).join("\r\n");
     http_headers::parse_http_response(&shown)
 }
@@ -321,16 +353,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn at_most_sixteen_kilobytes_are_read_and_controls_never_shown() {
-        let (port, _seen) = server(|_| {
-            let mut answer = b"HTTP/1.1 200 OK\r\nX-Evil: a\x1b[2Jb\r\nX-Long: ".to_vec();
-            answer.extend(std::iter::repeat_n(b'a', 4 * MAX_RESPONSE_BYTES));
-            answer
-        })
-        .await;
+    async fn controls_in_the_headers_are_never_shown() {
+        let (port, _seen) =
+            server(|_| b"HTTP/1.1 200 OK\r\nX-Evil: a\x1b[2Jb\r\n\r\nbody".to_vec()).await;
         let target = parse_target(&format!("http://127.0.0.1:{port}/")).unwrap();
         let fetched = fetch(&target).await.expect("fetched");
-        assert!(fetched.info.header_section.len() <= MAX_RESPONSE_BYTES + 64);
         assert!(
             fetched
                 .info
@@ -338,6 +365,66 @@ mod tests {
                 .contains(&("X-Evil".into(), "a\\u{001B}[2Jb".into()))
         );
         assert!(!fetched.info.header_section.contains('\u{1b}'));
+    }
+
+    #[tokio::test]
+    async fn a_header_section_past_sixteen_kilobytes_is_said_never_graded() {
+        let (port, _seen) = server(|_| {
+            let mut answer = b"HTTP/1.1 200 OK\r\nX-Frame-Options: DENY\r\nX-Long: ".to_vec();
+            answer.extend(std::iter::repeat_n(b'a', 4 * MAX_RESPONSE_BYTES));
+            answer
+        })
+        .await;
+        let target = parse_target(&format!("http://127.0.0.1:{port}/")).unwrap();
+        assert_eq!(fetch(&target).await, Err(HttpFetchError::Oversized));
+    }
+
+    #[tokio::test]
+    async fn a_header_section_cut_by_the_server_is_said_never_graded() {
+        let (port, _seen) =
+            server(|_| b"HTTP/1.1 200 OK\r\nStrict-Transport-Security: max-age=1".to_vec()).await;
+        let target = parse_target(&format!("http://127.0.0.1:{port}/")).unwrap();
+        assert_eq!(fetch(&target).await, Err(HttpFetchError::Incomplete));
+    }
+
+    #[tokio::test]
+    async fn interim_responses_are_passed_over_for_the_final_one() {
+        let (port, _seen) = server(|_| {
+            b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nX-Frame-Options: DENY\r\n\r\nbody"
+                .to_vec()
+        })
+        .await;
+        let target = parse_target(&format!("http://127.0.0.1:{port}/")).unwrap();
+        let fetched = fetch(&target).await.expect("fetched");
+        assert_eq!(fetched.info.status_code, 200);
+        assert_eq!(
+            fetched.info.headers,
+            [("X-Frame-Options".to_owned(), "DENY".to_owned())]
+        );
+    }
+
+    #[tokio::test]
+    async fn interim_responses_count_against_the_same_budget() {
+        let (port, _seen) = server(|_| {
+            let interim = b"HTTP/1.1 103 Early Hints\r\nLink: </a.css>\r\n\r\n";
+            let mut answer = Vec::new();
+            while answer.len() <= MAX_RESPONSE_BYTES {
+                answer.extend_from_slice(interim);
+            }
+            answer.extend_from_slice(b"HTTP/1.1 200 OK\r\n\r\n");
+            answer
+        })
+        .await;
+        let target = parse_target(&format!("http://127.0.0.1:{port}/")).unwrap();
+        assert_eq!(fetch(&target).await, Err(HttpFetchError::Oversized));
+    }
+
+    #[tokio::test]
+    async fn switching_protocols_is_a_final_response() {
+        let (port, _seen) =
+            server(|_| b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: h2c\r\n\r\n".to_vec()).await;
+        let target = parse_target(&format!("http://127.0.0.1:{port}/")).unwrap();
+        assert_eq!(fetch(&target).await.expect("fetched").info.status_code, 101);
     }
 
     #[tokio::test]

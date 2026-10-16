@@ -152,12 +152,10 @@ impl CrontabPane {
                 self.check_manual();
             }
             CrontabMessage::ManualSubmitted => {
-                // As the C# `OnManualInputKeyDown`: applied when it reads, ranges unchecked.
-                let typed = self.manual.trim().to_owned();
-                if let Some(fields) = cron_builder::parse(&typed) {
-                    self.problem = None;
-                    self.show(&fields);
-                    self.expression = typed;
+                // As the C# `OnManualInputKeyDown`, but checked as when typed: the C# applies
+                // `99 * * * *` and hides why it never runs; here it is refused, said.
+                if !self.manual.trim().is_empty() {
+                    self.check_manual();
                 }
             }
             CrontabMessage::Copy => {
@@ -252,23 +250,9 @@ impl CrontabPane {
     /// What is wrong with the box typed in, as the C# `TxtValidationError`.
     #[must_use]
     pub fn problem_text(&self) -> Option<String> {
-        Some(match self.problem.as_ref()? {
-            CronProblem::FieldCount => fl!("ui-tool-crontab-error-field-count"),
-            CronProblem::InvalidField { field, text } => fl!(
-                "ui-tool-crontab-error-invalid-field",
-                field = field_label(*field),
-                value = text.as_str()
-            ),
-            CronProblem::OutOfRange { field } => {
-                let (min, max) = FIELD_RANGES[*field];
-                fl!(
-                    "ui-tool-crontab-error-out-of-range",
-                    field = field_label(*field),
-                    min = min,
-                    max = max
-                )
-            }
-        })
+        self.problem
+            .as_ref()
+            .map(|problem| problem_text(problem, &FIELD_RANGES))
     }
 
     /// The tool's page, as the C# `CrontabBuilderView.xaml`: the presets, the five lists,
@@ -369,6 +353,32 @@ impl CrontabPane {
             .push(runs)
             .spacing(spacing::SM + spacing::XS),
         )
+    }
+}
+
+/// What `problem` says, the bounds of each field being `ranges`.
+pub(super) fn problem_text(problem: &CronProblem, ranges: &[(i64, i64); FIELD_COUNT]) -> String {
+    match problem {
+        CronProblem::FieldCount => fl!("ui-tool-crontab-error-field-count"),
+        CronProblem::InvalidField { field, text } => fl!(
+            "ui-tool-crontab-error-invalid-field",
+            field = field_label(*field),
+            value = text.as_str()
+        ),
+        CronProblem::Malformed { field, text } => fl!(
+            "ui-tool-crontab-error-malformed-field",
+            field = field_label(*field),
+            value = text.as_str()
+        ),
+        CronProblem::OutOfRange { field } => {
+            let (min, max) = ranges[*field];
+            fl!(
+                "ui-tool-crontab-error-out-of-range",
+                field = field_label(*field),
+                min = min,
+                max = max
+            )
+        }
     }
 }
 
@@ -599,14 +609,25 @@ mod tests {
     }
 
     #[test]
-    fn enter_applies_an_expression_that_reads_without_its_ranges() {
+    fn enter_never_applies_an_expression_out_of_its_ranges() {
         let mut pane = pane();
         let _ = pane.update(CrontabMessage::ManualEdited("99 * * * *".to_owned()));
         assert!(pane.problem_text().is_some());
         let _ = pane.update(CrontabMessage::ManualSubmitted);
+        assert_eq!(
+            pane.problem_text().as_deref(),
+            Some("Field \"Minute\" values must be between 0 and 59")
+        );
+        assert_eq!(pane.expression(), "* * * * *", "left as it was");
+        let _ = pane.update(CrontabMessage::ManualEdited("10-20/5 * * * *".to_owned()));
+        let _ = pane.update(CrontabMessage::ManualSubmitted);
         assert_eq!(pane.problem_text(), None);
-        assert_eq!(pane.expression(), "99 * * * *");
-        assert!(pane.next_runs().is_empty(), "no minute 99");
+        assert_eq!(pane.expression(), "10-20/5 * * * *");
+        let _ = pane.update(CrontabMessage::ManualEdited("1- * * * *".to_owned()));
+        assert_eq!(
+            pane.problem_text().as_deref(),
+            Some("Field \"Minute\" is not a number, a range or a step: 1-")
+        );
     }
 
     #[test]
