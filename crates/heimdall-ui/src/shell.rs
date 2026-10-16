@@ -5902,40 +5902,21 @@ impl Shell {
                     .update(AppMessage::Settings(SettingsMessage::ExternalEditor(typed))),
                 None => Vec::new(),
             },
+            // Applied as soon as what is typed is in the range, as the C# fields bound on
+            // `PropertyChanged` take it (`MainWindow.xaml:3059`): leaving the field with Tab
+            // or a click keeps what it shows. Enter applies it as well.
             Message::FontSizeEdited(typed) => {
                 self.font_size_typed = Some(typed);
-                Vec::new()
+                self.apply_font_size()
             }
-            Message::FontSizeApply => {
-                // A size out of the range stays typed, the C# message under it.
-                let Some(size) = self
-                    .typed_font_size()
-                    .filter(|size| heimdall_core::settings::terminal_font_size_accepted(*size))
-                else {
-                    return Vec::new();
-                };
-                self.font_size_typed = None;
-                self.app
-                    .update(AppMessage::Settings(SettingsMessage::TerminalFontSize(
-                        size,
-                    )))
-            }
+            Message::FontSizeApply => self.apply_font_size(),
+            // As the font size, each as its C# field (`MainWindow.xaml:3246`, the
+            // `CommitNumericText` of `SettingsViewModel.cs:4260`).
             Message::SessionFieldEdited(field, typed) => {
                 self.session_typed[field.index()] = Some(typed);
-                Vec::new()
+                self.apply_session_field(field)
             }
-            Message::SessionFieldApply(field) => {
-                // Out of the range, it stays typed, the C# message under it.
-                let Some(seconds) = self
-                    .typed_session(field)
-                    .filter(|seconds| field.accepted(*seconds))
-                else {
-                    return Vec::new();
-                };
-                self.session_typed[field.index()] = None;
-                self.app
-                    .update(AppMessage::Settings(field.applied(seconds)))
-            }
+            Message::SessionFieldApply(field) => self.apply_session_field(field),
             _ => match self.log_directory.take() {
                 Some(typed) => {
                     self.app
@@ -5946,6 +5927,43 @@ impl Shell {
                 None => Vec::new(),
             },
         }
+    }
+
+    /// Applies the font size typed when it is in the range, what is typed then dropped, so
+    /// that the field shows the size set; one out of the range stays typed, the C# message
+    /// under it. The size it already is changes nothing.
+    fn apply_font_size(&mut self) -> Vec<Effect> {
+        let Some(size) = self
+            .typed_font_size()
+            .filter(|size| heimdall_core::settings::terminal_font_size_accepted(*size))
+        else {
+            return Vec::new();
+        };
+        self.font_size_typed = None;
+        if size == self.app.settings().terminal_font_size {
+            return Vec::new();
+        }
+        self.app
+            .update(AppMessage::Settings(SettingsMessage::TerminalFontSize(
+                size,
+            )))
+    }
+
+    /// Applies `field`'s value typed when it is in its range, what is typed then dropped, so
+    /// that the field shows the value set; one out of its range stays typed, the C# message
+    /// under it. The value it already is changes nothing.
+    fn apply_session_field(&mut self, field: SessionField) -> Vec<Effect> {
+        let Some(value) = self
+            .typed_session(field)
+            .filter(|value| field.accepted(*value))
+        else {
+            return Vec::new();
+        };
+        self.session_typed[field.index()] = None;
+        if value == field.value(self.app.settings()) {
+            return Vec::new();
+        }
+        self.app.update(AppMessage::Settings(field.applied(value)))
     }
 
     /// The font size typed, as a number; `None` when nothing is typed or it is not one.

@@ -362,6 +362,58 @@ fn a_marker_shows_on_exactly_the_settings_off_their_default() {
 }
 
 #[test]
+fn a_number_is_applied_once_typed_in_its_range_without_enter() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let defaults = Settings::default();
+    let saved = || Settings::load(&settings_path(&dir.path().join("profiles.toml")));
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    // Typed key by key, as the C# field bound on `PropertyChanged` takes it: "4" is out of
+    // the range, so stays typed with its rule and changes nothing.
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::KeepAlive,
+        "4".to_owned(),
+    ));
+    assert_eq!(
+        shell.app().settings().ssh_keep_alive_interval,
+        defaults.ssh_keep_alive_interval
+    );
+    let rule = "SSH keep-alive interval must be between 5 and 600 seconds.";
+    {
+        let mut ui = simulator(&shell);
+        ui.find(rule).expect("its rule while out of it");
+    }
+    // "45" is in it: applied and saved at once, so leaving the field with Tab keeps it.
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::KeepAlive,
+        "45".to_owned(),
+    ));
+    assert_eq!(shell.app().settings().ssh_keep_alive_interval, 45);
+    assert_eq!(saved().expect("saved").ssh_keep_alive_interval, 45);
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find(rule).is_err(), "no rule once in the range");
+        ui.find("45").expect("the value set shown");
+    }
+    // Set elsewhere since, Enter on the field never brings back what was typed.
+    change(&mut shell, SettingsMessage::SshKeepAliveInterval(60));
+    let _ = shell.update(Message::SessionFieldApply(SessionField::KeepAlive));
+    assert_eq!(shell.app().settings().ssh_keep_alive_interval, 60);
+
+    // The terminals' font size the same way.
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let _ = shell.update(Message::FontSizeEdited("7".to_owned()));
+    assert_eq!(
+        shell.app().settings().terminal_font_size,
+        defaults.terminal_font_size
+    );
+    let _ = shell.update(Message::FontSizeEdited("19".to_owned()));
+    assert_eq!(shell.app().settings().terminal_font_size, 19);
+    assert_eq!(saved().expect("saved").terminal_font_size, 19);
+}
+
+#[test]
 fn reset_puts_the_default_back_through_the_settings_and_saves_it() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
@@ -373,10 +425,10 @@ fn reset_puts_the_default_back_through_the_settings_and_saves_it() {
         "45".to_owned(),
     ));
     let _ = shell.update(Message::SessionFieldApply(SessionField::KeepAlive));
-    // Typed again, not applied: the reset drops it too.
+    // Typed again out of its range, so not applied: the reset drops it too.
     let _ = shell.update(Message::SessionFieldEdited(
         SessionField::KeepAlive,
-        "50".to_owned(),
+        "601".to_owned(),
     ));
     change(&mut shell, SettingsMessage::SessionLogging(true));
     let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
@@ -409,7 +461,7 @@ fn reset_puts_the_default_back_through_the_settings_and_saves_it() {
 
     let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
     let mut ui = simulator(&shell);
-    assert!(ui.find("50").is_err(), "what was typed is gone");
+    assert!(ui.find("601").is_err(), "what was typed is gone");
     ui.find(defaults.ssh_keep_alive_interval.to_string().as_str())
         .expect("the default shown");
     assert!(ui.find("Modified").is_err());
