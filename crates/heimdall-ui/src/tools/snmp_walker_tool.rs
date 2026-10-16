@@ -15,7 +15,7 @@
  */
 
 //! The SNMP MIB Walker tool view: SNMPv2c MIB subtree traversal,
-//! OID resolution, type decoding, and CSV export.
+//! OID resolution, type decoding, the test of the common communities, and CSV export.
 
 use std::fmt;
 use std::sync::Arc;
@@ -28,8 +28,9 @@ use zeroize::Zeroizing;
 
 use heimdall_core::tools::net_host::checked_host;
 use heimdall_core::tools::snmp_walker::{
-    self, DEFAULT_COMMUNITY, DEFAULT_OID, DEFAULT_PORT, DEFAULT_TIMEOUT_MS, MAX_COMMUNITY_LEN,
-    MAX_WALK_RESULTS, SnmpEntry, WalkEnd, WalkError,
+    self, COMMON_COMMUNITIES, COMMUNITY_TIMEOUT_MS, CommunityResult, DEFAULT_COMMUNITY,
+    DEFAULT_OID, DEFAULT_PORT, DEFAULT_TIMEOUT_MS, MAX_COMMUNITY_LEN, MAX_WALK_RESULTS, SnmpEntry,
+    WalkEnd, WalkError,
 };
 
 use super::network_run::{RunSlot, blocking_run};
@@ -56,6 +57,12 @@ pub enum SnmpWalkerMessage {
     Entry(u64, SnmpEntry),
     /// Walk `.0` ended as `.1` says; `None` when its work failed.
     Ended(u64, Option<Result<WalkEnd, WalkError>>),
+    /// Try the common communities on the host, as the C# `TestCommunitiesAsync`.
+    TestCommunities,
+    /// Test `.0` tried a community.
+    CommunityTried(u64, CommunityResult),
+    /// Test `.0` ended as `.1` says; `None` when its work failed.
+    CommunitiesEnded(u64, Option<Result<WalkEnd, WalkError>>),
     /// Copy CSV export.
     CopyCsv,
 }
@@ -71,6 +78,10 @@ impl fmt::Debug for SnmpWalkerMessage {
             Self::Stop => f.write_str("Stop"),
             Self::Entry(run, entry) => write!(f, "Entry({run}, {entry:?})"),
             Self::Ended(run, end) => write!(f, "Ended({run}, {end:?})"),
+            Self::TestCommunities => f.write_str("TestCommunities"),
+            // The communities tried are the common ones, never one typed.
+            Self::CommunityTried(run, result) => write!(f, "CommunityTried({run}, {result:?})"),
+            Self::CommunitiesEnded(run, end) => write!(f, "CommunitiesEnded({run}, {end:?})"),
             Self::CopyCsv => f.write_str("CopyCsv"),
         }
     }
@@ -87,6 +98,10 @@ pub struct SnmpWalkerPane {
     /// How the last walk ended, when it says something: stopped, the agent gone silent.
     notice: Option<String>,
     entries: Vec<SnmpEntry>,
+    /// The run going is a community test, not a walk.
+    testing: bool,
+    /// What the last community test found, community after community.
+    communities: Vec<CommunityResult>,
 }
 
 impl fmt::Debug for SnmpWalkerPane {
@@ -97,6 +112,7 @@ impl fmt::Debug for SnmpWalkerPane {
             .field("oid", &self.oid)
             .field("run", &self.run)
             .field("entries", &self.entries.len())
+            .field("communities", &self.communities)
             .finish_non_exhaustive()
     }
 }
@@ -111,6 +127,8 @@ impl Default for SnmpWalkerPane {
             error: None,
             notice: None,
             entries: Vec::new(),
+            testing: false,
+            communities: Vec::new(),
         }
     }
 }
@@ -132,10 +150,18 @@ struct Walk {
     oid: String,
 }
 
+/// A community test to make: its run, its stop, and the host.
+struct CommunityTest {
+    run: u64,
+    stop: Arc<AtomicBool>,
+    host: String,
+}
+
 /// What a message asks of the pane, before its tab is known.
 enum Step {
     None,
     Walk(Walk),
+    Test(CommunityTest),
     Copy(CopySlot, String),
 }
 
@@ -175,6 +201,28 @@ impl SnmpWalkerPane {
                 });
                 Outcome::Task(self.run.attach(task))
             }
+            Step::Test(test) => {
+                let CommunityTest { run, stop, host } = test;
+                let stream = blocking_run(
+                    stop,
+                    move |stop, tried| {
+                        snmp_walker::test_communities(
+                            &host,
+                            DEFAULT_PORT,
+                            &COMMON_COMMUNITIES,
+                            COMMUNITY_TIMEOUT_MS,
+                            stop,
+                            tried,
+                        )
+                    },
+                    move |result: CommunityResult| SnmpWalkerMessage::CommunityTried(run, result),
+                    move |end| SnmpWalkerMessage::CommunitiesEnded(run, end),
+                );
+                let task = Task::run(stream, move |message| {
+                    Message::Tool(tab, super::ToolMessage::SnmpWalk(message))
+                });
+                Outcome::Task(self.run.attach(task))
+            }
         }
     }
 
@@ -200,7 +248,12 @@ impl SnmpWalkerPane {
             SnmpWalkerMessage::Stop => {
                 if self.run.running() {
                     self.run.stop();
-                    self.notice = Some(fl!("ui-tool-snmpwalk-stopped"));
+                    self.notice = Some(if self.testing {
+                        fl!("ui-tool-snmpwalk-test-stopped")
+                    } else {
+                        fl!("ui-tool-snmpwalk-stopped")
+                    });
+                    self.testing = false;
                 }
                 Step::None
             }
@@ -212,6 +265,20 @@ impl SnmpWalkerPane {
             }
             SnmpWalkerMessage::Ended(run, end) => {
                 if self.run.finish(run) {
+                    self.ended(end);
+                }
+                Step::None
+            }
+            SnmpWalkerMessage::TestCommunities => self.test(),
+            SnmpWalkerMessage::CommunityTried(run, result) => {
+                if self.run.is_current(run) {
+                    self.communities.push(result);
+                }
+                Step::None
+            }
+            SnmpWalkerMessage::CommunitiesEnded(run, end) => {
+                if self.run.finish(run) {
+                    self.testing = false;
                     self.ended(end);
                 }
                 Step::None
@@ -235,19 +302,44 @@ impl SnmpWalkerPane {
         }
     }
 
+    /// The host typed, checked; `None` with the error said.
+    fn checked_target(&mut self) -> Option<String> {
+        let host = self.host.trim().to_owned();
+        if host.is_empty() {
+            self.error = Some(fl!("ui-tool-snmpwalk-error-host-required"));
+            return None;
+        }
+        let host = checked_host(&host);
+        if host.is_none() {
+            self.error = Some(fl!("ui-tool-snmpwalk-error-invalid-host"));
+        }
+        host
+    }
+
+    /// A community test begun, as the C# `TestCommunitiesAsync`: the host checked, the
+    /// community typed left aside.
+    fn test(&mut self) -> Step {
+        if self.run.running() {
+            return Step::None;
+        }
+        let Some(host) = self.checked_target() else {
+            return Step::None;
+        };
+        self.error = None;
+        self.notice = None;
+        self.communities.clear();
+        self.testing = true;
+        let (run, stop) = self.run.begin();
+        Step::Test(CommunityTest { run, stop, host })
+    }
+
     /// A walk begun, as the C# `WalkAsync`: the host checked, the community and the
     /// subtree given their defaults when empty.
     fn start(&mut self) -> Step {
         if self.run.running() {
             return Step::None;
         }
-        let host = self.host.trim().to_owned();
-        if host.is_empty() {
-            self.error = Some(fl!("ui-tool-snmpwalk-error-host-required"));
-            return Step::None;
-        }
-        let Some(host) = checked_host(&host) else {
-            self.error = Some(fl!("ui-tool-snmpwalk-error-invalid-host"));
+        let Some(host) = self.checked_target() else {
             return Step::None;
         };
         let community = match self.community.trim() {
@@ -361,6 +453,15 @@ impl SnmpWalkerPane {
                 Some(send(SnmpWalkerMessage::Start)),
             )
         };
+        let test_btn = super::action_button(
+            if self.testing {
+                fl!("ui-tool-snmpwalk-testing")
+            } else {
+                fl!("ui-tool-snmpwalk-test-communities")
+            },
+            false,
+            (!self.run.running()).then(|| send(SnmpWalkerMessage::TestCommunities)),
+        );
 
         let inputs_row = row![
             column![super::field_label(fl!("ui-tool-snmpwalk-host")), host_input]
@@ -376,6 +477,7 @@ impl SnmpWalkerPane {
                 .spacing(spacing::XS)
                 .width(Length::FillPortion(2)),
             container(action_btn).align_y(Alignment::End),
+            container(test_btn).align_y(Alignment::End),
         ]
         .spacing(spacing::SM)
         .align_y(Alignment::End);
@@ -403,6 +505,10 @@ impl SnmpWalkerPane {
                 .padding(spacing::MD)
                 .style(styles::card),
             );
+        }
+
+        if !self.communities.is_empty() {
+            body = body.push(self.communities_card());
         }
 
         if !self.entries.is_empty() {
@@ -480,6 +586,65 @@ impl SnmpWalkerPane {
 
         super::content_column(body)
     }
+
+    /// What the last community test found, as the C# results grid: each community tried,
+    /// whether the agent answered it and the name it gave.
+    fn communities_card(&self) -> Element<'_, Message> {
+        let caption = |label: String, width: Length| {
+            text(label)
+                .size(font_size::CAPTION)
+                .style(text::secondary)
+                .width(width)
+        };
+        let mut rows = column![
+            text(fl!(
+                "ui-tool-snmpwalk-accepted-count",
+                count = self.communities.iter().filter(|r| r.accepted).count()
+            ))
+            .size(font_size::SUBTITLE),
+            row![
+                caption(fl!("ui-tool-snmpwalk-community"), Length::FillPortion(1)),
+                caption(fl!("ui-tool-snmpwalk-col-status"), Length::FillPortion(1)),
+                caption(fl!("ui-tool-snmpwalk-col-sys-name"), Length::FillPortion(2)),
+            ]
+            .spacing(spacing::SM),
+        ]
+        .spacing(spacing::XS);
+        for result in &self.communities {
+            let (status, style): (String, fn(&Theme) -> text::Style) = if result.accepted {
+                (fl!("ui-tool-snmpwalk-community-accepted"), text::success)
+            } else {
+                (fl!("ui-tool-snmpwalk-community-rejected"), text::secondary)
+            };
+            // What the agent named itself is the agent's text.
+            let name = result
+                .sys_name
+                .as_deref()
+                .map(heimdall_app::server_text)
+                .unwrap_or_default();
+            rows = rows.push(
+                row![
+                    text(&result.community)
+                        .size(font_size::BODY)
+                        .font(super::BOX_FONT)
+                        .width(Length::FillPortion(1)),
+                    text(status)
+                        .size(font_size::BODY)
+                        .style(style)
+                        .width(Length::FillPortion(1)),
+                    text(name)
+                        .size(font_size::BODY)
+                        .font(super::BOX_FONT)
+                        .width(Length::FillPortion(2)),
+                ]
+                .spacing(spacing::SM),
+            );
+        }
+        container(rows)
+            .padding(spacing::MD)
+            .style(styles::card)
+            .into()
+    }
 }
 
 #[cfg(test)]
@@ -545,6 +710,75 @@ mod tests {
             panic!("a CSV");
         };
         assert_eq!(csv.lines().count(), 3);
+    }
+
+    fn tried(community: &str, accepted: bool) -> CommunityResult {
+        CommunityResult {
+            community: community.to_owned(),
+            accepted,
+            sys_name: accepted.then(|| "core-sw1".to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_community_test_lists_each_community_and_is_one_run_with_the_walk() {
+        let mut pane = SnmpWalkerPane::default();
+        assert!(matches!(
+            pane.apply(SnmpWalkerMessage::TestCommunities),
+            Step::None
+        ));
+        assert!(pane.error.is_some(), "a host first");
+        pane.apply(SnmpWalkerMessage::HostChanged("10.0.0.1".to_owned()));
+        pane.apply(SnmpWalkerMessage::CommunityChanged("s3cret".to_owned()));
+        let Step::Test(test) = pane.apply(SnmpWalkerMessage::TestCommunities) else {
+            panic!("a test");
+        };
+        assert_eq!(test.host, "10.0.0.1");
+        assert!(pane.testing);
+        assert!(
+            matches!(pane.apply(SnmpWalkerMessage::Start), Step::None),
+            "no walk while the test runs"
+        );
+        pane.apply(SnmpWalkerMessage::CommunityTried(
+            test.run,
+            tried("public", false),
+        ));
+        pane.apply(SnmpWalkerMessage::CommunityTried(
+            test.run,
+            tried("monitor", true),
+        ));
+        pane.apply(SnmpWalkerMessage::CommunitiesEnded(
+            test.run,
+            Some(Ok(WalkEnd::Complete)),
+        ));
+        assert!(!pane.testing && !pane.run.running());
+        assert_eq!(pane.communities.len(), 2);
+        assert!(pane.communities[1].accepted);
+        assert!(
+            !format!("{pane:?}").contains("s3cret"),
+            "the community typed is still never shown"
+        );
+
+        let Step::Test(test) = pane.apply(SnmpWalkerMessage::TestCommunities) else {
+            panic!("a test");
+        };
+        assert!(pane.communities.is_empty(), "a new test starts afresh");
+        pane.apply(SnmpWalkerMessage::Stop);
+        assert!(test.stop.load(Ordering::Relaxed));
+        assert!(!pane.testing);
+        pane.apply(SnmpWalkerMessage::CommunityTried(
+            test.run,
+            tried("public", true),
+        ));
+        assert!(pane.communities.is_empty(), "nothing after the stop");
+        let Step::Test(test) = pane.apply(SnmpWalkerMessage::TestCommunities) else {
+            panic!("a test");
+        };
+        pane.apply(SnmpWalkerMessage::CommunitiesEnded(
+            test.run,
+            Some(Err(WalkError::Unresolved)),
+        ));
+        assert!(pane.error.is_some(), "a host that does not resolve is said");
     }
 
     #[test]

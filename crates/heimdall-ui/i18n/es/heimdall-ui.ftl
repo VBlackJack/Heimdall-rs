@@ -4784,7 +4784,7 @@ ui-tool-arpmon-col-status = Estado
 ui-tool-arpmon-col-first-seen = Primera detección
 ui-tool-arpmon-col-last-seen = Última detección
 ui-tool-arpmon-status-new = Nuevo
-ui-tool-arpmon-status-known = Conocido
+ui-tool-arpmon-status-stable = Estable
 ui-tool-arpmon-status-changed = Modificado
 ui-tool-arpmon-status-conflict = Conflicto
 
@@ -4792,7 +4792,7 @@ ui-tool-arpmon-status-conflict = Conflicto
 ui-tool-fwtest-name = Probador de salida del cortafuegos
 ui-tool-fwtest-description = Probar la conectividad saliente a través de los puertos del cortafuegos, con medición de latencia
 ui-tool-fwtest-hosts = Hosts de destino
-ui-tool-fwtest-hosts-watermark = Hosts separados por comas o espacios (p. ej. 1.1.1.1, 8.8.8.8)
+ui-tool-fwtest-hosts-watermark = Un host por línea, o separados por comas (p. ej. 1.1.1.1, 8.8.8.8)
 ui-tool-fwtest-ports = Puertos a probar
 ui-tool-fwtest-ports-watermark = 80,443,8080
 ui-tool-fwtest-start = Probar la salida
@@ -5088,6 +5088,97 @@ ui-tool-netmap-role-remote = Host de administración remota
 ui-tool-netmap-role-appliance = Pasarela / equipo de red
 ui-tool-netmap-role-active = Nodo activo
 ui-tool-netmap-role-no-ports = Host (ningún puerto abierto)
+ui-tool-mac-vendor-randomized = Privada (MAC aleatoria)
+ui-tool-arpmon-status-gone = Desaparecido
+ui-tool-arpmon-start = Iniciar
+ui-tool-arpmon-stop = Detener
+ui-tool-arpmon-interval = Actualización
+ui-tool-arpmon-interval-secs = { $secs } s
+ui-tool-arpmon-dismiss-alert = Cerrar
+ui-tool-arpmon-alert-title = Anomalía ARP detectada
+ui-tool-arpmon-changes-title = Cambios de la tabla ARP
+ui-tool-arpmon-alert-mac-changed = La dirección MAC de { $ip } ha cambiado de { $previous } a { $current } (posible suplantación ARP)
+ui-tool-arpmon-alert-conflict = { $ip } la reclaman varias direcciones MAC a la vez: { $macs } (posible suplantación ARP)
+ui-tool-arpmon-alert-new =
+    { $count ->
+        [one] { $count } host nuevo: { $list }
+       *[other] { $count } hosts nuevos: { $list }
+    }
+ui-tool-arpmon-alert-gone =
+    { $count ->
+        [one] { $count } host desaparecido: { $list }
+       *[other] { $count } hosts desaparecidos: { $list }
+    }
+ui-tool-arpmon-alert-more = { $list } y { $more } más
+ui-tool-arpmon-mac-was = antes { $mac }
+ui-tool-arpmon-mac-also = también { $macs }
+ui-tool-arpmon-total =
+    { $count ->
+        [one] { $count } entrada
+       *[other] { $count } entradas
+    }
+ui-tool-arpmon-last-refresh = Última actualización: { $time }
+ui-tool-arpmon-empty = Haga clic en Iniciar para supervisar la tabla ARP local, o en Escanear ahora para leerla una vez.
+ui-tool-arpmon-empty-running = Supervisión activa: esperando entradas en la tabla ARP local.
+ui-tool-netmap-reverse-dns = DNS inverso
+ui-tool-netmap-use-kb = Usar la base de conocimiento
+ui-tool-netmap-kb-empty = Base de conocimiento: vacía
+ui-tool-netmap-kb-stats =
+    { $count ->
+        [one] Base de conocimiento: { $count } host, actualizada { $updated }
+       *[other] Base de conocimiento: { $count } hosts, actualizada { $updated }
+    }
+ui-tool-netmap-kb-just-now = justo ahora
+ui-tool-netmap-kb-minutes-ago = hace { $count } min
+ui-tool-netmap-kb-hours-ago = hace { $count } h
+ui-tool-netmap-kb-days-ago =
+    { $count ->
+        [one] hace { $count } día
+       *[other] hace { $count } días
+    }
+ui-tool-netmap-kb-clear = Borrar la base de conocimiento
+ui-tool-netmap-kb-keep = Conservar
+ui-tool-netmap-kb-clear-confirm = ¿Borrar todos los datos de hosts acumulados en la base de conocimiento?
+ui-tool-netmap-kb-cleared = Base de conocimiento borrada.
+ui-tool-netmap-error-kb-clear = No se ha podido borrar la base de conocimiento: { $reason }
+ui-tool-netmap-saved = Escaneo guardado en el historial.
+ui-tool-netmap-history-entry = { $time } - { $subnet }
+ui-tool-netmap-compare-with = Comparar con
+ui-tool-netmap-compare = Comparar
+ui-tool-netmap-diff-none = Ningún cambio desde ese escaneo.
+ui-tool-netmap-diff-new =
+    { $count ->
+        [one] { $count } host nuevo
+       *[other] { $count } hosts nuevos
+    }
+ui-tool-netmap-diff-removed =
+    { $count ->
+        [one] { $count } host desaparecido
+       *[other] { $count } hosts desaparecidos
+    }
+ui-tool-netmap-diff-changed =
+    { $count ->
+        [one] { $count } host modificado
+       *[other] { $count } hosts modificados
+    }
+ui-tool-netmap-error-history-read = No se ha podido leer ese escaneo del historial.
+ui-tool-netmap-naming =
+    { $count ->
+        [one] Leyendo la tabla ARP y buscando el nombre de { $count } host...
+       *[other] Leyendo la tabla ARP y buscando los nombres de { $count } hosts...
+    }
+ui-tool-snmpwalk-test-communities = Probar comunidades comunes
+ui-tool-snmpwalk-testing = Probando...
+ui-tool-snmpwalk-test-stopped = Prueba de comunidades detenida.
+ui-tool-snmpwalk-accepted-count =
+    { $count ->
+        [one] { $count } comunidad aceptada
+       *[other] { $count } comunidades aceptadas
+    }
+ui-tool-snmpwalk-col-status = Estado
+ui-tool-snmpwalk-col-sys-name = sysName
+ui-tool-snmpwalk-community-accepted = Aceptada
+ui-tool-snmpwalk-community-rejected = Sin respuesta
 ## Visor de registros
 ui-tool-logview-name = Visor de registros
 ui-tool-logview-description = Ver un archivo de registro, filtrar sus líneas y seguir lo que se le añade

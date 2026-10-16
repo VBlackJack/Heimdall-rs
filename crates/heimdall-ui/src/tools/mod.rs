@@ -896,9 +896,9 @@ impl ToolPane {
             ToolId::SnmpWalk => Pane::SnmpWalk(snmp_walker_tool::SnmpWalkerPane::default()),
             ToolId::ArpMon => Pane::ArpMon(arp_monitor_tool::ArpMonitorPane::default()),
             ToolId::FwTest => Pane::FwTest(firewall_tester_tool::FirewallTesterPane::default()),
-            ToolId::NetMap => {
-                Pane::NetMap(network_cartography_tool::NetworkCartographyPane::default())
-            }
+            ToolId::NetMap => Pane::NetMap(network_cartography_tool::NetworkCartographyPane::new(
+                heimdall_core::paths::data_dir(),
+            )),
             ToolId::OpenPorts => Pane::OpenPorts(open_ports_tool::OpenPortsPane::default()),
             ToolId::NetIf => Pane::NetIf(network_interfaces_tool::NetIfPane::default()),
             ToolId::Routes => Pane::Routes(route_table_tool::RouteTablePane::default()),
@@ -984,16 +984,15 @@ impl ToolPanes {
     }
 
     /// The work of the tool tabs made since last asked, as the C# view's `Initialize`: the
-    /// Hosts File Editor reads the hosts file.
+    /// Hosts File Editor reads the hosts file, the Network Cartography its scan history and
+    /// its knowledge base.
     pub fn opening(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
         for tab in std::mem::take(&mut self.opening) {
-            if let Some(ToolPane {
-                pane: Pane::Hosts(pane),
-                ..
-            }) = self.panes.get_mut(&tab)
-            {
-                tasks.push(pane.open(tab));
+            match self.panes.get_mut(&tab).map(|state| &mut state.pane) {
+                Some(Pane::Hosts(pane)) => tasks.push(pane.open(tab)),
+                Some(Pane::NetMap(pane)) => tasks.push(pane.open(tab)),
+                _ => {}
             }
         }
         Task::batch(tasks)
@@ -1007,7 +1006,8 @@ impl ToolPanes {
 
     /// The timers of the tool tabs that follow something: each log viewer tailing its
     /// file looked at every [`TAIL_INTERVAL`](heimdall_core::tools::log_viewer::TAIL_INTERVAL),
-    /// as the C# `_tailTimer`.
+    /// as the C# `_tailTimer`; each ARP monitor monitoring reads its table every interval
+    /// chosen, as the C# polling loop.
     #[must_use]
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(self.panes.iter().filter_map(|(tab, state)| {
@@ -1017,6 +1017,13 @@ impl ToolPanes {
                         .with(*tab)
                         .map(|(tab, _)| {
                             Message::Tool(tab, ToolMessage::LogView(LogViewerMessage::TailTick))
+                        }),
+                ),
+                Pane::ArpMon(pane) if pane.monitoring() => Some(
+                    iced::time::every(pane.interval())
+                        .with(*tab)
+                        .map(|(tab, _)| {
+                            Message::Tool(tab, ToolMessage::ArpMon(ArpMonitorMessage::Tick))
                         }),
                 ),
                 _ => None,
@@ -1742,6 +1749,17 @@ fn copy_button<'a>(
     .padding(styles::TOOLTIP_PADDING)
     .style(styles::tooltip)
     .into()
+}
+
+/// The hardware vendor a MAC address names, as the ARP monitor and the cartography say it:
+/// empty when unknown.
+fn vendor_label(vendor: Option<heimdall_core::tools::mac_vendor::MacVendor>) -> String {
+    use heimdall_core::tools::mac_vendor::MacVendor;
+    match vendor {
+        Some(MacVendor::Named(name)) => name.to_owned(),
+        Some(MacVendor::Randomized) => fl!("ui-tool-mac-vendor-randomized"),
+        None => String::new(),
+    }
 }
 
 /// Why a network tool's probe got no answer, in the user's language: the reasons of the
