@@ -17,20 +17,24 @@
 //! A session's transcript, as the C# Heimdall's session log: its output as plain text in a
 //! file of its own, named by protocol, host and start (UTC), between a header and a footer
 //! the window words; continued in `.1.log`, `.2.log`... past a size cap. A file is never
-//! written over, and a transcript dropped unfinished is finished then. On Unix only its owner may read it; on Windows it takes the rights of the
-//! folder it is in.
+//! written over, and a transcript dropped unfinished is finished then. Each file is readable
+//! by the user alone before a byte goes in it, mode 0600 on Unix, and on Windows restricted
+//! to the user, the Administrators and SYSTEM as the C# `RestrictedLogFile` restricts it:
+//! a server can echo a password, and the folder can be one the user chose. A file that
+//! cannot be restricted is not written, and the transcript says why.
 //!
 //! Transcripts older than the retention the settings give are removed at start, as the C#
 //! `PruneExpiredTranscripts`: only the files this module writes, in the folder itself.
 
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use heimdall_core::tools::private_file::{create_private_log, open_private_log};
 use heimdall_core::utc::UtcTime;
 use heimdall_term::PlainText;
 
@@ -244,22 +248,14 @@ fn create_unique(dir: &Path, name: &str) -> io::Result<(PathBuf, File)> {
     Err(io::Error::from(io::ErrorKind::AlreadyExists))
 }
 
-/// Opens `path` to add to it, made if need be; `new` refuses one already there. On Unix
-/// only its owner may read it.
+/// Opens `path` to add to it, made if need be; `new` refuses one already there. Only the
+/// user may read it, restricted before anything is written in it.
 fn open(path: &Path, new: bool) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.append(true);
     if new {
-        options.create_new(true);
+        create_private_log(path)
     } else {
-        options.create(true);
+        open_private_log(path)
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
 }
 
 /// Removes from `folder` the transcripts whose newest file was last written more than
