@@ -17,19 +17,56 @@
 //! The Files session over FTP, against an FTP server run in the test on a temporary folder:
 //! what the Files tab relies on, the FTP way.
 
-use std::net::Ipv4Addr;
+use std::future::Future;
+use std::io;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::time::Duration;
 
 use heimdall_files::conflict::{Choice, Kind};
 use heimdall_files::{
-    FtpClient, FtpSecurity, FtpTarget, ItemKind, RemoteError, RemotePath, RemoteSession, Root,
+    FtpClient, FtpSecurity, FtpTarget, ItemKind, Refusal, RemoteError, RemotePath, RemoteSession,
+    Root,
 };
+use tokio::net::TcpSocket;
 use tokio_util::sync::CancellationToken;
 use unftp_sbe_fs::Filesystem;
 
 /// Longest wait for the test server, or for one operation.
 const STEP: Duration = Duration::from_secs(20);
+
+/// Binds each passive data port where the system puts it: a port no other socket holds.
+///
+/// libunftp's own binding takes a random port in 49152-65535 with `SO_REUSEADDR` set.
+/// Windows lets two sockets with that option listen on one port, every connection then
+/// going to the first: a data connection could reach another test's server, the transfer
+/// never reaching this one, and the client wait for its reply until the server's 600 s idle
+/// timeout closed the session (CI run 38892908592). Linux refuses the second bind instead.
+#[derive(Debug)]
+struct SystemPort;
+
+impl libunftp::options::Binder for SystemPort {
+    fn bind<'a, 'b>(
+        &'a mut self,
+        local_addr: IpAddr,
+        _passive_ports: RangeInclusive<u16>,
+    ) -> Pin<Box<dyn Future<Output = io::Result<TcpSocket>> + Send + 'b>>
+    where
+        'a: 'b,
+        Self: 'b,
+    {
+        let socket = if local_addr.is_ipv4() {
+            TcpSocket::new_v4()
+        } else {
+            TcpSocket::new_v6()
+        };
+        let bound =
+            socket.and_then(|socket| socket.bind(SocketAddr::new(local_addr, 0)).map(|()| socket));
+        Box::pin(std::future::ready(bound))
+    }
+}
 
 /// Serves `root` over FTP, over explicit FTPS with the certificate and key files `ftps`
 /// names when given, on a free local port; returns the port.
@@ -44,7 +81,8 @@ async fn listen(root: &Path, ftps: Option<(PathBuf, PathBuf)>) -> u16 {
         let home = home.clone();
         let mut builder = libunftp::ServerBuilder::new(Box::new(move || {
             Filesystem::new(home.clone()).expect("root")
-        }));
+        }))
+        .binder(SystemPort);
         if let Some((cert, key)) = ftps.clone() {
             builder = builder.ftps(cert, key);
         }
@@ -268,9 +306,14 @@ async fn a_file_put_there_by_someone_else_during_an_upload_is_never_replaced() {
         )
         .await;
     assert!(arrived, "the other client wrote during the upload");
-    assert!(
-        matches!(refused, Err(RemoteError::Refused { .. })),
-        "{refused:?}"
+    // Refused for the name taken, not for any reply the server gave: a session the server
+    // closed on a timeout (421) is a refusal too, and leaves the temporary file behind.
+    assert_eq!(
+        refused,
+        Err(RemoteError::Refused {
+            refusal: Refusal::Failure,
+            message: b"already exists".to_vec(),
+        })
     );
     assert_eq!(
         std::fs::read(&theirs).expect("theirs"),
