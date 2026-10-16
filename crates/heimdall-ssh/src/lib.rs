@@ -36,6 +36,7 @@ mod known_hosts_export;
 pub mod known_hosts_import;
 pub mod local_forward;
 mod options;
+mod password_prompt;
 mod pins;
 mod prompter;
 mod run_trust;

@@ -412,6 +412,96 @@ fn each_hop_is_given_its_own_saved_password_in_one_attempt() {
     assert_eq!(ask(&mut app, tab, attempt, "bastion.lab", "root"), None);
 }
 
+/// The saved password Heimdall answers a password question with by itself, asked at
+/// `host`:`port` for `user` on try `attempt`.
+fn ask_at(
+    app: &mut App,
+    tab: TabId,
+    attempt: AttemptId,
+    (host, port, user): (&str, u16, &str),
+    try_number: u32,
+) -> Option<String> {
+    let kind = QuestionKind::Password(PasswordQuestion {
+        host: host.to_owned(),
+        port,
+        username: user.to_owned(),
+        attempt: try_number,
+    });
+    match app
+        .update(Message::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::Question {
+                question: QuestionId::fresh(),
+                kind,
+            },
+        })
+        .as_slice()
+    {
+        [
+            Effect::Answer {
+                answer: Some(Answer::Secret(secret)),
+                ..
+            },
+        ] => Some(secret.expose().to_owned()),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_keyboard_interactive_password_round_follows_the_saved_password_rules_hop_by_hop() {
+    // heimdall-ssh asks a keyboard-interactive round asking the account's password alone as
+    // a password question of its hop: the same endpoint rules answer it, with a gateway on
+    // the server's own host, on another port, never given the server's password.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(
+        dir.path(),
+        Some("bastion"),
+        vec![SshGateway {
+            host: "web.lab".to_owned(),
+            port: 2222,
+            ..gateway("bastion", None)
+        }],
+    );
+    app.update(Message::EditGateway(id("bastion")));
+    app.update(Message::SaveGateway {
+        password: Some(Secret::new("gateway pw".to_owned())),
+        passphrase: None,
+    });
+    app.update(Message::EditProfile(id("web")));
+    app.update(Message::SaveProfile {
+        password: Some(Secret::new("server pw".to_owned())),
+        passphrase: None,
+    });
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let gateway = ("web.lab", 2222, "jump");
+    let server = ("web.lab", 22, "admin");
+
+    let (tab, attempt) = open(&mut app);
+    // Another account at the server's own host and port gets neither password.
+    assert_eq!(
+        ask_at(&mut app, tab, attempt, ("web.lab", 22, "jump"), 1),
+        None
+    );
+    assert_eq!(
+        ask_at(&mut app, tab, attempt, gateway, 1).as_deref(),
+        Some("gateway pw")
+    );
+    assert_eq!(
+        ask_at(&mut app, tab, attempt, server, 1).as_deref(),
+        Some("server pw")
+    );
+    // Asked again: the server refused it, the user is asked from then on.
+    assert_eq!(ask_at(&mut app, tab, attempt, server, 2), None);
+    let (tab, attempt) = open(&mut app);
+    assert_eq!(
+        ask_at(&mut app, tab, attempt, gateway, 1).as_deref(),
+        Some("gateway pw"),
+        "the gateway's own is not refused with it"
+    );
+    assert_eq!(ask_at(&mut app, tab, attempt, server, 1), None);
+}
+
 #[test]
 fn the_servers_password_never_goes_to_the_gateway() {
     let dir = tempfile::tempdir().expect("dir");

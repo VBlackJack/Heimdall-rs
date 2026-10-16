@@ -42,7 +42,10 @@ pub struct PasswordQuestion {
     pub port: u16,
     /// Account the password is for.
     pub username: String,
-    /// 1 for the first question, 2 after one wrong password, and so on.
+    /// 1 for the first question of the connection, 2 after one refused password, and so on,
+    /// whether the password method or a keyboard-interactive round asking the account's
+    /// password alone asks it. A question after a password accepted as one factor of several
+    /// is not counted a retry.
     pub attempt: u32,
 }
 

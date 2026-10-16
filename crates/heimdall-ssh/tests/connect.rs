@@ -527,11 +527,9 @@ fn two_prompts_then_zero() -> Vec<KbdRound> {
                 ("Code: ".to_owned(), true),
             ],
             expected: vec!["pw".to_owned(), "123456".to_owned()],
+            ..KbdRound::default()
         },
-        KbdRound {
-            prompts: Vec::new(),
-            expected: Vec::new(),
-        },
+        KbdRound::default(),
     ]
 }
 
@@ -591,6 +589,263 @@ async fn cancelling_a_keyboard_interactive_round_ends_promptly() {
         server.observed.lock().expect("observed").password_attempts,
         0
     );
+}
+
+/// A keyboard-interactive round of one prompt, expecting `expected`.
+fn one_prompt(prompt: &str, echo: bool, expected: &str) -> KbdRound {
+    KbdRound {
+        prompts: vec![(prompt.to_owned(), echo)],
+        expected: vec![expected.to_owned()],
+        ..KbdRound::default()
+    }
+}
+
+/// A keyboard-interactive-only server asking `rounds`, its password method off.
+async fn kbd_only(rounds: Vec<KbdRound>) -> common::TestServer {
+    start(Spec {
+        methods: vec![MethodKind::KeyboardInteractive],
+        kbd_rounds: rounds,
+        ..Spec::default()
+    })
+    .await
+}
+
+fn queued<T>(values: Vec<T>) -> std::sync::Mutex<std::collections::VecDeque<Option<T>>> {
+    values
+        .into_iter()
+        .map(Some)
+        .collect::<std::collections::VecDeque<_>>()
+        .into()
+}
+
+#[tokio::test]
+async fn a_keyboard_interactive_password_prompt_is_asked_as_the_password_once() {
+    // A PAM server, or network gear, asking the password through keyboard-interactive: the
+    // round is the password question, so a saved password answers it as the C# does.
+    let server = kbd_only(vec![one_prompt("Password: ", false, PASSWORD)]).await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let prompter = Arc::new(ScriptedPrompter::passwords(&[PASSWORD]));
+
+    assert!(
+        run(server.port, None, &options, prompter.clone())
+            .await
+            .is_ok()
+    );
+    assert_eq!(prompter.asked(), vec!["password"]);
+    let questions = prompter
+        .password_questions
+        .lock()
+        .expect("questions")
+        .clone();
+    assert_eq!(questions.len(), 1);
+    assert_eq!(
+        (
+            questions[0].host.as_str(),
+            questions[0].port,
+            questions[0].username.as_str()
+        ),
+        (LOOPBACK, server.port, common::USER),
+        "the password of this server's account, nothing else"
+    );
+    assert_eq!(questions[0].attempt, 1);
+    assert_eq!(
+        server.observed.lock().expect("observed").kbd_answers,
+        vec![vec![PASSWORD.to_owned()]]
+    );
+}
+
+#[tokio::test]
+async fn a_second_password_round_is_the_user_s_never_the_same_secret_again() {
+    // Asked twice in one exchange (a second factor worded as a password, or gear asking
+    // again after a wrong one): the password question is asked once, the rest goes to the user.
+    let server = kbd_only(vec![
+        one_prompt("Password: ", false, PASSWORD),
+        one_prompt("Password: ", false, "second"),
+    ])
+    .await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let prompter = Arc::new(ScriptedPrompter {
+        kbd: queued(vec![vec!["second".to_owned()]]),
+        ..ScriptedPrompter::passwords(&[PASSWORD, PASSWORD])
+    });
+
+    assert!(
+        run(server.port, None, &options, prompter.clone())
+            .await
+            .is_ok()
+    );
+    assert_eq!(prompter.asked(), vec!["password", "kbd"]);
+    assert_eq!(
+        server.observed.lock().expect("observed").kbd_answers,
+        vec![vec![PASSWORD.to_owned()], vec!["second".to_owned()]]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_keyboard_interactive_password_makes_the_password_method_a_retry() {
+    let server = start(Spec {
+        kbd_rounds: vec![one_prompt("Password: ", false, PASSWORD)],
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let prompter = Arc::new(ScriptedPrompter::passwords(&["wrong", PASSWORD]));
+
+    assert!(
+        run(server.port, None, &options, prompter.clone())
+            .await
+            .is_ok()
+    );
+    assert_eq!(prompter.asked(), vec!["password", "password"]);
+    let attempts: Vec<u32> = prompter
+        .password_questions
+        .lock()
+        .expect("questions")
+        .iter()
+        .map(|question| question.attempt)
+        .collect();
+    assert_eq!(
+        attempts,
+        vec![1, 2],
+        "the second question says the first was wrong"
+    );
+    let observed = server.observed.lock().expect("observed");
+    assert_eq!(observed.kbd_answers, vec![vec!["wrong".to_owned()]]);
+    assert_eq!(observed.password_attempts, 1);
+}
+
+#[tokio::test]
+async fn a_keyboard_interactive_password_question_left_unanswered_ends_the_attempt() {
+    // Cancelled, then left to its deadline: russh waits for the round's answer only, so the
+    // connection ends, and nothing is sent in the password's place.
+    let server = kbd_only(vec![one_prompt("Password: ", false, PASSWORD)]).await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let prompter = Arc::new(ScriptedPrompter::default());
+
+    let error = run(server.port, None, &options, prompter.clone())
+        .await
+        .expect_err("cancelled");
+    assert!(matches!(error, ConnectError::Cancelled), "got {error:?}");
+    assert_eq!(prompter.asked(), vec!["password"]);
+    assert!(
+        server
+            .observed
+            .lock()
+            .expect("observed")
+            .kbd_answers
+            .is_empty()
+    );
+
+    let server = kbd_only(vec![one_prompt("Password: ", false, PASSWORD)]).await;
+    let mut options = options_trusting(dir.path(), server.port, "host-ed25519");
+    options.prompt_timeout = Duration::from_millis(200);
+    let prompter = Arc::new(ScriptedPrompter {
+        hang: true,
+        ..ScriptedPrompter::passwords(&[PASSWORD])
+    });
+
+    let error = run(server.port, None, &options, prompter.clone())
+        .await
+        .expect_err("timed out");
+    assert!(
+        matches!(error, ConnectError::PromptTimedOut),
+        "got {error:?}"
+    );
+    assert_eq!(prompter.asked(), vec!["password"]);
+    assert!(
+        server
+            .observed
+            .lock()
+            .expect("observed")
+            .kbd_answers
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_one_time_code_round_is_never_answered_with_the_password() {
+    for prompt in [
+        "Verification code: ",
+        "One-time password (OATH) for `tester':",
+        "Password + OTP: ",
+        "Temporary password: ",
+        "RSA SecurID password: ",
+        "Code de vérification : ",
+    ] {
+        let server = kbd_only(vec![one_prompt(prompt, false, "123456")]).await;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let options = options_trusting(dir.path(), server.port, "host-ed25519");
+        let prompter = Arc::new(ScriptedPrompter {
+            kbd: queued(vec![vec!["123456".to_owned()]]),
+            ..ScriptedPrompter::passwords(&[PASSWORD])
+        });
+
+        assert!(
+            run(server.port, None, &options, prompter.clone())
+                .await
+                .is_ok(),
+            "{prompt:?}"
+        );
+        assert_eq!(prompter.asked(), vec!["kbd"], "{prompt:?}");
+        assert_eq!(
+            server.observed.lock().expect("observed").kbd_answers,
+            vec![vec!["123456".to_owned()]],
+            "{prompt:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_password_then_a_one_time_code_ask_the_password_then_the_user() {
+    let server = kbd_only(vec![
+        one_prompt("Password: ", false, PASSWORD),
+        one_prompt("Verification code: ", false, "123456"),
+    ])
+    .await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let prompter = Arc::new(ScriptedPrompter {
+        kbd: queued(vec![vec!["123456".to_owned()]]),
+        ..ScriptedPrompter::passwords(&[PASSWORD, PASSWORD])
+    });
+
+    assert!(
+        run(server.port, None, &options, prompter.clone())
+            .await
+            .is_ok()
+    );
+    assert_eq!(prompter.asked(), vec!["password", "kbd"]);
+}
+
+#[tokio::test]
+async fn a_shown_answer_or_one_time_code_instructions_keep_the_round_the_user_s() {
+    let echoed = one_prompt("Password: ", true, "typed");
+    let instructed = KbdRound {
+        instructions: "Enter the one-time password shown by your token.".to_owned(),
+        ..one_prompt("Password: ", false, "typed")
+    };
+    let other_account = one_prompt("(admin@host) Password: ", false, "typed");
+    for round in [echoed, instructed, other_account] {
+        let server = kbd_only(vec![round.clone()]).await;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let options = options_trusting(dir.path(), server.port, "host-ed25519");
+        let prompter = Arc::new(ScriptedPrompter {
+            kbd: queued(vec![vec!["typed".to_owned()]]),
+            ..ScriptedPrompter::passwords(&[PASSWORD])
+        });
+
+        assert!(
+            run(server.port, None, &options, prompter.clone())
+                .await
+                .is_ok(),
+            "{round:?}"
+        );
+        assert_eq!(prompter.asked(), vec!["kbd"], "{round:?}");
+    }
 }
 
 // ---- keys ------------------------------------------------------------------------------

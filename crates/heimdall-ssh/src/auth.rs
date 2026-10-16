@@ -22,8 +22,16 @@
 //! 3. other agent keys, only when the profile names no key, and at most
 //!    [`MAX_OTHER_AGENT_KEYS`], so they do not exhaust the server's `MaxAuthTries`;
 //! 4. keyboard-interactive; once started it is never abandoned for another method, because
-//!    russh waits for the round's answer and ignores anything else;
+//!    russh waits for the round's answer and ignores anything else. Its first round that asks
+//!    for the account's password alone is asked as the password method asks it, so a saved or
+//!    provided password answers it, once per connection, as the C#
+//!    `AnswerKeyboardInteractivePrompts` (`SshConnectionFactory.cs`); every other round is
+//!    the user's;
 //! 5. password.
+//!
+//! keyboard-interactive comes before password, as in OpenSSH's default
+//! `PreferredAuthentications`: a PAM server asks its factors there, and a server offering both
+//! takes the same saved password through either.
 //!
 //! After every refusal the connection is checked: a server that disconnected reports
 //! "no methods left", which must not read as "authentication failed".
@@ -41,6 +49,7 @@ use crate::client::{ClientHandler, ServerMessage, ask};
 use crate::error::{AuthMethod, ConnectError};
 use crate::key_file::{KeyFile, KeyFileError};
 use crate::options::{AgentSource, ConnectOptions};
+use crate::password_prompt::round_is_the_password;
 use crate::prompter::{
     KeyboardInteractivePrompt, KeyboardInteractiveQuestion, PassphraseQuestion, PasswordQuestion,
     Prompter,
@@ -52,7 +61,7 @@ use crate::secret::Secret;
 /// default) before a password could be asked.
 pub(crate) const MAX_OTHER_AGENT_KEYS: usize = 3;
 
-/// Password questions before giving up.
+/// Password questions before giving up, a keyboard-interactive round asked as one included.
 pub(crate) const MAX_PASSWORD_ATTEMPTS: u32 = 3;
 
 /// Passes over the methods: a server asking several factors (OpenSSH `AuthenticationMethods
@@ -95,6 +104,11 @@ struct Attempts<'a, P: Prompter> {
     agents_loaded: bool,
     /// A method of this pass was accepted as one factor among several.
     partial: bool,
+    /// Password questions asked on this connection, by either method.
+    password_questions: u32,
+    /// Passwords refused outright on this connection: one accepted as a factor of several
+    /// is not, so the question after it is not told a retry.
+    password_refusals: u32,
 }
 
 /// Hash for RSA signatures, from what the server announced in `server-sig-algs`.
@@ -174,6 +188,8 @@ pub(crate) async fn authenticate<P: Prompter>(ctx: AuthContext<'_, P>) -> Result
         agent_keys: Vec::new(),
         agents_loaded: false,
         partial: false,
+        password_questions: 0,
+        password_refusals: 0,
     };
     attempts.ensure_open()?;
     attempts.run().await
@@ -420,6 +436,7 @@ impl<P: Prompter> Attempts<'_, P> {
             .authenticate_keyboard_interactive_start(self.ctx.username, None::<String>)
             .await
             .map_err(|error| request_failed(&self.ctx, error))?;
+        let questions_before = self.password_questions;
         loop {
             match response {
                 KeyboardInteractiveAuthResponse::Success => return Ok(true),
@@ -427,6 +444,10 @@ impl<P: Prompter> Attempts<'_, P> {
                     remaining_methods,
                     partial_success,
                 } => {
+                    if !partial_success && self.password_questions > questions_before {
+                        // A round of it was asked as the password: refused.
+                        self.password_refusals += 1;
+                    }
                     self.methods = remaining_methods;
                     self.partial |= partial_success;
                     self.ensure_open()?;
@@ -453,17 +474,8 @@ impl<P: Prompter> Attempts<'_, P> {
                                 })
                                 .collect(),
                         };
-                        let asked = ask(
-                            self.ctx.prompter.keyboard_interactive(question),
-                            self.ctx.cancel,
-                            self.ctx.options.prompt_timeout,
-                        )
-                        .await;
-                        match asked {
-                            Ok(answers) => answers
-                                .iter()
-                                .map(|answer| answer.expose().to_owned())
-                                .collect(),
+                        match self.answer_round(question).await {
+                            Ok(answers) => answers,
                             Err(error) => {
                                 // russh ignores every message but this round's answer:
                                 // switching method would hang, so the connection ends.
@@ -483,17 +495,58 @@ impl<P: Prompter> Attempts<'_, P> {
         }
     }
 
+    /// The answers to a keyboard-interactive round with at least one prompt.
+    ///
+    /// The account's password alone, asked before any other password question of this
+    /// connection, is asked as the password method's first question: the same host, port and
+    /// account, so only a password saved for that server answers it (see
+    /// [`round_is_the_password`]). Every other round is the user's.
+    async fn answer_round(
+        &mut self,
+        question: KeyboardInteractiveQuestion,
+    ) -> Result<Vec<String>, ConnectError> {
+        if round_is_the_password(self.password_questions, &question) {
+            self.password_questions += 1;
+            let asked = PasswordQuestion {
+                host: self.ctx.host.to_owned(),
+                port: self.ctx.port,
+                username: self.ctx.username.to_owned(),
+                attempt: self.password_refusals + 1,
+            };
+            let password: Secret = ask(
+                self.ctx.prompter.password(asked),
+                self.ctx.cancel,
+                self.ctx.options.prompt_timeout,
+            )
+            .await?;
+            return Ok(vec![password.expose().to_owned()]);
+        }
+        let answers: Vec<Secret> = ask(
+            self.ctx.prompter.keyboard_interactive(question),
+            self.ctx.cancel,
+            self.ctx.options.prompt_timeout,
+        )
+        .await?;
+        Ok(answers
+            .iter()
+            .map(|answer| answer.expose().to_owned())
+            .collect())
+    }
+
     async fn password(&mut self) -> Result<bool, ConnectError> {
         self.tried.push(AuthMethod::Password);
-        for attempt in 1..=MAX_PASSWORD_ATTEMPTS {
+        while self.password_questions < MAX_PASSWORD_ATTEMPTS {
             if !self.allows(MethodKind::Password) {
                 break;
             }
+            // Counted with a keyboard-interactive round asked as the password: the question
+            // after that round's refusal is a retry.
+            self.password_questions += 1;
             let question = PasswordQuestion {
                 host: self.ctx.host.to_owned(),
                 port: self.ctx.port,
                 username: self.ctx.username.to_owned(),
-                attempt,
+                attempt: self.password_refusals + 1,
             };
             let password: Secret = ask(
                 self.ctx.prompter.password(question),
@@ -514,6 +567,7 @@ impl<P: Prompter> Attempts<'_, P> {
                 // Accepted as the first factor: the next one is another method's.
                 break;
             }
+            self.password_refusals += 1;
         }
         Ok(false)
     }
