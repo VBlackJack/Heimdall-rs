@@ -51,9 +51,16 @@ Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` an
 
 ## Built-in Tools
 
-Heimdall embeds 30 offline sysadmin and security assessment tools:
+Heimdall embeds 30 sysadmin and security assessment tools. Not all of them are
+offline: the network tools, such as the SSL/TLS Auditor, DNS Security Checker, SMB
+Enumerator, Default Credentials Scanner and SecNumCloud Auditor, connect to the
+hosts you give them; the others run fully offline.
 
-- **Security & Compliance:** SSH Key Auditor, SSL/TLS Auditor, DNS Security Checker (DNSSEC/DANE), ANSSI SecNumCloud v3.2 Auditor, SMB Enumerator, Default Credentials Scanner, Offline CVE & CISA KEV Lookup, Password Auditor, Password Generator, SSH Key Generator, Certificate Generator.
+The CVE Lookup uses an embedded, hand-curated database of 68 entries (63 distinct
+CVEs) for common infrastructure software, spanning 2015 to 2024. It carries no
+CISA KEV (Known Exploited Vulnerabilities) data and is not a live feed.
+
+- **Security & Compliance:** SSH Key Auditor, SSL/TLS Auditor, DNS Security Checker (DNSSEC/DANE), ANSSI SecNumCloud v3.2 Auditor, SMB Enumerator, Default Credentials Scanner, Offline CVE Lookup, Password Auditor, Password Generator, SSH Key Generator, Certificate Generator.
 - **Network:** Subnet Calculator, IP Converter, Network Calculator.
 - **System:** Chmod Calculator, Date & Time Converter, Crontab Builder, SSH Config Generator.
 - **Encoding & Tokens:** Hash Computer, HMAC Generator, JWT Debugger, TOTP Generator, Base64 Encoder/Decoder, URL Encoder/Decoder, JSON Formatter, Regex Tester, Text Diff, Text Case Converter, UUID Generator, ULID Generator.

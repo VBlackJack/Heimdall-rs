@@ -160,6 +160,7 @@ fn the_browsers_entry_menu_opens_in_explorer_and_sends_nothing() {
         sftp: false,
         over_ssh: false,
         local_only: true,
+        folder_pending: false,
     };
     let file = FilesEntryFacts {
         index: 0,
@@ -457,6 +458,7 @@ fn run_in_shell_is_in_the_menu_of_a_script_alone() {
         sftp: false,
         over_ssh: false,
         local_only: true,
+        folder_pending: false,
     };
     let script = FilesEntryFacts {
         index: 2,
@@ -508,6 +510,7 @@ fn browser_facts(can_paste: bool) -> FilesTabFacts {
         sftp: false,
         over_ssh: false,
         local_only: true,
+        folder_pending: false,
     }
 }
 

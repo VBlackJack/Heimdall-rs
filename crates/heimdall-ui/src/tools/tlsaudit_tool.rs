@@ -886,13 +886,17 @@ async fn probe_packet(
         Err(_) => return Err("Connection timed out".to_owned()),
     };
 
-    if let Err(e) = tokio::time::timeout(
+    // Both the timeout and the write itself can fail; the inner write error was
+    // previously discarded, hiding a failed send as a successful one.
+    match tokio::time::timeout(
         timeout_duration,
         tokio::io::AsyncWriteExt::write_all(&mut stream, packet),
     )
     .await
     {
-        return Err(e.to_string());
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(e) => return Err(e.to_string()),
     }
 
     let mut buf = vec![0u8; 4096];
@@ -926,13 +930,15 @@ async fn probe_handshake_flight(
         Err(_) => return Err("Connection timed out".to_owned()),
     };
 
-    if let Err(e) = tokio::time::timeout(
+    match tokio::time::timeout(
         timeout_duration,
         tokio::io::AsyncWriteExt::write_all(&mut stream, packet),
     )
     .await
     {
-        return Err(e.to_string());
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(e) => return Err(e.to_string()),
     }
 
     let mut buf = vec![0u8; 16384];

@@ -520,6 +520,7 @@ ui-files-upload-button = Enviar
 ui-files-upload-files-tooltip = Subir archivos
 ui-files-download-selected-tooltip = Descargar la selección (Ctrl+Mayús+D)
 ui-files-loading = Cargando...
+ui-files-listing-in-progress-tooltip = Listado en curso: espera a que se cargue la carpeta
 ui-files-empty = Carpeta vacía
 ui-files-cancel-button = Cancelar
 ui-files-transfers-title = Transferencias
@@ -2358,6 +2359,7 @@ ui-status-dropped-folder = Carpeta { $name } movida. Ctrl+Z lo deshace.
 ui-status-drop-refused = Ya hay una carpeta con ese nombre: no se movió nada.
 ui-status-move-undone = Movimiento deshecho.
 ui-status-listing-cancelled = Carga cancelada.
+ui-status-listing-in-progress = Listado en curso: espera a que se cargue la carpeta y vuelve a intentarlo.
 ui-status-session-limit = Ya está abierto el máximo de { $max } sesiones remotas incrustadas. Cierra una sesión antes de abrir otra.
 ui-status-sftp-auto-open-failed = Falló la apertura automática de SFTP: { $reason }
 ui-status-sftp-browser-disabled = El explorador SFTP integrado está desactivado en los ajustes.
@@ -4184,14 +4186,14 @@ ui-tool-defaultcreds-help =
     3. Haz clic en Escanear
 
     Protocolos probados:
-    - SSH (contraseñas comunes de root/admin)
+    - SSH (solo servicio accesible, credenciales no probadas)
     - Autenticación básica HTTP
     - FTP (anónimo, admin)
     - SNMP (cadenas de comunidad)
-    - MySQL, PostgreSQL, MSSQL (credenciales de base de datos predeterminadas)
-    - VNC (contraseñas comunes)
+    - PostgreSQL (acceso sin contraseña); MySQL, MSSQL (solo servicio accesible, credenciales no probadas)
+    - VNC (solo servicio accesible, credenciales no probadas)
     - Telnet
-    - Redis (detección de ausencia de autenticación)
+    - Redis (solo servicio accesible, credenciales no probadas)
 
     Seguridad:
     - Limitado en frecuencia (1 intento/segundo por servicio)
@@ -4201,7 +4203,7 @@ ui-tool-secnumcloud-name = Auditoría SecNumCloud
 ui-tool-secnumcloud-description = Auditoría de cumplimiento SecNumCloud v3.2 en red, criptografía, accesos y operaciones
 ui-tool-secnumcloud-title = Auditoría de cumplimiento SecNumCloud v3.2
 ui-tool-secnumcloud-scope-label = Ámbito de la auditoría
-ui-tool-secnumcloud-scope-placeholder = 10.0.1.0/24 o un host por línea
+ui-tool-secnumcloud-scope-placeholder = Un host o dirección IP por línea
 ui-tool-secnumcloud-depth-label = Profundidad
 ui-tool-secnumcloud-depth-quick = Rápida
 ui-tool-secnumcloud-depth-standard = Estándar
@@ -4240,7 +4242,7 @@ ui-tool-secnumcloud-ops04-name = Inventario de servicios
 ui-tool-secnumcloud-btn-copy-csv = Copiar CSV
 ui-tool-secnumcloud-btn-copy-html = Copiar HTML
 ui-tool-secnumcloud-empty-state = Introduce una subred o lista de hosts para iniciar una auditoría de cumplimiento SecNumCloud
-ui-tool-secnumcloud-error-scope = Introduce al menos un host de destino o subred.
+ui-tool-secnumcloud-error-scope = Introduce al menos un host de destino.
 ui-tool-secnumcloud-phase-discovery = Fase 1/5: Descubrimiento de red...
 ui-tool-secnumcloud-phase-network = Fase 2/5: Comprobaciones de seguridad de red...
 ui-tool-secnumcloud-phase-crypto = Fase 3/5: Comprobaciones de criptografía...
@@ -4254,7 +4256,7 @@ ui-tool-secnumcloud-help =
     Auditoría de seguridad automatizada según los requisitos de ANSSI SecNumCloud v3.2.
 
     Ámbito:
-    Introduce una subred CIDR (ej. 10.0.1.0/24) para descubrimiento automático de hosts, o una lista de hosts (uno por línea) para una auditoría específica.
+    Introduce los hosts que se van a auditar, un nombre de host o dirección IP por línea. Los rangos CIDR no se expanden y se rechazan.
 
     Capítulos auditados:
     - Seguridad de red (cap. 9): Inventario de puertos, cabeceras HTTP, segmentación
@@ -4327,6 +4329,55 @@ ui-tool-smb-help =
 
     Comprobaciones de seguridad:
     - Firma SMB desactivada (riesgo de ataque de retransmisión)
+    - Dialecto SMB2/SMB3 negociado
+
+# --- Review follow-ups (#402): security tools ---
+ui-tool-defaultcreds-status-not-tested = No probado
+ui-tool-defaultcreds-detail-not-tested = { $service } accesible, credenciales no probadas
+ui-tool-defaultcreds-empty = (vacío)
+ui-tool-defaultcreds-timeout-connect = Tiempo de conexión agotado
+ui-tool-defaultcreds-timeout-write = Tiempo de escritura agotado
+ui-tool-defaultcreds-timeout-read = Tiempo de lectura agotado
+ui-tool-dnssec-report-record = Registro
+ui-tool-dnssec-report-detail = Detalle
+ui-tool-dnssec-error-nslookup-missing = No se encontró nslookup. Instálelo (bind-utils / dnsutils en Linux) o asegúrese de que esté en el PATH.
+ui-tool-secnumcloud-error-cidr = Los rangos CIDR no se expanden. Introduzca hosts individuales, uno por línea.
+ui-tool-secnumcloud-clause = Cláusula { $clause }
+ui-tool-secnumcloud-unknown = desconocido
+ui-tool-secnumcloud-net01-summary = { $open } puertos abiertos inventariados en { $hosts } hosts.
+ui-tool-secnumcloud-net01-evidence = { $count } puertos abiertos: { $ports }
+ui-tool-secnumcloud-net02-pass = No se detectaron servicios innecesarios o no estándar.
+ui-tool-secnumcloud-net02-warn = { $count } puertos no estándar encontrados - revise la necesidad operativa.
+ui-tool-secnumcloud-net02-evidence = Puertos no estándar: { $ports }
+ui-tool-secnumcloud-net03-skipped = No se encontraron servicios HTTP/HTTPS para comprobar.
+ui-tool-secnumcloud-net03-pass = Los { $count } servicios web tienen las cabeceras de seguridad requeridas.
+ui-tool-secnumcloud-net03-fail = { $missing } servicios web de { $checked } carecen de cabeceras de seguridad requeridas (HSTS, CSP, XFO, XCTO).
+ui-tool-secnumcloud-net03-evidence = Puerto { $port }: cabeceras ausentes: { $headers }
+ui-tool-secnumcloud-net04-summary = { $count } subredes detectadas. Verifique la segmentación de red según las directrices de la ANSSI.
+ui-tool-secnumcloud-cry01-skipped = No se encontraron servicios TLS para comprobar.
+ui-tool-secnumcloud-cry01-pass = { $count } extremos TLS verificados para protocolos aceptables.
+ui-tool-secnumcloud-cry02-pass = No se negociaron suites de cifrado débiles en los extremos auditados.
+ui-tool-secnumcloud-cry03-pass = Todos los certificados capturados están dentro de su periodo de validez.
+ui-tool-secnumcloud-cry04-skipped = No se encontraron servicios SSH para comprobar.
+ui-tool-secnumcloud-cry04-fail = { $weak } servidores SSH de { $checked } ofrecen algoritmos de clave débiles.
+ui-tool-secnumcloud-cry04-pass = Los { $checked } servidores SSH usan algoritmos de clave aceptables.
+ui-tool-secnumcloud-cry04-evidence = Puerto 22: algoritmo de clave de host SSH débil (DSA) detectado
+ui-tool-secnumcloud-acc01-pass = No se aceptaron credenciales predeterminadas en los servicios auditados.
+ui-tool-secnumcloud-acc02-skipped = No se encontraron servicios SMB para comprobar.
+ui-tool-secnumcloud-acc02-pass = { $count } servicios SMB evaluados para la firma de mensajes.
+ui-tool-secnumcloud-acc03-skipped = No se encontraron servicios SNMP para comprobar.
+ui-tool-secnumcloud-acc03-pass = No se aceptaron cadenas de comunidad SNMP predeterminadas.
+ui-tool-secnumcloud-ops01-skipped = No hay dominios públicos configurados en el alcance para comprobaciones DNS.
+ui-tool-secnumcloud-ops02-skipped = No hay dominios públicos configurados en el alcance para comprobaciones CAA.
+ui-tool-secnumcloud-ops03-pass = No se encontraron CVE conocidas de gravedad alta en los banners de servicio analizados.
+ui-tool-secnumcloud-ops03-fail = { $count } CVE conocidas encontradas en los servicios analizados.
+ui-tool-secnumcloud-ops03-evidence = Puerto { $port }: { $software } { $version } afectado por { $cve } ({ $severity })
+ui-tool-secnumcloud-ops04-summary = { $count } servicios inventariados en { $hosts } hosts.
+ui-tool-secnumcloud-ops04-evidence = Puerto { $port }: { $service }
+ui-tool-secnumcloud-html-doc-title = Informe de auditoría SecNumCloud
+ui-tool-secnumcloud-html-heading = SecNumCloud v3.2 - Informe de auditoría de conformidad
+ui-tool-secnumcloud-html-clause = Cláusula
+ui-tool-secnumcloud-html-generated-by = Generado por Heimdall
     - SMBv1 detectado (vulnerabilidad EternalBlue)
 
 ui-tool-http-name = Códigos de estado HTTP

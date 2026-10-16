@@ -724,6 +724,26 @@ fn danger_style(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// An entry putting something into the folder a Files pane shows: greyed while the pane
+/// names another folder whose listing is on its way (`pending`), saying why on hover, as
+/// the pane's own buttons.
+fn into_shown_entry<'a>(
+    label: String,
+    message: FilesMessage,
+    pending: bool,
+) -> Element<'a, Message> {
+    if !pending {
+        return entry(label, Some(AppMessage::Files(message)));
+    }
+    tooltip(
+        entry(label, None),
+        text(fl!("ui-files-listing-in-progress-tooltip")).size(font_size::CAPTION),
+        tooltip::Position::Right,
+    )
+    .style(container::rounded_box)
+    .into()
+}
+
 /// One entry: a label, active when it has a message.
 fn entry<'a>(label: String, message: Option<AppMessage>) -> Element<'a, Message> {
     button(text(label).size(font_size::BODY_LARGE))
@@ -1177,6 +1197,9 @@ pub struct FilesTabFacts {
     /// It is the local file browser docked beside a local shell: no server to send to,
     /// and "Open in Explorer" and "Open in terminal", as the C# browser.
     pub local_only: bool,
+    /// The pane names a folder whose listing is on its way over the entries of another:
+    /// nothing is put into it until it is shown.
+    pub folder_pending: bool,
 }
 
 /// The menu of an entry of a Files tab's pane, in the C# order, limited to what this
@@ -1187,7 +1210,9 @@ pub struct FilesTabFacts {
 /// connection; Paste while what was cut or copied can be pasted in this tab. The local file
 /// browser's own entries, as the C# `LocalFileBrowserView`: "Open With" (on Windows, which
 /// alone has the chooser) and "Open in Editor" for one regular file, "Copy" and "Paste" of
-/// its files, and "Properties" for an entry chosen alone.
+/// its files, and "Properties" for an entry chosen alone. What puts something into the
+/// folder shown, New Folder, Paste and the uploads, is greyed while the pane names a folder
+/// whose listing is on its way, saying so on hover.
 pub fn files_entry_menu<'a>(
     (tab, side): (TabId, Side),
     entry_facts: Option<FilesEntryFacts>,
@@ -1261,9 +1286,10 @@ pub fn files_entry_menu<'a>(
         on_entry.then(separator),
         clipboard_entries((tab, side), entry_facts, tab_facts),
         on_entry.then(separator),
-        entry(
+        into_shown_entry(
             fl!("ui-files-menu-new-folder"),
-            files(FilesMessage::AskNewFolder { tab, side })
+            FilesMessage::AskNewFolder { tab, side },
+            tab_facts.folder_pending,
         ),
         entry(
             fl!("ui-files-menu-refresh"),
@@ -1293,23 +1319,27 @@ fn clipboard_entries<'a>(
     let remote = side == Side::Remote;
     let local_only = tab_facts.local_only;
     let files = |message| Some(AppMessage::Files(message));
+    let pending = tab_facts.folder_pending;
     menu_column![
-        remote.then(|| entry(
+        remote.then(|| into_shown_entry(
             fl!("ui-files-menu-upload-here"),
-            files(FilesMessage::UploadHere { tab })
+            FilesMessage::UploadHere { tab },
+            pending,
         )),
         // Explorer's copied files are read on Windows only.
-        (remote && cfg!(windows)).then(|| entry(
+        (remote && cfg!(windows)).then(|| into_shown_entry(
             fl!("ui-files-menu-paste-explorer"),
-            files(FilesMessage::PasteFromExplorer { tab })
+            FilesMessage::PasteFromExplorer { tab },
+            pending,
         )),
         (remote && on_entry)
             .then(|| entry(fl!("ui-files-menu-cut"), files(FilesMessage::Cut { tab }))),
         (on_entry && ((remote && tab_facts.can_copy) || local_only))
             .then(|| entry(fl!("ui-files-menu-copy"), files(FilesMessage::Copy { tab }))),
-        ((remote || local_only) && tab_facts.can_paste).then(|| entry(
+        ((remote || local_only) && tab_facts.can_paste).then(|| into_shown_entry(
             fl!("ui-files-menu-paste"),
-            files(FilesMessage::Paste { tab })
+            FilesMessage::Paste { tab },
+            pending,
         )),
         (remote && tab_facts.over_ssh && on_entry).then(|| entry(
             fl!("ui-files-menu-duplicate"),

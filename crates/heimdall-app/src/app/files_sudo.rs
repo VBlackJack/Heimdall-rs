@@ -27,15 +27,18 @@ use crate::ids::TabId;
 
 /// The listing of the server's folder `path` in `tab`: as root while its sudo mode is on,
 /// with the password sudo took for the tab. It is the server pane's latest: any other one on
-/// its way is not shown.
+/// its way is not shown. Over FTP, whose one control connection lists one folder at a time,
+/// it starts now when none is on its way, else waits for that one's answer in place of any
+/// other waiting; over SFTP and as root it starts at once, a slow listing holding up nothing.
 pub(super) fn remote_listing(
     files: &mut FilesPane,
     tab: TabId,
     client: RemoteSession,
     path: RemotePath,
-) -> Effect {
+) -> Vec<Effect> {
     let request = files.remote.ask_listing();
-    match files.shell.clone().filter(|_| files.sudo_mode) {
+    let one_at_a_time = matches!(client, RemoteSession::Ftp(_));
+    let listing = match files.shell.clone().filter(|_| files.sudo_mode) {
         Some(shell) => Effect::SudoListRemote {
             tab,
             shell,
@@ -49,7 +52,15 @@ pub(super) fn remote_listing(
             path,
             request,
         },
+    };
+    if !one_at_a_time {
+        return vec![listing];
     }
+    files
+        .remote_listings
+        .ask(request, listing)
+        .into_iter()
+        .collect()
 }
 
 impl App {
@@ -122,6 +133,6 @@ impl App {
         };
         // The folder shown is left for it, as when it was first asked for.
         files.remote.leave();
-        vec![remote_listing(files, tab, client, path)]
+        remote_listing(files, tab, client, path)
     }
 }
