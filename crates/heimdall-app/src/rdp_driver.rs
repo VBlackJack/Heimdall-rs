@@ -70,6 +70,9 @@ pub struct RdpRequest {
     pub desktop_scale: u32,
     /// How long logging on may take; `None` for no limit.
     pub logon_timeout: Option<std::time::Duration>,
+    /// Time without anything sent before an RDP keep-alive of the session, as the settings'
+    /// `rdp_keep_alive_interval_ms`.
+    pub keep_alive: std::time::Duration,
     /// The SSH gateways the server is reached through, nearest first, each as the hop it
     /// is; empty for a direct connection.
     pub route: Vec<SshProfile>,
@@ -335,6 +338,7 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
             logon: request.logon_timeout.unwrap_or(UNBOUNDED_LOGON),
             ..Timeouts::default()
         },
+        keep_alive: request.keep_alive,
         clipboard: profile.redirect_clipboard,
         drives: if profile.redirect_drives {
             local_drives()
@@ -494,6 +498,7 @@ mod tests {
             desktop: (1024, 768),
             desktop_scale: 100,
             logon_timeout: None,
+            keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
             route: Vec::new(),
             ssh: ConnectOptions::new(PathBuf::from("known_hosts")),
             cancel: CancellationToken::new(),

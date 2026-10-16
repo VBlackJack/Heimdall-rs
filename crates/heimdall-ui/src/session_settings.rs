@@ -16,7 +16,7 @@
 
 //! The numbers of the Settings page, as the C# SSH/SFTP Session tab, its session health
 //! monitor, its session logging, its idle auto-lock, its update checks, its Windows Hello
-//! grace and the days Windows Hello unlocks the vault have them: each typed, then applied
+//! grace, the days Windows Hello unlocks the vault and its RDP Behavior numbers have them: each typed, then applied
 //! with Enter; one out of its range stays typed, its rule said under it.
 
 use heimdall_app::SettingsMessage;
@@ -31,7 +31,10 @@ use heimdall_core::settings::{
     WINDOWS_HELLO_VAULT_MAX_DAYS_MAX, WINDOWS_HELLO_VAULT_MAX_DAYS_NEVER,
 };
 
-use heimdall_core::settings::{RDP_RESIZE_ENABLE_DELAY_MAX_MS, RDP_RESIZE_ENABLE_DELAY_MIN_MS};
+use heimdall_core::settings::{
+    RDP_KEEP_ALIVE_INTERVAL_MAX_MS, RDP_KEEP_ALIVE_INTERVAL_MIN_MS, RDP_RESIZE_ENABLE_DELAY_MAX_MS,
+    RDP_RESIZE_ENABLE_DELAY_MIN_MS,
+};
 
 use crate::i18n::fl;
 
@@ -63,6 +66,8 @@ pub enum SessionField {
     VaultHelloMaxDays,
     /// Milliseconds an RDP desktop following its tab waits after connecting, 0 for none.
     RdpResizeDelay,
+    /// Milliseconds between two keep-alives of an embedded RDP connection.
+    RdpKeepAlive,
 }
 
 impl SessionField {
@@ -80,7 +85,7 @@ impl SessionField {
     pub const TRANSCRIPTS: [Self; 1] = [Self::TranscriptRetention];
 
     /// How many there are.
-    pub(crate) const COUNT: usize = 12;
+    pub(crate) const COUNT: usize = 13;
 
     /// Its place among them all.
     pub(crate) fn index(self) -> usize {
@@ -97,6 +102,7 @@ impl SessionField {
             Self::WindowsHelloGrace => 9,
             Self::VaultHelloMaxDays => 10,
             Self::RdpResizeDelay => 11,
+            Self::RdpKeepAlive => 12,
         }
     }
 
@@ -115,6 +121,7 @@ impl SessionField {
             Self::WindowsHelloGrace => fl!("ui-settings-windows-hello-grace"),
             Self::VaultHelloMaxDays => fl!("ui-settings-vault-hello-max-days"),
             Self::RdpResizeDelay => fl!("ui-settings-rdp-resize-delay"),
+            Self::RdpKeepAlive => fl!("ui-settings-rdp-keep-alive-interval"),
         }
     }
 
@@ -124,7 +131,7 @@ impl SessionField {
             Self::KeepAlive | Self::TmoutReset | Self::AntiIdle | Self::ReachabilityInterval => {
                 Some(fl!("ui-settings-anti-idle-unit"))
             }
-            Self::ReachabilityTimeout | Self::RdpResizeDelay => {
+            Self::ReachabilityTimeout | Self::RdpResizeDelay | Self::RdpKeepAlive => {
                 Some(fl!("ui-settings-milliseconds-unit"))
             }
             Self::TranscriptRetention | Self::VaultHelloMaxDays => {
@@ -162,6 +169,7 @@ impl SessionField {
             Self::WindowsHelloGrace => settings.windows_hello.grace_minutes,
             Self::VaultHelloMaxDays => settings.windows_hello.vault_max_days,
             Self::RdpResizeDelay => settings.rdp_resize_enable_delay_ms,
+            Self::RdpKeepAlive => settings.rdp_keep_alive_interval_ms,
         }
     }
 
@@ -180,6 +188,7 @@ impl SessionField {
             Self::WindowsHelloGrace => settings::windows_hello_grace_minutes_accepted(value),
             Self::VaultHelloMaxDays => settings::windows_hello_vault_max_days_accepted(value),
             Self::RdpResizeDelay => settings::rdp_resize_enable_delay_accepted(value),
+            Self::RdpKeepAlive => settings::rdp_keep_alive_interval_accepted(value),
         }
     }
 
@@ -198,6 +207,7 @@ impl SessionField {
             Self::WindowsHelloGrace => SettingsMessage::WindowsHelloGraceMinutes(value),
             Self::VaultHelloMaxDays => SettingsMessage::VaultHelloMaxDays(value),
             Self::RdpResizeDelay => SettingsMessage::RdpResizeEnableDelay(value),
+            Self::RdpKeepAlive => SettingsMessage::RdpKeepAliveInterval(value),
         }
     }
 
@@ -263,6 +273,11 @@ impl SessionField {
                 "ui-settings-rdp-resize-delay-refused",
                 min = RDP_RESIZE_ENABLE_DELAY_MIN_MS,
                 max = RDP_RESIZE_ENABLE_DELAY_MAX_MS
+            ),
+            Self::RdpKeepAlive => fl!(
+                "ui-settings-rdp-keep-alive-interval-refused",
+                min = RDP_KEEP_ALIVE_INTERVAL_MIN_MS,
+                max = RDP_KEEP_ALIVE_INTERVAL_MAX_MS
             ),
         }
     }
