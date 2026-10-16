@@ -435,7 +435,7 @@ impl SettingRow {
         self.card().tab()
     }
 
-    /// The number it is, when it is one typed and applied with Enter.
+    /// The number it is, when it is one typed and applied once in its range.
     #[must_use]
     pub fn session_field(self) -> Option<SessionField> {
         Some(match self {

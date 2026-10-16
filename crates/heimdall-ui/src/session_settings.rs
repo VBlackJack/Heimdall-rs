@@ -16,8 +16,10 @@
 
 //! The numbers of the Settings page, as the C# SSH/SFTP Session tab, its session health
 //! monitor, its session logging, its idle auto-lock, its update checks, its Windows Hello
-//! grace, the days Windows Hello unlocks the vault and its RDP Behavior numbers have them: each typed, then applied
-//! with Enter; one out of its range stays typed, its rule said under it.
+//! grace, the days Windows Hello unlocks the vault and its RDP Behavior numbers have them:
+//! each applied as soon as what is typed is in its range, as the C# fields bound on
+//! `PropertyChanged`, so leaving the field keeps what it shows; one out of its range stays
+//! typed, its rule said under it.
 
 use heimdall_app::SettingsMessage;
 use heimdall_core::settings::{
