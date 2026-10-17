@@ -1985,8 +1985,7 @@ ui-settings-collapse-tunnels-panel = Replier le panneau Tunnels par défaut
 ui-settings-collapse-tunnels-panel-hint = État du panneau Tunnels au démarrage. L'ouvrir ou le fermer ensuite le laisse ainsi jusqu'à la fermeture de l'application.
 ui-settings-prevent-sleep = Empêcher la mise en veille pendant les sessions actives
 ui-settings-prevent-sleep-hint = Empêche Windows de se mettre en veille tant qu'une session est connectée ; l'écran peut toujours s'éteindre ou se verrouiller.
-ui-settings-max-sessions = Sessions intégrées max
-ui-settings-max-sessions-none = Aucune limite
+ui-settings-max-sessions = Avertir au-delà de ce nombre de sessions ouvertes
 ui-profile-session-logging = Journalisation des sessions
 ui-profile-session-logging-inherit = Hériter
 ui-profile-session-logging-on = Activé
@@ -2344,6 +2343,11 @@ ui-update-banner-text = Une nouvelle version est disponible : { $version }
 ui-update-banner-view-release = Voir la release
 ui-update-banner-later = Plus tard
 ui-update-banner-skip = Ignorer cette version
+ui-session-load-notice-text = { $open ->
+    [one] { $open } session intégrée est ouverte
+   *[other] { $open } sessions intégrées sont ouvertes
+}, au-delà du seuil de { $threshold } fixé dans les Paramètres. Chacune consomme de la mémoire, surtout en RDP : fermez celles dont vous n'avez plus besoin si Heimdall ralentit.
+ui-session-load-notice-hide = Masquer
 ui-tree-reachability-checking = Vérification...
 ui-tree-reachability-up = Joignable ({ $millis } ms)
 ui-tree-reachability-down = Injoignable : { $reason }
@@ -2368,7 +2372,6 @@ ui-status-drop-refused = Un dossier de ce nom s'y trouve déjà : rien n'a été
 ui-status-move-undone = Déplacement annulé.
 ui-status-listing-cancelled = Chargement annulé.
 ui-status-listing-in-progress = Chargement du dossier en cours : attendez qu'il s'affiche, puis réessayez.
-ui-status-session-limit = Le maximum de { $max } sessions distantes intégrées est déjà ouvert. Fermez une session avant d'en ouvrir une autre.
 ui-status-sftp-auto-open-failed = Ouverture automatique SFTP échouée : { $reason }
 ui-status-sftp-browser-disabled = Le navigateur SFTP intégré est désactivé dans les paramètres.
 ui-status-nothing-to-undo = Rien à annuler.

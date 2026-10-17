@@ -91,6 +91,7 @@ pub mod winrm_preflight;
 pub mod x11_server;
 
 pub use app::SavedCredentials;
+pub use app::SessionLoadNotice;
 pub use app::SettingsTransferMessage;
 pub use app::ToolsMessage;
 pub use app::split;

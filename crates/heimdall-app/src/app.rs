@@ -130,6 +130,7 @@ mod scheduled;
 mod scheduled_page;
 mod selection;
 mod session_events;
+mod session_load;
 mod session_restore;
 mod sessions_import;
 mod settings_transfer;
@@ -194,6 +195,7 @@ pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
 pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
+pub use session_load::SessionLoadNotice;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
     SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
@@ -446,6 +448,9 @@ pub enum Message {
     ScheduledTick,
     /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
     Update(UpdateMessage),
+    /// "Hide" on the open sessions banner, as the C# `DismissSessionLoadNotice`: hidden until
+    /// the count is no longer past the threshold.
+    HideSessionLoadNotice,
     /// A server answered the background check, or did not.
     ReachabilityChecked {
         /// The profile.
@@ -989,6 +994,7 @@ impl fmt::Debug for Message {
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
             Self::ScheduledTick => f.write_str("ScheduledTick"),
             Self::Update(message) => write!(f, "Update({message:?})"),
+            Self::HideSessionLoadNotice => f.write_str("HideSessionLoadNotice"),
             Self::ReachabilityChecked { id, verdict } => {
                 write!(f, "ReachabilityChecked({id}, {verdict:?})")
             }
@@ -3236,6 +3242,8 @@ pub struct App {
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// A session opens in a tab's place, as Reconnect opens it: it takes no more room.
     replacing: bool,
+    /// The open sessions banner, as the C# `SessionLoad`.
+    session_load: session_load::SessionLoad,
     /// The SFTP panes opened beside an SSH shell by themselves, until they connect: one
     /// that fails before is closed and said, as the C# auto-open.
     docking_sftp: Vec<TabId>,
@@ -3439,6 +3447,7 @@ impl App {
             tunnels_panel,
             last_move: None,
             replacing: false,
+            session_load: session_load::SessionLoad::default(),
             docking_sftp: Vec::new(),
             pending_restore,
             recent_hosts: Vec::new(),
@@ -3581,6 +3590,8 @@ impl App {
         let outermost = self.begin_batch();
         let mut effects = self.apply(message);
         effects.extend(self.prune_floating());
+        // On every change of the tabs, as the C# refresh on every change of the strip.
+        self.refresh_session_load_notice();
         self.follow_desktop_sessions();
         self.note_status();
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
@@ -3665,6 +3676,10 @@ impl App {
                 self.scheduled_tick_at(crate::time_zone::unix_now(), &crate::time_zone::SystemClock)
             }
             Message::Update(message) => self.update_message(message),
+            Message::HideSessionLoadNotice => {
+                self.hide_session_load_notice();
+                Vec::new()
+            }
             Message::ReachabilityChecked { id, verdict } => {
                 self.reachability_checked(&id, verdict);
                 Vec::new()
@@ -4042,47 +4057,20 @@ impl App {
         self.open_ssh(profile, purpose)
     }
 
-    /// Whether one more session may not open, as the C# `MaxEmbeddedSessions`, which is
-    /// said: no limit at 0; this computer's own shells are not counted, nor a session
-    /// opening in a tab's place.
-    pub(super) fn session_limit_reached(&mut self) -> bool {
-        let Some(max) = self.session_limit_hit() else {
-            return false;
-        };
-        self.tell(Notice::SessionLimitReached(max));
-        true
-    }
-
-    /// The session limit when one more session may not open, without saying it.
-    pub(super) fn session_limit_hit(&self) -> Option<u32> {
-        let max = self.settings.max_sessions;
-        if max == 0 || self.replacing {
-            return None;
-        }
-        let open = self
-            .tabs
-            .iter()
-            .filter(|tab| !matches!(tab.profile, TabProfile::Local(_) | TabProfile::Tool(_)))
-            .count();
-        (open >= usize::try_from(max).unwrap_or(usize::MAX)).then_some(max)
-    }
-
-    /// Opens a tab for `profile`, a shell or its files, without asking about its steps:
-    /// within the session limit, and its files only while the SFTP browser is on, as the C#
-    /// SFTP handler refuses them.
+    /// Opens a tab for `profile`, a shell or its files, without asking about its steps: its
+    /// files only while the SFTP browser is on, as the C# SFTP handler refuses them, the
+    /// open sessions banner shown past the threshold.
     pub(super) fn open_ssh_now(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
         if purpose == Purpose::Files && !self.settings.sftp_browser.enabled {
             self.tell(Notice::SftpBrowserDisabled);
             return Vec::new();
         }
-        if self.session_limit_reached() {
-            return Vec::new();
-        }
+        self.note_new_connection();
         self.open_ssh_tab(profile, purpose).1
     }
 
     /// Opens a tab for `profile`, a shell or its files, the last of the tabs and the active
-    /// one, whatever the session limit; the tab, and what connects it.
+    /// one, not counted as a new connection; the tab, and what connects it.
     pub(super) fn open_ssh_tab(
         &mut self,
         profile: SshProfile,

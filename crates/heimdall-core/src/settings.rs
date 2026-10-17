@@ -636,8 +636,8 @@ pub struct Settings {
     /// The computer kept from sleeping while a session is open, as the C#
     /// `PreventSleepDuringSession`: on.
     pub prevent_sleep: bool,
-    /// Most sessions open at once, as the C# `MaxEmbeddedSessions`; 0 for no limit, the
-    /// default here: a session costs no embedded control as the C# one does.
+    /// The open sessions past which a banner says what they cost, as the C#
+    /// `MaxEmbeddedSessions` (`AppSettings.cs:304-306`): a threshold, never a limit.
     pub max_sessions: u32,
     /// The application writes its diagnostics log, as the C# `EnableLogging`: on.
     pub diagnostics_log: bool,
@@ -1093,20 +1093,22 @@ pub fn rdp_auto_reconnect_attempts_accepted(attempts: u32) -> bool {
     (RDP_AUTO_RECONNECT_ATTEMPTS_MIN..=RDP_AUTO_RECONNECT_ATTEMPTS_MAX).contains(&attempts)
 }
 
-/// `value` read from the file when `accepted`; `default` when absent or out of the range,
-/// as the C# load warns and keeps the default.
-/// Sessions open at once by default: no limit.
-pub const MAX_SESSIONS_DEFAULT: u32 = 0;
-/// Most sessions a limit may allow, as the C# setting's range.
+/// The open sessions threshold by default, as the C# `DefaultMaxEmbeddedSessions`.
+pub const MAX_SESSIONS_DEFAULT: u32 = 10;
+/// The lowest threshold, as the C# setting's range.
+pub const MAX_SESSIONS_MIN: u32 = 1;
+/// The highest threshold, as the C# setting's range.
 pub const MAX_SESSIONS_MAX: u32 = 20;
 
-/// Whether `max` is a limit of sessions the settings accept: 0 for none, or within the C#
-/// range.
+/// Whether `max` is an open sessions threshold the settings accept, within the C# range:
+/// a 0 of a file written when 0 meant "no limit" is not, and loads as the default.
 #[must_use]
 pub fn max_sessions_accepted(max: u32) -> bool {
-    max <= MAX_SESSIONS_MAX
+    (MAX_SESSIONS_MIN..=MAX_SESSIONS_MAX).contains(&max)
 }
 
+/// `value` read from the file when `accepted`; `default` when absent or out of the range,
+/// as the C# load warns and keeps the default.
 fn within(value: Option<u32>, accepted: fn(u32) -> bool, default: u32) -> u32 {
     value.filter(|value| accepted(*value)).unwrap_or(default)
 }

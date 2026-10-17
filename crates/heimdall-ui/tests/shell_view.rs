@@ -5040,6 +5040,34 @@ fn a_newer_release_is_offered_in_a_banner_that_full_screen_hides() {
 }
 
 #[test]
+fn past_the_sessions_threshold_a_banner_says_so_until_hidden_as_the_csharp() {
+    const BANNER: &str = "2 embedded sessions are open, past the threshold of 1 set in \
+                          Settings. Each one uses memory, RDP sessions most: close the ones you \
+                          no longer need if Heimdall slows down.";
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(AppMessage::Settings(
+        heimdall_app::SettingsMessage::MaxSessions(1),
+    ));
+    open(&mut app, "a");
+    let mut shell = Shell::with_app(app);
+    assert!(simulator(&shell).find(BANNER).is_err(), "at the threshold");
+    let _ = shell.update(Message::App(AppMessage::OpenProfile(ProfileId::new("b"))));
+    {
+        let mut ui = simulator(&shell);
+        ui.find(BANNER).expect("the banner");
+        ui.click("Hide").expect("Hide");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::HideSessionLoadNotice))),
+            "hidden by the app"
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::HideSessionLoadNotice));
+    assert!(simulator(&shell).find(BANNER).is_err(), "hidden");
+}
+
+#[test]
 fn the_general_settings_hold_the_csharp_updates_card_and_check_now() {
     use heimdall_app::UpdateMessage;
     use heimdall_ui::shell::SessionField;

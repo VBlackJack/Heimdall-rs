@@ -68,9 +68,7 @@ impl App {
 
     /// Opens a VNC tab for `profile`.
     pub(super) fn open_vnc_profile(&mut self, profile: VncProfile) -> Vec<Effect> {
-        if self.session_limit_reached() {
-            return Vec::new();
-        }
+        self.note_new_connection();
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
