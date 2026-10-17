@@ -2184,6 +2184,8 @@ pub struct Tab {
     /// For a tool's tab, the name of the document it holds whose changes are not saved,
     /// or still being saved, as the window says; closing the tab asks first.
     tool_unsaved: Option<String>,
+    /// For a tool's tab, what it opened on: the host or the argument it was given.
+    tool_context: crate::tools::ToolContext,
     /// Whether the tunnels panel was opened or closed while this tab was shown, as the C#
     /// `TunnelsPanelManualOverride`: it wins over its profile's choice.
     pub(crate) tunnels_panel: Option<bool>,
@@ -2377,6 +2379,7 @@ impl Tab {
             opened: std::time::SystemTime::now(),
             reopen: reconnect::Reopen::of(&profile),
             tool_unsaved: None,
+            tool_context: crate::tools::ToolContext::default(),
             post_connect: None,
             macro_recording: None,
             macro_playing: None,
@@ -2434,6 +2437,13 @@ impl Tab {
     #[must_use]
     pub fn tool_unsaved(&self) -> Option<&str> {
         self.tool_unsaved.as_deref()
+    }
+
+    /// For a tool's tab, what it opened on, as the C# `ToolContext` given to the tool's
+    /// view; empty for any other tab.
+    #[must_use]
+    pub fn tool_context(&self) -> &crate::tools::ToolContext {
+        &self.tool_context
     }
 
     fn stop(&mut self) {

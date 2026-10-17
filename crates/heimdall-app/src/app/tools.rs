@@ -23,18 +23,21 @@ use tokio_util::sync::CancellationToken;
 use super::{App, Dialog, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::ids::{AttemptId, TabId};
-use crate::tools::{SidebarTab, ToolGroup, ToolId, toggle_favorite};
+use crate::tools::{SidebarTab, ToolContext, ToolGroup, ToolId, toggle_favorite};
 
 /// What the Tools area is asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolsMessage {
-    /// Open `tool` in a tab, named `title`, as the C# names it in the language shown; a
-    /// tool reaching no host that is open already is shown instead, as the C#.
+    /// Open `tool` in a tab, named `title`, as the C# names it in the language shown, on
+    /// `context`; a tool reaching no host that is open already is shown instead when
+    /// `context` is empty, as the C#.
     Open {
         /// The tool.
         tool: ToolId,
         /// The tab's title.
         title: String,
+        /// What it opens on, as the C# `ToolContext`.
+        context: ToolContext,
     },
     /// Pin `tool`, or unpin it, saved at once.
     ToggleFavorite(ToolId),
@@ -144,7 +147,11 @@ impl App {
     /// Applies a message about the Tools area.
     pub(super) fn tools_message(&mut self, message: ToolsMessage) -> Vec<Effect> {
         match message {
-            ToolsMessage::Open { tool, title } => self.open_tool(tool, title),
+            ToolsMessage::Open {
+                tool,
+                title,
+                context,
+            } => self.open_tool(tool, title, context),
             ToolsMessage::ToggleFavorite(tool) => {
                 let toggle = toggle_favorite(&self.settings.tools.favorites, tool);
                 self.save_tools(|tools| tools.favorites.clone_from(&toggle.favorites));
@@ -198,11 +205,13 @@ impl App {
         }
     }
 
-    /// Opens `tool` in a tab named `title`, the last, and shows it; a tool reaching no host
-    /// already open is shown instead, as the C# singleton tools. Either way it becomes the
-    /// tool used last, as the C# tracks it once opened.
-    fn open_tool(&mut self, tool: ToolId, title: String) -> Vec<Effect> {
-        let open = (!tool.is_network())
+    /// Opens `tool` in a tab named `title`, the last, on `context`, and shows it; a tool
+    /// reaching no host already open is shown instead when `context` is empty, as the C#
+    /// singleton tools (`MainViewModel.cs:1301-1324`): one given a host or an argument opens
+    /// a tab of its own. Either way it becomes the tool used last, as the C# tracks it once
+    /// opened.
+    fn open_tool(&mut self, tool: ToolId, title: String, context: ToolContext) -> Vec<Effect> {
+        let open = (!tool.is_network() && context.is_empty())
             .then(|| self.tabs.iter().find(|tab| tab.tool() == Some(tool)))
             .flatten()
             .map(|tab| tab.id);
@@ -220,6 +229,7 @@ impl App {
                 CancellationToken::new(),
             );
             tab.title = title;
+            tab.tool_context = context;
             // Ready at once: nothing connects, as the C# tool tab's "Ready".
             tab.phase = Phase::Connected;
             self.tabs.push(tab);

@@ -147,6 +147,12 @@ impl fmt::Debug for JwtPane {
 }
 
 impl JwtPane {
+    /// What its first box holds, for the tests of what a tool opens on.
+    #[cfg(test)]
+    pub(super) fn first_box(&self) -> String {
+        super::box_text(&self.input)
+    }
+
     /// A new tab's state: nothing pasted.
     #[must_use]
     pub fn new() -> Self {

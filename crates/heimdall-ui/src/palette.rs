@@ -80,11 +80,15 @@ pub fn field_id() -> iced::widget::Id {
     iced::widget::Id::new("quick-connect")
 }
 
-/// The names a tool is found by in the language shown, for the core's search.
+/// The names a tool is found by in the language shown, for the core's search: given the
+/// argument typed after its command word, its name with it, as its tab's title.
 #[must_use]
-pub fn tool_words(tool: ToolId) -> ToolWords {
+pub fn tool_words(tool: ToolId, argument: Option<&str>) -> ToolWords {
     ToolWords {
-        name: crate::tools::label(tool),
+        name: argument.map_or_else(
+            || crate::tools::label(tool),
+            |argument| crate::tools::titled(tool, argument),
+        ),
         category: crate::tools::category_label(tool.category()),
     }
 }
@@ -113,6 +117,7 @@ pub fn group_label(group: &QuickGroup) -> String {
         QuickGroup::QuickConnect => fl!("ui-palette-quick-connect"),
         QuickGroup::ActiveSessions => fl!("ui-palette-active-sessions"),
         QuickGroup::RecentTools => fl!("ui-palette-recent-tools"),
+        QuickGroup::Tools => fl!("ui-palette-tools"),
         QuickGroup::Category(category) => crate::tools::category_label(*category),
     }
 }

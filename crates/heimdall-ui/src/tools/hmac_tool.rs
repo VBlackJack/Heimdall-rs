@@ -145,6 +145,12 @@ impl Default for HmacPane {
 }
 
 impl HmacPane {
+    /// What its first box holds, for the tests of what a tool opens on.
+    #[cfg(test)]
+    pub(super) fn first_box(&self) -> String {
+        super::box_text(&self.input)
+    }
+
     /// Applies `message`; what the copy button copies, when it is pressed.
     pub fn update(&mut self, message: HmacMessage) -> Option<String> {
         match message {

@@ -36,6 +36,7 @@ mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
 mod command_library_tool;
+mod context;
 mod cron_job_tool;
 mod crontab_tool;
 mod crypto_parts;
@@ -114,6 +115,7 @@ pub use certgen_tool::{
 };
 pub use chmod_tool::ChmodMessage;
 pub use command_library_tool::CommandLibraryMessage;
+pub use context::{inherited_context, inherited_host, tab_title, titled};
 pub use cron_job_tool::CronJobMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
 pub use cve_tool::{CveMessage, Outcome as CveOutcome};
@@ -1012,6 +1014,8 @@ pub struct ToolPanes {
     panes: HashMap<TabId, ToolPane>,
     /// Tool tabs made whose opening work, as the C# view's `Initialize`, is still to start.
     opening: Vec<TabId>,
+    /// What the tool tabs just made were told of their context left to run.
+    prefilled: Vec<Task<Message>>,
 }
 
 impl ToolPanes {
@@ -1031,11 +1035,20 @@ impl ToolPanes {
             open
         });
         for tab in &app.tabs {
-            if let Some(tool) = tab.tool() {
-                self.panes.entry(tab.id).or_insert_with(|| {
-                    self.opening.push(tab.id);
-                    ToolPane::new(tool, Some(app.profiles_file()))
-                });
+            let Some(tool) = tab.tool() else {
+                continue;
+            };
+            if self.panes.contains_key(&tab.id) {
+                continue;
+            }
+            self.panes
+                .insert(tab.id, ToolPane::new(tool, Some(app.profiles_file())));
+            self.opening.push(tab.id);
+            // What it opened on, as the C# view's `Initialize` reads its `ToolContext`: told
+            // as typed, so it is checked as typed.
+            for message in context::messages(tool, tab.tool_context()) {
+                let task = self.update(tab.id, message, None);
+                self.prefilled.push(task);
             }
         }
     }
@@ -1078,9 +1091,10 @@ impl ToolPanes {
 
     /// The work of the tool tabs made since last asked, as the C# view's `Initialize`: the
     /// Hosts File Editor reads the hosts file, the Network Cartography its scan history and
-    /// its knowledge base.
+    /// its knowledge base; what a tab opened on a host or an argument was told runs on, a
+    /// log file read or a conversion due.
     pub fn opening(&mut self) -> Task<Message> {
-        let mut tasks = Vec::new();
+        let mut tasks = std::mem::take(&mut self.prefilled);
         for tab in std::mem::take(&mut self.opening) {
             match self.panes.get_mut(&tab).map(|state| &mut state.pane) {
                 Some(Pane::Hosts(pane)) => tasks.push(pane.open(tab)),

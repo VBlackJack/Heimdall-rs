@@ -1129,10 +1129,14 @@ fn the_splits_remembered_are_read_back_at_the_next_start() {
     );
 }
 
-/// The names of the tools, as the window gives them: here their identifiers.
-fn words(tool: ToolId) -> ToolWords {
+/// The names of the tools, as the window gives them: here their identifiers, and an
+/// argument after a colon.
+fn words(tool: ToolId, argument: Option<&str>) -> ToolWords {
     ToolWords {
-        name: tool.code().to_owned(),
+        name: argument.map_or_else(
+            || tool.code().to_owned(),
+            |argument| format!("{}: {argument}", tool.code()),
+        ),
         category: format!("{:?}", tool.category()),
     }
 }
@@ -1331,6 +1335,7 @@ fn ctrl_enter_opens_as_usual_with_no_tab_a_tool_s_tab_or_a_host_typed() {
     app.update(Message::Tools(ToolsMessage::Open {
         tool: ToolId::Uuid,
         title: "UUID".to_owned(),
+        context: heimdall_app::tools::ToolContext::default(),
     }));
     let message = app.quick_open(found(&app, "server b"), None, true);
     assert!(matches!(
@@ -1347,13 +1352,14 @@ fn ctrl_enter_opens_as_usual_with_no_tab_a_tool_s_tab_or_a_host_typed() {
             QuickResult::Tool {
                 tool: ToolId::Hash,
                 name: "Hash".to_owned(),
+                argument: None,
             },
             None,
             beside,
         );
         assert!(matches!(
             message,
-            Message::Tools(ToolsMessage::Open { tool: ToolId::Hash, ref title }) if title == "Hash"
+            Message::Tools(ToolsMessage::Open { tool: ToolId::Hash, ref title, .. }) if title == "Hash"
         ));
     }
 }

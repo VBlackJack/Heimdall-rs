@@ -19,7 +19,7 @@
 
 use std::path::Path;
 
-use heimdall_app::tools::{ToolCategory, ToolId};
+use heimdall_app::tools::{ToolCategory, ToolContext, ToolId};
 use heimdall_app::{
     App, AppConfig, ConnectionEvent, Effect, Message, Purpose, QuickGroup, QuickResult, ToolWords,
     ToolsMessage, UiError,
@@ -390,10 +390,14 @@ fn a_session_is_found_by_its_environment_and_its_tags_too() {
     );
 }
 
-/// The names of the tools, as the window gives them: here their identifiers.
-fn words(tool: ToolId) -> ToolWords {
+/// The names of the tools, as the window gives them: here their identifiers, and an
+/// argument after a colon.
+fn words(tool: ToolId, argument: Option<&str>) -> ToolWords {
     ToolWords {
-        name: tool.code().to_owned(),
+        name: argument.map_or_else(
+            || tool.code().to_owned(),
+            |argument| format!("{}: {argument}", tool.code()),
+        ),
         category: format!("{:?}", tool.category()),
     }
 }
@@ -425,6 +429,7 @@ fn the_palette_shows_the_sessions_by_folder_then_the_tools_used_lately() {
         app.update(Message::Tools(ToolsMessage::Open {
             tool,
             title: title.to_owned(),
+            context: ToolContext::default(),
         }));
     }
     // By name, each folder together in the order it first comes, as the C# grouped list;
@@ -509,4 +514,49 @@ fn a_tool_chosen_opens_in_its_tab_named_as_shown() {
     assert_eq!(app.tabs[0].tool(), Some(ToolId::Chmod));
     assert_eq!(app.tabs[0].title, "CHMOD");
     assert_eq!(app.recent_tools(), [ToolId::Chmod], "used lately");
+}
+
+#[test]
+fn a_tool_word_and_an_argument_offer_that_tool_alone_opened_on_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), vec![ssh("p", "ping box", "p.lab", None)]);
+    // As the C# palette: that tool alone, named with its argument, under "Tools".
+    assert_eq!(
+        lines(&app, "ping 10.0.0.1"),
+        [(QuickGroup::Tools, "PING: 10.0.0.1".to_owned())]
+    );
+    // The word alone is still scored with the sessions.
+    assert!(lines(&app, "ping").len() > 1);
+    let row = app
+        .quick_results_in("PING  10.0.0.1 ", None, &words)
+        .into_iter()
+        .next()
+        .expect("found");
+    assert_eq!(
+        row.result,
+        QuickResult::Tool {
+            tool: ToolId::Ping,
+            name: "PING: 10.0.0.1".to_owned(),
+            argument: Some("10.0.0.1".to_owned()),
+        }
+    );
+    let message = app.quick_open(row.result, None, false);
+    app.update(message);
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.tabs[0].tool(), Some(ToolId::Ping));
+    assert_eq!(app.tabs[0].title, "PING: 10.0.0.1");
+    assert_eq!(
+        app.tabs[0].tool_context(),
+        &ToolContext::with_argument("10.0.0.1"),
+        "given as typed, as the C# `Argument`"
+    );
+    // A tool chosen without one opens on nothing.
+    let row = app
+        .quick_results_in("chmod", None, &words)
+        .into_iter()
+        .next()
+        .expect("found");
+    let message = app.quick_open(row.result, None, false);
+    app.update(message);
+    assert!(app.tabs[1].tool_context().is_empty());
 }

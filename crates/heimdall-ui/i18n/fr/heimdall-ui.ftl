@@ -1267,6 +1267,7 @@ ui-palette-hints = Entrée = ouvrir · Ctrl+Entrée = scinder · tools = tous le
 ui-palette-servers = Serveurs
 ui-palette-active-sessions = Sessions actives
 ui-palette-recent-tools = Outils récents
+ui-palette-tools = Outils
 ui-palette-merge-session = ↔ { $title }
 ui-palette-merge-detail = Session active - fusionner sans reconnecter
 ui-palette-account = · { $account }
@@ -2441,6 +2442,8 @@ ui-tools-no-results = Aucun outil correspondant
 ui-tools-no-results-hint = Essayez un autre terme ou un alias comme ping, dns, json ou password.
 ui-tools-context-with = Les outils réseau utiliseront la cible sélectionnée : { $host }
 ui-tools-context-none = Les outils réseau s'ouvriront sans cible héritée.
+# A tool tab opened on a host or an argument, as the C# PaletteTool*With keys.
+ui-tools-tab-with = { $tool } : { $target }
 ui-tools-favorites = Favoris
 ui-tools-recent = Utilisés récemment
 ui-tools-all = Tous les outils
