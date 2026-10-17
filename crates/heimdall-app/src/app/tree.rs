@@ -345,12 +345,6 @@ impl App {
         })
     }
 
-    /// The notes folder, beside the profiles.
-    #[must_use]
-    pub fn notes_dir(&self) -> std::path::PathBuf {
-        crate::notes::notes_dir(&self.config.profiles_file)
-    }
-
     /// The summary of profile `id`, when there is one.
     #[must_use]
     pub fn profile_summary(&self, id: &ProfileId) -> Option<ProfileSummary> {

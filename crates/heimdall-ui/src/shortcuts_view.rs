@@ -65,7 +65,15 @@ pub enum Action {
     ToggleToolsPanel,
     NextTab,
     PreviousTab,
+    /// Ctrl+1 to Ctrl+8: the tab at that place.
+    GoToTab,
+    /// Ctrl+9: the last tab.
+    LastTab,
+    /// Ctrl+Shift+Page Up and Page Down: the tab shown one place over.
+    MoveTab,
     CloseTab,
+    /// Shift+F10 on a tab: its menu.
+    TabMenu,
     ToggleSplit,
     NextPane,
     PreviousPane,
@@ -124,7 +132,11 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
         &[
             ("Ctrl+Tab, Ctrl+PgDn", Action::NextTab),
             ("Ctrl+Shift+Tab, Ctrl+PgUp", Action::PreviousTab),
-            ("Ctrl+W, Ctrl+Shift+W", Action::CloseTab),
+            ("Ctrl+1 ... Ctrl+8", Action::GoToTab),
+            ("Ctrl+9", Action::LastTab),
+            ("Ctrl+Shift+PgUp, Ctrl+Shift+PgDn", Action::MoveTab),
+            ("Ctrl+W, Ctrl+Shift+W, Ctrl+F4", Action::CloseTab),
+            ("Shift+F10", Action::TabMenu),
             ("Ctrl+Shift+O", Action::ToggleSplit),
             ("Ctrl+Alt+Right, Ctrl+F6", Action::NextPane),
             ("Ctrl+Alt+Left, Ctrl+Shift+F6", Action::PreviousPane),
@@ -200,7 +212,11 @@ pub fn action_text(action: Action) -> String {
         Action::ToggleToolsPanel => fl!("ui-shortcuts-toggle-tools-panel"),
         Action::NextTab => fl!("ui-shortcuts-next-tab"),
         Action::PreviousTab => fl!("ui-shortcuts-previous-tab"),
+        Action::GoToTab => fl!("ui-shortcuts-go-to-tab"),
+        Action::LastTab => fl!("ui-shortcuts-last-tab"),
+        Action::MoveTab => fl!("ui-shortcuts-move-tab"),
         Action::CloseTab => fl!("ui-shortcuts-close-tab"),
+        Action::TabMenu => fl!("ui-shortcuts-tab-menu"),
         Action::ToggleSplit => fl!("ui-shortcuts-toggle-split"),
         Action::NextPane => fl!("ui-shortcuts-next-pane"),
         Action::PreviousPane => fl!("ui-shortcuts-previous-pane"),
@@ -292,6 +308,6 @@ mod tests {
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
 
-        assert_eq!(actions.len(), 43, "every action listed");
+        assert_eq!(actions.len(), 47, "every action listed");
     }
 }

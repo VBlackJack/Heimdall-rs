@@ -38,8 +38,9 @@ cargo build --locked -p heimdall-ui --features test-data-dir
 target\debug\heimdall-rs.exe --data-dir C:\Temp\heimdall-ui-test
 ```
 
-The folder must be a full path; it is made if it is not there. `--data-dir=<folder>` is
-accepted too; that form must be text. A test build started without `--data-dir`, with any
+The folder must be a full path; it is made if it is not there, with its `home` folder: a
+real user always has one, and the local pane of the Files tab opens there. `--data-dir=<folder>`
+is accepted too; that form must be text. A test build started without `--data-dir`, with any
 other argument, or with a refused folder prints why and exits with code 2: it never starts
 on the real folders.
 
@@ -58,7 +59,7 @@ the real application.
 | Folder | What it replaces | What is in it |
 |---|---|---|
 | `config` | `%APPDATA%\Heimdall-rs\config` | profiles, settings, vault, `known_hosts`, host key pins and details, session snapshot, window state, split layouts, macros, the single-instance lock |
-| `data` | `%LOCALAPPDATA%\Heimdall-rs\data` | logs and crash reports, files being edited, the Network Cartography's scan history (`network-scans`) and knowledge base (`network-kb.json`) |
+| `data` | `%LOCALAPPDATA%\Heimdall-rs\data` | logs and crash reports, files being edited, the Network Cartography's scan history (`network-scans`) and knowledge base (`network-kb.json`), the notes (`config\notes`: the Notes tool's and those started from the session tree) |
 | `legacy` | `%LOCALAPPDATA%\Heimdall` | the C# Heimdall's data, source of the migration |
 | `home` | the user's profile folder | `.ssh\known_hosts` (import and export), `.Xauthority`, the Files tab's start, the file dialogs' `.ssh` start, the `~` of an OpenSSH config import, `.putty\sessions` |
 | `local-app-data` | `%LOCALAPPDATA%` | the Citrix Workspace cache read by the Citrix import |

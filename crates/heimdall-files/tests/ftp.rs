@@ -128,6 +128,56 @@ async fn session(root: &Path) -> RemoteSession {
     RemoteSession::Ftp(client)
 }
 
+/// The lines the tests log: each test looks for those naming what it is about, so tests
+/// running side by side do not mix them up.
+static LOGGED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Keeps each warning and error in [`LOGGED`], as `LEVEL message`. Not the rest: the test
+/// server's own lines come through whatever the maximum level says.
+struct Capture;
+
+impl log::Log for Capture {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        if let Ok(mut lines) = LOGGED.lock() {
+            lines.push(format!("{} {}", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static CAPTURE: Capture = Capture;
+
+/// Starts keeping the lines logged, once for the test binary.
+fn capture_log() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let _ = log::set_logger(&CAPTURE);
+        log::set_max_level(log::LevelFilter::Warn);
+    });
+}
+
+/// The warnings and errors logged so far that name `needle`.
+fn logged_with(needle: &str) -> Vec<String> {
+    LOGGED
+        .lock()
+        .map(|lines| {
+            lines
+                .iter()
+                .filter(|line| line.contains(needle))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn names(items: &[heimdall_files::RemoteItem]) -> Vec<String> {
     let mut names: Vec<String> = items
         .iter()
@@ -412,6 +462,84 @@ async fn a_file_read_whole_is_replaced_only_while_unchanged_and_nothing_is_left_
         .map(|entry| entry.expect("entry").file_name())
         .collect();
     assert_eq!(left.len(), 2, "nothing left by a refusal: {left:?}");
+}
+
+#[tokio::test]
+async fn an_upload_file_left_behind_by_a_refused_upload_is_said_in_the_log() {
+    capture_log();
+    let root = tempfile::tempdir().expect("root");
+    let local = tempfile::tempdir().expect("local");
+    let source = local.path().join("stuck.bin");
+    // Large enough for the data to still be on its way once the server has the file.
+    std::fs::write(&source, vec![7u8; 4_000_000]).expect("source");
+    let session = session(root.path()).await;
+    let top = session
+        .canonical(&RemotePath::from("."))
+        .await
+        .expect("top");
+    let theirs = root.path().join("stuck.bin");
+    let temporary = root.path().join(".heimdall-upload-stuck.bin");
+    let mut swapped = false;
+    // While the data is sent, another client takes the name, and the upload file becomes
+    // a folder, which the server cannot delete as a file.
+    let refused = session
+        .upload(
+            &source,
+            &top.join(b"stuck.bin"),
+            false,
+            &CancellationToken::new(),
+            |_| {
+                if !swapped && std::fs::rename(&temporary, root.path().join("aside.bin")).is_ok() {
+                    std::fs::create_dir(&temporary).expect("folder");
+                    std::fs::write(temporary.join("inside"), b"x").expect("inside");
+                    std::fs::write(&theirs, b"someone else's").expect("theirs");
+                    swapped = true;
+                }
+            },
+        )
+        .await;
+    assert!(swapped, "the upload file was there during the upload");
+    assert!(
+        matches!(refused, Err(RemoteError::Refused { .. })),
+        "{refused:?}"
+    );
+    assert!(temporary.is_dir(), "still there");
+    let warned = logged_with(".heimdall-upload-stuck.bin");
+    assert!(
+        warned.iter().any(|line| line.starts_with("WARN")),
+        "{warned:?}"
+    );
+
+    // One whose upload file went away says nothing: there is nothing left to remove, as
+    // the C# looks before it deletes.
+    let theirs = root.path().join("gone.bin");
+    let temporary = root.path().join(".heimdall-upload-gone.bin");
+    let mut moved = false;
+    let refused = session
+        .upload(
+            &source,
+            &top.join(b"gone.bin"),
+            false,
+            &CancellationToken::new(),
+            |_| {
+                if !moved && std::fs::rename(&temporary, root.path().join("gone-aside.bin")).is_ok()
+                {
+                    std::fs::write(&theirs, b"someone else's").expect("theirs");
+                    moved = true;
+                }
+            },
+        )
+        .await;
+    assert!(moved, "the upload file was there during the upload");
+    assert!(
+        matches!(refused, Err(RemoteError::Refused { .. })),
+        "{refused:?}"
+    );
+    assert!(!temporary.exists());
+    assert_eq!(
+        logged_with(".heimdall-upload-gone.bin"),
+        Vec::<String>::new()
+    );
 }
 
 #[tokio::test]

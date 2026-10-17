@@ -180,6 +180,7 @@ async fn a_changed_key_a_refused_password_and_a_question_only_a_person_answers_a
         kbd_rounds: vec![KbdRound {
             prompts: vec![("Verification code: ".to_owned(), false)],
             expected: vec!["123456".to_owned()],
+            ..KbdRound::default()
         }],
         ..gateway_spec(vec![MethodKind::KeyboardInteractive])
     })
@@ -193,6 +194,42 @@ async fn a_changed_key_a_refused_password_and_a_question_only_a_person_answers_a
     )
     .await;
     assert_eq!(seen, [(StepOf::Gateway(0), Outcome::Interactive)]);
+}
+
+#[tokio::test]
+async fn a_gateway_asking_its_password_through_keyboard_interactive_is_given_it() {
+    // PAM or network gear: the round asking the password alone takes the hop's password,
+    // as the password method would.
+    let gateway = start(Spec {
+        kbd_rounds: vec![KbdRound {
+            prompts: vec![("Password: ".to_owned(), false)],
+            expected: vec![PASSWORD.to_owned()],
+            ..KbdRound::default()
+        }],
+        ..gateway_spec(vec![MethodKind::KeyboardInteractive])
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("dir");
+    let options = trusting(dir.path(), &[&gateway]);
+    let seen = outcomes(
+        &[profile(gateway.port, None)],
+        &[password(PASSWORD)],
+        None,
+        &options,
+    )
+    .await;
+    assert_eq!(seen, [(StepOf::Gateway(0), Outcome::Passed)]);
+
+    // Nothing given: the password question is declined, an authentication matter, no
+    // longer a question only a person answers.
+    let seen = outcomes(
+        &[profile(gateway.port, None)],
+        &[HopSecrets::default()],
+        None,
+        &options,
+    )
+    .await;
+    assert_eq!(seen, [(StepOf::Gateway(0), Outcome::Auth)]);
 }
 
 #[tokio::test]

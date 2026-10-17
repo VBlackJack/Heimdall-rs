@@ -118,6 +118,8 @@ pub fn host_public_key(name: &str) -> PublicKey {
 pub struct KbdRound {
     pub prompts: Vec<(String, bool)>,
     pub expected: Vec<String>,
+    /// Instructions sent with the prompts, often empty.
+    pub instructions: String,
 }
 
 /// What the test server accepts and how it behaves.
@@ -467,7 +469,7 @@ impl Connection {
         let round = &self.spec.kbd_rounds[index];
         Auth::Partial {
             name: Cow::Borrowed(""),
-            instructions: Cow::Borrowed(""),
+            instructions: Cow::Owned(round.instructions.clone()),
             prompts: Cow::Owned(
                 round
                     .prompts
@@ -1013,6 +1015,8 @@ pub struct ScriptedPrompter {
     pub kbd: Mutex<VecDeque<Option<Vec<String>>>>,
     /// Every question asked, in order: "username", "password", "passphrase", "kbd".
     pub asked: Mutex<Vec<&'static str>>,
+    /// Every password question asked, in order.
+    pub password_questions: Mutex<Vec<PasswordQuestion>>,
     /// Never answer, to test deadlines and cancellation.
     pub hang: bool,
     /// Wait this long before each answer, as a user slow to type.
@@ -1058,7 +1062,11 @@ impl Prompter for ScriptedPrompter {
         self.answer("username", next).await
     }
 
-    async fn password(&self, _question: PasswordQuestion) -> Option<Secret> {
+    async fn password(&self, question: PasswordQuestion) -> Option<Secret> {
+        self.password_questions
+            .lock()
+            .expect("password questions")
+            .push(question);
         let next = pop(&self.passwords).map(Secret::new);
         self.answer("password", next).await
     }

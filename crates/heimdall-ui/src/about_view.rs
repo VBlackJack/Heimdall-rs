@@ -294,7 +294,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
             card_button(fl!("ui-about-open-logs"), logs.map(Message::OpenWithSystem)),
             card_button(
                 fl!("ui-about-open-notes"),
-                Some(Message::OpenWithSystem(app.notes_dir())),
+                heimdall_core::tools::notes_storage::notes_dir().map(Message::OpenWithSystem),
             ),
             card_button(
                 fl!("ui-about-repository"),

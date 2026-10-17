@@ -112,7 +112,8 @@ use crate::styles;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
-    WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
+    LAST_TAB_ORDINAL, WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, tab_ordinal,
+    window_shortcut,
 };
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
@@ -575,6 +576,12 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             // field has the keyboard either, which is asked first.
             if crate::terminal_view::keys::is_ctrl_w(&key, physical_key, modifiers) {
                 return (!repeat).then_some(Message::CloseKey);
+            }
+            // Ctrl and a digit of the main row no terminal and no desktop took: that tab, as
+            // the C# Ctrl+1 to Ctrl+9, read from the key's place for an AZERTY keyboard.
+            // Before the zoom keys: the minus of an AZERTY 6 is Ctrl+6 here.
+            if let Some(place) = tab_ordinal(physical_key, modifiers) {
+                return (!repeat).then_some(Message::Shortcut(WindowShortcut::GoToTab(place)));
             }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
@@ -3408,6 +3415,28 @@ impl Shell {
             (WindowShortcut::PreviousTab, Some(index)) => {
                 AppMessage::SelectTab(strip[(index + count - 1) % count])
             }
+            // As the C# `SelectTabAtOrdinal`: the ninth is the last, a place past the last
+            // tab shows none.
+            (WindowShortcut::GoToTab(place), _) => {
+                let at = if place == LAST_TAB_ORDINAL {
+                    strip.last()
+                } else {
+                    strip.get(usize::from(place).saturating_sub(1))
+                };
+                match at {
+                    Some(tab) => AppMessage::SelectTab(*tab),
+                    None => return Vec::new(),
+                }
+            }
+            // One place, within its pinned block, as the C# `MoveActiveTab`; the tab stays
+            // shown.
+            (WindowShortcut::MoveTabLeft | WindowShortcut::MoveTabRight, _) => {
+                let right = shortcut == WindowShortcut::MoveTabRight;
+                match self.app.tab_step_target(shown, right) {
+                    Some(onto) => AppMessage::MoveTab { tab: shown, onto },
+                    None => return Vec::new(),
+                }
+            }
             (WindowShortcut::ToggleSplit, _) => {
                 if self.app.shown_tab().is_none_or(|tab| tab.layout.is_none()) {
                     return Vec::new();
@@ -4824,6 +4853,13 @@ impl Shell {
         let Some(context) = self.app.profile_summary_note(id) else {
             return Task::none();
         };
+        // The Notes tool's folder, so the note is listed there: the C# writes it through the
+        // Notes tool's own storage (`NotesStorageService.CreateNoteAsync`).
+        let Some(dir) = heimdall_core::tools::notes_storage::notes_dir() else {
+            return Task::done(Message::App(AppMessage::NoteOpened(Err(fl!(
+                "ui-tool-notes-error-no-folder"
+            )))));
+        };
         let draft = heimdall_app::notes::draft(
             template,
             &context,
@@ -4831,11 +4867,7 @@ impl Shell {
             &note_labels(),
         );
         Task::perform(
-            heimdall_app::notes::open(
-                self.app.notes_dir(),
-                draft,
-                self.app.settings().external_editor.clone(),
-            ),
+            heimdall_app::notes::open(dir, draft, self.app.settings().external_editor.clone()),
             |opened| Message::App(AppMessage::NoteOpened(opened)),
         )
     }
@@ -5678,6 +5710,7 @@ impl Shell {
                 depth,
                 open,
                 count,
+                total,
             } => {
                 if let Some(editor) = self.inline_editor(&TreeCursor::Folder(path.clone()), depth) {
                     return editor;
@@ -5686,7 +5719,14 @@ impl Shell {
                 let target = heimdall_app::DropTarget::Folder(path.clone());
                 let selected = self.app.selected_folder.as_deref() == Some(path.as_str());
                 crate::tree_drag::drop_zone(
-                    tree_view::folder_row(path, name, depth, open, count, color, selected),
+                    tree_view::folder_row(
+                        path,
+                        name,
+                        (depth, open),
+                        (count, total),
+                        color,
+                        selected,
+                    ),
                     target,
                     self.tree_drag.as_ref(),
                 )
@@ -6401,11 +6441,8 @@ impl Shell {
                 }
             }
             Message::MenuKey => {
-                if self.tree_focused
-                    && self.app.dialog.is_none()
-                    && let Some(id) = self.app.selected_profile.clone()
-                {
-                    self.open_tree_menu(TreeMenu::Profile(id));
+                if let Some(menu) = self.menu_key_target() {
+                    self.open_tree_menu(menu);
                 }
                 Vec::new()
             }
@@ -6694,6 +6731,31 @@ impl Shell {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The menu Shift+F10 or the menu key opens, as the C# `OnWindowPreviewKeyDown`: with the
+    /// tree's keyboard, the menu of the row it is on, a folder winning as the C#
+    /// `ResolveKeyboardContextTarget` lets it, the bulk menu of the profiles selected
+    /// together, else the profile's; elsewhere, the menu of the tab shown, as the C# opens
+    /// it from the strip (#554). Never over a dialog. A terminal keeps Shift+F10 for its
+    /// programs; the menu key, which it sends nothing for, reaches here from it too.
+    fn menu_key_target(&self) -> Option<TreeMenu> {
+        if self.app.dialog.is_some() || self.gated() {
+            return None;
+        }
+        if self.tree_focused {
+            if let Some(path) = self.app.selected_folder.clone() {
+                return Some(TreeMenu::Folder(path));
+            }
+            if !self.app.selected_profiles().is_empty() {
+                return Some(TreeMenu::Selection);
+            }
+            return self.app.selected_profile.clone().map(TreeMenu::Profile);
+        }
+        if self.page != Page::Tab {
+            return None;
+        }
+        self.shown_tab_id().map(TreeMenu::Tab)
     }
 
     /// The row the tree's keyboard is on: the folder selected, or the profile.
@@ -6993,6 +7055,7 @@ impl Shell {
             profile,
             others: !self.app.tab_group(id, TabGroup::Others).is_empty(),
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
+            all: !self.app.tab_group(id, TabGroup::All).is_empty(),
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
@@ -12997,6 +13060,112 @@ mod tests {
         let mut png = b"PNG image".to_vec();
         png.extend_from_slice(&[0; 20]);
         assert_eq!(dib_of_bitmap_file(&png), None);
+    }
+
+    #[test]
+    fn ctrl_and_a_digit_left_by_every_widget_shows_that_tab_on_qwerty_and_azerty() {
+        use keyboard::key::Code;
+        let digit = |typed: &str, code: Code, modifiers, status, repeat| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(typed.into()),
+                    modified_key: Key::Character(typed.into()),
+                    physical_key: Physical::Code(code),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat,
+                }),
+                status,
+                window::Id::unique(),
+            )
+        };
+        let rows = [
+            (Code::Digit1, "1", "&"),
+            (Code::Digit2, "2", "\u{e9}"),
+            (Code::Digit3, "3", "\""),
+            (Code::Digit4, "4", "'"),
+            (Code::Digit5, "5", "("),
+            (Code::Digit6, "6", "-"),
+            (Code::Digit7, "7", "\u{e8}"),
+            (Code::Digit8, "8", "_"),
+            (Code::Digit9, "9", "\u{e7}"),
+        ];
+        for (place, (code, qwerty, azerty)) in (1..).zip(rows) {
+            for typed in [qwerty, azerty] {
+                assert!(
+                    matches!(
+                        digit(typed, code, Modifiers::CTRL, event::Status::Ignored, false),
+                        Some(Message::Shortcut(WindowShortcut::GoToTab(got))) if got == place
+                    ),
+                    "Ctrl+{typed} on {code:?}"
+                );
+                assert!(
+                    digit(typed, code, Modifiers::CTRL, event::Status::Captured, false).is_none(),
+                    "a terminal keeps Ctrl+{typed}, as the C# leaves it to one"
+                );
+                assert!(
+                    digit(typed, code, Modifiers::CTRL, event::Status::Ignored, true).is_none(),
+                    "held, it does not repeat"
+                );
+            }
+        }
+        assert!(!matches!(
+            digit(
+                "1",
+                Code::Digit1,
+                Modifiers::CTRL | Modifiers::SHIFT,
+                event::Status::Ignored,
+                false
+            ),
+            Some(Message::Shortcut(WindowShortcut::GoToTab(_)))
+        ));
+        assert!(matches!(
+            digit(
+                "0",
+                Code::Digit0,
+                Modifiers::CTRL,
+                event::Status::Ignored,
+                false
+            ),
+            Some(Message::Shortcut(WindowShortcut::Zoom(Zoom::Reset)))
+        ));
+    }
+
+    #[test]
+    fn ctrl_f4_closes_and_ctrl_shift_page_keys_move_the_tab_whatever_no_widget_took() {
+        let named = |key: Named, modifiers, repeat| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Named(key),
+                    modified_key: Key::Named(key),
+                    physical_key: Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat,
+                }),
+                event::Status::Ignored,
+                window::Id::unique(),
+            )
+        };
+        assert!(matches!(
+            named(Named::F4, Modifiers::CTRL, false),
+            Some(Message::Shortcut(WindowShortcut::CloseTab))
+        ));
+        assert!(
+            named(Named::F4, Modifiers::CTRL, true).is_none(),
+            "held, it closes one tab"
+        );
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        assert!(matches!(
+            named(Named::PageUp, both, false),
+            Some(Message::Shortcut(WindowShortcut::MoveTabLeft))
+        ));
+        assert!(matches!(
+            named(Named::PageDown, both, true),
+            Some(Message::Shortcut(WindowShortcut::MoveTabRight))
+        ));
     }
 
     #[test]
