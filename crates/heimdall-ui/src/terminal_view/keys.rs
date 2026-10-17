@@ -55,6 +55,7 @@ pub fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
         Physical::Code(Code::KeyF) => Some('f'),
         Physical::Code(Code::KeyK) => Some('k'),
         Physical::Code(Code::KeyL) => Some('l'),
+        Physical::Code(Code::KeyR) => Some('r'),
         Physical::Code(Code::KeyS) => Some('s'),
         Physical::Code(Code::KeyU) => Some('u'),
         Physical::Code(Code::KeyV) => Some('v'),
@@ -152,6 +153,11 @@ pub enum WindowShortcut {
     /// terminal leaves to the window: there Ctrl+2 is NUL and Ctrl+3 Escape, as the C# leaves
     /// them to a focused terminal.
     GoToTab(u8),
+    /// Open again the tabs of the most recent close: Ctrl+Shift+R, read from
+    /// [`is_reopen_closed_key`], as the C# `RegisterTabNavigationShortcuts`. Never a key a
+    /// terminal leaves to the window: there it is the shell's Ctrl+R, its history search,
+    /// as the C# leaves it to a focused terminal; a remote desktop keeps it too.
+    ReopenClosedTab,
     /// Place the panes of the split tab shown the other way: Ctrl+Shift+O, as the C# one.
     ToggleSplit,
     /// Give the keyboard to the next pane of the split tab shown: Ctrl+Alt+Right, or
@@ -197,6 +203,21 @@ pub fn tab_ordinal(physical: Physical, modifiers: keyboard::Modifiers) -> Option
         return None;
     }
     digit(physical).filter(|digit| (1..=LAST_TAB_ORDINAL).contains(digit))
+}
+
+/// Whether `key` with `modifiers` is Ctrl+Shift+R, whatever the keyboard's layout: the tabs
+/// of the most recent close opened again, once no terminal, no desktop and no field took it.
+#[must_use]
+pub fn is_reopen_closed_key(
+    key: &keyboard::Key,
+    physical: Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    modifiers.control()
+        && modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && letter(key, physical) == Some('r')
 }
 
 /// A change of the terminal's text size, as the C# Heimdall's.
@@ -476,8 +497,39 @@ mod tests {
 
     use super::{
         LAST_TAB_ORDINAL, Shortcut, WindowShortcut, Zoom, is_ctrl_k, is_ctrl_w, is_lock_key,
-        is_search_key, key_input, shortcut, tab_ordinal, window_shortcut,
+        is_reopen_closed_key, is_search_key, key_input, shortcut, tab_ordinal, window_shortcut,
     };
+
+    #[test]
+    fn ctrl_shift_r_reopens_whatever_the_layout_and_a_terminal_keeps_it() {
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        let r = Physical::Code(Code::KeyR);
+        assert!(is_reopen_closed_key(&character("R"), r, both));
+        assert!(
+            is_reopen_closed_key(&character("R"), ANY_PLACE, both),
+            "the character where the layout puts it"
+        );
+        assert!(
+            is_reopen_closed_key(&character("\u{41a}"), r, both),
+            "a Cyrillic layout's key at the place of R"
+        );
+        assert!(!is_reopen_closed_key(&character("r"), r, Modifiers::CTRL));
+        assert!(!is_reopen_closed_key(&character("R"), r, Modifiers::SHIFT));
+        assert!(
+            !is_reopen_closed_key(&character("R"), r, both | Modifiers::ALT),
+            "AltGr is Ctrl+Alt on Windows"
+        );
+        assert!(!is_reopen_closed_key(
+            &character("T"),
+            Physical::Code(Code::KeyT),
+            both
+        ));
+        assert_eq!(
+            window_shortcut(&character("R"), r, both),
+            None,
+            "not left to the window by a terminal: the shell's history search"
+        );
+    }
 
     /// The digit row: each key's place, what it types unshifted on a US keyboard, then on a
     /// French AZERTY one.

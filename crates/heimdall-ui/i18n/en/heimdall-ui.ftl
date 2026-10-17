@@ -5484,3 +5484,10 @@ ui-shortcuts-go-to-tab = Go to tab 1 to 8
 ui-shortcuts-last-tab = Go to the last tab
 ui-shortcuts-move-tab = Move the tab one place left or right
 ui-shortcuts-tab-menu = The menu of the tab shown
+## A tab's menu: the tabs of the last close opened again, as the C# SessionReopenClosedTab
+## and SessionReopenClosedTabs; the second when that close took several.
+ui-tab-menu-reopen-closed = Reopen closed tab
+ui-tab-menu-reopen-closed-many = Reopen { $count } closed tabs
+ui-menu-keys-reopen-closed = Ctrl+Shift+R
+## The keyboard shortcuts list: Ctrl+Shift+R.
+ui-shortcuts-reopen-closed-tab = Reopen the tabs of the last close

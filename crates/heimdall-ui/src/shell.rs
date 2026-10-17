@@ -112,8 +112,8 @@ use crate::styles;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
-    LAST_TAB_ORDINAL, WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, tab_ordinal,
-    window_shortcut,
+    LAST_TAB_ORDINAL, WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_reopen_closed_key,
+    is_search_key, tab_ordinal, window_shortcut,
 };
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
@@ -577,11 +577,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if crate::terminal_view::keys::is_ctrl_w(&key, physical_key, modifiers) {
                 return (!repeat).then_some(Message::CloseKey);
             }
-            // Ctrl and a digit of the main row no terminal and no desktop took: that tab, as
-            // the C# Ctrl+1 to Ctrl+9, read from the key's place for an AZERTY keyboard.
             // Before the zoom keys: the minus of an AZERTY 6 is Ctrl+6 here.
-            if let Some(place) = tab_ordinal(physical_key, modifiers) {
-                return (!repeat).then_some(Message::Shortcut(WindowShortcut::GoToTab(place)));
+            if let Some(shortcut) = untaken_tab_key(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::Shortcut(shortcut));
             }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
@@ -594,6 +592,21 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         }
         _ => None,
     }
+}
+
+/// The tab keys the window takes only when no terminal, no desktop and no field took them,
+/// as the C# leaves them to a focused terminal: Ctrl and a digit of the main row, that tab,
+/// read from the key's place for an AZERTY keyboard (Ctrl+2 is a terminal's NUL); and
+/// Ctrl+Shift+R, the tabs of the last close (a shell's history search).
+fn untaken_tab_key(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<WindowShortcut> {
+    if let Some(place) = tab_ordinal(physical, modifiers) {
+        return Some(WindowShortcut::GoToTab(place));
+    }
+    is_reopen_closed_key(key, physical, modifiers).then_some(WindowShortcut::ReopenClosedTab)
 }
 
 /// What the window reacts to.
@@ -3382,6 +3395,15 @@ impl Shell {
                 .app
                 .update(AppMessage::Tools(ToolsMessage::ToggleSidebarTab));
         }
+        // With no tab left too, once the last one is closed; never over a dialog or the lock
+        // screen, which have the keyboard.
+        if shortcut == WindowShortcut::ReopenClosedTab {
+            if self.app.dialog.is_some() || self.gated() {
+                return Vec::new();
+            }
+            self.menu = None;
+            return self.update_app(AppMessage::ReopenClosedTab);
+        }
         if shortcut == WindowShortcut::Settings {
             // Ctrl+, as the C#, with or without a tab; not over a dialog, which has the keyboard.
             if self.app.dialog.is_none() {
@@ -3456,7 +3478,8 @@ impl Shell {
                 | WindowShortcut::Screenshot
                 | WindowShortcut::QuickConnect
                 | WindowShortcut::CopyStatus
-                | WindowShortcut::ToggleToolsPanel,
+                | WindowShortcut::ToggleToolsPanel
+                | WindowShortcut::ReopenClosedTab,
                 _,
             )
             | (_, None) => {
@@ -7028,6 +7051,7 @@ impl Shell {
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
+            reopen_closed: self.app.reopen_closed_count(),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
             pane: false,
@@ -13137,6 +13161,43 @@ mod tests {
         assert!(matches!(
             named(Named::PageDown, both, true),
             Some(Message::Shortcut(WindowShortcut::MoveTabRight))
+        ));
+    }
+
+    #[test]
+    fn ctrl_shift_r_left_by_every_widget_reopens_and_a_session_keeps_its_own() {
+        use keyboard::key::Code;
+        let r = |modifiers, status, repeat| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character("R".into()),
+                    modified_key: Key::Character("R".into()),
+                    physical_key: Physical::Code(Code::KeyR),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat,
+                }),
+                status,
+                window::Id::unique(),
+            )
+        };
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        assert!(matches!(
+            r(both, event::Status::Ignored, false),
+            Some(Message::Shortcut(WindowShortcut::ReopenClosedTab))
+        ));
+        assert!(
+            r(both, event::Status::Captured, false).is_none(),
+            "a terminal or a desktop keeps it, as the C# leaves it to one"
+        );
+        assert!(
+            r(both, event::Status::Ignored, true).is_none(),
+            "held, it reopens one close"
+        );
+        assert!(!matches!(
+            r(Modifiers::CTRL, event::Status::Ignored, false),
+            Some(Message::Shortcut(WindowShortcut::ReopenClosedTab))
         ));
     }
 

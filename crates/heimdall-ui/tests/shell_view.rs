@@ -5669,3 +5669,85 @@ fn a_terminal_leaves_ctrl_f4_and_the_tab_moves_to_the_window_and_keeps_ctrl_and_
         .count();
     assert_eq!(keys, 3, "the three Ctrl+digit, to the session");
 }
+
+#[test]
+fn ctrl_shift_r_and_the_tab_menu_reopen_the_last_close_as_the_csharp() {
+    use heimdall_app::{TabGroup, TabMenuMessage};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, _) = open(&mut core, "a");
+    let _ = open(&mut core, "b");
+    let _ = open(&mut core, "c");
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    assert!(
+        simulator(&shell).find("Reopen closed tab").is_err(),
+        "nothing closed yet: no entry, as the C# shows none"
+    );
+    let _ = shell.update(Message::CloseTreeMenu);
+    let _ = shell.update(Message::App(AppMessage::TabMenu(TabMenuMessage::Close {
+        tab,
+        group: TabGroup::Right,
+    })));
+    assert_eq!(shell.app().strip().len(), 1);
+
+    // Its count when the close took several, after the pin and with its keys, as the C#
+    // `AppendTabGroupItems`.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    let mut ui = tall(&shell);
+    let (pin, reopen, edit) = (
+        common::last_bounds(&mut ui, "Pin tab"),
+        common::last_bounds(&mut ui, "Reopen 2 closed tabs"),
+        common::last_bounds(&mut ui, "Edit"),
+    );
+    assert!(
+        pin.y < reopen.y && reopen.y < edit.y,
+        "{pin:?} {reopen:?} {edit:?}"
+    );
+    let said = common::last_bounds(&mut ui, "Ctrl+Shift+R");
+    assert!(
+        (reopen.center_y() - said.center_y()).abs() < 1.0 && said.x > reopen.x,
+        "{reopen:?} {said:?}"
+    );
+    common::click_last(&mut ui, "Reopen 2 closed tabs");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::MenuChoice(AppMessage::ReopenClosedTab)))
+    );
+    let _ = shell.update(Message::CloseTreeMenu);
+
+    let _ = shell.update(Message::Shortcut(WindowShortcut::ReopenClosedTab));
+    assert_eq!(shell.app().strip().len(), 3, "both back, in one go");
+
+    // With no tab left, the key still brings them back.
+    let _ = shell.update(Message::App(AppMessage::TabMenu(TabMenuMessage::Close {
+        tab,
+        group: TabGroup::All,
+    })));
+    assert!(shell.app().strip().is_empty());
+    let _ = shell.update(Message::Shortcut(WindowShortcut::ReopenClosedTab));
+    assert_eq!(shell.app().strip().len(), 3);
+}
+
+#[test]
+fn a_terminal_keeps_ctrl_shift_r_for_its_shell() {
+    use iced::keyboard::{self, Location, key};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let mut ui = simulator(&shell);
+    // As the C# `RegisterTabNavigationShortcuts` leaves it to a focused terminal: the
+    // shell's history search.
+    let statuses = ui.simulate([iced::Event::Keyboard(keyboard::Event::KeyPressed {
+        key: keyboard::Key::Character("R".into()),
+        modified_key: keyboard::Key::Character("R".into()),
+        physical_key: key::Physical::Code(key::Code::KeyR),
+        location: Location::Standard,
+        modifiers: keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT,
+        text: None,
+        repeat: false,
+    })]);
+    assert_eq!(statuses, [event::Status::Captured], "the session's");
+}

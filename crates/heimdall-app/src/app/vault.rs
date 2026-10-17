@@ -1080,6 +1080,9 @@ impl App {
         if self.settings.disconnect_on_lock {
             self.close_all_for_lock();
         }
+        // Whoever unlocks it finds nothing of what was closed before, as nothing of the
+        // sessions shown is drawn behind the lock screen.
+        self.recently_closed.clear();
         log::info!("Workspace locked.");
         let dialog = self.vault_dialog(VaultMode::Locked);
         self.dialog = Some(Dialog::Vault(dialog));

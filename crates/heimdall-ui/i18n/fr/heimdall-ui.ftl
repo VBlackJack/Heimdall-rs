@@ -5537,3 +5537,10 @@ ui-shortcuts-go-to-tab = Aller à l'onglet 1 à 8
 ui-shortcuts-last-tab = Aller au dernier onglet
 ui-shortcuts-move-tab = Déplacer l'onglet d'une place à gauche ou à droite
 ui-shortcuts-tab-menu = Menu de l'onglet affiché
+## A tab's menu: the tabs of the last close opened again, as the C# SessionReopenClosedTab
+## and SessionReopenClosedTabs; the second when that close took several.
+ui-tab-menu-reopen-closed = Rouvrir l'onglet fermé
+ui-tab-menu-reopen-closed-many = Rouvrir les { $count } onglets fermés
+ui-menu-keys-reopen-closed = Ctrl+Shift+R
+## The keyboard shortcuts list: Ctrl+Shift+R.
+ui-shortcuts-reopen-closed-tab = Rouvrir les onglets de la dernière fermeture

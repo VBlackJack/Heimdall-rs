@@ -309,9 +309,7 @@ impl App {
             });
             return;
         }
-        for tab in tabs {
-            self.close_tab(tab);
-        }
+        self.close_tabs_by_user(&tabs);
     }
 
     /// Whether `tab`'s session is saved nowhere, to be saved as a profile: one typed in
