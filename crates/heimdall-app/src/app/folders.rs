@@ -46,6 +46,10 @@ pub enum TreeRow {
         /// The profiles it holds, in its sub-folders too, as the C# tree counts them; only
         /// those found while searching.
         count: usize,
+        /// While searching or filtering, how many it holds in all, for "found/all" as the C#
+        /// `FolderViewModel.CountBadgeText`: a folder of forty showing "2" looked nearly empty
+        /// rather than filtered. `None` otherwise.
+        total: Option<usize>,
     },
     /// A profile.
     Profile {
@@ -88,7 +92,17 @@ impl App {
         let searching = !search.trim().is_empty() || self.tree_filter().is_active();
         let mut root = Node::default();
         let mut loose = Vec::new();
+        // Every profile, found or not, for what each folder holds in all while searching.
+        let mut all = Tally::default();
         for profile in self.profile_summaries() {
+            if searching {
+                let parts = profile
+                    .group
+                    .as_deref()
+                    .map(folder::parts)
+                    .unwrap_or_default();
+                all.add(&parts);
+            }
             if !profile.matches(search)
                 || !self
                     .tree_filter()
@@ -115,7 +129,14 @@ impl App {
             }
         }
         let mut rows = Vec::new();
-        walk(&root, "", 0, searching, &self.closed_folders, &mut rows);
+        walk(
+            &root,
+            searching.then_some(&all),
+            "",
+            0,
+            &self.closed_folders,
+            &mut rows,
+        );
         if !loose.is_empty() {
             let open = searching || !self.closed_folders.contains(NO_FOLDER);
             rows.push(TreeRow::Folder {
@@ -124,6 +145,7 @@ impl App {
                 depth: 0,
                 open,
                 count: loose.len(),
+                total: searching.then_some(all.here),
             });
             if open {
                 sort_in_order(&mut loose);
@@ -171,16 +193,46 @@ impl App {
     }
 }
 
-/// The rows under `node`, at `depth`, its path `path`.
+/// How many profiles a folder holds in all, found or not, and each of its folders.
+#[derive(Debug, Default)]
+struct Tally {
+    folders: BTreeMap<(String, String), Tally>,
+    /// Those in this folder itself.
+    here: usize,
+    /// Those in it and under it.
+    under: usize,
+}
+
+impl Tally {
+    /// One more profile in the folder of `parts`, counted on the way down.
+    fn add(&mut self, parts: &[&str]) {
+        let mut tally = self;
+        tally.under += 1;
+        for part in parts {
+            tally = tally
+                .folders
+                .entry((part.to_lowercase(), (*part).to_owned()))
+                .or_default();
+            tally.under += 1;
+        }
+        tally.here += 1;
+    }
+}
+
+/// The rows under `node`, at `depth`, its path `path`; `all`, while searching, how many the
+/// same folder holds, found or not.
 fn walk(
     node: &Node,
+    all: Option<&Tally>,
     path: &str,
     depth: usize,
-    searching: bool,
     closed: &HashSet<String>,
     rows: &mut Vec<TreeRow>,
 ) {
-    for ((_, name), child) in &node.folders {
+    let searching = all.is_some();
+    for (key, child) in &node.folders {
+        let name = &key.1;
+        let all_child = all.and_then(|all| all.folders.get(key));
         let child_path = if path.is_empty() {
             name.clone()
         } else {
@@ -193,9 +245,10 @@ fn walk(
             depth,
             open,
             count: child.count(),
+            total: all_child.map(|tally| tally.under),
         });
         if open {
-            walk(child, &child_path, depth + 1, searching, closed, rows);
+            walk(child, all_child, &child_path, depth + 1, closed, rows);
         }
     }
     let mut profiles = node.profiles.clone();

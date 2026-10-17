@@ -53,7 +53,7 @@ use iced::{
 use crate::terminal_view::blink::{CursorBlink, blinks};
 use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
-    Shortcut, Zoom, committed_text, key_input, shortcut, window_shortcut,
+    Shortcut, WindowShortcut, Zoom, committed_text, key_input, shortcut, window_shortcut,
 };
 use crate::terminal_view::metrics::{CellMetrics, as_f32};
 
@@ -420,7 +420,20 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 // when the settings say so; Ctrl+Shift+F11, full screen, is never the shell's.
                 let kept = keys::is_ctrl_k(key, *physical_key, *modifiers)
                     && !self.ctrl_k.opens_quick_connect();
-                if (!kept && window_shortcut(key, *physical_key, *modifiers).is_some())
+                let window_key = window_shortcut(key, *physical_key, *modifiers);
+                // A zoom typed on the digit row, the minus of an AZERTY 6: left to the
+                // window it would read as Ctrl+6, the sixth tab, which a terminal keeps
+                // as the C# does; asked for here instead, as the wheel asks.
+                if let (Some(WindowShortcut::Zoom(zoom)), Some(_), Some(on_zoom)) = (
+                    window_key,
+                    keys::tab_ordinal(*physical_key, *modifiers),
+                    self.on_zoom,
+                ) {
+                    shell.publish(on_zoom(zoom));
+                    shell.capture_event();
+                    return;
+                }
+                if (!kept && window_key.is_some())
                     || keys::is_fullscreen_key(*physical_key, *modifiers)
                 {
                     return;

@@ -321,23 +321,24 @@ async fn the_quality_menu_offers_the_csharp_four_from_performance_and_asks_the_s
 }
 
 /// The entries of a connected VNC tab's menu, as the C# `SessionTabContextMenuFactory` builds
-/// it for a saved profile not split: no Resolution, which is RDP's.
-const VNC_TAB_MENU: [&str; 15] = [
-    "Disconnect",
+/// it for a saved profile not split: no Resolution, which is RDP's; "Close tab" last.
+const VNC_TAB_MENU: [&str; 16] = [
+    "Reconnect Session",
+    "Duplicate Session",
+    "Fullscreen",
     "Rename tab",
     "Reset title",
     "Pin tab",
-    "Fullscreen (F11)",
-    "Reconnect Session",
-    "Duplicate Session",
+    "Detach to Window",
     "Edit",
     "Copy hostname",
     "Copy username",
     "Reveal in tree",
-    "Detach to Window",
+    "Split...",
     "Close others",
     "Close to the right",
-    "Split...",
+    "Close all tabs",
+    "Close tab",
 ];
 
 #[tokio::test]
@@ -370,12 +371,7 @@ async fn a_vnc_tab_has_the_csharp_header_menu_and_toolbar_over_its_desktop() {
         ui.find("Connected").expect("the state");
         ui.find("Not encrypted: this desktop and what you type cross the network in clear.")
             .expect("the clear connection said");
-        for absent in [
-            "Send keys",
-            "Fit to Window",
-            "Fullscreen (F11)",
-            "Send clipboard",
-        ] {
+        for absent in ["Send keys", "Fit to Window", "Fullscreen", "Send clipboard"] {
             assert!(ui.find(absent).is_err(), "{absent} is on screen");
         }
         assert!(

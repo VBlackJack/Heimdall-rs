@@ -502,12 +502,13 @@ fn disconnect_from_a_pane_header_closes_that_pane_and_from_the_strip_the_whole_t
     assert!(shell.app().tab(right).expect("right").layout.is_none());
     assert_eq!(shell.app().active, Some(right));
 
-    // The strip's own menu: the whole tab, every pane, as the C# `CloseAllPanes`.
+    // The strip's own menu: the whole tab, every pane, as the C# `CloseAllPanes`, called
+    // "Close tab" as the C# names it.
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, left, right) = split_shell(dir.path());
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(left)));
     let expected = Message::MenuChoice(AppMessage::RequestCloseTab(left));
-    let got = chosen_nth(&shell, "Disconnect", 2);
+    let got = chosen_nth(&shell, "Close tab", 0);
     assert!(
         matches!(got.as_slice(), [message] if same(message, &expected)),
         "{got:?}"

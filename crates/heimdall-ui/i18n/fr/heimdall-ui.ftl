@@ -1133,7 +1133,7 @@ ui-tree-gateway-missing = passerelle manquante
 ui-tab-menu-disconnect = Déconnecter
 ui-tab-menu-rename = Renommer l'onglet
 ui-tab-menu-reset-title = Réinitialiser le titre
-ui-tab-menu-fullscreen = Plein écran (F11)
+ui-tab-menu-fullscreen = Plein écran
 ui-tab-menu-reconnect = Reconnecter la session
 ui-tab-menu-duplicate = Dupliquer la session
 ui-tab-menu-detach = Détacher dans une fenêtre
@@ -5512,3 +5512,23 @@ ui-tool-netif-dhcp-yes = DHCP
 ui-tool-netif-dhcp-no = Statique
 ui-tool-netif-dhcp-unknown = Inconnu
 ui-tool-routes-on-link = Sur la liaison
+## A tab's menu: its last entries, as the C# SessionCloseTab and SessionCloseAllTabs.
+ui-tab-menu-close-tab = Fermer l'onglet
+ui-tab-menu-close-all = Fermer tous les onglets
+## Why "Copy username" is greyed, said on hover as the C# TreeCtxCopyUsernameDisabledReason.
+ui-tree-copy-username-disabled = Cette session n'a pas d'identifiant enregistré.
+## A folder's count while searching or filtering: those found, then how many it holds.
+ui-tree-folder-count-filtered = { $shown }/{ $total }
+## The keys said at the right of a menu's entries, as the C# InputGestureText.
+ui-menu-keys-rename = F2
+ui-menu-keys-edit = Ctrl+E
+ui-menu-keys-delete = Suppr
+ui-menu-keys-new-session = Ctrl+N
+ui-menu-keys-fullscreen = F11
+ui-menu-keys-close-tab = Ctrl+F4
+ui-menu-keys-toggle-orientation = Ctrl+Shift+O
+## The tab keys of the keyboard shortcuts list.
+ui-shortcuts-go-to-tab = Aller à l'onglet 1 à 8
+ui-shortcuts-last-tab = Aller au dernier onglet
+ui-shortcuts-move-tab = Déplacer l'onglet d'une place à gauche ou à droite
+ui-shortcuts-tab-menu = Menu de l'onglet affiché

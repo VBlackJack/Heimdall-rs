@@ -485,6 +485,36 @@ fn a_folder_counts_the_profiles_it_holds_its_sub_folders_included() {
 }
 
 #[test]
+fn while_searching_a_folder_also_says_how_many_it_holds_in_all_as_the_csharp_badge() {
+    let dir = tempfile::tempdir().expect("dir");
+    let app = app(dir.path());
+    let totals = |rows: Vec<TreeRow>| -> Vec<(String, usize, Option<usize>)> {
+        rows.into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Folder {
+                    path, count, total, ..
+                } => Some((path, count, total)),
+                TreeRow::Profile { .. } => None,
+            })
+            .collect()
+    };
+    assert!(
+        totals(app.tree_rows(""))
+            .iter()
+            .all(|(_, _, total)| total.is_none()),
+        "no search: the count alone"
+    );
+    // The C# "found/all", a folder of four showing "2/4" rather than a bare "2".
+    assert_eq!(
+        totals(app.tree_rows("web")),
+        [
+            ("Prod".to_owned(), 2, Some(4)),
+            ("Prod/Web".to_owned(), 2, Some(2)),
+        ]
+    );
+}
+
+#[test]
 fn a_folder_is_given_a_colour_from_its_menu_and_its_folders_show_it() {
     use heimdall_app::FolderMessage;
     use heimdall_core::folder::FolderColor;

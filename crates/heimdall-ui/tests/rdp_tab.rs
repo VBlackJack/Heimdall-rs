@@ -669,7 +669,7 @@ fn full_screen_shows_the_session_only_and_comes_back() {
     {
         let mut ui = simulator(&shell);
         ui.find("Sessions").expect("the tree");
-        ui.click("Fullscreen (F11)").expect("the tab menu's entry");
+        ui.click("Fullscreen").expect("the tab menu's entry");
         assert!(
             ui.into_messages()
                 .any(|message| matches!(message, Message::MenuFullscreen(shown) if shown == tab))
@@ -2052,24 +2052,26 @@ fn assert_in_order(shell: &Shell, labels: &[&str]) {
 }
 
 /// The entries of a connected RDP tab's menu, as the C# `SessionTabContextMenuFactory` builds
-/// it for a saved profile not split.
-const RDP_TAB_MENU: [&str; 16] = [
-    "Disconnect",
+/// it for a saved profile not split: what the session does, its resolution, the tab, its
+/// profile, the split, then the closing entries, "Close tab" last.
+const RDP_TAB_MENU: [&str; 17] = [
+    "Reconnect Session",
+    "Duplicate Session",
+    "Fullscreen",
+    "Resolution",
     "Rename tab",
     "Reset title",
     "Pin tab",
-    "Resolution",
-    "Fullscreen (F11)",
-    "Reconnect Session",
-    "Duplicate Session",
+    "Detach to Window",
     "Edit",
     "Copy hostname",
     "Copy username",
     "Reveal in tree",
-    "Detach to Window",
+    "Split...",
     "Close others",
     "Close to the right",
-    "Split...",
+    "Close all tabs",
+    "Close tab",
 ];
 
 /// The keys of the "Send keys" menu, in the C# session header's order.
@@ -2116,7 +2118,7 @@ fn an_rdp_tab_s_header_has_the_csharp_buttons_and_indicators_and_no_bar_under_it
             "Keyboard shortcuts...",
             "Match window",
             "Fit to Window",
-            "Fullscreen (F11)",
+            "Fullscreen",
             "Resolution",
         ] {
             assert!(ui.find(gone).is_err(), "{gone} is on screen");
@@ -2210,12 +2212,12 @@ fn right_clicking_an_rdp_tab_offers_the_csharp_tab_menu() {
             ))
     );
     assert!(
-        menu_click(&shell, "Fullscreen (F11)")
+        menu_click(&shell, "Fullscreen")
             .iter()
             .any(|message| matches!(message, Message::MenuFullscreen(shown) if *shown == tab))
     );
     assert!(
-        menu_click(&shell, "Disconnect")
+        menu_click(&shell, "Close tab")
             .iter()
             .any(|message| matches!(
                 message,
@@ -2433,4 +2435,48 @@ fn pause_reaches_the_server_as_its_whole_sequence_once_per_press() {
         sent.extend(batch);
     }
     assert!(matches!(sent.as_slice(), [RdpInput::Pause]), "{sent:?}");
+}
+
+#[test]
+fn ctrl_f4_ctrl_and_a_digit_and_the_tab_moves_reach_the_server_from_a_desktop() {
+    use iced::event::Status;
+    use iced::keyboard::key::{Code, Named, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _received) = connected(dir.path());
+    let pressed = |key: Key, code: Code, modifiers: Modifiers| {
+        iced::Event::Keyboard(Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: Physical::Code(code),
+            location: Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    };
+    let (ctrl, both) = (Modifiers::CTRL, Modifiers::CTRL | Modifiers::SHIFT);
+    // As the C# `LowLevelGlobalShortcutRouter.ShouldRouteUnlessRdpFocused`: on a remote
+    // desktop they close or switch the documents of the remote application, so the desktop
+    // keeps them, Ctrl+1 to Ctrl+9 as well, on a US row as on an AZERTY one.
+    let mut ui = simulator(&shell);
+    let statuses = ui.simulate([
+        pressed(Key::Named(Named::F4), Code::F4, ctrl),
+        pressed(Key::Named(Named::PageUp), Code::PageUp, both),
+        pressed(Key::Named(Named::PageDown), Code::PageDown, both),
+        pressed(Key::Character("1".into()), Code::Digit1, ctrl),
+        pressed(Key::Character("&".into()), Code::Digit1, ctrl),
+    ]);
+    assert_eq!(statuses, [Status::Captured; 5], "the server's");
+    let sent = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs),
+            _ => None,
+        })
+        .flatten()
+        .filter(|input| matches!(input, DesktopInput::Key { pressed: true, .. }))
+        .count();
+    assert_eq!(sent, 5, "each key sent down");
 }
