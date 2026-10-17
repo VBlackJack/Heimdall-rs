@@ -619,17 +619,22 @@ mod tests {
             not_before: std::time::UNIX_EPOCH,
             not_after: std::time::UNIX_EPOCH + std::time::Duration::from_hours(24),
         };
-        let (events, mut said) = mpsc::channel(2);
+        let (events, mut said) = mpsc::channel(3);
         ask_about(
             &dc(),
             &presented,
-            Some(Renewal {
-                recorded: Some(recorded),
-            }),
+            (
+                Some(Renewal {
+                    recorded: Some(recorded),
+                }),
+                None,
+            ),
             &events,
         )
         .await;
-        ask_about(&dc(), &presented, None, &events).await;
+        ask_about(&dc(), &presented, (None, None), &events).await;
+        let carried = CertificateHash::from_sha256([1; 32]);
+        ask_about(&dc(), &presented, (None, Some(carried)), &events).await;
 
         // Renewed: said so, with when the certificate on record and the one presented hold;
         // no authority of this computer was asked, so no issue is said.
@@ -673,6 +678,19 @@ mod tests {
         assert_eq!(certificate, CertificateHash::of(&der));
         assert_eq!(subject, Some(presented.subject.clone()));
         assert!(details.is_none());
+
+        // Another than the one carried over from the C#: the one trusted before said.
+        let Some(ConnectionEvent::UnknownRdpCertificate {
+            certificate,
+            details: Some(details),
+            ..
+        }) = said.recv().await
+        else {
+            panic!("the question about another certificate");
+        };
+        assert_eq!(certificate, CertificateHash::of(&der));
+        assert_eq!(details.replaces, Some(carried));
+        assert_eq!(details.renewal, None);
     }
 
     /// A probe answering `status`.
