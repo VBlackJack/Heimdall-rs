@@ -14,20 +14,28 @@
  * limitations under the License.
  */
 
-//! The preferences of the C# Heimdall's `settings.json` and of its "Export settings" file,
-//! read from JSON written as the C# writes it.
+//! The preferences and trusted certificates of the C# Heimdall's `settings.json` and of its
+//! "Export settings" file, read from JSON written as the C# writes it.
 
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use heimdall_core::credential_provider::ProviderKind;
 use heimdall_core::import::csharp_settings::{
-    CsharpSettingsError, PreferenceOutcome, Preferences, carried_keys, preferences,
+    CsharpSettingsError, PreferenceOutcome, Preferences, RdpTarget, carried_keys, preferences,
+    thumbprint, trusted_certificates,
 };
 use heimdall_core::profile::{AudioPlayback, ColorDepth};
 use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, BroadcastScope, ColorScheme, Language, Settings,
     TransferError, UpdateCheck,
 };
+
+/// A C# thumbprint whose 32 bytes are all `byte`, as `CertificateFingerprint.ComputeSha256`
+/// writes one.
+fn thumb(byte: u8) -> String {
+    let bytes: Vec<String> = (0..32).map(|_| format!("{byte:02X}")).collect();
+    format!("SHA256:{}", bytes.join(":"))
+}
 
 /// The C# `settings.json` holding `fields`, in camel case as the C# writes it.
 fn settings_json(fields: &str) -> String {
@@ -312,6 +320,7 @@ fn a_malformed_file_is_an_error_of_its_own() {
             ),
             "{text}"
         );
+        assert!(trusted_certificates(text, &[]).is_err(), "{text}");
     }
     assert!(matches!(
         preferences("[1, 2]", &Settings::default()),
@@ -494,4 +503,150 @@ fn every_preference_carried_over_is_shown_as_a_change_before_it_is_taken() {
         "{:?}",
         read.rows
     );
+}
+
+/// The RDP profiles imported, as the certificates are bound to them.
+const TARGETS: &[RdpTarget<'static>] = &[("r1", "dc.lab", 3390), ("r2", "pool.lab", 3389)];
+
+#[test]
+fn rdp_certificates_are_bound_to_the_server_of_their_profile() {
+    let text = settings_json(&format!(
+        r#""trustedRdpCertificates": {{
+            "r1": [{{"thumbprint": "{one}", "firstTrusted": "2026-01-01T00:00:01+00:00",
+                     "subject": "CN=dc.lab", "issuer": "CN=Lab CA"}}],
+            "r2": [{{"thumbprint": "{two}"}}, {{"thumbprint": "{three}"}}],
+            "deleted": [{{"thumbprint": "{one}"}}]
+        }}"#,
+        one = thumb(1),
+        two = thumb(2),
+        three = thumb(3).to_lowercase(),
+    ));
+    let read = trusted_certificates(&text, TARGETS).expect("read");
+    let bound: Vec<(&str, u16, u8)> = read
+        .rdp
+        .iter()
+        .map(|certificate| {
+            (
+                certificate.host.as_str(),
+                certificate.port,
+                certificate.sha256[0],
+            )
+        })
+        .collect();
+    assert_eq!(
+        bound,
+        [
+            ("dc.lab", 3390, 1),
+            ("pool.lab", 3389, 2),
+            ("pool.lab", 3389, 3)
+        ],
+        "a set per profile, a thumbprint in any case"
+    );
+    let first = &read.rdp[0];
+    assert_eq!(
+        first.trusted,
+        Some(UNIX_EPOCH + Duration::from_secs(1_767_225_601))
+    );
+    assert_eq!(first.subject.as_deref(), Some("CN=dc.lab"));
+    assert_eq!(first.issuer.as_deref(), Some("CN=Lab CA"));
+    assert_eq!(read.skipped, 1, "the profile is not imported");
+    assert_eq!(read.invalid, 0);
+}
+
+#[test]
+fn ftps_certificates_keep_the_host_and_port_the_csharp_stored_them_under() {
+    let text = export_file("");
+    assert_eq!(
+        trusted_certificates(&text, &[]).expect("read"),
+        heimdall_core::import::csharp_settings::TrustedCertificates::default()
+    );
+    let text = settings_json(&format!(
+        r#""trustedFtpsCertificates": {{
+            "files.lab:990": {{"fingerprint": "{one}", "source": "UserConfirmed",
+                               "subject": "(unknown)", "firstSeen": "0001-01-01T00:00:00+00:00"}},
+            "[fd00::1]:21": {{"fingerprint": "{two}", "source": 1}},
+            "public.lab:990": {{"fingerprint": "{three}", "source": "SystemValidated"}},
+            "old.lab:990": {{"fingerprint": "{three}"}}
+        }}"#,
+        one = thumb(1),
+        two = thumb(2),
+        three = thumb(3),
+    ));
+    let read = trusted_certificates(&text, &[]).expect("read");
+    let mut bound: Vec<(&str, u16)> = read
+        .ftps
+        .iter()
+        .map(|certificate| (certificate.host.as_str(), certificate.port))
+        .collect();
+    bound.sort_unstable();
+    assert_eq!(bound, [("fd00::1", 21), ("files.lab", 990)]);
+    let files = read
+        .ftps
+        .iter()
+        .find(|certificate| certificate.host == "files.lab")
+        .expect("files.lab");
+    assert_eq!(files.subject, None, "the C# placeholder is no name");
+    assert_eq!(files.trusted, None, "the C# MinValue is no date");
+    assert_eq!(files.sha256, [1; 32]);
+    assert_eq!(
+        read.skipped, 2,
+        "validated by the system, or of no known source: the user never trusted it"
+    );
+}
+
+#[test]
+fn an_invalid_certificate_is_counted_and_never_trusted() {
+    let sha1 = "SHA1:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01";
+    let short = "SHA256:AB:CD";
+    let bare = "AB".repeat(32);
+    let not_hex = thumb(1).replacen("01", "ZZ", 1);
+    let long = format!("{}:01", thumb(1));
+    let text = settings_json(&format!(
+        r#""trustedRdpCertificates": {{
+            "r1": [{{"thumbprint": "{sha1}"}}, {{"thumbprint": "{short}"}},
+                   {{"thumbprint": "{bare}"}}, {{"thumbprint": "{not_hex}"}},
+                   {{"thumbprint": "{long}"}}, {{"subject": "CN=no thumbprint"}}, "text",
+                   {{"thumbprint": 12}}],
+            "r2": "not a list"
+        }},
+        "trustedRdpCertificatesForTypedDestinations": {{
+            "typed.lab": [{{"thumbprint": "{good}"}}, {{"thumbprint": "{short}"}}]
+        }},
+        "trustedFtpsCertificates": {{
+            "nohost": {{"fingerprint": "{good}", "source": "UserConfirmed"}},
+            "zero.lab:0": {{"fingerprint": "{good}", "source": "UserConfirmed"}},
+            "bad host:21": {{"fingerprint": "{good}", "source": "UserConfirmed"}},
+            "short.lab:990": {{"fingerprint": "{short}", "source": "UserConfirmed"}}
+        }}"#,
+        good = thumb(9),
+    ));
+    let read = trusted_certificates(&text, TARGETS).expect("read");
+    assert!(read.rdp.is_empty() && read.ftps.is_empty(), "{read:?}");
+    assert_eq!(read.invalid, 8 + 1 + 1 + 4);
+    assert_eq!(read.skipped, 1, "a destination typed by hand has no port");
+
+    let text = settings_json(r#""trustedFtpsCertificates": [], "trustedRdpCertificates": 3"#);
+    let read = trusted_certificates(&text, TARGETS).expect("read");
+    assert_eq!(read.invalid, 2, "a store of another shape");
+}
+
+#[test]
+fn a_thumbprint_is_sha256_in_hexadecimal_bytes_and_nothing_else() {
+    assert_eq!(thumbprint(&thumb(0xAB)), Some([0xAB; 32]));
+    assert_eq!(
+        thumbprint(&format!("  {}  ", thumb(0xab).to_lowercase())),
+        Some([0xAB; 32])
+    );
+    for text in [
+        String::new(),
+        "SHA256:".to_owned(),
+        thumb(1).replace("SHA256:", "SHA512:"),
+        thumb(1).replace("SHA256:", ""),
+        thumb(1).replace(':', ""),
+        format!("{}:", thumb(1)),
+        thumb(1).replacen("01", "1", 1),
+        thumb(1).replacen("01", "+1", 1),
+    ] {
+        assert_eq!(thumbprint(&text), None, "{text}");
+    }
 }

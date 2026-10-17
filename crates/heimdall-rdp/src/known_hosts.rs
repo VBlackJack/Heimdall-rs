@@ -33,8 +33,20 @@
 //! certificate=SHA256:ungWv48Bz... valid_from=1767225600 valid_until=1798761600`, or, as an
 //! earlier Heimdall wrote it, `dc.lab:3389 SHA256:rgJ0... trusted=1767225600`.
 //!
+//! A certificate carried over from the C# Heimdall, which pins the whole certificate and
+//! never kept its key, is written with `-` in place of the key: `dc.lab:3389 -
+//! certificate=SHA256:ungWv48Bz... trusted=1767225600`. It is trusted as a certificate the
+//! user accepted here: the server presenting exactly it goes through, checked as any pin.
+//! Another certificate is [`CertificateVerdict::OtherCertificate`]: without the key a
+//! renewal cannot be told from another key, so the FTPS and VNC clients refuse it as a
+//! changed key, as the C# FTPS refuses a mismatch, and the RDP client asks about it, as the
+//! C# asks about any certificate an RDP profile does not trust yet. Such a line without a
+//! certificate that reads trusts nothing and is left out.
+//!
 //! The key stays the second field: a reader of the first two fields alone, an older
-//! Heimdall among them, reads every line as before. An attribute not known, or that does
+//! Heimdall among them, reads every line as before, and skips a carried line, whose `-`
+//! is no key: it reads no trust for that server and asks about it as at a first
+//! connection. An attribute not known, or that does
 //! not decode, is ignored; but a `certificate` that does not read still names a
 //! certificate, so its line is never taken for a key recorded alone. Lines starting with
 //! `#` and lines that do not parse are kept as they are; forgetting drops whole lines and
@@ -80,6 +92,11 @@ const ATTRIBUTE_SEPARATOR: char = '=';
 const LINE_ENDING_CHARACTERS: [char; 2] = ['\r', '\n'];
 /// Added to a file's name for the new text written beside it, before it takes its place.
 const REWRITE_SUFFIX: &str = ".tmp";
+/// What stands in place of the key on the line of a certificate carried over from the C#
+/// Heimdall, which never kept its key.
+const UNRECORDED_KEY: &str = "-";
+/// Marks a comment line: a host starting with it would be read as one.
+const COMMENT_MARK: char = '#';
 
 /// Where a server stands against the recorded pins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +134,42 @@ pub enum CertificateVerdict {
         /// A key recorded for it.
         recorded: Fingerprint,
     },
+    /// Recorded with another whole certificate alone, its key not on record: carried over
+    /// from the C# Heimdall. Without the key a renewal cannot be told from another key: the
+    /// FTPS and VNC clients refuse it as [`CertificateVerdict::Changed`], the RDP client asks
+    /// about it, showing the certificate recorded, as the C# asks.
+    OtherCertificate {
+        /// A certificate recorded for it.
+        recorded: CertificateHash,
+    },
+}
+
+/// A certificate the C# Heimdall trusted, to be trusted here the same: by the whole of it,
+/// its key unknown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarriedCertificate {
+    /// Host, as the C# bound the certificate to it.
+    pub host: String,
+    /// Port.
+    pub port: u16,
+    /// The hash of the whole certificate, the C# thumbprint.
+    pub certificate: CertificateHash,
+    /// When the C# user trusted it; `None` when it did not say, then it is now.
+    pub trusted: Option<SystemTime>,
+    /// The subject the C# kept of it; `None` when it kept none.
+    pub subject: Option<String>,
+    /// The issuer the C# kept of it; `None` when it kept none.
+    pub issuer: Option<String>,
+}
+
+/// What carrying certificates over did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Carried {
+    /// Certificates now trusted.
+    pub carried: usize,
+    /// Certificates left out: their server already trusted here, which is never added to,
+    /// the same certificate given twice, or a host that cannot be written on a line.
+    pub left: usize,
 }
 
 /// The file of trusted RDP servers.
@@ -150,8 +203,9 @@ pub struct KnownRdpHost {
     pub host: String,
     /// Port.
     pub port: u16,
-    /// The key of its certificate.
-    pub fingerprint: Fingerprint,
+    /// The key of its certificate; `None` for a certificate carried over from the C#
+    /// Heimdall, which never kept it: [`KnownRdpHost::certificate`] is then the pin.
+    pub fingerprint: Option<Fingerprint>,
     /// The subject of its certificate, made safe to show; `None` when not recorded.
     pub subject: Option<String>,
     /// The issuer of its certificate, made safe to show; `None` when not recorded.
@@ -167,6 +221,30 @@ pub struct KnownRdpHost {
     pub certificate_unreadable: bool,
     /// When the certificate trusted holds; `None` when not recorded.
     pub validity: Option<Validity>,
+}
+
+impl KnownRdpHost {
+    /// What the server is pinned by, as a list shows it: its key, or for a certificate
+    /// carried over from the C# Heimdall without its key, the certificate's thumbprint, as
+    /// the C# showed it.
+    #[must_use]
+    pub fn pin_text(&self) -> String {
+        match (self.fingerprint, self.certificate) {
+            (Some(key), _) => key.to_string(),
+            (None, Some(certificate)) => certificate.thumbprint(),
+            (None, None) => String::new(),
+        }
+    }
+}
+
+/// Whether `host` can be written as the start of a line: not empty, no space, no control
+/// character, not read as a comment.
+fn writable_host(host: &str) -> bool {
+    !host.is_empty()
+        && !host.starts_with(COMMENT_MARK)
+        && !host
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
 }
 
 /// Seconds since the Unix epoch, as an attribute holds them.
@@ -307,17 +385,23 @@ impl KnownRdpHosts {
             }))
     }
 
-    /// Whether a key is recorded for `host:port`: the server was trusted before.
+    /// Whether a key, or a certificate carried over from the C# Heimdall, is recorded for
+    /// `host:port`: the server was trusted before.
     ///
     /// # Errors
     ///
     /// The file exists and cannot be read.
     pub fn knows(&self, host: &str, port: u16) -> io::Result<bool> {
         let _files = locked();
-        Ok(!self.keys(host, port)?.is_empty())
+        let host = host.to_ascii_lowercase();
+        Ok(self
+            .read_entries()?
+            .iter()
+            .any(|entry| entry.host == host && entry.port == port))
     }
 
-    /// The keys recorded for `host:port`, in the order of the file; the files locked.
+    /// The keys recorded for `host:port`, in the order of the file; the files locked. A
+    /// certificate carried over without its key is no key, and is not among them.
     fn keys(&self, host: &str, port: u16) -> io::Result<Vec<Fingerprint>> {
         let Some(text) = self.text()? else {
             return Ok(Vec::new());
@@ -359,7 +443,10 @@ impl KnownRdpHosts {
             .filter_map(|line| {
                 let mut fields = line.split_whitespace();
                 let (host, port) = split_address(fields.next()?)?;
-                let fingerprint = fields.next()?.parse().ok()?;
+                let fingerprint = match fields.next()? {
+                    UNRECORDED_KEY => None,
+                    key => Some(key.parse().ok()?),
+                };
                 let mut entry = KnownRdpHost {
                     host,
                     port,
@@ -372,7 +459,8 @@ impl KnownRdpHosts {
                     validity: None,
                 };
                 read_attributes(&mut entry, fields);
-                Some(entry)
+                // A certificate carried over pins nothing without the certificate.
+                (entry.fingerprint.is_some() || entry.certificate.is_some()).then_some(entry)
             })
             .collect())
     }
@@ -522,9 +610,16 @@ impl KnownRdpHosts {
         .into_iter()
         .filter(|entry| entry.host == host && entry.port == port)
         .collect();
+        // A certificate carried over is the pin by itself: its hash commits to its key.
+        if entries
+            .iter()
+            .any(|entry| entry.fingerprint.is_none() && entry.certificate == Some(*certificate))
+        {
+            return Ok(CertificateVerdict::Known);
+        }
         let same_key: Vec<&KnownRdpHost> = entries
             .iter()
-            .filter(|entry| entry.fingerprint == *key)
+            .filter(|entry| entry.fingerprint == Some(*key))
             .collect();
         if same_key
             .iter()
@@ -543,13 +638,118 @@ impl KnownRdpHosts {
                 recorded: same_key.iter().find_map(|entry| entry.validity),
             });
         }
+        // Another key than every one recorded; or, when only certificates carried over are,
+        // another certificate than theirs.
+        if let Some(recorded) = entries.iter().find_map(|entry| entry.fingerprint) {
+            return Ok(CertificateVerdict::Changed { recorded });
+        }
         Ok(entries
-            .first()
+            .iter()
+            .find_map(|entry| entry.certificate)
             .map_or(CertificateVerdict::Unknown, |recorded| {
-                CertificateVerdict::Changed {
-                    recorded: recorded.fingerprint,
-                }
+                CertificateVerdict::OtherCertificate { recorded }
             }))
+    }
+
+    /// Forgets the certificate of hash `certificate` carried over for `host:port` without
+    /// its key: every other line stays. Whether it was there.
+    ///
+    /// # Errors
+    ///
+    /// The file exists and cannot be read or written.
+    pub fn forget_certificate(
+        &self,
+        host: &str,
+        port: u16,
+        certificate: &CertificateHash,
+    ) -> io::Result<bool> {
+        let _files = locked();
+        let wanted = address(host, port);
+        self.rewrite(|line| {
+            let mut fields = line.split_whitespace();
+            let carried = fields.next() == Some(wanted.as_str())
+                && fields.next() == Some(UNRECORDED_KEY)
+                && fields.any(|attribute| {
+                    attribute
+                        .split_once(ATTRIBUTE_SEPARATOR)
+                        .is_some_and(|(name, value)| {
+                            name == CERTIFICATE_ATTRIBUTE
+                                && value.parse::<CertificateHash>().ok() == Some(*certificate)
+                        })
+                });
+            if carried {
+                LineEdit::Drop
+            } else {
+                LineEdit::Keep
+            }
+        })
+    }
+
+    /// Trusts the certificates `carried`, which the C# Heimdall trusted, by the whole of
+    /// each, their key unknown, as the C# pinned them. A server already trusted here, by a
+    /// key or a certificate, is left as it is: never replaced, never added to, as the SSH
+    /// servers carried over. A server of `carried` may take several certificates, as the C#
+    /// trusts a set per RDP profile. Read and written under one lock of the trust files.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be read or written; what was carried before the failure stays.
+    pub fn carry_over(&self, carried: &[CarriedCertificate]) -> io::Result<Carried> {
+        let _files = locked();
+        let trusted_here: Vec<(String, u16)> = self
+            .read_entries()?
+            .into_iter()
+            .map(|entry| (entry.host, entry.port))
+            .collect();
+        let mut done = Carried::default();
+        let mut written: Vec<(String, u16, CertificateHash)> = Vec::new();
+        for certificate in carried {
+            let host = certificate.host.to_ascii_lowercase();
+            let port = certificate.port;
+            if !writable_host(&host)
+                || port == 0
+                || trusted_here.contains(&(host.clone(), port))
+                || written.contains(&(host.clone(), port, certificate.certificate))
+            {
+                done.left += 1;
+                continue;
+            }
+            self.append_carried(&host, port, certificate)?;
+            written.push((host, port, certificate.certificate));
+            done.carried += 1;
+        }
+        Ok(done)
+    }
+
+    /// Appends the line of `certificate` carried over for `host:port`, its key unknown; the
+    /// files locked.
+    fn append_carried(
+        &self,
+        host: &str,
+        port: u16,
+        certificate: &CarriedCertificate,
+    ) -> io::Result<()> {
+        let mut line = format!(
+            "{} {UNRECORDED_KEY} {CERTIFICATE_ATTRIBUTE}={}",
+            address(host, port),
+            certificate.certificate
+        );
+        if let Some(since) = seconds(certificate.trusted.unwrap_or_else(SystemTime::now)) {
+            let _ = write!(line, " {TRUSTED_ATTRIBUTE}={since}");
+        }
+        for (name, value) in [
+            (SUBJECT_ATTRIBUTE, &certificate.subject),
+            (ISSUER_ATTRIBUTE, &certificate.issuer),
+        ] {
+            if let Some(value) = value
+                .as_deref()
+                .map(shown)
+                .filter(|value| !value.is_empty())
+            {
+                let _ = write!(line, " {name}={}", encoded(&value));
+            }
+        }
+        self.append_line(&line)
     }
 
     /// Records for `host:port` the whole `certificate`, of hash `hash` and holding during
@@ -645,6 +845,11 @@ impl KnownRdpHosts {
             }
         }
         line.push_str(more);
+        self.append_line(&line)
+    }
+
+    /// Appends `line`, creating the file and its folder if needed; the files locked.
+    fn append_line(&self, line: &str) -> io::Result<()> {
         if let Some(dir) = self.path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
             fs::create_dir_all(dir)?;
         }

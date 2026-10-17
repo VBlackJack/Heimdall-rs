@@ -1334,7 +1334,7 @@ fn trusted_host_keys(settings: &LegacySettings) -> Vec<TrustedHostKey> {
 }
 
 /// `host:port` or `[ipv6]:port`, as the C# keys its trust store.
-fn host_and_port(name: &str) -> Option<(&str, u16)> {
+pub(super) fn host_and_port(name: &str) -> Option<(&str, u16)> {
     let (host, port) = match name.strip_prefix('[') {
         Some(bracketed) => bracketed.split_once("]:")?,
         None => name.rsplit_once(':')?,

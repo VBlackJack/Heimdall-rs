@@ -5661,3 +5661,9 @@ ui-dialog-import-preferences-invalid = Valeurs non lues : { $names }
 ui-dialog-import-preferences-relative = Chemins de l'installation C#, non repris : { $names }
 ui-dialog-import-preferences-failed = Les préférences de Heimdall C# n'ont pas pu être lues : { $detail }
 ui-dialog-import-preferences-review = Vérifier les préférences
+## La reprise des certificats de confiance de Heimdall C#.
+ui-trusted-certificates-key-unrecorded = Clé non enregistrée (reprise de Heimdall C#)
+ui-dialog-import-certificates = Certificats de confiance repris : { $rdp } RDP, { $ftps } FTPS. Ignorés : { $skipped }. Invalides : { $invalid }.
+ui-dialog-import-certificates-failed = Les certificats de confiance n'ont pas pu être repris : { $detail }
+ui-certificate-replaced = Un autre certificat que celui approuvé : ce serveur avait été approuvé, dans Heimdall C#, pour un autre certificat. Un certificat Bureau à distance auto-signé est renouvelé tous les quelques mois, et plusieurs machines peuvent répondre à cette adresse ; approuvez celui-ci seulement si vous l'attendez.
+ui-certificate-replaced-previous = Certificat approuvé auparavant : { $thumbprint }

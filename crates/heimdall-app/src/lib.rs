@@ -121,6 +121,7 @@ pub use app::{
     bulk_password_refusal, local_date_time, master_password_problem, open_vault, search_folded,
     should_auto_lock,
 };
+pub use app::{CarriedCertificates, ImportedPreferences};
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};

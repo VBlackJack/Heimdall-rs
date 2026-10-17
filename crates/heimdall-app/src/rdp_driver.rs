@@ -261,13 +261,27 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
                 certificate.certificate,
                 certificate.fingerprint
             );
-            return ask_about(profile, &certificate, None, &events).await;
+            return ask_about(profile, &certificate, (None, None), &events).await;
         }
         Err(RdpError::RenewedCertificate {
             presented,
             recorded,
         }) => {
-            return ask_about(profile, &presented, Some(Renewal { recorded }), &events).await;
+            return ask_about(
+                profile,
+                &presented,
+                (Some(Renewal { recorded }), None),
+                &events,
+            )
+            .await;
+        }
+        // Another certificate than the one carried over from the C# Heimdall: asked about,
+        // the one trusted before shown, as the C# asks (`RdpCertificateVerifier.cs:229-251`).
+        Err(RdpError::OtherCertificate {
+            presented,
+            recorded,
+        }) => {
+            return ask_about(profile, &presented, (None, Some(recorded)), &events).await;
         }
         Err(error) => {
             let error = ui_error(error);
@@ -363,20 +377,23 @@ fn connects_uncompressed(
 }
 
 /// The certificate question about `certificate`, presented by the server of `profile`;
-/// `renewal` when it renews a certificate trusted on the same key.
+/// with `renewal` when it renews a certificate trusted on the same key, `replaces` the
+/// certificate carried over from the C# Heimdall it is not.
 async fn ask_about(
     profile: &RdpProfile,
     certificate: &ServerCertificate,
-    renewal: Option<Renewal>,
+    (renewal, replaces): (Option<Renewal>, Option<CertificateHash>),
     events: &mpsc::Sender<ConnectionEvent>,
 ) {
     // The C# RDP question shows the subject alone; a renewal says so, with both validities,
-    // as the FTPS and VNC questions do. No authority of this computer was asked.
-    let details = renewal.map(|renewal| CertificateDetails {
+    // as the FTPS and VNC questions do, and another certificate than the one carried over
+    // says which was trusted. No authority of this computer was asked.
+    let details = (renewal.is_some() || replaces.is_some()).then(|| CertificateDetails {
         issuer: certificate.issuer.clone(),
         validity: certificate.validity,
         issue: None,
-        renewal: Some(renewal),
+        renewal,
+        replaces,
     });
     let _ = events
         .send(ConnectionEvent::UnknownRdpCertificate {
@@ -633,6 +650,7 @@ mod tests {
         assert_eq!(
             *details,
             CertificateDetails {
+                replaces: None,
                 issuer: presented.issuer.clone(),
                 validity: presented.validity,
                 issue: None,

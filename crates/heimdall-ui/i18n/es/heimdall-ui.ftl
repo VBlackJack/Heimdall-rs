@@ -5650,3 +5650,9 @@ ui-dialog-import-preferences-invalid = Valores no leídos: { $names }
 ui-dialog-import-preferences-relative = Rutas de la instalación de C#, no transferidas: { $names }
 ui-dialog-import-preferences-failed = No se pudieron leer las preferencias de Heimdall C#: { $detail }
 ui-dialog-import-preferences-review = Revisar preferencias
+## La migración de los certificados de confianza de Heimdall C#.
+ui-trusted-certificates-key-unrecorded = Clave no registrada (transferida de Heimdall C#)
+ui-dialog-import-certificates = Certificados de confianza transferidos: { $rdp } RDP, { $ftps } FTPS. Omitidos: { $skipped }. No válidos: { $invalid }.
+ui-dialog-import-certificates-failed = No se pudieron transferir los certificados de confianza: { $detail }
+ui-certificate-replaced = Otro certificado distinto del aprobado: este servidor se aprobó, en Heimdall C#, para otro certificado. Un certificado de Escritorio remoto autofirmado se renueva cada pocos meses, y varias máquinas pueden responder en esta dirección; apruébelo solo si lo espera.
+ui-certificate-replaced-previous = Certificado aprobado antes: { $thumbprint }

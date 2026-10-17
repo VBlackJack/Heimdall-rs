@@ -100,6 +100,9 @@ pub struct CertificateDetails {
     /// Set when the server's key is the one trusted, its certificate another: renewed, or
     /// minted again by whoever holds the key.
     pub renewal: Option<Renewal>,
+    /// The certificate trusted before, carried over from the C# Heimdall without its key,
+    /// when the one presented is another: a renewal, or another machine at the address.
+    pub replaces: Option<heimdall_rdp::CertificateHash>,
 }
 
 /// A certificate presented on a key trusted, with another certificate on record.

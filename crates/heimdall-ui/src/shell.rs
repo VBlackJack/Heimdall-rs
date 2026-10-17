@@ -8677,6 +8677,20 @@ fn certificate_details<'a>(
         heimdall_rdp::ValidityPeriod::NotYetValid => "future",
     };
     let mut body = Column::new().spacing(spacing::SM);
+    // Another certificate than the one carried over from the C# Heimdall without its key:
+    // both thumbprints, the presented one being the question's own, as a changed key shows
+    // both of its keys.
+    if let Some(previous) = details.replaces {
+        body = body.push(text(fl!("ui-certificate-replaced")));
+        body = body.push(
+            text(fl!(
+                "ui-certificate-replaced-previous",
+                thumbprint = previous.thumbprint()
+            ))
+            .font(iced::Font::MONOSPACE)
+            .wrapping(text::Wrapping::WordOrGlyph),
+        );
+    }
     if let Some(renewed) = &details.renewal {
         body = body.push(text(fl!("ui-certificate-renewed")));
         if let Some(recorded) = renewed.recorded {
@@ -9658,8 +9672,8 @@ fn left_out_line<'a>(
 }
 
 /// What the migration of this computer's C# store carried over from its `settings.json`
-/// besides the profiles: its preferences, to be reviewed, and those left out by name; or
-/// why they could not be.
+/// besides the profiles: its preferences, to be reviewed, and those left out by name; its
+/// trusted certificates; or why they could not be.
 fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, Message>> {
     let mut lines = Vec::new();
     if let Some(detail) = &summary.settings_unreadable {
@@ -9698,6 +9712,32 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
             text::danger,
         )),
         None => {}
+    }
+    match &summary.certificates {
+        Some(Ok(carried)) if carried.rdp + carried.ftps + carried.skipped + carried.invalid > 0 => {
+            lines.push(caption_line(
+                fl!(
+                    "ui-dialog-import-certificates",
+                    rdp = carried.rdp,
+                    ftps = carried.ftps,
+                    skipped = carried.skipped,
+                    invalid = carried.invalid
+                ),
+                if carried.invalid > 0 {
+                    text::warning
+                } else {
+                    text::default
+                },
+            ));
+        }
+        Some(Err(detail)) => lines.push(caption_line(
+            fl!(
+                "ui-dialog-import-certificates-failed",
+                detail = detail.as_str()
+            ),
+            text::danger,
+        )),
+        _ => {}
     }
     lines
 }

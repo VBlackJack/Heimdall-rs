@@ -65,14 +65,13 @@ impl TrustedKey {
         }
     }
 
-    /// Its SHA-256 fingerprint.
+    /// Its SHA-256 fingerprint; for a certificate carried over from the C# Heimdall
+    /// without its key, the certificate's thumbprint.
     #[must_use]
     pub fn fingerprint(&self) -> String {
         match self {
             Self::Ssh(entry) => entry.fingerprint.clone(),
-            Self::Rdp(entry) | Self::Ftps(entry) | Self::Vnc(entry) => {
-                entry.fingerprint.to_string()
-            }
+            Self::Rdp(entry) | Self::Ftps(entry) | Self::Vnc(entry) => entry.pin_text(),
         }
     }
 
@@ -279,8 +278,15 @@ impl App {
             self.forget_server_of(key);
             return;
         };
-        let forgotten =
-            KnownRdpHosts::new(file).forget_key(&entry.host, entry.port, &entry.fingerprint);
+        let known = KnownRdpHosts::new(file);
+        // A certificate carried over from the C# Heimdall has no key: forgotten by itself.
+        let forgotten = match (entry.fingerprint, entry.certificate) {
+            (Some(key), _) => known.forget_key(&entry.host, entry.port, &key),
+            (None, Some(certificate)) => {
+                known.forget_certificate(&entry.host, entry.port, &certificate)
+            }
+            (None, None) => Ok(false),
+        };
         self.read_trusted_keys();
         match forgotten {
             Ok(_) => self.tell(Notice::CertificateForgotten(key.address())),
