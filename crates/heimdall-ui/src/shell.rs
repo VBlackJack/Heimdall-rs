@@ -2861,12 +2861,15 @@ impl Shell {
                 Vec::new()
             }
             Message::OpenTool(tool) => {
-                // As the C# launch from a card or the sidebar: the Sessions page shown first.
+                // As the C# launch from a card or the sidebar: the Sessions page shown first,
+                // a network tool on the selected session's host, named after it.
                 self.menu = None;
                 self.page = Page::Tab;
+                let context = crate::tools::inherited_context(&self.app, tool);
                 self.app.update(AppMessage::Tools(ToolsMessage::Open {
                     tool,
-                    title: crate::tools::label(tool),
+                    title: crate::tools::tab_title(tool, &context),
+                    context,
                 }))
             }
             Message::NewNote { id, template } => {

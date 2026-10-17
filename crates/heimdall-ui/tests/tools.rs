@@ -1112,3 +1112,65 @@ fn the_password_audit_scores_a_password_as_it_is_typed() {
     ui.find("8 characters (minimum: 8)").expect("length");
     assert!(ui.find("password").is_err(), "the password is hidden");
 }
+
+#[test]
+fn a_tool_opens_on_the_selected_host_or_the_palette_argument_named_after_it() {
+    use heimdall_app::tools::ToolContext;
+    use heimdall_core::profile::{ProfileId, SshProfile};
+    use heimdall_ui::shell::TreeShortcut;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store =
+        heimdall_core::store::ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge([SshProfile {
+        id: ProfileId::new("web"),
+        name: "web".to_owned(),
+        group: None,
+        host: "web.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        gateway: None,
+        local_tunnel_port: None,
+        vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
+        compression: false,
+        sftp: false,
+        legacy_algorithms: false,
+        session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
+    }]);
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    app.selected_profile = Some(ProfileId::new("web"));
+    let mut shell = Shell::with_app(app);
+    let ping = tools::label(ToolId::Ping);
+
+    // From the sidebar, a network tool on the selected session's host, named after it, as
+    // the C# `ResolveToolTabTitle`; a tool reaching no host on nothing.
+    let _ = shell.update(Message::OpenTool(ToolId::Ping));
+    let _ = shell.update(Message::OpenTool(ToolId::Base64));
+    let tabs = &shell.app().tabs;
+    assert_eq!(tabs[0].display_title(), format!("{ping}: web.lab"));
+    assert_eq!(tabs[0].tool_context(), &ToolContext::on_host("web.lab"));
+    assert_eq!(tabs[1].display_title(), tools::label(ToolId::Base64));
+    assert!(tabs[1].tool_context().is_empty());
+
+    // From the palette, "ping 10.0.0.1": that tool alone, opened on it.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::PaletteQuery("ping 10.0.0.1".to_owned()));
+    simulator(&shell)
+        .find(format!("{ping}: 10.0.0.1").as_str())
+        .expect("its line");
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    let tabs = &shell.app().tabs;
+    assert_eq!(tabs.len(), 3);
+    assert_eq!(tabs[2].display_title(), format!("{ping}: 10.0.0.1"));
+    assert_eq!(
+        tabs[2].tool_context(),
+        &ToolContext::with_argument("10.0.0.1")
+    );
+}

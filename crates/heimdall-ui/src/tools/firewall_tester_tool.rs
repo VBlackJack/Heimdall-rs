@@ -119,6 +119,12 @@ enum Step {
 }
 
 impl FirewallTesterPane {
+    /// What its first box holds, for the tests of what a tool opens on.
+    #[cfg(test)]
+    pub(super) fn first_box(&self) -> String {
+        super::box_text(&self.hosts)
+    }
+
     /// Handles tool messages.
     pub fn update(&mut self, tab: TabId, message: FirewallTesterMessage) -> Outcome {
         match self.apply(message) {

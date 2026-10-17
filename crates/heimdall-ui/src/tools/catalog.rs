@@ -162,7 +162,7 @@ fn categories() -> Vec<ToolCategory> {
 /// What the sidebar's network context line says, as the C# `ToolContextProvider`: the host
 /// a network tool would inherit, or that none would be.
 fn context_label(app: &App) -> String {
-    match app.tool_target_host() {
+    match super::inherited_host(app) {
         Some(host) => fl!("ui-tools-context-with", host = host.as_str()),
         None => fl!("ui-tools-context-none"),
     }
@@ -462,7 +462,7 @@ pub fn pin_id(tool: ToolId) -> iced::widget::Id {
 /// The Tools page's header, as the C#: its title, its search and the `count` of tools it
 /// lists, then the network context in the accent when a host would be inherited.
 fn page_header<'a>(app: &App, search: &str, count: usize) -> Element<'a, Message> {
-    let has_target = app.tool_target_host().is_some();
+    let has_target = super::inherited_host(app).is_some();
     container(
         column![
             row![

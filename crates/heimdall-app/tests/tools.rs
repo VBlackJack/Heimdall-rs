@@ -21,7 +21,8 @@
 use std::path::Path;
 
 use heimdall_app::tools::{
-    MAX_RECENT_TOOLS, RecentTools, SidebarTab, ToolCategory, ToolGroup, ToolId, toggle_favorite,
+    MAX_RECENT_TOOLS, RecentTools, SidebarTab, ToolCategory, ToolContext, ToolGroup, ToolId,
+    toggle_favorite, tool_invocation,
 };
 use heimdall_app::{
     App, AppConfig, Dialog, Effect, Message, Phase, TabGroup, TabMenuMessage, TabProfile,
@@ -46,6 +47,7 @@ fn open(app: &mut App, tool: ToolId) {
     let _ = app.update(Message::Tools(ToolsMessage::Open {
         tool,
         title: tool.code().to_owned(),
+        context: heimdall_app::tools::ToolContext::default(),
     }));
 }
 
@@ -474,4 +476,93 @@ fn quitting_or_closing_tabs_together_counts_the_tool_tabs_unsaved_changes() {
         app.dialog
     );
     assert_eq!(app.tabs.len(), 2, "nothing closed before it is answered");
+}
+
+#[test]
+fn a_tool_word_and_an_argument_name_the_tool_and_what_follows() {
+    // As the C# `TryParseExplicitToolInvocation`: a command word, a space, something.
+    assert_eq!(
+        tool_invocation("ping 10.0.0.1"),
+        Some((ToolId::Ping, "10.0.0.1".to_owned()))
+    );
+    assert_eq!(
+        tool_invocation("  PING   10.0.0.1  "),
+        Some((ToolId::Ping, "10.0.0.1".to_owned())),
+        "whatever its case, trimmed"
+    );
+    assert_eq!(
+        tool_invocation("nslookup example.com"),
+        Some((ToolId::Dns, "example.com".to_owned())),
+        "any of its words"
+    );
+    assert_eq!(
+        tool_invocation("subnet 10.0.0.0/8"),
+        Some((ToolId::SubnetCalculator, "10.0.0.0/8".to_owned()))
+    );
+    assert_eq!(
+        tool_invocation("base64 hello world"),
+        Some((ToolId::Base64, "hello world".to_owned())),
+        "the rest whole, spaces kept"
+    );
+    assert_eq!(tool_invocation("ping"), None, "a word alone is scored");
+    assert_eq!(tool_invocation("ping   "), None);
+    assert_eq!(tool_invocation("pingx 10.0.0.1"), None, "not its word");
+    assert_eq!(tool_invocation("web server"), None);
+    assert_eq!(tool_invocation(""), None);
+    assert_eq!(
+        tool_invocation("\u{e9}t\u{e9} x"),
+        None,
+        "not cut inside a letter"
+    );
+}
+
+#[test]
+fn a_context_is_empty_without_a_host_or_an_argument() {
+    assert!(ToolContext::default().is_empty());
+    assert!(ToolContext::on_host("   ").is_empty());
+    assert!(ToolContext::with_argument(" ").is_empty());
+    let host = ToolContext::on_host(" web.lab ");
+    assert_eq!(host.host.as_deref(), Some("web.lab"), "trimmed");
+    assert_eq!(host.shown(), Some("web.lab"));
+    let argument = ToolContext::with_argument(" 10.0.0.1 ");
+    assert!(!argument.is_empty());
+    assert_eq!(argument.shown(), Some("10.0.0.1"));
+    let blank = ToolContext {
+        host: Some("  ".to_owned()),
+        ..ToolContext::default()
+    };
+    assert!(
+        blank.is_empty(),
+        "a blank host is no host, as the C# hasContext"
+    );
+}
+
+#[test]
+fn a_tool_opened_on_a_context_keeps_it_in_a_tab_of_its_own() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    open(&mut app, ToolId::Hash);
+    open(&mut app, ToolId::Hash);
+    assert_eq!(app.tabs.len(), 1, "no context: the open tab shown again");
+    assert!(app.tabs[0].tool_context().is_empty());
+    // Given an argument, a tab of its own, as the C# `hasContext`.
+    let context = ToolContext::with_argument("hello");
+    let _ = app.update(Message::Tools(ToolsMessage::Open {
+        tool: ToolId::Hash,
+        title: "HASH: hello".to_owned(),
+        context: context.clone(),
+    }));
+    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.tabs[1].title, "HASH: hello");
+    assert_eq!(app.tabs[1].tool_context(), &context);
+    // A network tool, a tab each time, its host kept.
+    for _ in 0..2 {
+        let _ = app.update(Message::Tools(ToolsMessage::Open {
+            tool: ToolId::Ping,
+            title: "PING: web.lab".to_owned(),
+            context: ToolContext::on_host("web.lab"),
+        }));
+    }
+    assert_eq!(app.tabs.len(), 4);
+    assert_eq!(app.tabs[3].tool_context().host.as_deref(), Some("web.lab"));
 }

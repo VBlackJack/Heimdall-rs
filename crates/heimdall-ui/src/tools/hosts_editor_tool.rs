@@ -864,6 +864,7 @@ mod tests {
         let _ = app.update(AppMessage::Tools(ToolsMessage::Open {
             tool: ToolId::Hosts,
             title: String::new(),
+            context: heimdall_app::tools::ToolContext::default(),
         }));
         app.tabs[0].id
     }

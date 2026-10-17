@@ -354,6 +354,7 @@ mod tests {
         let _ = app.update(AppMessage::Tools(ToolsMessage::Open {
             tool: ToolId::OpenPorts,
             title: String::new(),
+            context: heimdall_app::tools::ToolContext::default(),
         }));
         app.tabs[0].id
     }
