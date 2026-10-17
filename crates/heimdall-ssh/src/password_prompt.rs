@@ -124,7 +124,7 @@ const ONE_TIME_CODE_WORDS: &[&str] = &[
 ];
 
 /// Pieces of words that name a one-time code or a second factor, compounds included
-/// ("tokencode", "OneTimePassword", "Zweifaktorauthentifizierung"), matched anywhere in a
+/// (`tokencode`, `OneTimePassword`, `Zweifaktorauthentifizierung`), matched anywhere in a
 /// word of the title, the instructions or a host label.
 const ONE_TIME_CODE_STEMS: &[&str] = &[
     "otp",
@@ -167,7 +167,7 @@ const ONE_TIME_CODE_PHRASES: &[&[&str]] = &[
 /// What separates a host from the account in front of it ("jdoe@host").
 const AT: char = '@';
 
-/// What opens and closes an IPv6 address as a host label ("jdoe@[fe80::1]").
+/// What opens and closes an IPv6 address as a host label (`jdoe@[fe80::1]`).
 const ADDRESS_OPEN: char = '[';
 const ADDRESS_CLOSE: char = ']';
 
