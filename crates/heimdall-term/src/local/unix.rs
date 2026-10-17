@@ -40,7 +40,16 @@ const HANG_UP_GRACE: Duration = Duration::from_secs(2);
 pub(super) fn spawn(options: &Options, size: WindowSize) -> io::Result<LocalSession> {
     let pty = tty::new(options, size, 0)?;
     // Clones of the master: the same open file, non-blocking as alacritty set it.
+    // tokio 1.53.3 deprecates `AsyncFd::new` (tokio #8587) for an `unsafe fn register`
+    // whose contract is: the descriptor stays open and unchanged while registered. It holds
+    // here without unsafe code: the `File` is a `try_clone` (its own dup'ed descriptor),
+    // owned only by this `AsyncFd`, never closed or replaced while registered (only
+    // `get_ref` reads through it, never `get_mut` or `into_inner`), so `as_raw_fd` is
+    // stable until the `AsyncFd` drops. Revisited in issue #465.
+    #[allow(deprecated)]
     let reader = AsyncFd::new(pty.file().try_clone()?)?;
+    // Same argument as the reader: an owned dup'ed descriptor, read only through `get_ref`.
+    #[allow(deprecated)]
     let writer = AsyncFd::new(pty.file().try_clone()?)?;
     let child_exited = signal(SignalKind::child())?;
     let (commands, commands_received) = mpsc::unbounded_channel();
