@@ -18,11 +18,17 @@
 //! marks, its close button, and the row that scrolls sideways once the tabs pass its
 //! width.
 
+use std::time::{Duration, Instant};
+
 use heimdall_app::{
-    BroadcastMessage, Message as AppMessage, SessionState, Tab, TabId, server_text,
+    BroadcastMessage, Message as AppMessage, Phase, ProfileSummary, SessionState, Tab, TabId,
+    server_text,
 };
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::widget::{Tree, tree};
+use iced::advanced::{Clipboard, Shell as WidgetShell, Widget, renderer};
 use iced::widget::{button, center, column, container, mouse_area, row, text, tooltip};
-use iced::{Color, Element, Length, Theme};
+use iced::{Color, Element, Event, Length, Rectangle, Size, Theme, mouse, window};
 
 use super::{
     BroadcastScope, Message, PostConnectProgress, Shell, TAB_GAP, TAB_PADDING, TAB_UNDERLINE,
@@ -34,7 +40,7 @@ use crate::icons::{self, Icon, Tint};
 use crate::styles;
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
-use crate::tree_view::{self, TreeMenu};
+use crate::tree_view::TreeMenu;
 
 /// Room around the tab strip, as the C#'s: none below, where the tabs meet the session.
 const TAB_STRIP_PADDING: iced::Padding = iced::Padding {
@@ -59,6 +65,121 @@ const TAB_DROP_EDGE: f32 = 2.0;
 /// Widest a tab's title grows before it ends with an ellipsis, as the C# tab title's
 /// `MaxWidth`.
 const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
+
+/// Side of the mark after the title of a tab that needs a look, as the C#
+/// `SessionTabStateMarkSize`.
+const TAB_MARK_SIDE: f32 = 8.0;
+
+/// Width of the ring of a dropped tab, as the C# `SessionTabStateRingThickness`.
+const TAB_RING_WIDTH: f32 = 1.5;
+
+/// Side of the warning of a failed tab, as the C# `SessionTabStateGlyphFontSize`.
+const TAB_WARNING_SIDE: f32 = 11.0;
+
+/// How long the pointer rests on a tab's title before its tooltip shows, as the WPF
+/// tooltip's default `InitialShowDelay` the C# tab keeps.
+const TAB_TOOLTIP_DELAY: Duration = Duration::from_millis(400);
+
+/// How long the connecting dot takes to fade, then as long to come back, as the C#
+/// `TabStatePulse` storyboard's `Duration="0:0:0.6"` with `AutoReverse`.
+const PULSE_HALF: Duration = Duration::from_millis(600);
+
+/// The connecting dot's opacity at the faintest of its pulse, as the C# storyboard's `To`.
+const PULSE_FAINTEST: f32 = 0.2;
+
+/// How often the pulsing dot is drawn anew: smooth to the eye without drawing every frame.
+const PULSE_FRAME: Duration = Duration::from_millis(40);
+
+/// The mark after the title of a tab whose session needs a look, as the C# tab's
+/// `TabStateMark`: each state its own shape, so the colour is never the only cue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StateMark {
+    /// Connecting or waiting to connect again: a pulsing dot.
+    Pulse,
+    /// Ended, the tab left open: a ring.
+    Ring,
+    /// Failed: a warning.
+    Warning,
+}
+
+/// The mark of a session in `state`, as the C# `SessionTabHeaderStates.From`
+/// (`SessionTabHeaderState.cs:52`): none for a connected one, so thirty healthy tabs stay
+/// quiet and the one that dropped stands out.
+fn state_mark(state: SessionState) -> Option<StateMark> {
+    match state {
+        SessionState::Connected => None,
+        SessionState::Connecting | SessionState::Reconnecting => Some(StateMark::Pulse),
+        SessionState::Ended => Some(StateMark::Ring),
+        SessionState::Failed => Some(StateMark::Warning),
+    }
+}
+
+/// The state of a session in words, for its tab's tooltip, `None` for a connected one: a
+/// failure says its `reason`, as the C# composer shows the reason written
+/// (`SessionTabToolTipComposer.cs:94`), the tooltip being read once, on demand.
+fn state_words(state: SessionState, reason: Option<String>) -> Option<String> {
+    match state {
+        SessionState::Connected => None,
+        SessionState::Connecting => Some(fl!("ui-status-connecting")),
+        SessionState::Reconnecting => Some(fl!("ui-status-reconnecting")),
+        SessionState::Ended => Some(fl!("ui-status-disconnected")),
+        SessionState::Failed => Some(reason.unwrap_or_else(|| fl!("ui-status-error"))),
+    }
+}
+
+/// Where a profile goes, as the C# `ServerItemViewModel.Endpoint`: its host, and its port
+/// when it has one.
+fn endpoint_text((host, port): &(String, u16)) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty() {
+        None
+    } else if *port == 0 {
+        Some(host.to_owned())
+    } else {
+        Some(format!("{host}:{port}"))
+    }
+}
+
+/// The lines of a tab's tooltip, as the C# `SessionTabToolTipComposer.Compose`: its whole
+/// `title`, the strip cutting a long one; then, from the saved `profile` behind it, where
+/// it goes and by which protocol, as whom and from which folder; then its `state` when it
+/// needs a look. Never a secret: a profile's summary carries no password nor passphrase.
+fn tooltip_lines(
+    title: String,
+    profile: Option<&ProfileSummary>,
+    state: Option<String>,
+) -> Vec<String> {
+    let mut lines = vec![title];
+    if let Some(profile) = profile {
+        if let Some(endpoint) = profile.endpoint.as_ref().and_then(endpoint_text) {
+            lines.push(fl!(
+                "ui-tab-tooltip-endpoint",
+                endpoint = endpoint,
+                protocol = profile.kind.label()
+            ));
+        }
+        if let Some(user) = profile.username.as_deref().map(str::trim)
+            && !user.is_empty()
+        {
+            lines.push(fl!("ui-tab-tooltip-user", user = user));
+        }
+        if let Some(folder) = profile.group.as_deref().map(str::trim)
+            && !folder.is_empty()
+        {
+            lines.push(fl!("ui-tab-tooltip-folder", folder = folder));
+        }
+    }
+    if let Some(state) = state {
+        lines.push(fl!("ui-tab-tooltip-state", state = state));
+    }
+    lines
+}
+
+/// What a tab's close button says: the tab it closes, as the C# `A11yCloseSessionTabNamed`
+/// (`ConnectionViewModel.cs:230`), since every tab has one.
+fn close_label(name: &str) -> String {
+    fl!("ui-tab-close-named", name = name)
+}
 
 impl Shell {
     /// A tab of the bar: a click shows it, a right click opens its menu, a middle click closes
@@ -182,7 +303,7 @@ impl Shell {
     }
 
     /// What a tab says of itself, as the C# tab: its protocol's icon, its pin, its title
-    /// and a dot while it connects, then its marks.
+    /// and the mark of a state that needs a look, the tooltip over them, then its marks.
     fn tab_title(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
         let kind = self.app.tab_kind(tab);
         // A tool's tab bears the tool's icon, in its category's colour.
@@ -205,18 +326,42 @@ impl Shell {
             );
         }
         // One long server title cannot take the whole strip: it ends with an ellipsis.
-        label = label.push(
-            crate::ellipsis::text(Self::tab_name(tab))
+        let name = Self::tab_name(tab);
+        let mut titled = row![
+            crate::ellipsis::text(name.clone())
                 .size(font_size::BODY)
                 .font(styles::SEMIBOLD)
                 .style(text::base)
                 .max_width(TAB_TITLE_MAX_WIDTH),
-        );
-        // While it connects, as the C# tab's busy dot.
-        let state = SessionState::of(tab);
-        if matches!(state, SessionState::Connecting | SessionState::Reconnecting) {
-            label = label.push(tree_view::state_dot(Some(state)));
+        ]
+        .spacing(spacing::XS)
+        .align_y(iced::Alignment::Center);
+        // A tool's tab is no session: it has no state to show.
+        let state = tab.tool().is_none().then(|| SessionState::of(tab));
+        if let Some(mark) = state.and_then(state_mark) {
+            titled = titled.push(self.state_mark_view(mark));
         }
+        // Its whole title, where it goes and its state, as the C# tab's tooltip.
+        let reason = match &tab.phase {
+            Phase::Failed(error) => Some(super::failure_text(tab, error)),
+            _ => None,
+        };
+        let profile = self.app.tab_profile(tab);
+        let lines = tooltip_lines(
+            name,
+            profile.as_ref(),
+            state.and_then(|state| state_words(state, reason)),
+        );
+        label = label.push(
+            tooltip(
+                titled,
+                text(lines.join("\n")).size(font_size::CAPTION),
+                tooltip::Position::Bottom,
+            )
+            .delay(TAB_TOOLTIP_DELAY)
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
+        );
         // Through gateways, said on the tab while the tunnels panel that lists it is
         // closed, as the C# tab's tunnel badge.
         if !self.app.tunnels_panel() {
@@ -226,6 +371,30 @@ impl Shell {
             label = label.push(badge);
         }
         label
+    }
+
+    /// The mark of a tab that needs a look, as the C# tab's: the dot pulsing unless Windows
+    /// asks for reduced motion, in the colours of the tree's state dots.
+    fn state_mark_view(&self, mark: StateMark) -> Element<'static, Message> {
+        match mark {
+            StateMark::Pulse => Element::new(PulseDot {
+                side: TAB_MARK_SIDE,
+                pulses: !self.reduced_motion,
+            }),
+            StateMark::Ring => container(iced::widget::space())
+                .width(TAB_MARK_SIDE)
+                .height(TAB_MARK_SIDE)
+                .style(|theme: &Theme| container::Style {
+                    border: iced::Border {
+                        color: theme.extended_palette().secondary.base.color,
+                        width: TAB_RING_WIDTH,
+                        radius: (TAB_MARK_SIDE / 2.0).into(),
+                    },
+                    ..container::Style::default()
+                })
+                .into(),
+            StateMark::Warning => icons::icon(Icon::Warning, Tint::Danger, TAB_WARNING_SIDE),
+        }
     }
 
     /// What goes before a tab, on the strip or in a pane's header: its broadcast marker
@@ -307,7 +476,7 @@ impl Shell {
             // faded but on the tab selected or pointed at. It takes the press, which selecting
             // the tab then does not see.
             let quiet = !active && self.tab_hover != Some(tab.id);
-            // Named as the C# button's accessible name, in a tooltip.
+            // Naming the tab it closes, as the C# button's accessible name, in a tooltip.
             let close = container(
                 tooltip(
                     button(center(icons::faded(
@@ -325,7 +494,7 @@ impl Shell {
                     .padding(0.0)
                     .style(styles::close_mark(quiet))
                     .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-                    text(fl!("ui-session-close-button")).size(font_size::CAPTION),
+                    text(close_label(&Self::tab_name(tab))).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .padding(styles::TOOLTIP_PADDING)
@@ -366,4 +535,310 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
     .padding(styles::TOOLTIP_PADDING)
     .style(styles::tooltip)
     .into()
+}
+
+/// The pulse of a connecting tab's dot, as the C# `TabStatePulse` storyboard: from opaque to
+/// faint in [`PULSE_HALF`], then back, over and over; told the time rather than reading the
+/// clock. It holds still, opaque, while it does not pulse.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Pulse {
+    /// When it started pulsing; `None` while it does not.
+    since: Option<Instant>,
+    /// The time of the frame last drawn.
+    frame: Option<Instant>,
+}
+
+impl Pulse {
+    /// Takes note of a frame drawn at `now`, pulsing or not (`pulses`: Windows does not ask
+    /// for reduced motion); when to draw the next one, `None` while it holds still.
+    fn observe(&mut self, now: Instant, pulses: bool) -> Option<Instant> {
+        if !pulses {
+            *self = Self::default();
+            return None;
+        }
+        self.since.get_or_insert(now);
+        self.frame = Some(now);
+        now.checked_add(PULSE_FRAME)
+    }
+
+    /// The dot's opacity in the frame last drawn: opaque while it does not pulse.
+    fn opacity(&self) -> f32 {
+        let (Some(since), Some(frame)) = (self.since, self.frame) else {
+            return 1.0;
+        };
+        let half = PULSE_HALF.as_secs_f32();
+        let into = frame.saturating_duration_since(since).as_secs_f32() % (2.0 * half);
+        // How far it has faded: from nothing to all of it, then back.
+        let faded = if into <= half {
+            into / half
+        } else {
+            2.0 - into / half
+        };
+        1.0 - (1.0 - PULSE_FAINTEST) * faded
+    }
+}
+
+/// The dot of a connecting tab, in the warning colour of the tree's state dots, pulsing as
+/// the C# tab's unless `pulses` is off. Drawn anew on its own, without the strip being
+/// built again.
+struct PulseDot {
+    side: f32,
+    pulses: bool,
+}
+
+impl<M> Widget<M, Theme, iced::Renderer> for PulseDot {
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(self.side), Length::Fixed(self.side))
+    }
+
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<Pulse>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(Pulse::default())
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut Tree,
+        _renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::atomic(limits, self.side, self.side)
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        _layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        _renderer: &iced::Renderer,
+        _clipboard: &mut dyn Clipboard,
+        shell: &mut WidgetShell<'_, M>,
+        _viewport: &Rectangle,
+    ) {
+        if let Event::Window(window::Event::RedrawRequested(now)) = event
+            && let Some(next) = tree
+                .state
+                .downcast_mut::<Pulse>()
+                .observe(*now, self.pulses)
+        {
+            shell.request_redraw_at(next);
+        }
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        _style: &renderer::Style,
+        layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+    ) {
+        let opacity = tree.state.downcast_ref::<Pulse>().opacity();
+        <iced::Renderer as renderer::Renderer>::fill_quad(
+            renderer,
+            renderer::Quad {
+                bounds: layout.bounds(),
+                border: iced::Border {
+                    radius: (self.side / 2.0).into(),
+                    ..iced::Border::default()
+                },
+                ..renderer::Quad::default()
+            },
+            theme
+                .extended_palette()
+                .warning
+                .base
+                .color
+                .scale_alpha(opacity),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use heimdall_app::{ProfileKind, ProfileSummary, SessionState};
+    use heimdall_core::profile::ProfileId;
+
+    use super::{
+        PULSE_FAINTEST, PULSE_FRAME, PULSE_HALF, Pulse, StateMark, close_label, state_mark,
+        state_words, tooltip_lines,
+    };
+
+    fn summary(
+        kind: ProfileKind,
+        endpoint: Option<(&str, u16)>,
+        user: Option<&str>,
+        folder: Option<&str>,
+    ) -> ProfileSummary {
+        ProfileSummary {
+            id: ProfileId::new("web"),
+            name: "web-prod-01".to_owned(),
+            group: folder.map(str::to_owned),
+            kind,
+            endpoint: endpoint.map(|(host, port)| (host.to_owned(), port)),
+            username: user.map(str::to_owned),
+            gateway: None,
+            favorite: false,
+            metadata: heimdall_core::metadata::ProfileMetadata::default(),
+        }
+    }
+
+    fn opaque(pulse: &Pulse) -> bool {
+        (pulse.opacity() - 1.0).abs() < 1e-3
+    }
+
+    #[test]
+    fn each_state_that_needs_a_look_has_its_own_mark_and_a_connected_one_none() {
+        assert_eq!(
+            state_mark(SessionState::Connected),
+            None,
+            "healthy tabs stay quiet"
+        );
+        assert_eq!(state_mark(SessionState::Connecting), Some(StateMark::Pulse));
+        assert_eq!(
+            state_mark(SessionState::Reconnecting),
+            Some(StateMark::Pulse)
+        );
+        assert_eq!(state_mark(SessionState::Ended), Some(StateMark::Ring));
+        assert_eq!(state_mark(SessionState::Failed), Some(StateMark::Warning));
+    }
+
+    #[test]
+    fn the_tooltip_says_where_an_ssh_tab_goes_as_whom_and_from_which_folder() {
+        let profile = summary(
+            ProfileKind::Ssh,
+            Some(("web01.lab", 22)),
+            Some("admin"),
+            Some("Prod/Web"),
+        );
+        assert_eq!(
+            tooltip_lines("web-prod-01".to_owned(), Some(&profile), None),
+            [
+                "web-prod-01",
+                "web01.lab:22 (SSH)",
+                "User: admin",
+                "Folder: Prod/Web",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_tooltip_leaves_out_what_a_profile_does_not_have() {
+        // Telnet takes no account; a profile filed nowhere has no folder.
+        let telnet = summary(ProfileKind::Telnet, Some(("switch.lab", 23)), None, None);
+        assert_eq!(
+            tooltip_lines("switch".to_owned(), Some(&telnet), None),
+            ["switch", "switch.lab:23 (Telnet)"]
+        );
+        let rdp = summary(ProfileKind::Rdp, Some(("dc01", 3389)), Some("  "), Some(""));
+        assert_eq!(
+            tooltip_lines("dc01".to_owned(), Some(&rdp), None),
+            ["dc01", "dc01:3389 (RDP)"]
+        );
+        // A local program reaches no server: no endpoint, so no protocol either, as the C#
+        // composer.
+        let local = summary(ProfileKind::Local, None, None, Some("Tools"));
+        assert_eq!(
+            tooltip_lines("cmd".to_owned(), Some(&local), None),
+            ["cmd", "Folder: Tools"]
+        );
+        // A tab with no saved profile behind it: its title, and its state.
+        assert_eq!(
+            tooltip_lines(
+                "shell".to_owned(),
+                None,
+                state_words(SessionState::Connecting, None)
+            ),
+            ["shell", "State: Connecting..."]
+        );
+    }
+
+    #[test]
+    fn the_tooltip_says_the_state_of_a_tab_that_needs_a_look_and_why_it_failed() {
+        let profile = summary(ProfileKind::Vnc, Some(("vnc.lab", 5900)), None, None);
+        let said = |state, reason: Option<&str>| {
+            tooltip_lines(
+                "vnc".to_owned(),
+                Some(&profile),
+                state_words(state, reason.map(str::to_owned)),
+            )
+            .last()
+            .cloned()
+        };
+        assert_eq!(
+            said(SessionState::Connected, None).as_deref(),
+            Some("vnc.lab:5900 (VNC)"),
+            "a connected tab says no state"
+        );
+        assert_eq!(
+            said(SessionState::Connecting, None).as_deref(),
+            Some("State: Connecting...")
+        );
+        assert_eq!(
+            said(SessionState::Reconnecting, None).as_deref(),
+            Some("State: Reconnecting...")
+        );
+        assert_eq!(
+            said(SessionState::Ended, None).as_deref(),
+            Some("State: Disconnected")
+        );
+        assert_eq!(
+            said(SessionState::Failed, Some("Connection refused")).as_deref(),
+            Some("State: Connection refused"),
+            "the reason as the pane's card says it"
+        );
+        assert_eq!(
+            said(SessionState::Failed, None).as_deref(),
+            Some("State: Error")
+        );
+    }
+
+    #[test]
+    fn the_close_button_names_the_tab_it_closes() {
+        assert_eq!(close_label("web-prod-01"), "Close web-prod-01");
+    }
+
+    #[test]
+    fn the_dot_fades_and_comes_back_as_the_csharp_storyboard() {
+        let start = Instant::now();
+        let mut pulse = Pulse::default();
+        assert!(opaque(&pulse), "opaque before its first frame");
+        assert_eq!(
+            pulse.observe(start, true),
+            Some(start + PULSE_FRAME),
+            "the next frame asked for"
+        );
+        assert!(opaque(&pulse));
+        pulse.observe(start + PULSE_HALF / 2, true);
+        assert!((pulse.opacity() - f32::midpoint(1.0, PULSE_FAINTEST)).abs() < 1e-3);
+        pulse.observe(start + PULSE_HALF, true);
+        assert!(
+            (pulse.opacity() - PULSE_FAINTEST).abs() < 1e-3,
+            "faintest after half a pulse"
+        );
+        pulse.observe(start + PULSE_HALF * 2, true);
+        assert!(opaque(&pulse), "opaque again after a whole one");
+    }
+
+    #[test]
+    fn reduced_motion_holds_the_dot_still_and_opaque_asking_no_frame() {
+        let start = Instant::now();
+        let mut pulse = Pulse::default();
+        pulse.observe(start, true);
+        pulse.observe(start + PULSE_HALF, true);
+        assert!(!opaque(&pulse), "pulsing");
+        let still = start + PULSE_HALF + Duration::from_millis(1);
+        assert_eq!(pulse.observe(still, false), None, "no frame asked for");
+        assert!(opaque(&pulse));
+        assert_eq!(pulse.observe(still + PULSE_HALF, false), None);
+        assert!(opaque(&pulse), "still opaque half a pulse later");
+    }
 }
