@@ -151,6 +151,7 @@ mod updates;
 mod vault;
 mod vault_hello;
 mod vnc_tab;
+mod web_launch;
 mod winrm_tab;
 
 use crate::transcript::{Transcript, TranscriptLines};
@@ -357,6 +358,18 @@ pub enum Message {
         pid: u32,
         /// What it came to.
         result: crate::citrix_terminate::TerminateResult,
+    },
+    /// Open a saved web console in the system's browser, through a tunnel of its gateway
+    /// when it names one: no tab.
+    OpenWeb(ProfileId),
+    /// A web console was handed to the browser, or why not.
+    WebOpened {
+        /// The profile's name.
+        name: String,
+        /// The local port of the tunnel it went through, when it did.
+        through: Option<u16>,
+        /// Handed over, or why not.
+        result: Result<(), crate::web_console::WebRefusal>,
     },
     /// An RDP profile was opened in Remote Desktop Connection, or why not.
     RdpExternalLaunched {
@@ -968,6 +981,8 @@ impl fmt::Debug for Message {
             Self::CitrixTerminated { tab, pid, result } => {
                 write!(f, "CitrixTerminated({}, {pid}, {result:?})", tab.value())
             }
+            Self::OpenWeb(id) => write!(f, "OpenWeb({id})"),
+            Self::WebOpened { result, .. } => write!(f, "WebOpened({})", result.is_ok()),
             Self::RdpExternalLaunched { result, .. } => {
                 write!(f, "RdpExternalLaunched({})", result.is_ok())
             }
@@ -1347,6 +1362,16 @@ pub enum Effect {
     WriteFileList(Vec<PathBuf>),
     /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
     OpenUrl(String),
+    /// Open a web console's address in the system's browser, off the UI thread, and say how
+    /// it went as [`Message::WebOpened`].
+    OpenWebConsole {
+        /// The profile's name.
+        name: String,
+        /// The address, built and checked by [`crate::web_console`].
+        url: String,
+        /// The local port of the tunnel it goes through, when it does.
+        through: Option<u16>,
+    },
     /// Ask GitHub for the latest release, off the UI thread, and say what it found as
     /// [`UpdateMessage::Checked`].
     CheckForUpdate,
@@ -1896,6 +1921,7 @@ impl fmt::Debug for Effect {
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
+            Self::OpenWebConsole { through, .. } => write!(f, "OpenWebConsole({through:?})"),
             Self::CheckForUpdate => f.write_str("CheckForUpdate"),
             Self::CheckVaultHello => f.write_str("CheckVaultHello"),
             // Never the data key.
@@ -3654,6 +3680,8 @@ impl App {
             | Message::OpenWinRm(_)
             | Message::OpenCitrix(_)
             | Message::CitrixLaunched { .. }
+            | Message::OpenWeb(_)
+            | Message::WebOpened { .. }
             | Message::RdpExternalLaunched { .. }
             | Message::MstscRoute { .. }
             | Message::PuttyHostKey { .. }
@@ -3993,6 +4021,12 @@ impl App {
             Message::CitrixLaunched { tab, name, result } => {
                 self.citrix_launched(tab, &name, result)
             }
+            Message::OpenWeb(id) => self.open_web(&id),
+            Message::WebOpened {
+                name,
+                through,
+                result,
+            } => self.web_opened(name, through, result),
             Message::RdpExternalLaunched {
                 name,
                 gateway,

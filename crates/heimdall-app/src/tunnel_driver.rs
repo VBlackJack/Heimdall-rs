@@ -51,6 +51,8 @@ pub struct TunnelRequest {
     pub remote_port: u16,
     /// The port of this computer's loopback address to listen on.
     pub local_port: u16,
+    /// The loopback address to listen on: `127.0.0.1`, or a web console's own.
+    pub bind: std::net::Ipv4Addr,
     /// SSH options for the route.
     pub ssh: ConnectOptions,
     /// Stops the attempt, then closes the tunnel.
@@ -97,13 +99,32 @@ async fn run(
         // The tunnel's own end is a gateway: a refusal there is said as one.
         Err(error) => return report_failure(at_gateway(error, true), &route, &target).await,
     };
-    let listening = local_forward::start_on(
+    let mut listening = local_forward::start_at(
         Arc::clone(&gateway),
         request.remote_host.clone(),
         request.remote_port,
+        request.bind,
         Some(request.local_port),
     )
     .await;
+    // A system with no loopback address but 127.0.0.1 (macOS): the console shares that one
+    // with the others, which the browser then gives the same cookies.
+    if let Err(error) = &listening
+        && error.kind() == std::io::ErrorKind::AddrNotAvailable
+        && request.bind != std::net::Ipv4Addr::LOCALHOST
+    {
+        log::warn!(
+            "the tunnel to {target} could not listen on {}: {error}; on 127.0.0.1 instead",
+            request.bind
+        );
+        listening = local_forward::start_on(
+            Arc::clone(&gateway),
+            request.remote_host.clone(),
+            request.remote_port,
+            Some(request.local_port),
+        )
+        .await;
+    }
     let forward = match listening {
         Ok(forward) => forward,
         Err(error) => {

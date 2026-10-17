@@ -247,6 +247,7 @@ impl App {
             ProfileKind::Vnc => Target::Vnc,
             ProfileKind::Ftp => Target::Ftp,
             ProfileKind::Citrix => Target::Citrix,
+            ProfileKind::Web => Target::Web,
             ProfileKind::Local => Target::Local,
         };
         scheduled::refusal(target, self.settings.sftp_browser.enabled)

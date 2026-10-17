@@ -65,8 +65,8 @@ pub enum BulkRefusal {
 }
 
 impl App {
-    /// How many of `ids` can go through a gateway: SSH, SFTP, RDP and `WinRM`, the count the
-    /// C# "Set gateway..." entry acts on.
+    /// How many of `ids` can go through a gateway: SSH, SFTP, RDP, `WinRM` and web consoles,
+    /// the count the C# "Set gateway..." entry acts on (`ProtocolCapabilities.cs:28-34`).
     #[must_use]
     pub fn gateway_targets(&self, ids: &[ProfileId]) -> usize {
         ids.iter()
@@ -74,7 +74,11 @@ impl App {
             .filter(|profile| {
                 matches!(
                     profile.kind,
-                    ProfileKind::Ssh | ProfileKind::Sftp | ProfileKind::Rdp | ProfileKind::WinRm
+                    ProfileKind::Ssh
+                        | ProfileKind::Sftp
+                        | ProfileKind::Rdp
+                        | ProfileKind::WinRm
+                        | ProfileKind::Web
                 )
             })
             .count()

@@ -170,6 +170,8 @@ impl App {
             ProfileDraft::from_ftp(profile)
         } else if let Some(profile) = self.store.citrix_profiles().iter().find(|p| p.id == *id) {
             ProfileDraft::from_citrix(profile)
+        } else if let Some(profile) = self.store.web_profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_web(profile)
         } else {
             return;
         };
@@ -211,6 +213,7 @@ impl App {
 
     /// Saves the form, with `password` and `passphrase` typed into it, or puts it back with
     /// what to fix.
+    #[expect(clippy::too_many_lines, reason = "one store call per protocol")]
     pub(super) fn save_profile(
         &mut self,
         draft: Box<ProfileDraft>,
@@ -279,6 +282,7 @@ impl App {
                 DraftProfile::Telnet(profile) => store.merge_telnet([profile]),
                 DraftProfile::Ftp(profile) => store.merge_ftp([profile]),
                 DraftProfile::Citrix(profile) => store.merge_citrix([profile]),
+                DraftProfile::Web(profile) => store.merge_web([profile]),
                 // Written in the form: approved by the one who wrote it, the program as it is
                 // found now, as the C# dialog confirms it when it saves. A program found
                 // nowhere is saved unapproved; opening it says why it cannot run.
@@ -376,6 +380,7 @@ fn saved_id(profile: &DraftProfile) -> &ProfileId {
         DraftProfile::Local(profile) => &profile.id,
         DraftProfile::Ftp(profile) => &profile.id,
         DraftProfile::Citrix(profile) => &profile.id,
+        DraftProfile::Web(profile) => &profile.id,
     }
 }
 
@@ -412,6 +417,10 @@ fn password_endpoint(profile: &DraftProfile) -> Option<Endpoint> {
         }),
         // The current Windows identity has none: only an account's is saved.
         DraftProfile::WinRm(profile) => winrm::password_endpoint(profile),
-        DraftProfile::Telnet(_) | DraftProfile::Local(_) | DraftProfile::Citrix(_) => None,
+        // The browser asks a web console's password itself: none is saved.
+        DraftProfile::Telnet(_)
+        | DraftProfile::Local(_)
+        | DraftProfile::Citrix(_)
+        | DraftProfile::Web(_) => None,
     }
 }

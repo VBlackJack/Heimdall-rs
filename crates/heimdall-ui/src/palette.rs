@@ -104,6 +104,7 @@ const fn kind_badge(kind: ProfileKind) -> &'static str {
         ProfileKind::Vnc => "VNC",
         ProfileKind::Telnet => "TEL",
         ProfileKind::Citrix => "CTX",
+        ProfileKind::Web => "WEB",
         ProfileKind::Local => "SH",
     }
 }

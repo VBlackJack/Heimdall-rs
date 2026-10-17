@@ -348,12 +348,37 @@ impl App {
     }
 
     /// The local ports of the tunnels open or being opened: a new one may take none of them.
+    /// A web console's tunnel, on a port the system picks, holds the one it listens on.
     #[must_use]
     pub fn tunnel_ports(&self) -> Vec<u16> {
         self.tunnel_runs
             .iter()
-            .map(|run| run.spec.local_port)
+            .map(|run| {
+                self.tunnel(run.id)
+                    .map_or(run.spec.local_port, |tunnel| tunnel.local.port())
+            })
+            .filter(|port| *port != crate::tunnel::SYSTEM_PICKED_PORT)
             .collect()
+    }
+
+    /// The open tunnel of the console `wanted` asks for, if one listens.
+    pub(super) fn web_tunnel(&self, wanted: &TunnelSpec) -> Option<&Tunnel> {
+        self.tunnels
+            .iter()
+            .find(|tunnel| !tunnel.interrupted && serves_same_console(&tunnel.spec, wanted))
+    }
+
+    /// Whether the tunnel of the console `wanted` asks for is being opened, or waits on its
+    /// gateway's key being trusted.
+    pub(super) fn web_tunnel_opening(&self, wanted: &TunnelSpec) -> bool {
+        let opening = self
+            .tunnel_runs
+            .iter()
+            .any(|run| self.tunnel(run.id).is_none() && serves_same_console(&run.spec, wanted));
+        let asking = self.pending_tunnel_key.as_ref().is_some_and(|pending| {
+            matches!(&pending.then, KeyFor::Tunnel(spec) if serves_same_console(spec, wanted))
+        });
+        opening || asking
     }
 
     /// Confirms the tunnel dialog open: "Open tunnel", or trusting the gateway's key.
@@ -371,7 +396,7 @@ impl App {
     }
 
     /// Starts the attempt of a tunnel `spec` asks for.
-    fn open_tunnel(&mut self, spec: TunnelSpec) -> Vec<Effect> {
+    pub(super) fn open_tunnel(&mut self, spec: TunnelSpec) -> Vec<Effect> {
         let route = match self.store.route(Some(&spec.gateway)) {
             Ok(route) => route,
             Err(error) => {
@@ -396,6 +421,10 @@ impl App {
             remote_host: spec.remote_host.clone(),
             remote_port: spec.remote_port,
             local_port: spec.local_port,
+            bind: spec
+                .browse
+                .as_ref()
+                .map_or(std::net::Ipv4Addr::LOCALHOST, |browse| browse.loopback),
             ssh: self.ssh_options(),
             cancel: cancel.clone(),
         };
@@ -488,8 +517,13 @@ impl App {
                     host: tunnel.spec.remote_host.clone(),
                     remote_port: tunnel.spec.remote_port,
                 });
+                let browse = tunnel.spec.browse.clone();
                 self.tunnels.push(tunnel);
-                Vec::new()
+                // A web console's tunnel: the browser is pointed at it now that it listens.
+                match browse {
+                    Some(browse) => self.browse_tunnel(&browse, local),
+                    None => Vec::new(),
+                }
             }
             TunnelEvent::Closed => {
                 // Kept and said interrupted, as the C# row: which one went stays in sight,
@@ -663,6 +697,21 @@ impl App {
         self.dialog = None;
         Some(self.tunnel_host_key_decision(super::KeyTrust::Refused))
     }
+}
+
+/// Whether tunnel `spec` serves the console `wanted` asks for: a web console's tunnel
+/// through the same gateway, to the same host and port, on the same loopback address. A
+/// tunnel of the "New tunnel" dialog never does: on `127.0.0.1`, the browser would give the
+/// console the cookies of every other one there.
+fn serves_same_console(spec: &TunnelSpec, wanted: &TunnelSpec) -> bool {
+    spec.gateway == wanted.gateway
+        && spec.remote_host == wanted.remote_host
+        && spec.remote_port == wanted.remote_port
+        && spec
+            .browse
+            .as_ref()
+            .zip(wanted.browse.as_ref())
+            .is_some_and(|(open, asked)| open.loopback == asked.loopback)
 }
 
 /// Whether the route of `tab` through its gateways is interrupted: its session failed,

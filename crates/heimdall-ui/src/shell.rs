@@ -4335,6 +4335,25 @@ impl Shell {
                 }
             })
             .discard(),
+            Effect::OpenWebConsole { name, url, through } => Task::future(async move {
+                // Starting the browser waits on the system: off the UI thread, as a link.
+                let opened =
+                    tokio::task::spawn_blocking(move || heimdall_app::external_url::open_url(&url))
+                        .await;
+                let result = match opened {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(error)) => Err(error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                if let Err(error) = &result {
+                    log::warn!("the browser did not start for a web console: {error}");
+                }
+                Message::App(AppMessage::WebOpened {
+                    name,
+                    through,
+                    result: result.map_err(heimdall_app::web_console::WebRefusal::NotStarted),
+                })
+            }),
             Effect::CheckForUpdate => Task::future(async {
                 // The system's certificates and proxy, then the request: each waits on the
                 // system or the network, off the UI thread.
@@ -9559,6 +9578,7 @@ fn protocol_name(protocol: DraftProtocol) -> String {
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-name"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-name"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-name"),
+        DraftProtocol::Web => fl!("ui-profile-protocol-web-name"),
         DraftProtocol::Ftp => fl!("ui-profile-protocol-ftp-name"),
         DraftProtocol::Citrix => fl!("ui-profile-protocol-citrix-name"),
         DraftProtocol::Local => fl!("ui-profile-protocol-local-name"),
@@ -9573,6 +9593,7 @@ fn protocol_description(protocol: DraftProtocol) -> String {
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-desc"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-desc"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-desc"),
+        DraftProtocol::Web => fl!("ui-profile-protocol-web-desc"),
         DraftProtocol::Ftp => fl!("ui-profile-protocol-ftp-desc"),
         DraftProtocol::Citrix => fl!("ui-profile-protocol-citrix-desc"),
         DraftProtocol::Local => fl!("ui-profile-protocol-local-desc"),
@@ -9642,6 +9663,7 @@ fn protocol_kind(protocol: DraftProtocol) -> heimdall_app::ProfileKind {
         DraftProtocol::WinRm => ProfileKind::WinRm,
         DraftProtocol::Vnc => ProfileKind::Vnc,
         DraftProtocol::Telnet => ProfileKind::Telnet,
+        DraftProtocol::Web => ProfileKind::Web,
         DraftProtocol::Ftp => ProfileKind::Ftp,
         DraftProtocol::Citrix => ProfileKind::Citrix,
         DraftProtocol::Local => ProfileKind::Local,
@@ -9682,6 +9704,7 @@ fn labelled_field(
                 DraftProtocol::WinRm => fl!("ui-profile-port-winrm"),
                 DraftProtocol::Vnc => fl!("ui-profile-port-vnc"),
                 DraftProtocol::Ftp => fl!("ui-profile-port-ftp"),
+                DraftProtocol::Web => fl!("ui-profile-port-web"),
                 // Not shown: a local shell and a Citrix application have no port.
                 DraftProtocol::Telnet | DraftProtocol::Local | DraftProtocol::Citrix => {
                     fl!("ui-profile-port-telnet")
@@ -9692,6 +9715,10 @@ fn labelled_field(
         ProfileField::StoreFrontUrl => (fl!("ui-profile-field-storefront-url"), String::new()),
         ProfileField::AppName => (fl!("ui-profile-field-app-name"), String::new()),
         ProfileField::IcaFile => (fl!("ui-profile-field-ica-file"), String::new()),
+        ProfileField::WebPath => (
+            fl!("ui-profile-field-web-path"),
+            fl!("ui-profile-web-path-placeholder"),
+        ),
         ProfileField::Username => (
             fl!("ui-profile-field-username"),
             match draft.protocol {
@@ -9862,6 +9889,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
         ProfileToggle::Seamless => fl!("ui-profile-toggle-seamless"),
         ProfileToggle::Sso => fl!("ui-profile-toggle-sso"),
+        ProfileToggle::PlainHttp => fl!("ui-profile-web-use-http"),
         ProfileToggle::Favorite => fl!("ui-profile-toggle-favorite"),
         ProfileToggle::RunAsAdministrator => fl!("ui-profile-local-run-as-admin"),
         ProfileToggle::AutoTunnelPort => fl!("ui-profile-tunnel-port-auto-toggle"),
@@ -10048,6 +10076,11 @@ fn network_section<'a>(
                     .style(text::warning),
             );
         }
+    }
+    // Said where the tunnel port card is for the others: a web console's tunnel takes a
+    // port the system picks, and the browser names it rather than the console.
+    if draft.protocol == DraftProtocol::Web && draft.routed_gateway().is_some() {
+        section_column = section_column.push(crate::web_form::gateway_hint());
     }
     if draft.shows(ProfileField::LocalTunnelPort) {
         section_column = tunnel_port_card(draft, section_column);
@@ -10482,6 +10515,10 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             fl!("ui-profile-credentials-ftp"),
             Some(fl!("ui-profile-credentials-ftp-desc")),
         )),
+        DraftProtocol::Web => Some((
+            fl!("ui-profile-credentials-web"),
+            Some(fl!("ui-profile-credentials-web-desc")),
+        )),
         DraftProtocol::Telnet | DraftProtocol::Local | DraftProtocol::Citrix => None,
     };
     if let Some((title, description)) = credentials {
@@ -10605,7 +10642,10 @@ fn protocol_options<'a>(
             fl!("ui-profile-options-ssh-desc"),
         )),
         // Their own cards' titles.
-        DraftProtocol::WinRm | DraftProtocol::Local | DraftProtocol::Citrix => None,
+        DraftProtocol::WinRm
+        | DraftProtocol::Local
+        | DraftProtocol::Citrix
+        | DraftProtocol::Web => None,
     };
     if let Some((options, description)) = options {
         form = form.push(section(options, Some(description)));
@@ -10648,6 +10688,9 @@ fn protocol_options<'a>(
             form_field(draft, field)
         }));
     }
+    if draft.protocol == DraftProtocol::Web {
+        form = form.push(crate::web_form::opening(draft));
+    }
     if draft.protocol == DraftProtocol::Ssh {
         form = form.push(ssh_mode_choice(draft));
     }
@@ -10656,6 +10699,7 @@ fn protocol_options<'a>(
         // Info tab's, the WinRM transport the General tab's.
         let drawn_elsewhere = *toggle == ProfileToggle::StoredCredential
             || *toggle == ProfileToggle::Favorite
+            || *toggle == ProfileToggle::PlainHttp
             || (draft.protocol == DraftProtocol::WinRm && WINRM_TRANSPORT.contains(toggle))
             || (draft.protocol == DraftProtocol::Rdp && crate::rdp_options::draws(*toggle));
         if !drawn_elsewhere && draft.shows_toggle(*toggle) {
@@ -10891,6 +10935,11 @@ fn general_tab<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Mes
     let mut tab = column![basics].spacing(SECTION_GAP);
     if draft.protocol == DraftProtocol::Citrix {
         tab = tab.push(crate::citrix_form::basics(|field| form_field(draft, field)));
+    }
+    if draft.protocol == DraftProtocol::Web {
+        tab = tab.push(crate::web_form::address(draft, |field| {
+            form_field(draft, field)
+        }));
     }
     if draft.protocol == DraftProtocol::Local {
         tab = tab.push(crate::local_form::basics(draft, |field| {

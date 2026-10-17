@@ -611,6 +611,15 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             notice @ (Notice::RdpExternalLaunched { .. }
             | Notice::RdpExternalLaunchedThrough { .. }
             | Notice::RdpExternalRefused(_)) => rdp_external_notice(notice),
+            Notice::WebOpened(name) => fl!("ui-status-web-opened", name = server_text(name)),
+            // The browser names the tunnel, not the console: said, as the C# SOCKS route
+            // had no such effect to warn of.
+            Notice::WebOpenedThrough { name, port } => fl!(
+                "ui-status-web-opened-through",
+                name = server_text(name),
+                port = port.to_string()
+            ),
+            Notice::WebRefused(refusal) => crate::texts::web_refusal(refusal),
             notice @ (Notice::PuttyLaunched(_)
             | Notice::PuttyLaunchedThrough { .. }
             | Notice::PuttyRefused(_)
@@ -820,6 +829,7 @@ mod tests {
             RefusalKind::ExternalClient,
             RefusalKind::RdGateway,
             RefusalKind::Citrix,
+            RefusalKind::WebConsole,
             RefusalKind::WinRmNoAccount,
             RefusalKind::WinRmPasswordNotStored,
             RefusalKind::X11Forwarding,

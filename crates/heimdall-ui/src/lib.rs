@@ -106,6 +106,7 @@ mod tree_row;
 pub mod tree_view;
 pub mod trusted_keys_view;
 pub mod tunnels_view;
+pub mod web_form;
 pub mod xt_scancode;
 
 use heimdall_core::paths;

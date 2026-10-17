@@ -25,7 +25,7 @@ use heimdall_core::post_connect::{OnFailure, PostConnect, PostConnectStep};
 use heimdall_core::profile::{
     AudioPlayback, CitrixProfile, ColorDepth, Forwards, FtpProfile, LocalArguments, LocalCommand,
     LocalProfile, ProfileId, RdpDefaults, RdpOptions, RdpProfile, Resolution, SshGateway,
-    SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    SshProfile, TelnetProfile, VncProfile, WebProfile, WinRmProfile,
 };
 use heimdall_core::store::ProfileStore;
 
@@ -213,6 +213,20 @@ fn local(arguments: LocalArguments) -> LocalProfile {
     }
 }
 
+fn web() -> WebProfile {
+    WebProfile {
+        id: ProfileId::new("console"),
+        name: "iLO".to_owned(),
+        group: Some("BMC".to_owned()),
+        host: "ilo.lab".to_owned(),
+        port: 8443,
+        use_http: true,
+        path: Some("/login.html".to_owned()),
+        username: Some("admin".to_owned()),
+        gateway: Some(ProfileId::new("edge")),
+    }
+}
+
 fn store(dir: &std::path::Path) -> ProfileStore {
     let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
     store.merge_gateways(gateways());
@@ -261,6 +275,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         seamless: false,
         sso: true,
     }]);
+    store.merge_web([web()]);
     store.merge_local([local(LocalArguments::WindowsLine(
         r#"/c "echo hi""#.to_owned(),
     ))]);
@@ -346,6 +361,7 @@ fn every_profile_comes_back_the_same_through_the_import() {
     );
     assert_eq!(report.local, store.local_profiles());
     assert_eq!(report.winrm, store.winrm_profiles());
+    assert_eq!(report.web, store.web_profiles());
     let kept: Vec<_> = report
         .metadata
         .iter()
@@ -355,7 +371,7 @@ fn every_profile_comes_back_the_same_through_the_import() {
     for (id, metadata) in kept {
         assert_eq!(store.metadata(&id), metadata, "{id}");
     }
-    assert_eq!(export::session_count(&store), 11);
+    assert_eq!(export::session_count(&store), 12);
 }
 
 /// A Windows line as written; a list, which this test does not quote, marked.
@@ -428,6 +444,7 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
         ("mail", "Citrix"),
         ("tool", "Local"),
         ("ps", "WINRM"),
+        ("console", "WEB"),
     ]
     .into();
     for (id, kind) in kinds {
@@ -463,6 +480,13 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
         mail.get("citrixLaunchCommandLine").is_none(),
         "the Workspace cache launch line is a secret"
     );
+    let console = by_id("console");
+    assert_eq!(console["remoteServer"], "ilo.lab");
+    assert_eq!(console["webPort"], 8443);
+    assert_eq!(console["webUseHttp"], true);
+    assert_eq!(console["webPath"], "/login.html");
+    assert_eq!(console["webUsername"], "admin");
+    assert_eq!(console["sshGatewayId"], "edge");
     assert_eq!(by_id("web")["sshMode"], "External");
     assert_eq!(by_id("web")["sshX11Forwarding"], true);
     assert!(

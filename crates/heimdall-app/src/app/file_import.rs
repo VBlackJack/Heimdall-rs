@@ -266,6 +266,7 @@ impl App {
             let winrm = store.merge_winrm(report.winrm);
             let ftp = store.merge_ftp(report.ftp);
             let citrix = store.merge_citrix(report.citrix);
+            let web = store.merge_web(report.web);
             // Counted on their own line, as the C# summary counts them.
             store.merge_gateways(report.gateways);
             for id in &report.favorites {
@@ -278,7 +279,7 @@ impl App {
             for (path, color) in &report.folder_colors {
                 let _ = store.set_folder_color(path, Some(*color));
             }
-            [ssh, rdp, telnet, vnc, local, winrm, ftp, citrix]
+            [ssh, rdp, telnet, vnc, local, winrm, ftp, citrix, web]
                 .into_iter()
                 .fold(MergeReport::default(), |total, one| MergeReport {
                     added: total.added + one.added,
@@ -324,6 +325,7 @@ fn report_count(report: &ImportReport) -> usize {
         + report.winrm.len()
         + report.ftp.len()
         + report.citrix.len()
+        + report.web.len()
 }
 
 /// As the C#: nothing to import is said, with why when the file says it.

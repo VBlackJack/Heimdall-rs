@@ -72,6 +72,7 @@ impl ProfileTab {
             | ProfileField::Port
             | ProfileField::StoreFrontUrl
             | ProfileField::AppName
+            | ProfileField::WebPath
             | ProfileField::Username
             | ProfileField::Domain
             | ProfileField::KeyPath

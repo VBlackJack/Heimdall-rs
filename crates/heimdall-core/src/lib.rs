@@ -47,6 +47,7 @@ pub mod split_layouts;
 pub mod store;
 pub mod tools;
 pub mod utc;
+pub mod web;
 pub mod window_state;
 pub mod winrm;
 pub mod winrm_diagnostic;
