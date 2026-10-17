@@ -17,7 +17,8 @@
 //! The tree's filters, as the C# sidebar's filter button offers them: protocols, connected,
 //! through a gateway, favorites; every one chosen must hold, as the C# `ServerFilterSpec` combines them.
 //! Showing the gateway badge is a view choice beside them, not a filter: kept in the
-//! settings across runs, as the C# `ShowGatewayBadge`, where the filters are not.
+//! settings across runs, as the C# `ShowGatewayBadge`, where the filters are not. So is
+//! showing the properties panel under the tree, as the C# `ShowSessionPropertiesPanel`.
 
 use super::tree::{ProfileKind, ProfileSummary};
 use super::{App, Dialog, SessionState};
@@ -48,7 +49,9 @@ pub enum FilterMessage {
     Favorites,
     /// The gateway badge shown, or hidden, and kept so in the settings.
     GatewayBadge,
-    /// Every filter off, as the C# "Reset filters"; the badge choice stays.
+    /// The properties panel under the tree shown, or hidden, and kept so in the settings.
+    PropertiesPanel,
+    /// Every filter off, as the C# "Reset filters"; the view choices stay.
     Reset,
 }
 
@@ -103,8 +106,8 @@ impl TreeFilter {
             FilterMessage::Connected => self.connected = !self.connected,
             FilterMessage::Gateway => self.gateway = !self.gateway,
             FilterMessage::Favorites => self.favorites = !self.favorites,
-            // The settings', not a filter: see `App::filter_message`.
-            FilterMessage::GatewayBadge => {}
+            // The settings', not filters: see `App::filter_message`.
+            FilterMessage::GatewayBadge | FilterMessage::PropertiesPanel => {}
             FilterMessage::Reset => *self = Self::default(),
         }
     }
@@ -124,11 +127,33 @@ impl App {
         self.settings.show_gateway_badge
     }
 
+    /// Whether the properties panel is docked under the tree, as the settings keep it.
+    #[must_use]
+    pub fn shows_properties_panel(&self) -> bool {
+        self.settings.show_properties_panel
+    }
+
+    /// The properties panel shown when `shown`, hidden otherwise, saved at once as the C#
+    /// saves `ShowSessionPropertiesPanel`; a choice that cannot be saved is said and not
+    /// made. Nothing is written when it is already so.
+    pub fn show_properties_panel(&mut self, shown: bool) {
+        if self.settings.show_properties_panel == shown {
+            return;
+        }
+        self.settings.show_properties_panel = shown;
+        if let Err(error) = self.settings.save(&self.settings_file) {
+            self.settings.show_properties_panel = !shown;
+            self.dialog = Some(Dialog::save_failed(&error));
+        }
+    }
+
     pub(super) fn filter_message(&mut self, message: FilterMessage) {
-        if message == FilterMessage::GatewayBadge {
-            self.toggle_gateway_badge();
-        } else {
-            self.tree_filter.apply(message);
+        match message {
+            FilterMessage::GatewayBadge => self.toggle_gateway_badge(),
+            FilterMessage::PropertiesPanel => {
+                self.show_properties_panel(!self.settings.show_properties_panel);
+            }
+            _ => self.tree_filter.apply(message),
         }
     }
 

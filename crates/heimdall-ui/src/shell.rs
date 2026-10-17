@@ -268,12 +268,21 @@ const VEIL_ALPHA: f32 = 0.7;
 const SETTINGS_WIDTH: f32 = 900.0;
 
 /// Window events and the window's shortcuts.
-/// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N.
+/// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N,
+/// Ctrl+Shift+B.
 fn tree_shortcut(
     key: &keyboard::Key,
     physical: keyboard::key::Physical,
     modifiers: keyboard::Modifiers,
 ) -> Option<TreeShortcut> {
+    // As the C# `RegisterPropertiesPanelShortcut`: left to a terminal that takes it.
+    if modifiers.control()
+        && modifiers.shift()
+        && !modifiers.alt()
+        && crate::terminal_view::keys::letter(key, physical) == Some('b')
+    {
+        return Some(TreeShortcut::PropertiesPanel);
+    }
     match ctrl_letter(key, physical, modifiers)? {
         'e' => Some(TreeShortcut::Edit),
         'n' => Some(TreeShortcut::New),
@@ -469,6 +478,37 @@ fn sidebar_drag_event(
     }
 }
 
+/// While the splitter above the properties panel is held: where the pointer is, and its
+/// release.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the signature `event::listen_with` takes"
+)]
+fn properties_drag_event(
+    event: iced::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+            Some(Message::PropertiesDragged(position.y))
+        }
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+            Some(Message::PropertiesDragEnd)
+        }
+        _ => None,
+    }
+}
+
+/// A drag of the splitter above the properties panel: the height it started from, the room
+/// the panel shares with the tree, and where the pointer was first seen, once it moved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PropertiesDrag {
+    start: f32,
+    available: f32,
+    anchor: Option<f32>,
+}
+
 /// Whether `physical` with `modifiers` toggles the window's full screen, as the C#
 /// `FullscreenShortcutRouter`: F11 alone, which a desktop keeps from its server, or
 /// Ctrl+Shift+F11, full screen over an embedded session, which neither a terminal nor a
@@ -556,7 +596,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
                 return Some(Message::FocusSearch);
             }
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
-                return Some(Message::TreeShortcut(shortcut));
+                // Held down, the panel's key would flip it, and save it, at each repeat.
+                return (!repeat || shortcut != TreeShortcut::PropertiesPanel)
+                    .then_some(Message::TreeShortcut(shortcut));
             }
             // F1 left by every widget: a terminal or a desktop keeps it for its programs.
             if physical_key == keyboard::key::Physical::Code(keyboard::key::Code::F1)
@@ -900,6 +942,18 @@ pub enum Message {
     SidebarDragged(f32),
     /// The handle is let go.
     SidebarDragEnd,
+    /// The splitter above the properties panel is pressed, the panel `height` high in a
+    /// room of `available` height it shares with the tree.
+    PropertiesDragStart {
+        /// The panel's height as drawn.
+        height: f32,
+        /// The height of the room the tree and the panel share.
+        available: f32,
+    },
+    /// The pointer moved to this y while that splitter is held.
+    PropertiesDragged(f32),
+    /// That splitter is let go.
+    PropertiesDragEnd,
     /// A divider of a split tab is dragged to this share: drawn there, not kept yet.
     SplitDragged {
         /// The split tab.
@@ -1016,6 +1070,9 @@ pub enum TreeShortcut {
     Undo,
     /// Ctrl+B: the sidebar shown or hidden, as the C# one.
     ToggleSidebar,
+    /// Ctrl+Shift+B: the properties panel under the tree shown or hidden, as the C# one;
+    /// shown, never hidden, while it cannot be seen.
+    PropertiesPanel,
 }
 
 impl fmt::Debug for Message {
@@ -1150,6 +1207,11 @@ impl fmt::Debug for Message {
             Self::WindowResized(size) => write!(f, "WindowResized({size:?})"),
             Self::SidebarDragged(x) => write!(f, "SidebarDragged({x})"),
             Self::SidebarDragEnd => f.write_str("SidebarDragEnd"),
+            Self::PropertiesDragStart { height, available } => {
+                write!(f, "PropertiesDragStart({height}, {available})")
+            }
+            Self::PropertiesDragged(y) => write!(f, "PropertiesDragged({y})"),
+            Self::PropertiesDragEnd => f.write_str("PropertiesDragEnd"),
             Self::SplitDragged {
                 host,
                 divider,
@@ -1535,6 +1597,10 @@ pub struct Shell {
     sidebar_width: f32,
     /// The handle between the sidebar and the sessions is held.
     sidebar_drag: bool,
+    /// The height of the properties panel under the tree, as dragged.
+    properties_height: f32,
+    /// The splitter above the properties panel, while it is held.
+    properties_drag: Option<PropertiesDrag>,
     /// A divider of a split tab being dragged: the tab, the divider's number, the share it
     /// is drawn at until let go.
     split_drag: Option<(TabId, usize, f32)>,
@@ -1733,6 +1799,8 @@ impl Shell {
             shell.sidebar_width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
         }
         shell.sidebar_hidden = left.sidebar_hidden;
+        shell.properties_height =
+            crate::properties_panel::kept_height(left.properties_panel_height);
         // Windows high contrast, as it is at start; looked at again while the window runs.
         shell.forced_theme =
             heimdall_app::high_contrast::system_on().then_some(AppTheme::HighContrast);
@@ -1820,6 +1888,8 @@ impl Shell {
             monitors: None,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
+            properties_height: crate::properties_panel::DEFAULT_HEIGHT,
+            properties_drag: None,
             split_drag: None,
             type_ahead: (String::new(), None),
             palette: None,
@@ -2228,6 +2298,9 @@ impl Shell {
         }
         if self.sidebar_drag {
             subscriptions.push(in_main_window(window_tagged!(sidebar_drag_event), main));
+        }
+        if self.properties_drag.is_some() {
+            subscriptions.push(in_main_window(window_tagged!(properties_drag_event), main));
         }
         if locked_out
             || self.app.tabs.iter().any(|tab| tab.retry.is_some())
@@ -2791,6 +2864,9 @@ impl Shell {
             | Message::WindowResized(_)
             | Message::SidebarDragged(_)
             | Message::SidebarDragEnd) => self.tree_input(message),
+            message @ (Message::PropertiesDragStart { .. }
+            | Message::PropertiesDragged(_)
+            | Message::PropertiesDragEnd) => self.properties_drag_message(&message),
             Message::GatewayReassignPicked { missing, to } => {
                 self.gateway_reassign.insert(missing, to);
                 Vec::new()
@@ -4629,6 +4705,7 @@ impl Shell {
         let leaving = heimdall_core::window_state::WindowState {
             sidebar_width: Some(self.sidebar_width),
             sidebar_hidden: self.sidebar_hidden,
+            properties_panel_height: Some(self.properties_height),
             folded: self.app.folded_folders(),
             selected: self
                 .app
@@ -5027,7 +5104,11 @@ impl Shell {
         } else if let TreeMenu::MoveProfile(id) = menu {
             tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
         } else if let TreeMenu::Filter = menu {
-            tree_view::filter_entries(self.app.tree_filter(), self.app.shows_gateway_badge())
+            tree_view::filter_entries(
+                self.app.tree_filter(),
+                self.app.shows_gateway_badge(),
+                self.app.shows_properties_panel(),
+            )
         } else if let TreeMenu::Selection = menu {
             let selected = self.app.selected_profiles();
             let connectable = selected
@@ -5462,27 +5543,112 @@ impl Shell {
             ]
             .push(actions)
         } else {
-            let list = self.tree_list();
-            // A right click beside the rows is the tree's own menu.
-            let tree = mouse_area(
-                container(styles::scroll(list))
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            )
-            .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
+            // The tree over the properties panel, as the C# `SidebarContentGrid`: laid out
+            // in the height the two share, so a height kept from a taller window leaves the
+            // tree its room. Laid out so whether or not the panel is shown, so showing it
+            // keeps the tree as it was, scrolled where it was.
+            let docked =
+                crate::properties_panel::is_shown(self.app.shows_properties_panel(), false);
+            let saved = self.properties_height;
+            let content = responsive(move |size| {
+                let mut content = column![self.tree_area()];
+                if docked {
+                    let height = crate::properties_panel::fit_height(saved, size.height);
+                    content = content
+                        .push(crate::properties_panel::splitter(height, size.height))
+                        .push(crate::properties_panel::view(
+                            self.properties_shown(),
+                            height,
+                        ));
+                }
+                content.into()
+            });
             column![header, self.search_box()]
                 .push(actions)
                 .push(self.filter_feedback())
-                .push(tree)
-                .push(self.no_folder_zone())
-                .push(self.selection_bar())
-                .push(self.undo_bar())
+                .push(content)
         };
         container(body.spacing(spacing::SM).padding(spacing::MD))
             .width(self.sidebar_width)
             .height(Length::Fill)
             .style(container::rounded_box)
             .into()
+    }
+
+    /// The tree and what is drawn under it: the bar a drop takes a session out of its folder
+    /// on, the selection's bar and the undo bar.
+    fn tree_area(&self) -> Element<'_, Message> {
+        let list = self.tree_list();
+        // A right click beside the rows is the tree's own menu.
+        let tree = mouse_area(
+            container(styles::scroll(list))
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
+        column![tree]
+            .push(self.no_folder_zone())
+            .push(self.selection_bar())
+            .push(self.undo_bar())
+            .spacing(spacing::SM)
+            .height(Length::Fill)
+            .into()
+    }
+
+    /// What the properties panel shows, as the C# panel follows the tree: the sessions
+    /// selected together, the session selected, the folder pressed, or nothing.
+    fn properties_shown(&self) -> crate::properties_panel::Shown {
+        use crate::properties_panel::{Shown, Subject, folder_title, subject, summary};
+        let app = &self.app;
+        let with_state = |profile: heimdall_app::ProfileSummary| {
+            let state = app.profile_state(&profile.id);
+            (profile, state)
+        };
+        match subject(
+            app.selected_profiles(),
+            app.selected_profile.as_ref(),
+            app.selected_folder.as_deref(),
+        ) {
+            Subject::Selection(ids) => Shown::Summary(summary(
+                fl!("ui-tree-selection-count", count = ids.len()),
+                None,
+                ids.iter()
+                    .filter_map(|id| app.profile_summary(id))
+                    .map(with_state),
+            )),
+            // As the C# `FindFolderOnScreen`: a folder renamed, deleted or hidden by the
+            // search is not summed up under its old name.
+            Subject::Folder(path)
+                if !app.tree_rows(&self.search).iter().any(
+                    |row| matches!(row, TreeRow::Folder { path: shown, .. } if *shown == path),
+                ) =>
+            {
+                Shown::Nothing
+            }
+            Subject::Folder(path) => {
+                let (title, shown_path) = folder_title(&path);
+                Shown::Summary(summary(
+                    title,
+                    shown_path,
+                    app.folder_profiles(&path, &self.search)
+                        .into_iter()
+                        .map(with_state),
+                ))
+            }
+            Subject::Session(id) => match app.profile_summary(&id) {
+                Some(profile) => Shown::Session {
+                    profile,
+                    saved: app.selected_credentials().cloned(),
+                    provider: app.provider_consulted(&id),
+                    reachability: app.reachability(&id).cloned(),
+                    gateway_badge: app.shows_gateway_badge(),
+                    state: app.profile_state(&id),
+                    editable: app.can_edit(&id),
+                },
+                None => Shown::Nothing,
+            },
+            Subject::Nothing => Shown::Nothing,
+        }
     }
 
     /// Under the tree while something is dragged, as the C# one: dropped there, a session
@@ -6534,6 +6700,47 @@ impl Shell {
         }
     }
 
+    /// The splitter above the properties panel pressed, dragged and let go.
+    fn properties_drag_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
+            Message::PropertiesDragStart { height, available } => {
+                self.properties_drag = Some(PropertiesDrag {
+                    start: height,
+                    available,
+                    anchor: None,
+                });
+            }
+            // The panel hidden while held: the drag ends with it.
+            Message::PropertiesDragged(_) if !self.app.shows_properties_panel() => {
+                self.properties_drag = None;
+            }
+            // The press gives no place: the first move is where the drag starts from.
+            Message::PropertiesDragged(y) => {
+                if let Some(drag) = self.properties_drag.as_mut() {
+                    match drag.anchor {
+                        None => drag.anchor = Some(y),
+                        Some(anchor) => {
+                            self.properties_height = crate::properties_panel::dragged_height(
+                                drag.start,
+                                anchor,
+                                y,
+                                drag.available,
+                            );
+                        }
+                    }
+                }
+            }
+            // Kept in whole pixels, as the C# `CommitPropertiesPanelHeight` rounds it.
+            Message::PropertiesDragEnd if self.properties_drag.is_some() => {
+                self.properties_drag = None;
+                self.properties_height =
+                    crate::properties_panel::clamp_height(self.properties_height.round());
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
     /// A press on session `id`: the start of a drag of it, or of the sessions selected with
     /// it.
     fn press_profile(&mut self, id: ProfileId) {
@@ -6637,6 +6844,7 @@ impl Shell {
                 self.open_palette(None);
                 Vec::new()
             }
+            TreeShortcut::PropertiesPanel => self.properties_shortcut(),
             TreeShortcut::Edit => match self.app.selected_profile.clone() {
                 Some(id) if self.tree_focused && self.app.can_edit(&id) => {
                     self.app.update(AppMessage::EditProfile(id))
@@ -6644,6 +6852,28 @@ impl Shell {
                 _ => Vec::new(),
             },
         }
+    }
+
+    /// Ctrl+Shift+B, as the C# one: the properties panel shown or hidden; while it cannot be
+    /// seen, behind the Tools tab or the sidebar hidden, shown with the sessions' tab and the
+    /// sidebar, since a toggle there turned it off unseen.
+    fn properties_shortcut(&mut self) -> Vec<Effect> {
+        let tools = self.app.sidebar_tab() == SidebarTab::Tools;
+        if !crate::properties_panel::shortcut_reveals(tools, self.sidebar_hidden) {
+            return self.app.update(AppMessage::Filter(
+                heimdall_app::FilterMessage::PropertiesPanel,
+            ));
+        }
+        self.app.show_properties_panel(true);
+        self.sidebar_hidden = false;
+        if tools {
+            return self
+                .app
+                .update(AppMessage::Tools(ToolsMessage::ShowSidebarTab(
+                    SidebarTab::Sessions,
+                )));
+        }
+        Vec::new()
     }
 
     /// A key of the Files tab's set pressed while the tree has the keyboard, as the C# tree
@@ -13593,6 +13823,33 @@ mod tests {
         assert!(
             routed(ctrl_b(), event::Status::Captured).is_none(),
             "tmux's prefix in a terminal stays its own"
+        );
+        // Ctrl+Shift+B, the properties panel: the C# leaves it to a terminal too.
+        let ctrl_shift_b = || {
+            pressed(
+                Key::Character("B".into()),
+                unknown,
+                Modifiers::CTRL | Modifiers::SHIFT,
+                None,
+            )
+        };
+        assert!(matches!(
+            routed(ctrl_shift_b(), event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::PropertiesPanel))
+        ));
+        assert!(routed(ctrl_shift_b(), event::Status::Captured).is_none());
+        let held = iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character("B".into()),
+            modified_key: Key::Character("B".into()),
+            physical_key: unknown,
+            location: Location::Standard,
+            modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+            text: None,
+            repeat: true,
+        });
+        assert!(
+            routed(held, event::Status::Ignored).is_none(),
+            "held down, it does not flip the panel at each repeat"
         );
         let shift_f10 = pressed(
             Key::Named(Named::F10),

@@ -192,6 +192,68 @@ fn the_gateway_badge_choice_is_kept_across_runs_as_the_csharp_setting() {
 }
 
 #[test]
+fn the_properties_panel_choice_is_kept_across_runs_and_survives_a_filter_reset() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut first = app(dir.path());
+    assert!(!first.shows_properties_panel(), "hidden, as the C# default");
+    filter(&mut first, FilterMessage::PropertiesPanel);
+    assert!(first.shows_properties_panel());
+    filter(&mut first, FilterMessage::Reset);
+    assert!(
+        first.shows_properties_panel(),
+        "a view choice, not a filter"
+    );
+    // Asked for as it already is: nothing changes.
+    first.show_properties_panel(true);
+    assert!(first.shows_properties_panel());
+    drop(first);
+    let settings = heimdall_core::settings::settings_path(&dir.path().join("profiles.toml"));
+    let text = std::fs::read_to_string(settings).expect("saved");
+    assert!(text.contains("show_properties_panel = true"), "{text}");
+
+    let mut next = app(dir.path());
+    assert!(next.shows_properties_panel(), "shown, as it was left");
+    next.show_properties_panel(false);
+    assert!(
+        !app(dir.path()).shows_properties_panel(),
+        "hidden again, kept so"
+    );
+}
+
+#[test]
+fn a_folder_holds_what_the_tree_lists_in_it_folded_or_not_its_case_its_own() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let ids = |app: &App, path: &str, search: &str| -> Vec<String> {
+        let mut ids: Vec<String> = app
+            .folder_profiles(path, search)
+            .into_iter()
+            .map(|profile| profile.id.as_str().to_owned())
+            .collect();
+        ids.sort();
+        ids
+    };
+    app.update(Message::ToggleFolder("Prod".to_owned()));
+    assert_eq!(ids(&app, "Prod", ""), ["db", "web"], "folded, still held");
+    assert!(
+        ids(&app, "prod", "").is_empty(),
+        "another folder, as the tree draws it"
+    );
+    assert_eq!(
+        ids(&app, "Prod", "web"),
+        ["web"],
+        "only what the search finds"
+    );
+    filter(&mut app, FilterMessage::Gateway);
+    assert_eq!(ids(&app, "Prod", ""), ["web"], "only what the filters pass");
+    assert!(ids(&app, "Pro", "").is_empty(), "a folder, not a prefix");
+    assert!(
+        ids(&app, heimdall_app::NO_FOLDER, "").is_empty(),
+        "every one is filed"
+    );
+}
+
+#[test]
 fn connected_lists_the_profiles_with_a_session_connected() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());

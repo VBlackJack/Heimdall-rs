@@ -960,6 +960,28 @@ fn the_gateway_badge_is_shown_until_hidden_and_an_older_file_shows_it() {
 }
 
 #[test]
+fn the_properties_panel_is_hidden_until_shown_and_an_older_file_hides_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(!settings.show_properties_panel, "as the C# default");
+    assert!(
+        !written(
+            dir.path(),
+            "version = 1
+[general]
+prevent_sleep = true
+"
+        )
+        .show_properties_panel,
+        "a file written before the choice was kept"
+    );
+    settings.show_properties_panel = true;
+    settings.save(&path).expect("save");
+    assert!(Settings::load(&path).expect("load").show_properties_panel);
+}
+
+#[test]
 fn the_diagnostics_log_is_written_unless_turned_off_as_the_csharp_default() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
@@ -1745,6 +1767,8 @@ fn reset_all_puts_every_preference_back_and_keeps_what_the_csharp_keeps() {
         // Kept: no C# Settings panel edits them.
         broadcast_scope: BroadcastScope::AllTabs,
         show_gateway_badge: false,
+        // Kept: the C# reset leaves the properties panel as it is.
+        show_properties_panel: true,
         // Reset: preferences of every tab.
         color_scheme: ColorScheme::Nord,
         session_logging: true,
@@ -1782,6 +1806,7 @@ fn reset_all_puts_every_preference_back_and_keeps_what_the_csharp_keeps() {
         last_used_gateway: before.last_used_gateway.clone(),
         broadcast_scope: before.broadcast_scope,
         show_gateway_badge: before.show_gateway_badge,
+        show_properties_panel: before.show_properties_panel,
         ..Settings::default()
     };
     assert_eq!(settings, kept);
