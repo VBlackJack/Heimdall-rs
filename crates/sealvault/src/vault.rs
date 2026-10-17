@@ -348,10 +348,45 @@ impl Vault {
         let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(io_error(dir))?;
         temp.write_all(bytes).map_err(io_error(temp.path()))?;
         temp.as_file().sync_all().map_err(io_error(temp.path()))?;
-        temp.persist(&self.path)
-            .map_err(|error| io_error(&self.path)(error.error))?;
-        Ok(())
+        rename_over(temp, &self.path).map_err(io_error(&self.path))
     }
+}
+
+/// Renames the written and synced `temp` over `target`, the temporary file removed when the
+/// rename fails.
+///
+/// Through [`fs::rename`], not `NamedTempFile::persist`: on Windows persist is a bare
+/// `MoveFileExW`, which refuses to replace a file any other program holds open (an editor, an
+/// antivirus, a backup or sync client), while std retries a refused move as a rename with
+/// POSIX semantics (`FileRenameInfoEx`), which replaces a file opened with delete sharing.
+/// The C# save does the same (`PosixFileReplace.TryReplace`), and so does the profile store
+/// (`heimdall-core`, `store::rename_over`). On Unix both are the same `rename(2)`, followed
+/// here by a sync of the folder so the new name survives a power cut.
+fn rename_over(temp: tempfile::NamedTempFile, target: &Path) -> io::Result<()> {
+    // The handle stays open until the rename is done, as persist kept it: closed earlier, an
+    // antivirus scanning the file on close could hold it without delete sharing and fail the
+    // move. Opened with every sharing flag, it never blocks the rename itself.
+    let (file, path) = temp.into_parts();
+    // Kept, the path is no longer removed on drop: the rename below moves it away, and the
+    // failure path removes it by hand. A failed keep drops it, which removes it.
+    let kept = path.keep().map_err(|error| error.error)?;
+    let renamed = fs::rename(&kept, target);
+    drop(file);
+    if renamed.is_err() {
+        // Best effort: the rename's error is the one the caller needs.
+        let _ = fs::remove_file(&kept);
+    }
+    #[cfg(unix)]
+    if renamed.is_ok() {
+        // Best effort too: the vault is already replaced, a folder that cannot be synced
+        // (some network file systems) must not report the save as failed.
+        let dir = target
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let _ = fs::File::open(dir).and_then(|dir| dir.sync_all());
+    }
+    renamed
 }
 
 /// Where the copy of the previous file goes.
