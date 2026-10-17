@@ -636,6 +636,10 @@ pub enum CopySlot {
     WifiCsv,
     /// The serialized hosts file text.
     HostsFileText,
+    /// The address of the hosts file entry selected.
+    HostsIp,
+    /// The host name of the hosts file entry selected.
+    HostsHostname,
     /// The service status dashboard CSV export.
     ServicesCsv,
     /// The log viewer's lines shown.
