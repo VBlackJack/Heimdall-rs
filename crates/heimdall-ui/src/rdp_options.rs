@@ -186,7 +186,8 @@ fn toggle_box<'a>(
 }
 
 /// The box of `switch`, out of reach while the global defaults decide it, said to be
-/// Remote Desktop Connection's; hardware acceleration said honoured by neither client yet.
+/// Remote Desktop Connection's but for compression, which the built-in client honours too;
+/// hardware acceleration said honoured by neither client yet.
 fn switch_box<'a>(draft: &ProfileDraft, switch: RdpSwitch) -> Element<'a, Message> {
     let locked = following(draft) && switch.follows_defaults();
     let tick = checkbox(switch.is_on(&draft.rdp_extras))
@@ -194,10 +195,11 @@ fn switch_box<'a>(draft: &ProfileDraft, switch: RdpSwitch) -> Element<'a, Messag
         .label(switch_label(switch))
         .on_toggle_maybe((!locked).then_some(move |on| choice(ProfileChoice::Extra(switch, on))))
         .into();
-    if switch == RdpSwitch::HardwareAcceleration {
-        return unsupported(tick);
+    match switch {
+        RdpSwitch::HardwareAcceleration => unsupported(tick),
+        RdpSwitch::Compression => tick,
+        _ => external_only(draft, tick),
     }
-    external_only(draft, tick)
 }
 
 /// The hardware acceleration box, and under it that it is not supported yet: the C# sets

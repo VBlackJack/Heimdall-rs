@@ -88,6 +88,8 @@ fn request(
         desktop_scale: 100,
         logon_timeout: None,
         keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
+        // Compressing as the profile asks, so the lab's xrdp is read through MPPC.
+        builtin_compression: true,
         route: vec![SshProfile {
             id: ProfileId::new("gw"),
             name: "gw".to_owned(),

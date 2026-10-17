@@ -19,6 +19,34 @@ pub use active_stage::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, Grace
 
 pub type SessionResult<T> = Result<T, SessionError>;
 
+/// The source of every error that bulk-compressed data ends the session with: data that does
+/// not decompress, compressed data without compression negotiated, a decompressor that
+/// cannot be built. A caller tells these failures apart by this type, and may connect again
+/// without compression. Heimdall-rs patch, see `vendor/PATCHES.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BulkDataRefused;
+
+impl fmt::Display for BulkDataRefused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("bulk-compressed data refused")
+    }
+}
+
+impl core::error::Error for BulkDataRefused {}
+
+/// Whether `error` is one that bulk-compressed data ended the session with
+/// ([`BulkDataRefused`]). Heimdall-rs patch, see `vendor/PATCHES.md`.
+pub fn is_bulk_data_refused(error: &SessionError) -> bool {
+    let mut source = core::error::Error::source(error);
+    while let Some(cause) = source {
+        if cause.is::<BulkDataRefused>() {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
+}
+
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum SessionErrorKind {

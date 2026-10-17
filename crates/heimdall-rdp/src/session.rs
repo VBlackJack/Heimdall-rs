@@ -32,6 +32,7 @@ use ironrdp::session::fast_path::ProcessorBuilder;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{
     ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason,
+    is_bulk_data_refused,
 };
 use ironrdp_core::WriteBuf;
 use tokio::io::{AsyncWriteExt as _, ReadHalf, WriteHalf};
@@ -141,6 +142,11 @@ pub enum CloseReason {
     Local,
     /// The connection failed; a description.
     Failed(String),
+    /// What the server bulk-compressed could not be read: data that does not decompress, or
+    /// compressed when compression was not negotiated, or a compressed PDU of a
+    /// reactivation's finalization; a description. A connection again without compression
+    /// may get through.
+    CompressionRefused(String),
 }
 
 /// A session running in its own task.
@@ -222,6 +228,8 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         result,
         desktop_scale,
         keep_alive,
+        // Said by the application before the session starts.
+        compression_turned_off: _,
     } = connection;
     let framebuffer = Framebuffer::new(result.desktop_size.width, result.desktop_size.height);
     let (events, event_receiver) = mpsc::channel(EVENT_QUEUE);
@@ -244,6 +252,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         keep_alive: KeepAlive::new(keep_alive),
         reader: FrameReader::new(read_half, leftover),
         writer: write_half,
+        compression_refused: false,
     };
     let offers = shared.is_some().then_some(offers);
     tokio::spawn(running.run(result, shared, cancel));
@@ -765,6 +774,35 @@ fn described(error: &ironrdp::session::SessionError) -> String {
     error.kind().to_string()
 }
 
+/// [`described`], `refused` set when what the server bulk-compressed could not be read.
+fn noted(refused: &mut bool, error: &ironrdp::session::SessionError) -> String {
+    *refused = is_bulk_data_refused(error);
+    described(error)
+}
+
+/// The active stage of the connection `result` settled, with the activation factory and
+/// the user channel the reactivations and the keep-alives need.
+fn active_stage(
+    result: ConnectionResult,
+) -> (
+    ironrdp::session::SessionResult<ActiveStage>,
+    ConnectionActivationFactory,
+    u16,
+) {
+    let stage = ActiveStageBuilder {
+        static_channels: result.static_channels,
+        user_channel_id: result.user_channel_id,
+        io_channel_id: result.io_channel_id,
+        message_channel_id: result.message_channel_id,
+        share_id: result.share_id,
+        compression_type: result.compression_type,
+        enable_server_pointer: result.enable_server_pointer,
+        pointer_software_rendering: result.pointer_software_rendering,
+    }
+    .build();
+    (stage, result.activation_factory, result.user_channel_id)
+}
+
 struct Running {
     framebuffer: Framebuffer,
     events: mpsc::Sender<RdpEvent>,
@@ -784,6 +822,9 @@ struct Running {
     keep_alive: KeepAlive,
     reader: FrameReader<ReadHalf<Upgraded>>,
     writer: WriteHalf<Upgraded>,
+    /// Set when the session ends because what the server bulk-compressed could not be read:
+    /// it then closes with [`CloseReason::CompressionRefused`].
+    compression_refused: bool,
 }
 
 impl Running {
@@ -796,6 +837,9 @@ impl Running {
         let reason = match self.serve(result, shared, cancel).await {
             Ok(reason) => reason,
             // A Set Error Info ending a reactivation is the server ending the session.
+            Err(description) if self.compression_refused => {
+                CloseReason::CompressionRefused(description)
+            }
             Err(description) => match reason::ending_in_failure(&description) {
                 Some(Ending::Logoff) => CloseReason::Server,
                 Some(ending) => CloseReason::Disconnected(ending),
@@ -811,19 +855,10 @@ impl Running {
         mut shared: Option<Shared>,
         cancel: CancellationToken,
     ) -> Result<CloseReason, String> {
-        let activation = result.activation_factory;
-        let user_channel_id = result.user_channel_id;
-        let mut stage = ActiveStageBuilder {
-            static_channels: result.static_channels,
-            user_channel_id: result.user_channel_id,
-            io_channel_id: result.io_channel_id,
-            message_channel_id: result.message_channel_id,
-            share_id: result.share_id,
-            compression_type: result.compression_type,
-            enable_server_pointer: result.enable_server_pointer,
-            pointer_software_rendering: result.pointer_software_rendering,
-        }
-        .build();
+        let (stage, activation, user_channel_id) = active_stage(result);
+        // Compression offered and its decompressor not built: the session ends here rather
+        // than read what the server compresses.
+        let mut stage = stage.map_err(|error| noted(&mut self.compression_refused, &error))?;
         let mut keys = Database::new();
         self.keep_alive.activated(Instant::now());
         loop {
@@ -841,7 +876,9 @@ impl Running {
                         return Ok(CloseReason::Server);
                     }
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
-                    stage.process(&mut image, action, &frame).map_err(|error| described(&error))?
+                    stage
+                        .process(&mut image, action, &frame)
+                        .map_err(|error| noted(&mut self.compression_refused, &error))?
                 }
                 changed = self.size.changed() => {
                     if changed.is_ok() {
@@ -1239,7 +1276,12 @@ impl Running {
             } else {
                 sequence.step_no_input(&mut buffer)
             }
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| {
+                // A compressed PDU of the reactivation's finalization, which the connector
+                // refuses (`vendor/PATCHES.md`).
+                self.compression_refused = crate::connect::compressed_finalization(&error);
+                error.to_string()
+            })?;
             if let Some(length) = written.size() {
                 let frame = buffer.filled()[..length].to_vec();
                 self.send(&frame).await?;
@@ -1265,6 +1307,8 @@ impl Running {
         }
         stage.set_share_id(share_id);
         stage.set_enable_server_pointer(enable_server_pointer);
+        // The server's compression history goes on across the reactivation.
+        let bulk_decompressor = stage.take_bulk_decompressor();
         stage.set_fastpath_processor(
             ProcessorBuilder {
                 io_channel_id: activation.io_channel_id(),
@@ -1272,7 +1316,7 @@ impl Running {
                 share_id,
                 enable_server_pointer,
                 pointer_software_rendering,
-                bulk_decompressor: None,
+                bulk_decompressor,
             }
             .build(),
         );

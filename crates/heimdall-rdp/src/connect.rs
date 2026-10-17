@@ -39,8 +39,8 @@ use ironrdp::connector::credssp::{CredsspSequence, KerberosConfig};
 use ironrdp::connector::sspi::generator::GeneratorState;
 use ironrdp::connector::sspi::{self, credssp::ClientState};
 use ironrdp::connector::{
-    self, BitmapConfig, ClientConnector, ClientConnectorState, ConnectionResult, ConnectorError,
-    ConnectorErrorKind, ConnectorResult, DesktopSize,
+    self, BitmapConfig, ClientConnector, ClientConnectorState, CompressedFinalizationPdu,
+    ConnectionResult, ConnectorError, ConnectorErrorKind, ConnectorResult, DesktopSize,
 };
 use ironrdp::core::WriteBuf;
 use ironrdp::displaycontrol::client::DisplayControlClient;
@@ -48,7 +48,7 @@ use ironrdp::dvc::DrdynvcClient;
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::nego::NegoRequestData;
 use ironrdp::pdu::rdp::capability_sets::{MajorPlatformType, client_codecs_capabilities};
-use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
+use ironrdp::pdu::rdp::client_info::{CompressionType, PerformanceFlags, TimezoneInfo};
 use ironrdp_tokio::{Framed, FramedRead, FramedWrite, MovableTokioFramed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::client::TlsStream;
@@ -224,6 +224,10 @@ pub struct RdpConfig {
     /// The desktop scale factor asked for, in percent, as the C# Heimdall maps the screen's
     /// (see [`desktop_scale_factor`]): 100 draws the remote desktop at its own size.
     pub desktop_scale: u32,
+    /// The server may bulk-compress what it sends, as the C# `RdpCompression` sets the
+    /// `MsTscAx` control's `Compress` (`RdpActiveXHost.cs:2128`): offered up to
+    /// [`BULK_COMPRESSION`].
+    pub compression: bool,
     /// Told how far the connection has come, as the C# session header's phase stepper
     /// shows it; `None` when nobody follows it.
     pub progress: Option<Progress>,
@@ -370,6 +374,11 @@ pub enum RdpError {
         /// Height.
         height: u16,
     },
+    /// The server bulk-compressed a PDU of the connection finalization, which this client
+    /// refuses (`vendor/PATCHES.md`); [`connect`] then connects again once without
+    /// compression, so this is the outcome only when that was not possible.
+    #[error("the server compressed the connection finalization, which this client does not read")]
+    CompressionRefused,
     /// The connection sequence failed otherwise.
     #[error("RDP: {0}")]
     Protocol(String),
@@ -395,12 +404,39 @@ pub struct RdpConnection {
     pub(crate) desktop_scale: u32,
     /// Time without anything sent before an RDP keep-alive, as [`RdpConfig::keep_alive`].
     pub(crate) keep_alive: Duration,
+    /// The server compressed a PDU of the connection finalization: this connection was
+    /// opened again, once, without compression ([`RdpError::CompressionRefused`]).
+    pub compression_turned_off: bool,
 }
 
 /// How the bytes reach the server: the stream once open, and the address this side reports
 /// to the server as its own.
 pub type Opening =
     Pin<Box<dyn Future<Output = io::Result<(Box<dyn Transport>, SocketAddr)>> + Send>>;
+
+/// Each way to the server a connection opens: one for the connection, one more when it is
+/// opened again without compression ([`RdpError::CompressionRefused`]).
+pub type Openings = Box<dyn FnMut() -> Opening + Send>;
+
+/// The credentials the first connection was given, kept for the one connection again without
+/// compression, then dropped (and wiped) with the attempt.
+type Kept = Arc<std::sync::Mutex<Option<Credentials>>>;
+
+/// `credentials`, the answer kept in `kept` as well.
+fn remembering(credentials: AskCredentials, kept: Kept) -> AskCredentials {
+    Box::new(move || {
+        let asked = credentials();
+        Box::pin(async move {
+            let answer = asked.await;
+            if let Some((username, password)) = &answer
+                && let Ok(mut slot) = kept.lock()
+            {
+                *slot = Some((username.clone(), password.clone()));
+            }
+            answer
+        })
+    })
+}
 
 /// Opens a connection to `config.host` over TCP. The future can be spawned: the connection
 /// sequence runs on a blocking thread of the current runtime, as `IronRDP`'s connector
@@ -416,30 +452,39 @@ pub async fn connect(
 ) -> Result<RdpConnection, RdpError> {
     let host = config.host.clone();
     let port = config.port;
-    let tcp: Opening = Box::pin(async move {
-        let tcp = heimdall_net::connect(&host, port).await?;
-        let local = tcp.local_addr()?;
-        Ok((Box::new(tcp) as Box<dyn Transport>, local))
+    let tcp: Openings = Box::new(move || {
+        let host = host.clone();
+        Box::pin(async move {
+            let tcp = heimdall_net::connect(&host, port).await?;
+            let local = tcp.local_addr()?;
+            Ok((Box::new(tcp) as Box<dyn Transport>, local))
+        })
     });
     let limit = config.timeouts.connect;
     connect_through(config, credentials, cancel, tcp, Some(limit)).await
 }
 
-/// [`connect`], with the stream opened by `opening` instead of a TCP connection of its own:
+/// [`connect`], with the stream opened by `openings` instead of a TCP connection of its own:
 /// through an SSH tunnel, for one. The server is still `config.host` for its certificate and
 /// for the logon: only the way to it changes.
 ///
-/// `limit` bounds the opening; `None` leaves it to `opening`, which may wait for a person (a
-/// gateway's password) and bounds its own steps.
+/// `limit` bounds each opening; `None` leaves it to `openings`, which may wait for a person
+/// (a gateway's password) and bound their own steps.
+///
+/// A server that bulk-compresses a PDU of the connection finalization, which the connector
+/// refuses (`vendor/PATCHES.md`), is connected to again once without compression, with the
+/// credentials the first connection was given: said in the diagnostics log and by
+/// [`RdpConnection::compression_turned_off`]. Never more than once, nor when compression
+/// was not offered.
 ///
 /// # Errors
 ///
-/// As [`connect`]; a failure of `opening` is [`RdpError::Network`].
+/// As [`connect`]; a failure of an opening is [`RdpError::Network`].
 pub async fn connect_through(
     config: RdpConfig,
     credentials: AskCredentials,
     cancel: CancellationToken,
-    opening: Opening,
+    openings: Openings,
     limit: Option<Duration>,
 ) -> Result<RdpConnection, RdpError> {
     let runtime = tokio::runtime::Handle::current();
@@ -448,7 +493,7 @@ pub async fn connect_through(
             &config,
             credentials,
             &cancel,
-            opening,
+            openings,
             limit,
         ))
     })
@@ -458,6 +503,53 @@ pub async fn connect_through(
 
 /// [`connect_through`], on the calling task: its future is not `Send`.
 async fn connect_in_place(
+    config: &RdpConfig,
+    credentials: AskCredentials,
+    cancel: &CancellationToken,
+    mut openings: Openings,
+    limit: Option<Duration>,
+) -> Result<RdpConnection, RdpError> {
+    let kept = Kept::default();
+    let first = Box::pin(connect_once(
+        config,
+        remembering(credentials, Arc::clone(&kept)),
+        cancel,
+        openings(),
+        limit,
+    ))
+    .await;
+    match first {
+        Err(RdpError::CompressionRefused) if config.compression => {
+            let target = heimdall_core::profile::display_address(&config.host, config.port);
+            // Asked and answered once: the same account again, never asked twice.
+            let Some((username, password)) = kept.lock().ok().and_then(|mut slot| slot.take())
+            else {
+                return Err(RdpError::CompressionRefused);
+            };
+            log::warn!(
+                "{target} bulk-compressed a PDU of the connection finalization: compression turned off for this connection, connecting again"
+            );
+            let uncompressed = RdpConfig {
+                compression: false,
+                ..config.clone()
+            };
+            let mut connection = Box::pin(connect_once(
+                &uncompressed,
+                given(username, password),
+                cancel,
+                openings(),
+                limit,
+            ))
+            .await?;
+            connection.compression_turned_off = true;
+            Ok(connection)
+        }
+        outcome => outcome,
+    }
+}
+
+/// One connection of [`connect_in_place`], over the stream `opening` opens.
+async fn connect_once(
     config: &RdpConfig,
     credentials: AskCredentials,
     cancel: &CancellationToken,
@@ -665,6 +757,7 @@ pub async fn connect_over(
         result,
         desktop_scale: config.desktop_scale,
         keep_alive: config.keep_alive,
+        compression_turned_off: false,
     })
 }
 
@@ -872,6 +965,12 @@ fn adopt(
     Ok(())
 }
 
+/// The highest bulk compression the server is offered, RDP 6.1 (XCRUSH), as mstsc offers it:
+/// the server picks this level or a lower one per packet, and the session decompresses each
+/// level, the fast-path updates and the slow-path PDUs alike (with one history, see
+/// `vendor/PATCHES.md`).
+pub const BULK_COMPRESSION: CompressionType = CompressionType::Rdp61;
+
 fn connector_config(config: &RdpConfig) -> connector::Config {
     let (width, height) = config.desktop;
     connector::Config {
@@ -914,7 +1013,7 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         enable_audio_playback: played_here(config.options.audio),
         remote_console_audio: config.options.audio == AudioPlayback::OnServer,
         console_session: config.options.admin_session,
-        compression_type: None,
+        compression_type: config.compression.then_some(BULK_COMPRESSION),
         pointer_software_rendering: true,
         multitransport_flags: None,
         performance_flags: performance_flags(config.options.performance_flags),
@@ -953,8 +1052,24 @@ async fn phase<T>(
     }
 }
 
+/// Whether `error` is the connector refusing a bulk-compressed PDU of the connection
+/// finalization (`vendor/PATCHES.md`), told by the type of its source.
+pub(crate) fn compressed_finalization(error: &ConnectorError) -> bool {
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        if cause.is::<CompressedFinalizationPdu>() {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
+}
+
 /// The category of a connector failure.
 fn failure(error: &ConnectorError) -> RdpError {
+    if compressed_finalization(error) {
+        return RdpError::CompressionRefused;
+    }
     // A Set Error Info while the connection finishes: a licence, a denied account.
     if let ConnectorErrorKind::Reason(text) = error.kind()
         && let Some(ending) = reason::ending_in_failure(text)
@@ -1160,6 +1275,7 @@ mod tests {
             kerberos: false,
             time_zone: None,
             desktop_scale: 100,
+            compression: false,
             progress: None,
         }
     }

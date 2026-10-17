@@ -327,6 +327,7 @@ fn desktop_notice(notice: &Notice) -> String {
         Notice::ResolutionReconnected => fl!("ui-status-resolution-reconnected"),
         Notice::ResolutionScaled => fl!("ui-resolution-larger-than-window"),
         Notice::StabilizationSkipped => fl!("ui-status-stabilization-skipped"),
+        Notice::RdpCompressionOff => fl!("ui-status-rdp-compression-off"),
         Notice::RdpFilesTooMany => fl!(
             "ui-status-rdp-files-too-many",
             count = heimdall_rdp::MAX_COPY_ENTRIES
@@ -596,6 +597,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             notice @ (Notice::ResolutionReconnected
             | Notice::ResolutionScaled
             | Notice::StabilizationSkipped
+            | Notice::RdpCompressionOff
             | Notice::RdpFilesTooMany
             | Notice::RdpFilesTooLarge
             | Notice::RdpFilesSaveEnded(_)) => desktop_notice(notice),
@@ -1015,6 +1017,10 @@ mod tests {
     #[test]
     fn files_not_offered_to_a_desktop_are_said_with_the_limit_they_pass() {
         let said = |notice: Notice| status_text(&SessionStatus::Ready, Some(&notice), 0);
+        assert_eq!(
+            said(Notice::RdpCompressionOff),
+            "The server sent compressed data this client could not read: compression is off for this connection."
+        );
         assert_eq!(
             said(Notice::RdpFilesTooMany),
             "Files not copied to the server: one copy takes 10000 files and folders at most."

@@ -51,6 +51,18 @@ pub struct Processor {
 }
 
 impl Processor {
+    /// The bulk decompressor, for the slow-path PDUs too: the server compresses them with the
+    /// same history. Heimdall-rs patch, see `vendor/PATCHES.md`.
+    pub fn bulk_decompressor_mut(&mut self) -> Option<&mut BulkCompressor> {
+        self.bulk_decompressor.as_mut()
+    }
+
+    /// Takes the bulk decompressor out, for the processor that replaces this one after a
+    /// reactivation: the server's history goes on. Heimdall-rs patch, see `vendor/PATCHES.md`.
+    pub fn take_bulk_decompressor(&mut self) -> Option<BulkCompressor> {
+        self.bulk_decompressor.take()
+    }
+
     pub fn update_mouse_pos(&mut self, x: u16, y: u16) {
         self.mouse_pos_update = Some((x, y));
     }
@@ -107,7 +119,9 @@ impl Processor {
                 if let Some(ref mut decompressor) = self.bulk_decompressor {
                     let decompressed = decompressor
                         .decompress(update_pdu.data, bulk_flags)
-                        .map_err(|e| reason_err!("FastPath", "bulk decompression failed: {}", e))?;
+                        .map_err(|e| {
+                            reason_err!("FastPath", "bulk decompression failed: {}", e).with_source(crate::BulkDataRefused)
+                        })?;
                     // Copy decompressed data before accessing metrics (releases the mutable borrow).
                     decompressed_data = decompressed.to_vec();
                     debug!(
@@ -121,8 +135,11 @@ impl Processor {
                     );
                     decompressed_data.as_slice()
                 } else {
-                    warn!("Received compressed FastPath data but no decompressor is configured");
-                    update_pdu.data
+                    // Heimdall-rs patch: never decode compressed bytes as plain data.
+                    return Err(
+                        reason_err!("FastPath", "compressed update without negotiated compression")
+                            .with_source(crate::BulkDataRefused),
+                    );
                 }
             } else {
                 // Compression flags present but COMPRESSED bit not set — pass data through.

@@ -1894,6 +1894,7 @@ ui-files-menu-open-with = Open With...
 ui-files-menu-open-in-editor = Open in Editor
 ui-status-resolution-reconnected = Resolution change required reconnect.
 ui-status-stabilization-skipped = Stabilization skipped - dynamic resolution is now active.
+ui-status-rdp-compression-off = The server sent compressed data this client could not read: compression is off for this connection.
 ui-resolution-mode-smart-sizing = Smart sizing
 ui-resolution-tooltip = Change resolution - { $mode }
 ui-resolution-tooltip-size = Change resolution - { $mode } ({ $width }x{ $height })
@@ -3834,6 +3835,8 @@ ui-settings-rdp-resize-delay = Resolution stabilization delay after connect (0 =
 ui-settings-rdp-resize-delay-refused = RDP resize delay must be zero or between { $min } and { $max } ms.
 ui-settings-rdp-keep-alive-interval = Session keep-alive interval
 ui-settings-rdp-keep-alive-interval-refused = RDP keep-alive interval must be between { $min } and { $max } ms.
+ui-settings-rdp-builtin-compression = Compress in the built-in client (experimental)
+ui-settings-rdp-builtin-compression-hint = Applies to the built-in RDP client only, for profiles with RDP compression enabled. Remote Desktop Connection follows the profile.
 ui-settings-rdp-connect-timeout-off = Off
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Give the keyboard back from a remote desktop
