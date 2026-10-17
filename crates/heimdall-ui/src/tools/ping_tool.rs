@@ -16,7 +16,7 @@
 
 //! The ICMP Ping tool view, as the C# `PingToolView` and `PingToolViewModel`: a latency
 //! monitor probing once a second, for a count or until stopped, its probes shown as they
-//! come with running statistics, and copied as text or CSV.
+//! come with running statistics, copied as text or saved as CSV.
 //!
 //! A run is one stream of probes, aborted by Stop or when the tab closes, which kills the
 //! `ping` program under way; each probe carries its run's number, so one of an earlier run
@@ -38,6 +38,7 @@ use heimdall_core::tools::ping::{
     self, PingDetail, PingInputs, PingProbeResult, PingStatsSnapshot, PingStatus,
 };
 
+use super::file_export::FileExport;
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -50,6 +51,9 @@ const MAX_SHOWN_PROBES: usize = 200;
 
 /// Probes buffered between the run and the view.
 const PROBE_BUFFER: usize = 16;
+
+/// What the CSV export's suggested name starts with, as the C# `ping_{host}_{now}.csv`.
+const EXPORT_PREFIX: &str = "ping";
 
 /// Messages emitted by the ICMP Ping tool view.
 #[derive(Debug, Clone)]
@@ -70,8 +74,8 @@ pub enum PingMessage {
     Ended(u64),
     /// Copy summary text.
     CopyResults,
-    /// Copy CSV export.
-    CopyCsv,
+    /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
+    ExportCsv,
 }
 
 /// The ICMP Ping tool pane state.
@@ -112,6 +116,8 @@ pub enum Outcome {
     None,
     Task(Task<Message>),
     Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// The text of a validation error key of [`ping::validate_inputs`].
@@ -219,12 +225,18 @@ impl PingPane {
                 }
                 Outcome::Copy(CopySlot::PingResults, self.summary_text())
             }
-            PingMessage::CopyCsv => {
+            PingMessage::ExportCsv => {
                 if self.results.is_empty() {
                     return Outcome::None;
                 }
                 let csv = ping::build_csv_export(self.results.make_contiguous());
-                Outcome::Copy(CopySlot::PingCsv, csv)
+                Outcome::Save(FileExport::csv(
+                    CopySlot::PingCsv,
+                    fl!("ui-tool-ping-export-csv"),
+                    EXPORT_PREFIX,
+                    Some(&self.host),
+                    csv,
+                ))
             }
         }
     }
@@ -438,11 +450,10 @@ impl PingPane {
                 super::COPY_PADDING,
             );
 
-            let copy_csv_btn = super::copy_button(
-                fl!("ui-tool-ping-copy-csv"),
+            let export_csv_btn = super::export_button(
+                fl!("ui-tool-ping-export-csv"),
                 state.copied(CopySlot::PingCsv),
-                send(PingMessage::CopyCsv),
-                super::COPY_PADDING,
+                send(PingMessage::ExportCsv),
             );
 
             let header_row = row![
@@ -450,7 +461,7 @@ impl PingPane {
                     .size(font_size::SUBTITLE)
                     .width(Length::Fill),
                 copy_results_btn,
-                copy_csv_btn,
+                export_csv_btn,
             ]
             .spacing(spacing::SM)
             .align_y(Alignment::Center);
@@ -610,6 +621,32 @@ mod tests {
             pane.error.as_deref(),
             Some(fl!("ui-tool-ping-error-count-invalid").as_str()),
             "refused, not cut to 100"
+        );
+    }
+
+    #[test]
+    fn the_csv_export_is_saved_to_a_file_named_after_the_host() {
+        let mut pane = filled(" 192.0.2.1 ", "0");
+        assert!(
+            matches!(pane.apply(PingMessage::ExportCsv), Outcome::None),
+            "no probe yet"
+        );
+        started(&mut pane);
+        let mut formula = probe(1);
+        formula.ip_or_host = "=HYPERLINK(\"x\")".into();
+        pane.apply(PingMessage::Probed(pane.run, formula));
+        let Outcome::Save(export) = pane.apply(PingMessage::ExportCsv) else {
+            panic!("a file to save");
+        };
+        assert_eq!(export.slot(), CopySlot::PingCsv);
+        assert!(export.suggested_name().starts_with("ping_192.0.2.1_"));
+        assert!(export.suggested_name().ends_with(".csv"));
+        let lines: Vec<&str> = export.content().lines().collect();
+        assert_eq!(lines[0], "Seq,Timestamp,Host,Status,LatencyMs,TTL,Detail");
+        assert!(
+            lines[1].contains(",\"'=HYPERLINK(\"\"x\"\")\","),
+            "the host's formula defused: {}",
+            lines[1]
         );
     }
 

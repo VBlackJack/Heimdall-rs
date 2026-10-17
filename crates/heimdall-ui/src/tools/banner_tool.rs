@@ -16,7 +16,8 @@
 
 //! Banner Grabber tool pane for probing network ports and inspecting service banners, as
 //! the C# `BannerGrabViewModel`: [`MAX_CONCURRENT`] ports probed at once, each result shown
-//! as it comes, and Stop ends the run at once.
+//! as it comes, and Stop ends the run at once. The results are copied as text or saved as
+//! CSV.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -40,6 +41,7 @@ use iced::task::Handle;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
+use super::file_export::FileExport;
 use super::{CopySlot, ToolMessage, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -54,6 +56,9 @@ const DB_PORTS: &str = "1433,1521,3306,5432,6379,27017";
 
 /// Results buffered between the run and the pane.
 const CHANNEL_SIZE: usize = 32;
+
+/// What the CSV export's suggested name starts with, as the C# `banners_{host}_{now}.csv`.
+const EXPORT_PREFIX: &str = "banners";
 
 /// Messages emitted by the Banner Grabber tool.
 #[derive(Debug, Clone)]
@@ -82,7 +87,7 @@ pub enum BannerMessage {
     Finished(u64),
     /// Copy tabulated text to clipboard.
     CopyResults,
-    /// Export CSV to clipboard.
+    /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
     ExportCsv,
 }
 
@@ -135,6 +140,8 @@ pub enum Outcome {
     None,
     Task(Task<Message>),
     Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// What a message did, before its tab is known.
@@ -143,6 +150,7 @@ enum Applied {
     None,
     Run(Task<BannerMessage>),
     Copy(CopySlot, String),
+    Save(FileExport),
 }
 
 impl BannerPane {
@@ -154,6 +162,7 @@ impl BannerPane {
                 task.map(move |message| Message::Tool(tab, ToolMessage::Banner(message))),
             ),
             Applied::Copy(slot, content) => Outcome::Copy(slot, content),
+            Applied::Save(export) => Outcome::Save(export),
         }
     }
 
@@ -224,15 +233,23 @@ impl BannerPane {
                     super::NEW_LINE,
                 ),
             ),
-            BannerMessage::ExportCsv => Applied::Copy(
-                CopySlot::BannerGrabCsv,
-                banner_grab::build_csv_export(
-                    &self.results,
-                    &export_labels(),
-                    millis_text,
-                    super::NEW_LINE,
-                ),
-            ),
+            BannerMessage::ExportCsv => {
+                if self.results.is_empty() {
+                    return Applied::None;
+                }
+                Applied::Save(FileExport::csv(
+                    CopySlot::BannerGrabCsv,
+                    fl!("ui-tool-banner-btn-export"),
+                    EXPORT_PREFIX,
+                    Some(&self.host),
+                    banner_grab::build_csv_export(
+                        &self.results,
+                        &export_labels(),
+                        millis_text,
+                        super::NEW_LINE,
+                    ),
+                ))
+            }
         }
     }
 
@@ -408,11 +425,10 @@ impl BannerPane {
                     Message::Tool(tab, ToolMessage::Banner(BannerMessage::CopyResults),),
                     super::COPY_PADDING,
                 ),
-                super::copy_button(
+                super::export_button(
                     fl!("ui-tool-banner-btn-export"),
                     state.copied(CopySlot::BannerGrabCsv),
-                    Message::Tool(tab, ToolMessage::Banner(BannerMessage::ExportCsv),),
-                    super::COPY_PADDING,
+                    Message::Tool(tab, ToolMessage::Banner(BannerMessage::ExportCsv)),
                 ),
             ]
             .spacing(spacing::SM)
@@ -590,6 +606,32 @@ mod tests {
         pane.apply(BannerMessage::Finished(old));
         assert!(pane.results.is_empty());
         assert!(pane.running.is_some(), "the new run goes on");
+    }
+
+    #[test]
+    fn the_csv_export_defuses_the_servers_words_and_is_saved_to_a_file() {
+        let mut pane = BannerPane::default();
+        assert!(matches!(
+            pane.apply(BannerMessage::ExportCsv),
+            Applied::None
+        ));
+        drop(started(&mut pane));
+        let mut open = BannerProbeResult::closed(22);
+        open.response_ms = Some(3);
+        open.banner = Some("=cmd|' /C calc'!A0, \"quoted\"".to_owned());
+        pane.apply(BannerMessage::Probed(pane.run, open));
+        let Applied::Save(export) = pane.apply(BannerMessage::ExportCsv) else {
+            panic!("a file to save");
+        };
+        assert_eq!(export.slot(), CopySlot::BannerGrabCsv);
+        assert!(export.suggested_name().starts_with("banners_localhost_"));
+        let lines: Vec<&str> = export.content().lines().collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[1].contains("\"'=cmd|' /C calc'!A0, \"\"quoted\"\"\""),
+            "{}",
+            lines[1]
+        );
     }
 
     #[test]
