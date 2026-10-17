@@ -106,6 +106,12 @@ Les tests d'interface automatisés lancent une version debug compilée avec la f
 `test-data-dir` sur un dossier jetable, jamais sur les vrais profils, le coffre ou les mots
 de passe enregistrés : voir [Dossier de données de test](docs/fr/test-data-folder.md).
 
+Toute version, release comprise, lance une instance alternative (un test à la main, un profil
+de démonstration) à côté de celle de l'utilisateur avec `--data-dir <chemin complet>`, comme
+le Heimdall C# : sa propre configuration, ses données et ses mots de passe enregistrés sous ce
+dossier. Voir
+[`--data-dir` dans une version normale](docs/fr/test-data-folder.md#--data-dir-dans-une-version-normale).
+
 Une release publiée est compilée avec `HEIMDALL_RELEASE` réglé sur son tag, par exemple
 `v2026.100901` : la vérification des mises à jour le compare à la dernière release publiée
 sur GitHub et propose une version plus récente. Une compilation sans elle, comme

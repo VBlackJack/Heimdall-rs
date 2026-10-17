@@ -23,7 +23,7 @@
 
 use std::path::{Path, PathBuf};
 
-use heimdall_app::update_check::{ReleaseTag, running_release};
+use heimdall_app::update_check::{ReleaseTag, display_version, running_release};
 use heimdall_app::{App, Message as AppMessage, SettingsMessage, SettingsTransferMessage};
 use iced::widget::{Column, button, checkbox, column, container, row, space, text};
 use iced::{Alignment, Element, Length};
@@ -82,8 +82,8 @@ const BUTTON_PADDING: [f32; 2] = [6.0, 12.0];
 /// (`MainWindow.xaml:4837`): `SpacingSm`.
 const BUTTON_GAP: f32 = spacing::SM;
 
-/// The application's version, author, licence and repository, from its package.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The application's author, licence and repository, from its package; its version is
+/// [`display_version`], a release's own when the build is one.
 const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
@@ -202,7 +202,7 @@ fn header<'a>() -> Element<'a, Message> {
             .size(font_size::HEADLINE)
             .font(crate::detail_view::BOLD),
         space().height(spacing::XS),
-        text(fl!("ui-about-version", version = VERSION))
+        text(fl!("ui-about-version", version = display_version()))
             .size(font_size::BODY_LARGE)
             .style(text::secondary),
         text(fl!("ui-about-tagline"))

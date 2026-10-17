@@ -8,7 +8,14 @@ members = ["crates/*", "xtask"]
 exclude = ["vendor/ironrdp-connector", "vendor/ironrdp-rdpdr", "vendor/ironrdp-session"]
 
 [workspace.package]
-version = "0.1.0"
+# The version follows the C# Heimdall's calendar scheme, the one of the GitHub release tags:
+# a tag is `vYYYY.MMDDNN` (year, then the month, day and the day's build number), and the
+# matching version is `YYYY.MMDDNN.0`, the minor the integer MMDDNN so no component carries a
+# leading zero (Cargo rejects those: `2027.10101.0` for `v2027.010101`). The update check
+# compares the tag a release build is compiled with (`HEIMDALL_RELEASE`, its tag or this
+# version) with the latest release; a development build shows this version and never looks.
+# See crates/heimdall-app/src/update_check.rs.
+version = "2026.101701.0"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"

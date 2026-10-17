@@ -1927,14 +1927,15 @@ impl Shell {
     }
 
     /// The title of the window `window`: a tab's own window's as the C# names it, the main
-    /// window's as [`Self::title`], the application's name for any other; in a test build,
-    /// followed by its test data folder.
+    /// window's as [`Self::title`], the application's name for any other; followed by the
+    /// data folder of an alternate instance (`--data-dir`), or a test build's test data
+    /// folder.
     #[must_use]
     pub fn window_title(&self, window: window::Id) -> String {
         #[cfg(feature = "test-data-dir")]
         return crate::test_data::titled(self.own_window_title(window));
         #[cfg(not(feature = "test-data-dir"))]
-        return self.own_window_title(window);
+        return crate::data_root::titled(self.own_window_title(window));
     }
 
     /// The title of the window `window`, as [`Self::window_title`] says it before a test
