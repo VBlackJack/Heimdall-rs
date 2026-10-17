@@ -9,6 +9,7 @@ yanked = "deny"
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled by metal, the macOS backend of wgpu, through iced; not built for Linux or Windows" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled by fontdb and owned_ttf_parser through iced" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained (merged into zbus 6); pulled by zbus 5 through iced (mundy), keepawake and the Linux keyring store; no zbus 6 release of those yet" },
     # Decided by Julien Bombled on 2026-10-04, with iced's highlighter for the integrated
     # editor: syntect 5.3 through two-face. Nothing either crate reads comes from the
     # network or from a user's file.
