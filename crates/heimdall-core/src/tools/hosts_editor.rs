@@ -23,6 +23,7 @@
 //! since it was read, keeps a backup copy beside it, and replaces it through a temporary file,
 //! so an interrupted save never leaves a truncated hosts file behind.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write as _};
 use std::net::IpAddr;
@@ -302,16 +303,64 @@ impl HostsDocument {
 
     /// Takes entry `index` and its line out of the file.
     pub fn remove(&mut self, index: usize) {
-        let position = self
-            .lines
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| line.entry.is_some())
-            .nth(index)
-            .map(|(position, _)| position);
-        if let Some(position) = position {
-            self.lines.remove(position);
+        self.remove_all(&BTreeSet::from([index]));
+    }
+
+    /// Takes the entries of `indices` and their lines out of the file at once, as the C#
+    /// `OnDeleteSelectedClick` removes every row selected: every other line stays as it was.
+    pub fn remove_all(&mut self, indices: &BTreeSet<usize>) {
+        let mut entry = 0;
+        self.lines.retain(|line| {
+            if line.entry.is_none() {
+                return true;
+            }
+            let keep = !indices.contains(&entry);
+            entry += 1;
+            keep
+        });
+    }
+
+    /// Changes the address, the names and the comment of entry `index` in place, as the C#
+    /// grid's cells edit them (`HostsFileEditorView.xaml:128-132`), checked as an entry
+    /// added is. `names` holds the host name and its aliases, separated by spaces. The entry
+    /// keeps its state and its place; only its line is written anew, and not even that when
+    /// nothing changed. Every other line stays byte for byte as it was.
+    ///
+    /// # Errors
+    ///
+    /// The address is not an IP address, no host name is given, a name holds a character a
+    /// name cannot hold, or the comment holds a control character: the file is unchanged.
+    pub fn edit(
+        &mut self,
+        index: usize,
+        ip: &str,
+        names: &str,
+        comment: &str,
+    ) -> Result<(), EntryError> {
+        let Some(line) = self.entry_line(index) else {
+            return Ok(());
+        };
+        let Some(current) = line.entry.as_ref() else {
+            return Ok(());
+        };
+        let mut words = names.split_whitespace();
+        let host = words.next().unwrap_or_default();
+        let mut entry = checked_entry(ip, host, comment)?;
+        entry.aliases = words.map(str::to_owned).collect();
+        if !entry.aliases.iter().all(|alias| is_valid_host_name(alias)) {
+            return Err(EntryError::InvalidHost);
         }
+        entry.enabled = current.enabled;
+        if &entry == current {
+            return Ok(());
+        }
+        let edited = Line::new(entry.to_line().into_bytes(), line.ending);
+        // A line written anew reads back as the entry it was made from.
+        if edited.entry.as_ref() != Some(&entry) {
+            return Err(EntryError::InvalidHost);
+        }
+        *line = edited;
+        Ok(())
     }
 
     /// Adds an active entry at the end of the file, on a line of its own ending as the file's
@@ -437,6 +486,9 @@ pub struct LoadedHosts {
     pub original: Vec<u8>,
     /// The lines and entries they hold.
     pub document: HostsDocument,
+    /// When the file was last written, as the C# `File.GetLastWriteTime` shows it; `None`
+    /// when the system does not say.
+    pub modified: Option<SystemTime>,
 }
 
 /// What a save did.
@@ -447,6 +499,9 @@ pub struct SavedHosts {
     /// The backup copy of the file as it was; `None` when nothing changed and nothing was
     /// written.
     pub backup: Option<PathBuf>,
+    /// When the file was last written, read again after the save; `None` when the system
+    /// does not say.
+    pub modified: Option<SystemTime>,
 }
 
 /// Reads the hosts file at `path`, whatever its encoding.
@@ -457,7 +512,18 @@ pub struct SavedHosts {
 pub fn load(path: &Path) -> Result<LoadedHosts, HostsError> {
     let original = fs::read(path).map_err(read_error)?;
     let document = HostsDocument::parse(&original);
-    Ok(LoadedHosts { original, document })
+    Ok(LoadedHosts {
+        original,
+        document,
+        modified: modified_time(path),
+    })
+}
+
+/// When the file at `path` was last written, when the system says.
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
 }
 
 /// Writes `document` to the hosts file at `path`, which must still hold `original`, the
@@ -491,6 +557,7 @@ pub fn save(
         return Ok(SavedHosts {
             written,
             backup: None,
+            modified: modified_time(&target),
         });
     }
     let folder = target
@@ -522,6 +589,7 @@ pub fn save(
     Ok(SavedHosts {
         written,
         backup: Some(backup),
+        modified: modified_time(&target),
     })
 }
 
@@ -717,6 +785,129 @@ mod tests {
         let mut document = HostsDocument::parse(b"# head\n127.0.0.1 a\n# keep\n10.0.0.1 b\n");
         document.remove(0);
         assert_eq!(document.to_bytes(), b"# head\n# keep\n10.0.0.1 b\n");
+    }
+
+    #[test]
+    fn several_entries_removed_at_once_take_only_their_lines() {
+        let mut document = HostsDocument::parse(WINDOWS_SAMPLE);
+        // "# 102.54.94.97 rhino", "127.0.0.1 localhost loopback" and "# 192.168.1.100".
+        document.remove_all(&BTreeSet::from([0, 2, 4]));
+        let expected: &[u8] = b"# Copyright (c) 1993-2009 Microsoft Corp.\r\n\
+#\r\n\
+# localhost name resolution is handled within DNS itself.\r\n\
+#\t127.0.0.1       localhost\r\n\
+\r\n\
+# 1.2.3.4 was the old gateway, do not use\r\n\
+::1             localhost\r\n";
+        assert_eq!(document.to_bytes(), expected);
+        // An index past the entries removes nothing more.
+        document.remove_all(&BTreeSet::from([9]));
+        assert_eq!(document.to_bytes(), expected);
+    }
+
+    #[test]
+    fn an_edit_rewrites_only_its_line_and_keeps_every_other_byte() {
+        let mut document = HostsDocument::parse(WINDOWS_SAMPLE);
+        // "127.0.0.1       localhost loopback", active.
+        document
+            .edit(2, " 10.0.0.9 ", "web.local  www.local", " moved ")
+            .expect("edited");
+        let mut expected = WINDOWS_SAMPLE.to_vec();
+        let old: &[u8] = b"127.0.0.1       localhost loopback\r\n";
+        let at = expected
+            .windows(old.len())
+            .position(|window| window == old)
+            .expect("line");
+        expected.splice(
+            at..at + old.len(),
+            b"10.0.0.9\tweb.local www.local\t# moved\r\n"
+                .iter()
+                .copied(),
+        );
+        assert_eq!(document.to_bytes(), expected);
+        let entry = document.entries().nth(2).expect("entry");
+        assert!(entry.enabled);
+        assert_eq!(entry.aliases, ["www.local"]);
+    }
+
+    #[test]
+    fn a_disabled_entry_edited_stays_disabled_and_in_its_place() {
+        let mut document = HostsDocument::parse(b"# head\n# 10.0.0.1 a # old\n10.0.0.2 b");
+        document.edit(0, "10.0.0.3", "c", "").expect("edited");
+        assert_eq!(document.to_bytes(), b"# head\n# 10.0.0.3\tc\n10.0.0.2 b");
+        let entry = document.entries().next().expect("entry");
+        assert!(!entry.enabled);
+        assert_eq!(entry.comment, "");
+    }
+
+    #[test]
+    fn an_edit_that_changes_nothing_leaves_the_line_as_it_was() {
+        let sample = b"127.0.0.1       localhost loopback   # here\n";
+        let mut document = HostsDocument::parse(sample);
+        document
+            .edit(0, "127.0.0.1", "localhost loopback", "here")
+            .expect("edited");
+        assert_eq!(document.to_bytes(), sample);
+        // An entry that is not there is no change either.
+        document.edit(5, "10.0.0.1", "a", "").expect("nothing");
+        assert_eq!(document.to_bytes(), sample);
+    }
+
+    #[test]
+    fn an_edit_is_checked_as_an_entry_added_and_a_refused_one_changes_nothing() {
+        let mut document = HostsDocument::parse(WINDOWS_SAMPLE);
+        for (ip, names, comment, error) in [
+            ("x", "a", "", EntryError::InvalidIp),
+            ("999.1.1.1", "a", "", EntryError::InvalidIp),
+            ("10.0.0.1", " ", "", EntryError::MissingHost),
+            ("10.0.0.1", "a#b", "", EntryError::InvalidHost),
+            ("10.0.0.1", "a b,c", "", EntryError::InvalidHost),
+            (
+                "10.0.0.1",
+                "a",
+                "x\r\n10.6.6.6 evil",
+                EntryError::InvalidComment,
+            ),
+        ] {
+            assert_eq!(
+                document.edit(2, ip, names, comment),
+                Err(error),
+                "{ip:?} {names:?}"
+            );
+        }
+        assert_eq!(document.to_bytes(), WINDOWS_SAMPLE);
+    }
+
+    #[test]
+    fn an_edit_saved_reads_back_as_edited_and_keeps_the_rest_of_the_file() {
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join("hosts");
+        fs::write(&path, WINDOWS_SAMPLE).expect("written");
+        let loaded = load(&path).expect("loaded");
+        assert!(loaded.modified.is_some());
+        let mut document = loaded.document.clone();
+        document
+            .edit(4, "192.168.1.101", "dev.local api.local", "moved")
+            .expect("edited");
+        let saved = save(&path, &loaded.original, &document, now()).expect("saved");
+        assert!(saved.backup.is_some());
+        assert!(saved.modified.is_some());
+        let again = load(&path).expect("loaded again");
+        assert_eq!(again.original, document.to_bytes());
+        let entries: Vec<&HostEntry> = again.document.entries().collect();
+        assert_eq!(entries.len(), 5);
+        assert_eq!(entries[4].ip, "192.168.1.101");
+        assert_eq!(entries[4].names(), "dev.local api.local");
+        assert_eq!(entries[4].comment, "moved");
+        assert!(!entries[4].enabled);
+        // Every line but the one edited is the same.
+        let before: Vec<&[u8]> = WINDOWS_SAMPLE.split(|&byte| byte == b'\n').collect();
+        let after: Vec<&[u8]> = again.original.split(|&byte| byte == b'\n').collect();
+        assert_eq!(before.len(), after.len());
+        let changed: Vec<usize> = (0..before.len())
+            .filter(|&line| before[line] != after[line])
+            .collect();
+        assert_eq!(changed, [9]);
     }
 
     #[test]

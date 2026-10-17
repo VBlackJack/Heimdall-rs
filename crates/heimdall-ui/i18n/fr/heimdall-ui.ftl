@@ -4982,6 +4982,19 @@ ui-tool-hosts-col-ip = Adresse IP
 ui-tool-hosts-col-hostname = Nom d'hôte
 ui-tool-hosts-col-comment = Commentaire
 ui-tool-hosts-col-action = Action
+ui-tool-hosts-col-names = Noms d'hôte (séparés par des espaces)
+ui-tool-hosts-btn-edit = Modifier
+ui-tool-hosts-btn-apply = Appliquer
+ui-tool-hosts-btn-cancel = Annuler
+ui-tool-hosts-btn-delete-selected = Supprimer la sélection
+ui-tool-hosts-select-all = Sélectionner toutes les entrées
+ui-tool-hosts-selected-count = { $count ->
+    [one] { $count } entrée sélectionnée
+   *[other] { $count } entrées sélectionnées
+}
+ui-tool-hosts-copy-ip = Copier l'adresse IP
+ui-tool-hosts-copy-hostname = Copier le nom d'hôte
+ui-tool-hosts-last-modified = Dernière modification : { $time }
 
 ## Tableau de bord des services
 ui-tool-services-name = Tableau de bord des services
