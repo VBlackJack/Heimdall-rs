@@ -17,13 +17,16 @@
 //! Whether a keyboard-interactive round asks for the account's password and nothing else,
 //! as the C# `LooksLikePasswordPrompt` and `LooksLikeOneTimeCodePrompt` tell
 //! (`SshConnectionFactory.cs`), stricter: one prompt, typed hidden, made only of words a
-//! plain password prompt is made of, and no one-time code in the round's title or
-//! instructions.
+//! plain password prompt is made of, with a title and instructions as plain or empty.
 //!
 //! A round wrongly taken for a password sends the secret to the wrong factor, which cannot
-//! be undone; a password round missed only asks the user. So the prompt is matched against
+//! be undone; a password round missed only asks the user. So the round is matched against
 //! what it may say, never against what it may not: a word outside the list ("Temporary",
 //! "RADIUS", "admin", "Einmalpasswort") is a doubt, and every doubt is a "no".
+//!
+//! The title and instructions are held to the same list, a few plain words added: a PAM
+//! notice ("Your password will expire in 5 days") then sends the round to the user, who
+//! reads it in the keyboard-interactive dialog instead of losing it behind the password.
 
 use crate::prompter::KeyboardInteractiveQuestion;
 
@@ -86,70 +89,77 @@ const PLAIN_WORDS: &[&str] = &[
     "cuenta",
 ];
 
+/// Words a plain title or instructions may say besides a prompt's: "Password
+/// authentication", "keyboard-interactive", "Please enter your password to continue".
+const PLAIN_NOTICE_WORDS: &[&str] = &[
+    "to",
+    "a",
+    "an",
+    "and",
+    "now",
+    "continue",
+    "required",
+    "authentication",
+    "authentification",
+    "keyboard",
+    "interactive",
+    "pam",
+];
+
 /// Words after which a prompt names the account it asks about ("Password for jdoe:"):
 /// allowed only before the user's own account.
-const ACCOUNT_INTRODUCERS: &[&str] = &["for", "pour", "für", "fur", "para"];
+const ACCOUNT_INTRODUCERS: &[&str] = &["for", "pour", "für", "fur", "fuer", "para"];
+
+/// Words after which the user's own account stands as an account, besides the introducers:
+/// the French and Spanish "de" ("Mot de passe de jdoe", "Contraseña de jdoe").
+const ACCOUNT_OF: &[&str] = &["de"];
 
 /// The possessive of "jdoe@host's password": allowed only after the user's own account.
 const POSSESSIVE: &str = "s";
 
-/// Whole words that name a one-time code or a second factor in a round's title or
-/// instructions (C# `OneTimeCodePromptPattern`, widened). The prompt itself needs no such
-/// list: none of these words is a plain password prompt's.
+/// Whole words that name a one-time code or a second factor (C# `OneTimeCodePromptPattern`,
+/// widened), checked in the title, the instructions and a host label.
 const ONE_TIME_CODE_WORDS: &[&str] = &[
-    // English.
-    "otp",
-    "totp",
-    "hotp",
-    "oath",
-    "onetime",
-    "code",
-    "codes",
-    "passcode",
-    "token",
-    "tokens",
-    "verification",
-    "verify",
-    "pin",
-    "2fa",
-    "mfa",
-    "tfa",
-    "factor",
-    "factors",
-    "authenticator",
-    "yubikey",
-    "duo",
-    "sms",
-    // French.
-    "jeton",
-    "jetons",
-    "vérification",
-    "facteur",
-    "facteurs",
-    "a2f",
-    "authentificateur",
-    // German.
-    "bestätigungscode",
-    "bestatigungscode",
-    "verifizierungscode",
-    "faktor",
-    // Spanish.
-    "código",
-    "codigo",
-    "verificación",
-    "verificacion",
+    "otp", "totp", "hotp", "oath", "pin", "duo", "sms", "tfa", "verify",
 ];
 
-/// Words that name a one-time code by their beginning: German compounds ("Einmalpasswort",
-/// "Einmalkennwort"), as the C# `einmal\w*`.
-const ONE_TIME_CODE_PREFIXES: &[&str] = &["einmal"];
+/// Pieces of words that name a one-time code or a second factor, compounds included
+/// ("tokencode", "OneTimePassword", "Zweifaktorauthentifizierung"), matched anywhere in a
+/// word of the title, the instructions or a host label.
+const ONE_TIME_CODE_STEMS: &[&str] = &[
+    "otp",
+    "token",
+    "code",
+    "codigo",
+    "código",
+    "onetime",
+    "securid",
+    "passcode",
+    "yubi",
+    "radius",
+    "second",
+    "tempor",
+    "dynami",
+    "faktor",
+    "factor",
+    "facteur",
+    "mfa",
+    "2fa",
+    "a2f",
+    "einmal",
+    "jeton",
+    "verif",
+    "vérif",
+    "unique",
+    "authenticator",
+    "authentificateur",
+];
 
 /// Consecutive words that name a one-time code or a second factor.
 const ONE_TIME_CODE_PHRASES: &[&[&str]] = &[
     &["one", "time"],
     &["two", "step"],
     &["2", "step"],
-    &["usage", "unique"],
     &["deux", "étapes"],
     &["un", "solo", "uso"],
 ];
@@ -157,11 +167,15 @@ const ONE_TIME_CODE_PHRASES: &[&[&str]] = &[
 /// What separates a host from the account in front of it ("jdoe@host").
 const AT: char = '@';
 
-/// A piece of a prompt: a word, or the user's own account (with the host after it).
+/// What opens and closes an IPv6 address as a host label ("jdoe@[fe80::1]").
+const ADDRESS_OPEN: char = '[';
+const ADDRESS_CLOSE: char = ']';
+
+/// A piece of a prompt: a word, or the user's own account, `at_host` when a host follows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Token<'a> {
     Word(&'a str),
-    Own,
+    Own { at_host: bool },
 }
 
 /// Characters an account name is made of, domain and machine accounts included
@@ -170,9 +184,10 @@ fn is_account_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | '\\' | '$' | AT)
 }
 
-/// Characters of the host label after "jdoe@", an IPv6 address included.
+/// Characters of a host label after "jdoe@" outside brackets: a `:` ends it, so
+/// "jdoe@host:root's" leaves "root" to be read.
 fn is_host_char(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '[' | ']' | '%')
+    c.is_alphanumeric() || matches!(c, '.' | '_' | '-')
 }
 
 /// `true` when a keyboard-interactive round is to be asked as the password method's
@@ -189,7 +204,7 @@ pub(crate) fn round_is_the_password(
 
 /// `true` when `question` asks for the account's password alone: exactly one prompt, typed
 /// hidden, made only of a plain password prompt's words and the user's own account, in a
-/// round whose title and instructions name no one-time code.
+/// round whose title and instructions are empty or as plain, and name no one-time code.
 pub(crate) fn asks_for_the_account_password(question: &KeyboardInteractiveQuestion) -> bool {
     let [prompt] = question.prompts.as_slice() else {
         return false;
@@ -197,85 +212,121 @@ pub(crate) fn asks_for_the_account_password(question: &KeyboardInteractiveQuesti
     if prompt.echo {
         return false;
     }
-    let text = prompt.text.to_lowercase();
     let username = question.username.to_lowercase();
+    let text = prompt.text.to_lowercase();
     let Some(tokens) = tokens(&text, &username) else {
         return false;
     };
-    if !is_a_plain_password_prompt(&tokens) {
+    if !names_a_password(&tokens) || !is_plain(&tokens, &[]) {
         return false;
     }
     [&question.name, &question.instructions]
         .into_iter()
-        .all(|said| !names_a_one_time_code(&words(&said.to_lowercase())))
+        .all(|said| is_a_plain_notice(&said.to_lowercase(), &username))
 }
 
-/// `true` when every token is allowed where it stands and one names a password.
-fn is_a_plain_password_prompt(tokens: &[Token<'_>]) -> bool {
-    let words: Vec<&str> = tokens
+/// `true` when lowercased `said` (a title or instructions) is empty, or names no one-time
+/// code and is made only of a plain prompt's words, plain notice words and the user's own
+/// account.
+fn is_a_plain_notice(said: &str, username: &str) -> bool {
+    if names_a_one_time_code(said) {
+        return false;
+    }
+    tokens(said, username).is_some_and(|tokens| is_plain(&tokens, PLAIN_NOTICE_WORDS))
+}
+
+/// The words of `tokens`, the user's own account left out.
+fn words_of<'a>(tokens: &[Token<'a>]) -> Vec<&'a str> {
+    tokens
         .iter()
         .filter_map(|token| match token {
             Token::Word(word) => Some(*word),
-            Token::Own => None,
+            Token::Own { .. } => None,
         })
-        .collect();
-    let names_a_password = words.iter().any(|word| PASSWORD_WORDS.contains(word))
+        .collect()
+}
+
+fn names_a_password(tokens: &[Token<'_>]) -> bool {
+    let words = words_of(tokens);
+    words.iter().any(|word| PASSWORD_WORDS.contains(word))
         || PASSWORD_PHRASES
             .iter()
-            .any(|phrase| words.windows(phrase.len()).any(|window| window == *phrase));
-    if !names_a_password {
-        return false;
-    }
+            .any(|phrase| words.windows(phrase.len()).any(|window| window == *phrase))
+}
+
+/// `true` when every token is allowed where it stands: a word of the lists (`more` added),
+/// an introducer before the user's own account, a possessive after it, and the user's own
+/// account only where it stands as an account (with its host, after an introducer or "de",
+/// or before a possessive). A bare account name is a doubt: user "token" and "Token
+/// password:" name a token.
+fn is_plain(tokens: &[Token<'_>], more: &[&str]) -> bool {
     tokens.iter().enumerate().all(|(index, token)| {
-        let Token::Word(word) = token else {
-            return true;
-        };
-        let after_own = index > 0 && tokens[index - 1] == Token::Own;
-        let before_own = tokens.get(index + 1) == Some(&Token::Own);
-        if ACCOUNT_INTRODUCERS.contains(word) {
-            return before_own;
+        let before = index.checked_sub(1).map(|at| tokens[at]);
+        let after = tokens.get(index + 1).copied();
+        match token {
+            Token::Own { at_host } => {
+                *at_host
+                    || matches!(before, Some(Token::Word(word))
+                        if ACCOUNT_INTRODUCERS.contains(&word) || ACCOUNT_OF.contains(&word))
+                    || after == Some(Token::Word(POSSESSIVE))
+            }
+            Token::Word(word) if ACCOUNT_INTRODUCERS.contains(word) => {
+                matches!(after, Some(Token::Own { .. }))
+            }
+            Token::Word(word) if *word == POSSESSIVE => matches!(before, Some(Token::Own { .. })),
+            Token::Word(word) => {
+                PASSWORD_WORDS.contains(word) || PLAIN_WORDS.contains(word) || more.contains(word)
+            }
         }
-        if *word == POSSESSIVE {
-            return after_own;
-        }
-        PASSWORD_WORDS.contains(word) || PLAIN_WORDS.contains(word)
     })
 }
 
-/// The tokens of lowercased `prompt`, the whole-name occurrences of lowercased `username`
-/// (with the `@host` after one) taken as [`Token::Own`]. `None` when an `@` is left: another
-/// account ("(admin@host) Password:"), or a doubt.
-fn tokens<'a>(prompt: &'a str, username: &str) -> Option<Vec<Token<'a>>> {
+/// The tokens of lowercased `text`, the whole-name occurrences of lowercased `username`
+/// (with the `@host` after one) taken as [`Token::Own`]. `None` when an `@` is left
+/// (another account: "(admin@host) Password:"), or a host label is a doubt.
+fn tokens<'a>(text: &'a str, username: &str) -> Option<Vec<Token<'a>>> {
     let mut tokens = Vec::new();
     let mut copied = 0;
     if !username.is_empty() {
-        for (start, found) in prompt.match_indices(username) {
+        for (start, found) in text.match_indices(username) {
             if start < copied {
                 continue;
             }
             let mut end = start + found.len();
-            let before = prompt[..start].chars().next_back();
-            let after = prompt[end..].chars().next();
+            let before = text[..start].chars().next_back();
+            let after = text[end..].chars().next();
             let whole_name = !before.is_some_and(is_account_char)
                 && !after.is_some_and(|c| c != AT && is_account_char(c));
             if !whole_name {
                 continue;
             }
-            if after == Some(AT) {
+            let at_host = after == Some(AT);
+            if at_host {
                 end += AT.len_utf8();
-                end += prompt[end..]
-                    .chars()
-                    .take_while(|&c| is_host_char(c))
-                    .map(char::len_utf8)
-                    .sum::<usize>();
+                end += host_label_length(&text[end..])?;
             }
-            plain_tokens(&prompt[copied..start], &mut tokens)?;
-            tokens.push(Token::Own);
+            plain_tokens(&text[copied..start], &mut tokens)?;
+            tokens.push(Token::Own { at_host });
             copied = end;
         }
     }
-    plain_tokens(&prompt[copied..], &mut tokens)?;
+    plain_tokens(&text[copied..], &mut tokens)?;
     Some(tokens)
+}
+
+/// The length of the host label at the start of `rest`, after "jdoe@": a bracketed address,
+/// or host characters up to the first other one. `None` for an unclosed bracket, or a label
+/// naming a one-time code ("(jdoe@otp) Password:").
+fn host_label_length(rest: &str) -> Option<usize> {
+    let length = if rest.starts_with(ADDRESS_OPEN) {
+        rest.find(ADDRESS_CLOSE)? + ADDRESS_CLOSE.len_utf8()
+    } else {
+        rest.chars()
+            .take_while(|&c| is_host_char(c))
+            .map(char::len_utf8)
+            .sum()
+    };
+    (!names_a_one_time_code(&rest[..length])).then_some(length)
 }
 
 /// Appends the words of `piece`, which holds no own account; `None` when it holds an `@`.
@@ -294,16 +345,16 @@ fn words(text: &str) -> Vec<&str> {
         .collect()
 }
 
-fn names_a_one_time_code(words: &[&str]) -> bool {
-    words.iter().any(|word| ONE_TIME_CODE_WORDS.contains(word))
-        || ONE_TIME_CODE_PHRASES
-            .iter()
-            .any(|phrase| words.windows(phrase.len()).any(|window| window == *phrase))
-        || words.iter().any(|word| {
-            ONE_TIME_CODE_PREFIXES
-                .iter()
-                .any(|prefix| word.starts_with(prefix))
-        })
+/// `true` when lowercased `text` names a one-time code or a second factor: a word of the
+/// list, a piece of a word, or consecutive words.
+fn names_a_one_time_code(text: &str) -> bool {
+    let words = words(text);
+    words.iter().any(|word| {
+        ONE_TIME_CODE_WORDS.contains(word)
+            || ONE_TIME_CODE_STEMS.iter().any(|stem| word.contains(stem))
+    }) || ONE_TIME_CODE_PHRASES
+        .iter()
+        .any(|phrase| words.windows(phrase.len()).any(|window| window == *phrase))
 }
 
 #[cfg(test)]
@@ -376,6 +427,7 @@ mod tests {
             "Password for jdoe@CORP.LOCAL: ",
             "Password for `jdoe':",
             "Mot de passe pour jdoe :",
+            "jdoe's password: ",
             "Mot de passe de jdoe :",
             "Passwort für jdoe:",
             "Contraseña para jdoe:",
@@ -534,22 +586,103 @@ mod tests {
         }
     }
 
+    /// Whether a "Password: " round titled `name` with `instructions` is the password.
+    fn with_notice(user: &str, name: &str, instructions: &str) -> bool {
+        let mut asked = round(user, instructions, &[("Password: ", false)]);
+        asked.name = name.to_owned();
+        asks_for_the_account_password(&asked)
+    }
+
     #[test]
-    fn instructions_naming_a_one_time_code_make_the_round_a_factor_s() {
-        assert!(!asks_for_the_account_password(&round(
-            USER,
+    fn a_title_or_instructions_naming_a_factor_or_an_account_make_the_round_the_user_s() {
+        for said in [
             "Enter the one-time password shown by your token.",
-            &[("Password: ", false)]
-        )));
-        let mut titled = round(USER, "", &[("Password: ", false)]);
-        titled.name = "Duo two-factor login".to_owned();
-        assert!(!asks_for_the_account_password(&titled));
-        // Other instructions do not change the answer.
-        assert!(asks_for_the_account_password(&round(
-            USER,
+            "Duo two-factor login",
+            "Enter your RSA SecurID tokencode",
+            "Enter your OneTimePassword",
+            "OTPpassword required",
+            "Enter your second password",
+            "Temporary password",
+            "Zweifaktorauthentifizierung",
+            "Enter the password for admin@db01",
+            "Enter the password for admin",
+            "Root password required",
+            "admin's password",
+            "Code de vérification",
+            "Mot de passe à usage unique",
+            "Contraseña temporal",
+            // A PAM notice: the user reads it in the keyboard-interactive dialog.
             "Your password will expire in 5 days.",
-            &[("Password: ", false)]
-        )));
+            "Last login: Mon Oct 12 10:00:00 2026 from 10.0.0.1",
+        ] {
+            assert!(!with_notice(USER, "", said), "instructions {said:?}");
+            assert!(!with_notice(USER, said, ""), "title {said:?}");
+        }
+    }
+
+    #[test]
+    fn a_plain_title_or_instructions_keep_the_round_the_password() {
+        for said in [
+            "",
+            "Please enter your password",
+            "Please enter your password to continue.",
+            "Password authentication",
+            "keyboard-interactive",
+            "Enter the password for jdoe",
+            "Enter the password for jdoe@CORP.LOCAL",
+            "Veuillez saisir votre mot de passe",
+            "Bitte geben Sie Ihr Passwort ein",
+            "Ingrese su contraseña",
+        ] {
+            assert!(with_notice(USER, "", said), "instructions {said:?}");
+            assert!(with_notice(USER, said, ""), "title {said:?}");
+        }
+    }
+
+    #[test]
+    fn a_user_name_that_is_a_word_counts_only_where_it_stands_as_an_account() {
+        // Users "token", "otp", "new" and "enable": "Token password:" names a token.
+        for (user, prompt) in [
+            ("token", "Token password: "),
+            ("otp", "OTP password: "),
+            ("new", "New password: "),
+            ("enable", "Enable password: "),
+            ("second", "Second password: "),
+            (USER, "jdoe password: "),
+            (USER, "Password jdoe: "),
+        ] {
+            assert!(!password_round(user, prompt), "{user:?} {prompt:?}");
+        }
+        for (user, prompt) in [
+            ("token", "Password for token: "),
+            ("token", "(token@host) Password: "),
+            ("otp", "otp@host's password: "),
+            ("new", "Mot de passe de new : "),
+            (USER, "jdoe's password: "),
+        ] {
+            assert!(password_round(user, prompt), "{user:?} {prompt:?}");
+        }
+    }
+
+    #[test]
+    fn a_host_label_naming_a_factor_or_hiding_another_account_is_a_doubt() {
+        for prompt in [
+            "(jdoe@otp) Password: ",
+            "(jdoe@token-host) Password: ",
+            "(jdoe@radius01) Password: ",
+            "jdoe@host:root's password: ",
+            "(jdoe@host:admin) Password: ",
+            "(jdoe@[fe80::1) Password: ",
+        ] {
+            assert!(!password_round(USER, prompt), "{prompt:?}");
+        }
+        for prompt in [
+            "(jdoe@host) Password: ",
+            "(jdoe@[fe80::1%eth0]) Password: ",
+            "Password for jdoe@CORP.LOCAL: ",
+        ] {
+            assert!(password_round(USER, prompt), "{prompt:?}");
+        }
     }
 
     #[test]
