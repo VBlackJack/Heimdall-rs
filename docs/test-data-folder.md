@@ -59,7 +59,7 @@ the real application.
 | Folder | What it replaces | What is in it |
 |---|---|---|
 | `config` | `%APPDATA%\Heimdall-rs\config` | profiles, settings, vault, `known_hosts`, host key pins and details, session snapshot, window state, split layouts, macros, the single-instance lock |
-| `data` | `%LOCALAPPDATA%\Heimdall-rs\data` | logs and crash reports, files being edited, the Network Cartography's scan history (`network-scans`) and knowledge base (`network-kb.json`) |
+| `data` | `%LOCALAPPDATA%\Heimdall-rs\data` | logs and crash reports, files being edited, the Network Cartography's scan history (`network-scans`) and knowledge base (`network-kb.json`), the notes (`config\notes`: the Notes tool's and those started from the session tree) |
 | `legacy` | `%LOCALAPPDATA%\Heimdall` | the C# Heimdall's data, source of the migration |
 | `home` | the user's profile folder | `.ssh\known_hosts` (import and export), `.Xauthority`, the Files tab's start, the file dialogs' `.ssh` start, the `~` of an OpenSSH config import, `.putty\sessions` |
 | `local-app-data` | `%LOCALAPPDATA%` | the Citrix Workspace cache read by the Citrix import |

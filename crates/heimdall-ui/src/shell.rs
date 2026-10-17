@@ -4793,6 +4793,13 @@ impl Shell {
         let Some(context) = self.app.profile_summary_note(id) else {
             return Task::none();
         };
+        // The Notes tool's folder, so the note is listed there: the C# writes it through the
+        // Notes tool's own storage (`NotesStorageService.CreateNoteAsync`).
+        let Some(dir) = heimdall_core::tools::notes_storage::notes_dir() else {
+            return Task::done(Message::App(AppMessage::NoteOpened(Err(fl!(
+                "ui-tool-notes-error-no-folder"
+            )))));
+        };
         let draft = heimdall_app::notes::draft(
             template,
             &context,
@@ -4800,11 +4807,7 @@ impl Shell {
             &note_labels(),
         );
         Task::perform(
-            heimdall_app::notes::open(
-                self.app.notes_dir(),
-                draft,
-                self.app.settings().external_editor.clone(),
-            ),
+            heimdall_app::notes::open(dir, draft, self.app.settings().external_editor.clone()),
             |opened| Message::App(AppMessage::NoteOpened(opened)),
         )
     }

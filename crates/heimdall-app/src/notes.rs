@@ -15,17 +15,15 @@
  */
 
 //! Notes about a server, as the C# Notes tool's templates write them: a Markdown file in
-//! the notes folder beside the profiles, named after when and what, opened in the editor
-//! set. The day's note is one file a day, opened again when it is there.
+//! the notes folder the Notes tool lists ([`heimdall_core::tools::notes_storage::notes_dir`]),
+//! named after when and what, opened in the editor set. The day's note is one file a day,
+//! opened again when it is there.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use unicode_normalization::UnicodeNormalization as _;
 use unicode_normalization::char::is_combining_mark;
-
-/// The folder of the notes, beside the profiles.
-pub const NOTES_FOLDER: &str = "notes";
 
 /// The folder of the day's notes, in the notes folder.
 const DAILY_FOLDER: &str = "daily";
@@ -320,12 +318,6 @@ pub fn draft(
     }
 }
 
-/// The notes folder beside `profiles_file`.
-#[must_use]
-pub fn notes_dir(profiles_file: &Path) -> PathBuf {
-    profiles_file.with_file_name(NOTES_FOLDER)
-}
-
 /// Writes `draft` in the notes folder `dir`, unless a note is there already (the day's
 /// note, written earlier), then opens it in the editor `setting` names; the note's path.
 ///
@@ -472,5 +464,38 @@ mod tests {
         // No editor to open it with here: what matters is the file.
         let _ = open(dir.path().to_owned(), daily, "/no/such/editor".to_owned()).await;
         assert_eq!(std::fs::read_to_string(&path).expect("read"), "kept");
+    }
+
+    #[tokio::test]
+    async fn a_note_written_from_the_session_tree_is_listed_by_the_notes_tool() {
+        use heimdall_core::tools::notes_storage::list_notes;
+        let dir = tempfile::tempdir().expect("dir");
+        let note = draft(NoteTemplate::Blank, &web(), NOW, &labels());
+        let daily = draft(NoteTemplate::Daily, &web(), NOW, &labels());
+        // No editor to open them with here: what matters is the files.
+        let _ = open(
+            dir.path().to_owned(),
+            note.clone(),
+            "/no/such/editor".to_owned(),
+        )
+        .await;
+        let _ = open(
+            dir.path().to_owned(),
+            daily.clone(),
+            "/no/such/editor".to_owned(),
+        )
+        .await;
+        let listed = list_notes(dir.path()).expect("listed");
+        let mut paths: Vec<_> = listed.iter().map(|note| note.path.clone()).collect();
+        paths.sort();
+        let mut expected = vec![dir.path().join(&note.path), dir.path().join(&daily.path)];
+        expected.sort();
+        assert_eq!(paths, expected);
+        let blank = listed
+            .iter()
+            .find(|listed| listed.path == dir.path().join(&note.path))
+            .expect("listed");
+        assert_eq!(blank.title(), "Working Note - Web Prod é");
+        assert_eq!(blank.content, note.content);
     }
 }

@@ -63,7 +63,7 @@ version de test ne soit jamais prise pour la vraie application.
 | Dossier | Ce qu'il remplace | Ce qu'il contient |
 |---|---|---|
 | `config` | `%APPDATA%\Heimdall-rs\config` | profils, réglages, coffre, `known_hosts`, épinglages et détails des clés d'hôte, instantané de session, état de la fenêtre, dispositions partagées, macros, le verrou d'instance unique |
-| `data` | `%LOCALAPPDATA%\Heimdall-rs\data` | journaux et rapports de plantage, fichiers en cours d'édition, historique des analyses (`network-scans`) et base de connaissances (`network-kb.json`) de la Cartographie réseau |
+| `data` | `%LOCALAPPDATA%\Heimdall-rs\data` | journaux et rapports de plantage, fichiers en cours d'édition, historique des analyses (`network-scans`) et base de connaissances (`network-kb.json`) de la Cartographie réseau, les notes (`config\notes` : celles de l'outil Notes et celles créées depuis l'arborescence des sessions) |
 | `legacy` | `%LOCALAPPDATA%\Heimdall` | les données du Heimdall C#, source de la migration |
 | `home` | le dossier de profil de l'utilisateur | `.ssh\known_hosts` (import et export), `.Xauthority`, le départ de l'onglet Fichiers, le départ `.ssh` des boîtes de dialogue, le `~` d'un import de configuration OpenSSH, `.putty\sessions` |
 | `local-app-data` | `%LOCALAPPDATA%` | le cache de Citrix Workspace lu par l'import Citrix |
