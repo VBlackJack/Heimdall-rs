@@ -4926,6 +4926,19 @@ ui-tool-hosts-col-ip = IP Address
 ui-tool-hosts-col-hostname = Hostname
 ui-tool-hosts-col-comment = Comment
 ui-tool-hosts-col-action = Action
+ui-tool-hosts-col-names = Hostnames (separated by spaces)
+ui-tool-hosts-btn-edit = Edit
+ui-tool-hosts-btn-apply = Apply
+ui-tool-hosts-btn-cancel = Cancel
+ui-tool-hosts-btn-delete-selected = Delete Selected
+ui-tool-hosts-select-all = Select all entries
+ui-tool-hosts-selected-count = { $count ->
+    [one] { $count } entry selected
+   *[other] { $count } entries selected
+}
+ui-tool-hosts-copy-ip = Copy IP Address
+ui-tool-hosts-copy-hostname = Copy Hostname
+ui-tool-hosts-last-modified = Last modified: { $time }
 
 ## Service Status Dashboard
 ui-tool-services-name = Service Status Dashboard
