@@ -167,11 +167,9 @@ impl App {
     /// The profiles folder `path` holds, its sub-folders' too, those the tree lists while
     /// `search` is typed, folded or not: what the properties panel summarizes of a folder,
     /// as the C# `EnumerateFolderSessions` walks the folder on screen. [`NO_FOLDER`] holds
-    /// the profiles in none. Folders are told apart whatever the case, as the tree groups
-    /// them.
+    /// the profiles in none. "Prod" and "prod" are two folders, as the tree draws two rows.
     #[must_use]
     pub fn folder_profiles(&self, path: &str, search: &str) -> Vec<ProfileSummary> {
-        let folder = path.to_lowercase();
         self.profile_summaries()
             .into_iter()
             .filter(|profile| {
@@ -179,7 +177,7 @@ impl App {
                 if path == NO_FOLDER {
                     folder::parts(group).is_empty()
                 } else {
-                    folder::is_within(&group.to_lowercase(), &folder)
+                    folder::is_within(group, path)
                 }
             })
             .filter(|profile| self.lists(profile, search))

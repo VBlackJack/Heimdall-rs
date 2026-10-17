@@ -198,6 +198,15 @@ fn a_folder_and_a_selection_are_summed_up() {
     ui.find("Connected:").expect("those connected");
     drop(ui);
 
+    // Hidden by the search: not summed up as if it were still there.
+    let _ = shell.update(Message::Search("c.lab".to_owned()));
+    let mut ui = simulator(&shell, WINDOW);
+    assert!(ui.find("Sessions:").is_err());
+    ui.find("Select a session to see its properties.")
+        .expect("nothing shown");
+    drop(ui);
+    let _ = shell.update(Message::Search(String::new()));
+
     select(&mut shell, "a");
     let _ = shell.update(Message::App(AppMessage::Selection(
         SelectionMessage::Toggle(ProfileId::new("c")),

@@ -221,7 +221,7 @@ fn the_properties_panel_choice_is_kept_across_runs_and_survives_a_filter_reset()
 }
 
 #[test]
-fn a_folder_holds_what_the_tree_lists_in_it_folded_or_not_whatever_the_case() {
+fn a_folder_holds_what_the_tree_lists_in_it_folded_or_not_its_case_its_own() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let ids = |app: &App, path: &str, search: &str| -> Vec<String> {
@@ -235,7 +235,10 @@ fn a_folder_holds_what_the_tree_lists_in_it_folded_or_not_whatever_the_case() {
     };
     app.update(Message::ToggleFolder("Prod".to_owned()));
     assert_eq!(ids(&app, "Prod", ""), ["db", "web"], "folded, still held");
-    assert_eq!(ids(&app, "prod", ""), ["db", "web"], "whatever the case");
+    assert!(
+        ids(&app, "prod", "").is_empty(),
+        "another folder, as the tree draws it"
+    );
     assert_eq!(
         ids(&app, "Prod", "web"),
         ["web"],

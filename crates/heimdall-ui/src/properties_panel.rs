@@ -30,7 +30,9 @@ use heimdall_app::{
     SessionState, server_text,
 };
 use heimdall_core::profile::{ProfileId, display_address};
-use iced::widget::{Column, button, column, container, mouse_area, row, space, text, tooltip};
+use iced::widget::{
+    Column, button, column, container, mouse_area, row, space, table, text, tooltip,
+};
 use iced::{Alignment, Element, Length, Padding, Theme};
 
 use crate::i18n::fl;
@@ -258,7 +260,9 @@ pub fn auth_parts(
         }
         ProfileKind::Telnet | ProfileKind::Local | ProfileKind::Citrix => return None,
     }
-    if provider {
+    // Asked only for a password not saved, as the C# `GetCredentialTarget` and the connect
+    // path, which answers from the saved one first.
+    if provider && !saved.password {
         parts.push(AuthPart::CredentialProvider);
     }
     Some(parts)
@@ -776,45 +780,55 @@ fn copy_style(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// The card of `lines`: labels in a column as wide as the widest, values beside them, as
-/// the C# grid.
+/// The card of `lines`: labels in a column as wide as the widest, each value beside its
+/// own, as the C# grid's rows: a value wrapped over two lines pushes the next line down.
 fn card<'a>(lines: &[Line]) -> Element<'a, Message> {
-    let mut labels = Column::new().spacing(LINE_GAP);
-    let mut values = Column::new().spacing(LINE_GAP).width(Length::Fill);
-    for line in lines {
-        labels = labels.push(
+    let labels = table::column(space(), |line: Line| {
+        container(
             text(line.field.label())
                 .size(font_size::CAPTION)
                 .style(text::secondary),
-        );
-        let value: Element<'a, Message> = if line.field == Field::Favorite {
-            container(icons::icon(
-                Icon::FavoriteStarFill,
-                Tint::Warning,
-                font_size::CAPTION,
-            ))
-            .into()
-        } else {
-            let said = text_value(line.value.clone(), line.field.one_line())
-                .size(font_size::CAPTION)
-                .style(if line.warning {
-                    text::warning
-                } else {
-                    text::default
-                });
-            if line.field.copies() {
-                copy_value(said, line.value.clone())
-            } else {
-                said.into()
-            }
-        };
-        values = values.push(value);
+        )
+        .padding(Padding {
+            right: LABEL_GAP,
+            ..Padding::ZERO
+        })
+    });
+    // Each value as wide as its column: a text wrapped is measured in it.
+    let values = table::column(space(), |line: Line| {
+        container(line_value(&line)).width(Length::Fill)
+    })
+    .width(Length::Fill);
+    container(
+        table([labels, values], lines.iter().cloned())
+            .padding_x(0.0)
+            .padding_y(LINE_GAP / 2.0)
+            .separator(0.0),
+    )
+    .padding(CARD_PADDING)
+    .width(Length::Fill)
+    .style(crate::detail_view::card_style)
+    .into()
+}
+
+/// What `line` says: its text, a copy of it at a click when it is a value, or the star.
+fn line_value<'a>(line: &Line) -> Element<'a, Message> {
+    if line.field == Field::Favorite {
+        return icons::icon(Icon::FavoriteStarFill, Tint::Warning, font_size::CAPTION);
     }
-    container(row![labels, values].spacing(LABEL_GAP))
-        .padding(CARD_PADDING)
-        .width(Length::Fill)
-        .style(crate::detail_view::card_style)
-        .into()
+    let said = text_value(line.value.clone(), line.field.one_line())
+        .size(font_size::CAPTION)
+        .style(if line.warning {
+            text::warning
+        } else {
+            text::default
+        });
+    // A gateway gone says so in the window's words: nothing to paste elsewhere.
+    if line.field.copies() && !line.warning {
+        copy_value(said, line.value.clone())
+    } else {
+        said.into()
+    }
 }
 
 /// A folder's or a selection's summary: its title, its path, then its counts in a card, as
@@ -981,7 +995,12 @@ mod tests {
         );
         assert_eq!(
             case(ProfileKind::Sftp, &both, true),
-            Some(vec![Username, SshKey, Password, CredentialProvider])
+            Some(vec![Username, SshKey, Password]),
+            "a password saved: the provider is not asked"
+        );
+        assert_eq!(
+            case(ProfileKind::Sftp, &saved(false, Some("id_ed25519")), true),
+            Some(vec![Username, SshKey, CredentialProvider])
         );
         assert_eq!(
             case(ProfileKind::Rdp, &both, false),
@@ -990,8 +1009,12 @@ mod tests {
         assert_eq!(case(ProfileKind::Ftp, &none, false), Some(vec![Username]));
         assert_eq!(case(ProfileKind::Vnc, &both, false), Some(vec![Password]));
         assert_eq!(
-            case(ProfileKind::WinRm, &both, true),
-            Some(vec![Username, Password, CredentialProvider])
+            case(ProfileKind::Rdp, &none, true),
+            Some(vec![Username, CredentialProvider])
+        );
+        assert_eq!(
+            case(ProfileKind::WinRm, &both, false),
+            Some(vec![Username, Password])
         );
         let current = ProfileSummary {
             username: None,

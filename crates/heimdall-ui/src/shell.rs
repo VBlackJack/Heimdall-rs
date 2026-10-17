@@ -596,7 +596,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
                 return Some(Message::FocusSearch);
             }
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
-                return Some(Message::TreeShortcut(shortcut));
+                // Held down, the panel's key would flip it, and save it, at each repeat.
+                return (!repeat || shortcut != TreeShortcut::PropertiesPanel)
+                    .then_some(Message::TreeShortcut(shortcut));
             }
             // F1 left by every widget: a terminal or a desktop keeps it for its programs.
             if physical_key == keyboard::key::Physical::Code(keyboard::key::Code::F1)
@@ -5540,29 +5542,31 @@ impl Shell {
                 crate::tools::catalog::sidebar_panel(&self.app, &self.tools_filter)
             ]
             .push(actions)
-        } else if crate::properties_panel::is_shown(self.app.shows_properties_panel(), false) {
+        } else {
             // The tree over the properties panel, as the C# `SidebarContentGrid`: laid out
             // in the height the two share, so a height kept from a taller window leaves the
-            // tree its room.
+            // tree its room. Laid out so whether or not the panel is shown, so showing it
+            // keeps the tree as it was, scrolled where it was.
+            let docked =
+                crate::properties_panel::is_shown(self.app.shows_properties_panel(), false);
             let saved = self.properties_height;
-            let docked = responsive(move |size| {
-                let height = crate::properties_panel::fit_height(saved, size.height);
-                column![
-                    self.tree_area(),
-                    crate::properties_panel::splitter(height, size.height),
-                    crate::properties_panel::view(self.properties_shown(), height),
-                ]
-                .into()
+            let content = responsive(move |size| {
+                let mut content = column![self.tree_area()];
+                if docked {
+                    let height = crate::properties_panel::fit_height(saved, size.height);
+                    content = content
+                        .push(crate::properties_panel::splitter(height, size.height))
+                        .push(crate::properties_panel::view(
+                            self.properties_shown(),
+                            height,
+                        ));
+                }
+                content.into()
             });
             column![header, self.search_box()]
                 .push(actions)
                 .push(self.filter_feedback())
-                .push(docked)
-        } else {
-            column![header, self.search_box()]
-                .push(actions)
-                .push(self.filter_feedback())
-                .push(self.tree_area())
+                .push(content)
         };
         container(body.spacing(spacing::SM).padding(spacing::MD))
             .width(self.sidebar_width)
@@ -5612,6 +5616,15 @@ impl Shell {
                     .filter_map(|id| app.profile_summary(id))
                     .map(with_state),
             )),
+            // As the C# `FindFolderOnScreen`: a folder renamed, deleted or hidden by the
+            // search is not summed up under its old name.
+            Subject::Folder(path)
+                if !app.tree_rows(&self.search).iter().any(
+                    |row| matches!(row, TreeRow::Folder { path: shown, .. } if *shown == path),
+                ) =>
+            {
+                Shown::Nothing
+            }
             Subject::Folder(path) => {
                 let (title, shown_path) = folder_title(&path);
                 Shown::Summary(summary(
@@ -6697,6 +6710,10 @@ impl Shell {
                     anchor: None,
                 });
             }
+            // The panel hidden while held: the drag ends with it.
+            Message::PropertiesDragged(_) if !self.app.shows_properties_panel() => {
+                self.properties_drag = None;
+            }
             // The press gives no place: the first move is where the drag starts from.
             Message::PropertiesDragged(y) => {
                 if let Some(drag) = self.properties_drag.as_mut() {
@@ -6838,12 +6855,11 @@ impl Shell {
     }
 
     /// Ctrl+Shift+B, as the C# one: the properties panel shown or hidden; while it cannot be
-    /// seen, behind the Tools tab, the sidebar hidden or another page, shown with the
-    /// sessions' tab and the sidebar, since a toggle there turned it off unseen.
+    /// seen, behind the Tools tab or the sidebar hidden, shown with the sessions' tab and the
+    /// sidebar, since a toggle there turned it off unseen.
     fn properties_shortcut(&mut self) -> Vec<Effect> {
         let tools = self.app.sidebar_tab() == SidebarTab::Tools;
-        let unseen = self.sidebar_hidden || self.page != Page::Tab;
-        if !crate::properties_panel::shortcut_reveals(tools, unseen) {
+        if !crate::properties_panel::shortcut_reveals(tools, self.sidebar_hidden) {
             return self.app.update(AppMessage::Filter(
                 heimdall_app::FilterMessage::PropertiesPanel,
             ));
@@ -13822,6 +13838,19 @@ mod tests {
             Some(Message::TreeShortcut(TreeShortcut::PropertiesPanel))
         ));
         assert!(routed(ctrl_shift_b(), event::Status::Captured).is_none());
+        let held = iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character("B".into()),
+            modified_key: Key::Character("B".into()),
+            physical_key: unknown,
+            location: Location::Standard,
+            modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+            text: None,
+            repeat: true,
+        });
+        assert!(
+            routed(held, event::Status::Ignored).is_none(),
+            "held down, it does not flip the panel at each repeat"
+        );
         let shift_f10 = pressed(
             Key::Named(Named::F10),
             Physical::Code(keyboard::key::Code::F10),
