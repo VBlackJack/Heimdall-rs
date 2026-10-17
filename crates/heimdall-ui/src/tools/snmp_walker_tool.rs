@@ -33,12 +33,16 @@ use heimdall_core::tools::snmp_walker::{
     WalkEnd, WalkError,
 };
 
+use super::file_export::FileExport;
 use super::network_run::{RunSlot, blocking_run};
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
+
+/// What the CSV export's suggested name starts with, as the C# `snmpwalk_{host}_{now}.csv`.
+const EXPORT_PREFIX: &str = "snmpwalk";
 
 /// Messages emitted by the SNMP walker view.
 #[derive(Clone)]
@@ -63,8 +67,8 @@ pub enum SnmpWalkerMessage {
     CommunityTried(u64, CommunityResult),
     /// Test `.0` ended as `.1` says; `None` when its work failed.
     CommunitiesEnded(u64, Option<Result<WalkEnd, WalkError>>),
-    /// Copy CSV export.
-    CopyCsv,
+    /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
+    ExportCsv,
 }
 
 impl fmt::Debug for SnmpWalkerMessage {
@@ -82,7 +86,7 @@ impl fmt::Debug for SnmpWalkerMessage {
             // The communities tried are the common ones, never one typed.
             Self::CommunityTried(run, result) => write!(f, "CommunityTried({run}, {result:?})"),
             Self::CommunitiesEnded(run, end) => write!(f, "CommunitiesEnded({run}, {end:?})"),
-            Self::CopyCsv => f.write_str("CopyCsv"),
+            Self::ExportCsv => f.write_str("ExportCsv"),
         }
     }
 }
@@ -138,7 +142,8 @@ impl Default for SnmpWalkerPane {
 pub enum Outcome {
     None,
     Task(Task<Message>),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// A walk to make: its run, its stop, and what it reads.
@@ -162,7 +167,8 @@ enum Step {
     None,
     Walk(Walk),
     Test(CommunityTest),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 impl SnmpWalkerPane {
@@ -170,7 +176,7 @@ impl SnmpWalkerPane {
     pub fn update(&mut self, tab: TabId, message: SnmpWalkerMessage) -> Outcome {
         match self.apply(message) {
             Step::None => Outcome::None,
-            Step::Copy(slot, content) => Outcome::Copy(slot, content),
+            Step::Save(export) => Outcome::Save(export),
             Step::Walk(walk) => {
                 let Walk {
                     run,
@@ -283,7 +289,7 @@ impl SnmpWalkerPane {
                 }
                 Step::None
             }
-            SnmpWalkerMessage::CopyCsv => {
+            SnmpWalkerMessage::ExportCsv => {
                 if self.entries.is_empty() {
                     return Step::None;
                 }
@@ -297,7 +303,13 @@ impl SnmpWalkerPane {
                     &self.entries,
                     header.each_ref().map(String::as_str),
                 );
-                Step::Copy(CopySlot::SnmpWalkCsv, csv)
+                Step::Save(FileExport::csv(
+                    CopySlot::SnmpWalkCsv,
+                    fl!("ui-tool-snmpwalk-export-csv"),
+                    EXPORT_PREFIX,
+                    Some(&self.host),
+                    csv,
+                ))
             }
         }
     }
@@ -512,11 +524,10 @@ impl SnmpWalkerPane {
         }
 
         if !self.entries.is_empty() {
-            let copy_csv_btn = super::copy_button(
-                fl!("ui-tool-snmpwalk-copy-csv"),
+            let export_csv_btn = super::export_button(
+                fl!("ui-tool-snmpwalk-export-csv"),
                 state.copied(CopySlot::SnmpWalkCsv),
-                send(SnmpWalkerMessage::CopyCsv),
-                super::COPY_PADDING,
+                send(SnmpWalkerMessage::ExportCsv),
             );
 
             let header_row = row![
@@ -526,7 +537,7 @@ impl SnmpWalkerPane {
                 ))
                 .size(font_size::SUBTITLE)
                 .width(Length::Fill),
-                copy_csv_btn,
+                export_csv_btn,
             ]
             .spacing(spacing::SM)
             .align_y(Alignment::Center);
@@ -706,9 +717,12 @@ mod tests {
             Some(Ok(WalkEnd::Stopped)),
         ));
         assert_eq!(pane.entries.len(), 2, "kept, none added after the stop");
-        let Step::Copy(CopySlot::SnmpWalkCsv, csv) = pane.apply(SnmpWalkerMessage::CopyCsv) else {
+        let Step::Save(export) = pane.apply(SnmpWalkerMessage::ExportCsv) else {
             panic!("a CSV");
         };
+        assert_eq!(export.slot(), CopySlot::SnmpWalkCsv);
+        assert!(export.suggested_name().starts_with("snmpwalk_"));
+        let csv = export.content();
         assert_eq!(csv.lines().count(), 3);
     }
 

@@ -35,12 +35,16 @@ use heimdall_core::tools::cert_inspector::{
 };
 use heimdall_core::tools::net_host::checked_host;
 
+use super::file_export::FileExport;
 use super::network_run::RunSlot;
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
+
+/// What the CSV export's suggested name starts with, as the C# `certscan_{host}_{now}.csv`.
+const EXPORT_PREFIX: &str = "certscan";
 
 /// Messages a probe stream holds before it waits for the window.
 const STREAM_BUFFER: usize = 16;
@@ -87,8 +91,8 @@ pub enum CertInspectorMessage {
     Done(u64),
     /// Copy plain text details.
     CopyDetails,
-    /// Copy CSV export.
-    CopyCsv,
+    /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
+    ExportCsv,
 }
 
 /// The SSL/TLS Certificate Inspector tool pane state.
@@ -135,6 +139,8 @@ pub enum Outcome {
     None,
     Task(Task<Message>),
     Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// What a message asks of the pane, before its tab is known.
@@ -144,6 +150,8 @@ enum Step {
     /// Probe `.1`'s ports `.2` as run `.0`.
     Probe(u64, String, Vec<u16>),
     Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 impl CertInspectorPane {
@@ -152,6 +160,7 @@ impl CertInspectorPane {
         match self.apply(message) {
             Step::None => Outcome::None,
             Step::Copy(slot, content) => Outcome::Copy(slot, content),
+            Step::Save(export) => Outcome::Save(export),
             Step::Probe(run, host, ports) => {
                 let task = Task::run(probes(run, host, ports), move |message| {
                     Message::Tool(tab, super::ToolMessage::Cert(message))
@@ -213,7 +222,7 @@ impl CertInspectorPane {
                     .collect();
                 Step::Copy(CopySlot::CertDetails, details.join("\n"))
             }
-            CertInspectorMessage::CopyCsv => {
+            CertInspectorMessage::ExportCsv => {
                 if self.results.is_empty() {
                     return Step::None;
                 }
@@ -235,7 +244,13 @@ impl CertInspectorPane {
                     header.each_ref().map(String::as_str),
                     (&yes, &no),
                 );
-                Step::Copy(CopySlot::CertCsv, csv)
+                Step::Save(FileExport::csv(
+                    CopySlot::CertCsv,
+                    fl!("ui-tool-cert-export-csv"),
+                    EXPORT_PREFIX,
+                    Some(&self.inspected_host),
+                    csv,
+                ))
             }
         }
     }
@@ -401,17 +416,16 @@ impl CertInspectorPane {
                 send(CertInspectorMessage::CopyDetails),
                 super::COPY_PADDING,
             );
-            let copy_csv_btn = super::copy_button(
-                fl!("ui-tool-cert-copy-csv"),
+            let export_csv_btn = super::export_button(
+                fl!("ui-tool-cert-export-csv"),
                 state.copied(CopySlot::CertCsv),
-                send(CertInspectorMessage::CopyCsv),
-                super::COPY_PADDING,
+                send(CertInspectorMessage::ExportCsv),
             );
             body = body.push(
                 row![
                     iced::widget::space::horizontal(),
                     copy_details_btn,
-                    copy_csv_btn
+                    export_csv_btn
                 ]
                 .spacing(spacing::SM)
                 .align_y(Alignment::Center),
@@ -761,9 +775,12 @@ mod tests {
         pane.apply(CertInspectorMessage::Done(run));
         assert_eq!(pane.results.len(), 2, "nothing after the stop");
         assert!(pane.notice.is_some());
-        let Step::Copy(CopySlot::CertCsv, csv) = pane.apply(CertInspectorMessage::CopyCsv) else {
+        let Step::Save(export) = pane.apply(CertInspectorMessage::ExportCsv) else {
             panic!("a CSV");
         };
+        assert_eq!(export.slot(), CopySlot::CertCsv);
+        assert!(export.suggested_name().starts_with("certscan_"));
+        let csv = export.content();
         assert!(csv.contains("\n443,") && csv.contains(",-3,"), "{csv}");
         let Step::Copy(CopySlot::CertDetails, details) =
             pane.apply(CertInspectorMessage::CopyDetails)

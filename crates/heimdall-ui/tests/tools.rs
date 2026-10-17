@@ -483,6 +483,33 @@ fn the_base64_tool_encodes_from_its_button_and_shows_its_help() {
 }
 
 #[test]
+fn a_failed_export_is_said_under_the_header_until_one_is_written() {
+    use heimdall_ui::tools::CopySlot;
+    use heimdall_ui::tools::file_export::Saved;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(ToolId::SecNumCloud));
+    let tab = shell.app().tabs[0].id;
+    let exported =
+        |saved| Message::Tool(tab, ToolMessage::Exported(CopySlot::SecNumCloudHtml, saved));
+    let failed = "Export failed: disk full";
+    let _ = shell.update(exported(Saved::Failed("disk full".to_owned())));
+    simulator(&shell)
+        .find(failed)
+        .expect("the reason, as the C# StatusExportFailed");
+    let _ = shell.update(exported(Saved::Cancelled));
+    simulator(&shell)
+        .find(failed)
+        .expect("a cancel changes nothing");
+    let _ = shell.update(exported(Saved::Written));
+    assert!(
+        simulator(&shell).find(failed).is_err(),
+        "said no more once written"
+    );
+}
+
+#[test]
 fn the_url_tool_encodes_as_it_is_typed() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));

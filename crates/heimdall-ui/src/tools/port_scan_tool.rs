@@ -16,7 +16,8 @@
 
 //! The TCP Port Scanner tool view, as the C# `PortScannerView` and `PortScanViewModel`: the
 //! host resolved once, then its ports probed [`port_scanner::MAX_CONCURRENT`] at a time, the
-//! results shown in port order as they come, with summary metrics and a CSV export.
+//! results shown in port order as they come, with summary metrics and a CSV export saved
+//! to a file.
 //!
 //! A scan is one stream, aborted by Stop or when the tab closes, which drops the
 //! connections under way; each batch of results carries its scan's number, so one of an
@@ -39,6 +40,7 @@ use heimdall_core::tools::port_scanner::{
     PortStatus,
 };
 
+use super::file_export::FileExport;
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -53,6 +55,9 @@ const RESULT_BATCH: usize = 64;
 
 /// Messages buffered between the scan and the view.
 const EVENT_BUFFER: usize = 16;
+
+/// What the CSV export's suggested name starts with, as the C# `portscan_{host}_{now}.csv`.
+const EXPORT_PREFIX: &str = "portscan";
 
 /// Messages emitted by the port scanner view.
 #[derive(Debug, Clone)]
@@ -75,8 +80,8 @@ pub enum PortScanMessage {
     Probed(u64, Vec<PortProbeResult>),
     /// Scan `.0` probed every port.
     Ended(u64),
-    /// Copy CSV export.
-    CopyCsv,
+    /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
+    ExportCsv,
 }
 
 /// What a scan is asked for, once validated.
@@ -131,7 +136,8 @@ impl Default for PortScanPane {
 pub enum Outcome {
     None,
     Task(Task<Message>),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// The text of a validation error key of [`port_scanner`].
@@ -251,10 +257,16 @@ impl PortScanPane {
                     self.finish();
                 }
             }
-            PortScanMessage::CopyCsv => {
+            PortScanMessage::ExportCsv => {
                 if !self.results.is_empty() {
                     let csv = port_scanner::format_port_scan_csv(&self.results);
-                    return Outcome::Copy(CopySlot::PortScanCsv, csv);
+                    return Outcome::Save(FileExport::csv(
+                        CopySlot::PortScanCsv,
+                        fl!("ui-tool-portscan-export-csv"),
+                        EXPORT_PREFIX,
+                        Some(&self.host),
+                        csv,
+                    ));
                 }
             }
         }
@@ -471,18 +483,17 @@ impl PortScanPane {
             ]
             .spacing(spacing::SM);
 
-            let copy_csv_btn = super::copy_button(
-                fl!("ui-tool-portscan-copy-csv"),
+            let export_csv_btn = super::export_button(
+                fl!("ui-tool-portscan-export-csv"),
                 state.copied(CopySlot::PortScanCsv),
-                send(PortScanMessage::CopyCsv),
-                super::COPY_PADDING,
+                send(PortScanMessage::ExportCsv),
             );
 
             let header_row = row![
                 text(fl!("ui-tool-portscan-results-title"))
                     .size(font_size::SUBTITLE)
                     .width(Length::Fill),
-                copy_csv_btn,
+                export_csv_btn,
             ]
             .spacing(spacing::SM)
             .align_y(Alignment::Center);
@@ -634,6 +645,35 @@ mod tests {
         assert_eq!(pane.summary.closed, 3);
         pane.apply(PortScanMessage::Ended(pane.run));
         assert!(!pane.running);
+    }
+
+    #[test]
+    fn the_csv_export_holds_every_port_and_is_saved_to_a_file_named_after_the_host() {
+        let mut pane = filled("fe80::1", "22,80");
+        assert!(matches!(
+            pane.apply(PortScanMessage::ExportCsv),
+            Outcome::None
+        ));
+        started(&mut pane);
+        pane.apply(PortScanMessage::Probed(
+            pane.run,
+            vec![closed(80), closed(22)],
+        ));
+        let Outcome::Save(export) = pane.apply(PortScanMessage::ExportCsv) else {
+            panic!("a file to save");
+        };
+        assert_eq!(export.slot(), CopySlot::PortScanCsv);
+        assert!(
+            export.suggested_name().starts_with("portscan_fe80__1_"),
+            "a colon names no file on Windows: {}",
+            export.suggested_name()
+        );
+        let lines: Vec<&str> = export.content().lines().collect();
+        assert_eq!(lines[0], "Port,Service,Status,LatencyMs");
+        assert!(
+            lines[1].starts_with("22,") && lines[2].starts_with("80,"),
+            "{lines:?}"
+        );
     }
 
     #[test]

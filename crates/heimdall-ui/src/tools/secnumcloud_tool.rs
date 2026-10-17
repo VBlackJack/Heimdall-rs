@@ -20,6 +20,10 @@
 //! Cryptography, Access Control, Operations) and 15 verifiable controls.
 //! Features live progress tracking, chapter expanders, compliance scoring,
 //! CSV evidence export, and standalone HTML report generation.
+//!
+//! The report and the evidence are saved to files, as the C# `OnExportHtmlClick` and
+//! `OnExportCsvClick`, never put on the clipboard: audit evidence there would outlive the
+//! export in the clipboard's history and its cloud sync.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -51,6 +55,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+use super::file_export::FileExport;
 use super::{CopySlot, ToolMessage, ToolPane, key_parts};
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -62,6 +67,14 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Height of the progress bar during scans.
 const PROGRESS_HEIGHT: f32 = 4.0;
+
+/// What the HTML report's suggested name starts with, as the C#
+/// `SecNumCloud_Audit_{now}.html`.
+const REPORT_PREFIX: &str = "SecNumCloud_Audit";
+
+/// What the CSV evidence's suggested name starts with, as the C#
+/// `SecNumCloud_Evidence_{now}.csv`.
+const EVIDENCE_PREFIX: &str = "SecNumCloud_Evidence";
 
 /// Pick-list wrapper for `AuditDepth`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,10 +114,10 @@ pub enum SecNumCloudMessage {
     Progress(u64, f32, String),
     /// The audit finished: (scan_id, outcome).
     Finished(u64, Result<AuditReport, String>),
-    /// Copy CSV evidence to clipboard.
-    CopyCsv,
-    /// Copy HTML report to clipboard.
-    CopyHtml,
+    /// Save the CSV evidence to a file.
+    ExportCsv,
+    /// Save the HTML report to a file.
+    ExportHtml,
 }
 
 /// Action outcome from updating the tool pane.
@@ -113,8 +126,8 @@ pub enum Outcome {
     None,
     /// Asynchronous task to execute.
     Task(Task<Message>),
-    /// Copy text into a copy slot.
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// The SecNumCloud Audit view state.
@@ -232,39 +245,61 @@ impl SecNumCloudPane {
                 Outcome::None
             }
             SecNumCloudMessage::Finished(scan_id, res) => {
-                if self.scan_id_counter != scan_id {
-                    return Outcome::None;
-                }
-                self.is_auditing = false;
-                self.progress = None;
-                match res {
-                    Ok(report) => {
-                        self.csv_text = build_csv_export(&report);
-                        self.html_text = build_html_export(&report, &html_labels());
-                        self.last_report = Some(report);
-                        self.error = None;
-                    }
-                    Err(err) => {
-                        self.error = Some(err);
-                    }
-                }
+                self.finished(scan_id, res);
                 Outcome::None
             }
-            SecNumCloudMessage::CopyCsv => {
-                if !self.csv_text.is_empty() {
-                    Outcome::Copy(CopySlot::SecNumCloudCsv, self.csv_text.clone())
-                } else {
-                    Outcome::None
-                }
-            }
-            SecNumCloudMessage::CopyHtml => {
-                if !self.html_text.is_empty() {
-                    Outcome::Copy(CopySlot::SecNumCloudHtml, self.html_text.clone())
-                } else {
-                    Outcome::None
-                }
+            SecNumCloudMessage::ExportCsv => self.export_csv().map_or(Outcome::None, Outcome::Save),
+            SecNumCloudMessage::ExportHtml => {
+                self.export_html().map_or(Outcome::None, Outcome::Save)
             }
         }
+    }
+
+    /// Audit `scan_id` ended with `res`: its report and its exports kept, or why it failed;
+    /// the end of an audit cancelled or replaced is let go.
+    fn finished(&mut self, scan_id: u64, res: Result<AuditReport, String>) {
+        if self.scan_id_counter != scan_id {
+            return;
+        }
+        self.is_auditing = false;
+        self.progress = None;
+        match res {
+            Ok(report) => {
+                self.csv_text = build_csv_export(&report);
+                self.html_text = build_html_export(&report, &html_labels());
+                self.last_report = Some(report);
+                self.error = None;
+            }
+            Err(err) => {
+                self.error = Some(err);
+            }
+        }
+    }
+
+    /// The CSV evidence of the last audit, to save; `None` before one ends.
+    fn export_csv(&self) -> Option<FileExport> {
+        (!self.csv_text.is_empty()).then(|| {
+            FileExport::csv(
+                CopySlot::SecNumCloudCsv,
+                fl!("ui-tool-secnumcloud-btn-export-csv"),
+                EVIDENCE_PREFIX,
+                None,
+                self.csv_text.clone(),
+            )
+        })
+    }
+
+    /// The HTML report of the last audit, to save; `None` before one ends.
+    fn export_html(&self) -> Option<FileExport> {
+        (!self.html_text.is_empty()).then(|| {
+            FileExport::html(
+                CopySlot::SecNumCloudHtml,
+                fl!("ui-tool-secnumcloud-btn-export-html"),
+                REPORT_PREFIX,
+                None,
+                self.html_text.clone(),
+            )
+        })
     }
 
     /// Renders the SecNumCloud audit tool view.
@@ -398,18 +433,17 @@ impl SecNumCloudPane {
             body_col = body_col.push(self.render_chapters_view(report, theme));
 
             // Summary footer & exports
-            let copy_csv_btn = super::copy_button(
-                fl!("ui-tool-secnumcloud-btn-copy-csv"),
-                state.copied(CopySlot::SecNumCloudCsv),
-                send(SecNumCloudMessage::CopyCsv),
-                super::COPY_PADDING,
+            // The C# order: the report, then the evidence.
+            let export_html_btn = super::export_button(
+                fl!("ui-tool-secnumcloud-btn-export-html"),
+                state.copied(CopySlot::SecNumCloudHtml),
+                send(SecNumCloudMessage::ExportHtml),
             );
 
-            let copy_html_btn = super::copy_button(
-                fl!("ui-tool-secnumcloud-btn-copy-html"),
-                state.copied(CopySlot::SecNumCloudHtml),
-                send(SecNumCloudMessage::CopyHtml),
-                super::COPY_PADDING,
+            let export_csv_btn = super::export_button(
+                fl!("ui-tool-secnumcloud-btn-export-csv"),
+                state.copied(CopySlot::SecNumCloudCsv),
+                send(SecNumCloudMessage::ExportCsv),
             );
 
             let summary_str = fl!(
@@ -426,8 +460,8 @@ impl SecNumCloudPane {
                     .size(font_size::BODY)
                     .style(text::secondary)
                     .width(Length::Fill),
-                copy_csv_btn,
-                copy_html_btn,
+                export_html_btn,
+                export_csv_btn,
             ]
             .spacing(spacing::SM)
             .align_y(Alignment::Center);
@@ -1232,6 +1266,84 @@ async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHo
             "ui-tool-secnumcloud-ops04-summary",
             count = count,
             hosts = hosts.len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use heimdall_core::tools::secnumcloud::AuditCheck;
+
+    use super::super::file_export::Format;
+    use super::*;
+
+    /// A report whose evidence holds what a hostile server could send back.
+    fn hostile_report() -> AuditReport {
+        AuditReport {
+            start_time: "2026-10-17T10:00:00Z".to_owned(),
+            end_time: "2026-10-17T10:01:00Z".to_owned(),
+            scope: AuditScope::default(),
+            chapters: vec![AuditChapter {
+                id: "NET".to_owned(),
+                name: "Network Security".to_owned(),
+                secnumcloud_ref: "9".to_owned(),
+                checks: vec![AuditCheck {
+                    id: "NET-02".to_owned(),
+                    name: "HTTP security headers".to_owned(),
+                    secnumcloud_clause: "9.4.1".to_owned(),
+                    status: AuditStatus::Fail,
+                    summary: "<b>missing</b>".to_owned(),
+                    evidence: vec![AuditEvidence {
+                        host: "10.0.0.1".to_owned(),
+                        detail: "Server: <script>alert(1)</script>".to_owned(),
+                        raw_data: "=HYPERLINK(\"http://x\")".to_owned(),
+                    }],
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn nothing_is_saved_before_an_audit_ends() {
+        let pane = SecNumCloudPane::default();
+        assert!(pane.export_csv().is_none());
+        assert!(pane.export_html().is_none());
+    }
+
+    #[test]
+    fn the_report_and_the_evidence_are_saved_to_files_named_as_the_csharp() {
+        let mut pane = SecNumCloudPane::default();
+        pane.scan_id_counter = 1;
+        pane.is_auditing = true;
+        pane.finished(1, Ok(hostile_report()));
+
+        let html = pane.export_html().expect("a report to save");
+        assert_eq!(html.slot(), CopySlot::SecNumCloudHtml);
+        assert_eq!(html.format(), Format::Html);
+        assert!(html.suggested_name().starts_with("SecNumCloud_Audit_"));
+        assert!(html.suggested_name().ends_with(".html"));
+        assert!(
+            html.content()
+                .contains("Server: &lt;script&gt;alert(1)&lt;/script&gt;"),
+            "the server's words are escaped"
+        );
+        assert!(!html.content().contains("<script>"));
+        assert!(html.content().contains("&lt;b&gt;missing&lt;/b&gt;"));
+
+        let csv = pane.export_csv().expect("evidence to save");
+        assert_eq!(csv.slot(), CopySlot::SecNumCloudCsv);
+        assert_eq!(csv.format(), Format::Csv);
+        assert!(csv.suggested_name().starts_with("SecNumCloud_Evidence_"));
+        assert!(csv.suggested_name().ends_with(".csv"));
+        let lines: Vec<&str> = csv.content().lines().collect();
+        assert_eq!(
+            lines[0],
+            "Chapter,CheckID,CheckName,Clause,Status,Host,Detail,RawData"
+        );
+        assert!(
+            lines[1].ends_with(",\"'=HYPERLINK(\"\"http://x\"\")\""),
+            "the raw data's formula defused: {}",
+            lines[1]
         );
     }
 }

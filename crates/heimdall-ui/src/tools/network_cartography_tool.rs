@@ -36,12 +36,16 @@ use heimdall_core::tools::network_history::{
     self, KnowledgeBase, ScanDiff, ScanSnapshot, ScanStore, SnapshotInfo,
 };
 
+use super::file_export::FileExport;
 use super::network_run::{RunSlot, blocking_run};
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
+
+/// What the CSV export's suggested name starts with, as the C# `cartography_{subnet}_{now}.csv`.
+const EXPORT_PREFIX: &str = "cartography";
 
 /// How a snapshot's moment is shown in the history picker, in local time.
 const SNAPSHOT_TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -90,8 +94,8 @@ pub enum NetworkCartographyMessage {
     ConfirmClear(bool),
     /// The knowledge base cleared, or why it could not be.
     Cleared(Result<StoredView, String>),
-    /// Copy CSV export.
-    CopyCsv,
+    /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
+    ExportCsv,
 }
 
 /// What the knowledge base holds, as the C# `KbStatsText` says it.
@@ -232,7 +236,8 @@ impl NetworkCartographyPane {
 pub enum Outcome {
     None,
     Task(Task<Message>),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// A discovery to run.
@@ -256,7 +261,8 @@ enum Step {
     Load(ScanStore, String),
     /// Clear the knowledge base of the store.
     Clear(ScanStore),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// `work` run off the window, its end as `end` says.
@@ -338,7 +344,7 @@ impl NetworkCartographyPane {
     pub fn update(&mut self, tab: TabId, message: NetworkCartographyMessage) -> Outcome {
         match self.apply(message) {
             Step::None => Outcome::None,
-            Step::Copy(slot, content) => Outcome::Copy(slot, content),
+            Step::Save(export) => Outcome::Save(export),
             Step::Load(store, file_name) => {
                 let read = file_name.clone();
                 Outcome::Task(blocking(
@@ -482,7 +488,7 @@ impl NetworkCartographyPane {
                 }
                 Step::None
             }
-            NetworkCartographyMessage::CopyCsv => {
+            NetworkCartographyMessage::ExportCsv => {
                 if self.nodes.is_empty() {
                     return Step::None;
                 }
@@ -501,7 +507,13 @@ impl NetworkCartographyPane {
                     super::vendor_label,
                     role_label,
                 );
-                Step::Copy(CopySlot::NetMapCsv, csv)
+                Step::Save(FileExport::csv(
+                    CopySlot::NetMapCsv,
+                    fl!("ui-tool-netmap-export-csv"),
+                    EXPORT_PREFIX,
+                    Some(&self.cidr),
+                    csv,
+                ))
             }
         }
     }
@@ -878,18 +890,17 @@ impl NetworkCartographyPane {
         state: &ToolPane,
         send: impl Fn(NetworkCartographyMessage) -> Message,
     ) -> Element<'a, Message> {
-        let copy_csv_btn = super::copy_button(
-            fl!("ui-tool-netmap-copy-csv"),
+        let export_csv_btn = super::export_button(
+            fl!("ui-tool-netmap-export-csv"),
             state.copied(CopySlot::NetMapCsv),
-            send(NetworkCartographyMessage::CopyCsv),
-            super::COPY_PADDING,
+            send(NetworkCartographyMessage::ExportCsv),
         );
 
         let header_row = row![
             text(fl!("ui-tool-netmap-name"))
                 .size(font_size::SUBTITLE)
                 .width(Length::Fill),
-            copy_csv_btn,
+            export_csv_btn,
         ]
         .spacing(spacing::SM)
         .align_y(Alignment::Center);
@@ -1160,10 +1171,12 @@ mod tests {
         ));
         assert_eq!(pane.nodes[1].hostname.as_deref(), Some("web.lab"));
         assert_eq!(pane.nodes[1].vendor, Some(MacVendor::Named("VMware")));
-        let Step::Copy(CopySlot::NetMapCsv, csv) = pane.apply(NetworkCartographyMessage::CopyCsv)
-        else {
-            panic!("the CSV is copied");
+        let Step::Save(export) = pane.apply(NetworkCartographyMessage::ExportCsv) else {
+            panic!("the CSV is saved");
         };
+        assert_eq!(export.slot(), CopySlot::NetMapCsv);
+        assert!(export.suggested_name().starts_with("cartography_"));
+        let csv = export.content();
         assert_eq!(csv.lines().count(), 3);
         assert!(
             csv.contains("\"web.lab\",\"00-50-56-00-00-10\",\"VMware\""),
