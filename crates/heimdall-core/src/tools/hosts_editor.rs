@@ -575,17 +575,19 @@ pub fn save(
         .tempfile_in(folder)
         .map_err(write_error)?;
     temp.write_all(&written).map_err(write_error)?;
-    temp.as_file().sync_all().map_err(write_error)?;
-    // The new file keeps the old one's permissions (its mode, on Unix).
+    // The new file keeps the old one's permissions (its mode, on Unix), set before the sync so
+    // the change is on disk with the content.
     if let Ok(metadata) = fs::metadata(&target) {
         fs::set_permissions(temp.path(), metadata.permissions()).map_err(write_error)?;
     }
+    temp.as_file().sync_all().map_err(write_error)?;
     // Read again at the last moment: another program's write since is never overwritten.
     if fs::read(&target).map_err(read_error)? != original {
         return Err(HostsError::ChangedOnDisk);
     }
-    temp.persist(&target)
-        .map_err(|error| write_error(error.error))?;
+    // Renamed with POSIX semantics on Windows, so a reader holding the hosts file open (the
+    // DNS client, an antivirus) does not fail the save.
+    crate::store::rename_over(temp, &target).map_err(write_error)?;
     Ok(SavedHosts {
         written,
         backup: Some(backup),
@@ -979,6 +981,41 @@ mod tests {
             .filter(|name| name.starts_with(TEMP_PREFIX))
             .collect();
         assert!(left.is_empty(), "{left:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_hosts_file_another_program_reads_with_delete_sharing_is_still_saved() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        /// `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`, by their documented values.
+        const SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join("hosts");
+        fs::write(&path, b"127.0.0.1 a\n").expect("written");
+        let loaded = load(&path).expect("loaded");
+        // The DNS client or an antivirus reading the file.
+        let reader = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(SHARE_ALL)
+            .open(&path)
+            .expect("held open");
+        let mut document = loaded.document.clone();
+        document.add("10.0.0.2", "b", "").expect("added");
+        save(&path, &loaded.original, &document, now()).expect("saved while held open");
+        drop(reader);
+        assert_eq!(fs::read(&path).expect("read"), document.to_bytes());
+        let left = fs::read_dir(folder.path())
+            .expect("listed")
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(TEMP_PREFIX)
+            })
+            .count();
+        assert_eq!(left, 0, "no temporary file left");
     }
 
     #[test]

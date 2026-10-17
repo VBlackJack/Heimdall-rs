@@ -1328,3 +1328,73 @@ fn a_user_file_keeps_its_mode_and_a_link_to_it_stays_a_link() {
     let mode = fs::metadata(&path).expect("metadata").permissions().mode();
     assert_eq!(mode & 0o777, 0o640);
 }
+
+/// The `share_mode` flags of `CreateFileW`, by their documented values.
+#[cfg(windows)]
+const FILE_SHARE_READ: u32 = 0x1;
+#[cfg(windows)]
+const FILE_SHARE_WRITE: u32 = 0x2;
+#[cfg(windows)]
+const FILE_SHARE_DELETE: u32 = 0x4;
+
+/// `path` opened for reading as another program would, sharing it with `share_mode`.
+#[cfg(windows)]
+fn held_open(path: &std::path::Path, share_mode: u32) -> fs::File {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(share_mode)
+        .open(path)
+        .expect("held open")
+}
+
+#[cfg(windows)]
+#[test]
+fn a_file_another_program_holds_open_with_delete_sharing_is_replaced() {
+    use std::io::Read as _;
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("profiles.json");
+    fs::write(&path, "old").expect("written");
+    // An editor, an antivirus or a sync client reading the file: a bare MoveFileExW is
+    // refused then, the POSIX rename replaces it (on NTFS, where the test folder lives).
+    let share_all = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    let mut reader = held_open(&path, share_all);
+    replace_file(&path, b"new").expect("replaced while held open");
+    assert_eq!(fs::read(&path).expect("read"), b"new");
+    // The new file held open in turn, for the user file write.
+    let mut second_reader = held_open(&path, share_all);
+    replace_user_file(&path, b"newer").expect("replaced while held open");
+    assert_eq!(fs::read(&path).expect("read"), b"newer");
+    // Each reader keeps the content it opened.
+    let mut seen = String::new();
+    reader.read_to_string(&mut seen).expect("read");
+    assert_eq!(seen, "old");
+    seen.clear();
+    second_reader.read_to_string(&mut seen).expect("read");
+    assert_eq!(seen, "new");
+    drop(second_reader);
+    drop(reader);
+    assert_eq!(
+        names_in(dir.path()),
+        ["profiles.json"],
+        "no temporary file left"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_file_held_open_without_delete_sharing_is_left_untouched_and_no_temporary_file_stays() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("profiles.json");
+    fs::write(&path, "old").expect("written");
+    let reader = held_open(&path, FILE_SHARE_READ | FILE_SHARE_WRITE);
+    assert!(replace_file(&path, b"new").is_err());
+    assert!(replace_user_file(&path, b"new").is_err());
+    drop(reader);
+    assert_eq!(fs::read_to_string(&path).expect("read"), "old");
+    assert_eq!(
+        names_in(dir.path()),
+        ["profiles.json"],
+        "no temporary file left"
+    );
+}
