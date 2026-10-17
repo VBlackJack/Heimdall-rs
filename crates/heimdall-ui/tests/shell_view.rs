@@ -1714,6 +1714,145 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     );
 }
 
+/// Quick Connect to a host no session matches, as Ctrl+K and Enter: an SSH tab of its own.
+fn quick_connect_to_a_host(shell: &mut Shell) -> TabId {
+    let _ = shell.update(Message::TreeShortcut(
+        heimdall_ui::shell::TreeShortcut::QuickConnect,
+    ));
+    let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    shell.app().tabs.last().expect("a tab opened").id
+}
+
+/// The Sessions page shown, `tab` on it: the tab's strip and the tree beside it.
+fn assert_sessions_page(shell: &Shell, tab: TabId, from: &str) {
+    assert!(!shell.settings_shown(), "{from}: the settings left");
+    assert_eq!(
+        shell.app().shown_tab().map(|shown| shown.id),
+        Some(tab),
+        "{from}: the tab opened shown"
+    );
+    let mut ui = simulator(shell);
+    assert!(
+        ui.find(tab_close_id(tab)).is_ok(),
+        "{from}: the tab on the strip"
+    );
+    assert!(
+        ui.find(sidebar_tab_id(SidebarTab::Tools)).is_ok(),
+        "{from}: the tree beside it"
+    );
+}
+
+#[test]
+fn a_session_opened_over_another_page_is_shown_on_the_sessions_page() {
+    use heimdall_ui::shell::Destination;
+
+    for page in [
+        Destination::Settings,
+        Destination::Tunnels,
+        Destination::Scheduled,
+        Destination::Tools,
+        Destination::About,
+    ] {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = Shell::with_app(app(dir.path()));
+        let _ = shell.update(Message::Navigate(page));
+        let tab = quick_connect_to_a_host(&mut shell);
+        assert_sessions_page(&shell, tab, &format!("Quick Connect over {page:?}"));
+        // Again, a tab already shown under the page this time.
+        let _ = shell.update(Message::Navigate(page));
+        let tab = quick_connect_to_a_host(&mut shell);
+        assert_sessions_page(&shell, tab, &format!("a second over {page:?}"));
+    }
+
+    // A saved session, as the tree's double click opens it.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Navigate(Destination::Settings));
+    let _ = shell.update(Message::App(AppMessage::ConnectProfile(ProfileId::new(
+        "a",
+    ))));
+    let tab = shell.app().tabs.last().expect("a tab opened").id;
+    assert_sessions_page(&shell, tab, "a saved session over the settings");
+}
+
+#[test]
+fn reconnect_over_another_page_shows_the_session_reopened_on_the_sessions_page() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::HostKeyChanged {
+            target: Some(heimdall_app::ServerAddress {
+                host: "a.lab".to_owned(),
+                port: 22,
+            }),
+            recorded: "SHA256:old".to_owned(),
+            offered: "SHA256:new".to_owned(),
+        }),
+    });
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::Navigate(Destination::Settings));
+    let _ = shell.update(Message::App(AppMessage::ReconnectTab(tab)));
+    let reopened = shell.app().shown_tab().expect("a tab shown").id;
+    assert_ne!(reopened, tab, "reopened in the tab's place");
+    assert_sessions_page(&shell, reopened, "Reconnect over the settings");
+}
+
+#[test]
+fn the_tab_shown_closing_leaves_the_page_shown() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (first, _) = open(&mut core, "a");
+    let (second, _) = open(&mut core, "b");
+    let mut shell = Shell::with_app(core);
+    assert_eq!(shell.app().active, Some(second));
+    let close = |shell: &mut Shell, tab| {
+        let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+        if shell.app().dialog.is_some() {
+            let _ = shell.update(Message::DialogKey { confirm: true });
+        }
+        assert!(shell.app().tab(tab).is_none(), "closed");
+    };
+
+    // The settings stay, over the tab shown in its place.
+    let _ = shell.update(Message::Navigate(Destination::Settings));
+    close(&mut shell, second);
+    assert_eq!(shell.app().active, Some(first));
+    assert!(shell.settings_shown(), "still the settings");
+
+    // The tunnels too, with no tab left.
+    let _ = shell.update(Message::Navigate(Destination::Tunnels));
+    close(&mut shell, first);
+    let mut ui = simulator(&shell);
+    ui.find("Active Tunnels").expect("still the Tunnels page");
+    assert!(
+        ui.find(sidebar_tab_id(SidebarTab::Tools)).is_err(),
+        "no tree"
+    );
+}
+
+#[test]
+fn the_status_bar_counts_the_saved_sessions_whatever_tabs_are_open() {
+    // As the C# `ServerCountText`: `ServerCount = servers.Count`, the inventory loaded
+    // (`MainViewModel.cs:139-140`, `:641`), never the tabs open; a Quick Connect to a host
+    // is saved nowhere.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    quick_connect_to_a_host(&mut shell);
+    quick_connect_to_a_host(&mut shell);
+    assert_eq!(shell.app().tabs.len(), 2);
+    let mut ui = simulator(&shell);
+    ui.find("3 sessions").expect("the sessions saved");
+    ui.find("0 tunnels").expect("no tunnel open");
+}
+
 #[test]
 fn with_no_session_saved_the_window_welcomes_and_offers_to_add_one() {
     let dir = tempfile::tempdir().expect("dir");
