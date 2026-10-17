@@ -78,6 +78,10 @@ pub struct RdpRequest {
     /// Time without anything sent before an RDP keep-alive of the session, as the settings'
     /// `rdp_keep_alive_interval_ms`.
     pub keep_alive: std::time::Duration,
+    /// Whether the built-in client may compress at all, as the settings'
+    /// `builtin_rdp_compression`: off, it never does, whatever the profile says. The
+    /// profile's switch alone still drives Remote Desktop Connection's `compression:i`.
+    pub builtin_compression: bool,
     /// The SSH gateways the server is reached through, nearest first, each as the hop it
     /// is; empty for a direct connection.
     pub route: Vec<SshProfile>,
@@ -286,8 +290,8 @@ async fn serve(
     events: &mpsc::Sender<ConnectionEvent>,
     target: &str,
 ) {
-    // Compressed unless the profile turns it off or the connection had to.
-    let compressing = request.profile.extras.compression && !connection.compression_turned_off;
+    // Compressed when offered, unless the connection had to turn it off.
+    let compressing = compresses(request) && !connection.compression_turned_off;
     let turned_off = connection.compression_turned_off;
     let mut session = session::start(connection, request.cancel.clone());
     log::info!("RDP session open to {target}");
@@ -386,6 +390,12 @@ async fn ask_about(
         .await;
 }
 
+/// Whether the connection for `request` offers bulk compression: the profile in effect asks
+/// for it, as the C# `RdpCompression`, and the settings allow it in the built-in client.
+fn compresses(request: &RdpRequest) -> bool {
+    request.profile.extras.compression && request.builtin_compression
+}
+
 /// What `request` asks of the RDP connection.
 fn rdp_config(request: &RdpRequest) -> RdpConfig {
     let profile = &request.profile;
@@ -423,8 +433,9 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         kerberos: request.route.is_empty(),
         time_zone: crate::time_zone::local(),
         desktop_scale: request.desktop_scale,
-        // The profile in effect, as for the strict server authentication.
-        compression: profile.extras.compression,
+        // The profile in effect, as for the strict server authentication, once the
+        // settings allow it.
+        compression: compresses(request),
         progress: None,
     }
 }
@@ -570,6 +581,7 @@ mod tests {
             desktop_scale: 100,
             logon_timeout: None,
             keep_alive: heimdall_rdp::DEFAULT_KEEP_ALIVE,
+            builtin_compression: false,
             route: Vec::new(),
             ssh: ConnectOptions::new(PathBuf::from("known_hosts")),
             cancel: CancellationToken::new(),
@@ -738,7 +750,10 @@ mod tests {
             config.kerberos,
             "a server reached directly may log on with Kerberos"
         );
-        assert!(config.compression, "compressed by default, as the C#");
+        assert!(
+            !config.compression,
+            "the profile compresses as the C#, the built-in client only once the settings allow it"
+        );
     }
 
     #[test]
@@ -761,11 +776,28 @@ mod tests {
     }
 
     #[test]
-    fn the_built_in_client_compresses_as_the_profile_asks() {
+    fn the_built_in_client_never_compresses_while_the_settings_do_not_allow_it() {
         for compression in [true, false] {
             let mut profile = dc();
             profile.extras.compression = compression;
-            assert_eq!(rdp_config(&request(profile)).compression, compression);
+            let request = request(profile);
+            assert!(!request.builtin_compression, "off by default");
+            assert!(!rdp_config(&request).compression, "profile {compression}");
+            assert!(!compresses(&request), "nothing to fall back from");
+        }
+    }
+
+    #[test]
+    fn the_built_in_client_allowed_to_compress_compresses_as_the_profile_asks() {
+        for compression in [true, false] {
+            let mut profile = dc();
+            profile.extras.compression = compression;
+            let request = RdpRequest {
+                builtin_compression: true,
+                ..request(profile)
+            };
+            assert_eq!(rdp_config(&request).compression, compression);
+            assert_eq!(compresses(&request), compression);
         }
     }
 }

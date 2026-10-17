@@ -90,6 +90,9 @@ pub enum SettingsMessage {
     /// Milliseconds between two keep-alives of an embedded RDP connection; one out of the
     /// accepted range is ignored.
     RdpKeepAliveInterval(u32),
+    /// The built-in RDP client offers bulk compression when the profile asks for it, or
+    /// never.
+    RdpBuiltinCompression(bool),
     /// The execution policy a local `PowerShell` is started with.
     PowerShellExecutionPolicy(heimdall_core::settings::ExecutionPolicy),
     /// What Ctrl+V does in a terminal.
@@ -503,6 +506,9 @@ impl App {
             | SettingsMessage::RequireWindowsHello(_)
             | SettingsMessage::SyncKnownHostsAtStartup(_)) => self.set_security_flag(message),
             SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
+            SettingsMessage::RdpBuiltinCompression(on) => {
+                self.settings.builtin_rdp_compression = *on;
+            }
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }

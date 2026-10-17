@@ -1668,3 +1668,23 @@ fn a_connection_opened_again_without_compression_is_said_and_its_tab_keeps_it_of
     let (_, _, compressed) = connecting(&app.update(Message::OpenRdp(ProfileId::new("dc"))));
     assert!(compressed);
 }
+
+#[test]
+fn the_built_in_client_compresses_only_once_the_settings_allow_it() {
+    let allowed = |effects: &[Effect]| match effects {
+        [Effect::ConnectRdp { request, .. }] => request.builtin_compression,
+        _ => panic!("{effects:?}"),
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+    let (_, _, compressed) = connecting(&effects);
+    assert!(compressed, "the profile asks for it, as the C#");
+    assert!(!allowed(&effects), "experimental: off until chosen");
+
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::RdpBuiltinCompression(true),
+    ));
+    assert!(app.settings().builtin_rdp_compression);
+    assert!(allowed(&app.update(Message::OpenRdp(ProfileId::new("dc")))));
+}

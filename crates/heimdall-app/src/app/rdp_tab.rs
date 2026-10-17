@@ -215,6 +215,7 @@ impl App {
             keep_alive: std::time::Duration::from_millis(u64::from(
                 self.settings.rdp_keep_alive_interval_ms,
             )),
+            builtin_compression: self.settings.builtin_rdp_compression,
             route: route.iter().map(SshGateway::as_hop).collect(),
             ssh,
             cancel,

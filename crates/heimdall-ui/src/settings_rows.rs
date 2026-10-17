@@ -261,6 +261,8 @@ pub enum SettingRow {
     RdpResizeDelay,
     /// Milliseconds between two keep-alives of an embedded RDP connection.
     RdpKeepAlive,
+    /// The built-in RDP client compresses when the profile asks for it, experimental.
+    RdpBuiltinCompression,
     /// The sizes the RDP Resolution menus offer.
     RdpResolutionPresets,
     /// "Reset RDP defaults".
@@ -291,7 +293,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 64] = [
+    pub const ALL: [Self; 65] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -343,6 +345,7 @@ impl SettingRow {
         Self::RdpConnectTimeout,
         Self::RdpResizeDelay,
         Self::RdpKeepAlive,
+        Self::RdpBuiltinCompression,
         Self::RdpResolutionPresets,
         Self::RdpResetAll,
         Self::Certificates,
@@ -406,11 +409,13 @@ impl SettingRow {
             | Self::VncCertificates => SettingsCard::SshTrusted,
             // At the top of the C# "RDP defaults" card (`MainWindow.xaml:3356-3375`).
             Self::RdpDefaultMode | Self::RdpDefaults => SettingsCard::RdpDefaults,
-            // The keep-alive last, as in the C# RDP Behavior card.
+            // The keep-alive last of the C# RDP Behavior card, then the built-in client's
+            // compression, which the C# has no switch for.
             Self::RdpAutoReconnectAttempts
             | Self::RdpConnectTimeout
             | Self::RdpResizeDelay
-            | Self::RdpKeepAlive => SettingsCard::RdpSession,
+            | Self::RdpKeepAlive
+            | Self::RdpBuiltinCompression => SettingsCard::RdpSession,
             Self::RdpResolutionPresets => SettingsCard::RdpPresets,
             Self::RdpResetAll => SettingsCard::RdpReset,
             Self::Certificates => SettingsCard::RdpTrusted,
@@ -637,6 +642,7 @@ impl SettingRow {
             Self::SyncKnownHostsAtStartup => settings.sync_known_hosts_at_startup,
             Self::RequireCredentialGuard => settings.require_credential_guard,
             Self::RequireWindowsHello => settings.windows_hello.require_on_connect,
+            Self::RdpBuiltinCompression => settings.builtin_rdp_compression,
             _ => return None,
         })
     }
@@ -676,6 +682,7 @@ impl SettingRow {
             Self::SyncKnownHostsAtStartup => SettingsMessage::SyncKnownHostsAtStartup(on),
             Self::RequireCredentialGuard => SettingsMessage::RequireCredentialGuard(on),
             Self::RequireWindowsHello => SettingsMessage::RequireWindowsHello(on),
+            Self::RdpBuiltinCompression => SettingsMessage::RdpBuiltinCompression(on),
             Self::SftpBrowser => browser(SftpBrowser {
                 enabled: on,
                 ..sftp
@@ -948,6 +955,35 @@ mod tests {
     use heimdall_core::profile::{RdpMode, SshMode};
 
     use super::*;
+
+    #[test]
+    fn the_built_in_client_s_compression_is_a_box_off_by_default_last_of_the_rdp_session_card() {
+        let row = SettingRow::RdpBuiltinCompression;
+        assert_eq!(row.tab(), SettingsTab::Rdp);
+        assert_eq!(
+            SettingsCard::RdpSession.rows().last(),
+            Some(&row),
+            "after the C# card's keep-alive"
+        );
+        assert!(row.is_marked());
+        let defaults = Settings::default();
+        assert_eq!(row.flag(&defaults), Some(false), "experimental: off");
+        assert!(row.toggle_enabled(&defaults));
+        assert!(!row.is_modified(&defaults));
+        let changed = Settings {
+            builtin_rdp_compression: true,
+            ..Settings::default()
+        };
+        assert!(row.is_modified(&changed));
+        assert_eq!(
+            row.reset(&changed),
+            Some(SettingsMessage::RdpBuiltinCompression(false))
+        );
+        assert_eq!(
+            row.toggled(&defaults, true),
+            Some(SettingsMessage::RdpBuiltinCompression(true))
+        );
+    }
 
     #[test]
     fn every_card_has_rows_and_every_row_one_card() {

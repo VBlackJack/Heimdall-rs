@@ -202,6 +202,8 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("rdp_session.default_mode", PLAIN),
     // Credentials sent to an embedded desktop without Credential Guard protecting them.
     ("rdp_session.require_credential_guard", ON_STRICT),
+    // What a server compresses read by the built-in client's bulk decompressors.
+    ("rdp_session.builtin_compression", OFF_STRICT),
     // C# `ExternalEditorPath`.
     ("files.external_editor", RUNS),
     ("files.browser_enabled", PLAIN),

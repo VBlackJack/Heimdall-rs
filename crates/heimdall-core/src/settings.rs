@@ -582,6 +582,11 @@ pub struct Settings {
     /// the C# `RequireCredentialGuard`: off unless chosen. Remote Desktop Connection's own
     /// window is not concerned.
     pub require_credential_guard: bool,
+    /// The built-in RDP client offers bulk compression to the server, when the profile in
+    /// effect asks for it: off unless chosen, experimental. No C# counterpart: the C#
+    /// control compresses as `RdpCompression` says, and Remote Desktop Connection still
+    /// does, whatever this says.
+    pub builtin_rdp_compression: bool,
     /// The sizes RDP tabs' Resolution menus offer, as the C# `RdpResolutionPresets`; empty
     /// offers [`RESOLUTION_PRESETS`]. See [`Settings::resolution_presets`].
     pub rdp_resolution_presets: Vec<(u16, u16)>,
@@ -1219,6 +1224,7 @@ impl Default for Settings {
             rdp_resize_enable_delay_ms: RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
             rdp_keep_alive_interval_ms: RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
             require_credential_guard: false,
+            builtin_rdp_compression: false,
             rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
@@ -1451,6 +1457,9 @@ struct RdpSessionSection {
     /// Absent is the C# default, off.
     #[serde(default)]
     require_credential_guard: Option<bool>,
+    /// Absent is off: a settings file written before it existed does not compress.
+    #[serde(default)]
+    builtin_compression: Option<bool>,
 }
 
 impl RdpSessionSection {
@@ -1471,6 +1480,7 @@ impl RdpSessionSection {
             ),
             default_mode: Some(settings.rdp_default_mode.name().to_owned()),
             require_credential_guard: Some(settings.require_credential_guard),
+            builtin_compression: Some(settings.builtin_rdp_compression),
         }
     }
 }
@@ -1765,7 +1775,8 @@ impl Settings {
 
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults": the options
     /// profiles following the application take, the auto-reconnect attempts, the
-    /// resolution presets and the default RDP mode. Nothing else changes, and no profile.
+    /// resolution presets and the default RDP mode; beyond the C#, the built-in client's
+    /// compression. Nothing else changes, and no profile.
     pub fn reset_rdp(&mut self) {
         let defaults = Self::default();
         self.rdp_defaults = defaults.rdp_defaults;
@@ -1773,6 +1784,7 @@ impl Settings {
         self.rdp_connect_timeout = defaults.rdp_connect_timeout;
         self.rdp_resize_enable_delay_ms = defaults.rdp_resize_enable_delay_ms;
         self.rdp_keep_alive_interval_ms = defaults.rdp_keep_alive_interval_ms;
+        self.builtin_rdp_compression = defaults.builtin_rdp_compression;
         self.rdp_resolution_presets = defaults.rdp_resolution_presets;
         self.rdp_default_mode = defaults.rdp_default_mode;
     }
@@ -1948,6 +1960,7 @@ impl Settings {
                 .rdp_session
                 .require_credential_guard
                 .unwrap_or_default(),
+            builtin_rdp_compression: file.rdp_session.builtin_compression.unwrap_or_default(),
             // A line that is not a preset is left out, as the C# menu leaves it out.
             rdp_resolution_presets: file.rdp_session.resolution_presets.map_or_else(
                 || RESOLUTION_PRESETS.to_vec(),
