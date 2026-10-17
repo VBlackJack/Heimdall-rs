@@ -1548,6 +1548,9 @@ pub struct TabMenuState {
     pub health: Option<bool>,
     /// It is pinned.
     pub pinned: bool,
+    /// How many tabs "Reopen closed tab" opens again; 0 hides it, as the C# shows it only
+    /// with a tab to reopen.
+    pub reopen_closed: usize,
     /// Its session is saved nowhere, and can be saved as a profile.
     pub saveable: bool,
     /// It takes terminal macros.
@@ -1890,6 +1893,65 @@ fn submenu<'a>(label: String, menu: TreeMenu) -> Element<'a, Message> {
         .into()
 }
 
+/// A tab's entries for the tab itself, as the C# `AppendTitleAndPinItems` and
+/// `AppendDetachItem`: its name, its pin, the tabs of the last close, and its own window.
+fn own_tab_entries<'a>(state: &TabMenuState) -> Vec<Element<'a, Message>> {
+    let tab = state.tab;
+    let menu = |message| Some(AppMessage::TabMenu(message));
+    let mut own = vec![entry(
+        fl!("ui-tab-menu-rename"),
+        menu(TabMenuMessage::Rename(tab)),
+    )];
+    if state.renamed {
+        own.push(entry(
+            fl!("ui-tab-menu-reset-title"),
+            menu(TabMenuMessage::ResetTitle(tab)),
+        ));
+    }
+    if !state.docked {
+        own.push(entry(
+            if state.pinned {
+                fl!("ui-tab-menu-unpin")
+            } else {
+                fl!("ui-tab-menu-pin")
+            },
+            menu(TabMenuMessage::Pin(tab)),
+        ));
+    }
+    // After the pin, as the C# `AppendTabGroupItems`: the tabs of the last close, named
+    // with their count when it closed several.
+    if state.reopen_closed > 0 {
+        own.push(keyed_entry(
+            if state.reopen_closed > 1 {
+                fl!(
+                    "ui-tab-menu-reopen-closed-many",
+                    count = state.reopen_closed
+                )
+            } else {
+                fl!("ui-tab-menu-reopen-closed")
+            },
+            Some(fl!("ui-menu-keys-reopen-closed")),
+            Some(AppMessage::ReopenClosedTab),
+        ));
+    }
+    // "Detach to Window", or on a split tab "Detach Secondary Pane", with the title and the
+    // pin as the C# `AppendDetachItem` places them.
+    if state.detach {
+        own.push(entry(
+            fl!("ui-tab-menu-detach"),
+            Some(AppMessage::Float(FloatMessage::Detach(tab))),
+        ));
+    } else if let SplitEntries::Split(host) = state.split
+        && state.detach_secondary
+    {
+        own.push(entry(
+            fl!("ui-split-detach-secondary"),
+            Some(AppMessage::Float(FloatMessage::DetachSecondary(host))),
+        ));
+    }
+    own
+}
+
 /// The entries of a tab's menu, by sections in the C# order
 /// (`SessionTabContextMenuFactory.cs:76-117`), from the most frequent to the most
 /// destructive: what the session does, its resolution, the tab itself, its profile, its
@@ -1930,41 +1992,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             TreeMenu::Resolution(tab),
         ));
     }
-    let mut own = vec![entry(
-        fl!("ui-tab-menu-rename"),
-        menu(TabMenuMessage::Rename(tab)),
-    )];
-    if state.renamed {
-        own.push(entry(
-            fl!("ui-tab-menu-reset-title"),
-            menu(TabMenuMessage::ResetTitle(tab)),
-        ));
-    }
-    if !state.docked {
-        own.push(entry(
-            if state.pinned {
-                fl!("ui-tab-menu-unpin")
-            } else {
-                fl!("ui-tab-menu-pin")
-            },
-            menu(TabMenuMessage::Pin(tab)),
-        ));
-    }
-    // "Detach to Window", or on a split tab "Detach Secondary Pane", with the title and the
-    // pin as the C# `AppendDetachItem` places them.
-    if state.detach {
-        own.push(entry(
-            fl!("ui-tab-menu-detach"),
-            Some(AppMessage::Float(FloatMessage::Detach(tab))),
-        ));
-    } else if let SplitEntries::Split(host) = state.split
-        && state.detach_secondary
-    {
-        own.push(entry(
-            fl!("ui-split-detach-secondary"),
-            Some(AppMessage::Float(FloatMessage::DetachSecondary(host))),
-        ));
-    }
+    let own = own_tab_entries(state);
     let profile = state
         .profile
         .as_ref()

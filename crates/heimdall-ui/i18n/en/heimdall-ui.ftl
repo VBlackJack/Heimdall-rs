@@ -1412,6 +1412,7 @@ ui-palette-hints = Enter = open · Ctrl+Enter = split · tools = all tools · Es
 ui-palette-servers = Servers
 ui-palette-active-sessions = Active Sessions
 ui-palette-recent-tools = Recent Tools
+ui-palette-tools = Tools
 ui-palette-merge-session = ↔ { $title }
 ui-palette-merge-detail = Active session - merge without reconnecting
 ui-palette-account = · { $account }
@@ -2618,6 +2619,8 @@ ui-tools-no-results = No matching tool
 ui-tools-no-results-hint = Try another term or an alias such as ping, dns, json, or password.
 ui-tools-context-with = Network tools will use the selected target: { $host }
 ui-tools-context-none = Network tools will open without an inherited target.
+# A tool tab opened on a host or an argument, as the C# PaletteTool*With keys.
+ui-tools-tab-with = { $tool }: { $target }
 ui-tools-favorites = Favorites
 ui-tools-recent = Recently Used
 ui-tools-all = All Tools
@@ -5505,3 +5508,10 @@ ui-shortcuts-go-to-tab = Go to tab 1 to 8
 ui-shortcuts-last-tab = Go to the last tab
 ui-shortcuts-move-tab = Move the tab one place left or right
 ui-shortcuts-tab-menu = The menu of the tab shown
+## A tab's menu: the tabs of the last close opened again, as the C# SessionReopenClosedTab
+## and SessionReopenClosedTabs; the second when that close took several.
+ui-tab-menu-reopen-closed = Reopen closed tab
+ui-tab-menu-reopen-closed-many = Reopen { $count } closed tabs
+ui-menu-keys-reopen-closed = Ctrl+Shift+R
+## The keyboard shortcuts list: Ctrl+Shift+R.
+ui-shortcuts-reopen-closed-tab = Reopen the tabs of the last close

@@ -314,6 +314,12 @@ impl Default for DiffPane {
 }
 
 impl DiffPane {
+    /// What its first box holds, for the tests of what a tool opens on.
+    #[cfg(test)]
+    pub(super) fn first_box(&self) -> String {
+        super::box_text(&self.original)
+    }
+
     /// Applies `message`; what is then to be done.
     pub fn update(&mut self, message: DiffMessage) -> Outcome {
         match message {

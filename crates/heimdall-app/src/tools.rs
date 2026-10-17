@@ -566,6 +566,76 @@ impl ToolId {
 /// (`ConnectionTypeCatalog.ToolPrefix`).
 const TOOL_PREFIX: &str = "TOOL:";
 
+/// What a tool opens on, as the C# `ToolContext` (`ToolContext.cs:26-46`): the host it
+/// reaches, its port, and the text typed after its command word in the palette. Only the
+/// window reads it, each tool as its C# view's `Initialize` does: a host or an argument
+/// fills a box, as typed there, and goes through the checks a typed one goes through.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolContext {
+    /// The host, as the C# `TargetHost`.
+    pub host: Option<String>,
+    /// The port, as the C# `TargetPort`.
+    pub port: Option<u16>,
+    /// The text typed after the tool's command word, as the C# `Argument`: plain text,
+    /// never run.
+    pub argument: Option<String>,
+}
+
+impl ToolContext {
+    /// A context on `host`, trimmed; empty when nothing is left.
+    #[must_use]
+    pub fn on_host(host: &str) -> Self {
+        let host = host.trim();
+        Self {
+            host: (!host.is_empty()).then(|| host.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    /// A context holding `argument`, trimmed, as the palette's "ping 10.0.0.1" gives it;
+    /// empty when nothing is left.
+    #[must_use]
+    pub fn with_argument(argument: &str) -> Self {
+        let argument = argument.trim();
+        Self {
+            argument: (!argument.is_empty()).then(|| argument.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    /// Whether it holds neither a host nor an argument, as the C# `hasContext` reads it
+    /// (`MainViewModel.cs:1305`): such a tool reaching no host shows its open tab again.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let blank = |value: &Option<String>| value.as_deref().is_none_or(|v| v.trim().is_empty());
+        blank(&self.host) && blank(&self.argument)
+    }
+
+    /// What its title names after the tool's: the host, else the argument.
+    #[must_use]
+    pub fn shown(&self) -> Option<&str> {
+        self.host.as_deref().or(self.argument.as_deref())
+    }
+}
+
+/// `query` read as a tool and its argument, as the C# `TryParseExplicitToolInvocation`
+/// (`CommandPaletteViewModel.Search.cs:328-353`): one of a tool's command words, whatever
+/// its case, a space, then something; the first tool in the registry's order whose word
+/// matches wins. A word alone is not an invocation, so "ping" is still scored as before.
+#[must_use]
+pub fn tool_invocation(query: &str) -> Option<(ToolId, String)> {
+    let query = query.trim();
+    ToolId::ALL.into_iter().find_map(|tool| {
+        tool.prefixes().iter().find_map(|prefix| {
+            let typed = query.get(..prefix.len())?;
+            let rest = query[prefix.len()..].strip_prefix(' ')?;
+            let rest = rest.trim();
+            (typed.eq_ignore_ascii_case(prefix) && !rest.is_empty())
+                .then(|| (tool, rest.to_owned()))
+        })
+    })
+}
+
 /// Tools remembered as used lately, as the C# `RecentToolList.MaxEntries`.
 pub const MAX_RECENT_TOOLS: usize = 5;
 

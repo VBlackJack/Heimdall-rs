@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-//! Quick Connect, the C# Heimdall's Ctrl+K palette without its snippets and its tools'
-//! arguments: the sessions and the tools found as it scores them, the first ten sessions and
-//! the tools used lately when nothing is typed, those of the hosts last connected to first;
-//! when none is found, `ssh user@host:port` or `user@host` opens an SSH session saved
-//! nowhere, and a bare host or address offers SSH and RDP to it, the one last used with it
-//! first. Opened from a tab's "Split...", the sessions open in other tabs come first, to be
-//! merged into it without reconnecting; Ctrl+Enter opens a session as a split of the tab
-//! shown, as the C# `ConnectSplitFromPaletteAsync`.
+//! Quick Connect, the C# Heimdall's Ctrl+K palette without its snippets: the sessions and
+//! the tools found as it scores them, the first ten sessions and the tools used lately when
+//! nothing is typed, those of the hosts last connected to first; a tool's command word and
+//! an argument ("ping 10.0.0.1") that tool alone, opened on it; when none is found,
+//! `ssh user@host:port` or `user@host` opens an SSH session saved nowhere, and a bare host
+//! or address offers SSH and RDP to it, the one last used with it first. Opened from a
+//! tab's "Split...", the sessions open in other tabs come first, to be merged into it
+//! without reconnecting; Ctrl+Enter opens a session as a split of the tab shown, as the C#
+//! `ConnectSplitFromPaletteAsync`.
 
 use std::net::IpAddr;
 
@@ -33,7 +34,7 @@ use super::tree::{ProfileKind, ProfileSummary};
 use super::{App, Effect, Message, Phase, TabProfile, ToolsMessage};
 use crate::driver::Purpose;
 use crate::ids::TabId;
-use crate::tools::{ToolCategory, ToolId};
+use crate::tools::{ToolCategory, ToolContext, ToolId, tool_invocation};
 
 /// Sessions shown when nothing is typed, as the C# palette.
 const FIRST_SESSIONS: usize = 10;
@@ -84,8 +85,12 @@ pub enum QuickResult {
     Tool {
         /// The tool.
         tool: ToolId,
-        /// Its name in the language shown, its tab's title.
+        /// Its name in the language shown, with the argument when there is one: its tab's
+        /// title.
         name: String,
+        /// What was typed after its command word, as the C# palette's "ping 10.0.0.1":
+        /// given to the tool as plain text.
+        argument: Option<String>,
     },
 }
 
@@ -103,6 +108,8 @@ pub enum QuickGroup {
     ActiveSessions,
     /// The tools used lately, when nothing is typed, as the C# `PaletteRecentToolsHeader`.
     RecentTools,
+    /// A tool invoked with an argument, as the C# `PaletteToolsSectionHeader`.
+    Tools,
     /// A tool found, under its category.
     Category(ToolCategory),
 }
@@ -120,7 +127,7 @@ pub struct QuickRow {
 /// category's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolWords {
-    /// Its name.
+    /// Its name; given an argument, its name with it, as the C# `LabelWithArgKey` says it.
     pub name: String,
     /// Its category's name.
     pub category: String,
@@ -144,13 +151,34 @@ impl QuickRow {
     }
 
     /// A tool's line, under `group`.
-    fn tool(tool: ToolId, words: &dyn Fn(ToolId) -> ToolWords, group: QuickGroup) -> Self {
+    fn tool(
+        tool: ToolId,
+        words: &dyn Fn(ToolId, Option<&str>) -> ToolWords,
+        group: QuickGroup,
+    ) -> Self {
         Self {
             result: QuickResult::Tool {
                 tool,
-                name: words(tool).name,
+                name: words(tool, None).name,
+                argument: None,
             },
             group,
+        }
+    }
+
+    /// The line of `tool` invoked with `argument`, as the C# lists it alone.
+    fn invoked(
+        tool: ToolId,
+        argument: String,
+        words: &dyn Fn(ToolId, Option<&str>) -> ToolWords,
+    ) -> Self {
+        Self {
+            result: QuickResult::Tool {
+                tool,
+                name: words(tool, Some(&argument)).name,
+                argument: Some(argument),
+            },
+            group: QuickGroup::Tools,
         }
     }
 }
@@ -355,6 +383,9 @@ impl App {
     /// grouped list shows them, each section together; `words` names the tools in the
     /// language shown.
     ///
+    /// A tool's command word, a space and an argument ("ping 10.0.0.1") is that tool alone,
+    /// to open on the argument, as the C# `TryParseExplicitToolInvocation`.
+    ///
     /// Nothing typed: opened from tab `split`'s "Split...", the sessions open in the other
     /// tabs it can be merged with, then the profiles last split with the one its pane shows,
     /// the most recent first, then every other profile; otherwise the first ten profiles.
@@ -366,11 +397,15 @@ impl App {
         &self,
         query: &str,
         split: Option<TabId>,
-        words: &dyn Fn(ToolId) -> ToolWords,
+        words: &dyn Fn(ToolId, Option<&str>) -> ToolWords,
     ) -> Vec<QuickRow> {
         let query = query.trim();
         if query.is_empty() {
             return grouped(self.first_rows(split, words));
+        }
+        // Alone, so the argument-bearing line is the one chosen, as the C# shows it.
+        if let Some((tool, argument)) = tool_invocation(query) {
+            return vec![QuickRow::invoked(tool, argument, words)];
         }
         if ALL_TOOLS_WORDS
             .iter()
@@ -386,7 +421,7 @@ impl App {
         let mut scored: Vec<(usize, QuickRow)> = ToolId::ALL
             .into_iter()
             .filter_map(|tool| {
-                let score = score_tool(tool, &words(tool), query);
+                let score = score_tool(tool, &words(tool, None), query);
                 (score > 0).then(|| {
                     let row = QuickRow::tool(tool, words, QuickGroup::Category(tool.category()));
                     (score, row)
@@ -420,7 +455,7 @@ impl App {
     fn first_rows(
         &self,
         split: Option<TabId>,
-        words: &dyn Fn(ToolId) -> ToolWords,
+        words: &dyn Fn(ToolId, Option<&str>) -> ToolWords,
     ) -> Vec<QuickRow> {
         let mut rows: Vec<QuickRow> = Vec::new();
         if let Some(host) = split {
@@ -492,9 +527,18 @@ impl App {
                 }),
                 None => Message::SelectTab(tab),
             },
-            QuickResult::Tool { tool, name } => {
-                Message::Tools(ToolsMessage::Open { tool, title: name })
-            }
+            QuickResult::Tool {
+                tool,
+                name,
+                argument,
+            } => Message::Tools(ToolsMessage::Open {
+                tool,
+                title: name,
+                context: argument
+                    .as_deref()
+                    .map(ToolContext::with_argument)
+                    .unwrap_or_default(),
+            }),
             result @ QuickResult::Profile(_) if beside => match self.splittable_shown() {
                 Some(host) => Message::Split(SplitMessage::QuickConnect {
                     host,

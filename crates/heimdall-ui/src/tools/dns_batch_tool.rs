@@ -138,6 +138,12 @@ fn batch_run(tab: TabId, run: u64, hostnames: Vec<String>) -> (Task<Message>, Ha
 }
 
 impl DnsBatchPane {
+    /// What its first box holds, for the tests of what a tool opens on.
+    #[cfg(test)]
+    pub(super) fn first_box(&self) -> String {
+        super::box_text(&self.editor)
+    }
+
     /// Handles tool messages.
     pub fn update(&mut self, tab: TabId, message: DnsBatchMessage) -> Outcome {
         if !matches!(message, DnsBatchMessage::Resolve) {

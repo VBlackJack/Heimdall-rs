@@ -1267,6 +1267,7 @@ ui-palette-hints = Entrée = ouvrir · Ctrl+Entrée = scinder · tools = tous le
 ui-palette-servers = Serveurs
 ui-palette-active-sessions = Sessions actives
 ui-palette-recent-tools = Outils récents
+ui-palette-tools = Outils
 ui-palette-merge-session = ↔ { $title }
 ui-palette-merge-detail = Session active - fusionner sans reconnecter
 ui-palette-account = · { $account }
@@ -2444,6 +2445,8 @@ ui-tools-no-results = Aucun outil correspondant
 ui-tools-no-results-hint = Essayez un autre terme ou un alias comme ping, dns, json ou password.
 ui-tools-context-with = Les outils réseau utiliseront la cible sélectionnée : { $host }
 ui-tools-context-none = Les outils réseau s'ouvriront sans cible héritée.
+# A tool tab opened on a host or an argument, as the C# PaletteTool*With keys.
+ui-tools-tab-with = { $tool } : { $target }
 ui-tools-favorites = Favoris
 ui-tools-recent = Utilisés récemment
 ui-tools-all = Tous les outils
@@ -5558,3 +5561,10 @@ ui-shortcuts-go-to-tab = Aller à l'onglet 1 à 8
 ui-shortcuts-last-tab = Aller au dernier onglet
 ui-shortcuts-move-tab = Déplacer l'onglet d'une place à gauche ou à droite
 ui-shortcuts-tab-menu = Menu de l'onglet affiché
+## A tab's menu: the tabs of the last close opened again, as the C# SessionReopenClosedTab
+## and SessionReopenClosedTabs; the second when that close took several.
+ui-tab-menu-reopen-closed = Rouvrir l'onglet fermé
+ui-tab-menu-reopen-closed-many = Rouvrir les { $count } onglets fermés
+ui-menu-keys-reopen-closed = Ctrl+Shift+R
+## The keyboard shortcuts list: Ctrl+Shift+R.
+ui-shortcuts-reopen-closed-tab = Rouvrir les onglets de la dernière fermeture
