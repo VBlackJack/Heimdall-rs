@@ -2504,9 +2504,41 @@ impl Shell {
         }
     }
 
+    /// Applies a message, then shows the Sessions page when it showed another tab.
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        let shown = self.shown_tab_id();
+        let task = self.apply(message);
+        self.follow_shown_tab(shown);
+        task
+    }
+
+    /// The page after the tab shown went from `before` to another one. A tab opened or
+    /// chosen, from Quick Connect, the tree or a reconnection, is shown on the Sessions
+    /// page, as the C# shows it before a tool's tab opens (`MainWindow.xaml.cs:2527`,
+    /// `:2577`). Left on Settings, the tab showed the window's whole width under the
+    /// settings' name, without its strip or the tree; left on another page, it opened
+    /// unseen. No choice leaves the page: the tab shown closing, or a scheduled connection,
+    /// which opens behind the tab shown and is shown only when there was none; the settings
+    /// then stay, over the tab shown now.
+    fn follow_shown_tab(&mut self, before: Option<TabId>) {
+        let after = self.shown_tab_id();
+        if after == before || self.page == Page::Tab {
+            return;
+        }
+        let chosen = after.is_some_and(|shown| match before {
+            Some(tab) => self.app.tab(tab).is_some(),
+            None => !self.app.is_scheduled_tab(shown),
+        });
+        if chosen {
+            self.page = Page::Tab;
+        } else if matches!(self.page, Page::Settings { .. }) {
+            self.page = Page::Settings { over: after };
+        }
+    }
+
     /// Applies a message.
     #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
-    pub fn update(&mut self, message: Message) -> Task<Message> {
+    fn apply(&mut self, message: Message) -> Task<Message> {
         // A tab's own window's: answered apart, never through the main window's tab shown.
         let message = match message {
             Message::Float(window, event) => return self.float_event(window, event),
@@ -6031,7 +6063,11 @@ impl Shell {
     fn note_focus(&mut self, message: &Message) {
         match message {
             // A tab detached is shown in its own window: the main window stays as it is.
-            Message::App(AppMessage::SelectTab(tab)) if !self.app.is_floating(*tab) => {
+            // Reconnect is chosen as the tab is: the session reopened in the tab's place is
+            // shown on the Sessions page, though the tab it replaces is gone.
+            Message::App(AppMessage::SelectTab(tab) | AppMessage::ReconnectTab(tab))
+                if !self.app.is_floating(*tab) =>
+            {
                 self.page = Page::Tab;
                 self.tree_focused = false;
             }
