@@ -35,7 +35,7 @@ pub(super) struct SessionLoad {
     threshold: u32,
     /// The banner is shown.
     shown: bool,
-    /// The user hid the banner; forgotten once the count is back under the threshold.
+    /// The user hid the banner; forgotten once the count is no longer past the threshold.
     dismissed: bool,
 }
 
@@ -86,9 +86,10 @@ impl App {
         })
     }
 
-    /// Notes that one more connection is being opened, as the C# `NoteNewConnection`: past
-    /// the threshold, the banner shows, unless the user hid it since the count last went
-    /// past. Never refuses; a session opening in a tab's place takes no more room.
+    /// Notes that one more connection is being opened, as the C# `NoteNewConnection`: when it
+    /// takes the count past the threshold, the banner shows, unless the user hid it since the
+    /// count last went past. Never refuses; a session opening in a tab's place takes no more
+    /// room.
     pub(super) fn note_new_connection(&mut self) {
         if self.replacing {
             return;
@@ -103,34 +104,36 @@ impl App {
         }
     }
 
-    /// Hides the banner until the count is back under the threshold, as the C#
+    /// Hides the banner until the count is no longer past the threshold, as the C#
     /// `DismissSessionLoadNotice`.
     pub(super) fn hide_session_load_notice(&mut self) {
         self.session_load.shown = false;
         self.session_load.dismissed = true;
     }
 
-    /// Takes the banner down once the connections are back under the threshold, and forgets
-    /// that it was hidden, so going past again shows it again, as the C#
-    /// `RefreshSessionLoadNotice`.
+    /// Takes the banner down once the connections are no longer past the threshold, and
+    /// forgets that it was hidden, so going past again shows it again. The C#
+    /// `RefreshSessionLoadNotice` keeps it until the count is under the threshold, its text
+    /// frozen at the count it was raised with; taken down at the threshold, the banner never
+    /// says "past the threshold" of a count that is not, and its text follows the count.
     pub(super) fn refresh_session_load_notice(&mut self) {
         let load = &self.session_load;
         if !load.shown && !load.dismissed {
             return;
         }
-        if load.threshold == 0 || self.connection_count() >= threshold_len(load.threshold) {
+        if load.threshold == 0 || self.connection_count() > threshold_len(load.threshold) {
             return;
         }
         self.session_load.shown = false;
         self.session_load.dismissed = false;
     }
 
-    /// The open sessions banner while it is shown: the connections open now, and the
-    /// threshold they are past.
+    /// The open sessions banner while it is shown and the connections open now are past the
+    /// threshold: those connections, and the threshold.
     #[must_use]
     pub fn session_load_notice(&self) -> Option<SessionLoadNotice> {
         let open = self.connection_count();
-        (self.session_load.shown && open >= threshold_len(self.session_load.threshold)).then_some(
+        (self.session_load.shown && open > threshold_len(self.session_load.threshold)).then_some(
             SessionLoadNotice {
                 open,
                 threshold: self.session_load.threshold,

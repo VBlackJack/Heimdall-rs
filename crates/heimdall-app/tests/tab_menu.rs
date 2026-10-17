@@ -488,7 +488,7 @@ fn past_the_sessions_threshold_a_banner_shows_and_nothing_is_refused_as_the_csha
     assert_eq!(app.session_load_notice(), None);
 
     // One more opens, and the banner says so.
-    let third = failed(&mut app);
+    failed(&mut app);
     assert_eq!(app.tabs.len(), 4, "not refused");
     assert_eq!(
         app.session_load_notice(),
@@ -498,29 +498,27 @@ fn past_the_sessions_threshold_a_banner_shows_and_nothing_is_refused_as_the_csha
         })
     );
 
-    // Hidden, it stays hidden while the count is past the threshold or at it.
+    // Hidden, it stays hidden while the count is past the threshold.
     app.update(Message::HideSessionLoadNotice);
     assert_eq!(app.session_load_notice(), None);
     let fourth = failed(&mut app);
     assert_eq!(app.session_load_notice(), None, "hidden: not shown again");
     app.update(Message::RequestCloseTab(fourth));
-    app.update(Message::RequestCloseTab(third));
-    assert_eq!(app.connection_count(), 2);
+    assert_eq!(app.connection_count(), 3);
     failed(&mut app);
     assert_eq!(
         app.session_load_notice(),
         None,
-        "still hidden at the threshold"
+        "still past it: still hidden"
     );
 
-    // Back under it, the hiding is forgotten: going past again shows it again.
-    // The first tab kept, reconnected in its place: the others closed.
-    let others: Vec<TabId> = app.tabs.iter().skip(1).map(|tab| tab.id).collect();
+    // Back at the threshold, the hiding is forgotten: going past again shows it again.
+    // The first tab kept, reconnected in its place, and one more: the others closed.
+    let others: Vec<TabId> = app.tabs.iter().skip(2).map(|tab| tab.id).collect();
     for tab in others {
         app.update(Message::RequestCloseTab(tab));
     }
-    assert_eq!(app.connection_count(), 1);
-    failed(&mut app);
+    assert_eq!(app.connection_count(), 2);
     assert_eq!(app.session_load_notice(), None);
     failed(&mut app);
     assert_eq!(
@@ -531,6 +529,36 @@ fn past_the_sessions_threshold_a_banner_shows_and_nothing_is_refused_as_the_csha
         }),
         "shown again"
     );
+}
+
+#[test]
+fn the_sessions_banner_goes_once_the_count_is_no_longer_past_the_threshold() {
+    use heimdall_app::{SessionLoadNotice, SettingsMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
+    let past = Some(SessionLoadNotice {
+        open: 2,
+        threshold: 1,
+    });
+    failed(&mut app);
+    let second = failed(&mut app);
+    assert_eq!(app.session_load_notice(), past, "two past one");
+
+    // One closed: one is not past one, the banner goes rather than say it is.
+    app.update(Message::RequestCloseTab(second));
+    assert_eq!(app.connection_count(), 1);
+    assert_eq!(app.session_load_notice(), None);
+
+    // Hidden, then back at the threshold: the hiding is forgotten.
+    let second = failed(&mut app);
+    assert_eq!(app.session_load_notice(), past, "back");
+    app.update(Message::HideSessionLoadNotice);
+    assert_eq!(app.session_load_notice(), None);
+    app.update(Message::RequestCloseTab(second));
+    failed(&mut app);
+    assert_eq!(app.session_load_notice(), past, "the Hide forgotten");
 }
 
 #[test]

@@ -2343,7 +2343,10 @@ ui-update-banner-text = Une nouvelle version est disponible : { $version }
 ui-update-banner-view-release = Voir la release
 ui-update-banner-later = Plus tard
 ui-update-banner-skip = Ignorer cette version
-ui-session-load-notice-text = { $open } sessions intégrées sont ouvertes, au-delà du seuil de { $threshold } fixé dans les Paramètres. Chacune consomme de la mémoire, surtout en RDP : fermez celles dont vous n'avez plus besoin si Heimdall ralentit.
+ui-session-load-notice-text = { $open ->
+    [one] { $open } session intégrée est ouverte
+   *[other] { $open } sessions intégrées sont ouvertes
+}, au-delà du seuil de { $threshold } fixé dans les Paramètres. Chacune consomme de la mémoire, surtout en RDP : fermez celles dont vous n'avez plus besoin si Heimdall ralentit.
 ui-session-load-notice-hide = Masquer
 ui-tree-reachability-checking = Vérification...
 ui-tree-reachability-up = Joignable ({ $millis } ms)

@@ -2517,7 +2517,10 @@ ui-update-banner-text = A new version is available: { $version }
 ui-update-banner-view-release = View release
 ui-update-banner-later = Later
 ui-update-banner-skip = Skip this version
-ui-session-load-notice-text = { $open } embedded sessions are open, past the threshold of { $threshold } set in Settings. Each one uses memory, RDP sessions most: close the ones you no longer need if Heimdall slows down.
+ui-session-load-notice-text = { $open ->
+    [one] { $open } embedded session is open
+   *[other] { $open } embedded sessions are open
+}, past the threshold of { $threshold } set in Settings. Each one uses memory, RDP sessions most: close the ones you no longer need if Heimdall slows down.
 ui-session-load-notice-hide = Hide
 ui-tree-reachability-checking = Checking...
 ui-tree-reachability-up = Reachable ({ $millis } ms)

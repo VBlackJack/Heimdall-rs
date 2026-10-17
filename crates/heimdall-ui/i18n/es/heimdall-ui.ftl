@@ -2337,7 +2337,10 @@ ui-update-banner-text = Hay una nueva versión disponible: { $version }
 ui-update-banner-view-release = Ver versión
 ui-update-banner-later = Más tarde
 ui-update-banner-skip = Omitir esta versión
-ui-session-load-notice-text = Hay { $open } sesiones integradas abiertas, por encima del umbral de { $threshold } fijado en Configuración. Cada una consume memoria, sobre todo las RDP: cierra las que ya no necesites si Heimdall se ralentiza.
+ui-session-load-notice-text = { $open ->
+    [one] Hay { $open } sesión integrada abierta
+   *[other] Hay { $open } sesiones integradas abiertas
+}, por encima del umbral de { $threshold } fijado en Configuración. Cada una consume memoria, sobre todo las RDP: cierra las que ya no necesites si Heimdall se ralentiza.
 ui-session-load-notice-hide = Ocultar
 ui-tree-reachability-checking = Comprobando...
 ui-tree-reachability-up = Accesible ({ $millis } ms)

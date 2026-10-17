@@ -449,7 +449,7 @@ pub enum Message {
     /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
     Update(UpdateMessage),
     /// "Hide" on the open sessions banner, as the C# `DismissSessionLoadNotice`: hidden until
-    /// the count is back under the threshold.
+    /// the count is no longer past the threshold.
     HideSessionLoadNotice,
     /// A server answered the background check, or did not.
     ReachabilityChecked {
