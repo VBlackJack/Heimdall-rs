@@ -31,8 +31,9 @@ use heimdall_app::profile_draft::ProfileField;
 use heimdall_app::update_check::{Failure, ReleaseTag, minutes_to_wait};
 use heimdall_app::windows_hello;
 use heimdall_app::{
-    Dialog, Effect, LegacyMigrationMessage, Message as AppMessage, PinMessage, ProviderMessage,
-    UpdateMessage, UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus, search_folded,
+    Dialog, Effect, ExternalToolMessage, LegacyMigrationMessage, Message as AppMessage, PinMessage,
+    ProviderMessage, UpdateMessage, UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus,
+    search_folded,
 };
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
@@ -54,6 +55,7 @@ use super::{
     SessionsChoice, SettingsMessage, SettingsTab, Shell, TimeoutChoice, settings_tabs,
 };
 use crate::browse::{BrowseTarget, browse_button};
+use crate::external_tools_view::ToolsEdit;
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::search_keys::SearchKeys;
@@ -187,6 +189,12 @@ fn divider<'a>() -> Element<'a, Message> {
         .into()
 }
 
+/// Whether the program `written` is there, as the C# `ExeExistsOnDiskOrPath` checks it: a
+/// full path that is a file, or a bare name in an absolute folder of `PATH`.
+fn program_found(written: &str) -> bool {
+    heimdall_term::local::program_path(Some(written)).is_ok_and(|program| program.is_file())
+}
+
 /// `message` as the window sends it to the application.
 fn send(message: SettingsMessage) -> Message {
     Message::App(AppMessage::Settings(message))
@@ -223,6 +231,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::Sftp => fl!("ui-settings-sftp"),
         SettingsCard::X11 => fl!("ui-settings-x11"),
         SettingsCard::ExternalEditor => fl!("ui-settings-external-editor"),
+        SettingsCard::ExternalTools => fl!("ui-external-tools-title"),
         SettingsCard::RdpDefaults => fl!("ui-settings-rdp-defaults"),
         SettingsCard::ConnectionChecks => fl!("ui-settings-connection-checks"),
         _ => return None,
@@ -239,6 +248,7 @@ fn card_framed(card: SettingsCard) -> bool {
     !matches!(
         card,
         SettingsCard::Macros
+            | SettingsCard::ExternalTools
             | SettingsCard::SshTrusted
             | SettingsCard::RdpReset
             | SettingsCard::RdpTrusted
@@ -282,6 +292,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::DockLocalBrowser => fl!("ui-settings-dock-local-browser"),
         SettingRow::LocalFollow => fl!("ui-settings-local-follow"),
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-path"),
+        SettingRow::ExternalTools => fl!("ui-external-tools-title"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path"),
@@ -325,6 +336,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::SessionLogDirectory => fl!("ui-settings-session-log-directory-hint"),
         SettingRow::SshAgentPreference => fl!("ui-settings-ssh-agent-preference-hint"),
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-hint"),
+        SettingRow::ExternalTools => fl!("ui-external-tools-description"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path-hint"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode-hint"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
@@ -1078,6 +1090,7 @@ impl Shell {
             | SettingRow::Gateways
             | SettingRow::RdpDefaults
             | SettingRow::RdpResolutionPresets
+            | SettingRow::ExternalTools
             | SettingRow::RdpResetAll => self.list_card_row(row),
             SettingRow::Pin | SettingRow::Vault | SettingRow::Provider => self.security_row(row),
             SettingRow::UpdateVersion => self.update_version_row(),
@@ -1556,6 +1569,16 @@ impl Shell {
                 }
                 _ => PathBuf::new(),
             },
+            BrowseTarget::ExternalToolProgram => PathBuf::from(
+                self.external_tools
+                    .selected()
+                    .map_or("", |tool| tool.executable_path.trim()),
+            ),
+            BrowseTarget::ExternalToolFolder => PathBuf::from(
+                self.external_tools
+                    .selected()
+                    .map_or("", |tool| tool.working_directory.trim()),
+            ),
         };
         crate::browse::pick(target, target.start(&current), self.main_window)
     }
@@ -1586,8 +1609,42 @@ impl Shell {
                 field: ProfileField::KeyPath,
                 value: path,
             },
+            target @ (BrowseTarget::ExternalToolProgram | BrowseTarget::ExternalToolFolder) => {
+                let folder = target == BrowseTarget::ExternalToolFolder;
+                return match self.external_tools.picked(folder, path, program_found) {
+                    Some(tools) => self
+                        .app
+                        .update(AppMessage::Settings(SettingsMessage::ExternalTools(tools))),
+                    None => Vec::new(),
+                };
+            }
         };
         self.app.update(message)
+    }
+
+    /// A change in the external tools card: applied once the list passes the C# Save's
+    /// checks; "Test" starts the tool chosen as it is edited, for no session.
+    pub(super) fn external_tools_edit(&mut self, edit: ToolsEdit) -> Vec<Effect> {
+        if edit == ToolsEdit::Test {
+            return match self.external_tools.selected() {
+                Some(tool) if !tool.executable_path.trim().is_empty() => {
+                    let tool = tool.clone();
+                    self.app
+                        .update(AppMessage::ExternalTool(ExternalToolMessage::Test(tool)))
+                }
+                // As the C#, which does nothing for a tool without a program.
+                _ => Vec::new(),
+            };
+        }
+        match self
+            .external_tools
+            .edit(edit, &fl!("ui-external-tools-new-name"), program_found)
+        {
+            Some(tools) => self
+                .app
+                .update(AppMessage::Settings(SettingsMessage::ExternalTools(tools))),
+            None => Vec::new(),
+        }
     }
 
     /// A program's path, `PuTTY` or the X server, typed and applied with Enter, "Browse..."
@@ -1733,6 +1790,12 @@ impl Shell {
                 crate::rdp_options::defaults(self.app.settings().rdp_defaults)
             }
             SettingRow::RdpResolutionPresets => self.presets.view(),
+            SettingRow::ExternalTools => self.external_tools.view(
+                self.external_tools
+                    .selected()
+                    .map(|tool| self.app.external_tool_preview(tool)),
+                heimdall_app::elevated_shell::SUPPORTED,
+            ),
             _ => tooltip(
                 button(text(fl!("ui-settings-rdp-reset-defaults")))
                     .style(styles::secondary)

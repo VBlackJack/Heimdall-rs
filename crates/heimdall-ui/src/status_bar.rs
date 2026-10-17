@@ -617,6 +617,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::PuttyLaunchedThrough { .. }
             | Notice::PuttyRefused(_)
             | Notice::X11ServerNotFound) => putty_notice(notice),
+            notice @ (Notice::ExternalToolStarted(_) | Notice::ExternalToolFailed { .. }) => {
+                crate::external_tools_view::notice(notice)
+            }
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",

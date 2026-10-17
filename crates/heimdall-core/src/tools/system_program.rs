@@ -17,7 +17,8 @@
 //! The one runner of the system programs the tools start: `tracert`, `traceroute`, `arp`,
 //! `ping` and `nslookup` read line by line as they print ([`run_lines`]), Windows
 //! `PowerShell`, `netsh`, `ip`, `ss` and `nmcli` read whole once they end ([`run`]), and
-//! one error type, [`ProgramError`], for every way they fail.
+//! one error type, [`ProgramError`], for every way they fail. With them, the programs the
+//! user lists as external tools, started and left to run ([`launch_detached`]).
 //!
 //! Every program is named by its full path (the system folder on Windows, fixed folders
 //! elsewhere, never the `PATH`), runs without a window and nothing on its input, its
@@ -56,6 +57,11 @@ const UNIX_SYSTEM_FOLDERS: [&str; 4] = ["/usr/sbin", "/usr/bin", "/sbin", "/bin"
 /// The process gets no console window, as the C# `CreateNoWindow`.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// A console program gets a console of its own, as Windows' shell gives one to a program it
+/// starts: never the one Heimdall may have been started from.
+#[cfg(windows)]
+const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
 /// Windows `PowerShell` inside the system folder, as the C# `SystemExecutablePath`.
 #[cfg(windows)]
@@ -209,6 +215,47 @@ fn start(mut command: Command, stderr: Stdio) -> Result<Child, ProgramError> {
     command
         .spawn()
         .map_err(|error| ProgramError::NotStarted(error.to_string()))
+}
+
+/// How a program started by [`launch_detached`] shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Window {
+    /// As it shows itself: a window program its windows, a console program a console of its
+    /// own on Windows, as the C# `UseShellExecute` starts it.
+    Own,
+    /// A console program without its console window, as the C# `RunHidden`. A window
+    /// program still shows its windows: Windows lets a program choose.
+    Hidden,
+}
+
+/// Starts `command`, a program the user chose, and leaves it running: nothing on its
+/// standard input, output and error but what it inherits, so that a console program writes
+/// in its own console; no time limit; a thread of its own reaps it when it ends, which the
+/// log says. Its process identifier.
+///
+/// # Errors
+///
+/// [`ProgramError::NotStarted`], with the system's words.
+pub fn launch_detached(mut command: Command, window: Window) -> Result<u32, ProgramError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(match window {
+            Window::Own => CREATE_NEW_CONSOLE,
+            Window::Hidden => CREATE_NO_WINDOW,
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+    let mut child = command
+        .spawn()
+        .map_err(|error| ProgramError::NotStarted(error.to_string()))?;
+    let id = child.id();
+    thread::spawn(move || match child.wait() {
+        Ok(status) => log::info!("process {id} ended: {status}"),
+        Err(error) => log::warn!("process {id} could not be waited for: {error}"),
+    });
+    Ok(id)
 }
 
 /// Ends `child` and reaps it. Already ended, the kill fails: the wait still reaps it.
@@ -573,6 +620,35 @@ mod tests {
                 detail: "Access denied more".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn a_program_launched_is_left_running_and_one_missing_says_why() {
+        let (program, flag) = shell();
+        let marker = tempfile::tempdir().expect("dir");
+        let file = marker.path().join("ran");
+        let mut command = Command::new(&program);
+        command.arg(flag);
+        // As `cmd.exe` reads its line: as written, not quoted for the C runtime.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            command.raw_arg(format!("echo ran> \"{}\"", file.display()));
+        }
+        #[cfg(not(windows))]
+        command.arg(format!("echo ran > '{}'", file.display()));
+        let id = launch_detached(command, Window::Hidden).expect("started");
+        assert!(id > 0);
+        let started = Instant::now();
+        while !file.exists() && started.elapsed() < Duration::from_secs(20) {
+            thread::sleep(POLL_INTERVAL);
+        }
+        assert!(file.exists(), "it ran");
+        let missing = std::env::temp_dir().join("heimdall-no-such-program");
+        assert!(matches!(
+            launch_detached(Command::new(missing), Window::Own),
+            Err(ProgramError::NotStarted(detail)) if !detail.is_empty()
+        ));
     }
 
     #[test]

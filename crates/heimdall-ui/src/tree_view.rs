@@ -132,6 +132,9 @@ pub enum TreeMenu {
     Macros(TabId),
     /// The notes a session's menu writes about it, as the C# Notes submenu.
     Notes(ProfileId),
+    /// The user's external tools a session's menu, or its tab's, starts for it, as the C#
+    /// "External Tools" submenu.
+    ExternalTools(ProfileId),
     /// The menu of an entry of a Files tab's pane, as the C# Files tab's; `None` beside the
     /// entries, the menu of the folder shown.
     FilesEntry {
@@ -868,17 +871,18 @@ fn separator<'a>() -> Element<'a, Message> {
 }
 
 /// The entries of `menu`, as the C# Heimdall orders them, limited to what this version does;
-/// `splittable` while a tab is shown that a profile can open in a split of.
+/// `splittable` while a tab is shown that a profile can open in a split of, `tools` while the
+/// user lists external tools.
 pub fn menu_entries<'a>(
     menu: &TreeMenu,
     profile: Option<&ProfileSummary>,
     connect_as: &[ConnectAs],
-    (editable, splittable): (bool, bool),
+    (editable, splittable, tools): (bool, bool, bool),
 ) -> Element<'a, Message> {
     let mut entries = MenuColumn::new();
     match (menu, profile) {
         (TreeMenu::Profile(_), Some(profile)) => {
-            entries = profile_entries(entries, profile, connect_as, (editable, splittable));
+            entries = profile_entries(entries, profile, connect_as, (editable, splittable, tools));
         }
         (TreeMenu::ConnectAs(_), Some(profile)) => {
             // The protocols but the profile's own, as the C# menu lists them.
@@ -1132,12 +1136,12 @@ pub fn connect_with_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
 
 /// A profile's menu, in the C# order this version has: Connect, Connect with (an RDP
 /// profile's), Connect as, Open in split, Rename, Edit, Duplicate, Move to folder, the
-/// copies, Delete.
+/// copies, Notes, the external tools while the user lists some, Delete.
 fn profile_entries<'a>(
     mut entries: MenuColumn<'a, Message>,
     profile: &ProfileSummary,
     connect_as: &[ConnectAs],
-    (editable, splittable): (bool, bool),
+    (editable, splittable, tools): (bool, bool, bool),
 ) -> MenuColumn<'a, Message> {
     let id = profile.id.clone();
     entries = entries.push(entry(
@@ -1193,6 +1197,13 @@ fn profile_entries<'a>(
     entries = entries
         .push(separator())
         .push(submenu(fl!("ui-tree-notes"), TreeMenu::Notes(id.clone())));
+    // After the notes, as the C# (`ContextMenuFactory.cs:174-180`), only with a tool listed.
+    if tools {
+        entries = entries.push(separator()).push(submenu(
+            fl!("ui-external-tools-menu"),
+            TreeMenu::ExternalTools(id.clone()),
+        ));
+    }
     entries = entries.push(separator()).push(
         keyed_button(fl!("ui-tree-delete"), Some(fl!("ui-menu-keys-delete")))
             .style(danger_style)
@@ -1222,6 +1233,20 @@ pub fn notes_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
                     template,
                 }),
         );
+    }
+    menu_card(entries).into()
+}
+
+/// A session's "External Tools" menu, as the C# one: each tool of the user's list by its
+/// name, in its order, started for the session `id`.
+#[must_use]
+pub fn external_tools_entries<'a>(id: &ProfileId, names: &[String]) -> Element<'a, Message> {
+    let mut entries = MenuColumn::new();
+    for name in names {
+        entries = entries.push(entry(
+            heimdall_app::server_text(name),
+            Some(crate::external_tools_view::launch(name, id.clone())),
+        ));
     }
     menu_card(entries).into()
 }
@@ -1576,6 +1601,8 @@ pub struct TabMenuState {
     pub saveable: bool,
     /// It takes terminal macros.
     pub macros: bool,
+    /// The user lists external tools, which its profile's entries start for it.
+    pub external_tools: bool,
     /// Opened from a pane's header: Disconnect closes that pane alone.
     pub pane: bool,
     /// It is a pane docked in another tab's split: off the strip, it is never pinned.
@@ -1869,19 +1896,26 @@ pub fn resolution_entries<'a>(
     menu_card(entries).into()
 }
 
-/// A tab's entries for the saved profile it was opened from: Edit, the copies, and Reveal
-/// in tree.
+/// A tab's entries for the saved profile it was opened from: Edit, the copies, Reveal in
+/// tree, and its external tools while the user lists some.
 fn profile_tab_entries<'a>(
     tab: TabId,
     profile: &ProfileSummary,
     editable: bool,
+    tools: bool,
 ) -> Vec<Element<'a, Message>> {
     let id = profile.id.clone();
     let has_user = profile
         .username
         .as_deref()
         .is_some_and(|user| !user.is_empty());
-    vec![
+    let tools = tools.then(|| {
+        submenu(
+            fl!("ui-external-tools-menu"),
+            TreeMenu::ExternalTools(id.clone()),
+        )
+    });
+    let mut entries = vec![
         keyed_entry(
             fl!("ui-tree-edit"),
             Some(fl!("ui-menu-keys-edit")),
@@ -1902,7 +1936,10 @@ fn profile_tab_entries<'a>(
             fl!("ui-tab-menu-reveal-in-tree"),
             Some(AppMessage::TabMenu(TabMenuMessage::RevealInTree(tab))),
         ),
-    ]
+    ];
+    // Beyond the C# tab menu, which has none: the tools of the session shown, at hand.
+    entries.extend(tools);
+    entries
 }
 
 /// An entry that opens the menu `menu` beside the one shown.
@@ -2017,7 +2054,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     let profile = state
         .profile
         .as_ref()
-        .map(|profile| profile_tab_entries(tab, profile, state.editable))
+        .map(|profile| profile_tab_entries(tab, profile, state.editable, state.external_tools))
         .unwrap_or_default();
     let close = |group| menu(TabMenuMessage::Close { tab, group });
     let closing = vec![

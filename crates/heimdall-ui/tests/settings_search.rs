@@ -1043,9 +1043,10 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         );
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
-    // The last rows added, the welcome tour's button, the RDP keep-alive interval and the
-    // built-in client's compression, hold no path.
-    assert_eq!(SettingRow::ALL.len(), 65, "no row added");
+    // The last rows added, the welcome tour's button, the RDP keep-alive interval, the
+    // built-in client's compression, hold no path; the external tools' card holds the Browse
+    // buttons of the tool chosen, which its own tests cover.
+    assert_eq!(SettingRow::ALL.len(), 66, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1521,4 +1522,35 @@ fn the_legacy_migration_is_offered_again_from_the_updates_card_once_declined() {
             LegacyMigrationMessage::OfferAgain
         ))
     )));
+}
+
+#[test]
+fn an_external_tool_is_added_from_its_card_and_applied_once_its_program_is_found() {
+    use heimdall_ui::browse::BrowseTarget;
+    use heimdall_ui::external_tools_view::ToolsEdit;
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("external tools"),
+        [SettingRow::ExternalTools]
+    );
+    let _ = shell.update(Message::ExternalToolsEdit(ToolsEdit::Add));
+    assert!(
+        shell.app().settings().external_tools.is_empty(),
+        "no program yet: kept in the card"
+    );
+    let program = std::env::current_exe()
+        .expect("the test itself")
+        .to_string_lossy()
+        .into_owned();
+    let _ = shell.update(Message::Browsed(
+        BrowseTarget::ExternalToolProgram,
+        program.clone(),
+    ));
+    let tools = &shell.app().settings().external_tools;
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name, "New Tool");
+    assert_eq!(tools[0].executable_path, program);
+    assert_eq!(tools[0].arguments, "{Host}");
 }

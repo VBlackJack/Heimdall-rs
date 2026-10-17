@@ -2239,3 +2239,118 @@ fn the_local_tunnel_port_is_the_profile_s_never_a_setting() {
         assert!(!written.contains("TunnelPort"), "{written}");
     }
 }
+
+/// Two tools of the user's list, every field set.
+fn external_tools() -> Vec<heimdall_core::external_tools::ExternalTool> {
+    use heimdall_core::external_tools::ExternalTool;
+    vec![
+        ExternalTool {
+            name: "WinSCP".to_owned(),
+            executable_path: r"C:\Program Files (x86)\WinSCP\WinSCP.exe".to_owned(),
+            arguments: r#"sftp://{User}@{Host}:{Port} /sessionname="{ServerName}""#.to_owned(),
+            working_directory: r"C:\Temp".to_owned(),
+            run_as_administrator: false,
+            run_hidden: true,
+        },
+        ExternalTool {
+            name: "Wireshark".to_owned(),
+            executable_path: "wireshark".to_owned(),
+            arguments: "-k -f \"host {Host}\"".to_owned(),
+            working_directory: String::new(),
+            run_as_administrator: true,
+            run_hidden: false,
+        },
+    ]
+}
+
+#[test]
+fn the_external_tools_are_written_in_their_order_and_read_back_whole() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        external_tools: external_tools(),
+        ..Settings::default()
+    };
+    settings.save(&path).expect("saved");
+    assert_eq!(
+        Settings::load(&path).expect("read").external_tools,
+        external_tools()
+    );
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(text.contains("[[external_tools.tools]]"), "{text}");
+    assert!(text.contains("executable_path = "), "{text}");
+    // None by default, and none in a file written before them.
+    assert!(Settings::default().external_tools.is_empty());
+    Settings::default().save(&path).expect("saved");
+    assert!(
+        Settings::load(&path)
+            .expect("read")
+            .external_tools
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_reset_keeps_the_external_tools_and_an_export_carries_them_shown_first() {
+    use heimdall_core::settings::Sensitivity;
+    let settings = Settings {
+        external_tools: external_tools(),
+        ..Settings::default()
+    };
+    // The user's own entries, as the C# reset carries them across.
+    let mut reset = settings.clone();
+    reset.reset_all();
+    assert_eq!(reset.external_tools, external_tools());
+
+    let (text, _) = settings.export(None, false);
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(read.settings.external_tools, external_tools());
+    let flagged: Vec<&str> = read
+        .flagged(Sensitivity::RunsOnThisComputer)
+        .map(|change| change.key.as_str())
+        .collect();
+    assert_eq!(flagged, ["external_tools.tools"], "programs it starts");
+    assert!(read.ignored.is_empty(), "{:?}", read.ignored);
+}
+
+#[test]
+fn an_import_shows_each_tool_with_its_program_and_an_export_leaves_home_tools_behind() {
+    use heimdall_core::settings::{ProgramShown, SettingValue};
+    let settings = Settings {
+        external_tools: external_tools(),
+        ..Settings::default()
+    };
+    let (text, _) = settings.export(None, false);
+    let read = Settings::default().import(&text).expect("read");
+    let change = read
+        .changes
+        .iter()
+        .find(|change| change.key == "external_tools.tools")
+        .expect("changed");
+    // Tool by tool, as the C# preview: what would run, never a count.
+    assert_eq!(
+        change.after,
+        Some(SettingValue::Programs(vec![
+            ProgramShown {
+                name: "WinSCP".to_owned(),
+                program: r"C:\Program Files (x86)\WinSCP\WinSCP.exe".to_owned(),
+                administrator: false,
+            },
+            ProgramShown {
+                name: "Wireshark".to_owned(),
+                program: "wireshark".to_owned(),
+                administrator: true,
+            },
+        ]))
+    );
+    assert_eq!(change.before, Some(SettingValue::List(0)));
+
+    // A tool naming a path under the home folder stays on this computer, counted.
+    let home = Path::new(r"C:\Temp");
+    let (text, held_back) = settings.export(Some(home), false);
+    assert_eq!(held_back, 1, "the tool whose folder is under home");
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(read.settings.external_tools, external_tools()[1..]);
+    let (_, held_back) = settings.export(Some(home), true);
+    assert_eq!(held_back, 0);
+}

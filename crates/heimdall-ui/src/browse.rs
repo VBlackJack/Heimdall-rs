@@ -67,13 +67,18 @@ pub enum BrowseTarget {
     ProviderKeyFile,
     /// The SSH key of the gateway editor.
     GatewayKey,
+    /// The program of the external tool chosen in the Settings page, as the C#
+    /// `OnExtToolBrowseClick`.
+    ExternalToolProgram,
+    /// Its working folder, as the C# `OnExtToolWorkDirBrowseClick`.
+    ExternalToolFolder,
 }
 
 impl BrowseTarget {
     /// Whether it is a folder, picked in the folder dialog, as the C# transcripts' folder.
     #[must_use]
     pub fn picks_folder(self) -> bool {
-        self == Self::SessionLogDirectory
+        matches!(self, Self::SessionLogDirectory | Self::ExternalToolFolder)
     }
 
     /// The dialog's title, the C#'s; `None` where the C# leaves the system's own.
@@ -85,7 +90,11 @@ impl BrowseTarget {
             Self::ExternalEditor => Some(fl!("ui-settings-browse-editor-title")),
             Self::SessionLogDirectory => Some(fl!("ui-settings-browse-log-directory-title")),
             Self::GatewayKey => Some(fl!("ui-profile-browse-key-title")),
-            Self::ProviderDatabase | Self::ProviderKeyFile => None,
+            // The system's own, as the C# dialogs.
+            Self::ProviderDatabase
+            | Self::ProviderKeyFile
+            | Self::ExternalToolProgram
+            | Self::ExternalToolFolder => None,
         }
     }
 
@@ -95,11 +104,17 @@ impl BrowseTarget {
     pub fn filters(self) -> Vec<(String, &'static [&'static str])> {
         let all = || (fl!("ui-settings-browse-all-files"), ALL_FILES);
         match self {
-            Self::Tool(_) | Self::ExternalEditor if cfg!(windows) => vec![
-                (fl!("ui-settings-browse-executables"), EXECUTABLE_EXTENSIONS),
-                all(),
-            ],
-            Self::Tool(_) | Self::ExternalEditor | Self::SessionLogDirectory => Vec::new(),
+            Self::Tool(_) | Self::ExternalEditor | Self::ExternalToolProgram if cfg!(windows) => {
+                vec![
+                    (fl!("ui-settings-browse-executables"), EXECUTABLE_EXTENSIONS),
+                    all(),
+                ]
+            }
+            Self::Tool(_)
+            | Self::ExternalEditor
+            | Self::ExternalToolProgram
+            | Self::SessionLogDirectory
+            | Self::ExternalToolFolder => Vec::new(),
             Self::ProviderDatabase => vec![
                 (
                     fl!("ui-settings-browse-database-filter"),

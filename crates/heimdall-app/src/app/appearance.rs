@@ -129,6 +129,10 @@ pub enum SettingsMessage {
     /// The sizes the Resolution menus offer, empty for the built-in ones; refused when one
     /// is out of the limits.
     RdpResolutionPresets(Vec<(u16, u16)>),
+    /// The external tools, in their order, their names and programs trimmed as the C# Save
+    /// trims them; refused, as the C# Save refuses it, when one has no name or no program or
+    /// two share a name. Whether each program is there is the editor's to check.
+    ExternalTools(Vec<heimdall_core::external_tools::ExternalTool>),
     /// The RDP settings back to their own values, asked first as the C# asks.
     ResetRdpDefaults,
     /// Minutes without input before the workspace locks, 0 for never; refused out of the
@@ -421,6 +425,26 @@ impl App {
         }
     }
 
+    /// Sets the list `message` changes, the resolution presets or the external tools, when
+    /// it is accepted; whether it was. The external tools are refused as the C# Save refuses
+    /// them, one without a name or a program or two of one name; whether each program is
+    /// there is the editor's to check.
+    fn set_list(&mut self, message: &SettingsMessage) -> bool {
+        use heimdall_core::external_tools::{problem, saved};
+        match message {
+            SettingsMessage::RdpResolutionPresets(presets)
+                if Settings::resolution_presets_accepted(presets) =>
+            {
+                self.settings.rdp_resolution_presets.clone_from(presets);
+            }
+            SettingsMessage::ExternalTools(tools) if problem(tools, |_| true).is_none() => {
+                self.settings.external_tools = saved(tools);
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// Sets the reachability number `message` changes, when within its range; whether it
     /// was.
     fn set_reachability(&mut self, message: &SettingsMessage) -> bool {
@@ -522,11 +546,11 @@ impl App {
                     return Vec::new();
                 }
             }
-            SettingsMessage::RdpResolutionPresets(presets) => {
-                if !Settings::resolution_presets_accepted(presets) {
+            message @ (SettingsMessage::RdpResolutionPresets(_)
+            | SettingsMessage::ExternalTools(_)) => {
+                if !self.set_list(message) {
                     return Vec::new();
                 }
-                self.settings.rdp_resolution_presets.clone_from(presets);
             }
             SettingsMessage::ResetRdpDefaults => self.settings.reset_rdp(),
             SettingsMessage::ResetAllSettings => {
