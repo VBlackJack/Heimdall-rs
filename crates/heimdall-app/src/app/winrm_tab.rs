@@ -72,9 +72,7 @@ impl App {
 
     /// A tab whose attempt probes the server or opens the route, then starts `PowerShell`.
     fn open_winrm_tab(&mut self, profile: WinRmProfile) -> Vec<Effect> {
-        if self.session_limit_reached() {
-            return Vec::new();
-        }
+        self.note_new_connection();
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();

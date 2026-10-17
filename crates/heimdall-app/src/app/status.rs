@@ -296,9 +296,6 @@ pub enum Notice {
     ListingCancelled,
     /// Nothing was put into a Files tab's folder shown: its listing is still on its way.
     ListingInProgress,
-    /// A session was not opened: this many are open already, the most the settings allow,
-    /// as the C# "Embedded session limit reached".
-    SessionLimitReached(u32),
     /// The SFTP pane opened beside an SSH shell could not connect, for this reason, and
     /// was closed, as the C# `StatusSftpAutoOpenFailed`.
     SftpAutoOpenFailed(UiError),

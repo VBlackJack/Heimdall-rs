@@ -122,6 +122,7 @@ mod quick_connect;
 mod rdp_import;
 mod rdp_tab;
 mod reachability_monitor;
+mod recently_closed;
 mod reconnect;
 mod resolution;
 mod route_test;
@@ -130,6 +131,7 @@ mod scheduled;
 mod scheduled_page;
 mod selection;
 mod session_events;
+mod session_load;
 mod session_restore;
 mod sessions_import;
 mod settings_transfer;
@@ -189,11 +191,13 @@ pub use provider_connect::{ProviderAnswer, ProviderRequest};
 pub use quick_connect::{QuickGroup, QuickResult, QuickRow, ToolWords};
 pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow};
 use rdp_tab::ResizeFallback;
+pub use recently_closed::{ClosedTab, RECENTLY_CLOSED_CAPACITY, RecentlyClosed};
 pub use resolution::ResolutionChoice;
 pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
 pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
+pub use session_load::SessionLoadNotice;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
     SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
@@ -446,6 +450,9 @@ pub enum Message {
     ScheduledTick,
     /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
     Update(UpdateMessage),
+    /// "Hide" on the open sessions banner, as the C# `DismissSessionLoadNotice`: hidden until
+    /// the count is no longer past the threshold.
+    HideSessionLoadNotice,
     /// A server answered the background check, or did not.
     ReachabilityChecked {
         /// The profile.
@@ -505,6 +512,8 @@ pub enum Message {
     },
     /// Close a tab, asking first when its session is live.
     RequestCloseTab(TabId),
+    /// Open again the tabs of the most recent close, as the C# Ctrl+Shift+R.
+    ReopenClosedTab,
     /// End a tab's remote desktop from its bar, the tab kept to reconnect.
     DisconnectDesktop(TabId),
     /// Something from a tab's menu.
@@ -989,6 +998,7 @@ impl fmt::Debug for Message {
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
             Self::ScheduledTick => f.write_str("ScheduledTick"),
             Self::Update(message) => write!(f, "Update({message:?})"),
+            Self::HideSessionLoadNotice => f.write_str("HideSessionLoadNotice"),
             Self::ReachabilityChecked { id, verdict } => {
                 write!(f, "ReachabilityChecked({id}, {verdict:?})")
             }
@@ -1012,6 +1022,7 @@ impl fmt::Debug for Message {
                 write!(f, "MoveTab({} onto {})", tab.value(), onto.value())
             }
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
+            Self::ReopenClosedTab => f.write_str("ReopenClosedTab"),
             Self::DisconnectDesktop(tab) => write!(f, "DisconnectDesktop({})", tab.value()),
             Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
             Self::Split(message) => write!(f, "Split({message:?})"),
@@ -2184,6 +2195,8 @@ pub struct Tab {
     /// For a tool's tab, the name of the document it holds whose changes are not saved,
     /// or still being saved, as the window says; closing the tab asks first.
     tool_unsaved: Option<String>,
+    /// For a tool's tab, what it opened on: the host or the argument it was given.
+    tool_context: crate::tools::ToolContext,
     /// Whether the tunnels panel was opened or closed while this tab was shown, as the C#
     /// `TunnelsPanelManualOverride`: it wins over its profile's choice.
     pub(crate) tunnels_panel: Option<bool>,
@@ -2381,6 +2394,7 @@ impl Tab {
             opened: std::time::SystemTime::now(),
             reopen: reconnect::Reopen::of(&profile),
             tool_unsaved: None,
+            tool_context: crate::tools::ToolContext::default(),
             post_connect: None,
             macro_recording: None,
             macro_playing: None,
@@ -2439,6 +2453,13 @@ impl Tab {
     #[must_use]
     pub fn tool_unsaved(&self) -> Option<&str> {
         self.tool_unsaved.as_deref()
+    }
+
+    /// For a tool's tab, what it opened on, as the C# `ToolContext` given to the tool's
+    /// view; empty for any other tab.
+    #[must_use]
+    pub fn tool_context(&self) -> &crate::tools::ToolContext {
+        &self.tool_context
     }
 
     fn stop(&mut self) {
@@ -3241,6 +3262,8 @@ pub struct App {
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// A session opens in a tab's place, as Reconnect opens it: it takes no more room.
     replacing: bool,
+    /// The open sessions banner, as the C# `SessionLoad`.
+    session_load: session_load::SessionLoad,
     /// The SFTP panes opened beside an SSH shell by themselves, until they connect: one
     /// that fails before is closed and said, as the C# auto-open.
     docking_sftp: Vec<TabId>,
@@ -3347,6 +3370,8 @@ pub struct App {
     closed_folders: std::collections::HashSet<String>,
     /// The tree's filters, beyond its search.
     tree_filter: TreeFilter,
+    /// The tabs closed lately, to reopen: in memory alone, forgotten on lock and on quit.
+    recently_closed: RecentlyClosed,
 }
 
 impl fmt::Debug for App {
@@ -3444,6 +3469,7 @@ impl App {
             tunnels_panel,
             last_move: None,
             replacing: false,
+            session_load: session_load::SessionLoad::default(),
             docking_sftp: Vec::new(),
             pending_restore,
             recent_hosts: Vec::new(),
@@ -3483,6 +3509,7 @@ impl App {
             desktop_sessions: session_events::DesktopSessions::default(),
             closed_folders: std::collections::HashSet::new(),
             tree_filter: TreeFilter::default(),
+            recently_closed: RecentlyClosed::default(),
         };
         // The PIN when one is set, then a vault on disk is offered to unlock: its passwords
         // are then ready.
@@ -3586,9 +3613,13 @@ impl App {
         let outermost = self.begin_batch();
         let mut effects = self.apply(message);
         effects.extend(self.prune_floating());
+        // On every change of the tabs, as the C# refresh on every change of the strip.
+        self.refresh_session_load_notice();
         self.follow_desktop_sessions();
         self.note_status();
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
+            // Nothing of what was closed outlives the application.
+            self.recently_closed.clear();
             self.close_session_logs();
             self.release_putty_routes();
             self.release_mstsc_routes();
@@ -3670,6 +3701,10 @@ impl App {
                 self.scheduled_tick_at(crate::time_zone::unix_now(), &crate::time_zone::SystemClock)
             }
             Message::Update(message) => self.update_message(message),
+            Message::HideSessionLoadNotice => {
+                self.hide_session_load_notice();
+                Vec::new()
+            }
             Message::ReachabilityChecked { id, verdict } => {
                 self.reachability_checked(&id, verdict);
                 Vec::new()
@@ -3695,6 +3730,7 @@ impl App {
                 Vec::new()
             }
             Message::RequestCloseTab(tab) => self.request_close(tab),
+            Message::ReopenClosedTab => self.reopen_closed(),
             Message::DisconnectDesktop(tab) => {
                 self.request_disconnect_desktop(tab);
                 Vec::new()
@@ -4047,47 +4083,20 @@ impl App {
         self.open_ssh(profile, purpose)
     }
 
-    /// Whether one more session may not open, as the C# `MaxEmbeddedSessions`, which is
-    /// said: no limit at 0; this computer's own shells are not counted, nor a session
-    /// opening in a tab's place.
-    pub(super) fn session_limit_reached(&mut self) -> bool {
-        let Some(max) = self.session_limit_hit() else {
-            return false;
-        };
-        self.tell(Notice::SessionLimitReached(max));
-        true
-    }
-
-    /// The session limit when one more session may not open, without saying it.
-    pub(super) fn session_limit_hit(&self) -> Option<u32> {
-        let max = self.settings.max_sessions;
-        if max == 0 || self.replacing {
-            return None;
-        }
-        let open = self
-            .tabs
-            .iter()
-            .filter(|tab| !matches!(tab.profile, TabProfile::Local(_) | TabProfile::Tool(_)))
-            .count();
-        (open >= usize::try_from(max).unwrap_or(usize::MAX)).then_some(max)
-    }
-
-    /// Opens a tab for `profile`, a shell or its files, without asking about its steps:
-    /// within the session limit, and its files only while the SFTP browser is on, as the C#
-    /// SFTP handler refuses them.
+    /// Opens a tab for `profile`, a shell or its files, without asking about its steps: its
+    /// files only while the SFTP browser is on, as the C# SFTP handler refuses them, the
+    /// open sessions banner shown past the threshold.
     pub(super) fn open_ssh_now(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
         if purpose == Purpose::Files && !self.settings.sftp_browser.enabled {
             self.tell(Notice::SftpBrowserDisabled);
             return Vec::new();
         }
-        if self.session_limit_reached() {
-            return Vec::new();
-        }
+        self.note_new_connection();
         self.open_ssh_tab(profile, purpose).1
     }
 
     /// Opens a tab for `profile`, a shell or its files, the last of the tabs and the active
-    /// one, whatever the session limit; the tab, and what connects it.
+    /// one, not counted as a new connection; the tab, and what connects it.
     pub(super) fn open_ssh_tab(
         &mut self,
         profile: SshProfile,
@@ -4868,12 +4877,13 @@ impl App {
         }
         let panes = self.panes_of(tab_id);
         if !self.ask_before_closing(tab_id, &panes) {
-            self.close_tab(tab_id);
+            self.close_tabs_by_user(&[tab_id]);
         }
         Vec::new()
     }
 
-    /// Closes `tab_id` and, for a split tab, every pane of it, as the C# `CloseAllPanes`.
+    /// Closes `tab_id` and, for a split tab, every pane of it, as the C# `CloseAllPanes`;
+    /// not remembered to reopen, as [`App::close_tabs_by_user`] remembers it.
     fn close_tab(&mut self, tab_id: TabId) {
         for pane in self.panes_of(tab_id) {
             if pane != tab_id {
@@ -4945,7 +4955,7 @@ impl App {
                 if self.closing_pane.take() == Some(tab) {
                     self.close_pane(tab);
                 } else {
-                    self.close_tab(tab);
+                    self.close_tabs_by_user(&[tab]);
                 }
                 Vec::new()
             }
@@ -4969,9 +4979,7 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmCloseTabs { tabs, .. }) => {
-                for tab in tabs {
-                    self.close_tab(tab);
-                }
+                self.close_tabs_by_user(&tabs);
                 Vec::new()
             }
             Some(Dialog::RenameTab { tab, value }) => {

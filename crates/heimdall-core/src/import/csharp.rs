@@ -22,8 +22,10 @@
 //!
 //! - groups are `/`-separated paths; the deepest group that sets a field wins over its
 //!   ancestors, and a group that sets a field to an empty string still stops the search;
-//! - a profile keeps its own gateway, user name and key path unless they are empty, and its
-//!   own port unless the `sshPort` field is absent.
+//! - a profile keeps its own gateway unless it is blank, its own user name and key path
+//!   unless they are empty, and its own port unless the `sshPort` field is absent;
+//! - a profile marked for a direct connection goes through no gateway, even one its group
+//!   supplies, as `SshGatewayRoute.GatewayIdFor` decides.
 //!
 //! Secrets are never imported: the C# Heimdall encrypts them with Windows DPAPI, which only
 //! that Windows account can reverse.
@@ -1453,7 +1455,7 @@ fn is_null_or_empty(value: Option<&String>) -> bool {
 impl LegacyGroupDefaults {
     /// Fills the fields `server` leaves unset, as `GroupDefaultsDto.ApplyTo` does.
     fn apply_to(&self, server: &mut LegacyServer) {
-        if is_null_or_empty(server.ssh_gateway_id.as_ref()) {
+        if !is_assigned(server.ssh_gateway_id.as_ref()) {
             server.ssh_gateway_id.clone_from(&self.ssh_gateway_id);
         }
         if is_null_or_empty(server.ssh_username.as_ref()) {
@@ -1477,9 +1479,10 @@ fn non_empty(value: Option<&String>) -> Option<String> {
     value.filter(|value| !value.is_empty()).cloned()
 }
 
-/// An SSH or SFTP profile, through the gateway it names. One the file does not hold is kept,
-/// as the C# keeps it (`GatewayImportReconciler.cs:123-139`): the import is not refused for
-/// it, [`super::gateways::reconcile`] counts it, and connecting says it is missing.
+/// An SSH or SFTP profile, through the gateway [`routed_gateway`] decides. One the file does
+/// not hold is kept, as the C# keeps it (`GatewayImportReconciler.cs:123-139`): the import is
+/// not refused for it, [`super::gateways::reconcile`] counts it, and connecting says it is
+/// missing.
 fn convert(server: &LegacyServer, suggested_tunnel_port: u16) -> Result<SshProfile, SkipReason> {
     let sftp = server.connection_type == SFTP_CONNECTION_TYPE;
     if server.connection_type != SSH_CONNECTION_TYPE && !sftp {
@@ -1491,7 +1494,9 @@ fn convert(server: &LegacyServer, suggested_tunnel_port: u16) -> Result<SshProfi
     if server.remote_server.trim().is_empty() {
         return Err(SkipReason::MissingHost);
     }
-    let gateway = non_empty(server.ssh_gateway_id.as_ref()).map(ProfileId::new);
+    // Not the identifier as the folder filled it: a profile marked direct opts out of the
+    // folder's gateway, as `ServerDialogViewModel.cs:2429-2432` records it.
+    let gateway = routed_gateway(server);
     let port = match server.ssh_port {
         None => DEFAULT_SSH_PORT,
         Some(value) => match u16::try_from(value) {
@@ -1609,7 +1614,7 @@ fn forwards_of(server: &LegacyServer) -> Result<Forwards, SkipReason> {
     })
 }
 
-/// An RDP profile, through its SSH gateway when it goes through one, kept as [`convert`]
+/// An RDP profile, through the SSH gateway [`routed_gateway`] decides, kept as [`convert`]
 /// keeps it.
 fn convert_rdp(
     server: &LegacyServer,
@@ -1939,19 +1944,43 @@ fn trimmed(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// A `WinRM` profile as `WinRmPowerShellLaunchBuilder` connects it: directly, never through a
-/// gateway. The stored password is not carried over: `PowerShell` asks for it.
-/// The SSH gateway `server` goes through, as `ConnectionService` decides: the one it names
-/// unless it asks for a direct connection. One the file does not hold is kept, as
-/// [`convert`] keeps it.
+/// The SSH gateway `server` goes through once its group defaults are applied: the one
+/// decision of the import, for every protocol, as `SshGatewayRoute.GatewayIdFor`
+/// (`SshGatewayRoute.cs:59-82`) makes it for the C# tunnel service and handlers. None for a
+/// protocol whose handler never tunnels, for a profile marked for a direct connection even
+/// when its folder supplies a gateway, and for a blank identifier. One the file does not hold
+/// is kept, as the C# keeps it (`GatewayImportReconciler.cs:123-139`).
 fn routed_gateway(server: &LegacyServer) -> Option<ProfileId> {
-    if server.use_direct_connection {
+    if server.use_direct_connection || !supports_ssh_gateway(&server.connection_type) {
         return None;
     }
-    non_empty(server.ssh_gateway_id.as_ref()).map(ProfileId::new)
+    server
+        .ssh_gateway_id
+        .as_ref()
+        .filter(|id| is_assigned(Some(id)))
+        .map(|id| ProfileId::new(id.clone()))
 }
 
-/// A `WinRM` profile as `WinRmHandler` connects it, through its SSH gateway when it names one.
+/// Whether the handler of `connection_type` routes through the SSH tunnel service, as
+/// `ProtocolCapabilities.SupportsSshGateway`; the C# `WEB` is not imported.
+fn supports_ssh_gateway(connection_type: &str) -> bool {
+    [
+        SSH_CONNECTION_TYPE,
+        SFTP_CONNECTION_TYPE,
+        RDP_CONNECTION_TYPE,
+        WINRM_CONNECTION_TYPE,
+    ]
+    .iter()
+    .any(|routed| connection_type.eq_ignore_ascii_case(routed))
+}
+
+/// Whether a gateway identifier names one, as `SshGatewayRoute.IsAssigned`: blank is none.
+fn is_assigned(gateway_id: Option<&String>) -> bool {
+    gateway_id.is_some_and(|id| !id.trim().is_empty())
+}
+
+/// A `WinRM` profile as `WinRmHandler` connects it, through the SSH gateway [`routed_gateway`]
+/// decides.
 /// One over HTTPS keeps it: connecting then says why the C# refuses it, as the C# does.
 fn convert_winrm(
     server: &LegacyServer,

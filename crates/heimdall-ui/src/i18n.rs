@@ -143,6 +143,41 @@ mod tests {
     }
 
     #[test]
+    fn the_open_sessions_banner_says_one_or_several_in_each_language() {
+        let loader: FluentLanguageLoader = fluent_language_loader!();
+        loader
+            .load_fallback_language(&Localizations)
+            .expect("fallback");
+        let said = |language: &str, open: usize| {
+            select(&loader, &[language.parse().expect("language tag")]);
+            loader.get_args(
+                "ui-session-load-notice-text",
+                HashMap::from([("open", open), ("threshold", 1)]),
+            )
+        };
+        for (language, one, several) in [
+            (
+                "en",
+                "1 embedded session is open, past",
+                "2 embedded sessions are open, past",
+            ),
+            (
+                "fr",
+                "1 session intégrée est ouverte, au-delà",
+                "2 sessions intégrées sont ouvertes, au-delà",
+            ),
+            (
+                "es",
+                "Hay 1 sesión integrada abierta, por encima",
+                "Hay 2 sesiones integradas abiertas, por encima",
+            ),
+        ] {
+            assert!(said(language, 1).starts_with(one), "{language}: one");
+            assert!(said(language, 2).starts_with(several), "{language}: other");
+        }
+    }
+
+    #[test]
     fn a_decimal_takes_the_language_s_sign() {
         assert_eq!(decimal_in(1.24, 1, Language::English), "1.2");
         assert_eq!(decimal_in(1.5, 1, Language::French), "1,5");

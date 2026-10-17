@@ -220,7 +220,9 @@ pub enum FailureKind {
     /// The server's key or certificate is not trusted yet: the user decides it, never a
     /// schedule.
     ConfirmationRequired,
-    /// The most sessions the settings allow are open.
+    /// The most sessions the settings allowed were open. No longer recorded: the setting is
+    /// a threshold that refuses nothing, as the C#; kept so a file that recorded it still
+    /// reads, and says why.
     SessionLimit,
     /// The connection did not open.
     ConnectionFailed,

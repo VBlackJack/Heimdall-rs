@@ -847,8 +847,8 @@ fn open_in_split_merges_the_new_tab_into_the_tab_shown_up_to_the_most_panes() {
 }
 
 #[test]
-fn open_in_split_merges_nothing_when_the_session_limit_refuses_the_open() {
-    use heimdall_app::SettingsMessage;
+fn open_in_split_past_the_sessions_threshold_merges_and_counts_two_hosts_as_the_csharp() {
+    use heimdall_app::{SessionLoadNotice, SettingsMessage};
 
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
@@ -871,11 +871,21 @@ fn open_in_split_merges_nothing_when_the_session_limit_refuses_the_open() {
             axis: Axis::SideBySide,
         },
     );
-    assert!(effects.is_empty(), "{effects:?}");
-    assert_eq!(app.tabs.len(), 1);
-    assert!(app.tab(a).expect("a").layout.is_none(), "nothing merged");
-    assert_eq!(app.active, Some(a));
-    assert_eq!(app.notice(), Some(&Notice::SessionLimitReached(1)));
+    // The threshold refuses nothing, as the C# split: the second host is merged.
+    assert!(!effects.is_empty(), "opened");
+    assert_eq!(app.tabs.len(), 2);
+    let b = app.tabs[1].id;
+    assert_eq!(layout(&app, a).leaves(), [a, b]);
+    // Two hosts in one tab are two connections, as the C# counts them.
+    assert_eq!(app.connection_count(), 2);
+    assert_eq!(
+        app.session_load_notice(),
+        Some(SessionLoadNotice {
+            open: 2,
+            threshold: 1
+        })
+    );
+    assert_eq!(app.notice(), None, "the banner says it, not the status bar");
 }
 
 #[test]
@@ -1129,10 +1139,14 @@ fn the_splits_remembered_are_read_back_at_the_next_start() {
     );
 }
 
-/// The names of the tools, as the window gives them: here their identifiers.
-fn words(tool: ToolId) -> ToolWords {
+/// The names of the tools, as the window gives them: here their identifiers, and an
+/// argument after a colon.
+fn words(tool: ToolId, argument: Option<&str>) -> ToolWords {
     ToolWords {
-        name: tool.code().to_owned(),
+        name: argument.map_or_else(
+            || tool.code().to_owned(),
+            |argument| format!("{}: {argument}", tool.code()),
+        ),
         category: format!("{:?}", tool.category()),
     }
 }
@@ -1331,6 +1345,7 @@ fn ctrl_enter_opens_as_usual_with_no_tab_a_tool_s_tab_or_a_host_typed() {
     app.update(Message::Tools(ToolsMessage::Open {
         tool: ToolId::Uuid,
         title: "UUID".to_owned(),
+        context: heimdall_app::tools::ToolContext::default(),
     }));
     let message = app.quick_open(found(&app, "server b"), None, true);
     assert!(matches!(
@@ -1347,13 +1362,14 @@ fn ctrl_enter_opens_as_usual_with_no_tab_a_tool_s_tab_or_a_host_typed() {
             QuickResult::Tool {
                 tool: ToolId::Hash,
                 name: "Hash".to_owned(),
+                argument: None,
             },
             None,
             beside,
         );
         assert!(matches!(
             message,
-            Message::Tools(ToolsMessage::Open { tool: ToolId::Hash, ref title }) if title == "Hash"
+            Message::Tools(ToolsMessage::Open { tool: ToolId::Hash, ref title, .. }) if title == "Hash"
         ));
     }
 }

@@ -158,7 +158,6 @@ fn files_notice(notice: &Notice) -> String {
         Notice::MoveUndone => fl!("ui-status-move-undone"),
         Notice::ListingCancelled => fl!("ui-status-listing-cancelled"),
         Notice::ListingInProgress => fl!("ui-status-listing-in-progress"),
-        Notice::SessionLimitReached(max) => fl!("ui-status-session-limit", max = (*max)),
         Notice::SftpAutoOpenFailed(error) => fl!(
             "ui-status-sftp-auto-open-failed",
             reason = crate::texts::error(error)
@@ -402,7 +401,6 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::MoveUndone
             | Notice::ListingCancelled
             | Notice::ListingInProgress
-            | Notice::SessionLimitReached(_)
             | Notice::SftpAutoOpenFailed(_)
             | Notice::SftpBrowserDisabled
             | Notice::UndoConflict

@@ -263,9 +263,7 @@ impl App {
         if let Some(effects) = self.open_rdp_external(&profile) {
             return effects;
         }
-        if self.session_limit_reached() {
-            return Vec::new();
-        }
+        self.note_new_connection();
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();

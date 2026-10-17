@@ -13,6 +13,14 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # One more integration test binary filled the Ubuntu runner's disk twice (PR #432), with
+  # master already close: full debug info is most of a test binary's size. Line tables keep
+  # file and line numbers in a panic's backtrace. The incremental caches of a build thrown
+  # away with its runner are pure disk cost: rust-cache turns them off too, set here so this
+  # does not depend on the action. The release build has no debug info either way.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   check:
@@ -27,6 +35,20 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+
+      # The checkout's volume and the root's: on Windows the checkout is on D:, which a bare
+      # df in Git Bash does not list.
+      - name: Disk space at the start
+        shell: bash
+        run: df -h . /
+
+      # The runner image ships toolchains these jobs never use (.NET, Android, Haskell,
+      # CodeQL): removed before building, as their space is what a full build runs short of.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Install Linux build dependencies of iced
         if: runner.os == 'Linux'
@@ -66,6 +88,14 @@ jobs:
       - name: Tests
         run: cargo test --workspace --locked
 
+      # The headroom left, in every log: a failed step still shows how full the disk was.
+      - name: Disk space after the tests
+        if: always()
+        shell: bash
+        run: |
+          df -h . /
+          du -sh target 2>/dev/null || true
+
       # The executable of each change, so it can be run by hand on a machine without a
       # Rust toolchain; release profile, as shipped.
       - name: Build the application
@@ -81,6 +111,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Disk space at the end
+        if: always()
+        shell: bash
+        run: |
+          df -h . /
+          du -sh target 2>/dev/null || true
+
   # The scratch data folder of the automated UI tests: the one job that builds with the
   # test-data-dir feature, in debug only (it does not compile in release), uploading nothing.
   # xtask's guard refuses the feature anywhere else, and --release or an upload here.
@@ -90,6 +127,16 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+
+      - name: Disk space at the start
+        run: df -h . /
+
+      # The runner image ships toolchains these jobs never use (.NET, Android, Haskell,
+      # CodeQL): removed before building, as their space is what a full build runs short of.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Install Linux build dependencies of iced
         timeout-minutes: 10
@@ -107,6 +154,12 @@ jobs:
 
       - name: Tests with the test data folder
         run: cargo test -p heimdall-core -p heimdall-ui --locked --features heimdall-ui/test-data-dir
+
+      - name: Disk space after the tests
+        if: always()
+        run: |
+          df -h . /
+          du -sh target 2>/dev/null || true
 
   deny:
     name: Dependencies (cargo-deny)

@@ -1024,7 +1024,7 @@ fn a_right_click_on_a_tab_opens_its_menu_as_the_csharp_one() {
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
     snapshot(&shell, "tab-menu.png");
     for (entry, expected) in [
-        ("Disconnect", Some(AppMessage::RequestCloseTab(tab))),
+        ("Close tab", Some(AppMessage::RequestCloseTab(tab))),
         (
             "Rename tab",
             Some(AppMessage::TabMenu(TabMenuMessage::Rename(tab))),
@@ -1072,7 +1072,7 @@ fn a_right_click_on_a_tab_opens_its_menu_as_the_csharp_one() {
     }
     {
         let mut ui = simulator(&shell);
-        ui.click("Fullscreen (F11)").expect("fullscreen");
+        ui.click("Fullscreen").expect("fullscreen");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::MenuFullscreen(shown) if shown == tab
@@ -1712,6 +1712,145 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
         shell.app().tab_kind(&shell.app().tabs[2]),
         heimdall_app::ProfileKind::Ssh
     );
+}
+
+/// Quick Connect to a host no session matches, as Ctrl+K and Enter: an SSH tab of its own.
+fn quick_connect_to_a_host(shell: &mut Shell) -> TabId {
+    let _ = shell.update(Message::TreeShortcut(
+        heimdall_ui::shell::TreeShortcut::QuickConnect,
+    ));
+    let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    shell.app().tabs.last().expect("a tab opened").id
+}
+
+/// The Sessions page shown, `tab` on it: the tab's strip and the tree beside it.
+fn assert_sessions_page(shell: &Shell, tab: TabId, from: &str) {
+    assert!(!shell.settings_shown(), "{from}: the settings left");
+    assert_eq!(
+        shell.app().shown_tab().map(|shown| shown.id),
+        Some(tab),
+        "{from}: the tab opened shown"
+    );
+    let mut ui = simulator(shell);
+    assert!(
+        ui.find(tab_close_id(tab)).is_ok(),
+        "{from}: the tab on the strip"
+    );
+    assert!(
+        ui.find(sidebar_tab_id(SidebarTab::Tools)).is_ok(),
+        "{from}: the tree beside it"
+    );
+}
+
+#[test]
+fn a_session_opened_over_another_page_is_shown_on_the_sessions_page() {
+    use heimdall_ui::shell::Destination;
+
+    for page in [
+        Destination::Settings,
+        Destination::Tunnels,
+        Destination::Scheduled,
+        Destination::Tools,
+        Destination::About,
+    ] {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = Shell::with_app(app(dir.path()));
+        let _ = shell.update(Message::Navigate(page));
+        let tab = quick_connect_to_a_host(&mut shell);
+        assert_sessions_page(&shell, tab, &format!("Quick Connect over {page:?}"));
+        // Again, a tab already shown under the page this time.
+        let _ = shell.update(Message::Navigate(page));
+        let tab = quick_connect_to_a_host(&mut shell);
+        assert_sessions_page(&shell, tab, &format!("a second over {page:?}"));
+    }
+
+    // A saved session, as the tree's double click opens it.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Navigate(Destination::Settings));
+    let _ = shell.update(Message::App(AppMessage::ConnectProfile(ProfileId::new(
+        "a",
+    ))));
+    let tab = shell.app().tabs.last().expect("a tab opened").id;
+    assert_sessions_page(&shell, tab, "a saved session over the settings");
+}
+
+#[test]
+fn reconnect_over_another_page_shows_the_session_reopened_on_the_sessions_page() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::HostKeyChanged {
+            target: Some(heimdall_app::ServerAddress {
+                host: "a.lab".to_owned(),
+                port: 22,
+            }),
+            recorded: "SHA256:old".to_owned(),
+            offered: "SHA256:new".to_owned(),
+        }),
+    });
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::Navigate(Destination::Settings));
+    let _ = shell.update(Message::App(AppMessage::ReconnectTab(tab)));
+    let reopened = shell.app().shown_tab().expect("a tab shown").id;
+    assert_ne!(reopened, tab, "reopened in the tab's place");
+    assert_sessions_page(&shell, reopened, "Reconnect over the settings");
+}
+
+#[test]
+fn the_tab_shown_closing_leaves_the_page_shown() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (first, _) = open(&mut core, "a");
+    let (second, _) = open(&mut core, "b");
+    let mut shell = Shell::with_app(core);
+    assert_eq!(shell.app().active, Some(second));
+    let close = |shell: &mut Shell, tab| {
+        let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+        if shell.app().dialog.is_some() {
+            let _ = shell.update(Message::DialogKey { confirm: true });
+        }
+        assert!(shell.app().tab(tab).is_none(), "closed");
+    };
+
+    // The settings stay, over the tab shown in its place.
+    let _ = shell.update(Message::Navigate(Destination::Settings));
+    close(&mut shell, second);
+    assert_eq!(shell.app().active, Some(first));
+    assert!(shell.settings_shown(), "still the settings");
+
+    // The tunnels too, with no tab left.
+    let _ = shell.update(Message::Navigate(Destination::Tunnels));
+    close(&mut shell, first);
+    let mut ui = simulator(&shell);
+    ui.find("Active Tunnels").expect("still the Tunnels page");
+    assert!(
+        ui.find(sidebar_tab_id(SidebarTab::Tools)).is_err(),
+        "no tree"
+    );
+}
+
+#[test]
+fn the_status_bar_counts_the_saved_sessions_whatever_tabs_are_open() {
+    // As the C# `ServerCountText`: `ServerCount = servers.Count`, the inventory loaded
+    // (`MainViewModel.cs:139-140`, `:641`), never the tabs open; a Quick Connect to a host
+    // is saved nowhere.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    quick_connect_to_a_host(&mut shell);
+    quick_connect_to_a_host(&mut shell);
+    assert_eq!(shell.app().tabs.len(), 2);
+    let mut ui = simulator(&shell);
+    ui.find("3 sessions").expect("the sessions saved");
+    ui.find("0 tunnels").expect("no tunnel open");
 }
 
 #[test]
@@ -5040,6 +5179,34 @@ fn a_newer_release_is_offered_in_a_banner_that_full_screen_hides() {
 }
 
 #[test]
+fn past_the_sessions_threshold_a_banner_says_so_until_hidden_as_the_csharp() {
+    const BANNER: &str = "2 embedded sessions are open, past the threshold of 1 set in \
+                          Settings. Each one uses memory, RDP sessions most: close the ones you \
+                          no longer need if Heimdall slows down.";
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(AppMessage::Settings(
+        heimdall_app::SettingsMessage::MaxSessions(1),
+    ));
+    open(&mut app, "a");
+    let mut shell = Shell::with_app(app);
+    assert!(simulator(&shell).find(BANNER).is_err(), "at the threshold");
+    let _ = shell.update(Message::App(AppMessage::OpenProfile(ProfileId::new("b"))));
+    {
+        let mut ui = simulator(&shell);
+        ui.find(BANNER).expect("the banner");
+        ui.click("Hide").expect("Hide");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::HideSessionLoadNotice))),
+            "hidden by the app"
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::HideSessionLoadNotice));
+    assert!(simulator(&shell).find(BANNER).is_err(), "hidden");
+}
+
+#[test]
 fn the_general_settings_hold_the_csharp_updates_card_and_check_now() {
     use heimdall_app::UpdateMessage;
     use heimdall_ui::shell::SessionField;
@@ -5356,4 +5523,398 @@ fn a_tab_menus_macro_is_edited_from_it_and_deleted_from_its_editor_as_the_csharp
     ui.find("Edit macro").expect("the macro editor");
     ui.find("Delete macro")
         .expect("its delete, as the C# editor's");
+}
+
+#[test]
+fn ctrl_and_a_digit_shows_that_tab_and_ctrl_9_the_last_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (first, _) = open(&mut core, "a");
+    let (second, _) = open(&mut core, "b");
+    let (third, _) = open(&mut core, "c");
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::Shortcut(WindowShortcut::GoToTab(1)));
+    assert_eq!(shell.app().active, Some(first));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::GoToTab(9)));
+    assert_eq!(shell.app().active, Some(third), "Ctrl+9 is the last");
+    let _ = shell.update(Message::Shortcut(WindowShortcut::GoToTab(2)));
+    assert_eq!(shell.app().active, Some(second));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::GoToTab(5)));
+    assert_eq!(shell.app().active, Some(second), "no fifth tab: nothing");
+}
+
+#[test]
+fn ctrl_shift_page_keys_move_the_tab_shown_one_place_within_its_pinned_block() {
+    use heimdall_app::TabMenuMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (first, _) = open(&mut core, "a");
+    let (second, _) = open(&mut core, "b");
+    let (third, _) = open(&mut core, "c");
+    core.update(AppMessage::TabMenu(TabMenuMessage::Pin(first)));
+    let mut shell = Shell::with_app(core);
+    let order =
+        |shell: &Shell| -> Vec<TabId> { shell.app().strip().iter().map(|tab| tab.id).collect() };
+    assert_eq!(shell.app().active, Some(third));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::MoveTabLeft));
+    assert_eq!(order(&shell), [first, third, second]);
+    assert_eq!(shell.app().active, Some(third), "still shown");
+    let _ = shell.update(Message::Shortcut(WindowShortcut::MoveTabLeft));
+    assert_eq!(
+        order(&shell),
+        [first, third, second],
+        "never into the pinned block"
+    );
+    let _ = shell.update(Message::Shortcut(WindowShortcut::MoveTabRight));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::MoveTabRight));
+    assert_eq!(order(&shell), [first, second, third], "the last stays last");
+}
+
+#[test]
+fn a_middle_click_on_a_tab_closes_it_as_its_close_button_does() {
+    use heimdall_ui::shell::tab_id;
+    use iced::mouse;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, _) = open(&mut core, "a");
+    let (other, _) = open(&mut core, "b");
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    let at = ui.find(tab_id(tab)).expect("the tab").bounds().center();
+    ui.point_at(at);
+    let _ = ui.simulate([
+        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)),
+        iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)),
+    ]);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    // The close button's own request: a live session asks first, as from the button.
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::RequestCloseTab(closed)) if *closed == tab
+        )),
+        "{messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::RequestCloseTab(closed)) if *closed == other
+        )),
+        "only the tab under the pointer"
+    );
+}
+
+#[test]
+fn the_tab_menu_is_in_the_csharp_order_close_tab_last_with_its_keys() {
+    use heimdall_app::{TabGroup, TabMenuMessage};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, _) = open(&mut core, "a");
+    let _ = open(&mut core, "b");
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    let mut ui = tall(&shell);
+    // Most frequent first, the most destructive last, as `SessionTabContextMenuFactory`.
+    let order = [
+        "Reconnect Session",
+        "Duplicate Session",
+        "Fullscreen",
+        "Rename tab",
+        "Pin tab",
+        "Edit",
+        "Reveal in tree",
+        "Close others",
+        "Close to the right",
+        "Close all tabs",
+        "Close tab",
+    ];
+    let tops: Vec<f32> = order
+        .iter()
+        .map(|label| common::last_bounds(&mut ui, label).y)
+        .collect();
+    assert!(
+        tops.windows(2).all(|pair| pair[0] < pair[1]),
+        "{order:?} at {tops:?}"
+    );
+    // The keys at the right of their entries, as the C# InputGestureText.
+    for (label, keys) in [
+        ("Close tab", "Ctrl+F4"),
+        ("Fullscreen", "F11"),
+        ("Edit", "Ctrl+E"),
+    ] {
+        let (entry, said) = (
+            common::last_bounds(&mut ui, label),
+            common::last_bounds(&mut ui, keys),
+        );
+        assert!(
+            (entry.center_y() - said.center_y()).abs() < 1.0 && said.x > entry.x,
+            "{keys} beside {label}: {entry:?} {said:?}"
+        );
+    }
+    common::click_last(&mut ui, "Close all tabs");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::TabMenu(TabMenuMessage::Close {
+            tab: closed,
+            group: TabGroup::All,
+        })) if closed == tab
+    )));
+}
+
+#[test]
+fn shift_f10_opens_the_menu_of_the_folder_the_selection_or_the_tab_shown() {
+    use iced::keyboard::Modifiers;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let _ = open(&mut core, "c");
+    let mut shell = Shell::with_app(core);
+    // The keyboard in the tree, on a folder: the folder's menu, as the C# lets a focused
+    // folder win.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::App(AppMessage::SelectFolder(
+        "Production".to_owned(),
+    )));
+    let _ = shell.update(Message::MenuKey);
+    simulator(&shell)
+        .find("Connect all (2)")
+        .expect("the folder's menu");
+    let _ = shell.update(Message::CloseTreeMenu);
+    // Several profiles selected together: their bulk menu.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("b")));
+    let _ = shell.update(Message::Modifiers(Modifiers::CTRL));
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::Modifiers(Modifiers::empty()));
+    let _ = shell.update(Message::MenuKey);
+    simulator(&shell)
+        .find("2 items selected")
+        .expect("the bulk menu");
+    let _ = shell.update(Message::CloseTreeMenu);
+    // The keyboard back with the session: the menu of the tab shown, as from the strip.
+    let _ = shell.update(Message::ContentFocus);
+    let _ = shell.update(Message::MenuKey);
+    let mut ui = simulator(&shell);
+    ui.find("Close all tabs").expect("the tab's menu");
+    assert!(ui.find("2 items selected").is_err());
+}
+
+#[test]
+fn a_folder_counts_what_a_search_finds_then_what_it_holds_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(
+        simulator(&shell).find("1/2").is_err(),
+        "the count alone without a search"
+    );
+    // One word, found in a's address only.
+    let _ = shell.update(Message::Search("a.lab".to_owned()));
+    simulator(&shell)
+        .find("1/2")
+        .expect("one found of the two it holds");
+}
+
+#[test]
+fn the_tree_menus_say_their_keys_and_why_copy_username_is_greyed() {
+    use heimdall_ui::tree_view::TreeMenu;
+    use iced::mouse;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([SshProfile {
+        username: None,
+        ..profile("a", None)
+    }]);
+    store.save().expect("save");
+    let core = App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    });
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(ProfileId::new(
+        "a",
+    ))));
+    let mut ui = tall(&shell);
+    for (label, keys) in [("Rename", "F2"), ("Edit", "Ctrl+E"), ("Delete", "Del")] {
+        let (entry, said) = (
+            common::last_bounds(&mut ui, label),
+            common::last_bounds(&mut ui, keys),
+        );
+        assert!(
+            (entry.center_y() - said.center_y()).abs() < 1.0 && said.x > entry.x,
+            "{keys} beside {label}: {entry:?} {said:?}"
+        );
+    }
+    // No username saved: greyed, its tooltip saying why. Only the tooltip changes the frame:
+    // a greyed entry is not lit under the pointer.
+    let copy = common::last_bounds(&mut ui, "Copy username").center();
+    let theme = iced::Theme::Dark;
+    let moved = |ui: &mut common::Drawn<'_>, at: iced::Point| {
+        ui.point_at(at);
+        let _ = ui.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
+            position: at,
+        })]);
+    };
+    let frame = |ui: &mut common::Drawn<'_>| {
+        ui.snapshot(&theme)
+            .expect("drawn")
+            .matches_image(dir.path().join("plain.png"))
+            .expect("compared")
+    };
+    let away = iced::Point::new(TALL_WINDOW.width - 1.0, TALL_WINDOW.height - 1.0);
+    moved(&mut ui, away);
+    assert!(frame(&mut ui), "the plain window, written");
+    moved(&mut ui, copy);
+    assert!(!frame(&mut ui), "the reason shown under the pointer");
+    drop(ui);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Add));
+    simulator(&shell).find("Ctrl+N").expect("Add Session's key");
+}
+
+#[test]
+fn a_terminal_leaves_ctrl_f4_and_the_tab_moves_to_the_window_and_keeps_ctrl_and_a_digit() {
+    use iced::keyboard::{self, Location, key};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let pressed = |key: keyboard::Key, code: key::Code, modifiers: keyboard::Modifiers| {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: key::Physical::Code(code),
+            location: Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    };
+    let ctrl = keyboard::Modifiers::CTRL;
+    let both = keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT;
+    let character = |c: &str| keyboard::Key::Character(c.into());
+    let mut ui = simulator(&shell);
+    // As the C# `RegisterCloseTabShortcuts` and `RegisterTabNavigationShortcuts`: a shell has
+    // no use for these, the window takes them from the terminal.
+    let statuses = ui.simulate([
+        pressed(keyboard_named(Named::F4), key::Code::F4, ctrl),
+        pressed(keyboard_named(Named::PageUp), key::Code::PageUp, both),
+        pressed(keyboard_named(Named::PageDown), key::Code::PageDown, both),
+    ]);
+    assert_eq!(statuses, [event::Status::Ignored; 3], "the window's");
+    // Ctrl+1 to Ctrl+9 stay the terminal's (Ctrl+2 is NUL, Ctrl+3 Escape), on a US row as on
+    // an AZERTY one.
+    let statuses = ui.simulate([
+        pressed(character("1"), key::Code::Digit1, ctrl),
+        pressed(character("&"), key::Code::Digit1, ctrl),
+        pressed(character("\u{e7}"), key::Code::Digit9, ctrl),
+    ]);
+    assert_eq!(statuses, [event::Status::Captured; 3], "the session's");
+    // The minus of an AZERTY 6 still zooms the terminal, never read as Ctrl+6 by the window.
+    let statuses = ui.simulate([pressed(character("-"), key::Code::Digit6, ctrl)]);
+    assert_eq!(statuses, [event::Status::Captured]);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::Shortcut(WindowShortcut::Zoom(
+                heimdall_ui::terminal_view::keys::Zoom::Out
+            ))
+        )),
+        "{messages:?}"
+    );
+    let keys = messages
+        .iter()
+        .filter(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+        .count();
+    assert_eq!(keys, 3, "the three Ctrl+digit, to the session");
+}
+
+#[test]
+fn ctrl_shift_r_and_the_tab_menu_reopen_the_last_close_as_the_csharp() {
+    use heimdall_app::{TabGroup, TabMenuMessage};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, _) = open(&mut core, "a");
+    let _ = open(&mut core, "b");
+    let _ = open(&mut core, "c");
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    assert!(
+        simulator(&shell).find("Reopen closed tab").is_err(),
+        "nothing closed yet: no entry, as the C# shows none"
+    );
+    let _ = shell.update(Message::CloseTreeMenu);
+    let _ = shell.update(Message::App(AppMessage::TabMenu(TabMenuMessage::Close {
+        tab,
+        group: TabGroup::Right,
+    })));
+    assert_eq!(shell.app().strip().len(), 1);
+
+    // Its count when the close took several, after the pin and with its keys, as the C#
+    // `AppendTabGroupItems`.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    let mut ui = tall(&shell);
+    let (pin, reopen, edit) = (
+        common::last_bounds(&mut ui, "Pin tab"),
+        common::last_bounds(&mut ui, "Reopen 2 closed tabs"),
+        common::last_bounds(&mut ui, "Edit"),
+    );
+    assert!(
+        pin.y < reopen.y && reopen.y < edit.y,
+        "{pin:?} {reopen:?} {edit:?}"
+    );
+    let said = common::last_bounds(&mut ui, "Ctrl+Shift+R");
+    assert!(
+        (reopen.center_y() - said.center_y()).abs() < 1.0 && said.x > reopen.x,
+        "{reopen:?} {said:?}"
+    );
+    common::click_last(&mut ui, "Reopen 2 closed tabs");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::MenuChoice(AppMessage::ReopenClosedTab)))
+    );
+    let _ = shell.update(Message::CloseTreeMenu);
+
+    let _ = shell.update(Message::Shortcut(WindowShortcut::ReopenClosedTab));
+    assert_eq!(shell.app().strip().len(), 3, "both back, in one go");
+
+    // With no tab left, the key still brings them back.
+    let _ = shell.update(Message::App(AppMessage::TabMenu(TabMenuMessage::Close {
+        tab,
+        group: TabGroup::All,
+    })));
+    assert!(shell.app().strip().is_empty());
+    let _ = shell.update(Message::Shortcut(WindowShortcut::ReopenClosedTab));
+    assert_eq!(shell.app().strip().len(), 3);
+}
+
+#[test]
+fn a_terminal_keeps_ctrl_shift_r_for_its_shell() {
+    use iced::keyboard::{self, Location, key};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let mut ui = simulator(&shell);
+    // As the C# `RegisterTabNavigationShortcuts` leaves it to a focused terminal: the
+    // shell's history search.
+    let statuses = ui.simulate([iced::Event::Keyboard(keyboard::Event::KeyPressed {
+        key: keyboard::Key::Character("R".into()),
+        modified_key: keyboard::Key::Character("R".into()),
+        physical_key: key::Physical::Code(key::Code::KeyR),
+        location: Location::Standard,
+        modifiers: keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT,
+        text: None,
+        repeat: false,
+    })]);
+    assert_eq!(statuses, [event::Status::Captured], "the session's");
 }

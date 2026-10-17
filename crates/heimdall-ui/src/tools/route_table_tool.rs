@@ -22,7 +22,7 @@ use iced::widget::{column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 use heimdall_core::tools::route_table::{self, Gateway, RouteEntry};
-use heimdall_core::tools::system_listing::ListingError;
+use heimdall_core::tools::system_program::ProgramError;
 
 use super::system_tables::{listing_error_text, read_time_now};
 use super::{CopySlot, ToolPane};
@@ -37,7 +37,7 @@ pub enum RouteTableMessage {
     /// Refresh routing table now.
     Refresh,
     /// Refresh completed with the routes, or why they could not be read.
-    Finished(Result<Vec<RouteEntry>, ListingError>),
+    Finished(Result<Vec<RouteEntry>, ProgramError>),
     /// Copy CSV export to clipboard.
     CopyCsv,
 }
@@ -73,7 +73,7 @@ impl RouteTablePane {
                         tokio::task::spawn_blocking(route_table::run_route_command)
                             .await
                             .unwrap_or_else(|error| {
-                                Err(ListingError::NotStarted(error.to_string()))
+                                Err(ProgramError::NotStarted(error.to_string()))
                             })
                     },
                     move |res| {
@@ -281,6 +281,7 @@ mod tests {
         let _ = app.update(AppMessage::Tools(ToolsMessage::Open {
             tool: ToolId::Routes,
             title: String::new(),
+            context: heimdall_app::tools::ToolContext::default(),
         }));
         app.tabs[0].id
     }
@@ -326,7 +327,7 @@ mod tests {
         let mut pane = RouteTablePane::default();
         let _ = pane.update(
             tab,
-            RouteTableMessage::Finished(Err(ListingError::Failed {
+            RouteTableMessage::Finished(Err(ProgramError::Failed {
                 code: Some(1),
                 detail: "Access denied".to_owned(),
             })),

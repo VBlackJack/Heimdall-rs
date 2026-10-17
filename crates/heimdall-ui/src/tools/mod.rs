@@ -36,6 +36,7 @@ mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
 mod command_library_tool;
+mod context;
 mod cron_job_tool;
 mod crontab_tool;
 mod crypto_parts;
@@ -47,6 +48,7 @@ mod diff_tool;
 mod dns_batch_tool;
 mod dns_tool;
 mod dnssec_tool;
+pub mod file_export;
 mod firewall_tester_tool;
 mod hash_tool;
 mod hmac_tool;
@@ -113,6 +115,7 @@ pub use certgen_tool::{
 };
 pub use chmod_tool::ChmodMessage;
 pub use command_library_tool::CommandLibraryMessage;
+pub use context::{inherited_context, inherited_host, tab_title, titled};
 pub use cron_job_tool::CronJobMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
 pub use cve_tool::{CveMessage, Outcome as CveOutcome};
@@ -635,6 +638,10 @@ pub enum CopySlot {
     WifiCsv,
     /// The serialized hosts file text.
     HostsFileText,
+    /// The address of the hosts file entry selected.
+    HostsIp,
+    /// The host name of the hosts file entry selected.
+    HostsHostname,
     /// The service status dashboard CSV export.
     ServicesCsv,
     /// The log viewer's lines shown.
@@ -660,6 +667,8 @@ pub enum ToolMessage {
     CloseHelp,
     /// The check mark of copy number `.0` has been shown long enough.
     CopyShown(u64),
+    /// How the export of the button of `.0` to a file went.
+    Exported(CopySlot, file_export::Saved),
     /// The hash generator's.
     Hash(HashMessage),
     /// The HMAC generator's.
@@ -838,14 +847,15 @@ enum Pane {
     CmdLib(command_library_tool::CommandLibraryPane),
 }
 
-/// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
-/// shows its check mark.
+/// What a tool's tab holds: the tool's state, its help shown or not, the copy or export
+/// button that shows its check mark, why the last export failed.
 #[derive(Debug)]
 pub struct ToolPane {
     pane: Pane,
     help: bool,
     copied: Option<(CopySlot, u64)>,
     copies: u64,
+    export_failed: Option<String>,
 }
 
 impl ToolPane {
@@ -922,6 +932,7 @@ impl ToolPane {
             help: false,
             copied: None,
             copies: 0,
+            export_failed: None,
         }
     }
 
@@ -952,15 +963,52 @@ impl ToolPane {
         if content.is_empty() {
             return Task::none();
         }
+        Task::batch([iced::clipboard::write(content), self.check_mark(tab, slot)])
+    }
+
+    /// The check mark of the button of `slot` shown for [`COPY_FEEDBACK`].
+    fn check_mark(&mut self, tab: TabId, slot: CopySlot) -> Task<Message> {
         self.copies += 1;
         let copy = self.copies;
         self.copied = Some((slot, copy));
-        Task::batch([
-            iced::clipboard::write(content),
-            Task::perform(wait(COPY_FEEDBACK), move |()| {
-                Message::Tool(tab, ToolMessage::CopyShown(copy))
-            }),
-        ])
+        Task::perform(wait(COPY_FEEDBACK), move |()| {
+            Message::Tool(tab, ToolMessage::CopyShown(copy))
+        })
+    }
+
+    /// `export` saved to the file the user picks, over the main window `main`; the failure
+    /// of an earlier one no longer said.
+    fn export(
+        &mut self,
+        tab: TabId,
+        export: file_export::FileExport,
+        main: Option<window::Id>,
+    ) -> Task<Message> {
+        self.export_failed = None;
+        export.task(tab, main)
+    }
+
+    /// How the export of the button of `slot` went, as the C# export buttons say it: the
+    /// button's check mark once written, as `CopyFeedbackHelper`, or why not under the
+    /// header, as the C# `StatusExportFailed`.
+    fn exported(&mut self, tab: TabId, slot: CopySlot, saved: file_export::Saved) -> Task<Message> {
+        match saved {
+            file_export::Saved::Written => {
+                self.export_failed = None;
+                self.check_mark(tab, slot)
+            }
+            file_export::Saved::Cancelled => Task::none(),
+            file_export::Saved::Failed(detail) => {
+                self.export_failed = Some(detail);
+                Task::none()
+            }
+        }
+    }
+
+    /// Why the last export failed, when it did.
+    #[must_use]
+    pub fn export_failure(&self) -> Option<&str> {
+        self.export_failed.as_deref()
     }
 }
 
@@ -970,6 +1018,8 @@ pub struct ToolPanes {
     panes: HashMap<TabId, ToolPane>,
     /// Tool tabs made whose opening work, as the C# view's `Initialize`, is still to start.
     opening: Vec<TabId>,
+    /// What the tool tabs just made were told of their context left to run.
+    prefilled: Vec<Task<Message>>,
 }
 
 impl ToolPanes {
@@ -989,11 +1039,20 @@ impl ToolPanes {
             open
         });
         for tab in &app.tabs {
-            if let Some(tool) = tab.tool() {
-                self.panes.entry(tab.id).or_insert_with(|| {
-                    self.opening.push(tab.id);
-                    ToolPane::new(tool, Some(app.profiles_file()))
-                });
+            let Some(tool) = tab.tool() else {
+                continue;
+            };
+            if self.panes.contains_key(&tab.id) {
+                continue;
+            }
+            self.panes
+                .insert(tab.id, ToolPane::new(tool, Some(app.profiles_file())));
+            self.opening.push(tab.id);
+            // What it opened on, as the C# view's `Initialize` reads its `ToolContext`: told
+            // as typed, so it is checked as typed.
+            for message in context::messages(tool, tab.tool_context()) {
+                let task = self.update(tab.id, message, None);
+                self.prefilled.push(task);
             }
         }
     }
@@ -1036,9 +1095,10 @@ impl ToolPanes {
 
     /// The work of the tool tabs made since last asked, as the C# view's `Initialize`: the
     /// Hosts File Editor reads the hosts file, the Network Cartography its scan history and
-    /// its knowledge base.
+    /// its knowledge base; what a tab opened on a host or an argument was told runs on, a
+    /// log file read or a conversion due.
     pub fn opening(&mut self) -> Task<Message> {
-        let mut tasks = Vec::new();
+        let mut tasks = std::mem::take(&mut self.prefilled);
         for tab in std::mem::take(&mut self.opening) {
             match self.panes.get_mut(&tab).map(|state| &mut state.pane) {
                 Some(Pane::Hosts(pane)) => tasks.push(pane.open(tab)),
@@ -1096,6 +1156,9 @@ impl ToolPanes {
         match (message, &mut state.pane) {
             (ToolMessage::ToggleHelp, _) => state.help = !state.help,
             (ToolMessage::CloseHelp, _) => state.help = false,
+            (ToolMessage::Exported(slot, saved), _) => {
+                return state.exported(tab, slot, saved);
+            }
             (ToolMessage::CopyShown(copy), _) => {
                 if state.copied.is_some_and(|(_, shown)| shown == copy) {
                     state.copied = None;
@@ -1246,10 +1309,8 @@ impl ToolPanes {
             }
             (ToolMessage::SecNumCloud(message), Pane::SecNumCloud(pane)) => {
                 return match pane.update(message, tab) {
-                    secnumcloud_tool::Outcome::Copy(slot, content) => {
-                        state.copy(tab, slot, content)
-                    }
                     secnumcloud_tool::Outcome::Task(task) => task,
+                    secnumcloud_tool::Outcome::Save(export) => state.export(tab, export, main),
                     secnumcloud_tool::Outcome::None => Task::none(),
                 };
             }
@@ -1289,6 +1350,7 @@ impl ToolPanes {
                 return match pane.update(tab, message) {
                     banner_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
                     banner_tool::Outcome::Task(task) => task,
+                    banner_tool::Outcome::Save(export) => state.export(tab, export, main),
                     banner_tool::Outcome::None => Task::none(),
                 };
             }
@@ -1296,6 +1358,7 @@ impl ToolPanes {
                 return match pane.update(tab, message) {
                     ping_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
                     ping_tool::Outcome::Task(task) => task,
+                    ping_tool::Outcome::Save(export) => state.export(tab, export, main),
                     ping_tool::Outcome::None => Task::none(),
                 };
             }
@@ -1315,8 +1378,8 @@ impl ToolPanes {
             }
             (ToolMessage::PortScan(message), Pane::PortScan(pane)) => {
                 return match pane.update(tab, message) {
-                    port_scan_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
                     port_scan_tool::Outcome::Task(task) => task,
+                    port_scan_tool::Outcome::Save(export) => state.export(tab, export, main),
                     port_scan_tool::Outcome::None => Task::none(),
                 };
             }
@@ -1335,24 +1398,21 @@ impl ToolPanes {
                         state.copy(tab, slot, content)
                     }
                     cert_inspector_tool::Outcome::Task(task) => task,
+                    cert_inspector_tool::Outcome::Save(export) => state.export(tab, export, main),
                     cert_inspector_tool::Outcome::None => Task::none(),
                 };
             }
             (ToolMessage::TcpTrace(message), Pane::TcpTrace(pane)) => {
                 return match pane.update(tab, message) {
-                    tcp_traceroute_tool::Outcome::Copy(slot, content) => {
-                        state.copy(tab, slot, content)
-                    }
                     tcp_traceroute_tool::Outcome::Task(task) => task,
+                    tcp_traceroute_tool::Outcome::Save(export) => state.export(tab, export, main),
                     tcp_traceroute_tool::Outcome::None => Task::none(),
                 };
             }
             (ToolMessage::SnmpWalk(message), Pane::SnmpWalk(pane)) => {
                 return match pane.update(tab, message) {
-                    snmp_walker_tool::Outcome::Copy(slot, content) => {
-                        state.copy(tab, slot, content)
-                    }
                     snmp_walker_tool::Outcome::Task(task) => task,
+                    snmp_walker_tool::Outcome::Save(export) => state.export(tab, export, main),
                     snmp_walker_tool::Outcome::None => Task::none(),
                 };
             }
@@ -1367,19 +1427,17 @@ impl ToolPanes {
             }
             (ToolMessage::FwTest(message), Pane::FwTest(pane)) => {
                 return match pane.update(tab, message) {
-                    firewall_tester_tool::Outcome::Copy(slot, content) => {
-                        state.copy(tab, slot, content)
-                    }
                     firewall_tester_tool::Outcome::Task(task) => task,
+                    firewall_tester_tool::Outcome::Save(export) => state.export(tab, export, main),
                     firewall_tester_tool::Outcome::None => Task::none(),
                 };
             }
             (ToolMessage::NetMap(message), Pane::NetMap(pane)) => {
                 return match pane.update(tab, message) {
-                    network_cartography_tool::Outcome::Copy(slot, content) => {
-                        state.copy(tab, slot, content)
-                    }
                     network_cartography_tool::Outcome::Task(task) => task,
+                    network_cartography_tool::Outcome::Save(export) => {
+                        state.export(tab, export, main)
+                    }
                     network_cartography_tool::Outcome::None => Task::none(),
                 };
             }
@@ -1700,7 +1758,8 @@ pub fn view<'a>(
     };
     column![
         header(tab, title, actions),
-        state.help.then(|| help_panel(tab, help))
+        state.help.then(|| help_panel(tab, help)),
+        state.export_failure().map(export_failed_strip),
     ]
     .push(body)
     .width(Length::Fill)
@@ -1753,6 +1812,15 @@ fn header(
     .into()
 }
 
+/// Why the last export failed, under the header, as the C# `StatusExportFailed` line.
+fn export_failed_strip<'a>(detail: &str) -> Element<'a, Message> {
+    container(error_line(fl!("ui-tool-export-failed", detail = detail)))
+        .padding(HELP_PADDING)
+        .width(Length::Fill)
+        .style(styles::strip)
+        .into()
+}
+
 /// The help under the header, as the C# inline help panel: the text, and a close button.
 fn help_panel<'a>(tab: TabId, help: String) -> Element<'a, Message> {
     container(
@@ -1788,13 +1856,44 @@ fn copy_button<'a>(
     on_press: Message,
     padding: [f32; 2],
 ) -> Element<'a, Message> {
-    let shown = if copied { CHECK_MARK.to_owned() } else { label };
+    feedback_button(
+        label,
+        copied,
+        on_press,
+        padding,
+        fl!("ui-tool-copy-tooltip"),
+    )
+}
+
+/// An export button of a tool: `label`, or the check mark once its file is written, as the
+/// C# export buttons show `CopyFeedbackHelper` after `File.WriteAllText`; its tooltip says
+/// it saves to a file.
+fn export_button<'a>(label: String, saved: bool, on_press: Message) -> Element<'a, Message> {
+    feedback_button(
+        label,
+        saved,
+        on_press,
+        COPY_PADDING,
+        fl!("ui-tool-export-tooltip"),
+    )
+}
+
+/// A button showing `label`, or the check mark while `done`, disabled then; `tip` its
+/// tooltip.
+fn feedback_button<'a>(
+    label: String,
+    done: bool,
+    on_press: Message,
+    padding: [f32; 2],
+    tip: String,
+) -> Element<'a, Message> {
+    let shown = if done { CHECK_MARK.to_owned() } else { label };
     tooltip(
         button(text(shown).size(font_size::BODY))
             .padding(padding)
             .style(styles::secondary)
-            .on_press_maybe((!copied).then_some(on_press)),
-        text(fl!("ui-tool-copy-tooltip")).size(font_size::CAPTION),
+            .on_press_maybe((!done).then_some(on_press)),
+        text(tip).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
     .padding(styles::TOOLTIP_PADDING)

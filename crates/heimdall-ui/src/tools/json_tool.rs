@@ -160,6 +160,12 @@ pub struct JsonPane {
 }
 
 impl JsonPane {
+    /// What its first box holds, for the tests of what a tool opens on.
+    #[cfg(test)]
+    pub(super) fn first_box(&self) -> String {
+        super::box_text(&self.input)
+    }
+
     /// Applies `message`; what is then to be done.
     pub fn update(&mut self, message: JsonMessage) -> Outcome {
         match message {

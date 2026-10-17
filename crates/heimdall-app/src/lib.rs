@@ -91,14 +91,15 @@ pub mod winrm_preflight;
 pub mod x11_server;
 
 pub use app::SavedCredentials;
+pub use app::SessionLoadNotice;
 pub use app::SettingsTransferMessage;
 pub use app::ToolsMessage;
 pub use app::split;
 pub use app::{ANNOUNCEMENTS_KEPT, Announced, Announcement};
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkPasswordRefusal, BulkPasswordSkips,
-    BulkRefusal, CertificateContext, CitrixImportOutcome, ConflictRow, ConnectAs, Dialog,
-    DropTarget, Effect, ElevatedPane, ElevatedState, ExportOutcome, FileKind, FilesMessage,
+    BulkRefusal, CertificateContext, CitrixImportOutcome, ClosedTab, ConflictRow, ConnectAs,
+    Dialog, DropTarget, Effect, ElevatedPane, ElevatedState, ExportOutcome, FileKind, FilesMessage,
     FilterMessage, FloatMessage, Floating, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
     HostKeysMessage, HostKeysOutcome, HostKeysPreview, IDLE_POLL, ImportFile, ImportSummary,
     KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
@@ -106,15 +107,16 @@ pub use app::{
     OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode,
     PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickGroup,
-    QuickResult, QuickRow, RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow,
-    ResolutionChoice, RestoreDialog, RestoreRow, Retry, ScriptConfirmation, SelectionMessage,
-    SessionState, SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow,
-    SessionsSource, SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage,
-    TabProfile, ToolWords, TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage,
-    TunnelMessage, UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog,
-    VaultHelloCard, VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem,
-    VaultStatus, VaultTicket, WHEEL_LINES, bulk_password_refusal, local_date_time,
-    master_password_problem, open_vault, search_folded, should_auto_lock,
+    QuickResult, QuickRow, RDP_EXTENSION, RECENTLY_CLOSED_CAPACITY, RdpMessage, RdpNames,
+    RdpOutcome, RdpPreview, RdpRow, RecentlyClosed, ResolutionChoice, RestoreDialog, RestoreRow,
+    Retry, ScriptConfirmation, SelectionMessage, SessionState, SessionStatus, SessionsCounts,
+    SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SudoAction,
+    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, ToolWords, TreeFilter, TreeRow,
+    TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, UpdateMessage,
+    UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard, VaultHelloMessage,
+    VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus, VaultTicket, WHEEL_LINES,
+    bulk_password_refusal, local_date_time, master_password_problem, open_vault, search_folded,
+    should_auto_lock,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};

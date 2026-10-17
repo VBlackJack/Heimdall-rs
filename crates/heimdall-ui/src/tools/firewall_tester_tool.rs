@@ -29,12 +29,16 @@ use heimdall_core::tools::firewall_tester::{
     MAX_HOSTS, MAX_PORTS,
 };
 
+use super::file_export::FileExport;
 use super::network_run::{RunSlot, blocking_run};
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
+
+/// What the CSV export's suggested name starts with, as the C# `firewall_test_{now}.csv`.
+const EXPORT_PREFIX: &str = "firewall_test";
 
 /// Height of the hosts box, as the C# `TxtHosts` (`Height="80"`).
 const HOSTS_BOX_HEIGHT: f32 = 80.0;
@@ -54,8 +58,8 @@ pub enum FirewallTesterMessage {
     Probed(u64, FwProbeResult),
     /// Test `.0` is over; `false` when its work failed.
     Ended(u64, bool),
-    /// Copy matrix CSV.
-    CopyCsv,
+    /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
+    ExportCsv,
 }
 
 /// The Firewall Egress Tester tool pane state.
@@ -100,7 +104,8 @@ impl Default for FirewallTesterPane {
 pub enum Outcome {
     None,
     Task(Task<Message>),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// What a message asks of the pane, before its tab is known.
@@ -109,15 +114,22 @@ enum Step {
     None,
     /// Probe the last hosts and ports as run `.0`, watching stop `.1`.
     Test(u64, Arc<AtomicBool>),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 impl FirewallTesterPane {
+    /// What its first box holds, for the tests of what a tool opens on.
+    #[cfg(test)]
+    pub(super) fn first_box(&self) -> String {
+        super::box_text(&self.hosts)
+    }
+
     /// Handles tool messages.
     pub fn update(&mut self, tab: TabId, message: FirewallTesterMessage) -> Outcome {
         match self.apply(message) {
             Step::None => Outcome::None,
-            Step::Copy(slot, content) => Outcome::Copy(slot, content),
+            Step::Save(export) => Outcome::Save(export),
             Step::Test(run, stop) => {
                 let hosts = self.last_hosts.clone();
                 let ports = self.last_ports.clone();
@@ -183,7 +195,7 @@ impl FirewallTesterPane {
                 }
                 Step::None
             }
-            FirewallTesterMessage::CopyCsv => {
+            FirewallTesterMessage::ExportCsv => {
                 if self.results.is_empty() {
                     return Step::None;
                 }
@@ -202,7 +214,13 @@ impl FirewallTesterPane {
                     },
                     &fl!("ui-tool-fwtest-not-tested"),
                 );
-                Step::Copy(CopySlot::FwTestCsv, csv)
+                Step::Save(FileExport::csv(
+                    CopySlot::FwTestCsv,
+                    fl!("ui-tool-fwtest-export-csv"),
+                    EXPORT_PREFIX,
+                    None,
+                    csv,
+                ))
             }
         }
     }
@@ -408,18 +426,17 @@ impl FirewallTesterPane {
                 );
             }
 
-            let copy_csv_btn = super::copy_button(
-                fl!("ui-tool-fwtest-copy-csv"),
+            let export_csv_btn = super::export_button(
+                fl!("ui-tool-fwtest-export-csv"),
                 state.copied(CopySlot::FwTestCsv),
-                send(FirewallTesterMessage::CopyCsv),
-                super::COPY_PADDING,
+                send(FirewallTesterMessage::ExportCsv),
             );
 
             let header_row = row![
                 text(fl!("ui-tool-fwtest-name"))
                     .size(font_size::SUBTITLE)
                     .width(Length::Fill),
-                copy_csv_btn,
+                export_csv_btn,
             ]
             .spacing(spacing::SM)
             .align_y(Alignment::Center);
@@ -590,10 +607,12 @@ mod tests {
         pane.apply(FirewallTesterMessage::Ended(run, true));
         type_hosts(&mut pane, "other.lab");
         pane.apply(FirewallTesterMessage::PortsChanged("22".to_owned()));
-        let Step::Copy(CopySlot::FwTestCsv, csv) = pane.apply(FirewallTesterMessage::CopyCsv)
-        else {
+        let Step::Save(export) = pane.apply(FirewallTesterMessage::ExportCsv) else {
             panic!("a CSV");
         };
+        assert_eq!(export.slot(), CopySlot::FwTestCsv);
+        assert!(export.suggested_name().starts_with("firewall_test_"));
+        let csv = export.content();
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines.len(), 3, "the two hosts tested: {csv}");
         assert!(lines[0].ends_with(",80,443"), "the ports tested: {csv}");

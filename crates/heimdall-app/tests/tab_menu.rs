@@ -446,33 +446,34 @@ fn reveal_in_tree_selects_the_profile_its_folders_opened() {
 }
 
 #[test]
-fn the_sessions_limit_refuses_one_more_but_not_a_reconnect_nor_a_local_shell() {
-    use heimdall_app::{Notice, SettingsMessage};
+fn past_the_sessions_threshold_a_banner_shows_and_nothing_is_refused_as_the_csharp() {
+    use heimdall_app::{SessionLoadNotice, SettingsMessage};
     use heimdall_term::local::LocalArguments;
 
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
-    assert_eq!(app.settings().max_sessions, 0, "no limit by default");
-    app.update(Message::Settings(SettingsMessage::MaxSessions(21)));
-    assert_eq!(app.settings().max_sessions, 0, "out of the C# range: kept");
-    app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
+    assert_eq!(app.settings().max_sessions, 10, "the C# default");
+    for out_of_range in [0, 21] {
+        app.update(Message::Settings(SettingsMessage::MaxSessions(
+            out_of_range,
+        )));
+        assert_eq!(app.settings().max_sessions, 10, "out of the C# range: kept");
+    }
+    app.update(Message::Settings(SettingsMessage::MaxSessions(2)));
 
     let first = failed(&mut app);
-    assert!(
-        app.update(Message::OpenProfile(ProfileId::new("a")))
-            .is_empty(),
-        "a second one refused"
+    failed(&mut app);
+    assert_eq!(
+        app.session_load_notice(),
+        None,
+        "at the threshold, not past it"
     );
-    assert_eq!(app.tabs.len(), 1);
-    assert_eq!(app.notice(), Some(&Notice::SessionLimitReached(1)));
-
     // In the first one's place: no more room taken.
     assert!(
         !app.update(Message::ReconnectTab(first)).is_empty(),
         "reconnected"
     );
-    assert_eq!(app.tabs.len(), 1);
-
+    assert_eq!(app.session_load_notice(), None);
     // This computer's own shells are not counted.
     let effects = app.update(Message::OpenLocal(heimdall_app::local_driver::LocalShell {
         name: "shell".to_owned(),
@@ -482,7 +483,82 @@ fn the_sessions_limit_refuses_one_more_but_not_a_reconnect_nor_a_local_shell() {
         environment: Vec::new(),
     }));
     assert!(!effects.is_empty());
-    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.tabs.len(), 3);
+    assert_eq!(app.connection_count(), 2);
+    assert_eq!(app.session_load_notice(), None);
+
+    // One more opens, and the banner says so.
+    failed(&mut app);
+    assert_eq!(app.tabs.len(), 4, "not refused");
+    assert_eq!(
+        app.session_load_notice(),
+        Some(SessionLoadNotice {
+            open: 3,
+            threshold: 2
+        })
+    );
+
+    // Hidden, it stays hidden while the count is past the threshold.
+    app.update(Message::HideSessionLoadNotice);
+    assert_eq!(app.session_load_notice(), None);
+    let fourth = failed(&mut app);
+    assert_eq!(app.session_load_notice(), None, "hidden: not shown again");
+    app.update(Message::RequestCloseTab(fourth));
+    assert_eq!(app.connection_count(), 3);
+    failed(&mut app);
+    assert_eq!(
+        app.session_load_notice(),
+        None,
+        "still past it: still hidden"
+    );
+
+    // Back at the threshold, the hiding is forgotten: going past again shows it again.
+    // The first tab kept, reconnected in its place, and one more: the others closed.
+    let others: Vec<TabId> = app.tabs.iter().skip(2).map(|tab| tab.id).collect();
+    for tab in others {
+        app.update(Message::RequestCloseTab(tab));
+    }
+    assert_eq!(app.connection_count(), 2);
+    assert_eq!(app.session_load_notice(), None);
+    failed(&mut app);
+    assert_eq!(
+        app.session_load_notice(),
+        Some(SessionLoadNotice {
+            open: 3,
+            threshold: 2
+        }),
+        "shown again"
+    );
+}
+
+#[test]
+fn the_sessions_banner_goes_once_the_count_is_no_longer_past_the_threshold() {
+    use heimdall_app::{SessionLoadNotice, SettingsMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
+    let past = Some(SessionLoadNotice {
+        open: 2,
+        threshold: 1,
+    });
+    failed(&mut app);
+    let second = failed(&mut app);
+    assert_eq!(app.session_load_notice(), past, "two past one");
+
+    // One closed: one is not past one, the banner goes rather than say it is.
+    app.update(Message::RequestCloseTab(second));
+    assert_eq!(app.connection_count(), 1);
+    assert_eq!(app.session_load_notice(), None);
+
+    // Hidden, then back at the threshold: the hiding is forgotten.
+    let second = failed(&mut app);
+    assert_eq!(app.session_load_notice(), past, "back");
+    app.update(Message::HideSessionLoadNotice);
+    assert_eq!(app.session_load_notice(), None);
+    app.update(Message::RequestCloseTab(second));
+    failed(&mut app);
+    assert_eq!(app.session_load_notice(), past, "the Hide forgotten");
 }
 
 #[test]
@@ -509,4 +585,77 @@ fn a_tab_dragged_onto_another_takes_its_place_within_its_own_group() {
     assert_eq!(ids(&app), [first, third, second]);
     moved(&mut app, first, second);
     assert_eq!(ids(&app), [first, third, second]);
+}
+
+#[test]
+fn close_all_tabs_closes_every_tab_the_pinned_one_too_once_asked_with_the_counts() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let ended = failed(&mut app);
+    let (kept, _) = live(&mut app);
+    let (live_one, sink) = live(&mut app);
+    menu(&mut app, TabMenuMessage::Pin(live_one));
+    let close = TabMenuMessage::Close {
+        tab: kept,
+        group: TabGroup::All,
+    };
+    menu(&mut app, close.clone());
+    // The C# "Open: {0}, connected: {1}": every tab of the strip, the menu's own included.
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::ConfirmCloseTabs {
+            tabs: vec![live_one, ended, kept],
+            live: 2,
+            unsaved: 0,
+        }),
+        "asked once for them all"
+    );
+    app.update(Message::DismissDialog);
+    assert_eq!(app.tabs.len(), 3, "declined: all stay");
+    menu(&mut app, close);
+    app.update(Message::ConfirmDialog);
+    assert!(app.tabs.is_empty(), "{:?}", ids(&app));
+    assert!(*sink.closed.lock().expect("closed"));
+}
+
+#[test]
+fn close_all_tabs_of_tabs_that_ended_closes_them_at_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let first = failed(&mut app);
+    let _ = failed(&mut app);
+    menu(
+        &mut app,
+        TabMenuMessage::Close {
+            tab: first,
+            group: TabGroup::All,
+        },
+    );
+    assert!(app.dialog.is_none(), "nothing connected: not asked");
+    assert!(app.tabs.is_empty());
+}
+
+#[test]
+fn a_tab_moves_one_step_within_its_pinned_block_as_the_csharp_move_active_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let first = failed(&mut app);
+    let second = failed(&mut app);
+    let third = failed(&mut app);
+    menu(&mut app, TabMenuMessage::Pin(first));
+    assert_eq!(app.tab_step_target(third, false), Some(second));
+    assert_eq!(app.tab_step_target(third, true), None, "the last");
+    assert_eq!(
+        app.tab_step_target(second, false),
+        None,
+        "the pinned block is not crossed"
+    );
+    assert_eq!(app.tab_step_target(first, true), None, "nor left");
+    assert_eq!(app.tab_step_target(first, false), None, "the first");
+    app.update(Message::MoveTab {
+        tab: third,
+        onto: second,
+    });
+    assert_eq!(ids(&app), [first, third, second]);
+    assert_eq!(app.tab_step_target(second, false), Some(third));
 }

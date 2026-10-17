@@ -54,13 +54,13 @@ async fn connect_as(
     port: u16,
     user: &str,
     key: Option<&str>,
-    prompter: ScriptedPrompter,
+    prompter: impl Into<Arc<ScriptedPrompter>>,
 ) -> Result<ShellSession, ConnectError> {
     let dir = tempfile::tempdir().expect("temp dir");
     let options = options_empty(dir.path());
     let mut target = profile(port, key);
     target.username = Some(user.to_owned());
-    let prompter = Arc::new(prompter);
+    let prompter: Arc<ScriptedPrompter> = prompter.into();
 
     // First contact is expected: record the key the server presented, then reconnect.
     let first = connect(
@@ -187,13 +187,16 @@ async fn a_password_then_keyboard_interactive_log_in_when_openssh_asks_both() {
     let password = std::env::var(LIVE_KI_PASSWORD_VARIABLE).unwrap_or_else(|_| {
         panic!("{LIVE_KI_PASSWORD_VARIABLE} must be set with {LIVE_MFA_PORT_VARIABLE}")
     });
-    let prompter = ScriptedPrompter {
+    let prompter = Arc::new(ScriptedPrompter {
         kbd: vec![Some(vec![password.clone()])]
             .into_iter()
             .collect::<std::collections::VecDeque<_>>()
             .into(),
         ..ScriptedPrompter::passwords(&[password.as_str()])
-    };
-    let session = connect_as(port, "kiuser", None, prompter).await;
+    });
+    let session = connect_as(port, "kiuser", None, prompter.clone()).await;
     assert_shell_runs(session.expect("password, then keyboard-interactive")).await;
+    // PAM's "Password:" after the password method's: the password is spent, the round is
+    // the user's (C# `MarkPasswordSpent`), never the same secret sent again unasked.
+    assert_eq!(prompter.asked(), vec!["password", "kbd"]);
 }

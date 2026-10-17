@@ -27,8 +27,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use super::csv_cell::quoted;
-use super::net_command;
 use super::net_host::checked_host;
+use super::probe_pool;
 
 /// Default TCP connection timeout in milliseconds, as the C# `ConnectTimeoutMs`.
 pub const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 3000;
@@ -215,7 +215,7 @@ pub fn run_matrix(
         .iter()
         .flat_map(|host| ports.iter().map(move |port| (host.as_str(), *port)))
         .collect();
-    net_command::for_each_bounded(
+    probe_pool::for_each_bounded(
         jobs,
         MAX_CONCURRENT,
         stop,

@@ -21,7 +21,7 @@ use heimdall_app::{TabId, server_text};
 use iced::widget::{column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length, Task, Theme};
 
-use heimdall_core::tools::system_listing::ListingError;
+use heimdall_core::tools::system_program::ProgramError;
 use heimdall_core::tools::wifi_scanner::{self, WifiEntry};
 
 use super::system_tables::{listing_error_text, read_time_now};
@@ -37,7 +37,7 @@ pub enum WifiMessage {
     /// Scan Wi-Fi networks in range now.
     Scan,
     /// Scan completed with the networks in range, or why they could not be listed.
-    Finished(Result<Vec<WifiEntry>, ListingError>),
+    Finished(Result<Vec<WifiEntry>, ProgramError>),
     /// Copy CSV export to clipboard.
     CopyCsv,
 }
@@ -73,7 +73,7 @@ impl WifiNetworksPane {
                         tokio::task::spawn_blocking(wifi_scanner::run_wifi_command)
                             .await
                             .unwrap_or_else(|error| {
-                                Err(ListingError::NotStarted(error.to_string()))
+                                Err(ProgramError::NotStarted(error.to_string()))
                             })
                     },
                     move |res| {
@@ -278,6 +278,7 @@ mod tests {
         let _ = app.update(AppMessage::Tools(ToolsMessage::Open {
             tool: ToolId::Wifi,
             title: String::new(),
+            context: heimdall_app::tools::ToolContext::default(),
         }));
         app.tabs[0].id
     }
@@ -290,7 +291,7 @@ mod tests {
         let message = "The Wireless AutoConfig Service (wlansvc) is not running.";
         let _ = pane.update(
             tab,
-            WifiMessage::Finished(Err(ListingError::Failed {
+            WifiMessage::Finished(Err(ProgramError::Failed {
                 code: Some(1),
                 detail: message.to_owned(),
             })),

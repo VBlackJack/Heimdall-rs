@@ -61,6 +61,10 @@ const MENU_MIN_WIDTH: f32 = 208.0;
 /// [`MENU_MIN_WIDTH`] less the card's padding: what the entries take of it.
 const MENU_MIN_ENTRIES_WIDTH: f32 = MENU_MIN_WIDTH - 2.0 * spacing::XS;
 
+/// Room between an entry's label and the key said at its right, as the C# menu item's
+/// gesture column keeps.
+const GESTURE_GAP: f32 = spacing::LG;
+
 /// A menu open in the tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeMenu {
@@ -340,17 +344,25 @@ pub fn indented(row: Element<'_, Message>, depth: usize) -> Element<'_, Message>
 
 /// A folder: open or closed at a click, as the C# tree's; "(No Folder)" for [`NO_FOLDER`].
 /// The expander's arrow before it, its icon in its colour, its own or inherited, else the
-/// theme's, and the profiles it holds counted at its right, as the C# tree's; the edge of
-/// the focus colour while the keyboard is on it.
+/// theme's, and the profiles it holds counted at its right, as the C# tree's, while
+/// searching those found then how many it holds in all, `total`; the edge of the focus
+/// colour while the keyboard is on it. `depth` and whether it is `open`.
 pub fn folder_row<'a>(
     path: String,
     name: String,
-    depth: usize,
-    open: bool,
-    count: usize,
+    (depth, open): (usize, bool),
+    (count, total): (usize, Option<usize>),
     color: Option<FolderColor>,
     selected: bool,
 ) -> Element<'a, Message> {
+    let count = match total {
+        Some(total) => fl!(
+            "ui-tree-folder-count-filtered",
+            shown = count,
+            total = total
+        ),
+        None => count.to_string(),
+    };
     let label = if path == NO_FOLDER {
         fl!("ui-sidebar-group-none")
     } else {
@@ -374,7 +386,7 @@ pub fn folder_row<'a>(
                     .width(Length::Fill)
                     .size(font_size::BODY)
                     .font(SEMIBOLD),
-                text(count.to_string())
+                text(count)
                     .size(font_size::SMALL_CAPTION)
                     .style(text::secondary),
             ]
@@ -746,11 +758,85 @@ fn into_shown_entry<'a>(
 
 /// One entry: a label, active when it has a message.
 fn entry<'a>(label: String, message: Option<AppMessage>) -> Element<'a, Message> {
-    button(text(label).size(font_size::BODY_LARGE))
-        .width(Length::Fill)
+    keyed_entry(label, None, message)
+}
+
+/// What an entry shows: its label, and at its right the `keys` that do the same, faded, as
+/// the C# `InputGestureText` (`ContextMenuFactory.cs:95,103,183`).
+fn entry_label<'a>(label: String, keys: Option<String>) -> Element<'a, Message> {
+    let label = text(label).size(font_size::BODY_LARGE);
+    match keys {
+        None => label.into(),
+        Some(keys) => row![
+            label.width(Length::Fill),
+            text(keys)
+                .size(font_size::BODY_LARGE)
+                .style(text::secondary),
+        ]
+        .spacing(GESTURE_GAP)
+        .into(),
+    }
+}
+
+/// An entry's button, its `keys` said at its right; the caller styles it and says what a
+/// press does.
+fn keyed_button<'a>(label: String, keys: Option<String>) -> button::Button<'a, Message> {
+    button(entry_label(label, keys)).width(Length::Fill)
+}
+
+/// [`entry`], with the `keys` that do the same said at its right.
+fn keyed_entry<'a>(
+    label: String,
+    keys: Option<String>,
+    message: Option<AppMessage>,
+) -> Element<'a, Message> {
+    keyed_button(label, keys)
         .style(menu_style)
         .on_press_maybe(message.map(Message::MenuChoice))
         .into()
+}
+
+/// `entry`, greyed, saying `why` on hover, as the C# `ExplainDisabled`
+/// (`ContextMenuFactory.cs:1100-1109`), instead of leaving it to be puzzled over.
+fn explained(entry: Element<'_, Message>, why: String) -> Element<'_, Message> {
+    tooltip(
+        entry,
+        text(why).size(font_size::BODY_LARGE),
+        tooltip::Position::Right,
+    )
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
+    .into()
+}
+
+/// "Copy username", greyed and saying why when the session saves none, as the C#.
+fn copy_username_entry<'a>(message: Option<AppMessage>) -> Element<'a, Message> {
+    match message {
+        Some(message) => entry(fl!("ui-tree-copy-username"), Some(message)),
+        None => explained(
+            entry(fl!("ui-tree-copy-username"), None),
+            fl!("ui-tree-copy-username-disabled"),
+        ),
+    }
+}
+
+/// `sections` one under the other, one separator between two that offer something and
+/// none at either end, as the C# `JoinSections`.
+fn join_sections<'a>(
+    sections: impl IntoIterator<Item = Vec<Element<'a, Message>>>,
+) -> MenuColumn<'a, Message> {
+    let mut entries = MenuColumn::new();
+    for (index, section) in sections
+        .into_iter()
+        .filter(|section| !section.is_empty())
+        .enumerate()
+    {
+        if index > 0 {
+            entries = entries.push(separator());
+        }
+        entries = entries.extend(section);
+    }
+    entries
 }
 
 /// The card every menu is drawn on, so what is under it never shows through; `entries` as
@@ -928,8 +1014,7 @@ fn server_entries<'a>(
                 fl!("ui-tree-copy-hostname"),
                 copy(ProfileCopy::Hostname),
             ))
-            .push(entry(
-                fl!("ui-tree-copy-username"),
+            .push(copy_username_entry(
                 copy(ProfileCopy::Username).filter(|_| has_user),
             ))
             .push(entry(
@@ -968,16 +1053,7 @@ fn open_in_split_entry<'a>(id: &ProfileId, splittable: bool) -> Element<'a, Mess
     if splittable {
         return submenu(label, TreeMenu::OpenInSplit(id.clone()));
     }
-    tooltip(
-        button(text(label).size(font_size::BODY_LARGE))
-            .width(Length::Fill)
-            .style(menu_style),
-        text(fl!("ui-split-open-in-split-disabled")).size(font_size::BODY_LARGE),
-        tooltip::Position::Right,
-    )
-    .padding(styles::TOOLTIP_PADDING)
-    .style(styles::tooltip)
-    .into()
+    explained(entry(label, None), fl!("ui-split-open-in-split-disabled"))
 }
 
 /// How profile `id` opens in a split of the tab shown, in the C# order: Horizontal,
@@ -1059,12 +1135,14 @@ fn profile_entries<'a>(
     }
     entries = entries
         .push(open_in_split_entry(&id, splittable))
-        .push(entry(
+        .push(keyed_entry(
             fl!("ui-tree-rename"),
+            Some(fl!("ui-menu-keys-rename")),
             editable.then(|| AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id.clone()))),
         ))
-        .push(entry(
+        .push(keyed_entry(
             fl!("ui-tree-edit"),
+            Some(fl!("ui-menu-keys-edit")),
             editable.then(|| AppMessage::EditProfile(id.clone())),
         ))
         .push(entry(
@@ -1095,8 +1173,7 @@ fn profile_entries<'a>(
         .push(separator())
         .push(submenu(fl!("ui-tree-notes"), TreeMenu::Notes(id.clone())));
     entries = entries.push(separator()).push(
-        button(text(fl!("ui-tree-delete")).size(font_size::BODY_LARGE))
-            .width(Length::Fill)
+        keyed_button(fl!("ui-tree-delete"), Some(fl!("ui-menu-keys-delete")))
             .style(danger_style)
             .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(id))),
     );
@@ -1132,8 +1209,9 @@ pub fn notes_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
 /// folder.
 fn add_entries(entries: MenuColumn<'_, Message>) -> MenuColumn<'_, Message> {
     entries
-        .push(entry(
+        .push(keyed_entry(
             fl!("ui-tree-add-session"),
+            Some(fl!("ui-menu-keys-new-session")),
             Some(AppMessage::NewProfile),
         ))
         .push(separator())
@@ -1460,6 +1538,8 @@ pub struct TabMenuState {
     pub others: bool,
     /// There are tabs after it.
     pub right: bool,
+    /// The strip has tabs "Close all tabs" closes: none from a pane docked in a split.
+    pub all: bool,
     /// Its transcript entry.
     pub transcript: TranscriptEntry,
     /// It shows a remote desktop whose size can be chosen: an RDP one.
@@ -1468,6 +1548,9 @@ pub struct TabMenuState {
     pub health: Option<bool>,
     /// It is pinned.
     pub pinned: bool,
+    /// How many tabs "Reopen closed tab" opens again; 0 hides it, as the C# shows it only
+    /// with a tab to reopen.
+    pub reopen_closed: usize,
     /// Its session is saved nowhere, and can be saved as a profile.
     pub saveable: bool,
     /// It takes terminal macros.
@@ -1768,40 +1851,37 @@ pub fn resolution_entries<'a>(
 /// A tab's entries for the saved profile it was opened from: Edit, the copies, and Reveal
 /// in tree.
 fn profile_tab_entries<'a>(
-    entries: MenuColumn<'a, Message>,
     tab: TabId,
     profile: &ProfileSummary,
     editable: bool,
-) -> MenuColumn<'a, Message> {
+) -> Vec<Element<'a, Message>> {
     let id = profile.id.clone();
     let has_user = profile
         .username
         .as_deref()
         .is_some_and(|user| !user.is_empty());
-    entries
-        .push(separator())
-        .push(entry(
+    vec![
+        keyed_entry(
             fl!("ui-tree-edit"),
+            Some(fl!("ui-menu-keys-edit")),
             editable.then(|| AppMessage::EditProfile(id.clone())),
-        ))
-        .push(entry(
+        ),
+        entry(
             fl!("ui-tree-copy-hostname"),
             profile.endpoint.is_some().then(|| AppMessage::CopyProfile {
                 id: id.clone(),
                 what: ProfileCopy::Hostname,
             }),
-        ))
-        .push(entry(
-            fl!("ui-tree-copy-username"),
-            has_user.then(|| AppMessage::CopyProfile {
-                id,
-                what: ProfileCopy::Username,
-            }),
-        ))
-        .push(entry(
+        ),
+        copy_username_entry(has_user.then(|| AppMessage::CopyProfile {
+            id,
+            what: ProfileCopy::Username,
+        })),
+        entry(
             fl!("ui-tab-menu-reveal-in-tree"),
             Some(AppMessage::TabMenu(TabMenuMessage::RevealInTree(tab))),
-        ))
+        ),
+    ]
 }
 
 /// An entry that opens the menu `menu` beside the one shown.
@@ -1813,28 +1893,23 @@ fn submenu<'a>(label: String, menu: TreeMenu) -> Element<'a, Message> {
         .into()
 }
 
-/// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
-/// does.
-pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
+/// A tab's entries for the tab itself, as the C# `AppendTitleAndPinItems` and
+/// `AppendDetachItem`: its name, its pin, the tabs of the last close, and its own window.
+fn own_tab_entries<'a>(state: &TabMenuState) -> Vec<Element<'a, Message>> {
     let tab = state.tab;
     let menu = |message| Some(AppMessage::TabMenu(message));
-    let mut entries = MenuColumn::new()
-        .push(entry(
-            fl!("ui-tab-menu-disconnect"),
-            Some(disconnect(state)),
-        ))
-        .push(entry(
-            fl!("ui-tab-menu-rename"),
-            menu(TabMenuMessage::Rename(tab)),
-        ));
+    let mut own = vec![entry(
+        fl!("ui-tab-menu-rename"),
+        menu(TabMenuMessage::Rename(tab)),
+    )];
     if state.renamed {
-        entries = entries.push(entry(
+        own.push(entry(
             fl!("ui-tab-menu-reset-title"),
             menu(TabMenuMessage::ResetTitle(tab)),
         ));
     }
     if !state.docked {
-        entries = entries.push(entry(
+        own.push(entry(
             if state.pinned {
                 fl!("ui-tab-menu-unpin")
             } else {
@@ -1843,57 +1918,113 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             menu(TabMenuMessage::Pin(tab)),
         ));
     }
-    if state.resolution {
-        entries = entries.push(separator()).push(submenu(
-            fl!("ui-resolution-menu"),
-            TreeMenu::Resolution(tab),
+    // After the pin, as the C# `AppendTabGroupItems`: the tabs of the last close, named
+    // with their count when it closed several.
+    if state.reopen_closed > 0 {
+        own.push(keyed_entry(
+            if state.reopen_closed > 1 {
+                fl!(
+                    "ui-tab-menu-reopen-closed-many",
+                    count = state.reopen_closed
+                )
+            } else {
+                fl!("ui-tab-menu-reopen-closed")
+            },
+            Some(fl!("ui-menu-keys-reopen-closed")),
+            Some(AppMessage::ReopenClosedTab),
         ));
     }
-    if state.macros {
-        entries = entries
-            .push(separator())
-            .push(submenu(fl!("ui-macros-menu"), TreeMenu::Macros(tab)));
+    // "Detach to Window", or on a split tab "Detach Secondary Pane", with the title and the
+    // pin as the C# `AppendDetachItem` places them.
+    if state.detach {
+        own.push(entry(
+            fl!("ui-tab-menu-detach"),
+            Some(AppMessage::Float(FloatMessage::Detach(tab))),
+        ));
+    } else if let SplitEntries::Split(host) = state.split
+        && state.detach_secondary
+    {
+        own.push(entry(
+            fl!("ui-split-detach-secondary"),
+            Some(AppMessage::Float(FloatMessage::DetachSecondary(host))),
+        ));
     }
-    entries = entries
-        .push(separator())
-        .push(
-            button(text(fl!("ui-tab-menu-fullscreen")).size(font_size::BODY_LARGE))
-                .width(Length::Fill)
-                .style(menu_style)
-                .on_press(Message::MenuFullscreen(tab)),
-        )
-        .push(entry(
+    own
+}
+
+/// The entries of a tab's menu, by sections in the C# order
+/// (`SessionTabContextMenuFactory.cs:76-117`), from the most frequent to the most
+/// destructive: what the session does, its resolution, the tab itself, its profile, its
+/// terminal, its split, and the closing entries last, "Close tab" at the very end, away from
+/// where the pointer lands. Limited to what this version does.
+pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
+    let tab = state.tab;
+    let menu = |message| Some(AppMessage::TabMenu(message));
+    let mut session = vec![
+        entry(
             fl!("ui-tab-menu-reconnect"),
             state.can_restart.then_some(AppMessage::ReconnectTab(tab)),
-        ))
-        .push(entry(
+        ),
+        entry(
             fl!("ui-tab-menu-duplicate"),
             state
                 .can_reopen
                 .then(|| AppMessage::TabMenu(TabMenuMessage::Duplicate(tab))),
-        ));
+        ),
+        keyed_button(
+            fl!("ui-tab-menu-fullscreen"),
+            Some(fl!("ui-menu-keys-fullscreen")),
+        )
+        .style(menu_style)
+        .on_press(Message::MenuFullscreen(tab))
+        .into(),
+    ];
     if state.saveable {
-        entries = entries.push(entry(
+        session.push(entry(
             fl!("ui-tab-menu-save-as-profile"),
             menu(TabMenuMessage::SaveAsProfile(tab)),
         ));
     }
-    if let Some(profile) = &state.profile {
-        entries = profile_tab_entries(entries, tab, profile, state.editable);
+    let mut resolution = Vec::new();
+    if state.resolution {
+        resolution.push(submenu(
+            fl!("ui-resolution-menu"),
+            TreeMenu::Resolution(tab),
+        ));
     }
-    entries = session_entries(entries, state);
+    let own = own_tab_entries(state);
+    let profile = state
+        .profile
+        .as_ref()
+        .map(|profile| profile_tab_entries(tab, profile, state.editable))
+        .unwrap_or_default();
     let close = |group| menu(TabMenuMessage::Close { tab, group });
-    entries = entries
-        .push(separator())
-        .push(entry(
+    let closing = vec![
+        entry(
             fl!("ui-tab-menu-close-others"),
             close(TabGroup::Others).filter(|_| state.others),
-        ))
-        .push(entry(
+        ),
+        entry(
             fl!("ui-tab-menu-close-right"),
             close(TabGroup::Right).filter(|_| state.right),
-        ));
-    menu_card(split_entries(entries, tab, state.split)).into()
+        ),
+        // Reachable from the menu, as the C# "Close all tabs", asking once with the counts.
+        entry(
+            fl!("ui-tab-menu-close-all"),
+            close(TabGroup::All).filter(|_| state.all),
+        ),
+        close_entry(state),
+    ];
+    menu_card(join_sections([
+        session,
+        resolution,
+        own,
+        profile,
+        terminal_entries(state),
+        split_entries(tab, state.split),
+        closing,
+    ]))
+    .into()
 }
 
 /// The keys of the "Send keys" menu, in the C# session header's groups and order.
@@ -1933,94 +2064,85 @@ pub fn send_keys_entries<'a>(tab: TabId) -> Element<'a, Message> {
     menu_card(entries).into()
 }
 
-/// A tab's entries after its profile's, in the C# order: "Detach to Window", or on a split
-/// tab "Detach Secondary Pane", as the C# `AppendDetachItem` places them, then the
-/// transcript and the server health panel.
-fn session_entries<'a>(
-    mut entries: MenuColumn<'a, Message>,
-    state: &TabMenuState,
-) -> MenuColumn<'a, Message> {
+/// The terminal's entries of a tab's menu, as the C# section of an SSH view: the transcript,
+/// the macros, then the server health panel.
+fn terminal_entries<'a>(state: &TabMenuState) -> Vec<Element<'a, Message>> {
     let tab = state.tab;
-    if state.detach {
-        entries = entries.push(separator()).push(entry(
-            fl!("ui-tab-menu-detach"),
-            Some(AppMessage::Float(FloatMessage::Detach(tab))),
-        ));
-    } else if let SplitEntries::Split(host) = state.split
-        && state.detach_secondary
-    {
-        entries = entries.push(separator()).push(entry(
-            fl!("ui-split-detach-secondary"),
-            Some(AppMessage::Float(FloatMessage::DetachSecondary(host))),
-        ));
-    }
-    entries = match state.transcript {
-        TranscriptEntry::Absent => entries,
-        TranscriptEntry::Start(can) => entries.push(separator()).push(entry(
+    let mut entries = Vec::new();
+    match state.transcript {
+        TranscriptEntry::Absent => {}
+        TranscriptEntry::Start(can) => entries.push(entry(
             fl!("ui-tab-menu-start-transcript"),
             can.then(|| AppMessage::TabMenu(TabMenuMessage::StartTranscript(tab))),
         )),
-        TranscriptEntry::Stop => entries.push(separator()).push(entry(
+        TranscriptEntry::Stop => entries.push(entry(
             fl!("ui-tab-menu-stop-transcript"),
             Some(AppMessage::TabMenu(TabMenuMessage::StopTranscript(tab))),
         )),
-    };
+    }
+    if state.macros {
+        entries.push(submenu(fl!("ui-macros-menu"), TreeMenu::Macros(tab)));
+    }
     if let Some(shown) = state.health {
-        entries = entries.push(health_entry(tab, shown));
+        entries.push(health_entry(tab, shown));
     }
     entries
 }
 
-/// What a tab menu's Disconnect closes: from a pane's header the pane alone, asked as its
-/// close button asks; from the strip the whole tab, as the C# `CloseAllPanes`.
-fn disconnect(state: &TabMenuState) -> AppMessage {
+/// What a tab menu's last entry closes: from a pane's header the pane alone, asked as its
+/// close button asks, and called Disconnect there; from the strip the whole tab, as the C#
+/// `CloseAllPanes`, called "Close tab" as the C# names it for what it does
+/// (`SessionTabContextMenuFactory.cs:348-358`), with Ctrl+F4, the key that closes it from a
+/// terminal too.
+fn close_entry<'a>(state: &TabMenuState) -> Element<'a, Message> {
     if state.pane {
-        AppMessage::Split(SplitMessage::ClosePane(state.tab))
+        entry(
+            fl!("ui-tab-menu-disconnect"),
+            Some(AppMessage::Split(SplitMessage::ClosePane(state.tab))),
+        )
     } else {
-        AppMessage::RequestCloseTab(state.tab)
+        keyed_entry(
+            fl!("ui-tab-menu-close-tab"),
+            Some(fl!("ui-menu-keys-close-tab")),
+            Some(AppMessage::RequestCloseTab(state.tab)),
+        )
     }
 }
 
-/// The end of a tab's menu, after a separator as the C#'s: "Split..." and "Merge with..."
-/// for a tab not split, else what its split offers.
-fn split_entries(
-    entries: MenuColumn<'_, Message>,
-    tab: TabId,
-    split: SplitEntries,
-) -> MenuColumn<'_, Message> {
+/// A tab's split entries, as the C#'s: "Split..." and "Merge with..." for a tab not split,
+/// else what its split offers.
+fn split_entries<'a>(tab: TabId, split: SplitEntries) -> Vec<Element<'a, Message>> {
     let split_message = |message| Some(AppMessage::Split(message));
     match split {
         SplitEntries::Merge(mergeable) => {
-            let entries = entries
-                .push(separator())
-                .push(submenu(fl!("ui-split-menu"), TreeMenu::SplitAxis(tab)));
+            let mut entries = vec![submenu(fl!("ui-split-menu"), TreeMenu::SplitAxis(tab))];
             if mergeable {
                 entries.push(submenu(
                     fl!("ui-split-merge-with"),
                     TreeMenu::MergeWith(tab),
-                ))
-            } else {
-                entries
+                ));
             }
+            entries
         }
-        SplitEntries::Split(host) => entries
-            .push(separator())
-            .push(entry(
+        SplitEntries::Split(host) => vec![
+            entry(
                 fl!("ui-split-unsplit"),
                 split_message(SplitMessage::Unsplit(host)),
-            ))
-            .push(entry(
+            ),
+            entry(
                 fl!("ui-split-swap-panes"),
                 split_message(SplitMessage::Swap(host)),
-            ))
-            .push(entry(
+            ),
+            keyed_entry(
                 fl!("ui-split-toggle-orientation"),
+                Some(fl!("ui-menu-keys-toggle-orientation")),
                 split_message(SplitMessage::ToggleAxis(host)),
-            ))
-            .push(entry(
+            ),
+            entry(
                 fl!("ui-split-close-secondary"),
                 split_message(SplitMessage::CloseSecondary(host)),
-            )),
+            ),
+        ],
     }
 }
 
@@ -2151,8 +2273,9 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                 }),
             ))
             .push(separator())
-            .push(entry(
+            .push(keyed_entry(
                 fl!("ui-folder-rename"),
+                Some(fl!("ui-menu-keys-rename")),
                 folder(FolderMessage::Rename(path.to_owned())),
             ))
             .push(submenu(
@@ -2246,12 +2369,14 @@ pub fn selection_menu_entries<'a>(
         ))
         .push(separator())
         .push(
-            button(text(fl!("ui-selection-delete", count = count)).size(font_size::BODY_LARGE))
-                .width(Length::Fill)
-                .style(danger_style)
-                .on_press(Message::MenuChoice(AppMessage::Selection(
-                    SelectionMessage::RequestDelete,
-                ))),
+            keyed_button(
+                fl!("ui-selection-delete", count = count),
+                Some(fl!("ui-menu-keys-delete")),
+            )
+            .style(danger_style)
+            .on_press(Message::MenuChoice(AppMessage::Selection(
+                SelectionMessage::RequestDelete,
+            ))),
         );
     menu_card(entries).into()
 }

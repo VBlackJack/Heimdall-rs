@@ -32,10 +32,16 @@
 //!
 //! The lines are written by a thread of their own, buffered, so a caller on the window's
 //! thread only hands a line over.
+//!
+//! Each file is readable by the user alone before a line goes in it, as the C#
+//! `RestrictedLogFile` makes it (`NdjsonAppendLog.cs:204-211`): mode 0600 on Unix, and on
+//! Windows restricted to the user, the Administrators and SYSTEM, whatever the folder the
+//! user chose allows. A file that cannot be restricted is not written: the line is dropped,
+//! said once in the diagnostics log, and the next one tries again.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -72,10 +78,6 @@ const WRITER_THREAD: &str = "session-logs";
 
 /// Nanoseconds in one tick of the C# round-trip time format.
 const NANOS_PER_TICK: u32 = 100;
-
-/// Owner read and write only, for the logs on Unix.
-#[cfg(unix)]
-const PRIVATE_FILE_MODE: u32 = 0o600;
 
 /// A session's connect or disconnect, as the C# `SessionEventKind` names it in the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -569,17 +571,10 @@ impl LogFile {
     }
 }
 
-/// Opens `path` to add to it, made if need be. On Unix only its owner may read it; on
-/// Windows it takes the rights of the folder it is in, as a transcript does.
+/// Opens `path` to add to it, made if need be, the user alone able to read it before a line
+/// is written in it.
 fn open(path: &Path) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(PRIVATE_FILE_MODE);
-    }
-    options.open(path)
+    heimdall_core::tools::private_file::open_private_log(path)
 }
 
 /// A JSON object written a property at a time, in the order given.

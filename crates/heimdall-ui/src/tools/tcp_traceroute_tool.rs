@@ -24,17 +24,22 @@ use heimdall_app::TabId;
 use iced::widget::{column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
-use heimdall_core::tools::net_command::RunEnd;
+use heimdall_core::tools::system_program::{ProgramError, RunEnd};
 use heimdall_core::tools::tcp_traceroute::{
     self, DEFAULT_MAX_HOPS, HopStatus, TraceHopResult, TraceInputError,
 };
 
+use super::file_export::FileExport;
 use super::network_run::{RunSlot, blocking_run};
 use super::{CopySlot, ToolPane};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
+
+/// What the CSV export's suggested name starts with, after the other tools' exports:
+/// the C# traceroute only copies its hops.
+const EXPORT_PREFIX: &str = "tcptrace";
 
 /// Messages emitted by the TCP traceroute view.
 #[derive(Debug, Clone)]
@@ -50,9 +55,9 @@ pub enum TcpTracerouteMessage {
     /// A hop of run `.0` was printed.
     Hop(u64, TraceHopResult),
     /// Run `.0` ended as `.1` says; `None` when its work failed.
-    Ended(u64, Option<RunEnd>),
-    /// Copy CSV export.
-    CopyCsv,
+    Ended(u64, Option<Result<RunEnd, ProgramError>>),
+    /// Save the CSV export to a file.
+    ExportCsv,
 }
 
 /// The TCP Traceroute tool pane state.
@@ -85,7 +90,8 @@ impl Default for TcpTraceroutePane {
 pub enum Outcome {
     None,
     Task(Task<Message>),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 /// What a message asks of the pane, before its tab is known.
@@ -94,7 +100,8 @@ enum Step {
     None,
     /// Trace `.2` up to `.3` hops as run `.0`, watching stop `.1`.
     Trace(u64, Arc<AtomicBool>, String, usize),
-    Copy(CopySlot, String),
+    /// Save this export to the file the user picks.
+    Save(FileExport),
 }
 
 impl TcpTraceroutePane {
@@ -102,7 +109,7 @@ impl TcpTraceroutePane {
     pub fn update(&mut self, tab: TabId, message: TcpTracerouteMessage) -> Outcome {
         match self.apply(message) {
             Step::None => Outcome::None,
-            Step::Copy(slot, content) => Outcome::Copy(slot, content),
+            Step::Save(export) => Outcome::Save(export),
             Step::Trace(run, stop, host, max_hops) => {
                 let stream = blocking_run(
                     stop,
@@ -172,21 +179,24 @@ impl TcpTraceroutePane {
                     return Step::None;
                 }
                 match end {
-                    Some(RunEnd::Exited) if self.hops.is_empty() => {
+                    Some(Ok(RunEnd::Exited)) if self.hops.is_empty() => {
                         self.notice = Some(fl!("ui-tool-tcptrace-no-hops"));
                     }
-                    Some(RunEnd::Exited | RunEnd::Stopped) => {}
-                    Some(RunEnd::TimedOut) => {
+                    Some(Ok(RunEnd::Exited | RunEnd::Stopped)) => {}
+                    Some(Err(ProgramError::TimedOut)) => {
                         self.notice = Some(fl!("ui-tool-tcptrace-timed-out"));
                     }
-                    Some(RunEnd::NotStarted) => {
+                    Some(Err(ProgramError::NotAvailable | ProgramError::NotStarted(_))) => {
                         self.error = Some(fl!("ui-tool-tcptrace-error-not-found"));
                     }
-                    None => self.error = Some(fl!("ui-tool-tcptrace-error-failed")),
+                    // A traceroute is read whatever its exit code: it never fails otherwise.
+                    Some(Err(ProgramError::Failed { .. } | ProgramError::Unreadable(_))) | None => {
+                        self.error = Some(fl!("ui-tool-tcptrace-error-failed"));
+                    }
                 }
                 Step::None
             }
-            TcpTracerouteMessage::CopyCsv => {
+            TcpTracerouteMessage::ExportCsv => {
                 if self.hops.is_empty() {
                     return Step::None;
                 }
@@ -202,7 +212,13 @@ impl TcpTraceroutePane {
                     header.each_ref().map(String::as_str),
                     status_label,
                 );
-                Step::Copy(CopySlot::TcpTraceCsv, csv)
+                Step::Save(FileExport::csv(
+                    CopySlot::TcpTraceCsv,
+                    fl!("ui-tool-tcptrace-export-csv"),
+                    EXPORT_PREFIX,
+                    Some(&self.host),
+                    csv,
+                ))
             }
         }
     }
@@ -288,18 +304,17 @@ impl TcpTraceroutePane {
         }
 
         if !self.hops.is_empty() {
-            let copy_csv_btn = super::copy_button(
-                fl!("ui-tool-tcptrace-copy-csv"),
+            let export_csv_btn = super::export_button(
+                fl!("ui-tool-tcptrace-export-csv"),
                 state.copied(CopySlot::TcpTraceCsv),
-                send(TcpTracerouteMessage::CopyCsv),
-                super::COPY_PADDING,
+                send(TcpTracerouteMessage::ExportCsv),
             );
 
             let header_row = row![
                 text(fl!("ui-tool-tcptrace-hop-count", count = self.hops.len()))
                     .size(font_size::SUBTITLE)
                     .width(Length::Fill),
-                copy_csv_btn,
+                export_csv_btn,
             ]
             .spacing(spacing::SM)
             .align_y(Alignment::Center);
@@ -425,12 +440,14 @@ mod tests {
             matches!(pane.apply(TcpTracerouteMessage::Start), Step::None),
             "one run at a time"
         );
-        pane.apply(TcpTracerouteMessage::Ended(run, Some(RunEnd::Exited)));
+        pane.apply(TcpTracerouteMessage::Ended(run, Some(Ok(RunEnd::Exited))));
         assert!(!pane.run.running());
-        let Step::Copy(CopySlot::TcpTraceCsv, csv) = pane.apply(TcpTracerouteMessage::CopyCsv)
-        else {
+        let Step::Save(export) = pane.apply(TcpTracerouteMessage::ExportCsv) else {
             panic!("a CSV");
         };
+        assert_eq!(export.slot(), CopySlot::TcpTraceCsv);
+        assert!(export.suggested_name().starts_with("tcptrace_"));
+        let csv = export.content();
         assert_eq!(csv.lines().count(), 3);
     }
 
@@ -446,7 +463,7 @@ mod tests {
         );
         assert!(!pane.run.running());
         pane.apply(TcpTracerouteMessage::Hop(run, hop(2)));
-        pane.apply(TcpTracerouteMessage::Ended(run, Some(RunEnd::Stopped)));
+        pane.apply(TcpTracerouteMessage::Ended(run, Some(Ok(RunEnd::Stopped))));
         assert_eq!(pane.hops.len(), 1);
         assert!(pane.notice.is_some());
         // A new run: the old one's messages never reach it.
@@ -466,10 +483,22 @@ mod tests {
         ));
         assert!(pane.error.is_some());
         let (run, _) = started(&mut pane);
-        pane.apply(TcpTracerouteMessage::Ended(run, Some(RunEnd::NotStarted)));
+        pane.apply(TcpTracerouteMessage::Ended(
+            run,
+            Some(Err(ProgramError::NotStarted("x".to_owned()))),
+        ));
         assert!(pane.error.is_some());
         let (run, _) = started(&mut pane);
-        pane.apply(TcpTracerouteMessage::Ended(run, Some(RunEnd::TimedOut)));
+        pane.apply(TcpTracerouteMessage::Ended(
+            run,
+            Some(Err(ProgramError::NotAvailable)),
+        ));
+        assert!(pane.error.is_some());
+        let (run, _) = started(&mut pane);
+        pane.apply(TcpTracerouteMessage::Ended(
+            run,
+            Some(Err(ProgramError::TimedOut)),
+        ));
         assert!(pane.notice.is_some());
     }
 }

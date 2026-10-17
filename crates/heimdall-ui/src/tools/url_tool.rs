@@ -64,6 +64,12 @@ pub struct UrlPane {
 }
 
 impl UrlPane {
+    /// What its first box holds, for the tests of what a tool opens on.
+    #[cfg(test)]
+    pub(super) fn first_box(&self) -> String {
+        super::box_text(&self.decoded)
+    }
+
     /// Applies `message`; what a copy button copies, when one is pressed.
     pub fn update(&mut self, message: UrlMessage) -> Option<(CopySlot, String)> {
         match message {

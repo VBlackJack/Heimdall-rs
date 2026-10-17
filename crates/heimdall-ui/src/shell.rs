@@ -88,6 +88,7 @@ mod files_input;
 mod floating_files;
 mod floating_find;
 mod settings_page;
+mod tab_strip;
 
 pub use settings_page::search_field_id as settings_search_field_id;
 
@@ -111,7 +112,8 @@ use crate::styles;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
-    WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
+    LAST_TAB_ORDINAL, WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_reopen_closed_key,
+    is_search_key, tab_ordinal, window_shortcut,
 };
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
@@ -176,23 +178,12 @@ const TOOL_GAP: f32 = 2.0;
 /// Side of the dot on the filter button while a filter is on, as the C#'s.
 const FILTER_DOT_SIDE: f32 = 6.0;
 
-/// Room around the tab strip, as the C#'s: none below, where the tabs meet the session.
-const TAB_STRIP_PADDING: iced::Padding = iced::Padding {
-    top: 8.0,
-    right: 8.0,
-    bottom: 0.0,
-    left: 8.0,
-};
-
 /// Space between two tabs, as the C# `ThemedTabItemStyle`'s right margin.
 const TAB_GAP: f32 = 4.0;
 
 /// Room inside a tab, around its heading and underline, as the C# `ThemedTabItemStyle`'s
 /// `16,10`.
 const TAB_PADDING: [f32; 2] = [10.0, 16.0];
-
-/// Room around a tab's heading, as the C# tab header's `10,6`.
-const TAB_HEADING_PADDING: [f32; 2] = [6.0, 10.0];
 
 /// Thickness of a selected tab's underline, as the C#'s.
 const TAB_UNDERLINE: f32 = 3.0;
@@ -205,12 +196,6 @@ const ERROR_BADGE_PADDING_X: f32 = 5.0;
 
 /// Space between a tab's name and its error badge, as the C# badge's left margin.
 const ERROR_BADGE_GAP: f32 = 6.0;
-
-/// Side of a tab's close button, as the C#'s 20 by 20.
-const TAB_CLOSE_SIDE: f32 = 20.0;
-
-/// Side of the pin before a pinned tab's title, as the C#'s glyph.
-const TAB_PIN_SIDE: f32 = 10.0;
 
 /// Width of the port column beside the server field, as in the C# dialog.
 const PORT_FIELD_WIDTH: f32 = 150.0;
@@ -257,9 +242,6 @@ const PASTE_PREVIEW_HEIGHT: f32 = 280.0;
 /// How often a waiting session's countdown is drawn anew.
 const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Width of the outline round the tab a dragged tab would take the place of.
-const TAB_DROP_EDGE: f32 = 2.0;
-
 /// Width of the border of the "Drop to split" overlay, as the C# `ContentDropZone`'s.
 const SPLIT_DROP_EDGE: f32 = 2.0;
 
@@ -274,10 +256,6 @@ const FONT_SIZE_FIELD_WIDTH: f32 = 80.0;
 
 /// Room above Quick Connect.
 const PALETTE_TOP: f32 = 80.0;
-
-/// Widest a tab's title grows before it ends with an ellipsis, as the C# tab title's
-/// `MaxWidth`.
-const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
 
 /// How long the pointer rests on the tree's search before its tooltip shows: the system's
 /// hover time, WPF's default for the C# box.
@@ -599,6 +577,10 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if crate::terminal_view::keys::is_ctrl_w(&key, physical_key, modifiers) {
                 return (!repeat).then_some(Message::CloseKey);
             }
+            // Before the zoom keys: the minus of an AZERTY 6 is Ctrl+6 here.
+            if let Some(shortcut) = untaken_tab_key(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::Shortcut(shortcut));
+            }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
@@ -610,6 +592,21 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         }
         _ => None,
     }
+}
+
+/// The tab keys the window takes only when no terminal, no desktop and no field took them,
+/// as the C# leaves them to a focused terminal: Ctrl and a digit of the main row, that tab,
+/// read from the key's place for an AZERTY keyboard (Ctrl+2 is a terminal's NUL); and
+/// Ctrl+Shift+R, the tabs of the last close (a shell's history search).
+fn untaken_tab_key(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<WindowShortcut> {
+    if let Some(place) = tab_ordinal(physical, modifiers) {
+        return Some(WindowShortcut::GoToTab(place));
+    }
+    is_reopen_closed_key(key, physical, modifiers).then_some(WindowShortcut::ReopenClosedTab)
 }
 
 /// What the window reacts to.
@@ -2520,9 +2517,41 @@ impl Shell {
         }
     }
 
+    /// Applies a message, then shows the Sessions page when it showed another tab.
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        let shown = self.shown_tab_id();
+        let task = self.apply(message);
+        self.follow_shown_tab(shown);
+        task
+    }
+
+    /// The page after the tab shown went from `before` to another one. A tab opened or
+    /// chosen, from Quick Connect, the tree or a reconnection, is shown on the Sessions
+    /// page, as the C# shows it before a tool's tab opens (`MainWindow.xaml.cs:2527`,
+    /// `:2577`). Left on Settings, the tab showed the window's whole width under the
+    /// settings' name, without its strip or the tree; left on another page, it opened
+    /// unseen. No choice leaves the page: the tab shown closing, or a scheduled connection,
+    /// which opens behind the tab shown and is shown only when there was none; the settings
+    /// then stay, over the tab shown now.
+    fn follow_shown_tab(&mut self, before: Option<TabId>) {
+        let after = self.shown_tab_id();
+        if after == before || self.page == Page::Tab {
+            return;
+        }
+        let chosen = after.is_some_and(|shown| match before {
+            Some(tab) => self.app.tab(tab).is_some(),
+            None => !self.app.is_scheduled_tab(shown),
+        });
+        if chosen {
+            self.page = Page::Tab;
+        } else if matches!(self.page, Page::Settings { .. }) {
+            self.page = Page::Settings { over: after };
+        }
+    }
+
     /// Applies a message.
     #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
-    pub fn update(&mut self, message: Message) -> Task<Message> {
+    fn apply(&mut self, message: Message) -> Task<Message> {
         // A tab's own window's: answered apart, never through the main window's tab shown.
         let message = match message {
             Message::Float(window, event) => return self.float_event(window, event),
@@ -2832,12 +2861,15 @@ impl Shell {
                 Vec::new()
             }
             Message::OpenTool(tool) => {
-                // As the C# launch from a card or the sidebar: the Sessions page shown first.
+                // As the C# launch from a card or the sidebar: the Sessions page shown first,
+                // a network tool on the selected session's host, named after it.
                 self.menu = None;
                 self.page = Page::Tab;
+                let context = crate::tools::inherited_context(&self.app, tool);
                 self.app.update(AppMessage::Tools(ToolsMessage::Open {
                     tool,
-                    title: crate::tools::label(tool),
+                    title: crate::tools::tab_title(tool, &context),
+                    context,
                 }))
             }
             Message::NewNote { id, template } => {
@@ -3398,6 +3430,15 @@ impl Shell {
                 .app
                 .update(AppMessage::Tools(ToolsMessage::ToggleSidebarTab));
         }
+        // With no tab left too, once the last one is closed; never over a dialog or the lock
+        // screen, which have the keyboard.
+        if shortcut == WindowShortcut::ReopenClosedTab {
+            if self.app.dialog.is_some() || self.gated() {
+                return Vec::new();
+            }
+            self.menu = None;
+            return self.update_app(AppMessage::ReopenClosedTab);
+        }
         if shortcut == WindowShortcut::Settings {
             // Ctrl+, as the C#, with or without a tab; not over a dialog, which has the keyboard.
             if self.app.dialog.is_none() {
@@ -3431,6 +3472,28 @@ impl Shell {
             (WindowShortcut::PreviousTab, Some(index)) => {
                 AppMessage::SelectTab(strip[(index + count - 1) % count])
             }
+            // As the C# `SelectTabAtOrdinal`: the ninth is the last, a place past the last
+            // tab shows none.
+            (WindowShortcut::GoToTab(place), _) => {
+                let at = if place == LAST_TAB_ORDINAL {
+                    strip.last()
+                } else {
+                    strip.get(usize::from(place).saturating_sub(1))
+                };
+                match at {
+                    Some(tab) => AppMessage::SelectTab(*tab),
+                    None => return Vec::new(),
+                }
+            }
+            // One place, within its pinned block, as the C# `MoveActiveTab`; the tab stays
+            // shown.
+            (WindowShortcut::MoveTabLeft | WindowShortcut::MoveTabRight, _) => {
+                let right = shortcut == WindowShortcut::MoveTabRight;
+                match self.app.tab_step_target(shown, right) {
+                    Some(onto) => AppMessage::MoveTab { tab: shown, onto },
+                    None => return Vec::new(),
+                }
+            }
             (WindowShortcut::ToggleSplit, _) => {
                 if self.app.shown_tab().is_none_or(|tab| tab.layout.is_none()) {
                     return Vec::new();
@@ -3450,7 +3513,8 @@ impl Shell {
                 | WindowShortcut::Screenshot
                 | WindowShortcut::QuickConnect
                 | WindowShortcut::CopyStatus
-                | WindowShortcut::ToggleToolsPanel,
+                | WindowShortcut::ToggleToolsPanel
+                | WindowShortcut::ReopenClosedTab,
                 _,
             )
             | (_, None) => {
@@ -4690,9 +4754,13 @@ impl Shell {
             let banner = self
                 .update_banner()
                 .unwrap_or_else(|| iced::widget::space().height(0.0).into());
+            let session_load = self
+                .session_load_banner()
+                .unwrap_or_else(|| iced::widget::space().height(0.0).into());
             column![
                 self.navigation(),
                 banner,
+                session_load,
                 self.shown_page(),
                 self.status_bar()
             ]
@@ -4800,6 +4868,33 @@ impl Shell {
         )
     }
 
+    /// The open sessions banner, as the C# one under the update banner: in a row of its own,
+    /// pushing the sessions down rather than lying over them, and "Hide".
+    fn session_load_banner(&self) -> Option<Element<'_, Message>> {
+        let notice = self.app.session_load_notice()?;
+        Some(
+            container(
+                row![
+                    text(fl!(
+                        "ui-session-load-notice-text",
+                        open = notice.open,
+                        threshold = notice.threshold
+                    ))
+                    .width(Length::Fill),
+                    button(text(fl!("ui-session-load-notice-hide")))
+                        .style(styles::secondary)
+                        .on_press(Message::App(AppMessage::HideSessionLoadNotice)),
+                ]
+                .spacing(spacing::SM)
+                .align_y(iced::Alignment::Center),
+            )
+            .padding([spacing::MD, spacing::LG])
+            .width(Length::Fill)
+            .style(styles::strip)
+            .into(),
+        )
+    }
+
     /// A terminal tab's Macros menu; `None` once the tab takes none.
     fn macros_menu(&self, tab: TabId) -> Option<Element<'_, Message>> {
         let tab = self.app.tab(tab)?;
@@ -4816,6 +4911,13 @@ impl Shell {
         let Some(context) = self.app.profile_summary_note(id) else {
             return Task::none();
         };
+        // The Notes tool's folder, so the note is listed there: the C# writes it through the
+        // Notes tool's own storage (`NotesStorageService.CreateNoteAsync`).
+        let Some(dir) = heimdall_core::tools::notes_storage::notes_dir() else {
+            return Task::done(Message::App(AppMessage::NoteOpened(Err(fl!(
+                "ui-tool-notes-error-no-folder"
+            )))));
+        };
         let draft = heimdall_app::notes::draft(
             template,
             &context,
@@ -4823,11 +4925,7 @@ impl Shell {
             &note_labels(),
         );
         Task::perform(
-            heimdall_app::notes::open(
-                self.app.notes_dir(),
-                draft,
-                self.app.settings().external_editor.clone(),
-            ),
+            heimdall_app::notes::open(dir, draft, self.app.settings().external_editor.clone()),
             |opened| Message::App(AppMessage::NoteOpened(opened)),
         )
     }
@@ -5670,6 +5768,7 @@ impl Shell {
                 depth,
                 open,
                 count,
+                total,
             } => {
                 if let Some(editor) = self.inline_editor(&TreeCursor::Folder(path.clone()), depth) {
                     return editor;
@@ -5678,7 +5777,14 @@ impl Shell {
                 let target = heimdall_app::DropTarget::Folder(path.clone());
                 let selected = self.app.selected_folder.as_deref() == Some(path.as_str());
                 crate::tree_drag::drop_zone(
-                    tree_view::folder_row(path, name, depth, open, count, color, selected),
+                    tree_view::folder_row(
+                        path,
+                        name,
+                        (depth, open),
+                        (count, total),
+                        color,
+                        selected,
+                    ),
                     target,
                     self.tree_drag.as_ref(),
                 )
@@ -6014,7 +6120,11 @@ impl Shell {
     fn note_focus(&mut self, message: &Message) {
         match message {
             // A tab detached is shown in its own window: the main window stays as it is.
-            Message::App(AppMessage::SelectTab(tab)) if !self.app.is_floating(*tab) => {
+            // Reconnect is chosen as the tab is: the session reopened in the tab's place is
+            // shown on the Sessions page, though the tab it replaces is gone.
+            Message::App(AppMessage::SelectTab(tab) | AppMessage::ReconnectTab(tab))
+                if !self.app.is_floating(*tab) =>
+            {
                 self.page = Page::Tab;
                 self.tree_focused = false;
             }
@@ -6393,11 +6503,8 @@ impl Shell {
                 }
             }
             Message::MenuKey => {
-                if self.tree_focused
-                    && self.app.dialog.is_none()
-                    && let Some(id) = self.app.selected_profile.clone()
-                {
-                    self.open_tree_menu(TreeMenu::Profile(id));
+                if let Some(menu) = self.menu_key_target() {
+                    self.open_tree_menu(menu);
                 }
                 Vec::new()
             }
@@ -6686,6 +6793,31 @@ impl Shell {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The menu Shift+F10 or the menu key opens, as the C# `OnWindowPreviewKeyDown`: with the
+    /// tree's keyboard, the menu of the row it is on, a folder winning as the C#
+    /// `ResolveKeyboardContextTarget` lets it, the bulk menu of the profiles selected
+    /// together, else the profile's; elsewhere, the menu of the tab shown, as the C# opens
+    /// it from the strip (#554). Never over a dialog. A terminal keeps Shift+F10 for its
+    /// programs; the menu key, which it sends nothing for, reaches here from it too.
+    fn menu_key_target(&self) -> Option<TreeMenu> {
+        if self.app.dialog.is_some() || self.gated() {
+            return None;
+        }
+        if self.tree_focused {
+            if let Some(path) = self.app.selected_folder.clone() {
+                return Some(TreeMenu::Folder(path));
+            }
+            if !self.app.selected_profiles().is_empty() {
+                return Some(TreeMenu::Selection);
+            }
+            return self.app.selected_profile.clone().map(TreeMenu::Profile);
+        }
+        if self.page != Page::Tab {
+            return None;
+        }
+        self.shown_tab_id().map(TreeMenu::Tab)
     }
 
     /// The row the tree's keyboard is on: the folder selected, or the profile.
@@ -6985,9 +7117,11 @@ impl Shell {
             profile,
             others: !self.app.tab_group(id, TabGroup::Others).is_empty(),
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
+            all: !self.app.tab_group(id, TabGroup::All).is_empty(),
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
+            reopen_closed: self.app.reopen_closed_count(),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
             pane: false,
@@ -7010,286 +7144,6 @@ impl Shell {
                 TranscriptEntry::Absent
             },
         })
-    }
-
-    /// A tab of the bar: a click shows it, a right click opens its menu; pressed and moved,
-    /// it is dragged, the tab it would take the place of outlined.
-    fn tab_button<'a>(
-        &self,
-        tab: TabId,
-        label: iced::widget::Row<'a, Message>,
-        active: bool,
-    ) -> Element<'a, Message> {
-        let dragging = self.tab_drag.filter(|drag| drag.active);
-        // As the C# tab: its heading, and under it the accent's line once selected.
-        let content = column![
-            container(label.align_y(iced::Alignment::Center)).padding(TAB_HEADING_PADDING),
-            container(iced::widget::space())
-                .width(Length::Fill)
-                .height(TAB_UNDERLINE)
-                .style(styles::underline(active)),
-        ]
-        .width(Length::Shrink);
-        let mut area = mouse_area(
-            button(content)
-                .padding(TAB_PADDING)
-                .style(styles::tab(active))
-                .on_press(Message::App(AppMessage::SelectTab(tab))),
-        )
-        .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab)))
-        .on_enter(Message::TabHover(tab))
-        .on_exit(Message::TabHoverLeft(tab));
-        if dragging.is_some() {
-            area = area.interaction(iced::mouse::Interaction::Grabbing);
-        }
-        // Where a dragged tab goes, outlined as the C# drop target.
-        let target = dragging.and_then(|drag| drag.onto(self.tab_hover)) == Some(tab);
-        container(area)
-            .id(tab_id(tab))
-            .style(move |theme: &Theme| container::Style {
-                border: iced::Border {
-                    color: if target {
-                        theme.extended_palette().primary.strong.color
-                    } else {
-                        Color::TRANSPARENT
-                    },
-                    width: TAB_DROP_EDGE,
-                    radius: radius::SM.into(),
-                },
-                ..container::Style::default()
-            })
-            .into()
-    }
-
-    /// The gateways `tab` goes through, as the C# says them: "via" and their names; `None`
-    /// when it goes straight.
-    fn route_text(&self, tab: &Tab) -> Option<String> {
-        let route = self.app.tab_route(tab);
-        if route.is_empty() {
-            return None;
-        }
-        let names = route
-            .iter()
-            .map(|name| server_text(name))
-            .collect::<Vec<_>>()
-            .join(&fl!("ui-route-test-separator"));
-        Some(fl!("ui-connect-via", route = names))
-    }
-
-    /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
-    /// goes straight.
-    /// Its colour says the route's health, as the C# tab's tunnel badge: the success colour
-    /// while the session runs, the warning colour once it failed, ended or waits to open
-    /// again, said in its tooltip above the route.
-    fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
-        let route = self.route_text(tab)?;
-        let (health, colour): (String, fn(&Theme) -> text::Style) = match self.app.tunnel_badge(tab)
-        {
-            heimdall_app::tunnel::TunnelBadge::Hidden => return None,
-            heimdall_app::tunnel::TunnelBadge::Healthy => {
-                (fl!("ui-tab-route-badge-healthy"), text::success)
-            }
-            heimdall_app::tunnel::TunnelBadge::Unhealthy => {
-                (fl!("ui-tab-route-badge-unhealthy"), text::warning)
-            }
-        };
-        Some(
-            tooltip(
-                text(fl!("ui-tab-route-badge"))
-                    .size(font_size::CAPTION)
-                    .style(colour),
-                column![
-                    text(health).size(font_size::CAPTION),
-                    text(route).size(font_size::CAPTION),
-                ],
-                tooltip::Position::Bottom,
-            )
-            .padding(styles::TOOLTIP_PADDING)
-            .style(styles::tooltip)
-            .into(),
-        )
-    }
-
-    /// The title of `tab`, as its tab and its pane's header name it: a Files tab says so,
-    /// and a desktop "Connect with" opened embedded this once, as the C# title suffix, which
-    /// a name the user gave replaces (`SessionTabViewModel.cs:255-269`). Remote Desktop
-    /// Connection opens no tab to name.
-    fn tab_name(tab: &Tab) -> String {
-        let name = if tab.files.is_some() && tab.custom_title.is_none() {
-            fl!("ui-tab-files-title", name = tab.display_title())
-        } else {
-            tab.display_title().to_owned()
-        };
-        if tab.custom_title.is_none()
-            && tab.rdp_mode_override == Some(heimdall_core::profile::RdpMode::Embedded)
-        {
-            fl!("ui-tab-rdp-forced-embedded-title", name = name)
-        } else {
-            name
-        }
-    }
-
-    /// What a tab says of itself, as the C# tab: its protocol's icon, its pin, its title
-    /// and a dot while it connects, then its marks.
-    fn tab_title(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
-        let kind = self.app.tab_kind(tab);
-        // A tool's tab bears the tool's icon, in its category's colour.
-        let (glyph, tint) = match tab.tool() {
-            Some(tool) => (crate::tools::icon(tool), Tint::Tool(tool.category())),
-            None => (Icon::of(kind), Tint::Protocol(kind)),
-        };
-        let mut label = row![icons::icon(glyph, tint, icons::GLYPH_SIDE)]
-            .spacing(spacing::XS)
-            .align_y(iced::Alignment::Center);
-        if tab.pinned {
-            label = label.push(
-                tooltip(
-                    icons::icon(Icon::Pin, Tint::Accent, TAB_PIN_SIDE),
-                    text(fl!("ui-tab-pinned-badge")).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .padding(styles::TOOLTIP_PADDING)
-                .style(styles::tooltip),
-            );
-        }
-        // One long server title cannot take the whole strip: it ends with an ellipsis.
-        label = label.push(
-            crate::ellipsis::text(Self::tab_name(tab))
-                .size(font_size::BODY)
-                .font(styles::SEMIBOLD)
-                .style(text::base)
-                .max_width(TAB_TITLE_MAX_WIDTH),
-        );
-        // While it connects, as the C# tab's busy dot.
-        let state = SessionState::of(tab);
-        if matches!(state, SessionState::Connecting | SessionState::Reconnecting) {
-            label = label.push(tree_view::state_dot(Some(state)));
-        }
-        // Through gateways, said on the tab while the tunnels panel that lists it is
-        // closed, as the C# tab's tunnel badge.
-        if !self.app.tunnels_panel() {
-            label = label.push(self.route_badge(tab));
-        }
-        for badge in tab_badges(tab, active) {
-            label = label.push(badge);
-        }
-        label
-    }
-
-    /// What goes before a tab, on the strip or in a pane's header: its broadcast marker
-    /// while broadcasting to the tabs chosen, as the C# tab's, and its post-connect steps.
-    fn tab_marks<'a>(&'a self, tab: &'a Tab) -> Vec<Element<'a, Message>> {
-        let mut marks = Vec::new();
-        let marked = self.app.broadcasting()
-            && self.app.settings().broadcast_scope == BroadcastScope::SelectedTabs
-            && shows_terminal(tab);
-        if marked {
-            // A target of broadcast input, or not, as the C# tab's marker.
-            let target = self.app.is_broadcast_target(tab.id);
-            marks.push(
-                tooltip(
-                    button(
-                        text(if target {
-                            fl!("ui-broadcast-target-on")
-                        } else {
-                            fl!("ui-broadcast-target-off")
-                        })
-                        .size(font_size::CAPTION),
-                    )
-                    .style(styles::subtle)
-                    .on_press(Message::App(AppMessage::Broadcast(
-                        BroadcastMessage::Target(tab.id),
-                    ))),
-                    text(fl!("ui-broadcast-target-tooltip")).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .padding(styles::TOOLTIP_PADDING)
-                .style(styles::tooltip)
-                .into(),
-            );
-        }
-        if let Some(progress) = &tab.post_connect {
-            marks.push(post_connect_badge(tab.id, progress));
-        }
-        marks
-    }
-
-    /// What a tab says of itself on the strip: its title and marks, the transcript it keeps
-    /// among them.
-    fn tab_heading(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
-        self.tab_title(tab, active).push(transcript_mark(tab))
-    }
-
-    /// The tabs' strip, as the C# one: on one row that scrolls sideways once the tabs pass
-    /// its width, the tab shown kept in view.
-    fn tab_bar(&self) -> Element<'_, Message> {
-        let mut strip = row![]
-            .spacing(TAB_GAP)
-            .padding(TAB_STRIP_PADDING)
-            .align_y(iced::Alignment::Center);
-        let mut tabs = row![].spacing(TAB_GAP).align_y(iced::Alignment::Center);
-        // The sidebar hidden, a way to show it again, as the C# button where it was.
-        if self.sidebar_hidden {
-            strip = strip.push(
-                tooltip(
-                    container(
-                        icons::button(Icon::ChevronRight)
-                            .style(styles::secondary)
-                            .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
-                    )
-                    .id(sidebar_toggle_id()),
-                    text(fl!("ui-sidebar-show-tooltip")).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .padding(styles::TOOLTIP_PADDING)
-                .style(styles::tooltip),
-            );
-        }
-        let shown = self.shown_tab_id();
-        for tab in self.app.strip() {
-            let active = shown == Some(tab.id);
-            for mark in self.tab_marks(tab) {
-                tabs = tabs.push(mark);
-            }
-            // The close button inside the tab, at its right, as the C# tab's: a circled cross,
-            // faded but on the tab selected or pointed at. It takes the press, which selecting
-            // the tab then does not see.
-            let quiet = !active && self.tab_hover != Some(tab.id);
-            // Named as the C# button's accessible name, in a tooltip.
-            let close = container(
-                tooltip(
-                    button(center(icons::faded(
-                        Icon::Close,
-                        Tint::Text,
-                        font_size::SMALL_CAPTION,
-                        if quiet {
-                            styles::CLOSE_REST_OPACITY
-                        } else {
-                            1.0
-                        },
-                    )))
-                    .width(TAB_CLOSE_SIDE)
-                    .height(TAB_CLOSE_SIDE)
-                    .padding(0.0)
-                    .style(styles::close_mark(quiet))
-                    .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-                    text(fl!("ui-session-close-button")).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .padding(styles::TOOLTIP_PADDING)
-                .style(styles::tooltip),
-            )
-            .id(tab_close_id(tab.id));
-            let label = self.tab_heading(tab, active).push(close);
-            tabs = tabs.push(self.tab_button(tab.id, label, active));
-        }
-        strip
-            .push(crate::tab_scroller::tab_scroller(
-                tabs,
-                tab_strip_id(),
-                shown.map(tab_id),
-            ))
-            .into()
     }
 
     /// A Files tab's page: its integrated editor when a file is open in it, else its lists,
@@ -11874,29 +11728,6 @@ fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Me
     )
 }
 
-/// The count of a tab's running post-connect steps, as the C# tab shows it; its tooltip says
-/// which step and what became of it, a click stops the rest.
-fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_, Message> {
-    let count = format!("{}/{}", progress.step, progress.total);
-    let status = texts::step_status(progress.status);
-    tooltip(
-        button(text(count.clone()).size(font_size::CAPTION))
-            .style(styles::subtle)
-            .on_press(Message::App(AppMessage::StopPostConnect(tab))),
-        text(fl!(
-            "ui-post-connect-tooltip",
-            progress = count,
-            status = status,
-            command = progress.command.as_str()
-        ))
-        .size(font_size::CAPTION),
-        tooltip::Position::Bottom,
-    )
-    .padding(styles::TOOLTIP_PADDING)
-    .style(styles::tooltip)
-    .into()
-}
-
 /// The work of sudo in a Files tab: a file edited with it opened and saved, a folder
 /// listed as root.
 fn sudo_task(effect: Effect) -> Task<Message> {
@@ -12487,16 +12318,13 @@ impl std::fmt::Display for TimeoutChoice {
     }
 }
 
-/// A limit of sessions as the list names it: none at 0.
+/// An open sessions threshold as the list names it: its number, as the C# field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SessionsChoice(u32);
 
 impl std::fmt::Display for SessionsChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&match self.0 {
-            0 => fl!("ui-settings-max-sessions-none"),
-            max => max.to_string(),
-        })
+        write!(f, "{}", self.0)
     }
 }
 
@@ -13295,6 +13123,149 @@ mod tests {
         let mut png = b"PNG image".to_vec();
         png.extend_from_slice(&[0; 20]);
         assert_eq!(dib_of_bitmap_file(&png), None);
+    }
+
+    #[test]
+    fn ctrl_and_a_digit_left_by_every_widget_shows_that_tab_on_qwerty_and_azerty() {
+        use keyboard::key::Code;
+        let digit = |typed: &str, code: Code, modifiers, status, repeat| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(typed.into()),
+                    modified_key: Key::Character(typed.into()),
+                    physical_key: Physical::Code(code),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat,
+                }),
+                status,
+                window::Id::unique(),
+            )
+        };
+        let rows = [
+            (Code::Digit1, "1", "&"),
+            (Code::Digit2, "2", "\u{e9}"),
+            (Code::Digit3, "3", "\""),
+            (Code::Digit4, "4", "'"),
+            (Code::Digit5, "5", "("),
+            (Code::Digit6, "6", "-"),
+            (Code::Digit7, "7", "\u{e8}"),
+            (Code::Digit8, "8", "_"),
+            (Code::Digit9, "9", "\u{e7}"),
+        ];
+        for (place, (code, qwerty, azerty)) in (1..).zip(rows) {
+            for typed in [qwerty, azerty] {
+                assert!(
+                    matches!(
+                        digit(typed, code, Modifiers::CTRL, event::Status::Ignored, false),
+                        Some(Message::Shortcut(WindowShortcut::GoToTab(got))) if got == place
+                    ),
+                    "Ctrl+{typed} on {code:?}"
+                );
+                assert!(
+                    digit(typed, code, Modifiers::CTRL, event::Status::Captured, false).is_none(),
+                    "a terminal keeps Ctrl+{typed}, as the C# leaves it to one"
+                );
+                assert!(
+                    digit(typed, code, Modifiers::CTRL, event::Status::Ignored, true).is_none(),
+                    "held, it does not repeat"
+                );
+            }
+        }
+        assert!(!matches!(
+            digit(
+                "1",
+                Code::Digit1,
+                Modifiers::CTRL | Modifiers::SHIFT,
+                event::Status::Ignored,
+                false
+            ),
+            Some(Message::Shortcut(WindowShortcut::GoToTab(_)))
+        ));
+        assert!(matches!(
+            digit(
+                "0",
+                Code::Digit0,
+                Modifiers::CTRL,
+                event::Status::Ignored,
+                false
+            ),
+            Some(Message::Shortcut(WindowShortcut::Zoom(Zoom::Reset)))
+        ));
+    }
+
+    #[test]
+    fn ctrl_f4_closes_and_ctrl_shift_page_keys_move_the_tab_whatever_no_widget_took() {
+        let named = |key: Named, modifiers, repeat| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Named(key),
+                    modified_key: Key::Named(key),
+                    physical_key: Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat,
+                }),
+                event::Status::Ignored,
+                window::Id::unique(),
+            )
+        };
+        assert!(matches!(
+            named(Named::F4, Modifiers::CTRL, false),
+            Some(Message::Shortcut(WindowShortcut::CloseTab))
+        ));
+        assert!(
+            named(Named::F4, Modifiers::CTRL, true).is_none(),
+            "held, it closes one tab"
+        );
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        assert!(matches!(
+            named(Named::PageUp, both, false),
+            Some(Message::Shortcut(WindowShortcut::MoveTabLeft))
+        ));
+        assert!(matches!(
+            named(Named::PageDown, both, true),
+            Some(Message::Shortcut(WindowShortcut::MoveTabRight))
+        ));
+    }
+
+    #[test]
+    fn ctrl_shift_r_left_by_every_widget_reopens_and_a_session_keeps_its_own() {
+        use keyboard::key::Code;
+        let r = |modifiers, status, repeat| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character("R".into()),
+                    modified_key: Key::Character("R".into()),
+                    physical_key: Physical::Code(Code::KeyR),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat,
+                }),
+                status,
+                window::Id::unique(),
+            )
+        };
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        assert!(matches!(
+            r(both, event::Status::Ignored, false),
+            Some(Message::Shortcut(WindowShortcut::ReopenClosedTab))
+        ));
+        assert!(
+            r(both, event::Status::Captured, false).is_none(),
+            "a terminal or a desktop keeps it, as the C# leaves it to one"
+        );
+        assert!(
+            r(both, event::Status::Ignored, true).is_none(),
+            "held, it reopens one close"
+        );
+        assert!(!matches!(
+            r(Modifiers::CTRL, event::Status::Ignored, false),
+            Some(Message::Shortcut(WindowShortcut::ReopenClosedTab))
+        ));
     }
 
     #[test]

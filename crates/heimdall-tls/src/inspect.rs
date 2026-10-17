@@ -36,7 +36,8 @@ use tokio_rustls::rustls::crypto::{
 };
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{
-    ClientConfig, ClientConnection, DigitallySignedStruct, Error, ProtocolVersion, SignatureScheme,
+    AlertDescription, ClientConfig, ClientConnection, DigitallySignedStruct, Error,
+    PeerIncompatible, ProtocolVersion, SignatureScheme,
 };
 
 /// The TLS version a handshake settled on.
@@ -148,6 +149,29 @@ pub fn inspection_server_name(host: &str) -> Option<ServerName<'static>> {
     ServerName::try_from(host.to_owned()).ok()
 }
 
+/// Whether `refusal`, a handshake's, says the server speaks only a TLS version older than
+/// 1.2, which Heimdall refuses (owner decision of 2026-10-16: no TLS 1.0 nor 1.1, a clear
+/// message instead): its server hello chose one (rustls then alerts `protocol_version`
+/// itself), or it answered the client hello with a `protocol_version` alert.
+#[must_use]
+pub fn is_obsolete_version(refusal: &Error) -> bool {
+    matches!(
+        refusal,
+        Error::PeerIncompatible(PeerIncompatible::ServerDoesNotSupportTls12Or13)
+            | Error::AlertReceived(AlertDescription::ProtocolVersion)
+    )
+}
+
+/// Whether the failed handshake `failure` of an [`inspection_connector`] was refused for
+/// [`is_obsolete_version`]: tokio-rustls carries rustls' error inside the I/O error.
+#[must_use]
+pub fn failed_on_obsolete_version(failure: &std::io::Error) -> bool {
+    failure
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<Error>())
+        .is_some_and(is_obsolete_version)
+}
+
 /// What the server of `connection`, its handshake over, presented; `None` when it presented
 /// no certificate or the version is neither TLS 1.2 nor TLS 1.3.
 #[must_use]
@@ -186,7 +210,10 @@ mod tests {
         SupportedProtocolVersion,
     };
 
-    use super::{PresentedChain, TlsVersion, inspection_connector, presented_chain, read_only};
+    use super::{
+        PresentedChain, TlsVersion, failed_on_obsolete_version, inspection_config,
+        inspection_connector, is_obsolete_version, presented_chain, read_only,
+    };
     use crate::inspection_server_name;
 
     /// Flights exchanged at most before a test handshake is said stuck.
@@ -342,6 +369,82 @@ mod tests {
                 "the handshake signature is checked in {version:?}"
             );
         }
+    }
+
+    /// The record a server speaking TLS 1.0 alone answers a client hello with: a server
+    /// hello choosing TLS 1.0 (`0x0301`), `TLS_RSA_WITH_AES_128_CBC_SHA`, no extension.
+    fn tls10_server_hello() -> Vec<u8> {
+        const TLS10: [u8; 2] = [0x03, 0x01];
+        const HANDSHAKE_RECORD: u8 = 0x16;
+        const SERVER_HELLO: u8 = 0x02;
+        const RSA_AES_128_CBC_SHA: [u8; 2] = [0x00, 0x2F];
+        const RANDOM_LEN: usize = 32;
+        let mut hello = TLS10.to_vec();
+        hello.extend([0x5A; RANDOM_LEN]);
+        // No session identifier, the suite, no compression.
+        hello.push(0);
+        hello.extend(RSA_AES_128_CBC_SHA);
+        hello.push(0);
+        let mut message = vec![
+            SERVER_HELLO,
+            0,
+            0,
+            u8::try_from(hello.len()).expect("short"),
+        ];
+        message.extend(hello);
+        let mut record = vec![HANDSHAKE_RECORD];
+        record.extend(TLS10);
+        record.extend(u16::try_from(message.len()).expect("short").to_be_bytes());
+        record.extend(message);
+        record
+    }
+
+    /// The fatal `protocol_version` alert a server refusing every version offered answers.
+    fn protocol_version_alert() -> Vec<u8> {
+        const ALERT_RECORD: u8 = 0x15;
+        const FATAL: u8 = 2;
+        const PROTOCOL_VERSION: u8 = 70;
+        vec![ALERT_RECORD, 0x03, 0x01, 0, 2, FATAL, PROTOCOL_VERSION]
+    }
+
+    /// What the inspection's client makes of `answer`, the whole of a server's reply to its
+    /// client hello.
+    fn answered(answer: &[u8]) -> Error {
+        let mut client = ClientConnection::new(
+            Arc::new(inspection_config()),
+            inspection_server_name("old.lab").expect("name"),
+        )
+        .expect("client");
+        let mut hello = Vec::new();
+        while client.wants_write() {
+            client.write_tls(&mut hello).expect("client hello");
+        }
+        let mut flight = answer;
+        client.read_tls(&mut flight).expect("client reads");
+        client.process_new_packets().expect_err("refused")
+    }
+
+    #[test]
+    fn a_server_speaking_only_tls_1_0_or_1_1_is_told_apart_from_other_failures() {
+        for answer in [tls10_server_hello(), protocol_version_alert()] {
+            let refusal = answered(&answer);
+            assert!(is_obsolete_version(&refusal), "{refusal:?}");
+            // As tokio-rustls hands it over.
+            let failure = std::io::Error::new(std::io::ErrorKind::InvalidData, refusal);
+            assert!(failed_on_obsolete_version(&failure));
+        }
+        let handshake_failure = answered(&[0x15, 0x03, 0x03, 0, 2, 2, 40]);
+        assert!(
+            !is_obsolete_version(&handshake_failure),
+            "{handshake_failure:?}"
+        );
+        assert!(!failed_on_obsolete_version(&std::io::Error::other(
+            "refused"
+        )));
+        assert!(!failed_on_obsolete_version(&std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            handshake_failure
+        )));
     }
 
     #[test]

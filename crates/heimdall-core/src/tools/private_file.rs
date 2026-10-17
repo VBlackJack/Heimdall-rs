@@ -27,6 +27,12 @@
 //! replaced by one granting the current user, the Administrators and SYSTEM alone (`icacls`,
 //! which changes an access list through a handle the sharing does not refuse), and only then
 //! is the key written: Win32-OpenSSH refuses a key other accounts can read.
+//!
+//! A log file a session writes, its transcript or a session log, is made the same way as
+//! the C# `RestrictedLogFile.Create` makes one (`RestrictedLogFile.cs:37-67`): new and empty,
+//! restricted while nobody else can open it, and only then opened to add to it. A transcript
+//! can hold a password a server echoed, and its folder can be one the user chose, whose
+//! access list is wider than the user's.
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -61,9 +67,7 @@ const TEMPORARY_TRIES: usize = 8;
 /// The error of the creation, the restriction, the write or the rename: on any of them the
 /// file written is removed, and what was at `path` is left as it was.
 pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    write_private_with(path, bytes, |file| {
-        folder_acl::restrict_file(file).map_err(io::Error::other)
-    })
+    write_private_with(path, bytes, restrict_file)
 }
 
 /// [`write_private`] with `restrict` restricting the access of the file it is given, for a
@@ -85,6 +89,61 @@ fn write_private_with(
         let _ = fs::remove_file(&temporary);
     }
     renamed
+}
+
+/// Opens the new log file `path` to add to it, refused if one is there, readable by its
+/// owner alone before a byte is written in it.
+///
+/// # Errors
+///
+/// The error of the creation or the restriction, a file there already included: when the
+/// restriction fails the file made is removed, so that the next try does not take it for
+/// one restricted, as the C# `RestrictedLogFile.Create`.
+pub fn create_private_log(path: &Path) -> io::Result<File> {
+    open_private_log_with(path, true, restrict_file)
+}
+
+/// Opens the log file `path` to add to it, made if need be, readable by its owner alone
+/// before a byte is written in it. One already there, from an earlier run, is restricted
+/// again before anything is added: it may have been made before its folder or this was.
+///
+/// # Errors
+///
+/// The error of the creation, the restriction or the opening: nothing is to be written in
+/// a file that could not be restricted.
+pub fn open_private_log(path: &Path) -> io::Result<File> {
+    open_private_log_with(path, false, restrict_file)
+}
+
+/// The file `file` restricted to its owner on Windows, as a key is.
+fn restrict_file(file: &Path) -> io::Result<()> {
+    folder_acl::restrict_file(file).map_err(io::Error::other)
+}
+
+/// [`create_private_log`] when `new`, else [`open_private_log`], with `restrict` restricting
+/// the access of the file it is given, for a test that makes the restriction fail.
+fn open_private_log_with(
+    path: &Path,
+    new: bool,
+    restrict: impl Fn(&Path) -> io::Result<()>,
+) -> io::Result<File> {
+    let path = absolute(path);
+    match create_private(&path) {
+        Ok(made) => {
+            // Restricted while the handle, sharing nothing, keeps everyone else out, and
+            // the file is still empty; closed after, as that handle refuses a second one.
+            let restricted = restrict(&path);
+            drop(made);
+            if let Err(error) = restricted {
+                let _ = fs::remove_file(&path);
+                return Err(error);
+            }
+        }
+        Err(error) if !new && error.kind() == io::ErrorKind::AlreadyExists => restrict(&path)?,
+        Err(error) => return Err(error),
+    }
+    // Never made here: should the file have gone meanwhile, nothing is written at all.
+    OpenOptions::new().append(true).open(&path)
 }
 
 /// `path` made from the current folder when it is relative: `icacls` is only ever given an
@@ -199,6 +258,86 @@ mod tests {
         })
         .expect("written");
         assert_eq!(fs::read(&path).expect("read"), b"key");
+    }
+
+    #[test]
+    fn a_log_is_restricted_while_still_empty_then_opened_to_add_to_it() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("session.log");
+        let mut file = open_private_log_with(&path, true, |made| {
+            assert_eq!(
+                fs::metadata(made).expect("made").len(),
+                0,
+                "nothing in it yet"
+            );
+            #[cfg(windows)]
+            assert!(
+                OpenOptions::new().read(true).open(made).is_err(),
+                "nobody else opens it before it is restricted"
+            );
+            Ok(())
+        })
+        .expect("opened");
+        file.write_all(b"one\n").expect("written");
+        drop(file);
+        let mut again = open_private_log(&path).expect("opened again");
+        again.write_all(b"two\n").expect("written");
+        drop(again);
+        assert_eq!(fs::read_to_string(&path).expect("read"), "one\ntwo\n");
+    }
+
+    #[test]
+    fn a_new_log_refuses_a_file_already_there() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("session.log");
+        fs::write(&path, "someone else's").expect("written");
+        let refused = create_private_log(&path).expect_err("refused");
+        assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&path).expect("read"), "someone else's");
+    }
+
+    #[test]
+    fn a_log_already_there_is_restricted_again_before_more_is_added() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("session.log");
+        fs::write(&path, "earlier\n").expect("written");
+        let restricted = std::cell::Cell::new(false);
+        let file = open_private_log_with(&path, false, |found| {
+            assert_eq!(found, path);
+            restricted.set(true);
+            Ok(())
+        })
+        .expect("opened");
+        drop(file);
+        assert!(restricted.get());
+        let refused = open_private_log_with(&path, false, |_| Err(io::Error::other("refused")));
+        assert!(
+            refused.is_err(),
+            "nothing added to a file left unrestricted"
+        );
+        assert_eq!(fs::read_to_string(&path).expect("read"), "earlier\n");
+    }
+
+    #[test]
+    fn a_log_that_cannot_be_restricted_is_removed_and_nothing_is_written() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("session.log");
+        for new in [true, false] {
+            let failed = open_private_log_with(&path, new, |_| Err(io::Error::other("refused")));
+            assert_eq!(failed.expect_err("refused").to_string(), "refused");
+            assert!(names(dir.path()).is_empty(), "the file made is removed");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_log_is_readable_by_its_owner_alone() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("session.log");
+        drop(create_private_log(&path).expect("opened"));
+        let mode = fs::metadata(&path).expect("metadata").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[cfg(windows)]

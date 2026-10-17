@@ -483,6 +483,33 @@ fn the_base64_tool_encodes_from_its_button_and_shows_its_help() {
 }
 
 #[test]
+fn a_failed_export_is_said_under_the_header_until_one_is_written() {
+    use heimdall_ui::tools::CopySlot;
+    use heimdall_ui::tools::file_export::Saved;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(ToolId::SecNumCloud));
+    let tab = shell.app().tabs[0].id;
+    let exported =
+        |saved| Message::Tool(tab, ToolMessage::Exported(CopySlot::SecNumCloudHtml, saved));
+    let failed = "Export failed: disk full";
+    let _ = shell.update(exported(Saved::Failed("disk full".to_owned())));
+    simulator(&shell)
+        .find(failed)
+        .expect("the reason, as the C# StatusExportFailed");
+    let _ = shell.update(exported(Saved::Cancelled));
+    simulator(&shell)
+        .find(failed)
+        .expect("a cancel changes nothing");
+    let _ = shell.update(exported(Saved::Written));
+    assert!(
+        simulator(&shell).find(failed).is_err(),
+        "said no more once written"
+    );
+}
+
+#[test]
 fn the_url_tool_encodes_as_it_is_typed() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
@@ -1084,4 +1111,66 @@ fn the_password_audit_scores_a_password_as_it_is_typed() {
     ui.find("Found in common password list").expect("common");
     ui.find("8 characters (minimum: 8)").expect("length");
     assert!(ui.find("password").is_err(), "the password is hidden");
+}
+
+#[test]
+fn a_tool_opens_on_the_selected_host_or_the_palette_argument_named_after_it() {
+    use heimdall_app::tools::ToolContext;
+    use heimdall_core::profile::{ProfileId, SshProfile};
+    use heimdall_ui::shell::TreeShortcut;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store =
+        heimdall_core::store::ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge([SshProfile {
+        id: ProfileId::new("web"),
+        name: "web".to_owned(),
+        group: None,
+        host: "web.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        gateway: None,
+        local_tunnel_port: None,
+        vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
+        compression: false,
+        sftp: false,
+        legacy_algorithms: false,
+        session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
+    }]);
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    app.selected_profile = Some(ProfileId::new("web"));
+    let mut shell = Shell::with_app(app);
+    let ping = tools::label(ToolId::Ping);
+
+    // From the sidebar, a network tool on the selected session's host, named after it, as
+    // the C# `ResolveToolTabTitle`; a tool reaching no host on nothing.
+    let _ = shell.update(Message::OpenTool(ToolId::Ping));
+    let _ = shell.update(Message::OpenTool(ToolId::Base64));
+    let tabs = &shell.app().tabs;
+    assert_eq!(tabs[0].display_title(), format!("{ping}: web.lab"));
+    assert_eq!(tabs[0].tool_context(), &ToolContext::on_host("web.lab"));
+    assert_eq!(tabs[1].display_title(), tools::label(ToolId::Base64));
+    assert!(tabs[1].tool_context().is_empty());
+
+    // From the palette, "ping 10.0.0.1": that tool alone, opened on it.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::PaletteQuery("ping 10.0.0.1".to_owned()));
+    simulator(&shell)
+        .find(format!("{ping}: 10.0.0.1").as_str())
+        .expect("its line");
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    let tabs = &shell.app().tabs;
+    assert_eq!(tabs.len(), 3);
+    assert_eq!(tabs[2].display_title(), format!("{ping}: 10.0.0.1"));
+    assert_eq!(
+        tabs[2].tool_context(),
+        &ToolContext::with_argument("10.0.0.1")
+    );
 }

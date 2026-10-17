@@ -79,6 +79,9 @@ pub enum TabGroup {
     Others,
     /// The tabs after this one.
     Right,
+    /// Every tab of the strip, this one and the pinned ones included, as the C# "Close all
+    /// tabs" (`ConnectionViewModel.CloseAllSessions`).
+    All,
 }
 
 impl App {
@@ -173,6 +176,7 @@ impl App {
         let from = match group {
             TabGroup::Others => 0,
             TabGroup::Right => index,
+            TabGroup::All => return strip.iter().map(|tab| tab.id).collect(),
         };
         // A pinned tab is left, as the C# leaves it.
         strip[from..]
@@ -180,6 +184,21 @@ impl App {
             .filter(|tab| tab.id != tab_id && !tab.pinned)
             .map(|tab| tab.id)
             .collect()
+    }
+
+    /// The tab of the strip `tab_id` changes place with when moved one step to the left, or
+    /// to the `right`, as the C# `MoveActiveTab`: its neighbour there, when it is in the same
+    /// block, pinned or not; `None` at the end of its block, where the move does nothing.
+    #[must_use]
+    pub fn tab_step_target(&self, tab_id: TabId, right: bool) -> Option<TabId> {
+        let strip = self.strip();
+        let index = strip.iter().position(|tab| tab.id == tab_id)?;
+        let neighbour = if right {
+            strip.get(index + 1)
+        } else {
+            index.checked_sub(1).and_then(|at| strip.get(at))
+        }?;
+        (neighbour.pinned == strip[index].pinned).then_some(neighbour.id)
     }
 
     /// Tab `tab_id` put where `onto` is, as the C# `MoveSession`: the place asked for, then
@@ -290,9 +309,7 @@ impl App {
             });
             return;
         }
-        for tab in tabs {
-            self.close_tab(tab);
-        }
+        self.close_tabs_by_user(&tabs);
     }
 
     /// Whether `tab`'s session is saved nowhere, to be saved as a profile: one typed in
