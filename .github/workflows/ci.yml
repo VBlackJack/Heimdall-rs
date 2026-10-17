@@ -28,6 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Disk space at the start
+        shell: bash
+        run: df -h
+
       - name: Install Linux build dependencies of iced
         if: runner.os == 'Linux'
         # A package mirror that stops answering held a run six hours.
@@ -66,6 +70,14 @@ jobs:
       - name: Tests
         run: cargo test --workspace --locked
 
+      # The headroom left, in every log: a failed step still shows how full the disk was.
+      - name: Disk space after the tests
+        if: always()
+        shell: bash
+        run: |
+          df -h
+          du -sh target 2>/dev/null || true
+
       # The executable of each change, so it can be run by hand on a machine without a
       # Rust toolchain; release profile, as shipped.
       - name: Build the application
@@ -81,6 +93,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Disk space at the end
+        if: always()
+        shell: bash
+        run: |
+          df -h
+          du -sh target 2>/dev/null || true
+
   # The scratch data folder of the automated UI tests: the one job that builds with the
   # test-data-dir feature, in debug only (it does not compile in release), uploading nothing.
   # xtask's guard refuses the feature anywhere else, and --release or an upload here.
@@ -90,6 +109,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+
+      - name: Disk space at the start
+        run: df -h
 
       - name: Install Linux build dependencies of iced
         timeout-minutes: 10
@@ -107,6 +129,12 @@ jobs:
 
       - name: Tests with the test data folder
         run: cargo test -p heimdall-core -p heimdall-ui --locked --features heimdall-ui/test-data-dir
+
+      - name: Disk space after the tests
+        if: always()
+        run: |
+          df -h
+          du -sh target 2>/dev/null || true
 
   deny:
     name: Dependencies (cargo-deny)
