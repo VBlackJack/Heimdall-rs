@@ -18,6 +18,7 @@
 
 pub mod citrix_cache;
 pub mod csharp;
+pub mod csharp_settings;
 pub mod foreign;
 pub mod gateways;
 pub mod mobaxterm;

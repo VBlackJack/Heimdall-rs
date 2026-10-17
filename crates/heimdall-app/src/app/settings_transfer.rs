@@ -93,10 +93,16 @@ impl App {
         })
     }
 
-    /// The settings read, taken as the user agreed to: saved, then in use.
+    /// The settings read, taken as the user agreed to: saved, then in use. Only the changes
+    /// shown are laid over the settings as they are now: what changed meanwhile without
+    /// the user, a lockout or the last look for a newer release, is not put back.
     pub(super) fn apply_imported_settings(&mut self, read: SettingsImport) -> Vec<Effect> {
         let count = read.changes.len();
-        let before = std::mem::replace(&mut self.settings, read.settings);
+        let taken = self
+            .settings
+            .with_changes_of(&read)
+            .unwrap_or(read.settings);
+        let before = std::mem::replace(&mut self.settings, taken);
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings = before;
             self.dialog = Some(Dialog::save_failed(&error));
