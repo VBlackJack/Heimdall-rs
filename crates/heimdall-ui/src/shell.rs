@@ -1006,6 +1006,8 @@ pub enum Message {
     DropGathered(crate::drop_batch::DropPlace),
     /// An action in the Settings page's box of resolution presets.
     PresetsEdited(iced::widget::text_editor::Action),
+    /// A change in the Settings page's external tools.
+    ExternalToolsEdit(crate::external_tools_view::ToolsEdit),
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
     OpenWithSystem(std::path::PathBuf),
     /// Write a note about the session `id` from `template`, then open it in the editor set.
@@ -1233,6 +1235,7 @@ impl fmt::Debug for Message {
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
+            Self::ExternalToolsEdit(_) => f.write_str("ExternalToolsEdit(..)"),
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
@@ -1620,6 +1623,8 @@ pub struct Shell {
     tool_paths_typed: [Option<String>; ToolPath::COUNT],
     /// The Settings page's box of resolution presets.
     presets: crate::presets_editor::PresetsEditor,
+    /// The Settings page's external tools, as edited.
+    external_tools: crate::external_tools_view::ExternalToolsEditor,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -1835,6 +1840,8 @@ impl Shell {
         crate::logging::set_enabled(app.settings().diagnostics_log);
         let presets =
             crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
+        let external_tools =
+            crate::external_tools_view::ExternalToolsEditor::new(&app.settings().external_tools);
         let language_shown = app.settings().language;
         Self {
             app,
@@ -1900,6 +1907,7 @@ impl Shell {
             editor_typed: None,
             tool_paths_typed: Default::default(),
             presets,
+            external_tools,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -2822,6 +2830,7 @@ impl Shell {
             }
             Message::BrowseKeyFile => return pick_key_file(self.main_window),
             Message::Browse(target) => return self.browse(target),
+            Message::ExternalToolsEdit(edit) => self.external_tools_edit(edit),
             Message::Browsed(target, path) => self.browsed(target, path),
             Message::CopyError(tab) => return self.copy_error(tab),
             Message::ToggleFailureDetails(tab) => {
@@ -3007,6 +3016,9 @@ impl Shell {
         // A reset, or presets that could not be saved, shown again in their box.
         self.presets
             .sync(&self.app.settings().rdp_resolution_presets);
+        // As the external tools: an import, or a list that could not be saved.
+        self.external_tools
+            .sync(&self.app.settings().external_tools);
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
         if let Some(field) = self.focus_next.take() {
@@ -3769,6 +3781,7 @@ impl Shell {
                 TreeMenu::ConnectAs(_)
                 | TreeMenu::ConnectWith(_)
                 | TreeMenu::OpenInSplit(_)
+                | TreeMenu::ExternalTools(_)
                 | TreeMenu::MoveFolder(_)
                 | TreeMenu::FolderColor(_)
                 | TreeMenu::MoveProfile(_)
@@ -4540,6 +4553,23 @@ impl Shell {
                     probe,
                 })
             }),
+            Effect::LaunchExternalTool { name, launch } => Task::future(async move {
+                // The elevation prompt holds the call until answered, and a start waits on
+                // the system: off the UI thread, as `PuTTY`.
+                let started = name.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    heimdall_app::external_tool::launch(&started, &launch)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    Err(heimdall_app::external_tool::ToolFailure::NotStarted(
+                        error.to_string(),
+                    ))
+                });
+                Message::App(AppMessage::ExternalTool(
+                    heimdall_app::ExternalToolMessage::Launched { name, result },
+                ))
+            }),
             Effect::LaunchPutty { name, launch } => Task::future(async move {
                 // Finding PuTTY, the X server and starting them wait on the system: off the
                 // UI thread, as Remote Desktop Connection.
@@ -5038,6 +5068,19 @@ impl Shell {
             // Only while the session is saved.
             self.app.profile_summary(id)?;
             tree_view::notes_entries(id)
+        } else if let TreeMenu::ExternalTools(id) = menu {
+            // Only while the session is saved and a tool is listed.
+            self.app.profile_summary(id)?;
+            let names: Vec<String> = self
+                .app
+                .external_tools()
+                .iter()
+                .map(|tool| tool.name.trim().to_owned())
+                .collect();
+            if names.is_empty() {
+                return None;
+            }
+            tree_view::external_tools_entries(id, &names)
         } else if let TreeMenu::SendKeys(tab) = *menu {
             // Only while its desktop is shown.
             shown_desktop(self.app.tab(tab)?)?;
@@ -5202,6 +5245,7 @@ impl Shell {
                 | TreeMenu::SendKeys(_)
                 | TreeMenu::Macros(_)
                 | TreeMenu::Notes(_)
+                | TreeMenu::ExternalTools(_)
                 | TreeMenu::Tool(_)
                 | TreeMenu::Tunnel(_) => None,
             };
@@ -5211,7 +5255,13 @@ impl Shell {
                 .map(|p| self.app.connect_as_choices(&p.id))
                 .unwrap_or_default();
             let splittable = self.app.shown_tab().is_some();
-            tree_view::menu_entries(menu, profile.as_ref(), &connect_as, (editable, splittable))
+            let tools = !self.app.external_tools().is_empty();
+            tree_view::menu_entries(
+                menu,
+                profile.as_ref(),
+                &connect_as,
+                (editable, splittable, tools),
+            )
         };
         Some(entries)
     }
@@ -7355,6 +7405,7 @@ impl Shell {
             reopen_closed: self.app.reopen_closed_count(),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
+            external_tools: !self.app.external_tools().is_empty(),
             pane: false,
             docked: self.app.is_docked(id),
             detach: self.app.can_detach(tab),

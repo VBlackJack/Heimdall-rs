@@ -320,6 +320,16 @@ pub enum Notice {
     NothingToUndo,
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
+    /// The external tool of this name was started.
+    ExternalToolStarted(String),
+    /// The external tool of this name did not start, and why, as the C#
+    /// `ExternalToolLaunchError` says it.
+    ExternalToolFailed {
+        /// The tool.
+        name: String,
+        /// Why.
+        failure: crate::external_tool::ToolFailure,
+    },
     /// A macro recording ended with nothing typed.
     MacroNothingRecorded,
     /// The macro of this name was kept.

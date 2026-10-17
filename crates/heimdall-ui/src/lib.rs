@@ -39,6 +39,7 @@ pub mod editor_history;
 mod editor_syntax;
 pub mod ellipsis;
 pub mod export_file;
+pub mod external_tools_view;
 pub mod file_dialog;
 pub mod file_import_view;
 pub mod files_drag;

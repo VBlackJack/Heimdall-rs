@@ -25,6 +25,7 @@ pub mod code_page;
 pub mod credential_provider;
 pub mod credentials;
 pub mod export;
+pub mod external_tools;
 pub mod files_state;
 pub mod folder;
 pub mod folder_acl;

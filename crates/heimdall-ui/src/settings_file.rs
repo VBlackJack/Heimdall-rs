@@ -147,6 +147,9 @@ async fn read(path: std::path::PathBuf) -> Result<String, String> {
         .map_err(|error| reason(&error))
 }
 
+/// Between the tools of a list of external tools, as the C# `ListSeparator`.
+const PROGRAMS_SEPARATOR: &str = ", ";
+
 /// A value as the list of changes shows it.
 fn shown(value: Option<&SettingValue>) -> String {
     match value {
@@ -158,6 +161,26 @@ fn shown(value: Option<&SettingValue>) -> String {
         }
         Some(SettingValue::Text(text)) => heimdall_app::server_text(text),
         Some(SettingValue::List(count)) => fl!("ui-settings-value-items", count = (*count)),
+        // Tool by tool, as the C# `DescribeFullValue`: what would run, never a count.
+        Some(SettingValue::Programs(programs)) => programs
+            .iter()
+            .map(|shown| {
+                let (name, program) = (
+                    heimdall_app::server_text(&shown.name),
+                    heimdall_app::server_text(&shown.program),
+                );
+                if shown.administrator {
+                    fl!(
+                        "ui-settings-value-tool-admin",
+                        name = name,
+                        program = program
+                    )
+                } else {
+                    fl!("ui-settings-value-tool", name = name, program = program)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(PROGRAMS_SEPARATOR),
     }
 }
 

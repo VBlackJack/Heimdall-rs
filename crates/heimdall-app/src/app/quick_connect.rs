@@ -22,7 +22,8 @@
 //! or address offers SSH and RDP to it, the one last used with it first. Opened from a
 //! tab's "Split...", the sessions open in other tabs come first, to be merged into it
 //! without reconnecting; Ctrl+Enter opens a session as a split of the tab shown, as the C#
-//! `ConnectSplitFromPaletteAsync`.
+//! `ConnectSplitFromPaletteAsync`. The user's external tools are found by their name and
+//! started for the session selected in the tree.
 
 use std::net::IpAddr;
 
@@ -92,6 +93,12 @@ pub enum QuickResult {
         /// given to the tool as plain text.
         argument: Option<String>,
     },
+    /// An external tool of the user's list, started for the session selected in the tree,
+    /// as the C# palette's `ext-tool-` items.
+    ExternalTool {
+        /// Its name, unique in the list.
+        name: String,
+    },
 }
 
 /// The section of the palette a result is listed under, as the C# palette groups its
@@ -112,6 +119,8 @@ pub enum QuickGroup {
     Tools,
     /// A tool found, under its category.
     Category(ToolCategory),
+    /// An external tool found, as the C# `PaletteExternalToolsHeader`.
+    ExternalTools,
 }
 
 /// A line of the palette: a result and the section it is listed under.
@@ -416,8 +425,27 @@ impl App {
                 .map(|tool| QuickRow::tool(tool, words, QuickGroup::Category(tool.category())))
                 .collect();
         }
-        // Tools first, then the profiles, as the C# adds them; the sort keeps that order
+        // Tools first, then the external tools by their name, then the profiles, as the C#
+        // adds them (`CommandPaletteViewModel.Search.cs:175-200`); the sort keeps that order
         // between equal scores.
+        let external = self
+            .settings
+            .external_tools
+            .iter()
+            .map(|tool| tool.name.trim())
+            .filter(|name| !name.is_empty())
+            .filter_map(|name| {
+                let score = score_text(name, query);
+                (score > 0).then(|| {
+                    let row = QuickRow {
+                        result: QuickResult::ExternalTool {
+                            name: name.to_owned(),
+                        },
+                        group: QuickGroup::ExternalTools,
+                    };
+                    (score, row)
+                })
+            });
         let mut scored: Vec<(usize, QuickRow)> = ToolId::ALL
             .into_iter()
             .filter_map(|tool| {
@@ -427,6 +455,7 @@ impl App {
                     (score, row)
                 })
             })
+            .chain(external)
             .chain(
                 self.found_profiles(query)
                     .into_iter()
@@ -527,6 +556,14 @@ impl App {
                 }),
                 None => Message::SelectTab(tab),
             },
+            // Started, never split nor merged, as the C# routes it in every mode; for the
+            // session selected in the tree, as the C# `LaunchExternalToolFromPalette`.
+            QuickResult::ExternalTool { name } => {
+                Message::ExternalTool(super::ExternalToolMessage::Launch {
+                    name,
+                    profile: self.selected_profile.clone(),
+                })
+            }
             QuickResult::Tool {
                 tool,
                 name,
@@ -609,7 +646,9 @@ impl App {
                 return self.update(Message::ConnectProfile(profile.id));
             }
             // Routed by `quick_open`; reaching here, they open as it would outside split mode.
-            result @ (QuickResult::Session { .. } | QuickResult::Tool { .. }) => {
+            result @ (QuickResult::Session { .. }
+            | QuickResult::Tool { .. }
+            | QuickResult::ExternalTool { .. }) => {
                 return self.update(self.quick_open(result, None, false));
             }
             QuickResult::Ssh {
