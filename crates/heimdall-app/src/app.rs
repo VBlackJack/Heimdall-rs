@@ -84,6 +84,7 @@ mod credential_guard_gate;
 mod csharp_settings_import;
 mod detail;
 mod docked_sftp;
+mod external_tools;
 mod file_import;
 mod files_clipboard;
 mod files_drop;
@@ -165,6 +166,7 @@ pub use citrix_import::CitrixImportOutcome;
 pub use connect_as::ConnectAs;
 pub use csharp_settings_import::ImportedPreferences;
 pub use detail::SavedCredentials;
+pub use external_tools::ExternalToolMessage;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
 pub use files_edit::SudoAction;
@@ -834,6 +836,8 @@ pub enum Message {
     Folder(FolderMessage),
     /// A profile's Rename or "Move to folder".
     ProfileMenu(ProfileMenuMessage),
+    /// Something about an external tool of the user's list.
+    ExternalTool(ExternalToolMessage),
     /// Something about the profiles selected together.
     Selection(SelectionMessage),
     /// Select a profile in the tree.
@@ -1150,6 +1154,7 @@ impl fmt::Debug for Message {
             Self::Filter(message) => write!(f, "Filter({message:?})"),
             Self::Folder(message) => write!(f, "Folder({message:?})"),
             Self::ProfileMenu(message) => write!(f, "ProfileMenu({message:?})"),
+            Self::ExternalTool(message) => write!(f, "ExternalTool({message:?})"),
             Self::Selection(message) => write!(f, "Selection({message:?})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::FoldAll(fold) => write!(f, "FoldAll({fold})"),
@@ -1458,6 +1463,15 @@ pub enum Effect {
         profile: Box<SshProfile>,
         /// What every SSH connection shares, `known_hosts` among it.
         options: Box<ConnectOptions>,
+    },
+    /// Start an external tool of the user's list, off the UI thread, as
+    /// [`crate::external_tool::launch`] does; answered with
+    /// [`ExternalToolMessage::Launched`].
+    LaunchExternalTool {
+        /// The tool's name.
+        name: String,
+        /// What starts.
+        launch: Box<crate::external_tool::ToolLaunch>,
     },
     /// Start `PuTTY`, off the UI thread; answered with [`Message::PuttyLaunched`].
     LaunchPutty {
@@ -1935,6 +1949,7 @@ impl fmt::Debug for Effect {
                 write!(f, "ProbePuttyHostKey({})", profile.id)
             }
             Self::LaunchPutty { .. } => f.write_str("LaunchPutty(..)"),
+            Self::LaunchExternalTool { name, .. } => write!(f, "LaunchExternalTool({name:?})"),
             Self::OpenPuttyRoute { id, .. } => write!(f, "OpenPuttyRoute({})", id.value()),
             Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
@@ -3703,6 +3718,7 @@ impl App {
             }
             Message::CitrixTick => self.citrix_tick(),
             Message::Tools(message) => self.tools_message(message),
+            Message::ExternalTool(message) => self.external_tool_message(message),
             Message::CitrixProbed { tab, probe } => {
                 self.citrix_probed(tab, &probe);
                 Vec::new()

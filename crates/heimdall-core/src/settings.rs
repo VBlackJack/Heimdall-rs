@@ -22,6 +22,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, ProviderSettings};
+use crate::external_tools::ExternalTool;
 use crate::last_good_copy::Document;
 use crate::lockout::{LOCKOUT_DURATION, Lockout};
 use crate::pin::PinHash;
@@ -612,6 +613,10 @@ pub struct Settings {
     /// The program a server's file is edited with, as the C# `ExternalEditorPath`; empty
     /// takes the system's own text editor.
     pub external_editor: String,
+    /// The user's external tools, in the order the menus list them, as the C#
+    /// `ExternalTools` (`AppSettings.cs:562`): started for a session from its menus and from
+    /// Quick Connect.
+    pub external_tools: Vec<ExternalTool>,
     /// `PuTTY`, which an SSH profile in the external mode opens in, as the C# `PuttyPath`;
     /// empty looks for it in the folders of `PATH`.
     pub putty_path: String,
@@ -1237,6 +1242,7 @@ impl Default for Settings {
             rdp_defaults: RdpDefaults::default(),
             rdp_default_mode: RdpMode::default(),
             external_editor: String::new(),
+            external_tools: Vec::new(),
             putty_path: String::new(),
             ssh_default_mode: SshMode::default(),
             x11_server_path: String::new(),
@@ -1291,6 +1297,8 @@ struct SettingsFile {
     #[serde(default)]
     files: FilesSection,
     #[serde(default)]
+    external_tools: ExternalToolsSection,
+    #[serde(default)]
     reachability: ReachabilitySection,
     #[serde(default)]
     updates: UpdatesSection,
@@ -1306,6 +1314,13 @@ struct SettingsFile {
     legacy_migration: LegacyMigrationSection,
     #[serde(default)]
     onboarding: OnboardingSection,
+}
+
+/// The external tools, carried by an export as the C# exports its `ExternalTools`.
+#[derive(Serialize, Deserialize, Default)]
+struct ExternalToolsSection {
+    #[serde(default)]
+    tools: Vec<ExternalTool>,
 }
 
 /// This computer's own: never exported.
@@ -1805,8 +1820,8 @@ impl Settings {
     /// and the last look for one; what no C# Settings panel edits (the tree's gateway badge,
     /// the broadcast scope, the gateway a new profile starts on, the Tools area's pins, tab
     /// and folded categories, which the C# resets but its tab, and the welcome tour seen);
-    /// and the properties panel under the tree, which the C# reset leaves as it is.
-    /// The gateways, the
+    /// the properties panel under the tree, which the C# reset leaves as it is; and the
+    /// external tools, the user's own entries, as the C# keeps them. The gateways, the
     /// profiles, the master password, the Windows Hello enrolment, the macros and the
     /// credential provider's unlock secret are kept elsewhere and are not touched.
     pub fn reset_all(&mut self) {
@@ -1824,6 +1839,9 @@ impl Settings {
             update_check: std::mem::take(&mut self.update_check),
             last_used_gateway: self.last_used_gateway.take(),
             tools: std::mem::take(&mut self.tools),
+            // The user's own entries, as the C# carries `ExternalTools` across
+            // (`SettingsViewModel.cs:2483-2488`).
+            external_tools: std::mem::take(&mut self.external_tools),
             legacy_migration: std::mem::take(&mut self.legacy_migration),
             onboarding_completed: self.onboarding_completed,
             ..Self::default()
@@ -2036,6 +2054,7 @@ impl Settings {
                 .unwrap_or_default(),
             sftp_browser: file.files.sftp_browser(),
             external_editor: file.files.external_editor.trim().to_owned(),
+            external_tools: file.external_tools.tools,
             putty_path: file.ssh.putty_path.trim().to_owned(),
             ssh_default_mode: file
                 .ssh
@@ -2216,6 +2235,9 @@ impl Settings {
                 dock_local_browser: Some(self.sftp_browser.dock_local_browser),
                 follow_local_directory: Some(self.sftp_browser.follow_local_directory),
             },
+            external_tools: ExternalToolsSection {
+                tools: self.external_tools.clone(),
+            },
             reachability: ReachabilitySection {
                 enabled: Some(self.reachability.enabled),
                 interval: Some(self.reachability.interval),
@@ -2267,6 +2289,14 @@ impl Settings {
             for (_, section) in &mut sections {
                 if let toml::Value::Table(values) = section {
                     values.retain(|_, value| {
+                        // A list of tables, the external tools: each one naming a path under
+                        // the home folder stays behind whole, counted as one.
+                        if let toml::Value::Array(items) = value {
+                            let before = items.len();
+                            items.retain(|item| !names_under(item, home));
+                            held_back += before - items.len();
+                            return true;
+                        }
                         let names = value.as_str().is_some_and(|text| under(text, home));
                         held_back += usize::from(names);
                         !names
@@ -2432,7 +2462,7 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 12] = [
+const TRANSFERRED: [&str; 13] = [
     "terminal",
     "session_log",
     "general",
@@ -2442,6 +2472,7 @@ const TRANSFERRED: [&str; 12] = [
     "rdp",
     "rdp_session",
     "files",
+    "external_tools",
     "reachability",
     "updates",
     "windows_hello",
@@ -2509,13 +2540,67 @@ pub enum SettingValue {
     Text(String),
     /// A list of this many items.
     List(usize),
+    /// External tools, each named with its program and whether it runs as administrator,
+    /// as the C# preview shows them tool by tool (`SettingsImportPreview.DescribeTool`): what
+    /// an import would let run is never a mere count.
+    Programs(Vec<ProgramShown>),
 }
+
+/// An external tool as an import's change shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramShown {
+    /// Its name.
+    pub name: String,
+    /// Its program, as written.
+    pub program: String,
+    /// It runs as administrator.
+    pub administrator: bool,
+}
+
+impl ProgramShown {
+    /// The tool `item` of a list, when it is a table naming a program.
+    fn of(item: &toml::Value) -> Option<Self> {
+        let toml::Value::Table(fields) = item else {
+            return None;
+        };
+        let text = |key: &str| {
+            fields
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        fields.contains_key(PROGRAM_KEY).then(|| Self {
+            name: text(NAME_KEY),
+            program: text(PROGRAM_KEY),
+            administrator: fields
+                .get(ADMINISTRATOR_KEY)
+                .and_then(toml::Value::as_bool)
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// The keys of an external tool in the settings file, as [`ExternalTool`] writes them.
+const NAME_KEY: &str = "name";
+const PROGRAM_KEY: &str = "executable_path";
+const ADMINISTRATOR_KEY: &str = "run_as_administrator";
 
 impl SettingValue {
     fn of(value: &toml::Value) -> Self {
         match value {
             toml::Value::Boolean(on) => Self::Flag(*on),
             toml::Value::String(text) => Self::Text(text.clone()),
+            toml::Value::Array(items) if !items.is_empty() => {
+                match items
+                    .iter()
+                    .map(ProgramShown::of)
+                    .collect::<Option<Vec<_>>>()
+                {
+                    Some(programs) => Self::Programs(programs),
+                    None => Self::List(items.len()),
+                }
+            }
             toml::Value::Array(items) => Self::List(items.len()),
             other => Self::Text(other.to_string()),
         }
@@ -2529,6 +2614,16 @@ pub enum TransferError {
     NotSettings,
     /// It was written by a newer version.
     Newer,
+}
+
+/// Whether `item`, a table of a list, holds a path under `home` in one of its texts.
+fn names_under(item: &toml::Value, home: &Path) -> bool {
+    match item {
+        toml::Value::Table(fields) => fields
+            .values()
+            .any(|field| field.as_str().is_some_and(|text| under(text, home))),
+        _ => false,
+    }
 }
 
 /// Whether the path `text` is under `home`, whatever the case of either.

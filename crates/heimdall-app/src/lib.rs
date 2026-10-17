@@ -34,6 +34,7 @@ pub mod elevated_shell;
 mod error;
 mod event;
 pub mod external_edit;
+pub mod external_tool;
 pub mod external_url;
 pub mod files;
 pub mod ftp_driver;
@@ -90,6 +91,7 @@ pub mod winrm_driver;
 pub mod winrm_preflight;
 pub mod x11_server;
 
+pub use app::ExternalToolMessage;
 pub use app::ImportedPreferences;
 pub use app::SavedCredentials;
 pub use app::SessionLoadNotice;

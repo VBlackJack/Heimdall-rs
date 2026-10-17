@@ -212,6 +212,8 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("files.follow_ssh_directory", PLAIN),
     ("files.dock_local_browser", PLAIN),
     ("files.follow_local_directory", PLAIN),
+    // C# `ExternalTools`, a `SensitiveKeys` entry: programs started from the menus.
+    ("external_tools.tools", RUNS),
     ("reachability.enabled", PLAIN),
     ("reachability.interval", PLAIN),
     ("reachability.timeout", PLAIN),
