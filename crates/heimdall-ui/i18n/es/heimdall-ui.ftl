@@ -5040,6 +5040,7 @@ ui-tool-cert-error-invalid-port = Introduzca puertos de 1 a 65535, separados por
 ui-tool-cert-error-too-many-ports = { $count } puertos introducidos: se inspeccionan { $max } como máximo a la vez.
 ui-tool-cert-error-connection = La conexión con { $host }:{ $port } ha fallado: { $detail }
 ui-tool-cert-error-handshake = La negociación TLS con { $host }:{ $port } ha fallado: { $detail }
+ui-tool-cert-error-obsolete-tls = { $host }:{ $port } solo ofrece una versión obsoleta de TLS (TLS 1.0 o 1.1), que Heimdall rechaza: no se puede leer su certificado.
 ui-tool-cert-error-no-certificate = El servidor no ha presentado ningún certificado.
 ui-tool-cert-error-unreadable = El certificado presentado no se puede leer.
 ui-tool-cert-error-timeout = El servidor no ha respondido a tiempo.

@@ -38,8 +38,9 @@ cargo build --locked -p heimdall-ui --features test-data-dir
 target\debug\heimdall-rs.exe --data-dir C:\Temp\heimdall-ui-test
 ```
 
-The folder must be a full path; it is made if it is not there. `--data-dir=<folder>` is
-accepted too; that form must be text. A test build started without `--data-dir`, with any
+The folder must be a full path; it is made if it is not there, with its `home` folder: a
+real user always has one, and the local pane of the Files tab opens there. `--data-dir=<folder>`
+is accepted too; that form must be text. A test build started without `--data-dir`, with any
 other argument, or with a refused folder prints why and exits with code 2: it never starts
 on the real folders.
 

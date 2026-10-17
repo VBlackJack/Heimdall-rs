@@ -137,6 +137,11 @@ mod with_the_feature {
         paths::use_test_data_dir(&root).expect("a scratch folder is accepted");
         assert_eq!(paths::test_data_dir(), Some(root.as_path()));
         assert!(root.is_dir(), "the folder is made");
+        assert!(
+            root.join(test_data::HOME).is_dir(),
+            "with its home folder, where the Files tab's local pane opens"
+        );
+        assert_eq!(paths::home_dir(), Some(root.join(test_data::HOME)));
 
         for (name, folder) in folders() {
             let folder = folder.unwrap_or_else(|| panic!("{name} unresolved"));
