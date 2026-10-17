@@ -61,8 +61,8 @@ const TAB_DROP_EDGE: f32 = 2.0;
 const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
 
 impl Shell {
-    /// A tab of the bar: a click shows it, a right click opens its menu; pressed and moved,
-    /// it is dragged, the tab it would take the place of outlined.
+    /// A tab of the bar: a click shows it, a right click opens its menu, a middle click closes
+    /// it; pressed and moved, it is dragged, the tab it would take the place of outlined.
     fn tab_button<'a>(
         &self,
         tab: TabId,
@@ -86,6 +86,9 @@ impl Shell {
                 .on_press(Message::App(AppMessage::SelectTab(tab))),
         )
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab)))
+        // A middle click closes it, as the C# `OnTabMiddleClick`: through the close
+        // button's request, so a live session still asks first.
+        .on_middle_press(Message::App(AppMessage::RequestCloseTab(tab)))
         .on_enter(Message::TabHover(tab))
         .on_exit(Message::TabHoverLeft(tab));
         if dragging.is_some() {

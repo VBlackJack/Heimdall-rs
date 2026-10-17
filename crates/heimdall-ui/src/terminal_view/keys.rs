@@ -138,8 +138,20 @@ pub enum WindowShortcut {
     NextTab,
     /// Show the previous tab: Ctrl+Shift+Tab, Ctrl+Page Up.
     PreviousTab,
-    /// Close the tab shown: Ctrl+Shift+W.
+    /// Close the tab shown: Ctrl+Shift+W, and Ctrl+F4, the Windows document-close key, as the
+    /// C# `RegisterCloseTabShortcuts`: a shell has no use for it, so a terminal leaves it to
+    /// the window, while a remote desktop keeps it for its own applications.
     CloseTab,
+    /// Move the tab shown one place to the left, within its pinned block: Ctrl+Shift+Page
+    /// Up, as the C# `MoveActiveTab`. A terminal leaves it; a remote desktop keeps it.
+    MoveTabLeft,
+    /// Move the tab shown one place to the right: Ctrl+Shift+Page Down.
+    MoveTabRight,
+    /// Show the tab at this place on the strip, from 1; [`LAST_TAB_ORDINAL`] shows the last
+    /// one, as in a browser: Ctrl+1 to Ctrl+9, read from [`tab_ordinal`]. Never a key a
+    /// terminal leaves to the window: there Ctrl+2 is NUL and Ctrl+3 Escape, as the C# leaves
+    /// them to a focused terminal.
+    GoToTab(u8),
     /// Place the panes of the split tab shown the other way: Ctrl+Shift+O, as the C# one.
     ToggleSplit,
     /// Give the keyboard to the next pane of the split tab shown: Ctrl+Alt+Right, or
@@ -169,6 +181,22 @@ pub enum WindowShortcut {
     /// Show the keyboard shortcuts: F1, as the C# one, when no session has the keyboard; a
     /// terminal keeps F1 for its programs. Never a key a terminal leaves to the window.
     Help,
+}
+
+/// The place on the strip Ctrl+9 stands for: the last tab, not the ninth, as the C#
+/// `ConnectionViewModel.LastTabOrdinal`.
+pub const LAST_TAB_ORDINAL: u8 = 9;
+
+/// The tab place Ctrl with a digit of the main row stands for, 1 to [`LAST_TAB_ORDINAL`],
+/// read from the key's place as the C# reads `Key.D1`: on an AZERTY keyboard the row types
+/// `& é " ' ( - è _ ç` without Shift, and Ctrl+& is still Ctrl+1. The keypad's digits are
+/// other keys, as in the C#. Ctrl alone held.
+#[must_use]
+pub fn tab_ordinal(physical: Physical, modifiers: keyboard::Modifiers) -> Option<u8> {
+    if !modifiers.control() || modifiers.shift() || modifiers.alt() || modifiers.logo() {
+        return None;
+    }
+    digit(physical).filter(|digit| (1..=LAST_TAB_ORDINAL).contains(digit))
 }
 
 /// A change of the terminal's text size, as the C# Heimdall's.
@@ -287,6 +315,9 @@ pub fn window_shortcut(
         keyboard::Key::Named(Named::Tab) => Some(WindowShortcut::NextTab),
         keyboard::Key::Named(Named::PageUp) if !shift => Some(WindowShortcut::PreviousTab),
         keyboard::Key::Named(Named::PageDown) if !shift => Some(WindowShortcut::NextTab),
+        keyboard::Key::Named(Named::PageUp) => Some(WindowShortcut::MoveTabLeft),
+        keyboard::Key::Named(Named::PageDown) => Some(WindowShortcut::MoveTabRight),
+        keyboard::Key::Named(Named::F4) if !shift => Some(WindowShortcut::CloseTab),
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('w') => {
             Some(WindowShortcut::CloseTab)
         }
@@ -444,9 +475,121 @@ mod tests {
     const ANY_PLACE: Physical = Physical::Code(Code::F24);
 
     use super::{
-        Shortcut, WindowShortcut, Zoom, is_ctrl_k, is_ctrl_w, is_lock_key, is_search_key,
-        key_input, shortcut, window_shortcut,
+        LAST_TAB_ORDINAL, Shortcut, WindowShortcut, Zoom, is_ctrl_k, is_ctrl_w, is_lock_key,
+        is_search_key, key_input, shortcut, tab_ordinal, window_shortcut,
     };
+
+    /// The digit row: each key's place, what it types unshifted on a US keyboard, then on a
+    /// French AZERTY one.
+    const DIGIT_ROW: [(Code, &str, &str); 9] = [
+        (Code::Digit1, "1", "&"),
+        (Code::Digit2, "2", "\u{e9}"),
+        (Code::Digit3, "3", "\""),
+        (Code::Digit4, "4", "'"),
+        (Code::Digit5, "5", "("),
+        (Code::Digit6, "6", "-"),
+        (Code::Digit7, "7", "\u{e8}"),
+        (Code::Digit8, "8", "_"),
+        (Code::Digit9, "9", "\u{e7}"),
+    ];
+
+    #[test]
+    fn ctrl_and_a_digit_of_the_main_row_is_a_tab_place_on_qwerty_and_azerty() {
+        for (place, (code, _, _)) in (1..).zip(DIGIT_ROW) {
+            let physical = Physical::Code(code);
+            assert_eq!(
+                tab_ordinal(physical, Modifiers::CTRL),
+                Some(place),
+                "{code:?}"
+            );
+            assert_eq!(tab_ordinal(physical, Modifiers::empty()), None, "typed");
+            assert_eq!(
+                tab_ordinal(physical, Modifiers::CTRL | Modifiers::SHIFT),
+                None,
+                "Ctrl+Shift+digit is another key"
+            );
+            assert_eq!(
+                tab_ordinal(physical, Modifiers::CTRL | Modifiers::ALT),
+                None,
+                "AltGr is Ctrl+Alt on Windows"
+            );
+        }
+        assert_eq!(LAST_TAB_ORDINAL, 9, "Ctrl+9 is the last tab");
+        assert_eq!(
+            tab_ordinal(Physical::Code(Code::Digit0), Modifiers::CTRL),
+            None,
+            "Ctrl+0 resets the text size"
+        );
+        assert_eq!(
+            tab_ordinal(Physical::Code(Code::Numpad1), Modifiers::CTRL),
+            None,
+            "the keypad is not the row, as the C# Key.D1"
+        );
+        // Not a window shortcut: a terminal keeps it, as the C# leaves it to a terminal.
+        for (code, qwerty, azerty) in DIGIT_ROW {
+            for typed in [qwerty, azerty] {
+                let shortcut =
+                    window_shortcut(&character(typed), Physical::Code(code), Modifiers::CTRL);
+                assert!(
+                    shortcut.is_none() || code == Code::Digit6,
+                    "{typed} on {code:?}: {shortcut:?}"
+                );
+            }
+        }
+        assert_eq!(
+            window_shortcut(
+                &character("-"),
+                Physical::Code(Code::Digit6),
+                Modifiers::CTRL
+            ),
+            Some(WindowShortcut::Zoom(Zoom::Out)),
+            "the minus of an AZERTY row still zooms a terminal out"
+        );
+    }
+
+    #[test]
+    fn ctrl_f4_closes_and_ctrl_shift_page_keys_move_the_tab() {
+        let named = |key| keyboard::Key::Named(key);
+        assert_eq!(
+            window_shortcut(&named(Named::F4), ANY_PLACE, Modifiers::CTRL),
+            Some(WindowShortcut::CloseTab)
+        );
+        assert_eq!(
+            window_shortcut(
+                &named(Named::F4),
+                ANY_PLACE,
+                Modifiers::CTRL | Modifiers::SHIFT
+            ),
+            None
+        );
+        assert_eq!(
+            window_shortcut(&named(Named::F4), ANY_PLACE, Modifiers::empty()),
+            None
+        );
+        assert_eq!(
+            window_shortcut(&named(Named::F4), ANY_PLACE, Modifiers::ALT),
+            None,
+            "Alt+F4 is the system's"
+        );
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(
+            window_shortcut(&named(Named::PageUp), ANY_PLACE, both),
+            Some(WindowShortcut::MoveTabLeft)
+        );
+        assert_eq!(
+            window_shortcut(&named(Named::PageDown), ANY_PLACE, both),
+            Some(WindowShortcut::MoveTabRight)
+        );
+        assert_eq!(
+            window_shortcut(&named(Named::PageDown), ANY_PLACE, Modifiers::CTRL),
+            Some(WindowShortcut::NextTab)
+        );
+        assert_eq!(
+            shortcut(&named(Named::PageUp), ANY_PLACE, both),
+            None,
+            "not the terminal's scrolling, which is Shift alone"
+        );
+    }
 
     #[test]
     fn ctrl_w_alone_is_known_by_its_key_whatever_the_layout() {

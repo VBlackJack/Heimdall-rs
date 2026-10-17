@@ -510,3 +510,76 @@ fn a_tab_dragged_onto_another_takes_its_place_within_its_own_group() {
     moved(&mut app, first, second);
     assert_eq!(ids(&app), [first, third, second]);
 }
+
+#[test]
+fn close_all_tabs_closes_every_tab_the_pinned_one_too_once_asked_with_the_counts() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let ended = failed(&mut app);
+    let (kept, _) = live(&mut app);
+    let (live_one, sink) = live(&mut app);
+    menu(&mut app, TabMenuMessage::Pin(live_one));
+    let close = TabMenuMessage::Close {
+        tab: kept,
+        group: TabGroup::All,
+    };
+    menu(&mut app, close.clone());
+    // The C# "Open: {0}, connected: {1}": every tab of the strip, the menu's own included.
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::ConfirmCloseTabs {
+            tabs: vec![live_one, ended, kept],
+            live: 2,
+            unsaved: 0,
+        }),
+        "asked once for them all"
+    );
+    app.update(Message::DismissDialog);
+    assert_eq!(app.tabs.len(), 3, "declined: all stay");
+    menu(&mut app, close);
+    app.update(Message::ConfirmDialog);
+    assert!(app.tabs.is_empty(), "{:?}", ids(&app));
+    assert!(*sink.closed.lock().expect("closed"));
+}
+
+#[test]
+fn close_all_tabs_of_tabs_that_ended_closes_them_at_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let first = failed(&mut app);
+    let _ = failed(&mut app);
+    menu(
+        &mut app,
+        TabMenuMessage::Close {
+            tab: first,
+            group: TabGroup::All,
+        },
+    );
+    assert!(app.dialog.is_none(), "nothing connected: not asked");
+    assert!(app.tabs.is_empty());
+}
+
+#[test]
+fn a_tab_moves_one_step_within_its_pinned_block_as_the_csharp_move_active_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let first = failed(&mut app);
+    let second = failed(&mut app);
+    let third = failed(&mut app);
+    menu(&mut app, TabMenuMessage::Pin(first));
+    assert_eq!(app.tab_step_target(third, false), Some(second));
+    assert_eq!(app.tab_step_target(third, true), None, "the last");
+    assert_eq!(
+        app.tab_step_target(second, false),
+        None,
+        "the pinned block is not crossed"
+    );
+    assert_eq!(app.tab_step_target(first, true), None, "nor left");
+    assert_eq!(app.tab_step_target(first, false), None, "the first");
+    app.update(Message::MoveTab {
+        tab: third,
+        onto: second,
+    });
+    assert_eq!(ids(&app), [first, third, second]);
+    assert_eq!(app.tab_step_target(second, false), Some(third));
+}
