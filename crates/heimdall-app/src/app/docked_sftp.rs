@@ -20,8 +20,8 @@
 //! for a server of the inventory with an account: a session typed in Quick Connect or
 //! opened with "Connect as" has none, and gets no pane. The pane is a connection of its own
 //! to the same server, through the same gateways, with the profile's credentials; it is not
-//! counted against the session limit. Its failure is said in the status bar and the shell
-//! is left alone.
+//! counted against the open sessions threshold, as the C# `IsCompanionPane`. Its failure is
+//! said in the status bar and the shell is left alone.
 //!
 //! Here the pane is a Files tab of the profile docked in the shell's tab, side by side, as
 //! the second pane at an even share, the keyboard staying where it was. It docks at once and
@@ -56,7 +56,7 @@ impl App {
             return Vec::new();
         }
         let active = self.active;
-        // Not counted against the session limit, as the C# pane is no session tab.
+        // Not noted as a new connection, nor counted while docked: the C# `IsCompanionPane`.
         let (pane, mut effects) = self.open_ssh_tab(profile, Purpose::Files);
         if let Some(files) = self.tab_mut(pane).and_then(|tab| tab.files.as_deref_mut()) {
             // Half a tab wide: the server's files alone, as the C# pane shows them.

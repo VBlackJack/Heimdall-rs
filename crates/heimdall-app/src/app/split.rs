@@ -617,7 +617,8 @@ impl App {
 
     /// Opens a session with `open`, then merges the tab it opened into `host`, the new pane
     /// with the keyboard. Beyond [`MAX_PANES`] it is said and nothing opens; an open
-    /// refused, by the session limit or a question asked first, merges nothing.
+    /// refused, or a question asked first, merges nothing. The open sessions threshold
+    /// refuses nothing, as the C# split: past it, the banner says so.
     fn open_merged(&mut self, host: TabId, axis: Axis, open: Message) -> Vec<Effect> {
         if self.tab(host).is_none() || self.is_docked(host) || self.is_tool(host) {
             return Vec::new();

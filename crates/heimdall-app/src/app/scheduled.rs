@@ -453,7 +453,8 @@ impl App {
     }
 
     /// Opens `id` of `kind` for `task` at `now`, as any saved profile opens, behind the tab
-    /// shown, unless a check would ask first or the session limit is reached; the tab it
+    /// shown, unless a check would ask first; past the open sessions threshold it opens and
+    /// the banner says so, as the C# task goes through the standard connect. The tab it
     /// opens is watched until it connects or fails.
     fn open_scheduled(
         &mut self,
@@ -471,15 +472,6 @@ impl App {
                 logged(&task.id)
             );
             self.scheduled_failed(task, FailureKind::VerificationRequired, Some(now));
-            return Vec::new();
-        }
-        if self.session_limit_hit().is_some() {
-            log::warn!(
-                "scheduled task '{}' (id={}) not run: the session limit is reached",
-                logged(&task.server_name),
-                logged(&task.id)
-            );
-            self.scheduled_failed(task, FailureKind::SessionLimit, Some(now));
             return Vec::new();
         }
         log::info!(

@@ -1382,24 +1382,36 @@ keep_alive_interval_ms = {written}
 }
 
 #[test]
-fn the_sessions_limit_is_none_by_default_and_kept_within_the_csharp_range() {
-    use heimdall_core::settings::{MAX_SESSIONS_MAX, max_sessions_accepted};
+fn the_sessions_threshold_is_the_csharp_default_and_kept_within_its_range() {
+    use heimdall_core::settings::{
+        MAX_SESSIONS_DEFAULT, MAX_SESSIONS_MAX, MAX_SESSIONS_MIN, max_sessions_accepted,
+    };
 
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
     let mut settings = Settings::load(&path).expect("defaults");
-    assert_eq!(settings.max_sessions, 0, "no limit");
-    assert!(max_sessions_accepted(0) && max_sessions_accepted(MAX_SESSIONS_MAX));
-    assert!(!max_sessions_accepted(MAX_SESSIONS_MAX + 1));
+    assert_eq!(
+        settings.max_sessions, 10,
+        "the C# DefaultMaxEmbeddedSessions"
+    );
+    assert_eq!(MAX_SESSIONS_DEFAULT, 10);
+    assert!(max_sessions_accepted(MAX_SESSIONS_MIN) && max_sessions_accepted(MAX_SESSIONS_MAX));
+    assert!(!max_sessions_accepted(0) && !max_sessions_accepted(MAX_SESSIONS_MAX + 1));
     settings.max_sessions = 5;
     settings.save(&path).expect("save");
     assert_eq!(Settings::load(&path).expect("load").max_sessions, 5);
-    std::fs::write(&path, "version = 1\n[general]\nmax_sessions = 99\n").expect("write");
-    assert_eq!(
-        Settings::load(&path).expect("load").max_sessions,
-        0,
-        "out of range"
-    );
+    for out_of_range in ["99", "0"] {
+        std::fs::write(
+            &path,
+            format!("version = 1\n[general]\nmax_sessions = {out_of_range}\n"),
+        )
+        .expect("write");
+        assert_eq!(
+            Settings::load(&path).expect("load").max_sessions,
+            MAX_SESSIONS_DEFAULT,
+            "{out_of_range}: out of range, the 0 that once meant no limit included"
+        );
+    }
 }
 
 #[test]

@@ -17,7 +17,8 @@
 //! The SFTP pane an SSH shell gets beside it once connected, as the C# `AutoOpenSftpAsync`:
 //! docked side by side as the second pane, the keyboard left on the shell; not when the
 //! settings say no, the tab is split already or the session is saved nowhere; never twice
-//! after a reconnect; closed with the C# notice when it fails; beyond the session limit.
+//! after a reconnect; closed with the C# notice when it fails; not counted as a connection
+//! of its own against the open sessions threshold.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -26,7 +27,7 @@ use heimdall_app::files::{FilesKey, Side};
 use heimdall_app::split::{Axis, DEFAULT_RATIO, Placement, SplitMessage};
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Effect, FilesMessage, InputSink, Message, Notice,
-    Phase, Purpose, QuickResult, SettingsMessage, TabId, UiError,
+    Phase, Purpose, QuickResult, SessionLoadNotice, SettingsMessage, TabId, UiError,
 };
 use heimdall_core::profile::{ProfileId, SshGateway, SshProfile};
 use heimdall_core::settings::SftpBrowser;
@@ -401,19 +402,29 @@ async fn idle_client() -> RemoteSession {
 }
 
 #[test]
-fn the_session_limit_does_not_hold_the_docked_pane_back_as_the_csharp() {
+fn an_ssh_shell_and_its_docked_pane_count_one_connection_as_the_csharp() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
     let shell = open(&mut app, "a");
     let (pane, _) = docked_connect(&connect(&mut app, shell));
     assert_eq!(leaves(&app, shell.0), [shell.0, pane]);
-    // Counted once open, as the C# counts every pane.
-    assert!(
-        app.update(Message::OpenProfile(ProfileId::new("b")))
-            .is_empty()
+    // The C# `IsCompanionPane`: the SFTP pane beside a session of its profile is none.
+    assert_eq!(app.connection_count(), 1);
+    assert_eq!(app.session_load_notice(), None);
+    // One more connection goes past the threshold: opened, and the banner says so.
+    open(&mut app, "b");
+    assert_eq!(app.connection_count(), 2);
+    assert_eq!(
+        app.session_load_notice(),
+        Some(SessionLoadNotice {
+            open: 2,
+            threshold: 1
+        })
     );
-    assert_eq!(app.notice(), Some(&Notice::SessionLimitReached(1)));
+    // A Files tab of its own is a connection.
+    open_as(&mut app, Message::OpenFiles(ProfileId::new("a")));
+    assert_eq!(app.connection_count(), 3);
 }
 
 #[test]

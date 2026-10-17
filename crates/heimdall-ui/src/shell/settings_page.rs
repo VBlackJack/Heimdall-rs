@@ -37,8 +37,9 @@ use heimdall_app::{
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
-    Language, MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
-    SSH_AUTO_RECONNECT_ATTEMPTS_MAX, SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings, settings_path,
+    Language, MAX_SESSIONS_MAX, MAX_SESSIONS_MIN, RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
+    RDP_AUTO_RECONNECT_ATTEMPTS_MIN, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
+    SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings, settings_path,
 };
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
@@ -366,7 +367,6 @@ fn row_choices(row: SettingRow) -> Vec<String> {
         SettingRow::SshAgentPreference => AgentPreference::ALL
             .map(|a| AgentChoice(a).to_string())
             .to_vec(),
-        SettingRow::MaxSessions => vec![SessionsChoice(0).to_string()],
         SettingRow::UpdateVersion => vec![fl!("ui-settings-updates-check-now")],
         // The button and what it says, which the C# search finds.
         SettingRow::LegacyMigration => vec![
@@ -1267,7 +1267,7 @@ impl Shell {
             SettingRow::MaxSessions => labelled(
                 label,
                 choices(
-                    (0..=MAX_SESSIONS_MAX)
+                    (MAX_SESSIONS_MIN..=MAX_SESSIONS_MAX)
                         .map(SessionsChoice)
                         .collect::<Vec<_>>(),
                     Some(SessionsChoice(settings.max_sessions)),

@@ -711,18 +711,30 @@ fn a_task_failing_three_times_in_a_row_is_turned_off() {
 }
 
 #[test]
-fn the_session_limit_fails_a_task_from_the_count_not_a_notice() {
+fn past_the_sessions_threshold_a_task_still_runs_and_the_banner_says_so_as_the_csharp() {
     let dir = tempfile::tempdir().expect("dir");
     let due = tomorrow();
     let mut app = app(dir.path(), vec![task("t", Some("a"), "server a", due)]);
     app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
     connected(&app.update(Message::OpenProfile(ProfileId::new("b"))));
-    assert!(app.scheduled_tick_at(due, &UTC).is_empty());
-    assert_eq!(app.tabs.len(), 1);
+    // The C# task goes through the standard connect, which warns and refuses nothing.
+    let opened = connected(&app.scheduled_tick_at(due, &UTC));
+    assert_eq!(app.tabs.len(), 2);
     assert_eq!(
-        find(&app, "t").last_outcome,
-        Some(Outcome::Failed(FailureKind::SessionLimit))
+        app.session_load_notice(),
+        Some(heimdall_app::SessionLoadNotice {
+            open: 2,
+            threshold: 1
+        })
     );
+    event(
+        &mut app,
+        opened,
+        ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    );
+    assert_eq!(find(&app, "t").last_outcome, Some(Outcome::Ran));
 }
 
 #[tokio::test]

@@ -446,33 +446,34 @@ fn reveal_in_tree_selects_the_profile_its_folders_opened() {
 }
 
 #[test]
-fn the_sessions_limit_refuses_one_more_but_not_a_reconnect_nor_a_local_shell() {
-    use heimdall_app::{Notice, SettingsMessage};
+fn past_the_sessions_threshold_a_banner_shows_and_nothing_is_refused_as_the_csharp() {
+    use heimdall_app::{SessionLoadNotice, SettingsMessage};
     use heimdall_term::local::LocalArguments;
 
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
-    assert_eq!(app.settings().max_sessions, 0, "no limit by default");
-    app.update(Message::Settings(SettingsMessage::MaxSessions(21)));
-    assert_eq!(app.settings().max_sessions, 0, "out of the C# range: kept");
-    app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
+    assert_eq!(app.settings().max_sessions, 10, "the C# default");
+    for out_of_range in [0, 21] {
+        app.update(Message::Settings(SettingsMessage::MaxSessions(
+            out_of_range,
+        )));
+        assert_eq!(app.settings().max_sessions, 10, "out of the C# range: kept");
+    }
+    app.update(Message::Settings(SettingsMessage::MaxSessions(2)));
 
     let first = failed(&mut app);
-    assert!(
-        app.update(Message::OpenProfile(ProfileId::new("a")))
-            .is_empty(),
-        "a second one refused"
+    failed(&mut app);
+    assert_eq!(
+        app.session_load_notice(),
+        None,
+        "at the threshold, not past it"
     );
-    assert_eq!(app.tabs.len(), 1);
-    assert_eq!(app.notice(), Some(&Notice::SessionLimitReached(1)));
-
     // In the first one's place: no more room taken.
     assert!(
         !app.update(Message::ReconnectTab(first)).is_empty(),
         "reconnected"
     );
-    assert_eq!(app.tabs.len(), 1);
-
+    assert_eq!(app.session_load_notice(), None);
     // This computer's own shells are not counted.
     let effects = app.update(Message::OpenLocal(heimdall_app::local_driver::LocalShell {
         name: "shell".to_owned(),
@@ -482,7 +483,54 @@ fn the_sessions_limit_refuses_one_more_but_not_a_reconnect_nor_a_local_shell() {
         environment: Vec::new(),
     }));
     assert!(!effects.is_empty());
-    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.tabs.len(), 3);
+    assert_eq!(app.connection_count(), 2);
+    assert_eq!(app.session_load_notice(), None);
+
+    // One more opens, and the banner says so.
+    let third = failed(&mut app);
+    assert_eq!(app.tabs.len(), 4, "not refused");
+    assert_eq!(
+        app.session_load_notice(),
+        Some(SessionLoadNotice {
+            open: 3,
+            threshold: 2
+        })
+    );
+
+    // Hidden, it stays hidden while the count is past the threshold or at it.
+    app.update(Message::HideSessionLoadNotice);
+    assert_eq!(app.session_load_notice(), None);
+    let fourth = failed(&mut app);
+    assert_eq!(app.session_load_notice(), None, "hidden: not shown again");
+    app.update(Message::RequestCloseTab(fourth));
+    app.update(Message::RequestCloseTab(third));
+    assert_eq!(app.connection_count(), 2);
+    failed(&mut app);
+    assert_eq!(
+        app.session_load_notice(),
+        None,
+        "still hidden at the threshold"
+    );
+
+    // Back under it, the hiding is forgotten: going past again shows it again.
+    // The first tab kept, reconnected in its place: the others closed.
+    let others: Vec<TabId> = app.tabs.iter().skip(1).map(|tab| tab.id).collect();
+    for tab in others {
+        app.update(Message::RequestCloseTab(tab));
+    }
+    assert_eq!(app.connection_count(), 1);
+    failed(&mut app);
+    assert_eq!(app.session_load_notice(), None);
+    failed(&mut app);
+    assert_eq!(
+        app.session_load_notice(),
+        Some(SessionLoadNotice {
+            open: 3,
+            threshold: 2
+        }),
+        "shown again"
+    );
 }
 
 #[test]

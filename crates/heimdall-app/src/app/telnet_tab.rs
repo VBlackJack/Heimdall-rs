@@ -35,9 +35,7 @@ impl App {
 
     /// Opens a Telnet tab for `profile`.
     pub(super) fn open_telnet_profile(&mut self, profile: TelnetProfile) -> Vec<Effect> {
-        if self.session_limit_reached() {
-            return Vec::new();
-        }
+        self.note_new_connection();
         let grid = self.viewport;
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();

@@ -4667,9 +4667,13 @@ impl Shell {
             let banner = self
                 .update_banner()
                 .unwrap_or_else(|| iced::widget::space().height(0.0).into());
+            let session_load = self
+                .session_load_banner()
+                .unwrap_or_else(|| iced::widget::space().height(0.0).into());
             column![
                 self.navigation(),
                 banner,
+                session_load,
                 self.shown_page(),
                 self.status_bar()
             ]
@@ -4766,6 +4770,33 @@ impl Shell {
                     button(text(fl!("ui-update-banner-skip")))
                         .style(styles::subtle)
                         .on_press(send(heimdall_app::UpdateMessage::Skip)),
+                ]
+                .spacing(spacing::SM)
+                .align_y(iced::Alignment::Center),
+            )
+            .padding([spacing::MD, spacing::LG])
+            .width(Length::Fill)
+            .style(styles::strip)
+            .into(),
+        )
+    }
+
+    /// The open sessions banner, as the C# one under the update banner: in a row of its own,
+    /// pushing the sessions down rather than lying over them, and "Hide".
+    fn session_load_banner(&self) -> Option<Element<'_, Message>> {
+        let notice = self.app.session_load_notice()?;
+        Some(
+            container(
+                row![
+                    text(fl!(
+                        "ui-session-load-notice-text",
+                        open = notice.open,
+                        threshold = notice.threshold
+                    ))
+                    .width(Length::Fill),
+                    button(text(fl!("ui-session-load-notice-hide")))
+                        .style(styles::secondary)
+                        .on_press(Message::App(AppMessage::HideSessionLoadNotice)),
                 ]
                 .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
@@ -12161,16 +12192,13 @@ impl std::fmt::Display for TimeoutChoice {
     }
 }
 
-/// A limit of sessions as the list names it: none at 0.
+/// An open sessions threshold as the list names it: its number, as the C# field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SessionsChoice(u32);
 
 impl std::fmt::Display for SessionsChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&match self.0 {
-            0 => fl!("ui-settings-max-sessions-none"),
-            max => max.to_string(),
-        })
+        write!(f, "{}", self.0)
     }
 }
 
