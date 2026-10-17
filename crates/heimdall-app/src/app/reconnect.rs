@@ -220,8 +220,12 @@ impl App {
             }
             Reopen::LocalBrowser | Reopen::Tool => Vec::new(),
             Reopen::Transient(profile, purpose) => {
+                let before = self.tabs.len();
                 let effects = self.open_transient(TabProfile::clone(&profile), purpose);
-                self.reopened_by(Reopen::Transient(profile, purpose));
+                // None opened past the session limit: the last tab is another's.
+                if self.tabs.len() > before {
+                    self.reopened_by(Reopen::Transient(profile, purpose));
+                }
                 effects
             }
         }

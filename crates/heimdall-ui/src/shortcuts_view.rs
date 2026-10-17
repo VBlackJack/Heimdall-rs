@@ -72,6 +72,8 @@ pub enum Action {
     /// Ctrl+Shift+Page Up and Page Down: the tab shown one place over.
     MoveTab,
     CloseTab,
+    /// Ctrl+Shift+R: the tabs of the last close opened again.
+    ReopenClosedTab,
     /// Shift+F10 on a tab: its menu.
     TabMenu,
     ToggleSplit,
@@ -136,6 +138,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
             ("Ctrl+9", Action::LastTab),
             ("Ctrl+Shift+PgUp, Ctrl+Shift+PgDn", Action::MoveTab),
             ("Ctrl+W, Ctrl+Shift+W, Ctrl+F4", Action::CloseTab),
+            ("Ctrl+Shift+R", Action::ReopenClosedTab),
             ("Shift+F10", Action::TabMenu),
             ("Ctrl+Shift+O", Action::ToggleSplit),
             ("Ctrl+Alt+Right, Ctrl+F6", Action::NextPane),
@@ -216,6 +219,7 @@ pub fn action_text(action: Action) -> String {
         Action::LastTab => fl!("ui-shortcuts-last-tab"),
         Action::MoveTab => fl!("ui-shortcuts-move-tab"),
         Action::CloseTab => fl!("ui-shortcuts-close-tab"),
+        Action::ReopenClosedTab => fl!("ui-shortcuts-reopen-closed-tab"),
         Action::TabMenu => fl!("ui-shortcuts-tab-menu"),
         Action::ToggleSplit => fl!("ui-shortcuts-toggle-split"),
         Action::NextPane => fl!("ui-shortcuts-next-pane"),
@@ -308,6 +312,6 @@ mod tests {
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
 
-        assert_eq!(actions.len(), 47, "every action listed");
+        assert_eq!(actions.len(), 48, "every action listed");
     }
 }

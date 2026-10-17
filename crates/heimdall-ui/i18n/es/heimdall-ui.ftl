@@ -5542,3 +5542,10 @@ ui-shortcuts-go-to-tab = Ir a la pestaña 1 a 8
 ui-shortcuts-last-tab = Ir a la última pestaña
 ui-shortcuts-move-tab = Mover la pestaña un lugar a la izquierda o a la derecha
 ui-shortcuts-tab-menu = Menú de la pestaña mostrada
+## A tab's menu: the tabs of the last close opened again, as the C# SessionReopenClosedTab
+## and SessionReopenClosedTabs; the second when that close took several.
+ui-tab-menu-reopen-closed = Reabrir la pestaña cerrada
+ui-tab-menu-reopen-closed-many = Reabrir las { $count } pestañas cerradas
+ui-menu-keys-reopen-closed = Ctrl+Shift+R
+## The keyboard shortcuts list: Ctrl+Shift+R.
+ui-shortcuts-reopen-closed-tab = Reabrir las pestañas del último cierre

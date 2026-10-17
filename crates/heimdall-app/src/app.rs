@@ -122,6 +122,7 @@ mod quick_connect;
 mod rdp_import;
 mod rdp_tab;
 mod reachability_monitor;
+mod recently_closed;
 mod reconnect;
 mod resolution;
 mod route_test;
@@ -190,6 +191,7 @@ pub use provider_connect::{ProviderAnswer, ProviderRequest};
 pub use quick_connect::{QuickGroup, QuickResult, QuickRow, ToolWords};
 pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow};
 use rdp_tab::ResizeFallback;
+pub use recently_closed::{ClosedTab, RECENTLY_CLOSED_CAPACITY, RecentlyClosed};
 pub use resolution::ResolutionChoice;
 pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
@@ -510,6 +512,8 @@ pub enum Message {
     },
     /// Close a tab, asking first when its session is live.
     RequestCloseTab(TabId),
+    /// Open again the tabs of the most recent close, as the C# Ctrl+Shift+R.
+    ReopenClosedTab,
     /// End a tab's remote desktop from its bar, the tab kept to reconnect.
     DisconnectDesktop(TabId),
     /// Something from a tab's menu.
@@ -1018,6 +1022,7 @@ impl fmt::Debug for Message {
                 write!(f, "MoveTab({} onto {})", tab.value(), onto.value())
             }
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
+            Self::ReopenClosedTab => f.write_str("ReopenClosedTab"),
             Self::DisconnectDesktop(tab) => write!(f, "DisconnectDesktop({})", tab.value()),
             Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
             Self::Split(message) => write!(f, "Split({message:?})"),
@@ -3350,6 +3355,8 @@ pub struct App {
     closed_folders: std::collections::HashSet<String>,
     /// The tree's filters, beyond its search.
     tree_filter: TreeFilter,
+    /// The tabs closed lately, to reopen: in memory alone, forgotten on lock and on quit.
+    recently_closed: RecentlyClosed,
 }
 
 impl fmt::Debug for App {
@@ -3487,6 +3494,7 @@ impl App {
             desktop_sessions: session_events::DesktopSessions::default(),
             closed_folders: std::collections::HashSet::new(),
             tree_filter: TreeFilter::default(),
+            recently_closed: RecentlyClosed::default(),
         };
         // The PIN when one is set, then a vault on disk is offered to unlock: its passwords
         // are then ready.
@@ -3595,6 +3603,8 @@ impl App {
         self.follow_desktop_sessions();
         self.note_status();
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
+            // Nothing of what was closed outlives the application.
+            self.recently_closed.clear();
             self.close_session_logs();
             self.release_putty_routes();
             self.release_mstsc_routes();
@@ -3705,6 +3715,7 @@ impl App {
                 Vec::new()
             }
             Message::RequestCloseTab(tab) => self.request_close(tab),
+            Message::ReopenClosedTab => self.reopen_closed(),
             Message::DisconnectDesktop(tab) => {
                 self.request_disconnect_desktop(tab);
                 Vec::new()
@@ -4838,12 +4849,13 @@ impl App {
         }
         let panes = self.panes_of(tab_id);
         if !self.ask_before_closing(tab_id, &panes) {
-            self.close_tab(tab_id);
+            self.close_tabs_by_user(&[tab_id]);
         }
         Vec::new()
     }
 
-    /// Closes `tab_id` and, for a split tab, every pane of it, as the C# `CloseAllPanes`.
+    /// Closes `tab_id` and, for a split tab, every pane of it, as the C# `CloseAllPanes`;
+    /// not remembered to reopen, as [`App::close_tabs_by_user`] remembers it.
     fn close_tab(&mut self, tab_id: TabId) {
         for pane in self.panes_of(tab_id) {
             if pane != tab_id {
@@ -4915,7 +4927,7 @@ impl App {
                 if self.closing_pane.take() == Some(tab) {
                     self.close_pane(tab);
                 } else {
-                    self.close_tab(tab);
+                    self.close_tabs_by_user(&[tab]);
                 }
                 Vec::new()
             }
@@ -4939,9 +4951,7 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmCloseTabs { tabs, .. }) => {
-                for tab in tabs {
-                    self.close_tab(tab);
-                }
+                self.close_tabs_by_user(&tabs);
                 Vec::new()
             }
             Some(Dialog::RenameTab { tab, value }) => {
