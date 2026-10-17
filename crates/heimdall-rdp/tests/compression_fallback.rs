@@ -22,7 +22,8 @@
 //! The server negotiates TLS without Network Level Authentication, as xrdp does, skips the
 //! channel join, tells the client its licence is valid, demands its capabilities, reads its
 //! confirmation and finalization PDUs, then answers with a Font Map, the last PDU of the
-//! finalization; or, when it compresses, with a compressed Set Error Info first.
+//! finalization; or, when it compresses, with a compressed Set Error Info, which the
+//! client refuses.
 
 #![allow(
     clippy::large_futures,
@@ -319,18 +320,20 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         Finalization::BrokenUpdateAfter => false,
     };
     if compressed {
+        // The client refuses it and hangs up: nothing more is sent, the stream may be gone.
         indicate(&mut tls, compressed_set_error_info()).await;
+    } else {
+        indicate(
+            &mut tls,
+            share_control(ShareControlPdu::Data(ShareDataHeader {
+                share_data_pdu: ShareDataPdu::FontMap(FontPdu::default()),
+                stream_priority: StreamPriority::Medium,
+                compression_flags: CompressionFlags::empty(),
+                compression_type: CompressionType::K8,
+            })),
+        )
+        .await;
     }
-    indicate(
-        &mut tls,
-        share_control(ShareControlPdu::Data(ShareDataHeader {
-            share_data_pdu: ShareDataPdu::FontMap(FontPdu::default()),
-            stream_priority: StreamPriority::Medium,
-            compression_flags: CompressionFlags::empty(),
-            compression_type: CompressionType::K8,
-        })),
-    )
-    .await;
     if finalization == Finalization::BrokenUpdateAfter {
         tls.write_all(&broken_fast_path_update())
             .await
