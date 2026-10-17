@@ -2218,6 +2218,10 @@ pub struct Tab {
     /// C# tab's `RdpModeOverride`: its title says so, and Reconnect keeps it
     /// (`SessionCoordinator.cs:1014-1027`, 1481); `None`, as its profile says.
     pub rdp_mode_override: Option<heimdall_core::profile::RdpMode>,
+    /// The built-in client connects without bulk compression whatever the profile says: the
+    /// server sent what it could not read compressed ([`ConnectionEvent::RdpCompressionOff`]).
+    /// Carried across a reconnect; a tab opened anew compresses as its profile says.
+    pub rdp_compression_off: bool,
 }
 
 impl fmt::Debug for Tab {
@@ -2385,6 +2389,7 @@ impl Tab {
             local_browser_closed: false,
             elevated: None,
             rdp_mode_override: None,
+            rdp_compression_off: false,
             dropped: false,
             connected_at: None,
             lasted: None,
@@ -4262,6 +4267,19 @@ impl App {
             ConnectionEvent::RdpStep(step) => {
                 tab.rdp_step = Some(step);
                 Vec::new()
+            }
+            ConnectionEvent::RdpCompressionOff { reconnect } => {
+                // For this tab, its reconnections included: its server sent what the
+                // built-in client could not read compressed. The profile is not changed.
+                tab.rdp_compression_off = true;
+                let effects = if reconnect {
+                    self.reconnect_rdp(tab_id, None)
+                } else {
+                    Vec::new()
+                };
+                // Said in the state the tab is in now: connected, or connecting again.
+                self.tell(Notice::RdpCompressionOff);
+                effects
             }
             event @ (ConnectionEvent::UnknownRdpCertificate { .. }
             | ConnectionEvent::RdpReady { .. }

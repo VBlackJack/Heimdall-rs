@@ -195,7 +195,8 @@ mod tests {
             enable_server_pointer: false,
             pointer_software_rendering: false,
         }
-        .build();
+        .build()
+        .expect("built");
         let expected: [u8; 36] = [
             // TPKT: version 3, 36 bytes.
             0x03, 0x00, 0x00, 0x24, //
@@ -227,7 +228,8 @@ mod tests {
             enable_server_pointer: false,
             pointer_software_rendering: false,
         }
-        .build();
+        .build()
+        .expect("built");
         stage.set_share_id(0x0A0B_0C0D);
         let frame = frame(&stage, 1007).expect("encoded");
         assert_eq!(frame[20..24], [0x0D, 0x0C, 0x0B, 0x0A]);

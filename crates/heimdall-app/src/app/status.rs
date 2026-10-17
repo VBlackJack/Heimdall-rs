@@ -465,6 +465,9 @@ pub enum Notice {
     /// X11 forwarding was asked and no X server could be found or started: `PuTTY` started
     /// without it, as the C# `X11ServerNotFound` says.
     X11ServerNotFound,
+    /// An RDP server sent what the built-in client could not read compressed: its tab
+    /// connects without compression from now on.
+    RdpCompressionOff,
 }
 
 /// A session's state: the one the status bar names, its tab's dot shows and its profile's

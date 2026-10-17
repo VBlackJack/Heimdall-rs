@@ -83,7 +83,9 @@ impl ActiveStageBuilder {
             .map(|ct| {
                 let bulk_ct = to_bulk_compression_type(ct);
                 let compressor = BulkCompressor::new(bulk_ct)
-                    .map_err(|e| reason_err!("bulk compression", "decompressor not built: {e}"))?;
+                    .map_err(|e| {
+                        reason_err!("bulk compression", "decompressor not built: {e}").with_source(crate::BulkDataRefused)
+                    })?;
                 info!(compression_type = %bulk_ct, "Bulk decompressor initialized");
                 Ok::<_, SessionError>(compressor)
             })

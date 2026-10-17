@@ -1713,6 +1713,7 @@ ui-files-menu-open-with = Abrir con...
 ui-files-menu-open-in-editor = Abrir en el editor
 ui-status-resolution-reconnected = El cambio de resolución requirió reconexión.
 ui-status-stabilization-skipped = Estabilización omitida: la resolución dinámica ahora está activa.
+ui-status-rdp-compression-off = El servidor envió datos comprimidos que este cliente no pudo leer: la compresión está desactivada para esta conexión.
 ui-resolution-mode-smart-sizing = Ajuste de tamaño inteligente
 ui-resolution-tooltip = Cambiar resolución - { $mode }
 ui-resolution-tooltip-size = Cambiar resolución - { $mode } ({ $width }x{ $height })

@@ -46,8 +46,8 @@ pub use clipboard_files::{CopyRefusal, MAX_COPY_BYTES, MAX_COPY_ENTRIES};
 pub use clipboard_save::{SaveEnd, SaveRefusal};
 pub use connect::{
     AcceptedCertificate, AskCredentials, BULK_COMPRESSION, Credentials, DESKTOP_SCALE_FACTORS,
-    Opening, Progress, RdpConfig, RdpConnection, RdpError, Security, Step, Timeouts, Transport,
-    connect, connect_over, connect_through, desktop_scale_factor, given,
+    Opening, Openings, Progress, RdpConfig, RdpConnection, RdpError, Security, Step, Timeouts,
+    Transport, connect, connect_over, connect_through, desktop_scale_factor, given,
 };
 pub use input::{RdpInput, fast_path_events};
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};

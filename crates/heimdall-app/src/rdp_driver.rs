@@ -27,7 +27,7 @@ use heimdall_rdp::drives::local_drives;
 use heimdall_rdp::session::{self, RdpEvent};
 use heimdall_rdp::{
     AcceptedCertificate, AskCredentials, CertificateHash, CloseReason, Ending, KnownRdpHosts,
-    Opening, Progress, RdpConfig, RdpConnection, RdpError, Security, ServerCertificate, Timeouts,
+    Openings, Progress, RdpConfig, RdpConnection, RdpError, Security, ServerCertificate, Timeouts,
     Transport, connect, connect_through,
 };
 use heimdall_ssh::{
@@ -50,6 +50,11 @@ const EVENT_QUEUE_LENGTH: usize = 64;
 
 /// Desktop size asked for until the tab tells its own.
 pub const DEFAULT_DESKTOP: (u16, u16) = (1280, 800);
+
+/// How long after its session opened a session that cannot read what its server compressed
+/// connects again without compression: past it, the session had worked compressed, and a
+/// failure is reported as one.
+pub const COMPRESSION_FALLBACK_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What an RDP attempt needs.
 #[derive(Debug, Clone)]
@@ -99,51 +104,65 @@ type TunnelFailure = Arc<Mutex<Option<ConnectError>>>;
 /// the session to end.
 type ForwardsSlot = Arc<Mutex<Option<OpenForwards>>>;
 
-/// The stream to the server through `route`, opened once the RDP connection asks for it, so
-/// that credentials asked before the connection are asked before the tunnel too.
+/// The streams to the server through `route`, each opened once the RDP connection asks for
+/// it, so that credentials asked before the connection are asked before the tunnel too. A
+/// second one, for the connection again without compression, closes the first one's
+/// forwards before it opens its own on the same ports.
 fn tunnel(
     request: &RdpRequest,
     prompter: Arc<ChannelPrompter>,
     failure: TunnelFailure,
     opened: ForwardsSlot,
-) -> Opening {
+) -> Openings {
     let route = request.route.clone();
     let forwards = request.profile.forwards;
     let options = request.ssh.clone();
     let cancel = request.cancel.clone();
     let host = request.profile.host.clone();
     let port = request.profile.port;
-    Box::pin(async move {
-        let opened = match route.split_last() {
-            Some((last, before)) => {
-                match establish_via(before, last, &options, prompter, cancel).await {
-                    Ok(gateway) => match open_forwards(forwards, Some(&gateway)).await {
-                        Ok(forwards) => {
-                            if let Ok(mut slot) = opened.lock() {
-                                *slot = Some(forwards);
-                            }
-                            gateway.open_tunnel(&host, port).await
-                        }
-                        Err(error) => Err(error),
-                    },
-                    Err(error) => Err(error),
-                }
-            }
-            None => Err(ConnectError::Cancelled),
-        };
-        match opened {
-            Ok(stream) => Ok((
-                Box::new(stream) as Box<dyn Transport>,
-                TUNNEL_CLIENT_ADDRESS,
-            )),
-            Err(error) => {
-                let reason = error.to_string();
-                if let Ok(mut slot) = failure.lock() {
-                    *slot = Some(error);
-                }
-                Err(io::Error::other(reason))
-            }
+    Box::new(move || {
+        if let Ok(mut slot) = opened.lock() {
+            drop(slot.take());
         }
+        let (route, options, cancel, host) =
+            (route.clone(), options.clone(), cancel.clone(), host.clone());
+        let (prompter, failure, opened) = (
+            Arc::clone(&prompter),
+            Arc::clone(&failure),
+            Arc::clone(&opened),
+        );
+        Box::pin(async move {
+            let opened = match route.split_last() {
+                Some((last, before)) => {
+                    match establish_via(before, last, &options, prompter, cancel).await {
+                        Ok(gateway) => match open_forwards(forwards, Some(&gateway)).await {
+                            Ok(forwards) => {
+                                if let Ok(mut slot) = opened.lock() {
+                                    *slot = Some(forwards);
+                                }
+                                gateway.open_tunnel(&host, port).await
+                            }
+                            Err(error) => Err(error),
+                        },
+                        Err(error) => Err(error),
+                    }
+                }
+                None => Err(ConnectError::Cancelled),
+            };
+            match opened {
+                Ok(stream) => Ok((
+                    Box::new(stream) as Box<dyn Transport>,
+                    TUNNEL_CLIENT_ADDRESS,
+                )),
+                Err(error) => {
+                    let reason = error.to_string();
+                    if let Ok(mut slot) = failure.lock() {
+                        *slot = Some(error);
+                    }
+                    Err(io::Error::other(reason))
+                }
+            }
+        })
     })
 }
 
@@ -179,7 +198,7 @@ fn connection_event(event: RdpEvent, target: &str) -> ConnectionEvent {
             log::info!("RDP session to {target} cannot take {width}x{height} live");
             ConnectionEvent::DesktopResizeRefused { width, height }
         }
-        RdpEvent::Closed(CloseReason::Failed(detail)) => {
+        RdpEvent::Closed(CloseReason::Failed(detail) | CloseReason::CompressionRefused(detail)) => {
             log::warn!("RDP session to {target} failed: {detail:?}");
             ConnectionEvent::Failed(UiError::RdpProtocol { detail })
         }
@@ -256,6 +275,20 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
             return failed(&events, error).await;
         }
     };
+    serve(connection, &request, &events, &target).await;
+}
+
+/// Runs the session of `connection`, opened for `request`, reporting it to `events` as the
+/// session to `target`.
+async fn serve(
+    connection: RdpConnection,
+    request: &RdpRequest,
+    events: &mpsc::Sender<ConnectionEvent>,
+    target: &str,
+) {
+    // Compressed unless the profile turns it off or the connection had to.
+    let compressing = request.profile.extras.compression && !connection.compression_turned_off;
+    let turned_off = connection.compression_turned_off;
     let mut session = session::start(connection, request.cancel.clone());
     log::info!("RDP session open to {target}");
     if events
@@ -271,8 +304,30 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         request.cancel.cancel();
         return;
     }
+    // Said once the session shows, its tab connected.
+    if turned_off
+        && events
+            .send(ConnectionEvent::RdpCompressionOff { reconnect: false })
+            .await
+            .is_err()
+    {
+        request.cancel.cancel();
+        return;
+    }
+    let opened_at = std::time::Instant::now();
     while let Some(event) = session.events.recv().await {
-        let event = connection_event(event, &target);
+        if let RdpEvent::Closed(reason) = &event
+            && connects_uncompressed(reason, compressing, opened_at.elapsed())
+        {
+            log::warn!(
+                "RDP session to {target} could not read what the server compressed ({reason:?}): compression turned off for this connection, connecting again"
+            );
+            let _ = events
+                .send(ConnectionEvent::RdpCompressionOff { reconnect: true })
+                .await;
+            return;
+        }
+        let event = connection_event(event, target);
         let last = matches!(
             event,
             ConnectionEvent::Closed { .. }
@@ -287,6 +342,20 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
             return;
         }
     }
+}
+
+/// Whether a session that ended for `reason`, `open_for` after it opened, connects again
+/// without compression: it could not read what its server compressed, it was compressing,
+/// and it fails at once, within [`COMPRESSION_FALLBACK_WINDOW`]. Once only: the connection
+/// again is not compressing.
+fn connects_uncompressed(
+    reason: &CloseReason,
+    compressing: bool,
+    open_for: std::time::Duration,
+) -> bool {
+    matches!(reason, CloseReason::CompressionRefused(_))
+        && compressing
+        && open_for < COMPRESSION_FALLBACK_WINDOW
 }
 
 /// The certificate question about `certificate`, presented by the server of `profile`;
@@ -390,14 +459,14 @@ async fn open(
             events: events.clone(),
             registry: registry.clone(),
         });
-        let opening = tunnel(request, prompter, failure.clone(), forwards.clone());
+        let openings = tunnel(request, prompter, failure.clone(), forwards.clone());
         // No limit of its own: each SSH hop bounds its steps, and a gateway may ask for a
         // password, which a person types.
         connect_through(
             config,
             ask_credentials,
             request.cancel.clone(),
-            opening,
+            openings,
             None,
         )
         .await
@@ -670,6 +739,25 @@ mod tests {
             "a server reached directly may log on with Kerberos"
         );
         assert!(config.compression, "compressed by default, as the C#");
+    }
+
+    #[test]
+    fn a_session_that_cannot_read_what_is_compressed_connects_again_uncompressed_once_and_early() {
+        let refused = CloseReason::CompressionRefused("bulk decompression failed".to_owned());
+        let early = std::time::Duration::from_secs(1);
+        assert!(connects_uncompressed(&refused, true, early));
+        assert!(
+            !connects_uncompressed(&refused, false, early),
+            "not compressing: the connection again would be the same, never a loop"
+        );
+        assert!(
+            !connects_uncompressed(&refused, true, COMPRESSION_FALLBACK_WINDOW),
+            "past the first seconds the session had worked compressed"
+        );
+        assert!(
+            !connects_uncompressed(&CloseReason::Failed("reset".to_owned()), true, early),
+            "any other failure is reported as itself"
+        );
     }
 
     #[test]

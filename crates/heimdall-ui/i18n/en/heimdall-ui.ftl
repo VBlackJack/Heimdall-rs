@@ -1893,6 +1893,7 @@ ui-files-menu-open-with = Open With...
 ui-files-menu-open-in-editor = Open in Editor
 ui-status-resolution-reconnected = Resolution change required reconnect.
 ui-status-stabilization-skipped = Stabilization skipped - dynamic resolution is now active.
+ui-status-rdp-compression-off = The server sent compressed data this client could not read: compression is off for this connection.
 ui-resolution-mode-smart-sizing = Smart sizing
 ui-resolution-tooltip = Change resolution - { $mode }
 ui-resolution-tooltip-size = Change resolution - { $mode } ({ $width }x{ $height })

@@ -297,12 +297,6 @@ impl Processor {
     }
 }
 
-/// Processes a vector of [`SvcMessage`] in preparation for sending them to the server on the `channel_id` channel.
-///
-/// This includes chunkifying the messages, adding MCS, x224, and tpkt headers, and encoding them into a buffer.
-/// The messages returned here are ready to be sent to the server.
-///
-/// The caller is responsible for ensuring that the `channel_id` corresponds to the correct channel.
 /// Share Control Header: `totalLength`, `pduType`, `pduSource`, `shareId` ([MS-RDPBCGR] 2.2.8.1.1.1.1).
 const SHARE_CONTROL_HEADER_LEN: usize = 10;
 /// Share Data Header past the Share Control Header: `pad1`, `streamId`, `uncompressedLength`,
@@ -341,7 +335,8 @@ fn decompress_share_data(user_data: &[u8], bulk: Option<&mut BulkCompressor>) ->
         return Err(reason_err!(
             "IO channel",
             "compressed slow-path PDU (compressedType {compressed_type:#04x}) without negotiated compression"
-        ));
+        )
+        .with_source(crate::BulkDataRefused));
     };
     let compressed_length = usize::from(u16::from_le_bytes([
         user_data[COMPRESSED_LENGTH_OFFSET],
@@ -355,21 +350,29 @@ fn decompress_share_data(user_data: &[u8], bulk: Option<&mut BulkCompressor>) ->
                 "compressedLength {compressed_length} out of the {} bytes received",
                 user_data.len()
             )
+            .with_source(crate::BulkDataRefused)
         })?;
     let data = bulk
         .decompress(&user_data[SHARE_HEADERS_LEN..end], u32::from(compressed_type))
-        .map_err(|e| reason_err!("IO channel", "bulk decompression failed: {e}"))?;
+        .map_err(|e| reason_err!("IO channel", "bulk decompression failed: {e}").with_source(crate::BulkDataRefused))?;
     let mut pdu = Vec::with_capacity(SHARE_HEADERS_LEN + data.len());
     pdu.extend_from_slice(&user_data[..SHARE_HEADERS_LEN]);
     pdu.extend_from_slice(data);
-    let total_length =
-        u16::try_from(pdu.len()).map_err(|_| reason_err!("IO channel", "decompressed PDU of {} bytes", pdu.len()))?;
+    let total_length = u16::try_from(pdu.len()).map_err(|_| {
+        reason_err!("IO channel", "decompressed PDU of {} bytes", pdu.len()).with_source(crate::BulkDataRefused)
+    })?;
     pdu[..2].copy_from_slice(&total_length.to_le_bytes());
     pdu[COMPRESSED_TYPE_OFFSET] = 0;
     pdu[COMPRESSED_LENGTH_OFFSET..SHARE_HEADERS_LEN].copy_from_slice(&0u16.to_le_bytes());
     Ok(Some(pdu))
 }
 
+/// Processes a vector of [`SvcMessage`] in preparation for sending them to the server on the `channel_id` channel.
+///
+/// This includes chunkifying the messages, adding MCS, x224, and tpkt headers, and encoding them into a buffer.
+/// The messages returned here are ready to be sent to the server.
+///
+/// The caller is responsible for ensuring that the `channel_id` corresponds to the correct channel.
 fn process_svc_messages(messages: Vec<SvcMessage>, channel_id: u16, initiator_id: u16) -> SessionResult<Vec<u8>> {
     client_encode_svc_messages(messages, channel_id, initiator_id).map_err(SessionError::encode)
 }

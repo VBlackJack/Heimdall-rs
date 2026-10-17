@@ -309,7 +309,11 @@ impl App {
         let TabProfile::Rdp(profile) = tab.profile.clone() else {
             return Vec::new();
         };
-        let profile = profile.effective(&defaults);
+        let mut profile = profile.effective(&defaults);
+        // Turned off for this tab, its server having sent what could not be read compressed.
+        if tab.rdp_compression_off {
+            profile.extras.compression = false;
+        }
         // The tab draws with the options the session gets.
         tab.profile = TabProfile::Rdp(profile.clone());
         let attempt = AttemptId::fresh();

@@ -301,7 +301,22 @@ fn ensure_uncompressed(user_data: &[u8]) -> ConnectorResult<()> {
         return Err(reason_err!(
             "ConnectionFinalization",
             "bulk-compressed PDU (compressedType {compressed_type:#04x}) during the connection finalization"
-        ));
+        )
+        .with_source(CompressedFinalizationPdu));
     }
     Ok(())
 }
+
+/// The source of the error [`ensure_uncompressed`] fails with, so that a caller can tell this
+/// refusal from any other failure by its type and connect again without compression.
+/// Heimdall-rs patch, see `vendor/PATCHES.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompressedFinalizationPdu;
+
+impl core::fmt::Display for CompressedFinalizationPdu {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("the server bulk-compressed a PDU of the connection finalization")
+    }
+}
+
+impl core::error::Error for CompressedFinalizationPdu {}

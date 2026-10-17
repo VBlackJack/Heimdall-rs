@@ -25,7 +25,9 @@ pub use sspi;
 
 pub use self::channel_connection::{ChannelConnectionSequence, ChannelConnectionState};
 pub use self::connection::{ClientConnector, ClientConnectorState, ConnectionResult, encode_send_data_request};
-pub use self::connection_finalization::{ConnectionFinalizationSequence, ConnectionFinalizationState};
+pub use self::connection_finalization::{
+    CompressedFinalizationPdu, ConnectionFinalizationSequence, ConnectionFinalizationState,
+};
 pub use self::license_exchange::{LicenseExchangeSequence, LicenseExchangeState};
 pub use self::server_name::ServerName;
 pub use crate::license_exchange::LicenseCache;
