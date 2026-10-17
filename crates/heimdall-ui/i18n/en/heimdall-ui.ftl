@@ -5537,3 +5537,15 @@ ui-tab-menu-reopen-closed-many = Reopen { $count } closed tabs
 ui-menu-keys-reopen-closed = Ctrl+Shift+R
 ## The keyboard shortcuts list: Ctrl+Shift+R.
 ui-shortcuts-reopen-closed-tab = Reopen the tabs of the last close
+## The migration of the C# Heimdall's settings: its preferences.
+ui-dialog-import-settings-unreadable = The settings of the C# Heimdall could not be read: the profiles were imported without their folder defaults, and its trusted SSH servers and scheduled connections were not carried over. { $detail }
+ui-dialog-import-preferences = { $count ->
+    [one] { $count } preference of the C# Heimdall can be carried over: review it before it is applied.
+   *[other] { $count } preferences of the C# Heimdall can be carried over: review them before they are applied.
+}
+ui-dialog-import-preferences-kept = Kept as changed here: { $names }
+ui-dialog-import-preferences-secret = Secrets, never carried over: { $names }
+ui-dialog-import-preferences-invalid = Values not read: { $names }
+ui-dialog-import-preferences-relative = Paths of the C# installation, not carried over: { $names }
+ui-dialog-import-preferences-failed = The preferences of the C# Heimdall could not be read: { $detail }
+ui-dialog-import-preferences-review = Review preferences

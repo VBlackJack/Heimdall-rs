@@ -35,6 +35,9 @@ use crate::tokens::{font_size, spacing};
 /// Extension of a settings file.
 const EXTENSION: &str = "toml";
 
+/// Extension of the C# Heimdall's "Export settings" file, which an import reads too.
+const CSHARP_EXTENSION: &str = "json";
+
 /// Most bytes a settings file read can have: far above any, far below a mistake.
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -48,11 +51,12 @@ const MAX_IGNORED_SHOWN: usize = 20;
 /// Between the names of the settings not imported, as the C# preview's list separator.
 const LIST_SEPARATOR: &str = ", ";
 
-/// A dialog of settings files titled `title`, over `parent` when there is one.
-fn dialog(title: String, parent: Option<&dyn window::Window>) -> FileDialog {
+/// A dialog of settings files of `extensions` titled `title`, over `parent` when there is
+/// one.
+fn dialog(title: String, parent: Option<&dyn window::Window>, extensions: &[&str]) -> FileDialog {
     let mut dialog = FileDialog::new()
         .set_title(title)
-        .add_filter(fl!("ui-settings-file-filter"), &[EXTENSION]);
+        .add_filter(fl!("ui-settings-file-filter"), extensions);
     if let Some(parent) = parent {
         dialog = dialog.set_parent(parent);
     }
@@ -74,7 +78,7 @@ fn over_window(
 /// `document` there; nothing when no file is picked.
 pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
     over_window(main, |parent| {
-        dialog(fl!("ui-dialog-settings-export-title"), parent)
+        dialog(fl!("ui-dialog-settings-export-title"), parent, &[EXTENSION])
             .set_file_name(SETTINGS_EXPORT_FILE_NAME)
             .save_file()
     })
@@ -106,7 +110,12 @@ pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
 /// nothing when none is picked.
 pub fn pick(main: Option<window::Id>) -> Task<Message> {
     over_window(main, |parent| {
-        dialog(fl!("ui-dialog-settings-import-title"), parent).pick_file()
+        dialog(
+            fl!("ui-dialog-settings-import-title"),
+            parent,
+            &[EXTENSION, CSHARP_EXTENSION],
+        )
+        .pick_file()
     })
     .then(|pick| {
         Task::future(pick).then(|picked| match picked {

@@ -90,6 +90,7 @@ pub mod winrm_driver;
 pub mod winrm_preflight;
 pub mod x11_server;
 
+pub use app::ImportedPreferences;
 pub use app::SavedCredentials;
 pub use app::SessionLoadNotice;
 pub use app::SettingsTransferMessage;

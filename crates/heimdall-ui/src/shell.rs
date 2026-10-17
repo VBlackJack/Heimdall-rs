@@ -63,6 +63,7 @@ use heimdall_app::{
     windows_hello,
 };
 use heimdall_core::folder::FolderError;
+use heimdall_core::import::csharp_settings::PreferenceOutcome;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
 use heimdall_core::profile::{ProfileId, SshGateway, SshMode, display_address};
@@ -9573,6 +9574,80 @@ fn migration_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a,
         ),
         None => {}
     }
+    lines.extend(settings_lines(summary));
+    lines
+}
+
+/// A line of the report in the caption size, styled as `style`.
+fn caption_line<'a>(line: String, style: fn(&iced::Theme) -> text::Style) -> Element<'a, Message> {
+    text(line).size(font_size::CAPTION).style(style).into()
+}
+
+/// The C# preferences left out for `outcome`, named, with why; `None` when there is none.
+fn left_out_line<'a>(
+    preferences: &heimdall_app::ImportedPreferences,
+    outcome: PreferenceOutcome,
+) -> Option<Element<'a, Message>> {
+    let names: Vec<&str> = preferences.left_out(outcome).collect();
+    if names.is_empty() {
+        return None;
+    }
+    let names = names.join(&fl!("ui-dialog-import-dropped-separator"));
+    let names = names.as_str();
+    let line = match outcome {
+        PreferenceOutcome::KeptHere => fl!("ui-dialog-import-preferences-kept", names = names),
+        PreferenceOutcome::Secret => fl!("ui-dialog-import-preferences-secret", names = names),
+        PreferenceOutcome::Invalid => fl!("ui-dialog-import-preferences-invalid", names = names),
+        PreferenceOutcome::RelativePath => {
+            fl!("ui-dialog-import-preferences-relative", names = names)
+        }
+        PreferenceOutcome::Taken | PreferenceOutcome::NoEquivalent => return None,
+    };
+    Some(caption_line(line, text::secondary))
+}
+
+/// What the migration of this computer's C# store carried over from its `settings.json`
+/// besides the profiles: its preferences, to be reviewed, and those left out by name; or
+/// why they could not be.
+fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, Message>> {
+    let mut lines = Vec::new();
+    if let Some(detail) = &summary.settings_unreadable {
+        lines.push(caption_line(
+            fl!(
+                "ui-dialog-import-settings-unreadable",
+                detail = detail.as_str()
+            ),
+            text::danger,
+        ));
+    }
+    match &summary.preferences {
+        Some(Ok(preferences)) => {
+            if preferences.taken > 0 {
+                lines.push(caption_line(
+                    fl!("ui-dialog-import-preferences", count = preferences.taken),
+                    text::default,
+                ));
+            }
+            lines.extend(
+                [
+                    PreferenceOutcome::KeptHere,
+                    PreferenceOutcome::Secret,
+                    PreferenceOutcome::Invalid,
+                    PreferenceOutcome::RelativePath,
+                ]
+                .into_iter()
+                .filter_map(|outcome| left_out_line(preferences, outcome)),
+            );
+        }
+        Some(Err(detail)) => lines.push(caption_line(
+            fl!(
+                "ui-dialog-import-preferences-failed",
+                detail = detail.as_str()
+            ),
+            text::danger,
+        )),
+        None => {}
+    }
     lines
 }
 
@@ -9651,11 +9726,23 @@ fn import_report<'a>(
     {
         content = content.push(text(line).size(font_size::CAPTION));
     }
+    // The C# preferences carried over are taken only once reviewed, as a settings file's.
+    let review = matches!(
+        &summary.preferences,
+        Some(Ok(preferences)) if preferences.review.is_some()
+    )
+    .then(|| {
+        dialog_parts::action(
+            fl!("ui-dialog-import-preferences-review"),
+            styles::secondary,
+        )
+        .on_press(Message::App(AppMessage::ReviewCsharpPreferences))
+    });
     dialog_parts::message(
         import_severity(summary),
         fl!("ui-dialog-import-title"),
         content,
-        dialog_parts::buttons([ok]),
+        dialog_parts::buttons(review.into_iter().chain([ok])),
     )
 }
 

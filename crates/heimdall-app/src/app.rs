@@ -81,6 +81,7 @@ mod citrix_import;
 mod citrix_launch;
 mod connect_as;
 mod credential_guard_gate;
+mod csharp_settings_import;
 mod detail;
 mod docked_sftp;
 mod file_import;
@@ -162,6 +163,7 @@ pub use bulk_edit::{BulkField, BulkRefusal};
 pub use bulk_password::{BulkPasswordRefusal, BulkPasswordSkips, bulk_password_refusal};
 pub use citrix_import::CitrixImportOutcome;
 pub use connect_as::ConnectAs;
+pub use csharp_settings_import::ImportedPreferences;
 pub use detail::SavedCredentials;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
@@ -656,6 +658,9 @@ pub enum Message {
     WindowCloseRequested,
     /// Import the profiles of the C# Heimdall.
     ImportLegacy,
+    /// The import report's "Review": the preferences of the C# Heimdall carried over, shown
+    /// before they are taken.
+    ReviewCsharpPreferences,
     /// "Import Citrix Apps": scan Citrix Workspace's local cache.
     ImportCitrix,
     /// Citrix Workspace's local cache scanned.
@@ -1082,6 +1087,7 @@ impl fmt::Debug for Message {
             Self::WindowFocus(focused) => write!(f, "WindowFocus({focused})"),
             Self::WindowCloseRequested => f.write_str("WindowCloseRequested"),
             Self::ImportLegacy => f.write_str("ImportLegacy"),
+            Self::ReviewCsharpPreferences => f.write_str("ReviewCsharpPreferences"),
             Self::ImportCitrix => f.write_str("ImportCitrix"),
             // Each application carries its launch line: only counted.
             Self::CitrixScanned(scan) => write!(f, "CitrixScanned({} apps)", scan.apps.len()),
@@ -2621,6 +2627,15 @@ pub struct ImportSummary {
     /// For the migration of this computer's C# store, how many scheduled connections were
     /// carried over; or why they could not be. `None` when it had none.
     pub scheduled: Option<Result<usize, String>>,
+    /// For the migration of this computer's C# store, why its `settings.json` could not be
+    /// read, or not as the profiles read it: they were imported without its group defaults,
+    /// its trusted SSH servers and its scheduled connections. `None` when it was read, or
+    /// there is none.
+    pub settings_unreadable: Option<String>,
+    /// For the migration of this computer's C# store, its preferences carried over, to be
+    /// reviewed, and those left out; or why they could not be read. Read on their own, one
+    /// by one: a part of `settings.json` the profiles cannot read does not stop them.
+    pub preferences: Option<Result<ImportedPreferences, String>>,
     /// The SSH gateways the file brought, created or found already saved, as the C# summary's
     /// gateway line counts them.
     pub gateways: heimdall_core::import::gateways::Reconciliation,
@@ -3786,6 +3801,7 @@ impl App {
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
             | Message::ImportLegacy
+            | Message::ReviewCsharpPreferences
             | Message::ImportCitrix
             | Message::CitrixScanned(_)
             | Message::ExportSessions
@@ -5137,6 +5153,10 @@ impl App {
                 self.import_legacy();
                 Vec::new()
             }
+            Message::ReviewCsharpPreferences => {
+                self.review_csharp_preferences();
+                Vec::new()
+            }
             Message::ExportSessions => vec![self.export_sessions()],
             Message::ImportCitrix => Self::scan_citrix(),
             Message::CitrixScanned(scan) => {
@@ -5211,9 +5231,28 @@ impl App {
                 return;
             }
         };
-        let settings = std::fs::read_to_string(dir.join(LEGACY_SETTINGS_FILE_NAME)).ok();
+        // A settings file that is missing says nothing; one that cannot be read, or does not
+        // read as settings, never stops the profiles: they are imported without it, said.
+        let (settings, mut settings_unreadable) =
+            match std::fs::read_to_string(dir.join(LEGACY_SETTINGS_FILE_NAME)) {
+                Ok(text) => (Some(text), None),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, None),
+                Err(error) => (None, Some(error.to_string())),
+            };
         let mut report = match csharp::import(&servers, settings.as_deref()) {
             Ok(report) => report,
+            Err(csharp::ImportError::Settings(error)) => {
+                settings_unreadable = Some(error.to_string());
+                match csharp::import(&servers, None) {
+                    Ok(report) => report,
+                    Err(error) => {
+                        self.dialog = Some(Dialog::ImportFailed {
+                            detail: error.to_string(),
+                        });
+                        return;
+                    }
+                }
+            }
             Err(error) => {
                 self.dialog = Some(Dialog::ImportFailed {
                     detail: error.to_string(),
@@ -5234,6 +5273,17 @@ impl App {
                 )
                 .map_err(|error| error.to_string()),
             );
+            // Apart from the profiles: read as values one by one, the preferences survive a
+            // part of the file the profiles cannot read. Their failure is said on its own
+            // line, unless it is the same file failing, already said.
+            summary.preferences =
+                settings
+                    .as_deref()
+                    .and_then(|text| match self.csharp_preferences(text) {
+                        Err(_) if settings_unreadable.is_some() => None,
+                        read => Some(read),
+                    });
+            summary.settings_unreadable = settings_unreadable;
             self.dialog = Some(Dialog::ImportDone(summary));
         }
     }

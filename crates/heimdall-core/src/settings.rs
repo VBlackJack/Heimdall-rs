@@ -2289,6 +2289,19 @@ impl Settings {
     ///
     /// [`TransferError`] when `text` is not a settings file this version reads.
     pub fn import(&self, text: &str) -> Result<SettingsImport, TransferError> {
+        // The C# "Export settings" file, in JSON: its preferences read as the import from
+        // the C# Heimdall reads them, none changed here overwritten, no secret taken.
+        // A byte order mark, which an editor may have added, starts no TOML or JSON.
+        let text = text.trim_start_matches(BYTE_ORDER_MARK);
+        if text.trim_start().starts_with(JSON_OBJECT_START) {
+            return match crate::import::csharp_settings::preferences(text, self) {
+                Ok(read) if read.export_file => Ok(self.csharp_import(&read)),
+                Err(crate::import::csharp_settings::CsharpSettingsError::Newer(_)) => {
+                    Err(TransferError::Newer)
+                }
+                _ => Err(TransferError::NotSettings),
+            };
+        }
         let document: toml::Table = text.parse().map_err(|_| TransferError::NotSettings)?;
         if document
             .get(TRANSFER_FORMAT_KEY)
@@ -2337,6 +2350,62 @@ impl Settings {
         })
     }
 }
+
+impl Settings {
+    /// These settings with the changes of `read` laid over them, and nothing else of it:
+    /// what changed here since it was read, a lockout or the last look for a newer release
+    /// among them, is kept. `None` when the result does not read as settings.
+    #[must_use]
+    pub fn with_changes_of(&self, read: &SettingsImport) -> Option<Self> {
+        let mut merged = toml::Table::try_from(self.file()).ok()?;
+        let incoming = toml::Table::try_from(read.settings.file()).ok()?;
+        for change in &read.changes {
+            let (section, key) = change.key.split_once('.')?;
+            let value = match incoming.get(section) {
+                Some(toml::Value::Table(values)) => values.get(key).cloned(),
+                _ => None,
+            };
+            let target = merged
+                .entry(section.to_owned())
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let toml::Value::Table(target) = target {
+                match value {
+                    Some(value) => target.insert(key.to_owned(), value),
+                    None => target.remove(key),
+                };
+            }
+        }
+        let file: SettingsFile = merged.try_into().ok()?;
+        Some(Self::from_file(file))
+    }
+
+    /// The preferences of the C# Heimdall `read` as an import shows them before they are
+    /// taken: what they change here, each with why it is shown first, and the C#
+    /// preferences left out, by their C# name.
+    #[must_use]
+    pub fn csharp_import(
+        &self,
+        read: &crate::import::csharp_settings::Preferences,
+    ) -> SettingsImport {
+        use crate::import::csharp_settings::PreferenceOutcome;
+        SettingsImport {
+            settings: read.settings.clone(),
+            changes: changes(&self.transferable(), &read.settings.transferable()),
+            ignored: read
+                .rows
+                .iter()
+                .filter(|row| row.outcome != PreferenceOutcome::Taken)
+                .map(|row| row.key.clone())
+                .collect(),
+        }
+    }
+}
+
+/// The byte order mark an editor may write at the start of a file.
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
+/// How a JSON document starts: the C# "Export settings" file is one.
+const JSON_OBJECT_START: char = '{';
 
 /// What a portable settings file says it is.
 const TRANSFER_FORMAT: &str = "heimdall-settings";

@@ -5590,3 +5590,15 @@ ui-tab-menu-reopen-closed-many = Rouvrir les { $count } onglets fermés
 ui-menu-keys-reopen-closed = Ctrl+Shift+R
 ## The keyboard shortcuts list: Ctrl+Shift+R.
 ui-shortcuts-reopen-closed-tab = Rouvrir les onglets de la dernière fermeture
+## La reprise des paramètres de Heimdall C# : ses préférences.
+ui-dialog-import-settings-unreadable = Les paramètres de Heimdall C# n'ont pas pu être lus : les profils ont été importés sans les valeurs par défaut de leurs dossiers, et ses serveurs SSH de confiance et connexions planifiées n'ont pas été repris. { $detail }
+ui-dialog-import-preferences = { $count ->
+    [one] { $count } préférence de Heimdall C# peut être reprise : vérifiez-la avant qu'elle soit appliquée.
+   *[other] { $count } préférences de Heimdall C# peuvent être reprises : vérifiez-les avant qu'elles soient appliquées.
+}
+ui-dialog-import-preferences-kept = Conservées car modifiées ici : { $names }
+ui-dialog-import-preferences-secret = Secrets, jamais repris : { $names }
+ui-dialog-import-preferences-invalid = Valeurs non lues : { $names }
+ui-dialog-import-preferences-relative = Chemins de l'installation C#, non repris : { $names }
+ui-dialog-import-preferences-failed = Les préférences de Heimdall C# n'ont pas pu être lues : { $detail }
+ui-dialog-import-preferences-review = Vérifier les préférences

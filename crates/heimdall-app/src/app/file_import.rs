@@ -303,6 +303,8 @@ impl App {
                     .collect(),
                 host_keys: None,
                 scheduled: None,
+                settings_unreadable: None,
+                preferences: None,
                 gateways: reconciled,
                 actions: None,
             }),
