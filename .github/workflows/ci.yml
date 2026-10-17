@@ -13,6 +13,14 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # One more integration test binary filled the Ubuntu runner's disk twice (PR #432), with
+  # master already close: full debug info is most of a test binary's size. Line tables keep
+  # file and line numbers in a panic's backtrace. The incremental caches of a build thrown
+  # away with its runner are pure disk cost: rust-cache turns them off too, said here so it
+  # does not hang on the action. The release build has no debug info either way.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   check:
@@ -31,6 +39,14 @@ jobs:
       - name: Disk space at the start
         shell: bash
         run: df -h
+
+      # The runner image ships toolchains these jobs never use (.NET, Android, Haskell,
+      # CodeQL): removed before building, as their space is what a full build runs short of.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Install Linux build dependencies of iced
         if: runner.os == 'Linux'
@@ -112,6 +128,13 @@ jobs:
 
       - name: Disk space at the start
         run: df -h
+
+      # The runner image ships toolchains these jobs never use (.NET, Android, Haskell,
+      # CodeQL): removed before building, as their space is what a full build runs short of.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Install Linux build dependencies of iced
         timeout-minutes: 10
