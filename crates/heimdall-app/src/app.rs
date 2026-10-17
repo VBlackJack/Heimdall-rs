@@ -856,6 +856,9 @@ pub enum Message {
         /// What.
         what: ProfileCopy,
     },
+    /// Put a value the properties panel shows on the clipboard, as the C# panel's values
+    /// copy themselves on a click; the panel never shows a secret, so none comes this way.
+    CopyValue(String),
     /// Open the vault dialog: unlock the vault, or create it.
     ShowVault,
     /// Open the dialog changing the master password.
@@ -1149,6 +1152,7 @@ impl fmt::Debug for Message {
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
             Self::RequestDeleteProfile(id) => write!(f, "RequestDeleteProfile({id})"),
             Self::CopyProfile { id, what } => write!(f, "CopyProfile({id}, {what:?})"),
+            Self::CopyValue(_) => f.write_str("CopyValue(..)"),
             Self::ShowVault => f.write_str("ShowVault"),
             Self::ChangeMasterPassword => f.write_str("ChangeMasterPassword"),
             Self::DisableMasterPassword => f.write_str("DisableMasterPassword"),
@@ -3853,7 +3857,8 @@ impl App {
             | Message::ConnectProfile(_)
             | Message::DuplicateProfile { .. }
             | Message::RequestDeleteProfile(_)
-            | Message::CopyProfile { .. }) => self.tree_message(message),
+            | Message::CopyProfile { .. }
+            | Message::CopyValue(_)) => self.tree_message(message),
             message @ (Message::ShowVault
             | Message::ChangeMasterPassword
             | Message::DisableMasterPassword

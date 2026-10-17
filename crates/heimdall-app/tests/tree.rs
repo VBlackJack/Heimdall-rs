@@ -374,6 +374,45 @@ fn copied(app: &mut App, profile: &str, what: ProfileCopy) -> Option<String> {
 }
 
 #[test]
+fn a_value_of_the_properties_panel_is_copied_and_said_and_an_empty_one_is_not() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    assert!(matches!(
+        app.update(Message::CopyValue("Prod/Web".to_owned())).as_slice(),
+        [Effect::WriteClipboard(text)] if text == "Prod/Web"
+    ));
+    assert!(app.update(Message::CopyValue("  ".to_owned())).is_empty());
+    assert_eq!(
+        format!("{:?}", Message::CopyValue("web.lab".to_owned())),
+        "CopyValue(..)",
+        "a copied value is not written to the log"
+    );
+}
+
+#[test]
+fn the_credential_provider_is_said_only_for_what_its_connect_path_asks_it() {
+    use heimdall_app::ProviderMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    assert!(!app.provider_consulted(&id("ssh")), "off");
+    app.update(Message::CredentialProvider(ProviderMessage::Enabled(true)));
+    app.update(Message::CredentialProvider(ProviderMessage::Command(
+        String::new(),
+    )));
+    assert!(!app.provider_consulted(&id("ssh")), "no command to run");
+    app.update(Message::CredentialProvider(ProviderMessage::Command(
+        "pass show {Title}".to_owned(),
+    )));
+    for asked in ["ssh", "rdp", "vnc"] {
+        assert!(app.provider_consulted(&id(asked)), "{asked}");
+    }
+    for never in ["telnet", "local", "winrm", "gone"] {
+        assert!(!app.provider_consulted(&id(never)), "{never}");
+    }
+}
+
+#[test]
 fn the_copy_entries_put_what_they_say_on_the_clipboard() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path(), &SystemCredentials::memory());

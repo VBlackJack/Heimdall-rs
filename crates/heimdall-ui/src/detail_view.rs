@@ -211,20 +211,24 @@ fn card<'a>(
         container(row![labels, values].spacing(spacing::MD))
             .padding([spacing::SM, spacing::MD])
             .width(Length::Fill)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(palette.background.weak.color.into()),
-                    border: iced::Border {
-                        color: palette.background.strong.color,
-                        width: BORDER_WIDTH,
-                        radius: radius::SM.into(),
-                    },
-                    ..container::Style::default()
-                }
-            })
+            .style(card_style)
             .into(),
     )
+}
+
+/// The card's look, as the C# `CardBrush` in `BorderBrush`, rounded as `CornerRadiusSm`:
+/// the detail panel's and the properties panel's.
+pub(crate) fn card_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(palette.background.weak.color.into()),
+        border: iced::Border {
+            color: palette.background.strong.color,
+            width: BORDER_WIDTH,
+            radius: radius::SM.into(),
+        },
+        ..container::Style::default()
+    }
 }
 
 /// The panel of `profile`; `saved`, the credentials kept for it once read; `editable`, it

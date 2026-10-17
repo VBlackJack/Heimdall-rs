@@ -68,6 +68,7 @@ pub mod press_tooltip;
 pub mod priority_row;
 pub mod profile_import_view;
 pub mod profile_tabs;
+mod properties_panel;
 mod provider_view;
 pub mod rdp_diagnostic;
 pub mod rdp_options;

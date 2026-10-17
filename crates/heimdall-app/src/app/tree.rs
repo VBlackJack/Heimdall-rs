@@ -426,6 +426,14 @@ impl App {
                 self.tell(super::Notice::Copied(text.clone()));
                 vec![Effect::WriteClipboard(text)]
             }
+            // As the C# `SessionPropertiesView.TryCopy`: an empty value copies nothing.
+            Message::CopyValue(text) => {
+                if text.trim().is_empty() {
+                    return Vec::new();
+                }
+                self.tell(super::Notice::Copied(text.clone()));
+                vec![Effect::WriteClipboard(text)]
+            }
             _ => Vec::new(),
         }
     }

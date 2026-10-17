@@ -649,6 +649,11 @@ pub struct Settings {
     /// The tree's rows show the gateway a profile goes through, as the C#
     /// `ShowGatewayBadge`: on. A view choice of the tree's filter menu, kept across runs.
     pub show_gateway_badge: bool,
+    /// The read-only properties of the session selected docked under the tree, as the C#
+    /// `ShowSessionPropertiesPanel`: off, so the tree keeps its height for whoever never
+    /// asked for it. A view choice of the tree's filter menu and Ctrl+Shift+B, kept across
+    /// runs.
+    pub show_properties_panel: bool,
     /// Whether, and how often, a newer release is looked for.
     pub updates: Updates,
     /// The last look for a newer release and the release skipped, kept across runs on
@@ -1242,6 +1247,7 @@ impl Default for Settings {
             reachability: Reachability::default(),
             sftp_browser: SftpBrowser::default(),
             show_gateway_badge: true,
+            show_properties_panel: false,
             updates: Updates::default(),
             update_check: UpdateCheck::default(),
             windows_hello: WindowsHello::default(),
@@ -1685,6 +1691,9 @@ struct GeneralSection {
     /// Absent, from a file written before it, is the C# default: shown.
     #[serde(default)]
     show_gateway_badge: Option<bool>,
+    /// Absent, from a file written before it, is the C# default: hidden.
+    #[serde(default)]
+    show_properties_panel: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1781,9 +1790,10 @@ impl Settings {
     /// (`SettingsViewModel.cs:2376-2464`), but what the C# carries across: the language,
     /// the theme and the accent, which a reader of another language needs to find the way
     /// back; the PIN and the lockouts, which are state, not preferences; the release skipped
-    /// and the last look for one; and what no C# Settings panel edits (the tree's gateway
-    /// badge, the broadcast scope, the gateway a new profile starts on, the Tools area's pins,
-    /// tab and folded categories, which the C# resets but its tab, and the welcome tour seen).
+    /// and the last look for one; what no C# Settings panel edits (the tree's gateway badge,
+    /// the broadcast scope, the gateway a new profile starts on, the Tools area's pins, tab
+    /// and folded categories, which the C# resets but its tab, and the welcome tour seen);
+    /// and the properties panel under the tree, which the C# reset leaves as it is.
     /// The gateways, the
     /// profiles, the master password, the Windows Hello enrolment, the macros and the
     /// credential provider's unlock secret are kept elsewhere and are not touched.
@@ -1798,6 +1808,7 @@ impl Settings {
             pin_unlock: self.pin_unlock,
             broadcast_scope: self.broadcast_scope,
             show_gateway_badge: self.show_gateway_badge,
+            show_properties_panel: self.show_properties_panel,
             update_check: std::mem::take(&mut self.update_check),
             last_used_gateway: self.last_used_gateway.take(),
             tools: std::mem::take(&mut self.tools),
@@ -2030,6 +2041,7 @@ impl Settings {
             ),
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
             show_gateway_badge: file.general.show_gateway_badge.unwrap_or(true),
+            show_properties_panel: file.general.show_properties_panel.unwrap_or(false),
             updates: Updates {
                 enabled: file.updates.enabled.unwrap_or(true),
                 interval_hours: within(
@@ -2162,6 +2174,7 @@ impl Settings {
                 max_sessions: Some(self.max_sessions),
                 diagnostics_log: Some(self.diagnostics_log),
                 show_gateway_badge: Some(self.show_gateway_badge),
+                show_properties_panel: Some(self.show_properties_panel),
             },
             vault_unlock: VaultUnlockSection {
                 failures: self.vault_unlock.failures(),

@@ -939,9 +939,14 @@ pub fn menu_entries<'a>(
 }
 
 /// The tree's filters, as the C# filter button's menu: the protocols, then connected and
-/// through a gateway, then the gateway badge. A box ticked leaves the menu open, as the C#
-/// entries stay open, so several can be chosen. `badge`: rows show their gateway.
-pub fn filter_entries<'a>(filter: &TreeFilter, badge: bool) -> Element<'a, Message> {
+/// through a gateway, then the view choices: the gateway badge and the properties panel. A
+/// box ticked leaves the menu open, as the C# entries stay open, so several can be chosen.
+/// `badge`: rows show their gateway; `properties`: the properties panel is shown.
+pub fn filter_entries<'a>(
+    filter: &TreeFilter,
+    badge: bool,
+    properties: bool,
+) -> Element<'a, Message> {
     let filter_box = |label: String, on: bool, message: FilterMessage| -> Element<'a, Message> {
         container(
             checkbox(on)
@@ -986,7 +991,23 @@ pub fn filter_entries<'a>(filter: &TreeFilter, badge: bool) -> Element<'a, Messa
             fl!("ui-tree-filter-gateway-badge"),
             badge,
             FilterMessage::GatewayBadge,
-        ));
+        ))
+        // Its key at its right, as the C# `InputGestureText`.
+        .push(
+            row![
+                container(filter_box(
+                    fl!("ui-tree-filter-properties-panel"),
+                    properties,
+                    FilterMessage::PropertiesPanel,
+                ))
+                .width(Length::Fill),
+                text(fl!("ui-menu-keys-properties-panel"))
+                    .size(font_size::BODY_LARGE)
+                    .style(text::secondary),
+            ]
+            .spacing(GESTURE_GAP)
+            .align_y(iced::Alignment::Center),
+        );
     menu_card(entries).into()
 }
 
