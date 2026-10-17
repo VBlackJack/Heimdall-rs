@@ -514,7 +514,12 @@ fn certificate_card<'a>(
         );
         for entry in entries {
             let address = display_address(&entry.host, entry.port);
-            let fingerprint = entry.fingerprint.to_string();
+            // A certificate carried over from the C# Heimdall, which never kept its key,
+            // says so in place of the key; its thumbprint is shown under it as any.
+            let fingerprint = entry.fingerprint.map_or_else(
+                || fl!("ui-trusted-certificates-key-unrecorded"),
+                |key| key.to_string(),
+            );
             let thumbprint = entry.certificate.map(|hash| hash.thumbprint());
             // As the C# search: the server, the key, the certificate's thumbprint, and the
             // names of the certificate.

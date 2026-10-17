@@ -379,7 +379,7 @@ async fn an_unknown_certificate_is_asked_about_before_any_password_then_pinned_o
     let keys = app.trusted_keys();
     assert!(keys.ftps.is_empty() && keys.rdp.is_empty());
     assert_eq!(keys.vnc.len(), 1);
-    assert_eq!(keys.vnc[0].fingerprint, pin);
+    assert_eq!(keys.vnc[0].fingerprint, Some(pin));
 }
 
 /// Pins another key than the server's for the profile's server.
@@ -840,7 +840,7 @@ async fn a_forged_certificate_around_the_pinned_key_fails_as_tls_never_as_a_pin_
         .expect("read")
         .try_into()
         .expect("one entry");
-    assert_eq!(entry.fingerprint, pin, "the pin stays");
+    assert_eq!(entry.fingerprint, Some(pin), "the pin stays");
 
     // The server itself, over, holding the key: refused as the pin no longer valid.
     let victim = rcgen::KeyPair::try_from(victim_key.as_slice()).expect("key");
@@ -978,7 +978,7 @@ async fn a_certificate_minted_again_on_the_pinned_key_is_asked_about_as_a_renewa
         .expect("one entry: the renewed one replaced the old");
     assert_eq!(
         (entry.fingerprint, entry.certificate),
-        (pin, Some(minted_again.hash))
+        (Some(pin), Some(minted_again.hash))
     );
 
     let third = attempt_of(&app.update(Message::ReconnectTab(tab)));

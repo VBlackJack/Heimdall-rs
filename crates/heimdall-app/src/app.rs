@@ -163,7 +163,7 @@ pub use bulk_edit::{BulkField, BulkRefusal};
 pub use bulk_password::{BulkPasswordRefusal, BulkPasswordSkips, bulk_password_refusal};
 pub use citrix_import::CitrixImportOutcome;
 pub use connect_as::ConnectAs;
-pub use csharp_settings_import::ImportedPreferences;
+pub use csharp_settings_import::{CarriedCertificates, ImportedPreferences};
 pub use detail::SavedCredentials;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
@@ -2632,6 +2632,9 @@ pub struct ImportSummary {
     /// reviewed, and those left out; or why they could not be read. Read on their own, one
     /// by one: a part of `settings.json` the profiles cannot read does not stop them.
     pub preferences: Option<Result<ImportedPreferences, String>>,
+    /// For the migration of this computer's C# store, its trusted RDP and FTPS certificates
+    /// carried over; or why they could not be. Read on their own as the preferences are.
+    pub certificates: Option<Result<CarriedCertificates, String>>,
     /// The SSH gateways the file brought, created or found already saved, as the C# summary's
     /// gateway line counts them.
     pub gateways: heimdall_core::import::gateways::Reconciliation,
@@ -5257,6 +5260,18 @@ impl App {
         };
         let host_keys = std::mem::take(&mut report.host_keys);
         let scheduled = std::mem::take(&mut report.scheduled);
+        // Bound to the server of the profile that trusted them, as imported now.
+        let rdp_targets: Vec<(String, String, u16)> = report
+            .rdp
+            .iter()
+            .map(|profile| {
+                (
+                    profile.id.as_str().to_owned(),
+                    profile.host.clone(),
+                    profile.port,
+                )
+            })
+            .collect();
         // Saved before it is kept: a failed save leaves the list as its file is.
         if let Some(mut summary) = self.merge_import(report) {
             summary.scheduled = self.carry_scheduled(scheduled);
@@ -5278,6 +5293,12 @@ impl App {
                         Err(_) if settings_unreadable.is_some() => None,
                         read => Some(read),
                     });
+            summary.certificates = settings.as_deref().and_then(|text| {
+                match self.carry_certificates(text, &rdp_targets) {
+                    Err(_) if settings_unreadable.is_some() => None,
+                    carried => Some(carried),
+                }
+            });
             summary.settings_unreadable = settings_unreadable;
             self.dialog = Some(Dialog::ImportDone(summary));
         }

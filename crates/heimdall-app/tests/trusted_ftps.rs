@@ -177,7 +177,7 @@ async fn an_accepted_ftps_certificate_is_listed_with_its_names_and_once_forgotte
     };
     assert_eq!(
         (entry.host.as_str(), entry.port, entry.fingerprint),
-        ("localhost", port, fingerprint)
+        ("localhost", port, Some(fingerprint))
     );
     assert_eq!(entry.subject, subject);
     assert_eq!(entry.issuer, entry.subject, "self-signed");
@@ -253,7 +253,7 @@ fn older_lines_are_listed_and_one_key_or_a_whole_server_is_forgotten_in_its_own_
         .trusted_keys()
         .ftps
         .iter()
-        .map(|entry| (entry.host.clone(), entry.fingerprint))
+        .filter_map(|entry| Some((entry.host.clone(), entry.fingerprint?)))
         .collect();
     let pin: Fingerprint = PIN.parse().expect("pin");
     assert_eq!(
@@ -411,6 +411,7 @@ fn trust_once(
             certificate: whole,
             subject: None,
             details: Some(Box::new(heimdall_app::CertificateDetails {
+                replaces: None,
                 issuer: "CN=ftp.lab".to_owned(),
                 validity: heimdall_rdp::Validity {
                     not_before: std::time::UNIX_EPOCH,

@@ -183,7 +183,8 @@ impl CertificatePins {
                 Ok(
                     CertificateVerdict::Unknown
                     | CertificateVerdict::Renewed { .. }
-                    | CertificateVerdict::Changed { .. },
+                    | CertificateVerdict::Changed { .. }
+                    | CertificateVerdict::OtherCertificate { .. },
                 )
                 | Err(_) => UserVerdict::Untrusted,
             }
@@ -330,6 +331,21 @@ impl CertificatePins {
                     offered: presented.to_string(),
                 });
             }
+            // Carried over from the C# Heimdall without its key: a renewal cannot be told
+            // from another key, so refused as a changed key is, as the C# refuses a
+            // mismatch (`FtpBrowser.cs` `FtpsCertificateRejectionReason.Mismatch`).
+            CertificateVerdict::OtherCertificate { recorded } => {
+                log::warn!(
+                    "the {} certificate of {target} changed: trusted {recorded}, carried over without its key, presented {}: refused",
+                    self.protocol,
+                    seen.hash
+                );
+                return Err(UiError::HostKeyChanged {
+                    target: None,
+                    recorded: recorded.thumbprint(),
+                    offered: seen.hash.thumbprint(),
+                });
+            }
             CertificateVerdict::Renewed { recorded } => {
                 log::info!(
                     "{target} presented a renewed certificate {}: the same key {presented}, another certificate than the one trusted",
@@ -345,6 +361,7 @@ impl CertificatePins {
             }
         };
         let details = seen.validity.map(|validity| CertificateDetails {
+            replaces: None,
             issuer: certificate.issuer.clone(),
             validity,
             issue: Some(issue),
@@ -492,6 +509,35 @@ mod tests {
         // A certificate on file never decided: another key.
         let other = certificate((2020, 2045), Vec::new(), false);
         assert_eq!(verdict(&on_file, &other), UserVerdict::Untrusted);
+    }
+
+    #[test]
+    fn a_certificate_carried_over_is_a_pin_checked_at_the_handshake_and_nothing_else() {
+        let dir = tempfile::tempdir().expect("dir");
+        let file = dir.path().join("known_ftps_hosts");
+        let key = KeyPair::generate().expect("key");
+        let expired = certificate_on(&key, (2000, 2001), Vec::new(), false);
+        let current = certificate_on(&key, (2020, 2045), Vec::new(), false);
+        KnownRdpHosts::new(&file)
+            .carry_over(&[heimdall_rdp::CarriedCertificate {
+                host: HOST.to_owned(),
+                port: PORT,
+                certificate: CertificateHash::of(&expired),
+                trusted: None,
+                subject: None,
+                issuer: None,
+            }])
+            .expect("carried");
+        let on_file = pins(&file);
+        assert!(on_file.pinned().expect("read"), "TLS required");
+        // The very certificate: a pin, whose validity is checked as any.
+        assert_eq!(verdict(&on_file, &expired), pinned(Period::Expired, true));
+        // Another, even on the same key: never trusted, as the C# FTPS refuses a mismatch.
+        assert_eq!(verdict(&on_file, &current), UserVerdict::Untrusted);
+        // Not even when an answer accepted it: a mismatch is never asked about.
+        let mut accepted = pins(&file);
+        accepted.accepted = Some(CertificateHash::of(&current));
+        assert_eq!(verdict(&accepted, &current), UserVerdict::Untrusted);
     }
 
     #[test]
