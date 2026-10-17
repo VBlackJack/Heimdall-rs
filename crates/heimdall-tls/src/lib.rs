@@ -51,7 +51,7 @@ mod inspect;
 
 pub use inspect::{
     PresentedChain, TlsVersion, failed_on_obsolete_version, inspection_connector,
-    inspection_server_name, is_obsolete_version, presented_chain,
+    inspection_server_name, is_obsolete_version, may_speak_legacy_only, presented_chain,
 };
 
 use tokio_rustls::TlsConnector;
