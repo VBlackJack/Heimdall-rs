@@ -98,7 +98,6 @@ pub use app::ImportedPreferences;
 pub use app::SavedCredentials;
 pub use app::SessionLoadNotice;
 pub use app::SettingsTransferMessage;
-pub use app::ToolsMessage;
 pub use app::split;
 pub use app::{ANNOUNCEMENTS_KEPT, Announced, Announcement};
 pub use app::{
@@ -132,6 +131,7 @@ pub use app::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use app::{
     SCHEDULED_TICK, ScheduledChoice, ScheduledMessage, ScheduledNotice, local_time_text,
 };
+pub use app::{ToolEntryEdit, ToolEntryForm, ToolsMessage};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };

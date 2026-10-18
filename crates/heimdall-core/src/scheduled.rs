@@ -260,6 +260,8 @@ pub enum RefusalKind {
     Citrix,
     /// A web console, opened in the system's browser.
     WebConsole,
+    /// A tool entry, which opens a tool's tab: there is no connection to schedule.
+    ToolEntry,
     /// A `WinRM` profile logging in as the account running Heimdall, or without an
     /// account: only a stored account and password are used unattended.
     WinRmNoAccount,
@@ -298,6 +300,8 @@ pub enum Target<'a> {
     Citrix,
     /// A web console, opened in the system's browser.
     Web,
+    /// A tool saved as a tree entry.
+    Tool,
     /// A local shell or program profile.
     Local,
 }
@@ -312,6 +316,7 @@ pub fn refusal(target: Target<'_>, files_browser: bool) -> Option<RefusalKind> {
         Target::Citrix => Some(RefusalKind::Citrix),
         // The system's browser is a program of this computer, as an external client is.
         Target::Web => Some(RefusalKind::WebConsole),
+        Target::Tool => Some(RefusalKind::ToolEntry),
         Target::Ssh(profile) if profile.sftp => {
             (!files_browser).then_some(RefusalKind::FilesBrowserOff)
         }

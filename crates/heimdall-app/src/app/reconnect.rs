@@ -287,5 +287,6 @@ pub(super) fn open_message(id: ProfileId, kind: ProfileKind, purpose: Purpose) -
         ProfileKind::WinRm => Message::OpenWinRm(id),
         ProfileKind::Citrix => Message::OpenCitrix(id),
         ProfileKind::Web => Message::OpenWeb(id),
+        ProfileKind::Tool => Message::Tools(super::ToolsMessage::OpenEntry(id)),
     }
 }

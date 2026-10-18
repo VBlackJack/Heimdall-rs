@@ -144,7 +144,7 @@ fn kind_of(kind: ProfileKind) -> Option<RemoteKind> {
         ProfileKind::WinRm => Some(RemoteKind::WinRm),
         ProfileKind::Telnet => Some(RemoteKind::Telnet),
         ProfileKind::Web => Some(RemoteKind::Web),
-        ProfileKind::Ftp | ProfileKind::Local | ProfileKind::Citrix => None,
+        ProfileKind::Ftp | ProfileKind::Local | ProfileKind::Citrix | ProfileKind::Tool => None,
     }
 }
 

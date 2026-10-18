@@ -455,6 +455,7 @@ pub fn scheduled_refusal(refusal: RefusalKind) -> String {
         RefusalKind::RdGateway => fl!("ui-scheduled-refusal-rd-gateway"),
         RefusalKind::Citrix => fl!("ui-scheduled-refusal-citrix"),
         RefusalKind::WebConsole => fl!("ui-scheduled-refusal-web"),
+        RefusalKind::ToolEntry => fl!("ui-scheduled-refusal-tool"),
         RefusalKind::WinRmNoAccount => fl!("ui-scheduled-refusal-winrm-no-account"),
         RefusalKind::WinRmPasswordNotStored => fl!("ui-scheduled-refusal-winrm-password"),
         RefusalKind::X11Forwarding => fl!("ui-scheduled-refusal-x11"),

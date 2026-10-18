@@ -84,6 +84,7 @@ impl Parsed {
         report.local.iter_mut().for_each(|p| fresh(&mut p.id));
         report.winrm.iter_mut().for_each(|p| fresh(&mut p.id));
         report.web.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.tools.iter_mut().for_each(|p| fresh(&mut p.id));
         // What the sessions say of their servers follows them to their new identifiers.
         for (id, _) in &mut report.metadata {
             if let Some(new) = renamed.get(id) {

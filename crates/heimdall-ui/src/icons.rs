@@ -78,6 +78,8 @@ pub enum Icon {
     Citrix,
     /// `Geo.Protocol.LocalShell`: a window with a prompt.
     LocalShell,
+    /// `Geo.Protocol.Tool`: a spanner, a tool saved as a tree entry.
+    Tool,
     /// `Geo.Tree.Group`: a folder of the tree.
     Folder,
     /// The tree's expander closed: the arrow of the C# `TreeViewExpanderToggleButtonStyle`.
@@ -260,7 +262,7 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 98] = [
+    pub const ALL: [Self; 99] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -271,6 +273,7 @@ impl Icon {
         Self::Ftp,
         Self::Citrix,
         Self::LocalShell,
+        Self::Tool,
         Self::Folder,
         Self::ChevronRight,
         Self::ChevronDown,
@@ -375,6 +378,7 @@ impl Icon {
             ProfileKind::Citrix => Self::Citrix,
             ProfileKind::Web => Self::Web,
             ProfileKind::Local => Self::LocalShell,
+            ProfileKind::Tool => Self::Tool,
         }
     }
 
@@ -420,6 +424,10 @@ impl Icon {
             }
             Self::LocalShell => {
                 "M1,2 L15,2 L15,14 L1,14 Z M1,4 L15,4 M4,7 L7,9.5 L4,12 M8,12 L12,12"
+            }
+            Self::Tool => {
+                "M11,1 A4,4 0 0 0 7.2,6.4 L1.6,12 A1.8,1.8 0 0 0 4,14.4 L9.6,8.8 \
+                 A4,4 0 0 0 15,5 L12.5,7.5 L9.5,6.5 L8.5,3.5 Z"
             }
             Self::Folder => {
                 "M3,1 L7,1 L8,3 L14,3 L14,9 L3,9 Z M1,5 L3,5 M1,5 L1,13 L12,13 L12,10 \
@@ -870,7 +878,7 @@ impl Tint {
 
 /// The colour of `kind` in `theme`, as the C# `HeimdallThemeBridge.xaml` gives each
 /// `Protocol*Brush`: RDP and FTP blue, SSH green, `WinRM` and Citrix purple, SFTP orange, VNC
-/// cyan, Telnet the comment colour, Web pink, Local the accent.
+/// cyan (a tool entry too), Telnet the comment colour, Web pink, Local the accent.
 #[must_use]
 pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
     let colors = crate::themes::colors_of(theme);
@@ -879,7 +887,7 @@ pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
         ProfileKind::Ssh => colors.green,
         ProfileKind::WinRm | ProfileKind::Citrix => colors.purple,
         ProfileKind::Sftp => colors.orange,
-        ProfileKind::Vnc => colors.cyan,
+        ProfileKind::Vnc | ProfileKind::Tool => colors.cyan,
         ProfileKind::Telnet => colors.comment,
         ProfileKind::Web => colors.pink,
         ProfileKind::Local => theme.palette().primary,

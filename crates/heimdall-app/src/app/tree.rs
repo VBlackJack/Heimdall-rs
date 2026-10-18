@@ -56,6 +56,8 @@ pub enum ProfileKind {
     Citrix,
     /// A web console, opened in the system's browser.
     Web,
+    /// A tool saved as a tree entry, as the C# `TOOL:X`: it opens the tool's tab.
+    Tool,
 }
 
 impl ProfileKind {
@@ -87,6 +89,7 @@ impl ProfileKind {
             Self::WinRm => "WinRM",
             Self::Citrix => "Citrix",
             Self::Web => "Web",
+            Self::Tool => "Tool",
         }
     }
 }
@@ -283,6 +286,24 @@ impl App {
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: profile.username.clone(),
                 gateway: self.badge(profile.gateway.as_ref()),
+            });
+        }
+        for profile in self.store.tool_profiles() {
+            all.push(ProfileSummary {
+                id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
+                name: profile.name.clone(),
+                group: profile.group.clone(),
+                kind: ProfileKind::Tool,
+                // A tool with a host shows it as a server does, the port left to the tool
+                // when it holds none.
+                endpoint: profile
+                    .host
+                    .clone()
+                    .map(|host| (host, profile.port.unwrap_or_default())),
+                username: None,
+                gateway: None,
             });
         }
         for profile in self.store.winrm_profiles() {
@@ -573,6 +594,14 @@ impl App {
                         profile.id = copy.clone();
                         profile.name.clone_from(&name);
                         store.merge_web([profile]);
+                    }
+                }
+                ProfileKind::Tool => {
+                    let found = store.tool_profiles().iter().find(|p| p.id == *id).cloned();
+                    if let Some(mut profile) = found {
+                        profile.id = copy.clone();
+                        profile.name.clone_from(&name);
+                        store.merge_tools([profile]);
                     }
                 }
             }

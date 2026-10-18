@@ -137,6 +137,7 @@ impl App {
             | ProfileKind::Local
             | ProfileKind::WinRm
             | ProfileKind::Web
+            | ProfileKind::Tool
             | ProfileKind::Citrix => false,
         }
     }

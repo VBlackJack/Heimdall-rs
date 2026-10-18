@@ -356,7 +356,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 13);
+    assert_eq!(PROFILE_FILE_VERSION, 14);
 }
 
 #[test]
@@ -1080,6 +1080,69 @@ fn web_consoles_read_back_with_their_address_and_gateway() {
 }
 
 #[test]
+fn tool_entries_read_back_and_follow_the_profile_operations() {
+    use heimdall_core::profile::ToolProfile;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let ping = ToolProfile {
+        id: ProfileId::new("ping-core"),
+        name: "Ping core".to_owned(),
+        group: Some("Lab/Tools".to_owned()),
+        tool: "PING".to_owned(),
+        host: Some("core.lab".to_owned()),
+        port: Some(443),
+    };
+    let uuid = ToolProfile {
+        id: ProfileId::new("uuid"),
+        name: "UUID".to_owned(),
+        group: None,
+        tool: "UUID".to_owned(),
+        host: None,
+        port: None,
+    };
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_tools([ping.clone(), uuid.clone()]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(text.contains("[[tool]]"), "{text}");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.tool_profiles(), [ping, uuid]);
+    assert!(
+        reopened.folder_paths().contains(&"Lab/Tools".to_owned()),
+        "its folder is a folder of the tree"
+    );
+    let mut store = reopened;
+    assert!(store.rename_profile(&ProfileId::new("uuid"), "Identifiers"));
+    assert_eq!(store.tool_profiles()[1].name, "Identifiers");
+    assert!(store.remove(&ProfileId::new("ping-core")));
+    assert_eq!(store.tool_profiles().len(), 1);
+}
+
+#[test]
+fn a_file_written_before_tool_entries_still_reads() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(
+        &path,
+        "version = 13\n[[ssh]]\nid = \"web\"\nname = \"web\"\nhost = \"h\"\nport = 22\n",
+    )
+    .expect("writes");
+    let store = ProfileStore::open(&path).expect("a version 13 file opens");
+    assert_eq!(store.ssh_profiles().len(), 1);
+    assert!(store.tool_profiles().is_empty());
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(
+        text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
+        "{text}"
+    );
+    assert!(
+        !text.contains("[[tool]]"),
+        "nothing written when none: {text}"
+    );
+}
+
+#[test]
 fn a_web_console_goes_direct_once_its_gateway_is_removed() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(PROFILES_FILE_NAME);
@@ -1102,7 +1165,7 @@ fn a_web_console_goes_direct_once_its_gateway_is_removed() {
 }
 
 #[test]
-fn a_version_12_file_opens_without_web_consoles_and_one_written_now_says_13() {
+fn a_version_12_file_opens_without_web_consoles_and_one_written_now_says_the_current_version() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(PROFILES_FILE_NAME);
     fs::write(
@@ -1116,7 +1179,10 @@ fn a_version_12_file_opens_without_web_consoles_and_one_written_now_says_13() {
     store.merge_web([web_console("ilo")]);
     store.save().expect("saves");
     let text = fs::read_to_string(&path).expect("reads");
-    assert!(text.starts_with("version = 13\n"), "{text}");
+    assert!(
+        text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
+        "{text}"
+    );
     // A web console's own switches are written only when set.
     assert!(!text.contains("use_http"), "{text}");
 }

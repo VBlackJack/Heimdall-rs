@@ -227,6 +227,27 @@ fn web() -> WebProfile {
     }
 }
 
+fn tool_entries() -> [heimdall_core::profile::ToolProfile; 2] {
+    [
+        heimdall_core::profile::ToolProfile {
+            id: ProfileId::new("ping-core"),
+            name: "Ping core".to_owned(),
+            group: Some("Tools".to_owned()),
+            tool: "PING".to_owned(),
+            host: Some("core.lab".to_owned()),
+            port: Some(443),
+        },
+        heimdall_core::profile::ToolProfile {
+            id: ProfileId::new("uuid"),
+            name: "UUID".to_owned(),
+            group: None,
+            tool: "UUID".to_owned(),
+            host: None,
+            port: None,
+        },
+    ]
+}
+
 fn store(dir: &std::path::Path) -> ProfileStore {
     let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
     store.merge_gateways(gateways());
@@ -276,6 +297,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         sso: true,
     }]);
     store.merge_web([web()]);
+    store.merge_tools(tool_entries());
     store.merge_local([local(LocalArguments::WindowsLine(
         r#"/c "echo hi""#.to_owned(),
     ))]);
@@ -362,6 +384,7 @@ fn every_profile_comes_back_the_same_through_the_import() {
     assert_eq!(report.local, store.local_profiles());
     assert_eq!(report.winrm, store.winrm_profiles());
     assert_eq!(report.web, store.web_profiles());
+    assert_eq!(report.tools, store.tool_profiles());
     let kept: Vec<_> = report
         .metadata
         .iter()
@@ -371,7 +394,7 @@ fn every_profile_comes_back_the_same_through_the_import() {
     for (id, metadata) in kept {
         assert_eq!(store.metadata(&id), metadata, "{id}");
     }
-    assert_eq!(export::session_count(&store), 12);
+    assert_eq!(export::session_count(&store), 14);
 }
 
 /// A Windows line as written; a list, which this test does not quote, marked.
@@ -480,6 +503,13 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
         mail.get("citrixLaunchCommandLine").is_none(),
         "the Workspace cache launch line is a secret"
     );
+    let ping = by_id("ping-core");
+    assert_eq!(ping["connectionType"], "TOOL:PING");
+    assert_eq!(ping["remoteServer"], "core.lab");
+    assert_eq!(ping["remotePort"], 443);
+    assert_eq!(by_id("uuid")["connectionType"], "TOOL:UUID");
+    assert_eq!(by_id("uuid")["remoteServer"], "");
+    assert!(by_id("uuid").get("remotePort").is_none());
     let console = by_id("console");
     assert_eq!(console["remoteServer"], "ilo.lab");
     assert_eq!(console["webPort"], 8443);

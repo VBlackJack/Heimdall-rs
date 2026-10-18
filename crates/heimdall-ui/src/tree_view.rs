@@ -21,6 +21,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::BulkField;
+use heimdall_app::ToolsMessage;
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::reachability::{DownReason, Unchecked, Verdict};
 use heimdall_app::split::{Axis, Placement, SplitMessage};
@@ -1195,6 +1196,9 @@ fn profile_entries<'a>(
     (editable, splittable, tools): (bool, bool, bool),
 ) -> MenuColumn<'a, Message> {
     let id = profile.id.clone();
+    if profile.kind == ProfileKind::Tool {
+        return tool_entries(entries, &id, editable);
+    }
     entries = entries.push(entry(
         fl!("ui-tree-connect"),
         Some(AppMessage::ConnectProfile(id.clone())),
@@ -1265,6 +1269,45 @@ fn profile_entries<'a>(
     entries
 }
 
+/// A tool entry's menu, as the C# `CreateToolContextMenu` (`ContextMenuFactory.cs:442-483`):
+/// Open in tab, Move to folder, Rename, Remove; none of a server's connecting, copying or
+/// waking entries.
+fn tool_entries<'a>(
+    entries: MenuColumn<'a, Message>,
+    id: &ProfileId,
+    editable: bool,
+) -> MenuColumn<'a, Message> {
+    entries
+        .push(entry(
+            fl!("ui-tree-tool-open"),
+            Some(AppMessage::Tools(ToolsMessage::OpenEntry(id.clone()))),
+        ))
+        .push(separator())
+        .push(
+            button(text(fl!("ui-tree-move-to-folder")).size(font_size::BODY_LARGE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press_maybe(
+                    editable.then(|| Message::OpenTreeMenu(TreeMenu::MoveProfile(id.clone()))),
+                )
+                .opens_menu(),
+        )
+        .push(separator())
+        .push(keyed_entry(
+            fl!("ui-tree-rename"),
+            Some(fl!("ui-menu-keys-rename")),
+            editable.then(|| AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id.clone()))),
+        ))
+        .push(
+            keyed_button(fl!("ui-tree-tool-remove"), Some(fl!("ui-menu-keys-delete")))
+                .style(danger_style)
+                .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(
+                    id.clone(),
+                )))
+                .menu_item(),
+        )
+}
+
 /// A session's Notes menu, as the C# one: a note about it, written from a template.
 #[must_use]
 pub fn notes_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
@@ -1313,6 +1356,10 @@ fn add_entries(entries: MenuColumn<'_, Message>) -> MenuColumn<'_, Message> {
             fl!("ui-tree-add-session"),
             Some(fl!("ui-menu-keys-new-session")),
             Some(AppMessage::NewProfile),
+        ))
+        .push(entry(
+            fl!("ui-tree-add-tool"),
+            Some(AppMessage::Tools(ToolsMessage::NewEntry { folder: None })),
         ))
         .push(separator())
         .push(entry(fl!("ui-gateway-add"), Some(AppMessage::NewGateway)))
@@ -2410,6 +2457,12 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
         .push(entry(
             fl!("ui-tree-add-session"),
             folder(FolderMessage::NewProfileIn(path.to_owned())),
+        ))
+        .push(entry(
+            fl!("ui-tree-add-tool"),
+            Some(AppMessage::Tools(ToolsMessage::NewEntry {
+                folder: (path != NO_FOLDER).then(|| path.to_owned()),
+            })),
         ));
     if path == NO_FOLDER {
         entries = entries.push(entry(
