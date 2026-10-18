@@ -3891,6 +3891,30 @@ fn a_migration_says_how_many_scheduled_connections_it_carried_over() {
 }
 
 #[test]
+fn the_network_scanner_report_has_a_title_of_its_own() {
+    let summary = heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport::default(),
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        scheduled: None,
+        settings_unreadable: None,
+        preferences: None,
+        gateways: heimdall_core::import::gateways::Reconciliation::default(),
+        actions: None,
+        dropped: Vec::new(),
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ScanAdded(summary));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Sessions added").expect("its own title");
+    assert!(ui.find("Import finished").is_err(), "not the import's");
+}
+
+#[test]
 fn an_import_says_which_settings_it_left_out_of_which_profile() {
     use heimdall_core::import::csharp::Dropped;
     let dir = tempfile::tempdir().expect("dir");

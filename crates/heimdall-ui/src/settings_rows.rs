@@ -37,6 +37,8 @@ pub enum SettingsCard {
     Appearance,
     /// The tunnels panel, the computer's sleep, the most sessions.
     Behavior,
+    /// The session tree's view choices, as the C# "Session tree" card.
+    SessionTree,
     /// The look for a newer release.
     Updates,
     /// The background check of every server.
@@ -90,9 +92,10 @@ pub enum SettingsCard {
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::Appearance,
         Self::Behavior,
+        Self::SessionTree,
         Self::Updates,
         Self::Reachability,
         Self::ExternalTools,
@@ -125,6 +128,7 @@ impl SettingsCard {
         match self {
             Self::Appearance
             | Self::Behavior
+            | Self::SessionTree
             | Self::Updates
             | Self::Reachability
             // The C# keeps them on its Advanced tab, which this version does not have.
@@ -172,6 +176,8 @@ pub enum SettingRow {
     Accent,
     /// The tunnels panel starts collapsed.
     CollapseTunnelsPanel,
+    /// The properties panel docked under the tree, shared with the tree's filter menu.
+    ShowPropertiesPanel,
     /// The computer kept from sleeping while a session is open.
     PreventSleep,
     /// Most sessions open at once.
@@ -300,13 +306,14 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 66] = [
+    pub const ALL: [Self; 67] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
         Self::CollapseTunnelsPanel,
         Self::PreventSleep,
         Self::MaxSessions,
+        Self::ShowPropertiesPanel,
         Self::UpdateChecks,
         Self::UpdateInterval,
         Self::UpdateVersion,
@@ -377,6 +384,7 @@ impl SettingRow {
             Self::CollapseTunnelsPanel | Self::PreventSleep | Self::MaxSessions => {
                 SettingsCard::Behavior
             }
+            Self::ShowPropertiesPanel => SettingsCard::SessionTree,
             Self::UpdateChecks
             | Self::UpdateInterval
             | Self::UpdateVersion
@@ -637,6 +645,7 @@ impl SettingRow {
         let sftp = settings.sftp_browser;
         Some(match self {
             Self::CollapseTunnelsPanel => settings.collapse_tunnels_panel,
+            Self::ShowPropertiesPanel => settings.show_properties_panel,
             Self::PreventSleep => settings.prevent_sleep,
             Self::UpdateChecks => settings.updates.enabled,
             Self::Reachability => settings.reachability.enabled,
@@ -682,6 +691,7 @@ impl SettingRow {
         let browser = |sftp: SftpBrowser| SettingsMessage::SftpBrowser(sftp);
         Some(match self {
             Self::CollapseTunnelsPanel => SettingsMessage::CollapseTunnelsPanel(on),
+            Self::ShowPropertiesPanel => SettingsMessage::ShowPropertiesPanel(on),
             Self::PreventSleep => SettingsMessage::PreventSleep(on),
             Self::UpdateChecks => SettingsMessage::UpdateChecks(on),
             Self::Reachability => SettingsMessage::Reachability(on),

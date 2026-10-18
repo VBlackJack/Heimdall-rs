@@ -3008,6 +3008,9 @@ pub enum Dialog {
     ConfirmPostConnect(Box<PostConnectConfirmation>),
     /// Result of an import.
     ImportDone(ImportSummary),
+    /// Result of the network scanner's Add: the hosts chosen, merged as an import is, but
+    /// told under a title of their own.
+    ScanAdded(ImportSummary),
     /// An import could not run.
     ImportFailed {
         /// Technical detail.
@@ -5217,6 +5220,7 @@ impl App {
             }
             Some(
                 Dialog::ImportDone(_)
+                | Dialog::ScanAdded(_)
                 | Dialog::LegacyMigrationDone(_)
                 | Dialog::TrustedHostKeyDetails(_)
                 | Dialog::FileProperties(_)

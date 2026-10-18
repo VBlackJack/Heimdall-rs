@@ -116,6 +116,9 @@ pub enum SettingsMessage {
     PreventSleep(bool),
     /// The tunnels panel starts collapsed, or open.
     CollapseTunnelsPanel(bool),
+    /// The properties panel docked under the tree, or not; the same choice as the tree
+    /// filter menu's and Ctrl+Shift+B.
+    ShowPropertiesPanel(bool),
     /// The application writes its diagnostics log, or not.
     DiagnosticsLog(bool),
     /// The background check of every server runs, or not.
@@ -533,6 +536,7 @@ impl App {
             SettingsMessage::RdpBuiltinCompression(on) => {
                 self.settings.builtin_rdp_compression = *on;
             }
+            SettingsMessage::ShowPropertiesPanel(on) => self.settings.show_properties_panel = *on,
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }

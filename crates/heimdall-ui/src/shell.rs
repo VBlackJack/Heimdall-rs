@@ -9761,6 +9761,15 @@ fn import_report<'a>(
     summary: &'a heimdall_app::ImportSummary,
     ok: iced::widget::Button<'a, Message>,
 ) -> Element<'a, Message> {
+    import_report_titled(summary, fl!("ui-dialog-import-title"), ok)
+}
+
+/// As [`import_report`], under `title`.
+fn import_report_titled<'a>(
+    summary: &'a heimdall_app::ImportSummary,
+    title: String,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
     let mut content = import_counts(summary);
     // The file's gateways on a line of their own, as the C# summary says them, then what to
     // do about the references none resolves (`ProfileImportService.cs:446-476`).
@@ -9846,7 +9855,7 @@ fn import_report<'a>(
     });
     dialog_parts::message(
         import_severity(summary),
-        fl!("ui-dialog-import-title"),
+        title,
         content,
         dialog_parts::buttons(review.into_iter().chain([ok])),
     )
@@ -13528,6 +13537,9 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             crate::trusted_keys_view::forget_server_question(key, *count)
         }
         Dialog::ImportDone(summary) => import_report(summary, ok_button()),
+        Dialog::ScanAdded(summary) => {
+            import_report_titled(summary, fl!("ui-dialog-scan-added-title"), ok_button())
+        }
         Dialog::LegacyMigrationOffer(offer) => {
             let (title, body, decline, confirm) = crate::legacy_migration_view::offer(offer);
             // As the C# `ShowConfirm` at start, its question naming what was found.
@@ -14119,6 +14131,26 @@ mod tests {
             routed(held, event::Status::Ignored).is_none(),
             "held down, it does not flip the panel at each repeat"
         );
+        // On a Cyrillic layout the letter is not Latin: the key's place stands for it.
+        let cyrillic_b = |modifiers| {
+            pressed(
+                Key::Character("\u{438}".into()),
+                Physical::Code(keyboard::key::Code::KeyB),
+                modifiers,
+                None,
+            )
+        };
+        assert!(matches!(
+            routed(cyrillic_b(Modifiers::CTRL), event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::ToggleSidebar))
+        ));
+        assert!(matches!(
+            routed(
+                cyrillic_b(Modifiers::CTRL | Modifiers::SHIFT),
+                event::Status::Ignored
+            ),
+            Some(Message::TreeShortcut(TreeShortcut::PropertiesPanel))
+        ));
         let shift_f10 = pressed(
             Key::Named(Named::F10),
             Physical::Code(keyboard::key::Code::F10),

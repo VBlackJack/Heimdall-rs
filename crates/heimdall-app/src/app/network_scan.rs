@@ -352,7 +352,7 @@ impl App {
         self.stop_network_scan();
         self.dialog = None;
         if let Some(summary) = self.merge_import(report) {
-            self.dialog = Some(Dialog::ImportDone(summary));
+            self.dialog = Some(Dialog::ScanAdded(summary));
         }
     }
 }
