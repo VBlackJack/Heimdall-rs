@@ -16,6 +16,10 @@
 
 //! Where Heimdall-rs keeps its files, and where the C# Heimdall keeps its own.
 //!
+//! A normal build started with `--data-dir` keeps its own configuration, data and saved
+//! passwords under the folder given ([`use_data_root`]), as the C# `--data-dir`, and leaves the
+//! home, Documents and temporary folders the user's own.
+//!
 //! A build with the `test-data-dir` feature, for automated UI tests only, roots every
 //! per-user folder in one scratch folder ([`use_test_data_dir`]), and files its credentials in
 //! the system's store under a namespace of that folder ([`credential_service`]). It fails
@@ -24,10 +28,7 @@
 //! build: it does not compile there, and the workspace's guard refuses any manifest or
 //! workflow that turns it on.
 
-use std::path::PathBuf;
-#[cfg(feature = "test-data-dir")]
-use std::path::{Component, Path};
-#[cfg(feature = "test-data-dir")]
+use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
 #[cfg(not(windows))]
@@ -86,8 +87,13 @@ fn application_path() -> PathBuf {
 pub fn config_dir() -> Option<PathBuf> {
     #[cfg(feature = "test-data-dir")]
     return test_folder(test_data::CONFIG);
+    // A data root given with `--data-dir` holds the configuration folder, as the C# puts
+    // servers.json and settings.json under its own data root; else the platform's.
     #[cfg(not(feature = "test-data-dir"))]
-    return platform_config_dir();
+    return match data_root() {
+        Some(root) => Some(root.join(DATA_ROOT_CONFIG_SUBDIR)),
+        None => platform_config_dir(),
+    };
 }
 
 /// [`config_dir`] as the platform says it.
@@ -120,8 +126,13 @@ pub fn known_hosts_file() -> Option<PathBuf> {
 pub fn data_dir() -> Option<PathBuf> {
     #[cfg(feature = "test-data-dir")]
     return test_folder(test_data::DATA);
+    // A data root given with `--data-dir` holds the data folder (logs, files being edited,
+    // scan history) too, beside the configuration folder; else the platform's.
     #[cfg(not(feature = "test-data-dir"))]
-    return platform_data_dir();
+    return match data_root() {
+        Some(root) => Some(root.join(DATA_ROOT_DATA_SUBDIR)),
+        None => platform_data_dir(),
+    };
 }
 
 /// [`data_dir`] as the platform says it.
@@ -131,6 +142,125 @@ fn platform_data_dir() -> Option<PathBuf> {
     #[cfg(not(windows))]
     return ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .map(|dirs| dirs.data_local_dir().to_owned());
+}
+
+// The data root given with `--data-dir` in a normal build: an alternate instance (a hand
+// test, a demo profile), as the C# `ApplicationDataPathResolver.UseDataRoot`
+// (`App.xaml.cs:153-156`). It moves the application's own folders ([`config_dir`],
+// [`data_dir`] and what derives from them: profiles, settings, vault, `known_hosts`, logs,
+// files being edited, scan history), and files the saved passwords under a namespace of the
+// root: the C# keeps them in servers.json under its data root, here they are in the system's
+// store, which the instance would otherwise share, overwrite and empty. The home, Documents
+// and temporary folders stay the user's own, as the C# leaves them, and so do the Windows
+// Credential Manager entries a profile names, which are only read. A test build has the
+// `test-data-dir` sandbox instead and refuses a data root.
+
+/// The configuration folder under a `--data-dir` root.
+#[cfg(not(feature = "test-data-dir"))]
+const DATA_ROOT_CONFIG_SUBDIR: &str = "config";
+
+/// The data folder under a `--data-dir` root, beside the configuration folder.
+#[cfg(not(feature = "test-data-dir"))]
+const DATA_ROOT_DATA_SUBDIR: &str = "data";
+
+/// What joins the application's name and the namespace of a `--data-dir` root in the system's
+/// credential store.
+#[cfg(not(feature = "test-data-dir"))]
+const DATA_ROOT_NAMESPACE_DIVIDER: &str = "-data-";
+
+/// The `--data-dir` root in use, and the namespace of its saved passwords.
+#[cfg(not(feature = "test-data-dir"))]
+#[derive(Debug)]
+struct DataRoot {
+    folder: PathBuf,
+    namespace: String,
+}
+
+/// Set once by [`use_data_root`], before any folder is asked.
+#[cfg(not(feature = "test-data-dir"))]
+static DATA_ROOT: OnceLock<DataRoot> = OnceLock::new();
+
+/// Why a `--data-dir` root was refused.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DataRootError {
+    /// The folder is not a full path.
+    #[error("the data directory must be a full path: {0}")]
+    NotAbsolute(PathBuf),
+    /// The folder is, holds or sits in a Heimdall folder of the user's, or is or holds one of
+    /// the user's own folders.
+    #[error("the data directory {0} overlaps the user's real folder {1}")]
+    Overlaps(PathBuf, PathBuf),
+    /// The folder cannot be made or used.
+    #[error("the data directory cannot be used: {0}")]
+    Unusable(String),
+    /// A data root is already in use by this process.
+    #[error("a data directory is already in use")]
+    AlreadySet,
+    /// A test build, whose sandbox replaces any data root.
+    #[error("a test build takes its folder from the test data folder, not a data directory")]
+    TestBuild,
+}
+
+/// Roots the application's own configuration and data folders in `folder`, made if needed,
+/// and files the saved passwords under a namespace of it: to be called once, at startup,
+/// before any folder is asked. The folder is checked as the test data folder is
+/// ([`folders_overlap`], [`folder_holds`]): it may neither be, hold nor sit in a Heimdall-rs
+/// or C# Heimdall folder, nor be or hold the home, Documents, temporary or application data
+/// folder, so the instance never shares a folder with the user's own and never changes the
+/// access of one of the user's folders. It is checked before it is made, and again once made.
+///
+/// # Errors
+///
+/// [`DataRootError`]: a relative path, a folder meeting a real one, a folder that cannot be
+/// made, or a second call.
+#[cfg(not(feature = "test-data-dir"))]
+pub fn use_data_root(folder: &Path) -> Result<(), DataRootError> {
+    if !folder.is_absolute() {
+        return Err(DataRootError::NotAbsolute(folder.to_owned()));
+    }
+    if DATA_ROOT.get().is_some() {
+        return Err(DataRootError::AlreadySet);
+    }
+    let overlap = |real: PathBuf| DataRootError::Overlaps(folder.to_owned(), real);
+    if let Some(real) = real_folder_met(folder) {
+        return Err(overlap(real));
+    }
+    std::fs::create_dir_all(folder)
+        .map_err(|error| DataRootError::Unusable(format!("{}: {error}", folder.display())))?;
+    if let Some(real) = real_folder_met(folder) {
+        return Err(overlap(real));
+    }
+    let namespace = namespace_of(&comparable(folder));
+    DATA_ROOT
+        .set(DataRoot {
+            folder: folder.to_owned(),
+            namespace,
+        })
+        .map_err(|_| DataRootError::AlreadySet)
+}
+
+/// A test build refuses a data root: its sandbox roots every folder.
+///
+/// # Errors
+///
+/// Always [`DataRootError::TestBuild`].
+#[cfg(feature = "test-data-dir")]
+pub fn use_data_root(_folder: &Path) -> Result<(), DataRootError> {
+    Err(DataRootError::TestBuild)
+}
+
+/// The `--data-dir` root this process runs on, if one was given.
+#[cfg(not(feature = "test-data-dir"))]
+#[must_use]
+pub fn data_root() -> Option<&'static Path> {
+    DATA_ROOT.get().map(|root| root.folder.as_path())
+}
+
+/// A test build never runs on a data root.
+#[cfg(feature = "test-data-dir")]
+#[must_use]
+pub fn data_root() -> Option<&'static Path> {
+    None
 }
 
 /// Directory of the log file and crash reports: local to the machine, never roamed.
@@ -380,7 +510,8 @@ pub fn program_dir() -> Option<PathBuf> {
 }
 
 /// The name Heimdall-rs files its secrets under in the system's credential store, for the
-/// application's own name `service`: `service` itself; in a test build, `service` followed by
+/// application's own name `service`: `service` itself; under a `--data-dir` root, `service`
+/// followed by the root's namespace; in a test build, `service` followed by
 /// the scratch folder's namespace, or by a namespace no folder has while none is set, so
 /// that a test never reads, replaces or removes a real entry.
 #[must_use]
@@ -391,8 +522,13 @@ pub fn credential_service(service: &str) -> String {
         test_data::NAMESPACE_DIVIDER,
         test_namespace()
     );
+    // Under a `--data-dir` root, the saved passwords are the root's own, as the C# keeps them
+    // in servers.json under its data root: never the user's real entries.
     #[cfg(not(feature = "test-data-dir"))]
-    return service.to_owned();
+    return match DATA_ROOT.get() {
+        Some(root) => format!("{service}{DATA_ROOT_NAMESPACE_DIVIDER}{}", root.namespace),
+        None => service.to_owned(),
+    };
 }
 
 /// The target name of a generic credential of Windows Credential Manager a profile names:
@@ -409,6 +545,19 @@ pub fn credential_target(target: &str) -> String {
     #[cfg(not(feature = "test-data-dir"))]
     return target.to_owned();
 }
+
+/// Bytes of the SHA-256 of a folder's path a credential namespace is named after: 48 bits, so
+/// that two folders never share one in practice.
+const NAMESPACE_HASH_LEN: usize = 6;
+
+/// The start of a Windows path that bypasses the path parser, as `canonicalize` gives.
+const VERBATIM_PREFIX: &str = r"\\?\";
+
+/// The start of a verbatim network path.
+const VERBATIM_UNC_PREFIX: &str = r"\\?\UNC\";
+
+/// The start of a network path written plainly.
+const UNC_PREFIX: &str = r"\\";
 
 /// What a test data folder is laid out as, and how its credentials are named.
 #[cfg(feature = "test-data-dir")]
@@ -451,16 +600,16 @@ pub mod test_data {
 
     /// Bytes of the SHA-256 of the folder's path the namespace is named after: 48 bits, so
     /// that two scratch folders never share one in practice.
-    pub const NAMESPACE_HASH_LEN: usize = 6;
+    pub const NAMESPACE_HASH_LEN: usize = super::NAMESPACE_HASH_LEN;
 
     /// The start of a Windows path that bypasses the path parser, as `canonicalize` gives.
-    pub const VERBATIM_PREFIX: &str = r"\\?\";
+    pub const VERBATIM_PREFIX: &str = super::VERBATIM_PREFIX;
 
     /// The start of a verbatim network path.
-    pub const VERBATIM_UNC_PREFIX: &str = r"\\?\UNC\";
+    pub const VERBATIM_UNC_PREFIX: &str = super::VERBATIM_UNC_PREFIX;
 
     /// The start of a network path written plainly.
-    pub const UNC_PREFIX: &str = r"\\";
+    pub const UNC_PREFIX: &str = super::UNC_PREFIX;
 }
 
 /// The test data folder in use, and the namespace of its credentials.
@@ -515,10 +664,15 @@ pub fn use_test_data_dir(folder: &Path) -> Result<(), TestDataDirError> {
     if TEST_ROOT.get().is_some() {
         return Err(TestDataDirError::AlreadySet);
     }
-    refuse_real(folder)?;
+    let overlap = |real: PathBuf| TestDataDirError::Overlaps(folder.to_owned(), real);
+    if let Some(real) = real_folder_met(folder) {
+        return Err(overlap(real));
+    }
     std::fs::create_dir_all(folder)
         .map_err(|error| TestDataDirError::Unusable(format!("{}: {error}", folder.display())))?;
-    refuse_real(folder)?;
+    if let Some(real) = real_folder_met(folder) {
+        return Err(overlap(real));
+    }
     // A real user's home folder is always there: the local pane of the Files tab opens on
     // it, and a missing one showed the system's "path not found" in its place.
     let home = folder.join(test_data::HOME);
@@ -533,28 +687,22 @@ pub fn use_test_data_dir(folder: &Path) -> Result<(), TestDataDirError> {
         .map_err(|_| TestDataDirError::AlreadySet)
 }
 
-/// [`TestDataDirError::Overlaps`] when `folder` meets one of the user's real folders, as
-/// [`use_test_data_dir`] says.
-#[cfg(feature = "test-data-dir")]
-fn refuse_real(folder: &Path) -> Result<(), TestDataDirError> {
-    let refused = |real: &PathBuf| TestDataDirError::Overlaps(folder.to_owned(), real.clone());
-    if let Some(real) = heimdall_folders()
-        .iter()
+/// The real folder of the user's that `folder` meets, if any, as [`use_test_data_dir`] and
+/// [`use_data_root`] refuse it: a Heimdall folder it is, holds or sits in, or a folder of the
+/// user's it is or holds.
+fn real_folder_met(folder: &Path) -> Option<PathBuf> {
+    heimdall_folders()
+        .into_iter()
         .find(|real| folders_overlap(folder, real))
-    {
-        return Err(refused(real));
-    }
-    if let Some(real) = user_folders()
-        .iter()
-        .find(|real| folder_holds(folder, real))
-    {
-        return Err(refused(real));
-    }
-    Ok(())
+        .or_else(|| {
+            user_folders()
+                .into_iter()
+                .find(|real| folder_holds(folder, real))
+        })
 }
 
-/// The real folders of Heimdall-rs and the C# Heimdall: no test folder may meet them.
-#[cfg(feature = "test-data-dir")]
+/// The real folders of Heimdall-rs and the C# Heimdall: no test folder or data root may meet
+/// them.
 fn heimdall_folders() -> Vec<PathBuf> {
     let own = [
         platform_config_dir(),
@@ -576,8 +724,8 @@ fn heimdall_folders() -> Vec<PathBuf> {
     own.into_iter().flatten().collect()
 }
 
-/// The user's own folders: a test folder may sit in them, never be or hold one.
-#[cfg(feature = "test-data-dir")]
+/// The user's own folders: a test folder or a data root may sit in them, never be or hold
+/// one.
 fn user_folders() -> Vec<PathBuf> {
     let common = [platform_home_dir(), Some(platform_temp_dir())];
     #[cfg(windows)]
@@ -617,16 +765,14 @@ fn test_namespace() -> &'static str {
 }
 
 /// The namespace of the folder `comparable`: hex of the start of the SHA-256 of its path.
-#[cfg(feature = "test-data-dir")]
 fn namespace_of(comparable: &Path) -> String {
     let text = comparable.to_string_lossy().into_owned();
     let digest = sealvault::hash::sha256(text.as_bytes());
-    data_encoding::HEXLOWER.encode(&digest[..test_data::NAMESPACE_HASH_LEN])
+    data_encoding::HEXLOWER.encode(&digest[..NAMESPACE_HASH_LEN])
 }
 
 /// Whether one of the folders `a` and `b` is the other or inside it, as the file system
 /// resolves them.
-#[cfg(feature = "test-data-dir")]
 #[must_use]
 pub fn folders_overlap(a: &Path, b: &Path) -> bool {
     let (a, b) = (comparable(a), comparable(b));
@@ -635,7 +781,6 @@ pub fn folders_overlap(a: &Path, b: &Path) -> bool {
 
 /// Whether the folder `outer` is the folder `inner` or holds it, as the file system resolves
 /// them.
-#[cfg(feature = "test-data-dir")]
 #[must_use]
 pub fn folder_holds(outer: &Path, inner: &Path) -> bool {
     comparable(inner).starts_with(comparable(outer))
@@ -644,7 +789,6 @@ pub fn folder_holds(outer: &Path, inner: &Path) -> bool {
 /// `path` as it is compared: its longest part that exists resolved by the file system (links
 /// followed, `..` resolved), the rest resolved by its words, Windows' verbatim prefix
 /// dropped, without regard to case.
-#[cfg(feature = "test-data-dir")]
 #[must_use]
 pub fn comparable(path: &Path) -> PathBuf {
     let components: Vec<Component<'_>> = path.components().collect();
@@ -658,9 +802,9 @@ pub fn comparable(path: &Path) -> PathBuf {
         })
         .unwrap_or_else(|| append_lexically(PathBuf::new(), &components));
     let text = resolved.to_string_lossy();
-    let plain = if let Some(rest) = text.strip_prefix(test_data::VERBATIM_UNC_PREFIX) {
-        format!("{}{rest}", test_data::UNC_PREFIX)
-    } else if let Some(rest) = text.strip_prefix(test_data::VERBATIM_PREFIX) {
+    let plain = if let Some(rest) = text.strip_prefix(VERBATIM_UNC_PREFIX) {
+        format!("{UNC_PREFIX}{rest}")
+    } else if let Some(rest) = text.strip_prefix(VERBATIM_PREFIX) {
         rest.to_owned()
     } else {
         text.into_owned()
@@ -669,7 +813,6 @@ pub fn comparable(path: &Path) -> PathBuf {
 }
 
 /// `base` followed by `rest`, a `..` taking the last part away and a `.` nothing.
-#[cfg(feature = "test-data-dir")]
 fn append_lexically(mut base: PathBuf, rest: &[Component<'_>]) -> PathBuf {
     for component in rest {
         match component {

@@ -95,6 +95,11 @@ Automated UI tests run a debug build with the `test-data-dir` feature on a scrat
 never on the real profiles, vault or saved passwords: see
 [Test data folder](docs/test-data-folder.md).
 
+Any build, release included, runs an alternate instance (a hand test, a demo profile) beside
+the user's own with `--data-dir <full path>`, as the C# Heimdall does: its own configuration,
+data and saved passwords under that folder. See
+[`--data-dir` in a normal build](docs/test-data-folder.md#--data-dir-in-a-normal-build).
+
 A published release is compiled with `HEIMDALL_RELEASE` set to its release tag, such as
 `v2026.100901`: the update check compares it with the latest release on GitHub and offers
 a newer one. A build without it, such as `cargo run` or the two scripts, never checks.

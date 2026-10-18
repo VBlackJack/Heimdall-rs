@@ -6,6 +6,18 @@ ui-window-title-tab = { $tab } - Heimdall
 ui-window-title-detached = { $tab } - Détaché
 # A test build's title, its test data folder after it.
 ui-window-title-test-data = { $title } [données de test : { $folder }]
+# An alternate instance's title, its data folder (--data-dir) after it.
+ui-window-title-data = { $title } [données : { $folder }]
+# Why a --data-dir folder did not start the application, in a message box and on the console.
+ui-data-dir-error-title = Heimdall ne peut pas démarrer
+ui-data-dir-error-no-value = { $option } doit être suivi du chemin complet d'un dossier.
+ui-data-dir-error-not-text = Le dossier après { $option } n'est pas un texte valide : { $folder }
+ui-data-dir-error-unknown = Option inconnue { $given } : le dossier de données se donne avec { $option } <chemin complet>.
+ui-data-dir-error-not-absolute = Le dossier de données doit être un chemin complet : { $folder }
+ui-data-dir-error-overlaps = Le dossier de données { $folder } recoupe l'un de vos propres dossiers : { $real }. Choisissez un dossier distinct.
+ui-data-dir-error-unusable = Le dossier de données ne peut pas être utilisé : { $detail }
+ui-data-dir-error-already-set = Un dossier de données est déjà utilisé.
+ui-data-dir-error-test-build = Une version de test prend ses dossiers dans son dossier de données de test, pas dans { $option }.
 
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Outils
