@@ -82,7 +82,7 @@ fn app_line() -> String {
     format!(
         "{} {APPLICATION} v{}",
         fl!("ui-error-report-app"),
-        env!("CARGO_PKG_VERSION")
+        heimdall_app::update_check::display_version()
     )
 }
 
