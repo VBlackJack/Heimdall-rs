@@ -108,7 +108,6 @@ mod with_the_feature {
 #[cfg(not(feature = "test-data-dir"))]
 mod without_the_feature {
     use std::ffi::OsString;
-    use std::path::PathBuf;
 
     use heimdall_ui::data_root::{ArgumentError, folder_from, titled};
 
@@ -191,6 +190,7 @@ mod without_the_feature {
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt as _;
+            use std::path::PathBuf;
             let joined = OsString::from_vec(b"--data-dir=/tmp/\xff".to_vec());
             assert_eq!(
                 folder_from([joined.clone()]),

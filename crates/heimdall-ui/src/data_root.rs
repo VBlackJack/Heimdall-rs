@@ -178,14 +178,16 @@ pub fn init(arguments: impl IntoIterator<Item = OsString>) -> Result<(), Argumen
     Ok(())
 }
 
-/// Says why the build does not start: on the error output, and, in a release build, which
-/// has no console on Windows, in a message box, so a refused folder never ends the program
+/// Says why the build does not start: on the error output, and, in a release build on
+/// Windows or macOS, which has no console, in a message box, so a refused folder never ends the program
 /// without a word.
 pub fn refuse(error: &ArgumentError) {
     crate::i18n::init();
     let message = error.to_string();
     eprintln!("{message}");
-    #[cfg(not(debug_assertions))]
+    // Linux has no dialog crate here (the portal goes through zbus) and a console, so the
+    // error output above is where the message is read there.
+    #[cfg(all(not(debug_assertions), not(target_os = "linux")))]
     {
         let _ = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Error)
