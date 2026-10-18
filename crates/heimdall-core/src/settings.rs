@@ -564,6 +564,22 @@ pub struct Settings {
     /// Attempts before the reconnect is left to the user, within
     /// [`SSH_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`SSH_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub ssh_auto_reconnect_attempts: u32,
+    /// Seconds before the first SSH auto-reconnect attempt, as the C#
+    /// `SshAutoReconnectFirstDelaySeconds`, within [`RECONNECT_DELAY_SECONDS_MIN`] and
+    /// [`RECONNECT_DELAY_SECONDS_MAX`].
+    pub ssh_auto_reconnect_first_delay: u32,
+    /// Seconds before the second attempt, as the C# `SshAutoReconnectSecondDelaySeconds`.
+    pub ssh_auto_reconnect_second_delay: u32,
+    /// Seconds before every attempt after the second, as the C#
+    /// `SshAutoReconnectSubsequentDelaySeconds`.
+    pub ssh_auto_reconnect_subsequent_delay: u32,
+    /// Ask before the session bar's Disconnect ends an RDP desktop, as the C#
+    /// `RdpConfirmDisconnect`: on unless cleared.
+    pub rdp_confirm_disconnect: bool,
+    /// Show every redirection on an RDP desktop's bar, the ones not shared too, instead of
+    /// behind the "+N" badge, as the C# `RdpRedirectionIndicatorsAlwaysExpanded`: off
+    /// unless chosen.
+    pub rdp_redirection_indicators_expanded: bool,
     /// Attempts of an RDP desktop's auto-reconnect, as the C# `RdpAutoReconnectMaxAttempts`:
     /// within [`RDP_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`RDP_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub rdp_auto_reconnect_attempts: u32,
@@ -1040,6 +1056,30 @@ pub const SSH_AUTO_RECONNECT_ATTEMPTS_MIN: u32 = 1;
 /// Most attempts of an SSH auto-reconnect accepted, as the C# setting's range.
 pub const SSH_AUTO_RECONNECT_ATTEMPTS_MAX: u32 = 10;
 
+/// Seconds before the first SSH auto-reconnect attempt by default, as the C#
+/// `DefaultSshAutoReconnectFirstDelaySeconds`.
+pub const SSH_AUTO_RECONNECT_FIRST_DELAY_DEFAULT: u32 = 2;
+
+/// Seconds before the second attempt by default, as the C#
+/// `DefaultSshAutoReconnectSecondDelaySeconds`.
+pub const SSH_AUTO_RECONNECT_SECOND_DELAY_DEFAULT: u32 = 5;
+
+/// Seconds before every later attempt by default, as the C#
+/// `DefaultSshAutoReconnectSubsequentDelaySeconds`.
+pub const SSH_AUTO_RECONNECT_SUBSEQUENT_DELAY_DEFAULT: u32 = 15;
+
+/// Fewest seconds a reconnect delay accepted, as the C# `SettingRange(1, 600)`.
+pub const RECONNECT_DELAY_SECONDS_MIN: u32 = 1;
+
+/// Most seconds a reconnect delay accepted, as the C# `SettingRange(1, 600)`.
+pub const RECONNECT_DELAY_SECONDS_MAX: u32 = 600;
+
+/// Whether `seconds` is a wait before an SSH auto-reconnect attempt the settings accept.
+#[must_use]
+pub fn reconnect_delay_accepted(seconds: u32) -> bool {
+    (RECONNECT_DELAY_SECONDS_MIN..=RECONNECT_DELAY_SECONDS_MAX).contains(&seconds)
+}
+
 /// Most attempts of an RDP auto-reconnect, and their number by default, as the C#
 /// `DefaultRdpAutoReconnectMaxAttempts`.
 pub const RDP_AUTO_RECONNECT_ATTEMPTS_MAX: u32 = 20;
@@ -1233,6 +1273,11 @@ impl Default for Settings {
             credential_provider: ProviderSettings::default(),
             ssh_auto_reconnect: false,
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+            ssh_auto_reconnect_first_delay: SSH_AUTO_RECONNECT_FIRST_DELAY_DEFAULT,
+            ssh_auto_reconnect_second_delay: SSH_AUTO_RECONNECT_SECOND_DELAY_DEFAULT,
+            ssh_auto_reconnect_subsequent_delay: SSH_AUTO_RECONNECT_SUBSEQUENT_DELAY_DEFAULT,
+            rdp_confirm_disconnect: true,
+            rdp_redirection_indicators_expanded: false,
             rdp_auto_reconnect_attempts: RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
             rdp_connect_timeout: RDP_CONNECT_TIMEOUT_DEFAULT,
             rdp_resize_enable_delay_ms: RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
@@ -1486,6 +1531,12 @@ struct RdpSessionSection {
     /// Absent is off: a settings file written before it existed does not compress.
     #[serde(default)]
     builtin_compression: Option<bool>,
+    /// Absent is the C# default: on.
+    #[serde(default)]
+    confirm_disconnect: Option<bool>,
+    /// Absent is the C# default: off.
+    #[serde(default)]
+    indicators_always_expanded: Option<bool>,
 }
 
 impl RdpSessionSection {
@@ -1507,6 +1558,8 @@ impl RdpSessionSection {
             default_mode: Some(settings.rdp_default_mode.name().to_owned()),
             require_credential_guard: Some(settings.require_credential_guard),
             builtin_compression: Some(settings.builtin_rdp_compression),
+            confirm_disconnect: Some(settings.rdp_confirm_disconnect),
+            indicators_always_expanded: Some(settings.rdp_redirection_indicators_expanded),
         }
     }
 }
@@ -1554,6 +1607,13 @@ struct SshSection {
     auto_reconnect: bool,
     #[serde(default)]
     auto_reconnect_attempts: Option<u32>,
+    /// Seconds; absent is the C# default.
+    #[serde(default)]
+    auto_reconnect_first_delay: Option<u32>,
+    #[serde(default)]
+    auto_reconnect_second_delay: Option<u32>,
+    #[serde(default)]
+    auto_reconnect_subsequent_delay: Option<u32>,
     /// Kept beside the SSH settings, where the C# Settings page shows it.
     #[serde(default)]
     anti_idle_interval: Option<u32>,
@@ -1585,6 +1645,9 @@ impl SshSection {
         Self {
             auto_reconnect: settings.ssh_auto_reconnect,
             auto_reconnect_attempts: Some(settings.ssh_auto_reconnect_attempts),
+            auto_reconnect_first_delay: Some(settings.ssh_auto_reconnect_first_delay),
+            auto_reconnect_second_delay: Some(settings.ssh_auto_reconnect_second_delay),
+            auto_reconnect_subsequent_delay: Some(settings.ssh_auto_reconnect_subsequent_delay),
             anti_idle_interval: Some(settings.anti_idle_interval),
             keep_alive_interval: Some(settings.ssh_keep_alive_interval),
             tmout_reset_interval: Some(settings.ssh_tmout_reset_interval),
@@ -1817,6 +1880,8 @@ impl Settings {
         self.rdp_resize_enable_delay_ms = defaults.rdp_resize_enable_delay_ms;
         self.rdp_keep_alive_interval_ms = defaults.rdp_keep_alive_interval_ms;
         self.builtin_rdp_compression = defaults.builtin_rdp_compression;
+        self.rdp_confirm_disconnect = defaults.rdp_confirm_disconnect;
+        self.rdp_redirection_indicators_expanded = defaults.rdp_redirection_indicators_expanded;
         self.rdp_resolution_presets = defaults.rdp_resolution_presets;
         self.rdp_default_mode = defaults.rdp_default_mode;
     }
@@ -1999,6 +2064,11 @@ impl Settings {
                 .require_credential_guard
                 .unwrap_or_default(),
             builtin_rdp_compression: file.rdp_session.builtin_compression.unwrap_or_default(),
+            rdp_confirm_disconnect: file.rdp_session.confirm_disconnect.unwrap_or(true),
+            rdp_redirection_indicators_expanded: file
+                .rdp_session
+                .indicators_always_expanded
+                .unwrap_or_default(),
             // A line that is not a preset is left out, as the C# menu leaves it out.
             rdp_resolution_presets: file.rdp_session.resolution_presets.map_or_else(
                 || RESOLUTION_PRESETS.to_vec(),
@@ -2013,6 +2083,21 @@ impl Settings {
                 file.ssh.auto_reconnect_attempts,
                 ssh_auto_reconnect_attempts_accepted,
                 SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+            ),
+            ssh_auto_reconnect_first_delay: within(
+                file.ssh.auto_reconnect_first_delay,
+                reconnect_delay_accepted,
+                SSH_AUTO_RECONNECT_FIRST_DELAY_DEFAULT,
+            ),
+            ssh_auto_reconnect_second_delay: within(
+                file.ssh.auto_reconnect_second_delay,
+                reconnect_delay_accepted,
+                SSH_AUTO_RECONNECT_SECOND_DELAY_DEFAULT,
+            ),
+            ssh_auto_reconnect_subsequent_delay: within(
+                file.ssh.auto_reconnect_subsequent_delay,
+                reconnect_delay_accepted,
+                SSH_AUTO_RECONNECT_SUBSEQUENT_DELAY_DEFAULT,
             ),
             anti_idle_interval: within(
                 file.ssh.anti_idle_interval,

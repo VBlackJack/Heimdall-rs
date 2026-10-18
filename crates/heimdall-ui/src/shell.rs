@@ -8419,7 +8419,8 @@ impl Shell {
             shown.extend(crate::rdp_status::redirection_controls(
                 tab_id,
                 profile,
-                self.redirections_shown.contains(&tab_id),
+                self.redirections_shown.contains(&tab_id)
+                    || self.app.settings().rdp_redirection_indicators_expanded,
             ));
         }
         shown.extend(save_files_control(pane, tab_id));

@@ -4959,8 +4959,8 @@ impl App {
             .count()
     }
 
-    /// The session bar's Disconnect, as the C# one: an RDP desktop asks first, as the C#
-    /// `RdpConfirmDisconnect` does by default; a VNC one ends at once.
+    /// The session bar's Disconnect, as the C# one: an RDP desktop asks first while the C#
+    /// `RdpConfirmDisconnect` setting is on (its default); a VNC one ends at once.
     fn request_disconnect_desktop(&mut self, tab_id: TabId) {
         let Some(tab) = self.tab(tab_id) else {
             return;
@@ -4968,7 +4968,7 @@ impl App {
         if tab.phase != Phase::Connected || tab.desktop.is_none() {
             return;
         }
-        if tab.purpose == Purpose::Rdp {
+        if tab.purpose == Purpose::Rdp && self.settings.rdp_confirm_disconnect {
             self.dialog = Some(Dialog::ConfirmDisconnectDesktop {
                 tab: tab_id,
                 name: tab.display_title().to_owned(),

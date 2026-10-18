@@ -43,7 +43,7 @@ use crate::settings::{
     Settings, anti_idle_interval_accepted, auto_lock_idle_minutes_accepted, max_sessions_accepted,
     rdp_auto_reconnect_attempts_accepted, rdp_keep_alive_interval_accepted,
     rdp_resize_enable_delay_accepted, reachability_interval_accepted, reachability_probes_accepted,
-    reachability_timeout_accepted, session_log_retention_days_accepted,
+    reachability_timeout_accepted, reconnect_delay_accepted, session_log_retention_days_accepted,
     ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_size_accepted, update_interval_accepted,
     windows_hello_grace_minutes_accepted, windows_hello_vault_max_days_accepted,
@@ -700,6 +700,50 @@ fn preferences_table() -> Vec<Preference> {
                 &mut settings.ssh_auto_reconnect_attempts
             ),
             ssh_auto_reconnect_attempts
+        ),
+        preference!(
+            "SshAutoReconnectFirstDelaySeconds",
+            |value, settings| number(
+                value,
+                2,
+                reconnect_delay_accepted,
+                &mut settings.ssh_auto_reconnect_first_delay
+            ),
+            ssh_auto_reconnect_first_delay
+        ),
+        preference!(
+            "SshAutoReconnectSecondDelaySeconds",
+            |value, settings| number(
+                value,
+                5,
+                reconnect_delay_accepted,
+                &mut settings.ssh_auto_reconnect_second_delay
+            ),
+            ssh_auto_reconnect_second_delay
+        ),
+        preference!(
+            "SshAutoReconnectSubsequentDelaySeconds",
+            |value, settings| number(
+                value,
+                15,
+                reconnect_delay_accepted,
+                &mut settings.ssh_auto_reconnect_subsequent_delay
+            ),
+            ssh_auto_reconnect_subsequent_delay
+        ),
+        preference!(
+            "RdpConfirmDisconnect",
+            |value, settings| flag(value, true, &mut settings.rdp_confirm_disconnect),
+            rdp_confirm_disconnect
+        ),
+        preference!(
+            "RdpRedirectionIndicatorsAlwaysExpanded",
+            |value, settings| flag(
+                value,
+                false,
+                &mut settings.rdp_redirection_indicators_expanded
+            ),
+            rdp_redirection_indicators_expanded
         ),
         preference!(
             "RdpDefaultMode",

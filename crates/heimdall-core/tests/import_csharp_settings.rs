@@ -461,6 +461,11 @@ const EVERY_PREFERENCE: &[(&str, &str)] = &[
     ("VaultHelloMaxDaysBeforeMasterPassword", "30"),
     ("AutoLockIdleMinutes", "10"),
     ("DisconnectOnLock", "true"),
+    ("SshAutoReconnectFirstDelaySeconds", "3"),
+    ("SshAutoReconnectSecondDelaySeconds", "10"),
+    ("SshAutoReconnectSubsequentDelaySeconds", "60"),
+    ("RdpConfirmDisconnect", "false"),
+    ("RdpRedirectionIndicatorsAlwaysExpanded", "true"),
 ];
 
 #[test]
@@ -495,4 +500,38 @@ fn every_preference_carried_over_is_shown_as_a_change_before_it_is_taken() {
         "{:?}",
         read.rows
     );
+}
+
+#[test]
+fn the_ssh_reconnect_waits_and_the_rdp_options_are_carried_over() {
+    let read = read(&settings_json(
+        r#""sshAutoReconnectFirstDelaySeconds": 3, "sshAutoReconnectSecondDelaySeconds": 10,
+           "sshAutoReconnectSubsequentDelaySeconds": 60, "rdpConfirmDisconnect": false,
+           "rdpRedirectionIndicatorsAlwaysExpanded": true"#,
+    ));
+    let settings = &read.settings;
+    assert_eq!(settings.ssh_auto_reconnect_first_delay, 3);
+    assert_eq!(settings.ssh_auto_reconnect_second_delay, 10);
+    assert_eq!(settings.ssh_auto_reconnect_subsequent_delay, 60);
+    assert!(!settings.rdp_confirm_disconnect);
+    assert!(settings.rdp_redirection_indicators_expanded);
+    assert_eq!(
+        outcome(&read, "SshAutoReconnectFirstDelaySeconds"),
+        Some(PreferenceOutcome::Taken)
+    );
+    assert_eq!(
+        outcome(&read, "RdpConfirmDisconnect"),
+        Some(PreferenceOutcome::Taken)
+    );
+
+    // Out of the C# range (1 to 600), the default is kept.
+    let read = read_text_out_of_range();
+    assert_eq!(read.settings.ssh_auto_reconnect_first_delay, 2);
+    assert_eq!(read.settings.ssh_auto_reconnect_subsequent_delay, 15);
+}
+
+fn read_text_out_of_range() -> Preferences {
+    read(&settings_json(
+        r#""sshAutoReconnectFirstDelaySeconds": 0, "sshAutoReconnectSubsequentDelaySeconds": 601"#,
+    ))
 }

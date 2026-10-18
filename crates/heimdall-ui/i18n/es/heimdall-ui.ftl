@@ -5753,3 +5753,12 @@ ui-network-scan-kind-web = Web
 ui-tab-menu-group-by-folder = Agrupar pestañas por carpeta
 ui-tab-list-tooltip = Todas las pestañas abiertas
 ui-tab-list-entry = { $name } - { $state }
+
+ui-settings-ssh-auto-reconnect-first-delay = Espera antes del primer intento
+ui-settings-ssh-auto-reconnect-second-delay = Espera antes del segundo intento
+ui-settings-ssh-auto-reconnect-subsequent-delay = Espera antes de cada intento posterior
+ui-settings-ssh-auto-reconnect-delay-refused = La espera debe estar entre { $min } y { $max } segundos.
+ui-settings-rdp-confirm-disconnect = Confirmar antes de desconectar una sesión RDP
+ui-settings-rdp-confirm-disconnect-hint = Pide confirmación al pulsar el botón Desconectar de una sesión RDP.
+ui-settings-rdp-redirection-indicators = Mostrar siempre todos los indicadores de redirección
+ui-settings-rdp-redirection-indicators-hint = Muestra también las redirecciones no compartidas en la barra de una sesión RDP, en lugar de agruparlas tras la insignia "+N".

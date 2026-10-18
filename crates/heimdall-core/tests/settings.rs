@@ -2378,3 +2378,77 @@ fn an_import_shows_each_tool_with_its_program_and_an_export_leaves_home_tools_be
     let (_, held_back) = settings.export(Some(home), true);
     assert_eq!(held_back, 0);
 }
+
+#[test]
+fn the_ssh_reconnect_waits_default_to_the_csharp_ones_and_are_kept_within_its_range() {
+    use heimdall_core::settings::{RECONNECT_DELAY_SECONDS_MAX, RECONNECT_DELAY_SECONDS_MIN};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let read = written(dir.path(), "version = 1\n");
+    assert_eq!(
+        (
+            read.ssh_auto_reconnect_first_delay,
+            read.ssh_auto_reconnect_second_delay,
+            read.ssh_auto_reconnect_subsequent_delay
+        ),
+        (2, 5, 15),
+        "the C# defaults"
+    );
+    assert_eq!(
+        (RECONNECT_DELAY_SECONDS_MIN, RECONNECT_DELAY_SECONDS_MAX),
+        (1, 600)
+    );
+    let text = "version = 1\n[ssh]\nauto_reconnect_first_delay = 1\n\
+                auto_reconnect_second_delay = 600\nauto_reconnect_subsequent_delay = 601\n";
+    let read = written(dir.path(), text);
+    assert_eq!(read.ssh_auto_reconnect_first_delay, 1);
+    assert_eq!(read.ssh_auto_reconnect_second_delay, 600);
+    assert_eq!(
+        read.ssh_auto_reconnect_subsequent_delay, 15,
+        "out of the range, the default"
+    );
+    let read = written(
+        dir.path(),
+        "version = 1\n[ssh]\nauto_reconnect_first_delay = 0\n",
+    );
+    assert_eq!(read.ssh_auto_reconnect_first_delay, 2, "0 is out of range");
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        ssh_auto_reconnect_first_delay: 3,
+        ssh_auto_reconnect_second_delay: 30,
+        ssh_auto_reconnect_subsequent_delay: 120,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+}
+
+#[test]
+fn the_rdp_disconnect_confirmation_is_on_and_the_indicators_collapsed_until_changed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let read = written(dir.path(), "version = 1\n");
+    assert!(read.rdp_confirm_disconnect, "on, as the C# default");
+    assert!(
+        !read.rdp_redirection_indicators_expanded,
+        "off, as the C# default"
+    );
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings {
+        rdp_confirm_disconnect: false,
+        rdp_redirection_indicators_expanded: true,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(
+        text.contains("confirm_disconnect = false")
+            && text.contains("indicators_always_expanded = true"),
+        "{text}"
+    );
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+
+    settings.reset_rdp();
+    assert!(settings.rdp_confirm_disconnect && !settings.rdp_redirection_indicators_expanded);
+}

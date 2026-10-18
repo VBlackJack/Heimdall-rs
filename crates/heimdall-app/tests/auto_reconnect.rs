@@ -709,6 +709,25 @@ fn the_session_bars_disconnect_asks_then_ends_the_desktop_and_keeps_the_tab() {
     assert!(ended.retry.is_none() && matches!(ended.phase, Phase::Closed { .. }));
 }
 
+#[test]
+fn the_session_bars_disconnect_ends_the_desktop_at_once_when_the_confirmation_is_off() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::RdpConfirmDisconnect(false),
+    ));
+    assert!(!app.settings().rdp_confirm_disconnect);
+    let (tab, _attempt) = live(&mut app);
+    app.update(Message::DisconnectDesktop(tab));
+    assert!(app.dialog.is_none(), "nothing asked: {:?}", app.dialog);
+    let ended = app.tab(tab).expect("the tab stays");
+    assert!(
+        matches!(ended.phase, Phase::Closed { .. }),
+        "{:?}",
+        ended.phase
+    );
+}
+
 /// Closes `tab`, said yes to the question a live session asks first.
 fn close(app: &mut App, tab: TabId) {
     app.update(Message::RequestCloseTab(tab));

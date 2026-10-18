@@ -161,6 +161,9 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("credential_provider.timeout_ms", PLAIN),
     ("ssh.auto_reconnect", PLAIN),
     ("ssh.auto_reconnect_attempts", PLAIN),
+    ("ssh.auto_reconnect_first_delay", PLAIN),
+    ("ssh.auto_reconnect_second_delay", PLAIN),
+    ("ssh.auto_reconnect_subsequent_delay", PLAIN),
     ("ssh.anti_idle_interval", PLAIN),
     ("ssh.keep_alive_interval", PLAIN),
     ("ssh.tmout_reset_interval", PLAIN),
@@ -206,6 +209,8 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("rdp_session.require_credential_guard", ON_STRICT),
     // What a server compresses read by the built-in client's bulk decompressors.
     ("rdp_session.builtin_compression", OFF_STRICT),
+    ("rdp_session.confirm_disconnect", PLAIN),
+    ("rdp_session.indicators_always_expanded", PLAIN),
     // C# `ExternalEditorPath`.
     ("files.external_editor", RUNS),
     ("files.browser_enabled", PLAIN),

@@ -226,6 +226,12 @@ pub enum SettingRow {
     SshAutoReconnect,
     /// Attempts of an SSH auto-reconnect.
     SshAutoReconnectAttempts,
+    /// Seconds before the first SSH auto-reconnect attempt.
+    SshAutoReconnectFirstDelay,
+    /// Seconds before the second SSH auto-reconnect attempt.
+    SshAutoReconnectSecondDelay,
+    /// Seconds before every SSH auto-reconnect attempt after the second.
+    SshAutoReconnectSubsequentDelay,
     /// Which SSH agent's keys are offered first.
     SshAgentPreference,
     /// Seconds between two SSH keep-alives.
@@ -276,6 +282,10 @@ pub enum SettingRow {
     RdpKeepAlive,
     /// The built-in RDP client compresses when the profile asks for it, experimental.
     RdpBuiltinCompression,
+    /// The session bar's Disconnect asks before it ends an RDP desktop.
+    RdpConfirmDisconnect,
+    /// An RDP desktop's bar shows every redirection, the ones not shared too.
+    RdpRedirectionIndicators,
     /// The sizes the RDP Resolution menus offer.
     RdpResolutionPresets,
     /// "Reset RDP defaults".
@@ -306,7 +316,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 67] = [
+    pub const ALL: [Self; 72] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -336,6 +346,9 @@ impl SettingRow {
         Self::Macros,
         Self::SshAutoReconnect,
         Self::SshAutoReconnectAttempts,
+        Self::SshAutoReconnectFirstDelay,
+        Self::SshAutoReconnectSecondDelay,
+        Self::SshAutoReconnectSubsequentDelay,
         Self::SshAgentPreference,
         Self::KeepAlive,
         Self::TmoutReset,
@@ -360,6 +373,8 @@ impl SettingRow {
         Self::RdpConnectTimeout,
         Self::RdpResizeDelay,
         Self::RdpKeepAlive,
+        Self::RdpConfirmDisconnect,
+        Self::RdpRedirectionIndicators,
         Self::RdpBuiltinCompression,
         Self::RdpResolutionPresets,
         Self::RdpResetAll,
@@ -406,9 +421,12 @@ impl SettingRow {
                 SettingsCard::SessionLogging
             }
             Self::Macros => SettingsCard::Macros,
-            Self::SshAutoReconnect | Self::SshAutoReconnectAttempts | Self::SshAgentPreference => {
-                SettingsCard::SshReconnect
-            }
+            Self::SshAutoReconnect
+            | Self::SshAutoReconnectAttempts
+            | Self::SshAutoReconnectFirstDelay
+            | Self::SshAutoReconnectSecondDelay
+            | Self::SshAutoReconnectSubsequentDelay
+            | Self::SshAgentPreference => SettingsCard::SshReconnect,
             Self::KeepAlive | Self::TmoutReset | Self::AntiIdle => SettingsCard::SshSession,
             Self::PuttyPath | Self::SshDefaultMode => SettingsCard::Putty,
             Self::SftpBrowser
@@ -432,7 +450,9 @@ impl SettingRow {
             | Self::RdpConnectTimeout
             | Self::RdpResizeDelay
             | Self::RdpKeepAlive
-            | Self::RdpBuiltinCompression => SettingsCard::RdpSession,
+            | Self::RdpBuiltinCompression
+            | Self::RdpConfirmDisconnect
+            | Self::RdpRedirectionIndicators => SettingsCard::RdpSession,
             Self::RdpResolutionPresets => SettingsCard::RdpPresets,
             Self::RdpResetAll => SettingsCard::RdpReset,
             Self::Certificates => SettingsCard::RdpTrusted,
@@ -465,6 +485,9 @@ impl SettingRow {
             Self::ReachabilityTimeout => SessionField::ReachabilityTimeout,
             Self::ReachabilityProbes => SessionField::ReachabilityProbes,
             Self::TranscriptRetention => SessionField::TranscriptRetention,
+            Self::SshAutoReconnectFirstDelay => SessionField::SshReconnectFirstDelay,
+            Self::SshAutoReconnectSecondDelay => SessionField::SshReconnectSecondDelay,
+            Self::SshAutoReconnectSubsequentDelay => SessionField::SshReconnectSubsequentDelay,
             Self::KeepAlive => SessionField::KeepAlive,
             Self::TmoutReset => SessionField::TmoutReset,
             Self::AntiIdle => SessionField::AntiIdle,
@@ -662,6 +685,8 @@ impl SettingRow {
             Self::RequireCredentialGuard => settings.require_credential_guard,
             Self::RequireWindowsHello => settings.windows_hello.require_on_connect,
             Self::RdpBuiltinCompression => settings.builtin_rdp_compression,
+            Self::RdpConfirmDisconnect => settings.rdp_confirm_disconnect,
+            Self::RdpRedirectionIndicators => settings.rdp_redirection_indicators_expanded,
             _ => return None,
         })
     }
@@ -703,6 +728,8 @@ impl SettingRow {
             Self::RequireCredentialGuard => SettingsMessage::RequireCredentialGuard(on),
             Self::RequireWindowsHello => SettingsMessage::RequireWindowsHello(on),
             Self::RdpBuiltinCompression => SettingsMessage::RdpBuiltinCompression(on),
+            Self::RdpConfirmDisconnect => SettingsMessage::RdpConfirmDisconnect(on),
+            Self::RdpRedirectionIndicators => SettingsMessage::RdpRedirectionIndicatorsExpanded(on),
             Self::SftpBrowser => browser(SftpBrowser {
                 enabled: on,
                 ..sftp
@@ -975,6 +1002,59 @@ mod tests {
     use heimdall_core::profile::{RdpMode, SshMode};
 
     use super::*;
+
+    #[test]
+    fn the_rdp_confirmation_and_indicators_are_boxes_and_the_ssh_waits_are_numbers() {
+        let defaults = Settings::default();
+        assert_eq!(SettingRow::RdpConfirmDisconnect.flag(&defaults), Some(true));
+        assert_eq!(
+            SettingRow::RdpRedirectionIndicators.flag(&defaults),
+            Some(false)
+        );
+        let changed = Settings {
+            rdp_confirm_disconnect: false,
+            rdp_redirection_indicators_expanded: true,
+            ..Settings::default()
+        };
+        assert!(SettingRow::RdpConfirmDisconnect.is_modified(&changed));
+        assert_eq!(
+            SettingRow::RdpConfirmDisconnect.toggled(&defaults, false),
+            Some(SettingsMessage::RdpConfirmDisconnect(false))
+        );
+        assert_eq!(
+            SettingRow::RdpRedirectionIndicators.reset(&changed),
+            Some(SettingsMessage::RdpRedirectionIndicatorsExpanded(false))
+        );
+        for (row, field) in [
+            (
+                SettingRow::SshAutoReconnectFirstDelay,
+                SessionField::SshReconnectFirstDelay,
+            ),
+            (
+                SettingRow::SshAutoReconnectSecondDelay,
+                SessionField::SshReconnectSecondDelay,
+            ),
+            (
+                SettingRow::SshAutoReconnectSubsequentDelay,
+                SessionField::SshReconnectSubsequentDelay,
+            ),
+        ] {
+            assert_eq!(row.session_field(), Some(field));
+            assert_eq!(row.tab(), SettingsTab::Ssh);
+            assert!(field.accepted(1) && field.accepted(600));
+            assert!(!field.accepted(0) && !field.accepted(601));
+            assert!(!row.is_modified(&defaults));
+        }
+        let waits = Settings {
+            ssh_auto_reconnect_second_delay: 30,
+            ..Settings::default()
+        };
+        assert!(SettingRow::SshAutoReconnectSecondDelay.is_modified(&waits));
+        assert_eq!(
+            SessionField::SshReconnectSecondDelay.applied(30),
+            SettingsMessage::SshAutoReconnectSecondDelay(30)
+        );
+    }
 
     #[test]
     fn the_built_in_client_s_compression_is_a_box_off_by_default_last_of_the_rdp_session_card() {
