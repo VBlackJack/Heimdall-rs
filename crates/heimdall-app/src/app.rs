@@ -145,6 +145,7 @@ pub mod split;
 mod status;
 mod tab_menu;
 mod telnet_tab;
+mod tool_entry;
 mod tools;
 mod transcripts;
 mod tree;
@@ -217,6 +218,7 @@ pub use status::{
     ANNOUNCEMENTS_KEPT, Announced, Announcement, Notice, SessionState, SessionStatus,
 };
 pub use tab_menu::{TabGroup, TabMenuMessage, folder_label};
+pub use tool_entry::{ToolEntryEdit, ToolEntryForm};
 pub use tools::ToolsMessage;
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary, search_folded};
 pub use tree_drag::{DropTarget, OrganizationChange};
@@ -2733,6 +2735,8 @@ pub struct ConflictRow {
 /// A modal decision that concerns the whole window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
+    /// The C# tool picker of "Add > Tool", as filled.
+    AddTool(Box<ToolEntryForm>),
     /// The C# "Custom resolution" of an RDP tab: the size typed, as `WIDTHxHEIGHT`.
     CustomResolution {
         /// The tab.
@@ -5076,6 +5080,10 @@ impl App {
             }
             Some(Dialog::CustomResolution { tab, value }) => {
                 self.confirm_custom_resolution(tab, &value);
+                Vec::new()
+            }
+            Some(Dialog::AddTool(form)) => {
+                self.confirm_tool_entry(*form);
                 Vec::new()
             }
             Some(

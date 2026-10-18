@@ -622,6 +622,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 port = port.to_string()
             ),
             Notice::WebRefused(refusal) => crate::texts::web_refusal(refusal),
+            Notice::UnknownTool(tool) => fl!("ui-status-tool-unknown", tool = server_text(tool)),
             notice @ (Notice::PuttyLaunched(_)
             | Notice::PuttyLaunchedThrough { .. }
             | Notice::PuttyRefused(_)
@@ -835,6 +836,7 @@ mod tests {
             RefusalKind::RdGateway,
             RefusalKind::Citrix,
             RefusalKind::WebConsole,
+            RefusalKind::ToolEntry,
             RefusalKind::WinRmNoAccount,
             RefusalKind::WinRmPasswordNotStored,
             RefusalKind::X11Forwarding,

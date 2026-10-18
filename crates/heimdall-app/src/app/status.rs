@@ -453,6 +453,8 @@ pub enum Notice {
     },
     /// A web console was not opened, for this reason.
     WebRefused(crate::web_console::WebRefusal),
+    /// A tool entry names a tool this build does not have; carries the identifier it holds.
+    UnknownTool(String),
     /// The RDP profile of this name opened in Remote Desktop Connection; through this RD
     /// Gateway, which sent it there, when it did not ask for it.
     RdpExternalLaunched {

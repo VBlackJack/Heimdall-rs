@@ -23,6 +23,7 @@ use heimdall_ssh::HopSecrets;
 use tokio_util::sync::CancellationToken;
 
 use super::route_test::endpoint;
+use super::tool_entry::ToolEntryEdit;
 use super::{App, Dialog, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::ids::{AttemptId, TabId};
@@ -43,6 +44,15 @@ pub enum ToolsMessage {
         /// What it opens on, as the C# `ToolContext`.
         context: ToolContext,
     },
+    /// Open the picker of the C# "Add > Tool", the entry to be filed in `folder`.
+    NewEntry {
+        /// The folder the entry goes in; none for the top.
+        folder: Option<String>,
+    },
+    /// Something changed in the picker.
+    EditEntry(ToolEntryEdit),
+    /// Open the tool of tree entry `id` on the host and port it holds.
+    OpenEntry(ProfileId),
     /// Pin `tool`, or unpin it, saved at once.
     ToggleFavorite(ToolId),
     /// Show this tab of the sidebar.
@@ -203,6 +213,15 @@ impl App {
                 title,
                 context,
             } => self.open_tool(tool, title, context),
+            ToolsMessage::NewEntry { folder } => {
+                self.new_tool_entry(folder);
+                Vec::new()
+            }
+            ToolsMessage::EditEntry(edit) => {
+                self.edit_tool_entry(edit);
+                Vec::new()
+            }
+            ToolsMessage::OpenEntry(id) => self.open_tool_entry(&id),
             ToolsMessage::SendCommand {
                 target,
                 command,
@@ -277,7 +296,12 @@ impl App {
     /// singleton tools (`MainViewModel.cs:1301-1324`): one given a host or an argument opens
     /// a tab of its own. Either way it becomes the tool used last, as the C# tracks it once
     /// opened.
-    fn open_tool(&mut self, tool: ToolId, title: String, context: ToolContext) -> Vec<Effect> {
+    pub(super) fn open_tool(
+        &mut self,
+        tool: ToolId,
+        title: String,
+        context: ToolContext,
+    ) -> Vec<Effect> {
         let open = (!tool.is_network() && context.is_empty())
             .then(|| self.tabs.iter().find(|tab| tab.tool() == Some(tool)))
             .flatten()

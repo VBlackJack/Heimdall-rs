@@ -105,6 +105,7 @@ pub mod test_data;
 mod texts;
 pub mod themes;
 pub mod tokens;
+pub mod tool_picker;
 pub mod tools;
 pub mod transcript_lines;
 mod tree_drag;

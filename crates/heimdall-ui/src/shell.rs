@@ -1352,7 +1352,7 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
 }
 
 /// Widget identifier of the name field of a dialog.
-fn name_field_id() -> iced::widget::Id {
+pub(crate) fn name_field_id() -> iced::widget::Id {
     iced::widget::Id::new("dialog-name")
 }
 
@@ -4304,6 +4304,7 @@ impl Shell {
                 | Dialog::SaveMacro { .. }
                 | Dialog::RenameTab { .. }
                 | Dialog::CustomResolution { .. }
+                | Dialog::AddTool(_)
                 | Dialog::FolderName { .. }
                 | Dialog::RenameProfile { .. }
                 | Dialog::BulkEdit { .. },
@@ -11602,7 +11603,7 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
 }
 
 /// Cancel, then `confirm` in the accent sending `ConfirmDialog`, at a dialog's bottom right.
-fn confirm_buttons<'a>(confirm: String) -> iced::widget::Row<'a, Message> {
+pub(crate) fn confirm_buttons<'a>(confirm: String) -> iced::widget::Row<'a, Message> {
     dialog_parts::buttons([
         dialog_parts::cancel(),
         dialog_parts::confirm(confirm, Some(Message::App(AppMessage::ConfirmDialog))),
@@ -13645,6 +13646,7 @@ fn ok_button<'a>() -> iced::widget::Button<'a, Message> {
 #[expect(clippy::too_many_lines, reason = "one arm per dialog")]
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
     match dialog {
+        Dialog::AddTool(form) => crate::tool_picker::dialog(form),
         Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
         Dialog::ConfirmSudoDelete { names, more, .. } => {
             files_view::sudo_delete_question(names, *more)
