@@ -63,6 +63,7 @@ mod logging;
 mod macros_view;
 mod menu_column;
 mod menu_fit;
+mod menu_nav;
 pub mod network_scan_view;
 pub mod onboarding;
 pub mod palette;
