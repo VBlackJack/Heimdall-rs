@@ -48,6 +48,7 @@ pub mod files_drag;
 mod files_view;
 pub mod finder;
 pub mod floating_view;
+mod fullscreen_chrome;
 mod gateways_view;
 mod headed_list;
 mod health_view;

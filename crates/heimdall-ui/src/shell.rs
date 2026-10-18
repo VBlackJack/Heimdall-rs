@@ -896,6 +896,8 @@ pub enum Message {
     SystemHighContrast(bool),
     /// Whether Windows asks for reduced motion, looked at again: the cursors follow it.
     SystemReducedMotion(bool),
+    /// A reading of the pointer, while full screen puts its exit button away.
+    ChromeTick(std::time::Instant),
     /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
     /// cannot be read.
     UserInput,
@@ -1233,6 +1235,7 @@ impl fmt::Debug for Message {
             Self::IdleTick => f.write_str("IdleTick"),
             Self::SystemHighContrast(on) => write!(f, "SystemHighContrast({on})"),
             Self::SystemReducedMotion(on) => write!(f, "SystemReducedMotion({on})"),
+            Self::ChromeTick(_) => f.write_str("ChromeTick"),
             Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1595,6 +1598,8 @@ pub struct Shell {
     page: Page,
     /// Full screen: the window shows the session only.
     fullscreen: bool,
+    /// The exit button's visibility in full screen; none outside it.
+    fullscreen_chrome: Option<crate::fullscreen_chrome::FullscreenChrome>,
     /// Physical pixels per logical one on the window's screen: remote desktops are drawn
     /// one of their pixels per physical one.
     density: f32,
@@ -1938,6 +1943,7 @@ impl Shell {
             menu_parent: None,
             page: Page::Tab,
             fullscreen: false,
+            fullscreen_chrome: None,
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
@@ -2316,6 +2322,15 @@ impl Shell {
                     Message::SystemReducedMotion(heimdall_app::reduced_motion::system_on())
                 }),
             );
+        }
+        // Full screen: the pointer read as the C# polls it, and the fade drawn while it runs.
+        if let Some(chrome) = self.fullscreen_chrome.as_ref().filter(|_| self.fullscreen) {
+            let interval = if chrome.is_fading(std::time::Instant::now()) {
+                crate::fullscreen_chrome::FADE_FRAME
+            } else {
+                crate::fullscreen_chrome::POLL_INTERVAL
+            };
+            ticks.push(iced::time::every(interval).map(Message::ChromeTick));
         }
         ticks
     }
@@ -2857,6 +2872,10 @@ impl Shell {
                 self.reduced_motion = on;
                 Vec::new()
             }
+            Message::ChromeTick(now) => {
+                self.read_fullscreen_chrome(now);
+                Vec::new()
+            }
             Message::UserInput => {
                 self.last_input = std::time::Instant::now();
                 Vec::new()
@@ -3237,6 +3256,9 @@ impl Shell {
             }
             Message::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
+                self.fullscreen_chrome = self.fullscreen.then(|| {
+                    crate::fullscreen_chrome::FullscreenChrome::entered(std::time::Instant::now())
+                });
                 let mode = if self.fullscreen {
                     window::Mode::Fullscreen
                 } else {
@@ -3566,6 +3588,22 @@ impl Shell {
     /// tunnels, the scheduled connections or About. The tab's keys are not its then.
     fn page_over_tab(&self) -> bool {
         self.settings_shown() || matches!(self.page, Page::Tunnels | Page::Scheduled | Page::About)
+    }
+
+    /// One reading of the pointer for the full-screen exit button, at `now`.
+    fn read_fullscreen_chrome(&mut self, now: std::time::Instant) {
+        let overlay_open = self.app.dialog.is_some()
+            || self.menu.is_some()
+            || self.palette.is_some()
+            || self.tour.is_some();
+        let reading = crate::fullscreen_chrome::Reading {
+            pointer: self.cursor.get(),
+            overlay_open,
+            reduced_motion: self.reduced_motion,
+        };
+        if let Some(chrome) = self.fullscreen_chrome.as_mut() {
+            chrome.read(now, reading);
+        }
     }
 
     /// Whether the window is behind a gate: the lock screen, or the PIN asked at start.
@@ -5041,12 +5079,20 @@ impl Shell {
         let mut layers = stack![body];
         // Full screen, a way out the mouse finds, as the C# floating button: a desktop's
         // header is put away in full screen, as the C# one.
-        if self.fullscreen && !locked {
+        // It puts itself away after a few seconds of stillness and comes back at the top
+        // edge, as the C# one; hidden, it takes no click.
+        let chrome_opacity = self
+            .fullscreen_chrome
+            .filter(|chrome| chrome.is_visible(std::time::Instant::now()))
+            .map(|chrome| chrome.opacity(std::time::Instant::now()));
+        if let (true, false, Some(opacity)) = (self.fullscreen, locked, chrome_opacity) {
             layers = layers.push(
                 container(
                     tooltip(
                         button(text(fl!("ui-fullscreen-exit")).size(font_size::CAPTION))
-                            .style(styles::secondary)
+                            .style(move |theme, status| {
+                                styles::faded_to(&styles::secondary(theme, status), opacity)
+                            })
                             .on_press(Message::ToggleFullscreen),
                         text(fl!("ui-fullscreen-exit-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Left,
