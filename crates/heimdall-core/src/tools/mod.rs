@@ -92,6 +92,7 @@ pub mod tls_audit;
 pub mod totp_generator;
 pub mod ulid_generator;
 pub mod url_codec;
+pub mod user_commands;
 pub mod uuid_generator;
 pub mod wake_on_lan;
 pub mod whois;

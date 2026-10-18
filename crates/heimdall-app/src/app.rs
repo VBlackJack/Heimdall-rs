@@ -132,6 +132,7 @@ mod run_in_shell;
 mod scheduled;
 mod scheduled_page;
 mod selection;
+mod send_command;
 mod session_events;
 mod session_load;
 mod session_restore;
@@ -202,6 +203,7 @@ pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
 pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
+pub use send_command::{SendConfirmation, SendTarget};
 pub use session_load::SessionLoadNotice;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -2981,6 +2983,9 @@ pub enum Dialog {
     /// Run a script from the local file browser by its interpreter, the command shown
     /// whole: asked each time, nothing recorded.
     ConfirmRunScript(Box<ScriptConfirmation>),
+    /// Write a command of the command library into a terminal, shown whole with the terminal
+    /// that receives it: asked each time, nothing written before it is agreed to.
+    ConfirmSendCommand(Box<SendConfirmation>),
     /// Type post-connect steps, shown whole, which the user has not approved yet.
     ConfirmPostConnect(Box<PostConnectConfirmation>),
     /// Result of an import.
@@ -3239,6 +3244,7 @@ impl Dialog {
             self,
             Self::ConfirmLocalCommand(_)
                 | Self::ConfirmRunScript(_)
+                | Self::ConfirmSendCommand(_)
                 | Self::ConfirmPostConnect(_)
                 | Self::Vault(_)
                 | Self::Pin(_)
@@ -5161,6 +5167,7 @@ impl App {
             }
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
             Some(Dialog::ConfirmRunScript(confirmation)) => self.confirm_script(*confirmation),
+            Some(Dialog::ConfirmSendCommand(confirmation)) => self.confirm_send(&confirmation),
             Some(Dialog::ConfirmPostConnect(confirmation)) => self.run_post_connect(*confirmation),
             // sudo's question is answered with the password the window holds, never by a
             // bare confirm.

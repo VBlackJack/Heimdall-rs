@@ -267,6 +267,18 @@ pub fn snippet(id: SnippetId) -> Option<&'static CommandSnippet> {
     BUILTIN_SNIPPETS.iter().find(|snippet| snippet.id == id)
 }
 
+/// Whether the snippet `id` can destroy data or stop a service. The catalog carries no level
+/// of its own; the C# asks before it sends a command marked dangerous
+/// (`DangerousCommandGuard.cs:44-57`), so these two are named the same way and the question
+/// about sending them says so.
+#[must_use]
+pub fn is_dangerous(id: SnippetId) -> bool {
+    matches!(
+        id,
+        SnippetId::LinuxKillPort | SnippetId::WindowsRestartService
+    )
+}
+
 /// Whether `snippet` is shown under the platform chosen, `None` being every platform: a
 /// cross-platform snippet is shown under each.
 #[must_use]
