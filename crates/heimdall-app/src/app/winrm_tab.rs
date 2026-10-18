@@ -26,8 +26,11 @@
 //! account, never a gateway's forward, given once an attempt, in `PowerShell`'s environment.
 //! A session given it that is never entered takes it as refused, as the vault's rules do for
 //! any saved password: until a new one is saved, `PowerShell` asks for it, so a stored
-//! password cannot lock the account out. With none stored, `PowerShell` asks.
+//! password cannot lock the account out. With none stored, the external credential provider
+//! is asked when it is on, as the C# does for a profile in credential mode; without its
+//! answer, `PowerShell` asks.
 
+use heimdall_core::credential_provider::{Lookup, ProviderKind};
 use heimdall_core::profile::{ProfileId, SshGateway, WinRmProfile};
 use heimdall_core::winrm::{self, PasswordSource};
 use heimdall_core::winrm_diagnostic::EarlyOutput;
@@ -41,7 +44,7 @@ use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
 use crate::local_driver::LocalShell;
-use crate::winrm_driver::WinRmRequest;
+use crate::winrm_driver::{WinRmProvider, WinRmRequest};
 
 /// `PowerShell` 7, preferred where it is installed: the only one on Linux.
 const POWERSHELL_CORE: &str = "pwsh";
@@ -151,6 +154,11 @@ impl App {
             .route(profile.gateway.as_ref())
             .map_err(UiError::Route)?;
         let ssh = self.ssh_options();
+        let password = self.winrm_stored_password(profile);
+        let provider = password
+            .is_none()
+            .then(|| self.winrm_provider(profile))
+            .flatten();
         Ok(WinRmRequest {
             profile: profile.clone(),
             program: powershell(),
@@ -159,7 +167,33 @@ impl App {
             size: terminal_size(self.viewport, None),
             fallback_directory: self.config.files_start.clone(),
             cancel,
-            password: self.winrm_stored_password(profile),
+            password,
+            provider,
+        })
+    }
+
+    /// The external credential provider's question for `profile`'s password, when the
+    /// profile names an account and the provider is on and ready, as the C#
+    /// `ServerListViewModel` asks it for a `WinRM` profile in credential mode.
+    fn winrm_provider(&self, profile: &WinRmProfile) -> Option<WinRmProvider> {
+        profile.username.as_ref()?;
+        let settings = &self.settings.credential_provider;
+        let ready = match settings.kind {
+            ProviderKind::Command => !settings.command.trim().is_empty(),
+            ProviderKind::WindowsCredentialManager => true,
+        };
+        if !settings.enabled || !ready {
+            return None;
+        }
+        Some(WinRmProvider {
+            settings: settings.clone(),
+            lookup: Lookup {
+                host: profile.host.clone(),
+                port: profile.port,
+                user: profile.username.clone(),
+                title: profile.name.clone(),
+            },
+            unlock: self.provider_unlock_secret(),
         })
     }
 

@@ -274,6 +274,7 @@ async fn winrm_command(lab: &Lab, dir: &Path, port: Option<u16>) -> String {
         fallback_directory: dir.to_owned(),
         cancel: CancellationToken::new(),
         password: None,
+        provider: None,
     };
     let mut events = heimdall_app::winrm_driver::winrm_events(request, registry.clone());
     let mut printed = String::new();
