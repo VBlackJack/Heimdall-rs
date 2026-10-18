@@ -26,6 +26,7 @@ pub mod banner_grab;
 pub mod base64_codec;
 pub mod cert_inspector;
 pub mod certificate_generator;
+pub mod command_activity;
 pub mod command_library;
 pub mod cron_builder;
 pub mod cron_job;

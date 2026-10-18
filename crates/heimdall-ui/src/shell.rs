@@ -59,8 +59,8 @@ use heimdall_app::{
     master_password_problem, open_vault, server_text,
 };
 use heimdall_app::{
-    LegacyMigrationMessage, QuickRow, SendConfirmation, ToolsMessage, VaultHelloMessage,
-    VaultTicket, vault_hello, windows_hello,
+    BroadcastConfirmation, LegacyMigrationMessage, QuickRow, SendConfirmation, ToolsMessage,
+    VaultHelloMessage, VaultTicket, vault_hello, windows_hello,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::import::csharp_settings::PreferenceOutcome;
@@ -608,6 +608,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if is_copy_key(&key, physical_key, modifiers) {
                 return (!repeat).then_some(Message::PasswordCopyKey);
             }
+            if is_duplicate_key(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::CmdLibDuplicateKey);
+            }
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
                 // Held down, the panel's key would flip it, and save it, at each repeat.
                 return (!repeat || shortcut.repeats()).then_some(Message::TreeShortcut(shortcut));
@@ -676,6 +679,19 @@ fn is_copy_key(
         && crate::terminal_view::keys::letter(key, physical) == Some('c')
 }
 
+/// Whether the key is Ctrl+D, as the C# command library's Duplicate.
+fn is_duplicate_key(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && crate::terminal_view::keys::letter(key, physical) == Some('d')
+}
+
 /// What the window reacts to.
 #[derive(Clone)]
 pub enum Message {
@@ -718,6 +734,9 @@ pub enum Message {
     /// Ctrl+C, uncaptured by any widget: copies the password of a Password Generator tab
     /// shown, as the C# `PasswordGeneratorView.OnKeyDown`.
     PasswordCopyKey,
+    /// Ctrl+D, uncaptured by any widget: duplicates the command last used in a command
+    /// library tab shown, as the C# `CommandLibraryView` binds it.
+    CmdLibDuplicateKey,
     /// Tab: the next field of a dialog, or the other pane of a Files tab.
     TabKey {
         /// With Shift: the previous field.
@@ -1138,6 +1157,7 @@ impl fmt::Debug for Message {
             Self::EscapeUntaken => f.write_str("EscapeUntaken"),
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
             Self::PasswordCopyKey => f.write_str("PasswordCopyKey"),
+            Self::CmdLibDuplicateKey => f.write_str("CmdLibDuplicateKey"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
@@ -2728,6 +2748,16 @@ impl Shell {
         if let Some((tab, key)) = self.password_key(&message) {
             return self.update(Message::Tool(tab, crate::tools::ToolMessage::Password(key)));
         }
+        // Ctrl+D no field took duplicates the command last used while a command library is
+        // shown, as the C# `CommandLibraryView` binds it.
+        if let Some(tab) = self.cmdlib_duplicate_key(&message) {
+            return self.update(Message::Tool(
+                tab,
+                crate::tools::ToolMessage::CmdLib(
+                    crate::tools::CommandLibraryMessage::DuplicateSelected,
+                ),
+            ));
+        }
         // Escape no widget took leaves full screen when there is nothing else to close, as
         // the C# Heimdall's.
         if matches!(message, Message::EscapeUntaken) {
@@ -2792,6 +2822,7 @@ impl Shell {
             // shown, and nothing else copies on it.
             Message::EscapeUntaken
             | Message::PasswordCopyKey
+            | Message::CmdLibDuplicateKey
             | Message::Float(..)
             | Message::InFloating(..) => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
@@ -3066,6 +3097,10 @@ impl Shell {
         self.editors.prune(&self.app);
         // The tool tabs' states follow their tabs, and those just opened start their work.
         self.tools.sync(&self.app);
+        // The commands written into terminals since, for the history of the library that
+        // asked.
+        let sent = self.app.take_sent_commands();
+        self.tools.record_sent(&sent);
         tasks.push(self.tools.opening());
         // What the detail panel says of the session selected, read again once it changed.
         self.app.refresh_detail();
@@ -4002,6 +4037,23 @@ impl Shell {
             && self.menu.is_none();
         let tab = self.shown_tab_id()?;
         (free && self.tools.is_password(tab)).then_some((tab, key))
+    }
+
+    /// The command library tab Ctrl+D is for: shown, with nothing over it.
+    fn cmdlib_duplicate_key(&self, message: &Message) -> Option<TabId> {
+        if !matches!(message, Message::CmdLibDuplicateKey) {
+            return None;
+        }
+        let free = !self.gated()
+            && !self.settings_shown()
+            && !self.tree_focused
+            && self.tour.is_none()
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && self.finder.is_none()
+            && self.menu.is_none();
+        let tab = self.shown_tab_id()?;
+        (free && self.tools.is_cmdlib(tab)).then_some(tab)
     }
 
     /// Whether Escape leaves full screen: in it, with no dialog, menu, Quick Connect, search
@@ -12226,6 +12278,59 @@ fn send_command_dialog(confirmation: &SendConfirmation) -> Element<'_, Message> 
     )
 }
 
+/// The question before a command is typed into several terminals: the command whole and
+/// the name of every terminal that receives it, one question for all.
+fn broadcast_command_dialog(confirmation: &BroadcastConfirmation) -> Element<'_, Message> {
+    let names = confirmation
+        .targets
+        .iter()
+        .fold(column![].spacing(spacing::XS), |list, target| {
+            list.push(text(target.name.as_str()).size(font_size::BODY))
+        });
+    let mut body = column![
+        dialog_parts::body(fl!(
+            "ui-dialog-broadcast-command-body",
+            count = confirmation.targets.len()
+        )),
+        container(styles::scroll(names).height(Length::Shrink))
+            .max_height(LOCAL_COMMAND_HEIGHT)
+            .padding(spacing::MD)
+            .style(container::rounded_box),
+        container(
+            styles::scroll(
+                text(confirmation.shown.as_str())
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::Glyph)
+            )
+            .height(Length::Shrink)
+        )
+        .max_height(LOCAL_COMMAND_HEIGHT)
+        .padding(spacing::MD)
+        .style(container::rounded_box),
+    ]
+    .spacing(spacing::SM);
+    if confirmation.dangerous {
+        body = body.push(dialog_parts::error(fl!("ui-dialog-send-command-dangerous")));
+    }
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-broadcast-command-title"),
+        body,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(
+                fl!("ui-dialog-broadcast-command-confirm"),
+                if confirmation.dangerous {
+                    styles::danger
+                } else {
+                    styles::primary
+                },
+            )
+            .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]),
+    )
+}
+
 /// A question about running `command` on this computer, under `title` and `intro`: the
 /// command whole in its own box, the `folder` it starts in, and a warning when the program
 /// `rereads` its line.
@@ -13606,6 +13711,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ConfirmRunScript(confirmation) => run_script_dialog(confirmation),
         Dialog::ConfirmSendCommand(confirmation) => send_command_dialog(confirmation),
+        Dialog::ConfirmBroadcastCommand(confirmation) => broadcast_command_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::TrustedHostKeyDetails(entry) => crate::trusted_keys_view::details(entry),

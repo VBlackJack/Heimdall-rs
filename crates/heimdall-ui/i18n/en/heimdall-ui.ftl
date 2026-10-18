@@ -779,6 +779,9 @@ ui-dialog-send-command-title = Send this command?
 ui-dialog-send-command-body = The command below is typed into { $name } and run there with Enter, with that session's rights. Heimdall asks each time.
 ui-dialog-send-command-dangerous = This command is marked dangerous: it can destroy data or stop a service.
 ui-dialog-send-command-confirm = Send
+ui-dialog-broadcast-command-title = Send this command to several sessions?
+ui-dialog-broadcast-command-body = The command below is typed into each session listed ({ $count }) and run there with Enter, with each session's rights. Heimdall asks each time.
+ui-dialog-broadcast-command-confirm = Send to all
 ui-error-remote-forward = The SSH gateway would not listen on its port { $port } for the remote forward: forwarding is off on it, or the port is taken there.
 ui-error-proxy-port = The SOCKS proxy could not open local port { $port }: another program may be using it. ({ $detail })
 ui-error-jump-refused = The SSH gateway would not connect onward to { $target }: forwarding is off on it, or that host cannot be reached from it.
@@ -5507,6 +5510,41 @@ ui-tool-cmdlib-value-path = { $label } must be a path.
 ui-tool-cmdlib-value-long = { $label } is longer than { $max } characters.
 ui-tool-cmdlib-value-dangerous = { $label } holds a character the shell would read as syntax.
 ui-tool-cmdlib-value-control = { $label } holds a line break or another control character.
+ui-tool-cmdlib-import = Import
+ui-tool-cmdlib-export = Export
+ui-tool-cmdlib-import-title = Import commands
+ui-tool-cmdlib-export-title = Export commands
+ui-tool-cmdlib-import-done = Imported { $imported }, updated { $updated }, skipped { $skipped }.
+ui-tool-cmdlib-export-done = Commands exported.
+ui-tool-cmdlib-transfer-too-large = The file is too large.
+ui-tool-cmdlib-transfer-format = The file is not an export of the command library.
+ui-tool-cmdlib-transfer-failed = The file could not be used: { $detail }
+ui-tool-cmdlib-favorite = Favorite
+ui-tool-cmdlib-unfavorite = Unfavorite
+ui-tool-cmdlib-favorites-only = Favorites only
+ui-tool-cmdlib-duplicate = Duplicate
+ui-tool-cmdlib-duplicate-title = Copy of { $title }
+ui-tool-cmdlib-history = History
+ui-tool-cmdlib-history-note = The values you type are never kept: a replay asks for the command as it is written now, and the question that follows shows it whole.
+ui-tool-cmdlib-history-empty = Nothing sent yet.
+ui-tool-cmdlib-history-sent = Sent to { $target } on { $when }
+ui-tool-cmdlib-history-replay = Replay
+ui-tool-cmdlib-history-clear = Clear history
+ui-tool-cmdlib-history-clear-question = Clear the whole history? The favorites stay.
+ui-tool-cmdlib-history-clear-confirm = Clear
+ui-tool-cmdlib-replay-gone = The command of this entry no longer exists.
+ui-tool-cmdlib-replay-blocked = This entry cannot be sent now: open a connected terminal tab and fill in the values it asks for.
+ui-tool-cmdlib-activity-unsaved = The favorites and the history could not be saved.
+ui-tool-cmdlib-broadcast-to = Broadcast to:
+ui-tool-cmdlib-broadcast = Broadcast
+ui-tool-cmdlib-broadcast-all = Select all
+ui-tool-cmdlib-broadcast-none = Clear
+ui-tool-cmdlib-broadcast-sent =
+    { $count ->
+        [one] Sent to { $count } terminal.
+       *[other] Sent to { $count } terminals.
+    }
+ui-tool-cmdlib-broadcast-partial = Sent to { $delivered } of { $total } terminals. Not reached: { $names }
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
 ui-tool-ping-latency = { $ms } ms

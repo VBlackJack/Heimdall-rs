@@ -35,6 +35,9 @@ use crate::text::{server_text, visible_text};
 /// What a terminal receives after the command, to run it: Enter, as a typed key.
 const SUBMIT: u8 = b'\r';
 
+/// The most receipts kept until the window takes them: it takes them after each message.
+const MAX_RECEIPTS: usize = 256;
+
 /// A terminal tab that can receive a command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendTarget {
@@ -59,7 +62,46 @@ pub struct SendConfirmation {
     pub dangerous: bool,
 }
 
+/// What is asked before one command is written into several terminals at once, as the C#
+/// `CommandLibraryViewModel.BroadcastAsync` asks (`...Broadcast.cs:122-162`): one question
+/// with the command and every terminal that receives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BroadcastConfirmation {
+    /// The terminals, in the order of the strip.
+    pub targets: Vec<SendTarget>,
+    /// The command as it is typed.
+    pub command: String,
+    /// The command as it is shown, every invisible character written out.
+    pub shown: String,
+    /// The command is marked dangerous.
+    pub dangerous: bool,
+}
+
+/// A command written into a terminal once the user agreed, which the window that asked
+/// records in its history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentCommand {
+    /// The terminal tab.
+    pub tab: TabId,
+    /// Its name, made safe.
+    pub target: String,
+    /// The command as it was typed.
+    pub command: String,
+}
+
 impl App {
+    /// The receipts of the commands written since the last call, taken.
+    pub fn take_sent_commands(&mut self) -> Vec<SentCommand> {
+        std::mem::take(&mut self.sent_commands)
+    }
+
+    fn keep_receipt(&mut self, receipt: SentCommand) {
+        if self.sent_commands.len() >= MAX_RECEIPTS {
+            self.sent_commands.remove(0);
+        }
+        self.sent_commands.push(receipt);
+    }
+
     /// The terminal tabs a command can be written into: a session of text, connected,
     /// asking nothing, as broadcast input reaches them, in the order of the strip.
     #[must_use]
@@ -98,18 +140,70 @@ impl App {
         })));
     }
 
+    /// Asks whether to write `command` into every terminal of `targets` still offered. A
+    /// command a single send would refuse, or no terminal left, is refused without a
+    /// question; nothing is written before it is agreed to.
+    pub(super) fn ask_broadcast(&mut self, targets: &[TabId], command: String, dangerous: bool) {
+        if command.trim().is_empty() || command.chars().any(char::is_control) {
+            return;
+        }
+        let chosen: Vec<SendTarget> = self
+            .send_targets()
+            .into_iter()
+            .filter(|each| targets.contains(&each.tab))
+            .collect();
+        if chosen.is_empty() {
+            return;
+        }
+        self.dialog = Some(Dialog::ConfirmBroadcastCommand(Box::new(
+            BroadcastConfirmation {
+                targets: chosen,
+                shown: visible_text(&command),
+                command,
+                dangerous,
+            },
+        )));
+    }
+
     /// Writes the command agreed to into its terminal, then Enter, while that terminal still
     /// takes input.
     pub(super) fn confirm_send(&mut self, confirmation: &SendConfirmation) -> Vec<Effect> {
-        let Some(tab) = self
-            .tab_mut(confirmation.tab)
+        self.write_command(
+            confirmation.tab,
+            &confirmation.target,
+            &confirmation.command,
+        );
+        Vec::new()
+    }
+
+    /// Writes the command agreed to into each terminal of the question that still takes
+    /// input: a terminal closed meanwhile is left out, never replaced by the one that took
+    /// its place.
+    pub(super) fn confirm_command_broadcast(
+        &mut self,
+        confirmation: &BroadcastConfirmation,
+    ) -> Vec<Effect> {
+        for target in &confirmation.targets {
+            self.write_command(target.tab, &target.name, &confirmation.command);
+        }
+        Vec::new()
+    }
+
+    /// Types `command` and Enter into `tab` if it still takes input, and leaves a receipt.
+    fn write_command(&mut self, tab: TabId, name: &str, command: &str) {
+        let Some(found) = self
+            .tab_mut(tab)
             .filter(|tab| super::broadcast::takes_input(tab))
         else {
-            return Vec::new();
+            return;
         };
-        let mut bytes = encode_paste(&confirmation.command, &tab.terminal.input_mode());
+        let mut bytes = encode_paste(command, &found.terminal.input_mode());
         bytes.push(SUBMIT);
-        tab.write(bytes);
-        Vec::new()
+        found.write(bytes);
+        self.keep_receipt(SentCommand {
+            tab,
+            target: name.to_owned(),
+            command: command.to_owned(),
+        });
     }
 }
