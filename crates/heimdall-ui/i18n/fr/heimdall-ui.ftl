@@ -4786,6 +4786,9 @@ ui-tool-cert-host = Hôte
 ui-tool-cert-host-watermark = example.com ou IP
 ui-tool-cert-ports = Ports
 ui-tool-cert-ports-watermark = 443, 8443
+ui-tool-cert-profiles = Profil d'analyse
+ui-tool-cert-profile-quick = Rapide ({ $count } ports)
+ui-tool-cert-profile-extended = Étendu ({ $count } ports)
 ui-tool-cert-inspect = Inspecter
 ui-tool-cert-copy-details = Copier les détails
 ui-tool-cert-export-csv = Exporter en CSV
@@ -5773,6 +5776,14 @@ ui-settings-rdp-confirm-disconnect = Confirmer avant de déconnecter une session
 ui-settings-rdp-confirm-disconnect-hint = Demande une confirmation quand on appuie sur le bouton Déconnecter d'une session RDP.
 ui-settings-rdp-redirection-indicators = Toujours afficher tous les indicateurs de redirection
 ui-settings-rdp-redirection-indicators-hint = Affiche aussi les redirections non partagées sur la barre d'une session RDP, au lieu de les ranger derrière le badge "+N".
+# "Route via" des outils réseau : leurs connexions TCP faites depuis une passerelle SSH.
+ui-tool-route-label = Passer par
+ui-tool-route-direct = Direct (depuis cet ordinateur)
+ui-tool-route-hint = Les connexions sont faites depuis la passerelle, qui résout le nom d'hôte. Rien n'est exécuté sur la passerelle.
+ui-tool-route-refused = Cet outil a besoin d'ICMP, d'ARP, de sockets bruts ou d'UDP, qu'une passerelle SSH ne peut pas transporter : il ne s'exécute donc pas à travers une passerelle. Choisissez Direct pour l'exécuter depuis cet ordinateur.
+ui-tool-route-unavailable = La passerelle choisie n'est plus disponible. Choisissez-la à nouveau, ou choisissez Direct.
+ui-tool-route-error-untrusted = La clé d'hôte de la passerelle { $host }:{ $port } n'est pas encore approuvée. Connectez-vous-y une fois depuis une session pour approuver sa clé, puis réessayez.
+ui-tool-route-error-gateway = Passerelle : { $detail }
 # Cartographie réseau : ce que les sondes en lecture seule apprennent d'un hôte (colonnes de l'export CSV, puis la ligne affichée sous l'hôte).
 ui-tool-netmap-col-os = Système d'exploitation
 ui-tool-netmap-col-os-confidence = Confiance du système

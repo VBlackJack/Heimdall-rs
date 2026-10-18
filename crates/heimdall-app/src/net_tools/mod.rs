@@ -32,6 +32,9 @@ pub mod port_scan;
 pub mod tcp_ping;
 pub mod whois;
 
+#[cfg(test)]
+mod route_tests;
+
 use std::net::IpAddr;
 use std::path::Path;
 use std::process::Stdio;

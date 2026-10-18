@@ -4775,6 +4775,9 @@ ui-tool-cert-host = Host
 ui-tool-cert-host-watermark = example.com o IP
 ui-tool-cert-ports = Puertos
 ui-tool-cert-ports-watermark = 443, 8443
+ui-tool-cert-profiles = Perfil de análisis
+ui-tool-cert-profile-quick = Rápido ({ $count } puertos)
+ui-tool-cert-profile-extended = Extendido ({ $count } puertos)
 ui-tool-cert-inspect = Inspeccionar
 ui-tool-cert-copy-details = Copiar detalles
 ui-tool-cert-export-csv = Exportar CSV
@@ -5762,6 +5765,14 @@ ui-settings-rdp-confirm-disconnect = Confirmar antes de desconectar una sesión 
 ui-settings-rdp-confirm-disconnect-hint = Pide confirmación al pulsar el botón Desconectar de una sesión RDP.
 ui-settings-rdp-redirection-indicators = Mostrar siempre todos los indicadores de redirección
 ui-settings-rdp-redirection-indicators-hint = Muestra también las redirecciones no compartidas en la barra de una sesión RDP, en lugar de agruparlas tras la insignia "+N".
+# "Route via" de las herramientas de red: sus conexiones TCP hechas desde una pasarela SSH.
+ui-tool-route-label = Pasar por
+ui-tool-route-direct = Directo (desde este equipo)
+ui-tool-route-hint = Las conexiones se hacen desde la pasarela, que resuelve el nombre del host. No se ejecuta nada en la pasarela.
+ui-tool-route-refused = Esta herramienta necesita ICMP, ARP, sockets sin procesar o UDP, que una pasarela SSH no puede transportar, por lo que no se ejecuta a través de una pasarela. Elija Directo para ejecutarla desde este equipo.
+ui-tool-route-unavailable = La pasarela elegida ya no está disponible. Elíjala de nuevo, o elija Directo.
+ui-tool-route-error-untrusted = La clave de host de la pasarela { $host }:{ $port } aún no es de confianza. Conéctese a ella una vez desde una sesión para confiar en su clave y vuelva a intentarlo.
+ui-tool-route-error-gateway = Pasarela: { $detail }
 # Cartografía de red: lo que las sondas de solo lectura averiguan de un host (columnas de la exportación CSV, luego la línea mostrada bajo el host).
 ui-tool-netmap-col-os = Sistema operativo
 ui-tool-netmap-col-os-confidence = Confianza del sistema

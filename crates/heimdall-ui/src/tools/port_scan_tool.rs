@@ -27,8 +27,11 @@
 
 use std::time::Duration;
 
+use std::sync::Arc;
+
 use heimdall_app::TabId;
 use heimdall_app::net_tools::{self, ResolveFailure};
+use heimdall_app::tool_route::ToolRoute;
 use iced::futures::{SinkExt as _, StreamExt as _};
 use iced::task::Handle;
 use iced::widget::{column, container, row, text, text_input};
@@ -76,6 +79,8 @@ pub enum PortScanMessage {
     Stop,
     /// The host of scan `.0` did not resolve.
     Unresolved(u64, ResolveFailure),
+    /// The gateway scan `.0` goes through could not be opened: why, said.
+    RouteFailed(u64, String),
     /// Ports of scan `.0` probed.
     Probed(u64, Vec<PortProbeResult>),
     /// Scan `.0` probed every port.
@@ -166,9 +171,36 @@ fn unresolved_text(failure: &ResolveFailure) -> String {
 }
 
 /// Scan `run` of `request`: the host resolved once, before any port is timed, then its
-/// ports probed [`port_scanner::MAX_CONCURRENT`] at a time on every address it has.
-fn scan_run(tab: TabId, run: u64, request: ScanRequest) -> (Task<Message>, Handle) {
+/// ports probed [`port_scanner::MAX_CONCURRENT`] at a time on every address it has. Through
+/// `via`, the gateway is opened first and each port is a channel it opens onward, the host
+/// sent as typed for the gateway to resolve; a gateway that cannot be opened ends the scan,
+/// which is never made from here instead.
+fn scan_run(
+    tab: TabId,
+    run: u64,
+    request: ScanRequest,
+    via: Option<ToolRoute>,
+) -> (Task<Message>, Handle) {
     let events = iced::stream::channel(EVENT_BUFFER, async move |mut out| {
+        let timeout_ms = request.timeout_ms;
+        if let Some(route) = via {
+            let gateway = match route.open().await {
+                Ok(gateway) => Arc::new(gateway),
+                Err(error) => {
+                    let said = super::route_bar::failure_text(error);
+                    let _ = out.send(PortScanMessage::RouteFailed(run, said)).await;
+                    return;
+                }
+            };
+            let gateway = &gateway;
+            let host = &request.host;
+            let probed = iced::futures::stream::iter(request.ports)
+                .map(|port| net_tools::port_scan::probe_via(gateway, host, port, timeout_ms))
+                .buffer_unordered(port_scanner::MAX_CONCURRENT)
+                .ready_chunks(RESULT_BATCH);
+            send_probes(&mut out, run, probed).await;
+            return;
+        }
         let resolving = Duration::from_millis(port_scanner::RESOLVE_TIMEOUT_MS);
         let addresses = match net_tools::resolve(&request.host, resolving).await {
             Ok(addresses) => addresses,
@@ -178,21 +210,11 @@ fn scan_run(tab: TabId, run: u64, request: ScanRequest) -> (Task<Message>, Handl
             }
         };
         let addresses = &addresses;
-        let timeout_ms = request.timeout_ms;
-        let mut probed = iced::futures::stream::iter(request.ports)
+        let probed = iced::futures::stream::iter(request.ports)
             .map(|port| net_tools::port_scan::probe(addresses, port, timeout_ms))
             .buffer_unordered(port_scanner::MAX_CONCURRENT)
             .ready_chunks(RESULT_BATCH);
-        while let Some(results) = probed.next().await {
-            if out
-                .send(PortScanMessage::Probed(run, results))
-                .await
-                .is_err()
-            {
-                return;
-            }
-        }
-        let _ = out.send(PortScanMessage::Ended(run)).await;
+        send_probes(&mut out, run, probed).await;
     });
     Task::run(events, move |message| {
         Message::Tool(tab, super::ToolMessage::PortScan(message))
@@ -200,9 +222,32 @@ fn scan_run(tab: TabId, run: u64, request: ScanRequest) -> (Task<Message>, Handl
     .abortable()
 }
 
+/// The results of scan `run` sent to the view as they come, then its end.
+async fn send_probes(
+    out: &mut iced::futures::channel::mpsc::Sender<PortScanMessage>,
+    run: u64,
+    mut probed: impl iced::futures::Stream<Item = Vec<PortProbeResult>> + Unpin,
+) {
+    while let Some(results) = probed.next().await {
+        if out
+            .send(PortScanMessage::Probed(run, results))
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+    let _ = out.send(PortScanMessage::Ended(run)).await;
+}
+
 impl PortScanPane {
     /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: PortScanMessage) -> Outcome {
+    pub fn update(
+        &mut self,
+        tab: TabId,
+        message: PortScanMessage,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
         let confirmed = match message {
             PortScanMessage::Start => false,
             PortScanMessage::Confirm => true,
@@ -210,7 +255,7 @@ impl PortScanPane {
         };
         match self.start(confirmed) {
             Some(request) => {
-                let (task, handle) = scan_run(tab, self.run, request);
+                let (task, handle) = scan_run(tab, self.run, request, via);
                 self.stop = Some(handle.abort_on_drop());
                 Outcome::Task(task)
             }
@@ -241,6 +286,12 @@ impl PortScanPane {
             PortScanMessage::Unresolved(run, failure) => {
                 if run == self.run && self.running {
                     self.error = Some(unresolved_text(&failure));
+                    self.finish();
+                }
+            }
+            PortScanMessage::RouteFailed(run, said) => {
+                if run == self.run && self.running {
+                    self.error = Some(said);
                     self.finish();
                 }
             }

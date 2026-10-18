@@ -4730,6 +4730,9 @@ ui-tool-cert-host = Host
 ui-tool-cert-host-watermark = example.com or IP
 ui-tool-cert-ports = Ports
 ui-tool-cert-ports-watermark = 443, 8443
+ui-tool-cert-profiles = Scan profile
+ui-tool-cert-profile-quick = Quick ({ $count } ports)
+ui-tool-cert-profile-extended = Extended ({ $count } ports)
 ui-tool-cert-inspect = Inspect
 ui-tool-cert-copy-details = Copy Details
 ui-tool-cert-export-csv = Export CSV
@@ -5717,6 +5720,14 @@ ui-settings-rdp-confirm-disconnect = Confirm before disconnecting an RDP session
 ui-settings-rdp-confirm-disconnect-hint = Ask for confirmation when the Disconnect button of an RDP session is pressed.
 ui-settings-rdp-redirection-indicators = Always show every redirection indicator
 ui-settings-rdp-redirection-indicators-hint = Show the redirections that are not shared too on the bar of an RDP session, instead of behind the "+N" badge.
+# "Route via" of the network tools: their TCP connections made from an SSH gateway.
+ui-tool-route-label = Route via
+ui-tool-route-direct = Direct (from this computer)
+ui-tool-route-hint = Connections are made from the gateway, which resolves the host name. Nothing is run on the gateway.
+ui-tool-route-refused = This tool needs ICMP, ARP, raw sockets or UDP, which an SSH gateway cannot carry, so it does not run through a gateway. Choose Direct to run it from this computer.
+ui-tool-route-unavailable = The gateway chosen is no longer available. Choose it again, or choose Direct.
+ui-tool-route-error-untrusted = The host key of the gateway { $host }:{ $port } is not trusted yet. Connect to it once from a session to trust its key, then try again.
+ui-tool-route-error-gateway = Gateway: { $detail }
 # Network cartography: what the read-only probes learn of a host (columns of the CSV export, then the line shown under the host).
 ui-tool-netmap-col-os = Operating System
 ui-tool-netmap-col-os-confidence = OS Confidence

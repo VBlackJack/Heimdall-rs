@@ -32,6 +32,7 @@
 use heimdall_app::TabId;
 use heimdall_app::net_tools::{self, banner};
 use heimdall_app::reachability::DownReason;
+use heimdall_app::tool_route::ToolRoute;
 use heimdall_core::tools::banner_grab::{
     self, BannerProbeResult, CONNECT_TIMEOUT, ExportLabels, MAX_CONCURRENT, READ_TIMEOUT,
 };
@@ -83,6 +84,8 @@ pub enum BannerMessage {
     Probed(u64, BannerProbeResult),
     /// The host of run `.0` could not be looked up.
     Unresolved(u64, DownReason),
+    /// The gateway run `.0` goes through could not be opened: why, said.
+    RouteFailed(u64, String),
     /// Run `.0` probed all its ports.
     Finished(u64),
     /// Copy tabulated text to clipboard.
@@ -102,6 +105,8 @@ enum Problem {
     PortRangeRequired,
     /// The host's name could not be looked up.
     Unresolved(DownReason),
+    /// The gateway could not be opened: why, said.
+    Route(String),
 }
 
 /// The Banner Grabber tool pane state.
@@ -155,8 +160,17 @@ enum Applied {
 
 impl BannerPane {
     /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: BannerMessage) -> Outcome {
-        match self.apply(message) {
+    pub fn update(
+        &mut self,
+        tab: TabId,
+        message: BannerMessage,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
+        let applied = match message {
+            BannerMessage::Start => self.start(via),
+            other => self.apply(other),
+        };
+        match applied {
             Applied::None => Outcome::None,
             Applied::Run(task) => Outcome::Task(
                 task.map(move |message| Message::Tool(tab, ToolMessage::Banner(message))),
@@ -195,7 +209,8 @@ impl BannerPane {
                 self.ports = DB_PORTS.to_string();
                 Applied::None
             }
-            BannerMessage::Start => self.start(),
+            // The route a run goes through is read by `update`, which starts it.
+            BannerMessage::Start => self.start(None),
             BannerMessage::Stop => {
                 if let Some(running) = self.running.take() {
                     running.abort();
@@ -215,6 +230,13 @@ impl BannerPane {
                 if run == self.run && self.running.is_some() {
                     self.running = None;
                     self.problem = Some(Problem::Unresolved(reason));
+                }
+                Applied::None
+            }
+            BannerMessage::RouteFailed(run, said) => {
+                if run == self.run && self.running.is_some() {
+                    self.running = None;
+                    self.problem = Some(Problem::Route(said));
                 }
                 Applied::None
             }
@@ -254,7 +276,7 @@ impl BannerPane {
     }
 
     /// Starts a run, the inputs checked in the C# `GrabAsync` order.
-    fn start(&mut self) -> Applied {
+    fn start(&mut self, via: Option<ToolRoute>) -> Applied {
         if self.running.is_some() {
             return Applied::None;
         }
@@ -280,7 +302,8 @@ impl BannerPane {
         self.problem = None;
         self.results.clear();
         self.total = ports.len();
-        let (task, handle) = Task::run(grabs(host, ports, self.run), |message| message).abortable();
+        let (task, handle) =
+            Task::run(grabs(host, ports, self.run, via), |message| message).abortable();
         self.running = Some(handle.abort_on_drop());
         Applied::Run(task)
     }
@@ -292,6 +315,7 @@ impl BannerPane {
             Problem::InvalidHost => fl!("ui-tool-net-error-invalid-host"),
             Problem::PortRangeRequired => fl!("ui-tool-net-error-port-range"),
             Problem::Unresolved(reason) => super::down_reason_text(reason),
+            Problem::Route(said) => said.clone(),
         }
     }
 
@@ -536,13 +560,38 @@ fn export_labels() -> ExportLabels {
 }
 
 /// The probes of a run, as the C# `BannerGrabService.GrabAsync`: the host looked up once,
-/// then [`MAX_CONCURRENT`] ports at a time, each result sent back as it ends.
+/// then [`MAX_CONCURRENT`] ports at a time, each result sent back as it ends. Through `via`
+/// the gateway is opened instead, each port is a channel it opens onward with the host sent
+/// as typed for it to resolve, and a gateway that cannot be opened ends the run: nothing is
+/// then connected from here.
 fn grabs(
     host: String,
     ports: Vec<u16>,
     run: u64,
+    via: Option<ToolRoute>,
 ) -> impl iced::futures::Stream<Item = BannerMessage> {
     iced::stream::channel(CHANNEL_SIZE, async move |mut out| {
+        if let Some(route) = via {
+            let gateway = match route.open().await {
+                Ok(gateway) => gateway,
+                Err(error) => {
+                    let said = super::route_bar::failure_text(error);
+                    let _ = out.send(BannerMessage::RouteFailed(run, said)).await;
+                    return;
+                }
+            };
+            let (gateway, host) = (&gateway, &host);
+            let mut probes = iced::futures::stream::iter(ports)
+                .map(|port| banner::grab_via(gateway, host, port, CONNECT_TIMEOUT, READ_TIMEOUT))
+                .buffer_unordered(MAX_CONCURRENT);
+            while let Some(result) = probes.next().await {
+                if out.send(BannerMessage::Probed(run, result)).await.is_err() {
+                    return;
+                }
+            }
+            let _ = out.send(BannerMessage::Finished(run)).await;
+            return;
+        }
         let Ok(addresses) = net_tools::resolve(&host, CONNECT_TIMEOUT).await else {
             let _ = out
                 .send(BannerMessage::Unresolved(run, DownReason::Dns))
