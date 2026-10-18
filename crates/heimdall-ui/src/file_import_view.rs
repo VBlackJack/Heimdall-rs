@@ -157,6 +157,11 @@ pub fn warning_lines(warnings: &[FileWarning]) -> Vec<String> {
                 fl!("ui-import-file-unreadable", detail = detail.as_str())
             }
             FileWarning::FullyEncrypted => fl!("ui-import-file-encrypted"),
+            FileWarning::UnresolvedVariable { session, name } => fl!(
+                "ui-import-mobaxterm-unresolved-variable",
+                session = session.as_str(),
+                name = name.as_str()
+            ),
         })
         .collect()
 }

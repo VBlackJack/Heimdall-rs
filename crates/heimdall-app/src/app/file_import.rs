@@ -173,7 +173,12 @@ impl App {
                     return Vec::new();
                 }
             },
-            FileKind::MobaXterm => self.pending(kind, &mobaxterm::parse(&file.text)),
+            FileKind::MobaXterm => {
+                // The user's variables fill in the `[NAME]` of the logins, as the C# import
+                // does through `MobaXtermVariableResolver` (`SettingsViewModel.cs:3093`).
+                let resolve = mobaxterm::variable_resolver(&self.settings.mobaxterm_variables);
+                self.pending(kind, &mobaxterm::parse_with(&file.text, &resolve))
+            }
             FileKind::MRemoteNg => self.pending(kind, &mremoteng::parse(&file.text)),
             FileKind::RdcMan => self.pending(kind, &rdcman::parse(&file.text)),
         };
