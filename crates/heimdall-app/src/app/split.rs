@@ -29,14 +29,17 @@ use super::reconnect::Reopen;
 use super::{App, Dialog, Effect, Message, Notice, QuickResult, Tab};
 use crate::ids::TabId;
 
-/// Most panes a tab is split in. The C# allows eight; two for now.
-pub const MAX_PANES: usize = 2;
+/// Most panes a tab is split in, as the C# `SplitService.MaxPanesPerTab` (SplitService.cs:38).
+pub const MAX_PANES: usize = 8;
 
 /// Smallest share of a split the first pane takes, as the C# `SplitRatio` clamp.
 pub const MIN_RATIO: f32 = split_layouts::MIN_RATIO;
 
 /// Largest share of a split the first pane takes.
 pub const MAX_RATIO: f32 = split_layouts::MAX_RATIO;
+
+/// The outer split's divider, the first numbered.
+pub const OUTER_DIVIDER: usize = 0;
 
 /// The share a new split gives its first pane, and a reset gives back.
 pub const DEFAULT_RATIO: f32 = 0.5;
@@ -172,6 +175,39 @@ impl Node {
         }
     }
 
+    /// The number of panes.
+    #[must_use]
+    pub fn pane_count(&self) -> usize {
+        match self {
+            Self::Leaf(_) => 1,
+            Self::Split { first, second, .. } => first.pane_count() + second.pane_count(),
+        }
+    }
+
+    /// The split numbered `divider` in a walk from this node, each side before the other, as
+    /// the dividers are numbered when drawn; `None` past the last one.
+    fn divider_mut(&mut self, divider: usize) -> Option<&mut Self> {
+        let mut count = 0;
+        self.divider_walk(divider, &mut count)
+    }
+
+    fn divider_walk(&mut self, wanted: usize, count: &mut usize) -> Option<&mut Self> {
+        let Self::Split { .. } = self else {
+            return None;
+        };
+        if *count == wanted {
+            return Some(self);
+        }
+        *count += 1;
+        let Self::Split { first, second, .. } = self else {
+            return None;
+        };
+        if let Some(found) = first.divider_walk(wanted, count) {
+            return Some(found);
+        }
+        second.divider_walk(wanted, count)
+    }
+
     /// The node `leaf` stands in split with `added`, `added` second, as the C# merge does.
     pub fn split_leaf(&mut self, leaf: TabId, added: TabId, axis: Axis) -> bool {
         self.split_leaf_at(leaf, added, axis, Placement::Second)
@@ -265,9 +301,34 @@ impl Layout {
         }
     }
 
+    /// Gives divider `divider` the share `value`, held within the C# clamp; whether the
+    /// divider exists. Divider 0 is the outer split's.
+    fn set_divider_ratio(&mut self, divider: usize, value: f32) -> bool {
+        match self.root.divider_mut(divider) {
+            Some(Node::Split { ratio, .. }) => {
+                *ratio = value.clamp(MIN_RATIO, MAX_RATIO);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
     fn set_ratio(&mut self, value: f32) {
-        if let Node::Split { ratio, .. } = &mut self.root {
-            *ratio = value.clamp(MIN_RATIO, MAX_RATIO);
+        self.set_divider_ratio(OUTER_DIVIDER, value);
+    }
+
+    /// The first pane of each side of divider `divider`, the panes the C# remembers its
+    /// share for.
+    fn divider_sides(&mut self, divider: usize) -> Option<(TabId, TabId, Axis, f32)> {
+        match self.root.divider_mut(divider) {
+            Some(Node::Split {
+                axis,
+                ratio,
+                first,
+                second,
+            }) => Some((first.first_leaf(), second.first_leaf(), *axis, *ratio)),
+            _ => None,
         }
     }
 
@@ -330,15 +391,22 @@ pub enum SplitMessage {
     Swap(TabId),
     /// `host`'s outer split placed the other way, as Ctrl+Shift+O.
     ToggleAxis(TabId),
-    /// The share the first side of `host`'s outer split takes, as dragged.
+    /// The share the first side of one of `host`'s dividers takes, as dragged.
     Resize {
         /// The split tab.
         host: TabId,
+        /// The divider, numbered in a walk from the outer split, each side before the other.
+        divider: usize,
         /// The share, clamped between [`MIN_RATIO`] and [`MAX_RATIO`].
         ratio: f32,
     },
-    /// The share back to [`DEFAULT_RATIO`], as a double click on the divider.
-    ResetRatio(TabId),
+    /// The share of one divider back to [`DEFAULT_RATIO`], as a double click on it.
+    ResetRatio {
+        /// The split tab.
+        host: TabId,
+        /// The divider, as in [`SplitMessage::Resize`].
+        divider: usize,
+    },
     /// Give a pane the keyboard.
     Focus(TabId),
     /// Close one pane, asking first as closing its tab would; the others stay split.
@@ -361,7 +429,7 @@ impl SplitMessage {
             | Self::Swap(_)
             | Self::ToggleAxis(_)
             | Self::Resize { .. }
-            | Self::ResetRatio(_)
+            | Self::ResetRatio { .. }
             | Self::Focus(_)
             | Self::ClosePane(_)
             | Self::CloseSecondary(_) => Vec::new(),
@@ -486,14 +554,16 @@ impl App {
             SplitMessage::ToggleAxis(host) => self.edit_layout(host, Layout::toggle_axis),
             // A share no split has is not taken.
             // Remembered for its pair, as the C# records a drag's end and a reset.
-            SplitMessage::Resize { host, ratio } if ratio.is_finite() => {
-                self.edit_layout(host, |layout| layout.set_ratio(ratio));
-                self.remember_layout(host);
+            SplitMessage::Resize {
+                host,
+                divider,
+                ratio,
+            } if ratio.is_finite() => {
+                self.set_divider(host, divider, ratio);
             }
             SplitMessage::Resize { .. } => {}
-            SplitMessage::ResetRatio(host) => {
-                self.edit_layout(host, |layout| layout.set_ratio(DEFAULT_RATIO));
-                self.remember_layout(host);
+            SplitMessage::ResetRatio { host, divider } => {
+                self.set_divider(host, divider, DEFAULT_RATIO);
             }
             SplitMessage::Focus(tab) => return self.focus_pane(tab),
             SplitMessage::ClosePane(tab) => self.request_pane_close(tab),
@@ -602,24 +672,18 @@ impl App {
         }
     }
 
-    /// Remembers the outer split of `host` as it now is, as the C# `RememberSplitRatio`:
-    /// its first pane and its secondary one.
-    fn remember_layout(&mut self, host: TabId) {
-        let Some(Layout {
-            root:
-                Node::Split {
-                    axis,
-                    ratio,
-                    first,
-                    second,
-                },
-            ..
-        }) = self.tab(host).and_then(|tab| tab.layout.as_ref())
-        else {
+    /// Gives divider `divider` of `host`'s split the share `ratio` and remembers it for the
+    /// panes either side, as the C# `RememberSplitRatio` does for the container dragged.
+    fn set_divider(&mut self, host: TabId, divider: usize, ratio: f32) {
+        let Some(layout) = self.tab_mut(host).and_then(|tab| tab.layout.as_mut()) else {
             return;
         };
-        let (first, second, axis, ratio) = (first.first_leaf(), second.first_leaf(), *axis, *ratio);
-        self.remember_split(first, second, axis, ratio);
+        if !layout.set_divider_ratio(divider, ratio) {
+            return;
+        }
+        if let Some((first, second, axis, ratio)) = layout.divider_sides(divider) {
+            self.remember_split(first, second, axis, ratio);
+        }
     }
 
     /// Opens a session with `open`, then merges the tab it opened into `host`, the new pane
@@ -993,5 +1057,93 @@ mod tests {
         assert_eq!(layout.secondary(), Some(a));
         layout.toggle_axis();
         assert_eq!(layout.axis(), Some(Axis::Stacked));
+    }
+
+    /// A tree of `count` panes, each added beside the last, alternating the placement.
+    fn tree(count: usize) -> (Node, Vec<TabId>) {
+        let first = TabId::fresh();
+        let mut root = Node::Leaf(first);
+        let mut panes = vec![first];
+        for index in 1..count {
+            let added = TabId::fresh();
+            let axis = if index % 2 == 0 {
+                Axis::SideBySide
+            } else {
+                Axis::Stacked
+            };
+            assert!(root.split_leaf(panes[index - 1], added, axis));
+            panes.push(added);
+        }
+        (root, panes)
+    }
+
+    #[test]
+    fn the_most_panes_is_the_csharp_eight_and_the_tree_holds_them() {
+        assert_eq!(MAX_PANES, 8, "SplitService.MaxPanesPerTab");
+        let (root, panes) = tree(MAX_PANES);
+        assert_eq!(root.pane_count(), MAX_PANES);
+        assert_eq!(root.leaves(), panes);
+    }
+
+    #[test]
+    fn a_split_nested_deep_loses_one_pane_and_its_parent_collapses() {
+        let (root, panes) = tree(4);
+        let root = root.remove_leaf(panes[3]).expect("three left");
+        assert_eq!(root.leaves(), panes[..3]);
+        assert_eq!(root.pane_count(), 3);
+        // The parent of the pane removed is gone: its sibling stands where the split was.
+        let Node::Split { second, .. } = &root else {
+            panic!("a split");
+        };
+        let Node::Split { second, .. } = &**second else {
+            panic!("a nested split");
+        };
+        assert_eq!(**second, Node::Leaf(panes[2]));
+        let root = root.remove_leaf(panes[2]).expect("two left");
+        assert_eq!(root.leaves(), panes[..2]);
+        let root = root.remove_leaf(panes[1]).expect("one left");
+        assert_eq!(root, Node::Leaf(panes[0]), "a single pane is a plain leaf");
+    }
+
+    #[test]
+    fn dividers_are_numbered_from_the_outer_split_each_side_before_the_other() {
+        let (root, panes) = tree(4);
+        let mut layout = Layout {
+            root,
+            focus: panes[0],
+        };
+        for (divider, ratio) in [(0, 0.2), (1, 0.3), (2, 0.4)] {
+            assert!(layout.set_divider_ratio(divider, ratio));
+        }
+        assert!(!layout.set_divider_ratio(3, 0.5), "only three dividers");
+        assert_eq!(layout.ratio(), Some(0.2), "the outer one");
+        let Node::Split { second, .. } = &layout.root else {
+            panic!("a split");
+        };
+        let Node::Split { ratio, second, .. } = &**second else {
+            panic!("a nested split");
+        };
+        assert_eq!(Some(*ratio), Some(0.3));
+        assert!(
+            matches!(&**second, Node::Split { ratio, .. } if (*ratio - 0.4).abs() < f32::EPSILON)
+        );
+        // Each divider holds the C# clamp.
+        assert!(layout.set_divider_ratio(2, 9.0));
+        assert_eq!(
+            layout.divider_sides(2).map(|(.., ratio)| ratio),
+            Some(MAX_RATIO)
+        );
+        assert!(layout.set_divider_ratio(1, -1.0));
+        assert_eq!(
+            layout.divider_sides(1).map(|(.., ratio)| ratio),
+            Some(MIN_RATIO)
+        );
+        assert_eq!(
+            layout
+                .divider_sides(1)
+                .map(|(first, second, ..)| (first, second)),
+            Some((panes[1], panes[2])),
+            "the first pane of each side"
+        );
     }
 }

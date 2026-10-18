@@ -335,6 +335,7 @@ fn a_double_click_on_the_divider_gives_each_pane_half() {
     let (mut shell, left, _) = split_shell(dir.path());
     let _ = shell.update(Message::App(AppMessage::Split(SplitMessage::Resize {
         host: left,
+        divider: 0,
         ratio: 0.3,
     })));
     let mut reset = None;
@@ -346,7 +347,7 @@ fn a_double_click_on_the_divider_gives_each_pane_half() {
         reset = ui.into_messages().find(|message| {
             matches!(
                 message,
-                Message::App(AppMessage::Split(SplitMessage::ResetRatio(host))) if *host == left
+                Message::App(AppMessage::Split(SplitMessage::ResetRatio { host, divider: 0 })) if *host == left
             )
         });
         if reset.is_some() {
@@ -742,17 +743,29 @@ fn no_overlay_for_the_tab_shown_a_split_tab_or_onto_a_full_split() {
     let _ = shell.update(Message::TabDragEnd);
     assert!(layout_of(&shell, left).is_none());
 
-    // Onto a split of two panes already: no overlay, and the drop says why.
+    // Onto a split of the most panes already: no overlay, and the drop says why.
     let dir = tempfile::tempdir().expect("dir");
     let (shell, left, _) = split_shell(dir.path());
     let mut core = shell.into_app();
+    while core.panes_of(left).len() < heimdall_app::split::MAX_PANES {
+        let filler = live(&mut core, "c", "filler");
+        core.update(AppMessage::Split(SplitMessage::Merge {
+            host: left,
+            tab: filler,
+            axis: Axis::SideBySide,
+            placement: Placement::Second,
+        }));
+    }
     let third = live(&mut core, "c", "third");
     core.update(AppMessage::SelectTab(left));
     let mut shell = Shell::with_app(core);
     drag_to(&mut shell, third, inside);
     assert!(drop_label(&shell).is_none(), "full already");
     let _ = shell.update(Message::TabDragEnd);
-    assert_eq!(layout_of(&shell, left).expect("split").leaves().len(), 2);
+    assert_eq!(
+        layout_of(&shell, left).expect("split").leaves().len(),
+        heimdall_app::split::MAX_PANES
+    );
     assert_eq!(
         shell.app().notice(),
         Some(&heimdall_app::Notice::SplitMaxPanesReached(
