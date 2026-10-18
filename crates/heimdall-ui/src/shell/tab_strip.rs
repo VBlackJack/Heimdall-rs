@@ -40,7 +40,8 @@ use crate::icons::{self, Icon, Tint};
 use crate::styles;
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
-use crate::tree_view::TreeMenu;
+use crate::tree_view::{self, TabListItem, TreeMenu};
+use heimdall_app::folder_label;
 
 /// Room around the tab strip, as the C#'s: none below, where the tabs meet the session.
 const TAB_STRIP_PADDING: iced::Padding = iced::Padding {
@@ -89,6 +90,13 @@ const PULSE_FAINTEST: f32 = 0.2;
 
 /// How often the pulsing dot is drawn anew: smooth to the eye without drawing every frame.
 const PULSE_FRAME: Duration = Duration::from_millis(40);
+
+/// Room the button listing every tab takes at the strip's end: its side and the gap before
+/// it, as the C# `SessionTabListButtonWidth` and the 2 it adds (`MainWindow.TabStrip.cs:113`).
+const TAB_LIST_RESERVE: f32 = icons::BUTTON_SIDE + TAB_GAP;
+
+/// Room round the chip naming a folder, as the C# group chip's label.
+const FOLDER_CHIP_PADDING: [f32; 2] = [2.0, spacing::SM];
 
 /// The mark after the title of a tab whose session needs a look, as the C# tab's
 /// `TabStateMark`: each state its own shape, so the colour is never the only cue.
@@ -342,16 +350,8 @@ impl Shell {
             titled = titled.push(self.state_mark_view(mark));
         }
         // Its whole title, where it goes and its state, as the C# tab's tooltip.
-        let reason = match &tab.phase {
-            Phase::Failed(error) => Some(super::failure_text(tab, error)),
-            _ => None,
-        };
         let profile = self.app.tab_profile(tab);
-        let lines = tooltip_lines(
-            name,
-            profile.as_ref(),
-            state.and_then(|state| state_words(state, reason)),
-        );
+        let lines = tooltip_lines(name, profile.as_ref(), Self::state_text(tab));
         label = label.push(
             tooltip(
                 titled,
@@ -371,6 +371,57 @@ impl Shell {
             label = label.push(badge);
         }
         label
+    }
+
+    /// The state of `tab`'s session in words, `None` for a connected one and for a tool.
+    fn state_text(tab: &Tab) -> Option<String> {
+        let state = tab.tool().is_none().then(|| SessionState::of(tab))?;
+        let reason = match &tab.phase {
+            Phase::Failed(error) => Some(super::failure_text(tab, error)),
+            _ => None,
+        };
+        state_words(state, reason)
+    }
+
+    /// Every tab of the strip, as the C# `TabListMenuFactory` lists them: in the strip's
+    /// order, each with its state when it needs a look, the folder at the right while the
+    /// tabs are gathered by folder, the tab shown ticked. `None` with no tab to list.
+    pub(super) fn tab_list_menu(&self) -> Option<Element<'_, Message>> {
+        let shown = self.shown_tab_id();
+        let items: Vec<TabListItem> = self
+            .app
+            .strip()
+            .into_iter()
+            .map(|tab| {
+                let name = Self::tab_name(tab);
+                TabListItem {
+                    tab: tab.id,
+                    label: match Self::state_text(tab) {
+                        Some(state) => fl!("ui-tab-list-entry", name = name, state = state),
+                        None => name,
+                    },
+                    folder: self
+                        .app
+                        .tab_folder(tab)
+                        .map(|folder| folder_label(&folder).to_owned()),
+                    active: shown == Some(tab.id),
+                }
+            })
+            .collect();
+        (!items.is_empty()).then(|| tree_view::tab_list_entries(items))
+    }
+
+    /// The chip heading a folder's tabs while they are gathered by folder, as the C# group
+    /// chip carrying the folder's name.
+    fn folder_chip(folder: &str) -> Element<'static, Message> {
+        container(
+            text(folder_label(folder).to_owned())
+                .size(font_size::CAPTION)
+                .font(styles::SEMIBOLD),
+        )
+        .padding(FOLDER_CHIP_PADDING)
+        .style(styles::folder_chip)
+        .into()
     }
 
     /// The mark of a tab that needs a look, as the C# tab's: the dot pulsing unless Windows
@@ -467,8 +518,17 @@ impl Shell {
             );
         }
         let shown = self.shown_tab_id();
+        let mut folder: Option<String> = None;
         for tab in self.app.strip() {
             let active = shown == Some(tab.id);
+            // A chip before the first tab of each folder, once the tabs are gathered.
+            let tab_folder = self.app.tab_folder(tab);
+            if tab_folder != folder
+                && let Some(name) = &tab_folder
+            {
+                tabs = tabs.push(Self::folder_chip(name));
+            }
+            folder = tab_folder;
             for mark in self.tab_marks(tab) {
                 tabs = tabs.push(mark);
             }
@@ -504,13 +564,32 @@ impl Shell {
             let label = self.tab_heading(tab, active).push(close);
             tabs = tabs.push(self.tab_button(tab.id, label, active));
         }
-        strip
-            .push(crate::tab_scroller::tab_scroller(
-                tabs,
-                tab_strip_id(),
-                shown.map(tab_id),
-            ))
-            .into()
+        // Judged against the width the strip has without the list button, so that the room it
+        // takes does not undo the decision that showed it, as the C# `UpdateTabStripOverflow`.
+        let reserve = if self.tab_overflow {
+            TAB_LIST_RESERVE
+        } else {
+            0.0
+        };
+        strip = strip.push(
+            crate::tab_scroller::tab_scroller(tabs, tab_strip_id(), shown.map(tab_id))
+                .on_overflow(reserve, Message::TabOverflow),
+        );
+        // Every open tab, for the ones scrolled out of the strip.
+        if self.tab_overflow {
+            strip = strip.push(
+                tooltip(
+                    icons::button(Icon::ChevronDown)
+                        .style(styles::secondary)
+                        .on_press(Message::OpenTreeMenu(TreeMenu::TabList)),
+                    text(fl!("ui-tab-list-tooltip")).size(font_size::CAPTION),
+                    tooltip::Position::Bottom,
+                )
+                .padding(styles::TOOLTIP_PADDING)
+                .style(styles::tooltip),
+            );
+        }
+        strip.into()
     }
 }
 

@@ -438,6 +438,7 @@ const EVERY_PREFERENCE: &[(&str, &str)] = &[
     ("BroadcastScope", r#""AllTabs""#),
     ("CollapseTunnelsPanelByDefault", "false"),
     ("ShowGatewayBadge", "false"),
+    ("GroupSessionTabsByFolder", "true"),
     ("UseExternalCredentialProvider", "true"),
     ("CredentialProviderType", "1"),
     ("CredentialProviderCommand", r#""pass show {Title}""#),

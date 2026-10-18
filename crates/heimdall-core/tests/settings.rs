@@ -945,6 +945,28 @@ fn the_terminal_font_family_is_the_embedded_one_until_chosen_and_kept_as_named()
 }
 
 #[test]
+fn the_tabs_are_not_grouped_by_folder_until_chosen_and_an_older_file_does_not_group_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(!settings.group_tabs_by_folder, "as the C# default");
+    assert!(
+        !written(
+            dir.path(),
+            "version = 1
+[general]
+prevent_sleep = true
+"
+        )
+        .group_tabs_by_folder,
+        "a file written before the choice was kept"
+    );
+    settings.group_tabs_by_folder = true;
+    settings.save(&path).expect("save");
+    assert!(Settings::load(&path).expect("load").group_tabs_by_folder);
+}
+
+#[test]
 fn the_gateway_badge_is_shown_until_hidden_and_an_older_file_shows_it() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
@@ -1769,6 +1791,7 @@ fn reset_all_puts_every_preference_back_and_keeps_what_the_csharp_keeps() {
         show_gateway_badge: false,
         // Kept: the C# reset leaves the properties panel as it is.
         show_properties_panel: true,
+        group_tabs_by_folder: true,
         // Reset: preferences of every tab.
         color_scheme: ColorScheme::Nord,
         session_logging: true,
@@ -1807,6 +1830,7 @@ fn reset_all_puts_every_preference_back_and_keeps_what_the_csharp_keeps() {
         broadcast_scope: before.broadcast_scope,
         show_gateway_badge: before.show_gateway_badge,
         show_properties_panel: before.show_properties_panel,
+        group_tabs_by_folder: before.group_tabs_by_folder,
         ..Settings::default()
     };
     assert_eq!(settings, kept);

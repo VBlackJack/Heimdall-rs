@@ -211,7 +211,7 @@ pub use settings_transfer::SettingsTransferMessage;
 pub use status::{
     ANNOUNCEMENTS_KEPT, Announced, Announcement, Notice, SessionState, SessionStatus,
 };
-pub use tab_menu::{TabGroup, TabMenuMessage};
+pub use tab_menu::{TabGroup, TabMenuMessage, folder_label};
 pub use tools::ToolsMessage;
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary, search_folded};
 pub use tree_drag::{DropTarget, OrganizationChange};
