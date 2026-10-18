@@ -2996,7 +2996,7 @@ impl Shell {
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
             Message::Tool(tab, message) => {
-                let task = self.tools.update(tab, message, self.main_window);
+                let task = self.tools.update(tab, message, self.main_window, &self.app);
                 self.tools.report_unsaved(&mut self.app);
                 return task;
             }
@@ -6303,6 +6303,7 @@ impl Shell {
                 tab,
                 crate::tools::ToolMessage::Hash(crate::tools::HashMessage::Picked(Some(path))),
                 self.main_window,
+                &self.app,
             ),
             _ => Task::none(),
         }

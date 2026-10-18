@@ -77,6 +77,7 @@ pub mod telnet_driver;
 mod text;
 pub mod text_codec;
 pub mod time_zone;
+pub mod tool_route;
 pub mod tools;
 pub mod transcript;
 pub mod tunnel;

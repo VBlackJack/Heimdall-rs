@@ -5767,6 +5767,15 @@ ui-network-scan-kind-web = Web
 ui-tab-menu-group-by-folder = Grouper les onglets par dossier
 ui-tab-list-tooltip = Tous les onglets ouverts
 ui-tab-list-entry = { $name } - { $state }
+
+# "Route via" des outils réseau : leurs connexions TCP faites depuis une passerelle SSH.
+ui-tool-route-label = Passer par
+ui-tool-route-direct = Direct (depuis cet ordinateur)
+ui-tool-route-hint = Les connexions sont faites depuis la passerelle, qui résout le nom d'hôte. Rien n'est exécuté sur la passerelle.
+ui-tool-route-refused = Cet outil a besoin d'ICMP, d'ARP, de sockets bruts ou d'UDP, qu'une passerelle SSH ne peut pas transporter : il ne s'exécute donc pas à travers une passerelle. Choisissez Direct pour l'exécuter depuis cet ordinateur.
+ui-tool-route-unavailable = La passerelle choisie n'est plus disponible. Choisissez-la à nouveau, ou choisissez Direct.
+ui-tool-route-error-untrusted = La clé d'hôte de la passerelle { $host }:{ $port } n'est pas encore approuvée. Connectez-vous-y une fois depuis une session pour approuver sa clé, puis réessayez.
+ui-tool-route-error-gateway = Passerelle : { $detail }
 # Cartographie réseau : ce que les sondes en lecture seule apprennent d'un hôte (colonnes de l'export CSV, puis la ligne affichée sous l'hôte).
 ui-tool-netmap-col-os = Système d'exploitation
 ui-tool-netmap-col-os-confidence = Confiance du système

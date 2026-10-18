@@ -5711,6 +5711,15 @@ ui-network-scan-kind-web = Web
 ui-tab-menu-group-by-folder = Arrange tabs by folder
 ui-tab-list-tooltip = All open tabs
 ui-tab-list-entry = { $name } - { $state }
+
+# "Route via" of the network tools: their TCP connections made from an SSH gateway.
+ui-tool-route-label = Route via
+ui-tool-route-direct = Direct (from this computer)
+ui-tool-route-hint = Connections are made from the gateway, which resolves the host name. Nothing is run on the gateway.
+ui-tool-route-refused = This tool needs ICMP, ARP, raw sockets or UDP, which an SSH gateway cannot carry, so it does not run through a gateway. Choose Direct to run it from this computer.
+ui-tool-route-unavailable = The gateway chosen is no longer available. Choose it again, or choose Direct.
+ui-tool-route-error-untrusted = The host key of the gateway { $host }:{ $port } is not trusted yet. Connect to it once from a session to trust its key, then try again.
+ui-tool-route-error-gateway = Gateway: { $detail }
 # Network cartography: what the read-only probes learn of a host (columns of the CSV export, then the line shown under the host).
 ui-tool-netmap-col-os = Operating System
 ui-tool-netmap-col-os-confidence = OS Confidence

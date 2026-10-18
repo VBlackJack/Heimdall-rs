@@ -24,6 +24,8 @@ use std::time::{Duration, Instant};
 use heimdall_core::tools::port_scanner::{
     self, PortProbeResult, PortStatus, service_name_for_port,
 };
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
 
 /// Port `port` of the host at `addresses`, within `timeout_ms`.
 pub async fn probe(addresses: &[IpAddr], port: u16, timeout_ms: u64) -> PortProbeResult {
@@ -52,10 +54,50 @@ pub async fn probe(addresses: &[IpAddr], port: u16, timeout_ms: u64) -> PortProb
     }
 }
 
+/// Port `port` of `host` as the gateway reaches it, within `timeout_ms`: the channel the
+/// gateway opens onward is the connection, so that it opening is the port being open. The
+/// host is sent as typed, for the gateway to resolve; nothing is connected from here.
+pub async fn probe_via<O: Opener>(
+    gateway: &ToolGateway<O>,
+    host: &str,
+    port: u16,
+    timeout_ms: u64,
+) -> PortProbeResult {
+    let started = Instant::now();
+    let dialed = gateway
+        .dial_within(host, port, Some(Duration::from_millis(timeout_ms)))
+        .await;
+    let (status, latency_ms) = match dialed {
+        Ok(_connected) => (PortStatus::Open, started.elapsed().as_secs_f64() * 1000.0),
+        Err(error) => (port_scanner::status_of_failure(Some(error.kind())), -1.0),
+    };
+    PortProbeResult {
+        port,
+        service: service_name_for_port(port),
+        status,
+        latency_ms,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net_tools::route_tests::{Loopback, Refusing};
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn through_a_gateway_an_open_port_is_open_and_a_refused_channel_is_closed() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let open = ToolGateway::over(Loopback(address), 4);
+        let result = probe_via(&open, "db.internal", address.port(), 2000).await;
+        assert_eq!(result.status, PortStatus::Open);
+        assert!(result.latency_ms >= 0.0);
+        let closed = ToolGateway::over(Refusing, 4);
+        let result = probe_via(&closed, "db.internal", 5432, 2000).await;
+        assert_eq!(result.status, PortStatus::Closed);
+        assert!(result.latency_ms < 0.0);
+    }
 
     #[tokio::test]
     async fn a_listening_port_is_open_and_a_refusing_one_closed() {

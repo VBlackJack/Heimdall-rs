@@ -18,11 +18,15 @@
 //! (`MainViewModel.cs:1236-1288`); the tools pinned and used lately; the sidebar's
 //! "Sessions | Tools" tab and its folded categories, as the C# `SidebarViewModel`.
 
+use heimdall_core::profile::{ProfileId, SshGateway};
+use heimdall_ssh::HopSecrets;
 use tokio_util::sync::CancellationToken;
 
+use super::route_test::endpoint;
 use super::{App, Dialog, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::ids::{AttemptId, TabId};
+use crate::tool_route::{GatewayChoice, ToolRoute};
 use crate::tools::{SidebarTab, ToolContext, ToolGroup, ToolId, toggle_favorite};
 
 /// What the Tools area is asked.
@@ -152,6 +156,32 @@ impl App {
         let (host, _) = profile.endpoint?;
         let host = host.trim();
         (!host.is_empty()).then(|| host.to_owned())
+    }
+
+    /// The gateways a network tool can be routed through, as the C# "Route via" lists them.
+    #[must_use]
+    pub fn tool_gateways(&self) -> Vec<GatewayChoice> {
+        self.gateways().iter().map(GatewayChoice::of).collect()
+    }
+
+    /// The route to gateway `id` as it is now, each hop with the secrets saved for it and for
+    /// its endpoint only; `None` when the gateway is gone or its route is not one (a loop, too
+    /// deep), so that a tool whose gateway cannot be found fails rather than runs direct.
+    #[must_use]
+    pub fn tool_route(&self, id: &ProfileId) -> Option<ToolRoute> {
+        let route = self.store.route(Some(id)).ok()?;
+        let secrets = route
+            .iter()
+            .map(|hop| HopSecrets {
+                password: self.saved_password_for(&hop.id, &endpoint(hop)),
+                passphrase: hop
+                    .key_path
+                    .as_deref()
+                    .and_then(|path| self.saved_passphrase_for(&hop.id, path)),
+            })
+            .collect();
+        let hops = route.iter().map(SshGateway::as_hop).collect();
+        Some(ToolRoute::new(hops, secrets, self.ssh_options()))
     }
 
     /// Applies a message about the Tools area.

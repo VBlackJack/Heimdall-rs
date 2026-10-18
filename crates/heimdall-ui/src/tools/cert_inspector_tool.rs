@@ -27,8 +27,10 @@
 //! as its answer to a legacy hello presents them, shown under a warning that nothing
 //! proves the server holds their key, with the way to the TLS Auditor. Never trusted.
 
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use heimdall_app::tool_route::ToolRoute;
 use heimdall_app::tools::{ToolContext, ToolId};
 use heimdall_app::{Message as AppMessage, TabId, ToolsMessage};
 use iced::futures::{SinkExt as _, StreamExt as _};
@@ -45,6 +47,7 @@ use heimdall_core::tools::legacy_tls::{
 };
 use heimdall_core::tools::net_host::checked_host;
 use heimdall_core::tools::tls_audit::TlsProtocol;
+use heimdall_ssh::tool_route::ToolGateway;
 
 use super::file_export::FileExport;
 use super::network_run::RunSlot;
@@ -106,6 +109,8 @@ pub enum CertInspectorMessage {
     Probed(u64, u16, Result<Box<CertInspectionSummary>, ProbeError>),
     /// Run `.0` probed every port.
     Done(u64),
+    /// The gateway run `.0` goes through could not be opened: why, said.
+    RouteFailed(u64, String),
     /// Copy plain text details.
     CopyDetails,
     /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
@@ -200,13 +205,18 @@ enum Step {
 
 impl CertInspectorPane {
     /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: CertInspectorMessage) -> Outcome {
+    pub fn update(
+        &mut self,
+        tab: TabId,
+        message: CertInspectorMessage,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
         match self.apply(message) {
             Step::None => Outcome::None,
             Step::Copy(slot, content) => Outcome::Copy(slot, content),
             Step::Save(export) => Outcome::Save(export),
             Step::Probe(run, host, ports) => {
-                let task = Task::run(probes(run, host, ports), move |message| {
+                let task = Task::run(probes(run, host, ports, via), move |message| {
                     Message::Tool(tab, super::ToolMessage::Cert(message))
                 });
                 Outcome::Task(self.run.attach(task))
@@ -256,6 +266,12 @@ impl CertInspectorPane {
             CertInspectorMessage::Done(run) => {
                 if self.run.finish(run) {
                     self.done();
+                }
+                Step::None
+            }
+            CertInspectorMessage::RouteFailed(run, said) => {
+                if self.run.finish(run) {
+                    self.error = Some(said);
                 }
                 Step::None
             }
@@ -836,20 +852,63 @@ fn now() -> u64 {
         .as_secs()
 }
 
+/// Where a probe's connections are made.
+#[derive(Clone)]
+enum Link {
+    /// From this computer, the address the first connection reached.
+    Address(std::net::SocketAddr),
+    /// From the gateway, to this host and port as typed: the gateway resolves the name.
+    Gateway(Arc<ToolGateway>, String, u16),
+}
+
+impl Link {
+    /// The port reached.
+    fn port(&self) -> u16 {
+        match self {
+            Self::Address(address) => address.port(),
+            Self::Gateway(_, _, port) => *port,
+        }
+    }
+
+    /// A connection of its own, never from here when the link is a gateway's.
+    async fn connect(&self) -> std::io::Result<tokio::net::TcpStream> {
+        match self {
+            Self::Address(address) => tokio::net::TcpStream::connect(address).await,
+            Self::Gateway(gateway, host, port) => gateway.dial(host, *port).await,
+        }
+    }
+}
+
 /// The certificate of `host`:`port`, read by a TLS handshake within [`PROBE_TIMEOUT_MS`];
 /// a server sharing nothing with it read again in clear, at the same address and within
-/// the same time.
-async fn probe(host: String, port: u16) -> Result<Box<CertInspectionSummary>, ProbeError> {
+/// the same time. Through `via` every connection is a channel of the gateway.
+async fn probe(
+    host: String,
+    port: u16,
+    via: Option<Arc<ToolGateway>>,
+) -> Result<Box<CertInspectionSummary>, ProbeError> {
     let timeout = Duration::from_millis(PROBE_TIMEOUT_MS);
     let read = async {
-        let tcp = tokio::net::TcpStream::connect((host.as_str(), port))
-            .await
-            .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
-        // The address reached: a read in clear goes to it, never to another the name
-        // resolves to by then.
-        let address = tcp
-            .peer_addr()
-            .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
+        let (tcp, link) = match via {
+            Some(gateway) => {
+                let tcp = gateway
+                    .dial(&host, port)
+                    .await
+                    .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
+                (tcp, Link::Gateway(gateway, host.clone(), port))
+            }
+            None => {
+                let tcp = tokio::net::TcpStream::connect((host.as_str(), port))
+                    .await
+                    .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
+                // The address reached: a read in clear goes to it, never to another the name
+                // resolves to by then.
+                let address = tcp
+                    .peer_addr()
+                    .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
+                (tcp, Link::Address(address))
+            }
+        };
         let name = heimdall_tls::inspection_server_name(&host).ok_or(ProbeError::Name)?;
         let tls = match heimdall_tls::inspection_connector()
             .connect(name, tcp)
@@ -857,7 +916,7 @@ async fn probe(host: String, port: u16) -> Result<Box<CertInspectionSummary>, Pr
         {
             Ok(tls) => tls,
             Err(error) if heimdall_tls::may_speak_legacy_only(&error) => {
-                return read_legacy(address, &host, &error).await;
+                return read_legacy(&link, &host, &error).await;
             }
             Err(error) => return Err(ProbeError::Handshake(detail(&error.to_string()))),
         };
@@ -910,25 +969,21 @@ impl LegacyFailure {
 /// speaks only an old version is told why, and so is one speaking SSL 3.0 or older; any
 /// other keeps the handshake's own words.
 async fn read_legacy(
-    address: std::net::SocketAddr,
+    link: &Link,
     host: &str,
     refusal: &std::io::Error,
 ) -> Result<Box<CertInspectionSummary>, ProbeError> {
     let refused = || ProbeError::Handshake(detail(&refusal.to_string()));
     let obsolete = heimdall_tls::failed_on_obsolete_version(refusal);
-    let read = match legacy_handshake(address, host, HelloShape::Full).await {
-        Err(failure) if failure.closed() => {
-            legacy_handshake(address, host, HelloShape::Minimal).await
-        }
+    let read = match legacy_handshake(link, host, HelloShape::Full).await {
+        Err(failure) if failure.closed() => legacy_handshake(link, host, HelloShape::Minimal).await,
         read => read,
     };
     match read {
         Ok(handshake) if handshake.speaks_modern_tls() => Err(refused()),
-        Ok(handshake) => {
-            cert_inspector::build_legacy_summary(&handshake, host, address.port(), now())
-                .map(Box::new)
-                .ok_or(ProbeError::Unreadable)
-        }
+        Ok(handshake) => cert_inspector::build_legacy_summary(&handshake, host, link.port(), now())
+            .map(Box::new)
+            .ok_or(ProbeError::Unreadable),
         Err(LegacyFailure::Answer(LegacyTlsError::Version(code)))
             if code < TlsProtocol::Tls10.version_code() =>
         {
@@ -943,13 +998,13 @@ async fn read_legacy(
 /// What `host` at `address` answers a legacy hello of `shape`, up to its certificates, on
 /// a connection of its own closed once they are read: the handshake is never finished.
 async fn legacy_handshake(
-    address: std::net::SocketAddr,
+    link: &Link,
     host: &str,
     shape: HelloShape,
 ) -> Result<LegacyHandshake, LegacyFailure> {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let io = |error: std::io::Error| LegacyFailure::Io(error.kind(), detail(&error.to_string()));
-    let mut tcp = tokio::net::TcpStream::connect(address).await.map_err(io)?;
+    let mut tcp = link.connect().await.map_err(io)?;
     tcp.write_all(&legacy_tls::client_hello(host, shape))
         .await
         .map_err(io)?;
@@ -968,17 +1023,32 @@ async fn legacy_handshake(
 
 /// The messages of run `run` probing `ports` of `host`, [`MAX_CONCURRENT_PROBES`] at a
 /// time, as the C# `SemaphoreSlim`: each port's outcome as it comes, then the end. Dropped
-/// by a stop, every probe still going is dropped with it.
+/// by a stop, every probe still going is dropped with it. Through `via` the gateway is
+/// opened first, and one that cannot be opened ends the run: nothing is then connected from
+/// here.
 fn probes(
     run: u64,
     host: String,
     ports: Vec<u16>,
+    via: Option<ToolRoute>,
 ) -> impl iced::futures::Stream<Item = CertInspectorMessage> {
     iced::stream::channel(STREAM_BUFFER, async move |mut out| {
+        let gateway = match via {
+            Some(route) => match route.open().await {
+                Ok(gateway) => Some(Arc::new(gateway)),
+                Err(error) => {
+                    let said = super::route_bar::failure_text(error);
+                    let _ = out.send(CertInspectorMessage::RouteFailed(run, said)).await;
+                    return;
+                }
+            },
+            None => None,
+        };
         let mut probed = iced::futures::stream::iter(ports)
             .map(|port| {
                 let host = host.clone();
-                async move { (port, probe(host, port).await) }
+                let gateway = gateway.clone();
+                async move { (port, probe(host, port, gateway).await) }
             })
             .buffer_unordered(MAX_CONCURRENT_PROBES);
         while let Some((port, result)) = probed.next().await {
@@ -1247,7 +1317,7 @@ mod tests {
 
     /// What probing the loopback's `port` gives.
     async fn probed(port: u16) -> Result<Box<CertInspectionSummary>, ProbeError> {
-        probe("127.0.0.1".to_owned(), port).await
+        probe("127.0.0.1".to_owned(), port, None).await
     }
 
     #[tokio::test]
