@@ -203,6 +203,8 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("rdp_session.connect_timeout", PLAIN),
     ("rdp_session.resize_enable_delay_ms", PLAIN),
     ("rdp_session.keep_alive_interval_ms", PLAIN),
+    ("rdp_session.default_width", PLAIN),
+    ("rdp_session.default_height", PLAIN),
     ("rdp_session.resolution_presets", PLAIN),
     ("rdp_session.default_mode", PLAIN),
     // Credentials sent to an embedded desktop without Credential Guard protecting them.

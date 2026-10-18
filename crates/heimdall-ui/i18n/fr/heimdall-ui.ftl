@@ -5815,3 +5815,7 @@ ui-tool-netmap-fp-smb =
 ui-tool-netmap-fp-ssh = SSH : { $banner }
 ui-tool-netmap-fp-hassh = HASSH : { $hash }
 ui-tool-netmap-fp-tls = TLS : { $subject }
+ui-settings-rdp-default-width = Largeur de la résolution par défaut
+ui-settings-rdp-default-height = Hauteur de la résolution par défaut
+ui-settings-rdp-default-resolution-refused = La résolution par défaut doit être comprise entre { $min } et { $max } pixels.
+ui-settings-pixels-unit = px

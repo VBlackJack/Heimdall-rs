@@ -283,3 +283,17 @@ fn a_resolution_menu_choice_made_while_it_settles_is_asked_at_the_end() {
     app.update(Message::StabilizationTick(end));
     assert_eq!(*asked.borrow(), Some((1280, 720)));
 }
+
+#[test]
+fn the_default_resolution_is_set_within_its_range_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), RdpOptions::default());
+    assert_eq!(app.settings().rdp_default_size(), (1920, 1080));
+    app.update(Message::Settings(SettingsMessage::RdpDefaultWidth(1280)));
+    app.update(Message::Settings(SettingsMessage::RdpDefaultHeight(720)));
+    assert_eq!(app.settings().rdp_default_size(), (1280, 720));
+    // Out of the range, the settings refuse it.
+    app.update(Message::Settings(SettingsMessage::RdpDefaultWidth(100)));
+    app.update(Message::Settings(SettingsMessage::RdpDefaultHeight(9000)));
+    assert_eq!(app.settings().rdp_default_size(), (1280, 720), "kept");
+}

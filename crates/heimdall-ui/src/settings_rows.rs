@@ -280,6 +280,10 @@ pub enum SettingRow {
     RdpResizeDelay,
     /// Milliseconds between two keep-alives of an embedded RDP connection.
     RdpKeepAlive,
+    /// Pixels of the width Remote Desktop Connection opens at for the default resolution.
+    RdpDefaultWidth,
+    /// Pixels of the height Remote Desktop Connection opens at for the default resolution.
+    RdpDefaultHeight,
     /// The built-in RDP client compresses when the profile asks for it, experimental.
     RdpBuiltinCompression,
     /// The session bar's Disconnect asks before it ends an RDP desktop.
@@ -316,7 +320,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 72] = [
+    pub const ALL: [Self; 74] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -375,6 +379,8 @@ impl SettingRow {
         Self::RdpKeepAlive,
         Self::RdpConfirmDisconnect,
         Self::RdpRedirectionIndicators,
+        Self::RdpDefaultWidth,
+        Self::RdpDefaultHeight,
         Self::RdpBuiltinCompression,
         Self::RdpResolutionPresets,
         Self::RdpResetAll,
@@ -452,6 +458,8 @@ impl SettingRow {
             | Self::RdpKeepAlive
             | Self::RdpBuiltinCompression
             | Self::RdpConfirmDisconnect
+            | Self::RdpDefaultWidth
+            | Self::RdpDefaultHeight
             | Self::RdpRedirectionIndicators => SettingsCard::RdpSession,
             Self::RdpResolutionPresets => SettingsCard::RdpPresets,
             Self::RdpResetAll => SettingsCard::RdpReset,
@@ -497,6 +505,8 @@ impl SettingRow {
             Self::VaultHelloMaxDays => SessionField::VaultHelloMaxDays,
             Self::RdpResizeDelay => SessionField::RdpResizeDelay,
             Self::RdpKeepAlive => SessionField::RdpKeepAlive,
+            Self::RdpDefaultWidth => SessionField::RdpDefaultWidth,
+            Self::RdpDefaultHeight => SessionField::RdpDefaultHeight,
             _ => return None,
         })
     }
