@@ -220,6 +220,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
     Some(match card {
         SettingsCard::Appearance => fl!("ui-settings-appearance"),
         SettingsCard::Behavior => fl!("ui-settings-behavior"),
+        SettingsCard::SessionTree => fl!("ui-settings-session-tree"),
         SettingsCard::Updates => fl!("ui-settings-updates"),
         SettingsCard::Reachability => fl!("ui-settings-reachability"),
         SettingsCard::Onboarding => fl!("ui-settings-onboarding"),
@@ -267,6 +268,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::Theme => fl!("ui-settings-theme"),
         SettingRow::Accent => fl!("ui-settings-accent"),
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel"),
+        SettingRow::ShowPropertiesPanel => fl!("ui-settings-show-properties-panel"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep"),
         SettingRow::MaxSessions => fl!("ui-settings-max-sessions"),
         SettingRow::UpdateChecks => fl!("ui-settings-updates-enabled"),
@@ -328,6 +330,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
     }
     Some(match row {
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel-hint"),
+        SettingRow::ShowPropertiesPanel => fl!("ui-settings-show-properties-panel-hint"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep-hint"),
         SettingRow::Reachability => fl!("ui-settings-reachability-hint"),
         SettingRow::Onboarding => fl!("ui-settings-onboarding-hint"),

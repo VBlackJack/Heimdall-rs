@@ -449,6 +449,7 @@ ui-dialog-paste-body = { $count ->
 }
 ui-dialog-paste-confirm = Pegar
 ui-dialog-import-title = Importación terminada
+ui-dialog-scan-added-title = Sesiones añadidas
 ui-dialog-import-counts = Añadidos: { $added }. Actualizados: { $updated }. Sin cambios: { $unchanged }.
 ui-dialog-import-actions = { $imported ->
     [one] { $imported } importado
@@ -2023,6 +2024,9 @@ ui-tunnels-menu-reopen = Reabrir
 ui-settings-behavior = Comportamiento
 ui-settings-collapse-tunnels-panel = Contraer el panel de túneles de forma predeterminada
 ui-settings-collapse-tunnels-panel-hint = Cómo empieza el panel de túneles. Abrirlo o cerrarlo después lo deja así hasta que se cierra la aplicación.
+ui-settings-session-tree = Árbol de sesiones
+ui-settings-show-properties-panel = Mostrar el panel de propiedades
+ui-settings-show-properties-panel-hint = Acopla bajo el árbol un panel con los detalles de la sesión seleccionada. También en el menú de filtro del árbol y con Ctrl+Mayús+B.
 ui-settings-prevent-sleep = Evitar la suspensión del sistema durante sesiones activas
 ui-settings-prevent-sleep-hint = Evita que Windows se suspenda mientras haya una sesión conectada; la pantalla puede seguir apagándose o bloqueándose.
 ui-settings-max-sessions = Avisar a partir de este número de sesiones abiertas

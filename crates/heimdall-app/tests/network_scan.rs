@@ -224,7 +224,7 @@ fn the_hosts_chosen_are_added_as_sessions_of_their_kind_without_credentials() {
 
     send(&mut app, NetworkScanMessage::Add);
     match &app.dialog {
-        Some(Dialog::ImportDone(summary)) => assert_eq!(summary.merged.added, 6),
+        Some(Dialog::ScanAdded(summary)) => assert_eq!(summary.merged.added, 6),
         other => panic!("no report: {other:?}"),
     }
 

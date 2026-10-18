@@ -1044,9 +1044,9 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
     // The last rows added, the welcome tour's button, the RDP keep-alive interval, the
-    // built-in client's compression, hold no path; the external tools' card holds the Browse
+    // built-in client's compression, the properties panel's box, hold no path; the external tools' card holds the Browse
     // buttons of the tool chosen, which its own tests cover.
-    assert_eq!(SettingRow::ALL.len(), 66, "no row added");
+    assert_eq!(SettingRow::ALL.len(), 67, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(

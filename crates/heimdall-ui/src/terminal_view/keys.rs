@@ -50,6 +50,7 @@ pub fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
     }
     match physical {
         Physical::Code(Code::KeyA) => Some('a'),
+        Physical::Code(Code::KeyB) => Some('b'),
         Physical::Code(Code::KeyC) => Some('c'),
         Physical::Code(Code::KeyD) => Some('d'),
         Physical::Code(Code::KeyF) => Some('f'),
