@@ -820,6 +820,8 @@ pub enum Message {
     OpenTreeMenu(TreeMenu),
     /// Close the open menu.
     CloseTreeMenu,
+    /// Left in a submenu: back to the menu it was opened from.
+    MenuBack,
     /// An entry of the open menu was chosen: the menu closes, the core gets the message.
     MenuChoice(AppMessage),
     /// A tab menu's Fullscreen: the menu closes, the tab is shown, full screen.
@@ -1156,6 +1158,7 @@ impl fmt::Debug for Message {
             Self::CopyRouteReport => f.write_str("CopyRouteReport"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
+            Self::MenuBack => f.write_str("MenuBack"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
             Self::SplitPalette { host, axis } => {
@@ -1529,6 +1532,8 @@ pub struct Shell {
     /// The tab's own window that menu was opened in, at its cursor; `None` for the main
     /// window.
     menu_window: Option<window::Id>,
+    /// The menu the open one is a submenu of, which Left goes back to.
+    menu_parent: Option<TreeMenu>,
     /// What the content area shows.
     page: Page,
     /// Full screen: the window shows the session only.
@@ -1840,6 +1845,7 @@ impl Shell {
 
     /// The window over an application core already in some state.
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one line per field of the window")]
     pub fn with_app(mut app: App) -> Self {
         app.set_transcript_lines(crate::transcript_lines::lines());
         crate::logging::set_enabled(app.settings().diagnostics_log);
@@ -1868,6 +1874,7 @@ impl Shell {
             cursor: CursorSpot::default(),
             menu: None,
             menu_window: None,
+            menu_parent: None,
             page: Page::Tab,
             fullscreen: false,
             density: 1.0,
@@ -2822,6 +2829,7 @@ impl Shell {
             Message::TestRouteForm => self.test_route_form(),
             message @ (Message::OpenTreeMenu(_)
             | Message::CloseTreeMenu
+            | Message::MenuBack
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
             Message::MenuChoice(message) => self.closing_menu(message),
             Message::VncScaling { tab, scaling } => self.vnc_scaling(tab, scaling),
@@ -3784,21 +3792,14 @@ impl Shell {
     /// Opens `menu` at `cursor` in `window`, a tab's own window or, `None`, the main one;
     /// for a sub-menu, where its menu was.
     fn open_tree_menu_at(&mut self, menu: TreeMenu, cursor: Point, window: Option<window::Id>) {
-        let at = match (&menu, &self.menu) {
-            (
-                TreeMenu::ConnectAs(_)
-                | TreeMenu::ConnectWith(_)
-                | TreeMenu::OpenInSplit(_)
-                | TreeMenu::ExternalTools(_)
-                | TreeMenu::MoveFolder(_)
-                | TreeMenu::FolderColor(_)
-                | TreeMenu::MoveProfile(_)
-                | TreeMenu::MoveSelection
-                | TreeMenu::EditSelection
-                | TreeMenu::GatewaySelection,
-                Some((_, at)),
-            ) => *at,
+        let at = match (menu.is_submenu(), &self.menu) {
+            (true, Some((_, at))) => *at,
             _ => cursor,
+        };
+        // What Left goes back to: the menu a submenu came out of.
+        self.menu_parent = match &self.menu {
+            Some((parent, _)) if menu.is_submenu() => Some(parent.clone()),
+            _ => None,
         };
         // A right click on one of the profiles selected together is theirs, as in C#.
         let menu = match menu {
@@ -4962,8 +4963,10 @@ impl Shell {
             // Kept whole and inside the window, as a WPF ContextMenu: near the right edge it
             // opens left of the pointer, near the foot (a tunnel row) above it.
             // Opaque: what is under the menu is neither hovered nor clicked.
+            let token = crate::menu_nav::menu_token(&self.menu.as_ref().map(|(menu, _)| menu));
+            let back = self.menu_parent.is_some().then_some(Message::MenuBack);
             layers = layers.push(opaque(
-                mouse_area(menu_at(entries, at))
+                mouse_area(menu_at(crate::menu_nav::menu_nav(entries, token, back), at))
                     .on_press(Message::CloseTreeMenu)
                     .on_right_press(Message::CloseTreeMenu),
             ));
@@ -6074,6 +6077,12 @@ impl Shell {
         match message {
             Message::OpenTreeMenu(menu) => self.open_tree_menu(menu),
             Message::CloseTreeMenu => self.menu = None,
+            // The submenu goes, the menu it came from comes back where it was.
+            Message::MenuBack => {
+                if let (Some(parent), Some((_, at))) = (self.menu_parent.take(), &self.menu) {
+                    self.menu = Some((parent, *at));
+                }
+            }
             Message::ResetTreeFilters => {
                 self.search.clear();
                 let effects = self.app.update(AppMessage::Filter(FilterMessage::Reset));
