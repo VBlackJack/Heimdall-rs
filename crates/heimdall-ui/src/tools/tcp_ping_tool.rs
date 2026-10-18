@@ -30,6 +30,7 @@
 use heimdall_app::TabId;
 use heimdall_app::net_tools::{self, tcp_ping as probe};
 use heimdall_app::reachability::DownReason;
+use heimdall_app::tool_route::ToolRoute;
 use heimdall_core::tools::tcp_ping::{
     self, CONNECT_TIMEOUT, DEFAULT_COUNT, DEFAULT_PORT, DELAY_BETWEEN_PROBES, TcpPingSummary,
 };
@@ -77,6 +78,8 @@ pub enum TcpPingMessage {
     Probed(u64, Probe),
     /// The host of run `.0` could not be looked up.
     Unresolved(u64, DownReason),
+    /// The gateway run `.0` goes through could not be opened: why, said.
+    RouteFailed(u64, String),
     /// Run `.0` sent all its probes.
     Finished(u64),
     /// Copy summary and results log to clipboard.
@@ -96,6 +99,8 @@ enum Problem {
     InvalidCount,
     /// The host's name could not be looked up.
     Unresolved(DownReason),
+    /// The gateway could not be opened: why, said.
+    Route(String),
 }
 
 /// The TCP Ping tool pane state.
@@ -150,8 +155,17 @@ enum Applied {
 
 impl TcpPingPane {
     /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: TcpPingMessage) -> Outcome {
-        match self.apply(message) {
+    pub fn update(
+        &mut self,
+        tab: TabId,
+        message: TcpPingMessage,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
+        let applied = match message {
+            TcpPingMessage::Start => self.start(via),
+            other => self.apply(other),
+        };
+        match applied {
             Applied::None => Outcome::None,
             Applied::Run(task) => Outcome::Task(
                 task.map(move |message| Message::Tool(tab, ToolMessage::TcpPing(message))),
@@ -178,7 +192,8 @@ impl TcpPingPane {
                 self.problem = None;
                 Applied::None
             }
-            TcpPingMessage::Start => self.start(),
+            // The route a run goes through is read by `update`, which starts it.
+            TcpPingMessage::Start => self.start(None),
             TcpPingMessage::Stop => {
                 if let Some(running) = self.running.take() {
                     running.abort();
@@ -195,6 +210,13 @@ impl TcpPingPane {
                 if run == self.run && self.running.is_some() {
                     self.running = None;
                     self.problem = Some(Problem::Unresolved(reason));
+                }
+                Applied::None
+            }
+            TcpPingMessage::RouteFailed(run, said) => {
+                if run == self.run && self.running.is_some() {
+                    self.running = None;
+                    self.problem = Some(Problem::Route(said));
                 }
                 Applied::None
             }
@@ -221,7 +243,7 @@ impl TcpPingPane {
     }
 
     /// Starts a run, the inputs checked in the C# `StartAsync` order.
-    fn start(&mut self) -> Applied {
+    fn start(&mut self, via: Option<ToolRoute>) -> Applied {
         if self.running.is_some() {
             return Applied::None;
         }
@@ -257,7 +279,7 @@ impl TcpPingPane {
         };
         self.total = count;
         let (task, handle) =
-            Task::run(probes(host, port, count, self.run), |message| message).abortable();
+            Task::run(probes(host, port, count, self.run, via), |message| message).abortable();
         self.running = Some(handle.abort_on_drop());
         Applied::Run(task)
     }
@@ -323,6 +345,7 @@ impl TcpPingPane {
             Problem::InvalidPort => fl!("ui-tool-net-error-port"),
             Problem::InvalidCount => fl!("ui-tool-tcpping-error-count"),
             Problem::Unresolved(reason) => super::down_reason_text(reason),
+            Problem::Route(said) => said.clone(),
         }
     }
 
@@ -492,24 +515,46 @@ impl TcpPingPane {
 }
 
 /// The probes of a run, as the C# `StartAsync` loop: the host looked up once, then `count`
-/// probes [`DELAY_BETWEEN_PROBES`] apart, each sent back as it ends.
+/// probes [`DELAY_BETWEEN_PROBES`] apart, each sent back as it ends. Through `via` the
+/// gateway is opened instead and each probe is a channel it opens onward, the host sent as
+/// typed for it to resolve; a gateway that cannot be opened ends the run, which is never
+/// made from here instead.
 fn probes(
     host: String,
     port: u16,
     count: usize,
     run: u64,
+    via: Option<ToolRoute>,
 ) -> impl iced::futures::Stream<Item = TcpPingMessage> {
     iced::stream::channel(CHANNEL_SIZE, async move |mut out| {
-        let Ok(addresses) = net_tools::resolve(&host, CONNECT_TIMEOUT).await else {
-            let _ = out
-                .send(TcpPingMessage::Unresolved(run, DownReason::Dns))
-                .await;
-            return;
-        };
+        let mut gateway = None;
+        let mut addresses = Vec::new();
+        if let Some(route) = via {
+            match route.open().await {
+                Ok(opened) => gateway = Some(opened),
+                Err(error) => {
+                    let said = super::route_bar::failure_text(error);
+                    let _ = out.send(TcpPingMessage::RouteFailed(run, said)).await;
+                    return;
+                }
+            }
+        } else {
+            let Ok(found) = net_tools::resolve(&host, CONNECT_TIMEOUT).await else {
+                let _ = out
+                    .send(TcpPingMessage::Unresolved(run, DownReason::Dns))
+                    .await;
+                return;
+            };
+            addresses = found;
+        }
         for seq in 1..=count {
-            let outcome = probe::connect_time(&addresses, port, CONNECT_TIMEOUT)
-                .await
-                .map(|elapsed| elapsed.as_secs_f64() * MILLIS_PER_SECOND);
+            let timed = match &gateway {
+                Some(gateway) => {
+                    probe::connect_time_via(gateway, &host, port, CONNECT_TIMEOUT).await
+                }
+                None => probe::connect_time(&addresses, port, CONNECT_TIMEOUT).await,
+            };
+            let outcome = timed.map(|elapsed| elapsed.as_secs_f64() * MILLIS_PER_SECOND);
             if out
                 .send(TcpPingMessage::Probed(run, Probe { seq, outcome }))
                 .await

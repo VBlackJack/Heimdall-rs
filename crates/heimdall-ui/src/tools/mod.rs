@@ -72,6 +72,7 @@ mod placement_bar;
 mod port_scan_tool;
 mod pwdaudit_tool;
 mod regex_tool;
+mod route_bar;
 mod route_table_tool;
 mod secnumcloud_tool;
 mod service_status_tool;
@@ -97,6 +98,7 @@ mod wol_tool;
 use std::collections::HashMap;
 use std::time::Duration;
 
+use heimdall_app::tool_route::RouteSupport;
 use heimdall_app::tools::{ToolCategory, ToolGroup, ToolId};
 use heimdall_app::{App, TabId};
 use heimdall_core::tools::command_library::SnippetId;
@@ -146,6 +148,7 @@ pub use ping_tool::PingMessage;
 pub use port_scan_tool::PortScanMessage;
 pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
+pub use route_bar::RouteMessage;
 pub use route_table_tool::RouteTableMessage;
 pub use secnumcloud_tool::{Outcome as SecNumCloudOutcome, SecNumCloudMessage};
 pub use service_status_tool::ServiceStatusMessage;
@@ -663,6 +666,8 @@ pub enum CopySlot {
 /// What a tool's tab is asked.
 #[derive(Debug, Clone)]
 pub enum ToolMessage {
+    /// The "Route via" bar's.
+    Route(RouteMessage),
     /// Show or hide the tool's help, as the C# "?" button.
     ToggleHelp,
     /// Hide the help, as its close button.
@@ -787,6 +792,33 @@ pub enum ToolMessage {
     CmdLib(CommandLibraryMessage),
 }
 
+impl ToolMessage {
+    /// Whether the message asks a network tool to start reaching a host, which is when the
+    /// "Route via" choice is read: the tools a gateway is offered on, routed or refused.
+    /// A tick of a monitor already going is not one: it was started on the choice then.
+    fn starts_run(&self) -> bool {
+        matches!(
+            self,
+            Self::PortScan(PortScanMessage::Start | PortScanMessage::Confirm)
+                | Self::Banner(BannerMessage::Start)
+                | Self::TcpPing(TcpPingMessage::Start)
+                | Self::HttpHeaders(HttpHeadersMessage::Analyze)
+                | Self::Cert(CertInspectorMessage::Inspect)
+                | Self::Ping(PingMessage::Start)
+                | Self::TcpTrace(TcpTracerouteMessage::Start)
+                | Self::SnmpWalk(SnmpWalkerMessage::Start | SnmpWalkerMessage::TestCommunities)
+                | Self::ArpMon(ArpMonitorMessage::Scan | ArpMonitorMessage::ToggleMonitoring)
+                | Self::Wol(WolMessage::SendPacket)
+                | Self::NetMap(
+                    NetworkCartographyMessage::Start | NetworkCartographyMessage::ConfirmLarge
+                )
+                | Self::Dns(DnsMessage::Lookup)
+                | Self::DnsBatch(DnsBatchMessage::Resolve)
+                | Self::DnsSec(DnsSecMessage::Check)
+        )
+    }
+}
+
 /// A tool's own state.
 #[derive(Debug)]
 enum Pane {
@@ -853,7 +885,10 @@ enum Pane {
 /// button that shows its check mark, why the last export failed.
 #[derive(Debug)]
 pub struct ToolPane {
+    tool: ToolId,
     pane: Pane,
+    /// The "Route via" bar, Direct until the user picks a gateway.
+    route: route_bar::RouteBar,
     help: bool,
     copied: Option<(CopySlot, u64)>,
     copies: u64,
@@ -932,7 +967,9 @@ impl ToolPane {
             }
         };
         Self {
+            tool,
             pane,
+            route: route_bar::RouteBar::default(),
             help: false,
             copied: None,
             copies: 0,
@@ -1055,8 +1092,15 @@ impl ToolPanes {
             // What it opened on, as the C# view's `Initialize` reads its `ToolContext`: told
             // as typed, so it is checked as typed.
             for message in context::messages(tool, tab.tool_context()) {
-                let task = self.update(tab.id, message, None);
+                let task = self.update(tab.id, message, None, app);
                 self.prefilled.push(task);
+            }
+        }
+        // The gateways a network tool can be routed through, as the core lists them now.
+        let gateways = app.tool_gateways();
+        for state in self.panes.values_mut() {
+            if state.tool.route_support() != RouteSupport::NotOffered {
+                state.route.set_gateways(gateways.clone());
             }
         }
         // The terminals a command can be sent to, as the core offers them now.
@@ -1160,9 +1204,24 @@ impl ToolPanes {
         tab: TabId,
         message: ToolMessage,
         main: Option<window::Id>,
+        app: &App,
     ) -> Task<Message> {
         let Some(state) = self.panes.get_mut(&tab) else {
             return Task::none();
+        };
+        if let ToolMessage::Route(message) = message {
+            state.route.update(message);
+            return Task::none();
+        }
+        // The gateway a run goes through, resolved when the run is asked. A run that cannot
+        // go through the gateway chosen is not made at all, and never made directly.
+        let via = if message.starts_run() {
+            match state.route.route_for(state.tool, app) {
+                Ok(via) => via,
+                Err(route_bar::Refused) => return Task::none(),
+            }
+        } else {
+            None
         };
         match (message, &mut state.pane) {
             (ToolMessage::ToggleHelp, _) => state.help = !state.help,
@@ -1337,7 +1396,7 @@ impl ToolPanes {
                 }
             }
             (ToolMessage::TcpPing(message), Pane::TcpPing(pane)) => {
-                return match pane.update(tab, message) {
+                return match pane.update(tab, message, via) {
                     tcp_ping_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
                     tcp_ping_tool::Outcome::Task(task) => task,
                     tcp_ping_tool::Outcome::None => Task::none(),
@@ -1357,7 +1416,7 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::Banner(message), Pane::Banner(pane)) => {
-                return match pane.update(tab, message) {
+                return match pane.update(tab, message, via) {
                     banner_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
                     banner_tool::Outcome::Task(task) => task,
                     banner_tool::Outcome::Save(export) => state.export(tab, export, main),
@@ -1387,14 +1446,14 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::PortScan(message), Pane::PortScan(pane)) => {
-                return match pane.update(tab, message) {
+                return match pane.update(tab, message, via) {
                     port_scan_tool::Outcome::Task(task) => task,
                     port_scan_tool::Outcome::Save(export) => state.export(tab, export, main),
                     port_scan_tool::Outcome::None => Task::none(),
                 };
             }
             (ToolMessage::HttpHeaders(message), Pane::HttpHeaders(pane)) => {
-                return match pane.update(tab, message) {
+                return match pane.update(tab, message, via) {
                     http_headers_tool::Outcome::Copy(slot, content) => {
                         state.copy(tab, slot, content)
                     }
@@ -1403,7 +1462,7 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::Cert(message), Pane::Cert(pane)) => {
-                return match pane.update(tab, message) {
+                return match pane.update(tab, message, via) {
                     cert_inspector_tool::Outcome::Copy(slot, content) => {
                         state.copy(tab, slot, content)
                     }
@@ -1789,6 +1848,7 @@ pub fn view<'a>(
         header(tab, title, actions),
         state.help.then(|| help_panel(tab, help)),
         state.export_failure().map(export_failed_strip),
+        state.route.view(tab, tool.route_support()),
     ]
     .push(body)
     .width(Length::Fill)
