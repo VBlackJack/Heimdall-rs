@@ -83,7 +83,9 @@ fn eligibility(kind: ProfileKind, has_account: bool) -> Eligibility {
         | ProfileKind::Ftp
         | ProfileKind::Vnc
         | ProfileKind::WinRm => Eligibility::Takes,
-        ProfileKind::Telnet | ProfileKind::Local | ProfileKind::Citrix => Eligibility::Other,
+        ProfileKind::Telnet | ProfileKind::Local | ProfileKind::Citrix | ProfileKind::Web => {
+            Eligibility::Other
+        }
     }
 }
 

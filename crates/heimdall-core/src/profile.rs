@@ -1361,6 +1361,54 @@ pub struct CitrixProfile {
     pub sso: bool,
 }
 
+/// A web console (iLO, iDRAC, a NAS or a switch), as the C# WEB connection type: opened in
+/// the system's browser, never in Heimdall, on the address built from its host, port, scheme
+/// and path (see [`crate::web::address`]); through an SSH gateway, on a tunnel of this
+/// computer's loopback address.
+///
+/// Holds no password: the browser asks for it itself, and none is ever put in the address.
+/// The account is kept as the C# `WebUsername`, shown in the tree and written back by the
+/// export.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Host name or address, as every other type keeps it, as the C# `RemoteServer`.
+    pub host: String,
+    /// TCP port, as the C# `WebPort`.
+    pub port: u16,
+    /// Plain HTTP rather than HTTPS, as the C# `WebUseHttp`: off unless turned on, written
+    /// down only when on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_http: bool,
+    /// Path, query and fragment appended to the address, as the C# `WebPath`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The account the console's sign-in takes, as the C# `WebUsername`; never put in the
+    /// address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// The SSH gateway the console is reached through, if any, as the C# `SshGatewayId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<ProfileId>,
+}
+
+impl WebProfile {
+    /// The address the browser opens when the console is reached directly.
+    ///
+    /// # Errors
+    ///
+    /// Its host, port and path form none.
+    pub fn address(&self) -> Result<String, crate::web::WebAddressError> {
+        crate::web::address(&self.host, self.port, self.use_http, self.path.as_deref())
+    }
+}
+
 /// An FTP profile's data connections are passive unless it says otherwise.
 fn passive() -> bool {
     true

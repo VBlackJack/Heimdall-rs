@@ -90,6 +90,7 @@ impl App {
             | Message::OpenFtp(_)
             | Message::OpenWinRm(_)
             | Message::OpenCitrix(_)
+            | Message::OpenWeb(_)
             | Message::OpenLocalProfile(_)
             // Held whole, so the session opened is merged when it opens.
             | Message::Split(

@@ -133,9 +133,11 @@ impl App {
                 .rdp_profiles()
                 .iter()
                 .any(|rdp| rdp.id == *id && !rdp.allow_tls_only),
-            ProfileKind::Telnet | ProfileKind::Local | ProfileKind::WinRm | ProfileKind::Citrix => {
-                false
-            }
+            ProfileKind::Telnet
+            | ProfileKind::Local
+            | ProfileKind::WinRm
+            | ProfileKind::Web
+            | ProfileKind::Citrix => false,
         }
     }
 

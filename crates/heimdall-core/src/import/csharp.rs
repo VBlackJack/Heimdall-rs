@@ -52,6 +52,8 @@ use crate::scheduled::{
 };
 use crate::settings::rdp_resize_enable_delay_accepted;
 
+mod web;
+
 /// `connectionType` of an SSH profile.
 const SSH_CONNECTION_TYPE: &str = "SSH";
 
@@ -167,6 +169,8 @@ pub struct ImportReport {
     /// Citrix profiles ready to be merged into the store, without their Workspace cache
     /// launch line, a secret the C# import and export drop too.
     pub citrix: Vec<CitrixProfile>,
+    /// Web consoles ready to be merged into the store, without their password.
+    pub web: Vec<crate::profile::WebProfile>,
     /// SSH gateways ready to be merged into the store, each one's parent as the file names
     /// it: [`super::gateways::reconcile`] resolves it, as the C# `GatewayImportReconciler`.
     pub gateways: Vec<SshGateway>,
@@ -205,6 +209,7 @@ impl ImportReport {
             .chain(self.citrix.iter().map(|p| p.id.clone()))
             .chain(self.local.iter().map(|p| p.id.clone()))
             .chain(self.winrm.iter().map(|p| p.id.clone()))
+            .chain(self.web.iter().map(|p| p.id.clone()))
             .collect();
         for id in ids {
             match self.metadata.iter_mut().find(|(found, _)| *found == id) {
@@ -264,6 +269,8 @@ pub enum Dropped {
     /// A daily scheduled connection's time, which is no time of day: carried over at
     /// [`DEFAULT_TIME_OF_DAY`], as the C# ran it.
     ScheduledTime,
+    /// A web console opened with a program of its own: the system's browser opens it.
+    WebExternalProgram,
 }
 
 /// The elevation a C# local shell asked for: each now runs as administrator in a window of
@@ -589,6 +596,9 @@ struct LegacyServer {
     win_rm_skip_certificate_check: bool,
     /// A name or a number, as the C# converter accepts both.
     win_rm_identity_mode: Option<serde_json::Value>,
+    /// A web console's fields.
+    #[serde(flatten)]
+    web: web::LegacyWeb,
 }
 
 fn default_connection_type() -> String {
@@ -1001,6 +1011,8 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
     .any(|other| kind.eq_ignore_ascii_case(other))
     {
         Vec::new()
+    } else if web::is_web(kind) {
+        web::dropped(server)
     } else if kind.eq_ignore_ascii_case(CITRIX_CONNECTION_TYPE) {
         turned_on(&[(
             server
@@ -1238,6 +1250,8 @@ pub fn import(
             .eq_ignore_ascii_case(CITRIX_CONNECTION_TYPE)
         {
             convert_citrix(&server).map(|profile| report.citrix.push(profile))
+        } else if web::is_web(&server.connection_type) {
+            web::convert(&server).map(|profile| report.web.push(profile))
         } else {
             convert(&server, suggested.ssh).map(|profile| report.profiles.push(profile))
         };
@@ -1962,13 +1976,14 @@ fn routed_gateway(server: &LegacyServer) -> Option<ProfileId> {
 }
 
 /// Whether the handler of `connection_type` routes through the SSH tunnel service, as
-/// `ProtocolCapabilities.SupportsSshGateway`; the C# `WEB` is not imported.
+/// `ProtocolCapabilities.SupportsSshGateway`.
 fn supports_ssh_gateway(connection_type: &str) -> bool {
     [
         SSH_CONNECTION_TYPE,
         SFTP_CONNECTION_TYPE,
         RDP_CONNECTION_TYPE,
         WINRM_CONNECTION_TYPE,
+        web::WEB_CONNECTION_TYPE,
     ]
     .iter()
     .any(|routed| connection_type.eq_ignore_ascii_case(routed))

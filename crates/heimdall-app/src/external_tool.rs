@@ -101,6 +101,7 @@ pub const fn protocol_name(kind: ProfileKind) -> &'static str {
         ProfileKind::Citrix => "Citrix",
         ProfileKind::Local => "Local",
         ProfileKind::WinRm => "WINRM",
+        ProfileKind::Web => "WEB",
     }
 }
 

@@ -441,6 +441,18 @@ pub enum Notice {
     CitrixLaunched(String),
     /// A Citrix application was not launched, for this reason.
     CitrixRefused(crate::citrix::CitrixRefusal),
+    /// The web console of this profile name was handed to the system's browser, directly.
+    WebOpened(String),
+    /// A web console was handed to the system's browser through its gateway's tunnel, on
+    /// this computer's loopback address: the browser names the tunnel, not the console.
+    WebOpenedThrough {
+        /// The profile's name.
+        name: String,
+        /// The tunnel's local port.
+        port: u16,
+    },
+    /// A web console was not opened, for this reason.
+    WebRefused(crate::web_console::WebRefusal),
     /// The RDP profile of this name opened in Remote Desktop Connection; through this RD
     /// Gateway, which sent it there, when it did not ask for it.
     RdpExternalLaunched {

@@ -32,7 +32,7 @@ use crate::metadata::{Environment, MacAddress, ProfileMetadata, ProfileOrigin};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
     CitrixProfile, FtpProfile, LocalApproval, LocalProfile, ProfileId, RdpMode, RdpProfile,
-    SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile, WebProfile, WinRmProfile,
 };
 
 /// Format version written into the profile file.
@@ -40,10 +40,10 @@ use crate::profile::{
 /// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles, 6 SSH
 /// gateways and the gateway an SSH profile goes through, 8 folders of their own, empty ones
 /// included, 9 the favorites, 10 the folders' colours and a profile's own session logging,
-/// 11 the profiles' metadata, 12 Citrix profiles. A build that knows an older version
-/// refuses a newer file rather than reading it, dropping what it does not know, and saving
-/// it back.
-pub const PROFILE_FILE_VERSION: u32 = 12;
+/// 11 the profiles' metadata, 12 Citrix profiles, 13 web consoles. A build that knows an
+/// older version refuses a newer file rather than reading it, dropping what it does not
+/// know, and saving it back.
+pub const PROFILE_FILE_VERSION: u32 = 13;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -70,6 +70,8 @@ struct ProfileFile {
     ftp: Vec<FtpProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     citrix: Vec<CitrixProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    web: Vec<WebProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     folder: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -219,6 +221,7 @@ pub struct ProfileStore {
     winrm: Vec<WinRmProfile>,
     ftp: Vec<FtpProfile>,
     citrix: Vec<CitrixProfile>,
+    web: Vec<WebProfile>,
     /// Folders kept for themselves, as the C# Heimdall's empty groups: normalised.
     folders: Vec<String>,
     /// The profiles marked as favorites, as the C# `IsFavorite`: each once.
@@ -275,6 +278,7 @@ impl ProfileStore {
             winrm: Vec::new(),
             ftp: Vec::new(),
             citrix: Vec::new(),
+            web: Vec::new(),
             folders: Vec::new(),
             favorites: Vec::new(),
             metadata: BTreeMap::new(),
@@ -328,6 +332,7 @@ impl ProfileStore {
             winrm: file.winrm,
             ftp: file.ftp,
             citrix: file.citrix,
+            web: file.web,
             folders: file
                 .folder
                 .iter()
@@ -444,6 +449,17 @@ impl ProfileStore {
         merge_into(&mut self.citrix, incoming, |profile| &profile.id)
     }
 
+    /// Web consoles, in file order.
+    #[must_use]
+    pub fn web_profiles(&self) -> &[WebProfile] {
+        &self.web
+    }
+
+    /// Adds or replaces web consoles by identifier; the order of existing ones is kept.
+    pub fn merge_web(&mut self, incoming: impl IntoIterator<Item = WebProfile>) -> MergeReport {
+        merge_into(&mut self.web, incoming, |profile| &profile.id)
+    }
+
     /// SSH gateways, in file order.
     #[must_use]
     pub fn gateways(&self) -> &[SshGateway] {
@@ -492,7 +508,8 @@ impl ProfileStore {
             .iter_mut()
             .map(|profile| &mut profile.gateway)
             .chain(self.rdp.iter_mut().map(|profile| &mut profile.gateway))
-            .chain(self.winrm.iter_mut().map(|profile| &mut profile.gateway));
+            .chain(self.winrm.iter_mut().map(|profile| &mut profile.gateway))
+            .chain(self.web.iter_mut().map(|profile| &mut profile.gateway));
         for route in routes.filter(|route| route.as_ref() == Some(id)) {
             *route = None;
             servers += 1;
@@ -660,6 +677,7 @@ impl ProfileStore {
             || self.winrm.iter().any(|profile| profile.id == *id)
             || self.ftp.iter().any(|profile| profile.id == *id)
             || self.citrix.iter().any(|profile| profile.id == *id)
+            || self.web.iter().any(|profile| profile.id == *id)
     }
 
     /// Removes the profile `id`, of any protocol; whether it was there. A favorite no
@@ -676,6 +694,7 @@ impl ProfileStore {
         self.winrm.retain(|profile| profile.id != *id);
         self.ftp.retain(|profile| profile.id != *id);
         self.citrix.retain(|profile| profile.id != *id);
+        self.web.retain(|profile| profile.id != *id);
         self.len() != before
     }
 
@@ -697,6 +716,7 @@ impl ProfileStore {
             .chain(self.winrm.iter().map(|p| p.group.as_deref()))
             .chain(self.ftp.iter().map(|p| p.group.as_deref()))
             .chain(self.citrix.iter().map(|p| p.group.as_deref()))
+            .chain(self.web.iter().map(|p| p.group.as_deref()))
     }
 
     /// The folder of every profile, of any protocol, to change.
@@ -711,6 +731,7 @@ impl ProfileStore {
             .chain(self.winrm.iter_mut().map(|p| &mut p.group))
             .chain(self.ftp.iter_mut().map(|p| &mut p.group))
             .chain(self.citrix.iter_mut().map(|p| &mut p.group))
+            .chain(self.web.iter_mut().map(|p| &mut p.group))
     }
 
     /// Every folder the tree shows: those kept for themselves, those of the profiles, and
@@ -863,8 +884,9 @@ impl ProfileStore {
     }
 
     /// Sets the gateway profile `id` goes through, none for a direct connection, as the C#
-    /// bulk "Set gateway" does for SSH, SFTP, RDP and `WinRM`; whether it changed. The other
-    /// protocols go through none, and a gateway not in the store is not set.
+    /// bulk "Set gateway" does for SSH, SFTP, RDP, `WinRM` and web consoles; whether it
+    /// changed. The other protocols go through none, and a gateway not in the store is not
+    /// set.
     pub fn set_gateway(&mut self, id: &ProfileId, gateway: Option<&ProfileId>) -> bool {
         if gateway.is_some_and(|gateway| !self.gateways.iter().any(|known| known.id == *gateway)) {
             return false;
@@ -875,6 +897,8 @@ impl ProfileStore {
         } else if let Some(profile) = self.rdp.iter_mut().find(|p| p.id == *id) {
             &mut profile.gateway
         } else if let Some(profile) = self.winrm.iter_mut().find(|p| p.id == *id) {
+            &mut profile.gateway
+        } else if let Some(profile) = self.web.iter_mut().find(|p| p.id == *id) {
             &mut profile.gateway
         } else {
             return false;
@@ -952,6 +976,9 @@ impl ProfileStore {
         if let Some(profile) = self.winrm.iter_mut().find(|profile| profile.id == *id) {
             return Some(&mut profile.port);
         }
+        if let Some(profile) = self.web.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.port);
+        }
         self.ftp
             .iter_mut()
             .find(|profile| profile.id == *id)
@@ -1026,6 +1053,7 @@ impl ProfileStore {
         find!(self.winrm);
         find!(self.ftp);
         find!(self.citrix);
+        find!(self.web);
         None
     }
 
@@ -1100,6 +1128,7 @@ impl ProfileStore {
             + self.winrm.len()
             + self.ftp.len()
             + self.citrix.len()
+            + self.web.len()
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
@@ -1168,6 +1197,7 @@ impl ProfileStore {
             winrm: self.winrm.clone(),
             ftp: self.ftp.clone(),
             citrix: self.citrix.clone(),
+            web: self.web.clone(),
             folder: self.folders.clone(),
             favorite: self.favorites.clone(),
             metadata: self

@@ -356,7 +356,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 12);
+    assert_eq!(PROFILE_FILE_VERSION, 13);
 }
 
 #[test]
@@ -1022,6 +1022,103 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
     let mut store = reopened;
     assert!(store.remove(&ProfileId::new("erp")));
     assert_eq!(store.citrix_profiles().len(), 1);
+}
+
+fn web_console(id: &str) -> heimdall_core::profile::WebProfile {
+    heimdall_core::profile::WebProfile {
+        id: ProfileId::new(id),
+        name: "iLO".to_owned(),
+        group: Some("Lab/BMC".to_owned()),
+        host: "ilo.lab".to_owned(),
+        port: 8443,
+        use_http: false,
+        path: Some("/html/login.html".to_owned()),
+        username: Some("admin".to_owned()),
+        gateway: Some(ProfileId::new("bastion")),
+    }
+}
+
+#[test]
+fn web_consoles_read_back_with_their_address_and_gateway() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let routed = web_console("ilo");
+    let plain = heimdall_core::profile::WebProfile {
+        id: ProfileId::new("nas"),
+        name: "NAS".to_owned(),
+        group: None,
+        host: "fd00::20".to_owned(),
+        port: 80,
+        use_http: true,
+        path: None,
+        username: None,
+        gateway: None,
+    };
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_web([routed.clone(), plain.clone()]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(text.contains("[[web]]"), "{text}");
+    assert!(!text.to_lowercase().contains("password"), "{text}");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.web_profiles(), [routed, plain]);
+    assert!(
+        reopened.folder_paths().contains(&"Lab/BMC".to_owned()),
+        "its folder is a folder of the tree"
+    );
+    let mut store = reopened;
+    assert!(store.set_port(&ProfileId::new("nas"), 8080));
+    assert!(
+        !store.set_gateway(&ProfileId::new("nas"), None),
+        "direct already"
+    );
+    assert!(store.rename_profile(&ProfileId::new("nas"), "Storage"));
+    assert!(store.remove(&ProfileId::new("ilo")));
+    assert_eq!(store.web_profiles().len(), 1);
+    assert_eq!(store.web_profiles()[0].port, 8080);
+    assert_eq!(store.web_profiles()[0].name, "Storage");
+}
+
+#[test]
+fn a_web_console_goes_direct_once_its_gateway_is_removed() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_gateways([SshGateway {
+        id: ProfileId::new("bastion"),
+        name: "Bastion".to_owned(),
+        host: "bastion.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        parent: None,
+    }]);
+    store.merge_web([web_console("ilo")]);
+    let removed = store
+        .remove_gateway(&ProfileId::new("bastion"))
+        .expect("a gateway");
+    assert_eq!(removed.servers, 1);
+    assert_eq!(store.web_profiles()[0].gateway, None);
+}
+
+#[test]
+fn a_version_12_file_opens_without_web_consoles_and_one_written_now_says_13() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(
+        &path,
+        "version = 12\n\n[[citrix]]\nid = \"c\"\nname = \"C\"\n",
+    )
+    .expect("writes");
+    let mut store = ProfileStore::open(&path).expect("a version 12 file opens");
+    assert_eq!(store.citrix_profiles().len(), 1);
+    assert!(store.web_profiles().is_empty());
+    store.merge_web([web_console("ilo")]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(text.starts_with("version = 13\n"), "{text}");
+    // A web console's own switches are written only when set.
+    assert!(!text.contains("use_http"), "{text}");
 }
 
 #[test]

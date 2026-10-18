@@ -59,6 +59,7 @@ enum List {
     WinRm,
     Ftp,
     Citrix,
+    Web,
 }
 
 impl List {
@@ -99,6 +100,10 @@ impl List {
             (
                 Self::Citrix,
                 has(store.citrix_profiles().iter().map(|p| &p.id), id),
+            ),
+            (
+                Self::Web,
+                has(store.web_profiles().iter().map(|p| &p.id), id),
             ),
         ]
         .into_iter()
@@ -271,6 +276,11 @@ entry!(
     |_: &heimdall_core::profile::CitrixProfile| ProfileKind::Citrix,
     |_: &heimdall_core::profile::CitrixProfile| None
 );
+entry!(
+    heimdall_core::profile::WebProfile,
+    |_: &heimdall_core::profile::WebProfile| ProfileKind::Web,
+    |p: &heimdall_core::profile::WebProfile| Some((p.host.clone(), p.port))
+);
 
 /// The rows of `list`, each with its place in the import.
 fn rows_of<T: Entry>(list: List, profiles: &[T]) -> Vec<ProfileImportRow> {
@@ -376,6 +386,7 @@ impl App {
         rows.extend(rows_of(List::WinRm, &report.winrm));
         rows.extend(rows_of(List::Ftp, &report.ftp));
         rows.extend(rows_of(List::Citrix, &report.citrix));
+        rows.extend(rows_of(List::Web, &report.web));
         for skipped in &report.skipped {
             rows.push(ProfileImportRow {
                 position: None,
@@ -446,6 +457,7 @@ impl App {
             List::WinRm => &mut report.winrm[index],
             List::Ftp => &mut report.ftp[index],
             List::Citrix => &mut report.citrix[index],
+            List::Web => &mut report.web[index],
         }
     }
 
@@ -689,6 +701,7 @@ impl App {
             winrm: written(List::WinRm, report.winrm, &by_slot),
             ftp: written(List::Ftp, report.ftp, &by_slot),
             citrix: written(List::Citrix, report.citrix, &by_slot),
+            web: written(List::Web, report.web, &by_slot),
             // As the C#, the file's gateways are reconciled only when a profile is written.
             gateways: if written_any {
                 report.gateways

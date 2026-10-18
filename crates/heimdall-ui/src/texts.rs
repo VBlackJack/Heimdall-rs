@@ -454,6 +454,7 @@ pub fn scheduled_refusal(refusal: RefusalKind) -> String {
         RefusalKind::ExternalClient => fl!("ui-scheduled-refusal-external-client"),
         RefusalKind::RdGateway => fl!("ui-scheduled-refusal-rd-gateway"),
         RefusalKind::Citrix => fl!("ui-scheduled-refusal-citrix"),
+        RefusalKind::WebConsole => fl!("ui-scheduled-refusal-web"),
         RefusalKind::WinRmNoAccount => fl!("ui-scheduled-refusal-winrm-no-account"),
         RefusalKind::WinRmPasswordNotStored => fl!("ui-scheduled-refusal-winrm-password"),
         RefusalKind::X11Forwarding => fl!("ui-scheduled-refusal-x11"),
@@ -522,6 +523,20 @@ pub fn dropped_setting(dropped: Dropped) -> String {
             "ui-import-dropped-scheduled-time",
             time = heimdall_core::scheduled::DEFAULT_TIME_OF_DAY
         ),
+        Dropped::WebExternalProgram => fl!("ui-import-dropped-web-external-program"),
+    }
+}
+
+/// Why a web console was not opened.
+#[must_use]
+pub fn web_refusal(refusal: &heimdall_app::web_console::WebRefusal) -> String {
+    use heimdall_app::web_console::WebRefusal;
+    match refusal {
+        WebRefusal::InvalidAddress => fl!("ui-status-web-invalid-address"),
+        WebRefusal::NotLoopback => fl!("ui-status-web-not-loopback"),
+        WebRefusal::NotStarted(reason) => {
+            fl!("ui-status-web-not-started", reason = server_text(reason))
+        }
     }
 }
 
