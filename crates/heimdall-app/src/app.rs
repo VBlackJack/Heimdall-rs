@@ -111,6 +111,7 @@ mod local_tab;
 mod macro_editor;
 mod macros;
 mod mstsc_launch;
+mod network_scan;
 mod onboarding;
 mod pin;
 mod post_connect;
@@ -186,6 +187,7 @@ pub use legacy_migration::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use local_tab::{ElevatedPane, ElevatedState, LocalConfirmation};
 pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use network_scan::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
 pub use profile_import::{
@@ -690,6 +692,8 @@ pub enum Message {
     Rdp(RdpMessage),
     /// The preview of a Heimdall session document's profiles.
     ProfileImport(ProfileImportMessage),
+    /// The network scanner dialog.
+    NetworkScan(NetworkScanMessage),
     /// How the export's file went.
     ExportFinished(ExportOutcome),
     /// Open an empty profile form.
@@ -1123,6 +1127,7 @@ impl fmt::Debug for Message {
             }
             Self::Rdp(message) => write!(f, "Rdp({message:?})"),
             Self::ProfileImport(message) => write!(f, "ProfileImport({message:?})"),
+            Self::NetworkScan(message) => write!(f, "NetworkScan({message:?})"),
             Self::ExportFinished(outcome) => write!(f, "ExportFinished({outcome:?})"),
             Self::NewProfile => f.write_str("NewProfile"),
             Self::EditProfile(id) => write!(f, "EditProfile({id})"),
@@ -1333,6 +1338,16 @@ pub enum Effect {
         host: String,
         /// Port.
         port: u16,
+    },
+    /// Sweep a subnet for hosts on the remote-access ports, and say what it finds as
+    /// [`NetworkScanMessage::Event`], then [`NetworkScanMessage::Ended`].
+    ScanNetwork {
+        /// Which sweep.
+        scan: u64,
+        /// The addresses to sweep.
+        ips: Vec<std::net::Ipv4Addr>,
+        /// Set to stop it.
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     },
     /// Test whether an address answers, and say it as [`Message::AddressTested`].
     TestAddress {
@@ -1930,6 +1945,9 @@ impl fmt::Debug for Effect {
             Self::LaunchElevated { tab, .. } => write!(f, "LaunchElevated({})", tab.value()),
             Self::OpenTunnel { id, .. } => write!(f, "OpenTunnel({})", id.value()),
             Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
+            Self::ScanNetwork { scan, ips, .. } => {
+                write!(f, "ScanNetwork({scan}, {} addresses)", ips.len())
+            }
             Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
             Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
             Self::WakeOnLan(_) => f.write_str("WakeOnLan"),
@@ -3032,6 +3050,8 @@ pub enum Dialog {
     ConfirmImportFile(Box<PendingImport>),
     /// The profiles of a Heimdall session document, each clash with a choice.
     ProfileImportPreview(Box<ProfileImportPreview>),
+    /// The network scanner: the subnet typed and the hosts it found, to choose from.
+    NetworkScan(Box<NetworkScan>),
     /// How many applications Citrix Workspace's cache gives, asked before they are imported.
     ConfirmCitrixImport(Box<heimdall_core::import::citrix_cache::CacheScan>),
     /// Citrix Workspace's cache gives no application: what the scan said.
@@ -3324,6 +3344,10 @@ pub struct App {
     address_test: Option<(u64, CancellationToken)>,
     /// The number of the next address test.
     next_address_test: u64,
+    /// The network sweep running, and what stops it.
+    network_scan: Option<(u64, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    /// The number of the next network sweep.
+    next_network_scan: u64,
     /// Tunnels the user opened by hand, open: the rows of the tunnels panel.
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// A session opens in a tab's place, as Reconnect opens it: it takes no more room.
@@ -3530,6 +3554,8 @@ impl App {
             edit_dir: heimdall_core::paths::edit_dir(),
             address_test: None,
             next_address_test: 0,
+            network_scan: None,
+            next_network_scan: 0,
             tunnels: Vec::new(),
             // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
             tunnels_panel,
@@ -3864,6 +3890,7 @@ impl App {
             | Message::Sessions(_)
             | Message::Rdp(_)
             | Message::ProfileImport(_)
+            | Message::NetworkScan(_)
             | Message::Settings(_)
             | Message::Macro(_)
             | Message::NoteOpened(_)
@@ -4109,6 +4136,11 @@ impl App {
             }) => effects = self.sudo_mode_off(tab),
             // "Don't restore": answered, the snapshot goes.
             Some(Dialog::RestoreSessions(_)) => self.forget_snapshot(),
+            // Closed: the sweep stops, its probes and programs with it.
+            Some(Dialog::NetworkScan(_)) => {
+                self.dialog = None;
+                self.stop_network_scan();
+            }
             // "Do not import": not asked again for the same files.
             Some(Dialog::LegacyMigrationOffer(offer)) => self.decline_legacy_migration(&offer),
             _ => {}
@@ -5176,7 +5208,9 @@ impl App {
                 | Dialog::Pin(_)
                 | Dialog::EditGateway { .. }
                 | Dialog::SudoPassword { .. }
-                | Dialog::BulkPassword { .. }),
+                | Dialog::BulkPassword { .. }
+                // Enter in its field starts the sweep: a bare confirm leaves it as it is.
+                | Dialog::NetworkScan(_)),
             ) => {
                 self.dialog = Some(dialog);
                 Vec::new()
@@ -5244,6 +5278,7 @@ impl App {
                 self.profile_import_message(*message);
                 Vec::new()
             }
+            Message::NetworkScan(message) => self.network_scan_message(message.clone()),
             Message::ExportFinished(outcome) => {
                 self.dialog = match outcome {
                     ExportOutcome::Saved(count) => Some(Dialog::ExportDone { count: *count }),

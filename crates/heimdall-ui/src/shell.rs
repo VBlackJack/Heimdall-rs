@@ -284,6 +284,14 @@ fn tree_shortcut(
     {
         return Some(TreeShortcut::PropertiesPanel);
     }
+    // As the C# Ctrl+Shift+N: not gated to terminals, so a terminal that takes it keeps it.
+    if modifiers.control()
+        && modifiers.shift()
+        && !modifiers.alt()
+        && crate::terminal_view::keys::letter(key, physical) == Some('n')
+    {
+        return Some(TreeShortcut::NetworkScan);
+    }
     match ctrl_letter(key, physical, modifiers)? {
         'e' => Some(TreeShortcut::Edit),
         'n' => Some(TreeShortcut::New),
@@ -598,8 +606,7 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             }
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
                 // Held down, the panel's key would flip it, and save it, at each repeat.
-                return (!repeat || shortcut != TreeShortcut::PropertiesPanel)
-                    .then_some(Message::TreeShortcut(shortcut));
+                return (!repeat || shortcut.repeats()).then_some(Message::TreeShortcut(shortcut));
             }
             // F1 left by every widget: a terminal or a desktop keeps it for its programs.
             if physical_key == keyboard::key::Physical::Code(keyboard::key::Code::F1)
@@ -1078,6 +1085,15 @@ pub enum TreeShortcut {
     /// Ctrl+Shift+B: the properties panel under the tree shown or hidden, as the C# one;
     /// shown, never hidden, while it cannot be seen.
     PropertiesPanel,
+    /// Ctrl+Shift+N: the network scanner, as the C# `MainWindow.xaml.cs:1958` registers it.
+    NetworkScan,
+}
+
+impl TreeShortcut {
+    /// Whether holding the key repeats it: the toggles and the dialog opened do not.
+    const fn repeats(self) -> bool {
+        !matches!(self, Self::PropertiesPanel | Self::NetworkScan)
+    }
 }
 
 impl fmt::Debug for Message {
@@ -4368,6 +4384,9 @@ impl Shell {
                     .buffer_unordered(at_once);
                 Task::stream(checks)
             }
+            Effect::ScanNetwork { scan, ips, stop } => {
+                crate::network_scan_view::run(scan, ips, stop)
+            }
             effect @ (Effect::TestReachability { .. }
             | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
@@ -4840,6 +4859,7 @@ impl Shell {
                     Dialog::SessionsPreview(_)
                         | Dialog::RdpPreview(_)
                         | Dialog::ProfileImportPreview(_)
+                        | Dialog::NetworkScan(_)
                         | Dialog::HostKeysPreview(_)
                         | Dialog::FileConflicts { .. }
                 ) {
@@ -6927,6 +6947,9 @@ impl Shell {
                 Vec::new()
             }
             TreeShortcut::PropertiesPanel => self.properties_shortcut(),
+            TreeShortcut::NetworkScan => self.app.update(AppMessage::NetworkScan(
+                heimdall_app::NetworkScanMessage::Open,
+            )),
             TreeShortcut::Edit => match self.app.selected_profile.clone() {
                 Some(id) if self.tree_focused && self.app.can_edit(&id) => {
                     self.app.update(AppMessage::EditProfile(id))
@@ -13550,6 +13573,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmImportFile(_)
         | Dialog::ProfileImportPreview(_)
         | Dialog::ConfirmCitrixImport(_) => import_preview(dialog),
+        Dialog::NetworkScan(scan) => crate::network_scan_view::dialog(scan),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::BulkPassword {
             ids,

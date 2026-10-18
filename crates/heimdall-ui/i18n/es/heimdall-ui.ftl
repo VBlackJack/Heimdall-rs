@@ -5713,6 +5713,38 @@ ui-dialog-import-preferences-relative = Rutas de la instalación de C#, no trans
 ui-dialog-import-preferences-failed = No se pudieron leer las preferencias de Heimdall C#: { $detail }
 ui-dialog-import-preferences-review = Revisar preferencias
 
+## El analizador de red, Ctrl+Mayús+N.
+ui-shortcuts-network-scan = Analizar la red para añadir equipos
+ui-network-scan-title = Analizador de red
+ui-network-scan-prompt = Subred que analizar (CIDR, por ejemplo 192.168.1.0/24) o una dirección IPv4. Los equipos que responden al ping se sondean en los puertos SSH, Telnet, HTTP, HTTPS, RDP, VNC y WinRM.
+ui-network-scan-start = Analizar
+ui-network-scan-stop = Detener
+ui-network-scan-error-empty = Escriba una subred como 192.168.1.0/24.
+ui-network-scan-error-invalid = No es una dirección ni una subred IPv4. Use una forma como 192.168.1.0/24.
+ui-network-scan-error-range = La subred es demasiado amplia: use un prefijo de /{ $prefix } o más largo.
+ui-network-scan-progress = Analizando { $cidr }: { $done } de { $total } direcciones.
+ui-network-scan-none = Ningún equipo respondió en { $cidr }.
+ui-network-scan-complete = { $count ->
+    [one] { $count } equipo encontrado.
+   *[other] { $count } equipos encontrados.
+}
+ui-network-scan-column-address = Dirección
+ui-network-scan-column-name = Nombre
+ui-network-scan-column-ports = Puertos abiertos
+ui-network-scan-column-session = Sesión
+ui-network-scan-column-status = Estado
+ui-network-scan-status-saved = Ya guardado
+ui-network-scan-status-no-port = Sin puerto de acceso remoto
+ui-network-scan-add = { $count ->
+    [one] Añadir { $count } sesión
+   *[other] Añadir { $count } sesiones
+}
+ui-network-scan-kind-rdp = RDP
+ui-network-scan-kind-ssh = SSH
+ui-network-scan-kind-vnc = VNC
+ui-network-scan-kind-winrm = WinRM
+ui-network-scan-kind-telnet = Telnet
+ui-network-scan-kind-web = Web
 # Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
 ui-tab-menu-group-by-folder = Agrupar pestañas por carpeta
 ui-tab-list-tooltip = Todas las pestañas abiertas

@@ -5668,6 +5668,38 @@ ui-dialog-import-preferences-relative = Paths of the C# installation, not carrie
 ui-dialog-import-preferences-failed = The preferences of the C# Heimdall could not be read: { $detail }
 ui-dialog-import-preferences-review = Review preferences
 
+## The network scanner, Ctrl+Shift+N.
+ui-shortcuts-network-scan = Scan the network for hosts to add
+ui-network-scan-title = Network scanner
+ui-network-scan-prompt = Subnet to scan (CIDR, for example 192.168.1.0/24) or one IPv4 address. Hosts that answer a ping are probed on the SSH, Telnet, HTTP, HTTPS, RDP, VNC and WinRM ports.
+ui-network-scan-start = Scan
+ui-network-scan-stop = Stop
+ui-network-scan-error-empty = Type a subnet such as 192.168.1.0/24.
+ui-network-scan-error-invalid = Not an IPv4 address or subnet. Use a form such as 192.168.1.0/24.
+ui-network-scan-error-range = The subnet is too wide: use a prefix of /{ $prefix } or longer.
+ui-network-scan-progress = Scanning { $cidr }: { $done } of { $total } addresses.
+ui-network-scan-none = No host answered in { $cidr }.
+ui-network-scan-complete = { $count ->
+    [one] { $count } host found.
+   *[other] { $count } hosts found.
+}
+ui-network-scan-column-address = Address
+ui-network-scan-column-name = Name
+ui-network-scan-column-ports = Open ports
+ui-network-scan-column-session = Session
+ui-network-scan-column-status = Status
+ui-network-scan-status-saved = Already saved
+ui-network-scan-status-no-port = No remote access port
+ui-network-scan-add = { $count ->
+    [one] Add { $count } session
+   *[other] Add { $count } sessions
+}
+ui-network-scan-kind-rdp = RDP
+ui-network-scan-kind-ssh = SSH
+ui-network-scan-kind-vnc = VNC
+ui-network-scan-kind-winrm = WinRM
+ui-network-scan-kind-telnet = Telnet
+ui-network-scan-kind-web = Web
 # Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
 ui-tab-menu-group-by-folder = Arrange tabs by folder
 ui-tab-list-tooltip = All open tabs
