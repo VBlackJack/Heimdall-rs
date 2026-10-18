@@ -34,8 +34,8 @@ use heimdall_core::settings::{
 };
 
 use heimdall_core::settings::{
-    RDP_KEEP_ALIVE_INTERVAL_MAX_MS, RDP_KEEP_ALIVE_INTERVAL_MIN_MS, RDP_RESIZE_ENABLE_DELAY_MAX_MS,
-    RDP_RESIZE_ENABLE_DELAY_MIN_MS,
+    RDP_DEFAULT_RESOLUTION_MAX, RDP_DEFAULT_RESOLUTION_MIN, RDP_KEEP_ALIVE_INTERVAL_MAX_MS,
+    RDP_KEEP_ALIVE_INTERVAL_MIN_MS, RDP_RESIZE_ENABLE_DELAY_MAX_MS, RDP_RESIZE_ENABLE_DELAY_MIN_MS,
 };
 
 use crate::i18n::fl;
@@ -76,6 +76,10 @@ pub enum SessionField {
     SshReconnectSecondDelay,
     /// Seconds before every SSH auto-reconnect attempt after the second.
     SshReconnectSubsequentDelay,
+    /// Pixels of the width Remote Desktop Connection opens at for the default resolution.
+    RdpDefaultWidth,
+    /// Pixels of the height Remote Desktop Connection opens at for the default resolution.
+    RdpDefaultHeight,
 }
 
 impl SessionField {
@@ -93,7 +97,7 @@ impl SessionField {
     pub const TRANSCRIPTS: [Self; 1] = [Self::TranscriptRetention];
 
     /// How many there are.
-    pub(crate) const COUNT: usize = 16;
+    pub(crate) const COUNT: usize = 18;
 
     /// Its place among them all.
     pub(crate) fn index(self) -> usize {
@@ -114,6 +118,8 @@ impl SessionField {
             Self::SshReconnectFirstDelay => 13,
             Self::SshReconnectSecondDelay => 14,
             Self::SshReconnectSubsequentDelay => 15,
+            Self::RdpDefaultWidth => 16,
+            Self::RdpDefaultHeight => 17,
         }
     }
 
@@ -138,6 +144,8 @@ impl SessionField {
             Self::SshReconnectSubsequentDelay => {
                 fl!("ui-settings-ssh-auto-reconnect-subsequent-delay")
             }
+            Self::RdpDefaultWidth => fl!("ui-settings-rdp-default-width"),
+            Self::RdpDefaultHeight => fl!("ui-settings-rdp-default-height"),
         }
     }
 
@@ -154,6 +162,7 @@ impl SessionField {
             Self::ReachabilityTimeout | Self::RdpResizeDelay | Self::RdpKeepAlive => {
                 Some(fl!("ui-settings-milliseconds-unit"))
             }
+            Self::RdpDefaultWidth | Self::RdpDefaultHeight => Some(fl!("ui-settings-pixels-unit")),
             Self::TranscriptRetention | Self::VaultHelloMaxDays => {
                 Some(fl!("ui-settings-days-unit"))
             }
@@ -193,6 +202,8 @@ impl SessionField {
             Self::SshReconnectFirstDelay => settings.ssh_auto_reconnect_first_delay,
             Self::SshReconnectSecondDelay => settings.ssh_auto_reconnect_second_delay,
             Self::SshReconnectSubsequentDelay => settings.ssh_auto_reconnect_subsequent_delay,
+            Self::RdpDefaultWidth => settings.rdp_default_width,
+            Self::RdpDefaultHeight => settings.rdp_default_height,
         }
     }
 
@@ -215,6 +226,9 @@ impl SessionField {
             Self::SshReconnectFirstDelay
             | Self::SshReconnectSecondDelay
             | Self::SshReconnectSubsequentDelay => settings::reconnect_delay_accepted(value),
+            Self::RdpDefaultWidth | Self::RdpDefaultHeight => {
+                settings::rdp_default_resolution_accepted(value)
+            }
         }
     }
 
@@ -239,6 +253,8 @@ impl SessionField {
             Self::SshReconnectSubsequentDelay => {
                 SettingsMessage::SshAutoReconnectSubsequentDelay(value)
             }
+            Self::RdpDefaultWidth => SettingsMessage::RdpDefaultWidth(value),
+            Self::RdpDefaultHeight => SettingsMessage::RdpDefaultHeight(value),
         }
     }
 
@@ -316,6 +332,11 @@ impl SessionField {
                 "ui-settings-ssh-auto-reconnect-delay-refused",
                 min = RECONNECT_DELAY_SECONDS_MIN,
                 max = RECONNECT_DELAY_SECONDS_MAX
+            ),
+            Self::RdpDefaultWidth | Self::RdpDefaultHeight => fl!(
+                "ui-settings-rdp-default-resolution-refused",
+                min = RDP_DEFAULT_RESOLUTION_MIN,
+                max = RDP_DEFAULT_RESOLUTION_MAX
             ),
         }
     }

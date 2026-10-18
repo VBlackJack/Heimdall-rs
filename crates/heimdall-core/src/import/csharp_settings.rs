@@ -40,8 +40,9 @@ use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind};
 use crate::profile::{ColorDepth, RESOLUTION_PRESETS, RdpMode, SshMode};
 use crate::settings::{
     Accent, AgentPreference, AppTheme, BroadcastScope, ColorScheme, ExecutionPolicy, Language,
-    Settings, anti_idle_interval_accepted, auto_lock_idle_minutes_accepted, max_sessions_accepted,
-    rdp_auto_reconnect_attempts_accepted, rdp_keep_alive_interval_accepted,
+    RDP_DEFAULT_HEIGHT_DEFAULT, RDP_DEFAULT_WIDTH_DEFAULT, Settings, anti_idle_interval_accepted,
+    auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
+    rdp_default_resolution_accepted, rdp_keep_alive_interval_accepted,
     rdp_resize_enable_delay_accepted, reachability_interval_accepted, reachability_probes_accepted,
     reachability_timeout_accepted, reconnect_delay_accepted, session_log_retention_days_accepted,
     ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
@@ -856,6 +857,26 @@ fn preferences_table() -> Vec<Preference> {
             "RdpDefaultAutoReconnect",
             |value, settings| flag(value, true, &mut settings.rdp_defaults.auto_reconnect),
             rdp_defaults.auto_reconnect
+        ),
+        preference!(
+            "DefaultResolutionWidth",
+            |value, settings| number(
+                value,
+                i64::from(RDP_DEFAULT_WIDTH_DEFAULT),
+                rdp_default_resolution_accepted,
+                &mut settings.rdp_default_width
+            ),
+            rdp_default_width
+        ),
+        preference!(
+            "DefaultResolutionHeight",
+            |value, settings| number(
+                value,
+                i64::from(RDP_DEFAULT_HEIGHT_DEFAULT),
+                rdp_default_resolution_accepted,
+                &mut settings.rdp_default_height
+            ),
+            rdp_default_height
         ),
         preference!(
             "RdpResolutionPresets",

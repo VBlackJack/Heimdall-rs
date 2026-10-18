@@ -15,7 +15,8 @@
  */
 
 //! What goes into the shared session logs beside the transcripts, as the C# Heimdall
-//! decides it: a remote desktop's connect and disconnect, RDP and VNC; a Files tab's
+//! decides it: a remote desktop's connect and disconnect, RDP and VNC, and a Citrix
+//! application's, from its client being seen to its end; a Files tab's
 //! changes on its server, SFTP and FTP. Both only while session logging is on for the
 //! session, read when the line is written, so the switch takes effect at once.
 //!
@@ -28,6 +29,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use super::{App, Effect, Phase, Tab, TabProfile};
+use crate::citrix;
 use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
 use crate::session_log::{EndTrigger, OperationJournal, SessionEvent, SessionEventKind};
@@ -37,6 +39,9 @@ const RDP: &str = "RDP";
 
 /// A VNC desktop's protocol, as the C# writes it.
 const VNC: &str = "VNC";
+
+/// A Citrix application's protocol, as the C# writes it.
+const CITRIX: &str = "CITRIX";
 
 /// An RDP end whose cause is not known, as the C# names it.
 const RDP_UNKNOWN: &str = "RDP_UNKNOWN";
@@ -67,8 +72,27 @@ fn connected_desktop(tab: &Tab) -> Option<&'static str> {
     match tab.profile {
         TabProfile::Rdp(_) => Some(RDP),
         TabProfile::Vnc(_) => Some(VNC),
+        TabProfile::Citrix(_) => Some(CITRIX),
         _ => None,
     }
+}
+
+/// The host a session event names for `tab`: the server of a desktop; for a Citrix
+/// application the sanitized `StoreFront` address, else its title, as the C#
+/// `CitrixSessionEventFactory` resolves it.
+fn event_host(tab: &Tab) -> String {
+    if let TabProfile::Citrix(profile) = &tab.profile {
+        let address = profile
+            .store_front_url
+            .as_deref()
+            .map(citrix::sanitized_store_front)
+            .filter(|address| !address.trim().is_empty());
+        return address.unwrap_or_else(|| tab.display_title().to_owned());
+    }
+    tab.profile
+        .endpoint()
+        .map(|(host, _)| host.to_owned())
+        .unwrap_or_default()
 }
 
 /// The C# key of why the server or the connection ended `tab`'s RDP session.
@@ -135,11 +159,7 @@ impl App {
             };
             let connected = Connected {
                 protocol,
-                host: tab
-                    .profile
-                    .endpoint()
-                    .map(|(host, _)| host.to_owned())
-                    .unwrap_or_default(),
+                host: event_host(tab),
                 title: tab.display_title().to_owned(),
                 attempt: tab.attempt,
                 since: Instant::now(),

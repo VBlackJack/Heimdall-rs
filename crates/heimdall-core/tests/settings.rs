@@ -2452,3 +2452,60 @@ fn the_rdp_disconnect_confirmation_is_on_and_the_indicators_collapsed_until_chan
     settings.reset_rdp();
     assert!(settings.rdp_confirm_disconnect && !settings.rdp_redirection_indicators_expanded);
 }
+
+#[test]
+fn the_default_resolution_is_kept_ranged_exported_and_reset() {
+    use heimdall_core::settings::{
+        RDP_DEFAULT_HEIGHT_DEFAULT, RDP_DEFAULT_RESOLUTION_MAX, RDP_DEFAULT_RESOLUTION_MIN,
+        RDP_DEFAULT_WIDTH_DEFAULT, rdp_default_resolution_accepted,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::default();
+    assert_eq!(settings.rdp_default_width, RDP_DEFAULT_WIDTH_DEFAULT);
+    assert_eq!(settings.rdp_default_height, RDP_DEFAULT_HEIGHT_DEFAULT);
+    assert_eq!(settings.rdp_default_size(), (1920, 1080));
+    for (side, accepted) in [
+        (RDP_DEFAULT_RESOLUTION_MIN - 1, false),
+        (RDP_DEFAULT_RESOLUTION_MIN, true),
+        (RDP_DEFAULT_RESOLUTION_MAX, true),
+        (RDP_DEFAULT_RESOLUTION_MAX + 1, false),
+    ] {
+        assert_eq!(rdp_default_resolution_accepted(side), accepted, "{side}");
+    }
+
+    settings.rdp_default_width = 1280;
+    settings.rdp_default_height = 720;
+    settings.save(&path).expect("save");
+    let mut read = Settings::load(&path).expect("load");
+    assert_eq!(read.rdp_default_size(), (1280, 720));
+
+    // Edited by hand out of the range: the default.
+    std::fs::write(
+        &path,
+        "version = 1\n[rdp_session]\ndefault_width = 100\ndefault_height = 9000\n",
+    )
+    .expect("write");
+    assert_eq!(
+        Settings::load(&path).expect("load").rdp_default_size(),
+        (1920, 1080)
+    );
+
+    // In a portable settings file, as the C# exports it.
+    let (text, _) = read.export(None, false);
+    assert!(text.contains("default_width = 1280"), "{text}");
+    let imported = Settings::default().import(&text).expect("import");
+    assert_eq!(imported.settings.rdp_default_size(), (1280, 720));
+    assert!(
+        imported
+            .changes
+            .iter()
+            .any(|change| change.key == "rdp_session.default_height"),
+        "{:?}",
+        imported.changes
+    );
+
+    read.reset_rdp();
+    assert_eq!(read.rdp_default_size(), (1920, 1080), "reset with RDP");
+}

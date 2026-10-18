@@ -33,9 +33,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
-use heimdall_core::profile::{
-    AudioPlayback, DEFAULT_FIXED_SIZE, Experience, RdpProfile, Resolution, fixed_desktop,
-};
+use heimdall_core::profile::{AudioPlayback, Experience, RdpProfile, Resolution, fixed_desktop};
 
 use crate::error::UiError;
 use crate::external_edit::{private_base, write_new};
@@ -117,16 +115,14 @@ struct Display {
 
 /// The size Remote Desktop Connection opens at in the automatic mode, as the C#
 /// `RdpDisplayResolver.ResolveExternalAutoWindowedSize`: the primary screen's working area,
-/// in physical pixels, or the default size when it is unknown or empty; each side brought
+/// in physical pixels, or `default_size` (the settings' default resolution) when it is
+/// unknown or empty; each side brought
 /// down to a multiple of 4, and never below 4.
 #[must_use]
-pub fn auto_desktop(working_area: Option<(u32, u32)>) -> (u16, u16) {
+pub fn auto_desktop(working_area: Option<(u32, u32)>, default_size: (u16, u16)) -> (u16, u16) {
     let (width, height) = working_area
         .filter(|&(width, height)| width > 0 && height > 0)
-        .unwrap_or((
-            u32::from(DEFAULT_FIXED_SIZE.0),
-            u32::from(DEFAULT_FIXED_SIZE.1),
-        ));
+        .unwrap_or((u32::from(default_size.0), u32::from(default_size.1)));
     let snap = |side: u32| {
         let side = u16::try_from(side).unwrap_or(u16::MAX);
         (side - side % AUTO_SIDE_STEP).max(AUTO_SIDE_STEP)
@@ -157,10 +153,15 @@ fn primary_working_area() -> Option<(u32, u32)> {
 }
 
 /// How `profile`'s desktop is shown. The automatic mode takes `working_area` (see
-/// [`auto_desktop`]); the monitors are spanned in the multi-monitor mode, or when the profile
+/// [`auto_desktop`]), the other modes that ask for the default resolution take
+/// `default_size`; the monitors are spanned in the multi-monitor mode, or when the profile
 /// asks for it outside the automatic mode, as the C# reads `RdpMultiMonitor` for a profile
 /// saved before its resolution modes.
-fn display(profile: &RdpProfile, working_area: Option<(u32, u32)>) -> Display {
+fn display(
+    profile: &RdpProfile,
+    working_area: Option<(u32, u32)>,
+    default_size: (u16, u16),
+) -> Display {
     let extras = &profile.extras;
     let screen_mode = |smart_sizing: bool| {
         if extras.full_screen || smart_sizing {
@@ -179,7 +180,7 @@ fn display(profile: &RdpProfile, working_area: Option<(u32, u32)>) -> Display {
     let options = &profile.options;
     match options.resolution {
         Resolution::Auto => Display {
-            size: auto_desktop(working_area),
+            size: auto_desktop(working_area, default_size),
             smart_sizing: true,
             multi_monitor: false,
             screen_mode: SCREEN_WINDOWED,
@@ -191,9 +192,9 @@ fn display(profile: &RdpProfile, working_area: Option<(u32, u32)>) -> Display {
             extras.multi_monitor,
         ),
         Resolution::FitWindow | Resolution::SmartSizing => {
-            shown(DEFAULT_FIXED_SIZE, true, extras.multi_monitor)
+            shown(default_size, true, extras.multi_monitor)
         }
-        Resolution::MultiMonitor => shown(DEFAULT_FIXED_SIZE, false, true),
+        Resolution::MultiMonitor => shown(default_size, false, true),
     }
 }
 
@@ -229,20 +230,31 @@ fn full_address(host: &str, port: u16) -> String {
 /// address, the user name and domain, the display, the redirections, the authentication,
 /// the performance options and the RD Gateway. Never a password.
 #[must_use]
-pub fn rdp_file(profile: &RdpProfile) -> String {
-    rdp_file_to(profile, &profile.host, profile.port, primary_working_area())
+pub fn rdp_file(profile: &RdpProfile, default_size: (u16, u16)) -> String {
+    rdp_file_to(
+        profile,
+        &profile.host,
+        profile.port,
+        primary_working_area(),
+        default_size,
+    )
 }
 
 /// The `.rdp` file `profile` opens with when its server is reached through the forward
 /// listening at `forward`, as the C# writes its tunnel's local end for the address; the RD
 /// Gateway, when the profile names one, written as [`rdp_file`] writes it, as the C# does.
 #[must_use]
-pub fn rdp_file_through(profile: &RdpProfile, forward: SocketAddr) -> String {
+pub fn rdp_file_through(
+    profile: &RdpProfile,
+    forward: SocketAddr,
+    default_size: (u16, u16),
+) -> String {
     rdp_file_to(
         profile,
         &forward.ip().to_string(),
         forward.port(),
         primary_working_area(),
+        default_size,
     )
 }
 
@@ -253,8 +265,9 @@ fn rdp_file_to(
     host: &str,
     port: u16,
     working_area: Option<(u32, u32)>,
+    default_size: (u16, u16),
 ) -> String {
-    let display = display(profile, working_area);
+    let display = display(profile, working_area, default_size);
     let options = &profile.options;
     let extras = &profile.extras;
     let mut file = String::new();
@@ -579,7 +592,9 @@ pub fn start(content: &str) -> Result<Running, ExternalRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use heimdall_core::profile::{ColorDepth, Forwards, ProfileId, RdpExtras, RdpOptions};
+    use heimdall_core::profile::{
+        ColorDepth, DEFAULT_FIXED_SIZE, Forwards, ProfileId, RdpExtras, RdpOptions,
+    };
 
     use super::*;
 
@@ -643,7 +658,7 @@ mod tests {
             full_screen: true,
         };
         assert_eq!(
-            lines(&rdp_file(&profile)),
+            lines(&rdp_file(&profile, DEFAULT_FIXED_SIZE)),
             [
                 "full address:s:rds.lab:3390",
                 "username:s:admin",
@@ -688,6 +703,35 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_default_resolution_sizes_the_modes_that_ask_for_it() {
+        let size = (1280, 720);
+        for resolution in [
+            Resolution::FitWindow,
+            Resolution::SmartSizing,
+            Resolution::MultiMonitor,
+        ] {
+            let mut profile = profile();
+            profile.options.resolution = resolution;
+            let file = rdp_file_to(&profile, &profile.host, profile.port, None, size);
+            let lines = lines(&file);
+            assert!(lines.contains(&"desktopwidth:i:1280"), "{resolution:?}");
+            assert!(lines.contains(&"desktopheight:i:720"), "{resolution:?}");
+        }
+        // The automatic mode falls back to it when the working area is unknown, and takes
+        // the working area otherwise.
+        assert_eq!(auto_desktop(None, size), size);
+        assert_eq!(auto_desktop(Some((0, 0)), size), size);
+        assert_eq!(auto_desktop(Some((2560, 1400)), size), (2560, 1400));
+        // A fixed size is its own, whatever the default.
+        let mut profile = profile();
+        profile.options.resolution = Resolution::Fixed;
+        profile.options.fixed_width = 1600;
+        profile.options.fixed_height = 900;
+        let file = rdp_file_to(&profile, &profile.host, profile.port, None, size);
+        assert!(lines(&file).contains(&"desktopwidth:i:1600"));
+    }
+
+    #[test]
     fn a_new_profile_opens_windowed_at_the_default_size_on_one_monitor() {
         let mut profile = profile();
         profile.username = None;
@@ -695,7 +739,13 @@ mod tests {
         profile.options.resolution = Resolution::Auto;
         profile.extras.multi_monitor = true;
         // The working area unknown: the default size.
-        let file = rdp_file_to(&profile, &profile.host, profile.port, None);
+        let file = rdp_file_to(
+            &profile,
+            &profile.host,
+            profile.port,
+            None,
+            DEFAULT_FIXED_SIZE,
+        );
         let lines = lines(&file);
         for expected in [
             "full address:s:rds.lab:3390",
@@ -725,15 +775,16 @@ mod tests {
 
     #[test]
     fn the_automatic_size_is_the_working_area_brought_down_to_a_multiple_of_4() {
-        assert_eq!(auto_desktop(Some((2560, 1400))), (2560, 1400));
+        let area = |size| auto_desktop(Some(size), DEFAULT_FIXED_SIZE);
+        assert_eq!(area((2560, 1400)), (2560, 1400));
         assert_eq!(
-            auto_desktop(Some((1366, 738))),
+            area((1366, 738)),
             (1364, 736),
             "each side snapped down, as the C# SnapDimension"
         );
-        assert_eq!(auto_desktop(Some((3, 2))), (4, 4), "never below 4");
+        assert_eq!(area((3, 2)), (4, 4), "never below 4");
         assert_eq!(
-            auto_desktop(Some((70_000, 1000))),
+            area((70_000, 1000)),
             (u16::MAX - u16::MAX % 4, 1000),
             "held within the file's numbers"
         );
@@ -741,9 +792,13 @@ mod tests {
 
     #[test]
     fn the_automatic_size_falls_back_to_the_default_without_a_working_area() {
-        assert_eq!(auto_desktop(None), DEFAULT_FIXED_SIZE);
+        assert_eq!(auto_desktop(None, DEFAULT_FIXED_SIZE), DEFAULT_FIXED_SIZE);
         for empty in [(0, 1040), (1920, 0), (0, 0)] {
-            assert_eq!(auto_desktop(Some(empty)), DEFAULT_FIXED_SIZE, "{empty:?}");
+            assert_eq!(
+                auto_desktop(Some(empty), DEFAULT_FIXED_SIZE),
+                DEFAULT_FIXED_SIZE,
+                "{empty:?}"
+            );
         }
     }
 
@@ -752,7 +807,13 @@ mod tests {
         let mut profile = profile();
         profile.options.resolution = Resolution::Auto;
         let area = Some((2560, 1392));
-        let file = rdp_file_to(&profile, &profile.host, profile.port, area);
+        let file = rdp_file_to(
+            &profile,
+            &profile.host,
+            profile.port,
+            area,
+            DEFAULT_FIXED_SIZE,
+        );
         let said = lines(&file);
         assert!(said.contains(&"desktopwidth:i:2560"), "{said:?}");
         assert!(said.contains(&"desktopheight:i:1392"), "{said:?}");
@@ -765,7 +826,13 @@ mod tests {
             Resolution::MultiMonitor,
         ] {
             profile.options.resolution = resolution;
-            let file = rdp_file_to(&profile, &profile.host, profile.port, area);
+            let file = rdp_file_to(
+                &profile,
+                &profile.host,
+                profile.port,
+                area,
+                DEFAULT_FIXED_SIZE,
+            );
             let said = lines(&file);
             assert!(said.contains(&"desktopwidth:i:1920"), "{resolution:?}");
             assert!(said.contains(&"desktopheight:i:1080"), "{resolution:?}");
@@ -779,7 +846,7 @@ mod tests {
         profile.username = Some("ops\r\npassword 51:b:0100".to_owned());
         profile.domain = Some("LAB\n\0".to_owned());
         profile.extras.rd_gateway = Some("rdg.lab\r\ngatewaycredentialssource:i:4".to_owned());
-        let file = rdp_file(&profile);
+        let file = rdp_file(&profile, DEFAULT_FIXED_SIZE);
         let lines = lines(&file);
         assert!(
             !lines.iter().any(|line| line.starts_with("password")),
@@ -796,9 +863,13 @@ mod tests {
     fn an_ipv6_address_is_written_in_brackets() {
         let mut profile = profile();
         profile.host = "fe80::1".to_owned();
-        assert!(rdp_file(&profile).starts_with("full address:s:[fe80::1]:3390\r\n"));
+        assert!(
+            rdp_file(&profile, DEFAULT_FIXED_SIZE).starts_with("full address:s:[fe80::1]:3390\r\n")
+        );
         profile.host = "[fe80::1]".to_owned();
-        assert!(rdp_file(&profile).starts_with("full address:s:[fe80::1]:3390\r\n"));
+        assert!(
+            rdp_file(&profile, DEFAULT_FIXED_SIZE).starts_with("full address:s:[fe80::1]:3390\r\n")
+        );
     }
 
     #[test]
@@ -808,7 +879,7 @@ mod tests {
         profile.options.fixed_width = 1366;
         profile.options.fixed_height = 768;
         profile.options.dynamic_resolution = false;
-        let file = rdp_file(&profile);
+        let file = rdp_file(&profile, DEFAULT_FIXED_SIZE);
         let lines = lines(&file);
         assert!(lines.contains(&"desktopwidth:i:1364"), "a multiple of 4");
         assert!(lines.contains(&"desktopheight:i:768"));
@@ -893,14 +964,17 @@ mod tests {
         let mut profile = profile();
         profile.extras.rd_gateway = Some("rdg.lab".to_owned());
         let forward = SocketAddr::from(([127, 0, 0, 1], 50123));
-        let through = rdp_file_through(&profile, forward);
+        let through = rdp_file_through(&profile, forward, DEFAULT_FIXED_SIZE);
         assert!(
             through.starts_with("full address:s:127.0.0.1:50123\r\n"),
             "{through}"
         );
         assert!(!through.contains("rds.lab"), "{through}");
         // Every other line as the file the server's own address opens with.
-        assert_eq!(lines(&through)[1..], lines(&rdp_file(&profile))[1..]);
+        assert_eq!(
+            lines(&through)[1..],
+            lines(&rdp_file(&profile, DEFAULT_FIXED_SIZE))[1..]
+        );
         assert!(through.contains("\r\ngatewayhostname:s:rdg.lab\r\n"));
     }
 }

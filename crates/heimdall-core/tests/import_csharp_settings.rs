@@ -425,6 +425,8 @@ const EVERY_PREFERENCE: &[(&str, &str)] = &[
     ("RdpDefaultCompression", "false"),
     ("RdpDefaultHardwareAcceleration", "true"),
     ("RdpDefaultAutoReconnect", "false"),
+    ("DefaultResolutionWidth", "1280"),
+    ("DefaultResolutionHeight", "720"),
     ("RdpResolutionPresets", r#"["1280x720"]"#),
     ("MaxEmbeddedSessions", "4"),
     ("SftpBrowserEnabled", "false"),

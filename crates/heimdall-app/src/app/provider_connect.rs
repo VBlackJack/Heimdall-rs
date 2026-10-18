@@ -112,7 +112,8 @@ impl App {
     /// server's password, for the properties panel to say so as the C# `BuildAuthSummary`
     /// adds "Credential provider" with the predicate its connect path uses: the provider on
     /// and ready, as [`Self::provider_request`] wants it, and a protocol whose password it
-    /// answers there: SSH and SFTP, RDP unless it signs in over TLS alone, FTP and VNC.
+    /// answers there: SSH and SFTP, RDP unless it signs in over TLS alone, FTP, VNC and `WinRM`
+    /// naming an account.
     #[must_use]
     pub fn provider_consulted(&self, id: &ProfileId) -> bool {
         let settings = &self.settings.credential_provider;
@@ -133,9 +134,13 @@ impl App {
                 .rdp_profiles()
                 .iter()
                 .any(|rdp| rdp.id == *id && !rdp.allow_tls_only),
+            // Only a profile naming an account has a password to give.
+            ProfileKind::WinRm => self
+                .winrm_profiles()
+                .iter()
+                .any(|winrm| winrm.id == *id && winrm.username.is_some()),
             ProfileKind::Telnet
             | ProfileKind::Local
-            | ProfileKind::WinRm
             | ProfileKind::Web
             | ProfileKind::Tool
             | ProfileKind::Citrix => false,
