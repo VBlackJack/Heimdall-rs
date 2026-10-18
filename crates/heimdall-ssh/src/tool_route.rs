@@ -40,11 +40,11 @@ use std::future::Future;
 use std::io;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use heimdall_core::profile::SshProfile;
-use tokio::io::{AsyncRead, AsyncWrite, copy_bidirectional};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, copy, split};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -63,6 +63,11 @@ use crate::socks::Opener;
 /// Channels one gateway carries at once for a tool: the C# scans through a gateway ten ports
 /// at a time (`PortScanService`), and so does this.
 pub const MAX_CHANNELS_PER_GATEWAY: usize = 10;
+
+/// How long a channel is still read once the tool has stopped sending (its stream dropped or
+/// shut down for writing): the reply of a server that answers after a half-close gets this
+/// long, and a server that never closes is let go after it, freeing the channel's place.
+const HALF_CLOSE_GRACE: Duration = Duration::from_secs(2);
 
 /// What is said when the socket pair of a channel was not the one made for it.
 const FOREIGN_PEER: &str = "the local end of a gateway channel was taken by another program";
@@ -99,6 +104,27 @@ impl<O: Opener> ToolGateway<O> {
         Self {
             opener: Arc::new(opener),
             permits: Arc::new(Semaphore::new(limit.max(1))),
+        }
+    }
+
+    /// As [`ToolGateway::over`], the places counted with every other route of the same `key`
+    /// in this process: two tools running at once through one gateway share its limit, as the
+    /// gateway's own limit on sessions is shared.
+    #[must_use]
+    pub fn over_shared(opener: O, key: &str, limit: usize) -> Self {
+        static REGISTRY: OnceLock<Mutex<HashMap<String, Arc<Semaphore>>>> = OnceLock::new();
+        let mut registry = REGISTRY
+            .get_or_init(Mutex::default)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let permits = Arc::clone(
+            registry
+                .entry(key.to_owned())
+                .or_insert_with(|| Arc::new(Semaphore::new(limit.max(1)))),
+        );
+        Self {
+            opener: Arc::new(opener),
+            permits,
         }
     }
 
@@ -182,10 +208,37 @@ where
     drop(listener);
     tokio::spawn(async move {
         let _held = permit;
-        let (mut channel, mut accepted) = (channel, accepted);
-        let _ = copy_bidirectional(&mut channel, &mut accepted).await;
+        relay(channel, accepted).await;
     });
     Ok(client)
+}
+
+/// Carries bytes between the channel and the tool's end until the tool is done with it: once
+/// the tool's end stops sending (dropped, closed, or shut down for writing) the channel is
+/// read for [`HALF_CLOSE_GRACE`] more and then let go, whether or not the server closed it.
+/// Without this a server that never sends EOF would keep the channel, and its place, for as
+/// long as the process lives. Returning drops, and so closes, both ends.
+async fn relay<S>(channel: S, local: TcpStream)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut from_channel, mut to_channel) = split(channel);
+    let (mut from_local, mut to_local) = local.into_split();
+    let up = async {
+        let _ = copy(&mut from_local, &mut to_channel).await;
+        let _ = to_channel.shutdown().await;
+    };
+    let down = async {
+        let _ = copy(&mut from_channel, &mut to_local).await;
+        let _ = to_local.shutdown().await;
+    };
+    tokio::pin!(up, down);
+    tokio::select! {
+        () = &mut down => {}
+        () = &mut up => {
+            let _ = tokio::time::timeout(HALF_CLOSE_GRACE, &mut down).await;
+        }
+    }
 }
 
 /// Opens the gateway at the end of `hops`, nearest first, each signed in to with its
@@ -209,7 +262,24 @@ pub async fn open(
     };
     let prompter = Arc::new(Given::of(hops, secrets));
     let connection = establish_via(before, last, options, prompter, cancel).await?;
-    Ok(ToolGateway::over(connection, MAX_CHANNELS_PER_GATEWAY))
+    // The places are counted per route, across the tools running at once.
+    let key = hops
+        .iter()
+        .map(|hop| {
+            format!(
+                "{}:{}:{}",
+                hop.host,
+                hop.port,
+                hop.username.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(">");
+    Ok(ToolGateway::over_shared(
+        connection,
+        &key,
+        MAX_CHANNELS_PER_GATEWAY,
+    ))
 }
 
 /// The key a password is given for: the account of a hop at its endpoint, never an address
@@ -284,7 +354,7 @@ mod tests {
     use std::time::Duration;
 
     use heimdall_core::profile::{ProfileId, SshGateway};
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream, duplex};
+    use tokio::io::{AsyncReadExt as _, DuplexStream, duplex};
 
     use super::*;
 
@@ -391,6 +461,66 @@ mod tests {
         assert!(
             fake.most.load(Ordering::SeqCst) <= 3,
             "three at once at most, saw {}",
+            fake.most.load(Ordering::SeqCst)
+        );
+    }
+
+    /// A gateway whose server never closes what it is sent.
+    struct Silent;
+
+    impl Opener for Silent {
+        type Stream = DuplexStream;
+
+        async fn open(&self, _host: String, _port: u16) -> Result<DuplexStream, ConnectError> {
+            tokio::task::yield_now().await;
+            let (ours, theirs) = duplex(1024);
+            // The far end stays open and silent for the whole test.
+            tokio::spawn(async move {
+                let _theirs = theirs;
+                std::future::pending::<()>().await;
+            });
+            Ok(ours)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_that_never_closes_does_not_keep_the_place_of_a_dropped_probe() {
+        let gateway = ToolGateway::over(Silent, 1);
+        let stream = gateway.dial("host", 80).await.expect("channel");
+        assert_eq!(gateway.free_channels(), 0);
+        drop(stream);
+        let freed = tokio::time::timeout(Duration::from_secs(10), gateway.dial("host", 81)).await;
+        assert!(freed.is_ok(), "the place came back");
+    }
+
+    #[tokio::test]
+    async fn two_routes_to_one_gateway_share_its_places() {
+        let key = "test-shared-gateway:22:ops";
+        let fake = Arc::new(Fake::new(false));
+        let first = Arc::new(ToolGateway::over_shared(Arc::clone(&fake), key, 3));
+        let second = Arc::new(ToolGateway::over_shared(Arc::clone(&fake), key, 3));
+        let mut tasks = Vec::new();
+        for index in 0..12 {
+            let gateway = if index % 2 == 0 {
+                Arc::clone(&first)
+            } else {
+                Arc::clone(&second)
+            };
+            tasks.push(tokio::spawn(async move {
+                let mut stream = gateway.dial("host", 80).await.expect("channel");
+                stream.write_all(b"x").await.expect("write");
+                let mut one = [0_u8; 1];
+                stream.read_exact(&mut one).await.expect("read");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }));
+        }
+        for task in tasks {
+            task.await.expect("task");
+        }
+        assert_eq!(fake.opened.load(Ordering::SeqCst), 12);
+        assert!(
+            fake.most.load(Ordering::SeqCst) <= 3,
+            "three at once across both, saw {}",
             fake.most.load(Ordering::SeqCst)
         );
     }
