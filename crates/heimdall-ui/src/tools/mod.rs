@@ -1114,6 +1114,11 @@ impl ToolPanes {
             match self.panes.get_mut(&tab).map(|state| &mut state.pane) {
                 Some(Pane::Hosts(pane)) => tasks.push(pane.open(tab)),
                 Some(Pane::NetMap(pane)) => tasks.push(pane.open(tab)),
+                // The C# `Initialize` of each runs its `RefreshCommand`.
+                Some(Pane::OpenPorts(pane)) => tasks.push(pane.open(tab)),
+                Some(Pane::NetIf(pane)) => tasks.push(pane.open(tab)),
+                Some(Pane::Routes(pane)) => tasks.push(pane.open(tab)),
+                Some(Pane::Services(pane)) => tasks.push(pane.open(tab)),
                 _ => {}
             }
         }
