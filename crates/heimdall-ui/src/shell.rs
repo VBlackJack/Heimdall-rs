@@ -7617,13 +7617,18 @@ impl Shell {
                     divider,
                     ratio,
                 })
-                .on_reset(move |_| Message::App(AppMessage::Split(SplitMessage::ResetRatio(host))))
+                .on_reset(move |divider| {
+                    Message::App(AppMessage::Split(SplitMessage::ResetRatio {
+                        host,
+                        divider,
+                    }))
+                })
                 .into(),
         )
     }
 
-    /// A divider dragged: drawn where it is held, then kept once let go. The application
-    /// keeps the share of a tab's outer split, the one divider of two panes.
+    /// A divider dragged: drawn where it is held, then kept once let go, whichever divider
+    /// of the tab's tree it is.
     fn split_drag_message(&mut self, message: &Message) -> Vec<Effect> {
         match *message {
             Message::SplitDragged {
@@ -7640,12 +7645,11 @@ impl Shell {
                 ratio,
             } => {
                 self.split_drag = None;
-                if divider == split_view::OUTER_DIVIDER {
-                    self.app
-                        .update(AppMessage::Split(SplitMessage::Resize { host, ratio }))
-                } else {
-                    Vec::new()
-                }
+                self.app.update(AppMessage::Split(SplitMessage::Resize {
+                    host,
+                    divider,
+                    ratio,
+                }))
             }
             _ => Vec::new(),
         }

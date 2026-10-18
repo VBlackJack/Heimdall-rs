@@ -5717,3 +5717,34 @@ ui-tool-route-refused = This tool needs ICMP, ARP, raw sockets or UDP, which an 
 ui-tool-route-unavailable = The gateway chosen is no longer available. Choose it again, or choose Direct.
 ui-tool-route-error-untrusted = The host key of the gateway { $host }:{ $port } is not trusted yet. Connect to it once from a session to trust its key, then try again.
 ui-tool-route-error-gateway = Gateway: { $detail }
+# Network cartography: what the read-only probes learn of a host (columns of the CSV export, then the line shown under the host).
+ui-tool-netmap-col-os = Operating System
+ui-tool-netmap-col-os-confidence = OS Confidence
+ui-tool-netmap-col-netbios-name = NetBIOS Name
+ui-tool-netmap-col-netbios-domain = NetBIOS Domain
+ui-tool-netmap-col-snmp-descr = SNMP Description
+ui-tool-netmap-col-snmp-name = SNMP Name
+ui-tool-netmap-col-snmp-location = SNMP Location
+ui-tool-netmap-col-ntlm-dns-name = Windows DNS Name
+ui-tool-netmap-col-os-build = Windows Build
+ui-tool-netmap-col-smb-dialect = SMB Dialect
+ui-tool-netmap-col-smb-signing = SMB Signing Required
+ui-tool-netmap-col-ssh-banner = SSH Banner
+ui-tool-netmap-col-ssh-hassh = SSH HASSH
+ui-tool-netmap-col-tls-subject = TLS Certificate Subject
+ui-tool-netmap-fp-os = System: { $os } ({ $confidence }%)
+ui-tool-netmap-fp-netbios = NetBIOS: { $name }
+ui-tool-netmap-fp-netbios-domain = NetBIOS: { $domain }\{ $name }
+ui-tool-netmap-fp-workgroup = NetBIOS domain: { $domain }
+ui-tool-netmap-fp-snmp = SNMP: { $descr }
+ui-tool-netmap-fp-snmp-name = SNMP name: { $name }
+ui-tool-netmap-fp-windows = Windows name: { $name }
+ui-tool-netmap-fp-build = Windows build: { $build }
+ui-tool-netmap-fp-smb =
+    SMB { $dialect }, { $required ->
+        [yes] signing required
+       *[no] signing not required
+    }
+ui-tool-netmap-fp-ssh = SSH: { $banner }
+ui-tool-netmap-fp-hassh = HASSH: { $hash }
+ui-tool-netmap-fp-tls = TLS: { $subject }
