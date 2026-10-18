@@ -181,6 +181,15 @@ fn the_search_finds_rows_by_name_hint_heading_or_choice_on_every_tab_whatever_th
         "beside the watchdog"
     );
     assert_eq!(
+        shell.settings_found("default resolution width"),
+        [SettingRow::RdpDefaultWidth],
+        "the C# default resolution, used by Remote Desktop Connection"
+    );
+    assert_eq!(
+        SettingRow::RdpDefaultHeight.card(),
+        SettingsCard::RdpSession,
+    );
+    assert_eq!(
         shell.settings_found("session keep-alive"),
         [SettingRow::RdpKeepAlive],
         "the C# RDP Behavior card's keep-alive"
@@ -1047,7 +1056,7 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     // built-in client's compression, the properties panel's box, the SSH reconnect waits,
     // the RDP disconnect confirmation and redirection indicators, hold no path; the external
     // tools' card holds the Browse buttons of the tool chosen, which its own tests cover.
-    assert_eq!(SettingRow::ALL.len(), 72, "no row added");
+    assert_eq!(SettingRow::ALL.len(), 74, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(

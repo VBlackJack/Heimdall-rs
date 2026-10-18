@@ -192,6 +192,7 @@ async fn mstsc_port(lab: &Lab, dir: &Path, profile: RdpProfile) -> (u16, Launch)
         profile,
         ssh: options(dir, lab),
         cancel: CancellationToken::new(),
+        default_size: heimdall_core::profile::DEFAULT_FIXED_SIZE,
     };
     let (hand, handed) = std_mpsc::channel::<String>();
     let start = move |content: &str| -> Result<MstscRunning, ExternalRefusal> {

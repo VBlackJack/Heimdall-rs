@@ -110,6 +110,7 @@ fn request(
         profile,
         ssh: options,
         cancel,
+        default_size: heimdall_core::profile::DEFAULT_FIXED_SIZE,
     }
 }
 

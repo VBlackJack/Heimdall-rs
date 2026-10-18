@@ -595,6 +595,12 @@ pub struct Settings {
     /// `RdpKeepAliveIntervalMs`: within [`RDP_KEEP_ALIVE_INTERVAL_MIN_MS`] and
     /// [`RDP_KEEP_ALIVE_INTERVAL_MAX_MS`].
     pub rdp_keep_alive_interval_ms: u32,
+    /// Width of the desktop Remote Desktop Connection opens at when a profile asks for the
+    /// default resolution, as the C# `DefaultResolutionWidth`: within
+    /// [`RDP_DEFAULT_RESOLUTION_MIN`] and [`RDP_DEFAULT_RESOLUTION_MAX`].
+    pub rdp_default_width: u32,
+    /// Height of that desktop, as the C# `DefaultResolutionHeight`, within the same range.
+    pub rdp_default_height: u32,
     /// An embedded RDP session opens only while Credential Guard runs on this computer, as
     /// the C# `RequireCredentialGuard`: off unless chosen. Remote Desktop Connection's own
     /// window is not concerned.
@@ -1117,6 +1123,21 @@ pub const RDP_KEEP_ALIVE_INTERVAL_MIN_MS: u32 = 5_000;
 /// Most milliseconds between two RDP keep-alives accepted, as the C# range's.
 pub const RDP_KEEP_ALIVE_INTERVAL_MAX_MS: u32 = 300_000;
 
+/// Width of the default resolution by default, as the C# `DefaultResolutionWidth`.
+pub const RDP_DEFAULT_WIDTH_DEFAULT: u32 = 1920;
+/// Height of the default resolution by default, as the C# `DefaultResolutionHeight`.
+pub const RDP_DEFAULT_HEIGHT_DEFAULT: u32 = 1080;
+/// Smallest side of the default resolution accepted, as the C# `MinimumSessionResolution`.
+pub const RDP_DEFAULT_RESOLUTION_MIN: u32 = 640;
+/// Largest side of the default resolution accepted, as the C# `MaximumSessionResolution`.
+pub const RDP_DEFAULT_RESOLUTION_MAX: u32 = 7680;
+
+/// Whether `side` is a side of the default resolution the settings accept.
+#[must_use]
+pub fn rdp_default_resolution_accepted(side: u32) -> bool {
+    (RDP_DEFAULT_RESOLUTION_MIN..=RDP_DEFAULT_RESOLUTION_MAX).contains(&side)
+}
+
 /// Whether `ms` is an RDP keep-alive interval the settings accept.
 #[must_use]
 pub fn rdp_keep_alive_interval_accepted(ms: u32) -> bool {
@@ -1282,6 +1303,8 @@ impl Default for Settings {
             rdp_connect_timeout: RDP_CONNECT_TIMEOUT_DEFAULT,
             rdp_resize_enable_delay_ms: RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
             rdp_keep_alive_interval_ms: RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
+            rdp_default_width: RDP_DEFAULT_WIDTH_DEFAULT,
+            rdp_default_height: RDP_DEFAULT_HEIGHT_DEFAULT,
             require_credential_guard: false,
             builtin_rdp_compression: false,
             rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
@@ -1519,6 +1542,12 @@ struct RdpSessionSection {
     /// Milliseconds.
     #[serde(default)]
     keep_alive_interval_ms: Option<u32>,
+    /// Pixels; absent is the C# default.
+    #[serde(default)]
+    default_width: Option<u32>,
+    /// Pixels; absent is the C# default.
+    #[serde(default)]
+    default_height: Option<u32>,
     /// One `WIDTHxHEIGHT` per preset.
     #[serde(default)]
     resolution_presets: Option<Vec<String>>,
@@ -1547,6 +1576,8 @@ impl RdpSessionSection {
             connect_timeout: Some(settings.rdp_connect_timeout),
             resize_enable_delay_ms: Some(settings.rdp_resize_enable_delay_ms),
             keep_alive_interval_ms: Some(settings.rdp_keep_alive_interval_ms),
+            default_width: Some(settings.rdp_default_width),
+            default_height: Some(settings.rdp_default_height),
             resolution_presets: Some(
                 settings
                     .rdp_resolution_presets
@@ -1862,6 +1893,16 @@ impl Settings {
         }
     }
 
+    /// The default resolution as a size, each side within the accepted range.
+    #[must_use]
+    pub fn rdp_default_size(&self) -> (u16, u16) {
+        let side = |side: u32| {
+            u16::try_from(side.clamp(RDP_DEFAULT_RESOLUTION_MIN, RDP_DEFAULT_RESOLUTION_MAX))
+                .unwrap_or(u16::MAX)
+        };
+        (side(self.rdp_default_width), side(self.rdp_default_height))
+    }
+
     /// Whether `presets` can be the Resolution menus' presets: each within the limits.
     #[must_use]
     pub fn resolution_presets_accepted(presets: &[(u16, u16)]) -> bool {
@@ -1879,6 +1920,8 @@ impl Settings {
         self.rdp_connect_timeout = defaults.rdp_connect_timeout;
         self.rdp_resize_enable_delay_ms = defaults.rdp_resize_enable_delay_ms;
         self.rdp_keep_alive_interval_ms = defaults.rdp_keep_alive_interval_ms;
+        self.rdp_default_width = defaults.rdp_default_width;
+        self.rdp_default_height = defaults.rdp_default_height;
         self.builtin_rdp_compression = defaults.builtin_rdp_compression;
         self.rdp_confirm_disconnect = defaults.rdp_confirm_disconnect;
         self.rdp_redirection_indicators_expanded = defaults.rdp_redirection_indicators_expanded;
@@ -2053,6 +2096,16 @@ impl Settings {
                 file.rdp_session.resize_enable_delay_ms,
                 rdp_resize_enable_delay_accepted,
                 RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
+            ),
+            rdp_default_width: within(
+                file.rdp_session.default_width,
+                rdp_default_resolution_accepted,
+                RDP_DEFAULT_WIDTH_DEFAULT,
+            ),
+            rdp_default_height: within(
+                file.rdp_session.default_height,
+                rdp_default_resolution_accepted,
+                RDP_DEFAULT_HEIGHT_DEFAULT,
             ),
             rdp_keep_alive_interval_ms: within(
                 file.rdp_session.keep_alive_interval_ms,

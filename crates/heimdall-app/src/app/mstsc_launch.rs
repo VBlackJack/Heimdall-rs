@@ -78,7 +78,7 @@ impl App {
             gateway: gateway
                 .filter(|_| !profile.extras.external)
                 .map(str::to_owned),
-            content: rdp_external::rdp_file(profile),
+            content: rdp_external::rdp_file(profile, self.settings.rdp_default_size()),
         }])
     }
 
@@ -134,6 +134,7 @@ impl App {
             profile: profile.clone(),
             ssh: self.ssh_options(),
             cancel: cancel.clone(),
+            default_size: self.settings.rdp_default_size(),
         };
         self.mstsc_routes.runs.push(MstscRoute {
             id,

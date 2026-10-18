@@ -23,10 +23,11 @@ use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
     auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
-    rdp_connect_timeout_accepted, rdp_keep_alive_interval_accepted,
-    rdp_resize_enable_delay_accepted, reachability_interval_accepted, reachability_probes_accepted,
-    reachability_timeout_accepted, reconnect_delay_accepted, session_log_retention_days_accepted,
-    settings_path, ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
+    rdp_connect_timeout_accepted, rdp_default_resolution_accepted,
+    rdp_keep_alive_interval_accepted, rdp_resize_enable_delay_accepted,
+    reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
+    reconnect_delay_accepted, session_log_retention_days_accepted, settings_path,
+    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
     update_interval_accepted, windows_hello_grace_minutes_accepted,
     windows_hello_vault_max_days_accepted,
@@ -102,6 +103,10 @@ pub enum SettingsMessage {
     /// Milliseconds between two keep-alives of an embedded RDP connection; one out of the
     /// accepted range is ignored.
     RdpKeepAliveInterval(u32),
+    /// Pixels of the default resolution's width; one out of the accepted range is ignored.
+    RdpDefaultWidth(u32),
+    /// Pixels of the default resolution's height; one out of the accepted range is ignored.
+    RdpDefaultHeight(u32),
     /// The built-in RDP client offers bulk compression when the profile asks for it, or
     /// never.
     RdpBuiltinCompression(bool),
@@ -359,6 +364,14 @@ impl App {
             SettingsMessage::RdpResizeEnableDelay(ms) if rdp_resize_enable_delay_accepted(ms) => {
                 self.settings.rdp_resize_enable_delay_ms = ms;
             }
+            SettingsMessage::RdpDefaultWidth(width) if rdp_default_resolution_accepted(width) => {
+                self.settings.rdp_default_width = width;
+            }
+            SettingsMessage::RdpDefaultHeight(height)
+                if rdp_default_resolution_accepted(height) =>
+            {
+                self.settings.rdp_default_height = height;
+            }
             SettingsMessage::RdpKeepAliveInterval(ms) if rdp_keep_alive_interval_accepted(ms) => {
                 self.settings.rdp_keep_alive_interval_ms = ms;
             }
@@ -541,6 +554,8 @@ impl App {
             message @ (SettingsMessage::RdpConnectTimeout(_)
             | SettingsMessage::RdpResizeEnableDelay(_)
             | SettingsMessage::RdpKeepAliveInterval(_)
+            | SettingsMessage::RdpDefaultWidth(_)
+            | SettingsMessage::RdpDefaultHeight(_)
             | SettingsMessage::RdpAutoReconnectAttempts(_)
             | SettingsMessage::MaxSessions(_)
             | SettingsMessage::SessionLogRetentionDays(_)
