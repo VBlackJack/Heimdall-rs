@@ -17,7 +17,8 @@
 //! Tunnels the user opens by hand, as the C# "New tunnel" dialog: a port of this computer's
 //! loopback address whose connections go, through a saved SSH gateway, to one host and port
 //! (`ssh -L`). A tunnel lasts until it is closed, its gateway goes, or the application quits:
-//! it is not saved.
+//! it is not saved. A web console reached through a gateway opens one too, on a port the
+//! system picks, and the browser is pointed at it once it listens.
 
 use std::net::SocketAddr;
 use std::time::SystemTime;
@@ -36,6 +37,9 @@ pub const LOCAL_PORT_MIN: u16 = 1024;
 pub const DEFAULT_REMOTE_PORT: u16 = 22;
 /// The local port a new tunnel starts with, as the C# dialog.
 pub const DEFAULT_LOCAL_PORT: u16 = 9090;
+/// The local port a web console's tunnel asks for: none, the system picks a free one, so
+/// that a console never fails for a port another program holds.
+pub const SYSTEM_PICKED_PORT: u16 = 0;
 
 /// A tunnel, from its opening to its end; never given to another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -117,6 +121,24 @@ pub struct TunnelSpec {
     pub local_port: u16,
     /// What the user called it, if anything.
     pub label: Option<String>,
+    /// The web console it was opened for, pointed at in the browser once it listens; `None`
+    /// for a tunnel of the "New tunnel" dialog.
+    pub browse: Option<TunnelBrowse>,
+}
+
+/// A web console a tunnel carries: what the browser opens on the tunnel's own address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TunnelBrowse {
+    /// The profile's name, as the status bar says it.
+    pub name: String,
+    /// Plain HTTP rather than HTTPS.
+    pub use_http: bool,
+    /// The path, query and fragment it opens, as the profile has it.
+    pub path: Option<String>,
+    /// The loopback address its tunnel listens on, the console's own: the browser scopes
+    /// cookies and saved sign-ins by host, not port, so two consoles on `127.0.0.1` would
+    /// share theirs.
+    pub loopback: std::net::Ipv4Addr,
 }
 
 impl TunnelForm {
@@ -169,6 +191,7 @@ impl TunnelForm {
             remote_port,
             local_port,
             label: (!label.is_empty()).then(|| label.to_owned()),
+            browse: None,
         })
     }
 }
@@ -296,6 +319,7 @@ mod tests {
                 remote_port: 22,
                 local_port: 9090,
                 label: None,
+                browse: None,
             })
         );
         form.set(TunnelField::Label, " wiki ".to_owned());

@@ -258,7 +258,10 @@ pub fn auth_parts(
                 parts.push(AuthPart::Password);
             }
         }
-        ProfileKind::Telnet | ProfileKind::Local | ProfileKind::Citrix => return None,
+        // A web console signs in inside the browser: nothing here to describe.
+        ProfileKind::Telnet | ProfileKind::Local | ProfileKind::Citrix | ProfileKind::Web => {
+            return None;
+        }
     }
     // Asked only for a password not saved, as the C# `GetCredentialTarget` and the connect
     // path, which answers from the saved one first.

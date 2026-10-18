@@ -258,6 +258,8 @@ pub enum RefusalKind {
     RdGateway,
     /// A Citrix application, launched by the Citrix Workspace client.
     Citrix,
+    /// A web console, opened in the system's browser.
+    WebConsole,
     /// A `WinRM` profile logging in as the account running Heimdall, or without an
     /// account: only a stored account and password are used unattended.
     WinRmNoAccount,
@@ -294,6 +296,8 @@ pub enum Target<'a> {
     Ftp,
     /// A Citrix profile.
     Citrix,
+    /// A web console, opened in the system's browser.
+    Web,
     /// A local shell or program profile.
     Local,
 }
@@ -306,6 +310,8 @@ pub fn refusal(target: Target<'_>, files_browser: bool) -> Option<RefusalKind> {
     match target {
         Target::Local => Some(RefusalKind::LocalProgram),
         Target::Citrix => Some(RefusalKind::Citrix),
+        // The system's browser is a program of this computer, as an external client is.
+        Target::Web => Some(RefusalKind::WebConsole),
         Target::Ssh(profile) if profile.sftp => {
             (!files_browser).then_some(RefusalKind::FilesBrowserOff)
         }

@@ -2183,3 +2183,98 @@ fn settings_without_scheduled_connections_carry_none_over() {
         assert!(report.scheduled.is_empty(), "{settings}");
     }
 }
+
+#[test]
+fn a_web_console_is_imported_with_its_address_account_and_gateway_never_its_password() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+    use heimdall_core::profile::WebProfile;
+    let report = import(
+        &servers(
+            r#"{"id": "ilo", "displayName": "iLO", "remoteServer": " ilo.lab ", "connectionType": "WEB",
+                "group": "Lab/BMC", "webPort": 8443, "webPath": " /html/login.html ",
+                "webUsername": "admin", "webPasswordEncrypted": "AQAAANCMnd8BFdERjHoAwE",
+                "sshGatewayId": "bastion"},
+               {"id": "nas", "remoteServer": "fd00::20", "connectionType": "web",
+                "webUseHttp": true, "webPort": 0, "useDirectConnection": true,
+                "sshGatewayId": "bastion"},
+               {"id": "old", "displayName": "Old iLO", "remoteServer": "old.lab",
+                "connectionType": "WEB", "webOpenExternally": true,
+                "webExternalProgram": "C:\\Legacy\\iexplore.exe", "webExternalArguments": "{Url}"},
+               {"id": "plain", "remoteServer": "switch.lab", "connectionType": "WEB",
+                "webOpenExternally": true, "webExternalProgram": "  "}"#,
+        ),
+        None,
+    )
+    .expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert_eq!(
+        report.web[0],
+        WebProfile {
+            id: ProfileId::new("ilo"),
+            name: "iLO".to_owned(),
+            group: Some("Lab/BMC".to_owned()),
+            host: "ilo.lab".to_owned(),
+            port: 8443,
+            use_http: false,
+            path: Some("/html/login.html".to_owned()),
+            username: Some("admin".to_owned()),
+            gateway: Some(ProfileId::new("bastion")),
+        }
+    );
+    let nas = &report.web[1];
+    assert_eq!(
+        (
+            nas.name.as_str(),
+            nas.port,
+            nas.use_http,
+            nas.gateway.as_ref()
+        ),
+        ("fd00::20", 80, true, None),
+        "named after its host, 0 the scheme's port, marked direct"
+    );
+    assert_eq!(report.web[2].port, 443, "absent is the C# HTTPS default");
+    assert_eq!(
+        report.dropped,
+        [DroppedSettings {
+            name: "Old iLO".to_owned(),
+            settings: vec![Dropped::WebExternalProgram],
+        }],
+        "an empty program is the default browser, which opens it here too"
+    );
+    assert_eq!(report.web.len(), 4);
+    assert!(report.profiles.is_empty(), "never taken for SSH");
+}
+
+#[test]
+fn a_web_console_takes_its_folder_s_gateway_as_the_csharp_routes_it() {
+    let json = servers(
+        r#"{"id": "idrac", "remoteServer": "idrac.lab", "connectionType": "WEB", "group": "DC"}"#,
+    );
+    let defaults = settings(r#""DC": {"sshGatewayId": "bastion"}"#);
+    let report = import(&json, Some(&defaults)).expect("valid JSON");
+    assert_eq!(report.web.len(), 1);
+    assert_eq!(report.web[0].gateway, Some(ProfileId::new("bastion")));
+}
+
+#[test]
+fn a_web_console_without_a_host_or_with_a_port_too_large_is_left_out() {
+    let report = import(
+        &servers(
+            r#"{"id": "nohost", "remoteServer": " ", "connectionType": "WEB"},
+               {"id": "big", "remoteServer": "ilo.lab", "connectionType": "WEB", "webPort": 70000},
+               {"id": "", "remoteServer": "ilo.lab", "connectionType": "WEB"}"#,
+        ),
+        None,
+    )
+    .expect("valid JSON");
+    assert!(report.web.is_empty());
+    let reasons: Vec<SkipReason> = report.skipped.into_iter().map(|s| s.reason).collect();
+    assert_eq!(
+        reasons,
+        [
+            SkipReason::MissingHost,
+            SkipReason::InvalidPort(70000),
+            SkipReason::MissingId
+        ]
+    );
+}

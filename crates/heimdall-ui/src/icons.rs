@@ -70,6 +70,8 @@ pub enum Icon {
     Vnc,
     /// `Geo.Protocol.Telnet`: a rounded terminal.
     Telnet,
+    /// `Geo.Protocol.Web`: a globe.
+    Web,
     /// `Geo.Protocol.Ftp`: a folder with arrows.
     Ftp,
     /// `Geo.Protocol.Citrix`: a window with a cloud.
@@ -258,13 +260,14 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 97] = [
+    pub const ALL: [Self; 98] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
         Self::Sftp,
         Self::Vnc,
         Self::Telnet,
+        Self::Web,
         Self::Ftp,
         Self::Citrix,
         Self::LocalShell,
@@ -370,6 +373,7 @@ impl Icon {
             ProfileKind::Telnet => Self::Telnet,
             ProfileKind::Ftp => Self::Ftp,
             ProfileKind::Citrix => Self::Citrix,
+            ProfileKind::Web => Self::Web,
             ProfileKind::Local => Self::LocalShell,
         }
     }
@@ -402,6 +406,14 @@ impl Icon {
                  A1,1 0 0 0 14,1 Z M3,3 L13,3 L13,11 L3,11 Z M5,6 L7.5,7.5 L5,9 M8,9 L11,9"
             }
             Self::Ftp => "M1,3 L6,3 L7,5 L15,5 L15,14 L1,14 Z M6,7 L8,9 L10,7 M6,12 L8,10 L10,12",
+            // Non-zero, as the C# geometry says: the ring's hole is its inner circle drawn
+            // the other way round.
+            Self::Web => {
+                "F1 M8,1 A7,7 0 1 1 7.99,1 Z M8,2.5 A5.5,5.5 0 1 0 8.01,2.5 Z M7.4,2.5 \
+                 L8.6,2.5 L8.6,13.5 L7.4,13.5 Z M2.5,7.4 L13.5,7.4 L13.5,8.6 L2.5,8.6 Z \
+                 M5.2,3.6 C4.2,5.4 4.2,10.6 5.2,12.4 L6.2,12 C5.4,10.4 5.4,5.6 6.2,4 Z \
+                 M10.8,3.6 C11.8,5.4 11.8,10.6 10.8,12.4 L9.8,12 C10.6,10.4 10.6,5.6 9.8,4 Z"
+            }
             Self::Citrix => {
                 "M1,2 L15,2 L15,14 L1,14 Z M1,4 L15,4 M5,11 A2,2 0 0 1 5,7 \
                  A2.5,2.5 0 0 1 10,6.5 A2,2 0 0 1 13,8 A1.5,1.5 0 0 1 12,11 Z"
@@ -858,7 +870,7 @@ impl Tint {
 
 /// The colour of `kind` in `theme`, as the C# `HeimdallThemeBridge.xaml` gives each
 /// `Protocol*Brush`: RDP and FTP blue, SSH green, `WinRM` and Citrix purple, SFTP orange, VNC
-/// cyan, Telnet the comment colour, Local the accent.
+/// cyan, Telnet the comment colour, Web pink, Local the accent.
 #[must_use]
 pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
     let colors = crate::themes::colors_of(theme);
@@ -869,6 +881,7 @@ pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
         ProfileKind::Sftp => colors.orange,
         ProfileKind::Vnc => colors.cyan,
         ProfileKind::Telnet => colors.comment,
+        ProfileKind::Web => colors.pink,
         ProfileKind::Local => theme.palette().primary,
     }
 }
@@ -1539,7 +1552,16 @@ mod tests {
                         && bounds.y + bounds.height <= BOX + 0.01),
                 "{icon:?}: {bounds:?}"
             );
-            assert_eq!(outline.rule, Rule::EvenOdd, "{icon:?}: WPF's default");
+            // The globe alone says non-zero, as its C# geometry does.
+            let rule = if icon == Icon::Web {
+                Rule::NonZero
+            } else {
+                Rule::EvenOdd
+            };
+            assert_eq!(
+                outline.rule, rule,
+                "{icon:?}: WPF's default, or the C# one's"
+            );
         }
     }
 
@@ -1697,6 +1719,7 @@ mod tests {
             (ProfileKind::Sftp, colors.orange),
             (ProfileKind::Vnc, colors.cyan),
             (ProfileKind::Telnet, colors.comment),
+            (ProfileKind::Web, colors.pink),
             (ProfileKind::Local, colors.blue),
         ] {
             assert_eq!(protocol_color(&theme, kind), expected, "{kind:?}");

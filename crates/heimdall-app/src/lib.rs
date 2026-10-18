@@ -86,6 +86,7 @@ pub mod update_check;
 pub mod vault_hello;
 pub mod vnc_driver;
 pub mod wake_on_lan;
+pub mod web_console;
 pub mod windows_hello;
 pub mod winrm_driver;
 pub mod winrm_preflight;

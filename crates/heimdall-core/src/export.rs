@@ -30,7 +30,7 @@ use crate::profile::{
     Aspect, AudioPlayback, CitrixProfile, Forwards, FtpProfile, LocalArguments, LocalProfile,
     RdpDefaults, RdpProfile, Resolution, SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT,
     SUGGESTED_WINRM_TUNNEL_PORT, SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile,
-    WinRmProfile,
+    WebProfile, WinRmProfile,
 };
 use crate::store::ProfileStore;
 
@@ -51,6 +51,7 @@ mod connection_type {
     pub const LOCAL: &str = "Local";
     pub const WINRM: &str = "WINRM";
     pub const CITRIX: &str = "Citrix";
+    pub const WEB: &str = "WEB";
 }
 
 /// The C# `RdpAudioMode` values.
@@ -175,6 +176,14 @@ struct Entry {
     citrix_seamless_mode: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     citrix_use_sso: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_port: Option<u16>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    web_use_http: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_shell_executable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -311,6 +320,7 @@ pub fn csharp(
                 .map(|profile| local(profile, windows_line)),
         )
         .chain(store.winrm_profiles().iter().map(winrm))
+        .chain(store.web_profiles().iter().map(web))
         .map(|server| with_metadata(server, store))
         .collect();
     let document = Document {
@@ -332,6 +342,7 @@ pub fn session_count(store: &ProfileStore) -> usize {
         + store.citrix_profiles().len()
         + store.local_profiles().len()
         + store.winrm_profiles().len()
+        + store.web_profiles().len()
 }
 
 /// The keys every profile has.
@@ -616,6 +627,25 @@ fn winrm(profile: &WinRmProfile) -> Entry {
             profile.group.as_ref(),
             &profile.host,
             connection_type::WINRM,
+        )
+    }
+}
+
+/// A web console: its address's parts and its account, never a password, which the C#
+/// would read as its own DPAPI one.
+fn web(profile: &WebProfile) -> Entry {
+    Entry {
+        ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
+        web_port: Some(profile.port),
+        web_use_http: profile.use_http,
+        web_path: profile.path.clone(),
+        web_username: profile.username.clone(),
+        ..server(
+            &profile.id,
+            &profile.name,
+            profile.group.as_ref(),
+            &profile.host,
+            connection_type::WEB,
         )
     }
 }
