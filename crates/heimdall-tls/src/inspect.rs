@@ -172,6 +172,39 @@ pub fn failed_on_obsolete_version(failure: &std::io::Error) -> bool {
         .is_some_and(is_obsolete_version)
 }
 
+/// Whether the failed handshake `failure` of an [`inspection_connector`] may be that of a
+/// server speaking only what rustls refuses, whose certificate the inspector then reads in
+/// clear (owner decision of 2026-10-17): a version older than TLS 1.2
+/// ([`failed_on_obsolete_version`]); a `handshake_failure` or `insufficient_security`
+/// alert, the server sharing no TLS 1.2 suite with rustls; or the connection closed or
+/// reset in the handshake, as some old servers answer a hello they cannot meet.
+///
+/// A refusal of what the server sent, a bad handshake signature first, is none of them,
+/// so a server caught failing to prove it holds its key is not read again. That is no
+/// proof of anything for the others: a server may close or alert instead of signing, so
+/// whatever is read in clear is shown as unproven, never trusted.
+#[must_use]
+pub fn may_speak_legacy_only(failure: &std::io::Error) -> bool {
+    if let Some(refusal) = failure
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<Error>())
+    {
+        return is_obsolete_version(refusal)
+            || matches!(
+                refusal,
+                Error::AlertReceived(
+                    AlertDescription::HandshakeFailure | AlertDescription::InsufficientSecurity
+                )
+            );
+    }
+    matches!(
+        failure.kind(),
+        std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+    )
+}
+
 /// What the server of `connection`, its handshake over, presented; `None` when it presented
 /// no certificate or the version is neither TLS 1.2 nor TLS 1.3.
 #[must_use]
@@ -212,7 +245,8 @@ mod tests {
 
     use super::{
         PresentedChain, TlsVersion, failed_on_obsolete_version, inspection_config,
-        inspection_connector, is_obsolete_version, presented_chain, read_only,
+        inspection_connector, is_obsolete_version, may_speak_legacy_only, presented_chain,
+        read_only,
     };
     use crate::inspection_server_name;
 
@@ -445,6 +479,45 @@ mod tests {
             std::io::ErrorKind::InvalidData,
             handshake_failure
         )));
+    }
+
+    #[test]
+    fn only_a_server_sharing_nothing_with_rustls_may_be_read_in_clear() {
+        let failed = |refusal: Error| std::io::Error::new(std::io::ErrorKind::InvalidData, refusal);
+        for answer in [
+            tls10_server_hello(),
+            protocol_version_alert(),
+            // handshake_failure, then insufficient_security.
+            vec![0x15, 0x03, 0x03, 0, 2, 2, 40],
+            vec![0x15, 0x03, 0x03, 0, 2, 2, 71],
+        ] {
+            assert!(
+                may_speak_legacy_only(&failed(answered(&answer))),
+                "{answer:?}"
+            );
+        }
+        // Closed or reset in the handshake, as tokio-rustls says it.
+        for kind in [
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+        ] {
+            assert!(may_speak_legacy_only(&std::io::Error::new(kind, "eof")));
+        }
+        // An alert of another kind, a timeout, and above all a server that does not hold
+        // the key of its certificate are not read again in clear.
+        let decode_error = answered(&[0x15, 0x03, 0x03, 0, 2, 2, 50]);
+        assert!(!may_speak_legacy_only(&failed(decode_error)));
+        assert!(!may_speak_legacy_only(&std::io::Error::from(
+            std::io::ErrorKind::TimedOut
+        )));
+        let (certificates, _) = chain(&["files.lab"], (2020, 2090));
+        let other_key = KeyPair::generate().expect("key").serialize_der();
+        for version in [&TLS13, &TLS12] {
+            let forged = inspect(&certificates, &other_key, "files.lab", version)
+                .expect_err("the signature is checked");
+            assert!(!may_speak_legacy_only(&failed(forged)), "{version:?}");
+        }
     }
 
     #[test]

@@ -48,6 +48,7 @@ pub mod ip_address;
 pub mod ip_codec;
 pub mod json_codec;
 pub mod jwt_parser;
+pub mod legacy_tls;
 pub mod log_viewer;
 pub mod mac_vendor;
 pub mod net_host;
