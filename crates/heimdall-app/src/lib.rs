@@ -69,6 +69,7 @@ pub mod scheduled_form;
 pub mod script_shell;
 pub mod server_health;
 pub mod session_log;
+pub mod shared_sessions;
 mod sink;
 pub mod steps_draft;
 pub mod sudo_edit;

@@ -30,6 +30,7 @@ use crate::profile::{
     ProfileId, RESOLUTION_PRESETS, RdpDefaults, RdpMode, SshMode, preset_fits, resolution_preset,
     resolution_text,
 };
+use crate::shared_sessions::SharedSource;
 use crate::store::StoreError;
 
 mod sensitive;
@@ -712,6 +713,10 @@ pub struct Settings {
     /// (`AppSettings.cs:354`): off until then, and the tour shows at start while it is off.
     /// This computer's own: never exported, and kept by a reset.
     pub onboarding_completed: bool,
+    /// The shared session files, as the C# `SharedSessionSources` (`AppSettings.cs`): read
+    /// and never written. Carried by an export, shown first by an import as it decides which
+    /// files this computer trusts to give it sessions; kept by a reset.
+    pub shared_sources: Vec<SharedSource>,
 }
 
 /// The offer to migrate from the legacy PowerShell Heimdall (`RDPManager`) the user declined,
@@ -1340,6 +1345,7 @@ impl Default for Settings {
             tools: ToolsSettings::default(),
             legacy_migration: LegacyMigration::default(),
             onboarding_completed: false,
+            shared_sources: Vec::new(),
         }
     }
 }
@@ -1387,6 +1393,15 @@ struct SettingsFile {
     legacy_migration: LegacyMigrationSection,
     #[serde(default)]
     onboarding: OnboardingSection,
+    #[serde(default)]
+    shared_sessions: SharedSessionsSection,
+}
+
+/// The shared session files, carried by an export.
+#[derive(Serialize, Deserialize, Default)]
+struct SharedSessionsSection {
+    #[serde(default)]
+    sources: Vec<SharedSource>,
 }
 
 /// The external tools, carried by an export as the C# exports its `ExternalTools`.
@@ -1961,6 +1976,7 @@ impl Settings {
             external_tools: std::mem::take(&mut self.external_tools),
             legacy_migration: std::mem::take(&mut self.legacy_migration),
             onboarding_completed: self.onboarding_completed,
+            shared_sources: std::mem::take(&mut self.shared_sources),
             ..Self::default()
         };
         *self = kept;
@@ -2259,6 +2275,7 @@ impl Settings {
             tools: file.tools.settings(),
             legacy_migration: file.legacy_migration.settings(),
             onboarding_completed: file.onboarding.completed,
+            shared_sources: file.shared_sessions.sources,
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -2411,6 +2428,9 @@ impl Settings {
             legacy_migration: LegacyMigrationSection::of(&self.legacy_migration),
             onboarding: OnboardingSection {
                 completed: self.onboarding_completed,
+            },
+            shared_sessions: SharedSessionsSection {
+                sources: self.shared_sources.clone(),
             },
         }
     }
@@ -2611,7 +2631,7 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 13] = [
+const TRANSFERRED: [&str; 14] = [
     "terminal",
     "session_log",
     "general",
@@ -2625,6 +2645,7 @@ const TRANSFERRED: [&str; 13] = [
     "reachability",
     "updates",
     "windows_hello",
+    "shared_sessions",
 ];
 
 /// The name a portable settings file is offered under.

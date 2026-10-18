@@ -140,6 +140,7 @@ mod session_load;
 mod session_restore;
 mod sessions_import;
 mod settings_transfer;
+mod shared;
 mod shell_directory;
 pub mod split;
 mod status;
@@ -468,6 +469,10 @@ pub enum Message {
     HealthTick,
     /// Time for the background check of every server.
     ReachabilityTick,
+    /// Time to look at the shared session files for a change.
+    SharedTick,
+    /// Open a session of a shared file from the tree.
+    ConnectShared(ProfileId),
     /// Time to look at the scheduled connections.
     ScheduledTick,
     /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
@@ -1030,6 +1035,8 @@ impl fmt::Debug for Message {
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::HealthTick => f.write_str("HealthTick"),
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
+            Self::SharedTick => f.write_str("SharedTick"),
+            Self::ConnectShared(id) => write!(f, "ConnectShared({id})"),
             Self::ScheduledTick => f.write_str("ScheduledTick"),
             Self::Update(message) => write!(f, "Update({message:?})"),
             Self::HideSessionLoadNotice => f.write_str("HideSessionLoadNotice"),
@@ -3379,6 +3386,8 @@ pub struct App {
     macros: heimdall_core::macros::Macros,
     /// The background check of every server.
     monitor: reachability_monitor::Monitor,
+    /// The sessions of the shared files, held in memory and never written back.
+    shared: crate::shared_sessions::SharedSessions,
     /// The look for a newer release.
     updates: updates::Updates,
     /// Credential Guard required before an embedded RDP session, asked before Windows
@@ -3576,6 +3585,7 @@ impl App {
             detail: detail::DetailCache::default(),
             macros,
             monitor: reachability_monitor::Monitor::default(),
+            shared: crate::shared_sessions::SharedSessions::default(),
             updates: updates::Updates::new(crate::update_check::running_release()),
             credential_guard: credential_guard_gate::CredentialGuardGate::default(),
             known_hosts_synced: false,
@@ -3615,6 +3625,7 @@ impl App {
         // A task whose time came while Heimdall was closed is missed, never run late.
         app.skip_missed(crate::time_zone::unix_now(), &crate::time_zone::SystemClock);
         app.show_start_gates();
+        app.load_shared();
         app
     }
 
@@ -3799,6 +3810,11 @@ impl App {
                 Vec::new()
             }
             Message::ReachabilityTick => self.reachability_round(),
+            Message::SharedTick => {
+                self.shared_tick(std::time::SystemTime::now());
+                Vec::new()
+            }
+            Message::ConnectShared(id) => self.connect_shared(&id),
             Message::ScheduledTick => {
                 self.scheduled_tick_at(crate::time_zone::unix_now(), &crate::time_zone::SystemClock)
             }

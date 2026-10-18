@@ -5819,3 +5819,28 @@ ui-settings-rdp-default-width = Largeur de la résolution par défaut
 ui-settings-rdp-default-height = Hauteur de la résolution par défaut
 ui-settings-rdp-default-resolution-refused = La résolution par défaut doit être comprise entre { $min } et { $max } pixels.
 ui-settings-pixels-unit = px
+
+ui-shared-title = Sessions partagées
+ui-shared-source-header = { $name } ({ $count })
+ui-shared-badge = partagée
+ui-shared-row-tooltip = Lecture seule : cette session vient du fichier partagé de { $source }. { $address }
+ui-shared-disabled = Désactivée.
+ui-shared-problem-invalid-id = L'identifiant de la source n'est pas valide.
+ui-shared-problem-duplicate-id = Une autre source a le même identifiant.
+ui-shared-problem-no-path = La source n'a pas de chemin de fichier.
+ui-shared-problem-missing = Le fichier { $path } est introuvable.
+ui-shared-problem-too-large = Le fichier { $path } dépasse { $limit } Mo et n'a pas été lu.
+ui-shared-problem-unreadable = Le fichier { $path } n'a pas pu être lu. { $reason }
+ui-shared-problem-unparsable = Le fichier { $path } n'a pas pu être compris. { $reason }
+ui-shared-problem-empty = Le fichier { $path } ne contient aucune session SSH ou RDP utilisable.
+ui-shared-kept-previous = La dernière modification n'a pas pu être prise en compte, les sessions précédentes sont conservées. { $reason }
+ui-shared-refused =
+    { $count ->
+        [one] { $count } session du fichier a été écartée : autre protocole ou hôte invalide.
+       *[other] { $count } sessions du fichier ont été écartées : autre protocole ou hôte invalide.
+    }
+ui-shared-passwords =
+    { $count ->
+        [one] { $count } mot de passe enregistré dans le fichier n'est jamais lu.
+       *[other] { $count } mots de passe enregistrés dans le fichier ne sont jamais lus.
+    }

@@ -5808,3 +5808,28 @@ ui-settings-rdp-default-width = Ancho de la resolución predeterminada
 ui-settings-rdp-default-height = Alto de la resolución predeterminada
 ui-settings-rdp-default-resolution-refused = La resolución predeterminada debe estar entre { $min } y { $max } píxeles.
 ui-settings-pixels-unit = px
+
+ui-shared-title = Sesiones compartidas
+ui-shared-source-header = { $name } ({ $count })
+ui-shared-badge = compartida
+ui-shared-row-tooltip = Solo lectura: esta sesión procede del archivo compartido de { $source }. { $address }
+ui-shared-disabled = Desactivada.
+ui-shared-problem-invalid-id = El identificador de la fuente no es válido.
+ui-shared-problem-duplicate-id = Otra fuente tiene el mismo identificador.
+ui-shared-problem-no-path = La fuente no tiene ruta de archivo.
+ui-shared-problem-missing = No se encontró el archivo { $path }.
+ui-shared-problem-too-large = El archivo { $path } supera { $limit } MB y no se leyó.
+ui-shared-problem-unreadable = No se pudo leer el archivo { $path }. { $reason }
+ui-shared-problem-unparsable = No se pudo interpretar el archivo { $path }. { $reason }
+ui-shared-problem-empty = El archivo { $path } no contiene ninguna sesión SSH o RDP utilizable.
+ui-shared-kept-previous = No se pudo aplicar el último cambio, se conservan las sesiones anteriores. { $reason }
+ui-shared-refused =
+    { $count ->
+        [one] { $count } sesión del archivo se descartó: otro protocolo o un host no válido.
+       *[other] { $count } sesiones del archivo se descartaron: otro protocolo o un host no válido.
+    }
+ui-shared-passwords =
+    { $count ->
+        [one] { $count } contraseña guardada en el archivo no se lee nunca.
+       *[other] { $count } contraseñas guardadas en el archivo no se leen nunca.
+    }

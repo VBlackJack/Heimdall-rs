@@ -49,6 +49,7 @@ use crate::settings::{
     ssh_tmout_reset_interval_accepted, terminal_font_size_accepted, update_interval_accepted,
     windows_hello_grace_minutes_accepted, windows_hello_vault_max_days_accepted,
 };
+use crate::shared_sessions::SharedSource;
 
 /// What the C# "Export settings" file says it is.
 const EXPORT_FORMAT: &str = "heimdall-settings";
@@ -474,6 +475,49 @@ fn presets(value: &Value, settings: &mut Settings) -> Read {
     Read::Set
 }
 
+/// The C# `SharedSessionSources` (`SharedSessionSourceDto`: `Id`, `Name`, `Path`, `Enabled`):
+/// all of them read, or none taken. A source needs an identifier of the shared namespace, a
+/// path Windows reads as absolute (or starting with a variable), and no other source's
+/// identifier; what the file holds is read later, never at import.
+fn shared_sources(value: &Value, settings: &mut Settings) -> Read {
+    let Some(items) = value.as_array() else {
+        return Read::Invalid;
+    };
+    let mut sources: Vec<SharedSource> = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(object) = item.as_object() else {
+            return Read::Invalid;
+        };
+        let fields = Folded::of(object);
+        let text = |key: &str| fields.get(key).and_then(Value::as_str).unwrap_or_default();
+        let id = text("Id");
+        let path = text("Path").trim();
+        let enabled = fields.get("Enabled").map_or(Some(true), Value::as_bool);
+        if !crate::shared_sessions::is_valid_source_id(id)
+            || sources.iter().any(|known| known.id == id)
+            || path.is_empty()
+            || has_control(path)
+            || !absolute_or_expanded(path)
+        {
+            return Read::Invalid;
+        }
+        let Some(enabled) = enabled else {
+            return Read::Invalid;
+        };
+        sources.push(SharedSource {
+            id: id.to_owned(),
+            name: text("Name").trim().to_owned(),
+            path: path.to_owned(),
+            enabled,
+        });
+    }
+    if sources.is_empty() {
+        return Read::CSharpDefault;
+    }
+    settings.shared_sources = sources;
+    Read::Set
+}
+
 /// The C# colour depth of an RDP desktop, as `NormalizeColorDepth` takes it.
 fn color_depth(value: &Value, settings: &mut Settings) -> Read {
     match whole(value) {
@@ -882,6 +926,11 @@ fn preferences_table() -> Vec<Preference> {
             "RdpResolutionPresets",
             |value, settings| presets(value, settings),
             rdp_resolution_presets
+        ),
+        preference!(
+            "SharedSessionSources",
+            |value, settings| shared_sources(value, settings),
+            shared_sources
         ),
         preference!(
             "MaxEmbeddedSessions",
