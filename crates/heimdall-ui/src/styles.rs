@@ -354,6 +354,22 @@ pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
     }
 }
 
+/// The chip naming a folder before its tabs, as the C# group chip: a card edged quietly,
+/// its text secondary.
+pub fn folder_chip(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        text_color: Some(brushes.secondary),
+        border: Border {
+            color: brushes.quiet_edge,
+            width: brushes.width,
+            radius: radius::SM.into(),
+        },
+        ..BoxStyle::default()
+    }
+}
+
 /// The bar under a selected tab, in the accent, as the C#'s; `lit` false, it keeps its
 /// place unseen.
 pub fn underline(lit: bool) -> impl Fn(&Theme) -> BoxStyle {

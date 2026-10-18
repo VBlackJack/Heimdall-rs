@@ -900,6 +900,8 @@ pub enum Message {
     TabHover(TabId),
     /// The pointer left it.
     TabHoverLeft(TabId),
+    /// The tabs pass the strip's width, or no longer: the list of every tab shows, or hides.
+    TabOverflow(bool),
     /// The pointer moved, a press on a tab held.
     TabDragMoved(Point),
     /// That press is let go.
@@ -1190,6 +1192,7 @@ impl fmt::Debug for Message {
             Self::CloseKeyFocus(focused) => write!(f, "CloseKeyFocus({focused})"),
             Self::TabHover(tab) => write!(f, "TabHover({})", tab.value()),
             Self::TabHoverLeft(tab) => write!(f, "TabHoverLeft({})", tab.value()),
+            Self::TabOverflow(on) => write!(f, "TabOverflow({on})"),
             Self::TabDragMoved(_) => f.write_str("TabDragMoved"),
             Self::TabDragEnd => f.write_str("TabDragEnd"),
             Self::TabDropArea(area) => write!(f, "TabDropArea({area:?})"),
@@ -1562,6 +1565,8 @@ pub struct Shell {
     dragged_out: crate::files_drag::DragOutGuard,
     /// The tab under the pointer.
     tab_hover: Option<TabId>,
+    /// The tabs pass the strip's width: the button listing every tab shows.
+    tab_overflow: bool,
     /// A press on a tab, a drag once the pointer moves.
     tab_drag: Option<crate::tab_drag::TabDrag>,
     /// Where the content was drawn when that drag started.
@@ -1879,6 +1884,7 @@ impl Shell {
             files_drag_window: None,
             dragged_out: crate::files_drag::DragOutGuard::default(),
             tab_hover: None,
+            tab_overflow: false,
             tab_drag: None,
             tab_drop_area: None,
             detach_place: None,
@@ -2885,6 +2891,7 @@ impl Shell {
             Message::TabDragMoved(at) => return self.tab_drag_moved(at),
             message @ (Message::TabHover(_)
             | Message::TabHoverLeft(_)
+            | Message::TabOverflow(_)
             | Message::TabDropArea(_)
             | Message::TabDragEnd) => self.tab_drag_message(&message),
             message @ (Message::SplitDragged { .. } | Message::SplitReleased { .. }) => {
@@ -5077,6 +5084,8 @@ impl Shell {
             } else {
                 tree_view::files_bookmarks_menu(tab, &shown)
             }
+        } else if matches!(menu, TreeMenu::TabList) {
+            self.tab_list_menu()?
         } else if let TreeMenu::Tool(tool) = *menu {
             tree_view::tool_menu_entries(tool, self.app.is_favorite_tool(tool))
         } else if let TreeMenu::Tunnel(id) = *menu {
@@ -5267,6 +5276,7 @@ impl Shell {
                 | TreeMenu::Notes(_)
                 | TreeMenu::ExternalTools(_)
                 | TreeMenu::Tool(_)
+                | TreeMenu::TabList
                 | TreeMenu::Tunnel(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
@@ -6479,6 +6489,7 @@ impl Shell {
                     self.tab_hover = None;
                 }
             }
+            Message::TabOverflow(on) => self.tab_overflow = on,
             Message::TabDropArea(area) => {
                 // Only for the drag that asked.
                 if self.tab_drag.is_some_and(|drag| drag.active) {
@@ -7422,6 +7433,7 @@ impl Shell {
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
+            grouped: self.app.groups_tabs_by_folder(),
             reopen_closed: self.app.reopen_closed_count(),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),

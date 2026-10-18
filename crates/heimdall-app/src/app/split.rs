@@ -374,10 +374,17 @@ impl App {
     /// detached to a window of their own.
     #[must_use]
     pub fn strip(&self) -> Vec<&Tab> {
-        self.tabs
+        let tabs: Vec<&Tab> = self
+            .tabs
             .iter()
             .filter(|tab| !self.is_docked(tab.id) && !self.is_floating(tab.id))
-            .collect()
+            .collect();
+        // Gathered by folder when the user asked for it, as the C# `OrderForStrip`.
+        if self.settings.group_tabs_by_folder {
+            super::tab_menu::gather_by_folder(tabs, |tab| tab.pinned, |tab| self.tab_folder(tab))
+        } else {
+            tabs
+        }
     }
 
     /// Whether `id` is docked in another tab's split, off the strip.

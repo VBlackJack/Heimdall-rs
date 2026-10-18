@@ -4228,69 +4228,41 @@ ui-tool-cve-help =
 
 
 
-## L'outil de scan d'identifiants par défaut, identique à DefaultCredentialView en C#.
-ui-tool-defaultcreds-name = Scanner d'identifiants par défaut
-ui-tool-defaultcreds-description = Teste les identifiants par défaut courants contre les services détectés sur un hôte cible
-ui-tool-defaultcreds-title = Scanner d'identifiants par défaut
-ui-tool-defaultcreds-host-label = Hôte
-ui-tool-defaultcreds-host-placeholder = Nom d'hôte ou adresse IP
-ui-tool-defaultcreds-btn-scan = Scanner
-ui-tool-defaultcreds-btn-stop = Arrêter
-ui-tool-defaultcreds-auto-detect = Détection automatique des services
-ui-tool-defaultcreds-show-passwords = Afficher les mots de passe
-ui-tool-defaultcreds-warning = Utiliser uniquement sur des systèmes dont vous êtes propriétaire ou avez l'autorisation explicite de tester.
+## L'outil Identifiants par défaut, pour le catalogue de DefaultCredentialView en C#,
+## jamais pour les tentatives de connexion qu'il effectue : liste seulement, décision
+## du propriétaire (2026-10-17, point 10).
+ui-tool-defaultcreds-name = Identifiants par défaut
+ui-tool-defaultcreds-description = Liste les identifiants par défaut connus des fournisseurs pour un produit ou un service
+ui-tool-defaultcreds-title = Identifiants par défaut
+ui-tool-defaultcreds-note = Cet outil liste les identifiants par défaut connus des fournisseurs. Il ne tente jamais de s'y connecter, pour éviter les verrouillages de compte et les tentatives de connexion non autorisées.
+ui-tool-defaultcreds-filter-label = Service
+ui-tool-defaultcreds-filter-placeholder = Filtrer par nom de service (par exemple SSH, HTTP, MySQL)
 ui-tool-defaultcreds-col-service = Service
 ui-tool-defaultcreds-col-port = Port
 ui-tool-defaultcreds-col-user = Identifiant
 ui-tool-defaultcreds-col-pass = Mot de passe
-ui-tool-defaultcreds-col-status = Statut
-ui-tool-defaultcreds-col-detail = Détail
-ui-tool-defaultcreds-status-default = Par défaut !
-ui-tool-defaultcreds-status-changed = Modifié
-ui-tool-defaultcreds-status-error = Erreur
-ui-tool-defaultcreds-detecting = Détection des services...
-ui-tool-defaultcreds-testing = Test de { $service } { $user } :{ $pass }...
-ui-tool-defaultcreds-summary = { $defaults ->
-    [one] { $defaults } identifiant par défaut trouvé sur { $services ->
-        [one] { $services } service
-       *[other] { $services } services
-    }
-   *[other] { $defaults } identifiants par défaut trouvés sur { $services ->
-        [one] { $services } service
-       *[other] { $services } services
-    }
-}
-ui-tool-defaultcreds-no-defaults = Aucun identifiant par défaut trouvé - tous les services testés semblent sécurisés.
 ui-tool-defaultcreds-btn-copy = Copier le rapport
 ui-tool-defaultcreds-btn-export = Exporter CSV
-ui-tool-defaultcreds-empty-state = Saisissez un hôte pour rechercher des identifiants par défaut sur les services courants
-ui-tool-defaultcreds-error-host-required = Un nom d'hôte ou une adresse IP est requis.
-ui-tool-defaultcreds-detail-accepted = { $service } a accepté les identifiants par défaut
-ui-tool-defaultcreds-detail-rejected = { $service } a rejeté les identifiants
+ui-tool-defaultcreds-empty-state = Aucun service du catalogue ne correspond à ce filtre
+ui-tool-defaultcreds-empty = (vide)
+ui-tool-defaultcreds-count = { $count ->
+    [one] { $count } identifiant par défaut listé
+   *[other] { $count } identifiants par défaut listés
+}
 ui-tool-defaultcreds-help =
-    Scanner d'identifiants par défaut
+    Identifiants par défaut
 
-    Teste les identifiants par défaut courants contre les services détectés sur un hôte cible.
+    Liste les identifiants par défaut connus des fournisseurs pour un produit ou un
+    service, à partir d'un catalogue intégré (SSH, Telnet, FTP, HTTP, SNMP, MySQL,
+    PostgreSQL, Redis, MSSQL, VNC).
 
     Utilisation :
-    1. Saisissez un nom d'hôte ou une adresse IP
-    2. Activez "Détection automatique des services" pour scanner les ports courants
-    3. Cliquez sur Scanner
+    1. Filtrez éventuellement par nom de service
+    2. Copiez le rapport, ou exportez-le en CSV
 
-    Protocoles testés :
-    - SSH (service joignable uniquement, identifiants non testés)
-    - Authentification HTTP Basic
-    - FTP (anonymous, admin)
-    - SNMP (chaînes de communauté)
-    - PostgreSQL (accès sans mot de passe) ; MySQL, MSSQL (service joignable uniquement, identifiants non testés)
-    - VNC (service joignable uniquement, identifiants non testés)
-    - Telnet
-    - Redis (service joignable uniquement, identifiants non testés)
-
-    Sécurité :
-    - Limité en débit (1 tentative/seconde par service)
-    - Teste uniquement les identifiants par défaut connus
-    - N'effectue PAS d'attaque par force brute
+    Cet outil ne tente jamais de connexion : contrairement à l'outil C# d'origine, il
+    se limite à lister le catalogue, pour éviter les verrouillages de compte et les
+    tentatives de connexion non autorisées.
 ui-tool-secnumcloud-name = Audit SecNumCloud
 ui-tool-secnumcloud-description = Audit de conformité SecNumCloud v3.2 sur le réseau, la crypto, les accès et l'exploitation
 ui-tool-secnumcloud-title = Audit de conformité SecNumCloud v3.2
@@ -4424,12 +4396,6 @@ ui-tool-smb-help =
     - Dialecte SMB2/SMB3 négocié
 
 # --- Review follow-ups (#402): security tools ---
-ui-tool-defaultcreds-status-not-tested = Non testé
-ui-tool-defaultcreds-detail-not-tested = { $service } joignable, identifiants non testés
-ui-tool-defaultcreds-empty = (vide)
-ui-tool-defaultcreds-timeout-connect = Délai de connexion dépassé
-ui-tool-defaultcreds-timeout-write = Délai d'écriture dépassé
-ui-tool-defaultcreds-timeout-read = Délai de lecture dépassé
 ui-tool-dnssec-report-record = Enregistrement
 ui-tool-dnssec-report-detail = Détail
 ui-tool-dnssec-error-nslookup-missing = nslookup est introuvable. Installez-le (bind-utils / dnsutils sous Linux) ou assurez-vous qu'il est dans le PATH.
@@ -5757,3 +5723,8 @@ ui-dialog-import-preferences-invalid = Valeurs non lues : { $names }
 ui-dialog-import-preferences-relative = Chemins de l'installation C#, non repris : { $names }
 ui-dialog-import-preferences-failed = Les préférences de Heimdall C# n'ont pas pu être lues : { $detail }
 ui-dialog-import-preferences-review = Vérifier les préférences
+
+# Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
+ui-tab-menu-group-by-folder = Grouper les onglets par dossier
+ui-tab-list-tooltip = Tous les onglets ouverts
+ui-tab-list-entry = { $name } - { $state }
