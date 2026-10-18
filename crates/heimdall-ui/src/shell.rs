@@ -59,8 +59,8 @@ use heimdall_app::{
     master_password_problem, open_vault, server_text,
 };
 use heimdall_app::{
-    LegacyMigrationMessage, QuickRow, ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello,
-    windows_hello,
+    LegacyMigrationMessage, QuickRow, SendConfirmation, ToolsMessage, VaultHelloMessage,
+    VaultTicket, vault_hello, windows_hello,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::import::csharp_settings::PreferenceOutcome;
@@ -12075,6 +12075,49 @@ fn run_script_dialog(confirmation: &ScriptConfirmation) -> Element<'_, Message> 
     )
 }
 
+/// The question before a command of the command library is typed into a terminal: the
+/// command whole, the terminal that receives it, and a warning when it is marked dangerous.
+fn send_command_dialog(confirmation: &SendConfirmation) -> Element<'_, Message> {
+    let mut body = column![
+        dialog_parts::body(fl!(
+            "ui-dialog-send-command-body",
+            name = confirmation.target.as_str()
+        )),
+        container(
+            styles::scroll(
+                text(confirmation.shown.as_str())
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::Glyph)
+            )
+            .height(Length::Shrink)
+        )
+        .max_height(LOCAL_COMMAND_HEIGHT)
+        .padding(spacing::MD)
+        .style(container::rounded_box),
+    ]
+    .spacing(spacing::SM);
+    if confirmation.dangerous {
+        body = body.push(dialog_parts::error(fl!("ui-dialog-send-command-dangerous")));
+    }
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-send-command-title"),
+        body,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(
+                fl!("ui-dialog-send-command-confirm"),
+                if confirmation.dangerous {
+                    styles::danger
+                } else {
+                    styles::primary
+                },
+            )
+            .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]),
+    )
+}
+
 /// A question about running `command` on this computer, under `title` and `intro`: the
 /// command whole in its own box, the `folder` it starts in, and a warning when the program
 /// `rereads` its line.
@@ -13454,6 +13497,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ConfirmRunScript(confirmation) => run_script_dialog(confirmation),
+        Dialog::ConfirmSendCommand(confirmation) => send_command_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::TrustedHostKeyDetails(entry) => crate::trusted_keys_view::details(entry),

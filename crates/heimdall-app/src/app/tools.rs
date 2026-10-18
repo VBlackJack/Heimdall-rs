@@ -47,6 +47,16 @@ pub enum ToolsMessage {
     ToggleSidebarTab,
     /// Fold or unfold a group of the sidebar's tools.
     ToggleGroup(ToolGroup),
+    /// Write `command` into terminal tab `target`, once the user agrees to the question it
+    /// opens; `dangerous` for a command marked so. Nothing is written by this message.
+    SendCommand {
+        /// The terminal tab.
+        target: TabId,
+        /// The command, one line.
+        command: String,
+        /// Marked dangerous.
+        dangerous: bool,
+    },
     /// The close question of a tool's tab answered Save: its document saved, then the
     /// close asked again.
     SaveBeforeClose,
@@ -152,6 +162,14 @@ impl App {
                 title,
                 context,
             } => self.open_tool(tool, title, context),
+            ToolsMessage::SendCommand {
+                target,
+                command,
+                dangerous,
+            } => {
+                self.ask_send(target, command, dangerous);
+                Vec::new()
+            }
             ToolsMessage::ToggleFavorite(tool) => {
                 let toggle = toggle_favorite(&self.settings.tools.favorites, tool);
                 self.save_tools(|tools| tools.favorites.clone_from(&toggle.favorites));

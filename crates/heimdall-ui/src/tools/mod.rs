@@ -656,6 +656,8 @@ pub enum CopySlot {
     DiagramSource,
     /// The command of a snippet of the command library.
     CmdLibCommand(SnippetId),
+    /// The command of the user's command at this place of the library.
+    CmdLibUserCommand(usize),
 }
 
 /// What a tool's tab is asked.
@@ -925,7 +927,9 @@ impl ToolPane {
             ToolId::CronJob => Pane::CronJob(cron_job_tool::CronJobPane::default()),
             ToolId::Notes => Pane::Notes(notes_tool::NotesPane::default()),
             ToolId::Diagram => Pane::Diagram(diagram_tool::DiagramPane::default()),
-            ToolId::CmdLib => Pane::CmdLib(command_library_tool::CommandLibraryPane::default()),
+            ToolId::CmdLib => {
+                Pane::CmdLib(command_library_tool::CommandLibraryPane::new(profiles_file))
+            }
         };
         Self {
             pane,
@@ -1053,6 +1057,13 @@ impl ToolPanes {
             for message in context::messages(tool, tab.tool_context()) {
                 let task = self.update(tab.id, message, None);
                 self.prefilled.push(task);
+            }
+        }
+        // The terminals a command can be sent to, as the core offers them now.
+        let targets = app.send_targets();
+        for state in self.panes.values_mut() {
+            if let Pane::CmdLib(pane) = &mut state.pane {
+                pane.set_targets(targets.clone());
             }
         }
     }
@@ -1522,6 +1533,26 @@ impl ToolPanes {
                     outcome => outcome.task(tab, main),
                 };
             }
+            (ToolMessage::CmdLib(message), Pane::CmdLib(pane)) => {
+                return match pane.update(message) {
+                    command_library_tool::Outcome::None => Task::none(),
+                    command_library_tool::Outcome::Copy(slot, content) => {
+                        state.copy(tab, slot, content)
+                    }
+                    // Only asks: the application writes nothing before the user agrees.
+                    command_library_tool::Outcome::Send {
+                        target,
+                        command,
+                        dangerous,
+                    } => Task::done(Message::App(heimdall_app::Message::Tools(
+                        heimdall_app::ToolsMessage::SendCommand {
+                            target,
+                            command,
+                            dangerous,
+                        },
+                    ))),
+                };
+            }
             (message, pane) => {
                 if let Some((slot, content)) = update_copying(message, pane) {
                     return state.copy(tab, slot, content);
@@ -1544,7 +1575,6 @@ fn update_copying(message: ToolMessage, pane: &mut Pane) -> Option<(CopySlot, St
         (ToolMessage::Ulid(message), Pane::Ulid(pane)) => pane.update(message),
         (ToolMessage::Crontab(message), Pane::Crontab(pane)) => pane.update(message),
         (ToolMessage::SshConfig(message), Pane::SshConfig(pane)) => pane.update(message),
-        (ToolMessage::CmdLib(message), Pane::CmdLib(pane)) => pane.update(message),
         _ => None,
     }
 }

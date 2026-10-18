@@ -46,7 +46,7 @@ pub(super) struct Broadcast {
 }
 
 /// Whether `tab` takes typed input now: a session of text, connected, asking nothing.
-fn takes_input(tab: &Tab) -> bool {
+pub(super) fn takes_input(tab: &Tab) -> bool {
     tab.phase == Phase::Connected
         && tab.prompts.is_empty()
         && tab.purpose == Purpose::Shell
