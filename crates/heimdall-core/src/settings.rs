@@ -664,6 +664,10 @@ pub struct Settings {
     /// asked for it. A view choice of the tree's filter menu and Ctrl+Shift+B, kept across
     /// runs.
     pub show_properties_panel: bool,
+    /// The session tabs gathered by the folder of their profile, as the C#
+    /// `GroupSessionTabsByFolder` (`AppSettings.cs:369`): off. Chosen from a tab's menu, kept
+    /// across runs.
+    pub group_tabs_by_folder: bool,
     /// Whether, and how often, a newer release is looked for.
     pub updates: Updates,
     /// The last look for a newer release and the release skipped, kept across runs on
@@ -1260,6 +1264,7 @@ impl Default for Settings {
             sftp_browser: SftpBrowser::default(),
             show_gateway_badge: true,
             show_properties_panel: false,
+            group_tabs_by_folder: false,
             updates: Updates::default(),
             update_check: UpdateCheck::default(),
             windows_hello: WindowsHello::default(),
@@ -1719,6 +1724,9 @@ struct GeneralSection {
     /// Absent, from a file written before it, is the C# default: hidden.
     #[serde(default)]
     show_properties_panel: Option<bool>,
+    /// Absent, from a file written before it, is the C# default: off.
+    #[serde(default)]
+    group_tabs_by_folder: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1836,6 +1844,7 @@ impl Settings {
             broadcast_scope: self.broadcast_scope,
             show_gateway_badge: self.show_gateway_badge,
             show_properties_panel: self.show_properties_panel,
+            group_tabs_by_folder: self.group_tabs_by_folder,
             update_check: std::mem::take(&mut self.update_check),
             last_used_gateway: self.last_used_gateway.take(),
             tools: std::mem::take(&mut self.tools),
@@ -2074,6 +2083,7 @@ impl Settings {
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
             show_gateway_badge: file.general.show_gateway_badge.unwrap_or(true),
             show_properties_panel: file.general.show_properties_panel.unwrap_or(false),
+            group_tabs_by_folder: file.general.group_tabs_by_folder.unwrap_or(false),
             updates: Updates {
                 enabled: file.updates.enabled.unwrap_or(true),
                 interval_hours: within(
@@ -2207,6 +2217,7 @@ impl Settings {
                 diagnostics_log: Some(self.diagnostics_log),
                 show_gateway_badge: Some(self.show_gateway_badge),
                 show_properties_panel: Some(self.show_properties_panel),
+                group_tabs_by_folder: Some(self.group_tabs_by_folder),
             },
             vault_unlock: VaultUnlockSection {
                 failures: self.vault_unlock.failures(),

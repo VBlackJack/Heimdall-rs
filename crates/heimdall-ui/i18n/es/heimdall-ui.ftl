@@ -5686,3 +5686,7 @@ ui-network-scan-kind-vnc = VNC
 ui-network-scan-kind-winrm = WinRM
 ui-network-scan-kind-telnet = Telnet
 ui-network-scan-kind-web = Web
+# Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
+ui-tab-menu-group-by-folder = Agrupar pestañas por carpeta
+ui-tab-list-tooltip = Todas las pestañas abiertas
+ui-tab-list-entry = { $name } - { $state }
