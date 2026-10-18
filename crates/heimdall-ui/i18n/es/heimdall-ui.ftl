@@ -5753,3 +5753,34 @@ ui-network-scan-kind-web = Web
 ui-tab-menu-group-by-folder = Agrupar pestañas por carpeta
 ui-tab-list-tooltip = Todas las pestañas abiertas
 ui-tab-list-entry = { $name } - { $state }
+# Cartografía de red: lo que las sondas de solo lectura averiguan de un host (columnas de la exportación CSV, luego la línea mostrada bajo el host).
+ui-tool-netmap-col-os = Sistema operativo
+ui-tool-netmap-col-os-confidence = Confianza del sistema
+ui-tool-netmap-col-netbios-name = Nombre NetBIOS
+ui-tool-netmap-col-netbios-domain = Dominio NetBIOS
+ui-tool-netmap-col-snmp-descr = Descripción SNMP
+ui-tool-netmap-col-snmp-name = Nombre SNMP
+ui-tool-netmap-col-snmp-location = Ubicación SNMP
+ui-tool-netmap-col-ntlm-dns-name = Nombre DNS de Windows
+ui-tool-netmap-col-os-build = Compilación de Windows
+ui-tool-netmap-col-smb-dialect = Dialecto SMB
+ui-tool-netmap-col-smb-signing = Firma SMB requerida
+ui-tool-netmap-col-ssh-banner = Banner SSH
+ui-tool-netmap-col-ssh-hassh = HASSH SSH
+ui-tool-netmap-col-tls-subject = Sujeto del certificado TLS
+ui-tool-netmap-fp-os = Sistema: { $os } ({ $confidence }%)
+ui-tool-netmap-fp-netbios = NetBIOS: { $name }
+ui-tool-netmap-fp-netbios-domain = NetBIOS: { $domain }\{ $name }
+ui-tool-netmap-fp-workgroup = Dominio NetBIOS: { $domain }
+ui-tool-netmap-fp-snmp = SNMP: { $descr }
+ui-tool-netmap-fp-snmp-name = Nombre SNMP: { $name }
+ui-tool-netmap-fp-windows = Nombre de Windows: { $name }
+ui-tool-netmap-fp-build = Compilación de Windows: { $build }
+ui-tool-netmap-fp-smb =
+    SMB { $dialect }, { $required ->
+        [yes] firma requerida
+       *[no] firma no requerida
+    }
+ui-tool-netmap-fp-ssh = SSH: { $banner }
+ui-tool-netmap-fp-hassh = HASSH: { $hash }
+ui-tool-netmap-fp-tls = TLS: { $subject }
