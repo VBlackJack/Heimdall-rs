@@ -308,6 +308,8 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::RdpAutoReconnectAttempts => fl!("ui-settings-rdp-auto-reconnect-attempts"),
         SettingRow::RdpConnectTimeout => fl!("ui-settings-rdp-connect-timeout"),
         SettingRow::RdpBuiltinCompression => fl!("ui-settings-rdp-builtin-compression"),
+        SettingRow::RdpConfirmDisconnect => fl!("ui-settings-rdp-confirm-disconnect"),
+        SettingRow::RdpRedirectionIndicators => fl!("ui-settings-rdp-redirection-indicators"),
         SettingRow::RdpResolutionPresets => fl!("ui-settings-rdp-resolution-presets"),
         SettingRow::RdpResetAll => fl!("ui-settings-rdp-reset-defaults"),
         SettingRow::Certificates => fl!("ui-trusted-certificates-title"),
@@ -350,6 +352,10 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::RdpDefaultMode => fl!("ui-settings-rdp-default-mode-hint"),
         SettingRow::RdpDefaults => fl!("ui-settings-rdp-defaults-hint"),
         SettingRow::RdpBuiltinCompression => fl!("ui-settings-rdp-builtin-compression-hint"),
+        SettingRow::RdpConfirmDisconnect => fl!("ui-settings-rdp-confirm-disconnect-hint"),
+        SettingRow::RdpRedirectionIndicators => {
+            fl!("ui-settings-rdp-redirection-indicators-hint")
+        }
         SettingRow::RdpResolutionPresets => fl!("ui-settings-rdp-resolution-presets-hint"),
         SettingRow::RdpResetAll => fl!("ui-settings-rdp-reset-defaults-tooltip"),
         SettingRow::Certificates => fl!("ui-trusted-certificates-hint"),

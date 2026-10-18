@@ -5768,6 +5768,14 @@ ui-tab-menu-group-by-folder = Grouper les onglets par dossier
 ui-tab-list-tooltip = Tous les onglets ouverts
 ui-tab-list-entry = { $name } - { $state }
 
+ui-settings-ssh-auto-reconnect-first-delay = Délai avant la première tentative
+ui-settings-ssh-auto-reconnect-second-delay = Délai avant la deuxième tentative
+ui-settings-ssh-auto-reconnect-subsequent-delay = Délai avant chaque tentative suivante
+ui-settings-ssh-auto-reconnect-delay-refused = Le délai doit être compris entre { $min } et { $max } secondes.
+ui-settings-rdp-confirm-disconnect = Confirmer avant de déconnecter une session RDP
+ui-settings-rdp-confirm-disconnect-hint = Demande une confirmation quand on appuie sur le bouton Déconnecter d'une session RDP.
+ui-settings-rdp-redirection-indicators = Toujours afficher tous les indicateurs de redirection
+ui-settings-rdp-redirection-indicators-hint = Affiche aussi les redirections non partagées sur la barre d'une session RDP, au lieu de les ranger derrière le badge "+N".
 # "Route via" des outils réseau : leurs connexions TCP faites depuis une passerelle SSH.
 ui-tool-route-label = Passer par
 ui-tool-route-direct = Direct (depuis cet ordinateur)

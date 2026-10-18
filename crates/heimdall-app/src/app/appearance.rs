@@ -25,8 +25,8 @@ use heimdall_core::settings::{
     auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
     rdp_connect_timeout_accepted, rdp_keep_alive_interval_accepted,
     rdp_resize_enable_delay_accepted, reachability_interval_accepted, reachability_probes_accepted,
-    reachability_timeout_accepted, session_log_retention_days_accepted, settings_path,
-    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
+    reachability_timeout_accepted, reconnect_delay_accepted, session_log_retention_days_accepted,
+    settings_path, ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
     update_interval_accepted, windows_hello_grace_minutes_accepted,
     windows_hello_vault_max_days_accepted,
@@ -77,8 +77,20 @@ pub enum SettingsMessage {
     SshAutoReconnect(bool),
     /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
     SshAutoReconnectAttempts(u32),
+    /// Seconds before the first SSH auto-reconnect attempt; one out of the accepted range is
+    /// ignored.
+    SshAutoReconnectFirstDelay(u32),
+    /// Seconds before the second attempt; one out of the accepted range is ignored.
+    SshAutoReconnectSecondDelay(u32),
+    /// Seconds before every attempt after the second; one out of the accepted range is
+    /// ignored.
+    SshAutoReconnectSubsequentDelay(u32),
     /// Attempts of an RDP auto-reconnect; one out of the accepted range is ignored.
     RdpAutoReconnectAttempts(u32),
+    /// Ask before an RDP desktop is disconnected from its session bar, or not.
+    RdpConfirmDisconnect(bool),
+    /// Every redirection on an RDP desktop's bar, the ones not shared too, or behind "+N".
+    RdpRedirectionIndicatorsExpanded(bool),
     /// Which SSH agent's keys are offered first, or alone.
     SshAgentPreference(heimdall_core::settings::AgentPreference),
     /// Most sessions open at once, 0 for no limit.
@@ -373,6 +385,21 @@ impl App {
             {
                 self.settings.ssh_auto_reconnect_attempts = attempts;
             }
+            SettingsMessage::SshAutoReconnectFirstDelay(seconds)
+                if reconnect_delay_accepted(seconds) =>
+            {
+                self.settings.ssh_auto_reconnect_first_delay = seconds;
+            }
+            SettingsMessage::SshAutoReconnectSecondDelay(seconds)
+                if reconnect_delay_accepted(seconds) =>
+            {
+                self.settings.ssh_auto_reconnect_second_delay = seconds;
+            }
+            SettingsMessage::SshAutoReconnectSubsequentDelay(seconds)
+                if reconnect_delay_accepted(seconds) =>
+            {
+                self.settings.ssh_auto_reconnect_subsequent_delay = seconds;
+            }
             SettingsMessage::AntiIdleInterval(seconds) if anti_idle_interval_accepted(seconds) => {
                 self.settings.anti_idle_interval = seconds;
             }
@@ -473,6 +500,7 @@ impl App {
 
     /// Applies `message` and saves the settings; one that cannot be saved is said and not
     /// applied. A colour scheme colours the terminals open too.
+    #[expect(clippy::too_many_lines, reason = "one arm per setting")]
     fn apply_settings(&mut self, message: &SettingsMessage) -> Vec<Effect> {
         let before = self.settings.clone();
         match message {
@@ -518,6 +546,9 @@ impl App {
             | SettingsMessage::SessionLogRetentionDays(_)
             | SettingsMessage::AutoLockIdleMinutes(_)
             | SettingsMessage::SshAutoReconnectAttempts(_)
+            | SettingsMessage::SshAutoReconnectFirstDelay(_)
+            | SettingsMessage::SshAutoReconnectSecondDelay(_)
+            | SettingsMessage::SshAutoReconnectSubsequentDelay(_)
             | SettingsMessage::AntiIdleInterval(_)
             | SettingsMessage::SshKeepAliveInterval(_)
             | SettingsMessage::SshTmoutResetInterval(_)
@@ -535,6 +566,10 @@ impl App {
             SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
             SettingsMessage::RdpBuiltinCompression(on) => {
                 self.settings.builtin_rdp_compression = *on;
+            }
+            SettingsMessage::RdpConfirmDisconnect(on) => self.settings.rdp_confirm_disconnect = *on,
+            SettingsMessage::RdpRedirectionIndicatorsExpanded(on) => {
+                self.settings.rdp_redirection_indicators_expanded = *on;
             }
             SettingsMessage::ShowPropertiesPanel(on) => self.settings.show_properties_panel = *on,
             SettingsMessage::CollapseTunnelsPanel(collapse) => {

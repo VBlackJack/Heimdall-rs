@@ -1870,6 +1870,10 @@ impl Shell {
         }
         // Transcripts past their retention, removed beside the start, as the C# does.
         shell.app.prune_transcripts();
+        // The connection history, in the log folder as the C# `ConnectionHistory`.
+        shell
+            .app
+            .set_connection_history(heimdall_core::paths::log_dir());
         shell.offer_tour_on_first_run();
         shell
     }
@@ -8473,7 +8477,8 @@ impl Shell {
             shown.extend(crate::rdp_status::redirection_controls(
                 tab_id,
                 profile,
-                self.redirections_shown.contains(&tab_id),
+                self.redirections_shown.contains(&tab_id)
+                    || self.app.settings().rdp_redirection_indicators_expanded,
             ));
         }
         shown.extend(save_files_control(pane, tab_id));

@@ -5712,6 +5712,14 @@ ui-tab-menu-group-by-folder = Arrange tabs by folder
 ui-tab-list-tooltip = All open tabs
 ui-tab-list-entry = { $name } - { $state }
 
+ui-settings-ssh-auto-reconnect-first-delay = Wait before the first attempt
+ui-settings-ssh-auto-reconnect-second-delay = Wait before the second attempt
+ui-settings-ssh-auto-reconnect-subsequent-delay = Wait before each later attempt
+ui-settings-ssh-auto-reconnect-delay-refused = The wait must be between { $min } and { $max } seconds.
+ui-settings-rdp-confirm-disconnect = Confirm before disconnecting an RDP session
+ui-settings-rdp-confirm-disconnect-hint = Ask for confirmation when the Disconnect button of an RDP session is pressed.
+ui-settings-rdp-redirection-indicators = Always show every redirection indicator
+ui-settings-rdp-redirection-indicators-hint = Show the redirections that are not shared too on the bar of an RDP session, instead of behind the "+N" badge.
 # "Route via" of the network tools: their TCP connections made from an SSH gateway.
 ui-tool-route-label = Route via
 ui-tool-route-direct = Direct (from this computer)
