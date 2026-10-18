@@ -5773,3 +5773,34 @@ ui-settings-rdp-confirm-disconnect = Confirmer avant de déconnecter une session
 ui-settings-rdp-confirm-disconnect-hint = Demande une confirmation quand on appuie sur le bouton Déconnecter d'une session RDP.
 ui-settings-rdp-redirection-indicators = Toujours afficher tous les indicateurs de redirection
 ui-settings-rdp-redirection-indicators-hint = Affiche aussi les redirections non partagées sur la barre d'une session RDP, au lieu de les ranger derrière le badge "+N".
+# Cartographie réseau : ce que les sondes en lecture seule apprennent d'un hôte (colonnes de l'export CSV, puis la ligne affichée sous l'hôte).
+ui-tool-netmap-col-os = Système d'exploitation
+ui-tool-netmap-col-os-confidence = Confiance du système
+ui-tool-netmap-col-netbios-name = Nom NetBIOS
+ui-tool-netmap-col-netbios-domain = Domaine NetBIOS
+ui-tool-netmap-col-snmp-descr = Description SNMP
+ui-tool-netmap-col-snmp-name = Nom SNMP
+ui-tool-netmap-col-snmp-location = Emplacement SNMP
+ui-tool-netmap-col-ntlm-dns-name = Nom DNS Windows
+ui-tool-netmap-col-os-build = Build Windows
+ui-tool-netmap-col-smb-dialect = Dialecte SMB
+ui-tool-netmap-col-smb-signing = Signature SMB requise
+ui-tool-netmap-col-ssh-banner = Bannière SSH
+ui-tool-netmap-col-ssh-hassh = HASSH SSH
+ui-tool-netmap-col-tls-subject = Sujet du certificat TLS
+ui-tool-netmap-fp-os = Système : { $os } ({ $confidence }%)
+ui-tool-netmap-fp-netbios = NetBIOS : { $name }
+ui-tool-netmap-fp-netbios-domain = NetBIOS : { $domain }\{ $name }
+ui-tool-netmap-fp-workgroup = Domaine NetBIOS : { $domain }
+ui-tool-netmap-fp-snmp = SNMP : { $descr }
+ui-tool-netmap-fp-snmp-name = Nom SNMP : { $name }
+ui-tool-netmap-fp-windows = Nom Windows : { $name }
+ui-tool-netmap-fp-build = Build Windows : { $build }
+ui-tool-netmap-fp-smb =
+    SMB { $dialect }, { $required ->
+        [yes] signature requise
+       *[no] signature non requise
+    }
+ui-tool-netmap-fp-ssh = SSH : { $banner }
+ui-tool-netmap-fp-hassh = HASSH : { $hash }
+ui-tool-netmap-fp-tls = TLS : { $subject }

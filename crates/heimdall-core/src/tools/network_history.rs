@@ -315,6 +315,7 @@ impl KnowledgeBase {
                     role: classify_role(&ports.value),
                     open_ports: ports.value.clone(),
                     response_time_ms: ms,
+                    fingerprint: Box::default(),
                 }),
                 _ => None,
             };
