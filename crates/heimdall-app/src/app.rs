@@ -80,6 +80,7 @@ mod bulk_password;
 mod citrix_import;
 mod citrix_launch;
 mod connect_as;
+mod connection_history;
 mod credential_guard_gate;
 mod csharp_settings_import;
 mod detail;
@@ -3423,6 +3424,8 @@ pub struct App {
     split_layouts: heimdall_core::split_layouts::SplitLayouts,
     /// The transcripts' first and last lines, as the window words them.
     transcript_lines: Option<TranscriptLines>,
+    /// The folder the connection history is written in, when the window has one.
+    connection_history: Option<PathBuf>,
     /// Broadcast input: on or off, and the tabs marked.
     broadcast: broadcast::Broadcast,
     /// What was just done, and the session shown then with its state.
@@ -3539,6 +3542,7 @@ impl App {
             files_state,
             split_layouts,
             transcript_lines: None,
+            connection_history: None,
             broadcast: broadcast::Broadcast::default(),
             viewport: config.initial_grid,
             display_scale: 1.0,
@@ -4351,8 +4355,17 @@ impl App {
         effects
     }
 
-    #[expect(clippy::too_many_lines, reason = "one arm per connection event")]
     fn apply_connection_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
+        let was_connected = self
+            .tab(tab_id)
+            .is_some_and(|tab| tab.phase == Phase::Connected);
+        let effects = self.apply_session_event(tab_id, event);
+        self.note_connected(tab_id, was_connected);
+        effects
+    }
+
+    #[expect(clippy::too_many_lines, reason = "one arm per connection event")]
+    fn apply_session_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
         let active = self.in_sight(tab_id);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();

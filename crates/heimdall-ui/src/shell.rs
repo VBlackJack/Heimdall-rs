@@ -1849,6 +1849,10 @@ impl Shell {
         }
         // Transcripts past their retention, removed beside the start, as the C# does.
         shell.app.prune_transcripts();
+        // The connection history, in the log folder as the C# `ConnectionHistory`.
+        shell
+            .app
+            .set_connection_history(heimdall_core::paths::log_dir());
         shell.offer_tour_on_first_run();
         shell
     }

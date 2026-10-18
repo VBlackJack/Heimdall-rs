@@ -905,6 +905,10 @@ impl App {
         };
         // Cancelling the attempt drops its pending questions from the registry.
         let mut tab = self.tabs.remove(index);
+        self.record_connection(
+            &tab,
+            heimdall_core::connection_history::Action::Disconnected,
+        );
         tab.stop();
         if self.active != Some(tab_id) {
             return;

@@ -22,6 +22,7 @@
 compile_error!("the test-data-dir feature is for test builds only, never a release build");
 
 pub mod code_page;
+pub mod connection_history;
 pub mod credential_provider;
 pub mod credentials;
 pub mod export;
