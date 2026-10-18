@@ -903,6 +903,11 @@ fn preferences_table() -> Vec<Preference> {
             show_gateway_badge
         ),
         preference!(
+            "GroupSessionTabsByFolder",
+            |value, settings| flag(value, false, &mut settings.group_tabs_by_folder),
+            group_tabs_by_folder
+        ),
+        preference!(
             "UseExternalCredentialProvider",
             |value, settings| flag(value, false, &mut settings.credential_provider.enabled),
             credential_provider.enabled

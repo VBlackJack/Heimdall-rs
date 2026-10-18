@@ -80,6 +80,9 @@ pub enum TreeMenu {
     Add,
     /// The "..." button's menu.
     More,
+    /// Every open tab, from the button at the end of an overflowing strip, as the C#
+    /// `TabListMenuFactory`.
+    TabList,
     /// A tab's menu, drawn as the tree's are.
     Tab(TabId),
     /// The same menu opened from a pane's header in a split: its Disconnect closes that pane
@@ -1594,6 +1597,8 @@ pub struct TabMenuState {
     pub health: Option<bool>,
     /// It is pinned.
     pub pinned: bool,
+    /// The tabs are gathered by the folder of their profile.
+    pub grouped: bool,
     /// How many tabs "Reopen closed tab" opens again; 0 hides it, as the C# shows it only
     /// with a tab to reopen.
     pub reopen_closed: usize,
@@ -1976,8 +1981,14 @@ fn own_tab_entries<'a>(state: &TabMenuState) -> Vec<Element<'a, Message>> {
             menu(TabMenuMessage::Pin(tab)),
         ));
     }
-    // After the pin, as the C# `AppendTabGroupItems`: the tabs of the last close, named
+    // After the pin, as the C# `AppendTabGroupItems`: the arrangement by folder, ticked while
+    // on, then the tabs of the last close, named
     // with their count when it closed several.
+    own.push(checked_entry(
+        fl!("ui-tab-menu-group-by-folder"),
+        state.grouped,
+        AppMessage::TabMenu(TabMenuMessage::ToggleGroupByFolder),
+    ));
     if state.reopen_closed > 0 {
         own.push(keyed_entry(
             if state.reopen_closed > 1 {
@@ -2083,6 +2094,40 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
         closing,
     ]))
     .into()
+}
+
+/// A tab in the list of every open tab.
+pub struct TabListItem {
+    /// The tab.
+    pub tab: TabId,
+    /// Its title, and its state when it needs a look.
+    pub label: String,
+    /// Its folder, said at the right while the tabs are gathered by folder.
+    pub folder: Option<String>,
+    /// It is the tab shown.
+    pub active: bool,
+}
+
+/// The list of every open tab, as the C# `TabListMenuFactory`: one entry per tab in the
+/// strip's order, the tab shown ticked, a choice showing that tab.
+#[must_use]
+pub fn tab_list_entries<'a>(items: Vec<TabListItem>) -> Element<'a, Message> {
+    let entries = MenuColumn::new().extend(items.into_iter().map(|item| {
+        button(
+            row![
+                text(if item.active { CHECKED } else { "" })
+                    .size(font_size::BODY_LARGE)
+                    .width(CHECK_WIDTH),
+                entry_label(item.label, item.folder),
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .style(menu_style)
+        .on_press(Message::MenuChoice(AppMessage::SelectTab(item.tab)))
+        .into()
+    }));
+    menu_card(entries).into()
 }
 
 /// The keys of the "Send keys" menu, in the C# session header's groups and order.

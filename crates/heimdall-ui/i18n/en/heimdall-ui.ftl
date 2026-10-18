@@ -5608,3 +5608,8 @@ ui-dialog-import-preferences-invalid = Values not read: { $names }
 ui-dialog-import-preferences-relative = Paths of the C# installation, not carried over: { $names }
 ui-dialog-import-preferences-failed = The preferences of the C# Heimdall could not be read: { $detail }
 ui-dialog-import-preferences-review = Review preferences
+
+# Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
+ui-tab-menu-group-by-folder = Arrange tabs by folder
+ui-tab-list-tooltip = All open tabs
+ui-tab-list-entry = { $name } - { $state }

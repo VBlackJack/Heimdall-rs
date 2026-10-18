@@ -137,6 +137,7 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("general.diagnostics_log", PLAIN),
     ("general.show_gateway_badge", PLAIN),
     ("general.show_properties_panel", PLAIN),
+    ("general.group_tabs_by_folder", PLAIN),
     // The workspace locks later, or never.
     (
         "vault.auto_lock_idle_minutes",
