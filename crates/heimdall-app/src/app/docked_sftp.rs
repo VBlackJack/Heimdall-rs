@@ -31,7 +31,7 @@
 
 use heimdall_core::profile::SshProfile;
 
-use super::split::{Axis, MAX_PANES, Placement, SplitMessage};
+use super::split::{Axis, Placement, SplitMessage};
 use super::{App, Effect, Notice, TabProfile};
 use crate::driver::Purpose;
 use crate::error::UiError;
@@ -52,7 +52,7 @@ impl App {
             return Vec::new();
         };
         // Split already, a reconnect among them, or docked in another tab: no room.
-        if self.is_docked(shell) || self.panes_of(shell).len() >= MAX_PANES {
+        if self.is_docked(shell) || self.in_split(shell) {
             return Vec::new();
         }
         let active = self.active;

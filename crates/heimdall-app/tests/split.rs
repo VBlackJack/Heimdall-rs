@@ -159,6 +159,22 @@ fn merged(app: &mut App) -> ((TabId, AttemptId), (TabId, AttemptId)) {
     (a, b)
 }
 
+/// Opens tabs and merges them into `host` until it is split in the most panes.
+fn fill_panes(app: &mut App, host: TabId) {
+    while app.panes_of(host).len() < MAX_PANES {
+        let (tab, _) = open(app, "c");
+        split(
+            app,
+            SplitMessage::Merge {
+                host,
+                tab,
+                axis: Axis::SideBySide,
+                placement: Placement::Second,
+            },
+        );
+    }
+}
+
 fn strip(app: &App) -> Vec<TabId> {
     app.strip().iter().map(|tab| tab.id).collect()
 }
@@ -242,7 +258,10 @@ fn a_merge_is_refused_onto_itself_from_a_split_and_beyond_the_most_panes() {
         assert_eq!(layout(&app, a).leaves(), [a, b]);
     }
     assert_eq!(app.notice(), None, "refused without a word");
+
+    // A third pane is welcome, split beside the pane with the keyboard.
     app.update(Message::SelectTab(a));
+    split(&mut app, SplitMessage::Focus(a));
     split(
         &mut app,
         SplitMessage::Merge {
@@ -252,18 +271,28 @@ fn a_merge_is_refused_onto_itself_from_a_split_and_beyond_the_most_panes() {
             placement: Placement::Second,
         },
     );
-    assert_eq!(layout(&app, a).leaves(), [a, b], "two panes at most");
-    assert_eq!(strip(&app), [a, c]);
+    assert_eq!(layout(&app, a).leaves(), [a, c, b]);
+    assert_eq!(strip(&app), [a]);
+    assert_eq!(app.notice(), None);
+
+    // Up to the most panes, the C# `MaxPanesPerTab`, and no further.
+    fill_panes(&mut app, a);
+    let full = layout(&app, a).leaves();
+    assert_eq!(full.len(), MAX_PANES);
+    let (extra, _) = open(&mut app, "c");
+    split(
+        &mut app,
+        SplitMessage::Merge {
+            host: a,
+            tab: extra,
+            axis: Axis::Stacked,
+            placement: Placement::Second,
+        },
+    );
+    assert_eq!(layout(&app, a).leaves(), full, "the most panes at most");
+    assert_eq!(strip(&app), [a, extra]);
     assert_eq!(app.notice(), Some(&Notice::SplitMaxPanesReached(MAX_PANES)));
     assert!(app.merge_candidates(a).is_empty(), "split: offers none");
-    assert_eq!(
-        app.merge_candidates(c)
-            .iter()
-            .map(|tab| tab.id)
-            .collect::<Vec<_>>(),
-        Vec::<TabId>::new(),
-        "the only other tab is split"
-    );
 }
 
 #[test]
@@ -286,6 +315,7 @@ fn unsplit_swap_toggle_and_the_ratio() {
         &mut app,
         SplitMessage::Resize {
             host: a,
+            divider: 0,
             ratio: 0.3,
         },
     );
@@ -294,6 +324,7 @@ fn unsplit_swap_toggle_and_the_ratio() {
         &mut app,
         SplitMessage::Resize {
             host: a,
+            divider: 0,
             ratio: 0.0,
         },
     );
@@ -302,6 +333,7 @@ fn unsplit_swap_toggle_and_the_ratio() {
         &mut app,
         SplitMessage::Resize {
             host: a,
+            divider: 0,
             ratio: 7.0,
         },
     );
@@ -310,6 +342,7 @@ fn unsplit_swap_toggle_and_the_ratio() {
         &mut app,
         SplitMessage::Resize {
             host: a,
+            divider: 0,
             ratio: f32::NAN,
         },
     );
@@ -318,7 +351,13 @@ fn unsplit_swap_toggle_and_the_ratio() {
         Some(MAX_RATIO),
         "no share is not one"
     );
-    split(&mut app, SplitMessage::ResetRatio(a));
+    split(
+        &mut app,
+        SplitMessage::ResetRatio {
+            host: a,
+            divider: 0,
+        },
+    );
     assert_eq!(layout(&app, a).ratio(), Some(DEFAULT_RATIO));
 
     // The docked tab back on the strip right after its host; the host keeps the keyboard.
@@ -534,6 +573,8 @@ fn the_tunnels_panel_and_the_notice_follow_the_tab_shown_not_the_pane_focused() 
         app.tab(a).expect("a").layout.as_ref().map(|l| l.focus),
         Some(a)
     );
+    fill_panes(&mut app, a);
+    split(&mut app, SplitMessage::Focus(a));
 
     split(
         &mut app,
@@ -831,7 +872,9 @@ fn open_in_split_merges_the_new_tab_into_the_tab_shown_up_to_the_most_panes() {
     assert_eq!(strip(&app), [a, c], "the new tab never on the strip");
     assert_eq!(app.active, Some(b), "the new pane has the keyboard");
 
-    // Two panes already: said, and nothing opens.
+    // The most panes already: said, and nothing opens.
+    fill_panes(&mut app, a);
+    let full = layout(&app, a).leaves();
     let before = app.tabs.len();
     let effects = split(
         &mut app,
@@ -842,7 +885,7 @@ fn open_in_split_merges_the_new_tab_into_the_tab_shown_up_to_the_most_panes() {
     );
     assert!(effects.is_empty());
     assert_eq!(app.tabs.len(), before, "nothing opened");
-    assert_eq!(layout(&app, a).leaves(), [a, b]);
+    assert_eq!(layout(&app, a).leaves(), full);
     assert_eq!(app.notice(), Some(&Notice::SplitMaxPanesReached(MAX_PANES)));
 }
 
@@ -999,6 +1042,7 @@ fn a_resized_split_of_two_profiles_starts_there_when_merged_again_mirrored_the_o
         &mut app,
         SplitMessage::Resize {
             host: a,
+            divider: 0,
             ratio: 0.25,
         },
     );
@@ -1028,7 +1072,13 @@ fn a_resized_split_of_two_profiles_starts_there_when_merged_again_mirrored_the_o
     assert_eq!(layout(&app, a).ratio(), Some(0.75));
 
     // A reset is remembered too; swapping and turning are not, as the C#.
-    split(&mut app, SplitMessage::ResetRatio(a));
+    split(
+        &mut app,
+        SplitMessage::ResetRatio {
+            host: a,
+            divider: 0,
+        },
+    );
     split(&mut app, SplitMessage::Swap(a));
     split(&mut app, SplitMessage::ToggleAxis(a));
     let kept = remembered(dir.path());
@@ -1069,6 +1119,7 @@ fn a_pane_saved_nowhere_is_not_remembered() {
         &mut app,
         SplitMessage::Resize {
             host: a,
+            divider: 0,
             ratio: 0.25,
         },
     );
@@ -1123,6 +1174,7 @@ fn the_splits_remembered_are_read_back_at_the_next_start() {
         &mut first_run,
         SplitMessage::Resize {
             host: a,
+            divider: 0,
             ratio: 0.25,
         },
     );
@@ -1305,7 +1357,9 @@ fn ctrl_enter_opens_a_session_as_a_split_of_the_tab_shown() {
             if host == c
     ));
 
-    // Two panes already: said, and nothing opens, as the C#.
+    // The most panes already: said, and nothing opens, as the C#.
+    app.update(Message::SelectTab(a));
+    fill_panes(&mut app, a);
     app.update(Message::SelectTab(a));
     let before = app.tabs.len();
     let message = app.quick_open(found(&app, "server c"), None, true);
@@ -1431,4 +1485,118 @@ fn awaited_listing(
         ] => *request,
         other => panic!("no listing asked for: {other:?}"),
     }
+}
+
+/// Tabs `a`, `b` side by side, then `c` stacked under `a`: the tree is
+/// `[a over c] beside b`, three panes, dividers 0 (outer) and 1 (`a` over `c`).
+fn three_panes(app: &mut App) -> (TabId, TabId, TabId) {
+    let ((a, _), (b, _)) = merged(app);
+    let (c, _) = open(app, "c");
+    app.update(Message::SelectTab(a));
+    split(app, SplitMessage::Focus(a));
+    split(
+        app,
+        SplitMessage::Merge {
+            host: a,
+            tab: c,
+            axis: Axis::Stacked,
+            placement: Placement::Second,
+        },
+    );
+    assert_eq!(layout(app, a).leaves(), [a, c, b]);
+    (a, b, c)
+}
+
+#[test]
+fn each_divider_of_a_nested_split_is_resized_and_reset_on_its_own() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, ..) = three_panes(&mut app);
+
+    split(
+        &mut app,
+        SplitMessage::Resize {
+            host: a,
+            divider: 1,
+            ratio: 0.3,
+        },
+    );
+    assert_eq!(
+        layout(&app, a).ratio(),
+        Some(DEFAULT_RATIO),
+        "outer untouched"
+    );
+    split(
+        &mut app,
+        SplitMessage::Resize {
+            host: a,
+            divider: 0,
+            ratio: 0.7,
+        },
+    );
+    assert_eq!(layout(&app, a).ratio(), Some(0.7));
+
+    // A divider no split has changes nothing.
+    let before = layout(&app, a);
+    split(
+        &mut app,
+        SplitMessage::Resize {
+            host: a,
+            divider: 2,
+            ratio: 0.9,
+        },
+    );
+    assert_eq!(layout(&app, a), before);
+
+    // The nested one reset leaves the outer one where it is.
+    split(
+        &mut app,
+        SplitMessage::ResetRatio {
+            host: a,
+            divider: 1,
+        },
+    );
+    assert_eq!(layout(&app, a).ratio(), Some(0.7));
+    let heimdall_app::split::Node::Split { first, .. } = layout(&app, a).root else {
+        panic!("a split");
+    };
+    let heimdall_app::split::Node::Split { ratio, .. } = *first else {
+        panic!("a nested split");
+    };
+    assert_eq!(Some(ratio), Some(DEFAULT_RATIO));
+}
+
+#[test]
+fn the_keyboard_goes_round_every_pane_of_a_nested_split() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, b, c) = three_panes(&mut app);
+    split(&mut app, SplitMessage::Focus(a));
+    // Forward from the first pane goes to the next in the tree's order, round to the first.
+    split(&mut app, SplitMessage::Focus(a));
+    split(&mut app, SplitMessage::FocusNext(a));
+    assert_eq!(app.active, Some(c));
+    split(&mut app, SplitMessage::FocusNext(a));
+    assert_eq!(app.active, Some(b));
+    split(&mut app, SplitMessage::FocusNext(a));
+    assert_eq!(app.active, Some(a), "the last hands it to the first");
+    split(&mut app, SplitMessage::FocusPrevious(a));
+    assert_eq!(app.active, Some(b), "the first hands it to the last");
+}
+
+#[test]
+fn closing_a_pane_of_three_collapses_its_parent_and_keeps_the_rest_split() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, b, c) = three_panes(&mut app);
+    split(&mut app, SplitMessage::ClosePane(c));
+    assert!(app.tab(c).is_none());
+    let left = layout(&app, a);
+    assert_eq!(left.leaves(), [a, b]);
+    assert_eq!(left.axis(), Some(Axis::SideBySide), "the outer split stays");
+    assert_eq!(strip(&app), [a]);
+
+    // The last split closed: back to a plain tab.
+    split(&mut app, SplitMessage::ClosePane(b));
+    assert!(app.tab(a).expect("a").layout.is_none());
 }

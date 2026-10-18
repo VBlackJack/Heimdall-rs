@@ -53,7 +53,7 @@ use heimdall_term::local::LocalArguments;
 use tokio_util::sync::CancellationToken;
 
 use super::reconnect::Reopen;
-use super::split::{Axis, MAX_PANES, Placement, SplitMessage};
+use super::split::{Axis, Placement, SplitMessage};
 use super::{App, Dialog, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::files::{EntryKind, FilesPane, LocalPane, ShellFollow, Side};
@@ -94,7 +94,7 @@ impl App {
             return Vec::new();
         };
         // Split already, a reconnect among them, or docked in another tab: no room.
-        if self.is_docked(shell) || self.panes_of(shell).len() >= MAX_PANES {
+        if self.is_docked(shell) || self.in_split(shell) {
             return Vec::new();
         }
         // The shell's folder; one not there is left for the home folder once listed.

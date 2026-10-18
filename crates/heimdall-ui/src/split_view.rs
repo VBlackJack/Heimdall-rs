@@ -60,10 +60,6 @@ pub const NUDGE: f32 = 0.05;
 /// Width of the accent border round the pane with the keyboard, as the C# one's.
 pub const FOCUS_EDGE: f32 = 2.0;
 
-/// The outer split's divider: the first numbered, and the only one while a tab takes two
-/// panes.
-pub const OUTER_DIVIDER: usize = 0;
-
 /// Room around a pane header's content, as the C# `SessionHeaderPadding`'s `8,4`.
 const HEADER_PADDING: [f32; 2] = [4.0, 8.0];
 
