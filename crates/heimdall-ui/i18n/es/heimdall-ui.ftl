@@ -4218,69 +4218,41 @@ ui-tool-cve-help =
 
 
 
-## La herramienta de escaneo de credenciales predeterminadas, idéntica a DefaultCredentialView en C#.
-ui-tool-defaultcreds-name = Escáner de credenciales predeterminadas
-ui-tool-defaultcreds-description = Prueba credenciales predeterminadas comunes contra servicios detectados en un host de destino
-ui-tool-defaultcreds-title = Escáner de credenciales predeterminadas
-ui-tool-defaultcreds-host-label = Host
-ui-tool-defaultcreds-host-placeholder = Nombre de host o dirección IP
-ui-tool-defaultcreds-btn-scan = Escanear
-ui-tool-defaultcreds-btn-stop = Detener
-ui-tool-defaultcreds-auto-detect = Detectar servicios automáticamente
-ui-tool-defaultcreds-show-passwords = Mostrar contraseñas
-ui-tool-defaultcreds-warning = Usa esto solo en sistemas de tu propiedad o con autorización explícita para probar.
+## La herramienta de credenciales predeterminadas, para el catálogo de
+## DefaultCredentialView en C#, nunca para los intentos de inicio de sesión que
+## realiza: solo lista, decisión del propietario (2026-10-17, punto 10).
+ui-tool-defaultcreds-name = Credenciales predeterminadas
+ui-tool-defaultcreds-description = Lista las credenciales predeterminadas conocidas de los proveedores para un producto o servicio
+ui-tool-defaultcreds-title = Credenciales predeterminadas
+ui-tool-defaultcreds-note = Esta herramienta lista las credenciales predeterminadas conocidas de los proveedores. Nunca intenta iniciar sesión con ellas, para evitar bloqueos de cuentas e intentos de inicio de sesión no autorizados.
+ui-tool-defaultcreds-filter-label = Servicio
+ui-tool-defaultcreds-filter-placeholder = Filtrar por nombre de servicio (por ejemplo SSH, HTTP, MySQL)
 ui-tool-defaultcreds-col-service = Servicio
 ui-tool-defaultcreds-col-port = Puerto
 ui-tool-defaultcreds-col-user = Usuario
 ui-tool-defaultcreds-col-pass = Contraseña
-ui-tool-defaultcreds-col-status = Estado
-ui-tool-defaultcreds-col-detail = Detalle
-ui-tool-defaultcreds-status-default = ¡Predeterminada!
-ui-tool-defaultcreds-status-changed = Cambiada
-ui-tool-defaultcreds-status-error = Error
-ui-tool-defaultcreds-detecting = Detectando servicios...
-ui-tool-defaultcreds-testing = Probando { $service } { $user }:{ $pass }...
-ui-tool-defaultcreds-summary = { $defaults ->
-    [one] { $defaults } credencial predeterminada encontrada en { $services ->
-        [one] { $services } servicio
-       *[other] { $services } servicios
-    }
-   *[other] { $defaults } credenciales predeterminadas encontradas en { $services ->
-        [one] { $services } servicio
-       *[other] { $services } servicios
-    }
-}
-ui-tool-defaultcreds-no-defaults = No se encontraron credenciales predeterminadas: todos los servicios probados parecen seguros.
 ui-tool-defaultcreds-btn-copy = Copiar informe
 ui-tool-defaultcreds-btn-export = Exportar CSV
-ui-tool-defaultcreds-empty-state = Introduce un host para escanear en busca de credenciales predeterminadas en servicios comunes
-ui-tool-defaultcreds-error-host-required = Se requiere un nombre de host o dirección IP.
-ui-tool-defaultcreds-detail-accepted = { $service } aceptó credenciales predeterminadas
-ui-tool-defaultcreds-detail-rejected = { $service } rechazó las credenciales
+ui-tool-defaultcreds-empty-state = Ningún servicio del catálogo coincide con este filtro
+ui-tool-defaultcreds-empty = (vacío)
+ui-tool-defaultcreds-count = { $count ->
+    [one] { $count } credencial predeterminada listada
+   *[other] { $count } credenciales predeterminadas listadas
+}
 ui-tool-defaultcreds-help =
-    Escáner de credenciales predeterminadas
+    Credenciales predeterminadas
 
-    Prueba credenciales predeterminadas comunes contra servicios detectados en un host de destino.
+    Lista las credenciales predeterminadas conocidas de los proveedores para un
+    producto o servicio, a partir de un catálogo incluido (SSH, Telnet, FTP, HTTP,
+    SNMP, MySQL, PostgreSQL, Redis, MSSQL, VNC).
 
     Uso:
-    1. Introduce un nombre de host o IP
-    2. Activa "Detectar servicios automáticamente" para escanear primero los puertos comunes
-    3. Haz clic en Escanear
+    1. Filtra opcionalmente por nombre de servicio
+    2. Copia el informe, o expórtalo como CSV
 
-    Protocolos probados:
-    - SSH (solo servicio accesible, credenciales no probadas)
-    - Autenticación básica HTTP
-    - FTP (anónimo, admin)
-    - SNMP (cadenas de comunidad)
-    - PostgreSQL (acceso sin contraseña); MySQL, MSSQL (solo servicio accesible, credenciales no probadas)
-    - VNC (solo servicio accesible, credenciales no probadas)
-    - Telnet
-    - Redis (solo servicio accesible, credenciales no probadas)
-
-    Seguridad:
-    - Limitado en frecuencia (1 intento/segundo por servicio)
-    - Solo prueba credenciales predeterminadas bien conocidas
-    - NO realiza ataques de fuerza bruta
+    Esta herramienta nunca intenta iniciar sesión: a diferencia de la herramienta C#
+    original, solo lista el catálogo, para evitar bloqueos de cuentas e intentos de
+    inicio de sesión no autorizados.
 ui-tool-secnumcloud-name = Auditoría SecNumCloud
 ui-tool-secnumcloud-description = Auditoría de cumplimiento SecNumCloud v3.2 en red, criptografía, accesos y operaciones
 ui-tool-secnumcloud-title = Auditoría de cumplimiento SecNumCloud v3.2
@@ -4414,12 +4386,6 @@ ui-tool-smb-help =
     - Dialecto SMB2/SMB3 negociado
 
 # --- Review follow-ups (#402): security tools ---
-ui-tool-defaultcreds-status-not-tested = No probado
-ui-tool-defaultcreds-detail-not-tested = { $service } accesible, credenciales no probadas
-ui-tool-defaultcreds-empty = (vacío)
-ui-tool-defaultcreds-timeout-connect = Tiempo de conexión agotado
-ui-tool-defaultcreds-timeout-write = Tiempo de escritura agotado
-ui-tool-defaultcreds-timeout-read = Tiempo de lectura agotado
 ui-tool-dnssec-report-record = Registro
 ui-tool-dnssec-report-detail = Detalle
 ui-tool-dnssec-error-nslookup-missing = No se encontró nslookup. Instálelo (bind-utils / dnsutils en Linux) o asegúrese de que esté en el PATH.

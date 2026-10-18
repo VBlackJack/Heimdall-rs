@@ -37,7 +37,7 @@ use iced::widget::text_editor::{Action, Edit};
 
 use super::{
     BannerMessage, Base64Message, CertInspectorMessage, ChmodMessage, CrontabMessage, CveMessage,
-    DateTimeMessage, DefaultCredsMessage, DiffMessage, DnsBatchMessage, DnsMessage, DnsSecMessage,
+    DateTimeMessage, DiffMessage, DnsBatchMessage, DnsMessage, DnsSecMessage,
     FirewallTesterMessage, HashMessage, HmacMessage, HttpHeadersMessage, IpConverterMessage,
     JsonMessage, JwtMessage, LogViewerMessage, NetworkCartographyMessage, PingMessage,
     PortScanMessage, RegexMessage, SmbMessage, SnmpWalkerMessage, SshConfigMessage, SshField,
@@ -126,10 +126,6 @@ pub(super) fn messages(tool: ToolId, context: &ToolContext) -> Vec<ToolMessage> 
             .collect(),
         ToolId::Smb => host()
             .map(|h| ToolMessage::Smb(SmbMessage::HostChanged(h)))
-            .into_iter()
-            .collect(),
-        ToolId::DefaultCreds => host()
-            .map(|h| ToolMessage::DefaultCreds(DefaultCredsMessage::HostChanged(h)))
             .into_iter()
             .collect(),
         ToolId::DnsSec => host()
@@ -359,7 +355,9 @@ mod tests {
     const BAD_HOST: &str = "probe-7.lab; rm -rf /tmp/x -oProxyCommand=x";
 
     /// The tools that reach a host, list hosts to reach, or compute on an address.
-    const HOST_TOOLS: [ToolId; 21] = [
+    /// `DefaultCreds` is list-only (owner decision 2026-10-17, item 10): it never
+    /// reaches a host, so it is not one of these.
+    const HOST_TOOLS: [ToolId; 20] = [
         ToolId::Ping,
         ToolId::Dns,
         ToolId::Cert,
@@ -377,14 +375,13 @@ mod tests {
         ToolId::TlsAudit,
         ToolId::DnsSec,
         ToolId::Smb,
-        ToolId::DefaultCreds,
         ToolId::SshConfig,
         ToolId::SubnetCalculator,
         ToolId::IpConverter,
     ];
 
     /// The tools that reach a host and so check it as typed.
-    const NETWORK_TOOLS: [ToolId; 19] = [
+    const NETWORK_TOOLS: [ToolId; 18] = [
         ToolId::Ping,
         ToolId::Dns,
         ToolId::Cert,
@@ -402,7 +399,6 @@ mod tests {
         ToolId::TlsAudit,
         ToolId::DnsSec,
         ToolId::Smb,
-        ToolId::DefaultCreds,
         ToolId::SshConfig,
     ];
 
@@ -506,7 +502,6 @@ mod tests {
             (ToolId::TlsAudit, argument("[::1]:993"), &["\"::1\"", "993"]),
             (ToolId::DnsSec, argument("probe.lab"), &["probe.lab"]),
             (ToolId::Smb, on(HOST, None), &[HOST]),
-            (ToolId::DefaultCreds, on(HOST, None), &[HOST]),
             (ToolId::SshConfig, on(HOST, Some(2222)), &[HOST, "2222"]),
             // The C# `PrefillInput`: encoded at once.
             (ToolId::Base64, argument("hello"), &["hello", "aGVsbG8="]),

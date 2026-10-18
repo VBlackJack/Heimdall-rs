@@ -1299,11 +1299,10 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::DefaultCreds(message), Pane::DefaultCreds(pane)) => {
-                return match pane.update(message, tab) {
+                return match pane.update(message) {
                     defaultcreds_tool::Outcome::Copy(slot, content) => {
                         state.copy(tab, slot, content)
                     }
-                    defaultcreds_tool::Outcome::Task(task) => task,
                     defaultcreds_tool::Outcome::None => Task::none(),
                 };
             }
@@ -1724,7 +1723,7 @@ pub fn view<'a>(
         Pane::SshAudit(pane) => (pane.view(tab, state, theme), None),
         Pane::TlsAudit(pane) => (pane.view(tab, state, theme), None),
         Pane::DnsSec(pane) => (pane.view(tab, state, theme), None),
-        Pane::DefaultCreds(pane) => (pane.view(tab, state, theme), None),
+        Pane::DefaultCreds(pane) => (pane.view(tab, state), None),
         Pane::Cve(pane) => (pane.view(tab, state, theme), None),
         Pane::SecNumCloud(pane) => (pane.view(tab, state, theme), None),
         Pane::Smb(pane) => (pane.view(tab, state, theme), None),
