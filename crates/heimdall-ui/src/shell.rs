@@ -527,6 +527,7 @@ fn toggles_fullscreen(physical: keyboard::key::Physical, modifiers: keyboard::Mo
         || crate::terminal_view::keys::is_fullscreen_key(physical, modifiers)
 }
 
+#[expect(clippy::too_many_lines, reason = "one arm per window key")]
 fn window_event(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Message> {
     match event {
         iced::Event::Window(window::Event::CloseRequested) => {
@@ -604,6 +605,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if is_search_key(&key, physical_key, modifiers) {
                 return Some(Message::FocusSearch);
             }
+            if is_copy_key(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::PasswordCopyKey);
+            }
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
                 // Held down, the panel's key would flip it, and save it, at each repeat.
                 return (!repeat || shortcut.repeats()).then_some(Message::TreeShortcut(shortcut));
@@ -659,6 +663,19 @@ fn untaken_tab_key(
     is_reopen_closed_key(key, physical, modifiers).then_some(WindowShortcut::ReopenClosedTab)
 }
 
+/// Whether `key` is Ctrl+C alone, whatever the keyboard's layout.
+fn is_copy_key(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && crate::terminal_view::keys::letter(key, physical) == Some('c')
+}
+
 /// What the window reacts to.
 #[derive(Clone)]
 pub enum Message {
@@ -698,6 +715,9 @@ pub enum Message {
     EscapeUntaken,
     /// A key for the Files tab shown, uncaptured by any widget.
     FilesKey(FilesKey),
+    /// Ctrl+C, uncaptured by any widget: copies the password of a Password Generator tab
+    /// shown, as the C# `PasswordGeneratorView.OnKeyDown`.
+    PasswordCopyKey,
     /// Tab: the next field of a dialog, or the other pane of a Files tab.
     TabKey {
         /// With Shift: the previous field.
@@ -1117,6 +1137,7 @@ impl fmt::Debug for Message {
             Self::DialogKey { confirm } => write!(f, "DialogKey({confirm})"),
             Self::EscapeUntaken => f.write_str("EscapeUntaken"),
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
+            Self::PasswordCopyKey => f.write_str("PasswordCopyKey"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
@@ -2698,6 +2719,11 @@ impl Shell {
         if let Some(tour) = self.tour_key(&message) {
             return self.update(Message::Tour(tour));
         }
+        // Enter, Escape and Ctrl+C no field took are the Password Generator's while it is
+        // shown, as the C# `PasswordGeneratorView.OnKeyDown`.
+        if let Some((tab, key)) = self.password_key(&message) {
+            return self.update(Message::Tool(tab, crate::tools::ToolMessage::Password(key)));
+        }
         // Escape no widget took leaves full screen when there is nothing else to close, as
         // the C# Heimdall's.
         if matches!(message, Message::EscapeUntaken) {
@@ -2758,8 +2784,12 @@ impl Shell {
             Message::Shortcut(WindowShortcut::Screenshot) => return self.screenshot(),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
-            // Answered above, before the rest.
-            Message::EscapeUntaken | Message::Float(..) | Message::InFloating(..) => Vec::new(),
+            // Answered above, before the rest; Ctrl+C is taken by no Password Generator
+            // shown, and nothing else copies on it.
+            Message::EscapeUntaken
+            | Message::PasswordCopyKey
+            | Message::Float(..)
+            | Message::InFloating(..) => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
             Message::TabKey { backward } => {
                 if self.tab_moves_focus() {
@@ -3941,6 +3971,33 @@ impl Shell {
             }
             _ => None,
         }
+    }
+
+    /// What a key no field took asks of the Password Generator tab shown, as the C#
+    /// `OnKeyDown`: Enter generates another password, Escape clears the output, Ctrl+C
+    /// copies the password. None while another page, a dialog, a menu, Quick Connect or
+    /// the tree has the keyboard, or when another tab is shown.
+    fn password_key(&self, message: &Message) -> Option<(TabId, crate::tools::PasswordMessage)> {
+        let key = match message {
+            Message::DialogKey { confirm: true } => crate::tools::PasswordMessage::Generate,
+            Message::EscapeUntaken if !self.escape_leaves_fullscreen() => {
+                crate::tools::PasswordMessage::ClearOutput
+            }
+            Message::PasswordCopyKey => {
+                crate::tools::PasswordMessage::Copy(crate::tools::PasswordCopy::Main)
+            }
+            _ => return None,
+        };
+        let free = !self.gated()
+            && !self.settings_shown()
+            && !self.tree_focused
+            && self.tour.is_none()
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && self.finder.is_none()
+            && self.menu.is_none();
+        let tab = self.shown_tab_id()?;
+        (free && self.tools.is_password(tab)).then_some((tab, key))
     }
 
     /// Whether Escape leaves full screen: in it, with no dialog, menu, Quick Connect, search
@@ -14308,6 +14365,101 @@ mod tests {
             ),
             "taken by none, Escape may leave full screen"
         );
+    }
+
+    #[test]
+    fn ctrl_c_left_by_every_widget_is_the_password_copy_key_and_a_held_one_is_not() {
+        use keyboard::key::Code;
+        let ctrl_c = |typed: &str, code, modifiers, status, repeat| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(typed.into()),
+                    modified_key: Key::Character(typed.into()),
+                    physical_key: Physical::Code(code),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat,
+                }),
+                status,
+                window::Id::unique(),
+            )
+        };
+        let ignored = event::Status::Ignored;
+        assert!(matches!(
+            ctrl_c("c", Code::KeyC, Modifiers::CTRL, ignored, false),
+            Some(Message::PasswordCopyKey)
+        ));
+        assert!(
+            ctrl_c(
+                "c",
+                Code::KeyC,
+                Modifiers::CTRL,
+                event::Status::Captured,
+                false
+            )
+            .is_none(),
+            "a field or a terminal that took it keeps it, as the C# TextBox check"
+        );
+        assert!(ctrl_c("c", Code::KeyC, Modifiers::CTRL, ignored, true).is_none());
+        assert!(
+            !matches!(
+                ctrl_c(
+                    "c",
+                    Code::KeyC,
+                    Modifiers::CTRL | Modifiers::SHIFT,
+                    ignored,
+                    false
+                ),
+                Some(Message::PasswordCopyKey)
+            ),
+            "Ctrl+Shift+C is the terminal's copy"
+        );
+    }
+
+    #[test]
+    fn enter_escape_and_ctrl_c_drive_the_password_generator_shown_and_no_other_tab() {
+        use crate::tools::{PasswordCopy, PasswordMessage};
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = Shell::with_app(App::new(AppConfig {
+            profiles_file: dir.path().join("profiles.toml"),
+            known_hosts: dir.path().join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: INITIAL_GRID,
+            files_start: dir.path().to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        }));
+        let enter = Message::DialogKey { confirm: true };
+        assert!(
+            shell.password_key(&enter).is_none(),
+            "no tab, no Password Generator"
+        );
+        let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Uuid));
+        assert!(shell.password_key(&enter).is_none(), "another tool's tab");
+        let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Password));
+        let tab = shell.shown_tab_id().expect("the tool's tab");
+        assert!(matches!(
+            shell.password_key(&enter),
+            Some((id, PasswordMessage::Generate)) if id == tab
+        ));
+        assert!(matches!(
+            shell.password_key(&Message::EscapeUntaken),
+            Some((_, PasswordMessage::ClearOutput))
+        ));
+        assert!(matches!(
+            shell.password_key(&Message::PasswordCopyKey),
+            Some((_, PasswordMessage::Copy(PasswordCopy::Main)))
+        ));
+        assert!(
+            shell
+                .password_key(&Message::DialogKey { confirm: false })
+                .is_none(),
+            "an Escape a widget took is the widget's"
+        );
+        // A menu over it keeps the keys.
+        shell.menu = Some((TreeMenu::Tab(tab), iced::Point::ORIGIN));
+        assert!(shell.password_key(&enter).is_none());
     }
 
     #[test]

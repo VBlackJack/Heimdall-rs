@@ -1114,10 +1114,23 @@ impl ToolPanes {
             match self.panes.get_mut(&tab).map(|state| &mut state.pane) {
                 Some(Pane::Hosts(pane)) => tasks.push(pane.open(tab)),
                 Some(Pane::NetMap(pane)) => tasks.push(pane.open(tab)),
+                // The C# `Initialize` of each runs its `RefreshCommand`.
+                Some(Pane::OpenPorts(pane)) => tasks.push(pane.open(tab)),
+                Some(Pane::NetIf(pane)) => tasks.push(pane.open(tab)),
+                Some(Pane::Routes(pane)) => tasks.push(pane.open(tab)),
+                Some(Pane::Services(pane)) => tasks.push(pane.open(tab)),
                 _ => {}
             }
         }
         Task::batch(tasks)
+    }
+
+    /// Whether tool tab `tab` is a Password Generator.
+    #[must_use]
+    pub fn is_password(&self, tab: TabId) -> bool {
+        self.panes
+            .get(&tab)
+            .is_some_and(|state| matches!(state.pane, Pane::Password(_)))
     }
 
     /// The state of tool tab `tab`.

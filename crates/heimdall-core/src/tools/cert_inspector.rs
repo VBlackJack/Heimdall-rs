@@ -38,6 +38,19 @@ pub const DEFAULT_PORT: u16 = 443;
 /// range typed by mistake (`1-65535`), which would take hours.
 pub const MAX_SCAN_PORTS: usize = 100;
 
+/// The Quick scan profile: the TLS ports of the usual services (HTTPS, IMAPS, POP3S, SMTPS,
+/// LDAPS, FTPS, WinRM over TLS, RDP, DNS over TLS, APNs, MQTT over TLS), as the C#
+/// `NetworkToolPresets.TlsQuickScanPorts`.
+pub const QUICK_SCAN_PORTS: [u16; 12] = [
+    443, 8443, 993, 995, 465, 636, 990, 5986, 3389, 853, 5223, 8883,
+];
+/// The Extended scan profile: the Quick ports and the services that also start TLS or
+/// sit on an alternate port, as the C# `NetworkToolPresets.TlsExtendedScanPorts`.
+pub const EXTENDED_SCAN_PORTS: [u16; 28] = [
+    443, 8443, 993, 995, 465, 636, 990, 5986, 3389, 853, 5223, 8883, 25, 110, 143, 389, 587, 989,
+    992, 1443, 2083, 2087, 2096, 4443, 5671, 6443, 6697, 9443,
+];
+
 /// Seconds in a day.
 const SECONDS_PER_DAY: i64 = 86_400;
 
@@ -162,6 +175,16 @@ pub fn days_remaining(not_after: u64, now: u64) -> i64 {
     let not_after = i64::try_from(not_after).unwrap_or(i64::MAX);
     let now = i64::try_from(now).unwrap_or(i64::MAX);
     not_after.saturating_sub(now).div_euclid(SECONDS_PER_DAY)
+}
+
+/// The ports typed in the Ports box for `ports`: comma-separated, as [`parse_ports`] reads.
+#[must_use]
+pub fn ports_text(ports: &[u16]) -> String {
+    ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Parses a comma-separated list of ports and ranges (e.g. "80,443,8000-8010").
@@ -324,6 +347,21 @@ pub fn build_scan_csv(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_scan_profiles_hold_the_c_sharp_ports_and_read_back_whole() {
+        assert_eq!(QUICK_SCAN_PORTS.len(), 12);
+        assert_eq!(EXTENDED_SCAN_PORTS.len(), 28);
+        // Extended starts with every Quick port, and neither repeats a port.
+        assert_eq!(EXTENDED_SCAN_PORTS[..12], QUICK_SCAN_PORTS);
+        let distinct: std::collections::BTreeSet<_> = EXTENDED_SCAN_PORTS.iter().collect();
+        assert_eq!(distinct.len(), EXTENDED_SCAN_PORTS.len());
+        assert!(EXTENDED_SCAN_PORTS.len() <= MAX_SCAN_PORTS);
+        let typed = ports_text(&EXTENDED_SCAN_PORTS);
+        let mut expected = EXTENDED_SCAN_PORTS.to_vec();
+        expected.sort_unstable();
+        assert_eq!(parse_ports(&typed), expected);
+    }
+
     use std::sync::LazyLock;
 
     use sealvault::cert::{AltName, Name, Profile, SigningKey, Spec, self_signed};

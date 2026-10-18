@@ -37,8 +37,8 @@ use iced::{Alignment, Element, Length, Task, Theme};
 
 use heimdall_core::tools::banner_grab::clean_banner;
 use heimdall_core::tools::cert_inspector::{
-    self, CertExpirationStatus, CertInspectionSummary, DEFAULT_PORT, MAX_CONCURRENT_PROBES,
-    MAX_SCAN_PORTS, PROBE_TIMEOUT_MS,
+    self, CertExpirationStatus, CertInspectionSummary, DEFAULT_PORT, EXTENDED_SCAN_PORTS,
+    MAX_CONCURRENT_PROBES, MAX_SCAN_PORTS, PROBE_TIMEOUT_MS, QUICK_SCAN_PORTS,
 };
 use heimdall_core::tools::legacy_tls::{
     self, HelloShape, LegacyHandshake, LegacyReader, LegacyTlsError,
@@ -96,6 +96,8 @@ pub enum CertInspectorMessage {
     HostChanged(String),
     /// Ports input changed.
     PortsChanged(String),
+    /// A scan profile chosen: its ports fill the Ports box, as the C# profile buttons.
+    ProfileChosen(ScanProfile),
     /// Inspect target certificates.
     Inspect,
     /// Stop the inspection, as the C# `Cancel`.
@@ -108,6 +110,33 @@ pub enum CertInspectorMessage {
     CopyDetails,
     /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
     ExportCsv,
+}
+
+/// A preset list of ports to scan, as the C# `quick` and `extended` profiles
+/// (`CertInspectorViewModel.GetScanPorts`); typing the ports is the `custom` one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanProfile {
+    Quick,
+    Extended,
+}
+
+impl ScanProfile {
+    /// The ports of the profile.
+    fn ports(self) -> &'static [u16] {
+        match self {
+            Self::Quick => &QUICK_SCAN_PORTS,
+            Self::Extended => &EXTENDED_SCAN_PORTS,
+        }
+    }
+
+    /// The profile's button label, with its port count as the C# tooltip says it.
+    fn label(self) -> String {
+        let count = self.ports().len();
+        match self {
+            Self::Quick => fl!("ui-tool-cert-profile-quick", count = count),
+            Self::Extended => fl!("ui-tool-cert-profile-extended", count = count),
+        }
+    }
 }
 
 /// The SSL/TLS Certificate Inspector tool pane state.
@@ -191,6 +220,10 @@ impl CertInspectorPane {
             CertInspectorMessage::HostChanged(val) => {
                 self.host = val;
                 self.error = None;
+                Step::None
+            }
+            CertInspectorMessage::ProfileChosen(profile) => {
+                self.ports = cert_inspector::ports_text(profile.ports());
                 Step::None
             }
             CertInspectorMessage::PortsChanged(val) => {
@@ -394,7 +427,27 @@ impl CertInspectorPane {
         .spacing(spacing::SM)
         .align_y(Alignment::End);
 
-        let input_card = container(column![inputs_row])
+        let profiles_row = row![
+            super::field_label(fl!("ui-tool-cert-profiles")),
+            super::action_button(
+                ScanProfile::Quick.label(),
+                false,
+                Some(send(CertInspectorMessage::ProfileChosen(
+                    ScanProfile::Quick
+                ))),
+            ),
+            super::action_button(
+                ScanProfile::Extended.label(),
+                false,
+                Some(send(CertInspectorMessage::ProfileChosen(
+                    ScanProfile::Extended
+                ))),
+            ),
+        ]
+        .spacing(spacing::SM)
+        .align_y(Alignment::Center);
+
+        let input_card = container(column![inputs_row, profiles_row].spacing(spacing::SM))
             .padding(spacing::MD)
             .style(styles::card);
 
@@ -985,6 +1038,29 @@ mod tests {
             }
             other => panic!("no probe: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_scan_profile_fills_the_ports_box_with_its_ports_and_scans_them() {
+        let mut pane = CertInspectorPane::default();
+        pane.apply(CertInspectorMessage::HostChanged("files.lab".to_owned()));
+        pane.apply(CertInspectorMessage::ProfileChosen(ScanProfile::Quick));
+        assert_eq!(
+            pane.ports,
+            "443, 8443, 993, 995, 465, 636, 990, 5986, 3389, 853, 5223, 8883"
+        );
+        pane.apply(CertInspectorMessage::ProfileChosen(ScanProfile::Extended));
+        assert_eq!(
+            cert_inspector::parse_ports(&pane.ports).len(),
+            EXTENDED_SCAN_PORTS.len()
+        );
+        assert!(matches!(
+            pane.apply(CertInspectorMessage::Inspect),
+            Step::Probe(_, _, ports) if ports.len() == EXTENDED_SCAN_PORTS.len()
+        ));
+        // A profile is a start: the box stays free to edit.
+        pane.apply(CertInspectorMessage::PortsChanged("443".to_owned()));
+        assert_eq!(pane.ports, "443");
     }
 
     #[test]
