@@ -29,6 +29,8 @@ pub mod column_header;
 pub mod component_versions;
 mod conflicts_view;
 mod connection_path;
+#[cfg(not(feature = "test-data-dir"))]
+pub mod data_root;
 mod desktop_texture;
 pub mod desktop_view;
 mod detail_view;

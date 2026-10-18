@@ -27,5 +27,13 @@ fn main() -> iced::Result {
         eprintln!("{error}");
         std::process::exit(heimdall_ui::test_data::REFUSED_EXIT_CODE);
     }
+    // A normal build roots the application's own folders in a `--data-dir` folder when one is
+    // given, before anything reads a folder; without it, it starts on the user's own. A
+    // refused folder is said in a message box too, a release build having no console.
+    #[cfg(not(feature = "test-data-dir"))]
+    if let Err(error) = heimdall_ui::data_root::init(std::env::args_os().skip(1)) {
+        heimdall_ui::data_root::refuse(&error);
+        std::process::exit(heimdall_ui::data_root::REFUSED_EXIT_CODE);
+    }
     heimdall_ui::run()
 }

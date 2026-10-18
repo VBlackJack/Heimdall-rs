@@ -27,7 +27,9 @@ folder instead.
   anywhere else in the application's code.
 - It is not an environment variable: whoever starts the program cannot move its folders
   through the environment, with or without the feature.
-- A build without the feature reads no command-line argument at all.
+- A build without the feature reads `--data-dir` too, as something else: an alternate
+  instance's data root, described in [`--data-dir` in a normal build](#--data-dir-in-a-normal-build)
+  below. The two never coexist in one build.
 
 ## Build and start
 
@@ -106,3 +108,31 @@ cmdkey /list |
 
 On Linux, remove the Secret Service items whose service attribute starts with
 `Heimdall-rs-test-` (for example with Seahorse, or `secret-tool clear service <name>`).
+
+## `--data-dir` in a normal build
+
+Every build, release included, takes `--data-dir <full path>` (or `--data-dir=<full path>`)
+to run an alternate instance, a hand test or a demo profile, beside the user's own, as the C#
+Heimdall's `--data-dir` does. It is not the sandbox above:
+
+- It moves the application's own folders: `config` (profiles, settings, vault, `known_hosts`,
+  window state, the single-instance lock) and `data` (logs, files being edited, scan history)
+  under the folder given. The instance never shares the user's profile, and runs beside
+  it.
+- Saved passwords without a master password go to the system's credential store under the
+  service `Heimdall-rs-data-<hash>`, `<hash>` being 12 hex digits of the SHA-256 of the
+  folder's resolved full path, lower-cased: the instance never reads, replaces or removes the user's own
+  entries under `Heimdall-rs`. (The C# keeps them in `servers.json` under its data root.)
+- Windows Hello enrolment is off: the key credential is the user's own, outside any folder.
+- The home, Documents and temporary folders stay the user's own, as in the C#: the instance
+  reads the real `~/.ssh/known_hosts` for an import, the PuTTY sessions, and the C# Heimdall's
+  data for a migration. A Windows Credential Manager entry a profile names is only read, as in
+  the C#.
+- The folder is checked as the test data folder is: a full path, made if it is not there, and
+  neither being, holding nor sitting in a Heimdall-rs or C# Heimdall folder, nor being or
+  holding the home, Documents, temporary or application data folder.
+- The option's name is read in any case, and the folder trimmed of spaces and quotes, as the
+  C# reads them. Where the C# falls back to the user's own folders, this build refuses to
+  start instead, with a message box and exit code 2: a missing or refused folder, a relative
+  one, or an option whose name only starts like this one (`--data-directory`).
+- Every window's title ends with `[data: <folder>]`.

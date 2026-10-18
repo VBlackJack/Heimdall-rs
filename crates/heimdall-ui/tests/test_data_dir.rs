@@ -106,20 +106,126 @@ mod with_the_feature {
 }
 
 #[cfg(not(feature = "test-data-dir"))]
-#[test]
-fn without_the_feature_no_argument_is_read() {
-    // The only reading of the command line is in the program's start, behind the feature,
-    // and the module that parses it is compiled with it alone: a build without the feature
-    // takes no `--data-dir`, whatever is passed.
-    const GATE: &str = "#[cfg(feature = \"test-data-dir\")]";
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let main = std::fs::read_to_string(root.join("main.rs")).expect("main.rs");
-    let read = main
-        .find("args_os")
-        .expect("the start reads the command line");
-    let gate = main.find(GATE).expect("behind the feature");
-    assert!(gate < read);
-    assert_eq!(main.matches("args").count(), 1, "one reading only");
-    let lib = std::fs::read_to_string(root.join("lib.rs")).expect("lib.rs");
-    assert!(lib.contains(&format!("{GATE}\npub mod test_data;")));
+mod without_the_feature {
+    use std::ffi::OsString;
+
+    use heimdall_ui::data_root::{ArgumentError, folder_from, titled};
+
+    fn arguments(words: &[&str]) -> Vec<OsString> {
+        words.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn the_data_dir_option_is_read_and_other_arguments_are_ignored() {
+        // A normal build reads `--data-dir` (the alternate-instance data root), as the C#
+        // `DataDirectoryArgument`: last occurrence wins, any other argument is ignored.
+        let folder = std::env::temp_dir().join("heimdall-demo");
+        let text = folder.to_string_lossy().into_owned();
+        assert_eq!(
+            folder_from(arguments(&["--data-dir", &text])),
+            Ok(Some(folder.clone()))
+        );
+        assert_eq!(
+            folder_from(arguments(&[&format!("--data-dir={text}")])),
+            Ok(Some(folder.clone()))
+        );
+        assert_eq!(
+            folder_from(arguments(&[])),
+            Ok(None),
+            "absent: the user's own folders"
+        );
+        assert_eq!(
+            folder_from(arguments(&["--verbose"])),
+            Ok(None),
+            "an unknown argument is ignored"
+        );
+        assert_eq!(
+            folder_from(arguments(&["--data-dir"])),
+            Err(ArgumentError::NoValue)
+        );
+        assert_eq!(
+            folder_from(arguments(&["--data-dir="])),
+            Err(ArgumentError::NoValue)
+        );
+        let other = std::env::temp_dir().join("other");
+        assert_eq!(
+            folder_from(arguments(&[
+                "--data-dir",
+                &text,
+                "--data-dir",
+                &other.to_string_lossy()
+            ])),
+            Ok(Some(other)),
+            "the last occurrence wins"
+        );
+        // The name in any case, as the C# compares it.
+        assert_eq!(
+            folder_from(arguments(&["--DATA-DIR", &text])),
+            Ok(Some(folder.clone()))
+        );
+        assert_eq!(
+            folder_from(arguments(&[&format!("--Data-Dir={text}")])),
+            Ok(Some(folder.clone()))
+        );
+        // Spaces and quotes trimmed, as the C# trims them: a shortcut's `"C:\My Demo\"`
+        // arrives with a quote at its end.
+        assert_eq!(
+            folder_from(arguments(&["--data-dir", &format!(" {text}\" ")])),
+            Ok(Some(folder.clone()))
+        );
+        assert_eq!(
+            folder_from(arguments(&["--data-dir", "\" \""])),
+            Err(ArgumentError::NoValue)
+        );
+        // A name that only starts like the option is refused, never ignored: the build would
+        // otherwise open the user's own profile.
+        for misspelled in ["--data-directory", "--data-dirs=x", "--DATA-DIRX"] {
+            assert_eq!(
+                folder_from(arguments(&[misspelled])),
+                Err(ArgumentError::Unknown(OsString::from(misspelled))),
+                "{misspelled}"
+            );
+        }
+        // A form that is not text is refused, never guessed.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt as _;
+            use std::path::PathBuf;
+            let joined = OsString::from_vec(b"--data-dir=/tmp/\xff".to_vec());
+            assert_eq!(
+                folder_from([joined.clone()]),
+                Err(ArgumentError::NotText(joined))
+            );
+            // Given as its own word, the folder is taken as the system gives it.
+            let folder = OsString::from_vec(b"/tmp/\xff".to_vec());
+            assert_eq!(
+                folder_from([OsString::from("--data-dir"), folder.clone()]),
+                Ok(Some(PathBuf::from(folder)))
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_data_dir_the_title_is_unchanged() {
+        // No `--data-dir` was set in this process, so the title carries no data folder.
+        assert_eq!(titled("Heimdall".to_owned()), "Heimdall");
+    }
+
+    #[test]
+    fn the_start_reads_the_data_dir_option_without_the_feature() {
+        // The normal build's start parses `--data-dir` through the data_root module, which is
+        // compiled only without the feature; the test-data sandbox module replaces it under
+        // the feature.
+        const SANDBOX_GATE: &str = "#[cfg(feature = \"test-data-dir\")]";
+        const NORMAL_GATE: &str = "#[cfg(not(feature = \"test-data-dir\"))]";
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let lib = std::fs::read_to_string(src.join("lib.rs")).expect("lib.rs");
+        assert!(lib.contains(&format!("{SANDBOX_GATE}\npub mod test_data;")));
+        assert!(lib.contains(&format!("{NORMAL_GATE}\npub mod data_root;")));
+        let main = std::fs::read_to_string(src.join("main.rs")).expect("main.rs");
+        assert!(
+            main.contains("data_root::init"),
+            "the normal start reads the data root option"
+        );
+    }
 }

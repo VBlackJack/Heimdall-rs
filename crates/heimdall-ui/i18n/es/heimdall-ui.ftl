@@ -6,6 +6,18 @@ ui-window-title-tab = { $tab } - Heimdall
 ui-window-title-detached = { $tab } - Separada
 # A test build's title, its test data folder after it.
 ui-window-title-test-data = { $title } [datos de prueba: { $folder }]
+# An alternate instance's title, its data folder (--data-dir) after it.
+ui-window-title-data = { $title } [datos: { $folder }]
+# Why a --data-dir folder did not start the application, in a message box and on the console.
+ui-data-dir-error-title = Heimdall no puede iniciarse
+ui-data-dir-error-no-value = { $option } necesita a continuación la ruta completa de una carpeta.
+ui-data-dir-error-not-text = La carpeta tras { $option } no es un texto válido: { $folder }
+ui-data-dir-error-unknown = Opción desconocida { $given }: la carpeta de datos se indica con { $option } <ruta completa>.
+ui-data-dir-error-not-absolute = La carpeta de datos debe ser una ruta completa: { $folder }
+ui-data-dir-error-overlaps = La carpeta de datos { $folder } se solapa con una de sus propias carpetas: { $real }. Elija una carpeta distinta.
+ui-data-dir-error-unusable = No se puede usar la carpeta de datos: { $detail }
+ui-data-dir-error-already-set = Ya hay una carpeta de datos en uso.
+ui-data-dir-error-test-build = Una compilación de prueba toma sus carpetas de su carpeta de datos de prueba, no de { $option }.
 
 ui-sidebar-title = Sesiones
 ui-sidebar-tools-tab = Herramientas

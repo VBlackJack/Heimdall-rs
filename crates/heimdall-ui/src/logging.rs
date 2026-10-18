@@ -196,7 +196,7 @@ pub fn init(dir: Option<PathBuf>) {
     }
     log::info!(
         "Heimdall {} started on {} {}",
-        env!("CARGO_PKG_VERSION"),
+        heimdall_app::update_check::display_version(),
         std::env::consts::OS,
         std::env::consts::ARCH
     );
@@ -247,7 +247,7 @@ fn crash_report(info: &PanicHookInfo<'_>) -> String {
     let _ = writeln!(
         report,
         "Heimdall {} crashed at {location}",
-        env!("CARGO_PKG_VERSION")
+        heimdall_app::update_check::display_version()
     );
     let _ = writeln!(
         report,
