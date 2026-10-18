@@ -21,6 +21,7 @@
 
 use sealvault::hash;
 use std::fmt::Write;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use serde::{Deserialize, Serialize};
 
@@ -106,24 +107,29 @@ pub fn is_valid_host(host: &str) -> bool {
     if host.is_empty() || host.len() > MAX_HOST_LEN {
         return false;
     }
-    let bare = host
-        .strip_prefix('[')
-        .map_or(host, |inner| inner.strip_suffix(']').unwrap_or(inner));
-    let ipv6_like = !bare.is_empty()
-        && bare.contains(':')
-        && bare
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() || byte == b':');
-    ipv6_like
-        || host.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= MAX_LABEL_LEN
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-        })
+    // An address is parsed, not guessed from its characters; brackets come in pairs.
+    if host.starts_with('[') || host.ends_with(']') {
+        return host
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .is_some_and(|inner| inner.parse::<Ipv6Addr>().is_ok());
+    }
+    if host.contains(':') {
+        return host.parse::<Ipv6Addr>().is_ok();
+    }
+    // Four numbers are an address, and must be one that exists.
+    if host.split('.').count() == 4 && host.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return host.parse::<Ipv4Addr>().is_ok();
+    }
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= MAX_LABEL_LEN
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    })
 }
 
 #[cfg(test)]
@@ -151,10 +157,26 @@ mod tests {
 
     #[test]
     fn hosts_are_names_or_addresses_and_nothing_a_shell_would_read() {
-        for good in ["web01", "web01.example.com", "10.0.0.1", "[::1]", "fe80::1"] {
+        for good in [
+            "web01",
+            "web01.example.com",
+            "10.0.0.1",
+            "[::1]",
+            "fe80::1",
+            "::ffff:192.0.2.1",
+            "[::ffff:192.0.2.1]",
+        ] {
             assert!(is_valid_host(good), "{good}");
         }
         for bad in [
+            ":",
+            "1:2:3",
+            "[::1",
+            "::1]",
+            "[]",
+            "[web01]",
+            "999.1.1.1",
+            "1:2:3:4:5:6:7:8:9",
             "",
             "-a",
             "a b",

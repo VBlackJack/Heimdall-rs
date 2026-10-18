@@ -65,20 +65,47 @@ const SSH_AGENT_FIELD: usize = 12;
 const FTP_PASSIVE_FIELD: usize = 3;
 const FTP_TLS_FIELD: usize = 4;
 
+/// What a read of a file may hold, for a file other people write: nothing larger is kept,
+/// whatever the file says, so a crafted one cannot make the reader allocate without bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// The longest section name, key or value kept, in bytes.
+    pub max_text_len: usize,
+    /// The most sections and entries kept in all.
+    pub max_entries: usize,
+}
+
+impl Limits {
+    /// No limit: the file of the person reading it.
+    pub const UNLIMITED: Self = Self {
+        max_text_len: usize::MAX,
+        max_entries: usize::MAX,
+    };
+}
+
+/// What a read left out, beyond the sessions it gave.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Skipped {
+    /// Entries and sections that were not taken: too long, malformed, or of another kind
+    /// than a session.
+    pub entries: usize,
+    /// The read stopped at [`Limits::max_entries`].
+    pub truncated: bool,
+}
+
 /// Reads a `MobaXterm` file.
 #[must_use]
 pub fn parse(text: &str) -> Parsed {
+    parse_limited(text, &Limits::UNLIMITED).0
+}
+
+/// Reads a `MobaXterm` file within `limits`, and says what it left out. Stored passwords
+/// are counted as they are met and never decoded nor kept.
+#[must_use]
+pub fn parse_limited(text: &str, limits: &Limits) -> (Parsed, Skipped) {
     let mut parsed = Parsed::default();
-    let sections = sections(text);
-    parsed.stored_credentials = sections
-        .iter()
-        .filter(|(name, _)| {
-            PASSWORD_SECTIONS
-                .iter()
-                .any(|section| name.eq_ignore_ascii_case(section))
-        })
-        .map(|(_, entries)| entries.len())
-        .sum();
+    let mut skipped = Skipped::default();
+    let sections = sections(text, limits, &mut parsed.stored_credentials, &mut skipped);
     for (name, entries) in &sections {
         if !starts_with_ignore_case(name, BOOKMARKS_PREFIX) {
             continue;
@@ -94,10 +121,12 @@ pub fn parse(text: &str) -> Parsed {
             }
             if let Some(fields) = session(key, value, &folder) {
                 parsed.push(fields);
+            } else {
+                skipped.entries += 1;
             }
         }
     }
-    parsed
+    (parsed, skipped)
 }
 
 fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
@@ -108,9 +137,19 @@ fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
 /// The sections of an INI file, in order: a section named twice is the last one, a key
 /// given twice in a section its last value, names compared without case, as the C#
 /// dictionaries.
-fn sections(text: &str) -> Vec<(String, Vec<(String, String)>)> {
+fn sections(
+    text: &str,
+    limits: &Limits,
+    credentials: &mut usize,
+    skipped: &mut Skipped,
+) -> Vec<(String, Vec<(String, String)>)> {
     let mut sections: Vec<(String, Vec<(String, String)>)> = Vec::new();
     let mut current: Option<usize> = None;
+    // Sections whose folder was too long to keep: none of their sessions is taken.
+    let mut poisoned: Vec<bool> = Vec::new();
+    let mut kept = 0_usize;
+    // Inside a section of stored passwords: its lines are counted, nothing else.
+    let mut in_credentials = false;
     for line in text.lines() {
         if line.trim().is_empty() || line.starts_with(';') {
             continue;
@@ -118,33 +157,73 @@ fn sections(text: &str) -> Vec<(String, Vec<(String, String)>)> {
         if let Some(rest) = line.strip_prefix('[')
             && let Some((name, _)) = rest.split_once(']')
         {
+            in_credentials = PASSWORD_SECTIONS
+                .iter()
+                .any(|section| name.eq_ignore_ascii_case(section));
+            if in_credentials {
+                current = None;
+                continue;
+            }
             // A section named again replaces the first, in its place, as the C# dictionary.
             if let Some(index) = sections
                 .iter()
                 .position(|(known, _)| known.eq_ignore_ascii_case(name))
             {
+                kept = kept.saturating_sub(sections[index].1.len());
                 sections[index].1.clear();
+                poisoned[index] = false;
                 current = Some(index);
+            } else if name.len() > limits.max_text_len || kept >= limits.max_entries {
+                skipped.entries += 1;
+                skipped.truncated |= kept >= limits.max_entries;
+                current = None;
             } else {
+                kept += 1;
                 sections.push((name.to_owned(), Vec::new()));
+                poisoned.push(false);
                 current = Some(sections.len() - 1);
+            }
+            continue;
+        }
+        if in_credentials {
+            if line.split_once('=').is_some_and(|(key, _)| !key.is_empty()) {
+                *credentials += 1;
             }
             continue;
         }
         let Some(index) = current else {
             continue;
         };
+        if poisoned[index] {
+            continue;
+        }
         if let Some((key, value)) = line.split_once('=')
             && !key.is_empty()
         {
             let key = key.trim();
+            if key.len() > limits.max_text_len || value.len() > limits.max_text_len {
+                skipped.entries += 1;
+                if key.eq_ignore_ascii_case(FOLDER_KEY) {
+                    kept = kept.saturating_sub(sections[index].1.len());
+                    sections[index].1.clear();
+                    poisoned[index] = true;
+                }
+                continue;
+            }
             let entries = &mut sections[index].1;
             match entries
                 .iter_mut()
                 .find(|(known, _)| known.eq_ignore_ascii_case(key))
             {
                 Some(entry) => value.clone_into(&mut entry.1),
-                None => entries.push((key.to_owned(), value.to_owned())),
+                None if kept >= limits.max_entries => {
+                    skipped.entries += 1;
+                    skipped.truncated = true;
+                }
+                None => {
+                    kept += 1;
+                    entries.push((key.to_owned(), value.to_owned()));
+                }
             }
         }
     }

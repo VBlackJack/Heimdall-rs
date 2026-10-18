@@ -5833,3 +5833,9 @@ ui-shared-passwords =
         [one] { $count } contraseña guardada en el archivo no se lee nunca.
        *[other] { $count } contraseñas guardadas en el archivo no se leen nunca.
     }
+ui-shared-skipped =
+    { $count ->
+        [one] { $count } entrada del archivo no se pudo leer y se omitió.
+       *[other] { $count } entradas del archivo no se pudieron leer y se omitieron.
+    }
+ui-shared-truncated = El archivo contiene más de lo que admite una fuente compartida, el resto no se leyó.

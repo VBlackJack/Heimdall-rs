@@ -18,6 +18,7 @@
 //! and RDP sessions, in memory and read-only, followed when it changes, and refused when it
 //! is not a file Heimdall can read.
 
+use std::fmt::Write as _;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -214,14 +215,14 @@ fn a_changed_file_is_read_again_and_a_worse_one_keeps_the_previous_sessions() {
     assert_eq!(state.kept_previous, Some(SourceProblem::Empty));
     assert_eq!(shared.sessions().count(), 2);
 
-    // Gone: the same.
+    // Gone: nothing stays connectable from a file that is not there.
     std::fs::remove_file(&file).expect("remove");
-    shared.refresh(&sources, later());
+    assert!(shared.refresh(&sources, later()));
     assert_eq!(
-        shared.sources()[0].kept_previous,
-        Some(SourceProblem::Missing)
+        shared.sources()[0].status,
+        SourceStatus::Failed(SourceProblem::Missing)
     );
-    assert_eq!(shared.sessions().count(), 2);
+    assert_eq!(shared.sessions().count(), 0);
 
     // Back and good: the notice goes.
     std::fs::write(&file, TEAM).expect("write");
@@ -307,4 +308,81 @@ fn an_unknown_shared_identifier_opens_nothing() {
     ));
     assert!(effects.is_empty());
     assert!(app.tabs.is_empty());
+}
+
+#[test]
+fn a_crafted_folder_cannot_make_the_reader_allocate_without_bound() {
+    // An 8 MiB folder and a thousand tiny sessions: copied into each, that is 8 GiB.
+    let mut text = String::from("[Bookmarks]\nSubRep=");
+    text.push_str(&"F".repeat(8 * 1024 * 1024));
+    text.push('\n');
+    for index in 0..1000 {
+        let _ = writeln!(text, "s{index}= #109#0%h{index}.example.com%22%u%");
+    }
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(dir.path(), &text);
+    // The section whose folder is too long is not taken at all.
+    assert_eq!(
+        shared.sources()[0].status,
+        SourceStatus::Failed(SourceProblem::Empty)
+    );
+    assert_eq!(shared.sessions().count(), 0);
+
+    // A long name is left out on its own, the others are kept and the notice counts it.
+    let long = "n".repeat(100_000);
+    let text = format!(
+        "[Bookmarks]\nSubRep=Ok
+{long}= #109#0%a.example.com%22%u%\nfine= #109#0%b.example.com%22%u%\n"
+    );
+    let (shared, _) = loaded(dir.path(), &text);
+    assert_eq!(shared.sessions().count(), 1);
+    assert_eq!(shared.sources()[0].skipped_entries, 1);
+}
+
+#[test]
+fn a_file_with_more_entries_than_a_source_may_hold_is_cut_and_says_so() {
+    let mut text = String::from("[Bookmarks]\n");
+    for index in 0..30_000 {
+        let _ = writeln!(text, "s{index}= #109#0%h{index}.example.com%22%u%");
+    }
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(dir.path(), &text);
+    let state = &shared.sources()[0];
+    assert!(state.truncated, "{state:?}");
+    assert!(shared.sessions().count() <= 5000);
+}
+
+#[test]
+fn malformed_entries_next_to_good_ones_are_skipped_and_counted() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(
+        dir.path(),
+        "[Bookmarks]
+good= #109#0%ok.example.com%22%u%
+broken=nonsense
+nohost= #109#0%%22%u%
+",
+    );
+    let state = &shared.sources()[0];
+    assert_eq!(state.sessions, 1);
+    assert_eq!(state.skipped_entries, 2);
+}
+
+#[test]
+fn stored_passwords_are_counted_and_no_value_is_kept() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(
+        dir.path(),
+        "[Bookmarks]
+good= #109#0%ok.example.com%22%u%
+[Passwords]
+a@b=TOPSECRET1
+c@d=TOPSECRET2
+[Credentials]
+e=TOPSECRET3
+",
+    );
+    assert_eq!(shared.sources()[0].ignored_passwords, 3);
+    let held = format!("{shared:?}");
+    assert!(!held.contains("TOPSECRET"), "{held}");
 }

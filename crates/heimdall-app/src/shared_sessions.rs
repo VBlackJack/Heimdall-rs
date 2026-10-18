@@ -37,6 +37,7 @@ use std::time::{Duration, SystemTime};
 
 use heimdall_core::import::foreign::{FileWarning, Parsed};
 use heimdall_core::import::mobaxterm;
+use heimdall_core::import::mobaxterm::Limits;
 use heimdall_core::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, Forwards, ProfileId, RdpExtras, RdpOptions, RdpProfile,
     SshMode, SshProfile,
@@ -60,6 +61,19 @@ const MAX_SOURCES: usize = 64;
 
 /// The most sessions kept from one source.
 const MAX_SESSIONS_PER_SOURCE: usize = 5000;
+
+/// The longest name, folder or session line kept, in bytes. A folder is copied into each of
+/// its sessions, so it bounds what a crafted file can make the reader allocate.
+const MAX_TEXT_LEN: usize = 2048;
+
+/// The most sections and entries kept from one file.
+const MAX_ENTRIES: usize = 10_000;
+
+/// What a shared file may hold.
+const LIMITS: Limits = Limits {
+    max_text_len: MAX_TEXT_LEN,
+    max_entries: MAX_ENTRIES,
+};
 
 /// Why a source holds nothing, or holds what it held before.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +125,10 @@ pub struct SourceState {
     pub refused: usize,
     /// How many passwords the file stores, never read.
     pub ignored_passwords: usize,
+    /// How many entries of the file were not taken: malformed, too long, or no session.
+    pub skipped_entries: usize,
+    /// The file held more than a source may, and the rest was not read.
+    pub truncated: bool,
     /// Why what is held is not what the file holds now: the last change could not be taken
     /// and the previous sessions are kept.
     pub kept_previous: Option<SourceProblem>,
@@ -355,6 +373,8 @@ fn read_source(
     let path = expand(&source.path);
     let stamp = stamp_of(&path);
     let state = |status, sessions, refused, ignored_passwords| SourceState {
+        skipped_entries: 0,
+        truncated: false,
         id: source.id.clone(),
         name: source.name.clone(),
         path: path.clone(),
@@ -391,12 +411,16 @@ fn read_source(
         // keeps the previous sessions when there are some.
         Ok(parsed) if !parsed.sessions.is_empty() => {
             return Loaded {
-                state: state(
-                    SourceStatus::Loaded,
-                    parsed.sessions.len(),
-                    parsed.refused,
-                    parsed.ignored_passwords,
-                ),
+                state: SourceState {
+                    skipped_entries: parsed.skipped_entries,
+                    truncated: parsed.truncated,
+                    ..state(
+                        SourceStatus::Loaded,
+                        parsed.sessions.len(),
+                        parsed.refused,
+                        parsed.ignored_passwords,
+                    )
+                },
                 sessions: parsed.sessions,
                 stamp,
             };
@@ -406,7 +430,8 @@ fn read_source(
     };
     match previous {
         // A change that cannot be taken keeps what was held, with the reason.
-        Some(kept) if had_sessions => {
+        // A file that is gone, as a source turned off, leaves nothing connectable.
+        Some(kept) if had_sessions && problem != SourceProblem::Missing => {
             let mut held = kept.clone();
             held.state.name.clone_from(&source.name);
             held.state.kept_previous = Some(problem);
@@ -449,12 +474,14 @@ struct ParsedSource {
     sessions: Vec<SharedSession>,
     refused: usize,
     ignored_passwords: usize,
+    skipped_entries: usize,
+    truncated: bool,
 }
 
 /// The sessions of a file's `bytes`, sanitized as the C# `SharedProfileSanitizer`.
 fn parse(source_id: &str, bytes: &[u8]) -> Result<ParsedSource, SourceProblem> {
     let text = decode_windows_1252_fallback(bytes);
-    let parsed: Parsed = mobaxterm::parse(&text);
+    let (parsed, left_out): (Parsed, _) = mobaxterm::parse_limited(&text, &LIMITS);
     if let Some(FileWarning::Unreadable(reason)) = parsed
         .warnings
         .iter()
@@ -478,6 +505,8 @@ fn parse(source_id: &str, bytes: &[u8]) -> Result<ParsedSource, SourceProblem> {
         sessions,
         refused,
         ignored_passwords: parsed.stored_credentials,
+        skipped_entries: left_out.entries,
+        truncated: left_out.truncated,
     })
 }
 

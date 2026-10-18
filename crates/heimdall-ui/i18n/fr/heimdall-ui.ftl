@@ -5844,3 +5844,9 @@ ui-shared-passwords =
         [one] { $count } mot de passe enregistré dans le fichier n'est jamais lu.
        *[other] { $count } mots de passe enregistrés dans le fichier ne sont jamais lus.
     }
+ui-shared-skipped =
+    { $count ->
+        [one] { $count } entrée du fichier n'a pas pu être lue et a été ignorée.
+       *[other] { $count } entrées du fichier n'ont pas pu être lues et ont été ignorées.
+    }
+ui-shared-truncated = Le fichier contient plus qu'une source partagée ne peut en prendre, la suite n'a pas été lue.

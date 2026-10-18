@@ -107,6 +107,15 @@ pub fn source_notes(state: &SourceState) -> Vec<(String, bool)> {
     if state.refused > 0 {
         notes.push((fl!("ui-shared-refused", count = state.refused), false));
     }
+    if state.skipped_entries > 0 {
+        notes.push((
+            fl!("ui-shared-skipped", count = state.skipped_entries),
+            false,
+        ));
+    }
+    if state.truncated {
+        notes.push((fl!("ui-shared-truncated"), true));
+    }
     if state.ignored_passwords > 0 {
         notes.push((
             fl!("ui-shared-passwords", count = state.ignored_passwords),

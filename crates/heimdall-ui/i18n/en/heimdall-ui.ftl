@@ -5788,3 +5788,9 @@ ui-shared-passwords =
         [one] { $count } password stored in the file is never read.
        *[other] { $count } passwords stored in the file are never read.
     }
+ui-shared-skipped =
+    { $count ->
+        [one] { $count } entry of the file could not be read and was skipped.
+       *[other] { $count } entries of the file could not be read and were skipped.
+    }
+ui-shared-truncated = The file holds more than a shared source may, the rest was not read.
