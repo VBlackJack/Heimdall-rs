@@ -57,6 +57,7 @@ pub mod network_calculator;
 pub mod network_cartography;
 pub mod network_history;
 pub mod network_interfaces;
+pub mod network_scanner;
 pub mod notes_storage;
 pub mod number_text;
 pub mod open_ports;

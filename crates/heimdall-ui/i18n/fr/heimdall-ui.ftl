@@ -5664,3 +5664,36 @@ ui-dialog-import-preferences-invalid = Valeurs non lues : { $names }
 ui-dialog-import-preferences-relative = Chemins de l'installation C#, non repris : { $names }
 ui-dialog-import-preferences-failed = Les préférences de Heimdall C# n'ont pas pu être lues : { $detail }
 ui-dialog-import-preferences-review = Vérifier les préférences
+
+## L'analyseur réseau, Ctrl+Maj+N.
+ui-shortcuts-network-scan = Analyser le réseau pour ajouter des hôtes
+ui-network-scan-title = Analyseur réseau
+ui-network-scan-prompt = Sous-réseau à analyser (CIDR, par exemple 192.168.1.0/24) ou une adresse IPv4. Les hôtes qui répondent au ping sont sondés sur les ports SSH, Telnet, HTTP, HTTPS, RDP, VNC et WinRM.
+ui-network-scan-start = Analyser
+ui-network-scan-stop = Arrêter
+ui-network-scan-error-empty = Saisissez un sous-réseau tel que 192.168.1.0/24.
+ui-network-scan-error-invalid = Ce n'est pas une adresse ou un sous-réseau IPv4. Utilisez une forme telle que 192.168.1.0/24.
+ui-network-scan-error-range = Le sous-réseau est trop large : utilisez un préfixe de /{ $prefix } ou plus long.
+ui-network-scan-progress = Analyse de { $cidr } : { $done } adresses sur { $total }.
+ui-network-scan-none = Aucun hôte n'a répondu dans { $cidr }.
+ui-network-scan-complete = { $count ->
+    [one] { $count } hôte trouvé.
+   *[other] { $count } hôtes trouvés.
+}
+ui-network-scan-column-address = Adresse
+ui-network-scan-column-name = Nom
+ui-network-scan-column-ports = Ports ouverts
+ui-network-scan-column-session = Session
+ui-network-scan-column-status = État
+ui-network-scan-status-saved = Déjà enregistré
+ui-network-scan-status-no-port = Aucun port d'accès distant
+ui-network-scan-add = { $count ->
+    [one] Ajouter { $count } session
+   *[other] Ajouter { $count } sessions
+}
+ui-network-scan-kind-rdp = RDP
+ui-network-scan-kind-ssh = SSH
+ui-network-scan-kind-vnc = VNC
+ui-network-scan-kind-winrm = WinRM
+ui-network-scan-kind-telnet = Telnet
+ui-network-scan-kind-web = Web
