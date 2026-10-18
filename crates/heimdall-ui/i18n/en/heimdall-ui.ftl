@@ -4165,69 +4165,38 @@ ui-tool-cve-help =
 
 
 
-## The Default Credentials Scanner tool, as the C# DefaultCredentialView.
-ui-tool-defaultcreds-name = Default Credentials Scanner
-ui-tool-defaultcreds-description = Tests common default credentials against detected services on a target host
-ui-tool-defaultcreds-title = Default Credentials Scanner
-ui-tool-defaultcreds-host-label = Host
-ui-tool-defaultcreds-host-placeholder = Hostname or IP address
-ui-tool-defaultcreds-btn-scan = Scan
-ui-tool-defaultcreds-btn-stop = Stop
-ui-tool-defaultcreds-auto-detect = Auto-detect services
-ui-tool-defaultcreds-show-passwords = Show passwords
-ui-tool-defaultcreds-warning = Use only on systems you own or have explicit authorization to test.
+## The Default Credentials tool, as the catalog of the C# DefaultCredentialView,
+## never the login attempts it makes: list-only by owner decision (2026-10-17, item 10).
+ui-tool-defaultcreds-name = Default Credentials
+ui-tool-defaultcreds-description = Lists the known vendor default credentials for a product or service
+ui-tool-defaultcreds-title = Default Credentials
+ui-tool-defaultcreds-note = This tool lists known vendor default credentials. It never tries to log in with them, to avoid account lockouts and unauthorized login attempts.
+ui-tool-defaultcreds-filter-label = Service
+ui-tool-defaultcreds-filter-placeholder = Filter by service name (e.g. SSH, HTTP, MySQL)
 ui-tool-defaultcreds-col-service = Service
 ui-tool-defaultcreds-col-port = Port
 ui-tool-defaultcreds-col-user = Username
 ui-tool-defaultcreds-col-pass = Password
-ui-tool-defaultcreds-col-status = Status
-ui-tool-defaultcreds-col-detail = Detail
-ui-tool-defaultcreds-status-default = Default!
-ui-tool-defaultcreds-status-changed = Changed
-ui-tool-defaultcreds-status-error = Error
-ui-tool-defaultcreds-detecting = Detecting services...
-ui-tool-defaultcreds-testing = Testing { $service } { $user }:{ $pass }...
-ui-tool-defaultcreds-summary = { $defaults ->
-    [one] { $defaults } default credential found on { $services ->
-        [one] { $services } service
-       *[other] { $services } services
-    }
-   *[other] { $defaults } default credentials found on { $services ->
-        [one] { $services } service
-       *[other] { $services } services
-    }
-}
-ui-tool-defaultcreds-no-defaults = No default credentials found - all tested services appear secured.
 ui-tool-defaultcreds-btn-copy = Copy report
 ui-tool-defaultcreds-btn-export = Export CSV
-ui-tool-defaultcreds-empty-state = Enter a host to scan for default credentials on common services
-ui-tool-defaultcreds-error-host-required = A hostname or IP address is required.
-ui-tool-defaultcreds-detail-accepted = { $service } accepted default credentials
-ui-tool-defaultcreds-detail-rejected = { $service } rejected credentials
+ui-tool-defaultcreds-empty-state = No catalogued service matches this filter
+ui-tool-defaultcreds-empty = (empty)
+ui-tool-defaultcreds-count = { $count ->
+    [one] { $count } default credential listed
+   *[other] { $count } default credentials listed
+}
 ui-tool-defaultcreds-help =
-    Default Credential Scanner
+    Default Credentials
 
-    Tests common default credentials against services detected on a target host.
+    Lists the known vendor default credentials for a product or service, from a
+    bundled catalog (SSH, Telnet, FTP, HTTP, SNMP, MySQL, PostgreSQL, Redis, MSSQL, VNC).
 
     Usage:
-    1. Enter a hostname or IP
-    2. Enable 'Auto-detect services' to scan common ports first
-    3. Click Scan
+    1. Optionally filter by service name
+    2. Copy the report, or export it as CSV
 
-    Protocols tested:
-    - SSH (service reachable only, credentials not tested)
-    - HTTP Basic Authentication
-    - FTP (anonymous, admin)
-    - SNMP (community strings)
-    - PostgreSQL (passwordless access); MySQL, MSSQL (service reachable only, credentials not tested)
-    - VNC (service reachable only, credentials not tested)
-    - Telnet
-    - Redis (service reachable only, credentials not tested)
-
-    Safety:
-    - Rate-limited (1 attempt/second per service)
-    - Only tests well-known default credentials
-    - Does NOT perform brute-force attacks
+    This tool never attempts a login: unlike the upstream C# tool, it only lists the
+    catalog, to avoid account lockouts and unauthorized login attempts.
 ui-tool-secnumcloud-name = SecNumCloud Audit
 ui-tool-secnumcloud-description = SecNumCloud v3.2 compliance audit across network, crypto, access, and operations
 ui-tool-secnumcloud-title = SecNumCloud v3.2 Compliance Audit
@@ -4361,12 +4330,6 @@ ui-tool-smb-help =
     - Negotiated SMB2/SMB3 dialect
 
 # --- Review follow-ups (#402): security tools ---
-ui-tool-defaultcreds-status-not-tested = Not tested
-ui-tool-defaultcreds-detail-not-tested = { $service } reachable, credentials not tested
-ui-tool-defaultcreds-empty = (empty)
-ui-tool-defaultcreds-timeout-connect = Connection timed out
-ui-tool-defaultcreds-timeout-write = Write timed out
-ui-tool-defaultcreds-timeout-read = Read timed out
 ui-tool-dnssec-report-record = Record
 ui-tool-dnssec-report-detail = Detail
 ui-tool-dnssec-error-nslookup-missing = nslookup was not found. Install it (bind-utils / dnsutils on Linux) or ensure it is on PATH.

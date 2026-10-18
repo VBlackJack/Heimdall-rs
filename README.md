@@ -53,12 +53,16 @@ Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` an
 
 Heimdall embeds 30 sysadmin and security assessment tools. Not all of them are
 offline: the network tools, such as the SSL/TLS Auditor, DNS Security Checker, SMB
-Enumerator, Default Credentials Scanner and SecNumCloud Auditor, connect to the
-hosts you give them; the others run fully offline.
+Enumerator and SecNumCloud Auditor, connect to the hosts you give them; the others
+run fully offline.
 
 The CVE Lookup uses an embedded, hand-curated database of 68 entries (63 distinct
 CVEs) for common infrastructure software, spanning 2015 to 2024. It carries no
 CISA KEV (Known Exploited Vulnerabilities) data and is not a live feed.
+
+The Default Credentials Scanner lists the known vendor default credentials for a
+product or service; unlike the upstream C# tool, it never attempts a login, to avoid
+account lockouts and unauthorized login attempts.
 
 - **Security & Compliance:** SSH Key Auditor, SSL/TLS Auditor, DNS Security Checker (DNSSEC/DANE), ANSSI SecNumCloud v3.2 Auditor, SMB Enumerator, Default Credentials Scanner, Offline CVE Lookup, Password Auditor, Password Generator, SSH Key Generator, Certificate Generator.
 - **Network:** Subnet Calculator, IP Converter, Network Calculator.

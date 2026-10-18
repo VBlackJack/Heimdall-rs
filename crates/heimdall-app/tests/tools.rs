@@ -172,7 +172,9 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
         ToolId::DnsSec.prefixes(),
         ["dnssec", "spf", "dmarc", "dkim"]
     );
-    assert!(ToolId::DefaultCreds.is_network());
+    // List-only by owner decision (2026-10-17, item 10): the tool's model exposes
+    // no network action, unlike the C# tool it mirrors the credential catalog of.
+    assert!(!ToolId::DefaultCreds.is_network());
     assert_eq!(ToolId::DefaultCreds.code(), "DEFAULTCREDS");
     assert_eq!(ToolId::DefaultCreds.category(), ToolCategory::Security);
     assert_eq!(ToolId::DefaultCreds.prefixes(), ["defaultcreds", "creds"]);
