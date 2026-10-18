@@ -217,3 +217,97 @@ fn a_terminal_closed_before_the_answer_receives_nothing() {
     send(&mut app, tab, "uptime");
     assert_eq!(app.dialog, None, "no such tab");
 }
+
+fn broadcast(app: &mut App, targets: &[TabId], command: &str) {
+    app.update(Message::Tools(ToolsMessage::BroadcastCommand {
+        targets: targets.to_vec(),
+        command: command.to_owned(),
+        dangerous: false,
+    }));
+}
+
+#[test]
+fn a_broadcast_asks_one_question_listing_every_terminal_and_writes_nothing_before_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (first, first_sink) = session(&mut app, true);
+    let (_second, second_sink) = session(&mut app, true);
+    let (third, third_sink) = session(&mut app, true);
+    broadcast(&mut app, &[third, first], "uptime");
+    let Some(Dialog::ConfirmBroadcastCommand(question)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    let asked: Vec<TabId> = question.targets.iter().map(|each| each.tab).collect();
+    assert_eq!(
+        asked,
+        [first, third],
+        "every terminal, in the order of the strip"
+    );
+    assert_eq!(question.command, "uptime");
+    assert_eq!(
+        [first_sink.taken(), second_sink.taken(), third_sink.taken()],
+        ["", "", ""],
+        "asked, not written"
+    );
+    // Declined: still nothing, and nothing to record.
+    app.update(Message::DismissDialog);
+    assert_eq!(app.dialog, None);
+    assert!(app.take_sent_commands().is_empty());
+    assert_eq!(first_sink.taken(), "");
+
+    // Agreed to: the command and Enter in each terminal asked, none other, once.
+    broadcast(&mut app, &[third, first], "uptime");
+    app.update(Message::ConfirmDialog);
+    assert_eq!(
+        [first_sink.taken(), second_sink.taken(), third_sink.taken()],
+        ["uptime\r", "", "uptime\r"]
+    );
+    let receipts = app.take_sent_commands();
+    let reached: Vec<TabId> = receipts.iter().map(|each| each.tab).collect();
+    assert_eq!(reached, [first, third]);
+    assert!(receipts.iter().all(|each| each.command == "uptime"));
+    assert!(app.take_sent_commands().is_empty(), "taken once");
+    app.update(Message::ConfirmDialog);
+    assert_eq!(first_sink.taken(), "", "not twice");
+}
+
+#[test]
+fn a_broadcast_leaves_out_what_takes_no_input_and_refuses_what_a_send_refuses() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (connecting, _) = session(&mut app, false);
+    let (ready, sink) = session(&mut app, true);
+    broadcast(&mut app, &[connecting, ready], "df -h");
+    let Some(Dialog::ConfirmBroadcastCommand(question)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    let asked: Vec<TabId> = question.targets.iter().map(|each| each.tab).collect();
+    assert_eq!(asked, [ready], "the terminal not connected is left out");
+    app.update(Message::DismissDialog);
+
+    broadcast(&mut app, &[connecting], "df -h");
+    assert_eq!(app.dialog, None, "no terminal left: no question");
+    broadcast(&mut app, &[], "df -h");
+    assert_eq!(app.dialog, None);
+    for command in ["ls\nrm -rf x", "ls\r", "  ", "", "a\u{1b}[2Jb"] {
+        broadcast(&mut app, &[ready], command);
+        assert_eq!(app.dialog, None, "{command:?}");
+    }
+    assert_eq!(sink.taken(), "");
+}
+
+#[test]
+fn a_command_sent_leaves_one_receipt_for_the_history() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _sink) = session(&mut app, true);
+    send(&mut app, tab, "uptime");
+    assert!(app.take_sent_commands().is_empty(), "asked, not sent");
+    app.update(Message::ConfirmDialog);
+    let receipts = app.take_sent_commands();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        (receipts[0].tab, receipts[0].command.as_str()),
+        (tab, "uptime")
+    );
+}

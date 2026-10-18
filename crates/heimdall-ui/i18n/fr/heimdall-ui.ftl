@@ -635,6 +635,9 @@ ui-dialog-send-command-title = Envoyer cette commande ?
 ui-dialog-send-command-body = La commande ci-dessous est saisie dans { $name } et exécutée avec Entrée, avec les droits de cette session. Heimdall redemande à chaque envoi.
 ui-dialog-send-command-dangerous = Cette commande est marquée dangereuse : elle peut détruire des données ou arrêter un service.
 ui-dialog-send-command-confirm = Envoyer
+ui-dialog-broadcast-command-title = Envoyer cette commande à plusieurs sessions ?
+ui-dialog-broadcast-command-body = La commande ci-dessous est saisie dans chaque session listée ({ $count }) et exécutée avec Entrée, avec les droits de chaque session. Heimdall demande à chaque fois.
+ui-dialog-broadcast-command-confirm = Envoyer à toutes
 ui-error-remote-forward = La passerelle SSH n'a pas voulu écouter sur son port { $port } pour la redirection distante : la redirection y est désactivée, ou le port y est déjà pris.
 ui-error-proxy-port = Le proxy SOCKS n'a pas pu ouvrir le port local { $port } : un autre programme l'utilise peut-être. ({ $detail })
 ui-error-jump-refused = La passerelle SSH n'a pas voulu se connecter à { $target } : la redirection y est désactivée, ou cet hôte n'est pas joignable depuis elle.
@@ -5563,6 +5566,41 @@ ui-tool-cmdlib-value-path = { $label } doit être un chemin.
 ui-tool-cmdlib-value-long = { $label } dépasse { $max } caractères.
 ui-tool-cmdlib-value-dangerous = { $label } contient un caractère que le shell lirait comme de la syntaxe.
 ui-tool-cmdlib-value-control = { $label } contient un saut de ligne ou un autre caractère de contrôle.
+ui-tool-cmdlib-import = Importer
+ui-tool-cmdlib-export = Exporter
+ui-tool-cmdlib-import-title = Importer des commandes
+ui-tool-cmdlib-export-title = Exporter les commandes
+ui-tool-cmdlib-import-done = Importées : { $imported }, mises à jour : { $updated }, ignorées : { $skipped }.
+ui-tool-cmdlib-export-done = Commandes exportées.
+ui-tool-cmdlib-transfer-too-large = Le fichier est trop volumineux.
+ui-tool-cmdlib-transfer-format = Le fichier n'est pas un export de la bibliothèque de commandes.
+ui-tool-cmdlib-transfer-failed = Le fichier n'a pas pu être utilisé : { $detail }
+ui-tool-cmdlib-favorite = Favori
+ui-tool-cmdlib-unfavorite = Retirer des favoris
+ui-tool-cmdlib-favorites-only = Favoris seulement
+ui-tool-cmdlib-duplicate = Dupliquer
+ui-tool-cmdlib-duplicate-title = Copie de { $title }
+ui-tool-cmdlib-history = Historique
+ui-tool-cmdlib-history-note = Les valeurs saisies ne sont jamais conservées : un rejeu demande la commande telle qu'elle est écrite maintenant, et la question qui suit la montre en entier.
+ui-tool-cmdlib-history-empty = Rien n'a encore été envoyé.
+ui-tool-cmdlib-history-sent = Envoyée à { $target } le { $when }
+ui-tool-cmdlib-history-replay = Rejouer
+ui-tool-cmdlib-history-clear = Effacer l'historique
+ui-tool-cmdlib-history-clear-question = Effacer tout l'historique ? Les favoris restent.
+ui-tool-cmdlib-history-clear-confirm = Effacer
+ui-tool-cmdlib-replay-gone = La commande de cette entrée n'existe plus.
+ui-tool-cmdlib-replay-blocked = Cette entrée ne peut pas être envoyée maintenant : ouvrez un onglet de terminal connecté et renseignez les valeurs demandées.
+ui-tool-cmdlib-activity-unsaved = Les favoris et l'historique n'ont pas pu être enregistrés.
+ui-tool-cmdlib-broadcast-to = Diffuser vers :
+ui-tool-cmdlib-broadcast = Diffuser
+ui-tool-cmdlib-broadcast-all = Tout sélectionner
+ui-tool-cmdlib-broadcast-none = Tout désélectionner
+ui-tool-cmdlib-broadcast-sent =
+    { $count ->
+        [one] Envoyée à { $count } terminal.
+       *[other] Envoyée à { $count } terminaux.
+    }
+ui-tool-cmdlib-broadcast-partial = Envoyée à { $delivered } terminaux sur { $total }. Non atteints : { $names }
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Nom d'hôte ou adresse IP invalide. Seuls les lettres, chiffres, points et tirets sont autorisés.
 ui-tool-ping-latency = { $ms } ms

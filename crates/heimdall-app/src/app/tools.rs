@@ -61,6 +61,17 @@ pub enum ToolsMessage {
         /// Marked dangerous.
         dangerous: bool,
     },
+    /// Write `command` into each terminal tab of `targets`, once the user agrees to the one
+    /// question it opens, which lists them all; `dangerous` for a command marked so.
+    /// Nothing is written by this message.
+    BroadcastCommand {
+        /// The terminal tabs.
+        targets: Vec<TabId>,
+        /// The command, one line.
+        command: String,
+        /// Marked dangerous.
+        dangerous: bool,
+    },
     /// The close question of a tool's tab answered Save: its document saved, then the
     /// close asked again.
     SaveBeforeClose,
@@ -198,6 +209,14 @@ impl App {
                 dangerous,
             } => {
                 self.ask_send(target, command, dangerous);
+                Vec::new()
+            }
+            ToolsMessage::BroadcastCommand {
+                targets,
+                command,
+                dangerous,
+            } => {
+                self.ask_broadcast(&targets, command, dangerous);
                 Vec::new()
             }
             ToolsMessage::ToggleFavorite(tool) => {

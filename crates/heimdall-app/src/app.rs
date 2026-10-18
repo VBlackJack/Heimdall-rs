@@ -206,7 +206,7 @@ pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
 pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
-pub use send_command::{SendConfirmation, SendTarget};
+pub use send_command::{BroadcastConfirmation, SendConfirmation, SendTarget, SentCommand};
 pub use session_load::SessionLoadNotice;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -3005,6 +3005,10 @@ pub enum Dialog {
     /// Write a command of the command library into a terminal, shown whole with the terminal
     /// that receives it: asked each time, nothing written before it is agreed to.
     ConfirmSendCommand(Box<SendConfirmation>),
+    /// Write a command of the command library into several terminals at once, shown whole
+    /// with every terminal that receives it: one question, nothing written before it is
+    /// agreed to.
+    ConfirmBroadcastCommand(Box<BroadcastConfirmation>),
     /// Type post-connect steps, shown whole, which the user has not approved yet.
     ConfirmPostConnect(Box<PostConnectConfirmation>),
     /// Result of an import.
@@ -3269,6 +3273,7 @@ impl Dialog {
             Self::ConfirmLocalCommand(_)
                 | Self::ConfirmRunScript(_)
                 | Self::ConfirmSendCommand(_)
+                | Self::ConfirmBroadcastCommand(_)
                 | Self::ConfirmPostConnect(_)
                 | Self::Vault(_)
                 | Self::Pin(_)
@@ -3327,6 +3332,9 @@ pub struct App {
     pub active: Option<TabId>,
     /// The pane the open close question is about alone, not its whole split.
     closing_pane: Option<TabId>,
+    /// The commands of the command library written into terminals, until the window takes
+    /// them for its history.
+    sent_commands: Vec<SentCommand>,
     /// The tabs detached to windows of their own, off the strip.
     floating: Vec<Floating>,
     /// Window-level dialog, if any.
@@ -3551,6 +3559,7 @@ impl App {
             tabs: Vec::new(),
             active: None,
             closing_pane: None,
+            sent_commands: Vec::new(),
             floating: Vec::new(),
             dialog,
             route_test: None,
@@ -5216,6 +5225,9 @@ impl App {
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
             Some(Dialog::ConfirmRunScript(confirmation)) => self.confirm_script(*confirmation),
             Some(Dialog::ConfirmSendCommand(confirmation)) => self.confirm_send(&confirmation),
+            Some(Dialog::ConfirmBroadcastCommand(confirmation)) => {
+                self.confirm_command_broadcast(&confirmation)
+            }
             Some(Dialog::ConfirmPostConnect(confirmation)) => self.run_post_connect(*confirmation),
             // sudo's question is answered with the password the window holds, never by a
             // bare confirm.

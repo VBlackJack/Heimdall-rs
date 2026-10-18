@@ -288,3 +288,17 @@ fn the_first_template_shown_is_this_systems_else_the_other() {
         Some(TemplatePlatform::Linux)
     );
 }
+
+#[test]
+fn a_copy_draft_has_no_identity_and_its_own_title() {
+    let mut library = UserLibrary::default();
+    let id = library.upsert(&draft("a", "ls {dir}")).expect("made");
+    let original = library.get(&id).expect("kept").clone();
+    let copy = Draft::copy_of(&original, "Copy of a".to_owned());
+    assert_eq!(copy.id, None);
+    assert_eq!(copy.title, "Copy of a");
+    assert_eq!(copy.linux_pattern, "ls {dir}");
+    let copy_id = library.upsert(&copy).expect("copy made");
+    assert_ne!(copy_id, id);
+    assert_eq!(library.commands().len(), 2);
+}
