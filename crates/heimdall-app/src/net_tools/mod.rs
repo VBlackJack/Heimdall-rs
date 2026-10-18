@@ -26,6 +26,7 @@
 
 pub mod banner;
 pub mod dns;
+pub mod firewall;
 pub mod http;
 pub mod ping;
 pub mod port_scan;
@@ -40,6 +41,8 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 
 use crate::text::{server_text, visible_text};
@@ -159,6 +162,35 @@ pub async fn resolve(host: &str, timeout: Duration) -> Result<Vec<IpAddr>, Resol
         return Err(ResolveFailure::NoAddress);
     }
     Ok(addresses)
+}
+
+/// A TCP connection to `host:port` within `timeout`, for the tools that open several in the
+/// course of a run (the TLS audit's probes, the SMB negotiation, the service probes of the
+/// `SecNumCloud` audit). With a `gateway` the connection is a channel it opens onward, `host`
+/// as typed for it to resolve; without one it is made from this computer. A gateway that
+/// cannot open the channel is an error, never a connection from here: the two branches share
+/// nothing.
+///
+/// # Errors
+///
+/// The connection failed or took longer than `timeout` ([`std::io::ErrorKind::TimedOut`]).
+pub async fn connect_routed<O: Opener>(
+    gateway: Option<&ToolGateway<O>>,
+    host: &str,
+    port: u16,
+    timeout: Duration,
+) -> std::io::Result<tokio::net::TcpStream> {
+    if let Some(gateway) = gateway {
+        return gateway.dial_within(host, port, Some(timeout)).await;
+    }
+    tokio::time::timeout(timeout, tokio::net::TcpStream::connect((host, port)))
+        .await
+        .unwrap_or_else(|_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "connection timed out",
+            ))
+        })
 }
 
 /// `text`, sent by a server or a program, one line each, made safe to show: every

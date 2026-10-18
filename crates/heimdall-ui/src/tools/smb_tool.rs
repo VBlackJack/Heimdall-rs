@@ -31,12 +31,16 @@
 use std::time::{Duration, Instant};
 
 use heimdall_app::TabId;
+use heimdall_app::net_tools::connect_routed;
+use heimdall_app::tool_route::ToolRoute;
 use heimdall_core::tools::smb::{
     NtlmInfo, SmbEnumerationResult, SmbFindingSeverity, SmbNegotiateInfo, build_netbios_header,
     build_netbios_nbstat_query, build_ntlmssp_type1, build_report, build_result,
     build_smb2_negotiate, build_smb2_session_setup, find_ntlmssp_message, parse_negotiate_response,
     parse_netbios_response, parse_ntlm_type2, read_netbios_length, wrap_in_spnego,
 };
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
 use iced::widget::{column, container, progress_bar, row, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -90,6 +94,9 @@ pub struct SmbPane {
     host: String,
     is_enumerating: bool,
     status_message: Option<String>,
+    /// The last run went through a gateway, which carries no UDP: its NetBIOS name query was
+    /// not sent.
+    netbios_skipped: bool,
     error: Option<String>,
     result: Option<SmbEnumerationResult>,
     report_text: String,
@@ -98,7 +105,7 @@ pub struct SmbPane {
 
 impl SmbPane {
     /// Updates the view state in response to a message.
-    pub fn update(&mut self, message: SmbMessage, tab: TabId) -> Outcome {
+    pub fn update(&mut self, message: SmbMessage, tab: TabId, via: Option<ToolRoute>) -> Outcome {
         match message {
             SmbMessage::HostChanged(val) => {
                 self.host = val;
@@ -113,6 +120,7 @@ impl SmbPane {
                 }
 
                 self.is_enumerating = true;
+                self.netbios_skipped = via.is_some();
                 self.error = None;
                 self.status_message = None;
                 self.result = None;
@@ -124,7 +132,7 @@ impl SmbPane {
                 let task = Task::perform(
                     async move {
                         let start = Instant::now();
-                        let outcome = execute_enumeration(&target).await;
+                        let outcome = enumerate_by(&target, via).await;
                         let elapsed = start.elapsed().as_millis();
                         (current_id, outcome, elapsed)
                     },
@@ -232,6 +240,12 @@ impl SmbPane {
         // 3. Error line
         if let Some(err) = &self.error {
             body_col = body_col.push(super::error_line(err.clone()));
+        }
+        if self.netbios_skipped {
+            body_col = body_col.push(super::status_line(Some((
+                fl!("ui-tool-route-udp-skipped"),
+                false,
+            ))));
         }
 
         // 4. Empty state or Results
@@ -415,11 +429,33 @@ impl SmbPane {
 
 // ── Networking Engine ───────────────────────────────────────────────────────
 
-async fn execute_enumeration(host: &str) -> Result<SmbEnumerationResult, String> {
-    let (netbios_res, smb_res) = tokio::join!(
-        probe_netbios(host, NETBIOS_TIMEOUT),
-        probe_smb_and_ntlm(host, SMB_TIMEOUT),
-    );
+/// The enumeration of `host`: through `via`, the gateway is opened first and the SMB exchange
+/// is the channel it opens onward; a gateway that cannot be opened is an `Err` with why, said,
+/// and nothing is then connected from here.
+async fn enumerate_by(host: &str, via: Option<ToolRoute>) -> Result<SmbEnumerationResult, String> {
+    let Some(route) = via else {
+        return execute_enumeration::<heimdall_ssh::Connection>(host, None).await;
+    };
+    let gateway = route.open().await.map_err(super::route_bar::failure_text)?;
+    execute_enumeration(host, Some(&gateway)).await
+}
+
+/// The enumeration of `host`. Through a `gateway` only the SMB exchange on TCP 445 is made:
+/// the NetBIOS name query is UDP, which a gateway's channels cannot carry, so it is not sent
+/// and is not counted as failed.
+async fn execute_enumeration<O: Opener>(
+    host: &str,
+    gateway: Option<&ToolGateway<O>>,
+) -> Result<SmbEnumerationResult, String> {
+    let netbios = async {
+        if gateway.is_some() {
+            (None, None, None, false)
+        } else {
+            probe_netbios(host, NETBIOS_TIMEOUT).await
+        }
+    };
+    let (netbios_res, smb_res) =
+        tokio::join!(netbios, probe_smb_and_ntlm(gateway, host, SMB_TIMEOUT),);
 
     let (nb_name, nb_domain, nb_mac, nb_failed) = netbios_res;
     let (ntlm, smb) = smb_res?;
@@ -478,14 +514,15 @@ async fn probe_netbios(
     }
 }
 
-async fn probe_smb_and_ntlm(
+async fn probe_smb_and_ntlm<O: Opener>(
+    gateway: Option<&ToolGateway<O>>,
     host: &str,
     dur: Duration,
 ) -> Result<(Option<NtlmInfo>, Option<SmbNegotiateInfo>), String> {
     let probe_task = async {
         // `(host, port)` resolves IPv4, IPv6 literals and hostnames correctly, where
         // `format!("{host}:445")` would mangle an IPv6 literal such as `::1`.
-        let mut stream = TcpStream::connect((host, SMB_PORT))
+        let mut stream = connect_routed(gateway, host, SMB_PORT, dur)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -633,7 +670,12 @@ mod tests {
         build_report, build_security_findings,
     };
 
-    use super::localize_key;
+    use heimdall_ssh::tool_route::ToolGateway;
+    use tokio::io::AsyncWriteExt as _;
+    use tokio::net::TcpListener;
+
+    use super::super::route_bar::doubles::{Loopback, Refusing};
+    use super::{execute_enumeration, localize_key};
 
     /// Every message key the report formatter and the findings builder can emit, so the
     /// test fails if a new key is added without a `localize_key` arm (as `ToolSmbModernDialect`
@@ -704,5 +746,32 @@ mod tests {
             !report.contains("ToolSmb"),
             "report leaked a raw message key"
         );
+    }
+
+    #[tokio::test]
+    async fn the_negotiation_goes_over_the_channel_and_no_name_query_is_sent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            // A NetBIOS header announcing four bytes that are not an SMB2 response.
+            socket
+                .write_all(&[0, 0, 0, 4, 1, 2, 3, 4])
+                .await
+                .expect("write");
+        });
+        let gateway = ToolGateway::over(Loopback(address), 4);
+        let answered = execute_enumeration("nas.internal", Some(&gateway)).await;
+        let said = answered.expect_err("not an SMB2 response");
+        assert!(said.contains("Invalid SMB2 negotiate response"), "{said}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_channel_is_a_failure_and_never_a_direct_connection() {
+        // The port is fixed, so no bait can stand on it: a connection from here to the
+        // loopback's 445 would be answered by a host that serves SMB, and not fail.
+        let gateway = ToolGateway::over(Refusing, 4);
+        let answered = execute_enumeration("127.0.0.1", Some(&gateway)).await;
+        assert!(answered.is_err());
     }
 }

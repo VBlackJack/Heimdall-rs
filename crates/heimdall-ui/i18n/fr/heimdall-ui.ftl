@@ -5867,3 +5867,4 @@ ui-settings-rdp-default-width = Largeur de la résolution par défaut
 ui-settings-rdp-default-height = Hauteur de la résolution par défaut
 ui-settings-rdp-default-resolution-refused = La résolution par défaut doit être comprise entre { $min } et { $max } pixels.
 ui-settings-pixels-unit = px
+ui-tool-route-udp-skipped = La requête de nom NetBIOS utilise UDP, qu'une passerelle SSH ne peut pas transporter : elle n'a pas été envoyée. Choisissez Direct pour l'envoyer depuis cet ordinateur.

@@ -23,6 +23,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use heimdall_core::tools::firewall_tester::FwProbeStatus;
 use heimdall_core::tools::http_headers::parse_target;
 use heimdall_ssh::ConnectError;
 use heimdall_ssh::socks::Opener;
@@ -31,7 +32,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::http::{HttpFetchError, fetch_via};
-use super::{banner, tcp_ping};
+use super::{banner, connect_routed, firewall, tcp_ping, whois};
 use crate::reachability::DownReason;
 
 /// A gateway that connects onward to one address of this computer, whatever it is asked.
@@ -162,4 +163,92 @@ async fn a_channel_error_is_not_an_io_error_of_this_computer() {
     let gateway = ToolGateway::over(Refusing, 1);
     let error = gateway.dial("host", 80).await.expect_err("refused");
     assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+}
+
+#[tokio::test]
+async fn a_whois_reply_is_read_over_the_channel_and_a_refusal_is_a_failure() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address = listener.local_addr().expect("address");
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        let mut query = [0_u8; 256];
+        let _ = socket.read(&mut query).await;
+        socket
+            .write_all(b"Domain Name: EXAMPLE.COM\r\n")
+            .await
+            .expect("write");
+    });
+    let open = ToolGateway::over(Loopback(address), 4);
+    let reply = whois::lookup_via_at(
+        &open,
+        "whois.internal",
+        43,
+        "example.com",
+        Duration::from_secs(5),
+        1024,
+    )
+    .await
+    .expect("reply");
+    assert_eq!(reply.text, "Domain Name: EXAMPLE.COM\n");
+
+    let (port, watch) = bait().await;
+    let refusing = ToolGateway::over(Refusing, 4);
+    let refused = whois::lookup_via_at(
+        &refusing,
+        "127.0.0.1",
+        port,
+        "example.com",
+        Duration::from_secs(5),
+        1024,
+    )
+    .await;
+    assert_eq!(
+        refused,
+        Err(whois::WhoisFailure::Failed(DownReason::Refused))
+    );
+    assert!(!watch.await.expect("watch"), "nothing connected from here");
+}
+
+#[tokio::test]
+async fn a_firewall_probe_is_the_channel_opening_and_never_a_direct_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address = listener.local_addr().expect("address");
+    let open = ToolGateway::over(Loopback(address), 4);
+    let probed = firewall::probe_via(&open, "web.internal", 443, 5000).await;
+    assert_eq!(probed.status, FwProbeStatus::Open);
+    assert!(probed.latency_ms.is_some());
+
+    let (port, watch) = bait().await;
+    let refusing = ToolGateway::over(Refusing, 4);
+    let refused = firewall::probe_via(&refusing, "127.0.0.1", port, 5000).await;
+    assert_eq!(refused.status, FwProbeStatus::Closed);
+    assert!(!watch.await.expect("watch"), "nothing connected from here");
+}
+
+#[tokio::test]
+async fn a_routed_connection_is_a_channel_and_a_refused_one_is_not_made_directly() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address = listener.local_addr().expect("address");
+    let open = ToolGateway::over(Loopback(address), 4);
+    let timeout = Duration::from_secs(5);
+    assert!(
+        connect_routed(Some(&open), "smb.internal", 445, timeout)
+            .await
+            .is_ok()
+    );
+
+    let (port, watch) = bait().await;
+    let refusing = ToolGateway::over(Refusing, 4);
+    let refused = connect_routed(Some(&refusing), "127.0.0.1", port, timeout).await;
+    assert_eq!(
+        refused.expect_err("refused").kind(),
+        io::ErrorKind::ConnectionRefused
+    );
+    assert!(!watch.await.expect("watch"), "nothing connected from here");
+
+    // Without a gateway the connection is made from here.
+    let (port, watch) = bait().await;
+    let direct = connect_routed::<Refusing>(None, "127.0.0.1", port, timeout).await;
+    assert!(direct.is_ok());
+    assert!(watch.await.expect("watch"));
 }

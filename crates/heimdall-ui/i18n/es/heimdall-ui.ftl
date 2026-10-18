@@ -5856,3 +5856,4 @@ ui-settings-rdp-default-width = Ancho de la resolución predeterminada
 ui-settings-rdp-default-height = Alto de la resolución predeterminada
 ui-settings-rdp-default-resolution-refused = La resolución predeterminada debe estar entre { $min } y { $max } píxeles.
 ui-settings-pixels-unit = px
+ui-tool-route-udp-skipped = La consulta de nombre NetBIOS usa UDP, que una pasarela SSH no puede transportar, así que no se envió. Elija Directo para enviarla desde este equipo.

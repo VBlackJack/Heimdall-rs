@@ -205,6 +205,56 @@ pub fn failure_text(error: ConnectError) -> String {
     fl!("ui-tool-route-error-gateway", detail = detail)
 }
 
+/// Stand-ins for a gateway, for the tests of the tools that run through one: a gateway that
+/// connects onward to a listener of this computer, one that refuses every channel, and a
+/// listener where a direct connection would land.
+#[cfg(test)]
+pub(super) mod doubles {
+    use std::net::SocketAddr;
+    use std::time::Duration;
+
+    use heimdall_ssh::ConnectError;
+    use heimdall_ssh::socks::Opener;
+    use tokio::net::{TcpListener, TcpStream};
+
+    /// A gateway that connects onward to one address of this computer, whatever it is asked.
+    pub struct Loopback(pub SocketAddr);
+
+    impl Opener for Loopback {
+        type Stream = TcpStream;
+
+        async fn open(&self, _host: String, _port: u16) -> Result<TcpStream, ConnectError> {
+            TcpStream::connect(self.0)
+                .await
+                .map_err(ConnectError::Network)
+        }
+    }
+
+    /// A gateway that opens no channel.
+    pub struct Refusing;
+
+    impl Opener for Refusing {
+        type Stream = TcpStream;
+
+        async fn open(&self, host: String, port: u16) -> Result<TcpStream, ConnectError> {
+            tokio::task::yield_now().await;
+            Err(ConnectError::JumpRefused { host, port })
+        }
+    }
+
+    /// A listener where a direct connection would land, and whether anyone came to it.
+    pub async fn bait() -> (u16, tokio::task::JoinHandle<bool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let watch = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(500), listener.accept())
+                .await
+                .is_ok()
+        });
+        (port, watch)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use heimdall_app::tools::ToolContext;
@@ -388,5 +438,54 @@ mod tests {
         assert!(!window.route(tab).unavailable, "choosing again clears it");
         window.send(tab, ToolMessage::PortScan(PortScanMessage::Start));
         assert!(window.running(tab), "Direct runs");
+    }
+
+    #[test]
+    fn the_newly_routed_tools_are_offered_the_bar_and_do_not_run_without_their_gateway() {
+        use super::super::{FirewallTesterMessage, SmbMessage, TlsAuditMessage, WhoisMessage};
+
+        let mut window = Window::with_gateway();
+        for tool in [
+            ToolId::Whois,
+            ToolId::TlsAudit,
+            ToolId::Smb,
+            ToolId::FwTest,
+            ToolId::SecNumCloud,
+        ] {
+            let tab = window.open(tool);
+            assert!(window.route(tab).shown(RouteSupport::Tcp), "{tool:?}");
+        }
+        let tab = window.open(ToolId::Whois);
+        window.send(
+            tab,
+            ToolMessage::Whois(WhoisMessage::DomainChanged("example.com".to_owned())),
+        );
+        window.choose(tab, Some("gone"));
+        window.send(tab, ToolMessage::Whois(WhoisMessage::Lookup));
+        assert!(!window.running(tab), "no fall back to a direct lookup");
+        assert!(window.route(tab).unavailable);
+
+        let tab = window.open(ToolId::Smb);
+        window.send(
+            tab,
+            ToolMessage::Smb(SmbMessage::HostChanged("nas.lab".to_owned())),
+        );
+        window.choose(tab, Some("gone"));
+        window.send(tab, ToolMessage::Smb(SmbMessage::Enumerate));
+        assert!(window.route(tab).unavailable, "refused, not run directly");
+
+        let tab = window.open(ToolId::TlsAudit);
+        window.send(
+            tab,
+            ToolMessage::TlsAudit(TlsAuditMessage::HostChanged("tls.lab".to_owned())),
+        );
+        window.choose(tab, Some("gone"));
+        window.send(tab, ToolMessage::TlsAudit(TlsAuditMessage::Audit));
+        assert!(window.route(tab).unavailable, "refused, not run directly");
+
+        let tab = window.open(ToolId::FwTest);
+        window.choose(tab, Some("gone"));
+        window.send(tab, ToolMessage::FwTest(FirewallTesterMessage::Start));
+        assert!(window.route(tab).unavailable, "refused, not run directly");
     }
 }

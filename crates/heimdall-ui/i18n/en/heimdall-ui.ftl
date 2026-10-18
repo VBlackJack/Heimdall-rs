@@ -5811,3 +5811,4 @@ ui-settings-rdp-default-width = Default resolution width
 ui-settings-rdp-default-height = Default resolution height
 ui-settings-rdp-default-resolution-refused = The default resolution must be between { $min } and { $max } pixels.
 ui-settings-pixels-unit = px
+ui-tool-route-udp-skipped = The NetBIOS name query uses UDP, which an SSH gateway cannot carry, so it was not sent. Choose Direct to send it from this computer.
