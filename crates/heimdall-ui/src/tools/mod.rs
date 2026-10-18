@@ -1125,6 +1125,14 @@ impl ToolPanes {
         Task::batch(tasks)
     }
 
+    /// Whether tool tab `tab` is a Password Generator.
+    #[must_use]
+    pub fn is_password(&self, tab: TabId) -> bool {
+        self.panes
+            .get(&tab)
+            .is_some_and(|state| matches!(state.pane, Pane::Password(_)))
+    }
+
     /// The state of tool tab `tab`.
     #[must_use]
     pub fn get(&self, tab: TabId) -> Option<&ToolPane> {
