@@ -59,8 +59,8 @@ use heimdall_app::{
     master_password_problem, open_vault, server_text,
 };
 use heimdall_app::{
-    LegacyMigrationMessage, QuickRow, ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello,
-    windows_hello,
+    LegacyMigrationMessage, QuickRow, SendConfirmation, ToolsMessage, VaultHelloMessage,
+    VaultTicket, vault_hello, windows_hello,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::import::csharp_settings::PreferenceOutcome;
@@ -283,6 +283,14 @@ fn tree_shortcut(
         && crate::terminal_view::keys::letter(key, physical) == Some('b')
     {
         return Some(TreeShortcut::PropertiesPanel);
+    }
+    // As the C# Ctrl+Shift+N: not gated to terminals, so a terminal that takes it keeps it.
+    if modifiers.control()
+        && modifiers.shift()
+        && !modifiers.alt()
+        && crate::terminal_view::keys::letter(key, physical) == Some('n')
+    {
+        return Some(TreeShortcut::NetworkScan);
     }
     match ctrl_letter(key, physical, modifiers)? {
         'e' => Some(TreeShortcut::Edit),
@@ -598,8 +606,7 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             }
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
                 // Held down, the panel's key would flip it, and save it, at each repeat.
-                return (!repeat || shortcut != TreeShortcut::PropertiesPanel)
-                    .then_some(Message::TreeShortcut(shortcut));
+                return (!repeat || shortcut.repeats()).then_some(Message::TreeShortcut(shortcut));
             }
             // F1 left by every widget: a terminal or a desktop keeps it for its programs.
             if physical_key == keyboard::key::Physical::Code(keyboard::key::Code::F1)
@@ -1080,6 +1087,15 @@ pub enum TreeShortcut {
     /// Ctrl+Shift+B: the properties panel under the tree shown or hidden, as the C# one;
     /// shown, never hidden, while it cannot be seen.
     PropertiesPanel,
+    /// Ctrl+Shift+N: the network scanner, as the C# `MainWindow.xaml.cs:1958` registers it.
+    NetworkScan,
+}
+
+impl TreeShortcut {
+    /// Whether holding the key repeats it: the toggles and the dialog opened do not.
+    const fn repeats(self) -> bool {
+        !matches!(self, Self::PropertiesPanel | Self::NetworkScan)
+    }
 }
 
 impl fmt::Debug for Message {
@@ -4369,6 +4385,9 @@ impl Shell {
                     .buffer_unordered(at_once);
                 Task::stream(checks)
             }
+            Effect::ScanNetwork { scan, ips, stop } => {
+                crate::network_scan_view::run(scan, ips, stop)
+            }
             effect @ (Effect::TestReachability { .. }
             | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
@@ -4841,6 +4860,7 @@ impl Shell {
                     Dialog::SessionsPreview(_)
                         | Dialog::RdpPreview(_)
                         | Dialog::ProfileImportPreview(_)
+                        | Dialog::NetworkScan(_)
                         | Dialog::HostKeysPreview(_)
                         | Dialog::FileConflicts { .. }
                 ) {
@@ -6936,6 +6956,9 @@ impl Shell {
                 Vec::new()
             }
             TreeShortcut::PropertiesPanel => self.properties_shortcut(),
+            TreeShortcut::NetworkScan => self.app.update(AppMessage::NetworkScan(
+                heimdall_app::NetworkScanMessage::Open,
+            )),
             TreeShortcut::Edit => match self.app.selected_profile.clone() {
                 Some(id) if self.tree_focused && self.app.can_edit(&id) => {
                     self.app.update(AppMessage::EditProfile(id))
@@ -12084,6 +12107,49 @@ fn run_script_dialog(confirmation: &ScriptConfirmation) -> Element<'_, Message> 
     )
 }
 
+/// The question before a command of the command library is typed into a terminal: the
+/// command whole, the terminal that receives it, and a warning when it is marked dangerous.
+fn send_command_dialog(confirmation: &SendConfirmation) -> Element<'_, Message> {
+    let mut body = column![
+        dialog_parts::body(fl!(
+            "ui-dialog-send-command-body",
+            name = confirmation.target.as_str()
+        )),
+        container(
+            styles::scroll(
+                text(confirmation.shown.as_str())
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::Glyph)
+            )
+            .height(Length::Shrink)
+        )
+        .max_height(LOCAL_COMMAND_HEIGHT)
+        .padding(spacing::MD)
+        .style(container::rounded_box),
+    ]
+    .spacing(spacing::SM);
+    if confirmation.dangerous {
+        body = body.push(dialog_parts::error(fl!("ui-dialog-send-command-dangerous")));
+    }
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-send-command-title"),
+        body,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(
+                fl!("ui-dialog-send-command-confirm"),
+                if confirmation.dangerous {
+                    styles::danger
+                } else {
+                    styles::primary
+                },
+            )
+            .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]),
+    )
+}
+
 /// A question about running `command` on this computer, under `title` and `intro`: the
 /// command whole in its own box, the `folder` it starts in, and a warning when the program
 /// `rereads` its line.
@@ -13463,6 +13529,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ConfirmRunScript(confirmation) => run_script_dialog(confirmation),
+        Dialog::ConfirmSendCommand(confirmation) => send_command_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::TrustedHostKeyDetails(entry) => crate::trusted_keys_view::details(entry),
@@ -13515,6 +13582,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmImportFile(_)
         | Dialog::ProfileImportPreview(_)
         | Dialog::ConfirmCitrixImport(_) => import_preview(dialog),
+        Dialog::NetworkScan(scan) => crate::network_scan_view::dialog(scan),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::BulkPassword {
             ids,

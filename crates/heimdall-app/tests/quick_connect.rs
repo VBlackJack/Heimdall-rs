@@ -560,3 +560,63 @@ fn a_tool_word_and_an_argument_offer_that_tool_alone_opened_on_it() {
     app.update(message);
     assert!(app.tabs[1].tool_context().is_empty());
 }
+
+#[test]
+fn a_bare_tool_code_or_localized_name_opens_the_tool_first() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), vec![ssh("p", "cmdlib box", "p.lab", None)]);
+    // The identifier, whatever its case, is no command word yet lists its tool first.
+    for typed in ["cmdlib", "CmdLib"] {
+        let row = app
+            .quick_results_in(typed, None, &words)
+            .into_iter()
+            .next()
+            .expect("found");
+        assert!(
+            matches!(
+                row.result,
+                QuickResult::Tool {
+                    tool: ToolId::CmdLib,
+                    ..
+                }
+            ),
+            "{typed}: {:?}",
+            row.result
+        );
+        let message = app.quick_open(row.result, None, false);
+        app.update(message);
+        assert_eq!(app.tabs.last().expect("tab").tool(), Some(ToolId::CmdLib));
+    }
+    // The name in the language shown, which is not the code.
+    let localized = |tool: ToolId, _argument: Option<&str>| ToolWords {
+        name: if tool == ToolId::Ping {
+            "Sonde reseau".to_owned()
+        } else {
+            tool.code().to_owned()
+        },
+        category: String::new(),
+    };
+    let first = app
+        .quick_results_in("sonde RESEAU", None, &localized)
+        .into_iter()
+        .next()
+        .expect("found");
+    assert!(matches!(
+        first.result,
+        QuickResult::Tool {
+            tool: ToolId::Ping,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_bare_word_matching_no_tool_is_still_a_host() {
+    let dir = tempfile::tempdir().expect("dir");
+    let app = app(dir.path());
+    let rows = app.quick_results_in("zzhost", None, &words);
+    assert!(matches!(
+        rows.first().map(|row| &row.result),
+        Some(QuickResult::Ssh { host, .. }) if host == "zzhost"
+    ));
+}

@@ -113,20 +113,21 @@ pub use app::{
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickGroup,
     QuickResult, QuickRow, RDP_EXTENSION, RECENTLY_CLOSED_CAPACITY, RdpMessage, RdpNames,
     RdpOutcome, RdpPreview, RdpRow, RecentlyClosed, ResolutionChoice, RestoreDialog, RestoreRow,
-    Retry, ScriptConfirmation, SelectionMessage, SessionState, SessionStatus, SessionsCounts,
-    SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SudoAction,
-    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, ToolWords, TreeFilter, TreeRow,
-    TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, UpdateMessage,
-    UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard, VaultHelloMessage,
-    VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus, VaultTicket, WHEEL_LINES,
-    bulk_password_refusal, folder_label, local_date_time, master_password_problem, open_vault,
-    search_folded, should_auto_lock,
+    Retry, ScriptConfirmation, SelectionMessage, SendConfirmation, SendTarget, SessionState,
+    SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
+    SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
+    ToolWords, TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
+    UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard,
+    VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    VaultTicket, WHEEL_LINES, bulk_password_refusal, folder_label, local_date_time,
+    master_password_problem, open_vault, search_folded, should_auto_lock,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
 pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use app::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use app::{
     SCHEDULED_TICK, ScheduledChoice, ScheduledMessage, ScheduledNotice, local_time_text,
 };
