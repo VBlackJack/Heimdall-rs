@@ -29,6 +29,8 @@ use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::input::Database;
 use ironrdp::pdu::Action;
 use ironrdp::pdu::geometry::InclusiveRectangle;
+use ironrdp::pdu::rdp::headers::ShareDataPdu;
+use ironrdp::pdu::rdp::refresh_rectangle::RefreshRectanglePdu;
 use ironrdp::session::fast_path::ProcessorBuilder;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{
@@ -932,7 +934,14 @@ impl Running {
                     ActiveStageOutput::ResponseFrame(frame) => self.send(&frame).await?,
                     ActiveStageOutput::GraphicsUpdate(region) => {
                         self.note_update(&region);
-                        self.adopt_asked_size(&region).await;
+                        if let Some((width, height)) = self.adopt_asked_size(&region).await {
+                            let frame = full_refresh_frame(&stage, width, height)?;
+                            log::debug!(
+                                target: LOG_TARGET,
+                                "full refresh requested: {width}x{height}"
+                            );
+                            self.send(&frame).await?;
+                        }
                         let _ = self
                             .events
                             .send(RdpEvent::Updated {
@@ -1254,14 +1263,12 @@ impl Running {
     /// size the session connected with (measured in the lab, 3440x1440 asked, 1280x800
     /// kept). The framebuffer takes the size asked, empty, and the server's next update
     /// fills it.
-    async fn adopt_asked_size(&mut self, region: &InclusiveRectangle) {
+    async fn adopt_asked_size(&mut self, region: &InclusiveRectangle) -> Option<(u16, u16)> {
         let current = self.framebuffer.read(|width, height, _| (width, height));
         let asked = self.asked.and_then(|(width, height)| {
             Some((u16::try_from(width).ok()?, u16::try_from(height).ok()?))
         });
-        let Some((width, height)) = adopted_size(asked, current, region) else {
-            return;
-        };
+        let (width, height) = adopted_size(asked, current, region)?;
         log::debug!(
             target: LOG_TARGET,
             "RDP resize path: the server drew {width}x{height} without a reactivation, the framebuffer follows (was {}x{})",
@@ -1275,6 +1282,7 @@ impl Running {
             .unwrap_or_else(PoisonError::into_inner) =
             DecodedImage::new(PixelFormat::RgbA32, width, height);
         let _ = self.events.send(RdpEvent::Resized { width, height }).await;
+        Some((width, height))
     }
 
     /// Counts the updates the server sent and, once a second, says how many, and whether
@@ -1426,6 +1434,27 @@ impl Running {
             .await;
         Ok(())
     }
+}
+
+/// The Refresh Rect PDU (MS-RDPBCGR 2.2.11.2) for the whole `width`x`height` desktop, under
+/// the share `stage` is in: a server sends dirty regions only, and a framebuffer just made is
+/// empty.
+fn full_refresh_frame(stage: &ActiveStage, width: u16, height: u16) -> Result<Vec<u8>, String> {
+    let mut buffer = WriteBuf::new();
+    stage
+        .encode_static(
+            &mut buffer,
+            ShareDataPdu::RefreshRectangle(RefreshRectanglePdu {
+                areas_to_refresh: vec![InclusiveRectangle {
+                    left: 0,
+                    top: 0,
+                    right: width.saturating_sub(1),
+                    bottom: height.saturating_sub(1),
+                }],
+            }),
+        )
+        .map_err(|error| error.kind().to_string())?;
+    Ok(buffer.into_inner())
 }
 
 /// The size the framebuffer takes when `region` was drawn by a server that applied the size

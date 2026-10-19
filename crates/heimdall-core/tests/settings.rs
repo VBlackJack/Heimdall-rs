@@ -1516,6 +1516,45 @@ fn the_sessions_threshold_is_the_csharp_default_and_kept_within_its_range() {
 }
 
 #[test]
+fn the_full_screen_pointer_tolerance_has_a_default_and_is_kept_within_its_range() {
+    use heimdall_core::settings::{
+        FULLSCREEN_POINTER_TOLERANCE_DEFAULT, FULLSCREEN_POINTER_TOLERANCE_MAX,
+        fullscreen_pointer_tolerance_accepted,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.fullscreen_pointer_tolerance,
+        FULLSCREEN_POINTER_TOLERANCE_DEFAULT
+    );
+    assert!(fullscreen_pointer_tolerance_accepted(0));
+    assert!(!fullscreen_pointer_tolerance_accepted(
+        FULLSCREEN_POINTER_TOLERANCE_MAX + 1
+    ));
+    settings.fullscreen_pointer_tolerance = 0;
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path)
+            .expect("load")
+            .fullscreen_pointer_tolerance,
+        0
+    );
+    std::fs::write(
+        &path,
+        "version = 1\n[general]\nfullscreen_pointer_tolerance = 999\n",
+    )
+    .expect("write");
+    assert_eq!(
+        Settings::load(&path)
+            .expect("load")
+            .fullscreen_pointer_tolerance,
+        FULLSCREEN_POINTER_TOLERANCE_DEFAULT
+    );
+}
+
+#[test]
 fn ctrl_v_pastes_outside_full_screen_programs_by_default_and_is_kept() {
     use heimdall_core::settings::CtrlVPaste;
 

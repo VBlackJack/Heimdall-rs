@@ -1634,6 +1634,8 @@ pub struct Shell {
     /// The pointer as the window's events say, the one feed the full-screen exit button
     /// reads: two feeds disagreeing kept its timer resetting.
     chrome_pointer: Point,
+    /// The window's pointer events of the last second, for the log.
+    chrome_trace: crate::fullscreen_chrome::PointerTrace,
     /// Physical pixels per logical one on the window's screen: remote desktops are drawn
     /// one of their pixels per physical one.
     density: f32,
@@ -1993,6 +1995,7 @@ impl Shell {
             fullscreen_chrome: None,
             chrome_overlay_flags: (false, false, false, false),
             chrome_pointer: Point::ORIGIN,
+            chrome_trace: crate::fullscreen_chrome::PointerTrace::new(),
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
@@ -2949,6 +2952,11 @@ impl Shell {
                 Vec::new()
             }
             Message::ChromePointer(position) => {
+                let (dx, dy) = (
+                    position.x - self.chrome_pointer.x,
+                    position.y - self.chrome_pointer.y,
+                );
+                self.chrome_trace.note(dx.hypot(dy));
                 self.chrome_pointer = position;
                 Vec::new()
             }
@@ -3719,7 +3727,17 @@ impl Shell {
             pointer: self.chrome_pointer,
             overlay_open: self.overlay_shown(),
             reduced_motion: self.reduced_motion,
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a tolerance of a few pixels, far below f32's exact integers"
+            )]
+            tolerance: self.app.settings().fullscreen_pointer_tolerance as f32,
         };
+        let tracker = self.cursor.get();
+        self.chrome_trace.flush(
+            now,
+            (tracker.x - self.chrome_pointer.x).hypot(tracker.y - self.chrome_pointer.y),
+        );
         if let Some(chrome) = self.fullscreen_chrome.as_mut() {
             chrome.read(now, reading);
         }
