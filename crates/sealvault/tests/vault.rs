@@ -299,3 +299,94 @@ fn with_the_data_key_a_change_to_any_field_or_a_cut_file_is_unreadable() {
         Err(VaultError::Io { .. })
     ));
 }
+
+/// The `share_mode` flags of `CreateFileW`, by their documented values.
+#[cfg(windows)]
+const FILE_SHARE_READ: u32 = 0x1;
+#[cfg(windows)]
+const FILE_SHARE_WRITE: u32 = 0x2;
+#[cfg(windows)]
+const FILE_SHARE_DELETE: u32 = 0x4;
+
+/// `path` opened for reading as another program would, sharing it with `share_mode`.
+#[cfg(windows)]
+fn held_open(path: &Path, share_mode: u32) -> fs::File {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(share_mode)
+        .open(path)
+        .expect("held open")
+}
+
+/// The names in `dir`, sorted.
+#[cfg(windows)]
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .expect("listed")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[cfg(windows)]
+#[test]
+fn a_vault_another_program_holds_open_with_delete_sharing_is_saved() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = filled(dir.path());
+    // A backup or sync client reading the vault: a bare MoveFileExW is refused then, the
+    // POSIX rename replaces it (on NTFS, where the test folder lives).
+    let reader = held_open(
+        &path,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    );
+    let mut vault = Vault::open(&path, PASSWORD).expect("opens");
+    vault.set("ssh/new", b"s3cret".to_vec());
+    vault.save().expect("saved while held open");
+    drop(reader);
+    let vault = Vault::open(&path, PASSWORD).expect("opens again");
+    assert_eq!(vault.get("ssh/new"), Some(&b"s3cret"[..]));
+    let backup = backup_path(&path);
+    let backup = backup
+        .file_name()
+        .expect("name")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        names_in(dir.path()),
+        ["secrets.svlt".to_owned(), backup],
+        "no temporary file left"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_vault_held_open_without_delete_sharing_is_left_untouched_and_no_temporary_file_stays() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = filled(dir.path());
+    let before = fs::read(&path).expect("read");
+    let reader = held_open(&path, FILE_SHARE_READ | FILE_SHARE_WRITE);
+    let mut vault = Vault::open(&path, PASSWORD).expect("opens");
+    vault.set("ssh/new", b"s3cret".to_vec());
+    assert!(vault.save().is_err());
+    drop(reader);
+    assert_eq!(fs::read(&path).expect("read"), before);
+    let backup = backup_path(&path);
+    let backup = backup
+        .file_name()
+        .expect("name")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        names_in(dir.path()),
+        ["secrets.svlt".to_owned(), backup],
+        "no temporary file left"
+    );
+}
