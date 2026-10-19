@@ -49,6 +49,11 @@ pub const LOG_TARGET: &str = "heimdall::fullscreen";
 /// How often the readings are summed up in the log.
 const TRACE_EVERY: Duration = Duration::from_secs(1);
 
+/// How far, in logical pixels, the pointer must go from where it was last counted to count
+/// as moved: the readings of a still pointer wander by a pixel or so (the lab measured the
+/// timer reset every 2 s by a pointer that had not been touched).
+pub const POINTER_JITTER: f32 = 3.0;
+
 /// What the window tells the chrome at each reading.
 #[derive(Debug, Clone, Copy)]
 pub struct Reading {
@@ -139,10 +144,21 @@ impl FullscreenChrome {
 
     /// One reading of the pointer at `now`.
     pub fn read(&mut self, now: Instant, reading: Reading) {
-        let moved = self
-            .last_pointer
-            .is_some_and(|last| last != reading.pointer);
-        self.last_pointer = Some(reading.pointer);
+        let moved = self.last_pointer.is_some_and(|last| {
+            let (dx, dy) = (last.x - reading.pointer.x, last.y - reading.pointer.y);
+            dx.hypot(dy) >= POINTER_JITTER
+        });
+        if let Some(last) = self.last_pointer.filter(|_| moved) {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome pointer moved by {:.1} px",
+                (last.x - reading.pointer.x).hypot(last.y - reading.pointer.y)
+            );
+        }
+        // Counted from where it last counted as moved, so a slow drift adds up.
+        if moved || self.last_pointer.is_none() {
+            self.last_pointer = Some(reading.pointer);
+        }
         self.moved_since_trace |= moved;
         let near_top = reading.pointer.y >= 0.0 && reading.pointer.y <= REVEAL_THRESHOLD;
         if near_top {
@@ -253,6 +269,21 @@ mod tests {
         let done = late + FADE_DURATION;
         assert!(chrome.opacity(done).abs() < f32::EPSILON);
         assert!(!chrome.is_visible(done));
+    }
+
+    #[test]
+    fn a_still_pointer_whose_readings_wander_a_little_does_not_keep_the_chrome() {
+        let start = Instant::now();
+        let mut chrome = FullscreenChrome::entered(start);
+        let (a, b) = (Point::new(1700.0, 1000.0), Point::new(1701.0, 999.5));
+        for step in 0..=60_u32 {
+            let pointer = if step % 2 == 0 { a } else { b };
+            chrome.read(at(start, u64::from(step) * 100), reading(pointer));
+        }
+        assert!(
+            !chrome.is_shown(),
+            "hidden after 3 s although the readings differ"
+        );
     }
 
     #[test]

@@ -1631,6 +1631,9 @@ pub struct Shell {
     fullscreen_chrome: Option<crate::fullscreen_chrome::FullscreenChrome>,
     /// The overlay flags at the last reading of the pointer, to log a change only.
     chrome_overlay_flags: (bool, bool, bool, bool),
+    /// The pointer as the window's events say, the one feed the full-screen exit button
+    /// reads: two feeds disagreeing kept its timer resetting.
+    chrome_pointer: Point,
     /// Physical pixels per logical one on the window's screen: remote desktops are drawn
     /// one of their pixels per physical one.
     density: f32,
@@ -1989,6 +1992,7 @@ impl Shell {
             fullscreen: false,
             fullscreen_chrome: None,
             chrome_overlay_flags: (false, false, false, false),
+            chrome_pointer: Point::ORIGIN,
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
@@ -2945,7 +2949,7 @@ impl Shell {
                 Vec::new()
             }
             Message::ChromePointer(position) => {
-                self.cursor.set(position);
+                self.chrome_pointer = position;
                 Vec::new()
             }
             Message::UserInput => {
@@ -3345,6 +3349,8 @@ impl Shell {
                     "full screen {}",
                     if self.fullscreen { "entered" } else { "left" }
                 );
+                // Where it was last seen, until the first move says better.
+                self.chrome_pointer = self.cursor.get();
                 self.fullscreen_chrome = self.fullscreen.then(|| {
                     crate::fullscreen_chrome::FullscreenChrome::entered(std::time::Instant::now())
                 });
@@ -3710,7 +3716,7 @@ impl Shell {
             self.chrome_overlay_flags = flags;
         }
         let reading = crate::fullscreen_chrome::Reading {
-            pointer: self.cursor.get(),
+            pointer: self.chrome_pointer,
             overlay_open: self.overlay_shown(),
             reduced_motion: self.reduced_motion,
         };
@@ -15072,7 +15078,7 @@ mod tests {
         shell.menu = Some((TreeMenu::Resolution(tab), iced::Point::ORIGIN));
         assert!(!shell.overlay_shown(), "nothing of it is drawn");
         let start = std::time::Instant::now();
-        shell.cursor.set(iced::Point::new(1700.0, 1000.0));
+        shell.chrome_pointer = iced::Point::new(1700.0, 1000.0);
         for millis in (0..=5_000).step_by(100) {
             chrome_tick(&mut shell, start, millis);
         }
@@ -15091,7 +15097,7 @@ mod tests {
         let _ = shell.update(Message::App(AppMessage::NewProfile));
         assert!(shell.overlay_shown(), "a dialog is open");
         let start = std::time::Instant::now();
-        shell.cursor.set(iced::Point::new(1700.0, 1000.0));
+        shell.chrome_pointer = iced::Point::new(1700.0, 1000.0);
         for millis in (0..=6_000).step_by(100) {
             chrome_tick(&mut shell, start, millis);
         }
@@ -15110,7 +15116,7 @@ mod tests {
             fullscreen_pointer_event(moved, event::Status::Captured, window::Id::unique())
                 .expect("a move is the window's whatever took it");
         let _ = shell.update(message);
-        assert_eq!(shell.cursor.get(), iced::Point::new(1700.0, 1000.0));
+        assert_eq!(shell.chrome_pointer, iced::Point::new(1700.0, 1000.0));
         let start = std::time::Instant::now();
         // The same position over and over, as events that do not move it: the wait runs on.
         for millis in (0..=5_000).step_by(100) {
@@ -15126,7 +15132,7 @@ mod tests {
         let mut shell = fullscreen_shell(dir.path());
         let _ = shell.update(Message::ToggleFullscreen);
         let start = std::time::Instant::now();
-        shell.cursor.set(iced::Point::new(1700.0, 1000.0));
+        shell.chrome_pointer = iced::Point::new(1700.0, 1000.0);
         for millis in (0..=5_000).step_by(100) {
             chrome_tick(&mut shell, start, millis);
         }

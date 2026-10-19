@@ -932,6 +932,7 @@ impl Running {
                     ActiveStageOutput::ResponseFrame(frame) => self.send(&frame).await?,
                     ActiveStageOutput::GraphicsUpdate(region) => {
                         self.note_update(&region);
+                        self.adopt_asked_size(&region).await;
                         let _ = self
                             .events
                             .send(RdpEvent::Updated {
@@ -1247,6 +1248,35 @@ impl Running {
         }
     }
 
+    /// A server that applied the size asked through Display Control without the
+    /// Deactivation-Reactivation Sequence (xrdp does not send one) draws the new desktop in
+    /// updates larger than the framebuffer, which the decoder skips: the picture froze at the
+    /// size the session connected with (measured in the lab, 3440x1440 asked, 1280x800
+    /// kept). The framebuffer takes the size asked, empty, and the server's next update
+    /// fills it.
+    async fn adopt_asked_size(&mut self, region: &InclusiveRectangle) {
+        let current = self.framebuffer.read(|width, height, _| (width, height));
+        let asked = self.asked.and_then(|(width, height)| {
+            Some((u16::try_from(width).ok()?, u16::try_from(height).ok()?))
+        });
+        let Some((width, height)) = adopted_size(asked, current, region) else {
+            return;
+        };
+        log::debug!(
+            target: LOG_TARGET,
+            "RDP resize path: the server drew {width}x{height} without a reactivation, the framebuffer follows (was {}x{})",
+            current.0,
+            current.1
+        );
+        *self
+            .framebuffer
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) =
+            DecodedImage::new(PixelFormat::RgbA32, width, height);
+        let _ = self.events.send(RdpEvent::Resized { width, height }).await;
+    }
+
     /// Counts the updates the server sent and, once a second, says how many, and whether
     /// any fell outside the framebuffer (dropped by the decoder: a frozen picture).
     fn note_update(&mut self, region: &InclusiveRectangle) {
@@ -1398,9 +1428,65 @@ impl Running {
     }
 }
 
+/// The size the framebuffer takes when `region` was drawn by a server that applied the size
+/// `asked` without a reactivation: `asked` when the region does not fit the framebuffer
+/// but fits `asked`, or is exactly `asked` (a whole-desktop update). `None` otherwise: a
+/// region beyond what was asked is not a resize this side made.
+fn adopted_size(
+    asked: Option<(u16, u16)>,
+    current: (u16, u16),
+    region: &InclusiveRectangle,
+) -> Option<(u16, u16)> {
+    let asked = asked.filter(|asked| *asked != current)?;
+    let fits = |size: (u16, u16)| region.right < size.0 && region.bottom < size.1;
+    let whole = region.left == 0
+        && region.top == 0
+        && region.right.checked_add(1) == Some(asked.0)
+        && region.bottom.checked_add(1) == Some(asked.1);
+    ((fits(asked) && !fits(current)) || whole).then_some(asked)
+}
+
 #[cfg(test)]
 mod resize_tests {
-    use super::{RESIZE_GIVE_UP, asks_again};
+    use ironrdp::pdu::geometry::InclusiveRectangle;
+
+    use super::{RESIZE_GIVE_UP, adopted_size, asks_again};
+
+    fn region(right: u16, bottom: u16) -> InclusiveRectangle {
+        InclusiveRectangle {
+            left: 0,
+            top: 0,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn a_whole_desktop_update_beyond_the_framebuffer_makes_it_the_size_asked() {
+        let current = (1280, 800);
+        let asked = Some((3440, 1440));
+        assert_eq!(
+            adopted_size(asked, current, &region(3439, 1439)),
+            Some((3440, 1440))
+        );
+        // Part of the new desktop, outside the old framebuffer, inside the size asked.
+        assert_eq!(
+            adopted_size(asked, current, &region(2000, 900)),
+            Some((3440, 1440))
+        );
+        // Inside the framebuffer already, and not the whole desktop: nothing to do.
+        assert_eq!(adopted_size(asked, current, &region(100, 100)), None);
+        // Beyond what was asked: not this side's resize.
+        assert_eq!(adopted_size(asked, current, &region(4000, 1439)), None);
+        // Nothing asked, or the framebuffer has it.
+        assert_eq!(adopted_size(None, current, &region(3439, 1439)), None);
+        assert_eq!(adopted_size(asked, (3440, 1440), &region(3439, 1439)), None);
+        // A smaller desktop asked and drawn whole replaces a larger framebuffer.
+        assert_eq!(
+            adopted_size(Some((1134, 724)), current, &region(1133, 723)),
+            Some((1134, 724))
+        );
+    }
     use std::time::Duration;
     use tokio::time::Instant;
 
