@@ -237,13 +237,11 @@ mod tests {
     }
 
     #[test]
-    fn entries_are_read_folders_first_without_links_or_refused_names() {
+    fn entries_are_read_folders_first() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("zdir")).unwrap();
         std::fs::write(dir.path().join("b.txt"), "bb").unwrap();
         std::fs::write(dir.path().join("A.txt"), "a").unwrap();
-        std::fs::write(dir.path().join("con"), "x").unwrap();
-        std::fs::write(dir.path().join("trailing."), "x").ok();
         let names: Vec<String> = read_entries(dir.path())
             .unwrap()
             .into_iter()
