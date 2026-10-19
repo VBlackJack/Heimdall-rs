@@ -16,6 +16,7 @@
 
 //! A profile as typed into its form, and the checks that turn it into a saved profile.
 
+use heimdall_core::folder_defaults::{InheritedField, ResolvedDefaults};
 use heimdall_core::metadata::{Environment, MacAddress, ProfileMetadata};
 use std::hash::{BuildHasher as _, RandomState};
 use std::path::PathBuf;
@@ -592,6 +593,13 @@ pub struct ProfileDraft {
     /// The local tunnel port, as typed; while the system chooses, the protocol's suggested
     /// port, as the C# dialog shows it.
     pub local_tunnel_port: String,
+    /// The fields a new session's form took from its folder's defaults and the user has not
+    /// changed since, each with the folder it came from. Changing a field takes it out.
+    pub from_folder: Vec<(InheritedField, String)>,
+    /// The fields the user has typed in or chosen: from then on each is a choice, not what
+    /// the form started with, and a folder's value no longer replaces it. The port needs
+    /// this: the form starts with the protocol's default, which a typed one can equal.
+    pub edited: Vec<InheritedField>,
 }
 
 /// How a form's local tunnel port is chosen, as the C# "Choose the tunnel port
@@ -1175,6 +1183,9 @@ impl ProfileDraft {
             self.choose_tunnel_port_automatically(on);
             return;
         }
+        if toggle == ProfileToggle::DirectConnection && on {
+            self.forget_inherited(InheritedField::Gateway);
+        }
         let before = self.default_port();
         self.toggles.retain(|ticked| *ticked != toggle);
         if on {
@@ -1237,6 +1248,7 @@ impl ProfileDraft {
     /// Routes the profile through gateway `id`, "Connect directly" cleared. A `WinRM` port
     /// still on the HTTPS default goes back to HTTP's, as HTTPS is refused through a gateway.
     pub fn choose_gateway(&mut self, id: ProfileId) {
+        self.forget_inherited(InheritedField::Gateway);
         let before = self.default_port();
         self.gateway = Some(id);
         self.toggle(ProfileToggle::DirectConnection, false);
@@ -1279,7 +1291,10 @@ impl ProfileDraft {
                     monitors.sort_unstable();
                 }
             }
-            ProfileChoice::Environment(environment) => self.environment = environment,
+            ProfileChoice::Environment(environment) => {
+                self.forget_inherited(InheritedField::Environment);
+                self.environment = environment;
+            }
             ProfileChoice::SessionLogging(logging) => self.session_logging = logging,
         }
     }
@@ -1924,8 +1939,100 @@ impl ProfileDraft {
         }
     }
 
+    /// The folder `field` was taken from, while the user has not changed it.
+    #[must_use]
+    pub fn inherited_from(&self, field: InheritedField) -> Option<&str> {
+        self.from_folder
+            .iter()
+            .find(|(inherited, _)| *inherited == field)
+            .map(|(_, folder)| folder.as_str())
+    }
+
+    /// Takes `field` out of what came from the folder: the user chose it.
+    fn forget_inherited(&mut self, field: InheritedField) {
+        self.from_folder
+            .retain(|(inherited, _)| *inherited != field);
+    }
+
+    /// Fills a new session's form from the defaults of the folder it is in: only what the
+    /// user has not set, as the C# `GroupDefaultsDto.ApplyTo` fills only what is unset. What
+    /// an earlier folder gave and the user has not touched is replaced first, so typing
+    /// another folder in the form follows it.
+    ///
+    /// Unset means: no account, no key, no gateway and not "direct connection", no
+    /// environment, and a port the user never typed in. The account, the key and the port
+    /// are SSH and SFTP's; the gateway is every protocol's that goes through one. A form
+    /// that edits a saved session is left as it is.
+    pub fn apply_folder_defaults(
+        &mut self,
+        resolved: &ResolvedDefaults,
+        gateway_exists: impl Fn(&ProfileId) -> bool,
+    ) {
+        if self.editing.is_some() || !self.protocol_chosen {
+            return;
+        }
+        for (field, _) in std::mem::take(&mut self.from_folder) {
+            match field {
+                InheritedField::Username => self.username.clear(),
+                InheritedField::KeyPath => self.key_path.clear(),
+                InheritedField::Port => self.port = self.default_port().to_string(),
+                InheritedField::Gateway => self.gateway = None,
+                InheritedField::Environment => self.environment = None,
+            }
+        }
+        let ssh = matches!(self.protocol, DraftProtocol::Ssh | DraftProtocol::Sftp);
+        let mut taken = Vec::new();
+        if self.protocol.routes_through_gateway()
+            && self.gateway.is_none()
+            && !self.is_on(ProfileToggle::DirectConnection)
+            && let Some(inherited) = &resolved.gateway
+            && gateway_exists(&inherited.value)
+        {
+            self.choose_gateway(inherited.value.clone());
+            taken.push((InheritedField::Gateway, inherited.folder.clone()));
+        }
+        if ssh {
+            if self.username.trim().is_empty()
+                && let Some(inherited) = &resolved.username
+            {
+                self.username.clone_from(&inherited.value);
+                taken.push((InheritedField::Username, inherited.folder.clone()));
+            }
+            if self.key_path.trim().is_empty()
+                && let Some(inherited) = &resolved.key_path
+            {
+                self.key_path = inherited.value.to_string_lossy().into_owned();
+                taken.push((InheritedField::KeyPath, inherited.folder.clone()));
+            }
+            if !self.edited.contains(&InheritedField::Port)
+                && let Some(inherited) = &resolved.port
+            {
+                self.port = inherited.value.to_string();
+                taken.push((InheritedField::Port, inherited.folder.clone()));
+            }
+        }
+        if self.environment.is_none()
+            && let Some(inherited) = &resolved.environment
+        {
+            self.environment = Some(inherited.value);
+            taken.push((InheritedField::Environment, inherited.folder.clone()));
+        }
+        self.from_folder = taken;
+    }
+
     /// Replaces the text of `field`.
     pub fn set(&mut self, field: ProfileField, value: String) {
+        match field {
+            ProfileField::Username => self.forget_inherited(InheritedField::Username),
+            ProfileField::KeyPath => self.forget_inherited(InheritedField::KeyPath),
+            ProfileField::Port => {
+                self.forget_inherited(InheritedField::Port);
+                if !self.edited.contains(&InheritedField::Port) {
+                    self.edited.push(InheritedField::Port);
+                }
+            }
+            _ => {}
+        }
         // What the test found was about the address it dialled, not this one.
         if matches!(field, ProfileField::Host | ProfileField::Port) {
             self.address_test = AddressTest::Idle;

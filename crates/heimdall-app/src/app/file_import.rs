@@ -285,6 +285,10 @@ impl App {
             for (path, color) in &report.folder_colors {
                 let _ = store.set_folder_color(path, Some(*color));
             }
+            // The same for what a folder gives the sessions made in it later.
+            for (path, defaults) in &report.folder_defaults {
+                let _ = store.set_folder_defaults(path, defaults.clone());
+            }
             [ssh, rdp, telnet, vnc, local, winrm, ftp, citrix, web, tools]
                 .into_iter()
                 .fold(MergeReport::default(), |total, one| MergeReport {

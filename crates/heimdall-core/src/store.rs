@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::folder::{self, FolderColor, FolderError};
+use crate::folder_defaults::{DefaultsEntry, FolderDefaults, InheritedField, ResolvedDefaults};
 use crate::gateway_parents::MAX_GATEWAY_CHAIN_DEPTH;
 use crate::last_good_copy::{self, Document};
 use crate::metadata::{Environment, MacAddress, ProfileMetadata, ProfileOrigin};
@@ -41,10 +42,11 @@ use crate::profile::{
 /// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles, 6 SSH
 /// gateways and the gateway an SSH profile goes through, 8 folders of their own, empty ones
 /// included, 9 the favorites, 10 the folders' colours and a profile's own session logging,
-/// 11 the profiles' metadata, 12 Citrix profiles, 13 web consoles, 14 tool entries. A build that knows an
+/// 11 the profiles' metadata, 12 Citrix profiles, 13 web consoles, 14 tool entries, 15 the
+/// defaults a folder gives its sessions. A build that knows an
 /// older version refuses a newer file rather than reading it, dropping what it does not
 /// know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 14;
+pub const PROFILE_FILE_VERSION: u32 = 15;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -82,6 +84,9 @@ struct ProfileFile {
     /// A folder's colour by its path, the colour by name; one not known is left out.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     folder_color: BTreeMap<String, String>,
+    /// What a folder gives the sessions put in it, by its path.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    folder_default: BTreeMap<String, DefaultsEntry>,
     /// What each profile says of its server, by identifier.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     metadata: BTreeMap<String, MetadataEntry>,
@@ -238,6 +243,9 @@ pub struct ProfileStore {
     metadata: BTreeMap<ProfileId, ProfileMetadata>,
     /// The colours given to folders, by normalised path, as the C# group colour.
     folder_colors: BTreeMap<String, FolderColor>,
+    /// What folders give the sessions put in them, by normalised path, as the C#
+    /// `GroupDefaultsDto`; none empty.
+    folder_defaults: BTreeMap<String, FolderDefaults>,
     /// What the file held when last read or written here, for a change made outside to be
     /// kept rather than overwritten.
     on_disk: OnDisk,
@@ -252,6 +260,8 @@ pub struct GatewayRemoval {
     pub servers: usize,
     /// Gateways reached through it, now reached directly.
     pub gateways: usize,
+    /// Folders whose defaults named it, now naming none, as the C# delete clears them.
+    pub folders: usize,
 }
 
 /// Why an SSH profile's gateways cannot be followed.
@@ -293,6 +303,7 @@ impl ProfileStore {
             favorites: Vec::new(),
             metadata: BTreeMap::new(),
             folder_colors: BTreeMap::new(),
+            folder_defaults: BTreeMap::new(),
             on_disk: OnDisk::Unknown,
             recovered: false,
         }
@@ -370,6 +381,15 @@ impl ProfileStore {
                     let path = folder::normal(path);
                     let color = FolderColor::named(name)?;
                     (!path.is_empty()).then_some((path, color))
+                })
+                .collect(),
+            folder_defaults: file
+                .folder_default
+                .iter()
+                .filter_map(|(path, entry)| {
+                    let path = folder::normal(path);
+                    let defaults = entry.read();
+                    (!path.is_empty() && !defaults.is_empty()).then_some((path, defaults))
                 })
                 .collect(),
             // The damaged file is not what the store holds: the next save replaces it.
@@ -570,8 +590,21 @@ impl ProfileStore {
             *parent = None;
             gateways += 1;
         }
+        let mut folders = 0;
+        for defaults in self.folder_defaults.values_mut() {
+            if defaults.gateway.as_ref() == Some(id) {
+                defaults.gateway = None;
+                folders += 1;
+            }
+        }
+        self.folder_defaults
+            .retain(|_, defaults| !defaults.is_empty());
         self.gateways.retain(|gateway| gateway.id != *id);
-        Some(GatewayRemoval { servers, gateways })
+        Some(GatewayRemoval {
+            servers,
+            gateways,
+            folders,
+        })
     }
 
     /// Adds or replaces SSH gateways by identifier; the order of existing ones is kept.
@@ -894,6 +927,18 @@ impl ProfileStore {
                 }
             })
             .collect();
+        // So do their defaults, as `FolderRenameService` moves the group defaults.
+        let defaults = std::mem::take(&mut self.folder_defaults);
+        self.folder_defaults = defaults
+            .into_iter()
+            .map(|(named, set)| {
+                if folder::is_within(&named, &path) {
+                    (folder::relabel(&named, &path, to), set)
+                } else {
+                    (named, set)
+                }
+            })
+            .collect();
         Ok(to.to_owned())
     }
 
@@ -906,6 +951,29 @@ impl ProfileStore {
         self.profile_fields_mut(id)
             .map(|(_, current)| *current = group)
             .is_some()
+    }
+
+    /// Moves profile `id` into folder `group` as [`Self::set_group`] does and, when that
+    /// changes its folder, fills what it leaves unset from the folder's defaults
+    /// ([`Self::apply_folder_defaults`]); what it filled. `None` when the profile is not
+    /// there, an empty list when nothing was filled.
+    pub fn move_into_folder(
+        &mut self,
+        id: &ProfileId,
+        group: Option<String>,
+    ) -> Option<Vec<InheritedField>> {
+        let target = group
+            .as_deref()
+            .map(folder::normal)
+            .filter(|path| !path.is_empty());
+        let (_, current) = self.profile_fields_mut(id)?;
+        let unchanged = current.as_deref().map(folder::normal) == target;
+        self.set_group(id, group);
+        Some(if unchanged {
+            Vec::new()
+        } else {
+            self.apply_folder_defaults(id)
+        })
     }
 
     /// Sets the port profile `id` connects to, as the C# bulk edit does; whether it changed.
@@ -1124,6 +1192,9 @@ impl ProfileStore {
         self.folders.retain(|kept| !folder::is_within(kept, path));
         self.folder_colors
             .retain(|colored, _| !folder::is_within(colored, path));
+        // And their defaults, as `FolderDeletionService` removes the group defaults.
+        self.folder_defaults
+            .retain(|named, _| !folder::is_within(named, path));
         moved
     }
 
@@ -1167,6 +1238,132 @@ impl ProfileStore {
             None => self.folder_colors.remove(&path),
         };
         Ok(())
+    }
+
+    /// What folder `path` gives itself; `None` when it sets nothing.
+    #[must_use]
+    pub fn own_folder_defaults(&self, path: &str) -> Option<&FolderDefaults> {
+        self.folder_defaults.get(&folder::normal(path))
+    }
+
+    /// Every folder that sets defaults and what it sets, in path order.
+    pub fn folder_defaults(&self) -> impl Iterator<Item = (&str, &FolderDefaults)> {
+        self.folder_defaults
+            .iter()
+            .map(|(path, defaults)| (path.as_str(), defaults))
+    }
+
+    /// The defaults in force for folder `path`, each from the nearest folder that sets it,
+    /// as the C# `GroupDefaultsDto.Resolve`.
+    #[must_use]
+    pub fn resolve_folder_defaults(&self, path: &str) -> ResolvedDefaults {
+        ResolvedDefaults::resolve(path, |named| self.folder_defaults.get(named))
+    }
+
+    /// Gives folder `path` `defaults`, or takes them away when they set nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`FolderError::Missing`] for no such folder.
+    pub fn set_folder_defaults(
+        &mut self,
+        path: &str,
+        defaults: FolderDefaults,
+    ) -> Result<(), FolderError> {
+        let path = folder::normal(path);
+        if path.is_empty() || !self.folder_paths().contains(&path) {
+            return Err(FolderError::Missing);
+        }
+        if defaults.is_empty() {
+            self.folder_defaults.remove(&path);
+        } else {
+            self.folder_defaults.insert(path, defaults);
+        }
+        Ok(())
+    }
+
+    /// The folders whose own defaults send their sessions through gateway `id`, in path
+    /// order, as the C# `GatewayReferenceAnalyzer` lists them.
+    #[must_use]
+    pub fn folders_using_gateway(&self, id: &ProfileId) -> Vec<String> {
+        self.folder_defaults
+            .iter()
+            .filter(|(_, defaults)| defaults.gateway.as_ref() == Some(id))
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    /// Fills what profile `id` leaves unset from the folder it is in, each field from the
+    /// nearest folder that sets it, as the C# `GroupDefaultsDto.ApplyTo`; what it filled.
+    ///
+    /// Unset is what the C# calls unset where the profile can tell: no account, no key, no
+    /// gateway, no environment. The port is a plain number, so it is never touched here
+    /// (the editor fills it while it was never edited). A profile in no folder, and one not
+    /// in the store (a shared session is never in it), get nothing.
+    pub fn apply_folder_defaults(&mut self, id: &ProfileId) -> Vec<InheritedField> {
+        let Some(group) = self
+            .profile_fields_mut(id)
+            .and_then(|(_, group)| group.clone())
+        else {
+            return Vec::new();
+        };
+        let resolved = self.resolve_folder_defaults(&group);
+        if resolved.is_empty() {
+            return Vec::new();
+        }
+        let mut filled = Vec::new();
+        if let Some(profile) = self.ssh.iter_mut().find(|p| p.id == *id) {
+            if profile.username.as_deref().is_none_or(str::is_empty)
+                && let Some(inherited) = &resolved.username
+            {
+                profile.username = Some(inherited.value.clone());
+                filled.push(InheritedField::Username);
+            }
+            if profile
+                .key_path
+                .as_ref()
+                .is_none_or(|path| path.as_os_str().is_empty())
+                && let Some(inherited) = &resolved.key_path
+            {
+                profile.key_path = Some(inherited.value.clone());
+                filled.push(InheritedField::KeyPath);
+            }
+        }
+        if let Some(inherited) = &resolved.gateway
+            && self.gateways.iter().any(|g| g.id == inherited.value)
+            && let Some(current) = self.gateway_slot_mut(id)
+            && current.is_none()
+        {
+            *current = Some(inherited.value.clone());
+            filled.push(InheritedField::Gateway);
+        }
+        if let Some(inherited) = &resolved.environment
+            && self.metadata.get(id).and_then(|m| m.environment).is_none()
+        {
+            let metadata = ProfileMetadata {
+                environment: Some(inherited.value),
+                ..self.metadata.get(id).cloned().unwrap_or_default()
+            };
+            self.set_metadata(id, metadata);
+            filled.push(InheritedField::Environment);
+        }
+        filled
+    }
+
+    /// The gateway of profile `id`, for the protocols that go through one.
+    fn gateway_slot_mut(&mut self, id: &ProfileId) -> Option<&mut Option<ProfileId>> {
+        if let Some(profile) = self.ssh.iter_mut().find(|p| p.id == *id) {
+            Some(&mut profile.gateway)
+        } else if let Some(profile) = self.rdp.iter_mut().find(|p| p.id == *id) {
+            Some(&mut profile.gateway)
+        } else if let Some(profile) = self.winrm.iter_mut().find(|p| p.id == *id) {
+            Some(&mut profile.gateway)
+        } else {
+            self.web
+                .iter_mut()
+                .find(|p| p.id == *id)
+                .map(|profile| &mut profile.gateway)
+        }
     }
 
     /// Number of profiles, all protocols together.
@@ -1262,6 +1459,11 @@ impl ProfileStore {
                 .folder_colors
                 .iter()
                 .map(|(path, color)| (path.clone(), color.name().to_owned()))
+                .collect(),
+            folder_default: self
+                .folder_defaults
+                .iter()
+                .map(|(path, defaults)| (path.clone(), DefaultsEntry::of(defaults)))
                 .collect(),
         })?;
         last_good_copy::write_keeping_copy(&self.path, &text)?;

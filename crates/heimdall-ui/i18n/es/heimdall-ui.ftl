@@ -2351,6 +2351,10 @@ ui-dialog-delete-gateway-body = ¿Eliminar la pasarela "{ $name }"?
     Referencias a borrar:
     - Servidores: { $servers }
     - Pasarelas hijas: { $gateways }
+    - Valores predeterminados de carpetas: { $folder_count ->
+        [0] 0
+       *[other] { $folder_count } ({ $folders })
+      }
 ui-status-gateway-deleted = Pasarela "{ $name }" eliminada.
 ui-status-gateways-reassigned = { $count ->
     [one] Se reasignó { $count } sesión.
@@ -5966,3 +5970,4 @@ ui-shared-report-reason-over-limit = La fuente ya contiene tantas sesiones como 
 ui-shared-report-detail-unresolved = El inicio de sesión usa la variable { $name }, que no tiene valor. Defínala en las variables de importación de MobaXterm.
 ui-shared-report-detail-mismatch = El nombre no es el host { $host } ni su primera etiqueta.
 ui-shared-report-detail-duplicate-host = El host { $host } también lo usa { $others }.
+ui-profile-from-folder = Tomado de la carpeta "{ $folder }".

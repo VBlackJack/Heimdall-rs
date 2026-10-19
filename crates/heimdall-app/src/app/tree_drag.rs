@@ -185,7 +185,7 @@ impl App {
             for profile in order {
                 rank = rank.saturating_add(ORDER_STEP);
                 if folder_of(profile) != group {
-                    store.set_group(&profile.id, group.clone());
+                    store.move_into_folder(&profile.id, group.clone());
                 }
                 if profile.metadata.sort_order != Some(rank) {
                     let metadata = heimdall_core::metadata::ProfileMetadata {
@@ -242,7 +242,7 @@ impl App {
         let before = self.organizations(&moved);
         let saved = self.store.apply(|store| {
             for id in &moved {
-                store.set_group(id, to.clone());
+                store.move_into_folder(id, to.clone());
             }
         });
         if let Err(error) = saved {
