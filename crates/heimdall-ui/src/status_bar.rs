@@ -552,6 +552,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 keys = crate::texts::special_keys(*keys)
             ),
             Notice::KeysNotSent => fl!("ui-status-keys-not-sent"),
+            Notice::Share(share) => crate::share_view::notice_text(share),
             Notice::FingerprintCopied(server) => {
                 fl!("ui-status-fingerprint-copied", server = server.as_str())
             }

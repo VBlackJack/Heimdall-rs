@@ -393,6 +393,7 @@ const EVERY_PREFERENCE: &[(&str, &str)] = &[
     ("RdpAutoReconnectMaxAttempts", "5"),
     ("RdpKeepAliveIntervalMs", "30000"),
     ("SshKeepAliveIntervalSeconds", "60"),
+    ("EphemeralHttpPort", "9090"),
     ("EnableLogging", "false"),
     ("RequireCredentialGuard", "true"),
     ("TerminalFontFamily", r#""Cascadia Mono""#),

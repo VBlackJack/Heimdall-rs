@@ -393,6 +393,8 @@ pub enum Notice {
     BroadcastOff,
     /// Broadcast input will reach this scope when on.
     BroadcastScope(BroadcastScope),
+    /// "Share folder" started, stopped, failed or had its URL copied.
+    Share(crate::share::ShareNotice),
     /// The whole fingerprint of this server's key was copied.
     FingerprintCopied(String),
     /// This server's SSH host key was forgotten.

@@ -140,6 +140,7 @@ mod session_load;
 mod session_restore;
 mod sessions_import;
 mod settings_transfer;
+mod share;
 mod shared;
 mod shell_directory;
 pub mod split;
@@ -215,6 +216,7 @@ pub use sessions_import::{
     SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
 };
 pub use settings_transfer::SettingsTransferMessage;
+pub use share::{ShareMessage, ShareStatus};
 pub use status::{
     ANNOUNCEMENTS_KEPT, Announced, Announcement, Notice, SessionState, SessionStatus,
 };
@@ -527,6 +529,8 @@ pub enum Message {
     Files(FilesMessage),
     /// Something about the tunnels the user opens by hand.
     Tunnel(TunnelMessage),
+    /// Something about "Share folder".
+    Share(ShareMessage),
     /// The Scheduled page and its dialog.
     Scheduled(ScheduledMessage),
     /// Show a tab.
@@ -1059,6 +1063,7 @@ impl fmt::Debug for Message {
             Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
+            Self::Share(message) => write!(f, "Share({message:?})"),
             Self::Scheduled(_) => f.write_str("Scheduled"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::MoveTab { tab, onto } => {
@@ -1371,6 +1376,22 @@ pub enum Effect {
         ssh: bool,
         /// Stops it.
         cancel: CancellationToken,
+    },
+    /// List the addresses of this computer a share may listen on and send them back as
+    /// [`ShareMessage::Addresses`].
+    ListShareAddresses,
+    /// Pick the folder to share, starting at `start`, and send it back as
+    /// [`ShareMessage::FolderChosen`].
+    PickShareFolder {
+        /// Where the picker opens.
+        start: Option<std::path::PathBuf>,
+    },
+    /// Start a share and feed what it reports back as [`ShareMessage::Update`].
+    StartShare {
+        /// The share.
+        run: u64,
+        /// What to share.
+        request: Box<crate::share::ShareRequest>,
     },
     /// Open a tunnel the user asked for and feed its events back as [`TunnelMessage::Event`].
     OpenTunnel {
@@ -1954,6 +1975,9 @@ impl fmt::Debug for Effect {
             }
             Self::LaunchElevated { tab, .. } => write!(f, "LaunchElevated({})", tab.value()),
             Self::OpenTunnel { id, .. } => write!(f, "OpenTunnel({})", id.value()),
+            Self::ListShareAddresses => f.write_str("ListShareAddresses"),
+            Self::PickShareFolder { .. } => f.write_str("PickShareFolder"),
+            Self::StartShare { run, .. } => write!(f, "StartShare({run})"),
             Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
             Self::ScanNetwork { scan, ips, .. } => {
                 write!(f, "ScanNetwork({scan}, {} addresses)", ips.len())
@@ -2753,6 +2777,10 @@ pub enum Dialog {
     },
     /// The C# "New tunnel" dialog, as filled.
     NewTunnel(crate::tunnel::TunnelForm),
+    /// The "Share folder" dialog, as filled.
+    ShareFolder(Box<crate::share::ShareForm>),
+    /// The share started: its warning, URL and `curl` command.
+    ShareStarted,
     /// The dialog adding or editing a scheduled connection, as filled.
     ScheduledTask(Box<crate::scheduled_form::ScheduledForm>),
     /// Whether to delete a scheduled connection, as the C# danger confirmation.
@@ -3419,6 +3447,10 @@ pub struct App {
     selected_tunnel: Option<crate::tunnel::TunnelId>,
     /// The identifier of the next tunnel.
     next_tunnel: crate::tunnel::TunnelId,
+    /// "Share folder", while a share is starting or running.
+    share: Option<share::ShareRun>,
+    /// The identifier of the last share started.
+    next_share: u64,
     /// The gateway key the user is asked about for a tunnel.
     pending_tunnel_key: Option<tunnels::PendingTunnelKey>,
     /// Launches of `PuTTY` through gateways, until their forwards are released.
@@ -3607,6 +3639,8 @@ impl App {
             tunnel_runs: Vec::new(),
             selected_tunnel: None,
             next_tunnel: crate::tunnel::TunnelId::default(),
+            share: None,
+            next_share: 0,
             pending_tunnel_key: None,
             putty_routes: Vec::new(),
             next_putty_route: crate::putty_driver::PuttyRouteId::default(),
@@ -3741,7 +3775,8 @@ impl App {
         self.follow_desktop_sessions();
         self.note_status();
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
-            // Nothing of what was closed outlives the application.
+            // Nothing of what was closed outlives the application, a share included.
+            self.stop_share();
             self.recently_closed.clear();
             self.close_session_logs();
             self.release_putty_routes();
@@ -3842,6 +3877,7 @@ impl App {
             }
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),
+            Message::Share(message) => self.share_message(message),
             Message::Scheduled(message) => {
                 self.scheduled_message(message);
                 Vec::new()
@@ -5063,6 +5099,9 @@ impl App {
         if let Some(Dialog::NewTunnel(_) | Dialog::TunnelHostKey { .. }) = &self.dialog {
             return self.confirm_tunnel_dialog();
         }
+        if let Some(Dialog::ShareFolder(_)) = &self.dialog {
+            return self.confirm_share_dialog();
+        }
         let effects = self.confirm_open_dialog();
         // A transfer's question waits for any other to be answered.
         self.ask_next_conflicts();
@@ -5298,6 +5337,9 @@ impl App {
                 | Dialog::ConfirmDiscardScheduled(_)
                 // Confirmed before: see `confirm_dialog`.
                 | Dialog::NewTunnel(_)
+                | Dialog::ShareFolder(_)
+                // Its button only closes the dialog: the share goes on.
+                | Dialog::ShareStarted
                 | Dialog::TunnelHostKey { .. },
             )
             | None => Vec::new(),
