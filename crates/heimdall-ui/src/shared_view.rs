@@ -76,8 +76,18 @@ pub fn problem_text(problem: &SourceProblem, path: &str) -> String {
     }
 }
 
+/// When an offline copy was taken, in the user's time zone.
+fn copy_date(taken_at: std::time::SystemTime) -> String {
+    chrono::DateTime::<chrono::Local>::from(taken_at)
+        .format(COPY_DATE_FORMAT)
+        .to_string()
+}
+
+/// How the date of an offline copy is written.
+const COPY_DATE_FORMAT: &str = "%Y-%m-%d %H:%M";
+
 /// What to call a source: the name the user gave it, else its file.
-fn source_label(state: &SourceState) -> String {
+pub(crate) fn source_label(state: &SourceState) -> String {
     if state.name.trim().is_empty() {
         state.path.clone()
     } else {
@@ -94,6 +104,16 @@ pub fn source_notes(state: &SourceState) -> Vec<(String, bool)> {
         SourceStatus::Disabled => notes.push((fl!("ui-shared-disabled"), false)),
         SourceStatus::Failed(problem) => notes.push((problem_text(problem, &state.path), true)),
         SourceStatus::Loaded => {}
+    }
+    if let Some(offline) = &state.offline {
+        notes.push((
+            fl!(
+                "ui-shared-offline",
+                date = copy_date(offline.taken_at),
+                reason = problem_text(&offline.reason, &state.path)
+            ),
+            true,
+        ));
     }
     if let Some(problem) = &state.kept_previous {
         notes.push((

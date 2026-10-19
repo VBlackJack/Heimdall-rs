@@ -386,7 +386,7 @@ fn absolute(path: &str) -> bool {
 
 /// Whether `path` is absolute, or starts with a `%VARIABLE%`, which the editor's launch
 /// expands as the C# does (`external_edit.rs`), as its default `%windir%` is written.
-fn absolute_or_expanded(path: &str) -> bool {
+pub(crate) fn absolute_or_expanded(path: &str) -> bool {
     absolute(path) || path.starts_with('%')
 }
 
@@ -521,11 +521,10 @@ fn shared_sources(value: &Value, settings: &mut Settings) -> Read {
         let id = text("Id");
         let path = text("Path").trim();
         let enabled = fields.get("Enabled").map_or(Some(true), Value::as_bool);
+        // The same checks as the settings page's source rows.
         if !crate::shared_sessions::is_valid_source_id(id)
             || sources.iter().any(|known| known.id == id)
-            || path.is_empty()
-            || has_control(path)
-            || !absolute_or_expanded(path)
+            || crate::shared_sessions::path_problem(path).is_some()
         {
             return Read::Invalid;
         }

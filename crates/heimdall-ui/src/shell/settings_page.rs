@@ -235,6 +235,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::ExternalEditor => fl!("ui-settings-external-editor"),
         SettingsCard::ExternalTools => fl!("ui-external-tools-title"),
         SettingsCard::MobaxtermVariables => fl!("ui-mobaxterm-variables-title"),
+        SettingsCard::SharedSources => fl!("ui-shared-sources-title"),
         SettingsCard::RdpDefaults => fl!("ui-settings-rdp-defaults"),
         SettingsCard::ConnectionChecks => fl!("ui-settings-connection-checks"),
         _ => return None,
@@ -253,6 +254,7 @@ fn card_framed(card: SettingsCard) -> bool {
         SettingsCard::Macros
             | SettingsCard::ExternalTools
             | SettingsCard::MobaxtermVariables
+            | SettingsCard::SharedSources
             | SettingsCard::SshTrusted
             | SettingsCard::RdpReset
             | SettingsCard::RdpTrusted
@@ -299,6 +301,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-path"),
         SettingRow::ExternalTools => fl!("ui-external-tools-title"),
         SettingRow::MobaxtermVariables => fl!("ui-mobaxterm-variables-title"),
+        SettingRow::SharedSources => fl!("ui-shared-sources-title"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path"),
@@ -347,6 +350,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-hint"),
         SettingRow::ExternalTools => fl!("ui-external-tools-description"),
         SettingRow::MobaxtermVariables => fl!("ui-mobaxterm-variables-description"),
+        SettingRow::SharedSources => fl!("ui-shared-sources-description"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path-hint"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode-hint"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
@@ -1106,6 +1110,7 @@ impl Shell {
             | SettingRow::RdpResolutionPresets
             | SettingRow::ExternalTools
             | SettingRow::MobaxtermVariables
+            | SettingRow::SharedSources
             | SettingRow::RdpResetAll => self.list_card_row(row),
             SettingRow::Pin | SettingRow::Vault | SettingRow::Provider => self.security_row(row),
             SettingRow::UpdateVersion => self.update_version_row(),
@@ -1594,6 +1599,15 @@ impl Shell {
                     .selected()
                     .map_or("", |tool| tool.working_directory.trim()),
             ),
+            // The file set now, its variables expanded, so the dialog opens beside it.
+            BrowseTarget::SharedSourcePath(at) => PathBuf::from(
+                self.shared_sources
+                    .rows()
+                    .get(at)
+                    .map_or_else(String::new, |source| {
+                        heimdall_app::shared_sessions::expand(&source.path)
+                    }),
+            ),
         };
         crate::browse::pick(target, target.start(&current), self.main_window)
     }
@@ -1624,6 +1638,10 @@ impl Shell {
                 field: ProfileField::KeyPath,
                 value: path,
             },
+            BrowseTarget::SharedSourcePath(at) => {
+                return self
+                    .shared_sources_edit(crate::shared_sources_view::SourcesEdit::Path(at, path));
+            }
             target @ (BrowseTarget::ExternalToolProgram | BrowseTarget::ExternalToolFolder) => {
                 let folder = target == BrowseTarget::ExternalToolFolder;
                 return match self.external_tools.picked(folder, path, program_found) {
@@ -1658,6 +1676,36 @@ impl Shell {
             Some(tools) => self
                 .app
                 .update(AppMessage::Settings(SettingsMessage::ExternalTools(tools))),
+            None => Vec::new(),
+        }
+    }
+
+    /// A change in the shared session sources card: applied once every row passes the checks of
+    /// the C# rows and import; "Report" opens the import report of the source instead.
+    pub(super) fn shared_sources_edit(
+        &mut self,
+        edit: crate::shared_sources_view::SourcesEdit,
+    ) -> Vec<Effect> {
+        if let crate::shared_sources_view::SourcesEdit::Report(at) = edit {
+            self.shared_report = self.shared_sources.id_at(at).map(str::to_owned);
+            return Vec::new();
+        }
+        // A source taken out has no report to show any more.
+        let removed = match &edit {
+            crate::shared_sources_view::SourcesEdit::Remove(at) => {
+                self.shared_sources.id_at(*at).map(str::to_owned)
+            }
+            _ => None,
+        };
+        if removed.is_some() && removed == self.shared_report {
+            self.shared_report = None;
+        }
+        match self.shared_sources.edit(edit) {
+            Some(sources) => self
+                .app
+                .update(AppMessage::Settings(SettingsMessage::SharedSources(
+                    sources,
+                ))),
             None => Vec::new(),
         }
     }
@@ -1820,6 +1868,7 @@ impl Shell {
             }
             SettingRow::RdpResolutionPresets => self.presets.view(),
             SettingRow::MobaxtermVariables => self.mobaxterm_variables.view(),
+            SettingRow::SharedSources => self.shared_sources.view(&self.app),
             SettingRow::ExternalTools => self.external_tools.view(
                 self.external_tools
                     .selected()

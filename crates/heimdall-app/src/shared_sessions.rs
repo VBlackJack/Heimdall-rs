@@ -30,9 +30,14 @@
 //! by looking at the file's size and modification time on a timer; a file modified a moment
 //! ago is left to settle first, as the C# reload debounce, so half a file written by a sync
 //! client is not read.
+//!
+//! Each read that gives sessions leaves a private offline copy of them (`shared_cache`); a
+//! source whose file cannot be reached, and that holds nothing in memory, falls back on that
+//! copy and says so, as the C# `LoadOfflineCopyAsync`.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use heimdall_core::import::foreign::{FileWarning, Parsed};
@@ -46,6 +51,9 @@ use heimdall_core::shared_sessions::{
     MAX_SOURCE_FILE_BYTES, SharedSource, is_valid_host, is_valid_source_id, session_id,
 };
 use serde_json::Value;
+
+use crate::shared_cache::{CachedSession, CachedSource, SourceCache};
+use crate::shared_report::{ImportReport, Refused, SkipReason, Taken};
 
 /// The user's `MobaXterm` variables, the C# `MobaXtermUserVariables`: the shared provider fills
 /// in the `[NAME]` of a login with them as the file import does (`SharedSessionProvider.cs`).
@@ -136,6 +144,17 @@ pub struct SourceState {
     /// Why what is held is not what the file holds now: the last change could not be taken
     /// and the previous sessions are kept.
     pub kept_previous: Option<SourceProblem>,
+    /// Set when what is held is the offline copy: the file cannot be reached.
+    pub offline: Option<Offline>,
+}
+
+/// The offline copy a source is held from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offline {
+    /// When the copy was taken, that is when the file was last read.
+    pub taken_at: SystemTime,
+    /// Why the file is not used.
+    pub reason: SourceProblem,
 }
 
 /// What a shared session connects with.
@@ -201,6 +220,8 @@ struct Stamp {
 struct Loaded {
     state: SourceState,
     sessions: Vec<SharedSession>,
+    /// What the read had to say of the file.
+    report: ImportReport,
     /// What the file looked like when it was last read, or failed to be.
     stamp: Stamp,
 }
@@ -209,6 +230,8 @@ struct Loaded {
 #[derive(Debug, Clone, Default)]
 pub struct SharedSessions {
     sources: Vec<Loaded>,
+    /// Where the offline copies are kept; none, and none is made or used.
+    cache: Option<SourceCache>,
 }
 
 impl SharedSessions {
@@ -225,6 +248,22 @@ impl SharedSessions {
             .iter()
             .find(|loaded| loaded.state.id == source_id)
             .map_or(&[], |loaded| loaded.sessions.as_slice())
+    }
+
+    /// What the last read of `source_id` had to say of its file, or `None` for a source not
+    /// held.
+    #[must_use]
+    pub fn report_of(&self, source_id: &str) -> Option<&ImportReport> {
+        self.sources
+            .iter()
+            .find(|loaded| loaded.state.id == source_id)
+            .map(|loaded| &loaded.report)
+    }
+
+    /// Keeps the offline copies in `directory`, or nowhere: the copies are then neither made
+    /// nor used.
+    pub fn set_cache_directory(&mut self, directory: Option<PathBuf>) {
+        self.cache = directory.map(SourceCache::new);
     }
 
     /// Every session of every source.
@@ -255,6 +294,7 @@ impl SharedSessions {
             .map(|loaded| (loaded.state.id.clone(), loaded))
             .collect();
         let mut seen = HashSet::new();
+        let cache = self.cache.clone();
         self.sources = sources
             .iter()
             .take(MAX_SOURCES)
@@ -265,9 +305,14 @@ impl SharedSessions {
                         .path
                         .eq_ignore_ascii_case(&expand(&source.path))
                 });
-                read_source(source, &mut seen, kept, variables)
+                read_source(source, &mut seen, kept, variables, cache.as_ref())
             })
             .collect();
+        // A source taken out of the settings leaves no copy behind, as the C#.
+        if let Some(cache) = &cache {
+            let kept: Vec<&str> = sources.iter().map(|source| source.id.as_str()).collect();
+            cache.delete_all_except(&kept);
+        }
     }
 
     /// Reads again the sources whose file changed and settled since it was read, appeared
@@ -290,6 +335,7 @@ impl SharedSessions {
             return true;
         }
         let mut changed = false;
+        let cache = self.cache.clone();
         for (index, source) in wanted.into_iter().enumerate() {
             if !source.enabled {
                 continue;
@@ -318,7 +364,7 @@ impl SharedSessions {
                 .map(|(_, loaded)| loaded.state.id.clone())
                 .collect();
             let kept = (path == slot.state.path).then_some(slot);
-            let reloaded = read_source(source, &mut seen, kept, variables);
+            let reloaded = read_source(source, &mut seen, kept, variables, cache.as_ref());
             if reloaded.state != slot.state || reloaded.sessions != slot.sessions {
                 changed = true;
             }
@@ -379,6 +425,7 @@ fn read_source(
     seen: &mut HashSet<String>,
     previous: Option<&Loaded>,
     variables: &Variables,
+    cache: Option<&SourceCache>,
 ) -> Loaded {
     let path = expand(&source.path);
     let stamp = stamp_of(&path);
@@ -393,10 +440,12 @@ fn read_source(
         refused,
         ignored_passwords,
         kept_previous: None,
+        offline: None,
     };
     let failed = |problem| Loaded {
         state: state(SourceStatus::Failed(problem), 0, 0, 0),
         sessions: Vec::new(),
+        report: ImportReport::default(),
         stamp,
     };
     if !is_valid_source_id(&source.id) {
@@ -409,6 +458,7 @@ fn read_source(
         return Loaded {
             state: state(SourceStatus::Disabled, 0, 0, 0),
             sessions: Vec::new(),
+            report: ImportReport::default(),
             stamp,
         };
     }
@@ -420,6 +470,9 @@ fn read_source(
         // A file with nothing usable in it is no source of sessions: it reports why, and
         // keeps the previous sessions when there are some.
         Ok(parsed) if !parsed.sessions.is_empty() => {
+            if let Some(cache) = cache {
+                keep_copy(cache, source, &path, &parsed);
+            }
             return Loaded {
                 state: SourceState {
                     skipped_entries: parsed.skipped_entries,
@@ -432,6 +485,7 @@ fn read_source(
                     )
                 },
                 sessions: parsed.sessions,
+                report: parsed.report,
                 stamp,
             };
         }
@@ -444,12 +498,136 @@ fn read_source(
         Some(kept) if had_sessions && problem != SourceProblem::Missing => {
             let mut held = kept.clone();
             held.state.name.clone_from(&source.name);
-            held.state.kept_previous = Some(problem);
+            // What is held is the offline copy already: it is the reason that changes.
+            if let Some(offline) = &mut held.state.offline {
+                offline.reason = problem;
+            } else {
+                held.state.kept_previous = Some(problem);
+            }
             held.stamp = stamp;
             held
         }
-        _ => failed(problem),
+        // Nothing held, or the file is gone: the offline copy of the last good read.
+        _ => cache
+            .and_then(|cache| offline_copy(cache, source, &path, &problem, stamp, &state))
+            .unwrap_or_else(|| failed(problem)),
     }
+}
+
+/// Keeps what `parsed` gave as the offline copy of `source`. A copy that cannot be written is
+/// logged and the source loads all the same.
+fn keep_copy(cache: &SourceCache, source: &SharedSource, path: &str, parsed: &ParsedSource) {
+    let copy = CachedSource {
+        original_path: path.to_owned(),
+        taken_at: SystemTime::now(),
+        sessions: parsed.sessions.iter().map(cached_session).collect(),
+        refused: parsed.refused,
+        ignored_passwords: parsed.ignored_passwords,
+        skipped_entries: parsed.skipped_entries,
+        truncated: parsed.truncated,
+        report: parsed.report.clone(),
+    };
+    if let Err(error) = cache.store(&source.id, &copy) {
+        log::warn!(
+            "shared sessions: the offline copy of source {} could not be written: {error}",
+            source.id
+        );
+    }
+}
+
+/// The session as the offline copy keeps it.
+fn cached_session(session: &SharedSession) -> CachedSession {
+    let (host, port) = session.endpoint();
+    let username = match &session.target {
+        SharedTarget::Ssh(profile) => profile.username.clone(),
+        SharedTarget::Rdp(profile) => profile.username.clone(),
+    };
+    CachedSession {
+        folder: session.folder.clone(),
+        name: session.name().to_owned(),
+        protocol: session.protocol().to_ascii_lowercase(),
+        host: host.to_owned(),
+        port,
+        username,
+    }
+}
+
+/// The offline copy of `source` as a source that cannot be reached for `problem`, or `None`
+/// when there is no copy of that very file or it holds no session that passes the checks of
+/// a file from the share.
+fn offline_copy(
+    cache: &SourceCache,
+    source: &SharedSource,
+    path: &str,
+    problem: &SourceProblem,
+    stamp: Stamp,
+    state: &dyn Fn(SourceStatus, usize, usize, usize) -> SourceState,
+) -> Option<Loaded> {
+    let copy = cache.read(&source.id)?;
+    // A copy taken from another file is not this source's.
+    if !copy.original_path.eq_ignore_ascii_case(path) {
+        log::warn!(
+            "shared sessions: the offline copy of source {} was taken from another file; ignored",
+            source.id
+        );
+        return None;
+    }
+    let mut ids = HashSet::new();
+    let sessions: Vec<SharedSession> = copy
+        .sessions
+        .iter()
+        .filter_map(|cached| session_of_copy(&source.id, cached))
+        .filter(|session| ids.insert(session.id.clone()))
+        .take(MAX_SESSIONS_PER_SOURCE)
+        .collect();
+    if sessions.is_empty() {
+        return None;
+    }
+    let mut held = state(
+        SourceStatus::Loaded,
+        sessions.len(),
+        copy.refused,
+        copy.ignored_passwords,
+    );
+    held.skipped_entries = copy.skipped_entries;
+    held.truncated = copy.truncated;
+    held.offline = Some(Offline {
+        taken_at: copy.taken_at,
+        reason: problem.clone(),
+    });
+    Some(Loaded {
+        state: held,
+        sessions,
+        report: copy.report,
+        stamp,
+    })
+}
+
+/// A session of an offline copy, through the checks a session of a file goes through.
+fn session_of_copy(source_id: &str, cached: &CachedSession) -> Option<SharedSession> {
+    let kind = if cached.protocol.eq_ignore_ascii_case("ssh") {
+        Protocol::Ssh
+    } else if cached.protocol.eq_ignore_ascii_case("rdp") {
+        Protocol::Rdp
+    } else {
+        return None;
+    };
+    let host = clean(&cached.host).filter(|host| is_valid_host(host))?;
+    let name = clean(&cached.name)?;
+    let folder = cached.folder.as_deref().and_then(clean);
+    let username = cached.username.as_deref().and_then(clean);
+    if cached.port == 0 {
+        return None;
+    }
+    Some(build_session(
+        source_id,
+        kind,
+        folder,
+        name,
+        host,
+        cached.port,
+        username,
+    ))
 }
 
 /// The bytes of the file at `path`, opened for reading only, at most
@@ -486,6 +664,7 @@ struct ParsedSource {
     ignored_passwords: usize,
     skipped_entries: usize,
     truncated: bool,
+    report: ImportReport,
 }
 
 /// The sessions of a file's `bytes`, sanitized as the C# `SharedProfileSanitizer`.
@@ -505,33 +684,94 @@ fn parse(
         return Err(SourceProblem::Unparsable(reason.clone()));
     }
     let mut sessions = Vec::new();
-    let mut refused = 0;
+    let mut refused = Vec::new();
     let mut ids = HashSet::new();
     for server in &parsed.servers {
-        let session = sanitize(source_id, server).filter(|session| {
-            sessions.len() < MAX_SESSIONS_PER_SOURCE && ids.insert(session.id.clone())
+        let outcome = sanitize(source_id, server).and_then(|session| {
+            if sessions.len() >= MAX_SESSIONS_PER_SOURCE {
+                Err((SkipReason::OverLimit, String::new()))
+            } else if !ids.insert(session.id.clone()) {
+                Err((SkipReason::DuplicateSession, String::new()))
+            } else {
+                Ok(session)
+            }
         });
-        match session {
-            Some(session) => sessions.push(session),
-            None => refused += 1,
+        match outcome {
+            Ok(session) => sessions.push(session),
+            Err((reason, detail)) => {
+                let (folder, name) = listed_as(server);
+                refused.push(Refused {
+                    folder,
+                    name,
+                    reason,
+                    detail,
+                });
+            }
         }
     }
+    // The warning names the session as the file does; its folder is the one of the entry of
+    // that name, as the C# looks the folder of a warning's section up.
+    let unresolved = parsed
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            FileWarning::UnresolvedVariable { session, name } => {
+                let folder = parsed
+                    .servers
+                    .iter()
+                    .find(|server| text_of(server, "displayName") == Some(session.as_str()))
+                    .and_then(|server| text_of(server, "group"))
+                    .unwrap_or_default();
+                Some((folder.to_owned(), session.clone(), name.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let taken: Vec<Taken<'_>> = sessions
+        .iter()
+        .map(|session| Taken {
+            folder: session.folder.as_deref().unwrap_or_default(),
+            name: session.name(),
+            host: session.endpoint().0,
+        })
+        .collect();
+    let refused_count = refused.len();
+    let report = ImportReport::build(refused, unresolved, &taken);
     Ok(ParsedSource {
         sessions,
-        refused,
+        refused: refused_count,
         ignored_passwords: parsed.stored_credentials,
         skipped_entries: left_out.entries,
         truncated: left_out.truncated,
+        report,
     })
+}
+
+/// The folder and name the file lists `server` under, for the report.
+fn listed_as(server: &Value) -> (String, String) {
+    let folder = text_of(server, "group").unwrap_or_default();
+    let name = text_of(server, "displayName")
+        .or_else(|| text_of(server, "remoteServer"))
+        .unwrap_or_default();
+    (folder.to_owned(), name.to_owned())
+}
+
+/// `text` trimmed, or none when it is empty or holds a control character.
+fn clean(text: &str) -> Option<&str> {
+    let text = text.trim();
+    (!text.is_empty() && !text.chars().any(char::is_control)).then_some(text)
 }
 
 /// A text of the file without a control character, or none.
 fn text_of<'a>(server: &'a Value, key: &str) -> Option<&'a str> {
-    server
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+    server.get(key).and_then(Value::as_str).and_then(clean)
+}
+
+/// What a shared session connects with, before its profile is made.
+#[derive(Clone, Copy)]
+enum Protocol {
+    Ssh,
+    Rdp,
 }
 
 /// A port of the file, or `default`.
@@ -545,42 +785,80 @@ fn port_of(server: &Value, key: &str, default: u16) -> u16 {
 }
 
 /// The session `server` of a file as the C# sanitizer keeps it: SSH or RDP, a valid host,
-/// and the fields of its whitelist; `None` for any other.
-fn sanitize(source_id: &str, server: &Value) -> Option<SharedSession> {
-    let kind = text_of(server, "connectionType")?;
-    let host = text_of(server, "remoteServer").filter(|host| is_valid_host(host))?;
-    let folder = text_of(server, "group").map(str::to_owned);
-    let name = text_of(server, "displayName").unwrap_or(host).to_owned();
-    let id = ProfileId::new(session_id(
-        source_id,
-        folder.as_deref().unwrap_or_default(),
-        &name,
-    ));
-    let target = if kind.eq_ignore_ascii_case("SSH") {
-        SharedTarget::Ssh(ssh_profile(
-            &id,
-            &name,
+/// and the fields of its whitelist; for any other, why it is refused and what the file gives
+/// that is the reason.
+fn sanitize(source_id: &str, server: &Value) -> Result<SharedSession, (SkipReason, String)> {
+    let kind = text_of(server, "connectionType")
+        .ok_or_else(|| (SkipReason::OtherProtocol, String::new()))?;
+    let host = text_of(server, "remoteServer")
+        .filter(|host| is_valid_host(host))
+        .ok_or_else(|| {
+            let given = server
+                .get("remoteServer")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            (SkipReason::InvalidHost, display_text(given))
+        })?;
+    let folder = text_of(server, "group");
+    let name = text_of(server, "displayName").unwrap_or(host);
+    if kind.eq_ignore_ascii_case("SSH") {
+        Ok(build_session(
+            source_id,
+            Protocol::Ssh,
+            folder,
+            name,
             host,
             port_of(server, "sshPort", DEFAULT_SSH_PORT),
             text_of(server, "sshUsername"),
         ))
     } else if kind.eq_ignore_ascii_case("RDP") {
-        SharedTarget::Rdp(rdp_profile(
-            &id,
-            &name,
+        Ok(build_session(
+            source_id,
+            Protocol::Rdp,
+            folder,
+            name,
             host,
             port_of(server, "remotePort", DEFAULT_RDP_PORT),
             text_of(server, "rdpUsername"),
         ))
     } else {
-        return None;
+        Err((SkipReason::OtherProtocol, display_text(kind)))
+    }
+}
+
+/// The longest text of a file shown back in a report.
+const MAX_REPORT_TEXT: usize = 120;
+
+/// `text` made safe to show: no control character, and short.
+fn display_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_REPORT_TEXT)
+        .collect()
+}
+
+/// The shared session of a source: its identifier follows its folder and name, as the C#
+/// `MobaXtermImporter.BuildId`.
+fn build_session(
+    source_id: &str,
+    kind: Protocol,
+    folder: Option<&str>,
+    name: &str,
+    host: &str,
+    port: u16,
+    username: Option<&str>,
+) -> SharedSession {
+    let id = ProfileId::new(session_id(source_id, folder.unwrap_or_default(), name));
+    let target = match kind {
+        Protocol::Ssh => SharedTarget::Ssh(ssh_profile(&id, name, host, port, username)),
+        Protocol::Rdp => SharedTarget::Rdp(rdp_profile(&id, name, host, port, username)),
     };
-    Some(SharedSession {
+    SharedSession {
         id,
         source_id: source_id.to_owned(),
-        folder,
+        folder: folder.map(str::to_owned),
         target,
-    })
+    }
 }
 
 /// An SSH session of a shared file: its own fields and nothing else. No key, no gateway, no

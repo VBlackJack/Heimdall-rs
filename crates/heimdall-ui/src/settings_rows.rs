@@ -48,6 +48,8 @@ pub enum SettingsCard {
     /// The values of the `[NAME]` variables of a `MobaXterm` file, as the C# card of the `MobaXterm` import
     /// variables.
     MobaxtermVariables,
+    /// The shared session sources, as the C# card of its "Shared session sources".
+    SharedSources,
     /// "Show the tour again", as the C# "Welcome tour" card.
     Onboarding,
     /// The terminals' text and colours, Ctrl+V and the `PowerShell` policy.
@@ -95,7 +97,7 @@ pub enum SettingsCard {
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::Appearance,
         Self::Behavior,
         Self::SessionTree,
@@ -103,6 +105,7 @@ impl SettingsCard {
         Self::Reachability,
         Self::ExternalTools,
         Self::MobaxtermVariables,
+        Self::SharedSources,
         Self::Onboarding,
         Self::Terminal,
         Self::SessionLogging,
@@ -138,6 +141,7 @@ impl SettingsCard {
             // The C# keeps them on its Advanced tab, which this version does not have.
             | Self::ExternalTools
             | Self::MobaxtermVariables
+            | Self::SharedSources
             | Self::Onboarding => SettingsTab::General,
             Self::Terminal | Self::SessionLogging | Self::Macros => SettingsTab::Terminal,
             Self::SshReconnect
@@ -207,6 +211,8 @@ pub enum SettingRow {
     ExternalTools,
     /// The `MobaXterm` import variables, listed and edited.
     MobaxtermVariables,
+    /// The shared session sources, listed and edited.
+    SharedSources,
     /// "Show the tour again", which shows the welcome tour from its first step.
     Onboarding,
     /// The size of the terminals' text.
@@ -327,7 +333,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 75] = [
+    pub const ALL: [Self; 76] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -345,6 +351,7 @@ impl SettingRow {
         Self::ReachabilityProbes,
         Self::ExternalTools,
         Self::MobaxtermVariables,
+        Self::SharedSources,
         Self::Onboarding,
         Self::FontSize,
         Self::FontFamily,
@@ -424,6 +431,7 @@ impl SettingRow {
             | Self::ReachabilityProbes => SettingsCard::Reachability,
             Self::ExternalTools => SettingsCard::ExternalTools,
             Self::MobaxtermVariables => SettingsCard::MobaxtermVariables,
+            Self::SharedSources => SettingsCard::SharedSources,
             // The last card of the C# General tab (`MainWindow.xaml:2715-2745`).
             Self::Onboarding => SettingsCard::Onboarding,
             Self::FontSize
@@ -566,6 +574,7 @@ impl SettingRow {
                 | Self::Onboarding
                 | Self::ExternalTools
                 | Self::MobaxtermVariables
+                | Self::SharedSources
                 | Self::Macros
                 | Self::HostKeys
                 | Self::FtpsCertificates

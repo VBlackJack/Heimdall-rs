@@ -1062,6 +1062,10 @@ pub enum Message {
     ExternalToolsEdit(crate::external_tools_view::ToolsEdit),
     /// A change in the Settings page's `MobaXterm` import variables.
     MobaxtermVariablesEdit(crate::mobaxterm_variables_view::VariablesEdit),
+    /// A change in the Settings page's shared session sources.
+    SharedSourcesEdit(crate::shared_sources_view::SourcesEdit),
+    /// Close the import report of a shared source.
+    SharedReportClose,
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
     OpenWithSystem(std::path::PathBuf),
     /// Write a note about the session `id` from `template`, then open it in the editor set.
@@ -1305,6 +1309,8 @@ impl fmt::Debug for Message {
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
             Self::ExternalToolsEdit(_) => f.write_str("ExternalToolsEdit(..)"),
             Self::MobaxtermVariablesEdit(_) => f.write_str("MobaxtermVariablesEdit(..)"),
+            Self::SharedSourcesEdit(_) => f.write_str("SharedSourcesEdit(..)"),
+            Self::SharedReportClose => f.write_str("SharedReportClose"),
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
@@ -1702,6 +1708,10 @@ pub struct Shell {
     external_tools: crate::external_tools_view::ExternalToolsEditor,
     /// The Settings page's `MobaXterm` import variables, as edited.
     mobaxterm_variables: crate::mobaxterm_variables_view::MobaxtermVariablesEditor,
+    /// The Settings page's shared session sources, as edited.
+    shared_sources: crate::shared_sources_view::SharedSourcesEditor,
+    /// The shared source whose import report is open.
+    shared_report: Option<String>,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -1927,6 +1937,8 @@ impl Shell {
         let mobaxterm_variables = crate::mobaxterm_variables_view::MobaxtermVariablesEditor::new(
             &app.settings().mobaxterm_variables,
         );
+        let shared_sources =
+            crate::shared_sources_view::SharedSourcesEditor::new(&app.settings().shared_sources);
         let language_shown = app.settings().language;
         Self {
             app,
@@ -1997,6 +2009,8 @@ impl Shell {
             presets,
             external_tools,
             mobaxterm_variables,
+            shared_sources,
+            shared_report: None,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -2963,6 +2977,11 @@ impl Shell {
             Message::Browse(target) => return self.browse(target),
             Message::ExternalToolsEdit(edit) => self.external_tools_edit(edit),
             Message::MobaxtermVariablesEdit(edit) => self.mobaxterm_variables_edit(edit),
+            Message::SharedSourcesEdit(edit) => self.shared_sources_edit(edit),
+            Message::SharedReportClose => {
+                self.shared_report = None;
+                Vec::new()
+            }
             Message::Browsed(target, path) => self.browsed(target, path),
             Message::CopyError(tab) => return self.copy_error(tab),
             Message::ToggleFailureDetails(tab) => {
@@ -3159,6 +3178,9 @@ impl Shell {
         // And the `MobaXterm` variables.
         self.mobaxterm_variables
             .sync(&self.app.settings().mobaxterm_variables);
+        // And the shared session sources.
+        self.shared_sources
+            .sync(&self.app.settings().shared_sources);
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
         if let Some(field) = self.focus_next.take() {
@@ -5132,6 +5154,9 @@ impl Shell {
         if let Some(layer) = self.dialog_layer(locked) {
             layers = layers.push(layer);
         }
+        if let Some(layer) = self.shared_report_layer().filter(|_| !locked) {
+            layers = layers.push(layer);
+        }
         let open_menu = self
             .menu
             .as_ref()
@@ -5174,6 +5199,16 @@ impl Shell {
         container(CursorTracker::new(layers, self.cursor.clone()))
             .id(main_area_id())
             .into()
+    }
+
+    /// The import report of the shared source open, over the window; none when no report is
+    /// open or its source is no longer held.
+    fn shared_report_layer(&self) -> Option<Element<'_, Message>> {
+        let id = self.shared_report.as_deref()?;
+        let shared = self.app.shared_sessions();
+        let state = shared.sources().into_iter().find(|state| state.id == id)?;
+        let report = shared.report_of(id)?;
+        Some(crate::shared_report_view::layer(state, report))
     }
 
     /// The banner of a newer release, as the C# one under its navigation: the version, then

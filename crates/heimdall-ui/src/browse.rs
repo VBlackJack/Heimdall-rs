@@ -48,6 +48,9 @@ const DATABASE_EXTENSIONS: &[&str] = &["kdbx", "db", "gpg"];
 /// The extensions of the C# credential provider's key file filter.
 const KEY_FILE_EXTENSIONS: &[&str] = &["keyx", "key"];
 
+/// The extensions of a `MobaXterm` session file: its export, and its settings file.
+const SESSION_FILE_EXTENSIONS: &[&str] = &["mxtsessions", "ini"];
+
 /// The extensions of the C# gateway key filters, `.ppk` then `.pem`.
 const PPK_EXTENSIONS: &[&str] = &["ppk"];
 const PEM_EXTENSIONS: &[&str] = &["pem"];
@@ -72,6 +75,8 @@ pub enum BrowseTarget {
     ExternalToolProgram,
     /// Its working folder, as the C# `OnExtToolWorkDirBrowseClick`.
     ExternalToolFolder,
+    /// The file of the shared session source at this place of the Settings page's list.
+    SharedSourcePath(usize),
 }
 
 impl BrowseTarget {
@@ -90,6 +95,7 @@ impl BrowseTarget {
             Self::ExternalEditor => Some(fl!("ui-settings-browse-editor-title")),
             Self::SessionLogDirectory => Some(fl!("ui-settings-browse-log-directory-title")),
             Self::GatewayKey => Some(fl!("ui-profile-browse-key-title")),
+            Self::SharedSourcePath(_) => Some(fl!("ui-shared-sources-browse-title")),
             // The system's own, as the C# dialogs.
             Self::ProviderDatabase
             | Self::ProviderKeyFile
@@ -126,6 +132,13 @@ impl BrowseTarget {
                 (
                     fl!("ui-settings-browse-key-file-filter"),
                     KEY_FILE_EXTENSIONS,
+                ),
+                all(),
+            ],
+            Self::SharedSourcePath(_) => vec![
+                (
+                    fl!("ui-shared-sources-browse-filter"),
+                    SESSION_FILE_EXTENSIONS,
                 ),
                 all(),
             ],
