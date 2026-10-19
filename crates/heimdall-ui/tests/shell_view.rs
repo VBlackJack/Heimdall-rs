@@ -3900,6 +3900,7 @@ fn the_network_scanner_report_has_a_title_of_its_own() {
         stored_credentials: None,
         host_keys: None,
         scheduled: None,
+        certificates: None,
         settings_unreadable: None,
         preferences: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),

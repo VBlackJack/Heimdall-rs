@@ -53,7 +53,8 @@ pub use input::{RdpInput, fast_path_events};
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 pub use keep_alive::DEFAULT_KEEP_ALIVE;
 pub use known_hosts::{
-    Carried, CarriedCertificate, CertificateVerdict, KnownRdpHost, KnownRdpHosts, Verdict,
+    CARRIED_SUFFIX, Carried, CarriedCertificate, CertificateVerdict, KnownRdpHost, KnownRdpHosts,
+    Verdict,
 };
 pub use reason::{Ending, Refusal, error_info_description};
 pub use session::{CloseReason, Framebuffer, LocalClipboard, RdpEvent, RdpSession};

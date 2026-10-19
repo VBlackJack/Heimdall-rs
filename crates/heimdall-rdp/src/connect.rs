@@ -1527,9 +1527,10 @@ mod tests {
             .into_iter()
             .map(|entry| entry.certificate)
             .collect();
+        // The file's lines come first, the file beside it that holds the carried ones last.
         assert_eq!(
             pins,
-            [Some(certificate.certificate), Some(renewed.certificate)]
+            [Some(renewed.certificate), Some(certificate.certificate)]
         );
         assert_eq!(
             trust(&config, &certificate, false).ok(),

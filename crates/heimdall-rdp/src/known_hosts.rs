@@ -43,11 +43,13 @@
 //! C# asks about any certificate an RDP profile does not trust yet. Such a line without a
 //! certificate that reads trusts nothing and is left out.
 //!
-//! The key stays the second field: a reader of the first two fields alone, an older
-//! Heimdall among them, reads every line as before, and skips a carried line, whose `-`
-//! is no key: it reads no trust for that server and asks about it as at a first
-//! connection. An attribute not known, or that does
-//! not decode, is ignored; but a `certificate` that does not read still names a
+//! A carried line never goes in the file itself: it goes in a file beside it, named as it
+//! with [`CARRIED_SUFFIX`] added, in the same folder, and this reader reads both together.
+//! An older Heimdall reads the file alone: a key-less line there would be dropped by its
+//! `keys()` while its `knows()` counted it, and the TLS the server required would be lost (a
+//! profile that lets TLS be optional could then connect in clear). It never sees a carried
+//! server at all, which is the server as it was before the import. An attribute not known,
+//! or that does not decode, is ignored; but a `certificate` that does not read still names a
 //! certificate, so its line is never taken for a key recorded alone. Lines starting with
 //! `#` and lines that do not parse are kept as they are; forgetting drops whole lines and
 //! never rewrites one, and adopting a certificate for a line recorded with its key alone
@@ -92,6 +94,11 @@ const ATTRIBUTE_SEPARATOR: char = '=';
 const LINE_ENDING_CHARACTERS: [char; 2] = ['\r', '\n'];
 /// Added to a file's name for the new text written beside it, before it takes its place.
 const REWRITE_SUFFIX: &str = ".tmp";
+
+/// Added to the name of a trust file to name the file beside it that holds the certificates
+/// carried over from the C# Heimdall: key-less lines, which an older reader must never find
+/// in the file it reads.
+pub const CARRIED_SUFFIX: &str = ".carried";
 /// What stands in place of the key on the line of a certificate carried over from the C#
 /// Heimdall, which never kept its key.
 const UNRECORDED_KEY: &str = "-";
@@ -110,6 +117,10 @@ pub enum Verdict {
         /// A key recorded for it.
         recorded: Fingerprint,
     },
+    /// Recorded only by a certificate carried over from the C# Heimdall, its key not on
+    /// record: the key presented can be told neither from the key recorded nor from another.
+    /// A caller that pins by the key alone treats it as a changed key.
+    CertificateOnly,
 }
 
 /// Where a server pinned by its whole certificate, an RDP, FTPS or VNC one, stands against
@@ -356,9 +367,21 @@ impl KnownRdpHosts {
         &self.path
     }
 
+    /// The file beside it that holds the certificates carried over.
+    fn carried_path(&self) -> PathBuf {
+        let mut name = self.path.file_name().unwrap_or_default().to_owned();
+        name.push(CARRIED_SUFFIX);
+        self.path.with_file_name(name)
+    }
+
     /// The file's text; `None` when there is no file.
     fn text(&self) -> io::Result<Option<String>> {
-        match fs::read_to_string(&self.path) {
+        Self::text_of(&self.path)
+    }
+
+    /// The text of the file at `path`; `None` when there is no such file.
+    fn text_of(path: &Path) -> io::Result<Option<String>> {
+        match fs::read_to_string(path) {
             Ok(text) => Ok(Some(text)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
@@ -371,18 +394,28 @@ impl KnownRdpHosts {
     ///
     /// The file exists and cannot be read.
     pub fn verdict(&self, host: &str, port: u16, presented: &Fingerprint) -> io::Result<Verdict> {
-        let keys = {
+        let wanted = host.to_ascii_lowercase();
+        let (keys, carried) = {
             let _files = locked();
-            self.keys(host, port)?
+            let carried = self
+                .read_carried_entries()?
+                .iter()
+                .any(|entry| entry.host == wanted && entry.port == port);
+            (self.keys(host, port)?, carried)
         };
         if keys.contains(presented) {
             return Ok(Verdict::Known);
         }
-        Ok(keys
-            .first()
-            .map_or(Verdict::Unknown, |recorded| Verdict::Changed {
+        Ok(keys.first().map_or(
+            if carried {
+                Verdict::CertificateOnly
+            } else {
+                Verdict::Unknown
+            },
+            |recorded| Verdict::Changed {
                 recorded: *recorded,
-            }))
+            },
+        ))
     }
 
     /// Whether a key, or a certificate carried over from the C# Heimdall, is recorded for
@@ -433,12 +466,24 @@ impl KnownRdpHosts {
         self.read_entries()
     }
 
-    /// [`Self::entries`], the files locked.
+    /// [`Self::entries`], the files locked: the file, then the file beside it that holds the
+    /// certificates carried over.
     fn read_entries(&self) -> io::Result<Vec<KnownRdpHost>> {
-        let Some(text) = self.text()? else {
-            return Ok(Vec::new());
-        };
-        Ok(text
+        let mut entries = Self::parse_entries(self.text()?.as_deref());
+        entries.extend(self.read_carried_entries()?);
+        Ok(entries)
+    }
+
+    /// The entries of the file beside it, the files locked.
+    fn read_carried_entries(&self) -> io::Result<Vec<KnownRdpHost>> {
+        Ok(Self::parse_entries(
+            Self::text_of(&self.carried_path())?.as_deref(),
+        ))
+    }
+
+    /// The entries `text` holds; none when there is no text.
+    fn parse_entries(text: Option<&str>) -> Vec<KnownRdpHost> {
+        text.unwrap_or_default()
             .lines()
             .filter_map(|line| {
                 let mut fields = line.split_whitespace();
@@ -462,7 +507,7 @@ impl KnownRdpHosts {
                 // A certificate carried over pins nothing without the certificate.
                 (entry.fingerprint.is_some() || entry.certificate.is_some()).then_some(entry)
             })
-            .collect())
+            .collect()
     }
 
     /// Forgets `key` for `host:port` only: another key trusted for the same server stays,
@@ -499,7 +544,14 @@ impl KnownRdpHosts {
     /// a line replaced keeps its own ending. The new text is written beside the file then
     /// put in its place, so the file is never seen, nor left, half written.
     fn rewrite(&self, edit: impl Fn(&str) -> LineEdit) -> io::Result<bool> {
-        let Some(text) = self.text()? else {
+        let in_file = Self::rewrite_file(&self.path, &edit)?;
+        let beside = Self::rewrite_file(&self.carried_path(), &edit)?;
+        Ok(in_file || beside)
+    }
+
+    /// [`Self::rewrite`] for the one file at `path`.
+    fn rewrite_file(path: &Path, edit: &impl Fn(&str) -> LineEdit) -> io::Result<bool> {
+        let Some(text) = Self::text_of(path)? else {
             return Ok(false);
         };
         let mut changed = false;
@@ -518,23 +570,23 @@ impl KnownRdpHosts {
             }
         }
         if changed {
-            self.replace_with(&rewritten)?;
+            Self::replace_with(path, &rewritten)?;
         }
         Ok(changed)
     }
 
     /// Puts `text` in place of the file: written whole and synced beside it, then renamed
     /// over it. A failure leaves the file as it was.
-    fn replace_with(&self, text: &str) -> io::Result<()> {
-        let mut name = self.path.file_name().unwrap_or_default().to_owned();
+    fn replace_with(path: &Path, text: &str) -> io::Result<()> {
+        let mut name = path.file_name().unwrap_or_default().to_owned();
         name.push(REWRITE_SUFFIX);
-        let beside = self.path.with_file_name(name);
+        let beside = path.with_file_name(name);
         let written = (|| {
             let mut file = File::create(&beside)?;
             file.write_all(text.as_bytes())?;
             file.sync_all()?;
             drop(file);
-            fs::rename(&beside, &self.path)
+            fs::rename(&beside, path)
         })();
         if written.is_err() {
             // What could be written is not the file: never left behind.
@@ -721,8 +773,8 @@ impl KnownRdpHosts {
         Ok(done)
     }
 
-    /// Appends the line of `certificate` carried over for `host:port`, its key unknown; the
-    /// files locked.
+    /// Appends the line of `certificate` carried over for `host:port`, its key unknown, to
+    /// the file beside the file, never to it; the files locked.
     fn append_carried(
         &self,
         host: &str,
@@ -749,7 +801,7 @@ impl KnownRdpHosts {
                 let _ = write!(line, " {name}={}", encoded(&value));
             }
         }
-        self.append_line(&line)
+        Self::append_line_to(&self.carried_path(), &line)
     }
 
     /// Records for `host:port` the whole `certificate`, of hash `hash` and holding during
@@ -845,22 +897,20 @@ impl KnownRdpHosts {
             }
         }
         line.push_str(more);
-        self.append_line(&line)
+        Self::append_line_to(&self.path, &line)
     }
 
-    /// Appends `line`, creating the file and its folder if needed; the files locked.
-    fn append_line(&self, line: &str) -> io::Result<()> {
-        if let Some(dir) = self.path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+    /// Appends `line` to the file at `path`, creating it and its folder if needed; the files
+    /// locked.
+    fn append_line_to(path: &Path, line: &str) -> io::Result<()> {
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
             fs::create_dir_all(dir)?;
         }
         // A file that does not end with a line break gets one first, so the new line stays
         // its own.
         let needs_break =
-            fs::read(&self.path).is_ok_and(|bytes| bytes.last().is_some_and(|last| *last != b'\n'));
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+            fs::read(path).is_ok_and(|bytes| bytes.last().is_some_and(|last| *last != b'\n'));
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         let separator = if needs_break { "\n" } else { "" };
         writeln!(file, "{separator}{line}")?;
         file.sync_all()
