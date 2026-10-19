@@ -671,7 +671,7 @@ mod tests {
     };
 
     use heimdall_ssh::tool_route::ToolGateway;
-    use tokio::io::AsyncWriteExt as _;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::TcpListener;
 
     use super::super::route_bar::doubles::{Loopback, Refusing};
@@ -754,11 +754,25 @@ mod tests {
         let address = listener.local_addr().expect("address");
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept");
+            // Read the whole negotiate request first: closing a socket that still holds
+            // unread bytes sends an RST on Windows, which can discard the reply before the
+            // probe reads it ("early eof" on a loaded CI runner).
+            let mut header = [0u8; 4];
+            socket
+                .read_exact(&mut header)
+                .await
+                .expect("request header");
+            let length = u32::from_be_bytes(header) as usize;
+            let mut request = vec![0u8; length];
+            socket.read_exact(&mut request).await.expect("request body");
             // A NetBIOS header announcing four bytes that are not an SMB2 response.
             socket
                 .write_all(&[0, 0, 0, 4, 1, 2, 3, 4])
                 .await
                 .expect("write");
+            // Hold the connection until the probe has read the reply and hung up.
+            let mut rest = Vec::new();
+            let _ = socket.read_to_end(&mut rest).await;
         });
         let gateway = ToolGateway::over(Loopback(address), 4);
         let answered = execute_enumeration("nas.internal", Some(&gateway)).await;
