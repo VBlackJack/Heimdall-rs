@@ -238,6 +238,7 @@ impl App {
                     name: entry.name.clone(),
                     servers: entry.sessions.len(),
                     gateways,
+                    folders: self.store.folders_using_gateway(&id),
                 });
             }
             GatewaysMessage::Reassign { missing, to } => self.reroute(&missing, Some(&to)),

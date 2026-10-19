@@ -720,6 +720,7 @@ impl App {
             favorites,
             metadata,
             folder_colors: report.folder_colors,
+            folder_defaults: report.folder_defaults,
             scheduled: Vec::new(),
         };
         (chosen, replacing)

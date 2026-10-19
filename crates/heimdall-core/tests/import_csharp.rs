@@ -1771,6 +1771,52 @@ fn the_folders_colours_of_settings_json_are_imported_those_of_the_palette_only()
 }
 
 #[test]
+fn the_folders_defaults_of_settings_json_are_kept_beside_the_flattened_profiles() {
+    use heimdall_core::folder_defaults::FolderDefaults;
+    use heimdall_core::metadata::Environment;
+    use heimdall_core::profile::ProfileId;
+    use std::path::PathBuf;
+
+    let report = import(
+        &servers(
+            r#"{"id": "a", "remoteServer": "a.lab", "connectionType": "SSH", "group": "Lab/Linux"}"#,
+        ),
+        Some(&settings(
+            r#""Lab": {"sshGatewayId": "edge", "sshUsername": "ops", "sshKeyPath": "/k/lab",
+                       "sshPort": 2222, "environment": "staging"},
+               "Lab/Linux": {"sshUsername": "root"},
+               "Blank": {"sshUsername": "", "sshGatewayId": " ", "sshPort": 0, "environment": "Moon"}"#,
+        )),
+    )
+    .expect("valid JSON");
+    assert_eq!(
+        report.folder_defaults,
+        [
+            (
+                "Lab".to_owned(),
+                FolderDefaults {
+                    gateway: Some(ProfileId::new("edge")),
+                    username: Some("ops".to_owned()),
+                    key_path: Some(PathBuf::from("/k/lab")),
+                    port: Some(2222),
+                    environment: Some(Environment::Staging),
+                }
+            ),
+            (
+                "Lab/Linux".to_owned(),
+                FolderDefaults {
+                    username: Some("root".to_owned()),
+                    ..FolderDefaults::default()
+                }
+            ),
+        ]
+    );
+    // The profile itself still has them flattened in, as before.
+    assert_eq!(report.profiles[0].username.as_deref(), Some("root"));
+    assert_eq!(report.profiles[0].port, 2222);
+}
+
+#[test]
 fn an_rdp_profile_keeps_what_the_built_in_client_does_not_do_and_where_it_came_from() {
     use heimdall_core::import::csharp::Dropped;
     use heimdall_core::metadata::ProfileOrigin;

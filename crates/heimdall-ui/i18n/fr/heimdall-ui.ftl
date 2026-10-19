@@ -2357,6 +2357,10 @@ ui-dialog-delete-gateway-body = Supprimer la passerelle "{ $name }" ?
     Références à effacer :
     - Serveurs : { $servers }
     - Passerelles enfants : { $gateways }
+    - Valeurs par défaut de dossiers : { $folder_count ->
+        [0] 0
+       *[other] { $folder_count } ({ $folders })
+      }
 ui-status-gateway-deleted = Passerelle "{ $name }" supprimée.
 ui-status-gateways-reassigned = { $count ->
     [one] { $count } session réassignée.
@@ -5780,6 +5784,12 @@ ui-dialog-import-preferences-invalid = Valeurs non lues : { $names }
 ui-dialog-import-preferences-relative = Chemins de l'installation C#, non repris : { $names }
 ui-dialog-import-preferences-failed = Les préférences de Heimdall C# n'ont pas pu être lues : { $detail }
 ui-dialog-import-preferences-review = Vérifier les préférences
+## La reprise des certificats de confiance de Heimdall C#.
+ui-trusted-certificates-key-unrecorded = Clé non enregistrée (reprise de Heimdall C#)
+ui-dialog-import-certificates = Certificats de confiance repris : { $rdp } RDP, { $ftps } FTPS. Ignorés : { $skipped }. Invalides : { $invalid }.
+ui-dialog-import-certificates-failed = Les certificats de confiance n'ont pas pu être repris : { $detail }
+ui-certificate-replaced = Un autre certificat que celui approuvé : ce serveur avait été approuvé, dans Heimdall C#, pour un autre certificat. Un certificat Bureau à distance auto-signé est renouvelé tous les quelques mois, et plusieurs machines peuvent répondre à cette adresse ; approuvez celui-ci seulement si vous l'attendez.
+ui-certificate-replaced-previous = Certificat approuvé auparavant : { $thumbprint }
 
 ## L'analyseur réseau, Ctrl+Maj+N.
 ui-shortcuts-network-scan = Analyser le réseau pour ajouter des hôtes
@@ -6015,3 +6025,4 @@ ui-share-notice-failed-random = Aucun jeton d'accès n'a pu être créé
 ui-share-listing-index-of = Index de
 ui-share-listing-name = Nom
 ui-share-listing-size = Taille (octets)
+ui-profile-from-folder = Repris du dossier "{ $folder }".

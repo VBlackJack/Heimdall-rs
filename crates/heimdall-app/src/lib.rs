@@ -98,7 +98,6 @@ pub mod winrm_preflight;
 pub mod x11_server;
 
 pub use app::ExternalToolMessage;
-pub use app::ImportedPreferences;
 pub use app::SavedCredentials;
 pub use app::SessionLoadNotice;
 pub use app::SettingsTransferMessage;
@@ -127,6 +126,7 @@ pub use app::{
     folder_label, local_date_time, master_password_problem, open_vault, search_folded,
     should_auto_lock,
 };
+pub use app::{CarriedCertificates, ImportedPreferences};
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};

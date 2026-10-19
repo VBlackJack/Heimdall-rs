@@ -38,6 +38,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::folder::FolderColor;
+use crate::folder_defaults::FolderDefaults;
+use crate::metadata::Environment;
 use crate::post_connect::{DEFAULT_STEP_DELAY_MS, OnFailure, PostConnect, PostConnectStep};
 use crate::profile::{
     Aspect, AudioPlayback, CitrixProfile, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_FTP_PORT,
@@ -190,6 +192,11 @@ pub struct ImportReport {
     pub metadata: Vec<(ProfileId, crate::metadata::ProfileMetadata)>,
     /// The colours `settings.json` gives folders, by path: those of its palette only.
     pub folder_colors: Vec<(String, FolderColor)>,
+    /// What `settings.json` gives the sessions of each folder, by path: the gateway, the
+    /// account, the key, the port and the environment, a folder setting none left out.
+    /// The profiles imported have them filled in already; this keeps them for the sessions
+    /// made in those folders later.
+    pub folder_defaults: Vec<(String, FolderDefaults)>,
     /// The scheduled connections `settings.json` keeps, each with its identifier, none
     /// timed yet: when one runs next is computed on this computer's clock as it is carried
     /// over. For the migration of this computer's own C# store only, never from a file
@@ -1184,6 +1191,7 @@ struct LegacyGroupDefaults {
     ssh_key_path: Option<String>,
     ssh_port: Option<i64>,
     connection_type: Option<String>,
+    environment: Option<String>,
 }
 
 /// Imports the SSH profiles from the text of `servers.json` and, when available, of
@@ -1206,6 +1214,7 @@ pub fn import(
     let mut report = ImportReport {
         host_keys: trusted_host_keys(&settings),
         folder_colors: folder_colors(&settings.group_defaults),
+        folder_defaults: folder_defaults(&settings.group_defaults),
         ..ImportReport::default()
     };
     report.scheduled = scheduled_tasks(&settings, &mut report.dropped);
@@ -1356,7 +1365,7 @@ fn trusted_host_keys(settings: &LegacySettings) -> Vec<TrustedHostKey> {
 }
 
 /// `host:port` or `[ipv6]:port`, as the C# keys its trust store.
-fn host_and_port(name: &str) -> Option<(&str, u16)> {
+pub(super) fn host_and_port(name: &str) -> Option<(&str, u16)> {
     let (host, port) = match name.strip_prefix('[') {
         Some(bracketed) => bracketed.split_once("]:")?,
         None => name.rsplit_once(':')?,
@@ -1426,6 +1435,34 @@ fn folder_colors(all: &HashMap<String, LegacyGroupDefaults>) -> Vec<(String, Fol
         .collect();
     colors.sort_by(|(a, _), (b, _)| a.cmp(b));
     colors
+}
+
+/// What each folder of `all` gives its sessions, in path order: a blank value, a port out of
+/// range and an environment not known are left out, as the C# reads them as unset.
+fn folder_defaults(all: &HashMap<String, LegacyGroupDefaults>) -> Vec<(String, FolderDefaults)> {
+    let mut folders: Vec<(String, FolderDefaults)> = all
+        .iter()
+        .filter_map(|(path, legacy)| {
+            let path = crate::folder::normal(path);
+            let defaults = FolderDefaults {
+                gateway: legacy
+                    .ssh_gateway_id
+                    .as_ref()
+                    .filter(|id| is_assigned(Some(id)))
+                    .map(|id| ProfileId::new(id.trim().to_owned())),
+                username: non_empty(legacy.ssh_username.as_ref()),
+                key_path: non_empty(legacy.ssh_key_path.as_ref()).map(PathBuf::from),
+                port: legacy
+                    .ssh_port
+                    .and_then(|port| u16::try_from(port).ok())
+                    .filter(|port| *port != 0),
+                environment: legacy.environment.as_deref().and_then(Environment::named),
+            };
+            (!path.is_empty() && !defaults.is_empty()).then_some((path, defaults))
+        })
+        .collect();
+    folders.sort_by(|(a, _), (b, _)| a.cmp(b));
+    folders
 }
 
 /// Group defaults in force for `group`, as `GroupDefaultsDto.Resolve` computes them.

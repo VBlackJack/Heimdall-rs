@@ -136,6 +136,7 @@ fn a_gateway_deleted_once_agreed_to_clears_its_references() {
             name: "edge gateway".to_owned(),
             servers: 2,
             gateways: 1,
+            folders: Vec::new(),
         })
     );
     // Cancelled: nothing goes.

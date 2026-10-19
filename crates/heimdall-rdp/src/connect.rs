@@ -347,6 +347,16 @@ pub enum RdpError {
         /// What it presented, boxed as in [`RdpError::UnknownCertificate`].
         presented: Box<ServerCertificate>,
     },
+    /// The server presents another certificate than the one carried over from the C#
+    /// Heimdall without its key: the user is asked, told which certificate was trusted
+    /// before. Answered yes, the next attempt carries an [`AcceptedCertificate`].
+    #[error("the server certificate {} is not the one trusted, {recorded}", .presented.certificate)]
+    OtherCertificate {
+        /// The certificate recorded for it.
+        recorded: CertificateHash,
+        /// What it presented, boxed as in [`RdpError::UnknownCertificate`].
+        presented: Box<ServerCertificate>,
+    },
     /// The file of known servers cannot be read or written.
     #[error("known RDP servers: {0}")]
     KnownHosts(#[source] io::Error),
@@ -861,7 +871,14 @@ fn trust(
                 presented: Box::new(certificate.clone()),
             });
         }
-        asked @ (CertificateVerdict::Renewed { .. } | CertificateVerdict::Unknown) => asked,
+        // Trusted by a certificate carried over from the C# Heimdall, without its key, and
+        // another presented: asked about, both thumbprints shown, as the C# asks about any
+        // certificate a profile does not trust yet (`RdpCertificateVerifier.cs:229-251`): a
+        // self-signed RDP certificate is minted again every few months, and several machines
+        // may answer at the address. Accepted, it is trusted beside the one carried over.
+        asked @ (CertificateVerdict::Renewed { .. }
+        | CertificateVerdict::Unknown
+        | CertificateVerdict::OtherCertificate { .. }) => asked,
     };
     unsettled(config, certificate, verdict)
 }
@@ -920,6 +937,15 @@ fn unsettled(
             RdpError::RenewedCertificate {
                 presented: Box::new(certificate.clone()),
                 recorded,
+            }
+        }
+        CertificateVerdict::OtherCertificate { recorded } => {
+            log::info!(
+                "{target} presented the certificate {whole}, key {presented}, another than the one carried over from the C# Heimdall {recorded}: asked about"
+            );
+            RdpError::OtherCertificate {
+                recorded,
+                presented: Box::new(certificate.clone()),
             }
         }
         _ => RdpError::UnknownCertificate(Box::new(certificate.clone())),
@@ -1454,6 +1480,63 @@ mod tests {
             ..pinned_by(&known)
         }));
         assert!(!authenticated_by_system(&pinned_by(&known)));
+    }
+
+    #[test]
+    fn a_certificate_carried_over_from_the_csharp_lets_its_own_through_and_asks_about_another() {
+        let dir = tempfile::tempdir().expect("dir");
+        let known = dir.path().join("known_rdp_hosts");
+        let certificate = ServerCertificate::from_der(CERT).expect("fixture");
+        let renewed = ServerCertificate::from_der(RENEWED).expect("fixture");
+        let carried = |hash: CertificateHash| crate::known_hosts::CarriedCertificate {
+            host: HOST.to_owned(),
+            port: PORT,
+            certificate: hash,
+            trusted: None,
+            subject: None,
+            issuer: None,
+        };
+        KnownRdpHosts::new(&known)
+            .carry_over(&[carried(certificate.certificate)])
+            .expect("carried");
+        let config = pinned_by(&known);
+        assert_eq!(
+            trust(&config, &certificate, false).ok(),
+            Some(Passed::Trusted),
+            "the very certificate the C# trusted"
+        );
+        // Minted again, as Windows does with its self-signed certificate: asked about, the
+        // one trusted before told, as the C# asks.
+        assert!(matches!(
+            trust(&config, &renewed, false),
+            Err(RdpError::OtherCertificate { recorded, ref presented })
+                if recorded == certificate.certificate && presented.certificate == renewed.certificate
+        ));
+        // Accepted: trusted beside the one carried over, never in its place.
+        let accepted = RdpConfig {
+            accepted: Some(AcceptedCertificate::from(&renewed)),
+            ..pinned_by(&known)
+        };
+        assert_eq!(
+            trust(&accepted, &renewed, false).ok(),
+            Some(Passed::Trusted)
+        );
+        let pins: Vec<Option<CertificateHash>> = KnownRdpHosts::new(&known)
+            .entries()
+            .expect("read")
+            .into_iter()
+            .map(|entry| entry.certificate)
+            .collect();
+        // The file's lines come first, the file beside it that holds the carried ones last.
+        assert_eq!(
+            pins,
+            [Some(renewed.certificate), Some(certificate.certificate)]
+        );
+        assert_eq!(
+            trust(&config, &certificate, false).ok(),
+            Some(Passed::Trusted)
+        );
+        assert_eq!(trust(&config, &renewed, false).ok(), Some(Passed::Trusted));
     }
 
     #[test]

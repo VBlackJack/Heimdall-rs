@@ -30,6 +30,7 @@ pub mod external_tools;
 pub mod files_state;
 pub mod folder;
 pub mod folder_acl;
+pub mod folder_defaults;
 pub mod gateway_parents;
 pub mod import;
 pub mod instance;
