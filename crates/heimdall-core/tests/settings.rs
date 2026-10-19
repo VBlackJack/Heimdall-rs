@@ -945,6 +945,28 @@ fn the_terminal_font_family_is_the_embedded_one_until_chosen_and_kept_as_named()
 }
 
 #[test]
+fn the_tabs_are_not_grouped_by_folder_until_chosen_and_an_older_file_does_not_group_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(!settings.group_tabs_by_folder, "as the C# default");
+    assert!(
+        !written(
+            dir.path(),
+            "version = 1
+[general]
+prevent_sleep = true
+"
+        )
+        .group_tabs_by_folder,
+        "a file written before the choice was kept"
+    );
+    settings.group_tabs_by_folder = true;
+    settings.save(&path).expect("save");
+    assert!(Settings::load(&path).expect("load").group_tabs_by_folder);
+}
+
+#[test]
 fn the_gateway_badge_is_shown_until_hidden_and_an_older_file_shows_it() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
@@ -1769,6 +1791,7 @@ fn reset_all_puts_every_preference_back_and_keeps_what_the_csharp_keeps() {
         show_gateway_badge: false,
         // Kept: the C# reset leaves the properties panel as it is.
         show_properties_panel: true,
+        group_tabs_by_folder: true,
         // Reset: preferences of every tab.
         color_scheme: ColorScheme::Nord,
         session_logging: true,
@@ -1807,6 +1830,7 @@ fn reset_all_puts_every_preference_back_and_keeps_what_the_csharp_keeps() {
         broadcast_scope: before.broadcast_scope,
         show_gateway_badge: before.show_gateway_badge,
         show_properties_panel: before.show_properties_panel,
+        group_tabs_by_folder: before.group_tabs_by_folder,
         ..Settings::default()
     };
     assert_eq!(settings, kept);
@@ -2353,4 +2377,192 @@ fn an_import_shows_each_tool_with_its_program_and_an_export_leaves_home_tools_be
     assert_eq!(read.settings.external_tools, external_tools()[1..]);
     let (_, held_back) = settings.export(Some(home), true);
     assert_eq!(held_back, 0);
+}
+
+#[test]
+fn the_ssh_reconnect_waits_default_to_the_csharp_ones_and_are_kept_within_its_range() {
+    use heimdall_core::settings::{RECONNECT_DELAY_SECONDS_MAX, RECONNECT_DELAY_SECONDS_MIN};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let read = written(dir.path(), "version = 1\n");
+    assert_eq!(
+        (
+            read.ssh_auto_reconnect_first_delay,
+            read.ssh_auto_reconnect_second_delay,
+            read.ssh_auto_reconnect_subsequent_delay
+        ),
+        (2, 5, 15),
+        "the C# defaults"
+    );
+    assert_eq!(
+        (RECONNECT_DELAY_SECONDS_MIN, RECONNECT_DELAY_SECONDS_MAX),
+        (1, 600)
+    );
+    let text = "version = 1\n[ssh]\nauto_reconnect_first_delay = 1\n\
+                auto_reconnect_second_delay = 600\nauto_reconnect_subsequent_delay = 601\n";
+    let read = written(dir.path(), text);
+    assert_eq!(read.ssh_auto_reconnect_first_delay, 1);
+    assert_eq!(read.ssh_auto_reconnect_second_delay, 600);
+    assert_eq!(
+        read.ssh_auto_reconnect_subsequent_delay, 15,
+        "out of the range, the default"
+    );
+    let read = written(
+        dir.path(),
+        "version = 1\n[ssh]\nauto_reconnect_first_delay = 0\n",
+    );
+    assert_eq!(read.ssh_auto_reconnect_first_delay, 2, "0 is out of range");
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        ssh_auto_reconnect_first_delay: 3,
+        ssh_auto_reconnect_second_delay: 30,
+        ssh_auto_reconnect_subsequent_delay: 120,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+}
+
+#[test]
+fn the_rdp_disconnect_confirmation_is_on_and_the_indicators_collapsed_until_changed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let read = written(dir.path(), "version = 1\n");
+    assert!(read.rdp_confirm_disconnect, "on, as the C# default");
+    assert!(
+        !read.rdp_redirection_indicators_expanded,
+        "off, as the C# default"
+    );
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings {
+        rdp_confirm_disconnect: false,
+        rdp_redirection_indicators_expanded: true,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(
+        text.contains("confirm_disconnect = false")
+            && text.contains("indicators_always_expanded = true"),
+        "{text}"
+    );
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+
+    settings.reset_rdp();
+    assert!(settings.rdp_confirm_disconnect && !settings.rdp_redirection_indicators_expanded);
+}
+
+#[test]
+fn the_default_resolution_is_kept_ranged_exported_and_reset() {
+    use heimdall_core::settings::{
+        RDP_DEFAULT_HEIGHT_DEFAULT, RDP_DEFAULT_RESOLUTION_MAX, RDP_DEFAULT_RESOLUTION_MIN,
+        RDP_DEFAULT_WIDTH_DEFAULT, rdp_default_resolution_accepted,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::default();
+    assert_eq!(settings.rdp_default_width, RDP_DEFAULT_WIDTH_DEFAULT);
+    assert_eq!(settings.rdp_default_height, RDP_DEFAULT_HEIGHT_DEFAULT);
+    assert_eq!(settings.rdp_default_size(), (1920, 1080));
+    for (side, accepted) in [
+        (RDP_DEFAULT_RESOLUTION_MIN - 1, false),
+        (RDP_DEFAULT_RESOLUTION_MIN, true),
+        (RDP_DEFAULT_RESOLUTION_MAX, true),
+        (RDP_DEFAULT_RESOLUTION_MAX + 1, false),
+    ] {
+        assert_eq!(rdp_default_resolution_accepted(side), accepted, "{side}");
+    }
+
+    settings.rdp_default_width = 1280;
+    settings.rdp_default_height = 720;
+    settings.save(&path).expect("save");
+    let mut read = Settings::load(&path).expect("load");
+    assert_eq!(read.rdp_default_size(), (1280, 720));
+
+    // Edited by hand out of the range: the default.
+    std::fs::write(
+        &path,
+        "version = 1\n[rdp_session]\ndefault_width = 100\ndefault_height = 9000\n",
+    )
+    .expect("write");
+    assert_eq!(
+        Settings::load(&path).expect("load").rdp_default_size(),
+        (1920, 1080)
+    );
+
+    // In a portable settings file, as the C# exports it.
+    let (text, _) = read.export(None, false);
+    assert!(text.contains("default_width = 1280"), "{text}");
+    let imported = Settings::default().import(&text).expect("import");
+    assert_eq!(imported.settings.rdp_default_size(), (1280, 720));
+    assert!(
+        imported
+            .changes
+            .iter()
+            .any(|change| change.key == "rdp_session.default_height"),
+        "{:?}",
+        imported.changes
+    );
+
+    read.reset_rdp();
+    assert_eq!(read.rdp_default_size(), (1920, 1080), "reset with RDP");
+}
+
+#[test]
+fn the_mobaxterm_variables_default_to_das_and_are_written_and_read_back_whole() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let das = std::collections::BTreeMap::from([("DAS".to_owned(), "%USERNAME%".to_owned())]);
+    assert_eq!(Settings::default().mobaxterm_variables, das);
+
+    let custom = std::collections::BTreeMap::from([
+        ("TEAM".to_owned(), "ops".to_owned()),
+        ("DAS".to_owned(), "jb".to_owned()),
+    ]);
+    let settings = Settings {
+        mobaxterm_variables: custom.clone(),
+        ..Settings::default()
+    };
+    settings.save(&path).expect("saved");
+    assert_eq!(
+        Settings::load(&path).expect("read").mobaxterm_variables,
+        custom
+    );
+
+    // The user's choice of none is kept; a file written before the setting takes the default.
+    let none = Settings {
+        mobaxterm_variables: std::collections::BTreeMap::new(),
+        ..Settings::default()
+    };
+    none.save(&path).expect("saved");
+    assert!(
+        Settings::load(&path)
+            .expect("read")
+            .mobaxterm_variables
+            .is_empty()
+    );
+    std::fs::write(&path, "version = 1\n").expect("an old file");
+    assert_eq!(
+        Settings::load(&path).expect("read").mobaxterm_variables,
+        das
+    );
+}
+
+#[test]
+fn a_reset_keeps_the_mobaxterm_variables_and_an_export_carries_them() {
+    let custom = std::collections::BTreeMap::from([("TEAM".to_owned(), "ops".to_owned())]);
+    let settings = Settings {
+        mobaxterm_variables: custom.clone(),
+        ..Settings::default()
+    };
+    let mut reset = settings.clone();
+    reset.reset_all();
+    assert_eq!(reset.mobaxterm_variables, custom, "as the C# reset");
+
+    let (text, _) = settings.export(None, false);
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(read.settings.mobaxterm_variables, custom);
+    assert!(read.ignored.is_empty(), "{:?}", read.ignored);
 }

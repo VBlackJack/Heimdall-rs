@@ -137,6 +137,7 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("general.diagnostics_log", PLAIN),
     ("general.show_gateway_badge", PLAIN),
     ("general.show_properties_panel", PLAIN),
+    ("general.group_tabs_by_folder", PLAIN),
     // The workspace locks later, or never.
     (
         "vault.auto_lock_idle_minutes",
@@ -160,6 +161,9 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("credential_provider.timeout_ms", PLAIN),
     ("ssh.auto_reconnect", PLAIN),
     ("ssh.auto_reconnect_attempts", PLAIN),
+    ("ssh.auto_reconnect_first_delay", PLAIN),
+    ("ssh.auto_reconnect_second_delay", PLAIN),
+    ("ssh.auto_reconnect_subsequent_delay", PLAIN),
     ("ssh.anti_idle_interval", PLAIN),
     ("ssh.keep_alive_interval", PLAIN),
     ("ssh.tmout_reset_interval", PLAIN),
@@ -199,12 +203,16 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("rdp_session.connect_timeout", PLAIN),
     ("rdp_session.resize_enable_delay_ms", PLAIN),
     ("rdp_session.keep_alive_interval_ms", PLAIN),
+    ("rdp_session.default_width", PLAIN),
+    ("rdp_session.default_height", PLAIN),
     ("rdp_session.resolution_presets", PLAIN),
     ("rdp_session.default_mode", PLAIN),
     // Credentials sent to an embedded desktop without Credential Guard protecting them.
     ("rdp_session.require_credential_guard", ON_STRICT),
     // What a server compresses read by the built-in client's bulk decompressors.
     ("rdp_session.builtin_compression", OFF_STRICT),
+    ("rdp_session.confirm_disconnect", PLAIN),
+    ("rdp_session.indicators_always_expanded", PLAIN),
     // C# `ExternalEditorPath`.
     ("files.external_editor", RUNS),
     ("files.browser_enabled", PLAIN),
@@ -214,6 +222,11 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("files.follow_local_directory", PLAIN),
     // C# `ExternalTools`, a `SensitiveKeys` entry: programs started from the menus.
     ("external_tools.tools", RUNS),
+    // C# `SharedSessionSources`: files other people write, whose sessions this computer then
+    // offers to connect to.
+    ("shared_sessions.sources", RUNS),
+    // C# `MobaXtermUserVariables`: logins an import fills in, nothing that runs.
+    ("mobaxterm.variables", PLAIN),
     ("reachability.enabled", PLAIN),
     ("reachability.interval", PLAIN),
     ("reachability.timeout", PLAIN),

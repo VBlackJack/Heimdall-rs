@@ -207,7 +207,15 @@ fn grouped(rows: Vec<QuickRow>) -> Vec<QuickRow> {
 
 /// How well `tool` matches `query`, as the C# `ScoreToolDescriptor`: its name, its command
 /// words, a word typed whole above all, and its category's name by half.
+///
+/// Beyond the C#, which scores only the words: the tool's identifier ("cmdlib") or its
+/// name in the language shown, typed whole, count as a word typed whole. Otherwise a bare
+/// code that is no command word and not in order in the name fell through to an SSH
+/// session on a host of that name.
 fn score_tool(tool: ToolId, words: &ToolWords, query: &str) -> usize {
+    if tool.code().eq_ignore_ascii_case(query) || words.name.trim().eq_ignore_ascii_case(query) {
+        return TOOL_EXACT_ALIAS_SCORE;
+    }
     let mut best = score_text(&words.name, query);
     for prefix in tool.prefixes() {
         if prefix.eq_ignore_ascii_case(query) {

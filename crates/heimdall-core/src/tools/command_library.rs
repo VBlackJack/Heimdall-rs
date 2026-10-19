@@ -75,6 +75,46 @@ pub enum SnippetId {
     NmapServiceScan,
 }
 
+impl SnippetId {
+    /// Every snippet, in the order of the catalog.
+    pub const ALL: [Self; 10] = [
+        Self::LinuxListeningPorts,
+        Self::LinuxKillPort,
+        Self::LinuxJournalFollow,
+        Self::LinuxCertExpiry,
+        Self::WindowsTestConnection,
+        Self::WindowsPortOwner,
+        Self::WindowsRestartService,
+        Self::WindowsFlushDns,
+        Self::MtrProbe,
+        Self::NmapServiceScan,
+    ];
+
+    /// The name kept in a file for this snippet (favorites, history): it never changes with
+    /// the language or the order of the catalog.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::LinuxListeningPorts => "linux-listening-ports",
+            Self::LinuxKillPort => "linux-kill-port",
+            Self::LinuxJournalFollow => "linux-journal-follow",
+            Self::LinuxCertExpiry => "linux-cert-expiry",
+            Self::WindowsTestConnection => "windows-test-connection",
+            Self::WindowsPortOwner => "windows-port-owner",
+            Self::WindowsRestartService => "windows-restart-service",
+            Self::WindowsFlushDns => "windows-flush-dns",
+            Self::MtrProbe => "mtr-probe",
+            Self::NmapServiceScan => "nmap-service-scan",
+        }
+    }
+
+    /// The snippet named `key` by [`SnippetId::key`].
+    #[must_use]
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|id| id.key() == key)
+    }
+}
+
 /// What a value of a snippet is, named by its label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamLabel {
@@ -267,6 +307,18 @@ pub fn snippet(id: SnippetId) -> Option<&'static CommandSnippet> {
     BUILTIN_SNIPPETS.iter().find(|snippet| snippet.id == id)
 }
 
+/// Whether the snippet `id` can destroy data or stop a service. The catalog carries no level
+/// of its own; the C# asks before it sends a command marked dangerous
+/// (`DangerousCommandGuard.cs:44-57`), so these two are named the same way and the question
+/// about sending them says so.
+#[must_use]
+pub fn is_dangerous(id: SnippetId) -> bool {
+    matches!(
+        id,
+        SnippetId::LinuxKillPort | SnippetId::WindowsRestartService
+    )
+}
+
 /// Whether `snippet` is shown under the platform chosen, `None` being every platform: a
 /// cross-platform snippet is shown under each.
 #[must_use]
@@ -291,6 +343,20 @@ pub fn matches_query(snippet: &CommandSnippet, texts: &[&str], query: &str) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_snippet_has_a_key_that_finds_it_again() {
+        assert_eq!(SnippetId::ALL.len(), BUILTIN_SNIPPETS.len());
+        for each in BUILTIN_SNIPPETS {
+            assert!(SnippetId::ALL.contains(&each.id));
+            assert_eq!(SnippetId::from_key(each.id.key()), Some(each.id));
+        }
+        let mut keys: Vec<&str> = SnippetId::ALL.iter().map(|id| id.key()).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), SnippetId::ALL.len(), "keys are distinct");
+        assert_eq!(SnippetId::from_key("nothing"), None);
+    }
 
     #[test]
     fn a_snippet_takes_the_values_given_else_its_defaults() {

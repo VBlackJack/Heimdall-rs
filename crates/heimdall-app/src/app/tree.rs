@@ -54,17 +54,22 @@ pub enum ProfileKind {
     WinRm,
     /// A Citrix Workspace published application, launched outside Heimdall.
     Citrix,
+    /// A web console, opened in the system's browser.
+    Web,
+    /// A tool saved as a tree entry, as the C# `TOOL:X`: it opens the tool's tab.
+    Tool,
 }
 
 impl ProfileKind {
     /// Every protocol, in the order the C# filter lists them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
         Self::Sftp,
         Self::Vnc,
         Self::Telnet,
+        Self::Web,
         Self::Ftp,
         Self::Citrix,
         Self::Local,
@@ -83,6 +88,8 @@ impl ProfileKind {
             Self::Local => "Local",
             Self::WinRm => "WinRM",
             Self::Citrix => "Citrix",
+            Self::Web => "Web",
+            Self::Tool => "Tool",
         }
     }
 }
@@ -180,6 +187,7 @@ pub enum ProfileCopy {
 impl App {
     /// Every saved profile, whatever its protocol, in no particular order.
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one summary per protocol")]
     pub fn profile_summaries(&self) -> Vec<ProfileSummary> {
         let mut all = Vec::new();
         for profile in self.store.ssh_profiles() {
@@ -266,6 +274,37 @@ impl App {
                 profile.group.as_ref(),
                 ProfileKind::Citrix,
             ));
+        }
+        for profile in self.store.web_profiles() {
+            all.push(ProfileSummary {
+                id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
+                name: profile.name.clone(),
+                group: profile.group.clone(),
+                kind: ProfileKind::Web,
+                endpoint: Some((profile.host.clone(), profile.port)),
+                username: profile.username.clone(),
+                gateway: self.badge(profile.gateway.as_ref()),
+            });
+        }
+        for profile in self.store.tool_profiles() {
+            all.push(ProfileSummary {
+                id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
+                name: profile.name.clone(),
+                group: profile.group.clone(),
+                kind: ProfileKind::Tool,
+                // A tool with a host shows it as a server does, the port left to the tool
+                // when it holds none.
+                endpoint: profile
+                    .host
+                    .clone()
+                    .map(|host| (host, profile.port.unwrap_or_default())),
+                username: None,
+                gateway: None,
+            });
         }
         for profile in self.store.winrm_profiles() {
             all.push(ProfileSummary {
@@ -460,6 +499,7 @@ impl App {
     /// Saves a copy of `id` named as the C# Heimdall names one: `suffix` (" (copy)" in
     /// English) added, then a number when that name is taken. Its saved password comes
     /// along, except an RDP one, as there.
+    #[expect(clippy::too_many_lines, reason = "one copy per protocol")]
     pub(super) fn duplicate_profile(&mut self, id: &ProfileId, suffix: &str) {
         let Some(source) = self.profile_summary(id) else {
             return;
@@ -546,6 +586,22 @@ impl App {
                         profile.id = copy.clone();
                         profile.name.clone_from(&name);
                         store.merge_citrix([profile]);
+                    }
+                }
+                ProfileKind::Web => {
+                    let found = store.web_profiles().iter().find(|p| p.id == *id).cloned();
+                    if let Some(mut profile) = found {
+                        profile.id = copy.clone();
+                        profile.name.clone_from(&name);
+                        store.merge_web([profile]);
+                    }
+                }
+                ProfileKind::Tool => {
+                    let found = store.tool_profiles().iter().find(|p| p.id == *id).cloned();
+                    if let Some(mut profile) = found {
+                        profile.id = copy.clone();
+                        profile.name.clone_from(&name);
+                        store.merge_tools([profile]);
                     }
                 }
             }

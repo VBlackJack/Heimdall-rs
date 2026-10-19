@@ -181,6 +181,15 @@ fn the_search_finds_rows_by_name_hint_heading_or_choice_on_every_tab_whatever_th
         "beside the watchdog"
     );
     assert_eq!(
+        shell.settings_found("default resolution width"),
+        [SettingRow::RdpDefaultWidth],
+        "the C# default resolution, used by Remote Desktop Connection"
+    );
+    assert_eq!(
+        SettingRow::RdpDefaultHeight.card(),
+        SettingsCard::RdpSession,
+    );
+    assert_eq!(
         shell.settings_found("session keep-alive"),
         [SettingRow::RdpKeepAlive],
         "the C# RDP Behavior card's keep-alive"
@@ -1044,9 +1053,12 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
     // The last rows added, the welcome tour's button, the RDP keep-alive interval, the
-    // built-in client's compression, hold no path; the external tools' card holds the Browse
-    // buttons of the tool chosen, which its own tests cover.
-    assert_eq!(SettingRow::ALL.len(), 66, "no row added");
+    // built-in client's compression, the properties panel's box, the SSH reconnect waits,
+    // the RDP disconnect confirmation and redirection indicators, hold no path; the external
+    // tools' card holds the Browse buttons of the tool chosen, which its own tests cover, and
+    // the MobaXterm variables' card holds none; the shared sources' card holds one per source,
+    // which its own test covers.
+    assert_eq!(SettingRow::ALL.len(), 76, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1553,4 +1565,113 @@ fn an_external_tool_is_added_from_its_card_and_applied_once_its_program_is_found
     assert_eq!(tools[0].name, "New Tool");
     assert_eq!(tools[0].executable_path, program);
     assert_eq!(tools[0].arguments, "{Host}");
+}
+
+#[test]
+fn a_mobaxterm_variable_is_added_from_its_card_and_applied_once_it_has_a_name_and_a_value() {
+    use heimdall_ui::mobaxterm_variables_view::VariablesEdit;
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("import variables"),
+        [SettingRow::MobaxtermVariables]
+    );
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Add));
+    assert_eq!(
+        shell.app().settings().mobaxterm_variables.len(),
+        1,
+        "the empty row waits in the card"
+    );
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Name(
+        1,
+        "TEAM".to_owned(),
+    )));
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Value(
+        1,
+        "ops".to_owned(),
+    )));
+    assert_eq!(
+        shell.app().settings().mobaxterm_variables.get("TEAM"),
+        Some(&"ops".to_owned())
+    );
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Remove(0)));
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Remove(0)));
+    assert!(shell.app().settings().mobaxterm_variables.is_empty());
+}
+
+#[test]
+fn an_unresolved_mobaxterm_variable_is_a_line_of_the_import_report() {
+    use heimdall_core::import::foreign::FileWarning;
+    let _english = english();
+    let lines = heimdall_ui::file_import_view::warning_lines(&[FileWarning::UnresolvedVariable {
+        session: "db".to_owned(),
+        name: "GHOST".to_owned(),
+    }]);
+    assert_eq!(lines.len(), 1);
+    assert!(
+        lines[0].contains("has no value") && lines[0].contains("GHOST") && lines[0].contains("db"),
+        "{}",
+        lines[0]
+    );
+}
+
+#[test]
+fn a_shared_source_is_added_from_its_card_picked_and_applied_once_it_passes_the_row_checks() {
+    use heimdall_ui::browse::BrowseTarget;
+    use heimdall_ui::shared_sources_view::SourcesEdit;
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("shared session sources"),
+        [SettingRow::SharedSources]
+    );
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Add));
+    assert!(
+        shell.app().settings().shared_sources.is_empty(),
+        "the empty row waits in the card"
+    );
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Name(
+        0,
+        "Team".to_owned(),
+    )));
+    // Picked with Browse, as the typed path is applied.
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(
+        &file,
+        "[Bookmarks]
+web= #109#0%web.lab%22%ops%
+",
+    )
+    .expect("write");
+    let picked = file.to_string_lossy().into_owned();
+    let _ = shell.update(Message::Browsed(
+        BrowseTarget::SharedSourcePath(0),
+        picked.clone(),
+    ));
+    let sources = &shell.app().settings().shared_sources;
+    assert_eq!(sources.len(), 1);
+    assert_eq!(
+        (sources[0].name.as_str(), sources[0].path.as_str()),
+        ("Team", picked.as_str())
+    );
+    assert_eq!(sources[0].id.len(), 32, "an identifier of its own");
+    assert_eq!(
+        shell.app().shared_sessions().sessions().count(),
+        1,
+        "read at once"
+    );
+    // The report opens and closes without changing the list.
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Report(0)));
+    let _ = shell.update(Message::SharedReportClose);
+    assert_eq!(shell.app().settings().shared_sources.len(), 1);
+    // A relative path is refused as the import refuses it, and the list stays as it was.
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Path(
+        0,
+        "relative.mxtsessions".to_owned(),
+    )));
+    assert_eq!(shell.app().settings().shared_sources[0].path, picked);
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Remove(0)));
+    assert!(shell.app().settings().shared_sources.is_empty());
 }

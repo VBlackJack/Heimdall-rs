@@ -1361,6 +1361,105 @@ pub struct CitrixProfile {
     pub sso: bool,
 }
 
+/// A web console (iLO, iDRAC, a NAS or a switch), as the C# WEB connection type: opened in
+/// the system's browser, never in Heimdall, on the address built from its host, port, scheme
+/// and path (see [`crate::web::address`]); through an SSH gateway, on a tunnel of this
+/// computer's loopback address.
+///
+/// Holds no password: the browser asks for it itself, and none is ever put in the address.
+/// The account is kept as the C# `WebUsername`, shown in the tree and written back by the
+/// export.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Host name or address, as every other type keeps it, as the C# `RemoteServer`.
+    pub host: String,
+    /// TCP port, as the C# `WebPort`.
+    pub port: u16,
+    /// Plain HTTP rather than HTTPS, as the C# `WebUseHttp`: off unless turned on, written
+    /// down only when on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_http: bool,
+    /// Path, query and fragment appended to the address, as the C# `WebPath`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The account the console's sign-in takes, as the C# `WebUsername`; never put in the
+    /// address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// The SSH gateway the console is reached through, if any, as the C# `SshGatewayId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<ProfileId>,
+}
+
+impl WebProfile {
+    /// The address the browser opens when the console is reached directly.
+    ///
+    /// # Errors
+    ///
+    /// Its host, port and path form none.
+    pub fn address(&self) -> Result<String, crate::web::WebAddressError> {
+        crate::web::address(&self.host, self.port, self.use_http, self.path.as_deref())
+    }
+}
+
+/// A tool saved as a tree entry, as the C# `TOOL:X` connection type (`MainWindow.xaml.cs:921-961`,
+/// `ShowAddToolPickerAsync`): it opens the tool's tab, on the host and port it holds, instead of
+/// connecting.
+///
+/// The tool is kept as the C# identifier text (`PING`, `DNS`), not as a typed value, so an entry
+/// naming a tool this build does not have survives a save and an export untouched. Holds no
+/// secret and reaches nothing by itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the entry is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// The tool's C# identifier, without the `TOOL:` prefix, as `ToolDescriptor.Id`.
+    pub tool: String,
+    /// The host the tool opens on, as the C# `RemoteServer`; only a network tool takes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// The port the tool opens on, as the C# `RemotePort` when above zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+}
+
+impl ToolProfile {
+    /// The C# prefix before a tool's identifier in a connection type,
+    /// `ConnectionTypeCatalog.ToolPrefix`.
+    pub const TYPE_PREFIX: &'static str = "TOOL:";
+
+    /// Whether `connection_type` is a tool entry's, as `IsToolConnectionType`: the prefix,
+    /// whatever its case.
+    #[must_use]
+    pub fn is_tool_type(connection_type: &str) -> bool {
+        connection_type
+            .get(..Self::TYPE_PREFIX.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(Self::TYPE_PREFIX))
+    }
+
+    /// The upper-cased identifier behind a tool connection type; `None` when it has none.
+    #[must_use]
+    pub fn tool_of(connection_type: &str) -> Option<String> {
+        if !Self::is_tool_type(connection_type) {
+            return None;
+        }
+        let tool = connection_type[Self::TYPE_PREFIX.len()..].trim();
+        (!tool.is_empty()).then(|| tool.to_ascii_uppercase())
+    }
+}
+
 /// An FTP profile's data connections are passive unless it says otherwise.
 fn passive() -> bool {
     true

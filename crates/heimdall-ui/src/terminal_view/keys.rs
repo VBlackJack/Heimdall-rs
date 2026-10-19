@@ -48,19 +48,35 @@ pub fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
     {
         return Some(first.to_ascii_lowercase());
     }
+    // Every letter, not only the ones bound today: a shortcut added later works on a
+    // non-Latin layout without coming back here (Ctrl+Shift+N, Ctrl+E and Ctrl+Z did not).
     match physical {
         Physical::Code(Code::KeyA) => Some('a'),
+        Physical::Code(Code::KeyB) => Some('b'),
         Physical::Code(Code::KeyC) => Some('c'),
         Physical::Code(Code::KeyD) => Some('d'),
+        Physical::Code(Code::KeyE) => Some('e'),
         Physical::Code(Code::KeyF) => Some('f'),
+        Physical::Code(Code::KeyG) => Some('g'),
+        Physical::Code(Code::KeyH) => Some('h'),
+        Physical::Code(Code::KeyI) => Some('i'),
+        Physical::Code(Code::KeyJ) => Some('j'),
         Physical::Code(Code::KeyK) => Some('k'),
         Physical::Code(Code::KeyL) => Some('l'),
+        Physical::Code(Code::KeyM) => Some('m'),
+        Physical::Code(Code::KeyN) => Some('n'),
+        Physical::Code(Code::KeyO) => Some('o'),
+        Physical::Code(Code::KeyP) => Some('p'),
+        Physical::Code(Code::KeyQ) => Some('q'),
         Physical::Code(Code::KeyR) => Some('r'),
         Physical::Code(Code::KeyS) => Some('s'),
+        Physical::Code(Code::KeyT) => Some('t'),
         Physical::Code(Code::KeyU) => Some('u'),
         Physical::Code(Code::KeyV) => Some('v'),
         Physical::Code(Code::KeyW) => Some('w'),
         Physical::Code(Code::KeyX) => Some('x'),
+        Physical::Code(Code::KeyY) => Some('y'),
+        Physical::Code(Code::KeyZ) => Some('z'),
         _ => None,
     }
 }
@@ -491,6 +507,46 @@ mod tests {
     use heimdall_term::{Key, KeyLocation, NamedKey};
     use iced::keyboard::key::{Code, Named, Physical};
     use iced::keyboard::{self, Location, Modifiers};
+
+    #[test]
+    fn every_letter_falls_back_to_its_us_position_on_a_non_latin_layout() {
+        let codes = [
+            Code::KeyA,
+            Code::KeyB,
+            Code::KeyC,
+            Code::KeyD,
+            Code::KeyE,
+            Code::KeyF,
+            Code::KeyG,
+            Code::KeyH,
+            Code::KeyI,
+            Code::KeyJ,
+            Code::KeyK,
+            Code::KeyL,
+            Code::KeyM,
+            Code::KeyN,
+            Code::KeyO,
+            Code::KeyP,
+            Code::KeyQ,
+            Code::KeyR,
+            Code::KeyS,
+            Code::KeyT,
+            Code::KeyU,
+            Code::KeyV,
+            Code::KeyW,
+            Code::KeyX,
+            Code::KeyY,
+            Code::KeyZ,
+        ];
+        // A Cyrillic letter: no Latin character to read, so the place decides.
+        let cyrillic = keyboard::Key::Character("\u{0436}".into());
+        for (code, expected) in codes.into_iter().zip('a'..='z') {
+            assert_eq!(
+                super::letter(&cyrillic, Physical::Code(code)),
+                Some(expected)
+            );
+        }
+    }
 
     /// A physical key no shortcut reads.
     const ANY_PLACE: Physical = Physical::Code(Code::F24);

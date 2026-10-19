@@ -125,7 +125,8 @@ pub fn reconcile(
         .iter_mut()
         .map(|profile| &mut profile.gateway)
         .chain(report.rdp.iter_mut().map(|profile| &mut profile.gateway))
-        .chain(report.winrm.iter_mut().map(|profile| &mut profile.gateway));
+        .chain(report.winrm.iter_mut().map(|profile| &mut profile.gateway))
+        .chain(report.web.iter_mut().map(|profile| &mut profile.gateway));
     for gateway in profiles {
         rewired(gateway);
         if orphan(gateway.as_ref()) {

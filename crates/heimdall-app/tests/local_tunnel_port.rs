@@ -192,6 +192,7 @@ async fn mstsc_port(lab: &Lab, dir: &Path, profile: RdpProfile) -> (u16, Launch)
         profile,
         ssh: options(dir, lab),
         cancel: CancellationToken::new(),
+        default_size: heimdall_core::profile::DEFAULT_FIXED_SIZE,
     };
     let (hand, handed) = std_mpsc::channel::<String>();
     let start = move |content: &str| -> Result<MstscRunning, ExternalRefusal> {
@@ -274,6 +275,7 @@ async fn winrm_command(lab: &Lab, dir: &Path, port: Option<u16>) -> String {
         fallback_directory: dir.to_owned(),
         cancel: CancellationToken::new(),
         password: None,
+        provider: None,
     };
     let mut events = heimdall_app::winrm_driver::winrm_events(request, registry.clone());
     let mut printed = String::new();

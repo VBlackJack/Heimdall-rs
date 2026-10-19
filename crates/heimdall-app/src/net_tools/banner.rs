@@ -23,7 +23,9 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use heimdall_core::tools::banner_grab::{self, BANNER_MAX_BYTES, BannerProbeResult};
-use tokio::io::AsyncReadExt as _;
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
+use tokio::io::{AsyncRead, AsyncReadExt as _};
 
 use crate::text::server_report_text;
 
@@ -46,7 +48,34 @@ pub async fn grab(
         return BannerProbeResult::closed(port);
     };
     let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let mut stream = connected.stream;
+    read_banner(connected.stream, port, millis, read_timeout).await
+}
+
+/// What `port` of `host` says first as the gateway reaches it: connected from the gateway
+/// within `connect_timeout`, `host` sent as typed for the gateway to resolve, then one read
+/// as [`grab`] does. Nothing is connected from here.
+pub async fn grab_via<O: Opener>(
+    gateway: &ToolGateway<O>,
+    host: &str,
+    port: u16,
+    connect_timeout: Duration,
+    read_timeout: Duration,
+) -> BannerProbeResult {
+    let started = Instant::now();
+    let Ok(stream) = gateway.dial_within(host, port, Some(connect_timeout)).await else {
+        return BannerProbeResult::closed(port);
+    };
+    let millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    read_banner(stream, port, millis, read_timeout).await
+}
+
+/// The one read of what a connected port says first, within `read_timeout`.
+async fn read_banner<S: AsyncRead + Unpin>(
+    mut stream: S,
+    port: u16,
+    millis: u64,
+    read_timeout: Duration,
+) -> BannerProbeResult {
     let mut buffer = [0_u8; BANNER_MAX_BYTES];
     let banner = match tokio::time::timeout(read_timeout, stream.read(&mut buffer)).await {
         Ok(Ok(count)) if count > 0 => banner_grab::clean_banner(&server_report_text(

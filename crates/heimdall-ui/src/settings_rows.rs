@@ -37,12 +37,19 @@ pub enum SettingsCard {
     Appearance,
     /// The tunnels panel, the computer's sleep, the most sessions.
     Behavior,
+    /// The session tree's view choices, as the C# "Session tree" card.
+    SessionTree,
     /// The look for a newer release.
     Updates,
     /// The background check of every server.
     Reachability,
     /// The user's external tools, as the C# "External Tools" card of its Advanced tab.
     ExternalTools,
+    /// The values of the `[NAME]` variables of a `MobaXterm` file, as the C# card of the `MobaXterm` import
+    /// variables.
+    MobaxtermVariables,
+    /// The shared session sources, as the C# card of its "Shared session sources".
+    SharedSources,
     /// "Show the tour again", as the C# "Welcome tour" card.
     Onboarding,
     /// The terminals' text and colours, Ctrl+V and the `PowerShell` policy.
@@ -90,12 +97,15 @@ pub enum SettingsCard {
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 29] = [
         Self::Appearance,
         Self::Behavior,
+        Self::SessionTree,
         Self::Updates,
         Self::Reachability,
         Self::ExternalTools,
+        Self::MobaxtermVariables,
+        Self::SharedSources,
         Self::Onboarding,
         Self::Terminal,
         Self::SessionLogging,
@@ -125,10 +135,13 @@ impl SettingsCard {
         match self {
             Self::Appearance
             | Self::Behavior
+            | Self::SessionTree
             | Self::Updates
             | Self::Reachability
             // The C# keeps them on its Advanced tab, which this version does not have.
             | Self::ExternalTools
+            | Self::MobaxtermVariables
+            | Self::SharedSources
             | Self::Onboarding => SettingsTab::General,
             Self::Terminal | Self::SessionLogging | Self::Macros => SettingsTab::Terminal,
             Self::SshReconnect
@@ -172,6 +185,8 @@ pub enum SettingRow {
     Accent,
     /// The tunnels panel starts collapsed.
     CollapseTunnelsPanel,
+    /// The properties panel docked under the tree, shared with the tree's filter menu.
+    ShowPropertiesPanel,
     /// The computer kept from sleeping while a session is open.
     PreventSleep,
     /// Most sessions open at once.
@@ -194,6 +209,10 @@ pub enum SettingRow {
     ReachabilityProbes,
     /// The external tools, listed and edited.
     ExternalTools,
+    /// The `MobaXterm` import variables, listed and edited.
+    MobaxtermVariables,
+    /// The shared session sources, listed and edited.
+    SharedSources,
     /// "Show the tour again", which shows the welcome tour from its first step.
     Onboarding,
     /// The size of the terminals' text.
@@ -220,6 +239,12 @@ pub enum SettingRow {
     SshAutoReconnect,
     /// Attempts of an SSH auto-reconnect.
     SshAutoReconnectAttempts,
+    /// Seconds before the first SSH auto-reconnect attempt.
+    SshAutoReconnectFirstDelay,
+    /// Seconds before the second SSH auto-reconnect attempt.
+    SshAutoReconnectSecondDelay,
+    /// Seconds before every SSH auto-reconnect attempt after the second.
+    SshAutoReconnectSubsequentDelay,
     /// Which SSH agent's keys are offered first.
     SshAgentPreference,
     /// Seconds between two SSH keep-alives.
@@ -268,8 +293,16 @@ pub enum SettingRow {
     RdpResizeDelay,
     /// Milliseconds between two keep-alives of an embedded RDP connection.
     RdpKeepAlive,
+    /// Pixels of the width Remote Desktop Connection opens at for the default resolution.
+    RdpDefaultWidth,
+    /// Pixels of the height Remote Desktop Connection opens at for the default resolution.
+    RdpDefaultHeight,
     /// The built-in RDP client compresses when the profile asks for it, experimental.
     RdpBuiltinCompression,
+    /// The session bar's Disconnect asks before it ends an RDP desktop.
+    RdpConfirmDisconnect,
+    /// An RDP desktop's bar shows every redirection, the ones not shared too.
+    RdpRedirectionIndicators,
     /// The sizes the RDP Resolution menus offer.
     RdpResolutionPresets,
     /// "Reset RDP defaults".
@@ -300,13 +333,14 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 66] = [
+    pub const ALL: [Self; 76] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
         Self::CollapseTunnelsPanel,
         Self::PreventSleep,
         Self::MaxSessions,
+        Self::ShowPropertiesPanel,
         Self::UpdateChecks,
         Self::UpdateInterval,
         Self::UpdateVersion,
@@ -316,6 +350,8 @@ impl SettingRow {
         Self::ReachabilityTimeout,
         Self::ReachabilityProbes,
         Self::ExternalTools,
+        Self::MobaxtermVariables,
+        Self::SharedSources,
         Self::Onboarding,
         Self::FontSize,
         Self::FontFamily,
@@ -329,6 +365,9 @@ impl SettingRow {
         Self::Macros,
         Self::SshAutoReconnect,
         Self::SshAutoReconnectAttempts,
+        Self::SshAutoReconnectFirstDelay,
+        Self::SshAutoReconnectSecondDelay,
+        Self::SshAutoReconnectSubsequentDelay,
         Self::SshAgentPreference,
         Self::KeepAlive,
         Self::TmoutReset,
@@ -353,6 +392,10 @@ impl SettingRow {
         Self::RdpConnectTimeout,
         Self::RdpResizeDelay,
         Self::RdpKeepAlive,
+        Self::RdpConfirmDisconnect,
+        Self::RdpRedirectionIndicators,
+        Self::RdpDefaultWidth,
+        Self::RdpDefaultHeight,
         Self::RdpBuiltinCompression,
         Self::RdpResolutionPresets,
         Self::RdpResetAll,
@@ -377,6 +420,7 @@ impl SettingRow {
             Self::CollapseTunnelsPanel | Self::PreventSleep | Self::MaxSessions => {
                 SettingsCard::Behavior
             }
+            Self::ShowPropertiesPanel => SettingsCard::SessionTree,
             Self::UpdateChecks
             | Self::UpdateInterval
             | Self::UpdateVersion
@@ -386,6 +430,8 @@ impl SettingRow {
             | Self::ReachabilityTimeout
             | Self::ReachabilityProbes => SettingsCard::Reachability,
             Self::ExternalTools => SettingsCard::ExternalTools,
+            Self::MobaxtermVariables => SettingsCard::MobaxtermVariables,
+            Self::SharedSources => SettingsCard::SharedSources,
             // The last card of the C# General tab (`MainWindow.xaml:2715-2745`).
             Self::Onboarding => SettingsCard::Onboarding,
             Self::FontSize
@@ -398,9 +444,12 @@ impl SettingRow {
                 SettingsCard::SessionLogging
             }
             Self::Macros => SettingsCard::Macros,
-            Self::SshAutoReconnect | Self::SshAutoReconnectAttempts | Self::SshAgentPreference => {
-                SettingsCard::SshReconnect
-            }
+            Self::SshAutoReconnect
+            | Self::SshAutoReconnectAttempts
+            | Self::SshAutoReconnectFirstDelay
+            | Self::SshAutoReconnectSecondDelay
+            | Self::SshAutoReconnectSubsequentDelay
+            | Self::SshAgentPreference => SettingsCard::SshReconnect,
             Self::KeepAlive | Self::TmoutReset | Self::AntiIdle => SettingsCard::SshSession,
             Self::PuttyPath | Self::SshDefaultMode => SettingsCard::Putty,
             Self::SftpBrowser
@@ -424,7 +473,11 @@ impl SettingRow {
             | Self::RdpConnectTimeout
             | Self::RdpResizeDelay
             | Self::RdpKeepAlive
-            | Self::RdpBuiltinCompression => SettingsCard::RdpSession,
+            | Self::RdpBuiltinCompression
+            | Self::RdpConfirmDisconnect
+            | Self::RdpDefaultWidth
+            | Self::RdpDefaultHeight
+            | Self::RdpRedirectionIndicators => SettingsCard::RdpSession,
             Self::RdpResolutionPresets => SettingsCard::RdpPresets,
             Self::RdpResetAll => SettingsCard::RdpReset,
             Self::Certificates => SettingsCard::RdpTrusted,
@@ -457,6 +510,9 @@ impl SettingRow {
             Self::ReachabilityTimeout => SessionField::ReachabilityTimeout,
             Self::ReachabilityProbes => SessionField::ReachabilityProbes,
             Self::TranscriptRetention => SessionField::TranscriptRetention,
+            Self::SshAutoReconnectFirstDelay => SessionField::SshReconnectFirstDelay,
+            Self::SshAutoReconnectSecondDelay => SessionField::SshReconnectSecondDelay,
+            Self::SshAutoReconnectSubsequentDelay => SessionField::SshReconnectSubsequentDelay,
             Self::KeepAlive => SessionField::KeepAlive,
             Self::TmoutReset => SessionField::TmoutReset,
             Self::AntiIdle => SessionField::AntiIdle,
@@ -466,6 +522,8 @@ impl SettingRow {
             Self::VaultHelloMaxDays => SessionField::VaultHelloMaxDays,
             Self::RdpResizeDelay => SessionField::RdpResizeDelay,
             Self::RdpKeepAlive => SessionField::RdpKeepAlive,
+            Self::RdpDefaultWidth => SessionField::RdpDefaultWidth,
+            Self::RdpDefaultHeight => SessionField::RdpDefaultHeight,
             _ => return None,
         })
     }
@@ -515,6 +573,8 @@ impl SettingRow {
                 | Self::LegacyMigration
                 | Self::Onboarding
                 | Self::ExternalTools
+                | Self::MobaxtermVariables
+                | Self::SharedSources
                 | Self::Macros
                 | Self::HostKeys
                 | Self::FtpsCertificates
@@ -637,6 +697,7 @@ impl SettingRow {
         let sftp = settings.sftp_browser;
         Some(match self {
             Self::CollapseTunnelsPanel => settings.collapse_tunnels_panel,
+            Self::ShowPropertiesPanel => settings.show_properties_panel,
             Self::PreventSleep => settings.prevent_sleep,
             Self::UpdateChecks => settings.updates.enabled,
             Self::Reachability => settings.reachability.enabled,
@@ -653,6 +714,8 @@ impl SettingRow {
             Self::RequireCredentialGuard => settings.require_credential_guard,
             Self::RequireWindowsHello => settings.windows_hello.require_on_connect,
             Self::RdpBuiltinCompression => settings.builtin_rdp_compression,
+            Self::RdpConfirmDisconnect => settings.rdp_confirm_disconnect,
+            Self::RdpRedirectionIndicators => settings.rdp_redirection_indicators_expanded,
             _ => return None,
         })
     }
@@ -682,6 +745,7 @@ impl SettingRow {
         let browser = |sftp: SftpBrowser| SettingsMessage::SftpBrowser(sftp);
         Some(match self {
             Self::CollapseTunnelsPanel => SettingsMessage::CollapseTunnelsPanel(on),
+            Self::ShowPropertiesPanel => SettingsMessage::ShowPropertiesPanel(on),
             Self::PreventSleep => SettingsMessage::PreventSleep(on),
             Self::UpdateChecks => SettingsMessage::UpdateChecks(on),
             Self::Reachability => SettingsMessage::Reachability(on),
@@ -693,6 +757,8 @@ impl SettingRow {
             Self::RequireCredentialGuard => SettingsMessage::RequireCredentialGuard(on),
             Self::RequireWindowsHello => SettingsMessage::RequireWindowsHello(on),
             Self::RdpBuiltinCompression => SettingsMessage::RdpBuiltinCompression(on),
+            Self::RdpConfirmDisconnect => SettingsMessage::RdpConfirmDisconnect(on),
+            Self::RdpRedirectionIndicators => SettingsMessage::RdpRedirectionIndicatorsExpanded(on),
             Self::SftpBrowser => browser(SftpBrowser {
                 enabled: on,
                 ..sftp
@@ -965,6 +1031,59 @@ mod tests {
     use heimdall_core::profile::{RdpMode, SshMode};
 
     use super::*;
+
+    #[test]
+    fn the_rdp_confirmation_and_indicators_are_boxes_and_the_ssh_waits_are_numbers() {
+        let defaults = Settings::default();
+        assert_eq!(SettingRow::RdpConfirmDisconnect.flag(&defaults), Some(true));
+        assert_eq!(
+            SettingRow::RdpRedirectionIndicators.flag(&defaults),
+            Some(false)
+        );
+        let changed = Settings {
+            rdp_confirm_disconnect: false,
+            rdp_redirection_indicators_expanded: true,
+            ..Settings::default()
+        };
+        assert!(SettingRow::RdpConfirmDisconnect.is_modified(&changed));
+        assert_eq!(
+            SettingRow::RdpConfirmDisconnect.toggled(&defaults, false),
+            Some(SettingsMessage::RdpConfirmDisconnect(false))
+        );
+        assert_eq!(
+            SettingRow::RdpRedirectionIndicators.reset(&changed),
+            Some(SettingsMessage::RdpRedirectionIndicatorsExpanded(false))
+        );
+        for (row, field) in [
+            (
+                SettingRow::SshAutoReconnectFirstDelay,
+                SessionField::SshReconnectFirstDelay,
+            ),
+            (
+                SettingRow::SshAutoReconnectSecondDelay,
+                SessionField::SshReconnectSecondDelay,
+            ),
+            (
+                SettingRow::SshAutoReconnectSubsequentDelay,
+                SessionField::SshReconnectSubsequentDelay,
+            ),
+        ] {
+            assert_eq!(row.session_field(), Some(field));
+            assert_eq!(row.tab(), SettingsTab::Ssh);
+            assert!(field.accepted(1) && field.accepted(600));
+            assert!(!field.accepted(0) && !field.accepted(601));
+            assert!(!row.is_modified(&defaults));
+        }
+        let waits = Settings {
+            ssh_auto_reconnect_second_delay: 30,
+            ..Settings::default()
+        };
+        assert!(SettingRow::SshAutoReconnectSecondDelay.is_modified(&waits));
+        assert_eq!(
+            SessionField::SshReconnectSecondDelay.applied(30),
+            SettingsMessage::SshAutoReconnectSecondDelay(30)
+        );
+    }
 
     #[test]
     fn the_built_in_client_s_compression_is_a_box_off_by_default_last_of_the_rdp_session_card() {

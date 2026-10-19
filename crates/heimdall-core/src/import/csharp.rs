@@ -45,12 +45,14 @@ use crate::profile::{
     DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, Forwards, FtpProfile, LocalArguments,
     LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution,
     SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT, SUGGESTED_WINRM_TUNNEL_PORT, SshGateway,
-    SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    SshMode, SshProfile, TelnetProfile, ToolProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 use crate::scheduled::{
     DEFAULT_TIME_OF_DAY, FALLBACK_INTERVAL_MINUTES, Schedule, ScheduledTask, TimeOfDay, new_task_id,
 };
 use crate::settings::rdp_resize_enable_delay_accepted;
+
+mod web;
 
 /// `connectionType` of an SSH profile.
 const SSH_CONNECTION_TYPE: &str = "SSH";
@@ -167,6 +169,10 @@ pub struct ImportReport {
     /// Citrix profiles ready to be merged into the store, without their Workspace cache
     /// launch line, a secret the C# import and export drop too.
     pub citrix: Vec<CitrixProfile>,
+    /// Web consoles ready to be merged into the store, without their password.
+    pub web: Vec<crate::profile::WebProfile>,
+    /// Tool entries (`TOOL:X`) ready to be merged into the store.
+    pub tools: Vec<crate::profile::ToolProfile>,
     /// SSH gateways ready to be merged into the store, each one's parent as the file names
     /// it: [`super::gateways::reconcile`] resolves it, as the C# `GatewayImportReconciler`.
     pub gateways: Vec<SshGateway>,
@@ -205,6 +211,8 @@ impl ImportReport {
             .chain(self.citrix.iter().map(|p| p.id.clone()))
             .chain(self.local.iter().map(|p| p.id.clone()))
             .chain(self.winrm.iter().map(|p| p.id.clone()))
+            .chain(self.web.iter().map(|p| p.id.clone()))
+            .chain(self.tools.iter().map(|p| p.id.clone()))
             .collect();
         for id in ids {
             match self.metadata.iter_mut().find(|(found, _)| *found == id) {
@@ -264,6 +272,8 @@ pub enum Dropped {
     /// A daily scheduled connection's time, which is no time of day: carried over at
     /// [`DEFAULT_TIME_OF_DAY`], as the C# ran it.
     ScheduledTime,
+    /// A web console opened with a program of its own: the system's browser opens it.
+    WebExternalProgram,
 }
 
 /// The elevation a C# local shell asked for: each now runs as administrator in a window of
@@ -589,6 +599,9 @@ struct LegacyServer {
     win_rm_skip_certificate_check: bool,
     /// A name or a number, as the C# converter accepts both.
     win_rm_identity_mode: Option<serde_json::Value>,
+    /// A web console's fields.
+    #[serde(flatten)]
+    web: web::LegacyWeb,
 }
 
 fn default_connection_type() -> String {
@@ -1001,6 +1014,11 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
     .any(|other| kind.eq_ignore_ascii_case(other))
     {
         Vec::new()
+    } else if ToolProfile::is_tool_type(kind) {
+        // A tool entry keeps every key it has.
+        Vec::new()
+    } else if web::is_web(kind) {
+        web::dropped(server)
     } else if kind.eq_ignore_ascii_case(CITRIX_CONNECTION_TYPE) {
         turned_on(&[(
             server
@@ -1238,6 +1256,10 @@ pub fn import(
             .eq_ignore_ascii_case(CITRIX_CONNECTION_TYPE)
         {
             convert_citrix(&server).map(|profile| report.citrix.push(profile))
+        } else if web::is_web(&server.connection_type) {
+            web::convert(&server).map(|profile| report.web.push(profile))
+        } else if crate::profile::ToolProfile::is_tool_type(&server.connection_type) {
+            convert_tool(&server).map(|profile| report.tools.push(profile))
         } else {
             convert(&server, suggested.ssh).map(|profile| report.profiles.push(profile))
         };
@@ -1962,13 +1984,14 @@ fn routed_gateway(server: &LegacyServer) -> Option<ProfileId> {
 }
 
 /// Whether the handler of `connection_type` routes through the SSH tunnel service, as
-/// `ProtocolCapabilities.SupportsSshGateway`; the C# `WEB` is not imported.
+/// `ProtocolCapabilities.SupportsSshGateway`.
 fn supports_ssh_gateway(connection_type: &str) -> bool {
     [
         SSH_CONNECTION_TYPE,
         SFTP_CONNECTION_TYPE,
         RDP_CONNECTION_TYPE,
         WINRM_CONNECTION_TYPE,
+        web::WEB_CONNECTION_TYPE,
     ]
     .iter()
     .any(|routed| connection_type.eq_ignore_ascii_case(routed))
@@ -1977,6 +2000,39 @@ fn supports_ssh_gateway(connection_type: &str) -> bool {
 /// Whether a gateway identifier names one, as `SshGatewayRoute.IsAssigned`: blank is none.
 fn is_assigned(gateway_id: Option<&String>) -> bool {
     gateway_id.is_some_and(|id| !id.trim().is_empty())
+}
+
+/// A tool entry as the C# saves it (`MainWindow.xaml.cs:945-952`): `TOOL:` and the tool's
+/// identifier, the host in `remoteServer` and the port in `remotePort` when above zero. Before
+/// this was handled such an entry was skipped as [`SkipReason::NotSsh`]. The tool is kept as
+/// written, upper-cased, so one this build does not have is still carried; a tool with no
+/// identifier names nothing and is skipped as an unknown type.
+fn convert_tool(server: &LegacyServer) -> Result<ToolProfile, SkipReason> {
+    if server.id.is_empty() {
+        return Err(SkipReason::MissingId);
+    }
+    let tool = crate::profile::ToolProfile::tool_of(&server.connection_type)
+        .ok_or_else(|| SkipReason::NotSsh(server.connection_type.clone()))?;
+    let port = match server.remote_port {
+        Some(value) if value > 0 => {
+            Some(u16::try_from(value).map_err(|_| SkipReason::InvalidPort(value))?)
+        }
+        _ => None,
+    };
+    Ok(ToolProfile {
+        id: ProfileId::new(server.id.clone()),
+        name: if server.display_name.trim().is_empty() {
+            tool.clone()
+        } else {
+            server.display_name.clone()
+        },
+        group: non_empty(server.group.as_ref()),
+        tool,
+        host: Some(server.remote_server.trim())
+            .filter(|host| !host.is_empty())
+            .map(str::to_owned),
+        port,
+    })
 }
 
 /// A `WinRM` profile as `WinRmHandler` connects it, through the SSH gateway [`routed_gateway`]

@@ -35,7 +35,7 @@ use heimdall_ui::trusted_keys_view::TrustedList;
 use iced::{Settings, Size};
 
 /// A window tall enough for the whole Settings page.
-const WINDOW: Size = Size::new(1100.0, 1800.0);
+const WINDOW: Size = Size::new(1100.0, 2400.0);
 /// A window tall enough for the whole SSH tab, the FTPS certificates at its end.
 const TALL_WINDOW: Size = Size::new(1100.0, 3200.0);
 const ED25519: &str =

@@ -27,6 +27,8 @@ and English, French and Spanish localisation.
 The user interface is native, built with [iced](https://iced.rs), with no
 embedded web engine.
 
+Coming from the C# Heimdall? See [Moving from Heimdall (C#) to Heimdall-rs](docs/migration-from-csharp.md).
+
 ## Layout
 
 | Crate | Role |
@@ -53,12 +55,16 @@ Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` an
 
 Heimdall embeds 30 sysadmin and security assessment tools. Not all of them are
 offline: the network tools, such as the SSL/TLS Auditor, DNS Security Checker, SMB
-Enumerator, Default Credentials Scanner and SecNumCloud Auditor, connect to the
-hosts you give them; the others run fully offline.
+Enumerator and SecNumCloud Auditor, connect to the hosts you give them; the others
+run fully offline.
 
 The CVE Lookup uses an embedded, hand-curated database of 68 entries (63 distinct
 CVEs) for common infrastructure software, spanning 2015 to 2024. It carries no
 CISA KEV (Known Exploited Vulnerabilities) data and is not a live feed.
+
+The Default Credentials Scanner lists the known vendor default credentials for a
+product or service; unlike the upstream C# tool, it never attempts a login, to avoid
+account lockouts and unauthorized login attempts.
 
 - **Security & Compliance:** SSH Key Auditor, SSL/TLS Auditor, DNS Security Checker (DNSSEC/DANE), ANSSI SecNumCloud v3.2 Auditor, SMB Enumerator, Default Credentials Scanner, Offline CVE Lookup, Password Auditor, Password Generator, SSH Key Generator, Certificate Generator.
 - **Network:** Subnet Calculator, IP Converter, Network Calculator.
@@ -94,6 +100,11 @@ Both take a log level as their argument, `error` to `trace`: `run-debug.bat trac
 Automated UI tests run a debug build with the `test-data-dir` feature on a scratch folder,
 never on the real profiles, vault or saved passwords: see
 [Test data folder](docs/test-data-folder.md).
+
+Any build, release included, runs an alternate instance (a hand test, a demo profile) beside
+the user's own with `--data-dir <full path>`, as the C# Heimdall does: its own configuration,
+data and saved passwords under that folder. See
+[`--data-dir` in a normal build](docs/test-data-folder.md#--data-dir-in-a-normal-build).
 
 A published release is compiled with `HEIMDALL_RELEASE` set to its release tag, such as
 `v2026.100901`: the update check compares it with the latest release on GitHub and offers

@@ -28,8 +28,8 @@ use heimdall_core::profile::{
     DesktopSizing, Experience, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards,
     FtpProfile, LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile,
     RdpSwitch, Resolution, SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT,
-    SUGGESTED_WINRM_TUNNEL_PORT, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
-    fixed_desktop,
+    SUGGESTED_WINRM_TUNNEL_PORT, SshMode, SshProfile, TelnetProfile, VncProfile, WebProfile,
+    WinRmProfile, fixed_desktop,
 };
 use heimdall_core::settings::rdp_resize_enable_delay_accepted;
 
@@ -70,6 +70,9 @@ pub enum ProfileField {
     AppName,
     /// Citrix: an ICA file launched instead, as the C# "ICA file path".
     IcaFile,
+    /// Web: the path, query and fragment the address ends with, as the C# "Path
+    /// (optional)".
+    WebPath,
     /// User name.
     Username,
     /// Private key file.
@@ -111,7 +114,7 @@ pub enum ProfileField {
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -119,6 +122,7 @@ impl ProfileField {
         Self::StoreFrontUrl,
         Self::AppName,
         Self::IcaFile,
+        Self::WebPath,
         Self::Username,
         Self::Domain,
         Self::KeyPath,
@@ -155,6 +159,8 @@ pub enum DraftProtocol {
     WinRm,
     /// Telnet terminal.
     Telnet,
+    /// A web console, opened in the system's browser.
+    Web,
     /// FTP, plain or explicit FTPS: a Files tab.
     Ftp,
     /// A Citrix Workspace published application, launched outside Heimdall.
@@ -165,13 +171,14 @@ pub enum DraftProtocol {
 
 impl DraftProtocol {
     /// Every protocol, in the order the picker shows them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
         Self::Sftp,
         Self::Vnc,
         Self::Telnet,
+        Self::Web,
         Self::Ftp,
         Self::Citrix,
         Self::Local,
@@ -197,6 +204,7 @@ impl DraftProtocol {
             ProfileField::StoreFrontUrl | ProfileField::AppName | ProfileField::IcaFile => {
                 self == Self::Citrix
             }
+            ProfileField::WebPath => self == Self::Web,
             ProfileField::LocalProgram
             | ProfileField::LocalArguments
             | ProfileField::WorkingDirectory => self == Self::Local,
@@ -204,7 +212,13 @@ impl DraftProtocol {
             ProfileField::Username => {
                 matches!(
                     self,
-                    Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm | Self::Ftp | Self::Vnc
+                    Self::Ssh
+                        | Self::Sftp
+                        | Self::Rdp
+                        | Self::WinRm
+                        | Self::Ftp
+                        | Self::Vnc
+                        | Self::Web
                 )
             }
             ProfileField::Domain
@@ -216,12 +230,16 @@ impl DraftProtocol {
             // The protocols whose password the external credential provider gives: not
             // `WinRM`'s, which no server question asks for.
             ProfileField::VaultEntry => self.saves_password() && self != Self::WinRm,
-            // A WinRM session has the gateway carry it, and no ports of its own to open there.
+            // A WinRM session has the gateway carry it, and no ports of its own to open there;
+            // nor has a web console, whose tunnel is the one port it needs.
             ProfileField::SocksPort
             | ProfileField::RemoteBindPort
-            | ProfileField::RemoteLocalPort => self.routes_through_gateway() && self != Self::WinRm,
-            // The C# shows it for every protocol a gateway carries.
-            ProfileField::LocalTunnelPort => self.routes_through_gateway(),
+            | ProfileField::RemoteLocalPort => {
+                self.routes_through_gateway() && !matches!(self, Self::WinRm | Self::Web)
+            }
+            // The C# shows it for every protocol a gateway carries; a web console's tunnel
+            // takes a port the system picks, the C# SOCKS proxy having none to choose either.
+            ProfileField::LocalTunnelPort => self.routes_through_gateway() && self != Self::Web,
         }
     }
 
@@ -245,7 +263,10 @@ impl DraftProtocol {
     /// Whether this protocol's sessions can go through an SSH gateway.
     #[must_use]
     pub fn routes_through_gateway(self) -> bool {
-        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm)
+        matches!(
+            self,
+            Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm | Self::Web
+        )
     }
 
     /// The local tunnel port the C# suggests for the protocol, which stands for the
@@ -256,7 +277,7 @@ impl DraftProtocol {
             Self::Ssh | Self::Sftp => Some(SUGGESTED_SSH_TUNNEL_PORT),
             Self::Rdp => Some(SUGGESTED_RDP_TUNNEL_PORT),
             Self::WinRm => Some(SUGGESTED_WINRM_TUNNEL_PORT),
-            Self::Vnc | Self::Telnet | Self::Ftp | Self::Citrix | Self::Local => None,
+            Self::Vnc | Self::Telnet | Self::Web | Self::Ftp | Self::Citrix | Self::Local => None,
         }
     }
 
@@ -335,6 +356,9 @@ pub enum ProfileToggle {
     /// Citrix: single sign-on with this Windows account's Kerberos identity, as the C# "Use
     /// SSO (Kerberos)", ticked for a new profile.
     Sso,
+    /// Web: plain HTTP rather than HTTPS, as the C# "Use plain HTTP (unencrypted)". Drawn
+    /// by the web address's own card.
+    PlainHttp,
     /// Every protocol: marked as a favorite, as the C# "Mark as favorite"; kept by the
     /// store beside the profile.
     Favorite,
@@ -386,6 +410,7 @@ impl ProfileToggle {
             DraftProtocol::Sftp => &[Self::Compression, Self::LegacyAlgorithms, Self::Favorite],
             DraftProtocol::Ftp => &[Self::Passive, Self::Tls, Self::Favorite],
             DraftProtocol::Citrix => &[Self::Seamless, Self::Sso, Self::Favorite],
+            DraftProtocol::Web => &[Self::PlainHttp, Self::Favorite],
             DraftProtocol::Telnet | DraftProtocol::Local => &[Self::Favorite],
         }
     }
@@ -468,6 +493,8 @@ pub enum DraftProfile {
     Ftp(FtpProfile),
     /// Citrix.
     Citrix(CitrixProfile),
+    /// A web console.
+    Web(WebProfile),
 }
 
 /// What the form holds, as typed.
@@ -544,6 +571,8 @@ pub struct ProfileDraft {
     pub app_name: String,
     /// Citrix: the ICA file, as typed.
     pub ica_file: String,
+    /// Web: the path, as typed.
+    pub web_path: String,
     /// "Test address": not run, running, or what it found for the address shown.
     pub address_test: AddressTest,
     /// The environment chosen, as the C# Metadata section's; `None` for none.
@@ -804,6 +833,43 @@ impl ProfileDraft {
             seamless: self.is_on(ProfileToggle::Seamless),
             sso: self.is_on(ProfileToggle::Sso),
         })
+    }
+
+    /// A form filled from a saved web console.
+    #[must_use]
+    pub fn from_web(profile: &WebProfile) -> Self {
+        Self {
+            editing: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            group: profile.group.clone().unwrap_or_default(),
+            host: profile.host.clone(),
+            port: profile.port.to_string(),
+            username: profile.username.clone().unwrap_or_default(),
+            web_path: profile.path.clone().unwrap_or_default(),
+            gateway: profile.gateway.clone(),
+            protocol: DraftProtocol::Web,
+            protocol_chosen: true,
+            toggles: if profile.use_http {
+                vec![ProfileToggle::PlainHttp]
+            } else {
+                Vec::new()
+            },
+            ..Self::default()
+        }
+    }
+
+    /// The address a web console's form describes, as the C# dialog previews it; `None`
+    /// while its host, port or path form none.
+    #[must_use]
+    pub fn web_address(&self) -> Option<String> {
+        let port = self.typed_port().ok()?;
+        heimdall_core::web::address(
+            &self.host,
+            port,
+            self.is_on(ProfileToggle::PlainHttp),
+            Some(&self.web_path),
+        )
+        .ok()
     }
 
     /// A form filled from a saved local shell profile.
@@ -1115,7 +1181,10 @@ impl ProfileDraft {
             self.toggles.push(toggle);
         }
         let port = self.port.trim();
-        if toggle == ProfileToggle::UseSsl && (port.is_empty() || port == before.to_string()) {
+        // The same for a web console's scheme, as its C# port follows it.
+        if matches!(toggle, ProfileToggle::UseSsl | ProfileToggle::PlainHttp)
+            && (port.is_empty() || port == before.to_string())
+        {
             self.port = self.default_port().to_string();
         }
     }
@@ -1430,6 +1499,7 @@ impl ProfileDraft {
                 }
                 errors.extend(tunnel_port);
             }
+            DraftProtocol::Web => errors.extend(self.web_host_error()),
             DraftProtocol::Local => {
                 if local_draft::arguments_of(&self.local_arguments).is_none() {
                     errors.push(DraftError::ArgumentsInvalid);
@@ -1450,6 +1520,18 @@ impl ProfileDraft {
             first
         });
         errors
+    }
+
+    /// What a web console's host has against it, past what every host is checked for: a
+    /// name or an address alone, as the C# `WebAddress.TryBuild` takes it.
+    fn web_host_error(&self) -> Option<DraftError> {
+        if host(&self.host).is_err() {
+            // Said by the check every host goes through.
+            return None;
+        }
+        heimdall_core::web::authority_host(&self.host)
+            .err()
+            .map(|_| DraftError::HostInvalid)
     }
 
     /// The post-connect steps saved, of an SSH form: approved by the store, which the user
@@ -1497,6 +1579,7 @@ impl ProfileDraft {
             &self.store_front_url,
             &self.app_name,
             &self.ica_file,
+            &self.web_path,
         ]
         .iter()
         .any(|text| text.trim().chars().any(char::is_control))
@@ -1615,6 +1698,9 @@ impl ProfileDraft {
             DraftProtocol::WinRm => DEFAULT_WINRM_HTTP_PORT,
             DraftProtocol::Local | DraftProtocol::Citrix => NO_PORT,
             DraftProtocol::Ftp => DEFAULT_FTP_PORT,
+            DraftProtocol::Web => {
+                heimdall_core::web::default_port_for(self.is_on(ProfileToggle::PlainHttp))
+            }
         }
     }
 
@@ -1768,6 +1854,22 @@ impl ProfileDraft {
             }
             DraftProtocol::Local => self.saved_local(id, name, group)?,
             DraftProtocol::Citrix => self.saved_citrix(id, name, group),
+            DraftProtocol::Web => {
+                if let Some(error) = self.web_host_error() {
+                    return Err(error);
+                }
+                DraftProfile::Web(WebProfile {
+                    id,
+                    name,
+                    group,
+                    host,
+                    port,
+                    use_http: self.is_on(ProfileToggle::PlainHttp),
+                    path: optional(self.web_path.trim()),
+                    username: optional(username),
+                    gateway: self.routed_gateway(),
+                })
+            }
             DraftProtocol::Ftp => DraftProfile::Ftp(FtpProfile {
                 id,
                 name,
@@ -1801,6 +1903,7 @@ impl ProfileDraft {
             ProfileField::StoreFrontUrl => &self.store_front_url,
             ProfileField::AppName => &self.app_name,
             ProfileField::IcaFile => &self.ica_file,
+            ProfileField::WebPath => &self.web_path,
             ProfileField::Username => &self.username,
             ProfileField::KeyPath => &self.key_path,
             ProfileField::Domain => &self.domain,
@@ -1835,6 +1938,7 @@ impl ProfileDraft {
             ProfileField::StoreFrontUrl => &mut self.store_front_url,
             ProfileField::AppName => &mut self.app_name,
             ProfileField::IcaFile => &mut self.ica_file,
+            ProfileField::WebPath => &mut self.web_path,
             ProfileField::Username => &mut self.username,
             ProfileField::KeyPath => &mut self.key_path,
             ProfileField::Domain => &mut self.domain,
@@ -2457,6 +2561,7 @@ mod tests {
                 DraftProtocol::Sftp,
                 DraftProtocol::Vnc,
                 DraftProtocol::Telnet,
+                DraftProtocol::Web,
                 DraftProtocol::Ftp,
                 DraftProtocol::Citrix,
                 DraftProtocol::Local,

@@ -43,6 +43,7 @@ mod run_trust;
 mod secret;
 mod session;
 pub mod socks;
+pub mod tool_route;
 mod trust_files;
 mod x11;
 mod xauthority;

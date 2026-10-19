@@ -776,6 +776,12 @@ mod system {
                 log::info!("Windows Hello vault enrollment is off under a test data folder.");
                 return false;
             }
+            // Nor does a `--data-dir` instance: its vault may be a copy of the user's, and the
+            // key credential, named after the vault, would replace the real instance's own.
+            if heimdall_core::paths::data_root().is_some() {
+                log::info!("Windows Hello vault enrollment is off under a data directory.");
+                return false;
+            }
             let supported = answered(
                 within!(
                     KeyCredentialManager::IsSupportedAsync(),

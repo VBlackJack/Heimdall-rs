@@ -26,6 +26,7 @@
 
 use heimdall_app::TabId;
 use heimdall_app::net_tools::http::{self, CertificateCheck, HttpFetch, HttpFetchError};
+use heimdall_app::tool_route::ToolRoute;
 use iced::task::Handle;
 use iced::widget::{column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
@@ -52,6 +53,8 @@ pub enum HttpHeadersMessage {
     Stop,
     /// Fetch `.0` completed.
     Finished(u64, Result<HttpFetch, HttpFetchError>),
+    /// The gateway fetch `.0` goes through could not be opened: why, said.
+    RouteFailed(u64, String),
     /// Copy report text to clipboard.
     CopyReport,
 }
@@ -140,9 +143,28 @@ fn fetch_error(error: &HttpFetchError, host: &str) -> String {
     }
 }
 
+/// The fetch of `target`: through `via`, the gateway is opened and the headers are read over
+/// the channels it opens onward, the host sent as typed for it to resolve; a gateway that
+/// cannot be opened is `Err` with why, said, and nothing is then fetched from here.
+async fn fetch(
+    target: HttpTarget,
+    via: Option<ToolRoute>,
+) -> Result<Result<HttpFetch, HttpFetchError>, String> {
+    let Some(route) = via else {
+        return Ok(http::fetch(&target).await);
+    };
+    let gateway = route.open().await.map_err(super::route_bar::failure_text)?;
+    Ok(http::fetch_via(&target, &gateway).await)
+}
+
 impl HttpHeadersPane {
     /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: HttpHeadersMessage) -> Outcome {
+    pub fn update(
+        &mut self,
+        tab: TabId,
+        message: HttpHeadersMessage,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
         if !matches!(message, HttpHeadersMessage::Analyze) {
             return self.apply(message);
         }
@@ -150,14 +172,14 @@ impl HttpHeadersPane {
             return Outcome::None;
         };
         let run = self.run;
-        let (task, handle) =
-            Task::perform(async move { http::fetch(&target).await }, move |answer| {
-                Message::Tool(
-                    tab,
-                    super::ToolMessage::HttpHeaders(HttpHeadersMessage::Finished(run, answer)),
-                )
-            })
-            .abortable();
+        let (task, handle) = Task::perform(fetch(target, via), move |answer| {
+            let message = match answer {
+                Ok(answer) => HttpHeadersMessage::Finished(run, answer),
+                Err(said) => HttpHeadersMessage::RouteFailed(run, said),
+            };
+            Message::Tool(tab, super::ToolMessage::HttpHeaders(message))
+        })
+        .abortable();
         self.stop = Some(handle.abort_on_drop());
         Outcome::Task(task)
     }
@@ -172,6 +194,12 @@ impl HttpHeadersPane {
             }
             HttpHeadersMessage::Analyze => {}
             HttpHeadersMessage::Stop => self.finish(),
+            HttpHeadersMessage::RouteFailed(run, said) => {
+                if run == self.run && self.analyzing {
+                    self.finish();
+                    self.error = Some(said);
+                }
+            }
             HttpHeadersMessage::Finished(run, answer) => {
                 if run == self.run && self.analyzing {
                     self.finish();

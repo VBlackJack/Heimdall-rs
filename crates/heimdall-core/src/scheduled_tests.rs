@@ -527,6 +527,7 @@ fn a_schedule_opens_only_what_opens_in_a_tab_without_asking() {
         Some(RefusalKind::LocalProgram)
     );
     assert_eq!(refusal(Target::Citrix, true), Some(RefusalKind::Citrix));
+    assert_eq!(refusal(Target::Web, true), Some(RefusalKind::WebConsole));
 }
 
 #[test]

@@ -356,7 +356,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 12);
+    assert_eq!(PROFILE_FILE_VERSION, 14);
 }
 
 #[test]
@@ -1024,6 +1024,169 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
     assert_eq!(store.citrix_profiles().len(), 1);
 }
 
+fn web_console(id: &str) -> heimdall_core::profile::WebProfile {
+    heimdall_core::profile::WebProfile {
+        id: ProfileId::new(id),
+        name: "iLO".to_owned(),
+        group: Some("Lab/BMC".to_owned()),
+        host: "ilo.lab".to_owned(),
+        port: 8443,
+        use_http: false,
+        path: Some("/html/login.html".to_owned()),
+        username: Some("admin".to_owned()),
+        gateway: Some(ProfileId::new("bastion")),
+    }
+}
+
+#[test]
+fn web_consoles_read_back_with_their_address_and_gateway() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let routed = web_console("ilo");
+    let plain = heimdall_core::profile::WebProfile {
+        id: ProfileId::new("nas"),
+        name: "NAS".to_owned(),
+        group: None,
+        host: "fd00::20".to_owned(),
+        port: 80,
+        use_http: true,
+        path: None,
+        username: None,
+        gateway: None,
+    };
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_web([routed.clone(), plain.clone()]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(text.contains("[[web]]"), "{text}");
+    assert!(!text.to_lowercase().contains("password"), "{text}");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.web_profiles(), [routed, plain]);
+    assert!(
+        reopened.folder_paths().contains(&"Lab/BMC".to_owned()),
+        "its folder is a folder of the tree"
+    );
+    let mut store = reopened;
+    assert!(store.set_port(&ProfileId::new("nas"), 8080));
+    assert!(
+        !store.set_gateway(&ProfileId::new("nas"), None),
+        "direct already"
+    );
+    assert!(store.rename_profile(&ProfileId::new("nas"), "Storage"));
+    assert!(store.remove(&ProfileId::new("ilo")));
+    assert_eq!(store.web_profiles().len(), 1);
+    assert_eq!(store.web_profiles()[0].port, 8080);
+    assert_eq!(store.web_profiles()[0].name, "Storage");
+}
+
+#[test]
+fn tool_entries_read_back_and_follow_the_profile_operations() {
+    use heimdall_core::profile::ToolProfile;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let ping = ToolProfile {
+        id: ProfileId::new("ping-core"),
+        name: "Ping core".to_owned(),
+        group: Some("Lab/Tools".to_owned()),
+        tool: "PING".to_owned(),
+        host: Some("core.lab".to_owned()),
+        port: Some(443),
+    };
+    let uuid = ToolProfile {
+        id: ProfileId::new("uuid"),
+        name: "UUID".to_owned(),
+        group: None,
+        tool: "UUID".to_owned(),
+        host: None,
+        port: None,
+    };
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_tools([ping.clone(), uuid.clone()]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(text.contains("[[tool]]"), "{text}");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.tool_profiles(), [ping, uuid]);
+    assert!(
+        reopened.folder_paths().contains(&"Lab/Tools".to_owned()),
+        "its folder is a folder of the tree"
+    );
+    let mut store = reopened;
+    assert!(store.rename_profile(&ProfileId::new("uuid"), "Identifiers"));
+    assert_eq!(store.tool_profiles()[1].name, "Identifiers");
+    assert!(store.remove(&ProfileId::new("ping-core")));
+    assert_eq!(store.tool_profiles().len(), 1);
+}
+
+#[test]
+fn a_file_written_before_tool_entries_still_reads() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(
+        &path,
+        "version = 13\n[[ssh]]\nid = \"web\"\nname = \"web\"\nhost = \"h\"\nport = 22\n",
+    )
+    .expect("writes");
+    let store = ProfileStore::open(&path).expect("a version 13 file opens");
+    assert_eq!(store.ssh_profiles().len(), 1);
+    assert!(store.tool_profiles().is_empty());
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(
+        text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
+        "{text}"
+    );
+    assert!(
+        !text.contains("[[tool]]"),
+        "nothing written when none: {text}"
+    );
+}
+
+#[test]
+fn a_web_console_goes_direct_once_its_gateway_is_removed() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_gateways([SshGateway {
+        id: ProfileId::new("bastion"),
+        name: "Bastion".to_owned(),
+        host: "bastion.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        parent: None,
+    }]);
+    store.merge_web([web_console("ilo")]);
+    let removed = store
+        .remove_gateway(&ProfileId::new("bastion"))
+        .expect("a gateway");
+    assert_eq!(removed.servers, 1);
+    assert_eq!(store.web_profiles()[0].gateway, None);
+}
+
+#[test]
+fn a_version_12_file_opens_without_web_consoles_and_one_written_now_says_the_current_version() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(
+        &path,
+        "version = 12\n\n[[citrix]]\nid = \"c\"\nname = \"C\"\n",
+    )
+    .expect("writes");
+    let mut store = ProfileStore::open(&path).expect("a version 12 file opens");
+    assert_eq!(store.citrix_profiles().len(), 1);
+    assert!(store.web_profiles().is_empty());
+    store.merge_web([web_console("ilo")]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(
+        text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
+        "{text}"
+    );
+    // A web console's own switches are written only when set.
+    assert!(!text.contains("use_http"), "{text}");
+}
+
 #[test]
 fn favorites_are_kept_by_profile_and_leave_with_it() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -1396,5 +1559,51 @@ fn a_file_held_open_without_delete_sharing_is_left_untouched_and_no_temporary_fi
         names_in(dir.path()),
         ["profiles.json"],
         "no temporary file left"
+    );
+}
+
+#[test]
+fn a_shared_gateway_is_reached_by_a_route_and_is_in_no_list_and_no_file() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_gateways([gateway("mine", None)]);
+    store.save().expect("saves");
+    let before = fs::read_to_string(&path).expect("file");
+    let mut store = ProfileStore::open(&path).expect("reopens");
+    store.set_shared_gateways([
+        gateway("shared-team-bastion", Some("elsewhere")),
+        // Not in the shared namespace: a shared file cannot name a gateway of its own kind.
+        gateway("impostor", None),
+    ]);
+    let route = store
+        .route(Some(&ProfileId::new("shared-team-bastion")))
+        .expect("route");
+    assert_eq!(route.len(), 1, "a parent outside the namespace is dropped");
+    assert!(route[0].parent.is_none());
+    assert_eq!(
+        store.route(Some(&ProfileId::new("impostor"))),
+        Err(RouteError::MissingGateway(ProfileId::new("impostor")))
+    );
+    // The saved gateways are the saved ones alone, and a save writes nothing of the shared;
+    // a change kept by `apply` leaves them reachable.
+    assert_eq!(store.gateways().len(), 1);
+    store
+        .apply(|store| store.merge_gateways([gateway("other", None)]))
+        .expect("apply");
+    let written = fs::read_to_string(&path).expect("file");
+    assert_ne!(written, before);
+    assert!(!written.contains("shared-team-bastion"), "{written}");
+    assert!(
+        store
+            .route(Some(&ProfileId::new("shared-team-bastion")))
+            .is_ok()
+    );
+    // Replaced, not added to.
+    store.set_shared_gateways([]);
+    assert!(
+        store
+            .route(Some(&ProfileId::new("shared-team-bastion")))
+            .is_err()
     );
 }

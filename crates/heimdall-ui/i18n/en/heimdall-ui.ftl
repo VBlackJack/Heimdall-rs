@@ -6,6 +6,18 @@ ui-window-title-tab = { $tab } - Heimdall
 ui-window-title-detached = { $tab } - Detached
 # A test build's title, its test data folder after it.
 ui-window-title-test-data = { $title } [test data: { $folder }]
+# An alternate instance's title, its data folder (--data-dir) after it.
+ui-window-title-data = { $title } [data: { $folder }]
+# Why a --data-dir folder did not start the application, in a message box and on the console.
+ui-data-dir-error-title = Heimdall cannot start
+ui-data-dir-error-no-value = { $option } needs the full path of a folder after it.
+ui-data-dir-error-not-text = The folder after { $option } is not valid text: { $folder }
+ui-data-dir-error-unknown = Unknown option { $given }: the data folder is given with { $option } <full path>.
+ui-data-dir-error-not-absolute = The data folder must be a full path: { $folder }
+ui-data-dir-error-overlaps = The data folder { $folder } overlaps one of your own folders: { $real }. Choose a separate folder.
+ui-data-dir-error-unusable = The data folder cannot be used: { $detail }
+ui-data-dir-error-already-set = A data folder is already in use.
+ui-data-dir-error-test-build = A test build takes its folders from its test data folder, not from { $option }.
 
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Tools
@@ -524,6 +536,7 @@ ui-dialog-paste-dangerous-body = The text holds { $command }, a command that can
 ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-paste-truncated = Preview is truncated. The full clipboard content will be pasted if you continue.
 ui-dialog-import-title = Import finished
+ui-dialog-scan-added-title = Sessions added
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
 ui-dialog-import-actions = { $imported } imported, { $replaced } replaced, { $renamed } auto-renamed, { $skipped } skipped.
 ui-dialog-import-gateways = SSH gateways: { $created } created, { $merged } merged, { $orphans ->
@@ -607,6 +620,8 @@ ui-import-file-button = Import
 ui-import-file-nothing = No sessions found in the selected file.
 ui-import-file-unreadable = The file could not be read: { $detail }
 ui-import-file-encrypted = The file is fully encrypted. Decrypt it in mRemoteNG first (File > Save As with no encryption).
+ui-import-mobaxterm-unresolved-variable = Session "{ $session }": the variable [{ $name }] has no value, so its login was kept as written. Define it in Settings > MobaXterm variables and import again.
+ui-import-mobaxterm-invalid-gateway = Session "{ $session }" was not imported: its SSH gateway "{ $host }" is not a valid host. Importing it would reach the server around the gateway the file asked for.
 ui-import-file-too-large = The file is too large to import ({ $size } bytes).
 ui-import-mobaxterm-passwords = MobaXterm passwords are encrypted with a proprietary algorithm and could not be imported. Please re-enter credentials for each session.
 ui-import-mobaxterm-passwords-detected = { $count ->
@@ -762,6 +777,13 @@ ui-dialog-local-elevated = It runs as administrator, in its own window, once Win
 ui-dialog-local-confirm = Run
 ui-dialog-run-script-title = Run this script?
 ui-dialog-run-script-body = { $name } runs in a new tab with the command below, with your rights. Heimdall asks each time it runs.
+ui-dialog-send-command-title = Send this command?
+ui-dialog-send-command-body = The command below is typed into { $name } and run there with Enter, with that session's rights. Heimdall asks each time.
+ui-dialog-send-command-dangerous = This command is marked dangerous: it can destroy data or stop a service.
+ui-dialog-send-command-confirm = Send
+ui-dialog-broadcast-command-title = Send this command to several sessions?
+ui-dialog-broadcast-command-body = The command below is typed into each session listed ({ $count }) and run there with Enter, with each session's rights. Heimdall asks each time.
+ui-dialog-broadcast-command-confirm = Send to all
 ui-error-remote-forward = The SSH gateway would not listen on its port { $port } for the remote forward: forwarding is off on it, or the port is taken there.
 ui-error-proxy-port = The SOCKS proxy could not open local port { $port }: another program may be using it. ({ $detail })
 ui-error-jump-refused = The SSH gateway would not connect onward to { $target }: forwarding is off on it, or that host cannot be reached from it.
@@ -786,6 +808,14 @@ ui-tree-copy-address = Copy address
 ui-tree-copy-ssh-command = Copy SSH command
 ui-tree-delete = Delete
 ui-tree-add-session = Add Session
+ui-tree-add-tool = Add Tool
+ui-tree-tool-open = Open in tab
+ui-tree-tool-remove = Remove tool
+ui-tool-picker-title = Add a tool
+ui-tool-picker-prompt = Choose the tool to save in the tree.
+ui-tool-picker-search = Search tools
+ui-tool-picker-host = Host
+ui-tool-picker-confirm = Add
 ui-tree-import-sessions = Import Sessions
 ui-tree-export-sessions = Export Sessions
 ui-dialog-export-title = Export Sessions
@@ -1027,6 +1057,33 @@ ui-profile-protocol-vnc-name = VNC
 ui-profile-protocol-vnc-desc = Remote screen sharing
 ui-profile-protocol-telnet-name = Telnet
 ui-profile-protocol-telnet-desc = Legacy unencrypted terminal
+ui-profile-protocol-web-name = Web
+ui-profile-protocol-web-desc = Web console (iLO, iDRAC, switch)
+ui-profile-port-web = Web port
+ui-profile-web-address-title = Web address
+ui-profile-web-address-desc = The address is built from the host and port above, plus these settings.
+ui-profile-web-use-http = Use plain HTTP (unencrypted)
+ui-profile-web-http-warning = Plain HTTP sends everything in clear, the console's password included.
+ui-profile-field-web-path = Path (optional)
+ui-profile-web-path-placeholder = /login.html
+ui-profile-web-address-incomplete = Enter a host name or address to see the address.
+ui-profile-credentials-web = HTTP sign-in
+ui-profile-credentials-web-desc = The account is kept with the profile. The browser asks for its password itself: Heimdall never puts it in the address.
+ui-profile-web-opening-title = Opening
+ui-profile-web-opening-desc = The console opens in this computer's default browser, never inside Heimdall.
+ui-profile-web-password-hint = Heimdall keeps no password for a web console: sign in in the browser.
+ui-profile-web-gateway-hint = Through an SSH gateway, the browser opens a tunnel of this computer (an address of its own on 127.x.x.x, on a port the system picks) instead of the console's own name: expect a warning about the certificate's name, and a console that redirects to its own name leaves the tunnel. The tunnel stays open on the Tunnels page until you close it there or quit Heimdall.
+ui-profile-path-session-web = Web console in the browser
+ui-profile-path-client-web-tunnel = Local tunnel on an address of its own on 127.x.x.x, on a port the system picks
+ui-status-web-opened = Web console { $name } opened in the browser.
+ui-status-tool-unknown = The tool { $tool } is not available in this version.
+ui-status-web-opened-through = Web console { $name } opened in the browser through the SSH gateway's tunnel on port { $port }. The browser names the tunnel, not the console: a warning about the certificate's name is expected.
+ui-status-web-invalid-address = The host, port and path of this profile do not form a web address. Edit the profile: the host field takes a name or an address only, without http:// or a path.
+ui-status-web-not-loopback = The tunnel did not listen on this computer's loopback address: the browser was not opened.
+ui-status-web-not-started = The browser could not be started: { $reason }
+ui-import-dropped-web-external-program = its own browser program, now the system's default browser
+ui-scheduled-refusal-web = it is a web console, opened in the system's browser
+ui-scheduled-refusal-tool = it is a tool, which opens in a tab: there is no connection to schedule
 ui-profile-protocol-badge = Protocol
 ui-profile-protocol-change-tooltip = Click to change the protocol
 ui-profile-tab-general = General
@@ -2162,6 +2219,9 @@ ui-tunnels-menu-reopen = Reopen
 ui-settings-behavior = Behavior
 ui-settings-collapse-tunnels-panel = Collapse Tunnels panel by default
 ui-settings-collapse-tunnels-panel-hint = How the Tunnels panel starts. Opening or closing it later keeps it that way until the application closes.
+ui-settings-session-tree = Session tree
+ui-settings-show-properties-panel = Show properties panel
+ui-settings-show-properties-panel-hint = Docks a panel with the selected session's details under the tree. Also in the tree filter menu and on Ctrl+Shift+B.
 ui-settings-prevent-sleep = Prevent system sleep during active sessions
 ui-settings-prevent-sleep-hint = Keeps Windows from sleeping while a session is connected; the screen may still turn off or lock.
 ui-settings-max-sessions = Warn above this many open sessions
@@ -4140,69 +4200,38 @@ ui-tool-cve-help =
 
 
 
-## The Default Credentials Scanner tool, as the C# DefaultCredentialView.
-ui-tool-defaultcreds-name = Default Credentials Scanner
-ui-tool-defaultcreds-description = Tests common default credentials against detected services on a target host
-ui-tool-defaultcreds-title = Default Credentials Scanner
-ui-tool-defaultcreds-host-label = Host
-ui-tool-defaultcreds-host-placeholder = Hostname or IP address
-ui-tool-defaultcreds-btn-scan = Scan
-ui-tool-defaultcreds-btn-stop = Stop
-ui-tool-defaultcreds-auto-detect = Auto-detect services
-ui-tool-defaultcreds-show-passwords = Show passwords
-ui-tool-defaultcreds-warning = Use only on systems you own or have explicit authorization to test.
+## The Default Credentials tool, as the catalog of the C# DefaultCredentialView,
+## never the login attempts it makes: list-only by owner decision (2026-10-17, item 10).
+ui-tool-defaultcreds-name = Default Credentials
+ui-tool-defaultcreds-description = Lists the known vendor default credentials for a product or service
+ui-tool-defaultcreds-title = Default Credentials
+ui-tool-defaultcreds-note = This tool lists known vendor default credentials. It never tries to log in with them, to avoid account lockouts and unauthorized login attempts.
+ui-tool-defaultcreds-filter-label = Service
+ui-tool-defaultcreds-filter-placeholder = Filter by service name (e.g. SSH, HTTP, MySQL)
 ui-tool-defaultcreds-col-service = Service
 ui-tool-defaultcreds-col-port = Port
 ui-tool-defaultcreds-col-user = Username
 ui-tool-defaultcreds-col-pass = Password
-ui-tool-defaultcreds-col-status = Status
-ui-tool-defaultcreds-col-detail = Detail
-ui-tool-defaultcreds-status-default = Default!
-ui-tool-defaultcreds-status-changed = Changed
-ui-tool-defaultcreds-status-error = Error
-ui-tool-defaultcreds-detecting = Detecting services...
-ui-tool-defaultcreds-testing = Testing { $service } { $user }:{ $pass }...
-ui-tool-defaultcreds-summary = { $defaults ->
-    [one] { $defaults } default credential found on { $services ->
-        [one] { $services } service
-       *[other] { $services } services
-    }
-   *[other] { $defaults } default credentials found on { $services ->
-        [one] { $services } service
-       *[other] { $services } services
-    }
-}
-ui-tool-defaultcreds-no-defaults = No default credentials found - all tested services appear secured.
 ui-tool-defaultcreds-btn-copy = Copy report
 ui-tool-defaultcreds-btn-export = Export CSV
-ui-tool-defaultcreds-empty-state = Enter a host to scan for default credentials on common services
-ui-tool-defaultcreds-error-host-required = A hostname or IP address is required.
-ui-tool-defaultcreds-detail-accepted = { $service } accepted default credentials
-ui-tool-defaultcreds-detail-rejected = { $service } rejected credentials
+ui-tool-defaultcreds-empty-state = No catalogued service matches this filter
+ui-tool-defaultcreds-empty = (empty)
+ui-tool-defaultcreds-count = { $count ->
+    [one] { $count } default credential listed
+   *[other] { $count } default credentials listed
+}
 ui-tool-defaultcreds-help =
-    Default Credential Scanner
+    Default Credentials
 
-    Tests common default credentials against services detected on a target host.
+    Lists the known vendor default credentials for a product or service, from a
+    bundled catalog (SSH, Telnet, FTP, HTTP, SNMP, MySQL, PostgreSQL, Redis, MSSQL, VNC).
 
     Usage:
-    1. Enter a hostname or IP
-    2. Enable 'Auto-detect services' to scan common ports first
-    3. Click Scan
+    1. Optionally filter by service name
+    2. Copy the report, or export it as CSV
 
-    Protocols tested:
-    - SSH (service reachable only, credentials not tested)
-    - HTTP Basic Authentication
-    - FTP (anonymous, admin)
-    - SNMP (community strings)
-    - PostgreSQL (passwordless access); MySQL, MSSQL (service reachable only, credentials not tested)
-    - VNC (service reachable only, credentials not tested)
-    - Telnet
-    - Redis (service reachable only, credentials not tested)
-
-    Safety:
-    - Rate-limited (1 attempt/second per service)
-    - Only tests well-known default credentials
-    - Does NOT perform brute-force attacks
+    This tool never attempts a login: unlike the upstream C# tool, it only lists the
+    catalog, to avoid account lockouts and unauthorized login attempts.
 ui-tool-secnumcloud-name = SecNumCloud Audit
 ui-tool-secnumcloud-description = SecNumCloud v3.2 compliance audit across network, crypto, access, and operations
 ui-tool-secnumcloud-title = SecNumCloud v3.2 Compliance Audit
@@ -4336,12 +4365,6 @@ ui-tool-smb-help =
     - Negotiated SMB2/SMB3 dialect
 
 # --- Review follow-ups (#402): security tools ---
-ui-tool-defaultcreds-status-not-tested = Not tested
-ui-tool-defaultcreds-detail-not-tested = { $service } reachable, credentials not tested
-ui-tool-defaultcreds-empty = (empty)
-ui-tool-defaultcreds-timeout-connect = Connection timed out
-ui-tool-defaultcreds-timeout-write = Write timed out
-ui-tool-defaultcreds-timeout-read = Read timed out
 ui-tool-dnssec-report-record = Record
 ui-tool-dnssec-report-detail = Detail
 ui-tool-dnssec-error-nslookup-missing = nslookup was not found. Install it (bind-utils / dnsutils on Linux) or ensure it is on PATH.
@@ -4722,6 +4745,9 @@ ui-tool-cert-host = Host
 ui-tool-cert-host-watermark = example.com or IP
 ui-tool-cert-ports = Ports
 ui-tool-cert-ports-watermark = 443, 8443
+ui-tool-cert-profiles = Scan profile
+ui-tool-cert-profile-quick = Quick ({ $count } ports)
+ui-tool-cert-profile-extended = Extended ({ $count } ports)
 ui-tool-cert-inspect = Inspect
 ui-tool-cert-copy-details = Copy Details
 ui-tool-cert-export-csv = Export CSV
@@ -5441,6 +5467,96 @@ ui-tool-cmdlib-snippet-mtr = Network path quality
 ui-tool-cmdlib-snippet-mtr-description = Sends 50 probes to each hop to measure loss and latency.
 ui-tool-cmdlib-snippet-nmap = Service versions with Nmap
 ui-tool-cmdlib-snippet-nmap-description = Probes open ports for the service and version behind them.
+ui-tool-cmdlib-platform-both = Both
+ui-tool-cmdlib-template-windows = PowerShell
+ui-tool-cmdlib-template-linux = Shell
+ui-tool-cmdlib-section-mine = My commands
+ui-tool-cmdlib-section-catalog = Catalog
+ui-tool-cmdlib-new = New command
+ui-tool-cmdlib-edit = Edit
+ui-tool-cmdlib-delete = Delete
+ui-tool-cmdlib-delete-keep = Keep
+ui-tool-cmdlib-delete-question = Delete { $title }?
+ui-tool-cmdlib-send = Send
+ui-tool-cmdlib-send-to = Send to:
+ui-tool-cmdlib-send-none = Open a connected terminal tab to send a command to it. Nothing is sent before you agree.
+ui-tool-cmdlib-library-unreadable = The file of your commands could not be read. It is left as it is and cannot be changed here.
+ui-tool-cmdlib-library-unsaved = Your commands could not be saved. The change was not made.
+ui-tool-cmdlib-editor-new = New command
+ui-tool-cmdlib-editor-edit = Edit command
+ui-tool-cmdlib-field-title = Title
+ui-tool-cmdlib-field-description = Description
+ui-tool-cmdlib-field-category = Category
+ui-tool-cmdlib-field-tags = Tags (comma separated)
+ui-tool-cmdlib-field-platform = Platforms
+ui-tool-cmdlib-field-level = Level
+ui-tool-cmdlib-field-windows-pattern = PowerShell command
+ui-tool-cmdlib-field-linux-pattern = Shell command
+ui-tool-cmdlib-field-pattern-hint = Write each value to ask for between braces, for example ping -c 3 {"{"}host{"}"}. One line only.
+ui-tool-cmdlib-save = Save
+ui-tool-cmdlib-cancel = Cancel
+ui-tool-cmdlib-level-info = Info
+ui-tool-cmdlib-level-run = Run
+ui-tool-cmdlib-level-dangerous = Dangerous
+ui-tool-cmdlib-error-title-missing = Give the command a title.
+ui-tool-cmdlib-error-title-long = The title is too long.
+ui-tool-cmdlib-error-category-missing = Give the command a category.
+ui-tool-cmdlib-error-category-long = The category is too long.
+ui-tool-cmdlib-error-description-long = The description is too long.
+ui-tool-cmdlib-error-pattern-missing = Write the command for each platform chosen.
+ui-tool-cmdlib-error-pattern-long = A command is too long.
+ui-tool-cmdlib-error-pattern-multiline = A command must be on one line.
+ui-tool-cmdlib-error-too-many-parameters = The command asks for too many values.
+ui-tool-cmdlib-error-too-many-tags = There are too many tags.
+ui-tool-cmdlib-error-gone = This command no longer exists.
+ui-tool-cmdlib-error-empty-pattern = This command has nothing to run.
+ui-tool-cmdlib-error-command-long = The command with its values is too long.
+ui-tool-cmdlib-value-required = { $label } is required.
+ui-tool-cmdlib-value-not-offered = { $label } is not one of the values offered.
+ui-tool-cmdlib-value-not-integer = { $label } must be a whole number.
+ui-tool-cmdlib-value-not-number = { $label } must be a number.
+ui-tool-cmdlib-value-hostname = { $label } must be a host name.
+ui-tool-cmdlib-value-ip = { $label } must be an IP address.
+ui-tool-cmdlib-value-drive = { $label } must be one drive letter.
+ui-tool-cmdlib-value-path = { $label } must be a path.
+ui-tool-cmdlib-value-long = { $label } is longer than { $max } characters.
+ui-tool-cmdlib-value-dangerous = { $label } holds a character the shell would read as syntax.
+ui-tool-cmdlib-value-control = { $label } holds a line break or another control character.
+ui-tool-cmdlib-import = Import
+ui-tool-cmdlib-export = Export
+ui-tool-cmdlib-import-title = Import commands
+ui-tool-cmdlib-export-title = Export commands
+ui-tool-cmdlib-import-done = Imported { $imported }, updated { $updated }, skipped { $skipped }.
+ui-tool-cmdlib-export-done = Commands exported.
+ui-tool-cmdlib-transfer-too-large = The file is too large.
+ui-tool-cmdlib-transfer-format = The file is not an export of the command library.
+ui-tool-cmdlib-transfer-failed = The file could not be used: { $detail }
+ui-tool-cmdlib-favorite = Favorite
+ui-tool-cmdlib-unfavorite = Unfavorite
+ui-tool-cmdlib-favorites-only = Favorites only
+ui-tool-cmdlib-duplicate = Duplicate
+ui-tool-cmdlib-duplicate-title = Copy of { $title }
+ui-tool-cmdlib-history = History
+ui-tool-cmdlib-history-note = The values you type are never kept: a replay asks for the command as it is written now, and the question that follows shows it whole.
+ui-tool-cmdlib-history-empty = Nothing sent yet.
+ui-tool-cmdlib-history-sent = Sent to { $target } on { $when }
+ui-tool-cmdlib-history-replay = Replay
+ui-tool-cmdlib-history-clear = Clear history
+ui-tool-cmdlib-history-clear-question = Clear the whole history? The favorites stay.
+ui-tool-cmdlib-history-clear-confirm = Clear
+ui-tool-cmdlib-replay-gone = The command of this entry no longer exists.
+ui-tool-cmdlib-replay-blocked = This entry cannot be sent now: open a connected terminal tab and fill in the values it asks for.
+ui-tool-cmdlib-activity-unsaved = The favorites and the history could not be saved.
+ui-tool-cmdlib-broadcast-to = Broadcast to:
+ui-tool-cmdlib-broadcast = Broadcast
+ui-tool-cmdlib-broadcast-all = Select all
+ui-tool-cmdlib-broadcast-none = Clear
+ui-tool-cmdlib-broadcast-sent =
+    { $count ->
+        [one] Sent to { $count } terminal.
+       *[other] Sent to { $count } terminals.
+    }
+ui-tool-cmdlib-broadcast-partial = Sent to { $delivered } of { $total } terminals. Not reached: { $names }
 ## Network tools batch 2: review follow-ups
 ui-tool-ping-error-host-invalid = Invalid hostname or IP address. Only letters, digits, dots, and hyphens are allowed.
 ui-tool-ping-latency = { $ms } ms
@@ -5614,3 +5730,194 @@ ui-dialog-import-certificates = Trusted certificates carried over: { $rdp } RDP,
 ui-dialog-import-certificates-failed = The trusted certificates could not be carried over: { $detail }
 ui-certificate-replaced = Another certificate than the one trusted: this server was trusted, in the C# Heimdall, for another certificate. A self-signed Remote Desktop certificate is renewed every few months, and several machines may answer at this address; approve this one only if you expect it.
 ui-certificate-replaced-previous = Certificate trusted before: { $thumbprint }
+
+## The network scanner, Ctrl+Shift+N.
+ui-shortcuts-network-scan = Scan the network for hosts to add
+ui-network-scan-title = Network scanner
+ui-network-scan-prompt = Subnet to scan (CIDR, for example 192.168.1.0/24) or one IPv4 address. Hosts that answer a ping are probed on the SSH, Telnet, HTTP, HTTPS, RDP, VNC and WinRM ports.
+ui-network-scan-start = Scan
+ui-network-scan-stop = Stop
+ui-network-scan-error-empty = Type a subnet such as 192.168.1.0/24.
+ui-network-scan-error-invalid = Not an IPv4 address or subnet. Use a form such as 192.168.1.0/24.
+ui-network-scan-error-range = The subnet is too wide: use a prefix of /{ $prefix } or longer.
+ui-network-scan-progress = Scanning { $cidr }: { $done } of { $total } addresses.
+ui-network-scan-none = No host answered in { $cidr }.
+ui-network-scan-complete = { $count ->
+    [one] { $count } host found.
+   *[other] { $count } hosts found.
+}
+ui-network-scan-column-address = Address
+ui-network-scan-column-name = Name
+ui-network-scan-column-ports = Open ports
+ui-network-scan-column-session = Session
+ui-network-scan-column-status = Status
+ui-network-scan-status-saved = Already saved
+ui-network-scan-status-no-port = No remote access port
+ui-network-scan-add = { $count ->
+    [one] Add { $count } session
+   *[other] Add { $count } sessions
+}
+ui-network-scan-kind-rdp = RDP
+ui-network-scan-kind-ssh = SSH
+ui-network-scan-kind-vnc = VNC
+ui-network-scan-kind-winrm = WinRM
+ui-network-scan-kind-telnet = Telnet
+ui-network-scan-kind-web = Web
+# Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
+ui-tab-menu-group-by-folder = Arrange tabs by folder
+ui-tab-list-tooltip = All open tabs
+ui-tab-list-entry = { $name } - { $state }
+
+ui-settings-ssh-auto-reconnect-first-delay = Wait before the first attempt
+ui-settings-ssh-auto-reconnect-second-delay = Wait before the second attempt
+ui-settings-ssh-auto-reconnect-subsequent-delay = Wait before each later attempt
+ui-settings-ssh-auto-reconnect-delay-refused = The wait must be between { $min } and { $max } seconds.
+ui-settings-rdp-confirm-disconnect = Confirm before disconnecting an RDP session
+ui-settings-rdp-confirm-disconnect-hint = Ask for confirmation when the Disconnect button of an RDP session is pressed.
+ui-settings-rdp-redirection-indicators = Always show every redirection indicator
+ui-settings-rdp-redirection-indicators-hint = Show the redirections that are not shared too on the bar of an RDP session, instead of behind the "+N" badge.
+# "Route via" of the network tools: their TCP connections made from an SSH gateway.
+ui-tool-route-label = Route via
+ui-tool-route-direct = Direct (from this computer)
+ui-tool-route-hint = Connections are made from the gateway, which resolves the host name. Nothing is run on the gateway.
+ui-tool-route-refused = This tool needs ICMP, ARP, raw sockets or UDP, which an SSH gateway cannot carry, so it does not run through a gateway. Choose Direct to run it from this computer.
+ui-tool-route-unavailable = The gateway chosen is no longer available. Choose it again, or choose Direct.
+ui-tool-route-error-untrusted = The host key of the gateway { $host }:{ $port } is not trusted yet. Connect to it once from a session to trust its key, then try again.
+ui-tool-route-error-gateway = Gateway: { $detail }
+# Network cartography: what the read-only probes learn of a host (columns of the CSV export, then the line shown under the host).
+ui-tool-netmap-col-os = Operating System
+ui-tool-netmap-col-os-confidence = OS Confidence
+ui-tool-netmap-col-netbios-name = NetBIOS Name
+ui-tool-netmap-col-netbios-domain = NetBIOS Domain
+ui-tool-netmap-col-snmp-descr = SNMP Description
+ui-tool-netmap-col-snmp-name = SNMP Name
+ui-tool-netmap-col-snmp-location = SNMP Location
+ui-tool-netmap-col-ntlm-dns-name = Windows DNS Name
+ui-tool-netmap-col-os-build = Windows Build
+ui-tool-netmap-col-smb-dialect = SMB Dialect
+ui-tool-netmap-col-smb-signing = SMB Signing Required
+ui-tool-netmap-col-ssh-banner = SSH Banner
+ui-tool-netmap-col-ssh-hassh = SSH HASSH
+ui-tool-netmap-col-tls-subject = TLS Certificate Subject
+ui-tool-netmap-fp-os = System: { $os } ({ $confidence }%)
+ui-tool-netmap-fp-netbios = NetBIOS: { $name }
+ui-tool-netmap-fp-netbios-domain = NetBIOS: { $domain }\{ $name }
+ui-tool-netmap-fp-workgroup = NetBIOS domain: { $domain }
+ui-tool-netmap-fp-snmp = SNMP: { $descr }
+ui-tool-netmap-fp-snmp-name = SNMP name: { $name }
+ui-tool-netmap-fp-windows = Windows name: { $name }
+ui-tool-netmap-fp-build = Windows build: { $build }
+ui-tool-netmap-fp-smb =
+    SMB { $dialect }, { $required ->
+        [yes] signing required
+       *[no] signing not required
+    }
+ui-tool-netmap-fp-ssh = SSH: { $banner }
+ui-tool-netmap-fp-hassh = HASSH: { $hash }
+ui-tool-netmap-fp-tls = TLS: { $subject }
+ui-settings-rdp-default-width = Default resolution width
+ui-settings-rdp-default-height = Default resolution height
+ui-settings-rdp-default-resolution-refused = The default resolution must be between { $min } and { $max } pixels.
+ui-settings-pixels-unit = px
+ui-tool-route-udp-skipped = The NetBIOS name query uses UDP, which an SSH gateway cannot carry, so it was not sent. Choose Direct to send it from this computer.
+
+ui-shared-title = Shared sessions
+ui-shared-source-header = { $name } ({ $count })
+ui-shared-badge = shared
+ui-shared-row-tooltip = Read-only: this session comes from the shared file of { $source }. { $address }
+ui-shared-disabled = Turned off.
+ui-shared-problem-invalid-id = The source has an identifier that is not valid.
+ui-shared-problem-duplicate-id = Another source has the same identifier.
+ui-shared-problem-no-path = The source has no file path.
+ui-shared-problem-missing = The file { $path } was not found.
+ui-shared-problem-too-large = The file { $path } is larger than { $limit } MB and was not read.
+ui-shared-problem-unreadable = The file { $path } could not be read. { $reason }
+ui-shared-problem-unparsable = The file { $path } could not be understood. { $reason }
+ui-shared-problem-empty = The file { $path } holds no SSH or RDP session that can be used.
+ui-shared-kept-previous = The last change could not be taken, the previous sessions are kept. { $reason }
+ui-shared-refused =
+    { $count ->
+        [one] { $count } session of the file was left out: another protocol or an invalid host.
+       *[other] { $count } sessions of the file were left out: another protocol or an invalid host.
+    }
+ui-shared-passwords =
+    { $count ->
+        [one] { $count } password stored in the file is never read.
+       *[other] { $count } passwords stored in the file are never read.
+    }
+ui-shared-skipped =
+    { $count ->
+        [one] { $count } entry of the file could not be read and was skipped.
+       *[other] { $count } entries of the file could not be read and were skipped.
+    }
+ui-shared-truncated = The file holds more than a shared source may, the rest was not read.
+ui-mobaxterm-variables-title = MobaXterm import variables
+ui-mobaxterm-variables-description = When a MobaXterm session file is imported, [NAME] in a user field is replaced by the value of NAME: [DAS] becomes the value of DAS.
+ui-mobaxterm-variables-name = Name
+ui-mobaxterm-variables-value = Value
+ui-mobaxterm-variables-resolved = Resolves to
+ui-mobaxterm-variables-unresolved = Not resolved
+ui-mobaxterm-variables-add = Add
+ui-mobaxterm-variables-remove = Remove
+ui-mobaxterm-variables-name-required = Enter a name.
+ui-mobaxterm-variables-name-invalid = Use letters, digits and underscores, starting with a letter or an underscore.
+ui-mobaxterm-variables-name-duplicate = Another variable has this name.
+ui-mobaxterm-variables-value-required = Enter a value.
+ui-shared-sources-title = Shared session sources
+ui-shared-sources-description = MobaXterm session files kept by a team, read and never written. Their SSH and RDP sessions appear in the tree, read-only. The path is absolute or starts with a variable such as %USERPROFILE%.
+ui-shared-sources-name = Name
+ui-shared-sources-path = Path of the file
+ui-shared-sources-enabled = Read this source
+ui-shared-sources-report = Import report
+ui-shared-sources-remove = Remove
+ui-shared-sources-add = Add a source
+ui-shared-sources-browse-title = Select a shared session file
+ui-shared-sources-browse-filter = MobaXterm session files
+ui-shared-sources-status =
+    { $count ->
+        [one] { $count } session held.
+       *[other] { $count } sessions held.
+    }
+ui-shared-sources-name-required = Enter a name.
+ui-shared-sources-name-duplicate = Another source has this name.
+ui-shared-sources-path-required = Enter the path of the file.
+ui-shared-sources-path-invalid = The path must be absolute, or start with a variable such as %USERPROFILE%.
+ui-shared-sources-id-invalid = The identifier of the source is not valid.
+ui-shared-sources-id-duplicate = Another source has the same identifier.
+ui-shared-offline = The file cannot be reached: these sessions come from the copy kept on { $date }. { $reason }
+ui-shared-report-title = Import report: { $name }
+ui-shared-report-taken =
+    { $count ->
+        [one] { $count } session taken from the file.
+       *[other] { $count } sessions taken from the file.
+    }
+ui-shared-report-empty = Nothing to report: every session of the file was taken as it stands.
+ui-shared-report-close = Close
+ui-shared-report-skipped =
+    { $count ->
+        [one] { $count } session skipped
+       *[other] { $count } sessions skipped
+    }
+ui-shared-report-unresolved =
+    { $count ->
+        [one] { $count } login with an undefined variable
+       *[other] { $count } logins with an undefined variable
+    }
+ui-shared-report-mismatch =
+    { $count ->
+        [one] { $count } name that is not its host
+       *[other] { $count } names that are not their host
+    }
+ui-shared-report-duplicate-host =
+    { $count ->
+        [one] { $count } session on a host filed twice
+       *[other] { $count } sessions on a host filed twice
+    }
+ui-shared-report-reason-other-protocol = Protocol { $protocol } is not supported, only SSH and RDP are taken.
+ui-shared-report-reason-invalid-host = The host { $host } is not a host name or an address.
+ui-shared-report-reason-invalid-gateway = The SSH gateway { $host } is not a host name or an address, so the session was not taken: it would reach its host around the gateway.
+ui-shared-report-reason-duplicate-session = Another session of the file has the same folder and name.
+ui-shared-report-reason-over-limit = The source already holds as many sessions as one may.
+ui-shared-report-detail-unresolved = The login names the variable { $name }, which has no value. Define it in the MobaXterm import variables.
+ui-shared-report-detail-mismatch = The name is not the host { $host } nor its first label.
+ui-shared-report-detail-duplicate-host = The host { $host } is also used by { $others }.

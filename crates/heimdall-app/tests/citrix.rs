@@ -940,3 +940,92 @@ async fn a_master_password_takes_the_launch_lines_and_a_locked_vault_refuses_the
         Ok(CitrixLaunch::CacheLine(_))
     ));
 }
+
+/// The lines of the session events log beside the transcripts of the application over
+/// `dir`, read as JSON.
+fn session_events(app: &App, dir: &Path) -> Vec<serde_json::Value> {
+    app.sync_session_logs();
+    let folder = app
+        .settings()
+        .session_log_folder(&dir.join(heimdall_core::settings::SETTINGS_FILE_NAME));
+    std::fs::read_to_string(folder.join(heimdall_app::session_log::SESSION_EVENTS_FILE))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON object a line"))
+        .collect()
+}
+
+fn session_logging_on(app: &mut App) {
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::SessionLogging(true),
+    ));
+    if matches!(app.dialog, Some(Dialog::ConfirmSessionLogging)) {
+        app.update(Message::ConfirmDialog);
+    }
+    assert!(app.settings().session_logging);
+}
+
+#[test]
+fn a_citrix_session_s_connect_and_end_go_to_the_session_events_log() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut with_url = outlook();
+    with_url.store_front_url = Some("https://Store.lab:443/Citrix/Store?token=1".to_owned());
+    let mut app = app(dir.path(), &[with_url]);
+    // Off: nothing is written, whatever happens.
+    let silent = open_seen(&mut app, "outlook", &[], &[41]);
+    app.update(Message::CitrixProbed {
+        tab: silent,
+        probe: seen(LauncherStatus::Running, &[]),
+    });
+    assert!(session_events(&app, dir.path()).is_empty());
+
+    session_logging_on(&mut app);
+    // Ended by the client going away.
+    let remote = open_seen(&mut app, "outlook", &[], &[42]);
+    app.update(Message::CitrixProbed {
+        tab: remote,
+        probe: seen(LauncherStatus::Running, &[]),
+    });
+    // Ended by the user's Terminate.
+    let user = open_seen(&mut app, "outlook", &[], &[43]);
+    assert!(press_terminate(&mut app, user, false));
+    app.update(Message::ConfirmDialog);
+    app.update(Message::CitrixProbed {
+        tab: user,
+        probe: seen(LauncherStatus::Running, &[]),
+    });
+    // Ended by its tab closing.
+    let closed = open_seen(&mut app, "outlook", &[], &[44]);
+    app.update(Message::RequestCloseTab(closed));
+
+    let lines = session_events(&app, dir.path());
+    let kinds: Vec<&str> = lines
+        .iter()
+        .map(|line| line["event"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "Connected",
+            "Disconnected",
+            "Connected",
+            "Disconnected",
+            "Connected",
+            "Disconnected"
+        ],
+        "{lines:?}"
+    );
+    for line in &lines {
+        assert_eq!(line["protocol"], "CITRIX");
+        assert_eq!(
+            line["host"], "https://store.lab/Citrix/Store",
+            "query and default port dropped"
+        );
+        assert_eq!(line["title"], "Outlook");
+    }
+    let triggers: Vec<&str> = [1, 3, 5]
+        .iter()
+        .map(|index| lines[*index]["endTrigger"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(triggers, ["remote", "user", "teardown"], "{lines:?}");
+}

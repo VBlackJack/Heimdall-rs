@@ -248,6 +248,8 @@ impl App {
             );
             return Vec::new();
         }
+        // The user ends the session: its disconnect line says so, as the C# "user".
+        self.desktop_disconnected_by_user(tab);
         if let Some(pane) = self
             .tab_mut(tab)
             .and_then(|found| found.citrix.as_deref_mut())

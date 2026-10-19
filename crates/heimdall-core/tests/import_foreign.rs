@@ -376,3 +376,158 @@ fn the_ids_given_are_the_callers_one_per_kept_session() {
     assert_eq!(unique.len(), 5);
     assert!(ids.iter().all(|id| id.starts_with("id-")));
 }
+
+/// A `MobaXterm` session line: `name= #icon#type%` then the `%` fields.
+fn moba_line(name: &str, icon: u32, kind: u32, fields: &[&str]) -> String {
+    format!("{name}= #{icon}#{kind}%{}\n", fields.join("%"))
+}
+
+/// An SSH line through the gateway `(host, port, user)`: the gateway sits at fields 7-9.
+fn ssh_through(name: &str, host: &str, user: &str, gateway: (&str, &str, &str)) -> String {
+    moba_line(
+        name,
+        109,
+        0,
+        &[
+            host, "22", user, "", "", "", "", gateway.0, gateway.1, gateway.2,
+        ],
+    )
+}
+
+/// An RDP line through the gateway `(host, port, user)`: the gateway sits at fields 12-14.
+fn rdp_through(name: &str, host: &str, gateway: (&str, &str, &str)) -> String {
+    let mut fields = vec![host, "3389", "admin"];
+    fields.extend(["", "", "", "", "", "", "", "", ""]);
+    fields.extend([gateway.0, gateway.1, gateway.2]);
+    moba_line(name, 91, 4, &fields)
+}
+
+#[test]
+fn mobaxterm_sessions_through_a_gateway_share_it_and_are_linked_to_it() {
+    let mut text = String::from("[Bookmarks]\n");
+    text += &ssh_through("a", "a.lab", "root", ("jump.lab", "22", "ops"));
+    // The same gateway, written in other case: one gateway for both.
+    text += &ssh_through("b", "b.lab", "root", ("JUMP.LAB", "", "OPS"));
+    // Another port and no login: another gateway, named after the port.
+    text += &ssh_through("c", "c.lab", "root", ("jump.lab", "2200", ""));
+    text += &rdp_through("d", "d.lab", ("jump.lab", "22", "ops"));
+    text += &moba_line("direct", 109, 0, &["e.lab", "22", "root"]);
+    let parsed = mobaxterm::parse(&text);
+    assert!(parsed.warnings.is_empty());
+    assert_eq!(parsed.gateways.len(), 2);
+    let report = report(&parsed);
+    let names: Vec<&str> = report.gateways.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, ["ops@jump.lab", "jump.lab:2200"]);
+    let first = &report.gateways[0];
+    assert_eq!(
+        (first.host.as_str(), first.port, first.username.as_deref()),
+        ("jump.lab", 22, Some("ops"))
+    );
+    assert_eq!(report.gateways[1].username, None);
+    let route = |name: &str| {
+        report
+            .profiles
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.gateway.clone())
+            .expect(name)
+    };
+    assert_eq!(route("a"), Some(first.id.clone()));
+    assert_eq!(route("b"), Some(first.id.clone()));
+    assert_eq!(route("c"), Some(report.gateways[1].id.clone()));
+    assert_eq!(route("direct"), None);
+    let desk = report.rdp.iter().find(|p| p.name == "d").expect("rdp");
+    assert_eq!(desk.gateway, Some(first.id.clone()));
+    // No placeholder identifier survives: they are the caller's.
+    assert!(
+        report
+            .gateways
+            .iter()
+            .all(|g| g.id.as_str().starts_with("id-"))
+    );
+}
+
+#[test]
+fn only_ssh_and_rdp_sessions_read_a_gateway() {
+    let text = "[Bookmarks]\n".to_owned()
+        + &moba_line(
+            "sftp",
+            140,
+            5,
+            &["f.lab", "22", "me", "", "", "", "", "jump.lab", "22", "ops"],
+        )
+        + &moba_line(
+            "telnet",
+            98,
+            1,
+            &["t.lab", "23", "", "", "", "", "", "jump.lab", "22", "ops"],
+        );
+    let parsed = mobaxterm::parse(&text);
+    assert!(parsed.gateways.is_empty());
+    let report = report(&parsed);
+    assert!(report.gateways.is_empty());
+    assert!(report.profiles.iter().all(|p| p.gateway.is_none()));
+}
+
+#[test]
+fn a_gateway_login_takes_the_variables_and_an_unknown_one_is_said_once_per_session() {
+    let mut text = String::from("[Bookmarks]\n");
+    text += &ssh_through("known", "a.lab", "[DAS]", ("jump.lab", "22", "[DAS]"));
+    text += &ssh_through("lost", "b.lab", "[NOPE]", ("lost.lab", "22", "[NOPE]"));
+    let resolve = |name: &str| (name == "DAS").then(|| "jb".to_owned());
+    let parsed = mobaxterm::parse_with(&text, &resolve);
+    assert_eq!(
+        parsed.warnings,
+        [FileWarning::UnresolvedVariable {
+            session: "lost".to_owned(),
+            name: "NOPE".to_owned()
+        }],
+        "the session's login and its gateway's name one variable: one line"
+    );
+    let report = report(&parsed);
+    let by_host = |host: &str| {
+        report
+            .gateways
+            .iter()
+            .find(|g| g.host == host)
+            .expect(host)
+            .username
+            .clone()
+    };
+    assert_eq!(by_host("jump.lab").as_deref(), Some("jb"));
+    assert_eq!(by_host("lost.lab").as_deref(), Some("[NOPE]"));
+    // Resolved, the same login and host are one gateway whatever the token spelling.
+    let mut text = String::from("[Bookmarks]\n");
+    text += &ssh_through("x", "x.lab", "r", ("jump.lab", "22", "[DAS]"));
+    text += &ssh_through("y", "y.lab", "r", ("jump.lab", "22", "jb"));
+    assert_eq!(mobaxterm::parse_with(&text, &resolve).gateways.len(), 1);
+}
+
+#[test]
+fn a_session_whose_gateway_is_not_a_host_is_left_out_never_imported_direct() {
+    let mut text = String::from("[Bookmarks]\n");
+    text += &ssh_through("evil", "a.lab", "root", ("-oProxyCommand=x", "22", "ops"));
+    text += &ssh_through("spaced", "b.lab", "root", ("bad host", "22", "ops"));
+    text += &ssh_through("fine", "c.lab", "root", ("jump.lab", "99999", "ops"));
+    let (parsed, skipped) =
+        mobaxterm::parse_limited(&text, &|_| None, &mobaxterm::Limits::UNLIMITED);
+    assert_eq!(parsed.servers.len(), 1, "{:?}", parsed.servers);
+    assert_eq!(skipped.entries, 2);
+    assert_eq!(
+        parsed.warnings,
+        [
+            FileWarning::InvalidGatewayHost {
+                session: "evil".to_owned(),
+                folder: String::new(),
+                host: "-oProxyCommand=x".to_owned()
+            },
+            FileWarning::InvalidGatewayHost {
+                session: "spaced".to_owned(),
+                folder: String::new(),
+                host: "bad host".to_owned()
+            },
+        ]
+    );
+    // A port out of range is the SSH default.
+    assert_eq!(report(&parsed).gateways[0].port, 22);
+}

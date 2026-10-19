@@ -38,25 +38,29 @@
 //! entry that does not read is counted as invalid; one that cannot be bound, or that the
 //! user never confirmed, is counted as skipped.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, SystemTime};
 
 use serde_json::{Map, Value};
 use thiserror::Error;
 
 use super::csharp::{audio_playback, host_and_port};
+use super::mobaxterm::is_valid_variable_name;
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind};
 use crate::profile::{ColorDepth, RESOLUTION_PRESETS, RdpMode, SshMode};
 use crate::settings::{
     Accent, AgentPreference, AppTheme, BroadcastScope, ColorScheme, ExecutionPolicy, Language,
-    Settings, anti_idle_interval_accepted, auto_lock_idle_minutes_accepted, max_sessions_accepted,
-    rdp_auto_reconnect_attempts_accepted, rdp_keep_alive_interval_accepted,
-    rdp_resize_enable_delay_accepted, reachability_interval_accepted, reachability_probes_accepted,
-    reachability_timeout_accepted, session_log_retention_days_accepted,
+    RDP_DEFAULT_HEIGHT_DEFAULT, RDP_DEFAULT_WIDTH_DEFAULT, Settings, anti_idle_interval_accepted,
+    auto_lock_idle_minutes_accepted, default_mobaxterm_variables, max_sessions_accepted,
+    rdp_auto_reconnect_attempts_accepted, rdp_default_resolution_accepted,
+    rdp_keep_alive_interval_accepted, rdp_resize_enable_delay_accepted,
+    reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
+    reconnect_delay_accepted, session_log_retention_days_accepted,
     ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_size_accepted, update_interval_accepted,
     windows_hello_grace_minutes_accepted, windows_hello_vault_max_days_accepted,
 };
+use crate::shared_sessions::SharedSource;
 
 /// What the C# "Export settings" file says it is.
 const EXPORT_FORMAT: &str = "heimdall-settings";
@@ -385,6 +389,32 @@ fn words(value: &Value, default: &str, field: &mut String) -> Read {
     Read::Set
 }
 
+/// The C# `MobaXtermUserVariables`: an object of names to logins, laid over `field` unless it
+/// is the C# default. Every name must be one the import recognises and every login must say
+/// something, as the C# settings page refuses to save otherwise
+/// (`SettingsViewModel.MobaXtermVariables.cs:108`); one that does not is invalid as a whole.
+/// An empty object is the user's choice of none.
+fn variables(value: &Value, field: &mut BTreeMap<String, String>) -> Read {
+    let Value::Object(object) = value else {
+        return Read::Invalid;
+    };
+    let mut read = BTreeMap::new();
+    for (name, login) in object {
+        let (name, Some(login)) = (name.trim(), login.as_str().map(str::trim)) else {
+            return Read::Invalid;
+        };
+        if !is_valid_variable_name(name) || login.is_empty() || has_control(login) {
+            return Read::Invalid;
+        }
+        read.insert(name.to_owned(), login.to_owned());
+    }
+    if read == default_mobaxterm_variables() {
+        return Read::CSharpDefault;
+    }
+    *field = read;
+    Read::Set
+}
+
 /// Whether `path` is absolute as Windows reads it, whatever the folder Heimdall runs from:
 /// a drive, a share or a root. Read as text, so that a test on any system reads it alike.
 fn absolute(path: &str) -> bool {
@@ -399,7 +429,7 @@ fn absolute(path: &str) -> bool {
 
 /// Whether `path` is absolute, or starts with a `%VARIABLE%`, which the editor's launch
 /// expands as the C# does (`external_edit.rs`), as its default `%windir%` is written.
-fn absolute_or_expanded(path: &str) -> bool {
+pub(crate) fn absolute_or_expanded(path: &str) -> bool {
     absolute(path) || path.starts_with('%')
 }
 
@@ -513,6 +543,48 @@ fn presets(value: &Value, settings: &mut Settings) -> Read {
         return Read::CSharpDefault;
     }
     settings.rdp_resolution_presets = sizes;
+    Read::Set
+}
+
+/// The C# `SharedSessionSources` (`SharedSessionSourceDto`: `Id`, `Name`, `Path`, `Enabled`):
+/// all of them read, or none taken. A source needs an identifier of the shared namespace, a
+/// path Windows reads as absolute (or starting with a variable), and no other source's
+/// identifier; what the file holds is read later, never at import.
+fn shared_sources(value: &Value, settings: &mut Settings) -> Read {
+    let Some(items) = value.as_array() else {
+        return Read::Invalid;
+    };
+    let mut sources: Vec<SharedSource> = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(object) = item.as_object() else {
+            return Read::Invalid;
+        };
+        let fields = Folded::of(object);
+        let text = |key: &str| fields.get(key).and_then(Value::as_str).unwrap_or_default();
+        let id = text("Id");
+        let path = text("Path").trim();
+        let enabled = fields.get("Enabled").map_or(Some(true), Value::as_bool);
+        // The same checks as the settings page's source rows.
+        if !crate::shared_sessions::is_valid_source_id(id)
+            || sources.iter().any(|known| known.id == id)
+            || crate::shared_sessions::path_problem(path).is_some()
+        {
+            return Read::Invalid;
+        }
+        let Some(enabled) = enabled else {
+            return Read::Invalid;
+        };
+        sources.push(SharedSource {
+            id: id.to_owned(),
+            name: text("Name").trim().to_owned(),
+            path: path.to_owned(),
+            enabled,
+        });
+    }
+    if sources.is_empty() {
+        return Read::CSharpDefault;
+    }
+    settings.shared_sources = sources;
     Read::Set
 }
 
@@ -745,6 +817,50 @@ fn preferences_table() -> Vec<Preference> {
             ssh_auto_reconnect_attempts
         ),
         preference!(
+            "SshAutoReconnectFirstDelaySeconds",
+            |value, settings| number(
+                value,
+                2,
+                reconnect_delay_accepted,
+                &mut settings.ssh_auto_reconnect_first_delay
+            ),
+            ssh_auto_reconnect_first_delay
+        ),
+        preference!(
+            "SshAutoReconnectSecondDelaySeconds",
+            |value, settings| number(
+                value,
+                5,
+                reconnect_delay_accepted,
+                &mut settings.ssh_auto_reconnect_second_delay
+            ),
+            ssh_auto_reconnect_second_delay
+        ),
+        preference!(
+            "SshAutoReconnectSubsequentDelaySeconds",
+            |value, settings| number(
+                value,
+                15,
+                reconnect_delay_accepted,
+                &mut settings.ssh_auto_reconnect_subsequent_delay
+            ),
+            ssh_auto_reconnect_subsequent_delay
+        ),
+        preference!(
+            "RdpConfirmDisconnect",
+            |value, settings| flag(value, true, &mut settings.rdp_confirm_disconnect),
+            rdp_confirm_disconnect
+        ),
+        preference!(
+            "RdpRedirectionIndicatorsAlwaysExpanded",
+            |value, settings| flag(
+                value,
+                false,
+                &mut settings.rdp_redirection_indicators_expanded
+            ),
+            rdp_redirection_indicators_expanded
+        ),
+        preference!(
             "RdpDefaultMode",
             |value, settings| choice(
                 value,
@@ -857,9 +973,34 @@ fn preferences_table() -> Vec<Preference> {
             rdp_defaults.auto_reconnect
         ),
         preference!(
+            "DefaultResolutionWidth",
+            |value, settings| number(
+                value,
+                i64::from(RDP_DEFAULT_WIDTH_DEFAULT),
+                rdp_default_resolution_accepted,
+                &mut settings.rdp_default_width
+            ),
+            rdp_default_width
+        ),
+        preference!(
+            "DefaultResolutionHeight",
+            |value, settings| number(
+                value,
+                i64::from(RDP_DEFAULT_HEIGHT_DEFAULT),
+                rdp_default_resolution_accepted,
+                &mut settings.rdp_default_height
+            ),
+            rdp_default_height
+        ),
+        preference!(
             "RdpResolutionPresets",
             |value, settings| presets(value, settings),
             rdp_resolution_presets
+        ),
+        preference!(
+            "SharedSessionSources",
+            |value, settings| shared_sources(value, settings),
+            shared_sources
         ),
         preference!(
             "MaxEmbeddedSessions",
@@ -894,6 +1035,11 @@ fn preferences_table() -> Vec<Preference> {
                 &mut settings.external_editor
             ),
             external_editor
+        ),
+        preference!(
+            "MobaXtermUserVariables",
+            |value, settings| variables(value, &mut settings.mobaxterm_variables),
+            mobaxterm_variables
         ),
         preference!(
             "PreventSleepDuringSession",
@@ -944,6 +1090,11 @@ fn preferences_table() -> Vec<Preference> {
             "ShowGatewayBadge",
             |value, settings| flag(value, true, &mut settings.show_gateway_badge),
             show_gateway_badge
+        ),
+        preference!(
+            "GroupSessionTabsByFolder",
+            |value, settings| flag(value, false, &mut settings.group_tabs_by_folder),
+            group_tabs_by_folder
         ),
         preference!(
             "UseExternalCredentialProvider",
