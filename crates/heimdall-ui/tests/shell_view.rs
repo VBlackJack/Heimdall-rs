@@ -3866,6 +3866,7 @@ fn a_migration_says_how_many_scheduled_connections_it_carried_over() {
         scheduled,
         settings_unreadable: None,
         preferences: None,
+        certificates: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
         actions: None,
         dropped: vec![("web".to_owned(), vec![Dropped::ScheduledTime])],
@@ -3899,6 +3900,7 @@ fn the_network_scanner_report_has_a_title_of_its_own() {
         stored_credentials: None,
         host_keys: None,
         scheduled: None,
+        certificates: None,
         settings_unreadable: None,
         preferences: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
@@ -3932,6 +3934,7 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         scheduled: None,
         settings_unreadable: None,
         preferences: None,
+        certificates: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
         actions: None,
         dropped: vec![(
@@ -3969,6 +3972,7 @@ fn an_import_counts_the_gateways_it_created_and_merged_as_the_csharp_summary() {
         scheduled: None,
         settings_unreadable: None,
         preferences: None,
+        certificates: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 2,
             merged: 1,
@@ -4007,6 +4011,7 @@ fn an_import_with_orphan_gateway_references_counts_them_and_says_what_to_do_as_t
         scheduled: None,
         settings_unreadable: None,
         preferences: None,
+        certificates: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 0,
             merged: 0,
@@ -5972,6 +5977,7 @@ fn a_migration_says_which_csharp_preferences_it_carried_over_and_offers_their_re
         scheduled: None,
         settings_unreadable: None,
         preferences: Some(preferences),
+        certificates: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
         actions: None,
         dropped: Vec::new(),
@@ -6015,4 +6021,43 @@ fn a_migration_says_which_csharp_preferences_it_carried_over_and_offers_their_re
     ui.find("The preferences of the C# Heimdall could not be read: not JSON")
         .expect("why not");
     assert!(ui.find("Review preferences").is_err(), "nothing to review");
+}
+
+#[test]
+fn a_migration_says_how_many_csharp_certificates_it_carried_over_or_why_not() {
+    let summary = |certificates| heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport::default(),
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        scheduled: None,
+        settings_unreadable: None,
+        preferences: None,
+        certificates: Some(certificates),
+        gateways: heimdall_core::import::gateways::Reconciliation::default(),
+        actions: None,
+        dropped: Vec::new(),
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Ok(
+        heimdall_app::CarriedCertificates {
+            rdp: 1,
+            ftps: 2,
+            skipped: 3,
+            invalid: 4,
+        },
+    ))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Trusted certificates carried over: 1 RDP, 2 FTPS. Skipped: 3. Invalid: 4.")
+        .expect("counted");
+
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Err("disk full".to_owned()))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("The trusted certificates could not be carried over: disk full")
+        .expect("why not");
 }

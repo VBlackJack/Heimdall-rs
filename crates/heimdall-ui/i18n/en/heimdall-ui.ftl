@@ -5724,6 +5724,12 @@ ui-dialog-import-preferences-invalid = Values not read: { $names }
 ui-dialog-import-preferences-relative = Paths of the C# installation, not carried over: { $names }
 ui-dialog-import-preferences-failed = The preferences of the C# Heimdall could not be read: { $detail }
 ui-dialog-import-preferences-review = Review preferences
+## The migration of the C# Heimdall's trusted certificates.
+ui-trusted-certificates-key-unrecorded = Key not recorded (carried over from the C# Heimdall)
+ui-dialog-import-certificates = Trusted certificates carried over: { $rdp } RDP, { $ftps } FTPS. Skipped: { $skipped }. Invalid: { $invalid }.
+ui-dialog-import-certificates-failed = The trusted certificates could not be carried over: { $detail }
+ui-certificate-replaced = Another certificate than the one trusted: this server was trusted, in the C# Heimdall, for another certificate. A self-signed Remote Desktop certificate is renewed every few months, and several machines may answer at this address; approve this one only if you expect it.
+ui-certificate-replaced-previous = Certificate trusted before: { $thumbprint }
 
 ## The network scanner, Ctrl+Shift+N.
 ui-shortcuts-network-scan = Scan the network for hosts to add

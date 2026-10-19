@@ -498,6 +498,7 @@ fn an_ftp_profile_opens_a_files_tab_and_its_certificate_question_reconnects_it()
             subject: None,
             certificate: whole,
             details: Some(Box::new(heimdall_app::CertificateDetails {
+                replaces: None,
                 issuer: "CN=ftp.lab".to_owned(),
                 validity: heimdall_rdp::Validity {
                     not_before: at,

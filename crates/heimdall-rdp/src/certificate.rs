@@ -93,6 +93,12 @@ impl CertificateHash {
         Self(sha256(der))
     }
 
+    /// The hash whose SHA-256 is `sha256`: a thumbprint the C# Heimdall kept, read back.
+    #[must_use]
+    pub const fn from_sha256(sha256: [u8; SHA256_OUTPUT_LEN]) -> Self {
+        Self(sha256)
+    }
+
     /// As the C# shows a thumbprint (`CertificateFingerprint.ComputeSha256`): `SHA256:`,
     /// then each byte in upper-case hexadecimal, separated by colons.
     #[must_use]

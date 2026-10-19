@@ -930,6 +930,7 @@ fn a_certificate_renewed_on_the_trusted_key_is_said_so_with_both_validities_and_
         ConnectionEvent::UnknownRdpCertificate {
             subject: Some("CN=dc.lab".to_owned()),
             details: Some(Box::new(heimdall_app::CertificateDetails {
+                replaces: None,
                 issuer: "CN=dc.lab".to_owned(),
                 validity: presented,
                 issue: None,

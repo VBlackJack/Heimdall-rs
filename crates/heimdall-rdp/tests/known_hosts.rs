@@ -19,8 +19,8 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use heimdall_rdp::{
-    CertificateHash, CertificateVerdict, Fingerprint, KnownRdpHosts, ServerCertificate, Validity,
-    Verdict,
+    CARRIED_SUFFIX, Carried, CarriedCertificate, CertificateHash, CertificateVerdict, Fingerprint,
+    KnownRdpHosts, ServerCertificate, Validity, Verdict,
 };
 
 /// SHA-256 of the fixture's `SubjectPublicKeyInfo`, computed by openssl.
@@ -53,8 +53,8 @@ fn the_servers_trusted_are_listed_with_their_key_in_the_order_of_the_file() {
         ),
     )
     .expect("write");
-    let entry = |host: &str, port| (host.to_owned(), port, pin());
-    let servers = || -> Vec<(String, u16, Fingerprint)> {
+    let entry = |host: &str, port| (host.to_owned(), port, Some(pin()));
+    let servers = || -> Vec<(String, u16, Option<Fingerprint>)> {
         known
             .entries()
             .expect("read")
@@ -85,7 +85,7 @@ fn one_certificate_is_forgotten_and_another_trusted_for_the_same_server_stays() 
             .expect("another port")
     );
     assert!(known.forget_key("DC.lab", 3389, &pin()).expect("forget"));
-    let left: Vec<(String, Fingerprint)> = known
+    let left: Vec<(String, Option<Fingerprint>)> = known
         .entries()
         .expect("read")
         .into_iter()
@@ -93,7 +93,10 @@ fn one_certificate_is_forgotten_and_another_trusted_for_the_same_server_stays() 
         .collect();
     assert_eq!(
         left,
-        [("dc.lab".to_owned(), other), ("web.lab".to_owned(), pin())]
+        [
+            ("dc.lab".to_owned(), Some(other)),
+            ("web.lab".to_owned(), Some(pin()))
+        ]
     );
     assert!(!known.forget_key("dc.lab", 3389, &pin()).expect("gone"));
 }
@@ -121,7 +124,7 @@ fn a_certificate_is_recorded_with_its_names_and_the_time_and_read_back() {
         .expect("one entry");
     assert_eq!(
         (entry.host.as_str(), entry.port, entry.fingerprint),
-        ("dc.lab", 3389, certificate.fingerprint)
+        ("dc.lab", 3389, Some(certificate.fingerprint))
     );
     assert_eq!(entry.subject.as_deref(), Some("CN=dc.lab"));
     assert_eq!(
@@ -157,7 +160,10 @@ fn a_line_of_two_fields_reads_and_decides_as_before() {
         .expect("read")
         .try_into()
         .expect("one entry");
-    assert_eq!((entry.host.as_str(), entry.fingerprint), ("dc.lab", pin()));
+    assert_eq!(
+        (entry.host.as_str(), entry.fingerprint),
+        ("dc.lab", Some(pin()))
+    );
     assert_eq!(
         (entry.subject, entry.issuer, entry.trusted),
         (None, None, None),
@@ -522,4 +528,337 @@ fn a_certificate_that_does_not_read_is_asked_about_never_taken_for_a_key_alone()
         .try_into()
         .expect("one entry");
     assert!(entry.certificate_unreadable && entry.certificate.is_none());
+}
+
+/// A certificate the C# Heimdall trusted for `host:port`, by the hash `certificate`.
+fn carried(host: &str, port: u16, certificate: CertificateHash) -> CarriedCertificate {
+    CarriedCertificate {
+        host: host.to_owned(),
+        port,
+        certificate,
+        trusted: Some(UNIX_EPOCH + Duration::from_secs(1_767_225_601)),
+        subject: Some("CN=files.lab".to_owned()),
+        issuer: None,
+    }
+}
+
+/// The file beside `known` that holds the certificates carried over.
+fn carried_file(known: &KnownRdpHosts) -> std::path::PathBuf {
+    let mut name = known.path().file_name().expect("name").to_owned();
+    name.push(CARRIED_SUFFIX);
+    known.path().with_file_name(name)
+}
+
+#[test]
+fn a_certificate_carried_over_is_trusted_by_the_whole_of_it_and_nothing_else() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_ftps_hosts"));
+    let certificate = ServerCertificate::from_der(ISSUED).expect("readable");
+    let hash = CertificateHash::of(ISSUED);
+    let done = known
+        .carry_over(&[carried("Files.Lab", 990, hash)])
+        .expect("carried");
+    assert_eq!(
+        done,
+        Carried {
+            carried: 1,
+            left: 0
+        }
+    );
+    assert!(
+        !known.path().exists(),
+        "a key-less line never goes in the file an older reader reads"
+    );
+    let text = std::fs::read_to_string(carried_file(&known)).expect("file beside it");
+    assert!(
+        text.starts_with(&format!(
+            "files.lab:990 - certificate={hash} trusted=1767225601 "
+        )),
+        "the host in lower case, no key, the C# date kept: {text}"
+    );
+
+    let [entry] = known
+        .entries()
+        .expect("read")
+        .try_into()
+        .expect("one entry");
+    assert_eq!(entry.fingerprint, None, "the C# never kept the key");
+    assert_eq!(entry.certificate, Some(hash));
+    assert_eq!(entry.subject.as_deref(), Some("CN=files.lab"));
+    assert_eq!(
+        entry.pin_text(),
+        hash.thumbprint(),
+        "shown as the C# showed it"
+    );
+    assert!(known.knows("files.lab", 990).expect("read"), "TLS required");
+
+    // The very certificate goes through, whatever key it carries.
+    assert_eq!(
+        known
+            .certificate_verdict("FILES.lab", 990, &certificate.fingerprint, &hash)
+            .expect("read"),
+        CertificateVerdict::Known
+    );
+    // Another certificate, even on the same key: refused, never asked about.
+    let other = CertificateHash::from_sha256([7; 32]);
+    assert_eq!(
+        known
+            .certificate_verdict("files.lab", 990, &certificate.fingerprint, &other)
+            .expect("read"),
+        CertificateVerdict::OtherCertificate { recorded: hash }
+    );
+    // A reader of the keys alone has no key to say; a carried server is not unknown.
+    assert_eq!(
+        known
+            .verdict("files.lab", 990, &certificate.fingerprint)
+            .expect("read"),
+        Verdict::CertificateOnly
+    );
+    // Another server is not concerned.
+    assert_eq!(
+        known
+            .certificate_verdict("files.lab", 21, &certificate.fingerprint, &hash)
+            .expect("read"),
+        CertificateVerdict::Unknown
+    );
+}
+
+#[test]
+fn a_certificate_carried_over_beside_a_key_lets_the_key_decide_another_certificate() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_rdp_hosts"));
+    let hash = CertificateHash::from_sha256([1; 32]);
+    known
+        .carry_over(&[carried("dc.lab", 3389, hash)])
+        .expect("carried");
+    // Accepted here later, for another machine of the pool.
+    known.record("dc.lab", 3389, &pin()).expect("record");
+    let other = CertificateHash::from_sha256([2; 32]);
+    let stranger: Fingerprint = "SHA256:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+        .parse()
+        .expect("key");
+    assert_ne!(stranger, pin(), "another key than the one recorded");
+    assert_eq!(
+        known
+            .certificate_verdict("dc.lab", 3389, &stranger, &other)
+            .expect("read"),
+        CertificateVerdict::Changed { recorded: pin() },
+        "the key recorded is the one said"
+    );
+    assert_eq!(
+        known
+            .certificate_verdict("dc.lab", 3389, &stranger, &hash)
+            .expect("read"),
+        CertificateVerdict::Known
+    );
+}
+
+#[test]
+fn a_server_trusted_here_is_never_added_to_by_a_carry_over() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_rdp_hosts"));
+    known.record("dc.lab", 3389, &pin()).expect("record");
+    let (first, second) = (
+        CertificateHash::from_sha256([1; 32]),
+        CertificateHash::from_sha256([2; 32]),
+    );
+    let done = known
+        .carry_over(&[
+            carried("DC.lab", 3389, first),
+            // A pool behind one profile: both trusted, the same one given twice once.
+            carried("pool.lab", 3389, first),
+            carried("pool.lab", 3389, second),
+            carried("pool.lab", 3389, second),
+            // A host that cannot start a line, and a port that is none.
+            carried("bad host", 3389, first),
+            carried("#comment", 3389, first),
+            carried("zero.lab", 0, first),
+        ])
+        .expect("carried");
+    assert_eq!(
+        done,
+        Carried {
+            carried: 2,
+            left: 5
+        }
+    );
+    let pool: Vec<Option<CertificateHash>> = known
+        .entries()
+        .expect("read")
+        .into_iter()
+        .filter(|entry| entry.host == "pool.lab")
+        .map(|entry| entry.certificate)
+        .collect();
+    assert_eq!(pool, [Some(first), Some(second)]);
+    assert_eq!(
+        known
+            .certificate_verdict("dc.lab", 3389, &pin(), &first)
+            .expect("read"),
+        CertificateVerdict::KeyOnly,
+        "the trust decided here stands alone"
+    );
+}
+
+#[test]
+fn a_certificate_carried_over_is_forgotten_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_rdp_hosts"));
+    let (first, second) = (
+        CertificateHash::from_sha256([1; 32]),
+        CertificateHash::from_sha256([2; 32]),
+    );
+    known
+        .carry_over(&[
+            carried("pool.lab", 3389, first),
+            carried("pool.lab", 3389, second),
+        ])
+        .expect("carried");
+    assert!(
+        known
+            .forget_certificate("POOL.lab", 3389, &first)
+            .expect("forget")
+    );
+    let left: Vec<Option<CertificateHash>> = known
+        .entries()
+        .expect("read")
+        .into_iter()
+        .map(|entry| entry.certificate)
+        .collect();
+    assert_eq!(left, [Some(second)]);
+    assert!(
+        !known
+            .forget_certificate("pool.lab", 3389, &first)
+            .expect("gone")
+    );
+}
+
+#[test]
+fn a_carried_line_whose_certificate_does_not_read_trusts_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_rdp_hosts"));
+    std::fs::write(
+        known.path(),
+        "dc.lab:3389 - certificate=SHA256:nope\ndc.lab:3389 - trusted=1\n",
+    )
+    .expect("write");
+    assert_eq!(known.entries().expect("read"), []);
+    assert!(!known.knows("dc.lab", 3389).expect("read"));
+    assert_eq!(
+        known
+            .certificate_verdict("dc.lab", 3389, &pin(), &CertificateHash::of(ISSUED))
+            .expect("read"),
+        CertificateVerdict::Unknown
+    );
+}
+
+#[test]
+fn a_thumbprint_read_back_is_the_hash_it_was_shown_from() {
+    let hash = CertificateHash::of(ISSUED);
+    let shown = hash.thumbprint();
+    let bytes: Vec<u8> = shown
+        .trim_start_matches("SHA256:")
+        .split(':')
+        .map(|byte| u8::from_str_radix(byte, 16).expect("hex"))
+        .collect();
+    let bytes: [u8; 32] = bytes.try_into().expect("32 bytes");
+    assert_eq!(CertificateHash::from_sha256(bytes), hash);
+}
+
+#[test]
+fn an_older_reader_of_the_file_alone_never_finds_a_carried_server_in_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_ftps_hosts"));
+    // A server trusted here, then others carried over, then the first changed again.
+    known.record("kept.lab", 21, &pin()).expect("record");
+    known
+        .carry_over(&[
+            carried("files.lab", 990, CertificateHash::from_sha256([1; 32])),
+            carried("pool.lab", 21, CertificateHash::from_sha256([2; 32])),
+        ])
+        .expect("carried");
+    known
+        .record("later.lab", 21, &pin())
+        .expect("record after the carry-over");
+    known.forget("later.lab", 21).expect("forget");
+
+    // What an older Heimdall reads: this file alone, its `keys()` and its `knows()` both.
+    let main = std::fs::read_to_string(known.path()).expect("file");
+    for line in main.lines() {
+        let key = line.split_whitespace().nth(1).expect("a key field");
+        assert!(
+            key.parse::<Fingerprint>().is_ok(),
+            "a key-less line in the file: {line}"
+        );
+    }
+    assert!(
+        !main.contains("files.lab") && !main.contains("pool.lab"),
+        "{main}"
+    );
+    let older = dir.path().join("older_reader");
+    std::fs::create_dir(&older).expect("dir");
+    std::fs::write(older.join("known_ftps_hosts"), &main).expect("copy");
+    let older = KnownRdpHosts::new(older.join("known_ftps_hosts"));
+    for host in ["files.lab", "pool.lab"] {
+        assert!(
+            !older.knows(host, 990).expect("read") && !older.knows(host, 21).expect("read"),
+            "{host} as it was before the import, not a server half-read"
+        );
+    }
+    assert!(older.knows("kept.lab", 21).expect("read"));
+    // This reader sees both, and lists them across the two files.
+    let hosts: Vec<String> = known
+        .entries()
+        .expect("read")
+        .into_iter()
+        .map(|entry| entry.host)
+        .collect();
+    assert_eq!(hosts, ["kept.lab", "files.lab", "pool.lab"]);
+}
+
+#[test]
+fn forgetting_a_server_drops_its_carried_lines_too() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_rdp_hosts"));
+    known.record("kept.lab", 3389, &pin()).expect("record");
+    known
+        .carry_over(&[
+            carried("pool.lab", 3389, CertificateHash::from_sha256([1; 32])),
+            carried("pool.lab", 3389, CertificateHash::from_sha256([2; 32])),
+            carried("other.lab", 3389, CertificateHash::from_sha256([3; 32])),
+        ])
+        .expect("carried");
+    assert!(known.forget("pool.lab", 3389).expect("forget"));
+    assert!(!known.knows("pool.lab", 3389).expect("read"));
+    assert!(known.knows("other.lab", 3389).expect("read"));
+    assert!(known.knows("kept.lab", 3389).expect("read"));
+}
+
+#[test]
+fn the_key_verdict_of_a_server_known_by_a_carried_certificate_alone_is_not_unknown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_rdp_hosts"));
+    known
+        .carry_over(&[carried("dc.lab", 3389, CertificateHash::of(ISSUED))])
+        .expect("carried");
+    assert_eq!(
+        known.verdict("DC.lab", 3389, &pin()).expect("read"),
+        Verdict::CertificateOnly
+    );
+    assert_eq!(
+        known.verdict("other.lab", 3389, &pin()).expect("read"),
+        Verdict::Unknown
+    );
+    // A key recorded beside it decides, as before.
+    known.record("dc.lab", 3389, &pin()).expect("record");
+    assert_eq!(
+        known.verdict("dc.lab", 3389, &pin()).expect("read"),
+        Verdict::Known
+    );
+    let stranger: Fingerprint = "SHA256:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+        .parse()
+        .expect("key");
+    assert_eq!(
+        known.verdict("dc.lab", 3389, &stranger).expect("read"),
+        Verdict::Changed { recorded: pin() }
+    );
 }

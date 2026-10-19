@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-//! The preferences of the C# Heimdall: those of its `settings.json` (`AppSettings.cs`),
-//! and those of the file its "Export settings" writes (`SettingsTransfer.cs`), `{"format": "heimdall-settings", "version": 1,
+//! The preferences and the trusted RDP and FTPS certificates of the C# Heimdall: those of
+//! its `settings.json` (`AppSettings.cs`), and the preferences of the file its "Export
+//! settings" writes (`SettingsTransfer.cs`), `{"format": "heimdall-settings", "version": 1,
 //! "settings": {...}}`. Keys are read without case: `settings.json` writes them in camel
 //! case, the export file in Pascal case.
 //!
@@ -28,14 +29,22 @@
 //! Secrets never cross, whatever the file: the PIN hash and salt, the HMAC key, the Git
 //! access token, the credential provider's unlock secret and the vault's material are left
 //! out, and named. They are encrypted with Windows DPAPI for the C# Windows account anyway.
+//!
+//! The certificates are read as the C# keeps them: an RDP certificate by the profile that
+//! trusted it (`TrustedRdpCertificates`, `RdpCertificateTrustStore.cs`), bound here to that
+//! profile's host and port; an FTPS certificate by `host:port`
+//! (`TrustedFtpsCertificates`, `FtpsCertificateStore.MakeKey`), kept as it is. Each is its
+//! whole certificate's SHA-256, as `CertificateFingerprint.ComputeSha256` writes it. An
+//! entry that does not read is counted as invalid; one that cannot be bound, or that the
+//! user never confirmed, is counted as skipped.
 
 use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde_json::{Map, Value};
 use thiserror::Error;
 
-use super::csharp::audio_playback;
+use super::csharp::{audio_playback, host_and_port};
 use super::mobaxterm::is_valid_variable_name;
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind};
 use crate::profile::{ColorDepth, RESOLUTION_PRESETS, RdpMode, SshMode};
@@ -75,6 +84,40 @@ const SECRETS: [&str; 9] = [
     "VaultHelloChallenge",
     "VaultHelloSalt",
 ];
+
+/// The C# stores of trusted certificates.
+const RDP_CERTIFICATES_KEY: &str = "TrustedRdpCertificates";
+const RDP_TYPED_CERTIFICATES_KEY: &str = "TrustedRdpCertificatesForTypedDestinations";
+const FTPS_CERTIFICATES_KEY: &str = "TrustedFtpsCertificates";
+
+/// The fields of a C# `RdpCertificateEntry` and `FtpsCertificateEntry`.
+const THUMBPRINT_KEY: &str = "Thumbprint";
+const FINGERPRINT_KEY: &str = "Fingerprint";
+const FIRST_TRUSTED_KEY: &str = "FirstTrusted";
+const FIRST_SEEN_KEY: &str = "FirstSeen";
+const SUBJECT_KEY: &str = "Subject";
+const ISSUER_KEY: &str = "Issuer";
+const SOURCE_KEY: &str = "Source";
+
+/// The name the C# writes for an FTPS certificate the user accepted, and its number
+/// (`FtpsCertificateEntry.cs`): the only source carried over. A certificate the system
+/// validated was never asked about, and the user never trusted it by hand.
+const USER_CONFIRMED: &str = "UserConfirmed";
+const USER_CONFIRMED_NUMBER: u64 = 1;
+
+/// What the C# writes for a name it does not know (`FtpsCertificateStore.NormalizeEntry`).
+const UNKNOWN_NAME: &str = "(unknown)";
+
+/// Prefix of a C# thumbprint, the algorithm (`CertificateFingerprint.ComputeSha256`).
+const THUMBPRINT_PREFIX: &str = "SHA256:";
+/// What separates the bytes of a C# thumbprint.
+const THUMBPRINT_SEPARATOR: char = ':';
+/// Bytes of a SHA-256.
+const SHA256_BYTES: usize = 32;
+/// Hexadecimal digits of a byte.
+const HEX_DIGITS_PER_BYTE: usize = 2;
+/// The base of hexadecimal digits.
+const HEX_RADIX: u32 = 16;
 
 /// Milliseconds in a second, for the C# settings written in milliseconds.
 const MILLIS_PER_SECOND: i64 = 1000;
@@ -148,7 +191,7 @@ impl Preferences {
     }
 }
 
-/// Why a C# file could not be read for its preferences.
+/// Why a C# file could not be read for its preferences or its certificates.
 #[derive(Debug, Error)]
 pub enum CsharpSettingsError {
     /// It is not JSON.
@@ -1278,4 +1321,202 @@ pub fn preferences(text: &str, current: &Settings) -> Result<Preferences, Csharp
         rows,
         export_file: export,
     })
+}
+
+/// A certificate the C# Heimdall trusted, read and bound to its server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedCertificate {
+    /// Host, as the C# bound the certificate to it.
+    pub host: String,
+    /// Port.
+    pub port: u16,
+    /// The SHA-256 of the whole certificate, the C# thumbprint.
+    pub sha256: [u8; SHA256_BYTES],
+    /// When the C# user trusted it; `None` when it did not say.
+    pub trusted: Option<SystemTime>,
+    /// The subject the C# kept of it; `None` when it kept none.
+    pub subject: Option<String>,
+    /// The issuer the C# kept of it; `None` when it kept none.
+    pub issuer: Option<String>,
+}
+
+/// The trusted certificates of a C# `settings.json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrustedCertificates {
+    /// The RDP certificates, each bound to its profile's server.
+    pub rdp: Vec<TrustedCertificate>,
+    /// The FTPS certificates, each bound to the server the C# bound it to.
+    pub ftps: Vec<TrustedCertificate>,
+    /// Entries left out that read: their RDP profile is not imported, they belong to a
+    /// destination typed by hand, which the C# binds to a host without its port, or the
+    /// user never confirmed them.
+    pub skipped: usize,
+    /// Entries left out that do not read: no thumbprint, one of another algorithm or
+    /// length, a server that is no `host:port`, or a store of another shape.
+    pub invalid: usize,
+}
+
+/// An RDP profile imported, as its certificates are bound: its identifier, host and port.
+pub type RdpTarget<'a> = (&'a str, &'a str, u16);
+
+/// The SHA-256 of a C# thumbprint, `SHA256:` then 32 bytes in hexadecimal, separated by
+/// colons, any case (`CertificateFingerprint.ComputeSha256`, `RdpCertificateTrust.Normalize`);
+/// `None` for anything else, another algorithm or length among them.
+#[must_use]
+pub fn thumbprint(text: &str) -> Option<[u8; SHA256_BYTES]> {
+    let text = text.trim();
+    let prefix = text.get(..THUMBPRINT_PREFIX.len())?;
+    if !prefix.eq_ignore_ascii_case(THUMBPRINT_PREFIX) {
+        return None;
+    }
+    let mut bytes = [0_u8; SHA256_BYTES];
+    let mut parts = text[THUMBPRINT_PREFIX.len()..].split(THUMBPRINT_SEPARATOR);
+    for byte in &mut bytes {
+        let part = parts.next()?;
+        if part.len() != HEX_DIGITS_PER_BYTE || !part.bytes().all(|digit| digit.is_ascii_hexdigit())
+        {
+            return None;
+        }
+        *byte = u8::from_str_radix(part, HEX_RADIX).ok()?;
+    }
+    parts.next().is_none().then_some(bytes)
+}
+
+/// A name the C# kept of a certificate; `None` when it kept none, or wrote it does not know.
+fn certificate_name(entry: &Folded<'_>, key: &str) -> Option<String> {
+    entry
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != UNKNOWN_NAME)
+        .map(str::to_owned)
+}
+
+/// A host a certificate can be bound to: no space, no control character.
+fn bindable(host: &str) -> bool {
+    !host.is_empty()
+        && !host
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+}
+
+/// The certificate of the C# entry `entry`, its thumbprint under `thumbprint_key` and the
+/// moment it was trusted under `trusted_key`, for `host:port`; `None` when it does not read.
+fn certificate_of(
+    entry: &Value,
+    (thumbprint_key, trusted_key): (&str, &str),
+    (host, port): (&str, u16),
+) -> Option<TrustedCertificate> {
+    let Value::Object(entry) = entry else {
+        return None;
+    };
+    let entry = Folded::of(entry);
+    let sha256 = thumbprint(entry.get(thumbprint_key)?.as_str()?)?;
+    Some(TrustedCertificate {
+        host: host.to_owned(),
+        port,
+        sha256,
+        trusted: entry
+            .get(trusted_key)
+            .and_then(Value::as_str)
+            .and_then(crate::utc::parse_iso),
+        subject: certificate_name(&entry, SUBJECT_KEY),
+        issuer: certificate_name(&entry, ISSUER_KEY),
+    })
+}
+
+/// Whether the C# FTPS entry `entry` was accepted by the user.
+fn user_confirmed(entry: &Value) -> bool {
+    let Value::Object(entry) = entry else {
+        return false;
+    };
+    match Folded::of(entry).get(SOURCE_KEY) {
+        Some(Value::String(name)) => name.trim().eq_ignore_ascii_case(USER_CONFIRMED),
+        Some(Value::Number(number)) => number.as_u64() == Some(USER_CONFIRMED_NUMBER),
+        _ => false,
+    }
+}
+
+/// The trusted RDP and FTPS certificates of the C# `settings.json` `text`, the RDP ones
+/// bound to the server of the profile of `rdp` that trusted them.
+///
+/// # Errors
+///
+/// [`CsharpSettingsError`] when `text` is not a C# settings object.
+pub fn trusted_certificates(
+    text: &str,
+    rdp: &[RdpTarget<'_>],
+) -> Result<TrustedCertificates, CsharpSettingsError> {
+    let document = parse(text)?;
+    let (object, _) = read_object(&document)?;
+    let values = Folded::of(object);
+    let mut read = TrustedCertificates::default();
+    let rdp_entries = (THUMBPRINT_KEY, FIRST_TRUSTED_KEY);
+    match values.get(RDP_CERTIFICATES_KEY) {
+        None => {}
+        Some(Value::Object(owners)) => {
+            for (owner, entries) in owners {
+                let Value::Array(entries) = entries else {
+                    read.invalid += 1;
+                    continue;
+                };
+                let target = rdp.iter().find(|(id, _, _)| *id == owner.as_str());
+                for entry in entries {
+                    match (certificate_of(entry, rdp_entries, ("", 0)), target) {
+                        (None, _) => read.invalid += 1,
+                        (Some(_), None) => read.skipped += 1,
+                        (Some(_), Some((_, host, _))) if !bindable(host) => read.invalid += 1,
+                        (Some(certificate), Some((_, host, port))) => {
+                            read.rdp.push(TrustedCertificate {
+                                host: (*host).to_owned(),
+                                port: *port,
+                                ..certificate
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Some(_) => read.invalid += 1,
+    }
+    // A destination typed by hand: the C# binds its certificates to the host alone
+    // (`RdpTrustKey.ForTypedDestination`), and a host without its port cannot be bound
+    // exactly here. Asked again at its first connection.
+    match values.get(RDP_TYPED_CERTIFICATES_KEY) {
+        None => {}
+        Some(Value::Object(owners)) => {
+            for entries in owners.values() {
+                let Value::Array(entries) = entries else {
+                    read.invalid += 1;
+                    continue;
+                };
+                for entry in entries {
+                    match certificate_of(entry, rdp_entries, ("", 0)) {
+                        Some(_) => read.skipped += 1,
+                        None => read.invalid += 1,
+                    }
+                }
+            }
+        }
+        Some(_) => read.invalid += 1,
+    }
+    match values.get(FTPS_CERTIFICATES_KEY) {
+        None => {}
+        Some(Value::Object(servers)) => {
+            for (server, entry) in servers {
+                let certificate = host_and_port(server)
+                    .filter(|(host, _)| bindable(host))
+                    .and_then(|server| {
+                        certificate_of(entry, (FINGERPRINT_KEY, FIRST_SEEN_KEY), server)
+                    });
+                match certificate {
+                    None => read.invalid += 1,
+                    Some(_) if !user_confirmed(entry) => read.skipped += 1,
+                    Some(certificate) => read.ftps.push(certificate),
+                }
+            }
+        }
+        Some(_) => read.invalid += 1,
+    }
+    Ok(read)
 }

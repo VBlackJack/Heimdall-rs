@@ -186,7 +186,7 @@ fn one_rdp_certificate_is_forgotten_and_the_other_of_its_server_stays() {
         .trusted_keys()
         .rdp
         .iter()
-        .find(|entry| entry.fingerprint.to_string() == PIN)
+        .find(|entry| entry.pin_text() == PIN)
         .cloned()
         .expect("the pin");
     trusted(
@@ -198,7 +198,7 @@ fn one_rdp_certificate_is_forgotten_and_the_other_of_its_server_stays() {
         .trusted_keys()
         .rdp
         .iter()
-        .map(|entry| entry.fingerprint)
+        .filter_map(|entry| entry.fingerprint)
         .collect();
     assert_eq!(left, [other_pin()]);
     assert_eq!(

@@ -1539,6 +1539,7 @@ fn a_renewed_rdp_certificate_is_asked_about_as_a_renewal_and_trusted_by_its_hash
     let renewed = CertificateHash::of(b"the renewed certificate of dc.lab");
     let at = |seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
     let details = heimdall_app::CertificateDetails {
+        replaces: None,
         issuer: "CN=dc.lab".to_owned(),
         validity: heimdall_rdp::Validity {
             not_before: at(200),

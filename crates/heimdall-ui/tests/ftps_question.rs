@@ -62,6 +62,7 @@ fn certificate(common_name: &str, (from, until): (i32, i32)) -> Vec<u8> {
 /// What the FTPS driver says of `der`, refused for `issue`.
 fn details(der: &[u8], issue: ValidationIssue) -> CertificateDetails {
     CertificateDetails {
+        replaces: None,
         issuer: ServerCertificate::from_der(der).expect("read").issuer,
         validity: Validity::from_der(der).expect("validity"),
         issue: Some(issue),

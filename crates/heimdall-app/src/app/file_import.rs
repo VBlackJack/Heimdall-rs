@@ -312,6 +312,7 @@ impl App {
                 scheduled: None,
                 settings_unreadable: None,
                 preferences: None,
+                certificates: None,
                 gateways: reconciled,
                 actions: None,
             }),

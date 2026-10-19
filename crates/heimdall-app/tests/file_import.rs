@@ -111,6 +111,7 @@ fn a_mobaxterm_file_is_asked_about_then_merged_with_new_ids_and_its_passwords_sa
             scheduled: None,
             settings_unreadable: None,
             preferences: None,
+            certificates: None,
             gateways: heimdall_core::import::gateways::Reconciliation::default(),
             actions: None,
         }))
