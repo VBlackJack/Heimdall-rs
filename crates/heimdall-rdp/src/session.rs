@@ -28,6 +28,7 @@ use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::input::Database;
 use ironrdp::pdu::Action;
+use ironrdp::pdu::geometry::InclusiveRectangle;
 use ironrdp::session::fast_path::ProcessorBuilder;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{
@@ -197,6 +198,9 @@ const SAVE_PROGRESS_EVERY: Duration = Duration::from_millis(250);
 /// left is released.
 const CLIPBOARD_TIMEOUTS: Duration = Duration::from_secs(5);
 
+/// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
+const LOG_TARGET: &str = "heimdall::fullscreen";
+
 /// How long a wanted size must hold before the server is asked for it.
 pub const RESIZE_SETTLE: Duration = Duration::from_millis(300);
 
@@ -248,6 +252,9 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         asked: None,
         settle: None,
         waiting_since: None,
+        updates: 0,
+        outside: 0,
+        updates_since: None,
         desktop_scale,
         keep_alive: KeepAlive::new(keep_alive),
         reader: FrameReader::new(read_half, leftover),
@@ -818,6 +825,11 @@ struct Running {
     settle: Option<Instant>,
     /// Since when a size waits for the display channel to open.
     waiting_since: Option<Instant>,
+    /// Updates received since the last line of the log, how many fell outside the
+    /// framebuffer, and when the line was written.
+    updates: u32,
+    outside: u32,
+    updates_since: Option<Instant>,
     /// When the next keep-alive is due: every frame sent puts it back.
     keep_alive: KeepAlive,
     reader: FrameReader<ReadHalf<Upgraded>>,
@@ -919,6 +931,7 @@ impl Running {
                 match output {
                     ActiveStageOutput::ResponseFrame(frame) => self.send(&frame).await?,
                     ActiveStageOutput::GraphicsUpdate(region) => {
+                        self.note_update(&region);
                         let _ = self
                             .events
                             .send(RdpEvent::Updated {
@@ -1187,22 +1200,40 @@ impl Running {
             (u32::from(current_width), u32::from(current_height))
         });
         if (width, height) == current {
+            log::debug!(
+                target: LOG_TARGET,
+                "RDP resize to {width}x{height}: the framebuffer has it already, nothing sent"
+            );
             return Ok(());
         }
         // The scale asked at the connection, kept: 100 is the server's own, said as none.
         let scale = (self.desktop_scale > 100).then_some(self.desktop_scale);
         match stage.encode_resize(width, height, scale, None) {
             Some(Ok(frame)) => {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "RDP resize path: Display Control request {width}x{height} sent (framebuffer {}x{})",
+                    current.0,
+                    current.1
+                );
                 self.waiting_since = None;
                 self.send(&frame).await
             }
             None if asks_again(&mut self.waiting_since, Instant::now()) => {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "RDP resize {width}x{height}: the Display Control channel is not open, asked again soon"
+                );
                 self.wanted = Some((width, height));
                 self.settle = Some(Instant::now() + RESIZE_RETRY);
                 Ok(())
             }
             // Not encodable, or no display channel after all this time.
             Some(Err(_)) | None => {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "RDP resize {width}x{height}: Display Control unusable (not advertised or not encodable), refused"
+                );
                 self.waiting_since = None;
                 let (Ok(width), Ok(height)) = (u16::try_from(width), u16::try_from(height)) else {
                     return Ok(());
@@ -1213,6 +1244,30 @@ impl Running {
                     .await;
                 Ok(())
             }
+        }
+    }
+
+    /// Counts the updates the server sent and, once a second, says how many, and whether
+    /// any fell outside the framebuffer (dropped by the decoder: a frozen picture).
+    fn note_update(&mut self, region: &InclusiveRectangle) {
+        let (width, height) = self.framebuffer.read(|width, height, _| (width, height));
+        if region.right >= width || region.bottom >= height {
+            self.outside += 1;
+        }
+        self.updates += 1;
+        let now = Instant::now();
+        let since = *self.updates_since.get_or_insert(now);
+        if now.duration_since(since) >= Duration::from_secs(1) {
+            log::debug!(
+                target: LOG_TARGET,
+                "RDP: {} updates from the server in the last {:?} ({} outside the {width}x{height} framebuffer)",
+                self.updates,
+                now.duration_since(since),
+                self.outside
+            );
+            self.updates = 0;
+            self.outside = 0;
+            self.updates_since = Some(now);
         }
     }
 
@@ -1326,6 +1381,12 @@ impl Running {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) =
             DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
+        log::debug!(
+            target: LOG_TARGET,
+            "RDP reactivated: desktop {}x{}",
+            desktop_size.width,
+            desktop_size.height
+        );
         let _ = self
             .events
             .send(RdpEvent::Resized {

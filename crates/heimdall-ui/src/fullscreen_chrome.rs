@@ -43,6 +43,12 @@ pub const FADE_FRAME: Duration = Duration::from_millis(16);
 /// pixels, as the C# `FullscreenChromeRevealThresholdPx`.
 pub const REVEAL_THRESHOLD: f32 = 30.0;
 
+/// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
+pub const LOG_TARGET: &str = "heimdall::fullscreen";
+
+/// How often the readings are summed up in the log.
+const TRACE_EVERY: Duration = Duration::from_secs(1);
+
 /// What the window tells the chrome at each reading.
 #[derive(Debug, Clone, Copy)]
 pub struct Reading {
@@ -66,18 +72,31 @@ pub struct FullscreenChrome {
     /// The opacity when the last fade began, and when.
     fade_from: f32,
     fade_start: Instant,
+    /// Readings since the last summary in the log, and when it was written.
+    traced: (u32, Instant),
+    /// The overlay flag at the last reading, to log a change only.
+    last_overlay: bool,
+    /// Whether the pointer's position changed since the last summary in the log.
+    moved_since_trace: bool,
 }
 
 impl FullscreenChrome {
     /// A chrome shown at `now`, as full screen begins.
     #[must_use]
     pub fn entered(now: Instant) -> Self {
+        log::debug!(
+            target: LOG_TARGET,
+            "chrome timer armed: entered full screen, hides in {AUTO_HIDE_DELAY:?}"
+        );
         Self {
             shown: true,
             hide_at: now + AUTO_HIDE_DELAY,
             last_pointer: None,
             fade_from: 1.0,
             fade_start: now,
+            traced: (0, now),
+            last_overlay: false,
+            moved_since_trace: false,
         }
     }
 
@@ -124,11 +143,25 @@ impl FullscreenChrome {
             .last_pointer
             .is_some_and(|last| last != reading.pointer);
         self.last_pointer = Some(reading.pointer);
+        self.moved_since_trace |= moved;
         let near_top = reading.pointer.y >= 0.0 && reading.pointer.y <= REVEAL_THRESHOLD;
         if near_top {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome timer reset: pointer at the top edge"
+            );
             self.show(now, reading.reduced_motion);
         } else if moved && self.shown {
+            log::debug!(target: LOG_TARGET, "chrome timer reset: pointer position changed");
             self.hide_at = now + AUTO_HIDE_DELAY;
+        }
+        if reading.overlay_open != self.last_overlay {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome overlay open: {}",
+                reading.overlay_open
+            );
+            self.last_overlay = reading.overlay_open;
         }
         // Under a menu or a dialog the wait starts again at each reading: the chrome goes
         // a full delay after the last of them closes, never while one is open.
@@ -136,7 +169,26 @@ impl FullscreenChrome {
             self.hide_at = now + AUTO_HIDE_DELAY;
         }
         if self.shown && now >= self.hide_at {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome timer fired: hiding"
+            );
             self.set_shown(false, now, reading.reduced_motion);
+        }
+        self.traced.0 += 1;
+        if now.saturating_duration_since(self.traced.1) >= TRACE_EVERY {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome: {} readings in the last {:?}, shown={}, pointer changed since the last summary={}, overlay={}, hides in {:?}",
+                self.traced.0,
+                now.saturating_duration_since(self.traced.1),
+                self.shown,
+                self.moved_since_trace,
+                reading.overlay_open,
+                self.hide_at.saturating_duration_since(now)
+            );
+            self.traced = (0, now);
+            self.moved_since_trace = false;
         }
     }
 

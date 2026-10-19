@@ -488,6 +488,24 @@ fn sidebar_drag_event(
     }
 }
 
+/// In full screen: where the pointer is, for the exit button's auto-hide.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the signature `event::listen_with` takes"
+)]
+fn fullscreen_pointer_event(
+    event: iced::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+            Some(Message::ChromePointer(position))
+        }
+        _ => None,
+    }
+}
+
 /// While the splitter above the properties panel is held: where the pointer is, and its
 /// release.
 #[expect(
@@ -897,6 +915,8 @@ pub enum Message {
     SystemReducedMotion(bool),
     /// A reading of the pointer, while full screen puts its exit button away.
     ChromeTick(std::time::Instant),
+    /// The pointer moved in full screen, seen by the window whatever widget took the event.
+    ChromePointer(Point),
     /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
     /// cannot be read.
     UserInput,
@@ -1241,6 +1261,7 @@ impl fmt::Debug for Message {
             Self::SystemHighContrast(on) => write!(f, "SystemHighContrast({on})"),
             Self::SystemReducedMotion(on) => write!(f, "SystemReducedMotion({on})"),
             Self::ChromeTick(_) => f.write_str("ChromeTick"),
+            Self::ChromePointer(_) => f.write_str("ChromePointer"),
             Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1608,6 +1629,8 @@ pub struct Shell {
     fullscreen: bool,
     /// The exit button's visibility in full screen; none outside it.
     fullscreen_chrome: Option<crate::fullscreen_chrome::FullscreenChrome>,
+    /// The overlay flags at the last reading of the pointer, to log a change only.
+    chrome_overlay_flags: (bool, bool, bool, bool),
     /// Physical pixels per logical one on the window's screen: remote desktops are drawn
     /// one of their pixels per physical one.
     density: f32,
@@ -1965,6 +1988,7 @@ impl Shell {
             page: Page::Tab,
             fullscreen: false,
             fullscreen_chrome: None,
+            chrome_overlay_flags: (false, false, false, false),
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
@@ -2369,6 +2393,12 @@ impl Shell {
                 crate::fullscreen_chrome::POLL_INTERVAL
             };
             ticks.push(iced::time::every(interval).map(Message::ChromeTick));
+            // The pointer as the window sees it, whatever widget took the event: a tree of
+            // widgets may not hand every move to the tracker that records it.
+            ticks.push(in_main_window(
+                window_tagged!(fullscreen_pointer_event),
+                self.main_window,
+            ));
         }
         ticks
     }
@@ -2914,6 +2944,10 @@ impl Shell {
                 self.read_fullscreen_chrome(now);
                 Vec::new()
             }
+            Message::ChromePointer(position) => {
+                self.cursor.set(position);
+                Vec::new()
+            }
             Message::UserInput => {
                 self.last_input = std::time::Instant::now();
                 Vec::new()
@@ -3306,6 +3340,11 @@ impl Shell {
             }
             Message::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
+                log::debug!(
+                    target: crate::fullscreen_chrome::LOG_TARGET,
+                    "full screen {}",
+                    if self.fullscreen { "entered" } else { "left" }
+                );
                 self.fullscreen_chrome = self.fullscreen.then(|| {
                     crate::fullscreen_chrome::FullscreenChrome::entered(std::time::Instant::now())
                 });
@@ -3656,6 +3695,20 @@ impl Shell {
 
     /// One reading of the pointer for the full-screen exit button, at `now`.
     fn read_fullscreen_chrome(&mut self, now: std::time::Instant) {
+        let flags = (
+            self.app.dialog.is_some(),
+            self.menu.is_some(),
+            self.palette.is_some(),
+            self.tour.is_some(),
+        );
+        if flags != self.chrome_overlay_flags {
+            log::debug!(
+                target: crate::fullscreen_chrome::LOG_TARGET,
+                "overlay flags (dialog, menu held, palette, tour): {flags:?}, drawn: {}",
+                self.overlay_shown()
+            );
+            self.chrome_overlay_flags = flags;
+        }
         let reading = crate::fullscreen_chrome::Reading {
             pointer: self.cursor.get(),
             overlay_open: self.overlay_shown(),
@@ -15043,6 +15096,28 @@ mod tests {
             chrome_tick(&mut shell, start, millis);
         }
         assert!(exit_button_shown(&shell, start, 6_000));
+    }
+
+    #[test]
+    fn the_window_pointer_events_feed_the_exit_button_and_repeats_do_not_rearm_it() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = fullscreen_shell(dir.path());
+        let _ = shell.update(Message::ToggleFullscreen);
+        let moved = iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position: iced::Point::new(1700.0, 1000.0),
+        });
+        let message =
+            fullscreen_pointer_event(moved, event::Status::Captured, window::Id::unique())
+                .expect("a move is the window's whatever took it");
+        let _ = shell.update(message);
+        assert_eq!(shell.cursor.get(), iced::Point::new(1700.0, 1000.0));
+        let start = std::time::Instant::now();
+        // The same position over and over, as events that do not move it: the wait runs on.
+        for millis in (0..=5_000).step_by(100) {
+            let _ = shell.update(Message::ChromePointer(iced::Point::new(1700.0, 1000.0)));
+            chrome_tick(&mut shell, start, millis);
+        }
+        assert!(!exit_button_shown(&shell, start, 5_000));
     }
 
     #[test]

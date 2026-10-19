@@ -110,6 +110,7 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
         ConnectionEvent::DesktopFrame => {
             if let Some(pane) = tab.desktop.as_mut() {
                 pane.generation = pane.generation.wrapping_add(1);
+                pane.note_frame();
             }
         }
         _ => {}
@@ -806,6 +807,12 @@ impl App {
         {
             return Vec::new();
         }
+        log::debug!(
+            target: "heimdall::fullscreen",
+            "RDP resize path: the server refused {}x{} through Display Control, reconnecting at that size",
+            size.0,
+            size.1
+        );
         tab.resize_fallback = Some(ResizeFallback {
             size,
             pending: Some(size),

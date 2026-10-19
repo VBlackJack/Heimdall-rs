@@ -286,6 +286,8 @@ pub struct DesktopPane {
     remote_files: bool,
     /// Saving the server's files, from the folder asked for until it ends.
     save: Option<SaveState>,
+    /// Frames received since the last line of the log, and when it was written.
+    frames: (u32, Option<Instant>),
 }
 
 /// The proportions of a desktop that follows its tab, kept with its profile.
@@ -340,6 +342,29 @@ impl DesktopPane {
             cursor: None,
             remote_files: false,
             save: None,
+            frames: (0, None),
+        }
+    }
+
+    /// Counts a frame received and, once a second, says how many came, with the
+    /// framebuffer's size: whether frames stop arriving or stop being drawn.
+    pub(crate) fn note_frame(&mut self) {
+        const EVERY: Duration = Duration::from_secs(1);
+        let now = Instant::now();
+        let (count, since) = self.frames;
+        let since = since.unwrap_or(now);
+        if now.duration_since(since) >= EVERY {
+            let (width, height) = self.framebuffer.read(|width, height, _| (width, height));
+            log::debug!(
+                target: "heimdall::fullscreen",
+                "{} frames received in the last {:?}: generation {}, framebuffer {width}x{height}",
+                count + 1,
+                now.duration_since(since),
+                self.generation
+            );
+            self.frames = (0, Some(now));
+        } else {
+            self.frames = (count + 1, Some(since));
         }
     }
 
@@ -370,8 +395,16 @@ impl DesktopPane {
             // the one it connected with, as the C# control starts at its own size. Only the
             // later ones wait for the session to settle.
             if stabilizing_until.is_some() && size.borrow().is_some() {
+                log::debug!(
+                    target: "heimdall::fullscreen",
+                    "RDP resize to {width}x{height} kept for after the post-connect wait"
+                );
                 return;
             }
+            log::debug!(
+                target: "heimdall::fullscreen",
+                "RDP resize to {width}x{height} handed to the session"
+            );
             size.send_replace(Some(self.aspect.fit((width, height))));
         }
     }
@@ -777,6 +810,7 @@ impl DesktopPane {
             clipboard: None,
             remote_files: false,
             save: None,
+            frames: (0, None),
             sink: DesktopSink::Vnc(VncSink {
                 input,
                 buttons: AtomicU8::new(0),

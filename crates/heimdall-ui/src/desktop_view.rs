@@ -28,7 +28,8 @@
 //! over the desktop, as noVNC does; noVNC's dot stands for a shape nothing of which shows, as
 //! the C# Heimdall asks it with `showDotCursor`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::time::{Duration, Instant};
 
 use heimdall_app::{DesktopInput, DesktopPane, Message as AppMessage, PointerButton, TabId};
 use heimdall_rdp::Scancode;
@@ -71,6 +72,10 @@ struct State {
     shown: Option<(u16, u16)>,
     /// Whether the window was full screen at the last event.
     fullscreen: bool,
+    /// Draws of the desktop since the last line of the log, and when it was written: how
+    /// often it is drawn, against how often it changes, tells frames that do not come from
+    /// frames that are not drawn.
+    drawn: Cell<(u32, Option<Instant>)>,
     /// Keys held, with the keysym sent when each went down: a release sends the same one,
     /// or Shift released first would turn a held `!` into a `1` and leave `!` stuck.
     held: Vec<(Physical, u32)>,
@@ -218,6 +223,13 @@ impl<'a, M> DesktopView<'a, M> {
             return;
         }
         if ask && state.reported != Some(size) {
+            log::debug!(
+                target: LOG_TARGET,
+                "desktop view asks the server for {}x{} (full screen: {})",
+                size.0,
+                size.1,
+                self.fullscreen
+            );
             state.reported = Some(size);
             state.shown = Some(size);
             shell.publish((self.wrap)(AppMessage::DesktopResize {
@@ -373,6 +385,12 @@ pub fn fitted(bounds: Rectangle, (width, height): (u16, u16), density: f32) -> (
     );
     (Rectangle::new(origin, size), scale)
 }
+
+/// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
+const LOG_TARGET: &str = crate::fullscreen_chrome::LOG_TARGET;
+
+/// How often the draws in full screen are summed up in the log.
+const TRACE_EVERY: Duration = Duration::from_secs(1);
 
 /// How far, in pixels, a desktop may be from the screen's size in full screen and still count
 /// as having it: the server rounds a size it is asked for to an even number of pixels.
@@ -659,10 +677,24 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             };
         }
         let bounds = layout.bounds();
-        state.follow_fullscreen(self.fullscreen);
+        let toggled = state.follow_fullscreen(self.fullscreen);
         // Fitted, the server keeps its own size, once it has had the tab's when its profile
         // asks for it once; a desktop of a size of its own is never asked another.
         let ask = self.pane.asks_tab_size() && (!self.fit || self.pane.wants_first_size());
+        if toggled {
+            log::debug!(
+                target: LOG_TARGET,
+                "desktop view {} full screen: area {:?}, density {}, framebuffer {:?}, \
+                 asks the server: {ask} (follows tab: {}, fit: {}, first size wanted: {})",
+                if self.fullscreen { "entered" } else { "left" },
+                area_pixels(bounds, self.density),
+                self.density,
+                self.pane.framebuffer.read(|width, height, _| (width, height)),
+                self.pane.asks_tab_size(),
+                self.fit,
+                self.pane.wants_first_size()
+            );
+        }
         self.report_size(state, shell, bounds, ask);
         if !self.interactive {
             // Keys held when a dialog or Quick Connect came over it are let go on the server:
@@ -773,13 +805,41 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
 }
 
 impl<M> DesktopView<'_, M> {
+    /// Counts a draw in full screen and, once a second, says how many there were, with the
+    /// generation (the frames received) and the sizes drawn.
+    fn trace_draw(&self, state: &State, bounds: Rectangle, size: (u16, u16), placement: Placement) {
+        let (count, since) = state.drawn.get();
+        let now = Instant::now();
+        let since = since.unwrap_or(now);
+        if now.duration_since(since) >= TRACE_EVERY {
+            log::debug!(
+                target: LOG_TARGET,
+                "desktop drawn {} times in the last {:?}: generation {}, framebuffer {}x{}, \
+                 area {:?}, placement {placement:?}",
+                count + 1,
+                now.duration_since(since),
+                self.pane.generation,
+                size.0,
+                size.1,
+                area_pixels(bounds, self.density)
+            );
+            state.drawn.set((0, Some(now)));
+        } else {
+            state.drawn.set((count + 1, Some(since)));
+        }
+    }
+
     /// Draws the desktop in `bounds`.
     fn draw_desktop(&self, state: &State, renderer: &mut iced::Renderer, bounds: Rectangle) {
         let size = self
             .pane
             .framebuffer
             .read(|width, height, _| (width, height));
-        let (area, _) = placed(bounds, size, self.placement_in(bounds, size), self.density);
+        let placement = self.placement_in(bounds, size);
+        let (area, _) = placed(bounds, size, placement, self.density);
+        if self.fullscreen {
+            self.trace_draw(state, bounds, size, placement);
+        }
         // The GPU renderer keeps the desktop in a texture it rewrites; see `desktop_texture`.
         if matches!(renderer, fallback::Renderer::Primary(_)) {
             let desktop = Desktop {
