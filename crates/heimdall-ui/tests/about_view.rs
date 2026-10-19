@@ -137,7 +137,7 @@ fn the_about_tab_says_the_version_and_where_the_data_is_and_turns_the_log_off() 
     let mut shell = shell(dir.path());
     let messages: Vec<Message> = {
         let mut ui = simulator(&shell);
-        let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
+        let version = format!("Version {}", heimdall_app::update_check::display_version());
         let config = dir.path().display().to_string();
         for label in [
             version.as_str(),
@@ -202,7 +202,7 @@ fn the_page_is_one_centred_column_as_wide_as_the_csharps_with_every_card_in_it()
 
     // The application's card: its name and version centred over the column, then its
     // author and licence, labels in one column and values beside them.
-    let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
+    let version = format!("Version {}", heimdall_app::update_check::display_version());
     let mut above = column.y;
     for label in ["Heimdall", version.as_str()] {
         let bounds = text_in(&mut ui, label, column);

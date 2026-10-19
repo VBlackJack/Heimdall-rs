@@ -18,11 +18,16 @@
 //! (`MainViewModel.cs:1236-1288`); the tools pinned and used lately; the sidebar's
 //! "Sessions | Tools" tab and its folded categories, as the C# `SidebarViewModel`.
 
+use heimdall_core::profile::{ProfileId, SshGateway};
+use heimdall_ssh::HopSecrets;
 use tokio_util::sync::CancellationToken;
 
+use super::route_test::endpoint;
+use super::tool_entry::ToolEntryEdit;
 use super::{App, Dialog, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::ids::{AttemptId, TabId};
+use crate::tool_route::{GatewayChoice, ToolRoute};
 use crate::tools::{SidebarTab, ToolContext, ToolGroup, ToolId, toggle_favorite};
 
 /// What the Tools area is asked.
@@ -39,6 +44,15 @@ pub enum ToolsMessage {
         /// What it opens on, as the C# `ToolContext`.
         context: ToolContext,
     },
+    /// Open the picker of the C# "Add > Tool", the entry to be filed in `folder`.
+    NewEntry {
+        /// The folder the entry goes in; none for the top.
+        folder: Option<String>,
+    },
+    /// Something changed in the picker.
+    EditEntry(ToolEntryEdit),
+    /// Open the tool of tree entry `id` on the host and port it holds.
+    OpenEntry(ProfileId),
     /// Pin `tool`, or unpin it, saved at once.
     ToggleFavorite(ToolId),
     /// Show this tab of the sidebar.
@@ -47,6 +61,27 @@ pub enum ToolsMessage {
     ToggleSidebarTab,
     /// Fold or unfold a group of the sidebar's tools.
     ToggleGroup(ToolGroup),
+    /// Write `command` into terminal tab `target`, once the user agrees to the question it
+    /// opens; `dangerous` for a command marked so. Nothing is written by this message.
+    SendCommand {
+        /// The terminal tab.
+        target: TabId,
+        /// The command, one line.
+        command: String,
+        /// Marked dangerous.
+        dangerous: bool,
+    },
+    /// Write `command` into each terminal tab of `targets`, once the user agrees to the one
+    /// question it opens, which lists them all; `dangerous` for a command marked so.
+    /// Nothing is written by this message.
+    BroadcastCommand {
+        /// The terminal tabs.
+        targets: Vec<TabId>,
+        /// The command, one line.
+        command: String,
+        /// Marked dangerous.
+        dangerous: bool,
+    },
     /// The close question of a tool's tab answered Save: its document saved, then the
     /// close asked again.
     SaveBeforeClose,
@@ -144,6 +179,32 @@ impl App {
         (!host.is_empty()).then(|| host.to_owned())
     }
 
+    /// The gateways a network tool can be routed through, as the C# "Route via" lists them.
+    #[must_use]
+    pub fn tool_gateways(&self) -> Vec<GatewayChoice> {
+        self.gateways().iter().map(GatewayChoice::of).collect()
+    }
+
+    /// The route to gateway `id` as it is now, each hop with the secrets saved for it and for
+    /// its endpoint only; `None` when the gateway is gone or its route is not one (a loop, too
+    /// deep), so that a tool whose gateway cannot be found fails rather than runs direct.
+    #[must_use]
+    pub fn tool_route(&self, id: &ProfileId) -> Option<ToolRoute> {
+        let route = self.store.route(Some(id)).ok()?;
+        let secrets = route
+            .iter()
+            .map(|hop| HopSecrets {
+                password: self.saved_password_for(&hop.id, &endpoint(hop)),
+                passphrase: hop
+                    .key_path
+                    .as_deref()
+                    .and_then(|path| self.saved_passphrase_for(&hop.id, path)),
+            })
+            .collect();
+        let hops = route.iter().map(SshGateway::as_hop).collect();
+        Some(ToolRoute::new(hops, secrets, self.ssh_options()))
+    }
+
     /// Applies a message about the Tools area.
     pub(super) fn tools_message(&mut self, message: ToolsMessage) -> Vec<Effect> {
         match message {
@@ -152,6 +213,31 @@ impl App {
                 title,
                 context,
             } => self.open_tool(tool, title, context),
+            ToolsMessage::NewEntry { folder } => {
+                self.new_tool_entry(folder);
+                Vec::new()
+            }
+            ToolsMessage::EditEntry(edit) => {
+                self.edit_tool_entry(edit);
+                Vec::new()
+            }
+            ToolsMessage::OpenEntry(id) => self.open_tool_entry(&id),
+            ToolsMessage::SendCommand {
+                target,
+                command,
+                dangerous,
+            } => {
+                self.ask_send(target, command, dangerous);
+                Vec::new()
+            }
+            ToolsMessage::BroadcastCommand {
+                targets,
+                command,
+                dangerous,
+            } => {
+                self.ask_broadcast(&targets, command, dangerous);
+                Vec::new()
+            }
             ToolsMessage::ToggleFavorite(tool) => {
                 let toggle = toggle_favorite(&self.settings.tools.favorites, tool);
                 self.save_tools(|tools| tools.favorites.clone_from(&toggle.favorites));
@@ -210,7 +296,12 @@ impl App {
     /// singleton tools (`MainViewModel.cs:1301-1324`): one given a host or an argument opens
     /// a tab of its own. Either way it becomes the tool used last, as the C# tracks it once
     /// opened.
-    fn open_tool(&mut self, tool: ToolId, title: String, context: ToolContext) -> Vec<Effect> {
+    pub(super) fn open_tool(
+        &mut self,
+        tool: ToolId,
+        title: String,
+        context: ToolContext,
+    ) -> Vec<Effect> {
         let open = (!tool.is_network() && context.is_empty())
             .then(|| self.tabs.iter().find(|tab| tab.tool() == Some(tool)))
             .flatten()

@@ -19,10 +19,11 @@
 //!
 //! Provides hostname matching with wildcard support, expiration evaluation, the summary of
 //! the chain a server presented (read through `sealvault::cert`, the handshake made by the
-//! caller), and CSV export generation.
+//! caller, or read in clear from a legacy TLS answer), and CSV export generation.
 
 use super::banner_grab::clean_banner;
 use super::csv_cell::quoted;
+use super::legacy_tls::LegacyHandshake;
 
 /// Default warning threshold in days before certificate expiry.
 pub const DEFAULT_WARNING_THRESHOLD_DAYS: i64 = 30;
@@ -36,6 +37,19 @@ pub const DEFAULT_PORT: u16 = 443;
 /// The most ports one scan inspects: far above the C# extended preset's 28, far below a
 /// range typed by mistake (`1-65535`), which would take hours.
 pub const MAX_SCAN_PORTS: usize = 100;
+
+/// The Quick scan profile: the TLS ports of the usual services (HTTPS, IMAPS, POP3S, SMTPS,
+/// LDAPS, FTPS, WinRM over TLS, RDP, DNS over TLS, APNs, MQTT over TLS), as the C#
+/// `NetworkToolPresets.TlsQuickScanPorts`.
+pub const QUICK_SCAN_PORTS: [u16; 12] = [
+    443, 8443, 993, 995, 465, 636, 990, 5986, 3389, 853, 5223, 8883,
+];
+/// The Extended scan profile: the Quick ports and the services that also start TLS or
+/// sit on an alternate port, as the C# `NetworkToolPresets.TlsExtendedScanPorts`.
+pub const EXTENDED_SCAN_PORTS: [u16; 28] = [
+    443, 8443, 993, 995, 465, 636, 990, 5986, 3389, 853, 5223, 8883, 25, 110, 143, 389, 587, 989,
+    992, 1443, 2083, 2087, 2096, 4443, 5671, 6443, 6697, 9443,
+];
 
 /// Seconds in a day.
 const SECONDS_PER_DAY: i64 = 86_400;
@@ -53,6 +67,14 @@ pub enum CertExpirationStatus {
 pub struct CertChainElement {
     pub subject: String,
     pub expiry: String,
+}
+
+/// How a chain read from a legacy TLS answer was read ([`super::legacy_tls`]): in clear,
+/// the handshake never finished, so nothing proves the server holds the certificate's key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyTlsRead {
+    /// The IANA name of the suite the server chose.
+    pub cipher_suite: String,
 }
 
 /// Fully analyzed certificate summary.
@@ -74,6 +96,9 @@ pub struct CertInspectionSummary {
     pub expiration_status: CertExpirationStatus,
     pub chain: Vec<CertChainElement>,
     pub port: u16,
+    /// Set when the chain was read from a legacy TLS answer, without the server proving it
+    /// holds the key: shown with a warning, never trusted.
+    pub legacy: Option<LegacyTlsRead>,
 }
 
 /// Tests whether a hostname matches a pattern, supporting wildcard certificates (*.domain.com).
@@ -150,6 +175,16 @@ pub fn days_remaining(not_after: u64, now: u64) -> i64 {
     let not_after = i64::try_from(not_after).unwrap_or(i64::MAX);
     let now = i64::try_from(now).unwrap_or(i64::MAX);
     not_after.saturating_sub(now).div_euclid(SECONDS_PER_DAY)
+}
+
+/// The ports typed in the Ports box for `ports`: comma-separated, as [`parse_ports`] reads.
+#[must_use]
+pub fn ports_text(ports: &[u16]) -> String {
+    ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Parses a comma-separated list of ports and ranges (e.g. "80,443,8000-8010").
@@ -244,28 +279,55 @@ pub fn build_summary(
         expiration_status,
         chain,
         port,
+        legacy: None,
     })
 }
 
+/// The summary of the chain of `handshake`, a legacy TLS answer of the server at
+/// `host`:`port`, at `now`: as [`build_summary`], its version that of the answer, marked
+/// read without the server's proof of its key.
+#[must_use]
+pub fn build_legacy_summary(
+    handshake: &LegacyHandshake,
+    host: &str,
+    port: u16,
+    now: u64,
+) -> Option<CertInspectionSummary> {
+    let mut summary = build_summary(
+        &handshake.certificates,
+        handshake.version.name(),
+        host,
+        port,
+        now,
+    )?;
+    summary.legacy = Some(LegacyTlsRead {
+        cipher_suite: handshake.cipher_suite_name(),
+    });
+    Some(summary)
+}
+
 /// The column names of [`build_scan_csv`], in order.
-pub const SCAN_CSV_COLUMNS: usize = 10;
+pub const SCAN_CSV_COLUMNS: usize = 11;
 
 /// Builds CSV content for a collection of scan results under the column names `header`
 /// (port, subject, issuer, valid from, valid to, days remaining, TLS version, key size,
-/// hostname match, SANs), the match said `yes` or `no`; every text cell sanitized against
-/// formulas and quoted, as the C# `BuildScanCsv`.
+/// hostname match, SANs, then how it was read), the match said `yes` or `no` and how each
+/// was read said by `read`; every text cell sanitized against formulas and quoted, as the
+/// C# `BuildScanCsv`. The last column is not the C#'s: a chain read in clear from a legacy
+/// TLS answer must not pass for one read by a verified handshake once exported.
 #[must_use]
 pub fn build_scan_csv(
     results: &[CertInspectionSummary],
     header: [&str; SCAN_CSV_COLUMNS],
     (yes, no): (&str, &str),
+    read: impl Fn(&CertInspectionSummary) -> String,
 ) -> String {
     let mut out = header.map(quoted).join(",");
     out.push('\n');
 
     for r in results {
         out.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
             r.port,
             quoted(&r.subject),
             quoted(&r.issuer),
@@ -275,7 +337,8 @@ pub fn build_scan_csv(
             quoted(&r.tls_version),
             r.key_size_bits,
             quoted(if r.hostname_matches { yes } else { no }),
-            quoted(&r.sans.join("; "))
+            quoted(&r.sans.join("; ")),
+            quoted(&read(r))
         ));
     }
 
@@ -284,6 +347,21 @@ pub fn build_scan_csv(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_scan_profiles_hold_the_c_sharp_ports_and_read_back_whole() {
+        assert_eq!(QUICK_SCAN_PORTS.len(), 12);
+        assert_eq!(EXTENDED_SCAN_PORTS.len(), 28);
+        // Extended starts with every Quick port, and neither repeats a port.
+        assert_eq!(EXTENDED_SCAN_PORTS[..12], QUICK_SCAN_PORTS);
+        let distinct: std::collections::BTreeSet<_> = EXTENDED_SCAN_PORTS.iter().collect();
+        assert_eq!(distinct.len(), EXTENDED_SCAN_PORTS.len());
+        assert!(EXTENDED_SCAN_PORTS.len() <= MAX_SCAN_PORTS);
+        let typed = ports_text(&EXTENDED_SCAN_PORTS);
+        let mut expected = EXTENDED_SCAN_PORTS.to_vec();
+        expected.sort_unstable();
+        assert_eq!(parse_ports(&typed), expected);
+    }
+
     use std::sync::LazyLock;
 
     use sealvault::cert::{AltName, Name, Profile, SigningKey, Spec, self_signed};
@@ -501,6 +579,43 @@ mod tests {
     }
 
     #[test]
+    fn a_legacy_answer_is_summarized_with_its_version_and_suite_and_marked() {
+        use crate::tools::tls_audit::TlsProtocol;
+        let day = SECONDS_PER_DAY as u64;
+        let leaf = certificate(
+            "old.lab",
+            vec![AltName::Dns("old.lab".to_owned())],
+            NOW - day,
+            NOW + 90 * day,
+        );
+        let handshake = LegacyHandshake {
+            version: TlsProtocol::Tls10,
+            cipher_suite: 0x002F,
+            certificates: vec![leaf.clone()],
+            server_random: [0x5A; 32],
+        };
+        let summary = build_legacy_summary(&handshake, "old.lab", 443, NOW).expect("read");
+        assert_eq!(summary.tls_version, "TLS 1.0");
+        assert_eq!(
+            summary.legacy,
+            Some(LegacyTlsRead {
+                cipher_suite: "TLS_RSA_WITH_AES_128_CBC_SHA".to_owned()
+            })
+        );
+        assert!(summary.hostname_matches);
+        let modern = build_summary(&[leaf], "TLS 1.3", "old.lab", 443, NOW).expect("read");
+        assert_eq!(
+            modern.legacy, None,
+            "a verified handshake is no legacy read"
+        );
+        let junk = LegacyHandshake {
+            certificates: vec![b"junk".to_vec()],
+            ..handshake
+        };
+        assert!(build_legacy_summary(&junk, "old.lab", 443, NOW).is_none());
+    }
+
+    #[test]
     fn scan_csv_formatting() {
         let summaries = vec![CertInspectionSummary {
             subject: "=CN=test.com".to_owned(),
@@ -518,15 +633,34 @@ mod tests {
             expiration_status: CertExpirationStatus::Valid,
             chain: vec![],
             port: 443,
+            legacy: None,
         }];
 
-        let header = ["P", "S", "I", "F", "T", "D", "V", "K", "M", "N"];
-        let csv = build_scan_csv(&summaries, header, ("Yes", "No"));
-        assert!(csv.starts_with("\"P\",\"S\",\"I\",\"F\",\"T\",\"D\",\"V\",\"K\",\"M\",\"N\"\n"));
+        let mut legacy = summaries[0].clone();
+        legacy.port = 8443;
+        legacy.legacy = Some(LegacyTlsRead {
+            cipher_suite: "TLS_RSA_WITH_RC4_128_MD5".to_owned(),
+        });
+        let summaries = vec![summaries[0].clone(), legacy];
+        let header = ["P", "S", "I", "F", "T", "D", "V", "K", "M", "N", "R"];
+        let read = |r: &CertInspectionSummary| {
+            r.legacy.as_ref().map_or_else(
+                || "verified".to_owned(),
+                |legacy| format!("in clear {}", legacy.cipher_suite),
+            )
+        };
+        let csv = build_scan_csv(&summaries, header, ("Yes", "No"), read);
+        assert!(
+            csv.starts_with("\"P\",\"S\",\"I\",\"F\",\"T\",\"D\",\"V\",\"K\",\"M\",\"N\",\"R\"\n")
+        );
         assert!(
             csv.contains(
-                "443,\"'=CN=test.com\",\"CN=CA \"\"root\"\"\",\"2026-01-01\",\"2027-01-01\",300,\"TLS 1.3\",2048,\"Yes\",\"test.com; www.test.com\""
+                "443,\"'=CN=test.com\",\"CN=CA \"\"root\"\"\",\"2026-01-01\",\"2027-01-01\",300,\"TLS 1.3\",2048,\"Yes\",\"test.com; www.test.com\",\"verified\"\n"
             ),
+            "{csv}"
+        );
+        assert!(
+            csv.contains("\n8443,") && csv.contains(",\"in clear TLS_RSA_WITH_RC4_128_MD5\"\n"),
             "{csv}"
         );
     }

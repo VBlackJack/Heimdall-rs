@@ -34,6 +34,7 @@ pub mod elevated_shell;
 mod error;
 mod event;
 pub mod external_edit;
+pub mod external_tool;
 pub mod external_url;
 pub mod files;
 pub mod ftp_driver;
@@ -68,6 +69,9 @@ pub mod scheduled_form;
 pub mod script_shell;
 pub mod server_health;
 pub mod session_log;
+pub mod shared_cache;
+pub mod shared_report;
+pub mod shared_sessions;
 mod sink;
 pub mod steps_draft;
 pub mod sudo_edit;
@@ -76,6 +80,7 @@ pub mod telnet_driver;
 mod text;
 pub mod text_codec;
 pub mod time_zone;
+pub mod tool_route;
 pub mod tools;
 pub mod transcript;
 pub mod tunnel;
@@ -85,47 +90,51 @@ pub mod update_check;
 pub mod vault_hello;
 pub mod vnc_driver;
 pub mod wake_on_lan;
+pub mod web_console;
 pub mod windows_hello;
 pub mod winrm_driver;
 pub mod winrm_preflight;
 pub mod x11_server;
 
+pub use app::ExternalToolMessage;
+pub use app::ImportedPreferences;
 pub use app::SavedCredentials;
 pub use app::SessionLoadNotice;
 pub use app::SettingsTransferMessage;
-pub use app::ToolsMessage;
 pub use app::split;
 pub use app::{ANNOUNCEMENTS_KEPT, Announced, Announcement};
 pub use app::{
-    AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkPasswordRefusal, BulkPasswordSkips,
-    BulkRefusal, CertificateContext, CitrixImportOutcome, ClosedTab, ConflictRow, ConnectAs,
-    Dialog, DropTarget, Effect, ElevatedPane, ElevatedState, ExportOutcome, FileKind, FilesMessage,
-    FilterMessage, FloatMessage, Floating, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
-    HostKeysMessage, HostKeysOutcome, HostKeysPreview, IDLE_POLL, ImportFile, ImportSummary,
-    KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
-    OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode,
-    PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
+    AgentChip, App, AppConfig, BroadcastConfirmation, BroadcastMessage, BulkField,
+    BulkPasswordRefusal, BulkPasswordSkips, BulkRefusal, CertificateContext, CitrixImportOutcome,
+    ClosedTab, ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ElevatedPane, ElevatedState,
+    ExportOutcome, FileKind, FilesMessage, FilterMessage, FloatMessage, Floating, FolderMessage,
+    FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview,
+    IDLE_POLL, ImportFile, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
+    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice,
+    OpenedVault, OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage,
+    PinMode, PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickGroup,
     QuickResult, QuickRow, RDP_EXTENSION, RECENTLY_CLOSED_CAPACITY, RdpMessage, RdpNames,
     RdpOutcome, RdpPreview, RdpRow, RecentlyClosed, ResolutionChoice, RestoreDialog, RestoreRow,
-    Retry, ScriptConfirmation, SelectionMessage, SessionState, SessionStatus, SessionsCounts,
-    SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SudoAction,
-    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, ToolWords, TreeFilter, TreeRow,
-    TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, UpdateMessage,
-    UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard, VaultHelloMessage,
-    VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus, VaultTicket, WHEEL_LINES,
-    bulk_password_refusal, local_date_time, master_password_problem, open_vault, search_folded,
-    should_auto_lock,
+    Retry, ScriptConfirmation, SelectionMessage, SendConfirmation, SendTarget, SentCommand,
+    SessionState, SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow,
+    SessionsSource, SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage,
+    TabProfile, ToolWords, TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage,
+    TunnelMessage, UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog,
+    VaultHelloCard, VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem,
+    VaultStatus, VaultTicket, WHEEL_LINES, bulk_password_refusal, folder_label, local_date_time,
+    master_password_problem, open_vault, search_folded, should_auto_lock,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
 pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use app::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use app::{
     SCHEDULED_TICK, ScheduledChoice, ScheduledMessage, ScheduledNotice, local_time_text,
 };
+pub use app::{ToolEntryEdit, ToolEntryForm, ToolsMessage};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };

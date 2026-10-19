@@ -140,7 +140,8 @@ pub enum ToolId {
     TlsAudit,
     /// The DNS security checker, the C# `DNSSEC`.
     DnsSec,
-    /// The default credentials scanner, the C# `DEFAULTCREDS`.
+    /// The default credentials list, the C# `DEFAULTCREDS`. List-only, unlike the
+    /// C# tool: see `heimdall_core::tools::default_creds`.
     DefaultCreds,
     /// The offline CVE lookup engine, the C# `CVELOOKUP`.
     CveLookup,
@@ -368,7 +369,9 @@ impl ToolId {
                 ToolCategory::Security,
                 &["smb", "ntlm", "netbios"],
             ),
-            Self::DefaultCreds => ToolDescriptor::network(
+            // List-only by owner decision (2026-10-17, item 10): it never reaches a
+            // host, unlike the C# tool it mirrors the catalog of.
+            Self::DefaultCreds => ToolDescriptor::local(
                 "DEFAULTCREDS",
                 ToolCategory::Security,
                 &["defaultcreds", "creds"],

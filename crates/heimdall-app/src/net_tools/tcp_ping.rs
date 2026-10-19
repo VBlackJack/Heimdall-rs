@@ -21,6 +21,9 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
+
 use crate::reachability::{self, DownReason};
 
 /// How long the handshake with the first of `addresses` to answer on `port` took, within
@@ -42,6 +45,25 @@ pub async fn connect_time(
     match heimdall_net::connect_addresses(&targets, Some(timeout)).await {
         Ok(_connected) => Ok(started.elapsed()),
         Err(failure) => Err(reachability::down_reason(&failure)),
+    }
+}
+
+/// How long the handshake of the gateway with `host:port` took, within `timeout`, `host`
+/// sent as typed for the gateway to resolve. Nothing is connected from here.
+///
+/// # Errors
+///
+/// Why the gateway did not connect: a channel it refused is a refusal.
+pub async fn connect_time_via<O: Opener>(
+    gateway: &ToolGateway<O>,
+    host: &str,
+    port: u16,
+    timeout: Duration,
+) -> Result<Duration, DownReason> {
+    let started = Instant::now();
+    match gateway.dial_within(host, port, Some(timeout)).await {
+        Ok(_connected) => Ok(started.elapsed()),
+        Err(error) => Err(reachability::reason_of_error(&error)),
     }
 }
 

@@ -15,7 +15,8 @@
  */
 
 //! How the window was left, as the C# settings keep it: its place and size, whether it was
-//! maximized, the sidebar's width and whether it was hidden, and the tree: its folders
+//! maximized, the sidebar's width and whether it was hidden, the height of the properties
+//! panel under the tree, and the tree: its folders
 //! folded and the session selected. Its place is checked against
 //! the screens there are when it opens again, as the C# does: a screen unplugged since does
 //! not open it where nothing shows it.
@@ -48,6 +49,10 @@ pub struct WindowState {
     /// The sidebar was hidden.
     #[serde(default)]
     pub sidebar_hidden: bool,
+    /// The height the properties panel under the tree was dragged to, as the C#
+    /// `SessionPropertiesPanelHeight`; whether it is shown is a setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub properties_panel_height: Option<f32>,
     /// Its left edge when last not maximized, in physical pixels of the desktop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x: Option<i32>,
@@ -222,6 +227,7 @@ mod tests {
             maximized: true,
             sidebar_width: Some(320.0),
             sidebar_hidden: true,
+            properties_panel_height: Some(310.0),
             x: Some(-1900),
             y: Some(40),
             scale: Some(1.5),

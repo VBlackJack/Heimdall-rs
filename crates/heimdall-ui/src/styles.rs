@@ -199,7 +199,7 @@ fn faded(style: &ButtonStyle) -> ButtonStyle {
 }
 
 /// `style` at `opacity`.
-fn faded_to(style: &ButtonStyle, opacity: f32) -> ButtonStyle {
+pub(crate) fn faded_to(style: &ButtonStyle, opacity: f32) -> ButtonStyle {
     ButtonStyle {
         background: style
             .background
@@ -351,6 +351,22 @@ pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
             shadow: Shadow::default(),
             snap: true,
         }
+    }
+}
+
+/// The chip naming a folder before its tabs, as the C# group chip: a card edged quietly,
+/// its text secondary.
+pub fn folder_chip(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        text_color: Some(brushes.secondary),
+        border: Border {
+            color: brushes.quiet_edge,
+            width: brushes.width,
+            radius: radius::SM.into(),
+        },
+        ..BoxStyle::default()
     }
 }
 

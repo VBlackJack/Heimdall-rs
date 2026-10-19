@@ -38,7 +38,7 @@ use crate::profile_draft::SavedSecret;
 use crate::route_test::RouteTestRequest;
 
 /// The endpoint `gateway` signs in at.
-fn endpoint(gateway: &SshGateway) -> Endpoint {
+pub(super) fn endpoint(gateway: &SshGateway) -> Endpoint {
     Endpoint {
         protocol: CredentialProtocol::Ssh,
         host: gateway.host.clone(),

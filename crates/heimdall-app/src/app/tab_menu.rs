@@ -54,6 +54,9 @@ pub enum TabMenuMessage {
     ResolutionEdited(String),
     /// Pin a tab, or no longer.
     Pin(TabId),
+    /// Gather the tabs by the folder of their profile, or no longer, as the C# "Arrange tabs
+    /// by folder" (`SessionTabContextMenuFactory.cs:286`).
+    ToggleGroupByFolder,
     /// Resize a VNC tab's remote desktop to the tab, or no longer, as the C# "Remote
     /// resizing".
     VncRemoteResize(TabId),
@@ -119,6 +122,10 @@ impl App {
             TabMenuMessage::ToggleHealth(tab) => self.toggle_health(tab),
             TabMenuMessage::Pin(tab) => {
                 self.toggle_pin(tab);
+                Vec::new()
+            }
+            TabMenuMessage::ToggleGroupByFolder => {
+                self.toggle_group_tabs_by_folder();
                 Vec::new()
             }
             TabMenuMessage::VncRemoteResize(tab) => {
@@ -340,6 +347,38 @@ impl App {
         self.open_again(reopen, purpose)
     }
 
+    /// Whether the tabs are gathered by the folder of their profile, as the settings keep it.
+    #[must_use]
+    pub fn groups_tabs_by_folder(&self) -> bool {
+        self.settings.group_tabs_by_folder
+    }
+
+    /// The tabs gathered by folder or no longer, saved at once as the C# saves
+    /// `GroupSessionTabsByFolder` (`MainViewModel.cs:749`); a choice that cannot be saved is
+    /// said and not made.
+    fn toggle_group_tabs_by_folder(&mut self) {
+        self.settings.group_tabs_by_folder = !self.settings.group_tabs_by_folder;
+        if let Err(error) = self.settings.save(&self.settings_file) {
+            self.settings.group_tabs_by_folder = !self.settings.group_tabs_by_folder;
+            self.dialog = Some(Dialog::save_failed(&error));
+        }
+    }
+
+    /// The folder `tab` is grouped under while the tabs are gathered by folder: the path of
+    /// its profile's folder, as the C# `SessionTabGroupInfo.Key`. `None` for a pinned tab, a
+    /// session saved in no folder and a tab with no saved profile, as the C#
+    /// `AssignTabGroup` (`ConnectionViewModel.TabGroups.cs:372`).
+    #[must_use]
+    pub fn tab_folder(&self, tab: &Tab) -> Option<String> {
+        if !self.settings.group_tabs_by_folder || tab.pinned {
+            return None;
+        }
+        self.tab_profile(tab)?
+            .group
+            .map(|folder| folder.trim().to_owned())
+            .filter(|folder| !folder.is_empty())
+    }
+
     /// The protocol of `tab`: its saved profile's, else that of what it runs.
     #[must_use]
     pub fn tab_kind(&self, tab: &Tab) -> ProfileKind {
@@ -358,5 +397,109 @@ impl App {
             | Reopen::LocalBrowser
             | Reopen::Tool => None,
         }
+    }
+}
+
+/// The separator of a folder's path, as the tree spells it.
+const FOLDER_SEPARATOR: char = '/';
+
+/// The folder's own name, drawn on the group's chip: the last part of its `path`, as the C#
+/// `SessionTabGroupInfo.Label`.
+#[must_use]
+pub fn folder_label(path: &str) -> &str {
+    path.rsplit(FOLDER_SEPARATOR).next().unwrap_or(path)
+}
+
+/// `items` in the order of the strip with the tabs gathered by folder, as the C#
+/// `OrderForStrip` (`ConnectionViewModel.TabGroups.cs:262`): pinned items first, then the
+/// rest with the items of each folder gathered where the folder's first item stands. An item
+/// in no folder keeps its place among the groups. Folders compare without case, like the
+/// tree.
+pub(super) fn gather_by_folder<T>(
+    items: Vec<T>,
+    pinned: impl Fn(&T) -> bool,
+    folder: impl Fn(&T) -> Option<String>,
+) -> Vec<T> {
+    let mut first = Vec::new();
+    let mut blocks: Vec<Vec<T>> = Vec::new();
+    let mut index_of: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for item in items {
+        if pinned(&item) {
+            first.push(item);
+        } else if let Some(key) = folder(&item).map(|folder| folder.to_lowercase()) {
+            let at = *index_of.entry(key).or_insert_with(|| {
+                blocks.push(Vec::new());
+                blocks.len() - 1
+            });
+            blocks[at].push(item);
+        } else {
+            blocks.push(vec![item]);
+        }
+    }
+    first.extend(blocks.into_iter().flatten());
+    first
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{folder_label, gather_by_folder};
+
+    /// (name, pinned, folder)
+    type Item = (&'static str, bool, Option<&'static str>);
+
+    fn order(items: Vec<Item>) -> Vec<&'static str> {
+        gather_by_folder(items, |item| item.1, |item| item.2.map(str::to_owned))
+            .into_iter()
+            .map(|item| item.0)
+            .collect()
+    }
+
+    #[test]
+    fn the_tabs_of_a_folder_are_gathered_where_its_first_tab_stands() {
+        assert_eq!(
+            order(vec![
+                ("a1", false, Some("A")),
+                ("b1", false, Some("B")),
+                ("a2", false, Some("A")),
+                ("b2", false, Some("B")),
+            ]),
+            ["a1", "a2", "b1", "b2"]
+        );
+    }
+
+    #[test]
+    fn pinned_tabs_lead_and_tabs_without_a_folder_keep_their_place_among_the_groups() {
+        assert_eq!(
+            order(vec![
+                ("x", false, None),
+                ("a1", false, Some("A")),
+                ("p", true, Some("A")),
+                ("y", false, None),
+                ("a2", false, Some("A")),
+            ]),
+            ["p", "x", "a1", "a2", "y"]
+        );
+    }
+
+    #[test]
+    fn folders_compare_without_case_and_with_no_folder_the_order_is_kept() {
+        assert_eq!(
+            order(vec![
+                ("a1", false, Some("Lab/Web")),
+                ("b", false, Some("Prod")),
+                ("a2", false, Some("lab/web")),
+            ]),
+            ["a1", "a2", "b"]
+        );
+        assert_eq!(
+            order(vec![("one", false, None), ("two", false, None)]),
+            ["one", "two"]
+        );
+    }
+
+    #[test]
+    fn a_chip_names_the_last_part_of_the_folder_path() {
+        assert_eq!(folder_label("Lab/Web"), "Web");
+        assert_eq!(folder_label("Prod"), "Prod");
     }
 }

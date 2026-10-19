@@ -31,8 +31,11 @@ use std::time::{Duration, Instant};
 
 use super::csv_cell::quoted;
 use super::mac_vendor::{self, MacVendor};
-use super::{arp_monitor, dns_lookup, net_host, ping, probe_pool, system_program};
+use super::network_fingerprint::{self, Fingerprint, RawProbes};
+use super::{arp_monitor, dns_lookup, net_host, ping, probe_pool, smb, system_program};
 
+/// The columns of the CSV export: the seven of the C# export, then what the probes learned.
+pub const NODES_CSV_COLUMNS: usize = 21;
 /// Quick scan ports for network cartography.
 pub const QUICK_RECON_PORTS: [u16; 12] =
     [22, 53, 80, 88, 139, 389, 443, 445, 1433, 3306, 3389, 8080];
@@ -87,6 +90,9 @@ pub struct DiscoveredNode {
     pub role: NodeRole,
     /// Its echo reply's round trip, else its fastest open port's connection.
     pub response_time_ms: u64,
+    /// What the read-only probes learned of it, empty until they ran; boxed as it is large
+    /// and the nodes travel in messages.
+    pub fingerprint: Box<Fingerprint>,
 }
 
 /// What a discovery is told of a host before it starts, from the knowledge base, as the C#
@@ -132,6 +138,12 @@ pub enum DiscoveryEvent {
         mac: Option<String>,
         vendor: Option<MacVendor>,
     },
+    /// What the probes of a host learned: its names, SNMP system, NTLM and SMB data, SSH
+    /// banner, TLS certificate subject and the system guessed from them.
+    Fingerprint {
+        ip: String,
+        fingerprint: Box<Fingerprint>,
+    },
 }
 
 /// How a discovery reaches the network, apart from what it makes of the answers, so the
@@ -145,7 +157,17 @@ pub trait Prober: Sync {
     fn arp_table(&self, stop: &AtomicBool) -> Vec<(String, String)>;
     /// The name `ip` resolves back to, `None` when it has none.
     fn reverse_name(&self, ip: Ipv4Addr, stop: &AtomicBool) -> Option<String>;
+    /// What the read-only probes learn of `ip`, whose `open_ports` are known; nothing by
+    /// default.
+    fn fingerprint(&self, _ip: Ipv4Addr, _open_ports: &[u16], _stop: &AtomicBool) -> Fingerprint {
+        Fingerprint::default()
+    }
 }
+
+/// How the subject of the certificate a TLS server presents is read, supplied by the
+/// caller as the TLS stack is not this crate's: the subject, `None` when the server
+/// presents none.
+pub type TlsSubjectProbe = fn(Ipv4Addr, u16) -> Option<String>;
 
 /// The network as the system reaches it: the system's `ping` and `nslookup` programs by
 /// their whole path, as the PING and DNS tools run them, the ARP table as the ARP monitor
@@ -155,6 +177,7 @@ pub struct SystemProber {
     ping: Option<PathBuf>,
     nslookup: Option<PathBuf>,
     connect_timeout: Duration,
+    tls_subject: Option<TlsSubjectProbe>,
 }
 
 impl SystemProber {
@@ -165,7 +188,15 @@ impl SystemProber {
             ping: ping::ping_program(),
             nslookup: dns_lookup::nslookup_program(),
             connect_timeout: Duration::from_millis(connect_timeout_ms),
+            tls_subject: None,
         }
+    }
+
+    /// The same probes, reading the certificate subject of an HTTPS port with `probe`.
+    #[must_use]
+    pub fn with_tls_subject(mut self, probe: TlsSubjectProbe) -> Self {
+        self.tls_subject = Some(probe);
+        self
     }
 }
 
@@ -218,6 +249,42 @@ impl Prober for SystemProber {
         let deadline = Duration::from_millis(REVERSE_DNS_DEADLINE_MS);
         let output = program_output(program, &[address.as_str()], deadline, stop);
         parse_reverse_name(&output, ip, cfg!(windows))
+    }
+
+    /// The probes run at the same time, each only for the services the host shows, as the
+    /// C# runs its NetBIOS, SNMP, NTLM and SSH probes together.
+    fn fingerprint(&self, ip: Ipv4Addr, open_ports: &[u16], stop: &AtomicBool) -> Fingerprint {
+        let has = |port: u16| open_ports.contains(&port);
+        let tls_probe = self
+            .tls_subject
+            .filter(|_| has(network_fingerprint::TLS_PORT));
+        let raw = std::thread::scope(|scope| {
+            let netbios = scope.spawn(|| network_fingerprint::query_netbios(ip, stop));
+            let snmp = scope.spawn(|| network_fingerprint::query_snmp(ip, stop));
+            let smb = has(network_fingerprint::SMB_PORT)
+                .then(|| scope.spawn(|| network_fingerprint::probe_smb(ip, stop)));
+            let ssh = has(network_fingerprint::SSH_PORT).then(|| {
+                scope.spawn(|| {
+                    network_fingerprint::probe_ssh(ip, network_fingerprint::SSH_PORT, stop)
+                })
+            });
+            let tls = tls_probe
+                .map(|probe| scope.spawn(move || probe(ip, network_fingerprint::TLS_PORT)));
+            // A probe that panicked taught nothing.
+            let (ntlm, smb) = smb.and_then(|probe| probe.join().ok()).unwrap_or_default();
+            let (ssh_banner, ssh_hassh) =
+                ssh.and_then(|probe| probe.join().ok()).unwrap_or_default();
+            RawProbes {
+                netbios: netbios.join().ok().flatten(),
+                snmp: snmp.join().ok().flatten(),
+                ntlm,
+                smb,
+                ssh_banner,
+                ssh_hassh,
+                tls_subject: tls.and_then(|probe| probe.join().ok()).flatten(),
+            }
+        });
+        network_fingerprint::assemble(open_ports, raw)
     }
 }
 
@@ -382,7 +449,7 @@ pub fn canonical_subnet(cidr: &str) -> Option<String> {
 #[must_use]
 pub fn build_nodes_csv(
     nodes: &[DiscoveredNode],
-    header: [&str; 7],
+    header: [&str; NODES_CSV_COLUMNS],
     vendor_label: impl Fn(Option<MacVendor>) -> String,
     role_label: impl Fn(NodeRole) -> String,
 ) -> String {
@@ -396,16 +463,47 @@ pub fn build_nodes_csv(
             .map(u16::to_string)
             .collect::<Vec<_>>()
             .join(";");
+        let fp = &n.fingerprint;
+        let text = |value: Option<&String>| quoted(value.map_or("", String::as_str));
+        let snmp = fp.snmp.as_ref();
+        let ntlm = fp.ntlm.as_ref();
+        let os = fp.os.as_ref();
+        let signing = fp.smb.as_ref().map_or("", |smb| {
+            if smb.signing_required {
+                "true"
+            } else {
+                "false"
+            }
+        });
+        let dialect = fp
+            .smb
+            .as_ref()
+            .map(|smb| smb::format_dialect(smb.dialect_revision))
+            .unwrap_or_default();
 
         out.push_str(&format!(
-            "{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             quoted(&n.ip),
             quoted(n.hostname.as_deref().unwrap_or_default()),
             quoted(n.mac.as_deref().unwrap_or_default()),
             quoted(&vendor_label(n.vendor)),
             quoted(&ports),
             quoted(&role_label(n.role)),
-            n.response_time_ms
+            n.response_time_ms,
+            quoted(os.map_or("", |os| os.os.as_str())),
+            os.map(|os| os.confidence.to_string()).unwrap_or_default(),
+            text(fp.netbios_name.as_ref()),
+            text(fp.netbios_domain.as_ref()),
+            text(snmp.and_then(|snmp| snmp.descr.as_ref())),
+            text(snmp.and_then(|snmp| snmp.name.as_ref())),
+            text(snmp.and_then(|snmp| snmp.location.as_ref())),
+            text(ntlm.and_then(|ntlm| ntlm.dns_computer.as_ref())),
+            text(ntlm.and_then(|ntlm| ntlm.os_build.as_ref())),
+            quoted(&dialect),
+            quoted(signing),
+            text(fp.ssh_banner.as_ref()),
+            text(fp.ssh_hassh.as_ref()),
+            text(fp.tls_subject.as_ref()),
         ));
     }
 
@@ -544,6 +642,7 @@ pub fn discover(
                     .or(alive_ms)
                     .or(done.fastest_ms)
                     .unwrap_or_default(),
+                fingerprint: Box::default(),
             };
             set_mac(
                 &mut node,
@@ -603,7 +702,63 @@ pub fn discover(
             vendor: node.vendor,
         });
     }
+    fingerprint_hosts(&mut found, &reused, prober, stop, &mut on_event);
     found
+}
+
+/// Probes the hosts of `found` that were not told as the knowledge base knew them, as many
+/// at a time as [`MAX_CONCURRENCY`], and tells what each learned. As the C# merges NTLM data
+/// into the host, a host without a name takes the DNS name its NTLM challenge gives, and one
+/// without a MAC address the one its NetBIOS answer gives; both are told as details.
+fn fingerprint_hosts(
+    found: &mut [DiscoveredNode],
+    reused: &HashSet<String>,
+    prober: &impl Prober,
+    stop: &AtomicBool,
+    on_event: &mut impl FnMut(DiscoveryEvent),
+) {
+    let jobs: Vec<(usize, Ipv4Addr, Vec<u16>)> = found
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| !reused.contains(&node.ip))
+        .filter_map(|(at, node)| Some((at, node.ip.parse().ok()?, node.open_ports.clone())))
+        .collect();
+    probe_pool::for_each_bounded(
+        jobs,
+        MAX_CONCURRENCY,
+        stop,
+        |(at, ip, ports)| (at, prober.fingerprint(ip, &ports, stop)),
+        |(at, fingerprint)| {
+            let node = &mut found[at];
+            let hostname = node.hostname.clone().or_else(|| {
+                fingerprint
+                    .ntlm
+                    .as_ref()
+                    .and_then(|ntlm| ntlm.dns_computer.clone())
+            });
+            let mac = node.mac.clone().or_else(|| fingerprint.netbios_mac.clone());
+            let changed = hostname != node.hostname || mac != node.mac;
+            node.hostname = hostname;
+            if mac != node.mac {
+                set_mac(node, mac);
+            }
+            node.fingerprint = Box::new(fingerprint.clone());
+            if changed {
+                on_event(DiscoveryEvent::Details {
+                    ip: node.ip.clone(),
+                    hostname: node.hostname.clone(),
+                    mac: node.mac.clone(),
+                    vendor: node.vendor,
+                });
+            }
+            if !fingerprint.is_empty() {
+                on_event(DiscoveryEvent::Fingerprint {
+                    ip: node.ip.clone(),
+                    fingerprint: Box::new(fingerprint),
+                });
+            }
+        },
+    );
 }
 
 #[cfg(test)]
@@ -686,6 +841,9 @@ mod tests {
         named: std::sync::Mutex<Vec<Ipv4Addr>>,
         /// Sets the stop at the first echo request.
         stop_at_ping: Option<std::sync::Arc<AtomicBool>>,
+        /// What the probes learn of a host, with the ports it was told open.
+        fingerprints: HashMap<Ipv4Addr, Fingerprint>,
+        fingerprinted: std::sync::Mutex<Vec<(Ipv4Addr, Vec<u16>)>>,
     }
 
     impl Prober for FakeNetwork {
@@ -714,6 +872,14 @@ mod tests {
         fn reverse_name(&self, ip: Ipv4Addr, _: &AtomicBool) -> Option<String> {
             self.named.lock().expect("lock").push(ip);
             self.names.get(&ip).cloned()
+        }
+
+        fn fingerprint(&self, ip: Ipv4Addr, open_ports: &[u16], _: &AtomicBool) -> Fingerprint {
+            self.fingerprinted
+                .lock()
+                .expect("lock")
+                .push((ip, open_ports.to_vec()));
+            self.fingerprints.get(&ip).cloned().unwrap_or_default()
         }
     }
 
@@ -818,6 +984,7 @@ mod tests {
             open_ports: vec![22],
             role: NodeRole::RemoteManagement,
             response_time_ms: 2,
+            fingerprint: Box::default(),
         };
         let mut priors = HashMap::new();
         priors.insert(
@@ -956,6 +1123,103 @@ mod tests {
     }
 
     #[test]
+    fn every_host_up_is_fingerprinted_and_the_ntlm_name_and_netbios_mac_fill_what_is_missing() {
+        let mut network = FakeNetwork::default();
+        network.open.insert((ip(2), 445), 4);
+        network.open.insert((ip(3), 22), 4);
+        network.echoes.insert(ip(4), 1);
+        network.fingerprints.insert(
+            ip(2),
+            Fingerprint {
+                netbios_mac: Some("00-50-56-00-00-02".to_owned()),
+                ntlm: Some(smb::NtlmInfo {
+                    dns_computer: Some("srv.lab".to_owned()),
+                    ..smb::NtlmInfo::default()
+                }),
+                ..Fingerprint::default()
+            },
+        );
+        network.fingerprints.insert(
+            ip(3),
+            Fingerprint {
+                ssh_banner: Some("SSH-2.0-OpenSSH_9.6".to_owned()),
+                ..Fingerprint::default()
+            },
+        );
+        network.names.insert(ip(2), "dns-name.lab".to_owned());
+        let ips = [ip(2), ip(3), ip(4), ip(5)];
+        let stop = AtomicBool::new(false);
+        let mut events = Vec::new();
+        let found = discover(
+            &ips,
+            &HashMap::new(),
+            DiscoverOptions::default(),
+            &network,
+            &stop,
+            |event| events.push(event),
+        );
+
+        let mut probed = network.fingerprinted.lock().expect("lock").clone();
+        probed.sort();
+        assert_eq!(
+            probed,
+            [(ip(2), vec![445]), (ip(3), vec![22]), (ip(4), Vec::new())],
+            "the hosts up, never the silent one"
+        );
+        // The reverse name wins over the NTLM one; the MAC address is the NetBIOS one.
+        assert_eq!(found[0].hostname.as_deref(), Some("dns-name.lab"));
+        assert_eq!(found[0].mac.as_deref(), Some("00-50-56-00-00-02"));
+        assert_eq!(found[0].vendor, Some(MacVendor::Named("VMware")));
+        assert_eq!(
+            found[1].fingerprint.ssh_banner.as_deref(),
+            Some("SSH-2.0-OpenSSH_9.6")
+        );
+        let told: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                DiscoveryEvent::Fingerprint { ip, .. } => Some(ip.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(told.len(), 2, "an empty fingerprint is not told: {told:?}");
+        assert!(told.contains(&"10.0.0.2") && told.contains(&"10.0.0.3"));
+    }
+
+    #[test]
+    fn a_host_told_as_the_knowledge_base_knows_it_is_not_fingerprinted() {
+        let network = FakeNetwork::default();
+        let reused = DiscoveredNode {
+            ip: ip(2).to_string(),
+            hostname: None,
+            mac: None,
+            vendor: None,
+            open_ports: vec![22],
+            role: NodeRole::RemoteManagement,
+            response_time_ms: 1,
+            fingerprint: Box::default(),
+        };
+        let mut priors = HashMap::new();
+        priors.insert(
+            ip(2),
+            Prior {
+                reuse: Some(reused),
+                ..Prior::default()
+            },
+        );
+        let stop = AtomicBool::new(false);
+        let found = discover(
+            &[ip(2)],
+            &priors,
+            DiscoverOptions::default(),
+            &network,
+            &stop,
+            |_| {},
+        );
+        assert_eq!(found.len(), 1);
+        assert!(network.fingerprinted.lock().expect("lock").is_empty());
+    }
+
+    #[test]
     fn nodes_csv_export() {
         let nodes = vec![DiscoveredNode {
             ip: "192.168.1.10".to_owned(),
@@ -965,20 +1229,40 @@ mod tests {
             open_ports: vec![80, 443],
             role: NodeRole::Web,
             response_time_ms: 3,
+            fingerprint: Box::new(Fingerprint {
+                netbios_name: Some("SERVER01".to_owned()),
+                ssh_banner: Some("=cmd|' /C calc'!A0".to_owned()),
+                smb: Some(smb::SmbNegotiateInfo {
+                    dialect_revision: smb::DIALECT_SMB311,
+                    signing_required: true,
+                    ..smb::SmbNegotiateInfo::default()
+                }),
+                os: Some(network_fingerprint::OsGuess {
+                    os: "Windows".to_owned(),
+                    source: "Ports".to_owned(),
+                    confidence: 60,
+                }),
+                ..Fingerprint::default()
+            }),
         }];
 
         let csv = build_nodes_csv(
             &nodes,
-            ["IP", "H", "M", "V", "P", "R", "T"],
+            [
+                "IP", "H", "M", "V", "P", "R", "T", "OS", "C", "NB", "ND", "SD", "SN", "SL", "DN",
+                "B", "SMB", "SG", "SSH", "HASSH", "TLS",
+            ],
             |vendor| match vendor {
                 Some(MacVendor::Named(name)) => name.to_owned(),
                 _ => String::new(),
             },
             |role| format!("{role:?}"),
         );
-        assert!(csv.starts_with("\"IP\",\"H\",\"M\",\"V\",\"P\",\"R\",\"T\"\n"));
+        assert!(csv.starts_with("\"IP\",\"H\",\"M\",\"V\",\"P\",\"R\",\"T\",\"OS\","));
         assert!(csv.contains(
-            "\"192.168.1.10\",\"server01\",\"00-50-56-11-22-33\",\"VMware\",\"80;443\",\"Web\",3"
+            "\"192.168.1.10\",\"server01\",\"00-50-56-11-22-33\",\"VMware\",\"80;443\",\"Web\",3,\"Windows\",60,\"SERVER01\","
         ));
+        assert!(csv.contains(",\"true\","), "{csv}");
+        assert!(!csv.contains(",\"=cmd"), "a formula is neutralised: {csv}");
     }
 }

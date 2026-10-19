@@ -1,3 +1,4 @@
+use ironrdp_bulk::BulkCompressor;
 use ironrdp_core::{WriteBuf, decode};
 use ironrdp_dvc::{DrdynvcClient, DvcProcessor, DynamicVirtualChannel};
 use ironrdp_pdu::mcs::{DisconnectProviderUltimatum, DisconnectReason, McsMessage, SendDataIndicationCtx};
@@ -126,11 +127,33 @@ impl Processor {
     /// Processes a received PDU. Returns a vector of [`ProcessorOutput`] that must be processed
     /// in the returned order.
     pub fn process(&mut self, frame: &[u8]) -> SessionResult<Vec<ProcessorOutput>> {
+        self.process_with_bulk(frame, None)
+    }
+
+    /// [`Processor::process`], a bulk-compressed slow-path data PDU decompressed first by
+    /// `bulk`, the decompressor the fast-path updates use: the server compresses both with
+    /// one history. Heimdall-rs patch, see `vendor/PATCHES.md`.
+    pub fn process_with_bulk(
+        &mut self,
+        frame: &[u8],
+        bulk: Option<&mut BulkCompressor>,
+    ) -> SessionResult<Vec<ProcessorOutput>> {
         let data_ctx: SendDataIndicationCtx<'_> =
             ironrdp_pdu::mcs::decode_send_data_indication(frame).map_err(SessionError::decode)?;
         let channel_id = data_ctx.channel_id;
 
         if channel_id == self.io_channel_id {
+            let decompressed;
+            let data_ctx = match decompress_share_data(data_ctx.user_data, bulk)? {
+                Some(data) => {
+                    decompressed = data;
+                    SendDataIndicationCtx {
+                        user_data: &decompressed,
+                        ..data_ctx
+                    }
+                }
+                None => data_ctx,
+            };
             self.process_io_channel(data_ctx)
         } else if self.message_channel_id == Some(channel_id) {
             self.process_message_channel(data_ctx)
@@ -195,13 +218,8 @@ impl Processor {
                             )),
                         ])
                     }
-                    // TODO: slow-path payloads may be bulk-compressed when
-                    // ClientInfoFlags::COMPRESSION is negotiated. Decompression
-                    // should happen here before passing data downstream. Currently
-                    // IronRDP does not wire bulk decompression into this path.
-                    // FIXME: until this is wired, the client deliberately defaults to the simple,
-                    // stateless-friendly MPPC 64K (RDP5) compression level rather than XCRUSH; a
-                    // stateful codec would risk silent corruption on slow-path updates.
+                    // Bulk-compressed slow-path payloads arrive here decompressed, by
+                    // `process_with_bulk` (Heimdall-rs patch).
                     ShareDataPdu::Update(data) => {
                         debug!("Got slow-path graphics update ({} bytes)", data.len());
                         Ok(vec![ProcessorOutput::GraphicsUpdate(data)])
@@ -277,6 +295,76 @@ impl Processor {
         .map_err(SessionError::encode)?;
         Ok(written)
     }
+}
+
+/// Share Control Header: `totalLength`, `pduType`, `pduSource`, `shareId` ([MS-RDPBCGR] 2.2.8.1.1.1.1).
+const SHARE_CONTROL_HEADER_LEN: usize = 10;
+/// Share Data Header past the Share Control Header: `pad1`, `streamId`, `uncompressedLength`,
+/// `pduType2`, `compressedType`, `compressedLength` ([MS-RDPBCGR] 2.2.8.1.1.1.2).
+const SHARE_DATA_HEADER_LEN: usize = 8;
+/// Both headers, which a compressed PDU's `compressedLength` counts with its data.
+const SHARE_HEADERS_LEN: usize = SHARE_CONTROL_HEADER_LEN + SHARE_DATA_HEADER_LEN;
+/// `pduType` of a Data PDU, in its low four bits.
+const PDU_TYPE_DATA: u16 = 0x7;
+const PDU_TYPE_MASK: u16 = 0xF;
+/// Offsets of `compressedType` and `compressedLength` in the user data.
+const COMPRESSED_TYPE_OFFSET: usize = SHARE_CONTROL_HEADER_LEN + 5;
+const COMPRESSED_LENGTH_OFFSET: usize = SHARE_CONTROL_HEADER_LEN + 6;
+/// `PACKET_COMPRESSED`, `PACKET_AT_FRONT` and `PACKET_FLUSHED` in `compressedType`.
+const BULK_FLAGS_MASK: u8 = 0xE0;
+
+/// The IO channel `user_data` of a bulk-compressed Data PDU, rewritten uncompressed: its
+/// data decompressed by `bulk`, its `compressedType` and `compressedLength` zeroed and its
+/// `totalLength` set to the new size, as FreeRDP's `rdp_recv_data_pdu` decompresses before
+/// it reads the PDU. `None` when the PDU carries no compression flags. A PDU with compression
+/// flags and no decompressor (compression not negotiated) is an error: its bytes are never
+/// decoded as plain data. Bytes past `compressedLength` are dropped, as FreeRDP drops them.
+fn decompress_share_data(user_data: &[u8], bulk: Option<&mut BulkCompressor>) -> SessionResult<Option<Vec<u8>>> {
+    if user_data.len() < SHARE_HEADERS_LEN {
+        return Ok(None);
+    }
+    let pdu_type = u16::from_le_bytes([user_data[2], user_data[3]]);
+    if pdu_type & PDU_TYPE_MASK != PDU_TYPE_DATA {
+        return Ok(None);
+    }
+    let compressed_type = user_data[COMPRESSED_TYPE_OFFSET];
+    if compressed_type & BULK_FLAGS_MASK == 0 {
+        return Ok(None);
+    }
+    let Some(bulk) = bulk else {
+        return Err(reason_err!(
+            "IO channel",
+            "compressed slow-path PDU (compressedType {compressed_type:#04x}) without negotiated compression"
+        )
+        .with_source(crate::BulkDataRefused));
+    };
+    let compressed_length = usize::from(u16::from_le_bytes([
+        user_data[COMPRESSED_LENGTH_OFFSET],
+        user_data[COMPRESSED_LENGTH_OFFSET + 1],
+    ]));
+    let end = Some(compressed_length)
+        .filter(|end| (SHARE_HEADERS_LEN..=user_data.len()).contains(end))
+        .ok_or_else(|| {
+            reason_err!(
+                "IO channel",
+                "compressedLength {compressed_length} out of the {} bytes received",
+                user_data.len()
+            )
+            .with_source(crate::BulkDataRefused)
+        })?;
+    let data = bulk
+        .decompress(&user_data[SHARE_HEADERS_LEN..end], u32::from(compressed_type))
+        .map_err(|e| reason_err!("IO channel", "bulk decompression failed: {e}").with_source(crate::BulkDataRefused))?;
+    let mut pdu = Vec::with_capacity(SHARE_HEADERS_LEN + data.len());
+    pdu.extend_from_slice(&user_data[..SHARE_HEADERS_LEN]);
+    pdu.extend_from_slice(data);
+    let total_length = u16::try_from(pdu.len()).map_err(|_| {
+        reason_err!("IO channel", "decompressed PDU of {} bytes", pdu.len()).with_source(crate::BulkDataRefused)
+    })?;
+    pdu[..2].copy_from_slice(&total_length.to_le_bytes());
+    pdu[COMPRESSED_TYPE_OFFSET] = 0;
+    pdu[COMPRESSED_LENGTH_OFFSET..SHARE_HEADERS_LEN].copy_from_slice(&0u16.to_le_bytes());
+    Ok(Some(pdu))
 }
 
 /// Processes a vector of [`SvcMessage`] in preparation for sending them to the server on the `channel_id` channel.

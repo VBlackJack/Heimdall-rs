@@ -28,6 +28,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use heimdall_core::credential_provider::{Lookup, ProviderKind, ProviderSettings};
 use heimdall_core::profile::{SshProfile, WinRmProfile};
 use heimdall_core::winrm::{self, POWERSHELL_ARGUMENTS, PasswordSource};
 use heimdall_ssh::{ConnectOptions, Secret, TerminalSize, establish_via, local_forward};
@@ -36,6 +37,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+use crate::credential_provider::{ask, from_credential_manager};
 use crate::driver::{AnswerRegistry, ChannelPrompter, report_failure};
 use crate::error::UiError;
 use crate::event::ConnectionEvent;
@@ -66,6 +68,44 @@ pub struct WinRmRequest {
     /// The account's stored password, for the profile's own host, port and account; `None`
     /// has `PowerShell` ask for it.
     pub password: Option<Secret>,
+    /// The external credential provider to ask for the account's password when none is
+    /// stored, as the C# `ServerListViewModel` asks it for a `WinRM` profile in credential
+    /// mode; `None` when the provider is off or not to be asked.
+    pub provider: Option<WinRmProvider>,
+}
+
+/// What the external credential provider needs to answer a `WinRM` profile's password.
+#[derive(Debug, Clone)]
+pub struct WinRmProvider {
+    /// The provider's settings.
+    pub settings: ProviderSettings,
+    /// What the profile is looked up by.
+    pub lookup: Lookup,
+    /// The unlock secret, when one is kept.
+    pub unlock: Option<Secret>,
+}
+
+impl WinRmProvider {
+    /// Asks the provider; a failure leaves `PowerShell` to ask the user, as a profile with no
+    /// stored password does.
+    async fn password(self) -> Option<Secret> {
+        let result = match self.settings.kind {
+            ProviderKind::Command => ask(&self.settings, &self.lookup, self.unlock.as_ref()).await,
+            ProviderKind::WindowsCredentialManager => {
+                from_credential_manager(self.lookup.title.clone()).await
+            }
+        };
+        match result {
+            Ok(provided) => Some(provided.password),
+            Err(failure) => {
+                log::warn!(
+                    "the credential provider gave no password for {}: {failure:?}",
+                    self.lookup.title
+                );
+                None
+            }
+        }
+    }
 }
 
 /// Starts an attempt on the current tokio runtime. The stream ends after
@@ -95,10 +135,20 @@ async fn run(
         fallback_directory,
         cancel,
         password,
+        provider,
     } = request;
     let target = format!("{}:{}", profile.host, profile.port);
     // The current Windows identity has no password to give.
     let password = password.filter(|_| profile.username.is_some());
+    let password = match (password, provider) {
+        (None, Some(provider)) if profile.username.is_some() => {
+            tokio::select! {
+                () = cancel.cancelled() => return,
+                given = provider.password() => given,
+            }
+        }
+        (password, _) => password,
+    };
     let launch = Launch {
         name: profile.name.clone(),
         program,

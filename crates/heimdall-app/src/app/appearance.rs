@@ -23,9 +23,10 @@ use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
     auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
-    rdp_connect_timeout_accepted, rdp_keep_alive_interval_accepted,
-    rdp_resize_enable_delay_accepted, reachability_interval_accepted, reachability_probes_accepted,
-    reachability_timeout_accepted, session_log_retention_days_accepted, settings_path,
+    rdp_connect_timeout_accepted, rdp_default_resolution_accepted,
+    rdp_keep_alive_interval_accepted, rdp_resize_enable_delay_accepted,
+    reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
+    reconnect_delay_accepted, session_log_retention_days_accepted, settings_path,
     ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
     update_interval_accepted, windows_hello_grace_minutes_accepted,
@@ -77,8 +78,20 @@ pub enum SettingsMessage {
     SshAutoReconnect(bool),
     /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
     SshAutoReconnectAttempts(u32),
+    /// Seconds before the first SSH auto-reconnect attempt; one out of the accepted range is
+    /// ignored.
+    SshAutoReconnectFirstDelay(u32),
+    /// Seconds before the second attempt; one out of the accepted range is ignored.
+    SshAutoReconnectSecondDelay(u32),
+    /// Seconds before every attempt after the second; one out of the accepted range is
+    /// ignored.
+    SshAutoReconnectSubsequentDelay(u32),
     /// Attempts of an RDP auto-reconnect; one out of the accepted range is ignored.
     RdpAutoReconnectAttempts(u32),
+    /// Ask before an RDP desktop is disconnected from its session bar, or not.
+    RdpConfirmDisconnect(bool),
+    /// Every redirection on an RDP desktop's bar, the ones not shared too, or behind "+N".
+    RdpRedirectionIndicatorsExpanded(bool),
     /// Which SSH agent's keys are offered first, or alone.
     SshAgentPreference(heimdall_core::settings::AgentPreference),
     /// Most sessions open at once, 0 for no limit.
@@ -90,6 +103,13 @@ pub enum SettingsMessage {
     /// Milliseconds between two keep-alives of an embedded RDP connection; one out of the
     /// accepted range is ignored.
     RdpKeepAliveInterval(u32),
+    /// Pixels of the default resolution's width; one out of the accepted range is ignored.
+    RdpDefaultWidth(u32),
+    /// Pixels of the default resolution's height; one out of the accepted range is ignored.
+    RdpDefaultHeight(u32),
+    /// The built-in RDP client offers bulk compression when the profile asks for it, or
+    /// never.
+    RdpBuiltinCompression(bool),
     /// The execution policy a local `PowerShell` is started with.
     PowerShellExecutionPolicy(heimdall_core::settings::ExecutionPolicy),
     /// What Ctrl+V does in a terminal.
@@ -113,6 +133,9 @@ pub enum SettingsMessage {
     PreventSleep(bool),
     /// The tunnels panel starts collapsed, or open.
     CollapseTunnelsPanel(bool),
+    /// The properties panel docked under the tree, or not; the same choice as the tree
+    /// filter menu's and Ctrl+Shift+B.
+    ShowPropertiesPanel(bool),
     /// The application writes its diagnostics log, or not.
     DiagnosticsLog(bool),
     /// The background check of every server runs, or not.
@@ -126,6 +149,19 @@ pub enum SettingsMessage {
     /// The sizes the Resolution menus offer, empty for the built-in ones; refused when one
     /// is out of the limits.
     RdpResolutionPresets(Vec<(u16, u16)>),
+    /// The external tools, in their order, their names and programs trimmed as the C# Save
+    /// trims them; refused, as the C# Save refuses it, when one has no name or no program or
+    /// two share a name. Whether each program is there is the editor's to check.
+    ExternalTools(Vec<heimdall_core::external_tools::ExternalTool>),
+    /// The values of a `MobaXterm` file's `[NAME]` variables, name to login, names trimmed;
+    /// refused, as the C# settings page refuses it, when a name is not one the import
+    /// recognises, two names differ only by case, or a value is empty.
+    MobaxtermVariables(std::collections::BTreeMap<String, String>),
+    /// The shared session sources, in their order, name and path trimmed; refused, as the
+    /// C# settings page and import refuse them, when a source has no name or one used twice
+    /// in any case, a path that is not absolute (or does not start with a `%VARIABLE%`), or
+    /// an identifier that is not valid or is used twice.
+    SharedSources(Vec<heimdall_core::shared_sessions::SharedSource>),
     /// The RDP settings back to their own values, asked first as the C# asks.
     ResetRdpDefaults,
     /// Minutes without input before the workspace locks, 0 for never; refused out of the
@@ -337,6 +373,14 @@ impl App {
             SettingsMessage::RdpResizeEnableDelay(ms) if rdp_resize_enable_delay_accepted(ms) => {
                 self.settings.rdp_resize_enable_delay_ms = ms;
             }
+            SettingsMessage::RdpDefaultWidth(width) if rdp_default_resolution_accepted(width) => {
+                self.settings.rdp_default_width = width;
+            }
+            SettingsMessage::RdpDefaultHeight(height)
+                if rdp_default_resolution_accepted(height) =>
+            {
+                self.settings.rdp_default_height = height;
+            }
             SettingsMessage::RdpKeepAliveInterval(ms) if rdp_keep_alive_interval_accepted(ms) => {
                 self.settings.rdp_keep_alive_interval_ms = ms;
             }
@@ -362,6 +406,21 @@ impl App {
                 if ssh_auto_reconnect_attempts_accepted(attempts) =>
             {
                 self.settings.ssh_auto_reconnect_attempts = attempts;
+            }
+            SettingsMessage::SshAutoReconnectFirstDelay(seconds)
+                if reconnect_delay_accepted(seconds) =>
+            {
+                self.settings.ssh_auto_reconnect_first_delay = seconds;
+            }
+            SettingsMessage::SshAutoReconnectSecondDelay(seconds)
+                if reconnect_delay_accepted(seconds) =>
+            {
+                self.settings.ssh_auto_reconnect_second_delay = seconds;
+            }
+            SettingsMessage::SshAutoReconnectSubsequentDelay(seconds)
+                if reconnect_delay_accepted(seconds) =>
+            {
+                self.settings.ssh_auto_reconnect_subsequent_delay = seconds;
             }
             SettingsMessage::AntiIdleInterval(seconds) if anti_idle_interval_accepted(seconds) => {
                 self.settings.anti_idle_interval = seconds;
@@ -418,6 +477,43 @@ impl App {
         }
     }
 
+    /// Sets the list `message` changes, the resolution presets or the external tools, when
+    /// it is accepted; whether it was. The external tools are refused as the C# Save refuses
+    /// them, one without a name or a program or two of one name; whether each program is
+    /// there is the editor's to check.
+    fn set_list(&mut self, message: &SettingsMessage) -> bool {
+        use heimdall_core::external_tools::{problem, saved};
+        match message {
+            SettingsMessage::RdpResolutionPresets(presets)
+                if Settings::resolution_presets_accepted(presets) =>
+            {
+                self.settings.rdp_resolution_presets.clone_from(presets);
+            }
+            SettingsMessage::ExternalTools(tools) if problem(tools, |_| true).is_none() => {
+                self.settings.external_tools = saved(tools);
+            }
+            SettingsMessage::MobaxtermVariables(variables) if variables_accepted(variables) => {
+                self.settings.mobaxterm_variables = variables
+                    .iter()
+                    .map(|(name, value)| (name.trim().to_owned(), value.trim().to_owned()))
+                    .collect();
+            }
+            SettingsMessage::SharedSources(sources) if shared_sources_accepted(sources) => {
+                self.settings.shared_sources = sources
+                    .iter()
+                    .map(|source| heimdall_core::shared_sessions::SharedSource {
+                        id: source.id.clone(),
+                        name: source.name.trim().to_owned(),
+                        path: source.path.trim().to_owned(),
+                        enabled: source.enabled,
+                    })
+                    .collect();
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// Sets the reachability number `message` changes, when within its range; whether it
     /// was.
     fn set_reachability(&mut self, message: &SettingsMessage) -> bool {
@@ -443,6 +539,7 @@ impl App {
 
     /// Applies `message` and saves the settings; one that cannot be saved is said and not
     /// applied. A colour scheme colours the terminals open too.
+    #[expect(clippy::too_many_lines, reason = "one arm per setting")]
     fn apply_settings(&mut self, message: &SettingsMessage) -> Vec<Effect> {
         let before = self.settings.clone();
         match message {
@@ -483,11 +580,16 @@ impl App {
             message @ (SettingsMessage::RdpConnectTimeout(_)
             | SettingsMessage::RdpResizeEnableDelay(_)
             | SettingsMessage::RdpKeepAliveInterval(_)
+            | SettingsMessage::RdpDefaultWidth(_)
+            | SettingsMessage::RdpDefaultHeight(_)
             | SettingsMessage::RdpAutoReconnectAttempts(_)
             | SettingsMessage::MaxSessions(_)
             | SettingsMessage::SessionLogRetentionDays(_)
             | SettingsMessage::AutoLockIdleMinutes(_)
             | SettingsMessage::SshAutoReconnectAttempts(_)
+            | SettingsMessage::SshAutoReconnectFirstDelay(_)
+            | SettingsMessage::SshAutoReconnectSecondDelay(_)
+            | SettingsMessage::SshAutoReconnectSubsequentDelay(_)
             | SettingsMessage::AntiIdleInterval(_)
             | SettingsMessage::SshKeepAliveInterval(_)
             | SettingsMessage::SshTmoutResetInterval(_)
@@ -503,6 +605,14 @@ impl App {
             | SettingsMessage::RequireWindowsHello(_)
             | SettingsMessage::SyncKnownHostsAtStartup(_)) => self.set_security_flag(message),
             SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
+            SettingsMessage::RdpBuiltinCompression(on) => {
+                self.settings.builtin_rdp_compression = *on;
+            }
+            SettingsMessage::RdpConfirmDisconnect(on) => self.settings.rdp_confirm_disconnect = *on,
+            SettingsMessage::RdpRedirectionIndicatorsExpanded(on) => {
+                self.settings.rdp_redirection_indicators_expanded = *on;
+            }
+            SettingsMessage::ShowPropertiesPanel(on) => self.settings.show_properties_panel = *on,
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }
@@ -516,11 +626,13 @@ impl App {
                     return Vec::new();
                 }
             }
-            SettingsMessage::RdpResolutionPresets(presets) => {
-                if !Settings::resolution_presets_accepted(presets) {
+            message @ (SettingsMessage::RdpResolutionPresets(_)
+            | SettingsMessage::ExternalTools(_)
+            | SettingsMessage::MobaxtermVariables(_)
+            | SettingsMessage::SharedSources(_)) => {
+                if !self.set_list(message) {
                     return Vec::new();
                 }
-                self.settings.rdp_resolution_presets.clone_from(presets);
             }
             SettingsMessage::ResetRdpDefaults => self.settings.reset_rdp(),
             SettingsMessage::ResetAllSettings => {
@@ -567,10 +679,34 @@ impl App {
     /// as it now runs, and Credential Guard checked when just required, so that the first
     /// session does not wait for it.
     fn settings_changed(&mut self, before: &Settings) -> Vec<Effect> {
+        // A list of shared sources edited is followed at once, not at the timer's next look.
+        if before.shared_sources != self.settings.shared_sources {
+            self.shared_tick(std::time::SystemTime::now());
+        }
         let mut effects = self.reachability_changed(before.reachability);
         if !before.require_credential_guard {
             effects.extend(self.warm_credential_guard());
         }
         effects
     }
+}
+
+/// Whether `variables` can be kept, as the C# row checks
+/// (`SettingsViewModel.MobaXtermVariables.cs:108`): every name is one the import recognises,
+/// none repeats another in any case, and every value says something.
+fn variables_accepted(variables: &std::collections::BTreeMap<String, String>) -> bool {
+    use heimdall_core::import::mobaxterm::is_valid_variable_name;
+    let mut seen = std::collections::HashSet::new();
+    variables.iter().all(|(name, value)| {
+        let name = name.trim();
+        is_valid_variable_name(name) && seen.insert(name.to_lowercase()) && !value.trim().is_empty()
+    })
+}
+
+/// Whether `sources` can be kept: every row passes the checks of the C# settings page and
+/// import (`SettingsViewModel.SharedSessionSources.cs:247`).
+fn shared_sources_accepted(sources: &[heimdall_core::shared_sessions::SharedSource]) -> bool {
+    heimdall_core::shared_sessions::source_problems(sources)
+        .iter()
+        .all(|problems| problems.is_ok())
 }

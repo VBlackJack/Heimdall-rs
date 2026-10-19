@@ -80,9 +80,12 @@ mod bulk_password;
 mod citrix_import;
 mod citrix_launch;
 mod connect_as;
+mod connection_history;
 mod credential_guard_gate;
+mod csharp_settings_import;
 mod detail;
 mod docked_sftp;
+mod external_tools;
 mod file_import;
 mod files_clipboard;
 mod files_drop;
@@ -109,6 +112,7 @@ mod local_tab;
 mod macro_editor;
 mod macros;
 mod mstsc_launch;
+mod network_scan;
 mod onboarding;
 mod pin;
 mod post_connect;
@@ -130,16 +134,19 @@ mod run_in_shell;
 mod scheduled;
 mod scheduled_page;
 mod selection;
+mod send_command;
 mod session_events;
 mod session_load;
 mod session_restore;
 mod sessions_import;
 mod settings_transfer;
+mod shared;
 mod shell_directory;
 pub mod split;
 mod status;
 mod tab_menu;
 mod telnet_tab;
+mod tool_entry;
 mod tools;
 mod transcripts;
 mod tree;
@@ -151,6 +158,7 @@ mod updates;
 mod vault;
 mod vault_hello;
 mod vnc_tab;
+mod web_launch;
 mod winrm_tab;
 
 use crate::transcript::{Transcript, TranscriptLines};
@@ -162,7 +170,9 @@ pub use bulk_edit::{BulkField, BulkRefusal};
 pub use bulk_password::{BulkPasswordRefusal, BulkPasswordSkips, bulk_password_refusal};
 pub use citrix_import::CitrixImportOutcome;
 pub use connect_as::ConnectAs;
+pub use csharp_settings_import::ImportedPreferences;
 pub use detail::SavedCredentials;
+pub use external_tools::ExternalToolMessage;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
 pub use files_edit::SudoAction;
@@ -180,6 +190,7 @@ pub use legacy_migration::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use local_tab::{ElevatedPane, ElevatedState, LocalConfirmation};
 pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use network_scan::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
 pub use profile_import::{
@@ -197,6 +208,7 @@ pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
 pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
+pub use send_command::{BroadcastConfirmation, SendConfirmation, SendTarget, SentCommand};
 pub use session_load::SessionLoadNotice;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -206,7 +218,8 @@ pub use settings_transfer::SettingsTransferMessage;
 pub use status::{
     ANNOUNCEMENTS_KEPT, Announced, Announcement, Notice, SessionState, SessionStatus,
 };
-pub use tab_menu::{TabGroup, TabMenuMessage};
+pub use tab_menu::{TabGroup, TabMenuMessage, folder_label};
+pub use tool_entry::{ToolEntryEdit, ToolEntryForm};
 pub use tools::ToolsMessage;
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary, search_folded};
 pub use tree_drag::{DropTarget, OrganizationChange};
@@ -358,6 +371,18 @@ pub enum Message {
         /// What it came to.
         result: crate::citrix_terminate::TerminateResult,
     },
+    /// Open a saved web console in the system's browser, through a tunnel of its gateway
+    /// when it names one: no tab.
+    OpenWeb(ProfileId),
+    /// A web console was handed to the browser, or why not.
+    WebOpened {
+        /// The profile's name.
+        name: String,
+        /// The local port of the tunnel it went through, when it did.
+        through: Option<u16>,
+        /// Handed over, or why not.
+        result: Result<(), crate::web_console::WebRefusal>,
+    },
     /// An RDP profile was opened in Remote Desktop Connection, or why not.
     RdpExternalLaunched {
         /// The profile's name.
@@ -446,6 +471,10 @@ pub enum Message {
     HealthTick,
     /// Time for the background check of every server.
     ReachabilityTick,
+    /// Time to look at the shared session files for a change.
+    SharedTick,
+    /// Open a session of a shared file from the tree.
+    ConnectShared(ProfileId),
     /// Time to look at the scheduled connections.
     ScheduledTick,
     /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
@@ -656,6 +685,9 @@ pub enum Message {
     WindowCloseRequested,
     /// Import the profiles of the C# Heimdall.
     ImportLegacy,
+    /// The import report's "Review": the preferences of the C# Heimdall carried over, shown
+    /// before they are taken.
+    ReviewCsharpPreferences,
     /// "Import Citrix Apps": scan Citrix Workspace's local cache.
     ImportCitrix,
     /// Citrix Workspace's local cache scanned.
@@ -668,6 +700,8 @@ pub enum Message {
     Rdp(RdpMessage),
     /// The preview of a Heimdall session document's profiles.
     ProfileImport(ProfileImportMessage),
+    /// The network scanner dialog.
+    NetworkScan(NetworkScanMessage),
     /// How the export's file went.
     ExportFinished(ExportOutcome),
     /// Open an empty profile form.
@@ -829,6 +863,8 @@ pub enum Message {
     Folder(FolderMessage),
     /// A profile's Rename or "Move to folder".
     ProfileMenu(ProfileMenuMessage),
+    /// Something about an external tool of the user's list.
+    ExternalTool(ExternalToolMessage),
     /// Something about the profiles selected together.
     Selection(SelectionMessage),
     /// Select a profile in the tree.
@@ -856,6 +892,9 @@ pub enum Message {
         /// What.
         what: ProfileCopy,
     },
+    /// Put a value the properties panel shows on the clipboard, as the C# panel's values
+    /// copy themselves on a click; the panel never shows a secret, so none comes this way.
+    CopyValue(String),
     /// Open the vault dialog: unlock the vault, or create it.
     ShowVault,
     /// Open the dialog changing the master password.
@@ -968,6 +1007,8 @@ impl fmt::Debug for Message {
             Self::CitrixTerminated { tab, pid, result } => {
                 write!(f, "CitrixTerminated({}, {pid}, {result:?})", tab.value())
             }
+            Self::OpenWeb(id) => write!(f, "OpenWeb({id})"),
+            Self::WebOpened { result, .. } => write!(f, "WebOpened({})", result.is_ok()),
             Self::RdpExternalLaunched { result, .. } => {
                 write!(f, "RdpExternalLaunched({})", result.is_ok())
             }
@@ -996,6 +1037,8 @@ impl fmt::Debug for Message {
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::HealthTick => f.write_str("HealthTick"),
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
+            Self::SharedTick => f.write_str("SharedTick"),
+            Self::ConnectShared(id) => write!(f, "ConnectShared({id})"),
             Self::ScheduledTick => f.write_str("ScheduledTick"),
             Self::Update(message) => write!(f, "Update({message:?})"),
             Self::HideSessionLoadNotice => f.write_str("HideSessionLoadNotice"),
@@ -1079,6 +1122,7 @@ impl fmt::Debug for Message {
             Self::WindowFocus(focused) => write!(f, "WindowFocus({focused})"),
             Self::WindowCloseRequested => f.write_str("WindowCloseRequested"),
             Self::ImportLegacy => f.write_str("ImportLegacy"),
+            Self::ReviewCsharpPreferences => f.write_str("ReviewCsharpPreferences"),
             Self::ImportCitrix => f.write_str("ImportCitrix"),
             // Each application carries its launch line: only counted.
             Self::CitrixScanned(scan) => write!(f, "CitrixScanned({} apps)", scan.apps.len()),
@@ -1093,6 +1137,7 @@ impl fmt::Debug for Message {
             }
             Self::Rdp(message) => write!(f, "Rdp({message:?})"),
             Self::ProfileImport(message) => write!(f, "ProfileImport({message:?})"),
+            Self::NetworkScan(message) => write!(f, "NetworkScan({message:?})"),
             Self::ExportFinished(outcome) => write!(f, "ExportFinished({outcome:?})"),
             Self::NewProfile => f.write_str("NewProfile"),
             Self::EditProfile(id) => write!(f, "EditProfile({id})"),
@@ -1141,6 +1186,7 @@ impl fmt::Debug for Message {
             Self::Filter(message) => write!(f, "Filter({message:?})"),
             Self::Folder(message) => write!(f, "Folder({message:?})"),
             Self::ProfileMenu(message) => write!(f, "ProfileMenu({message:?})"),
+            Self::ExternalTool(message) => write!(f, "ExternalTool({message:?})"),
             Self::Selection(message) => write!(f, "Selection({message:?})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::FoldAll(fold) => write!(f, "FoldAll({fold})"),
@@ -1149,6 +1195,7 @@ impl fmt::Debug for Message {
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
             Self::RequestDeleteProfile(id) => write!(f, "RequestDeleteProfile({id})"),
             Self::CopyProfile { id, what } => write!(f, "CopyProfile({id}, {what:?})"),
+            Self::CopyValue(_) => f.write_str("CopyValue(..)"),
             Self::ShowVault => f.write_str("ShowVault"),
             Self::ChangeMasterPassword => f.write_str("ChangeMasterPassword"),
             Self::DisableMasterPassword => f.write_str("DisableMasterPassword"),
@@ -1302,6 +1349,16 @@ pub enum Effect {
         /// Port.
         port: u16,
     },
+    /// Sweep a subnet for hosts on the remote-access ports, and say what it finds as
+    /// [`NetworkScanMessage::Event`], then [`NetworkScanMessage::Ended`].
+    ScanNetwork {
+        /// Which sweep.
+        scan: u64,
+        /// The addresses to sweep.
+        ips: Vec<std::net::Ipv4Addr>,
+        /// Set to stop it.
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    },
     /// Test whether an address answers, and say it as [`Message::AddressTested`].
     TestAddress {
         /// Which test.
@@ -1347,6 +1404,16 @@ pub enum Effect {
     WriteFileList(Vec<PathBuf>),
     /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
     OpenUrl(String),
+    /// Open a web console's address in the system's browser, off the UI thread, and say how
+    /// it went as [`Message::WebOpened`].
+    OpenWebConsole {
+        /// The profile's name.
+        name: String,
+        /// The address, built and checked by [`crate::web_console`].
+        url: String,
+        /// The local port of the tunnel it goes through, when it does.
+        through: Option<u16>,
+    },
     /// Ask GitHub for the latest release, off the UI thread, and say what it found as
     /// [`UpdateMessage::Checked`].
     CheckForUpdate,
@@ -1448,6 +1515,15 @@ pub enum Effect {
         profile: Box<SshProfile>,
         /// What every SSH connection shares, `known_hosts` among it.
         options: Box<ConnectOptions>,
+    },
+    /// Start an external tool of the user's list, off the UI thread, as
+    /// [`crate::external_tool::launch`] does; answered with
+    /// [`ExternalToolMessage::Launched`].
+    LaunchExternalTool {
+        /// The tool's name.
+        name: String,
+        /// What starts.
+        launch: Box<crate::external_tool::ToolLaunch>,
     },
     /// Start `PuTTY`, off the UI thread; answered with [`Message::PuttyLaunched`].
     LaunchPutty {
@@ -1879,6 +1955,9 @@ impl fmt::Debug for Effect {
             Self::LaunchElevated { tab, .. } => write!(f, "LaunchElevated({})", tab.value()),
             Self::OpenTunnel { id, .. } => write!(f, "OpenTunnel({})", id.value()),
             Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
+            Self::ScanNetwork { scan, ips, .. } => {
+                write!(f, "ScanNetwork({scan}, {} addresses)", ips.len())
+            }
             Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
             Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
             Self::WakeOnLan(_) => f.write_str("WakeOnLan"),
@@ -1896,6 +1975,7 @@ impl fmt::Debug for Effect {
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
+            Self::OpenWebConsole { through, .. } => write!(f, "OpenWebConsole({through:?})"),
             Self::CheckForUpdate => f.write_str("CheckForUpdate"),
             Self::CheckVaultHello => f.write_str("CheckVaultHello"),
             // Never the data key.
@@ -1925,6 +2005,7 @@ impl fmt::Debug for Effect {
                 write!(f, "ProbePuttyHostKey({})", profile.id)
             }
             Self::LaunchPutty { .. } => f.write_str("LaunchPutty(..)"),
+            Self::LaunchExternalTool { name, .. } => write!(f, "LaunchExternalTool({name:?})"),
             Self::OpenPuttyRoute { id, .. } => write!(f, "OpenPuttyRoute({})", id.value()),
             Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
@@ -2231,6 +2312,10 @@ pub struct Tab {
     /// C# tab's `RdpModeOverride`: its title says so, and Reconnect keeps it
     /// (`SessionCoordinator.cs:1014-1027`, 1481); `None`, as its profile says.
     pub rdp_mode_override: Option<heimdall_core::profile::RdpMode>,
+    /// The built-in client connects without bulk compression whatever the profile says: the
+    /// server sent what it could not read compressed ([`ConnectionEvent::RdpCompressionOff`]).
+    /// Carried across a reconnect; a tab opened anew compresses as its profile says.
+    pub rdp_compression_off: bool,
 }
 
 impl fmt::Debug for Tab {
@@ -2399,6 +2484,7 @@ impl Tab {
             local_browser_closed: false,
             elevated: None,
             rdp_mode_override: None,
+            rdp_compression_off: false,
             dropped: false,
             connected_at: None,
             lasted: None,
@@ -2617,6 +2703,15 @@ pub struct ImportSummary {
     /// For the migration of this computer's C# store, how many scheduled connections were
     /// carried over; or why they could not be. `None` when it had none.
     pub scheduled: Option<Result<usize, String>>,
+    /// For the migration of this computer's C# store, why its `settings.json` could not be
+    /// read, or not as the profiles read it: they were imported without its group defaults,
+    /// its trusted SSH servers and its scheduled connections. `None` when it was read, or
+    /// there is none.
+    pub settings_unreadable: Option<String>,
+    /// For the migration of this computer's C# store, its preferences carried over, to be
+    /// reviewed, and those left out; or why they could not be read. Read on their own, one
+    /// by one: a part of `settings.json` the profiles cannot read does not stop them.
+    pub preferences: Option<Result<ImportedPreferences, String>>,
     /// The SSH gateways the file brought, created or found already saved, as the C# summary's
     /// gateway line counts them.
     pub gateways: heimdall_core::import::gateways::Reconciliation,
@@ -2647,6 +2742,8 @@ pub struct ConflictRow {
 /// A modal decision that concerns the whole window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
+    /// The C# tool picker of "Add > Tool", as filled.
+    AddTool(Box<ToolEntryForm>),
     /// The C# "Custom resolution" of an RDP tab: the size typed, as `WIDTHxHEIGHT`.
     CustomResolution {
         /// The tab.
@@ -2916,10 +3013,20 @@ pub enum Dialog {
     /// Run a script from the local file browser by its interpreter, the command shown
     /// whole: asked each time, nothing recorded.
     ConfirmRunScript(Box<ScriptConfirmation>),
+    /// Write a command of the command library into a terminal, shown whole with the terminal
+    /// that receives it: asked each time, nothing written before it is agreed to.
+    ConfirmSendCommand(Box<SendConfirmation>),
+    /// Write a command of the command library into several terminals at once, shown whole
+    /// with every terminal that receives it: one question, nothing written before it is
+    /// agreed to.
+    ConfirmBroadcastCommand(Box<BroadcastConfirmation>),
     /// Type post-connect steps, shown whole, which the user has not approved yet.
     ConfirmPostConnect(Box<PostConnectConfirmation>),
     /// Result of an import.
     ImportDone(ImportSummary),
+    /// Result of the network scanner's Add: the hosts chosen, merged as an import is, but
+    /// told under a title of their own.
+    ScanAdded(ImportSummary),
     /// An import could not run.
     ImportFailed {
         /// Technical detail.
@@ -2962,6 +3069,8 @@ pub enum Dialog {
     ConfirmImportFile(Box<PendingImport>),
     /// The profiles of a Heimdall session document, each clash with a choice.
     ProfileImportPreview(Box<ProfileImportPreview>),
+    /// The network scanner: the subnet typed and the hosts it found, to choose from.
+    NetworkScan(Box<NetworkScan>),
     /// How many applications Citrix Workspace's cache gives, asked before they are imported.
     ConfirmCitrixImport(Box<heimdall_core::import::citrix_cache::CacheScan>),
     /// Citrix Workspace's cache gives no application: what the scan said.
@@ -3174,6 +3283,8 @@ impl Dialog {
             self,
             Self::ConfirmLocalCommand(_)
                 | Self::ConfirmRunScript(_)
+                | Self::ConfirmSendCommand(_)
+                | Self::ConfirmBroadcastCommand(_)
                 | Self::ConfirmPostConnect(_)
                 | Self::Vault(_)
                 | Self::Pin(_)
@@ -3232,6 +3343,9 @@ pub struct App {
     pub active: Option<TabId>,
     /// The pane the open close question is about alone, not its whole split.
     closing_pane: Option<TabId>,
+    /// The commands of the command library written into terminals, until the window takes
+    /// them for its history.
+    sent_commands: Vec<SentCommand>,
     /// The tabs detached to windows of their own, off the strip.
     floating: Vec<Floating>,
     /// Window-level dialog, if any.
@@ -3253,6 +3367,10 @@ pub struct App {
     address_test: Option<(u64, CancellationToken)>,
     /// The number of the next address test.
     next_address_test: u64,
+    /// The network sweep running, and what stops it.
+    network_scan: Option<(u64, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    /// The number of the next network sweep.
+    next_network_scan: u64,
     /// Tunnels the user opened by hand, open: the rows of the tunnels panel.
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// A session opens in a tab's place, as Reconnect opens it: it takes no more room.
@@ -3280,6 +3398,8 @@ pub struct App {
     macros: heimdall_core::macros::Macros,
     /// The background check of every server.
     monitor: reachability_monitor::Monitor,
+    /// The sessions of the shared files, held in memory and never written back.
+    shared: crate::shared_sessions::SharedSessions,
     /// The look for a newer release.
     updates: updates::Updates,
     /// Credential Guard required before an embedded RDP session, asked before Windows
@@ -3325,6 +3445,8 @@ pub struct App {
     split_layouts: heimdall_core::split_layouts::SplitLayouts,
     /// The transcripts' first and last lines, as the window words them.
     transcript_lines: Option<TranscriptLines>,
+    /// The folder the connection history is written in, when the window has one.
+    connection_history: Option<PathBuf>,
     /// Broadcast input: on or off, and the tabs marked.
     broadcast: broadcast::Broadcast,
     /// What was just done, and the session shown then with its state.
@@ -3441,6 +3563,7 @@ impl App {
             files_state,
             split_layouts,
             transcript_lines: None,
+            connection_history: None,
             broadcast: broadcast::Broadcast::default(),
             viewport: config.initial_grid,
             display_scale: 1.0,
@@ -3449,6 +3572,7 @@ impl App {
             tabs: Vec::new(),
             active: None,
             closing_pane: None,
+            sent_commands: Vec::new(),
             floating: Vec::new(),
             dialog,
             route_test: None,
@@ -3459,6 +3583,8 @@ impl App {
             edit_dir: heimdall_core::paths::edit_dir(),
             address_test: None,
             next_address_test: 0,
+            network_scan: None,
+            next_network_scan: 0,
             tunnels: Vec::new(),
             // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
             tunnels_panel,
@@ -3472,6 +3598,7 @@ impl App {
             detail: detail::DetailCache::default(),
             macros,
             monitor: reachability_monitor::Monitor::default(),
+            shared: crate::shared_sessions::SharedSessions::default(),
             updates: updates::Updates::new(crate::update_check::running_release()),
             credential_guard: credential_guard_gate::CredentialGuardGate::default(),
             known_hosts_synced: false,
@@ -3511,6 +3638,7 @@ impl App {
         // A task whose time came while Heimdall was closed is missed, never run late.
         app.skip_missed(crate::time_zone::unix_now(), &crate::time_zone::SystemClock);
         app.show_start_gates();
+        app.load_shared();
         app
     }
 
@@ -3654,6 +3782,8 @@ impl App {
             | Message::OpenWinRm(_)
             | Message::OpenCitrix(_)
             | Message::CitrixLaunched { .. }
+            | Message::OpenWeb(_)
+            | Message::WebOpened { .. }
             | Message::RdpExternalLaunched { .. }
             | Message::MstscRoute { .. }
             | Message::PuttyHostKey { .. }
@@ -3679,6 +3809,7 @@ impl App {
             }
             Message::CitrixTick => self.citrix_tick(),
             Message::Tools(message) => self.tools_message(message),
+            Message::ExternalTool(message) => self.external_tool_message(message),
             Message::CitrixProbed { tab, probe } => {
                 self.citrix_probed(tab, &probe);
                 Vec::new()
@@ -3692,6 +3823,11 @@ impl App {
                 Vec::new()
             }
             Message::ReachabilityTick => self.reachability_round(),
+            Message::SharedTick => {
+                self.shared_tick(std::time::SystemTime::now());
+                Vec::new()
+            }
+            Message::ConnectShared(id) => self.connect_shared(&id),
             Message::ScheduledTick => {
                 self.scheduled_tick_at(crate::time_zone::unix_now(), &crate::time_zone::SystemClock)
             }
@@ -3782,6 +3918,7 @@ impl App {
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
             | Message::ImportLegacy
+            | Message::ReviewCsharpPreferences
             | Message::ImportCitrix
             | Message::CitrixScanned(_)
             | Message::ExportSessions
@@ -3789,6 +3926,7 @@ impl App {
             | Message::Sessions(_)
             | Message::Rdp(_)
             | Message::ProfileImport(_)
+            | Message::NetworkScan(_)
             | Message::Settings(_)
             | Message::Macro(_)
             | Message::NoteOpened(_)
@@ -3853,7 +3991,8 @@ impl App {
             | Message::ConnectProfile(_)
             | Message::DuplicateProfile { .. }
             | Message::RequestDeleteProfile(_)
-            | Message::CopyProfile { .. }) => self.tree_message(message),
+            | Message::CopyProfile { .. }
+            | Message::CopyValue(_)) => self.tree_message(message),
             message @ (Message::ShowVault
             | Message::ChangeMasterPassword
             | Message::DisableMasterPassword
@@ -3993,6 +4132,12 @@ impl App {
             Message::CitrixLaunched { tab, name, result } => {
                 self.citrix_launched(tab, &name, result)
             }
+            Message::OpenWeb(id) => self.open_web(&id),
+            Message::WebOpened {
+                name,
+                through,
+                result,
+            } => self.web_opened(name, through, result),
             Message::RdpExternalLaunched {
                 name,
                 gateway,
@@ -4027,6 +4172,11 @@ impl App {
             }) => effects = self.sudo_mode_off(tab),
             // "Don't restore": answered, the snapshot goes.
             Some(Dialog::RestoreSessions(_)) => self.forget_snapshot(),
+            // Closed: the sweep stops, its probes and programs with it.
+            Some(Dialog::NetworkScan(_)) => {
+                self.dialog = None;
+                self.stop_network_scan();
+            }
             // "Do not import": not asked again for the same files.
             Some(Dialog::LegacyMigrationOffer(offer)) => self.decline_legacy_migration(&offer),
             _ => {}
@@ -4234,8 +4384,17 @@ impl App {
         effects
     }
 
-    #[expect(clippy::too_many_lines, reason = "one arm per connection event")]
     fn apply_connection_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
+        let was_connected = self
+            .tab(tab_id)
+            .is_some_and(|tab| tab.phase == Phase::Connected);
+        let effects = self.apply_session_event(tab_id, event);
+        self.note_connected(tab_id, was_connected);
+        effects
+    }
+
+    #[expect(clippy::too_many_lines, reason = "one arm per connection event")]
+    fn apply_session_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
         let active = self.in_sight(tab_id);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
@@ -4271,6 +4430,19 @@ impl App {
             ConnectionEvent::RdpStep(step) => {
                 tab.rdp_step = Some(step);
                 Vec::new()
+            }
+            ConnectionEvent::RdpCompressionOff { reconnect } => {
+                // For this tab, its reconnections included: its server sent what the
+                // built-in client could not read compressed. The profile is not changed.
+                tab.rdp_compression_off = true;
+                let effects = if reconnect {
+                    self.reconnect_rdp(tab_id, None)
+                } else {
+                    Vec::new()
+                };
+                // Said in the state the tab is in now: connected, or connecting again.
+                self.tell(Notice::RdpCompressionOff);
+                effects
             }
             event @ (ConnectionEvent::UnknownRdpCertificate { .. }
             | ConnectionEvent::RdpReady { .. }
@@ -4816,8 +4988,8 @@ impl App {
             .count()
     }
 
-    /// The session bar's Disconnect, as the C# one: an RDP desktop asks first, as the C#
-    /// `RdpConfirmDisconnect` does by default; a VNC one ends at once.
+    /// The session bar's Disconnect, as the C# one: an RDP desktop asks first while the C#
+    /// `RdpConfirmDisconnect` setting is on (its default); a VNC one ends at once.
     fn request_disconnect_desktop(&mut self, tab_id: TabId) {
         let Some(tab) = self.tab(tab_id) else {
             return;
@@ -4825,7 +4997,7 @@ impl App {
         if tab.phase != Phase::Connected || tab.desktop.is_none() {
             return;
         }
-        if tab.purpose == Purpose::Rdp {
+        if tab.purpose == Purpose::Rdp && self.settings.rdp_confirm_disconnect {
             self.dialog = Some(Dialog::ConfirmDisconnectDesktop {
                 tab: tab_id,
                 name: tab.display_title().to_owned(),
@@ -4924,6 +5096,10 @@ impl App {
             }
             Some(Dialog::CustomResolution { tab, value }) => {
                 self.confirm_custom_resolution(tab, &value);
+                Vec::new()
+            }
+            Some(Dialog::AddTool(form)) => {
+                self.confirm_tool_entry(*form);
                 Vec::new()
             }
             Some(
@@ -5072,6 +5248,10 @@ impl App {
             }
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
             Some(Dialog::ConfirmRunScript(confirmation)) => self.confirm_script(*confirmation),
+            Some(Dialog::ConfirmSendCommand(confirmation)) => self.confirm_send(&confirmation),
+            Some(Dialog::ConfirmBroadcastCommand(confirmation)) => {
+                self.confirm_command_broadcast(&confirmation)
+            }
             Some(Dialog::ConfirmPostConnect(confirmation)) => self.run_post_connect(*confirmation),
             // sudo's question is answered with the password the window holds, never by a
             // bare confirm.
@@ -5080,13 +5260,16 @@ impl App {
                 | Dialog::Pin(_)
                 | Dialog::EditGateway { .. }
                 | Dialog::SudoPassword { .. }
-                | Dialog::BulkPassword { .. }),
+                | Dialog::BulkPassword { .. }
+                // Enter in its field starts the sweep: a bare confirm leaves it as it is.
+                | Dialog::NetworkScan(_)),
             ) => {
                 self.dialog = Some(dialog);
                 Vec::new()
             }
             Some(
                 Dialog::ImportDone(_)
+                | Dialog::ScanAdded(_)
                 | Dialog::LegacyMigrationDone(_)
                 | Dialog::TrustedHostKeyDetails(_)
                 | Dialog::FileProperties(_)
@@ -5132,6 +5315,10 @@ impl App {
                 self.import_legacy();
                 Vec::new()
             }
+            Message::ReviewCsharpPreferences => {
+                self.review_csharp_preferences();
+                Vec::new()
+            }
             Message::ExportSessions => vec![self.export_sessions()],
             Message::ImportCitrix => Self::scan_citrix(),
             Message::CitrixScanned(scan) => {
@@ -5144,6 +5331,7 @@ impl App {
                 self.profile_import_message(*message);
                 Vec::new()
             }
+            Message::NetworkScan(message) => self.network_scan_message(message.clone()),
             Message::ExportFinished(outcome) => {
                 self.dialog = match outcome {
                     ExportOutcome::Saved(count) => Some(Dialog::ExportDone { count: *count }),
@@ -5206,9 +5394,28 @@ impl App {
                 return;
             }
         };
-        let settings = std::fs::read_to_string(dir.join(LEGACY_SETTINGS_FILE_NAME)).ok();
+        // A settings file that is missing says nothing; one that cannot be read, or does not
+        // read as settings, never stops the profiles: they are imported without it, said.
+        let (settings, mut settings_unreadable) =
+            match std::fs::read_to_string(dir.join(LEGACY_SETTINGS_FILE_NAME)) {
+                Ok(text) => (Some(text), None),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, None),
+                Err(error) => (None, Some(error.to_string())),
+            };
         let mut report = match csharp::import(&servers, settings.as_deref()) {
             Ok(report) => report,
+            Err(csharp::ImportError::Settings(error)) => {
+                settings_unreadable = Some(error.to_string());
+                match csharp::import(&servers, None) {
+                    Ok(report) => report,
+                    Err(error) => {
+                        self.dialog = Some(Dialog::ImportFailed {
+                            detail: error.to_string(),
+                        });
+                        return;
+                    }
+                }
+            }
             Err(error) => {
                 self.dialog = Some(Dialog::ImportFailed {
                     detail: error.to_string(),
@@ -5229,6 +5436,17 @@ impl App {
                 )
                 .map_err(|error| error.to_string()),
             );
+            // Apart from the profiles: read as values one by one, the preferences survive a
+            // part of the file the profiles cannot read. Their failure is said on its own
+            // line, unless it is the same file failing, already said.
+            summary.preferences =
+                settings
+                    .as_deref()
+                    .and_then(|text| match self.csharp_preferences(text) {
+                        Err(_) if settings_unreadable.is_some() => None,
+                        read => Some(read),
+                    });
+            summary.settings_unreadable = settings_unreadable;
             self.dialog = Some(Dialog::ImportDone(summary));
         }
     }

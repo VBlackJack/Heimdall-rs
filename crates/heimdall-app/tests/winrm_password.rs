@@ -268,3 +268,74 @@ fn a_session_entered_or_never_started_keeps_its_password() {
     closed(&mut app, tab, failed, REMOTE_SESSION_NOT_ENTERED_EXIT_CODE);
     assert_eq!(open(&mut app, "w").2.as_deref(), Some(PASSWORD));
 }
+
+/// The provider question of `profile`'s opening, when it carries one.
+fn provider_of(app: &mut App, profile: &str) -> Option<heimdall_app::winrm_driver::WinRmProvider> {
+    let effects = app.update(Message::OpenWinRm(id(profile)));
+    let [Effect::ConnectWinRm { request, .. }] = effects.as_slice() else {
+        panic!("expected ConnectWinRm, got {effects:?}");
+    };
+    request.provider.clone()
+}
+
+fn provider_on(app: &mut App) {
+    use heimdall_app::ProviderMessage;
+
+    app.update(Message::CredentialProvider(ProviderMessage::Enabled(true)));
+    app.update(Message::CredentialProvider(ProviderMessage::Command(
+        "pass show {Title}".to_owned(),
+    )));
+}
+
+#[test]
+fn the_provider_is_asked_for_an_account_with_no_stored_password() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(
+        dir.path(),
+        vec![
+            profile("named", Some("LAB\\admin"), None),
+            profile("current", None, None),
+            profile("stored", Some("LAB\\admin"), None),
+        ],
+        &system,
+    );
+    store_password(
+        &system,
+        "stored",
+        endpoint("DC01.LAB", DEFAULT_WINRM_HTTP_PORT, "LAB\\admin"),
+        PASSWORD,
+    );
+    assert!(provider_of(&mut app, "named").is_none(), "provider off");
+    provider_on(&mut app);
+    let asked = provider_of(&mut app, "named").expect("asked");
+    assert_eq!(asked.lookup.host, "dc01.lab");
+    assert_eq!(asked.lookup.port, DEFAULT_WINRM_HTTP_PORT);
+    assert_eq!(asked.lookup.user.as_deref(), Some("LAB\\admin"));
+    assert_eq!(asked.lookup.title, "named");
+    assert!(
+        provider_of(&mut app, "current").is_none(),
+        "no account, no password"
+    );
+    assert!(
+        provider_of(&mut app, "stored").is_none(),
+        "a stored password comes first"
+    );
+}
+
+#[test]
+fn the_properties_panel_says_the_provider_is_consulted_for_a_named_account() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(
+        dir.path(),
+        vec![
+            profile("named", Some("LAB\\admin"), None),
+            profile("current", None, None),
+        ],
+        &system,
+    );
+    provider_on(&mut app);
+    assert!(app.provider_consulted(&id("named")));
+    assert!(!app.provider_consulted(&id("current")));
+}

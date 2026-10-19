@@ -1,0 +1,72 @@
+[Version française](fr/migration-from-csharp.md)
+
+# Moving from Heimdall (C#) to Heimdall-rs
+
+Heimdall-rs reads the data of the C# [Heimdall](https://github.com/VBlackJack/Heimdall)
+and keeps the C# behaviour wherever it can. This guide lists how to bring your
+connections over, what does not cross, and the places where Heimdall-rs differs on purpose.
+
+## Import your connections
+
+1. The C# Heimdall can stay installed and keep its data: Heimdall-rs only reads it.
+2. Start Heimdall-rs. On the home page, **Import Connections** is enabled when the C#
+   data is found: `servers.json` (and `settings.json` beside it) in
+   `%LOCALAPPDATA%\Heimdall`. It is greyed out when that file does not exist.
+3. Press it. A dialog reports what was added, updated and left out, with the reason for
+   each profile that was skipped.
+
+You can also use **Import Sessions** in the session tree and pick a `servers.json`
+(or a file exported by the C# Heimdall). The file import also reads the `settings.json`
+beside it.
+
+Importing again is safe: a profile with the same ID is updated, not duplicated.
+
+### What is imported
+
+| Item | Notes |
+|---|---|
+| Profiles | SSH, SFTP, RDP, VNC, Telnet, FTP, WinRM, Citrix, local shell, and WEB. |
+| Folders and colours | Folder paths and the colours of the C# palette. |
+| Folder defaults | Copied into each profile at import (see below). |
+| SSH gateways | Created or merged; a profile that referenced a missing gateway is reported. |
+| Trusted SSH host keys | Keys and fingerprints are carried over, so known servers do not ask again. |
+| Scheduled connections | Carried over with their schedule. |
+| C# preferences | Shown for review first, and applied only when you confirm. A preference you already changed in Heimdall-rs is kept. |
+
+Folder defaults work differently: the C# resolves them when it connects, from the folder
+of the profile, deepest folder first. Heimdall-rs resolves them once, at import, and
+writes the result into each profile. Changing a folder default in the C# afterwards does
+not change the profiles already imported; import again to take it over.
+
+### What is not imported
+
+- **Passwords, passphrases, the PIN and other secrets.** The C# protects them with
+  Windows DPAPI, which only that Windows account can reverse. Enter each password again
+  at the first connection and save it in the vault.
+- **The PIN hash, the HMAC key, the Git access token** and the credential provider's
+  unlock secret, from the preferences.
+- Paths that belong to the C# installation, and preference values Heimdall-rs does not
+  read. The review dialog names them.
+- Some settings the built-in client does not use yet (X11 forwarding, RDP printers, serial
+  ports, smart cards, webcam, USB, several monitors). The import dialog lists them per
+  profile.
+
+## Differences on purpose
+
+| Area | Heimdall-rs | Why |
+|---|---|---|
+| DEFAULTCREDS | Lists the known vendor default credentials only. It never tries a login. | No account lockouts, no unauthorised login attempts. |
+| Route via (network tools) | The TCP tools connect through an SSH gateway using SSH channels only. Nothing is run on the gateway. Tools that need ICMP, ARP, raw sockets or UDP refuse to run through a gateway. | A gateway can carry TCP, not those protocols, and running commands on it would need rights nobody asked for. |
+| Network scanner | Subnets wider than /22 are refused, and you choose which found hosts to add as sessions. | A bounded scan, and nothing is saved that you did not pick. |
+| RDP compression | The built-in RDP client does not compress by default. **Compress in the built-in client (experimental)** in the settings turns it on, for profiles with compression enabled. | The compression is new in the built-in client; if the server sends data it cannot read, compression turns itself off for that connection. |
+| RDP extras | An RD Gateway opens in Remote Desktop Connection (`mstsc.exe`). Options only that client honours (smart cards, printers, microphone and the like) are marked "External client (mstsc.exe) only" in the profile. | The built-in client does not implement them yet. `mstsc.exe` exists on Windows only. |
+| NOTES | Work notes are Markdown files, edited as plain text; a note can be copied as Markdown or as an HTML page. | No embedded web engine. |
+| DIAGRAM | A text editor for the source (Mermaid, Graphviz DOT, PlantUML, ASCII). It does not draw the diagram: render it in an external tool. | No embedded web engine. |
+| CERT | Also reads the certificate of a TLS 1.0 to 1.2 server, for display only, with a warning. Heimdall-rs never negotiates those versions for a real connection. | Lets you inspect and audit old servers without weakening any connection. |
+
+## Run a separate profile for testing
+
+Any build takes `--data-dir <full path>`: Heimdall-rs then keeps its configuration, data and
+saved passwords under that folder, and runs beside your own instance without ever touching
+its profiles or credentials. Use it to try the import on a copy of your data first. See
+[`--data-dir` in a normal build](test-data-folder.md#--data-dir-in-a-normal-build).

@@ -28,16 +28,23 @@
 
 use std::time::{Duration, Instant};
 
+use heimdall_core::settings::{
+    SSH_AUTO_RECONNECT_FIRST_DELAY_DEFAULT, SSH_AUTO_RECONNECT_SECOND_DELAY_DEFAULT,
+    SSH_AUTO_RECONNECT_SUBSEQUENT_DELAY_DEFAULT, Settings,
+};
+
 use super::{App, Effect, Message, Phase, TabProfile};
 use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
 
-/// Wait before the first attempt, the second, and every one after, as the C# defaults.
+/// Wait before the first attempt, the second, and every one after, as the C# defaults: those
+/// of an RDP desktop, which has no setting for them, and what an SSH shell's settings start
+/// from.
 const DELAYS: [Duration; 3] = [
-    Duration::from_secs(2),
-    Duration::from_secs(5),
-    Duration::from_secs(15),
+    Duration::from_secs(SSH_AUTO_RECONNECT_FIRST_DELAY_DEFAULT as u64),
+    Duration::from_secs(SSH_AUTO_RECONNECT_SECOND_DELAY_DEFAULT as u64),
+    Duration::from_secs(SSH_AUTO_RECONNECT_SUBSEQUENT_DELAY_DEFAULT as u64),
 ];
 
 /// A tab waiting to open its session again by itself.
@@ -72,10 +79,22 @@ fn transient(purpose: Purpose, error: &UiError) -> bool {
     }
 }
 
-/// The wait before attempt `attempt`, counted from 1.
-fn delay(attempt: u32) -> Duration {
+/// The wait before attempt `attempt`, counted from 1, among `delays`: the first, the second,
+/// then the one every later attempt takes.
+fn delay(attempt: u32, delays: [Duration; 3]) -> Duration {
     let index = usize::try_from(attempt.saturating_sub(1)).unwrap_or(usize::MAX);
-    DELAYS[index.min(DELAYS.len() - 1)]
+    delays[index.min(delays.len() - 1)]
+}
+
+/// The waits of an SSH shell's attempts, as the C# `SshAutoReconnect*DelaySeconds` settings
+/// give them.
+fn ssh_delays(settings: &Settings) -> [Duration; 3] {
+    [
+        settings.ssh_auto_reconnect_first_delay,
+        settings.ssh_auto_reconnect_second_delay,
+        settings.ssh_auto_reconnect_subsequent_delay,
+    ]
+    .map(|seconds| Duration::from_secs(u64::from(seconds)))
 }
 
 impl App {
@@ -100,6 +119,7 @@ impl App {
             .ssh_auto_reconnect
             .then_some(self.settings.ssh_auto_reconnect_attempts);
         let rdp_attempts = self.settings.rdp_auto_reconnect_attempts;
+        let ssh_delays = ssh_delays(&self.settings);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -121,7 +141,12 @@ impl App {
             return Vec::new();
         };
         let now = Instant::now();
-        let due = now + delay(attempt);
+        let delays = if tab.purpose == Purpose::Rdp {
+            DELAYS
+        } else {
+            ssh_delays
+        };
+        let due = now + delay(attempt, delays);
         let since = tab.retry.map_or(now, |retry| retry.since);
         tab.retry = Some(Retry {
             attempt,
@@ -218,13 +243,34 @@ mod tests {
 
     #[test]
     fn the_waits_are_the_csharp_ones() {
-        assert_eq!(delay(1), Duration::from_secs(2));
-        assert_eq!(delay(2), Duration::from_secs(5));
-        assert_eq!(delay(3), Duration::from_secs(15));
+        assert_eq!(delay(1, DELAYS), Duration::from_secs(2));
+        assert_eq!(delay(2, DELAYS), Duration::from_secs(5));
+        assert_eq!(delay(3, DELAYS), Duration::from_secs(15));
         assert_eq!(
-            delay(heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MAX),
+            delay(
+                heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
+                DELAYS
+            ),
             Duration::from_secs(15)
         );
-        assert_eq!(delay(0), Duration::from_secs(2), "never before the first");
+        assert_eq!(
+            delay(0, DELAYS),
+            Duration::from_secs(2),
+            "never before the first"
+        );
+    }
+
+    #[test]
+    fn an_ssh_shell_waits_as_its_settings_say() {
+        let mut settings = Settings::default();
+        assert_eq!(ssh_delays(&settings), DELAYS, "the C# defaults");
+        settings.ssh_auto_reconnect_first_delay = 1;
+        settings.ssh_auto_reconnect_second_delay = 30;
+        settings.ssh_auto_reconnect_subsequent_delay = 600;
+        let delays = ssh_delays(&settings);
+        assert_eq!(delay(1, delays), Duration::from_secs(1));
+        assert_eq!(delay(2, delays), Duration::from_secs(30));
+        assert_eq!(delay(3, delays), Duration::from_secs(600));
+        assert_eq!(delay(9, delays), Duration::from_secs(600));
     }
 }

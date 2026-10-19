@@ -485,7 +485,7 @@ checksum = "144e573728da132683b9488acd528274c790e07fc06ff81ee29f9d8f8b1041e0"
 dependencies = [
  "blowfish",
  "pbkdf2",
- "sha2 0.11.0",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -1616,7 +1616,7 @@ dependencies = [
  "ed25519",
  "rand_core 0.10.1",
  "serde",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "signature",
  "subtle",
  "zeroize",
@@ -1705,7 +1705,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2349,7 +2349,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "heimdall-app"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "chrono",
  "heimdall-core",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-core"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "data-encoding",
  "directories",
@@ -2400,7 +2400,7 @@ dependencies = [
  "sealvault",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "similar",
  "ssh-key",
  "tempfile",
@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-dragout"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",
@@ -2423,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-files"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "heimdall-net",
  "heimdall-sftp",
@@ -2443,14 +2443,14 @@ dependencies = [
 
 [[package]]
 name = "heimdall-i18n"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "fluent-syntax",
 ]
 
 [[package]]
 name = "heimdall-keyring"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "keyring-core",
  "thiserror 2.0.21",
@@ -2461,7 +2461,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-net"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "log",
  "tokio",
@@ -2469,7 +2469,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-rdp"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "cpal",
  "data-encoding",
@@ -2493,7 +2493,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-remote"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "flate2",
  "heimdall-net",
@@ -2510,7 +2510,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-sftp"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "log",
  "tempfile",
@@ -2521,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-ssh"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "data-encoding",
  "heimdall-core",
@@ -2539,7 +2539,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-term"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "alacritty_terminal",
  "heimdall-core",
@@ -2551,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "heimdall-tls"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "log",
  "rcgen",
@@ -2562,11 +2562,11 @@ dependencies = [
 
 [[package]]
 name = "heimdall-twinshell"
-version = "0.1.0"
+version = "2026.101701.0"
 
 [[package]]
 name = "heimdall-ui"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "chrono",
  "clipboard-win",
@@ -2760,7 +2760,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -4768,7 +4768,7 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
- "sha2 0.11.0",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -4782,7 +4782,7 @@ dependencies = [
  "fiat-crypto",
  "primefield",
  "primeorder",
- "sha2 0.11.0",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -4796,7 +4796,7 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
- "sha2 0.11.0",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -4812,7 +4812,7 @@ dependencies = [
  "futures",
  "log",
  "rand 0.10.3",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
  "tokio",
  "windows 0.62.2",
@@ -4945,7 +4945,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1 0.11.0",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sha3 0.12.0",
  "thiserror 2.0.21",
  "x25519-dalek",
@@ -5096,7 +5096,7 @@ dependencies = [
  "pbkdf2",
  "rand_core 0.10.1",
  "scrypt",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "spki 0.8.0",
 ]
 
@@ -5620,7 +5620,7 @@ dependencies = [
  "pkcs1 0.8.0-rc.4",
  "pkcs8",
  "rand_core 0.10.1",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "signature",
  "spki 0.8.0",
  "zeroize",
@@ -5684,7 +5684,7 @@ dependencies = [
  "scrypt",
  "sec1",
  "sha1 0.11.0",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sha3 0.12.0",
  "signature",
  "spki 0.8.0",
@@ -5753,7 +5753,7 @@ version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d84e8ba78bd384263e5922f084cbe1b081c3b7e69add59c8fb097b879ba968a"
 dependencies = [
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "walkdir",
 ]
 
@@ -5810,7 +5810,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5851,9 +5851,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
+checksum = "4a073f5dc7469f984c52ad2752b63b0807745133b6de880b7b64c1ac4c48aec4"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",
@@ -5936,7 +5936,7 @@ dependencies = [
  "cfg-if",
  "pbkdf2",
  "salsa20",
- "sha2 0.11.0",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -5954,7 +5954,7 @@ dependencies = [
 
 [[package]]
 name = "sealvault"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -5967,7 +5967,7 @@ dependencies = [
  "rcgen",
  "rsa",
  "sha1 0.11.0",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sha3 0.12.0",
  "ssh-key",
  "subtle",
@@ -6006,7 +6006,7 @@ dependencies = [
  "num",
  "once_cell",
  "serde",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "zbus",
 ]
 
@@ -6163,9 +6163,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -6535,7 +6535,7 @@ dependencies = [
  "rsa",
  "sec1",
  "sha1 0.11.0",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "signature",
  "ssh-cipher",
  "ssh-encoding",
@@ -6575,7 +6575,7 @@ dependencies = [
  "rsa",
  "serde",
  "sha1 0.11.0",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "time",
  "tokio",
  "tracing",
@@ -6619,9 +6619,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "suppaftp"
-version = "12.1.1"
+version = "12.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b161d71217da0cc91bd09c8f98ac5ad2a5e5b2735c6dfe1c6cb08b4471612f35"
+checksum = "2b58fcf921745cca6f0127c9f822069947da8c6dbeff52e9004750bcc448171f"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6747,7 +6747,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6908,9 +6908,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",
@@ -7754,7 +7754,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8329,7 +8329,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "2026.101701.0"
 dependencies = [
  "heimdall-i18n",
  "serde_json",
@@ -8523,9 +8523,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.0"
+version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 dependencies = [
  "zeroize_derive",
 ]

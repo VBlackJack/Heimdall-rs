@@ -23,6 +23,7 @@ use std::fmt;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use heimdall_app::TabId;
 use iced::widget::{checkbox, column, container, pick_list, row, text, text_input};
@@ -32,6 +33,7 @@ use heimdall_core::tools::network_cartography::{
     self, CartographySummary, CidrError, DiscoverOptions, DiscoveredNode, DiscoveryEvent,
     LARGE_SUBNET_THRESHOLD, MAX_PREFIX, MIN_PREFIX, NodeRole, PROBE_TIMEOUT_MS, SystemProber,
 };
+use heimdall_core::tools::network_fingerprint::Fingerprint;
 use heimdall_core::tools::network_history::{
     self, KnowledgeBase, ScanDiff, ScanSnapshot, ScanStore, SnapshotInfo,
 };
@@ -60,6 +62,10 @@ const IP_WIDTH: f32 = 120.0;
 const MAC_WIDTH: f32 = 150.0;
 /// Width of the latency column.
 const LATENCY_WIDTH: f32 = 70.0;
+/// What separates the facts of the line shown under a host.
+const FINGERPRINT_SEPARATOR: &str = "  |  ";
+/// How long the certificate of an HTTPS port is waited for, as the C# TLS inspection.
+const TLS_SUBJECT_TIMEOUT_MS: u64 = 3000;
 
 /// Messages emitted by the network cartography view.
 #[derive(Debug, Clone)]
@@ -277,6 +283,34 @@ fn blocking<T: Send + 'static>(
     )
 }
 
+/// The subject of the certificate `ip`:`port` presents, read by a handshake that takes any
+/// certificate and sends nothing once it is over, as the C# `InspectTlsWithHttpAsync` reads
+/// the certificate it does not trust. The discovery runs off the window's runtime, so the
+/// handshake runs on one of its own.
+fn tls_subject(ip: Ipv4Addr, port: u16) -> Option<String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    runtime.block_on(async {
+        let read = async {
+            let tcp = tokio::net::TcpStream::connect((ip, port)).await.ok()?;
+            let name = heimdall_tls::inspection_server_name(&ip.to_string())?;
+            let tls = heimdall_tls::inspection_connector()
+                .connect(name, tcp)
+                .await
+                .ok()?;
+            let chain = heimdall_tls::presented_chain(tls.get_ref().1)?;
+            let leaf = chain.certificates.first()?;
+            sealvault::cert::inspect(leaf).map(|summary| summary.subject)
+        };
+        tokio::time::timeout(Duration::from_millis(TLS_SUBJECT_TIMEOUT_MS), read)
+            .await
+            .ok()
+            .flatten()
+    })
+}
+
 /// A discovery's whole run, off the window: the knowledge base read when it is used, the
 /// hosts discovered, then, once completed, its snapshot saved in the history and learned by
 /// the knowledge base, as the C# `ScanAsync` does after its scan.
@@ -292,7 +326,7 @@ fn run_discovery(
     } else {
         std::collections::HashMap::new()
     };
-    let prober = SystemProber::new(PROBE_TIMEOUT_MS);
+    let prober = SystemProber::new(PROBE_TIMEOUT_MS).with_tls_subject(tls_subject);
     let nodes = network_cartography::discover(
         &discovery.ips,
         &priors,
@@ -500,6 +534,20 @@ impl NetworkCartographyPane {
                     fl!("ui-tool-netmap-col-ports"),
                     fl!("ui-tool-netmap-col-role"),
                     fl!("ui-tool-netmap-col-latency"),
+                    fl!("ui-tool-netmap-col-os"),
+                    fl!("ui-tool-netmap-col-os-confidence"),
+                    fl!("ui-tool-netmap-col-netbios-name"),
+                    fl!("ui-tool-netmap-col-netbios-domain"),
+                    fl!("ui-tool-netmap-col-snmp-descr"),
+                    fl!("ui-tool-netmap-col-snmp-name"),
+                    fl!("ui-tool-netmap-col-snmp-location"),
+                    fl!("ui-tool-netmap-col-ntlm-dns-name"),
+                    fl!("ui-tool-netmap-col-os-build"),
+                    fl!("ui-tool-netmap-col-smb-dialect"),
+                    fl!("ui-tool-netmap-col-smb-signing"),
+                    fl!("ui-tool-netmap-col-ssh-banner"),
+                    fl!("ui-tool-netmap-col-ssh-hassh"),
+                    fl!("ui-tool-netmap-col-tls-subject"),
                 ];
                 let csv = network_cartography::build_nodes_csv(
                     &self.nodes,
@@ -542,6 +590,11 @@ impl NetworkCartographyPane {
                     node.hostname = hostname;
                     node.mac = mac;
                     node.vendor = vendor;
+                }
+            }
+            DiscoveryEvent::Fingerprint { ip, fingerprint } => {
+                if let Some(node) = self.nodes.iter_mut().find(|node| node.ip == ip) {
+                    node.fingerprint = fingerprint;
                 }
             }
         }
@@ -972,7 +1025,16 @@ impl NetworkCartographyPane {
             ]
             .spacing(spacing::SM);
 
-            node_rows = node_rows.push(r);
+            let entry: Element<'a, Message> = match fingerprint_line(&n.fingerprint) {
+                Some(line) => column![
+                    r,
+                    text(line).size(font_size::CAPTION).style(text::secondary)
+                ]
+                .spacing(spacing::XS)
+                .into(),
+                None => r.into(),
+            };
+            node_rows = node_rows.push(entry);
         }
 
         container(column![header_row, node_rows].spacing(spacing::MD))
@@ -1057,6 +1119,66 @@ fn address(node: &DiscoveredNode) -> Option<Ipv4Addr> {
     node.ip.parse().ok()
 }
 
+/// What the probes learned of a host, said in one line under it; `None` when nothing was
+/// learned. Every text comes from the network: shown as text, never as the interface's own
+/// words.
+fn fingerprint_line(fingerprint: &Fingerprint) -> Option<String> {
+    let shown = |value: &str| heimdall_app::server_text(value);
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(os) = &fingerprint.os {
+        parts.push(fl!(
+            "ui-tool-netmap-fp-os",
+            os = shown(&os.os),
+            confidence = u64::from(os.confidence)
+        ));
+    }
+    match (&fingerprint.netbios_name, &fingerprint.netbios_domain) {
+        (Some(name), Some(domain)) => parts.push(fl!(
+            "ui-tool-netmap-fp-netbios-domain",
+            domain = shown(domain),
+            name = shown(name)
+        )),
+        (Some(name), None) => parts.push(fl!("ui-tool-netmap-fp-netbios", name = shown(name))),
+        (None, Some(domain)) => {
+            parts.push(fl!("ui-tool-netmap-fp-workgroup", domain = shown(domain)))
+        }
+        (None, None) => {}
+    }
+    if let Some(snmp) = &fingerprint.snmp {
+        if let Some(descr) = &snmp.descr {
+            parts.push(fl!("ui-tool-netmap-fp-snmp", descr = shown(descr)));
+        }
+        if let Some(name) = &snmp.name {
+            parts.push(fl!("ui-tool-netmap-fp-snmp-name", name = shown(name)));
+        }
+    }
+    if let Some(ntlm) = &fingerprint.ntlm {
+        if let Some(name) = &ntlm.dns_computer {
+            parts.push(fl!("ui-tool-netmap-fp-windows", name = shown(name)));
+        }
+        if let Some(build) = &ntlm.os_build {
+            parts.push(fl!("ui-tool-netmap-fp-build", build = shown(build)));
+        }
+    }
+    if let Some(smb) = &fingerprint.smb {
+        parts.push(fl!(
+            "ui-tool-netmap-fp-smb",
+            dialect = heimdall_core::tools::smb::format_dialect(smb.dialect_revision),
+            required = if smb.signing_required { "yes" } else { "no" }
+        ));
+    }
+    if let Some(banner) = &fingerprint.ssh_banner {
+        parts.push(fl!("ui-tool-netmap-fp-ssh", banner = shown(banner)));
+    }
+    if let Some(hash) = &fingerprint.ssh_hassh {
+        parts.push(fl!("ui-tool-netmap-fp-hassh", hash = shown(hash)));
+    }
+    if let Some(subject) = &fingerprint.tls_subject {
+        parts.push(fl!("ui-tool-netmap-fp-tls", subject = shown(subject)));
+    }
+    (!parts.is_empty()).then(|| parts.join(FINGERPRINT_SEPARATOR))
+}
+
 /// A role, as the view and the CSV say it.
 fn role_label(role: NodeRole) -> String {
     match role {
@@ -1089,6 +1211,7 @@ mod tests {
             open_ports: ports.to_vec(),
             role: network_cartography::classify_role(ports),
             response_time_ms: 2,
+            fingerprint: Box::default(),
         }
     }
 
@@ -1102,6 +1225,42 @@ mod tests {
 
     fn host(run: u64, node: Option<DiscoveredNode>) -> NetworkCartographyMessage {
         NetworkCartographyMessage::Event(run, DiscoveryEvent::Host(node))
+    }
+
+    #[test]
+    fn what_the_probes_learned_is_said_in_one_line_and_exported() {
+        assert_eq!(fingerprint_line(&Fingerprint::default()), None);
+        let fingerprint = Fingerprint {
+            netbios_name: Some("SRV01".to_owned()),
+            netbios_domain: Some("LAB".to_owned()),
+            ssh_banner: Some("SSH-2.0-Open\u{202E}SSH".to_owned()),
+            os: Some(heimdall_core::tools::network_fingerprint::OsGuess {
+                os: "Linux".to_owned(),
+                source: "Ports".to_owned(),
+                confidence: 40,
+            }),
+            ..Fingerprint::default()
+        };
+        let line = fingerprint_line(&fingerprint).expect("a line");
+        assert!(line.contains("Linux") && line.contains("SRV01") && line.contains("LAB"));
+        assert!(
+            line.contains("SSH-2.0-OpenSSH"),
+            "bidi controls dropped: {line}"
+        );
+        assert!(line.contains(FINGERPRINT_SEPARATOR));
+
+        let mut pane = NetworkCartographyPane::new(None);
+        let discovery = started(&mut pane, "10.0.0.0/28");
+        let mut found = node("10.0.0.5", &[22]);
+        found.fingerprint = Box::new(fingerprint);
+        pane.apply(host(discovery.run, Some(found)));
+        let Step::Save(export) = pane.apply(NetworkCartographyMessage::ExportCsv) else {
+            panic!("the CSV is saved");
+        };
+        let csv = export.content();
+        let header = csv.lines().next().expect("header");
+        assert_eq!(header.split("\",\"").count(), 21, "{header}");
+        assert!(csv.contains("\"SRV01\",\"LAB\""), "{csv}");
     }
 
     #[test]
@@ -1182,6 +1341,21 @@ mod tests {
             csv.contains("\"web.lab\",\"00-50-56-00-00-10\",\"VMware\""),
             "{csv}"
         );
+        pane.apply(NetworkCartographyMessage::Event(
+            run,
+            DiscoveryEvent::Fingerprint {
+                ip: "10.0.0.10".to_owned(),
+                fingerprint: Box::new(Fingerprint {
+                    ssh_banner: Some("SSH-2.0-OpenSSH_9.6".to_owned()),
+                    ..Fingerprint::default()
+                }),
+            },
+        ));
+        assert_eq!(
+            pane.nodes[1].fingerprint.ssh_banner.as_deref(),
+            Some("SSH-2.0-OpenSSH_9.6")
+        );
+        assert!(pane.nodes[0].fingerprint.is_empty());
         pane.apply(NetworkCartographyMessage::Stop);
         assert!(discovery.stop.load(Ordering::Relaxed));
         assert_eq!(pane.naming, None);

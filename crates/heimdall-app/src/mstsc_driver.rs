@@ -86,6 +86,8 @@ pub struct MstscRouteRequest {
     pub ssh: ConnectOptions,
     /// Stops the attempt, then releases the forward and the gateway.
     pub cancel: CancellationToken,
+    /// The settings' default resolution, for a profile that asks for it.
+    pub default_size: (u16, u16),
 }
 
 /// What a launch through a gateway reports.
@@ -138,6 +140,7 @@ async fn run<S>(
         profile,
         ssh,
         cancel,
+        default_size,
     } = request;
     let target = heimdall_core::profile::display_address(&profile.host, profile.port);
     let prompter = Arc::new(ChannelPrompter {
@@ -176,7 +179,7 @@ async fn run<S>(
     } else {
         log::info!("Using OS-assigned tunnel port: {address} for {target}");
     }
-    let content = rdp_external::rdp_file_through(&profile, address);
+    let content = rdp_external::rdp_file_through(&profile, address, default_size);
     let outcome = tokio::task::spawn_blocking(move || starter(&content))
         .await
         .unwrap_or_else(|error| Err(ExternalRefusal::NotStarted(error.to_string())));

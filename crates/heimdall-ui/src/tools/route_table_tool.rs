@@ -61,6 +61,15 @@ pub enum Outcome {
 }
 
 impl RouteTablePane {
+    /// Reads the list when the tab opens, as the C# `Initialize` runs `RefreshCommand`
+    /// (`RouteTableView.xaml.cs:61`): the user does not have to press Refresh first.
+    pub fn open(&mut self, tab: TabId) -> Task<Message> {
+        match self.update(tab, RouteTableMessage::Refresh) {
+            Outcome::Task(task) => task,
+            _ => Task::none(),
+        }
+    }
+
     /// Handles tool messages.
     pub fn update(&mut self, tab: TabId, message: RouteTableMessage) -> Outcome {
         match message {
@@ -284,6 +293,16 @@ mod tests {
             context: heimdall_app::tools::ToolContext::default(),
         }));
         app.tabs[0].id
+    }
+
+    #[test]
+    fn opening_the_routes_tab_reads_them_without_a_refresh_press() {
+        let dir = tempfile::tempdir().expect("dir");
+        let tab = tab(dir.path());
+        let mut pane = RouteTablePane::default();
+        assert!(!pane.running, "nothing runs before the tab opens");
+        let _task = pane.open(tab);
+        assert!(pane.running, "the C# Initialize runs the refresh at once");
     }
 
     #[test]

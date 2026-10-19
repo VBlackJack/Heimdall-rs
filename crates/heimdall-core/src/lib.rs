@@ -22,9 +22,11 @@
 compile_error!("the test-data-dir feature is for test builds only, never a release build");
 
 pub mod code_page;
+pub mod connection_history;
 pub mod credential_provider;
 pub mod credentials;
 pub mod export;
+pub mod external_tools;
 pub mod files_state;
 pub mod folder;
 pub mod folder_acl;
@@ -43,10 +45,12 @@ pub mod profile;
 pub mod scheduled;
 pub mod session_snapshot;
 pub mod settings;
+pub mod shared_sessions;
 pub mod split_layouts;
 pub mod store;
 pub mod tools;
 pub mod utc;
+pub mod web;
 pub mod window_state;
 pub mod winrm;
 pub mod winrm_diagnostic;

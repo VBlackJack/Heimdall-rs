@@ -56,6 +56,10 @@ const BADGE_ALPHA: f32 = 0.15;
 /// Room around a badge's text, as the C# template's `Margin="6,2"`.
 const BADGE_PADDING: [f32; 2] = [2.0, 6.0];
 
+/// The badge of an external tool, as the C# palette item's `ConnectionType`, upper-cased by
+/// its `ConnectionTypeBadge`.
+const EXTERNAL_TOOL_BADGE: &str = "EXTERNAL";
+
 /// The window's font, bold: what is typed, lit in a name, as the C# `HighlightTextBehavior`.
 const MATCH_FONT: Font = Font {
     weight: Weight::Bold,
@@ -104,7 +108,9 @@ const fn kind_badge(kind: ProfileKind) -> &'static str {
         ProfileKind::Vnc => "VNC",
         ProfileKind::Telnet => "TEL",
         ProfileKind::Citrix => "CTX",
+        ProfileKind::Web => "WEB",
         ProfileKind::Local => "SH",
+        ProfileKind::Tool => "TOOL",
     }
 }
 
@@ -119,6 +125,7 @@ pub fn group_label(group: &QuickGroup) -> String {
         QuickGroup::RecentTools => fl!("ui-palette-recent-tools"),
         QuickGroup::Tools => fl!("ui-palette-tools"),
         QuickGroup::Category(category) => crate::tools::category_label(*category),
+        QuickGroup::ExternalTools => fl!("ui-palette-external-tools"),
     }
 }
 
@@ -178,6 +185,11 @@ pub fn line(result: &QuickResult) -> Line {
             detail: None,
             account: None,
         },
+        QuickResult::ExternalTool { name } => Line {
+            title: heimdall_app::server_text(name),
+            detail: None,
+            account: None,
+        },
     }
 }
 
@@ -213,7 +225,7 @@ fn kind_of(result: &QuickResult) -> Option<ProfileKind> {
         QuickResult::Ssh { .. } => Some(ProfileKind::Ssh),
         QuickResult::Rdp { .. } => Some(ProfileKind::Rdp),
         QuickResult::Session { kind, .. } => Some(*kind),
-        QuickResult::Tool { .. } => None,
+        QuickResult::Tool { .. } | QuickResult::ExternalTool { .. } => None,
     }
 }
 
@@ -223,6 +235,7 @@ fn mark(result: &QuickResult) -> (Icon, Tint) {
         (QuickResult::Tool { tool, .. }, _) => {
             (crate::tools::icon(*tool), Tint::Tool(tool.category()))
         }
+        (QuickResult::ExternalTool { .. }, _) => (Icon::CommandPrompt, Tint::Accent),
         (_, kind) => {
             let kind = kind.unwrap_or(ProfileKind::Ssh);
             (Icon::of(kind), Tint::Protocol(kind))
@@ -236,6 +249,10 @@ fn badge(result: &QuickResult, theme: &Theme) -> (String, Color) {
         (QuickResult::Tool { tool, .. }, _) => (
             fl!("ui-palette-tool-badge"),
             icons::tool_color(theme, tool.category()),
+        ),
+        (QuickResult::ExternalTool { .. }, _) => (
+            EXTERNAL_TOOL_BADGE.to_owned(),
+            theme.extended_palette().primary.base.color,
         ),
         (_, kind) => {
             let kind = kind.unwrap_or(ProfileKind::Ssh);

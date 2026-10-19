@@ -3864,6 +3864,8 @@ fn a_migration_says_how_many_scheduled_connections_it_carried_over() {
         stored_credentials: None,
         host_keys: None,
         scheduled,
+        settings_unreadable: None,
+        preferences: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
         actions: None,
         dropped: vec![("web".to_owned(), vec![Dropped::ScheduledTime])],
@@ -3889,6 +3891,30 @@ fn a_migration_says_how_many_scheduled_connections_it_carried_over() {
 }
 
 #[test]
+fn the_network_scanner_report_has_a_title_of_its_own() {
+    let summary = heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport::default(),
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        scheduled: None,
+        settings_unreadable: None,
+        preferences: None,
+        gateways: heimdall_core::import::gateways::Reconciliation::default(),
+        actions: None,
+        dropped: Vec::new(),
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ScanAdded(summary));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Sessions added").expect("its own title");
+    assert!(ui.find("Import finished").is_err(), "not the import's");
+}
+
+#[test]
 fn an_import_says_which_settings_it_left_out_of_which_profile() {
     use heimdall_core::import::csharp::Dropped;
     let dir = tempfile::tempdir().expect("dir");
@@ -3904,6 +3930,8 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         stored_credentials: None,
         host_keys: None,
         scheduled: None,
+        settings_unreadable: None,
+        preferences: None,
         gateways: heimdall_core::import::gateways::Reconciliation::default(),
         actions: None,
         dropped: vec![(
@@ -3939,6 +3967,8 @@ fn an_import_counts_the_gateways_it_created_and_merged_as_the_csharp_summary() {
         stored_credentials: None,
         host_keys: None,
         scheduled: None,
+        settings_unreadable: None,
+        preferences: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 2,
             merged: 1,
@@ -3975,6 +4005,8 @@ fn an_import_with_orphan_gateway_references_counts_them_and_says_what_to_do_as_t
         stored_credentials: None,
         host_keys: None,
         scheduled: None,
+        settings_unreadable: None,
+        preferences: None,
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 0,
             merged: 0,
@@ -5917,4 +5949,70 @@ fn a_terminal_keeps_ctrl_shift_r_for_its_shell() {
         repeat: false,
     })]);
     assert_eq!(statuses, [event::Status::Captured], "the session's");
+}
+
+#[test]
+fn a_migration_says_which_csharp_preferences_it_carried_over_and_offers_their_review() {
+    use heimdall_core::import::csharp_settings::{PreferenceOutcome, PreferenceRow};
+    let review = heimdall_core::settings::Settings::default()
+        .import(
+            r#"{"format": "heimdall-settings", "version": 1, "settings": {"DefaultTheme": "Vesper"}}"#,
+        )
+        .expect("a C# export file");
+    let row = |key: &str, outcome| PreferenceRow {
+        key: key.to_owned(),
+        outcome,
+    };
+    let summary = |preferences| heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport::default(),
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        scheduled: None,
+        settings_unreadable: None,
+        preferences: Some(preferences),
+        gateways: heimdall_core::import::gateways::Reconciliation::default(),
+        actions: None,
+        dropped: Vec::new(),
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Ok(
+        heimdall_app::ImportedPreferences {
+            review: Some(Box::new(review)),
+            taken: 1,
+            left_out: vec![
+                row("AccentTint", PreferenceOutcome::KeptHere),
+                row("PinHash", PreferenceOutcome::Secret),
+                row("HmacKey", PreferenceOutcome::Secret),
+                row("TerminalFontSize", PreferenceOutcome::Invalid),
+                row("SessionLogDirectory", PreferenceOutcome::RelativePath),
+            ],
+        },
+    ))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("1 preference of the C# Heimdall can be carried over: review it before it is applied.")
+        .expect("counted");
+    ui.find("Kept as changed here: AccentTint").expect("kept");
+    ui.find("Secrets, never carried over: PinHash, HmacKey")
+        .expect("secrets named");
+    ui.find("Values not read: TerminalFontSize")
+        .expect("invalid");
+    ui.find("Paths of the C# installation, not carried over: SessionLogDirectory")
+        .expect("relative");
+    ui.click("Review preferences").expect("the review offered");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ReviewCsharpPreferences)))
+    );
+
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(summary(Err("not JSON".to_owned()))));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("The preferences of the C# Heimdall could not be read: not JSON")
+        .expect("why not");
+    assert!(ui.find("Review preferences").is_err(), "nothing to review");
 }

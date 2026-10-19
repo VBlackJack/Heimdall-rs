@@ -103,11 +103,7 @@ impl App {
                     .unwrap_or_default();
                 all.add(&parts);
             }
-            if !profile.matches(search)
-                || !self
-                    .tree_filter()
-                    .accepts(&profile, self.profile_state(&profile.id))
-            {
+            if !self.lists(&profile, search) {
                 continue;
             }
             let parts = profile
@@ -157,6 +153,35 @@ impl App {
             }
         }
         rows
+    }
+
+    /// Whether the tree lists `profile` while `search` is typed: found by the search and
+    /// passed by every filter chosen.
+    fn lists(&self, profile: &ProfileSummary, search: &str) -> bool {
+        profile.matches(search)
+            && self
+                .tree_filter()
+                .accepts(profile, self.profile_state(&profile.id))
+    }
+
+    /// The profiles folder `path` holds, its sub-folders' too, those the tree lists while
+    /// `search` is typed, folded or not: what the properties panel summarizes of a folder,
+    /// as the C# `EnumerateFolderSessions` walks the folder on screen. [`NO_FOLDER`] holds
+    /// the profiles in none. "Prod" and "prod" are two folders, as the tree draws two rows.
+    #[must_use]
+    pub fn folder_profiles(&self, path: &str, search: &str) -> Vec<ProfileSummary> {
+        self.profile_summaries()
+            .into_iter()
+            .filter(|profile| {
+                let group = profile.group.as_deref().unwrap_or_default();
+                if path == NO_FOLDER {
+                    folder::parts(group).is_empty()
+                } else {
+                    folder::is_within(group, path)
+                }
+            })
+            .filter(|profile| self.lists(profile, search))
+            .collect()
     }
 
     /// The tree's folders folded, by path, to keep how it was left.

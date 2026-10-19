@@ -33,6 +33,15 @@ use crate::styles;
 pub struct TabScroller<'a, Message> {
     scrollable: Element<'a, Message>,
     shown: Option<Id>,
+    /// Says whether the tabs pass the row's width, and what to reserve beside it.
+    overflow: Option<Overflow<'a, Message>>,
+}
+
+/// What a scroller says of its overflow: the room a button beside it takes while shown, and
+/// the message for a change.
+struct Overflow<'a, Message> {
+    reserve: f32,
+    message: Box<dyn Fn(bool) -> Message + 'a>,
 }
 
 /// The tabs of `row`, on one line that scrolls sideways, the one whose container bears the
@@ -52,12 +61,47 @@ pub fn tab_scroller<'a, Message: 'a>(
             .width(Length::Fill)
             .into(),
         shown,
+        overflow: None,
     }
 }
 
 /// The tab last brought into view.
 #[derive(Debug, Default)]
 struct Revealed(Option<Id>);
+
+/// Whether a row of `content` width passes a scroller `viewport` wide, `reserve` being the
+/// room a button beside the scroller takes while it is shown: judged against the width the
+/// row would have without that button, as the C# `UpdateTabStripOverflow`
+/// (`MainWindow.TabStrip.cs:100`), with its half-pixel tolerance.
+#[must_use]
+pub fn overflows(content: f32, viewport: f32, reserve: f32) -> bool {
+    content > viewport + reserve + OVERFLOW_TOLERANCE
+}
+
+/// Slack before the tabs count as passing the row, as the C# `TabStripOverflowTolerance`.
+const OVERFLOW_TOLERANCE: f32 = 0.5;
+
+/// Finds the widths of the scroller, met first, and of its content.
+struct Measure(Option<(f32, f32)>);
+
+impl Operation for Measure {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        _id: Option<&Id>,
+        bounds: Rectangle,
+        content_bounds: Rectangle,
+        _translation: Vector,
+        _state: &mut dyn operation::Scrollable,
+    ) {
+        if self.0.is_none() {
+            self.0 = Some((bounds.width, content_bounds.width));
+        }
+    }
+}
 
 /// Where the offset must go for `tab` to be seen whole in a scroller at `viewport` scrolled
 /// by `scrolled`, from the start of its content; `None` when it is seen whole already. A tab
@@ -126,6 +170,19 @@ impl Operation for ScrollTo {
             x: Some(self.0),
             y: None,
         });
+    }
+}
+
+impl<'a, Message> TabScroller<'a, Message> {
+    /// Says through `message` when the tabs start to pass the row's width, and when they stop,
+    /// `reserve` being the room a button beside it takes while shown, nothing while it is not.
+    #[must_use]
+    pub fn on_overflow(mut self, reserve: f32, message: impl Fn(bool) -> Message + 'a) -> Self {
+        self.overflow = Some(Overflow {
+            reserve,
+            message: Box::new(message),
+        });
+        self
     }
 }
 
@@ -251,6 +308,29 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for TabScroller<'_, Message
             shell,
             viewport,
         );
+        // Told on the frame drawn, once the row is laid out; only when it differs from what the
+        // caller shows.
+        if let Some(overflow) = &self.overflow
+            && matches!(
+                event,
+                Event::Window(iced::window::Event::RedrawRequested(_))
+            )
+        {
+            let mut measure = Measure(None);
+            self.scrollable.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                &mut measure,
+            );
+            if let Some((row, content)) = measure.0 {
+                let now = overflows(content, row, overflow.reserve);
+                // The button is shown exactly while a room is reserved for it.
+                if now != (overflow.reserve > 0.0) {
+                    shell.publish((overflow.message)(now));
+                }
+            }
+        }
     }
 
     fn mouse_interaction(
@@ -332,6 +412,18 @@ mod tests {
             reveal_offset(viewport, 200.0, rectangle(350.0, 100.0)),
             None
         );
+    }
+
+    #[test]
+    fn the_tabs_overflow_past_the_row_less_the_room_of_the_button_when_shown() {
+        use super::overflows;
+        assert!(!overflows(400.0, 400.0, 0.0), "just fitting");
+        assert!(!overflows(400.4, 400.0, 0.0), "within the half pixel");
+        assert!(overflows(401.0, 400.0, 0.0));
+        // The button shown has narrowed the row to 400, 436 wide without it: tabs that fit
+        // there do not hide the button, and it does not blink on and off.
+        assert!(!overflows(430.0, 400.0, 36.0));
+        assert!(overflows(437.0, 400.0, 36.0));
     }
 
     #[test]

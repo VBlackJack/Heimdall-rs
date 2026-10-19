@@ -77,10 +77,36 @@ same. `deny.toml` bans both crates, so that a later bump that would build them f
 (cargo-deny reads the built graph: it never saw these lock-only entries). TLS stays on
 rustls with ring, chosen explicitly where each configuration is built.
 
+Also changed, for bulk compression:
+
+- `src/connection_finalization.rs`, `WaitForResponse`: `ensure_uncompressed` refuses, with
+  an error, a Data PDU whose `compressedType` carries `PACKET_COMPRESSED`,
+  `PACKET_AT_FRONT` or `PACKET_FLUSHED`, before the crate decodes it. The error's source is
+  `CompressedFinalizationPdu`, a new public type exported from `src/lib.rs`, so that the
+  caller tells this refusal from any other failure by its type, not by its text.
+
+Why: compression is offered in the Client Info PDU, so the server may compress the
+Synchronize, Control, Font Map and Set Error Info PDUs that finalize the connection (and a
+reactivation); FreeRDP reads them through `rdp_recv_data_pdu`, which decompresses. The
+package decoded their compressed bytes as plain data, and the history the session's
+decompressor starts with would miss them. Decompressing them would mean building the
+decompressor here and handing it, with its history, to the session through
+`ConnectionResult` and the reactivation sequence; until a server is seen compressing them,
+the connection is refused instead, and `heimdall-rdp` connects again once without
+compression (`connect_through`), with the credentials already given: the diagnostics log
+and the status bar say so, and a server that compresses even then fails the connection,
+never a loop. A reactivation refused so ends the session as
+`CloseReason::CompressionRefused` (see `ironrdp-session` below). The tests
+`a_compressed_pdu_while_the_connection_finalizes_is_refused` in
+`crates/heimdall-rdp/tests/bulk_compression.rs` and those of
+`crates/heimdall-rdp/tests/compression_fallback.rs` (a fake server through licensing,
+capabilities and finalization, compressing when compression is offered, or always) check it.
+
 Remove when: a published `ironrdp-connector` depends on sspi 0.22 or later, can ask for the
 administrative session and for sound kept on the server, leaves `scard` to the user (or
-Heimdall-rs offers smart-card logon), takes sspi without its `aws-lc-rs` default, and
-names the client in `NegotiateConfig` by `KerberosConfig::hostname`. Then delete this directory and the
+Heimdall-rs offers smart-card logon), takes sspi without its `aws-lc-rs` default,
+names the client in `NegotiateConfig` by `KerberosConfig::hostname`, and decompresses (or
+refuses) compressed finalization PDUs. Then delete this directory and the
 `[patch.crates-io]` entry, map the two options to its fields, and run the gates,
 `crates/heimdall-rdp/tests/session_options.rs` included: it reads both off the wire.
 
@@ -110,9 +136,65 @@ the published code, exact with the patch. The live test
 window, the first white pixel must sit in the same column (11 different columns with the
 published code, 1 with the patch).
 
+Also changed, for bulk compression (the profile's "Enable RDP compression"):
+
+- `src/x224/mod.rs`: `Processor::process_with_bulk`, which `process` calls without a
+  decompressor. A Data PDU on the I/O channel whose `compressedType` carries
+  `PACKET_COMPRESSED`, `PACKET_AT_FRONT` or `PACKET_FLUSHED` has its data decompressed
+  (the `compressedLength` bytes past the two headers, as FreeRDP's `rdp_recv_data_pdu`
+  reads them) and its headers rewritten uncompressed before the crate decodes it. The
+  package left a `TODO` there and decoded the compressed bytes as they came.
+- `src/active_stage.rs`: `process` hands the X.224 frames the fast-path processor's
+  decompressor; `take_bulk_decompressor` takes it out for the processor built after a
+  reactivation.
+- `src/fast_path.rs`: `Processor::bulk_decompressor_mut` and `take_bulk_decompressor`.
+- Fail closed: a compressed fast-path update or slow-path PDU with no decompressor
+  (compression not negotiated) is an error, where the package logged a warning and decoded
+  the compressed bytes as plain data; `ActiveStageBuilder::build` returns a `SessionResult`
+  and fails when the decompressor of a negotiated compression cannot be built, where the
+  package logged the error and went on without one. Bytes past `compressedLength` are
+  dropped, as FreeRDP drops them.
+- `src/lib.rs`: `BulkDataRefused`, the source of each of these errors, and
+  `is_bulk_data_refused`, so that `heimdall-rdp` ends the session with
+  `CloseReason::CompressionRefused` and the application connects again without compression
+  when that happens within its first seconds (`COMPRESSION_FALLBACK_WINDOW` in
+  `crates/heimdall-app/src/rdp_driver.rs`), once.
+
+Why: the server compresses the fast-path updates and the slow-path PDUs with one history.
+The package decompressed the fast-path updates only, so a compressed slow-path PDU (a Save
+Session Info, a Set Error Info, a slow-path update) was misread, and the history the next
+fast-path update refers to missed it. A reactivation also rebuilt the fast-path processor
+without its decompressor. The tests `crates/heimdall-rdp/tests/bulk_compression.rs` read a
+slow-path PDU, a fast-path update through its history, then a slow-path PDU through the
+update's, at each of the four levels and across a reactivation; refuse a `compressedLength`
+out of the PDU, an unknown level, data that does not decompress and compressed data without
+compression negotiated; and feed 300,000 seeded malformed inputs (5,000,000 with
+`--ignored`) to long-lived sessions without a panic.
+
+The release build is what runs, with `panic = "abort"` (one panic ends every session) and
+no overflow checks: there integer overflow wraps where the test profile panics, so the
+seeded inputs were also fed to a `--release` build (`cargo test -p heimdall-rdp --release
+--test bulk_compression -- --include-ignored`): the 300,000 and the 5,000,000 inputs
+passed without a panic on Linux (6 s) and on Windows (21 s), 2026-10-17. The
+decompressors' arithmetic was read for an overflow the release build would let wrap (`ironrdp-bulk`
+0.1.1, crates.io, not vendored, `#![forbid(unsafe_code)]` at `src/lib.rs:52`): every sum
+and product on server data is bounded before it is used, so none can overflow on 32 or 64
+bits, and each index is checked against the buffer it reads or writes (MPPC
+`src/mppc/mod.rs:109-304`: `history_ptr` below 64 KiB, `length_of_match` at most 65,535;
+NCRUSH `src/ncrush/mod.rs:306-695`: `copy_offset` at most 65,535 from its tables, the
+bit count never negative while two bytes are left, every copy bounded by `history_end`;
+XCRUSH `src/xcrush/mod.rs:197-385`: offsets and lengths read as `u16`/`u32` and checked
+against the 2,000,000-byte history before any addition). The `wrapping_*` calls there are
+deliberate (a byte or bit accumulator). The vendored code here uses checked conversions
+(`u16::try_from`) and range checks on `compressedLength`. Nothing needed changing.
+
+Validated against: xrdp MPPC (lab): pending its manual check; Windows: pending owner.
+
 Remove when: a published `ironrdp-session` crops the decoded rows to the rectangle (or
-decodes to the rectangle's width). Then delete this directory and its `[patch.crates-io]`
-entry, and run the live test against the xrdp container.
+decodes to the rectangle's width) and decompresses the slow-path PDUs with the fast-path
+history, kept across a reactivation. Then delete this directory and its
+`[patch.crates-io]` entry, and run the live test against the xrdp container and the bulk
+compression tests.
 
 ## ironrdp-rdpdr 0.7.0
 

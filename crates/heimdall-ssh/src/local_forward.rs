@@ -82,7 +82,39 @@ pub async fn start_on<O: Opener>(
     port: u16,
     local: Option<u16>,
 ) -> io::Result<LocalForward> {
-    listen(opener, (host, port), local, MAX_CLIENTS).await
+    listen(
+        opener,
+        (host, port),
+        Ipv4Addr::LOCALHOST,
+        local,
+        MAX_CLIENTS,
+    )
+    .await
+}
+
+/// Starts a forward as [`start_on`] does, on `address`, an address of the loopback network
+/// (`127.0.0.0/8`) other than `127.0.0.1` when given one: a web console's own, so that the
+/// browser keeps each console's cookies and saved sign-in apart, as it scopes them by host.
+///
+/// # Errors
+///
+/// `address` is not a loopback address ([`io::ErrorKind::InvalidInput`]), or the port could
+/// not be taken there: see [`port_unavailable`]. A system that has no such address (macOS
+/// configures `127.0.0.1` alone) answers [`io::ErrorKind::AddrNotAvailable`].
+pub async fn start_at<O: Opener>(
+    opener: Arc<O>,
+    host: String,
+    port: u16,
+    address: Ipv4Addr,
+    local: Option<u16>,
+) -> io::Result<LocalForward> {
+    if !address.is_loopback() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a forward listens on the loopback address only",
+        ));
+    }
+    listen(opener, (host, port), address, local, MAX_CLIENTS).await
 }
 
 /// Starts a forward as [`start`] does, carrying at most `limit` clients at once: a forward
@@ -97,7 +129,7 @@ pub async fn start_limited<O: Opener>(
     port: u16,
     limit: usize,
 ) -> io::Result<LocalForward> {
-    listen(opener, (host, port), None, limit).await
+    listen(opener, (host, port), Ipv4Addr::LOCALHOST, None, limit).await
 }
 
 /// Starts a forward as [`start_limited`] does, on port `preferred` of the loopback address
@@ -120,6 +152,7 @@ pub async fn start_preferred<O: Opener>(
         match listen(
             Arc::clone(&opener),
             destination.clone(),
+            Ipv4Addr::LOCALHOST,
             Some(preferred),
             limit,
         )
@@ -136,18 +169,20 @@ pub async fn start_preferred<O: Opener>(
             ),
         }
     }
-    listen(opener, destination, None, limit).await
+    listen(opener, destination, Ipv4Addr::LOCALHOST, None, limit).await
 }
 
-/// Listens on port `local` of the loopback address, or on one the system picks, carrying at
-/// most `limit` clients at once to `destination`.
+/// Listens on port `local` of loopback address `address`, or on one the system picks,
+/// carrying at most `limit` clients at once to `destination`.
 async fn listen<O: Opener>(
     opener: Arc<O>,
     destination: (String, u16),
+    address: Ipv4Addr,
     local: Option<u16>,
     limit: usize,
 ) -> io::Result<LocalForward> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, local.unwrap_or(0))).await?;
+    debug_assert!(address.is_loopback(), "a forward listens on loopback only");
+    let listener = TcpListener::bind((address, local.unwrap_or(0))).await?;
     let address = listener.local_addr()?;
     let stop = CancellationToken::new();
     tokio::spawn(serve(listener, opener, destination, limit, stop.clone()));
@@ -281,6 +316,32 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
+    }
+
+    #[tokio::test]
+    async fn a_forward_never_listens_beyond_the_loopback_network() {
+        for address in [Ipv4Addr::UNSPECIFIED, Ipv4Addr::new(192, 0, 2, 1)] {
+            let refused = start_at(
+                Arc::new(FakeGateway::default()),
+                "ilo.lab".to_owned(),
+                443,
+                address,
+                None,
+            )
+            .await
+            .expect_err("refused");
+            assert_eq!(refused.kind(), io::ErrorKind::InvalidInput, "{address}");
+        }
+        let forward = start_at(
+            Arc::new(FakeGateway::default()),
+            "ilo.lab".to_owned(),
+            443,
+            Ipv4Addr::LOCALHOST,
+            None,
+        )
+        .await
+        .expect("start");
+        assert_eq!(forward.address().ip(), Ipv4Addr::LOCALHOST);
     }
 
     #[tokio::test]

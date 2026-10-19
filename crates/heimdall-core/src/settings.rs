@@ -16,12 +16,14 @@
 
 //! The settings of Heimdall-rs, beside its profiles: what the Settings page changes.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, ProviderSettings};
+use crate::external_tools::ExternalTool;
 use crate::last_good_copy::Document;
 use crate::lockout::{LOCKOUT_DURATION, Lockout};
 use crate::pin::PinHash;
@@ -29,6 +31,7 @@ use crate::profile::{
     ProfileId, RESOLUTION_PRESETS, RdpDefaults, RdpMode, SshMode, preset_fits, resolution_preset,
     resolution_text,
 };
+use crate::shared_sessions::SharedSource;
 use crate::store::StoreError;
 
 mod sensitive;
@@ -563,6 +566,22 @@ pub struct Settings {
     /// Attempts before the reconnect is left to the user, within
     /// [`SSH_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`SSH_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub ssh_auto_reconnect_attempts: u32,
+    /// Seconds before the first SSH auto-reconnect attempt, as the C#
+    /// `SshAutoReconnectFirstDelaySeconds`, within [`RECONNECT_DELAY_SECONDS_MIN`] and
+    /// [`RECONNECT_DELAY_SECONDS_MAX`].
+    pub ssh_auto_reconnect_first_delay: u32,
+    /// Seconds before the second attempt, as the C# `SshAutoReconnectSecondDelaySeconds`.
+    pub ssh_auto_reconnect_second_delay: u32,
+    /// Seconds before every attempt after the second, as the C#
+    /// `SshAutoReconnectSubsequentDelaySeconds`.
+    pub ssh_auto_reconnect_subsequent_delay: u32,
+    /// Ask before the session bar's Disconnect ends an RDP desktop, as the C#
+    /// `RdpConfirmDisconnect`: on unless cleared.
+    pub rdp_confirm_disconnect: bool,
+    /// Show every redirection on an RDP desktop's bar, the ones not shared too, instead of
+    /// behind the "+N" badge, as the C# `RdpRedirectionIndicatorsAlwaysExpanded`: off
+    /// unless chosen.
+    pub rdp_redirection_indicators_expanded: bool,
     /// Attempts of an RDP desktop's auto-reconnect, as the C# `RdpAutoReconnectMaxAttempts`:
     /// within [`RDP_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`RDP_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub rdp_auto_reconnect_attempts: u32,
@@ -578,10 +597,21 @@ pub struct Settings {
     /// `RdpKeepAliveIntervalMs`: within [`RDP_KEEP_ALIVE_INTERVAL_MIN_MS`] and
     /// [`RDP_KEEP_ALIVE_INTERVAL_MAX_MS`].
     pub rdp_keep_alive_interval_ms: u32,
+    /// Width of the desktop Remote Desktop Connection opens at when a profile asks for the
+    /// default resolution, as the C# `DefaultResolutionWidth`: within
+    /// [`RDP_DEFAULT_RESOLUTION_MIN`] and [`RDP_DEFAULT_RESOLUTION_MAX`].
+    pub rdp_default_width: u32,
+    /// Height of that desktop, as the C# `DefaultResolutionHeight`, within the same range.
+    pub rdp_default_height: u32,
     /// An embedded RDP session opens only while Credential Guard runs on this computer, as
     /// the C# `RequireCredentialGuard`: off unless chosen. Remote Desktop Connection's own
     /// window is not concerned.
     pub require_credential_guard: bool,
+    /// The built-in RDP client offers bulk compression to the server, when the profile in
+    /// effect asks for it: off unless chosen, experimental. No C# counterpart: the C#
+    /// control compresses as `RdpCompression` says, and Remote Desktop Connection still
+    /// does, whatever this says.
+    pub builtin_rdp_compression: bool,
     /// The sizes RDP tabs' Resolution menus offer, as the C# `RdpResolutionPresets`; empty
     /// offers [`RESOLUTION_PRESETS`]. See [`Settings::resolution_presets`].
     pub rdp_resolution_presets: Vec<(u16, u16)>,
@@ -607,6 +637,14 @@ pub struct Settings {
     /// The program a server's file is edited with, as the C# `ExternalEditorPath`; empty
     /// takes the system's own text editor.
     pub external_editor: String,
+    /// The user's external tools, in the order the menus list them, as the C#
+    /// `ExternalTools` (`AppSettings.cs:562`): started for a session from its menus and from
+    /// Quick Connect.
+    pub external_tools: Vec<ExternalTool>,
+    /// The values `[NAME]` takes in a `MobaXterm` session file's login fields, as the C#
+    /// `MobaXtermUserVariables` (`AppSettings.cs:416`): name without brackets to login, with
+    /// environment variables expanded when a file is read. Names match without case.
+    pub mobaxterm_variables: BTreeMap<String, String>,
     /// `PuTTY`, which an SSH profile in the external mode opens in, as the C# `PuttyPath`;
     /// empty looks for it in the folders of `PATH`.
     pub putty_path: String,
@@ -649,6 +687,15 @@ pub struct Settings {
     /// The tree's rows show the gateway a profile goes through, as the C#
     /// `ShowGatewayBadge`: on. A view choice of the tree's filter menu, kept across runs.
     pub show_gateway_badge: bool,
+    /// The read-only properties of the session selected docked under the tree, as the C#
+    /// `ShowSessionPropertiesPanel`: off, so the tree keeps its height for whoever never
+    /// asked for it. A view choice of the tree's filter menu and Ctrl+Shift+B, kept across
+    /// runs.
+    pub show_properties_panel: bool,
+    /// The session tabs gathered by the folder of their profile, as the C#
+    /// `GroupSessionTabsByFolder` (`AppSettings.cs:369`): off. Chosen from a tab's menu, kept
+    /// across runs.
+    pub group_tabs_by_folder: bool,
     /// Whether, and how often, a newer release is looked for.
     pub updates: Updates,
     /// The last look for a newer release and the release skipped, kept across runs on
@@ -671,6 +718,10 @@ pub struct Settings {
     /// (`AppSettings.cs:354`): off until then, and the tour shows at start while it is off.
     /// This computer's own: never exported, and kept by a reset.
     pub onboarding_completed: bool,
+    /// The shared session files, as the C# `SharedSessionSources` (`AppSettings.cs`): read
+    /// and never written. Carried by an export, shown first by an import as it decides which
+    /// files this computer trusts to give it sessions; kept by a reset.
+    pub shared_sources: Vec<SharedSource>,
 }
 
 /// The offer to migrate from the legacy PowerShell Heimdall (`RDPManager`) the user declined,
@@ -1021,6 +1072,30 @@ pub const SSH_AUTO_RECONNECT_ATTEMPTS_MIN: u32 = 1;
 /// Most attempts of an SSH auto-reconnect accepted, as the C# setting's range.
 pub const SSH_AUTO_RECONNECT_ATTEMPTS_MAX: u32 = 10;
 
+/// Seconds before the first SSH auto-reconnect attempt by default, as the C#
+/// `DefaultSshAutoReconnectFirstDelaySeconds`.
+pub const SSH_AUTO_RECONNECT_FIRST_DELAY_DEFAULT: u32 = 2;
+
+/// Seconds before the second attempt by default, as the C#
+/// `DefaultSshAutoReconnectSecondDelaySeconds`.
+pub const SSH_AUTO_RECONNECT_SECOND_DELAY_DEFAULT: u32 = 5;
+
+/// Seconds before every later attempt by default, as the C#
+/// `DefaultSshAutoReconnectSubsequentDelaySeconds`.
+pub const SSH_AUTO_RECONNECT_SUBSEQUENT_DELAY_DEFAULT: u32 = 15;
+
+/// Fewest seconds a reconnect delay accepted, as the C# `SettingRange(1, 600)`.
+pub const RECONNECT_DELAY_SECONDS_MIN: u32 = 1;
+
+/// Most seconds a reconnect delay accepted, as the C# `SettingRange(1, 600)`.
+pub const RECONNECT_DELAY_SECONDS_MAX: u32 = 600;
+
+/// Whether `seconds` is a wait before an SSH auto-reconnect attempt the settings accept.
+#[must_use]
+pub fn reconnect_delay_accepted(seconds: u32) -> bool {
+    (RECONNECT_DELAY_SECONDS_MIN..=RECONNECT_DELAY_SECONDS_MAX).contains(&seconds)
+}
+
 /// Most attempts of an RDP auto-reconnect, and their number by default, as the C#
 /// `DefaultRdpAutoReconnectMaxAttempts`.
 pub const RDP_AUTO_RECONNECT_ATTEMPTS_MAX: u32 = 20;
@@ -1057,6 +1132,21 @@ pub const RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS: u32 = 60_000;
 pub const RDP_KEEP_ALIVE_INTERVAL_MIN_MS: u32 = 5_000;
 /// Most milliseconds between two RDP keep-alives accepted, as the C# range's.
 pub const RDP_KEEP_ALIVE_INTERVAL_MAX_MS: u32 = 300_000;
+
+/// Width of the default resolution by default, as the C# `DefaultResolutionWidth`.
+pub const RDP_DEFAULT_WIDTH_DEFAULT: u32 = 1920;
+/// Height of the default resolution by default, as the C# `DefaultResolutionHeight`.
+pub const RDP_DEFAULT_HEIGHT_DEFAULT: u32 = 1080;
+/// Smallest side of the default resolution accepted, as the C# `MinimumSessionResolution`.
+pub const RDP_DEFAULT_RESOLUTION_MIN: u32 = 640;
+/// Largest side of the default resolution accepted, as the C# `MaximumSessionResolution`.
+pub const RDP_DEFAULT_RESOLUTION_MAX: u32 = 7680;
+
+/// Whether `side` is a side of the default resolution the settings accept.
+#[must_use]
+pub fn rdp_default_resolution_accepted(side: u32) -> bool {
+    (RDP_DEFAULT_RESOLUTION_MIN..=RDP_DEFAULT_RESOLUTION_MAX).contains(&side)
+}
 
 /// Whether `ms` is an RDP keep-alive interval the settings accept.
 #[must_use]
@@ -1214,11 +1304,19 @@ impl Default for Settings {
             credential_provider: ProviderSettings::default(),
             ssh_auto_reconnect: false,
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+            ssh_auto_reconnect_first_delay: SSH_AUTO_RECONNECT_FIRST_DELAY_DEFAULT,
+            ssh_auto_reconnect_second_delay: SSH_AUTO_RECONNECT_SECOND_DELAY_DEFAULT,
+            ssh_auto_reconnect_subsequent_delay: SSH_AUTO_RECONNECT_SUBSEQUENT_DELAY_DEFAULT,
+            rdp_confirm_disconnect: true,
+            rdp_redirection_indicators_expanded: false,
             rdp_auto_reconnect_attempts: RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
             rdp_connect_timeout: RDP_CONNECT_TIMEOUT_DEFAULT,
             rdp_resize_enable_delay_ms: RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
             rdp_keep_alive_interval_ms: RDP_KEEP_ALIVE_INTERVAL_DEFAULT_MS,
+            rdp_default_width: RDP_DEFAULT_WIDTH_DEFAULT,
+            rdp_default_height: RDP_DEFAULT_HEIGHT_DEFAULT,
             require_credential_guard: false,
+            builtin_rdp_compression: false,
             rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
@@ -1226,6 +1324,8 @@ impl Default for Settings {
             rdp_defaults: RdpDefaults::default(),
             rdp_default_mode: RdpMode::default(),
             external_editor: String::new(),
+            external_tools: Vec::new(),
+            mobaxterm_variables: default_mobaxterm_variables(),
             putty_path: String::new(),
             ssh_default_mode: SshMode::default(),
             x11_server_path: String::new(),
@@ -1242,6 +1342,8 @@ impl Default for Settings {
             reachability: Reachability::default(),
             sftp_browser: SftpBrowser::default(),
             show_gateway_badge: true,
+            show_properties_panel: false,
+            group_tabs_by_folder: false,
             updates: Updates::default(),
             update_check: UpdateCheck::default(),
             windows_hello: WindowsHello::default(),
@@ -1249,6 +1351,7 @@ impl Default for Settings {
             tools: ToolsSettings::default(),
             legacy_migration: LegacyMigration::default(),
             onboarding_completed: false,
+            shared_sources: Vec::new(),
         }
     }
 }
@@ -1279,6 +1382,10 @@ struct SettingsFile {
     #[serde(default)]
     files: FilesSection,
     #[serde(default)]
+    external_tools: ExternalToolsSection,
+    #[serde(default)]
+    mobaxterm: MobaxtermSection,
+    #[serde(default)]
     reachability: ReachabilitySection,
     #[serde(default)]
     updates: UpdatesSection,
@@ -1294,6 +1401,52 @@ struct SettingsFile {
     legacy_migration: LegacyMigrationSection,
     #[serde(default)]
     onboarding: OnboardingSection,
+    #[serde(default)]
+    shared_sessions: SharedSessionsSection,
+}
+
+/// The shared session files, carried by an export.
+#[derive(Serialize, Deserialize, Default)]
+struct SharedSessionsSection {
+    #[serde(default)]
+    sources: Vec<SharedSource>,
+}
+
+/// The C# default `MobaXtermUserVariables` name and value (`AppSettings.cs:418`).
+const MOBAXTERM_DEFAULT_VARIABLE: (&str, &str) = ("DAS", "%USERNAME%");
+
+/// The `MobaXterm` variables of a new installation, and of a file written before the setting
+/// existed, as the C# initializer.
+#[must_use]
+pub fn default_mobaxterm_variables() -> BTreeMap<String, String> {
+    BTreeMap::from([(
+        MOBAXTERM_DEFAULT_VARIABLE.0.to_owned(),
+        MOBAXTERM_DEFAULT_VARIABLE.1.to_owned(),
+    )])
+}
+
+/// The `MobaXterm` variables, carried by an export as the C# exports `MobaXtermUserVariables`.
+/// A section present with no variable is the user's choice of none; an absent one is a file
+/// written before the setting, which takes the default.
+#[derive(Serialize, Deserialize)]
+struct MobaxtermSection {
+    #[serde(default = "default_mobaxterm_variables")]
+    variables: BTreeMap<String, String>,
+}
+
+impl Default for MobaxtermSection {
+    fn default() -> Self {
+        Self {
+            variables: default_mobaxterm_variables(),
+        }
+    }
+}
+
+/// The external tools, carried by an export as the C# exports its `ExternalTools`.
+#[derive(Serialize, Deserialize, Default)]
+struct ExternalToolsSection {
+    #[serde(default)]
+    tools: Vec<ExternalTool>,
 }
 
 /// This computer's own: never exported.
@@ -1442,6 +1595,12 @@ struct RdpSessionSection {
     /// Milliseconds.
     #[serde(default)]
     keep_alive_interval_ms: Option<u32>,
+    /// Pixels; absent is the C# default.
+    #[serde(default)]
+    default_width: Option<u32>,
+    /// Pixels; absent is the C# default.
+    #[serde(default)]
+    default_height: Option<u32>,
     /// One `WIDTHxHEIGHT` per preset.
     #[serde(default)]
     resolution_presets: Option<Vec<String>>,
@@ -1451,6 +1610,15 @@ struct RdpSessionSection {
     /// Absent is the C# default, off.
     #[serde(default)]
     require_credential_guard: Option<bool>,
+    /// Absent is off: a settings file written before it existed does not compress.
+    #[serde(default)]
+    builtin_compression: Option<bool>,
+    /// Absent is the C# default: on.
+    #[serde(default)]
+    confirm_disconnect: Option<bool>,
+    /// Absent is the C# default: off.
+    #[serde(default)]
+    indicators_always_expanded: Option<bool>,
 }
 
 impl RdpSessionSection {
@@ -1461,6 +1629,8 @@ impl RdpSessionSection {
             connect_timeout: Some(settings.rdp_connect_timeout),
             resize_enable_delay_ms: Some(settings.rdp_resize_enable_delay_ms),
             keep_alive_interval_ms: Some(settings.rdp_keep_alive_interval_ms),
+            default_width: Some(settings.rdp_default_width),
+            default_height: Some(settings.rdp_default_height),
             resolution_presets: Some(
                 settings
                     .rdp_resolution_presets
@@ -1471,6 +1641,9 @@ impl RdpSessionSection {
             ),
             default_mode: Some(settings.rdp_default_mode.name().to_owned()),
             require_credential_guard: Some(settings.require_credential_guard),
+            builtin_compression: Some(settings.builtin_rdp_compression),
+            confirm_disconnect: Some(settings.rdp_confirm_disconnect),
+            indicators_always_expanded: Some(settings.rdp_redirection_indicators_expanded),
         }
     }
 }
@@ -1518,6 +1691,13 @@ struct SshSection {
     auto_reconnect: bool,
     #[serde(default)]
     auto_reconnect_attempts: Option<u32>,
+    /// Seconds; absent is the C# default.
+    #[serde(default)]
+    auto_reconnect_first_delay: Option<u32>,
+    #[serde(default)]
+    auto_reconnect_second_delay: Option<u32>,
+    #[serde(default)]
+    auto_reconnect_subsequent_delay: Option<u32>,
     /// Kept beside the SSH settings, where the C# Settings page shows it.
     #[serde(default)]
     anti_idle_interval: Option<u32>,
@@ -1549,6 +1729,9 @@ impl SshSection {
         Self {
             auto_reconnect: settings.ssh_auto_reconnect,
             auto_reconnect_attempts: Some(settings.ssh_auto_reconnect_attempts),
+            auto_reconnect_first_delay: Some(settings.ssh_auto_reconnect_first_delay),
+            auto_reconnect_second_delay: Some(settings.ssh_auto_reconnect_second_delay),
+            auto_reconnect_subsequent_delay: Some(settings.ssh_auto_reconnect_subsequent_delay),
             anti_idle_interval: Some(settings.anti_idle_interval),
             keep_alive_interval: Some(settings.ssh_keep_alive_interval),
             tmout_reset_interval: Some(settings.ssh_tmout_reset_interval),
@@ -1685,6 +1868,12 @@ struct GeneralSection {
     /// Absent, from a file written before it, is the C# default: shown.
     #[serde(default)]
     show_gateway_badge: Option<bool>,
+    /// Absent, from a file written before it, is the C# default: hidden.
+    #[serde(default)]
+    show_properties_panel: Option<bool>,
+    /// Absent, from a file written before it, is the C# default: off.
+    #[serde(default)]
+    group_tabs_by_folder: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1757,6 +1946,16 @@ impl Settings {
         }
     }
 
+    /// The default resolution as a size, each side within the accepted range.
+    #[must_use]
+    pub fn rdp_default_size(&self) -> (u16, u16) {
+        let side = |side: u32| {
+            u16::try_from(side.clamp(RDP_DEFAULT_RESOLUTION_MIN, RDP_DEFAULT_RESOLUTION_MAX))
+                .unwrap_or(u16::MAX)
+        };
+        (side(self.rdp_default_width), side(self.rdp_default_height))
+    }
+
     /// Whether `presets` can be the Resolution menus' presets: each within the limits.
     #[must_use]
     pub fn resolution_presets_accepted(presets: &[(u16, u16)]) -> bool {
@@ -1765,7 +1964,8 @@ impl Settings {
 
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults": the options
     /// profiles following the application take, the auto-reconnect attempts, the
-    /// resolution presets and the default RDP mode. Nothing else changes, and no profile.
+    /// resolution presets and the default RDP mode; beyond the C#, the built-in client's
+    /// compression. Nothing else changes, and no profile.
     pub fn reset_rdp(&mut self) {
         let defaults = Self::default();
         self.rdp_defaults = defaults.rdp_defaults;
@@ -1773,6 +1973,11 @@ impl Settings {
         self.rdp_connect_timeout = defaults.rdp_connect_timeout;
         self.rdp_resize_enable_delay_ms = defaults.rdp_resize_enable_delay_ms;
         self.rdp_keep_alive_interval_ms = defaults.rdp_keep_alive_interval_ms;
+        self.rdp_default_width = defaults.rdp_default_width;
+        self.rdp_default_height = defaults.rdp_default_height;
+        self.builtin_rdp_compression = defaults.builtin_rdp_compression;
+        self.rdp_confirm_disconnect = defaults.rdp_confirm_disconnect;
+        self.rdp_redirection_indicators_expanded = defaults.rdp_redirection_indicators_expanded;
         self.rdp_resolution_presets = defaults.rdp_resolution_presets;
         self.rdp_default_mode = defaults.rdp_default_mode;
     }
@@ -1781,10 +1986,11 @@ impl Settings {
     /// (`SettingsViewModel.cs:2376-2464`), but what the C# carries across: the language,
     /// the theme and the accent, which a reader of another language needs to find the way
     /// back; the PIN and the lockouts, which are state, not preferences; the release skipped
-    /// and the last look for one; and what no C# Settings panel edits (the tree's gateway
-    /// badge, the broadcast scope, the gateway a new profile starts on, the Tools area's pins,
-    /// tab and folded categories, which the C# resets but its tab, and the welcome tour seen).
-    /// The gateways, the
+    /// and the last look for one; what no C# Settings panel edits (the tree's gateway badge,
+    /// the broadcast scope, the gateway a new profile starts on, the Tools area's pins, tab
+    /// and folded categories, which the C# resets but its tab, and the welcome tour seen);
+    /// the properties panel under the tree, which the C# reset leaves as it is; and the
+    /// external tools, the user's own entries, as the C# keeps them. The gateways, the
     /// profiles, the master password, the Windows Hello enrolment, the macros and the
     /// credential provider's unlock secret are kept elsewhere and are not touched.
     pub fn reset_all(&mut self) {
@@ -1798,11 +2004,20 @@ impl Settings {
             pin_unlock: self.pin_unlock,
             broadcast_scope: self.broadcast_scope,
             show_gateway_badge: self.show_gateway_badge,
+            show_properties_panel: self.show_properties_panel,
+            group_tabs_by_folder: self.group_tabs_by_folder,
             update_check: std::mem::take(&mut self.update_check),
             last_used_gateway: self.last_used_gateway.take(),
             tools: std::mem::take(&mut self.tools),
+            // The user's own entries, as the C# carries `ExternalTools` across
+            // (`SettingsViewModel.cs:2483-2488`).
+            external_tools: std::mem::take(&mut self.external_tools),
+            // Kept like the tools, as the C# carries `MobaXtermUserVariables` across
+            // (`SettingsViewModel.cs:2499`).
+            mobaxterm_variables: std::mem::take(&mut self.mobaxterm_variables),
             legacy_migration: std::mem::take(&mut self.legacy_migration),
             onboarding_completed: self.onboarding_completed,
+            shared_sources: std::mem::take(&mut self.shared_sources),
             ..Self::default()
         };
         *self = kept;
@@ -1939,6 +2154,16 @@ impl Settings {
                 rdp_resize_enable_delay_accepted,
                 RDP_RESIZE_ENABLE_DELAY_DEFAULT_MS,
             ),
+            rdp_default_width: within(
+                file.rdp_session.default_width,
+                rdp_default_resolution_accepted,
+                RDP_DEFAULT_WIDTH_DEFAULT,
+            ),
+            rdp_default_height: within(
+                file.rdp_session.default_height,
+                rdp_default_resolution_accepted,
+                RDP_DEFAULT_HEIGHT_DEFAULT,
+            ),
             rdp_keep_alive_interval_ms: within(
                 file.rdp_session.keep_alive_interval_ms,
                 rdp_keep_alive_interval_accepted,
@@ -1947,6 +2172,12 @@ impl Settings {
             require_credential_guard: file
                 .rdp_session
                 .require_credential_guard
+                .unwrap_or_default(),
+            builtin_rdp_compression: file.rdp_session.builtin_compression.unwrap_or_default(),
+            rdp_confirm_disconnect: file.rdp_session.confirm_disconnect.unwrap_or(true),
+            rdp_redirection_indicators_expanded: file
+                .rdp_session
+                .indicators_always_expanded
                 .unwrap_or_default(),
             // A line that is not a preset is left out, as the C# menu leaves it out.
             rdp_resolution_presets: file.rdp_session.resolution_presets.map_or_else(
@@ -1962,6 +2193,21 @@ impl Settings {
                 file.ssh.auto_reconnect_attempts,
                 ssh_auto_reconnect_attempts_accepted,
                 SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+            ),
+            ssh_auto_reconnect_first_delay: within(
+                file.ssh.auto_reconnect_first_delay,
+                reconnect_delay_accepted,
+                SSH_AUTO_RECONNECT_FIRST_DELAY_DEFAULT,
+            ),
+            ssh_auto_reconnect_second_delay: within(
+                file.ssh.auto_reconnect_second_delay,
+                reconnect_delay_accepted,
+                SSH_AUTO_RECONNECT_SECOND_DELAY_DEFAULT,
+            ),
+            ssh_auto_reconnect_subsequent_delay: within(
+                file.ssh.auto_reconnect_subsequent_delay,
+                reconnect_delay_accepted,
+                SSH_AUTO_RECONNECT_SUBSEQUENT_DELAY_DEFAULT,
             ),
             anti_idle_interval: within(
                 file.ssh.anti_idle_interval,
@@ -2012,6 +2258,8 @@ impl Settings {
                 .unwrap_or_default(),
             sftp_browser: file.files.sftp_browser(),
             external_editor: file.files.external_editor.trim().to_owned(),
+            external_tools: file.external_tools.tools,
+            mobaxterm_variables: file.mobaxterm.variables,
             putty_path: file.ssh.putty_path.trim().to_owned(),
             ssh_default_mode: file
                 .ssh
@@ -2030,6 +2278,8 @@ impl Settings {
             ),
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
             show_gateway_badge: file.general.show_gateway_badge.unwrap_or(true),
+            show_properties_panel: file.general.show_properties_panel.unwrap_or(false),
+            group_tabs_by_folder: file.general.group_tabs_by_folder.unwrap_or(false),
             updates: Updates {
                 enabled: file.updates.enabled.unwrap_or(true),
                 interval_hours: within(
@@ -2067,6 +2317,7 @@ impl Settings {
             tools: file.tools.settings(),
             legacy_migration: file.legacy_migration.settings(),
             onboarding_completed: file.onboarding.completed,
+            shared_sources: file.shared_sessions.sources,
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -2162,6 +2413,8 @@ impl Settings {
                 max_sessions: Some(self.max_sessions),
                 diagnostics_log: Some(self.diagnostics_log),
                 show_gateway_badge: Some(self.show_gateway_badge),
+                show_properties_panel: Some(self.show_properties_panel),
+                group_tabs_by_folder: Some(self.group_tabs_by_folder),
             },
             vault_unlock: VaultUnlockSection {
                 failures: self.vault_unlock.failures(),
@@ -2190,6 +2443,12 @@ impl Settings {
                 dock_local_browser: Some(self.sftp_browser.dock_local_browser),
                 follow_local_directory: Some(self.sftp_browser.follow_local_directory),
             },
+            external_tools: ExternalToolsSection {
+                tools: self.external_tools.clone(),
+            },
+            mobaxterm: MobaxtermSection {
+                variables: self.mobaxterm_variables.clone(),
+            },
             reachability: ReachabilitySection {
                 enabled: Some(self.reachability.enabled),
                 interval: Some(self.reachability.interval),
@@ -2214,6 +2473,9 @@ impl Settings {
             legacy_migration: LegacyMigrationSection::of(&self.legacy_migration),
             onboarding: OnboardingSection {
                 completed: self.onboarding_completed,
+            },
+            shared_sessions: SharedSessionsSection {
+                sources: self.shared_sources.clone(),
             },
         }
     }
@@ -2241,6 +2503,14 @@ impl Settings {
             for (_, section) in &mut sections {
                 if let toml::Value::Table(values) = section {
                     values.retain(|_, value| {
+                        // A list of tables, the external tools: each one naming a path under
+                        // the home folder stays behind whole, counted as one.
+                        if let toml::Value::Array(items) = value {
+                            let before = items.len();
+                            items.retain(|item| !names_under(item, home));
+                            held_back += before - items.len();
+                            return true;
+                        }
                         let names = value.as_str().is_some_and(|text| under(text, home));
                         held_back += usize::from(names);
                         !names
@@ -2276,6 +2546,19 @@ impl Settings {
     ///
     /// [`TransferError`] when `text` is not a settings file this version reads.
     pub fn import(&self, text: &str) -> Result<SettingsImport, TransferError> {
+        // The C# "Export settings" file, in JSON: its preferences read as the import from
+        // the C# Heimdall reads them, none changed here overwritten, no secret taken.
+        // A byte order mark, which an editor may have added, starts no TOML or JSON.
+        let text = text.trim_start_matches(BYTE_ORDER_MARK);
+        if text.trim_start().starts_with(JSON_OBJECT_START) {
+            return match crate::import::csharp_settings::preferences(text, self) {
+                Ok(read) if read.export_file => Ok(self.csharp_import(&read)),
+                Err(crate::import::csharp_settings::CsharpSettingsError::Newer(_)) => {
+                    Err(TransferError::Newer)
+                }
+                _ => Err(TransferError::NotSettings),
+            };
+        }
         let document: toml::Table = text.parse().map_err(|_| TransferError::NotSettings)?;
         if document
             .get(TRANSFER_FORMAT_KEY)
@@ -2325,6 +2608,62 @@ impl Settings {
     }
 }
 
+impl Settings {
+    /// These settings with the changes of `read` laid over them, and nothing else of it:
+    /// what changed here since it was read, a lockout or the last look for a newer release
+    /// among them, is kept. `None` when the result does not read as settings.
+    #[must_use]
+    pub fn with_changes_of(&self, read: &SettingsImport) -> Option<Self> {
+        let mut merged = toml::Table::try_from(self.file()).ok()?;
+        let incoming = toml::Table::try_from(read.settings.file()).ok()?;
+        for change in &read.changes {
+            let (section, key) = change.key.split_once('.')?;
+            let value = match incoming.get(section) {
+                Some(toml::Value::Table(values)) => values.get(key).cloned(),
+                _ => None,
+            };
+            let target = merged
+                .entry(section.to_owned())
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let toml::Value::Table(target) = target {
+                match value {
+                    Some(value) => target.insert(key.to_owned(), value),
+                    None => target.remove(key),
+                };
+            }
+        }
+        let file: SettingsFile = merged.try_into().ok()?;
+        Some(Self::from_file(file))
+    }
+
+    /// The preferences of the C# Heimdall `read` as an import shows them before they are
+    /// taken: what they change here, each with why it is shown first, and the C#
+    /// preferences left out, by their C# name.
+    #[must_use]
+    pub fn csharp_import(
+        &self,
+        read: &crate::import::csharp_settings::Preferences,
+    ) -> SettingsImport {
+        use crate::import::csharp_settings::PreferenceOutcome;
+        SettingsImport {
+            settings: read.settings.clone(),
+            changes: changes(&self.transferable(), &read.settings.transferable()),
+            ignored: read
+                .rows
+                .iter()
+                .filter(|row| row.outcome != PreferenceOutcome::Taken)
+                .map(|row| row.key.clone())
+                .collect(),
+        }
+    }
+}
+
+/// The byte order mark an editor may write at the start of a file.
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
+/// How a JSON document starts: the C# "Export settings" file is one.
+const JSON_OBJECT_START: char = '{';
+
 /// What a portable settings file says it is.
 const TRANSFER_FORMAT: &str = "heimdall-settings";
 
@@ -2337,7 +2676,7 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 12] = [
+const TRANSFERRED: [&str; 15] = [
     "terminal",
     "session_log",
     "general",
@@ -2347,9 +2686,12 @@ const TRANSFERRED: [&str; 12] = [
     "rdp",
     "rdp_session",
     "files",
+    "external_tools",
+    "mobaxterm",
     "reachability",
     "updates",
     "windows_hello",
+    "shared_sessions",
 ];
 
 /// The name a portable settings file is offered under.
@@ -2414,13 +2756,67 @@ pub enum SettingValue {
     Text(String),
     /// A list of this many items.
     List(usize),
+    /// External tools, each named with its program and whether it runs as administrator,
+    /// as the C# preview shows them tool by tool (`SettingsImportPreview.DescribeTool`): what
+    /// an import would let run is never a mere count.
+    Programs(Vec<ProgramShown>),
 }
+
+/// An external tool as an import's change shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramShown {
+    /// Its name.
+    pub name: String,
+    /// Its program, as written.
+    pub program: String,
+    /// It runs as administrator.
+    pub administrator: bool,
+}
+
+impl ProgramShown {
+    /// The tool `item` of a list, when it is a table naming a program.
+    fn of(item: &toml::Value) -> Option<Self> {
+        let toml::Value::Table(fields) = item else {
+            return None;
+        };
+        let text = |key: &str| {
+            fields
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        fields.contains_key(PROGRAM_KEY).then(|| Self {
+            name: text(NAME_KEY),
+            program: text(PROGRAM_KEY),
+            administrator: fields
+                .get(ADMINISTRATOR_KEY)
+                .and_then(toml::Value::as_bool)
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// The keys of an external tool in the settings file, as [`ExternalTool`] writes them.
+const NAME_KEY: &str = "name";
+const PROGRAM_KEY: &str = "executable_path";
+const ADMINISTRATOR_KEY: &str = "run_as_administrator";
 
 impl SettingValue {
     fn of(value: &toml::Value) -> Self {
         match value {
             toml::Value::Boolean(on) => Self::Flag(*on),
             toml::Value::String(text) => Self::Text(text.clone()),
+            toml::Value::Array(items) if !items.is_empty() => {
+                match items
+                    .iter()
+                    .map(ProgramShown::of)
+                    .collect::<Option<Vec<_>>>()
+                {
+                    Some(programs) => Self::Programs(programs),
+                    None => Self::List(items.len()),
+                }
+            }
             toml::Value::Array(items) => Self::List(items.len()),
             other => Self::Text(other.to_string()),
         }
@@ -2434,6 +2830,16 @@ pub enum TransferError {
     NotSettings,
     /// It was written by a newer version.
     Newer,
+}
+
+/// Whether `item`, a table of a list, holds a path under `home` in one of its texts.
+fn names_under(item: &toml::Value, home: &Path) -> bool {
+    match item {
+        toml::Value::Table(fields) => fields
+            .values()
+            .any(|field| field.as_str().is_some_and(|text| under(text, home))),
+        _ => false,
+    }
 }
 
 /// Whether the path `text` is under `home`, whatever the case of either.

@@ -80,6 +80,12 @@ pub const RELEASE_VARIABLE: &str = "HEIMDALL_RELEASE";
 /// The tag of this build's release, when it was compiled as one.
 const BUILD_RELEASE: Option<&str> = option_env!("HEIMDALL_RELEASE");
 
+/// The version of this build's package: the workspace's, `2026.101701.0`.
+const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The patch of a package version of the release scheme, `YYYY.MMDDNN.0`.
+const PACKAGE_PATCH: &str = "0";
+
 /// What starts a release tag.
 const TAG_PREFIX: char = 'v';
 
@@ -159,6 +165,25 @@ impl ReleaseTag {
         })
     }
 
+    /// The release a package version names: `YYYY.MMDDNN.0`, the workspace's scheme, its
+    /// minor the integer `MMDDNN` without the leading zero Cargo refuses, `2026.101701.0` for
+    /// `v2026.101701` and `2027.10101.0` for `v2027.010101`; `None` for any other version.
+    #[must_use]
+    pub fn from_package_version(version: &str) -> Option<Self> {
+        let mut parts = version.split(TAG_SEPARATOR);
+        let (year, minor, patch) = (parts.next()?, parts.next()?, parts.next()?);
+        let plain_number = !minor.is_empty()
+            && minor.len() <= RELEASE_DIGITS
+            && !minor.starts_with('0')
+            && minor.bytes().all(|b| b.is_ascii_digit());
+        if parts.next().is_some() || patch != PACKAGE_PATCH || !plain_number {
+            return None;
+        }
+        Self::parse(&format!(
+            "{TAG_PREFIX}{year}{TAG_SEPARATOR}{minor:0>RELEASE_DIGITS$}"
+        ))
+    }
+
     /// Its tag, as the release is published under: `v2026.100901`.
     #[must_use]
     pub fn tag(self) -> String {
@@ -230,17 +255,28 @@ impl std::fmt::Display for ReleaseTag {
 }
 
 /// The release a build compiled with `variable` as [`RELEASE_VARIABLE`] is: its tag, with
-/// or without the leading `v`.
+/// or without the leading `v`, or the package version it matches (`2026.101701.0`), so a
+/// release compiled with the workspace's version copied in still checks for updates.
 #[must_use]
 pub fn build_release(variable: Option<&str>) -> Option<ReleaseTag> {
     let value = variable?.trim();
-    ReleaseTag::parse(value).or_else(|| ReleaseTag::parse(&format!("{TAG_PREFIX}{value}")))
+    ReleaseTag::parse(value)
+        .or_else(|| ReleaseTag::parse(&format!("{TAG_PREFIX}{value}")))
+        .or_else(|| ReleaseTag::from_package_version(value))
 }
 
 /// The release this build is; `None` for a development build.
 #[must_use]
 pub fn running_release() -> Option<ReleaseTag> {
     build_release(BUILD_RELEASE)
+}
+
+/// The version this build shows (About page, log, crash and error reports, the update
+/// check's request): its release, `2026.101701`, when compiled as one, as the C# About shows
+/// its informational version; else its package version, `2026.101701.0`.
+#[must_use]
+pub fn display_version() -> String {
+    running_release().map_or_else(|| PACKAGE_VERSION.to_owned(), |release| release.to_string())
 }
 
 /// Where GitHub says the latest release of [`RELEASES_REPOSITORY`].
@@ -543,10 +579,7 @@ impl GitHubSource {
             .https_only(true)
             .http_status_as_error(false)
             .timeout_global(Some(REQUEST_TIMEOUT))
-            .user_agent(format!(
-                "{USER_AGENT_PRODUCT}/{}",
-                env!("CARGO_PKG_VERSION")
-            ))
+            .user_agent(format!("{USER_AGENT_PRODUCT}/{}", display_version()))
             .accept(ACCEPT)
             .proxy(proxy())
             .tls_config(tls())
@@ -684,10 +717,71 @@ mod tests {
     }
 
     #[test]
+    fn same_day_builds_are_ordered_by_their_build_number() {
+        // Several builds of one day differ only in the last two digits, the day's build
+        // number, and compare in that order; across days the day wins over the number, so a
+        // later day with a lower build number is still newer.
+        let tag = |text: &str| ReleaseTag::parse(text).expect(text);
+        assert!(
+            tag("v2026.101702") > tag("v2026.101701"),
+            "the day's second build"
+        );
+        assert!(
+            tag("v2026.101710") > tag("v2026.101709"),
+            "ten over nine the same day"
+        );
+        assert!(
+            tag("v2026.101801") > tag("v2026.101799"),
+            "a new day outranks a high same-day build number"
+        );
+        assert_eq!(
+            tag("v2026.101701"),
+            tag("v2026.101701"),
+            "the same build equal"
+        );
+    }
+
+    #[test]
+    fn the_package_version_follows_the_release_scheme() {
+        // Cargo.toml's version mirrors a release tag as major.minor.patch = YYYY.MMDDNN.0,
+        // the minor without the leading zero Cargo refuses, so the version a development build
+        // shows and the tags a release compares with share one calendar scheme.
+        let package = ReleaseTag::from_package_version(env!("CARGO_PKG_VERSION"))
+            .expect("the workspace version is of the release scheme");
+        assert!(package.date().is_some(), "its day is a real date");
+        let tag = |text: &str| ReleaseTag::parse(text).expect(text);
+        assert_eq!(
+            ReleaseTag::from_package_version("2026.101701.0"),
+            Some(tag("v2026.101701"))
+        );
+        assert_eq!(
+            ReleaseTag::from_package_version("2027.10101.0"),
+            Some(tag("v2027.010101")),
+            "a January day: five digits, padded back"
+        );
+        for refused in [
+            "2026.010101.0",
+            "2026.101701.1",
+            "2026.101701",
+            "2026.1017011.0",
+            "2026..0",
+            "0.1.0",
+            "v2026.101701.0",
+        ] {
+            assert_eq!(ReleaseTag::from_package_version(refused), None, "{refused}");
+        }
+    }
+
+    #[test]
     fn a_build_names_its_release_with_or_without_the_v_and_a_development_build_none() {
         let expected = ReleaseTag::parse("v2026.100901");
         assert_eq!(build_release(Some("v2026.100901")), expected);
         assert_eq!(build_release(Some(" 2026.100901 ")), expected);
+        assert_eq!(
+            build_release(Some("2026.100901.0")),
+            expected,
+            "the package version"
+        );
         assert_eq!(build_release(Some("0.1.0")), None);
         assert_eq!(build_release(Some("")), None);
         assert_eq!(build_release(None), None);

@@ -30,7 +30,10 @@ Une version compilée avec la fonctionnalité `test-data-dir` travaille dans un 
   partout ailleurs dans le code de l'application.
 - Ce n'est pas une variable d'environnement : celui qui lance le programme ne peut pas
   déplacer ses dossiers par l'environnement, avec ou sans la fonctionnalité.
-- Une version sans la fonctionnalité ne lit aucun argument de ligne de commande.
+- Une version sans la fonctionnalité lit `--data-dir` aussi, comme autre chose : la racine
+  de données d'une instance alternative, décrite plus bas dans
+  [`--data-dir` dans une version normale](#--data-dir-dans-une-version-normale). Les deux ne
+  coexistent jamais dans une même version.
 
 ## Compiler et lancer
 
@@ -115,3 +118,36 @@ cmdkey /list |
 
 Sous Linux, supprimer les éléments du Secret Service dont l'attribut de service commence par
 `Heimdall-rs-test-` (par exemple avec Seahorse, ou `secret-tool clear service <nom>`).
+
+## `--data-dir` dans une version normale
+
+Toute version, release comprise, accepte `--data-dir <chemin complet>` (ou
+`--data-dir=<chemin complet>`) pour lancer une instance alternative, un test à la main ou un
+profil de démonstration, à côté de celle de l'utilisateur, comme le fait `--data-dir` du
+Heimdall C#. Ce n'est pas le bac à sable décrit plus haut :
+
+- Elle déplace les dossiers propres à l'application : `config` (profils, réglages, coffre,
+  `known_hosts`, état des fenêtres, verrou d'instance unique) et `data` (journaux, fichiers en
+  cours d'édition, historique des analyses) sous le dossier donné. L'instance ne partage
+  jamais le profil de l'utilisateur et tourne à côté de lui.
+- Les mots de passe enregistrés sans mot de passe maître vont dans le magasin d'identifiants
+  du système sous le service `Heimdall-rs-data-<hash>`, `<hash>` étant 12 chiffres
+  hexadécimaux du SHA-256 du chemin complet résolu du dossier, en minuscules : l'instance ne
+  lit, ne remplace ni ne supprime jamais les entrées de l'utilisateur sous `Heimdall-rs`. (Le
+  C# les garde dans `servers.json` sous sa racine de données.)
+- L'enrôlement Windows Hello est désactivé : l'identifiant de clé appartient à l'utilisateur,
+  hors de tout dossier.
+- Les dossiers personnel, Documents et temporaire restent ceux de l'utilisateur, comme dans le
+  C# : l'instance lit le vrai `~/.ssh/known_hosts` pour un import, les sessions PuTTY et les
+  données du Heimdall C# pour une migration. Une entrée du Gestionnaire d'identifiants Windows
+  nommée par un profil est seulement lue, comme dans le C#.
+- Le dossier est vérifié comme le dossier de données de test : un chemin complet, créé s'il
+  n'existe pas, qui n'est ni ne contient ni ne se trouve dans un dossier de Heimdall-rs ou du
+  Heimdall C#, et qui n'est ni ne contient le dossier personnel, Documents, temporaire ou de
+  données d'application.
+- Le nom de l'option est lu sans tenir compte de la casse, et le dossier débarrassé des
+  espaces et des guillemets, comme le C# les lit. Là où le C# se rabat sur les dossiers de
+  l'utilisateur, cette version refuse de démarrer, avec une boîte de message et le code de
+  sortie 2 : un dossier absent ou refusé, un chemin relatif, ou une option dont le nom
+  commence seulement comme celle-ci (`--data-directory`).
+- Le titre de chaque fenêtre se termine par `[données : <dossier>]`.

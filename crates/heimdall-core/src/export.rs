@@ -29,8 +29,8 @@ use crate::post_connect::{OnFailure, PostConnectStep};
 use crate::profile::{
     Aspect, AudioPlayback, CitrixProfile, Forwards, FtpProfile, LocalArguments, LocalProfile,
     RdpDefaults, RdpProfile, Resolution, SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT,
-    SUGGESTED_WINRM_TUNNEL_PORT, SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile,
-    WinRmProfile,
+    SUGGESTED_WINRM_TUNNEL_PORT, SshGateway, SshMode, SshProfile, TelnetProfile, ToolProfile,
+    VncProfile, WebProfile, WinRmProfile,
 };
 use crate::store::ProfileStore;
 
@@ -51,6 +51,9 @@ mod connection_type {
     pub const LOCAL: &str = "Local";
     pub const WINRM: &str = "WINRM";
     pub const CITRIX: &str = "Citrix";
+    pub const WEB: &str = "WEB";
+    /// The prefix before a tool entry's identifier, `ConnectionTypeCatalog.ToolPrefix`.
+    pub const TOOL_PREFIX: &str = "TOOL:";
 }
 
 /// The C# `RdpAudioMode` values.
@@ -90,9 +93,12 @@ struct Entry {
     id: String,
     display_name: String,
     remote_server: String,
-    connection_type: &'static str,
+    connection_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     group: Option<String>,
+    /// A tool entry's port, the C# `RemotePort`; the RDP keys carry their own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remote_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     vault_entry_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,6 +181,14 @@ struct Entry {
     citrix_seamless_mode: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     citrix_use_sso: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_port: Option<u16>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    web_use_http: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_shell_executable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -311,6 +325,8 @@ pub fn csharp(
                 .map(|profile| local(profile, windows_line)),
         )
         .chain(store.winrm_profiles().iter().map(winrm))
+        .chain(store.web_profiles().iter().map(web))
+        .chain(store.tool_profiles().iter().map(tool))
         .map(|server| with_metadata(server, store))
         .collect();
     let document = Document {
@@ -332,6 +348,8 @@ pub fn session_count(store: &ProfileStore) -> usize {
         + store.citrix_profiles().len()
         + store.local_profiles().len()
         + store.winrm_profiles().len()
+        + store.web_profiles().len()
+        + store.tool_profiles().len()
 }
 
 /// The keys every profile has.
@@ -346,7 +364,7 @@ fn server(
         id: id.as_str().to_owned(),
         display_name: name.to_owned(),
         remote_server: host.to_owned(),
-        connection_type,
+        connection_type: connection_type.to_owned(),
         group: group.cloned(),
         ..Entry::default()
     }
@@ -616,6 +634,41 @@ fn winrm(profile: &WinRmProfile) -> Entry {
             profile.group.as_ref(),
             &profile.host,
             connection_type::WINRM,
+        )
+    }
+}
+
+/// A web console: its address's parts and its account, never a password, which the C#
+/// would read as its own DPAPI one.
+fn web(profile: &WebProfile) -> Entry {
+    Entry {
+        ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
+        web_port: Some(profile.port),
+        web_use_http: profile.use_http,
+        web_path: profile.path.clone(),
+        web_username: profile.username.clone(),
+        ..server(
+            &profile.id,
+            &profile.name,
+            profile.group.as_ref(),
+            &profile.host,
+            connection_type::WEB,
+        )
+    }
+}
+
+/// A tool entry: `TOOL:` and the tool's identifier, the host as the C# `RemoteServer` and the
+/// port as its `RemotePort` (`MainWindow.xaml.cs:945-952`). No secret, no gateway.
+fn tool(profile: &ToolProfile) -> Entry {
+    Entry {
+        remote_port: profile.port,
+        connection_type: format!("{}{}", connection_type::TOOL_PREFIX, profile.tool),
+        ..server(
+            &profile.id,
+            &profile.name,
+            profile.group.as_ref(),
+            profile.host.as_deref().unwrap_or_default(),
+            connection_type::TOOL_PREFIX,
         )
     }
 }

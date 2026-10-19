@@ -149,6 +149,14 @@ pub enum ConnectionEvent {
     },
     /// The RDP connection came this far, before its session opened.
     RdpStep(heimdall_rdp::Step),
+    /// The RDP server compressed what this side could not read: the tab's connections go
+    /// without compression from now on. `reconnect` when the session ended for it at once and
+    /// the tab connects again; else the connection was opened again without compression
+    /// already, and its session is open.
+    RdpCompressionOff {
+        /// The tab connects again.
+        reconnect: bool,
+    },
     /// The RDP session is open.
     RdpReady {
         /// The desktop, drawn by the UI.
@@ -304,6 +312,10 @@ impl fmt::Debug for ConnectionEvent {
                 .field("fingerprint", &fingerprint.to_string())
                 .finish(),
             Self::RdpStep(step) => f.debug_tuple("RdpStep").field(step).finish(),
+            Self::RdpCompressionOff { reconnect } => f
+                .debug_struct("RdpCompressionOff")
+                .field("reconnect", reconnect)
+                .finish(),
             Self::RdpReady { .. } => f.write_str("RdpReady"),
             // What was copied can be a password: never shown.
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),

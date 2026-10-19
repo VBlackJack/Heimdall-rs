@@ -163,6 +163,7 @@ impl GatewayDraft {
             | ProfileField::StoreFrontUrl
             | ProfileField::AppName
             | ProfileField::IcaFile
+            | ProfileField::WebPath
             | ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
@@ -195,6 +196,7 @@ impl GatewayDraft {
             | ProfileField::StoreFrontUrl
             | ProfileField::AppName
             | ProfileField::IcaFile
+            | ProfileField::WebPath
             | ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight

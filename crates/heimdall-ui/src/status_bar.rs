@@ -327,6 +327,7 @@ fn desktop_notice(notice: &Notice) -> String {
         Notice::ResolutionReconnected => fl!("ui-status-resolution-reconnected"),
         Notice::ResolutionScaled => fl!("ui-resolution-larger-than-window"),
         Notice::StabilizationSkipped => fl!("ui-status-stabilization-skipped"),
+        Notice::RdpCompressionOff => fl!("ui-status-rdp-compression-off"),
         Notice::RdpFilesTooMany => fl!(
             "ui-status-rdp-files-too-many",
             count = heimdall_rdp::MAX_COPY_ENTRIES
@@ -596,6 +597,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             notice @ (Notice::ResolutionReconnected
             | Notice::ResolutionScaled
             | Notice::StabilizationSkipped
+            | Notice::RdpCompressionOff
             | Notice::RdpFilesTooMany
             | Notice::RdpFilesTooLarge
             | Notice::RdpFilesSaveEnded(_)) => desktop_notice(notice),
@@ -611,10 +613,23 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             notice @ (Notice::RdpExternalLaunched { .. }
             | Notice::RdpExternalLaunchedThrough { .. }
             | Notice::RdpExternalRefused(_)) => rdp_external_notice(notice),
+            Notice::WebOpened(name) => fl!("ui-status-web-opened", name = server_text(name)),
+            // The browser names the tunnel, not the console: said, as the C# SOCKS route
+            // had no such effect to warn of.
+            Notice::WebOpenedThrough { name, port } => fl!(
+                "ui-status-web-opened-through",
+                name = server_text(name),
+                port = port.to_string()
+            ),
+            Notice::WebRefused(refusal) => crate::texts::web_refusal(refusal),
+            Notice::UnknownTool(tool) => fl!("ui-status-tool-unknown", tool = server_text(tool)),
             notice @ (Notice::PuttyLaunched(_)
             | Notice::PuttyLaunchedThrough { .. }
             | Notice::PuttyRefused(_)
             | Notice::X11ServerNotFound) => putty_notice(notice),
+            notice @ (Notice::ExternalToolStarted(_) | Notice::ExternalToolFailed { .. }) => {
+                crate::external_tools_view::notice(notice)
+            }
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",
@@ -820,6 +835,8 @@ mod tests {
             RefusalKind::ExternalClient,
             RefusalKind::RdGateway,
             RefusalKind::Citrix,
+            RefusalKind::WebConsole,
+            RefusalKind::ToolEntry,
             RefusalKind::WinRmNoAccount,
             RefusalKind::WinRmPasswordNotStored,
             RefusalKind::X11Forwarding,
@@ -1015,6 +1032,10 @@ mod tests {
     #[test]
     fn files_not_offered_to_a_desktop_are_said_with_the_limit_they_pass() {
         let said = |notice: Notice| status_text(&SessionStatus::Ready, Some(&notice), 0);
+        assert_eq!(
+            said(Notice::RdpCompressionOff),
+            "The server sent compressed data this client could not read: compression is off for this connection."
+        );
         assert_eq!(
             said(Notice::RdpFilesTooMany),
             "Files not copied to the server: one copy takes 10000 files and folders at most."

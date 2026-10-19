@@ -50,6 +50,9 @@ pub struct ElevatedLaunch {
     pub working_directory: PathBuf,
     /// Where it starts when that folder is not there any more: the home folder, as the C#.
     pub fallback_directory: PathBuf,
+    /// Its window hidden, as the C# `RunHidden` of an external tool: Windows is asked to
+    /// start it with `SW_HIDE`, as `ProcessWindowStyle.Hidden` asks it.
+    pub hidden: bool,
 }
 
 /// How a start went.
@@ -87,6 +90,7 @@ pub fn launch_request(shell: &LocalShell, home: &Path) -> io::Result<ElevatedLau
             .clone()
             .unwrap_or_else(|| home.to_owned()),
         fallback_directory: home.to_owned(),
+        hidden: false,
     })
 }
 
@@ -167,7 +171,11 @@ mod windows {
             file,
             parameters: Some(request.parameters.as_str()).filter(|line| !line.is_empty()),
             directory: Some(directory),
-            show: co::SW::SHOWNORMAL,
+            show: if request.hidden {
+                co::SW::HIDE
+            } else {
+                co::SW::SHOWNORMAL
+            },
             ..Default::default()
         })
         .map_err(|error| {
@@ -232,6 +240,7 @@ mod tests {
                 parameters: "-NoExit -Command \"Get-Date\"".to_owned(),
                 working_directory: full("work"),
                 fallback_directory: home.clone(),
+                hidden: false,
             }
         );
         assert_eq!(request.verb, "runas");
@@ -267,6 +276,7 @@ mod tests {
             parameters: "-NoLogo".to_owned(),
             working_directory: folder,
             fallback_directory: fallback,
+            hidden: false,
         }
     }
 

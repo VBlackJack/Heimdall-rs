@@ -29,6 +29,7 @@
 
 use heimdall_app::TabId;
 use heimdall_app::net_tools::whois::{self as lookup, WhoisFailure, WhoisReply};
+use heimdall_app::tool_route::ToolRoute;
 use heimdall_core::tools::whois::{self, MAX_REPLY_BYTES};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
@@ -51,6 +52,8 @@ pub enum WhoisMessage {
     Lookup,
     /// The lookup of `.0` ended.
     LookupDone(String, Result<WhoisReply, WhoisFailure>),
+    /// The gateway the lookup goes through could not be opened: why, said.
+    RouteFailed(String),
     /// Copy output text to clipboard.
     CopyOutput,
 }
@@ -64,6 +67,8 @@ enum Problem {
     Invalid,
     /// The lookup failed.
     Failed(WhoisFailure),
+    /// The gateway could not be opened: why, said.
+    Route(String),
 }
 
 /// The WHOIS Lookup tool pane state.
@@ -92,10 +97,25 @@ enum Applied {
     Copy(CopySlot, String),
 }
 
+/// The lookup of `query` at `server`: through `via`, the gateway is opened and it carries the
+/// query to the server, which it resolves; a gateway that cannot be opened is `Err` with why,
+/// said, and nothing is then connected from here.
+async fn lookup_by(
+    server: &'static str,
+    query: &str,
+    via: Option<ToolRoute>,
+) -> Result<Result<WhoisReply, WhoisFailure>, String> {
+    let Some(route) = via else {
+        return Ok(lookup::lookup(server, query).await);
+    };
+    let gateway = route.open().await.map_err(super::route_bar::failure_text)?;
+    Ok(lookup::lookup_via(&gateway, server, query).await)
+}
+
 impl WhoisPane {
     /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: WhoisMessage) -> Outcome {
-        match self.apply(message) {
+    pub fn update(&mut self, tab: TabId, message: WhoisMessage, via: Option<ToolRoute>) -> Outcome {
+        match self.apply(message, via) {
             Applied::None => Outcome::None,
             Applied::Run(task) => Outcome::Task(
                 task.map(move |message| Message::Tool(tab, ToolMessage::Whois(message))),
@@ -105,7 +125,7 @@ impl WhoisPane {
     }
 
     /// Handles a message, as [`Self::update`] without the tab.
-    fn apply(&mut self, message: WhoisMessage) -> Applied {
+    fn apply(&mut self, message: WhoisMessage, via: Option<ToolRoute>) -> Applied {
         match message {
             WhoisMessage::DomainChanged(val) => {
                 self.domain = val;
@@ -133,11 +153,21 @@ impl WhoisPane {
                 let server = whois::resolve_whois_server(&query);
                 Applied::Run(Task::perform(
                     async move {
-                        let reply = lookup::lookup(server, &query).await;
+                        let reply = lookup_by(server, &query, via).await;
                         (query, reply)
                     },
-                    |(query, reply)| WhoisMessage::LookupDone(query, reply),
+                    |(query, reply)| match reply {
+                        Ok(reply) => WhoisMessage::LookupDone(query, reply),
+                        Err(said) => WhoisMessage::RouteFailed(said),
+                    },
                 ))
+            }
+            WhoisMessage::RouteFailed(said) => {
+                if self.running {
+                    self.running = false;
+                    self.problem = Some(Problem::Route(said));
+                }
+                Applied::None
             }
             WhoisMessage::LookupDone(query, reply) => {
                 self.running = false;
@@ -163,6 +193,7 @@ impl WhoisPane {
         match problem {
             Problem::Required => fl!("ui-tool-whois-error-required"),
             Problem::Invalid => fl!("ui-tool-whois-error-invalid"),
+            Problem::Route(said) => said.clone(),
             Problem::Failed(WhoisFailure::TimedOut) => fl!("ui-tool-whois-error-timeout"),
             Problem::Failed(WhoisFailure::Failed(reason)) => fl!(
                 "ui-tool-whois-error-failed",
@@ -290,12 +321,19 @@ mod tests {
     #[test]
     fn the_domain_is_checked_before_any_lookup() {
         let mut pane = WhoisPane::default();
-        assert!(matches!(pane.apply(WhoisMessage::Lookup), Applied::None));
-        assert_eq!(pane.problem, Some(Problem::Required));
-        pane.apply(WhoisMessage::DomainChanged(
-            "example.com\r\nevil".to_owned(),
+        assert!(matches!(
+            pane.apply(WhoisMessage::Lookup, None),
+            Applied::None
         ));
-        assert!(matches!(pane.apply(WhoisMessage::Lookup), Applied::None));
+        assert_eq!(pane.problem, Some(Problem::Required));
+        pane.apply(
+            WhoisMessage::DomainChanged("example.com\r\nevil".to_owned()),
+            None,
+        );
+        assert!(matches!(
+            pane.apply(WhoisMessage::Lookup, None),
+            Applied::None
+        ));
         assert_eq!(pane.problem, Some(Problem::Invalid));
         assert!(!pane.running);
     }
@@ -303,15 +341,35 @@ mod tests {
     #[test]
     fn a_second_lookup_waits_for_the_first() {
         let mut pane = WhoisPane::default();
-        pane.apply(WhoisMessage::DomainChanged("example.com".to_owned()));
-        assert!(matches!(pane.apply(WhoisMessage::Lookup), Applied::Run(_)));
-        assert!(pane.running);
-        assert!(matches!(pane.apply(WhoisMessage::Lookup), Applied::None));
-        pane.apply(WhoisMessage::LookupDone(
-            "example.com".to_owned(),
-            Err(WhoisFailure::TimedOut),
+        pane.apply(WhoisMessage::DomainChanged("example.com".to_owned()), None);
+        assert!(matches!(
+            pane.apply(WhoisMessage::Lookup, None),
+            Applied::Run(_)
         ));
+        assert!(pane.running);
+        assert!(matches!(
+            pane.apply(WhoisMessage::Lookup, None),
+            Applied::None
+        ));
+        pane.apply(
+            WhoisMessage::LookupDone("example.com".to_owned(), Err(WhoisFailure::TimedOut)),
+            None,
+        );
         assert!(!pane.running);
         assert_eq!(pane.problem, Some(Problem::Failed(WhoisFailure::TimedOut)));
+    }
+
+    #[test]
+    fn a_gateway_that_cannot_be_opened_ends_the_lookup_with_why() {
+        let mut pane = WhoisPane::default();
+        pane.apply(WhoisMessage::DomainChanged("example.com".to_owned()), None);
+        pane.apply(WhoisMessage::Lookup, None);
+        pane.apply(WhoisMessage::RouteFailed("no gateway".to_owned()), None);
+        assert!(!pane.running);
+        assert_eq!(pane.problem, Some(Problem::Route("no gateway".to_owned())));
+        assert_eq!(
+            WhoisPane::problem_text(pane.problem.as_ref().expect("problem")),
+            "no gateway"
+        );
     }
 }

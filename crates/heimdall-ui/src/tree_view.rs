@@ -21,6 +21,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::BulkField;
+use heimdall_app::ToolsMessage;
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::reachability::{DownReason, Unchecked, Verdict};
 use heimdall_app::split::{Axis, Placement, SplitMessage};
@@ -80,6 +81,9 @@ pub enum TreeMenu {
     Add,
     /// The "..." button's menu.
     More,
+    /// Every open tab, from the button at the end of an overflowing strip, as the C#
+    /// `TabListMenuFactory`.
+    TabList,
     /// A tab's menu, drawn as the tree's are.
     Tab(TabId),
     /// The same menu opened from a pane's header in a split: its Disconnect closes that pane
@@ -132,6 +136,9 @@ pub enum TreeMenu {
     Macros(TabId),
     /// The notes a session's menu writes about it, as the C# Notes submenu.
     Notes(ProfileId),
+    /// The user's external tools a session's menu, or its tab's, starts for it, as the C#
+    /// "External Tools" submenu.
+    ExternalTools(ProfileId),
     /// The menu of an entry of a Files tab's pane, as the C# Files tab's; `None` beside the
     /// entries, the menu of the folder shown.
     FilesEntry {
@@ -142,6 +149,26 @@ pub enum TreeMenu {
         /// The entry, or none.
         index: Option<usize>,
     },
+}
+
+impl TreeMenu {
+    /// It opens beside the menu whose entry led to it, which Left goes back to.
+    #[must_use]
+    pub fn is_submenu(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectAs(_)
+                | Self::ConnectWith(_)
+                | Self::OpenInSplit(_)
+                | Self::ExternalTools(_)
+                | Self::MoveFolder(_)
+                | Self::FolderColor(_)
+                | Self::MoveProfile(_)
+                | Self::MoveSelection
+                | Self::EditSelection
+                | Self::GatewaySelection
+        )
+    }
 }
 
 /// Side of a session's protocol icon, as the C# `GeoIconSmall`.
@@ -479,7 +506,7 @@ pub fn folder_color_entries<'a>(path: &str, current: Option<FolderColor>) -> Ele
         .width(Length::Fill)
         .style(menu_style)
         .on_press(choose(color))
-        .into()
+        .menu_item()
     };
     let entries = MenuColumn::new()
         .extend(
@@ -756,6 +783,34 @@ fn into_shown_entry<'a>(
     .into()
 }
 
+/// What a button of a menu is to the keyboard (see `menu_nav`).
+trait MenuButton<'a> {
+    /// An entry that acts.
+    fn menu_item(self) -> Element<'a, Message>;
+    /// An entry that opens another menu.
+    fn opens_menu(self) -> Element<'a, Message>;
+}
+
+impl<'a> MenuButton<'a> for button::Button<'a, Message> {
+    fn menu_item(self) -> Element<'a, Message> {
+        crate::menu_nav::item(self).into()
+    }
+
+    fn opens_menu(self) -> Element<'a, Message> {
+        crate::menu_nav::submenu_item(self).into()
+    }
+}
+
+impl<'a> MenuButton<'a> for Container<'a, Message> {
+    fn menu_item(self) -> Element<'a, Message> {
+        crate::menu_nav::item(self).into()
+    }
+
+    fn opens_menu(self) -> Element<'a, Message> {
+        crate::menu_nav::submenu_item(self).into()
+    }
+}
+
 /// One entry: a label, active when it has a message.
 fn entry<'a>(label: String, message: Option<AppMessage>) -> Element<'a, Message> {
     keyed_entry(label, None, message)
@@ -793,7 +848,7 @@ fn keyed_entry<'a>(
     keyed_button(label, keys)
         .style(menu_style)
         .on_press_maybe(message.map(Message::MenuChoice))
-        .into()
+        .menu_item()
 }
 
 /// `entry`, greyed, saying `why` on hover, as the C# `ExplainDisabled`
@@ -868,17 +923,18 @@ fn separator<'a>() -> Element<'a, Message> {
 }
 
 /// The entries of `menu`, as the C# Heimdall orders them, limited to what this version does;
-/// `splittable` while a tab is shown that a profile can open in a split of.
+/// `splittable` while a tab is shown that a profile can open in a split of, `tools` while the
+/// user lists external tools.
 pub fn menu_entries<'a>(
     menu: &TreeMenu,
     profile: Option<&ProfileSummary>,
     connect_as: &[ConnectAs],
-    (editable, splittable): (bool, bool),
+    (editable, splittable, tools): (bool, bool, bool),
 ) -> Element<'a, Message> {
     let mut entries = MenuColumn::new();
     match (menu, profile) {
         (TreeMenu::Profile(_), Some(profile)) => {
-            entries = profile_entries(entries, profile, connect_as, (editable, splittable));
+            entries = profile_entries(entries, profile, connect_as, (editable, splittable, tools));
         }
         (TreeMenu::ConnectAs(_), Some(profile)) => {
             // The protocols but the profile's own, as the C# menu lists them.
@@ -939,9 +995,14 @@ pub fn menu_entries<'a>(
 }
 
 /// The tree's filters, as the C# filter button's menu: the protocols, then connected and
-/// through a gateway, then the gateway badge. A box ticked leaves the menu open, as the C#
-/// entries stay open, so several can be chosen. `badge`: rows show their gateway.
-pub fn filter_entries<'a>(filter: &TreeFilter, badge: bool) -> Element<'a, Message> {
+/// through a gateway, then the view choices: the gateway badge and the properties panel. A
+/// box ticked leaves the menu open, as the C# entries stay open, so several can be chosen.
+/// `badge`: rows show their gateway; `properties`: the properties panel is shown.
+pub fn filter_entries<'a>(
+    filter: &TreeFilter,
+    badge: bool,
+    properties: bool,
+) -> Element<'a, Message> {
     let filter_box = |label: String, on: bool, message: FilterMessage| -> Element<'a, Message> {
         container(
             checkbox(on)
@@ -951,7 +1012,7 @@ pub fn filter_entries<'a>(filter: &TreeFilter, badge: bool) -> Element<'a, Messa
                 .on_toggle(move |_| Message::App(AppMessage::Filter(message))),
         )
         .padding(spacing::XS)
-        .into()
+        .menu_item()
     };
     let mut entries = menu_column![
         container(text(fl!("ui-tree-filter-protocols")).size(font_size::BODY_LARGE))
@@ -986,7 +1047,23 @@ pub fn filter_entries<'a>(filter: &TreeFilter, badge: bool) -> Element<'a, Messa
             fl!("ui-tree-filter-gateway-badge"),
             badge,
             FilterMessage::GatewayBadge,
-        ));
+        ))
+        // Its key at its right, as the C# `InputGestureText`.
+        .push(
+            row![
+                container(filter_box(
+                    fl!("ui-tree-filter-properties-panel"),
+                    properties,
+                    FilterMessage::PropertiesPanel,
+                ))
+                .width(Length::Fill),
+                text(fl!("ui-menu-keys-properties-panel"))
+                    .size(font_size::BODY_LARGE)
+                    .style(text::secondary),
+            ]
+            .spacing(GESTURE_GAP)
+            .align_y(iced::Alignment::Center),
+        );
     menu_card(entries).into()
 }
 
@@ -1111,14 +1188,17 @@ pub fn connect_with_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
 
 /// A profile's menu, in the C# order this version has: Connect, Connect with (an RDP
 /// profile's), Connect as, Open in split, Rename, Edit, Duplicate, Move to folder, the
-/// copies, Delete.
+/// copies, Notes, the external tools while the user lists some, Delete.
 fn profile_entries<'a>(
     mut entries: MenuColumn<'a, Message>,
     profile: &ProfileSummary,
     connect_as: &[ConnectAs],
-    (editable, splittable): (bool, bool),
+    (editable, splittable, tools): (bool, bool, bool),
 ) -> MenuColumn<'a, Message> {
     let id = profile.id.clone();
+    if profile.kind == ProfileKind::Tool {
+        return tool_entries(entries, &id, editable);
+    }
     entries = entries.push(entry(
         fl!("ui-tree-connect"),
         Some(AppMessage::ConnectProfile(id.clone())),
@@ -1166,18 +1246,66 @@ fn profile_entries<'a>(
                 .style(menu_style)
                 .on_press_maybe(
                     editable.then(|| Message::OpenTreeMenu(TreeMenu::MoveProfile(id.clone()))),
-                ),
+                )
+                .opens_menu(),
         );
     entries = server_entries(entries, profile);
     entries = entries
         .push(separator())
         .push(submenu(fl!("ui-tree-notes"), TreeMenu::Notes(id.clone())));
+    // After the notes, as the C# (`ContextMenuFactory.cs:174-180`), only with a tool listed.
+    if tools {
+        entries = entries.push(separator()).push(submenu(
+            fl!("ui-external-tools-menu"),
+            TreeMenu::ExternalTools(id.clone()),
+        ));
+    }
     entries = entries.push(separator()).push(
         keyed_button(fl!("ui-tree-delete"), Some(fl!("ui-menu-keys-delete")))
             .style(danger_style)
-            .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(id))),
+            .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(id)))
+            .menu_item(),
     );
     entries
+}
+
+/// A tool entry's menu, as the C# `CreateToolContextMenu` (`ContextMenuFactory.cs:442-483`):
+/// Open in tab, Move to folder, Rename, Remove; none of a server's connecting, copying or
+/// waking entries.
+fn tool_entries<'a>(
+    entries: MenuColumn<'a, Message>,
+    id: &ProfileId,
+    editable: bool,
+) -> MenuColumn<'a, Message> {
+    entries
+        .push(entry(
+            fl!("ui-tree-tool-open"),
+            Some(AppMessage::Tools(ToolsMessage::OpenEntry(id.clone()))),
+        ))
+        .push(separator())
+        .push(
+            button(text(fl!("ui-tree-move-to-folder")).size(font_size::BODY_LARGE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press_maybe(
+                    editable.then(|| Message::OpenTreeMenu(TreeMenu::MoveProfile(id.clone()))),
+                )
+                .opens_menu(),
+        )
+        .push(separator())
+        .push(keyed_entry(
+            fl!("ui-tree-rename"),
+            Some(fl!("ui-menu-keys-rename")),
+            editable.then(|| AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id.clone()))),
+        ))
+        .push(
+            keyed_button(fl!("ui-tree-tool-remove"), Some(fl!("ui-menu-keys-delete")))
+                .style(danger_style)
+                .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(
+                    id.clone(),
+                )))
+                .menu_item(),
+        )
 }
 
 /// A session's Notes menu, as the C# one: a note about it, written from a template.
@@ -1199,8 +1327,23 @@ pub fn notes_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
                 .on_press(Message::NewNote {
                     id: id.clone(),
                     template,
-                }),
+                })
+                .menu_item(),
         );
+    }
+    menu_card(entries).into()
+}
+
+/// A session's "External Tools" menu, as the C# one: each tool of the user's list by its
+/// name, in its order, started for the session `id`.
+#[must_use]
+pub fn external_tools_entries<'a>(id: &ProfileId, names: &[String]) -> Element<'a, Message> {
+    let mut entries = MenuColumn::new();
+    for name in names {
+        entries = entries.push(entry(
+            heimdall_app::server_text(name),
+            Some(crate::external_tools_view::launch(name, id.clone())),
+        ));
     }
     menu_card(entries).into()
 }
@@ -1213,6 +1356,10 @@ fn add_entries(entries: MenuColumn<'_, Message>) -> MenuColumn<'_, Message> {
             fl!("ui-tree-add-session"),
             Some(fl!("ui-menu-keys-new-session")),
             Some(AppMessage::NewProfile),
+        ))
+        .push(entry(
+            fl!("ui-tree-add-tool"),
+            Some(AppMessage::Tools(ToolsMessage::NewEntry { folder: None })),
         ))
         .push(separator())
         .push(entry(fl!("ui-gateway-add"), Some(AppMessage::NewGateway)))
@@ -1548,6 +1695,8 @@ pub struct TabMenuState {
     pub health: Option<bool>,
     /// It is pinned.
     pub pinned: bool,
+    /// The tabs are gathered by the folder of their profile.
+    pub grouped: bool,
     /// How many tabs "Reopen closed tab" opens again; 0 hides it, as the C# shows it only
     /// with a tab to reopen.
     pub reopen_closed: usize,
@@ -1555,6 +1704,8 @@ pub struct TabMenuState {
     pub saveable: bool,
     /// It takes terminal macros.
     pub macros: bool,
+    /// The user lists external tools, which its profile's entries start for it.
+    pub external_tools: bool,
     /// Opened from a pane's header: Disconnect closes that pane alone.
     pub pane: bool,
     /// It is a pane docked in another tab's split: off the strip, it is never pinned.
@@ -1756,7 +1907,7 @@ fn checked_message<'a>(label: String, checked: bool, message: Message) -> Elemen
     .width(Length::Fill)
     .style(menu_style)
     .on_press(message)
-    .into()
+    .menu_item()
 }
 
 /// An RDP tab's "Resolution" menu, as the C# one: the active mode, "Match window", the
@@ -1848,19 +1999,26 @@ pub fn resolution_entries<'a>(
     menu_card(entries).into()
 }
 
-/// A tab's entries for the saved profile it was opened from: Edit, the copies, and Reveal
-/// in tree.
+/// A tab's entries for the saved profile it was opened from: Edit, the copies, Reveal in
+/// tree, and its external tools while the user lists some.
 fn profile_tab_entries<'a>(
     tab: TabId,
     profile: &ProfileSummary,
     editable: bool,
+    tools: bool,
 ) -> Vec<Element<'a, Message>> {
     let id = profile.id.clone();
     let has_user = profile
         .username
         .as_deref()
         .is_some_and(|user| !user.is_empty());
-    vec![
+    let tools = tools.then(|| {
+        submenu(
+            fl!("ui-external-tools-menu"),
+            TreeMenu::ExternalTools(id.clone()),
+        )
+    });
+    let mut entries = vec![
         keyed_entry(
             fl!("ui-tree-edit"),
             Some(fl!("ui-menu-keys-edit")),
@@ -1881,7 +2039,10 @@ fn profile_tab_entries<'a>(
             fl!("ui-tab-menu-reveal-in-tree"),
             Some(AppMessage::TabMenu(TabMenuMessage::RevealInTree(tab))),
         ),
-    ]
+    ];
+    // Beyond the C# tab menu, which has none: the tools of the session shown, at hand.
+    entries.extend(tools);
+    entries
 }
 
 /// An entry that opens the menu `menu` beside the one shown.
@@ -1890,7 +2051,7 @@ fn submenu<'a>(label: String, menu: TreeMenu) -> Element<'a, Message> {
         .width(Length::Fill)
         .style(menu_style)
         .on_press(Message::OpenTreeMenu(menu))
-        .into()
+        .opens_menu()
 }
 
 /// A tab's entries for the tab itself, as the C# `AppendTitleAndPinItems` and
@@ -1918,8 +2079,14 @@ fn own_tab_entries<'a>(state: &TabMenuState) -> Vec<Element<'a, Message>> {
             menu(TabMenuMessage::Pin(tab)),
         ));
     }
-    // After the pin, as the C# `AppendTabGroupItems`: the tabs of the last close, named
+    // After the pin, as the C# `AppendTabGroupItems`: the arrangement by folder, ticked while
+    // on, then the tabs of the last close, named
     // with their count when it closed several.
+    own.push(checked_entry(
+        fl!("ui-tab-menu-group-by-folder"),
+        state.grouped,
+        AppMessage::TabMenu(TabMenuMessage::ToggleGroupByFolder),
+    ));
     if state.reopen_closed > 0 {
         own.push(keyed_entry(
             if state.reopen_closed > 1 {
@@ -1977,7 +2144,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
         )
         .style(menu_style)
         .on_press(Message::MenuFullscreen(tab))
-        .into(),
+        .menu_item(),
     ];
     if state.saveable {
         session.push(entry(
@@ -1996,7 +2163,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     let profile = state
         .profile
         .as_ref()
-        .map(|profile| profile_tab_entries(tab, profile, state.editable))
+        .map(|profile| profile_tab_entries(tab, profile, state.editable, state.external_tools))
         .unwrap_or_default();
     let close = |group| menu(TabMenuMessage::Close { tab, group });
     let closing = vec![
@@ -2025,6 +2192,40 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
         closing,
     ]))
     .into()
+}
+
+/// A tab in the list of every open tab.
+pub struct TabListItem {
+    /// The tab.
+    pub tab: TabId,
+    /// Its title, and its state when it needs a look.
+    pub label: String,
+    /// Its folder, said at the right while the tabs are gathered by folder.
+    pub folder: Option<String>,
+    /// It is the tab shown.
+    pub active: bool,
+}
+
+/// The list of every open tab, as the C# `TabListMenuFactory`: one entry per tab in the
+/// strip's order, the tab shown ticked, a choice showing that tab.
+#[must_use]
+pub fn tab_list_entries<'a>(items: Vec<TabListItem>) -> Element<'a, Message> {
+    let entries = MenuColumn::new().extend(items.into_iter().map(|item| {
+        button(
+            row![
+                text(if item.active { CHECKED } else { "" })
+                    .size(font_size::BODY_LARGE)
+                    .width(CHECK_WIDTH),
+                entry_label(item.label, item.folder),
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .style(menu_style)
+        .on_press(Message::MenuChoice(AppMessage::SelectTab(item.tab)))
+        .menu_item()
+    }));
+    menu_card(entries).into()
 }
 
 /// The keys of the "Send keys" menu, in the C# session header's groups and order.
@@ -2155,7 +2356,7 @@ pub fn split_axis_entries<'a>(host: TabId) -> Element<'a, Message> {
             .width(Length::Fill)
             .style(menu_style)
             .on_press(Message::SplitPalette { host, axis })
-            .into()
+            .menu_item()
     };
     let entries = MenuColumn::new()
         .push(split(fl!("ui-split-horizontal"), Axis::Stacked))
@@ -2256,6 +2457,12 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
         .push(entry(
             fl!("ui-tree-add-session"),
             folder(FolderMessage::NewProfileIn(path.to_owned())),
+        ))
+        .push(entry(
+            fl!("ui-tree-add-tool"),
+            Some(AppMessage::Tools(ToolsMessage::NewEntry {
+                folder: (path != NO_FOLDER).then(|| path.to_owned()),
+            })),
         ));
     if path == NO_FOLDER {
         entries = entries.push(entry(
@@ -2288,7 +2495,8 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                     .style(menu_style)
                     .on_press(Message::OpenTreeMenu(TreeMenu::FolderColor(
                         path.to_owned(),
-                    ))),
+                    )))
+                    .opens_menu(),
             )
             .push(
                 button(text(fl!("ui-folder-delete")).size(font_size::BODY_LARGE))
@@ -2296,7 +2504,8 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                     .style(danger_style)
                     .on_press(Message::MenuChoice(AppMessage::Folder(
                         FolderMessage::RequestDelete(path.to_owned()),
-                    ))),
+                    )))
+                    .menu_item(),
             );
     }
     menu_card(entries).into()
@@ -2376,7 +2585,8 @@ pub fn selection_menu_entries<'a>(
             .style(danger_style)
             .on_press(Message::MenuChoice(AppMessage::Selection(
                 SelectionMessage::RequestDelete,
-            ))),
+            )))
+            .menu_item(),
         );
     menu_card(entries).into()
 }
@@ -2415,7 +2625,8 @@ pub fn edit_selection_entries<'a>(
             .style(menu_style)
             .on_press_maybe(
                 (routed > 0).then_some(Message::OpenTreeMenu(TreeMenu::GatewaySelection)),
-            ),
+            )
+            .opens_menu(),
     );
     menu_card(entries).into()
 }

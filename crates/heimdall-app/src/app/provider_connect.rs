@@ -23,8 +23,10 @@
 //! status bar says why, where the C# one shows a warning and connects without a password.
 
 use heimdall_core::credential_provider::{Lookup, ProviderKind, ProviderSettings};
+use heimdall_core::profile::ProfileId;
 use heimdall_ssh::Secret;
 
+use super::tree::ProfileKind;
 use super::vault::usable_endpoint;
 use super::{App, Effect, Notice, TabProfile};
 use crate::credential_provider::{Provided, ProviderFailure, ask, from_credential_manager};
@@ -106,6 +108,45 @@ fn provider_title(profile: &TabProfile) -> String {
 }
 
 impl App {
+    /// Whether opening profile `id` may ask the external credential provider for its
+    /// server's password, for the properties panel to say so as the C# `BuildAuthSummary`
+    /// adds "Credential provider" with the predicate its connect path uses: the provider on
+    /// and ready, as [`Self::provider_request`] wants it, and a protocol whose password it
+    /// answers there: SSH and SFTP, RDP unless it signs in over TLS alone, FTP, VNC and `WinRM`
+    /// naming an account.
+    #[must_use]
+    pub fn provider_consulted(&self, id: &ProfileId) -> bool {
+        let settings = &self.settings.credential_provider;
+        let ready = match settings.kind {
+            ProviderKind::Command => !settings.command.trim().is_empty(),
+            ProviderKind::WindowsCredentialManager => true,
+        };
+        if !settings.enabled || !ready {
+            return false;
+        }
+        let Some(profile) = self.profile_summary(id) else {
+            return false;
+        };
+        match profile.kind {
+            ProfileKind::Ssh | ProfileKind::Sftp | ProfileKind::Ftp | ProfileKind::Vnc => true,
+            ProfileKind::Rdp => self
+                .store
+                .rdp_profiles()
+                .iter()
+                .any(|rdp| rdp.id == *id && !rdp.allow_tls_only),
+            // Only a profile naming an account has a password to give.
+            ProfileKind::WinRm => self
+                .winrm_profiles()
+                .iter()
+                .any(|winrm| winrm.id == *id && winrm.username.is_some()),
+            ProfileKind::Telnet
+            | ProfileKind::Local
+            | ProfileKind::Web
+            | ProfileKind::Tool
+            | ProfileKind::Citrix => false,
+        }
+    }
+
     /// The provider's request for `question` in `tab_id`, when the provider is to be asked:
     /// it is on and runs a command, the question is the tab's own server's password, first
     /// asked in this attempt, and no password of the server was refused in this run.

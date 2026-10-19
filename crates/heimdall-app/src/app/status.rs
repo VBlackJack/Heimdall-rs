@@ -320,6 +320,16 @@ pub enum Notice {
     NothingToUndo,
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
+    /// The external tool of this name was started.
+    ExternalToolStarted(String),
+    /// The external tool of this name did not start, and why, as the C#
+    /// `ExternalToolLaunchError` says it.
+    ExternalToolFailed {
+        /// The tool.
+        name: String,
+        /// Why.
+        failure: crate::external_tool::ToolFailure,
+    },
     /// A macro recording ended with nothing typed.
     MacroNothingRecorded,
     /// The macro of this name was kept.
@@ -431,6 +441,20 @@ pub enum Notice {
     CitrixLaunched(String),
     /// A Citrix application was not launched, for this reason.
     CitrixRefused(crate::citrix::CitrixRefusal),
+    /// The web console of this profile name was handed to the system's browser, directly.
+    WebOpened(String),
+    /// A web console was handed to the system's browser through its gateway's tunnel, on
+    /// this computer's loopback address: the browser names the tunnel, not the console.
+    WebOpenedThrough {
+        /// The profile's name.
+        name: String,
+        /// The tunnel's local port.
+        port: u16,
+    },
+    /// A web console was not opened, for this reason.
+    WebRefused(crate::web_console::WebRefusal),
+    /// A tool entry names a tool this build does not have; carries the identifier it holds.
+    UnknownTool(String),
     /// The RDP profile of this name opened in Remote Desktop Connection; through this RD
     /// Gateway, which sent it there, when it did not ask for it.
     RdpExternalLaunched {
@@ -462,6 +486,9 @@ pub enum Notice {
     /// X11 forwarding was asked and no X server could be found or started: `PuTTY` started
     /// without it, as the C# `X11ServerNotFound` says.
     X11ServerNotFound,
+    /// An RDP server sent what the built-in client could not read compressed: its tab
+    /// connects without compression from now on.
+    RdpCompressionOff,
 }
 
 /// A session's state: the one the status bar names, its tab's dot shows and its profile's

@@ -135,6 +135,10 @@ fn client_caption(draft: &ProfileDraft) -> Option<String> {
     if !listens_locally(draft) {
         return None;
     }
+    // A web console's tunnel takes a port the system picks when it opens.
+    if draft.protocol == DraftProtocol::Web {
+        return Some(fl!("ui-profile-path-client-web-tunnel"));
+    }
     let port = draft.value(ProfileField::LocalTunnelPort).to_owned();
     let shown = if draft.is_on(ProfileToggle::AutoTunnelPort) {
         fl!("ui-profile-tunnel-port-auto", port = port)
@@ -150,7 +154,8 @@ fn listens_locally(draft: &ProfileDraft) -> bool {
     match draft.protocol {
         DraftProtocol::Ssh => draft.ssh_mode == SshMode::External,
         DraftProtocol::Rdp => draft.rdp_extras.external,
-        DraftProtocol::WinRm => true,
+        // The browser connects to the tunnel's port of this computer.
+        DraftProtocol::WinRm | DraftProtocol::Web => true,
         DraftProtocol::Sftp
         | DraftProtocol::Vnc
         | DraftProtocol::Telnet
@@ -188,6 +193,7 @@ fn session_kind(protocol: DraftProtocol) -> String {
         DraftProtocol::Vnc => fl!("ui-profile-path-session-vnc"),
         DraftProtocol::Telnet => fl!("ui-profile-path-session-telnet"),
         DraftProtocol::Citrix => fl!("ui-profile-path-session-citrix"),
+        DraftProtocol::Web => fl!("ui-profile-path-session-web"),
         DraftProtocol::Local => fl!("ui-profile-path-session-local"),
     }
 }

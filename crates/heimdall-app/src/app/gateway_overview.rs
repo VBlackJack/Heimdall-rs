@@ -147,6 +147,15 @@ impl App {
                 ProfileKind::WinRm,
             ));
         }
+        // As the C# `GatewayOverviewBuilder` lists WEB among the sessions a gateway carries.
+        for profile in self.store.web_profiles() {
+            routes.push((
+                &profile.gateway,
+                &profile.id,
+                &profile.name,
+                ProfileKind::Web,
+            ));
+        }
         for (gateway, id, name, kind) in routes {
             if let Some(gateway) = gateway {
                 by_gateway

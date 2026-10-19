@@ -35,6 +35,9 @@ use std::time::Duration;
 use heimdall_core::tools::http_headers::{
     self, FETCH_TIMEOUT_MS, HttpResponseInfo, HttpTarget, MAX_RESPONSE_BYTES, METHOD_NOT_ALLOWED,
 };
+use heimdall_ssh::Connection;
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
 use heimdall_tls::{PresentedSlot, UserVerdict, ValidationIssue};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::TcpStream;
@@ -95,26 +98,53 @@ pub enum HttpFetchError {
 /// [`HttpFetchError`].
 pub async fn fetch(target: &HttpTarget) -> Result<HttpFetch, HttpFetchError> {
     let timeout = Duration::from_millis(FETCH_TIMEOUT_MS);
-    tokio::time::timeout(timeout, fetch_unbounded(target))
+    tokio::time::timeout(timeout, fetch_unbounded::<Connection>(target, None))
         .await
         .unwrap_or(Err(HttpFetchError::TimedOut))
 }
 
-async fn fetch_unbounded(target: &HttpTarget) -> Result<HttpFetch, HttpFetchError> {
-    let addresses: Vec<SocketAddr> = resolve(&target.host, Duration::from_millis(FETCH_TIMEOUT_MS))
+/// The headers of `target` as the gateway reaches it, as [`fetch`] reads them: every
+/// connection is a channel the gateway opens onward, the host sent as typed for the gateway
+/// to resolve, none made from here. The time is the same, the opening of the gateway not
+/// included.
+///
+/// # Errors
+///
+/// [`HttpFetchError`]; a channel the gateway would not open is [`HttpFetchError::Connection`].
+pub async fn fetch_via<O: Opener>(
+    target: &HttpTarget,
+    gateway: &ToolGateway<O>,
+) -> Result<HttpFetch, HttpFetchError> {
+    let timeout = Duration::from_millis(FETCH_TIMEOUT_MS);
+    tokio::time::timeout(timeout, fetch_unbounded(target, Some(gateway)))
         .await
-        .map_err(|failure| {
-            HttpFetchError::Unresolved(match failure {
-                ResolveFailure::Failed(why) => why,
-                ResolveFailure::TimedOut | ResolveFailure::NoAddress => String::new(),
-            })
-        })?
-        .into_iter()
-        .map(|address| SocketAddr::new(address, target.port))
-        .collect();
+        .unwrap_or(Err(HttpFetchError::TimedOut))
+}
+
+async fn fetch_unbounded<O: Opener>(
+    target: &HttpTarget,
+    via: Option<&ToolGateway<O>>,
+) -> Result<HttpFetch, HttpFetchError> {
+    // Through a gateway the name is the gateway's to resolve.
+    let addresses: Vec<SocketAddr> = if via.is_some() {
+        Vec::new()
+    } else {
+        resolve(&target.host, Duration::from_millis(FETCH_TIMEOUT_MS))
+            .await
+            .map_err(|failure| {
+                HttpFetchError::Unresolved(match failure {
+                    ResolveFailure::Failed(why) => why,
+                    ResolveFailure::TimedOut | ResolveFailure::NoAddress => String::new(),
+                })
+            })?
+            .into_iter()
+            .map(|address| SocketAddr::new(address, target.port))
+            .collect()
+    };
     let mut session = Session {
         target,
         addresses: &addresses,
+        via,
         accepted: None,
         certificate: if target.https {
             CertificateCheck::Trusted
@@ -135,15 +165,17 @@ async fn fetch_unbounded(target: &HttpTarget) -> Result<HttpFetch, HttpFetchErro
 }
 
 /// The requests of one analysis, and what its first TLS handshake learnt.
-struct Session<'a> {
+struct Session<'a, O: Opener> {
     target: &'a HttpTarget,
     addresses: &'a [SocketAddr],
+    /// The gateway the connections go through; `None` for connections from here.
+    via: Option<&'a ToolGateway<O>>,
     /// The certificate the system refused, taken as it is from then on.
     accepted: Option<Vec<u8>>,
     certificate: CertificateCheck,
 }
 
-impl Session<'_> {
+impl<O: Opener> Session<'_, O> {
     /// One `method` request, on a connection of its own as `Connection: close` asks.
     async fn send(&mut self, method: &str) -> Result<HttpResponseInfo, HttpFetchError> {
         let request = self.target.request(method);
@@ -165,6 +197,13 @@ impl Session<'_> {
     }
 
     async fn connect(&self) -> Result<TcpStream, HttpFetchError> {
+        if let Some(gateway) = self.via {
+            // Never a fall back to a connection from here: a channel refused is the error.
+            return gateway
+                .dial(&self.target.host, self.target.port)
+                .await
+                .map_err(|error| HttpFetchError::Connection(server_text(&error.to_string())));
+        }
         heimdall_net::connect_addresses(self.addresses, None)
             .await
             .map(|connected| connected.stream)

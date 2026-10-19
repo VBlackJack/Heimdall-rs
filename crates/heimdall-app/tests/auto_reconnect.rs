@@ -708,3 +708,71 @@ fn the_session_bars_disconnect_asks_then_ends_the_desktop_and_keeps_the_tab() {
     let ended = app.tab(tab).expect("tab");
     assert!(ended.retry.is_none() && matches!(ended.phase, Phase::Closed { .. }));
 }
+
+#[test]
+fn the_session_bars_disconnect_ends_the_desktop_at_once_when_the_confirmation_is_off() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::RdpConfirmDisconnect(false),
+    ));
+    assert!(!app.settings().rdp_confirm_disconnect);
+    let (tab, _attempt) = live(&mut app);
+    app.update(Message::DisconnectDesktop(tab));
+    assert!(app.dialog.is_none(), "nothing asked: {:?}", app.dialog);
+    let ended = app.tab(tab).expect("the tab stays");
+    assert!(
+        matches!(ended.phase, Phase::Closed { .. }),
+        "{:?}",
+        ended.phase
+    );
+}
+
+/// Closes `tab`, said yes to the question a live session asks first.
+fn close(app: &mut App, tab: TabId) {
+    app.update(Message::RequestCloseTab(tab));
+    if app.dialog.is_some() {
+        app.update(Message::ConfirmDialog);
+    }
+}
+
+#[test]
+fn a_session_coming_up_and_closing_is_recorded_in_the_connection_history() {
+    let dir = tempfile::tempdir().expect("dir");
+    let logs = dir.path().join("logs");
+    let mut app = app(dir.path());
+    app.set_connection_history(Some(logs.clone()));
+    let (tab, attempt) = live(&mut app);
+    // Another event of the live session is not another connection.
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::DesktopRenamed("x".to_owned()),
+    );
+    close(&mut app, tab);
+    assert!(app.tab(tab).is_none(), "closed");
+
+    let text = std::fs::read_to_string(logs.join("connection-history.jsonl")).expect("history");
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a JSON line"))
+        .collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert_eq!(lines[0]["action"], "Connected");
+    assert_eq!(lines[1]["action"], "Disconnected");
+    for line in &lines {
+        assert_eq!(line["serverId"], "dc");
+        assert_eq!(line["connectionType"], "RDP");
+        assert_eq!(line.as_object().expect("object").len(), 5, "no extra field");
+    }
+}
+
+#[test]
+fn nothing_is_recorded_without_a_history_folder() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _attempt) = live(&mut app);
+    close(&mut app, tab);
+    assert!(!dir.path().join("connection-history.jsonl").exists());
+}

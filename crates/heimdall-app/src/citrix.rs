@@ -28,6 +28,10 @@ use zeroize::Zeroizing;
 /// The extension of the files Citrix Workspace opens.
 const ICA_EXTENSION: &str = "ica";
 
+/// The ports `http` and `https` addresses name by default.
+const HTTP_PORT: u16 = 80;
+const HTTPS_PORT: u16 = 443;
+
 /// Citrix Workspace's `StoreFront` launcher, preferred, as the C#.
 const STOREBROWSE: &str = "storebrowse.exe";
 /// Citrix Workspace's self-service launcher, the C# fallback.
@@ -179,6 +183,42 @@ pub fn store_front_url(url: &str) -> Result<String, CitrixRefusal> {
         return Err(CitrixRefusal::StoreFrontCredentials);
     }
     Ok(launchable)
+}
+
+/// `url` as session events and diagnostics may name it, as the C#
+/// `CitrixStoreFrontUrlSanitizer`: an absolute `http` or `https` address without its user
+/// name, password, query and fragment, its scheme and host lowercased, its port kept unless
+/// it is the scheme's own, its path kept (`/` when empty). Anything else is returned as it
+/// is, for the event's fallback to name.
+#[must_use]
+pub fn sanitized_store_front(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_owned();
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    let default_port = match scheme.as_str() {
+        "http" => HTTP_PORT,
+        "https" => HTTPS_PORT,
+        _ => return url.to_owned(),
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if host_port.is_empty() {
+        return url.to_owned();
+    }
+    let (host, port) = match host_port.rsplit_once(':') {
+        Some((host, port)) if !port.contains(']') && !port.is_empty() => (host, Some(port)),
+        _ => (host_port, None),
+    };
+    let path = tail.split(['?', '#']).next().unwrap_or_default();
+    let path = if path.is_empty() { "/" } else { path };
+    let port = port
+        .filter(|port| port.parse::<u16>().ok() != Some(default_port))
+        .map_or_else(String::new, |port| format!(":{port}"));
+    format!("{scheme}://{}{port}{path}", host.to_ascii_lowercase())
 }
 
 /// `file` when it may be opened: an `.ica` file of this computer, never one on a share,
@@ -412,6 +452,28 @@ mod tests {
             ica_file: None,
             seamless: true,
             sso: true,
+        }
+    }
+
+    #[test]
+    fn a_store_front_address_is_sanitized_for_the_session_events() {
+        for (raw, expected) in [
+            (
+                "https://store.lab/Citrix/Store",
+                "https://store.lab/Citrix/Store",
+            ),
+            (
+                "HTTPS://user:secret@Store.Lab:443/Citrix/Store?token=1#frag",
+                "https://store.lab/Citrix/Store",
+            ),
+            ("http://store.lab:8080", "http://store.lab:8080/"),
+            ("http://store.lab:80/a", "http://store.lab/a"),
+            // Not an address: left for the event's fallback to name.
+            ("store.lab", "store.lab"),
+            ("ftp://store.lab/x", "ftp://store.lab/x"),
+            ("", ""),
+        ] {
+            assert_eq!(sanitized_store_front(raw), expected, "{raw}");
         }
     }
 

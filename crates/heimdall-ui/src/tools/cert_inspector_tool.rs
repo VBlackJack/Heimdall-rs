@@ -20,20 +20,34 @@
 //! The certificates are read by a real TLS handshake, 1.2 or 1.3, as the C#
 //! `RetrieveCertificateAsync`'s `SslStream`: the chain the server presents, the version
 //! negotiated, every port probed [`MAX_CONCURRENT_PROBES`] at a time and stopped for real.
+//!
+//! A server that shares nothing with that handshake, TLS 1.0 or 1.1 alone or TLS 1.2
+//! suites rustls refuses, is read again in clear (owner decision of 2026-10-17, as the C#
+//! `SslStream` reads it where the system still allows those versions): its certificates
+//! as its answer to a legacy hello presents them, shown under a warning that nothing
+//! proves the server holds their key, with the way to the TLS Auditor. Never trusted.
 
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use heimdall_app::TabId;
+use heimdall_app::tool_route::ToolRoute;
+use heimdall_app::tools::{ToolContext, ToolId};
+use heimdall_app::{Message as AppMessage, TabId, ToolsMessage};
 use iced::futures::{SinkExt as _, StreamExt as _};
 use iced::widget::{Column, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 use heimdall_core::tools::banner_grab::clean_banner;
 use heimdall_core::tools::cert_inspector::{
-    self, CertExpirationStatus, CertInspectionSummary, DEFAULT_PORT, MAX_CONCURRENT_PROBES,
-    MAX_SCAN_PORTS, PROBE_TIMEOUT_MS,
+    self, CertExpirationStatus, CertInspectionSummary, DEFAULT_PORT, EXTENDED_SCAN_PORTS,
+    MAX_CONCURRENT_PROBES, MAX_SCAN_PORTS, PROBE_TIMEOUT_MS, QUICK_SCAN_PORTS,
+};
+use heimdall_core::tools::legacy_tls::{
+    self, HelloShape, LegacyHandshake, LegacyReader, LegacyTlsError,
 };
 use heimdall_core::tools::net_host::checked_host;
+use heimdall_core::tools::tls_audit::TlsProtocol;
+use heimdall_ssh::tool_route::ToolGateway;
 
 use super::file_export::FileExport;
 use super::network_run::RunSlot;
@@ -53,6 +67,9 @@ const STREAM_BUFFER: usize = 16;
 const MAX_DETAIL_CHARS: usize = 200;
 /// The width of the labels of a certificate's details.
 const LABEL_WIDTH: f32 = 140.0;
+/// Bytes read from a legacy TLS answer at a time; the whole answer is bounded by
+/// [`legacy_tls::MAX_ANSWER_BYTES`].
+const LEGACY_READ_CHUNK: usize = 4096;
 
 /// Why a port's certificate could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,9 +80,10 @@ pub enum ProbeError {
     Name,
     /// The TLS handshake failed: no TLS there, or a cipher not spoken. Its words.
     Handshake(String),
-    /// The server speaks only TLS 1.1 or older, which Heimdall refuses (owner decision of
-    /// 2026-10-16): said plainly rather than as rustls words its refusal.
-    ObsoleteVersion,
+    /// The server speaks only a TLS version older than 1.2, and its answer to the legacy
+    /// hello gave no certificate: why, said plainly rather than as rustls words its
+    /// refusal.
+    Legacy(LegacyTlsError),
     /// The server presented no certificate.
     NoCertificate,
     /// The certificate presented does not decode.
@@ -81,6 +99,8 @@ pub enum CertInspectorMessage {
     HostChanged(String),
     /// Ports input changed.
     PortsChanged(String),
+    /// A scan profile chosen: its ports fill the Ports box, as the C# profile buttons.
+    ProfileChosen(ScanProfile),
     /// Inspect target certificates.
     Inspect,
     /// Stop the inspection, as the C# `Cancel`.
@@ -89,10 +109,39 @@ pub enum CertInspectorMessage {
     Probed(u64, u16, Result<Box<CertInspectionSummary>, ProbeError>),
     /// Run `.0` probed every port.
     Done(u64),
+    /// The gateway run `.0` goes through could not be opened: why, said.
+    RouteFailed(u64, String),
     /// Copy plain text details.
     CopyDetails,
     /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
     ExportCsv,
+}
+
+/// A preset list of ports to scan, as the C# `quick` and `extended` profiles
+/// (`CertInspectorViewModel.GetScanPorts`); typing the ports is the `custom` one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanProfile {
+    Quick,
+    Extended,
+}
+
+impl ScanProfile {
+    /// The ports of the profile.
+    fn ports(self) -> &'static [u16] {
+        match self {
+            Self::Quick => &QUICK_SCAN_PORTS,
+            Self::Extended => &EXTENDED_SCAN_PORTS,
+        }
+    }
+
+    /// The profile's button label, with its port count as the C# tooltip says it.
+    fn label(self) -> String {
+        let count = self.ports().len();
+        match self {
+            Self::Quick => fl!("ui-tool-cert-profile-quick", count = count),
+            Self::Extended => fl!("ui-tool-cert-profile-extended", count = count),
+        }
+    }
 }
 
 /// The SSL/TLS Certificate Inspector tool pane state.
@@ -156,13 +205,18 @@ enum Step {
 
 impl CertInspectorPane {
     /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: CertInspectorMessage) -> Outcome {
+    pub fn update(
+        &mut self,
+        tab: TabId,
+        message: CertInspectorMessage,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
         match self.apply(message) {
             Step::None => Outcome::None,
             Step::Copy(slot, content) => Outcome::Copy(slot, content),
             Step::Save(export) => Outcome::Save(export),
             Step::Probe(run, host, ports) => {
-                let task = Task::run(probes(run, host, ports), move |message| {
+                let task = Task::run(probes(run, host, ports, via), move |message| {
                     Message::Tool(tab, super::ToolMessage::Cert(message))
                 });
                 Outcome::Task(self.run.attach(task))
@@ -176,6 +230,10 @@ impl CertInspectorPane {
             CertInspectorMessage::HostChanged(val) => {
                 self.host = val;
                 self.error = None;
+                Step::None
+            }
+            CertInspectorMessage::ProfileChosen(profile) => {
+                self.ports = cert_inspector::ports_text(profile.ports());
                 Step::None
             }
             CertInspectorMessage::PortsChanged(val) => {
@@ -211,6 +269,12 @@ impl CertInspectorPane {
                 }
                 Step::None
             }
+            CertInspectorMessage::RouteFailed(run, said) => {
+                if self.run.finish(run) {
+                    self.error = Some(said);
+                }
+                Step::None
+            }
             CertInspectorMessage::CopyDetails => {
                 if self.results.is_empty() {
                     return Step::None;
@@ -237,12 +301,14 @@ impl CertInspectorPane {
                     fl!("ui-tool-cert-key-size"),
                     fl!("ui-tool-cert-hostname-match"),
                     fl!("ui-tool-cert-sans"),
+                    fl!("ui-tool-cert-col-read"),
                 ];
                 let (yes, no) = (fl!("ui-tool-cert-match-yes"), fl!("ui-tool-cert-match-no"));
                 let csv = cert_inspector::build_scan_csv(
                     &self.results,
                     header.each_ref().map(String::as_str),
                     (&yes, &no),
+                    read_text,
                 );
                 Step::Save(FileExport::csv(
                     CopySlot::CertCsv,
@@ -377,7 +443,27 @@ impl CertInspectorPane {
         .spacing(spacing::SM)
         .align_y(Alignment::End);
 
-        let input_card = container(column![inputs_row])
+        let profiles_row = row![
+            super::field_label(fl!("ui-tool-cert-profiles")),
+            super::action_button(
+                ScanProfile::Quick.label(),
+                false,
+                Some(send(CertInspectorMessage::ProfileChosen(
+                    ScanProfile::Quick
+                ))),
+            ),
+            super::action_button(
+                ScanProfile::Extended.label(),
+                false,
+                Some(send(CertInspectorMessage::ProfileChosen(
+                    ScanProfile::Extended
+                ))),
+            ),
+        ]
+        .spacing(spacing::SM)
+        .align_y(Alignment::Center);
+
+        let input_card = container(column![inputs_row, profiles_row].spacing(spacing::SM))
             .padding(spacing::MD)
             .style(styles::card);
 
@@ -433,7 +519,7 @@ impl CertInspectorPane {
         }
 
         for r in &self.results {
-            body = body.push(certificate_card(r));
+            body = body.push(certificate_card(r, &self.inspected_host));
         }
 
         super::content_column(body)
@@ -461,15 +547,71 @@ fn detail_row<'a>(label: String, value: String) -> Element<'a, Message> {
     .into()
 }
 
-/// The card of one port's certificate.
-fn certificate_card<'a>(r: &CertInspectionSummary) -> Element<'a, Message> {
+/// The style of a badge that says something good of a certificate: the success colour,
+/// but neutral for a certificate read in clear, whose good dates or name prove nothing.
+fn good(r: &CertInspectionSummary) -> fn(&Theme) -> text::Style {
+    if r.legacy.is_some() {
+        text::secondary
+    } else {
+        text::success
+    }
+}
+
+/// What opens the TLS Auditor on `host`:`port`, through the tool context of the palette
+/// and the sidebar: its boxes filled, nothing started.
+fn audit_message(host: &str, port: u16) -> Message {
+    let context = ToolContext {
+        host: Some(host.to_owned()),
+        port: Some(port),
+        argument: None,
+    };
+    Message::App(AppMessage::Tools(ToolsMessage::Open {
+        tool: ToolId::TlsAudit,
+        title: super::tab_title(ToolId::TlsAudit, &context),
+        context,
+    }))
+}
+
+/// The warning over a certificate read in clear from a legacy TLS answer: the version
+/// and suite, that nothing of it is trusted, and the TLS Auditor on the same port.
+fn legacy_banner<'a>(
+    r: &CertInspectionSummary,
+    cipher_suite: &str,
+    host: &str,
+) -> Element<'a, Message> {
+    container(
+        column![
+            text(fl!(
+                "ui-tool-cert-legacy-title",
+                version = r.tls_version.as_str(),
+                cipher = cipher_suite
+            ))
+            .size(font_size::BODY)
+            .style(text::warning),
+            text(fl!("ui-tool-cert-legacy-warning")).size(font_size::BODY),
+            super::action_button(
+                fl!("ui-tool-cert-legacy-audit"),
+                false,
+                Some(audit_message(host, r.port)),
+            ),
+        ]
+        .spacing(spacing::SM),
+    )
+    .padding(spacing::MD)
+    .width(Length::Fill)
+    .style(styles::warning_badge)
+    .into()
+}
+
+/// The card of one port's certificate, read from `host`.
+fn certificate_card<'a>(r: &CertInspectionSummary, host: &str) -> Element<'a, Message> {
     let status_badge = match r.expiration_status {
-        CertExpirationStatus::Valid => badge(fl!("ui-tool-cert-status-valid"), text::success),
+        CertExpirationStatus::Valid => badge(fl!("ui-tool-cert-status-valid"), good(r)),
         CertExpirationStatus::Warning => badge(fl!("ui-tool-cert-status-warning"), text::warning),
         CertExpirationStatus::Expired => badge(fl!("ui-tool-cert-status-expired"), text::danger),
     };
     let match_badge = if r.hostname_matches {
-        badge(fl!("ui-tool-cert-match-yes"), text::success)
+        badge(fl!("ui-tool-cert-match-yes"), good(r))
     } else {
         badge(fl!("ui-tool-cert-match-no"), text::danger)
     };
@@ -504,21 +646,47 @@ fn certificate_card<'a>(r: &CertInspectionSummary) -> Element<'a, Message> {
         detail_row(fl!("ui-tool-cert-valid-from"), r.not_before.clone()),
         detail_row(fl!("ui-tool-cert-valid-to"), valid_to(r)),
         detail_row(fl!("ui-tool-cert-tls-version"), r.tls_version.clone()),
+    ]
+    .spacing(spacing::XS);
+    if let Some(legacy) = &r.legacy {
+        details = details.push(detail_row(
+            fl!("ui-tool-cert-cipher-suite"),
+            legacy.cipher_suite.clone(),
+        ));
+    }
+    details = details.extend([
         detail_row(fl!("ui-tool-cert-sig-alg"), r.sig_algorithm.clone()),
         detail_row(fl!("ui-tool-cert-key-size"), key_size(r)),
         detail_row(fl!("ui-tool-cert-serial"), r.serial.clone()),
         detail_row(fl!("ui-tool-cert-sha256"), r.thumbprint.clone()),
         detail_row(fl!("ui-tool-cert-sans"), sans(r)),
-    ]
-    .spacing(spacing::XS);
+    ]);
     if !chain.is_empty() {
         details = details.push(detail_row(fl!("ui-tool-cert-chain"), chain.join("\n")));
     }
 
-    container(column![header_row, details].spacing(spacing::MD))
+    let mut card = column![header_row].spacing(spacing::MD);
+    if let Some(legacy) = &r.legacy {
+        card = card.push(legacy_banner(r, &legacy.cipher_suite, host));
+    }
+    container(card.push(details))
         .padding(spacing::MD)
         .style(styles::card)
         .into()
+}
+
+/// How a certificate was read, as its export says it: by a verified handshake, or in
+/// clear from a legacy TLS answer, with the suite.
+fn read_text(r: &CertInspectionSummary) -> String {
+    r.legacy.as_ref().map_or_else(
+        || fl!("ui-tool-cert-read-verified"),
+        |legacy| {
+            fl!(
+                "ui-tool-cert-read-unverified",
+                cipher = legacy.cipher_suite.as_str()
+            )
+        },
+    )
 }
 
 /// The last moment of a certificate and the days left, or past.
@@ -552,8 +720,19 @@ fn sans(r: &CertInspectionSummary) -> String {
     }
 }
 
-/// The plain-text report of one certificate, as the C# `BuildDetailsText`.
+/// The plain-text report of one certificate, as the C# `BuildDetailsText`; a certificate
+/// read in clear says so first, with its suite.
 fn details_text(summary: &CertInspectionSummary, host: &str) -> String {
+    let legacy = summary.legacy.as_ref().map(|legacy| {
+        [
+            fl!(
+                "ui-tool-cert-legacy-title",
+                version = summary.tls_version.as_str(),
+                cipher = legacy.cipher_suite.as_str()
+            ),
+            fl!("ui-tool-cert-legacy-warning"),
+        ]
+    });
     let lines = [
         fl!("ui-tool-cert-port-header", port = summary.port),
         format!(
@@ -585,7 +764,11 @@ fn details_text(summary: &CertInspectionSummary, host: &str) -> String {
         format!("{}: {}", fl!("ui-tool-cert-key-size"), key_size(summary)),
         format!("{}: {}", fl!("ui-tool-cert-sans"), sans(summary)),
     ];
-    let mut text = lines.join("\n");
+    let mut text = lines[0].clone();
+    for line in legacy.iter().flatten().chain(&lines[1..]) {
+        text.push('\n');
+        text.push_str(line);
+    }
     text.push('\n');
     text
 }
@@ -606,12 +789,49 @@ fn failure_text(host: &str, port: u16, error: &ProbeError) -> String {
             port = port,
             detail = detail.as_str()
         ),
-        ProbeError::ObsoleteVersion => {
-            fl!("ui-tool-cert-error-obsolete-tls", host = host, port = port)
+        ProbeError::Legacy(LegacyTlsError::Version(code))
+            if *code < TlsProtocol::Tls10.version_code() =>
+        {
+            fl!(
+                "ui-tool-cert-error-legacy-version",
+                host = host,
+                port = port,
+                version = version_label(*code)
+            )
         }
+        ProbeError::Legacy(error) => fl!(
+            "ui-tool-cert-error-legacy",
+            host = host,
+            port = port,
+            detail = legacy_detail(*error)
+        ),
         ProbeError::NoCertificate => fl!("ui-tool-cert-error-no-certificate"),
         ProbeError::Unreadable => fl!("ui-tool-cert-error-unreadable"),
         ProbeError::Timeout => fl!("ui-tool-cert-error-timeout"),
+    }
+}
+
+/// The name of version `code`: SSL 3.0, else its number.
+fn version_label(code: u16) -> String {
+    if code == TlsProtocol::Ssl3.version_code() {
+        TlsProtocol::Ssl3.name().to_owned()
+    } else {
+        format!("0x{code:04X}")
+    }
+}
+
+/// Why a legacy TLS answer gave no certificate, said.
+fn legacy_detail(error: LegacyTlsError) -> String {
+    match error {
+        LegacyTlsError::Alert(code) => fl!("ui-tool-cert-legacy-alert", code = code),
+        LegacyTlsError::NotTls => fl!("ui-tool-cert-legacy-not-tls"),
+        LegacyTlsError::TooLarge => fl!("ui-tool-cert-legacy-too-large"),
+        // A version past TLS 1.0 it was not offered is no answer to the hello.
+        LegacyTlsError::Malformed | LegacyTlsError::Version(_) => {
+            fl!("ui-tool-cert-legacy-malformed")
+        }
+        LegacyTlsError::NoCertificate => fl!("ui-tool-cert-legacy-no-certificate"),
+        LegacyTlsError::Closed => fl!("ui-tool-cert-legacy-closed"),
     }
 }
 
@@ -624,52 +844,211 @@ fn detail(raw: &str) -> String {
         .collect()
 }
 
-/// The certificate of `host`:`port`, read by a TLS handshake within [`PROBE_TIMEOUT_MS`].
-async fn probe(host: String, port: u16) -> Result<Box<CertInspectionSummary>, ProbeError> {
+/// Now, in Unix seconds.
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Where a probe's connections are made.
+#[derive(Clone)]
+enum Link {
+    /// From this computer, the address the first connection reached.
+    Address(std::net::SocketAddr),
+    /// From the gateway, to this host and port as typed: the gateway resolves the name.
+    Gateway(Arc<ToolGateway>, String, u16),
+}
+
+impl Link {
+    /// The port reached.
+    fn port(&self) -> u16 {
+        match self {
+            Self::Address(address) => address.port(),
+            Self::Gateway(_, _, port) => *port,
+        }
+    }
+
+    /// A connection of its own, never from here when the link is a gateway's.
+    async fn connect(&self) -> std::io::Result<tokio::net::TcpStream> {
+        match self {
+            Self::Address(address) => tokio::net::TcpStream::connect(address).await,
+            Self::Gateway(gateway, host, port) => gateway.dial(host, *port).await,
+        }
+    }
+}
+
+/// The certificate of `host`:`port`, read by a TLS handshake within [`PROBE_TIMEOUT_MS`];
+/// a server sharing nothing with it read again in clear, at the same address and within
+/// the same time. Through `via` every connection is a channel of the gateway.
+async fn probe(
+    host: String,
+    port: u16,
+    via: Option<Arc<ToolGateway>>,
+) -> Result<Box<CertInspectionSummary>, ProbeError> {
     let timeout = Duration::from_millis(PROBE_TIMEOUT_MS);
     let read = async {
-        let tcp = tokio::net::TcpStream::connect((host.as_str(), port))
-            .await
-            .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
+        let (tcp, link) = match via {
+            Some(gateway) => {
+                let tcp = gateway
+                    .dial(&host, port)
+                    .await
+                    .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
+                (tcp, Link::Gateway(gateway, host.clone(), port))
+            }
+            None => {
+                let tcp = tokio::net::TcpStream::connect((host.as_str(), port))
+                    .await
+                    .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
+                // The address reached: a read in clear goes to it, never to another the name
+                // resolves to by then.
+                let address = tcp
+                    .peer_addr()
+                    .map_err(|error| ProbeError::Connect(detail(&error.to_string())))?;
+                (tcp, Link::Address(address))
+            }
+        };
         let name = heimdall_tls::inspection_server_name(&host).ok_or(ProbeError::Name)?;
-        let tls = heimdall_tls::inspection_connector()
+        let tls = match heimdall_tls::inspection_connector()
             .connect(name, tcp)
             .await
-            .map_err(|error| {
-                if heimdall_tls::failed_on_obsolete_version(&error) {
-                    ProbeError::ObsoleteVersion
-                } else {
-                    ProbeError::Handshake(detail(&error.to_string()))
-                }
-            })?;
+        {
+            Ok(tls) => tls,
+            Err(error) if heimdall_tls::may_speak_legacy_only(&error) => {
+                return read_legacy(&link, &host, &error).await;
+            }
+            Err(error) => return Err(ProbeError::Handshake(detail(&error.to_string()))),
+        };
         let chain =
             heimdall_tls::presented_chain(tls.get_ref().1).ok_or(ProbeError::NoCertificate)?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        cert_inspector::build_summary(&chain.certificates, chain.version.label(), &host, port, now)
-            .map(Box::new)
-            .ok_or(ProbeError::Unreadable)
+        cert_inspector::build_summary(
+            &chain.certificates,
+            chain.version.label(),
+            &host,
+            port,
+            now(),
+        )
+        .map(Box::new)
+        .ok_or(ProbeError::Unreadable)
     };
     tokio::time::timeout(timeout, read)
         .await
         .unwrap_or(Err(ProbeError::Timeout))
 }
 
+/// Why a legacy TLS read gave nothing.
+enum LegacyFailure {
+    /// The connection, of this kind: the system's words.
+    Io(std::io::ErrorKind, String),
+    /// The answer.
+    Answer(LegacyTlsError),
+}
+
+impl LegacyFailure {
+    /// Whether the server closed or reset the connection on the hello, as an old server
+    /// intolerant of its version or its extensions does.
+    fn closed(&self) -> bool {
+        matches!(
+            self,
+            Self::Answer(LegacyTlsError::Closed)
+                | Self::Io(
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::UnexpectedEof,
+                    _
+                )
+        )
+    }
+}
+
+/// The certificate of `host` at `address` read in clear after the handshake failed with
+/// `refusal`, marked so: a full legacy hello, then a minimal one when the server closes on
+/// it. A server that turns out to speak what rustls speaks is not shown as a legacy one:
+/// the handshake's own words are kept. When the read gives nothing, a server that said it
+/// speaks only an old version is told why, and so is one speaking SSL 3.0 or older; any
+/// other keeps the handshake's own words.
+async fn read_legacy(
+    link: &Link,
+    host: &str,
+    refusal: &std::io::Error,
+) -> Result<Box<CertInspectionSummary>, ProbeError> {
+    let refused = || ProbeError::Handshake(detail(&refusal.to_string()));
+    let obsolete = heimdall_tls::failed_on_obsolete_version(refusal);
+    let read = match legacy_handshake(link, host, HelloShape::Full).await {
+        Err(failure) if failure.closed() => legacy_handshake(link, host, HelloShape::Minimal).await,
+        read => read,
+    };
+    match read {
+        Ok(handshake) if handshake.speaks_modern_tls() => Err(refused()),
+        Ok(handshake) => cert_inspector::build_legacy_summary(&handshake, host, link.port(), now())
+            .map(Box::new)
+            .ok_or(ProbeError::Unreadable),
+        Err(LegacyFailure::Answer(LegacyTlsError::Version(code)))
+            if code < TlsProtocol::Tls10.version_code() =>
+        {
+            Err(ProbeError::Legacy(LegacyTlsError::Version(code)))
+        }
+        Err(LegacyFailure::Answer(error)) if obsolete => Err(ProbeError::Legacy(error)),
+        Err(LegacyFailure::Io(_, said)) if obsolete => Err(ProbeError::Connect(said)),
+        Err(_) => Err(refused()),
+    }
+}
+
+/// What `host` at `address` answers a legacy hello of `shape`, up to its certificates, on
+/// a connection of its own closed once they are read: the handshake is never finished.
+async fn legacy_handshake(
+    link: &Link,
+    host: &str,
+    shape: HelloShape,
+) -> Result<LegacyHandshake, LegacyFailure> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let io = |error: std::io::Error| LegacyFailure::Io(error.kind(), detail(&error.to_string()));
+    let mut tcp = link.connect().await.map_err(io)?;
+    tcp.write_all(&legacy_tls::client_hello(host, shape))
+        .await
+        .map_err(io)?;
+    let mut reader = LegacyReader::new();
+    let mut chunk = vec![0; LEGACY_READ_CHUNK];
+    loop {
+        let read = tcp.read(&mut chunk).await.map_err(io)?;
+        if read == 0 {
+            return Err(LegacyFailure::Answer(LegacyTlsError::Closed));
+        }
+        if let Some(handshake) = reader.feed(&chunk[..read]).map_err(LegacyFailure::Answer)? {
+            return Ok(handshake);
+        }
+    }
+}
+
 /// The messages of run `run` probing `ports` of `host`, [`MAX_CONCURRENT_PROBES`] at a
 /// time, as the C# `SemaphoreSlim`: each port's outcome as it comes, then the end. Dropped
-/// by a stop, every probe still going is dropped with it.
+/// by a stop, every probe still going is dropped with it. Through `via` the gateway is
+/// opened first, and one that cannot be opened ends the run: nothing is then connected from
+/// here.
 fn probes(
     run: u64,
     host: String,
     ports: Vec<u16>,
+    via: Option<ToolRoute>,
 ) -> impl iced::futures::Stream<Item = CertInspectorMessage> {
     iced::stream::channel(STREAM_BUFFER, async move |mut out| {
+        let gateway = match via {
+            Some(route) => match route.open().await {
+                Ok(gateway) => Some(Arc::new(gateway)),
+                Err(error) => {
+                    let said = super::route_bar::failure_text(error);
+                    let _ = out.send(CertInspectorMessage::RouteFailed(run, said)).await;
+                    return;
+                }
+            },
+            None => None,
+        };
         let mut probed = iced::futures::stream::iter(ports)
             .map(|port| {
                 let host = host.clone();
-                async move { (port, probe(host, port).await) }
+                let gateway = gateway.clone();
+                async move { (port, probe(host, port, gateway).await) }
             })
             .buffer_unordered(MAX_CONCURRENT_PROBES);
         while let Some((port, result)) = probed.next().await {
@@ -687,6 +1066,9 @@ fn probes(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use heimdall_core::tools::cert_inspector::CertExpirationStatus;
 
     use super::*;
@@ -712,6 +1094,7 @@ mod tests {
             },
             chain: Vec::new(),
             port,
+            legacy: None,
         })
     }
 
@@ -725,6 +1108,29 @@ mod tests {
             }
             other => panic!("no probe: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_scan_profile_fills_the_ports_box_with_its_ports_and_scans_them() {
+        let mut pane = CertInspectorPane::default();
+        pane.apply(CertInspectorMessage::HostChanged("files.lab".to_owned()));
+        pane.apply(CertInspectorMessage::ProfileChosen(ScanProfile::Quick));
+        assert_eq!(
+            pane.ports,
+            "443, 8443, 993, 995, 465, 636, 990, 5986, 3389, 853, 5223, 8883"
+        );
+        pane.apply(CertInspectorMessage::ProfileChosen(ScanProfile::Extended));
+        assert_eq!(
+            cert_inspector::parse_ports(&pane.ports).len(),
+            EXTENDED_SCAN_PORTS.len()
+        );
+        assert!(matches!(
+            pane.apply(CertInspectorMessage::Inspect),
+            Step::Probe(_, _, ports) if ports.len() == EXTENDED_SCAN_PORTS.len()
+        ));
+        // A profile is a start: the box stays free to edit.
+        pane.apply(CertInspectorMessage::PortsChanged("443".to_owned()));
+        assert_eq!(pane.ports, "443");
     }
 
     #[test]
@@ -813,47 +1219,208 @@ mod tests {
         assert!(pane.notice.is_some());
     }
 
-    /// A server speaking TLS 1.0 alone, on a port of the loopback: it answers the first
-    /// client hello with a server hello choosing TLS 1.0 (`0x0301`), as an old appliance.
-    async fn tls10_only_server() -> u16 {
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-        const TLS10: [u8; 2] = [0x03, 0x01];
-        const RSA_AES_128_CBC_SHA: [u8; 2] = [0x00, 0x2F];
-        const RANDOM_LEN: usize = 32;
+    /// A fixture certificate for `old.lab`, valid from 2020 to 2090 (DER).
+    fn fixture_certificate() -> Vec<u8> {
+        let key = rcgen::KeyPair::generate().expect("key");
+        let mut params = rcgen::CertificateParams::new(vec!["old.lab".to_owned()]).expect("params");
+        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2090, 1, 1);
+        params.self_signed(&key).expect("signed").der().to_vec()
+    }
+
+    /// TLS 1.0 and TLS 1.2 on the wire.
+    const TLS10: u16 = 0x0301;
+    const TLS12: u16 = 0x0303;
+    /// `TLS_RSA_WITH_AES_128_CBC_SHA`, and `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, which
+    /// rustls speaks.
+    const RSA_AES_128_CBC_SHA: u16 = 0x002F;
+    const ECDHE_RSA_AES_128_GCM: u16 = 0xC02F;
+    /// The record type of a handshake, and the handshake types of a `ServerHello`, a
+    /// `Certificate` and a `ServerHelloDone`.
+    const HANDSHAKE: u8 = 22;
+    const SERVER_HELLO: u8 = 2;
+    const CERTIFICATE: u8 = 11;
+    const SERVER_HELLO_DONE: u8 = 14;
+    /// The fatal `handshake_failure` alert.
+    const HANDSHAKE_FAILURE: [u8; 7] = [0x15, 0x03, 0x03, 0, 2, 2, 40];
+    /// Where a client hello's version sits: after the record and message headers.
+    const HELLO_VERSION_AT: std::ops::Range<usize> = 9..11;
+
+    /// A handshake message of type `kind` and body `body`.
+    fn message(kind: u8, body: &[u8]) -> Vec<u8> {
+        let length = u32::try_from(body.len()).expect("short").to_be_bytes();
+        [&[kind], &length[1..], body].concat()
+    }
+
+    /// `messages` in one handshake record of `version`.
+    fn record(version: u16, messages: &[u8]) -> Vec<u8> {
+        let length = u16::try_from(messages.len()).expect("short").to_be_bytes();
+        [&[HANDSHAKE], &version.to_be_bytes()[..], &length, messages].concat()
+    }
+
+    /// A `ServerHello` choosing `version` and `cipher_suite`: no session, no compression.
+    fn server_hello(version: u16, cipher_suite: u16) -> Vec<u8> {
+        let mut body = version.to_be_bytes().to_vec();
+        body.extend([0x5A; 32]);
+        body.push(0);
+        body.extend(cipher_suite.to_be_bytes());
+        body.push(0);
+        message(SERVER_HELLO, &body)
+    }
+
+    /// The `Certificate` message of a list of `list_len` bytes holding `chain`.
+    fn certificates(list_len: usize, chain: &[Vec<u8>]) -> Vec<u8> {
+        let mut body = u32::try_from(list_len).expect("short").to_be_bytes()[1..].to_vec();
+        for der in chain {
+            body.extend(&u32::try_from(der.len()).expect("short").to_be_bytes()[1..]);
+            body.extend(der);
+        }
+        message(CERTIFICATE, &body)
+    }
+
+    /// The whole answer of a server speaking `version`, choosing `cipher_suite` and
+    /// presenting `der`: its hello, its certificate and its hello done.
+    fn answer(version: u16, cipher_suite: u16, der: &[u8]) -> Vec<u8> {
+        let mut messages = server_hello(version, cipher_suite);
+        messages.extend(certificates(der.len() + 3, &[der.to_vec()]));
+        messages.extend(message(SERVER_HELLO_DONE, &[]));
+        record(version, &messages)
+    }
+
+    /// A server on a port of the loopback that answers each client what `answer` makes of
+    /// the connection's number and the client's first bytes, nothing to close at once,
+    /// then reads until it closes: an old appliance, or a hostile one. The port, and the
+    /// count of connections taken.
+    fn canned_server(
+        answer: impl Fn(usize, &[u8]) -> Vec<u8> + Send + 'static,
+    ) -> (u16, Arc<AtomicUsize>) {
+        use std::io::{Read as _, Write as _};
         const CLIENT_HELLO_READ: usize = 4096;
-        let mut hello = TLS10.to_vec();
-        hello.extend([0x5A; RANDOM_LEN]);
-        // No session identifier, the suite, no compression, no extension.
-        hello.extend([0, RSA_AES_128_CBC_SHA[0], RSA_AES_128_CBC_SHA[1], 0]);
-        let mut message = vec![0x02, 0, 0, u8::try_from(hello.len()).expect("short")];
-        message.extend(hello);
-        let mut record = vec![0x16, TLS10[0], TLS10[1]];
-        record.extend(u16::try_from(message.len()).expect("short").to_be_bytes());
-        record.extend(message);
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .expect("listener");
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("listener");
         let port = listener.local_addr().expect("address").port();
-        tokio::spawn(async move {
-            let (mut client, _) = listener.accept().await.expect("client");
-            let mut client_hello = vec![0; CLIENT_HELLO_READ];
-            let _ = client.read(&mut client_hello).await;
-            let _ = client.write_all(&record).await;
-            // Its alert read, the connection closes.
-            let _ = client.read(&mut client_hello).await;
+        let taken = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&taken);
+        std::thread::spawn(move || {
+            while let Ok((mut client, _)) = listener.accept() {
+                let number = count.fetch_add(1, Ordering::SeqCst);
+                let mut hello = vec![0; CLIENT_HELLO_READ];
+                let read = client.read(&mut hello).unwrap_or(0);
+                let _ = client.write_all(&answer(number, &hello[..read]));
+                // Nothing more comes: the client sees the end of what was sent, and its
+                // alert or its close read, the connection closes.
+                let _ = client.shutdown(std::net::Shutdown::Write);
+                let _ = client.read(&mut hello);
+            }
         });
-        port
+        (port, taken)
+    }
+
+    /// What probing the loopback's `port` gives.
+    async fn probed(port: u16) -> Result<Box<CertInspectionSummary>, ProbeError> {
+        probe("127.0.0.1".to_owned(), port, None).await
     }
 
     #[tokio::test]
-    async fn a_server_speaking_only_tls_1_0_is_said_obsolete_not_a_failed_handshake() {
-        let port = tls10_only_server().await;
-        let refusal = probe("127.0.0.1".to_owned(), port)
-            .await
-            .expect_err("refused");
-        assert_eq!(refusal, ProbeError::ObsoleteVersion);
+    async fn a_tls_1_0_server_has_its_certificate_read_in_clear_and_marked() {
+        let canned = answer(TLS10, RSA_AES_128_CBC_SHA, &fixture_certificate());
+        let (port, taken) = canned_server(move |_, _| canned.clone());
+        let summary = probed(port).await.expect("read");
+        assert_eq!(
+            taken.load(Ordering::SeqCst),
+            2,
+            "the handshake refused, then the read in clear"
+        );
+        assert_eq!(summary.tls_version, "TLS 1.0");
+        let legacy = summary.legacy.as_ref().expect("marked as read in clear");
+        assert_eq!(legacy.cipher_suite, "TLS_RSA_WITH_AES_128_CBC_SHA");
+        assert_eq!(summary.sans, ["old.lab"]);
+        assert_eq!(summary.port, port);
+        let details = details_text(&summary, "127.0.0.1");
+        assert!(
+            details.contains("TLS_RSA_WITH_AES_128_CBC_SHA"),
+            "{details}"
+        );
+        assert!(details.contains("private key"), "the warning: {details}");
+        assert!(read_text(&summary).contains("not verified"));
+        // The way to the TLS Auditor, on the same host and port.
+        let Message::App(AppMessage::Tools(ToolsMessage::Open { tool, context, .. })) =
+            audit_message("127.0.0.1", port)
+        else {
+            panic!("no tool opened");
+        };
+        assert_eq!(tool, ToolId::TlsAudit);
+        assert_eq!(context.host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(context.port, Some(port));
+    }
+
+    #[tokio::test]
+    async fn an_old_server_closing_on_a_tls_1_2_hello_is_read_with_a_minimal_one() {
+        let canned = answer(TLS10, RSA_AES_128_CBC_SHA, &fixture_certificate());
+        let (port, taken) = canned_server(move |_, hello| {
+            let tls10 = hello.get(HELLO_VERSION_AT) == Some(&TLS10.to_be_bytes()[..]);
+            if tls10 { canned.clone() } else { Vec::new() }
+        });
+        let summary = probed(port).await.expect("read");
+        assert_eq!(
+            taken.load(Ordering::SeqCst),
+            3,
+            "rustls, the full hello and the minimal one"
+        );
+        assert_eq!(summary.tls_version, "TLS 1.0");
+        assert!(summary.legacy.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_server_speaking_what_rustls_speaks_is_not_shown_as_a_legacy_one() {
+        // The verified handshake refused (a client certificate asked, say), then a TLS 1.2
+        // answer with a suite rustls speaks.
+        let canned = answer(TLS12, ECDHE_RSA_AES_128_GCM, &fixture_certificate());
+        let (port, taken) = canned_server(move |number, _| {
+            if number == 0 {
+                HANDSHAKE_FAILURE.to_vec()
+            } else {
+                canned.clone()
+            }
+        });
+        let refusal = probed(port).await.expect_err("refused");
+        assert_eq!(taken.load(Ordering::SeqCst), 2);
+        assert!(matches!(refusal, ProbeError::Handshake(_)), "{refusal:?}");
+    }
+
+    #[tokio::test]
+    async fn a_tls_1_0_server_whose_answer_is_no_chain_is_said_why() {
+        let hello = record(TLS10, &server_hello(TLS10, RSA_AES_128_CBC_SHA));
+        // A hello, then a record announcing far more than any chain.
+        let oversized = [&hello[..], &[HANDSHAKE, 3, 1, 0xFF, 0xFF]].concat();
+        // A hello, then a certificate list longer than its message.
+        let garbled = [&hello[..], &record(TLS10, &certificates(9, &[vec![7]]))[..]].concat();
+        for (canned, expected) in [
+            (hello, LegacyTlsError::Closed),
+            (oversized, LegacyTlsError::TooLarge),
+            (garbled, LegacyTlsError::Malformed),
+        ] {
+            let (port, _) = canned_server(move |_, _| canned.clone());
+            let refusal = probed(port).await.expect_err("refused");
+            assert_eq!(refusal, ProbeError::Legacy(expected));
+            let said = failure_text("127.0.0.1", port, &refusal);
+            assert!(said.contains("obsolete"), "{said}");
+        }
+        // SSL 3.0 alone: named, never read.
+        let ssl3 = answer(0x0300, RSA_AES_128_CBC_SHA, &fixture_certificate());
+        let (port, _) = canned_server(move |_, _| ssl3.clone());
+        let refusal = probed(port).await.expect_err("refused");
+        assert_eq!(refusal, ProbeError::Legacy(LegacyTlsError::Version(0x0300)));
         let said = failure_text("127.0.0.1", port, &refusal);
-        assert!(said.contains("TLS 1.0"), "{said}");
+        assert!(said.contains("SSL 3.0"), "{said}");
+    }
+
+    #[tokio::test]
+    async fn a_server_refusing_every_suite_keeps_the_handshake_words_when_nothing_is_read() {
+        // handshake_failure to every hello: the read in clear runs and finds nothing more.
+        let (port, taken) = canned_server(|_, _| HANDSHAKE_FAILURE.to_vec());
+        let refusal = probed(port).await.expect_err("refused");
+        assert_eq!(taken.load(Ordering::SeqCst), 2, "the read in clear ran");
+        assert!(matches!(refusal, ProbeError::Handshake(_)), "{refusal:?}");
     }
 
     #[test]

@@ -1586,3 +1586,105 @@ fn a_renewed_rdp_certificate_is_asked_about_as_a_renewal_and_trusted_by_its_hash
         "nothing written"
     );
 }
+
+/// The connection `effects` start: its tab, its attempt and whether it compresses.
+fn connecting(effects: &[Effect]) -> (TabId, AttemptId, bool) {
+    match effects {
+        [
+            Effect::ConnectRdp {
+                tab,
+                attempt,
+                request,
+            },
+        ] => (*tab, *attempt, request.profile.extras.compression),
+        _ => panic!("{effects:?}"),
+    }
+}
+
+/// The server cannot take the tab's size live: the tab connects again at it.
+fn resize_refused() -> ConnectionEvent {
+    ConnectionEvent::DesktopResizeRefused {
+        width: 1600,
+        height: 900,
+    }
+}
+
+#[test]
+fn a_session_that_could_not_read_what_was_compressed_connects_again_without_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt, compressed) =
+        connecting(&app.update(Message::OpenRdp(ProfileId::new("dc"))));
+    assert!(compressed, "compressed by default");
+    desktop_ready(&mut app, tab, attempt);
+
+    let effects = event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpCompressionOff { reconnect: true },
+    );
+    assert_eq!(app.notice(), Some(&Notice::RdpCompressionOff));
+    let (again, next, compressed) = connecting(&effects);
+    assert_eq!(again, tab, "the same tab");
+    assert_ne!(next, attempt);
+    assert!(!compressed, "without compression");
+
+    // Later reconnections of the tab stay so; the profile is not changed.
+    desktop_ready(&mut app, tab, next);
+    let (_, _, compressed) = connecting(&event(&mut app, tab, next, resize_refused()));
+    assert!(!compressed, "kept across a reconnect");
+    let saved = app
+        .rdp_profiles()
+        .iter()
+        .find(|profile| profile.id == ProfileId::new("dc"))
+        .expect("profile")
+        .extras
+        .compression;
+    assert!(saved, "the profile is the user's");
+}
+
+#[test]
+fn a_connection_opened_again_without_compression_is_said_and_its_tab_keeps_it_off() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+
+    // heimdall-rdp connected again without compression already: said once the session
+    // shows, nothing more to start.
+    desktop_ready(&mut app, tab, attempt);
+    let effects = event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpCompressionOff { reconnect: false },
+    );
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(app.notice(), Some(&Notice::RdpCompressionOff));
+    let (_, _, compressed) = connecting(&event(&mut app, tab, attempt, resize_refused()));
+    assert!(!compressed);
+
+    // A tab opened anew compresses as its profile says.
+    let (_, _, compressed) = connecting(&app.update(Message::OpenRdp(ProfileId::new("dc"))));
+    assert!(compressed);
+}
+
+#[test]
+fn the_built_in_client_compresses_only_once_the_settings_allow_it() {
+    let allowed = |effects: &[Effect]| match effects {
+        [Effect::ConnectRdp { request, .. }] => request.builtin_compression,
+        _ => panic!("{effects:?}"),
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+    let (_, _, compressed) = connecting(&effects);
+    assert!(compressed, "the profile asks for it, as the C#");
+    assert!(!allowed(&effects), "experimental: off until chosen");
+
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::RdpBuiltinCompression(true),
+    ));
+    assert!(app.settings().builtin_rdp_compression);
+    assert!(allowed(&app.update(Message::OpenRdp(ProfileId::new("dc")))));
+}

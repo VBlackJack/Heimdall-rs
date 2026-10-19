@@ -30,6 +30,8 @@ Telnet, Citrix, WinRM, shell local, coffre d'identifiants, bibliothèque de comm
 L'interface est native, construite avec [iced](https://iced.rs), sans moteur web
 embarqué.
 
+Vous venez du Heimdall C# ? Voir [Passer de Heimdall (C#) à Heimdall-rs](docs/fr/migration-from-csharp.md).
+
 ## Organisation
 
 | Crate | Rôle |
@@ -56,14 +58,19 @@ Seul `heimdall-ui` dépend d'iced. Les crates de protocole ne dépendent que de
 
 Heimdall intègre 30 outils d'administration système et d'audit de sécurité. Tous
 ne sont pas hors-ligne : les outils réseau, comme l'Auditeur SSL/TLS, le
-Vérificateur de sécurité DNS, l'Énumérateur SMB, le Scanner d'identifiants par
-défaut et l'Auditeur SecNumCloud, se connectent aux hôtes que vous indiquez ; les
-autres fonctionnent entièrement hors-ligne.
+Vérificateur de sécurité DNS, l'Énumérateur SMB et l'Auditeur SecNumCloud, se
+connectent aux hôtes que vous indiquez ; les autres fonctionnent entièrement
+hors-ligne.
 
 La Recherche CVE utilise une base embarquée et constituée à la main de 68 entrées
 (63 CVE distinctes) pour des logiciels d'infrastructure courants, couvrant 2015 à
 2024. Elle ne contient aucune donnée CISA KEV (Known Exploited Vulnerabilities) et
 n'est pas un flux en direct.
+
+Le Scanner d'identifiants par défaut liste les identifiants par défaut connus des
+fournisseurs pour un produit ou un service ; contrairement à l'outil C# d'origine,
+il ne tente jamais de connexion, pour éviter les verrouillages de compte et les
+tentatives de connexion non autorisées.
 
 - **Sécurité & Conformité :** Auditeur de clés SSH, Auditeur SSL/TLS, Vérificateur de sécurité DNS (DNSSEC/DANE), Audit de conformité ANSSI SecNumCloud v3.2, Énumérateur SMB & NetBIOS, Scanner d'identifiants par défaut, Recherche hors-ligne CVE, Auditeur de mots de passe, Générateur de mots de passe, Générateur de clés SSH, Générateur de certificats.
 - **Réseau :** Calculateur de sous-réseau, Convertisseur IP, Calculateur réseau.
@@ -105,6 +112,12 @@ Les deux prennent un niveau de journal en argument, de `error` à `trace` :
 Les tests d'interface automatisés lancent une version debug compilée avec la fonctionnalité
 `test-data-dir` sur un dossier jetable, jamais sur les vrais profils, le coffre ou les mots
 de passe enregistrés : voir [Dossier de données de test](docs/fr/test-data-folder.md).
+
+Toute version, release comprise, lance une instance alternative (un test à la main, un profil
+de démonstration) à côté de celle de l'utilisateur avec `--data-dir <chemin complet>`, comme
+le Heimdall C# : sa propre configuration, ses données et ses mots de passe enregistrés sous ce
+dossier. Voir
+[`--data-dir` dans une version normale](docs/fr/test-data-folder.md#--data-dir-dans-une-version-normale).
 
 Une release publiée est compilée avec `HEIMDALL_RELEASE` réglé sur son tag, par exemple
 `v2026.100901` : la vérification des mises à jour le compare à la dernière release publiée

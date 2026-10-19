@@ -59,10 +59,11 @@ use heimdall_app::{
     master_password_problem, open_vault, server_text,
 };
 use heimdall_app::{
-    LegacyMigrationMessage, QuickRow, ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello,
-    windows_hello,
+    BroadcastConfirmation, LegacyMigrationMessage, QuickRow, SendConfirmation, ToolsMessage,
+    VaultHelloMessage, VaultTicket, vault_hello, windows_hello,
 };
 use heimdall_core::folder::FolderError;
+use heimdall_core::import::csharp_settings::PreferenceOutcome;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
 use heimdall_core::profile::{ProfileId, SshGateway, SshMode, display_address};
@@ -268,12 +269,29 @@ const VEIL_ALPHA: f32 = 0.7;
 const SETTINGS_WIDTH: f32 = 900.0;
 
 /// Window events and the window's shortcuts.
-/// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N.
+/// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N,
+/// Ctrl+Shift+B.
 fn tree_shortcut(
     key: &keyboard::Key,
     physical: keyboard::key::Physical,
     modifiers: keyboard::Modifiers,
 ) -> Option<TreeShortcut> {
+    // As the C# `RegisterPropertiesPanelShortcut`: left to a terminal that takes it.
+    if modifiers.control()
+        && modifiers.shift()
+        && !modifiers.alt()
+        && crate::terminal_view::keys::letter(key, physical) == Some('b')
+    {
+        return Some(TreeShortcut::PropertiesPanel);
+    }
+    // As the C# Ctrl+Shift+N: not gated to terminals, so a terminal that takes it keeps it.
+    if modifiers.control()
+        && modifiers.shift()
+        && !modifiers.alt()
+        && crate::terminal_view::keys::letter(key, physical) == Some('n')
+    {
+        return Some(TreeShortcut::NetworkScan);
+    }
     match ctrl_letter(key, physical, modifiers)? {
         'e' => Some(TreeShortcut::Edit),
         'n' => Some(TreeShortcut::New),
@@ -469,6 +487,37 @@ fn sidebar_drag_event(
     }
 }
 
+/// While the splitter above the properties panel is held: where the pointer is, and its
+/// release.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the signature `event::listen_with` takes"
+)]
+fn properties_drag_event(
+    event: iced::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+            Some(Message::PropertiesDragged(position.y))
+        }
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+            Some(Message::PropertiesDragEnd)
+        }
+        _ => None,
+    }
+}
+
+/// A drag of the splitter above the properties panel: the height it started from, the room
+/// the panel shares with the tree, and where the pointer was first seen, once it moved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PropertiesDrag {
+    start: f32,
+    available: f32,
+    anchor: Option<f32>,
+}
+
 /// Whether `physical` with `modifiers` toggles the window's full screen, as the C#
 /// `FullscreenShortcutRouter`: F11 alone, which a desktop keeps from its server, or
 /// Ctrl+Shift+F11, full screen over an embedded session, which neither a terminal nor a
@@ -478,6 +527,7 @@ fn toggles_fullscreen(physical: keyboard::key::Physical, modifiers: keyboard::Mo
         || crate::terminal_view::keys::is_fullscreen_key(physical, modifiers)
 }
 
+#[expect(clippy::too_many_lines, reason = "one arm per window key")]
 fn window_event(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Message> {
     match event {
         iced::Event::Window(window::Event::CloseRequested) => {
@@ -555,8 +605,15 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if is_search_key(&key, physical_key, modifiers) {
                 return Some(Message::FocusSearch);
             }
+            if is_copy_key(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::PasswordCopyKey);
+            }
+            if is_duplicate_key(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::CmdLibDuplicateKey);
+            }
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
-                return Some(Message::TreeShortcut(shortcut));
+                // Held down, the panel's key would flip it, and save it, at each repeat.
+                return (!repeat || shortcut.repeats()).then_some(Message::TreeShortcut(shortcut));
             }
             // F1 left by every widget: a terminal or a desktop keeps it for its programs.
             if physical_key == keyboard::key::Physical::Code(keyboard::key::Code::F1)
@@ -609,6 +666,32 @@ fn untaken_tab_key(
     is_reopen_closed_key(key, physical, modifiers).then_some(WindowShortcut::ReopenClosedTab)
 }
 
+/// Whether `key` is Ctrl+C alone, whatever the keyboard's layout.
+fn is_copy_key(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && crate::terminal_view::keys::letter(key, physical) == Some('c')
+}
+
+/// Whether the key is Ctrl+D, as the C# command library's Duplicate.
+fn is_duplicate_key(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && crate::terminal_view::keys::letter(key, physical) == Some('d')
+}
+
 /// What the window reacts to.
 #[derive(Clone)]
 pub enum Message {
@@ -648,6 +731,12 @@ pub enum Message {
     EscapeUntaken,
     /// A key for the Files tab shown, uncaptured by any widget.
     FilesKey(FilesKey),
+    /// Ctrl+C, uncaptured by any widget: copies the password of a Password Generator tab
+    /// shown, as the C# `PasswordGeneratorView.OnKeyDown`.
+    PasswordCopyKey,
+    /// Ctrl+D, uncaptured by any widget: duplicates the command last used in a command
+    /// library tab shown, as the C# `CommandLibraryView` binds it.
+    CmdLibDuplicateKey,
     /// Tab: the next field of a dialog, or the other pane of a Files tab.
     TabKey {
         /// With Shift: the previous field.
@@ -777,6 +866,8 @@ pub enum Message {
     OpenTreeMenu(TreeMenu),
     /// Close the open menu.
     CloseTreeMenu,
+    /// Left in a submenu: back to the menu it was opened from.
+    MenuBack,
     /// An entry of the open menu was chosen: the menu closes, the core gets the message.
     MenuChoice(AppMessage),
     /// A tab menu's Fullscreen: the menu closes, the tab is shown, full screen.
@@ -805,6 +896,8 @@ pub enum Message {
     SystemHighContrast(bool),
     /// Whether Windows asks for reduced motion, looked at again: the cursors follow it.
     SystemReducedMotion(bool),
+    /// A reading of the pointer, while full screen puts its exit button away.
+    ChromeTick(std::time::Instant),
     /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
     /// cannot be read.
     UserInput,
@@ -857,6 +950,8 @@ pub enum Message {
     TabHover(TabId),
     /// The pointer left it.
     TabHoverLeft(TabId),
+    /// The tabs pass the strip's width, or no longer: the list of every tab shows, or hides.
+    TabOverflow(bool),
     /// The pointer moved, a press on a tab held.
     TabDragMoved(Point),
     /// That press is let go.
@@ -900,6 +995,18 @@ pub enum Message {
     SidebarDragged(f32),
     /// The handle is let go.
     SidebarDragEnd,
+    /// The splitter above the properties panel is pressed, the panel `height` high in a
+    /// room of `available` height it shares with the tree.
+    PropertiesDragStart {
+        /// The panel's height as drawn.
+        height: f32,
+        /// The height of the room the tree and the panel share.
+        available: f32,
+    },
+    /// The pointer moved to this y while that splitter is held.
+    PropertiesDragged(f32),
+    /// That splitter is let go.
+    PropertiesDragEnd,
     /// A divider of a split tab is dragged to this share: drawn there, not kept yet.
     SplitDragged {
         /// The split tab.
@@ -951,6 +1058,14 @@ pub enum Message {
     DropGathered(crate::drop_batch::DropPlace),
     /// An action in the Settings page's box of resolution presets.
     PresetsEdited(iced::widget::text_editor::Action),
+    /// A change in the Settings page's external tools.
+    ExternalToolsEdit(crate::external_tools_view::ToolsEdit),
+    /// A change in the Settings page's `MobaXterm` import variables.
+    MobaxtermVariablesEdit(crate::mobaxterm_variables_view::VariablesEdit),
+    /// A change in the Settings page's shared session sources.
+    SharedSourcesEdit(crate::shared_sources_view::SourcesEdit),
+    /// Close the import report of a shared source.
+    SharedReportClose,
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
     OpenWithSystem(std::path::PathBuf),
     /// Write a note about the session `id` from `template`, then open it in the editor set.
@@ -1016,6 +1131,18 @@ pub enum TreeShortcut {
     Undo,
     /// Ctrl+B: the sidebar shown or hidden, as the C# one.
     ToggleSidebar,
+    /// Ctrl+Shift+B: the properties panel under the tree shown or hidden, as the C# one;
+    /// shown, never hidden, while it cannot be seen.
+    PropertiesPanel,
+    /// Ctrl+Shift+N: the network scanner, as the C# `MainWindow.xaml.cs:1958` registers it.
+    NetworkScan,
+}
+
+impl TreeShortcut {
+    /// Whether holding the key repeats it: the toggles and the dialog opened do not.
+    const fn repeats(self) -> bool {
+        !matches!(self, Self::PropertiesPanel | Self::NetworkScan)
+    }
 }
 
 impl fmt::Debug for Message {
@@ -1037,6 +1164,8 @@ impl fmt::Debug for Message {
             Self::DialogKey { confirm } => write!(f, "DialogKey({confirm})"),
             Self::EscapeUntaken => f.write_str("EscapeUntaken"),
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
+            Self::PasswordCopyKey => f.write_str("PasswordCopyKey"),
+            Self::CmdLibDuplicateKey => f.write_str("CmdLibDuplicateKey"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
@@ -1094,6 +1223,7 @@ impl fmt::Debug for Message {
             Self::CopyRouteReport => f.write_str("CopyRouteReport"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
+            Self::MenuBack => f.write_str("MenuBack"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
             Self::SplitPalette { host, axis } => {
@@ -1111,6 +1241,7 @@ impl fmt::Debug for Message {
             Self::IdleTick => f.write_str("IdleTick"),
             Self::SystemHighContrast(on) => write!(f, "SystemHighContrast({on})"),
             Self::SystemReducedMotion(on) => write!(f, "SystemReducedMotion({on})"),
+            Self::ChromeTick(_) => f.write_str("ChromeTick"),
             Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1130,6 +1261,7 @@ impl fmt::Debug for Message {
             Self::CloseKeyFocus(focused) => write!(f, "CloseKeyFocus({focused})"),
             Self::TabHover(tab) => write!(f, "TabHover({})", tab.value()),
             Self::TabHoverLeft(tab) => write!(f, "TabHoverLeft({})", tab.value()),
+            Self::TabOverflow(on) => write!(f, "TabOverflow({on})"),
             Self::TabDragMoved(_) => f.write_str("TabDragMoved"),
             Self::TabDragEnd => f.write_str("TabDragEnd"),
             Self::TabDropArea(area) => write!(f, "TabDropArea({area:?})"),
@@ -1150,6 +1282,11 @@ impl fmt::Debug for Message {
             Self::WindowResized(size) => write!(f, "WindowResized({size:?})"),
             Self::SidebarDragged(x) => write!(f, "SidebarDragged({x})"),
             Self::SidebarDragEnd => f.write_str("SidebarDragEnd"),
+            Self::PropertiesDragStart { height, available } => {
+                write!(f, "PropertiesDragStart({height}, {available})")
+            }
+            Self::PropertiesDragged(y) => write!(f, "PropertiesDragged({y})"),
+            Self::PropertiesDragEnd => f.write_str("PropertiesDragEnd"),
             Self::SplitDragged {
                 host,
                 divider,
@@ -1170,6 +1307,10 @@ impl fmt::Debug for Message {
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
+            Self::ExternalToolsEdit(_) => f.write_str("ExternalToolsEdit(..)"),
+            Self::MobaxtermVariablesEdit(_) => f.write_str("MobaxtermVariablesEdit(..)"),
+            Self::SharedSourcesEdit(_) => f.write_str("SharedSourcesEdit(..)"),
+            Self::SharedReportClose => f.write_str("SharedReportClose"),
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
@@ -1223,7 +1364,7 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
 }
 
 /// Widget identifier of the name field of a dialog.
-fn name_field_id() -> iced::widget::Id {
+pub(crate) fn name_field_id() -> iced::widget::Id {
     iced::widget::Id::new("dialog-name")
 }
 
@@ -1460,10 +1601,14 @@ pub struct Shell {
     /// The tab's own window that menu was opened in, at its cursor; `None` for the main
     /// window.
     menu_window: Option<window::Id>,
+    /// The menu the open one is a submenu of, which Left goes back to.
+    menu_parent: Option<TreeMenu>,
     /// What the content area shows.
     page: Page,
     /// Full screen: the window shows the session only.
     fullscreen: bool,
+    /// The exit button's visibility in full screen; none outside it.
+    fullscreen_chrome: Option<crate::fullscreen_chrome::FullscreenChrome>,
     /// Physical pixels per logical one on the window's screen: remote desktops are drawn
     /// one of their pixels per physical one.
     density: f32,
@@ -1496,6 +1641,8 @@ pub struct Shell {
     dragged_out: crate::files_drag::DragOutGuard,
     /// The tab under the pointer.
     tab_hover: Option<TabId>,
+    /// The tabs pass the strip's width: the button listing every tab shows.
+    tab_overflow: bool,
     /// A press on a tab, a drag once the pointer moves.
     tab_drag: Option<crate::tab_drag::TabDrag>,
     /// Where the content was drawn when that drag started.
@@ -1535,6 +1682,10 @@ pub struct Shell {
     sidebar_width: f32,
     /// The handle between the sidebar and the sessions is held.
     sidebar_drag: bool,
+    /// The height of the properties panel under the tree, as dragged.
+    properties_height: f32,
+    /// The splitter above the properties panel, while it is held.
+    properties_drag: Option<PropertiesDrag>,
     /// A divider of a split tab being dragged: the tab, the divider's number, the share it
     /// is drawn at until let go.
     split_drag: Option<(TabId, usize, f32)>,
@@ -1553,6 +1704,14 @@ pub struct Shell {
     tool_paths_typed: [Option<String>; ToolPath::COUNT],
     /// The Settings page's box of resolution presets.
     presets: crate::presets_editor::PresetsEditor,
+    /// The Settings page's external tools, as edited.
+    external_tools: crate::external_tools_view::ExternalToolsEditor,
+    /// The Settings page's `MobaXterm` import variables, as edited.
+    mobaxterm_variables: crate::mobaxterm_variables_view::MobaxtermVariablesEditor,
+    /// The Settings page's shared session sources, as edited.
+    shared_sources: crate::shared_sources_view::SharedSourcesEditor,
+    /// The shared source whose import report is open.
+    shared_report: Option<String>,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -1733,6 +1892,8 @@ impl Shell {
             shell.sidebar_width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
         }
         shell.sidebar_hidden = left.sidebar_hidden;
+        shell.properties_height =
+            crate::properties_panel::kept_height(left.properties_panel_height);
         // Windows high contrast, as it is at start; looked at again while the window runs.
         shell.forced_theme =
             heimdall_app::high_contrast::system_on().then_some(AppTheme::HighContrast);
@@ -1749,6 +1910,10 @@ impl Shell {
         }
         // Transcripts past their retention, removed beside the start, as the C# does.
         shell.app.prune_transcripts();
+        // The connection history, in the log folder as the C# `ConnectionHistory`.
+        shell
+            .app
+            .set_connection_history(heimdall_core::paths::log_dir());
         shell.offer_tour_on_first_run();
         shell
     }
@@ -1761,11 +1926,19 @@ impl Shell {
 
     /// The window over an application core already in some state.
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one line per field of the window")]
     pub fn with_app(mut app: App) -> Self {
         app.set_transcript_lines(crate::transcript_lines::lines());
         crate::logging::set_enabled(app.settings().diagnostics_log);
         let presets =
             crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
+        let external_tools =
+            crate::external_tools_view::ExternalToolsEditor::new(&app.settings().external_tools);
+        let mobaxterm_variables = crate::mobaxterm_variables_view::MobaxtermVariablesEditor::new(
+            &app.settings().mobaxterm_variables,
+        );
+        let shared_sources =
+            crate::shared_sources_view::SharedSourcesEditor::new(&app.settings().shared_sources);
         let language_shown = app.settings().language;
         Self {
             app,
@@ -1787,8 +1960,10 @@ impl Shell {
             cursor: CursorSpot::default(),
             menu: None,
             menu_window: None,
+            menu_parent: None,
             page: Page::Tab,
             fullscreen: false,
+            fullscreen_chrome: None,
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
@@ -1803,6 +1978,7 @@ impl Shell {
             files_drag_window: None,
             dragged_out: crate::files_drag::DragOutGuard::default(),
             tab_hover: None,
+            tab_overflow: false,
             tab_drag: None,
             tab_drop_area: None,
             detach_place: None,
@@ -1820,6 +1996,8 @@ impl Shell {
             monitors: None,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
+            properties_height: crate::properties_panel::DEFAULT_HEIGHT,
+            properties_drag: None,
             split_drag: None,
             type_ahead: (String::new(), None),
             palette: None,
@@ -1829,6 +2007,10 @@ impl Shell {
             editor_typed: None,
             tool_paths_typed: Default::default(),
             presets,
+            external_tools,
+            mobaxterm_variables,
+            shared_sources,
+            shared_report: None,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -1927,14 +2109,15 @@ impl Shell {
     }
 
     /// The title of the window `window`: a tab's own window's as the C# names it, the main
-    /// window's as [`Self::title`], the application's name for any other; in a test build,
-    /// followed by its test data folder.
+    /// window's as [`Self::title`], the application's name for any other; followed by the
+    /// data folder of an alternate instance (`--data-dir`), or a test build's test data
+    /// folder.
     #[must_use]
     pub fn window_title(&self, window: window::Id) -> String {
         #[cfg(feature = "test-data-dir")]
         return crate::test_data::titled(self.own_window_title(window));
         #[cfg(not(feature = "test-data-dir"))]
-        return self.own_window_title(window);
+        return crate::data_root::titled(self.own_window_title(window));
     }
 
     /// The title of the window `window`, as [`Self::window_title`] says it before a test
@@ -2110,6 +2293,13 @@ impl Shell {
                     .map(|_| Message::App(AppMessage::ScheduledTick)),
             );
         }
+        // The shared session files looked at for a change, as the C# source watcher.
+        if self.app.watches_shared_sources() {
+            ticks.push(
+                iced::time::every(heimdall_app::shared_sessions::POLL_INTERVAL)
+                    .map(|_| Message::App(AppMessage::SharedTick)),
+            );
+        }
         // Every server checked in the background, as the C# session health monitor.
         if let Some(interval) = self.app.reachability_interval() {
             ticks.push(
@@ -2162,6 +2352,15 @@ impl Shell {
                     Message::SystemReducedMotion(heimdall_app::reduced_motion::system_on())
                 }),
             );
+        }
+        // Full screen: the pointer read as the C# polls it, and the fade drawn while it runs.
+        if let Some(chrome) = self.fullscreen_chrome.as_ref().filter(|_| self.fullscreen) {
+            let interval = if chrome.is_fading(std::time::Instant::now()) {
+                crate::fullscreen_chrome::FADE_FRAME
+            } else {
+                crate::fullscreen_chrome::POLL_INTERVAL
+            };
+            ticks.push(iced::time::every(interval).map(Message::ChromeTick));
         }
         ticks
     }
@@ -2228,6 +2427,9 @@ impl Shell {
         }
         if self.sidebar_drag {
             subscriptions.push(in_main_window(window_tagged!(sidebar_drag_event), main));
+        }
+        if self.properties_drag.is_some() {
+            subscriptions.push(in_main_window(window_tagged!(properties_drag_event), main));
         }
         if locked_out
             || self.app.tabs.iter().any(|tab| tab.retry.is_some())
@@ -2586,6 +2788,21 @@ impl Shell {
         if let Some(tour) = self.tour_key(&message) {
             return self.update(Message::Tour(tour));
         }
+        // Enter, Escape and Ctrl+C no field took are the Password Generator's while it is
+        // shown, as the C# `PasswordGeneratorView.OnKeyDown`.
+        if let Some((tab, key)) = self.password_key(&message) {
+            return self.update(Message::Tool(tab, crate::tools::ToolMessage::Password(key)));
+        }
+        // Ctrl+D no field took duplicates the command last used while a command library is
+        // shown, as the C# `CommandLibraryView` binds it.
+        if let Some(tab) = self.cmdlib_duplicate_key(&message) {
+            return self.update(Message::Tool(
+                tab,
+                crate::tools::ToolMessage::CmdLib(
+                    crate::tools::CommandLibraryMessage::DuplicateSelected,
+                ),
+            ));
+        }
         // Escape no widget took leaves full screen when there is nothing else to close, as
         // the C# Heimdall's.
         if matches!(message, Message::EscapeUntaken) {
@@ -2646,8 +2863,13 @@ impl Shell {
             Message::Shortcut(WindowShortcut::Screenshot) => return self.screenshot(),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
-            // Answered above, before the rest.
-            Message::EscapeUntaken | Message::Float(..) | Message::InFloating(..) => Vec::new(),
+            // Answered above, before the rest; Ctrl+C is taken by no Password Generator
+            // shown, and nothing else copies on it.
+            Message::EscapeUntaken
+            | Message::PasswordCopyKey
+            | Message::CmdLibDuplicateKey
+            | Message::Float(..)
+            | Message::InFloating(..) => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
             Message::TabKey { backward } => {
                 if self.tab_moves_focus() {
@@ -2678,6 +2900,10 @@ impl Shell {
             }
             Message::SystemReducedMotion(on) => {
                 self.reduced_motion = on;
+                Vec::new()
+            }
+            Message::ChromeTick(now) => {
+                self.read_fullscreen_chrome(now);
                 Vec::new()
             }
             Message::UserInput => {
@@ -2733,6 +2959,7 @@ impl Shell {
             Message::TestRouteForm => self.test_route_form(),
             message @ (Message::OpenTreeMenu(_)
             | Message::CloseTreeMenu
+            | Message::MenuBack
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
             Message::MenuChoice(message) => self.closing_menu(message),
             Message::VncScaling { tab, scaling } => self.vnc_scaling(tab, scaling),
@@ -2748,6 +2975,13 @@ impl Shell {
             }
             Message::BrowseKeyFile => return pick_key_file(self.main_window),
             Message::Browse(target) => return self.browse(target),
+            Message::ExternalToolsEdit(edit) => self.external_tools_edit(edit),
+            Message::MobaxtermVariablesEdit(edit) => self.mobaxterm_variables_edit(edit),
+            Message::SharedSourcesEdit(edit) => self.shared_sources_edit(edit),
+            Message::SharedReportClose => {
+                self.shared_report = None;
+                Vec::new()
+            }
             Message::Browsed(target, path) => self.browsed(target, path),
             Message::CopyError(tab) => return self.copy_error(tab),
             Message::ToggleFailureDetails(tab) => {
@@ -2791,6 +3025,9 @@ impl Shell {
             | Message::WindowResized(_)
             | Message::SidebarDragged(_)
             | Message::SidebarDragEnd) => self.tree_input(message),
+            message @ (Message::PropertiesDragStart { .. }
+            | Message::PropertiesDragged(_)
+            | Message::PropertiesDragEnd) => self.properties_drag_message(&message),
             Message::GatewayReassignPicked { missing, to } => {
                 self.gateway_reassign.insert(missing, to);
                 Vec::new()
@@ -2798,6 +3035,7 @@ impl Shell {
             Message::TabDragMoved(at) => return self.tab_drag_moved(at),
             message @ (Message::TabHover(_)
             | Message::TabHoverLeft(_)
+            | Message::TabOverflow(_)
             | Message::TabDropArea(_)
             | Message::TabDragEnd) => self.tab_drag_message(&message),
             message @ (Message::SplitDragged { .. } | Message::SplitReleased { .. }) => {
@@ -2848,7 +3086,7 @@ impl Shell {
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
             Message::Tool(tab, message) => {
-                let task = self.tools.update(tab, message, self.main_window);
+                let task = self.tools.update(tab, message, self.main_window, &self.app);
                 self.tools.report_unsaved(&mut self.app);
                 return task;
             }
@@ -2914,6 +3152,10 @@ impl Shell {
         self.editors.prune(&self.app);
         // The tool tabs' states follow their tabs, and those just opened start their work.
         self.tools.sync(&self.app);
+        // The commands written into terminals since, for the history of the library that
+        // asked.
+        let sent = self.app.take_sent_commands();
+        self.tools.record_sent(&sent);
         tasks.push(self.tools.opening());
         // What the detail panel says of the session selected, read again once it changed.
         self.app.refresh_detail();
@@ -2930,6 +3172,15 @@ impl Shell {
         // A reset, or presets that could not be saved, shown again in their box.
         self.presets
             .sync(&self.app.settings().rdp_resolution_presets);
+        // As the external tools: an import, or a list that could not be saved.
+        self.external_tools
+            .sync(&self.app.settings().external_tools);
+        // And the `MobaXterm` variables.
+        self.mobaxterm_variables
+            .sync(&self.app.settings().mobaxterm_variables);
+        // And the shared session sources.
+        self.shared_sources
+            .sync(&self.app.settings().shared_sources);
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
         if let Some(field) = self.focus_next.take() {
@@ -3047,6 +3298,9 @@ impl Shell {
             }
             Message::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
+                self.fullscreen_chrome = self.fullscreen.then(|| {
+                    crate::fullscreen_chrome::FullscreenChrome::entered(std::time::Instant::now())
+                });
                 let mode = if self.fullscreen {
                     window::Mode::Fullscreen
                 } else {
@@ -3378,6 +3632,22 @@ impl Shell {
         self.settings_shown() || matches!(self.page, Page::Tunnels | Page::Scheduled | Page::About)
     }
 
+    /// One reading of the pointer for the full-screen exit button, at `now`.
+    fn read_fullscreen_chrome(&mut self, now: std::time::Instant) {
+        let overlay_open = self.app.dialog.is_some()
+            || self.menu.is_some()
+            || self.palette.is_some()
+            || self.tour.is_some();
+        let reading = crate::fullscreen_chrome::Reading {
+            pointer: self.cursor.get(),
+            overlay_open,
+            reduced_motion: self.reduced_motion,
+        };
+        if let Some(chrome) = self.fullscreen_chrome.as_mut() {
+            chrome.read(now, reading);
+        }
+    }
+
     /// Whether the window is behind a gate: the lock screen, or the PIN asked at start.
     /// Nothing of it is drawn, and its keys do nothing.
     fn gated(&self) -> bool {
@@ -3687,20 +3957,14 @@ impl Shell {
     /// Opens `menu` at `cursor` in `window`, a tab's own window or, `None`, the main one;
     /// for a sub-menu, where its menu was.
     fn open_tree_menu_at(&mut self, menu: TreeMenu, cursor: Point, window: Option<window::Id>) {
-        let at = match (&menu, &self.menu) {
-            (
-                TreeMenu::ConnectAs(_)
-                | TreeMenu::ConnectWith(_)
-                | TreeMenu::OpenInSplit(_)
-                | TreeMenu::MoveFolder(_)
-                | TreeMenu::FolderColor(_)
-                | TreeMenu::MoveProfile(_)
-                | TreeMenu::MoveSelection
-                | TreeMenu::EditSelection
-                | TreeMenu::GatewaySelection,
-                Some((_, at)),
-            ) => *at,
+        let at = match (menu.is_submenu(), &self.menu) {
+            (true, Some((_, at))) => *at,
             _ => cursor,
+        };
+        // What Left goes back to: the menu a submenu came out of.
+        self.menu_parent = match &self.menu {
+            Some((parent, _)) if menu.is_submenu() => Some(parent.clone()),
+            _ => None,
         };
         // A right click on one of the profiles selected together is theirs, as in C#.
         let menu = match menu {
@@ -3826,6 +4090,50 @@ impl Shell {
             }
             _ => None,
         }
+    }
+
+    /// What a key no field took asks of the Password Generator tab shown, as the C#
+    /// `OnKeyDown`: Enter generates another password, Escape clears the output, Ctrl+C
+    /// copies the password. None while another page, a dialog, a menu, Quick Connect or
+    /// the tree has the keyboard, or when another tab is shown.
+    fn password_key(&self, message: &Message) -> Option<(TabId, crate::tools::PasswordMessage)> {
+        let key = match message {
+            Message::DialogKey { confirm: true } => crate::tools::PasswordMessage::Generate,
+            Message::EscapeUntaken if !self.escape_leaves_fullscreen() => {
+                crate::tools::PasswordMessage::ClearOutput
+            }
+            Message::PasswordCopyKey => {
+                crate::tools::PasswordMessage::Copy(crate::tools::PasswordCopy::Main)
+            }
+            _ => return None,
+        };
+        let free = !self.gated()
+            && !self.settings_shown()
+            && !self.tree_focused
+            && self.tour.is_none()
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && self.finder.is_none()
+            && self.menu.is_none();
+        let tab = self.shown_tab_id()?;
+        (free && self.tools.is_password(tab)).then_some((tab, key))
+    }
+
+    /// The command library tab Ctrl+D is for: shown, with nothing over it.
+    fn cmdlib_duplicate_key(&self, message: &Message) -> Option<TabId> {
+        if !matches!(message, Message::CmdLibDuplicateKey) {
+            return None;
+        }
+        let free = !self.gated()
+            && !self.settings_shown()
+            && !self.tree_focused
+            && self.tour.is_none()
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && self.finder.is_none()
+            && self.menu.is_none();
+        let tab = self.shown_tab_id()?;
+        (free && self.tools.is_cmdlib(tab)).then_some(tab)
     }
 
     /// Whether Escape leaves full screen: in it, with no dialog, menu, Quick Connect, search
@@ -4076,6 +4384,7 @@ impl Shell {
                 | Dialog::SaveMacro { .. }
                 | Dialog::RenameTab { .. }
                 | Dialog::CustomResolution { .. }
+                | Dialog::AddTool(_)
                 | Dialog::FolderName { .. }
                 | Dialog::RenameProfile { .. }
                 | Dialog::BulkEdit { .. },
@@ -4270,6 +4579,9 @@ impl Shell {
                     .buffer_unordered(at_once);
                 Task::stream(checks)
             }
+            Effect::ScanNetwork { scan, ips, stop } => {
+                crate::network_scan_view::run(scan, ips, stop)
+            }
             effect @ (Effect::TestReachability { .. }
             | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
@@ -4335,6 +4647,25 @@ impl Shell {
                 }
             })
             .discard(),
+            Effect::OpenWebConsole { name, url, through } => Task::future(async move {
+                // Starting the browser waits on the system: off the UI thread, as a link.
+                let opened =
+                    tokio::task::spawn_blocking(move || heimdall_app::external_url::open_url(&url))
+                        .await;
+                let result = match opened {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(error)) => Err(error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                if let Err(error) = &result {
+                    log::warn!("the browser did not start for a web console: {error}");
+                }
+                Message::App(AppMessage::WebOpened {
+                    name,
+                    through,
+                    result: result.map_err(heimdall_app::web_console::WebRefusal::NotStarted),
+                })
+            }),
             Effect::CheckForUpdate => Task::future(async {
                 // The system's certificates and proxy, then the request: each waits on the
                 // system or the network, off the UI thread.
@@ -4462,6 +4793,23 @@ impl Shell {
                     profile: Box::new(profile),
                     probe,
                 })
+            }),
+            Effect::LaunchExternalTool { name, launch } => Task::future(async move {
+                // The elevation prompt holds the call until answered, and a start waits on
+                // the system: off the UI thread, as `PuTTY`.
+                let started = name.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    heimdall_app::external_tool::launch(&started, &launch)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    Err(heimdall_app::external_tool::ToolFailure::NotStarted(
+                        error.to_string(),
+                    ))
+                });
+                Message::App(AppMessage::ExternalTool(
+                    heimdall_app::ExternalToolMessage::Launched { name, result },
+                ))
             }),
             Effect::LaunchPutty { name, launch } => Task::future(async move {
                 // Finding PuTTY, the X server and starting them wait on the system: off the
@@ -4629,6 +4977,7 @@ impl Shell {
         let leaving = heimdall_core::window_state::WindowState {
             sidebar_width: Some(self.sidebar_width),
             sidebar_hidden: self.sidebar_hidden,
+            properties_panel_height: Some(self.properties_height),
             folded: self.app.folded_folders(),
             selected: self
                 .app
@@ -4705,6 +5054,7 @@ impl Shell {
                     Dialog::SessionsPreview(_)
                         | Dialog::RdpPreview(_)
                         | Dialog::ProfileImportPreview(_)
+                        | Dialog::NetworkScan(_)
                         | Dialog::HostKeysPreview(_)
                         | Dialog::FileConflicts { .. }
                 ) {
@@ -4771,12 +5121,20 @@ impl Shell {
         let mut layers = stack![body];
         // Full screen, a way out the mouse finds, as the C# floating button: a desktop's
         // header is put away in full screen, as the C# one.
-        if self.fullscreen && !locked {
+        // It puts itself away after a few seconds of stillness and comes back at the top
+        // edge, as the C# one; hidden, it takes no click.
+        let chrome_opacity = self
+            .fullscreen_chrome
+            .filter(|chrome| chrome.is_visible(std::time::Instant::now()))
+            .map(|chrome| chrome.opacity(std::time::Instant::now()));
+        if let (true, false, Some(opacity)) = (self.fullscreen, locked, chrome_opacity) {
             layers = layers.push(
                 container(
                     tooltip(
                         button(text(fl!("ui-fullscreen-exit")).size(font_size::CAPTION))
-                            .style(styles::secondary)
+                            .style(move |theme, status| {
+                                styles::faded_to(&styles::secondary(theme, status), opacity)
+                            })
                             .on_press(Message::ToggleFullscreen),
                         text(fl!("ui-fullscreen-exit-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Left,
@@ -4794,6 +5152,9 @@ impl Shell {
             layers = layers.push(tour_layer(tour));
         }
         if let Some(layer) = self.dialog_layer(locked) {
+            layers = layers.push(layer);
+        }
+        if let Some(layer) = self.shared_report_layer().filter(|_| !locked) {
             layers = layers.push(layer);
         }
         let open_menu = self
@@ -4827,8 +5188,10 @@ impl Shell {
             // Kept whole and inside the window, as a WPF ContextMenu: near the right edge it
             // opens left of the pointer, near the foot (a tunnel row) above it.
             // Opaque: what is under the menu is neither hovered nor clicked.
+            let token = crate::menu_nav::menu_token(&self.menu.as_ref().map(|(menu, _)| menu));
+            let back = self.menu_parent.is_some().then_some(Message::MenuBack);
             layers = layers.push(opaque(
-                mouse_area(menu_at(entries, at))
+                mouse_area(menu_at(crate::menu_nav::menu_nav(entries, token, back), at))
                     .on_press(Message::CloseTreeMenu)
                     .on_right_press(Message::CloseTreeMenu),
             ));
@@ -4836,6 +5199,16 @@ impl Shell {
         container(CursorTracker::new(layers, self.cursor.clone()))
             .id(main_area_id())
             .into()
+    }
+
+    /// The import report of the shared source open, over the window; none when no report is
+    /// open or its source is no longer held.
+    fn shared_report_layer(&self) -> Option<Element<'_, Message>> {
+        let id = self.shared_report.as_deref()?;
+        let shared = self.app.shared_sessions();
+        let state = shared.sources().into_iter().find(|state| state.id == id)?;
+        let report = shared.report_of(id)?;
+        Some(crate::shared_report_view::layer(state, report))
     }
 
     /// The banner of a newer release, as the C# one under its navigation: the version, then
@@ -4949,6 +5322,8 @@ impl Shell {
             } else {
                 tree_view::files_bookmarks_menu(tab, &shown)
             }
+        } else if matches!(menu, TreeMenu::TabList) {
+            self.tab_list_menu()?
         } else if let TreeMenu::Tool(tool) = *menu {
             tree_view::tool_menu_entries(tool, self.app.is_favorite_tool(tool))
         } else if let TreeMenu::Tunnel(id) = *menu {
@@ -4960,6 +5335,19 @@ impl Shell {
             // Only while the session is saved.
             self.app.profile_summary(id)?;
             tree_view::notes_entries(id)
+        } else if let TreeMenu::ExternalTools(id) = menu {
+            // Only while the session is saved and a tool is listed.
+            self.app.profile_summary(id)?;
+            let names: Vec<String> = self
+                .app
+                .external_tools()
+                .iter()
+                .map(|tool| tool.name.trim().to_owned())
+                .collect();
+            if names.is_empty() {
+                return None;
+            }
+            tree_view::external_tools_entries(id, &names)
         } else if let TreeMenu::SendKeys(tab) = *menu {
             // Only while its desktop is shown.
             shown_desktop(self.app.tab(tab)?)?;
@@ -5027,7 +5415,11 @@ impl Shell {
         } else if let TreeMenu::MoveProfile(id) = menu {
             tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
         } else if let TreeMenu::Filter = menu {
-            tree_view::filter_entries(self.app.tree_filter(), self.app.shows_gateway_badge())
+            tree_view::filter_entries(
+                self.app.tree_filter(),
+                self.app.shows_gateway_badge(),
+                self.app.shows_properties_panel(),
+            )
         } else if let TreeMenu::Selection = menu {
             let selected = self.app.selected_profiles();
             let connectable = selected
@@ -5120,7 +5512,9 @@ impl Shell {
                 | TreeMenu::SendKeys(_)
                 | TreeMenu::Macros(_)
                 | TreeMenu::Notes(_)
+                | TreeMenu::ExternalTools(_)
                 | TreeMenu::Tool(_)
+                | TreeMenu::TabList
                 | TreeMenu::Tunnel(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
@@ -5129,7 +5523,13 @@ impl Shell {
                 .map(|p| self.app.connect_as_choices(&p.id))
                 .unwrap_or_default();
             let splittable = self.app.shown_tab().is_some();
-            tree_view::menu_entries(menu, profile.as_ref(), &connect_as, (editable, splittable))
+            let tools = !self.app.external_tools().is_empty();
+            tree_view::menu_entries(
+                menu,
+                profile.as_ref(),
+                &connect_as,
+                (editable, splittable, tools),
+            )
         };
         Some(entries)
     }
@@ -5462,27 +5862,112 @@ impl Shell {
             ]
             .push(actions)
         } else {
-            let list = self.tree_list();
-            // A right click beside the rows is the tree's own menu.
-            let tree = mouse_area(
-                container(styles::scroll(list))
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            )
-            .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
+            // The tree over the properties panel, as the C# `SidebarContentGrid`: laid out
+            // in the height the two share, so a height kept from a taller window leaves the
+            // tree its room. Laid out so whether or not the panel is shown, so showing it
+            // keeps the tree as it was, scrolled where it was.
+            let docked =
+                crate::properties_panel::is_shown(self.app.shows_properties_panel(), false);
+            let saved = self.properties_height;
+            let content = responsive(move |size| {
+                let mut content = column![self.tree_area()];
+                if docked {
+                    let height = crate::properties_panel::fit_height(saved, size.height);
+                    content = content
+                        .push(crate::properties_panel::splitter(height, size.height))
+                        .push(crate::properties_panel::view(
+                            self.properties_shown(),
+                            height,
+                        ));
+                }
+                content.into()
+            });
             column![header, self.search_box()]
                 .push(actions)
                 .push(self.filter_feedback())
-                .push(tree)
-                .push(self.no_folder_zone())
-                .push(self.selection_bar())
-                .push(self.undo_bar())
+                .push(content)
         };
         container(body.spacing(spacing::SM).padding(spacing::MD))
             .width(self.sidebar_width)
             .height(Length::Fill)
             .style(container::rounded_box)
             .into()
+    }
+
+    /// The tree and what is drawn under it: the bar a drop takes a session out of its folder
+    /// on, the selection's bar and the undo bar.
+    fn tree_area(&self) -> Element<'_, Message> {
+        let list = self.tree_list();
+        // A right click beside the rows is the tree's own menu.
+        let tree = mouse_area(
+            container(styles::scroll(list))
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
+        column![tree]
+            .push(self.no_folder_zone())
+            .push(self.selection_bar())
+            .push(self.undo_bar())
+            .spacing(spacing::SM)
+            .height(Length::Fill)
+            .into()
+    }
+
+    /// What the properties panel shows, as the C# panel follows the tree: the sessions
+    /// selected together, the session selected, the folder pressed, or nothing.
+    fn properties_shown(&self) -> crate::properties_panel::Shown {
+        use crate::properties_panel::{Shown, Subject, folder_title, subject, summary};
+        let app = &self.app;
+        let with_state = |profile: heimdall_app::ProfileSummary| {
+            let state = app.profile_state(&profile.id);
+            (profile, state)
+        };
+        match subject(
+            app.selected_profiles(),
+            app.selected_profile.as_ref(),
+            app.selected_folder.as_deref(),
+        ) {
+            Subject::Selection(ids) => Shown::Summary(summary(
+                fl!("ui-tree-selection-count", count = ids.len()),
+                None,
+                ids.iter()
+                    .filter_map(|id| app.profile_summary(id))
+                    .map(with_state),
+            )),
+            // As the C# `FindFolderOnScreen`: a folder renamed, deleted or hidden by the
+            // search is not summed up under its old name.
+            Subject::Folder(path)
+                if !app.tree_rows(&self.search).iter().any(
+                    |row| matches!(row, TreeRow::Folder { path: shown, .. } if *shown == path),
+                ) =>
+            {
+                Shown::Nothing
+            }
+            Subject::Folder(path) => {
+                let (title, shown_path) = folder_title(&path);
+                Shown::Summary(summary(
+                    title,
+                    shown_path,
+                    app.folder_profiles(&path, &self.search)
+                        .into_iter()
+                        .map(with_state),
+                ))
+            }
+            Subject::Session(id) => match app.profile_summary(&id) {
+                Some(profile) => Shown::Session {
+                    profile,
+                    saved: app.selected_credentials().cloned(),
+                    provider: app.provider_consulted(&id),
+                    reachability: app.reachability(&id).cloned(),
+                    gateway_badge: app.shows_gateway_badge(),
+                    state: app.profile_state(&id),
+                    editable: app.can_edit(&id),
+                },
+                None => Shown::Nothing,
+            },
+            Subject::Nothing => Shown::Nothing,
+        }
     }
 
     /// Under the tree while something is dragged, as the C# one: dropped there, a session
@@ -5818,6 +6303,10 @@ impl Shell {
                 }
             }
         }));
+        // The shared files' sessions, read-only, under the saved ones.
+        if let Some(shared) = crate::shared_view::section(&self.app) {
+            list = list.push(shared);
+        }
         list
     }
 
@@ -5827,6 +6316,12 @@ impl Shell {
         match message {
             Message::OpenTreeMenu(menu) => self.open_tree_menu(menu),
             Message::CloseTreeMenu => self.menu = None,
+            // The submenu goes, the menu it came from comes back where it was.
+            Message::MenuBack => {
+                if let (Some(parent), Some((_, at))) = (self.menu_parent.take(), &self.menu) {
+                    self.menu = Some((parent, *at));
+                }
+            }
             Message::ResetTreeFilters => {
                 self.search.clear();
                 let effects = self.app.update(AppMessage::Filter(FilterMessage::Reset));
@@ -5970,6 +6465,7 @@ impl Shell {
                 tab,
                 crate::tools::ToolMessage::Hash(crate::tools::HashMessage::Picked(Some(path))),
                 self.main_window,
+                &self.app,
             ),
             _ => Task::none(),
         }
@@ -6242,6 +6738,7 @@ impl Shell {
                     self.tab_hover = None;
                 }
             }
+            Message::TabOverflow(on) => self.tab_overflow = on,
             Message::TabDropArea(area) => {
                 // Only for the drag that asked.
                 if self.tab_drag.is_some_and(|drag| drag.active) {
@@ -6534,6 +7031,47 @@ impl Shell {
         }
     }
 
+    /// The splitter above the properties panel pressed, dragged and let go.
+    fn properties_drag_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
+            Message::PropertiesDragStart { height, available } => {
+                self.properties_drag = Some(PropertiesDrag {
+                    start: height,
+                    available,
+                    anchor: None,
+                });
+            }
+            // The panel hidden while held: the drag ends with it.
+            Message::PropertiesDragged(_) if !self.app.shows_properties_panel() => {
+                self.properties_drag = None;
+            }
+            // The press gives no place: the first move is where the drag starts from.
+            Message::PropertiesDragged(y) => {
+                if let Some(drag) = self.properties_drag.as_mut() {
+                    match drag.anchor {
+                        None => drag.anchor = Some(y),
+                        Some(anchor) => {
+                            self.properties_height = crate::properties_panel::dragged_height(
+                                drag.start,
+                                anchor,
+                                y,
+                                drag.available,
+                            );
+                        }
+                    }
+                }
+            }
+            // Kept in whole pixels, as the C# `CommitPropertiesPanelHeight` rounds it.
+            Message::PropertiesDragEnd if self.properties_drag.is_some() => {
+                self.properties_drag = None;
+                self.properties_height =
+                    crate::properties_panel::clamp_height(self.properties_height.round());
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
     /// A press on session `id`: the start of a drag of it, or of the sessions selected with
     /// it.
     fn press_profile(&mut self, id: ProfileId) {
@@ -6637,6 +7175,10 @@ impl Shell {
                 self.open_palette(None);
                 Vec::new()
             }
+            TreeShortcut::PropertiesPanel => self.properties_shortcut(),
+            TreeShortcut::NetworkScan => self.app.update(AppMessage::NetworkScan(
+                heimdall_app::NetworkScanMessage::Open,
+            )),
             TreeShortcut::Edit => match self.app.selected_profile.clone() {
                 Some(id) if self.tree_focused && self.app.can_edit(&id) => {
                     self.app.update(AppMessage::EditProfile(id))
@@ -6644,6 +7186,28 @@ impl Shell {
                 _ => Vec::new(),
             },
         }
+    }
+
+    /// Ctrl+Shift+B, as the C# one: the properties panel shown or hidden; while it cannot be
+    /// seen, behind the Tools tab or the sidebar hidden, shown with the sessions' tab and the
+    /// sidebar, since a toggle there turned it off unseen.
+    fn properties_shortcut(&mut self) -> Vec<Effect> {
+        let tools = self.app.sidebar_tab() == SidebarTab::Tools;
+        if !crate::properties_panel::shortcut_reveals(tools, self.sidebar_hidden) {
+            return self.app.update(AppMessage::Filter(
+                heimdall_app::FilterMessage::PropertiesPanel,
+            ));
+        }
+        self.app.show_properties_panel(true);
+        self.sidebar_hidden = false;
+        if tools {
+            return self
+                .app
+                .update(AppMessage::Tools(ToolsMessage::ShowSidebarTab(
+                    SidebarTab::Sessions,
+                )));
+        }
+        Vec::new()
     }
 
     /// A key of the Files tab's set pressed while the tree has the keyboard, as the C# tree
@@ -7121,9 +7685,11 @@ impl Shell {
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
+            grouped: self.app.groups_tabs_by_folder(),
             reopen_closed: self.app.reopen_closed_count(),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
+            external_tools: !self.app.external_tools().is_empty(),
             pane: false,
             docked: self.app.is_docked(id),
             detach: self.app.can_detach(tab),
@@ -7270,13 +7836,18 @@ impl Shell {
                     divider,
                     ratio,
                 })
-                .on_reset(move |_| Message::App(AppMessage::Split(SplitMessage::ResetRatio(host))))
+                .on_reset(move |divider| {
+                    Message::App(AppMessage::Split(SplitMessage::ResetRatio {
+                        host,
+                        divider,
+                    }))
+                })
                 .into(),
         )
     }
 
-    /// A divider dragged: drawn where it is held, then kept once let go. The application
-    /// keeps the share of a tab's outer split, the one divider of two panes.
+    /// A divider dragged: drawn where it is held, then kept once let go, whichever divider
+    /// of the tab's tree it is.
     fn split_drag_message(&mut self, message: &Message) -> Vec<Effect> {
         match *message {
             Message::SplitDragged {
@@ -7293,12 +7864,11 @@ impl Shell {
                 ratio,
             } => {
                 self.split_drag = None;
-                if divider == split_view::OUTER_DIVIDER {
-                    self.app
-                        .update(AppMessage::Split(SplitMessage::Resize { host, ratio }))
-                } else {
-                    Vec::new()
-                }
+                self.app.update(AppMessage::Split(SplitMessage::Resize {
+                    host,
+                    divider,
+                    ratio,
+                }))
             }
             _ => Vec::new(),
         }
@@ -8065,7 +8635,8 @@ impl Shell {
             shown.extend(crate::rdp_status::redirection_controls(
                 tab_id,
                 profile,
-                self.redirections_shown.contains(&tab_id),
+                self.redirections_shown.contains(&tab_id)
+                    || self.app.settings().rdp_redirection_indicators_expanded,
             ));
         }
         shown.extend(save_files_control(pane, tab_id));
@@ -9343,11 +9914,94 @@ fn migration_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a,
         ),
         None => {}
     }
+    lines.extend(settings_lines(summary));
+    lines
+}
+
+/// A line of the report in the caption size, styled as `style`.
+fn caption_line<'a>(line: String, style: fn(&iced::Theme) -> text::Style) -> Element<'a, Message> {
+    text(line).size(font_size::CAPTION).style(style).into()
+}
+
+/// The C# preferences left out for `outcome`, named, with why; `None` when there is none.
+fn left_out_line<'a>(
+    preferences: &heimdall_app::ImportedPreferences,
+    outcome: PreferenceOutcome,
+) -> Option<Element<'a, Message>> {
+    let names: Vec<&str> = preferences.left_out(outcome).collect();
+    if names.is_empty() {
+        return None;
+    }
+    let names = names.join(&fl!("ui-dialog-import-dropped-separator"));
+    let names = names.as_str();
+    let line = match outcome {
+        PreferenceOutcome::KeptHere => fl!("ui-dialog-import-preferences-kept", names = names),
+        PreferenceOutcome::Secret => fl!("ui-dialog-import-preferences-secret", names = names),
+        PreferenceOutcome::Invalid => fl!("ui-dialog-import-preferences-invalid", names = names),
+        PreferenceOutcome::RelativePath => {
+            fl!("ui-dialog-import-preferences-relative", names = names)
+        }
+        PreferenceOutcome::Taken | PreferenceOutcome::NoEquivalent => return None,
+    };
+    Some(caption_line(line, text::secondary))
+}
+
+/// What the migration of this computer's C# store carried over from its `settings.json`
+/// besides the profiles: its preferences, to be reviewed, and those left out by name; or
+/// why they could not be.
+fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, Message>> {
+    let mut lines = Vec::new();
+    if let Some(detail) = &summary.settings_unreadable {
+        lines.push(caption_line(
+            fl!(
+                "ui-dialog-import-settings-unreadable",
+                detail = detail.as_str()
+            ),
+            text::danger,
+        ));
+    }
+    match &summary.preferences {
+        Some(Ok(preferences)) => {
+            if preferences.taken > 0 {
+                lines.push(caption_line(
+                    fl!("ui-dialog-import-preferences", count = preferences.taken),
+                    text::default,
+                ));
+            }
+            lines.extend(
+                [
+                    PreferenceOutcome::KeptHere,
+                    PreferenceOutcome::Secret,
+                    PreferenceOutcome::Invalid,
+                    PreferenceOutcome::RelativePath,
+                ]
+                .into_iter()
+                .filter_map(|outcome| left_out_line(preferences, outcome)),
+            );
+        }
+        Some(Err(detail)) => lines.push(caption_line(
+            fl!(
+                "ui-dialog-import-preferences-failed",
+                detail = detail.as_str()
+            ),
+            text::danger,
+        )),
+        None => {}
+    }
     lines
 }
 
 fn import_report<'a>(
     summary: &'a heimdall_app::ImportSummary,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    import_report_titled(summary, fl!("ui-dialog-import-title"), ok)
+}
+
+/// As [`import_report`], under `title`.
+fn import_report_titled<'a>(
+    summary: &'a heimdall_app::ImportSummary,
+    title: String,
     ok: iced::widget::Button<'a, Message>,
 ) -> Element<'a, Message> {
     let mut content = import_counts(summary);
@@ -9421,11 +10075,23 @@ fn import_report<'a>(
     {
         content = content.push(text(line).size(font_size::CAPTION));
     }
+    // The C# preferences carried over are taken only once reviewed, as a settings file's.
+    let review = matches!(
+        &summary.preferences,
+        Some(Ok(preferences)) if preferences.review.is_some()
+    )
+    .then(|| {
+        dialog_parts::action(
+            fl!("ui-dialog-import-preferences-review"),
+            styles::secondary,
+        )
+        .on_press(Message::App(AppMessage::ReviewCsharpPreferences))
+    });
     dialog_parts::message(
         import_severity(summary),
-        fl!("ui-dialog-import-title"),
+        title,
         content,
-        dialog_parts::buttons([ok]),
+        dialog_parts::buttons(review.into_iter().chain([ok])),
     )
 }
 
@@ -9559,6 +10225,7 @@ fn protocol_name(protocol: DraftProtocol) -> String {
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-name"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-name"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-name"),
+        DraftProtocol::Web => fl!("ui-profile-protocol-web-name"),
         DraftProtocol::Ftp => fl!("ui-profile-protocol-ftp-name"),
         DraftProtocol::Citrix => fl!("ui-profile-protocol-citrix-name"),
         DraftProtocol::Local => fl!("ui-profile-protocol-local-name"),
@@ -9573,6 +10240,7 @@ fn protocol_description(protocol: DraftProtocol) -> String {
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-desc"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-desc"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-desc"),
+        DraftProtocol::Web => fl!("ui-profile-protocol-web-desc"),
         DraftProtocol::Ftp => fl!("ui-profile-protocol-ftp-desc"),
         DraftProtocol::Citrix => fl!("ui-profile-protocol-citrix-desc"),
         DraftProtocol::Local => fl!("ui-profile-protocol-local-desc"),
@@ -9642,6 +10310,7 @@ fn protocol_kind(protocol: DraftProtocol) -> heimdall_app::ProfileKind {
         DraftProtocol::WinRm => ProfileKind::WinRm,
         DraftProtocol::Vnc => ProfileKind::Vnc,
         DraftProtocol::Telnet => ProfileKind::Telnet,
+        DraftProtocol::Web => ProfileKind::Web,
         DraftProtocol::Ftp => ProfileKind::Ftp,
         DraftProtocol::Citrix => ProfileKind::Citrix,
         DraftProtocol::Local => ProfileKind::Local,
@@ -9682,6 +10351,7 @@ fn labelled_field(
                 DraftProtocol::WinRm => fl!("ui-profile-port-winrm"),
                 DraftProtocol::Vnc => fl!("ui-profile-port-vnc"),
                 DraftProtocol::Ftp => fl!("ui-profile-port-ftp"),
+                DraftProtocol::Web => fl!("ui-profile-port-web"),
                 // Not shown: a local shell and a Citrix application have no port.
                 DraftProtocol::Telnet | DraftProtocol::Local | DraftProtocol::Citrix => {
                     fl!("ui-profile-port-telnet")
@@ -9692,6 +10362,10 @@ fn labelled_field(
         ProfileField::StoreFrontUrl => (fl!("ui-profile-field-storefront-url"), String::new()),
         ProfileField::AppName => (fl!("ui-profile-field-app-name"), String::new()),
         ProfileField::IcaFile => (fl!("ui-profile-field-ica-file"), String::new()),
+        ProfileField::WebPath => (
+            fl!("ui-profile-field-web-path"),
+            fl!("ui-profile-web-path-placeholder"),
+        ),
         ProfileField::Username => (
             fl!("ui-profile-field-username"),
             match draft.protocol {
@@ -9862,6 +10536,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
         ProfileToggle::Seamless => fl!("ui-profile-toggle-seamless"),
         ProfileToggle::Sso => fl!("ui-profile-toggle-sso"),
+        ProfileToggle::PlainHttp => fl!("ui-profile-web-use-http"),
         ProfileToggle::Favorite => fl!("ui-profile-toggle-favorite"),
         ProfileToggle::RunAsAdministrator => fl!("ui-profile-local-run-as-admin"),
         ProfileToggle::AutoTunnelPort => fl!("ui-profile-tunnel-port-auto-toggle"),
@@ -10048,6 +10723,11 @@ fn network_section<'a>(
                     .style(text::warning),
             );
         }
+    }
+    // Said where the tunnel port card is for the others: a web console's tunnel takes a
+    // port the system picks, and the browser names it rather than the console.
+    if draft.protocol == DraftProtocol::Web && draft.routed_gateway().is_some() {
+        section_column = section_column.push(crate::web_form::gateway_hint());
     }
     if draft.shows(ProfileField::LocalTunnelPort) {
         section_column = tunnel_port_card(draft, section_column);
@@ -10482,6 +11162,10 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             fl!("ui-profile-credentials-ftp"),
             Some(fl!("ui-profile-credentials-ftp-desc")),
         )),
+        DraftProtocol::Web => Some((
+            fl!("ui-profile-credentials-web"),
+            Some(fl!("ui-profile-credentials-web-desc")),
+        )),
         DraftProtocol::Telnet | DraftProtocol::Local | DraftProtocol::Citrix => None,
     };
     if let Some((title, description)) = credentials {
@@ -10605,7 +11289,10 @@ fn protocol_options<'a>(
             fl!("ui-profile-options-ssh-desc"),
         )),
         // Their own cards' titles.
-        DraftProtocol::WinRm | DraftProtocol::Local | DraftProtocol::Citrix => None,
+        DraftProtocol::WinRm
+        | DraftProtocol::Local
+        | DraftProtocol::Citrix
+        | DraftProtocol::Web => None,
     };
     if let Some((options, description)) = options {
         form = form.push(section(options, Some(description)));
@@ -10648,6 +11335,9 @@ fn protocol_options<'a>(
             form_field(draft, field)
         }));
     }
+    if draft.protocol == DraftProtocol::Web {
+        form = form.push(crate::web_form::opening(draft));
+    }
     if draft.protocol == DraftProtocol::Ssh {
         form = form.push(ssh_mode_choice(draft));
     }
@@ -10656,6 +11346,7 @@ fn protocol_options<'a>(
         // Info tab's, the WinRM transport the General tab's.
         let drawn_elsewhere = *toggle == ProfileToggle::StoredCredential
             || *toggle == ProfileToggle::Favorite
+            || *toggle == ProfileToggle::PlainHttp
             || (draft.protocol == DraftProtocol::WinRm && WINRM_TRANSPORT.contains(toggle))
             || (draft.protocol == DraftProtocol::Rdp && crate::rdp_options::draws(*toggle));
         if !drawn_elsewhere && draft.shows_toggle(*toggle) {
@@ -10892,6 +11583,11 @@ fn general_tab<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Mes
     if draft.protocol == DraftProtocol::Citrix {
         tab = tab.push(crate::citrix_form::basics(|field| form_field(draft, field)));
     }
+    if draft.protocol == DraftProtocol::Web {
+        tab = tab.push(crate::web_form::address(draft, |field| {
+            form_field(draft, field)
+        }));
+    }
     if draft.protocol == DraftProtocol::Local {
         tab = tab.push(crate::local_form::basics(draft, |field| {
             form_field(draft, field)
@@ -11012,7 +11708,7 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
 }
 
 /// Cancel, then `confirm` in the accent sending `ConfirmDialog`, at a dialog's bottom right.
-fn confirm_buttons<'a>(confirm: String) -> iced::widget::Row<'a, Message> {
+pub(crate) fn confirm_buttons<'a>(confirm: String) -> iced::widget::Row<'a, Message> {
     dialog_parts::buttons([
         dialog_parts::cancel(),
         dialog_parts::confirm(confirm, Some(Message::App(AppMessage::ConfirmDialog))),
@@ -11642,6 +12338,102 @@ fn run_script_dialog(confirmation: &ScriptConfirmation) -> Element<'_, Message> 
         &confirmation.command,
         confirmation.folder.as_deref(),
         confirmation.rereads,
+    )
+}
+
+/// The question before a command of the command library is typed into a terminal: the
+/// command whole, the terminal that receives it, and a warning when it is marked dangerous.
+fn send_command_dialog(confirmation: &SendConfirmation) -> Element<'_, Message> {
+    let mut body = column![
+        dialog_parts::body(fl!(
+            "ui-dialog-send-command-body",
+            name = confirmation.target.as_str()
+        )),
+        container(
+            styles::scroll(
+                text(confirmation.shown.as_str())
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::Glyph)
+            )
+            .height(Length::Shrink)
+        )
+        .max_height(LOCAL_COMMAND_HEIGHT)
+        .padding(spacing::MD)
+        .style(container::rounded_box),
+    ]
+    .spacing(spacing::SM);
+    if confirmation.dangerous {
+        body = body.push(dialog_parts::error(fl!("ui-dialog-send-command-dangerous")));
+    }
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-send-command-title"),
+        body,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(
+                fl!("ui-dialog-send-command-confirm"),
+                if confirmation.dangerous {
+                    styles::danger
+                } else {
+                    styles::primary
+                },
+            )
+            .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]),
+    )
+}
+
+/// The question before a command is typed into several terminals: the command whole and
+/// the name of every terminal that receives it, one question for all.
+fn broadcast_command_dialog(confirmation: &BroadcastConfirmation) -> Element<'_, Message> {
+    let names = confirmation
+        .targets
+        .iter()
+        .fold(column![].spacing(spacing::XS), |list, target| {
+            list.push(text(target.name.as_str()).size(font_size::BODY))
+        });
+    let mut body = column![
+        dialog_parts::body(fl!(
+            "ui-dialog-broadcast-command-body",
+            count = confirmation.targets.len()
+        )),
+        container(styles::scroll(names).height(Length::Shrink))
+            .max_height(LOCAL_COMMAND_HEIGHT)
+            .padding(spacing::MD)
+            .style(container::rounded_box),
+        container(
+            styles::scroll(
+                text(confirmation.shown.as_str())
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::Glyph)
+            )
+            .height(Length::Shrink)
+        )
+        .max_height(LOCAL_COMMAND_HEIGHT)
+        .padding(spacing::MD)
+        .style(container::rounded_box),
+    ]
+    .spacing(spacing::SM);
+    if confirmation.dangerous {
+        body = body.push(dialog_parts::error(fl!("ui-dialog-send-command-dangerous")));
+    }
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-broadcast-command-title"),
+        body,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(
+                fl!("ui-dialog-broadcast-command-confirm"),
+                if confirmation.dangerous {
+                    styles::danger
+                } else {
+                    styles::primary
+                },
+            )
+            .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]),
     )
 }
 
@@ -12959,6 +13751,7 @@ fn ok_button<'a>() -> iced::widget::Button<'a, Message> {
 #[expect(clippy::too_many_lines, reason = "one arm per dialog")]
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
     match dialog {
+        Dialog::AddTool(form) => crate::tool_picker::dialog(form),
         Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
         Dialog::ConfirmSudoDelete { names, more, .. } => {
             files_view::sudo_delete_question(names, *more)
@@ -13024,6 +13817,8 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ConfirmRunScript(confirmation) => run_script_dialog(confirmation),
+        Dialog::ConfirmSendCommand(confirmation) => send_command_dialog(confirmation),
+        Dialog::ConfirmBroadcastCommand(confirmation) => broadcast_command_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::TrustedHostKeyDetails(entry) => crate::trusted_keys_view::details(entry),
@@ -13031,6 +13826,9 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             crate::trusted_keys_view::forget_server_question(key, *count)
         }
         Dialog::ImportDone(summary) => import_report(summary, ok_button()),
+        Dialog::ScanAdded(summary) => {
+            import_report_titled(summary, fl!("ui-dialog-scan-added-title"), ok_button())
+        }
         Dialog::LegacyMigrationOffer(offer) => {
             let (title, body, decline, confirm) = crate::legacy_migration_view::offer(offer);
             // As the C# `ShowConfirm` at start, its question naming what was found.
@@ -13076,6 +13874,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmImportFile(_)
         | Dialog::ProfileImportPreview(_)
         | Dialog::ConfirmCitrixImport(_) => import_preview(dialog),
+        Dialog::NetworkScan(scan) => crate::network_scan_view::dialog(scan),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::BulkPassword {
             ids,
@@ -13594,6 +14393,53 @@ mod tests {
             routed(ctrl_b(), event::Status::Captured).is_none(),
             "tmux's prefix in a terminal stays its own"
         );
+        // Ctrl+Shift+B, the properties panel: the C# leaves it to a terminal too.
+        let ctrl_shift_b = || {
+            pressed(
+                Key::Character("B".into()),
+                unknown,
+                Modifiers::CTRL | Modifiers::SHIFT,
+                None,
+            )
+        };
+        assert!(matches!(
+            routed(ctrl_shift_b(), event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::PropertiesPanel))
+        ));
+        assert!(routed(ctrl_shift_b(), event::Status::Captured).is_none());
+        let held = iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character("B".into()),
+            modified_key: Key::Character("B".into()),
+            physical_key: unknown,
+            location: Location::Standard,
+            modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+            text: None,
+            repeat: true,
+        });
+        assert!(
+            routed(held, event::Status::Ignored).is_none(),
+            "held down, it does not flip the panel at each repeat"
+        );
+        // On a Cyrillic layout the letter is not Latin: the key's place stands for it.
+        let cyrillic_b = |modifiers| {
+            pressed(
+                Key::Character("\u{438}".into()),
+                Physical::Code(keyboard::key::Code::KeyB),
+                modifiers,
+                None,
+            )
+        };
+        assert!(matches!(
+            routed(cyrillic_b(Modifiers::CTRL), event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::ToggleSidebar))
+        ));
+        assert!(matches!(
+            routed(
+                cyrillic_b(Modifiers::CTRL | Modifiers::SHIFT),
+                event::Status::Ignored
+            ),
+            Some(Message::TreeShortcut(TreeShortcut::PropertiesPanel))
+        ));
         let shift_f10 = pressed(
             Key::Named(Named::F10),
             Physical::Code(keyboard::key::Code::F10),
@@ -13738,6 +14584,101 @@ mod tests {
             ),
             "taken by none, Escape may leave full screen"
         );
+    }
+
+    #[test]
+    fn ctrl_c_left_by_every_widget_is_the_password_copy_key_and_a_held_one_is_not() {
+        use keyboard::key::Code;
+        let ctrl_c = |typed: &str, code, modifiers, status, repeat| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(typed.into()),
+                    modified_key: Key::Character(typed.into()),
+                    physical_key: Physical::Code(code),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat,
+                }),
+                status,
+                window::Id::unique(),
+            )
+        };
+        let ignored = event::Status::Ignored;
+        assert!(matches!(
+            ctrl_c("c", Code::KeyC, Modifiers::CTRL, ignored, false),
+            Some(Message::PasswordCopyKey)
+        ));
+        assert!(
+            ctrl_c(
+                "c",
+                Code::KeyC,
+                Modifiers::CTRL,
+                event::Status::Captured,
+                false
+            )
+            .is_none(),
+            "a field or a terminal that took it keeps it, as the C# TextBox check"
+        );
+        assert!(ctrl_c("c", Code::KeyC, Modifiers::CTRL, ignored, true).is_none());
+        assert!(
+            !matches!(
+                ctrl_c(
+                    "c",
+                    Code::KeyC,
+                    Modifiers::CTRL | Modifiers::SHIFT,
+                    ignored,
+                    false
+                ),
+                Some(Message::PasswordCopyKey)
+            ),
+            "Ctrl+Shift+C is the terminal's copy"
+        );
+    }
+
+    #[test]
+    fn enter_escape_and_ctrl_c_drive_the_password_generator_shown_and_no_other_tab() {
+        use crate::tools::{PasswordCopy, PasswordMessage};
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = Shell::with_app(App::new(AppConfig {
+            profiles_file: dir.path().join("profiles.toml"),
+            known_hosts: dir.path().join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: INITIAL_GRID,
+            files_start: dir.path().to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        }));
+        let enter = Message::DialogKey { confirm: true };
+        assert!(
+            shell.password_key(&enter).is_none(),
+            "no tab, no Password Generator"
+        );
+        let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Uuid));
+        assert!(shell.password_key(&enter).is_none(), "another tool's tab");
+        let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Password));
+        let tab = shell.shown_tab_id().expect("the tool's tab");
+        assert!(matches!(
+            shell.password_key(&enter),
+            Some((id, PasswordMessage::Generate)) if id == tab
+        ));
+        assert!(matches!(
+            shell.password_key(&Message::EscapeUntaken),
+            Some((_, PasswordMessage::ClearOutput))
+        ));
+        assert!(matches!(
+            shell.password_key(&Message::PasswordCopyKey),
+            Some((_, PasswordMessage::Copy(PasswordCopy::Main)))
+        ));
+        assert!(
+            shell
+                .password_key(&Message::DialogKey { confirm: false })
+                .is_none(),
+            "an Escape a widget took is the widget's"
+        );
+        // A menu over it keeps the keys.
+        shell.menu = Some((TreeMenu::Tab(tab), iced::Point::ORIGIN));
+        assert!(shell.password_key(&enter).is_none());
     }
 
     #[test]

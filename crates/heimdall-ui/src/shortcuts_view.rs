@@ -61,6 +61,9 @@ pub enum Action {
     SessionMenu,
     FindByName,
     ToggleSidebar,
+    /// Ctrl+Shift+B: the properties panel under the tree.
+    PropertiesPanel,
+    NetworkScan,
     /// Ctrl+Shift+T: the sidebar's Sessions or Tools tab.
     ToggleToolsPanel,
     NextTab,
@@ -126,6 +129,8 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
             ("Shift+F10", Action::SessionMenu),
             ("A-Z, 0-9", Action::FindByName),
             ("Ctrl+B", Action::ToggleSidebar),
+            ("Ctrl+Shift+B", Action::PropertiesPanel),
+            ("Ctrl+Shift+N", Action::NetworkScan),
             ("Ctrl+Shift+T", Action::ToggleToolsPanel),
         ],
     ),
@@ -212,6 +217,8 @@ pub fn action_text(action: Action) -> String {
         Action::SessionMenu => fl!("ui-shortcuts-session-menu"),
         Action::FindByName => fl!("ui-shortcuts-find-by-name"),
         Action::ToggleSidebar => fl!("ui-shortcuts-toggle-sidebar"),
+        Action::PropertiesPanel => fl!("ui-shortcuts-properties-panel"),
+        Action::NetworkScan => fl!("ui-shortcuts-network-scan"),
         Action::ToggleToolsPanel => fl!("ui-shortcuts-toggle-tools-panel"),
         Action::NextTab => fl!("ui-shortcuts-next-tab"),
         Action::PreviousTab => fl!("ui-shortcuts-previous-tab"),
@@ -312,6 +319,6 @@ mod tests {
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
 
-        assert_eq!(actions.len(), 48, "every action listed");
+        assert_eq!(actions.len(), 50, "every action listed");
     }
 }
