@@ -21,12 +21,17 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use heimdall_app::TabId;
+use heimdall_app::net_tools::firewall;
+use heimdall_app::tool_route::ToolRoute;
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
+use iced::futures::{SinkExt as _, Stream, StreamExt as _};
 use iced::widget::{column, container, row, text, text_editor, text_input};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 use heimdall_core::tools::firewall_tester::{
     self, DEFAULT_CONNECT_TIMEOUT_MS, FwInputError, FwProbeResult, FwProbeStatus, FwProbeSummary,
-    MAX_HOSTS, MAX_PORTS,
+    MAX_CONCURRENT, MAX_HOSTS, MAX_PORTS,
 };
 
 use super::file_export::FileExport;
@@ -39,6 +44,9 @@ use crate::tokens::{font_size, spacing};
 
 /// What the CSV export's suggested name starts with, as the C# `firewall_test_{now}.csv`.
 const EXPORT_PREFIX: &str = "firewall_test";
+
+/// Results a routed test's stream holds before its sender waits for the window.
+const CHANNEL_SIZE: usize = 32;
 
 /// Height of the hosts box, as the C# `TxtHosts` (`Height="80"`).
 const HOSTS_BOX_HEIGHT: f32 = 80.0;
@@ -58,6 +66,8 @@ pub enum FirewallTesterMessage {
     Probed(u64, FwProbeResult),
     /// Test `.0` is over; `false` when its work failed.
     Ended(u64, bool),
+    /// The gateway test `.0` goes through could not be opened: why, said.
+    RouteFailed(u64, String),
     /// Save the CSV export to a file, as the C# `OnExportCsvClick`.
     ExportCsv,
 }
@@ -99,6 +109,57 @@ impl Default for FirewallTesterPane {
     }
 }
 
+/// Every port of every host probed from the gateway, [`MAX_CONCURRENT`] at a time and so
+/// within the channels the gateway carries, each result as it ends.
+fn routed_probes<'a, O: Opener>(
+    gateway: &'a ToolGateway<O>,
+    jobs: &'a [(String, u16)],
+) -> impl Stream<Item = FwProbeResult> + 'a {
+    iced::futures::stream::iter(jobs)
+        .map(move |(host, port)| {
+            firewall::probe_via(gateway, host, *port, DEFAULT_CONNECT_TIMEOUT_MS)
+        })
+        .buffer_unordered(MAX_CONCURRENT)
+}
+
+/// The run of a test through `route`: the gateway is opened, then every probe is a channel it
+/// opens onward with the host sent as typed for it to resolve. A gateway that cannot be
+/// opened ends the run with why, said: nothing is then connected from here.
+fn routed_run(
+    hosts: Vec<String>,
+    ports: Vec<u16>,
+    run: u64,
+    route: ToolRoute,
+) -> impl Stream<Item = FirewallTesterMessage> {
+    iced::stream::channel(CHANNEL_SIZE, async move |mut out| {
+        let gateway = match route.open().await {
+            Ok(gateway) => gateway,
+            Err(error) => {
+                let said = super::route_bar::failure_text(error);
+                let _ = out
+                    .send(FirewallTesterMessage::RouteFailed(run, said))
+                    .await;
+                return;
+            }
+        };
+        let jobs: Vec<(String, u16)> = hosts
+            .iter()
+            .flat_map(|host| ports.iter().map(move |port| (host.clone(), *port)))
+            .collect();
+        let mut probes = std::pin::pin!(routed_probes(&gateway, &jobs));
+        while let Some(result) = probes.next().await {
+            if out
+                .send(FirewallTesterMessage::Probed(run, result))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+        let _ = out.send(FirewallTesterMessage::Ended(run, true)).await;
+    })
+}
+
 /// Outcome of updating the Firewall Tester tool pane.
 #[derive(Debug)]
 pub enum Outcome {
@@ -126,13 +187,25 @@ impl FirewallTesterPane {
     }
 
     /// Handles tool messages.
-    pub fn update(&mut self, tab: TabId, message: FirewallTesterMessage) -> Outcome {
+    pub fn update(
+        &mut self,
+        tab: TabId,
+        message: FirewallTesterMessage,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
         match self.apply(message) {
             Step::None => Outcome::None,
             Step::Save(export) => Outcome::Save(export),
             Step::Test(run, stop) => {
                 let hosts = self.last_hosts.clone();
                 let ports = self.last_ports.clone();
+                if let Some(route) = via {
+                    let stream = routed_run(hosts, ports, run, route);
+                    let task = Task::run(stream, move |message| {
+                        Message::Tool(tab, super::ToolMessage::FwTest(message))
+                    });
+                    return Outcome::Task(self.run.attach(task));
+                }
                 let stream = blocking_run(
                     stop,
                     move |stop, probed| {
@@ -192,6 +265,12 @@ impl FirewallTesterPane {
             FirewallTesterMessage::Ended(run, completed) => {
                 if self.run.finish(run) && !completed {
                     self.error = Some(fl!("ui-tool-fwtest-error-failed"));
+                }
+                Step::None
+            }
+            FirewallTesterMessage::RouteFailed(run, said) => {
+                if self.run.finish(run) {
+                    self.error = Some(said);
                 }
                 Step::None
             }
@@ -656,6 +735,43 @@ mod tests {
             probed("a.lab", 443, FwProbeStatus::Open),
         ));
         assert_eq!(pane.results.len(), 1);
+        assert!(!pane.run.running());
+    }
+
+    #[tokio::test]
+    async fn a_routed_test_is_the_channels_opening_and_never_a_direct_connection() {
+        use super::super::route_bar::doubles::{Loopback, Refusing, bait};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let jobs = vec![
+            ("web.internal".to_owned(), 443),
+            ("db.internal".to_owned(), 5432),
+        ];
+        let open = ToolGateway::over(Loopback(address), 4);
+        let results: Vec<FwProbeResult> = routed_probes(&open, &jobs).collect().await;
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.status == FwProbeStatus::Open));
+
+        let (port, watch) = bait().await;
+        let jobs = vec![("127.0.0.1".to_owned(), port)];
+        let refusing = ToolGateway::over(Refusing, 4);
+        let results: Vec<FwProbeResult> = routed_probes(&refusing, &jobs).collect().await;
+        assert_eq!(results[0].status, FwProbeStatus::Closed);
+        assert!(!watch.await.expect("watch"), "nothing connected from here");
+    }
+
+    #[test]
+    fn a_gateway_that_cannot_be_opened_ends_the_test_with_why() {
+        let mut pane = FirewallTesterPane::default();
+        let (run, _stop) = started(&mut pane, "a.lab", "80");
+        pane.apply(FirewallTesterMessage::RouteFailed(
+            run,
+            "no gateway".to_owned(),
+        ));
+        assert_eq!(pane.error.as_deref(), Some("no gateway"));
         assert!(!pane.run.running());
     }
 }

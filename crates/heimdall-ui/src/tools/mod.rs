@@ -806,6 +806,11 @@ impl ToolMessage {
                 | Self::TcpPing(TcpPingMessage::Start)
                 | Self::HttpHeaders(HttpHeadersMessage::Analyze)
                 | Self::Cert(CertInspectorMessage::Inspect)
+                | Self::Whois(WhoisMessage::Lookup)
+                | Self::TlsAudit(TlsAuditMessage::Audit)
+                | Self::Smb(SmbMessage::Enumerate)
+                | Self::FwTest(FirewallTesterMessage::Start)
+                | Self::SecNumCloud(SecNumCloudMessage::StartAudit)
                 | Self::Ping(PingMessage::Start)
                 | Self::TcpTrace(TcpTracerouteMessage::Start)
                 | Self::SnmpWalk(SnmpWalkerMessage::Start | SnmpWalkerMessage::TestCommunities)
@@ -1385,7 +1390,7 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::TlsAudit(message), Pane::TlsAudit(pane)) => {
-                return match pane.update(message, tab) {
+                return match pane.update(message, tab, via) {
                     tlsaudit_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
                     tlsaudit_tool::Outcome::Task(task) => task,
                     tlsaudit_tool::Outcome::None => Task::none(),
@@ -1413,14 +1418,14 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::SecNumCloud(message), Pane::SecNumCloud(pane)) => {
-                return match pane.update(message, tab) {
+                return match pane.update(message, tab, via) {
                     secnumcloud_tool::Outcome::Task(task) => task,
                     secnumcloud_tool::Outcome::Save(export) => state.export(tab, export, main),
                     secnumcloud_tool::Outcome::None => Task::none(),
                 };
             }
             (ToolMessage::Smb(message), Pane::Smb(pane)) => {
-                return match pane.update(message, tab) {
+                return match pane.update(message, tab, via) {
                     smb_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
                     smb_tool::Outcome::Task(task) => task,
                     smb_tool::Outcome::None => Task::none(),
@@ -1445,7 +1450,7 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::Whois(message), Pane::Whois(pane)) => {
-                return match pane.update(tab, message) {
+                return match pane.update(tab, message, via) {
                     whois_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
                     whois_tool::Outcome::Task(task) => task,
                     whois_tool::Outcome::None => Task::none(),
@@ -1531,7 +1536,7 @@ impl ToolPanes {
                 };
             }
             (ToolMessage::FwTest(message), Pane::FwTest(pane)) => {
-                return match pane.update(tab, message) {
+                return match pane.update(tab, message, via) {
                     firewall_tester_tool::Outcome::Task(task) => task,
                     firewall_tester_tool::Outcome::Save(export) => state.export(tab, export, main),
                     firewall_tester_tool::Outcome::None => Task::none(),

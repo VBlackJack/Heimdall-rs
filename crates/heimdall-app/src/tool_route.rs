@@ -53,7 +53,15 @@ impl ToolId {
             | Self::BannerGrabber
             | Self::HttpHeaders
             | Self::Cert
-            | Self::TcpPing => RouteSupport::Tcp,
+            | Self::TcpPing
+            // WHOIS (TCP 43), the TLS audit's handshakes, the SMB negotiation (its NetBIOS
+            // name query is UDP and is left out through a gateway), the egress tester's
+            // connections and the SecNumCloud audit's service probes.
+            | Self::Whois
+            | Self::TlsAudit
+            | Self::Smb
+            | Self::FwTest
+            | Self::SecNumCloud => RouteSupport::Tcp,
             // ICMP (PING, TCPTRACE's TTL probes), ARP (ARPMON), a broadcast datagram (WOL),
             // UDP (SNMP, DNS) and the ping sweep of NETMAP.
             Self::Ping
@@ -171,6 +179,11 @@ mod tests {
             ToolId::HttpHeaders,
             ToolId::Cert,
             ToolId::TcpPing,
+            ToolId::Whois,
+            ToolId::TlsAudit,
+            ToolId::Smb,
+            ToolId::FwTest,
+            ToolId::SecNumCloud,
         ] {
             assert_eq!(tool.route_support(), RouteSupport::Tcp, "{tool:?}");
         }
@@ -178,7 +191,13 @@ mod tests {
 
     #[test]
     fn a_local_tool_is_not_offered_a_gateway() {
-        for tool in [ToolId::Hash, ToolId::Uuid, ToolId::NetIf, ToolId::Notes] {
+        for tool in [
+            ToolId::Hash,
+            ToolId::Uuid,
+            ToolId::NetIf,
+            ToolId::Notes,
+            ToolId::DefaultCreds,
+        ] {
             assert_eq!(tool.route_support(), RouteSupport::NotOffered, "{tool:?}");
         }
     }

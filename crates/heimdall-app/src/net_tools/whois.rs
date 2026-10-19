@@ -23,7 +23,9 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use heimdall_core::tools::whois::{MAX_REPLY_BYTES, WHOIS_DEADLINE, WHOIS_PORT};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
 use crate::reachability::{self, DownReason};
 use crate::text::server_report_text;
@@ -81,7 +83,65 @@ pub async fn lookup_at(
     // One deadline over the lookup, the connection, the query and the whole reply, as the
     // C# links its ten seconds to the lookup's token: a server trickling its reply a byte at
     // a time cannot hold the tool longer.
-    match tokio::time::timeout(deadline, exchange(server, port, query, deadline, limit)).await {
+    answered(
+        started,
+        tokio::time::timeout(deadline, exchange(server, port, query, deadline, limit)).await,
+    )
+}
+
+/// [`lookup`] as the gateway reaches the server: the channel it opens onward to `server`,
+/// sent as typed for the gateway to resolve, carries the query. Nothing is connected from
+/// here.
+///
+/// # Errors
+///
+/// [`WhoisFailure`].
+pub async fn lookup_via<O: Opener>(
+    gateway: &ToolGateway<O>,
+    server: &str,
+    query: &str,
+) -> Result<WhoisReply, WhoisFailure> {
+    lookup_via_at(
+        gateway,
+        server,
+        WHOIS_PORT,
+        query,
+        WHOIS_DEADLINE,
+        MAX_REPLY_BYTES,
+    )
+    .await
+}
+
+/// [`lookup_via`], on `port`, within `deadline`, keeping at most `limit` bytes.
+///
+/// # Errors
+///
+/// [`WhoisFailure`].
+pub async fn lookup_via_at<O: Opener>(
+    gateway: &ToolGateway<O>,
+    server: &str,
+    port: u16,
+    query: &str,
+    deadline: Duration,
+    limit: usize,
+) -> Result<WhoisReply, WhoisFailure> {
+    let started = Instant::now();
+    let work = async {
+        let stream = gateway
+            .dial_within(server, port, None)
+            .await
+            .map_err(|error| reachability::reason_of_error(&error))?;
+        converse(stream, query, limit).await
+    };
+    answered(started, tokio::time::timeout(deadline, work).await)
+}
+
+/// The lookup's answer from what its deadline-bound exchange gave.
+fn answered(
+    started: Instant,
+    exchanged: Result<Result<(Vec<u8>, bool), DownReason>, tokio::time::error::Elapsed>,
+) -> Result<WhoisReply, WhoisFailure> {
+    match exchanged {
         Err(_) => Err(WhoisFailure::TimedOut),
         Ok(Err(reason)) => Err(WhoisFailure::Failed(reason)),
         Ok(Ok((reply, truncated))) => Ok(WhoisReply {
@@ -110,7 +170,16 @@ async fn exchange(
     let connected = heimdall_net::connect_addresses(&targets, None)
         .await
         .map_err(|failure| reachability::down_reason(&failure))?;
-    let mut stream = connected.stream;
+    converse(connected.stream, query, limit).await
+}
+
+/// Sends `query` on `stream` and reads the reply to its end, at most `limit` bytes of it,
+/// and whether there were more.
+async fn converse<S: AsyncRead + AsyncWrite + Unpin>(
+    mut stream: S,
+    query: &str,
+    limit: usize,
+) -> Result<(Vec<u8>, bool), DownReason> {
     let line = format!("{query}{LINE_END}");
     stream
         .write_all(line.as_bytes())

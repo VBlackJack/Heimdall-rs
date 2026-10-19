@@ -32,11 +32,15 @@
 use std::time::Duration;
 
 use heimdall_app::TabId;
+use heimdall_app::net_tools::connect_routed;
+use heimdall_app::tool_route::ToolRoute;
 use heimdall_core::tools::tls_audit::{
     self, CipherStrength, KNOWN_TLS12_CIPHER_SUITES, PROTOCOL_DEFINITIONS, TlsAuditResult,
     TlsCertificateSummary, TlsCipherInfo, TlsFinding, TlsFindingKind, TlsFindingSeverity, TlsGrade,
     TlsProtocol, TlsProtocolRating, TlsProtocolTestResult,
 };
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
 use iced::futures::SinkExt as _;
 use iced::widget::{column, container, progress_bar, row, text, text_input};
 use iced::{Alignment, Background, Border, Element, Length, Task, Theme};
@@ -121,7 +125,12 @@ pub enum Outcome {
 
 impl TlsAuditPane {
     /// Applies `message` and returns the outcome.
-    pub fn update(&mut self, message: TlsAuditMessage, tab: TabId) -> Outcome {
+    pub fn update(
+        &mut self,
+        message: TlsAuditMessage,
+        tab: TabId,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
         match message {
             TlsAuditMessage::HostChanged(host) => {
                 self.host = host;
@@ -177,7 +186,7 @@ impl TlsAuditPane {
 
                 let host_str = trimmed_host.to_owned();
                 let task = Task::run(
-                    audit_stream(host_str, parsed_port, current_id),
+                    audit_stream(host_str, parsed_port, current_id, via),
                     move |msg| Message::Tool(tab, ToolMessage::TlsAudit(msg)),
                 );
                 Outcome::Task(task)
@@ -733,12 +742,31 @@ fn format_report_text(host: &str, port: u16, res: &TlsAuditResult) -> String {
 }
 
 /// Asynchronous streaming probe execution.
+///
+/// Through `via` the gateway is opened first and every probe is a channel it opens onward,
+/// the host sent as typed for it to resolve; a gateway that cannot be opened ends the audit
+/// with why, said, and nothing is then connected from here.
 fn audit_stream(
     host: String,
     port: u16,
     audit_id: u64,
+    via: Option<ToolRoute>,
 ) -> impl iced::futures::Stream<Item = TlsAuditMessage> {
     iced::stream::channel(16, async move |mut out| {
+        let gateway = match via {
+            Some(route) => match route.open().await {
+                Ok(gateway) => Some(gateway),
+                Err(error) => {
+                    let said = super::route_bar::failure_text(error);
+                    let _ = out
+                        .send(TlsAuditMessage::Finished(audit_id, Err(said)))
+                        .await;
+                    return;
+                }
+            },
+            None => None,
+        };
+        let gateway = gateway.as_ref();
         let total_steps = (PROTOCOL_DEFINITIONS.len() + KNOWN_TLS12_CIPHER_SUITES.len() + 1) as f32;
         let mut current_step = 0.0f32;
 
@@ -765,7 +793,7 @@ fn audit_stream(
             };
 
             let hello = tls_audit::build_client_hello(proto, &host, ciphers);
-            match probe_packet(&host, port, &hello, PROBE_TIMEOUT).await {
+            match probe_packet(gateway, &host, port, &hello, PROBE_TIMEOUT).await {
                 Ok(resp) => {
                     any_connected = true;
                     let supported = resp
@@ -817,7 +845,9 @@ fn audit_stream(
                     .await;
 
                 let hello = tls_audit::build_client_hello(TlsProtocol::Tls12, &host, &[suite.id]);
-                if let Ok(Some(resp)) = probe_packet(&host, port, &hello, PROBE_TIMEOUT).await {
+                if let Ok(Some(resp)) =
+                    probe_packet(gateway, &host, port, &hello, PROBE_TIMEOUT).await
+                {
                     if tls_audit::is_server_hello_accepted(&resp, TlsProtocol::Tls12) {
                         cipher_results.push(tls_audit::build_cipher_info(suite.name));
 
@@ -840,7 +870,7 @@ fn audit_stream(
                 ],
             );
             if let Ok(Some(flight)) =
-                probe_handshake_flight(&host, port, &full_hello, PROBE_TIMEOUT).await
+                probe_handshake_flight(gateway, &host, port, &full_hello, PROBE_TIMEOUT).await
             {
                 cert_der = tls_audit::extract_certificate_from_handshake(&flight);
             }
@@ -872,19 +902,18 @@ fn audit_stream(
     })
 }
 
-/// Connects to (host, port), sends `packet`, and reads the initial server response.
-async fn probe_packet(
+/// Connects to (host, port), sends `packet`, and reads the initial server response. With a
+/// `gateway` the connection is a channel it opens, never one from this computer.
+async fn probe_packet<O: Opener>(
+    gateway: Option<&ToolGateway<O>>,
     host: &str,
     port: u16,
     packet: &[u8],
     timeout_duration: Duration,
 ) -> Result<Option<Vec<u8>>, String> {
-    let connect_fut = tokio::net::TcpStream::connect((host, port));
-    let mut stream = match tokio::time::timeout(timeout_duration, connect_fut).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => return Err(e.to_string()),
-        Err(_) => return Err("Connection timed out".to_owned()),
-    };
+    let mut stream = connect_routed(gateway, host, port, timeout_duration)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Both the timeout and the write itself can fail; the inner write error was
     // previously discarded, hiding a failed send as a successful one.
@@ -917,18 +946,16 @@ async fn probe_packet(
 }
 
 /// Probes a TLS endpoint reading a larger flight to locate the server certificate.
-async fn probe_handshake_flight(
+async fn probe_handshake_flight<O: Opener>(
+    gateway: Option<&ToolGateway<O>>,
     host: &str,
     port: u16,
     packet: &[u8],
     timeout_duration: Duration,
 ) -> Result<Option<Vec<u8>>, String> {
-    let connect_fut = tokio::net::TcpStream::connect((host, port));
-    let mut stream = match tokio::time::timeout(timeout_duration, connect_fut).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => return Err(e.to_string()),
-        Err(_) => return Err("Connection timed out".to_owned()),
-    };
+    let mut stream = connect_routed(gateway, host, port, timeout_duration)
+        .await
+        .map_err(|e| e.to_string())?;
 
     match tokio::time::timeout(
         timeout_duration,
@@ -968,5 +995,48 @@ async fn probe_handshake_flight(
         Ok(Some(buf))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpListener;
+
+    use super::super::route_bar::doubles::{Loopback, Refusing, bait};
+    use super::*;
+
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    #[tokio::test]
+    async fn a_probe_goes_over_the_channel_and_reads_what_the_server_says() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut hello = [0_u8; 16];
+            let _ = socket.read(&mut hello).await;
+            socket.write_all(&[0x16, 0x03, 0x03]).await.expect("write");
+        });
+        let gateway = ToolGateway::over(Loopback(address), 4);
+        let answered = probe_packet(Some(&gateway), "tls.internal", 443, &[1, 2, 3], TIMEOUT).await;
+        assert_eq!(answered, Ok(Some(vec![0x16, 0x03, 0x03])));
+    }
+
+    #[tokio::test]
+    async fn a_refused_channel_is_an_error_and_never_a_direct_connection() {
+        let (port, watch) = bait().await;
+        let gateway = ToolGateway::over(Refusing, 4);
+        assert!(
+            probe_packet(Some(&gateway), "127.0.0.1", port, &[1], TIMEOUT)
+                .await
+                .is_err()
+        );
+        assert!(
+            probe_handshake_flight(Some(&gateway), "127.0.0.1", port, &[1], TIMEOUT)
+                .await
+                .is_err()
+        );
+        assert!(!watch.await.expect("watch"), "nothing connected from here");
     }
 }

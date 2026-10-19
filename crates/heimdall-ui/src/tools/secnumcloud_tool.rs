@@ -39,6 +39,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use heimdall_app::TabId;
+use heimdall_app::net_tools::connect_routed;
+use heimdall_app::tool_route::ToolRoute;
 use heimdall_core::tools::secnumcloud::{
     AuditChapter, AuditDepth, AuditEvidence, AuditOptions, AuditReport, AuditScope, AuditStatus,
     DiscoveredHost, DiscoveredService, HTTP_PORTS, HtmlLabels, REQUIRED_SECURITY_HEADERS,
@@ -46,13 +48,14 @@ use heimdall_core::tools::secnumcloud::{
     build_html_export, build_network_chapter, build_operations_chapter, find_cves_for_software,
     parse_banner,
 };
+use heimdall_ssh::socks::Opener;
+use heimdall_ssh::tool_route::ToolGateway;
 use iced::futures::SinkExt as _;
 use iced::widget::{
     checkbox, column, container, pick_list, progress_bar, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Background, Border, Element, Length, Task, Theme};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use super::file_export::FileExport;
@@ -170,7 +173,12 @@ impl Default for SecNumCloudPane {
 
 impl SecNumCloudPane {
     /// Updates the view state in response to a message.
-    pub fn update(&mut self, message: SecNumCloudMessage, tab: TabId) -> Outcome {
+    pub fn update(
+        &mut self,
+        message: SecNumCloudMessage,
+        tab: TabId,
+        via: Option<ToolRoute>,
+    ) -> Outcome {
         match message {
             SecNumCloudMessage::ScopeChanged(val) => {
                 self.scope = val;
@@ -227,7 +235,7 @@ impl SecNumCloudPane {
                     check_operations: self.check_operations,
                 };
 
-                let stream = audit_stream(self.scope.clone(), options, scan_id);
+                let stream = audit_stream(self.scope.clone(), options, scan_id, via);
                 Outcome::Task(Task::run(stream, move |msg| {
                     Message::Tool(tab, ToolMessage::SecNumCloud(msg))
                 }))
@@ -678,12 +686,35 @@ impl SecNumCloudPane {
 
 // ── Asynchronous Audit Stream ────────────────────────────────────────
 
+/// The audit of the hosts of `scope_str`. Through `via` the gateway is opened first and every
+/// probe is a channel it opens onward, the host sent as typed for it to resolve; a gateway
+/// that cannot be opened ends the audit with why, said, and nothing is then connected from
+/// here. The checks are the TCP connections of the audit: it sends no UDP or ICMP.
 fn audit_stream(
     scope_str: String,
     options: AuditOptions,
     scan_id: u64,
+    via: Option<ToolRoute>,
 ) -> impl iced::futures::Stream<Item = SecNumCloudMessage> {
     iced::stream::channel(16, async move |mut out| {
+        let gateway_id = via
+            .as_ref()
+            .and_then(|route| route.hops().last())
+            .map(|hop| hop.id.as_str().to_owned());
+        let gateway = match via {
+            Some(route) => match route.open().await {
+                Ok(gateway) => Some(gateway),
+                Err(error) => {
+                    let said = super::route_bar::failure_text(error);
+                    let _ = out
+                        .send(SecNumCloudMessage::Finished(scan_id, Err(said)))
+                        .await;
+                    return;
+                }
+            },
+            None => None,
+        };
+        let gateway = gateway.as_ref();
         let start_time = now_timestamp();
         let targets = parse_scope_targets(&scope_str);
         if targets.is_empty() {
@@ -707,7 +738,7 @@ fn audit_stream(
 
         let mut discovered_hosts = Vec::new();
         for target in &targets {
-            let host = probe_host(target).await;
+            let host = probe_host(gateway, target).await;
             discovered_hosts.push(host);
         }
 
@@ -731,7 +762,7 @@ fn audit_stream(
                 fl!("ui-tool-secnumcloud-net04-name"),
             ];
             let mut ch = build_network_chapter(chapter_name, check_names);
-            run_network_checks(&mut ch, &discovered_hosts).await;
+            run_network_checks(&mut ch, &discovered_hosts, gateway).await;
             chapters.push(ch);
         }
 
@@ -806,7 +837,7 @@ fn audit_stream(
             scope: AuditScope {
                 targets,
                 subnet: None,
-                gateway_id: None,
+                gateway_id,
             },
             chapters,
         };
@@ -867,14 +898,14 @@ fn html_labels() -> HtmlLabels {
     }
 }
 
-async fn probe_host(host: &str) -> DiscoveredHost {
+async fn probe_host<O: Opener>(gateway: Option<&ToolGateway<O>>, host: &str) -> DiscoveredHost {
     let probe_ports: &[u16] = &[
         21, 22, 23, 25, 53, 80, 161, 443, 445, 1433, 3306, 3389, 5432, 6379, 8080, 8443,
     ];
     let mut services = Vec::new();
 
     for &port in probe_ports {
-        if let Ok(Ok(mut stream)) = timeout(PROBE_TIMEOUT, TcpStream::connect((host, port))).await {
+        if let Ok(mut stream) = connect_routed(gateway, host, port, PROBE_TIMEOUT).await {
             let mut banner = None;
             let mut buf = [0u8; 256];
             if let Ok(Ok(n)) = timeout(Duration::from_millis(500), stream.read(&mut buf)).await {
@@ -929,7 +960,11 @@ fn guess_service_name(port: u16) -> Option<String> {
 
 // ── Check Runners ────────────────────────────────────────────────────
 
-async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]) {
+async fn run_network_checks<O: Opener>(
+    chapter: &mut AuditChapter,
+    hosts: &[DiscoveredHost],
+    gateway: Option<&ToolGateway<O>>,
+) {
     let unknown = fl!("ui-tool-secnumcloud-unknown");
 
     // NET-01: Open ports inventory
@@ -1002,7 +1037,7 @@ async fn run_network_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHost]
                 .filter(|s| s.is_open && HTTP_PORTS.contains(&s.port))
             {
                 checked_count += 1;
-                let missing = fetch_missing_headers(&host.ip_address, svc.port).await;
+                let missing = fetch_missing_headers(gateway, &host.ip_address, svc.port).await;
                 if !missing.is_empty() {
                     missing_count += 1;
                     let headers = missing.join(", ");
@@ -1069,9 +1104,13 @@ fn format_port_list(services: &[&DiscoveredService], unknown: &str) -> String {
         .join(", ")
 }
 
-async fn fetch_missing_headers(host: &str, port: u16) -> Vec<String> {
+async fn fetch_missing_headers<O: Opener>(
+    gateway: Option<&ToolGateway<O>>,
+    host: &str,
+    port: u16,
+) -> Vec<String> {
     let mut missing = Vec::new();
-    if let Ok(Ok(mut stream)) = timeout(PROBE_TIMEOUT, TcpStream::connect((host, port))).await {
+    if let Ok(mut stream) = connect_routed(gateway, host, port, PROBE_TIMEOUT).await {
         let req = format!("HEAD / HTTP/1.0\r\nHost: {host}\r\n\r\n");
         let _ = stream.write_all(req.as_bytes()).await;
         let mut buf = [0u8; 1024];
@@ -1274,7 +1313,10 @@ async fn run_operations_checks(chapter: &mut AuditChapter, hosts: &[DiscoveredHo
 mod tests {
     use heimdall_core::tools::secnumcloud::AuditCheck;
 
+    use tokio::net::TcpListener;
+
     use super::super::file_export::Format;
+    use super::super::route_bar::doubles::{Loopback, Refusing};
     use super::*;
 
     /// A report whose evidence holds what a hostile server could send back.
@@ -1345,5 +1387,37 @@ mod tests {
             "the raw data's formula defused: {}",
             lines[1]
         );
+    }
+
+    #[tokio::test]
+    async fn a_service_is_discovered_over_the_channel_with_its_banner() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(b"SSH-2.0-OpenSSH_9.6\r\n").await;
+            }
+        });
+        let gateway = ToolGateway::over(Loopback(address), 4);
+        let host = probe_host(Some(&gateway), "app.internal").await;
+        assert_eq!(host.ip_address, "app.internal");
+        assert!(host.services.iter().any(|service| {
+            service.port == 22
+                && service
+                    .banner
+                    .as_deref()
+                    .is_some_and(|banner| banner.starts_with("SSH-2.0-OpenSSH"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn a_refused_channel_finds_nothing_and_connects_nothing_directly() {
+        // The ports probed are fixed, so no bait can stand on them: a direct connection to
+        // the loopback would find a service wherever the machine serves one.
+        let gateway = ToolGateway::over(Refusing, 4);
+        let host = probe_host(Some(&gateway), "127.0.0.1").await;
+        assert!(host.services.is_empty());
+        let missing = fetch_missing_headers(Some(&gateway), "127.0.0.1", 80).await;
+        assert!(missing.is_empty());
     }
 }
