@@ -99,29 +99,28 @@ pub use app::ImportedPreferences;
 pub use app::SavedCredentials;
 pub use app::SessionLoadNotice;
 pub use app::SettingsTransferMessage;
-pub use app::ToolsMessage;
 pub use app::split;
 pub use app::{ANNOUNCEMENTS_KEPT, Announced, Announcement};
 pub use app::{
-    AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkPasswordRefusal, BulkPasswordSkips,
-    BulkRefusal, CertificateContext, CitrixImportOutcome, ClosedTab, ConflictRow, ConnectAs,
-    Dialog, DropTarget, Effect, ElevatedPane, ElevatedState, ExportOutcome, FileKind, FilesMessage,
-    FilterMessage, FloatMessage, Floating, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
-    HostKeysMessage, HostKeysOutcome, HostKeysPreview, IDLE_POLL, ImportFile, ImportSummary,
-    KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
-    OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode,
-    PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
+    AgentChip, App, AppConfig, BroadcastConfirmation, BroadcastMessage, BulkField,
+    BulkPasswordRefusal, BulkPasswordSkips, BulkRefusal, CertificateContext, CitrixImportOutcome,
+    ClosedTab, ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ElevatedPane, ElevatedState,
+    ExportOutcome, FileKind, FilesMessage, FilterMessage, FloatMessage, Floating, FolderMessage,
+    FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview,
+    IDLE_POLL, ImportFile, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
+    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice,
+    OpenedVault, OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage,
+    PinMode, PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickGroup,
     QuickResult, QuickRow, RDP_EXTENSION, RECENTLY_CLOSED_CAPACITY, RdpMessage, RdpNames,
     RdpOutcome, RdpPreview, RdpRow, RecentlyClosed, ResolutionChoice, RestoreDialog, RestoreRow,
-    Retry, ScriptConfirmation, SelectionMessage, SendConfirmation, SendTarget, SessionState,
-    SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
-    SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
-    ToolWords, TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
-    UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard,
-    VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    VaultTicket, WHEEL_LINES, bulk_password_refusal, folder_label, local_date_time,
+    Retry, ScriptConfirmation, SelectionMessage, SendConfirmation, SendTarget, SentCommand,
+    SessionState, SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow,
+    SessionsSource, SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage,
+    TabProfile, ToolWords, TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage,
+    TunnelMessage, UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog,
+    VaultHelloCard, VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem,
+    VaultStatus, VaultTicket, WHEEL_LINES, bulk_password_refusal, folder_label, local_date_time,
     master_password_problem, open_vault, search_folded, should_auto_lock,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
@@ -133,6 +132,7 @@ pub use app::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use app::{
     SCHEDULED_TICK, ScheduledChoice, ScheduledMessage, ScheduledNotice, local_time_text,
 };
+pub use app::{ToolEntryEdit, ToolEntryForm, ToolsMessage};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };

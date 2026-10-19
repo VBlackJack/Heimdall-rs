@@ -38,6 +38,14 @@ pub enum FileWarning {
     Unreadable(String),
     /// An `mRemoteNG` file encrypted whole: it must be saved without encryption first.
     FullyEncrypted,
+    /// A `MobaXterm` login names a `[NAME]` variable that has no value: the session is
+    /// imported with the token left as written, and the user told which value to define.
+    UnresolvedVariable {
+        /// The session that carries the token, as named in the file.
+        session: String,
+        /// The variable name, without brackets.
+        name: String,
+    },
 }
 
 /// What a file gives.
@@ -84,6 +92,7 @@ impl Parsed {
         report.local.iter_mut().for_each(|p| fresh(&mut p.id));
         report.winrm.iter_mut().for_each(|p| fresh(&mut p.id));
         report.web.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.tools.iter_mut().for_each(|p| fresh(&mut p.id));
         // What the sessions say of their servers follows them to their new identifiers.
         for (id, _) in &mut report.metadata {
             if let Some(new) = renamed.get(id) {

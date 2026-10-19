@@ -702,6 +702,8 @@ impl App {
             ftp: written(List::Ftp, report.ftp, &by_slot),
             citrix: written(List::Citrix, report.citrix, &by_slot),
             web: written(List::Web, report.web, &by_slot),
+            // The file picker's previews hold no tool entries: only a C# file has them.
+            tools: report.tools,
             // As the C#, the file's gateways are reconciled only when a profile is written.
             gateways: if written_any {
                 report.gateways

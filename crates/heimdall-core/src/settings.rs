@@ -16,6 +16,7 @@
 
 //! The settings of Heimdall-rs, beside its profiles: what the Settings page changes.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -640,6 +641,10 @@ pub struct Settings {
     /// `ExternalTools` (`AppSettings.cs:562`): started for a session from its menus and from
     /// Quick Connect.
     pub external_tools: Vec<ExternalTool>,
+    /// The values `[NAME]` takes in a `MobaXterm` session file's login fields, as the C#
+    /// `MobaXtermUserVariables` (`AppSettings.cs:416`): name without brackets to login, with
+    /// environment variables expanded when a file is read. Names match without case.
+    pub mobaxterm_variables: BTreeMap<String, String>,
     /// `PuTTY`, which an SSH profile in the external mode opens in, as the C# `PuttyPath`;
     /// empty looks for it in the folders of `PATH`.
     pub putty_path: String,
@@ -1320,6 +1325,7 @@ impl Default for Settings {
             rdp_default_mode: RdpMode::default(),
             external_editor: String::new(),
             external_tools: Vec::new(),
+            mobaxterm_variables: default_mobaxterm_variables(),
             putty_path: String::new(),
             ssh_default_mode: SshMode::default(),
             x11_server_path: String::new(),
@@ -1378,6 +1384,8 @@ struct SettingsFile {
     #[serde(default)]
     external_tools: ExternalToolsSection,
     #[serde(default)]
+    mobaxterm: MobaxtermSection,
+    #[serde(default)]
     reachability: ReachabilitySection,
     #[serde(default)]
     updates: UpdatesSection,
@@ -1402,6 +1410,36 @@ struct SettingsFile {
 struct SharedSessionsSection {
     #[serde(default)]
     sources: Vec<SharedSource>,
+}
+
+/// The C# default `MobaXtermUserVariables` name and value (`AppSettings.cs:418`).
+const MOBAXTERM_DEFAULT_VARIABLE: (&str, &str) = ("DAS", "%USERNAME%");
+
+/// The `MobaXterm` variables of a new installation, and of a file written before the setting
+/// existed, as the C# initializer.
+#[must_use]
+pub fn default_mobaxterm_variables() -> BTreeMap<String, String> {
+    BTreeMap::from([(
+        MOBAXTERM_DEFAULT_VARIABLE.0.to_owned(),
+        MOBAXTERM_DEFAULT_VARIABLE.1.to_owned(),
+    )])
+}
+
+/// The `MobaXterm` variables, carried by an export as the C# exports `MobaXtermUserVariables`.
+/// A section present with no variable is the user's choice of none; an absent one is a file
+/// written before the setting, which takes the default.
+#[derive(Serialize, Deserialize)]
+struct MobaxtermSection {
+    #[serde(default = "default_mobaxterm_variables")]
+    variables: BTreeMap<String, String>,
+}
+
+impl Default for MobaxtermSection {
+    fn default() -> Self {
+        Self {
+            variables: default_mobaxterm_variables(),
+        }
+    }
 }
 
 /// The external tools, carried by an export as the C# exports its `ExternalTools`.
@@ -1974,6 +2012,9 @@ impl Settings {
             // The user's own entries, as the C# carries `ExternalTools` across
             // (`SettingsViewModel.cs:2483-2488`).
             external_tools: std::mem::take(&mut self.external_tools),
+            // Kept like the tools, as the C# carries `MobaXtermUserVariables` across
+            // (`SettingsViewModel.cs:2499`).
+            mobaxterm_variables: std::mem::take(&mut self.mobaxterm_variables),
             legacy_migration: std::mem::take(&mut self.legacy_migration),
             onboarding_completed: self.onboarding_completed,
             shared_sources: std::mem::take(&mut self.shared_sources),
@@ -2218,6 +2259,7 @@ impl Settings {
             sftp_browser: file.files.sftp_browser(),
             external_editor: file.files.external_editor.trim().to_owned(),
             external_tools: file.external_tools.tools,
+            mobaxterm_variables: file.mobaxterm.variables,
             putty_path: file.ssh.putty_path.trim().to_owned(),
             ssh_default_mode: file
                 .ssh
@@ -2403,6 +2445,9 @@ impl Settings {
             },
             external_tools: ExternalToolsSection {
                 tools: self.external_tools.clone(),
+            },
+            mobaxterm: MobaxtermSection {
+                variables: self.mobaxterm_variables.clone(),
             },
             reachability: ReachabilitySection {
                 enabled: Some(self.reachability.enabled),
@@ -2631,7 +2676,7 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 14] = [
+const TRANSFERRED: [&str; 15] = [
     "terminal",
     "session_log",
     "general",
@@ -2642,6 +2687,7 @@ const TRANSFERRED: [&str; 14] = [
     "rdp_session",
     "files",
     "external_tools",
+    "mobaxterm",
     "reachability",
     "updates",
     "windows_hello",

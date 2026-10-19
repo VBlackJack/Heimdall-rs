@@ -58,7 +58,7 @@ fn loaded(dir: &Path, text: &str) -> (SharedSessions, Vec<SharedSource>) {
     std::fs::write(&file, text).expect("write");
     let sources = vec![source("team", &file)];
     let mut shared = SharedSessions::default();
-    shared.load(&sources);
+    shared.load(&sources, &Default::default());
     (shared, sources)
 }
 
@@ -118,7 +118,7 @@ fn the_file_is_only_read_and_a_session_handed_out_is_a_copy() {
         profile.host = "changed.example.com".to_owned();
     }
     assert_ne!(shared.find(&id), Some(copy), "the copy is not the held one");
-    shared.refresh(&sources, later());
+    shared.refresh(&sources, &Default::default(), later());
     assert_eq!(std::fs::read(&file).expect("read"), before);
     assert!(
         !std::fs::metadata(&file)
@@ -138,7 +138,10 @@ fn a_file_that_is_not_usable_loads_nothing_and_says_why() {
     assert_eq!(shared.sessions().count(), 0);
 
     let mut missing = SharedSessions::default();
-    missing.load(&[source("gone", &dir.path().join("nowhere.ini"))]);
+    missing.load(
+        &[source("gone", &dir.path().join("nowhere.ini"))],
+        &Default::default(),
+    );
     assert_eq!(
         missing.sources()[0].status,
         SourceStatus::Failed(SourceProblem::Missing)
@@ -148,7 +151,7 @@ fn a_file_that_is_not_usable_loads_nothing_and_says_why() {
     let file = std::fs::File::create(&big).expect("create");
     file.set_len(MAX_SOURCE_FILE_BYTES + 1).expect("length");
     let mut oversized = SharedSessions::default();
-    oversized.load(&[source("big", &big)]);
+    oversized.load(&[source("big", &big)], &Default::default());
     assert_eq!(
         oversized.sources()[0].status,
         SourceStatus::Failed(SourceProblem::TooLarge)
@@ -173,7 +176,7 @@ fn a_source_with_a_bad_identifier_a_repeated_one_or_no_path_is_reported() {
         no_path,
     ];
     let mut shared = SharedSessions::default();
-    shared.load(&sources);
+    shared.load(&sources, &Default::default());
     let statuses: Vec<_> = shared.sources().iter().map(|s| s.status.clone()).collect();
     assert_eq!(
         statuses,
@@ -193,7 +196,10 @@ fn a_changed_file_is_read_again_and_a_worse_one_keeps_the_previous_sessions() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shared, sources) = loaded(dir.path(), TEAM);
     let file = dir.path().join("team.mxtsessions");
-    assert!(!shared.refresh(&sources, later()), "nothing changed");
+    assert!(
+        !shared.refresh(&sources, &Default::default(), later()),
+        "nothing changed"
+    );
 
     std::fs::write(
         &file,
@@ -201,15 +207,15 @@ fn a_changed_file_is_read_again_and_a_worse_one_keeps_the_previous_sessions() {
     )
     .expect("write");
     // Just written: left to settle.
-    assert!(!shared.refresh(&sources, SystemTime::now()));
+    assert!(!shared.refresh(&sources, &Default::default(), SystemTime::now()));
     assert_eq!(shared.sources()[0].sessions, 2);
-    assert!(shared.refresh(&sources, later()));
+    assert!(shared.refresh(&sources, &Default::default(), later()));
     let names: Vec<_> = shared.sessions().map(|s| s.name().to_owned()).collect();
     assert_eq!(names, ["only", "second"]);
 
     // A file that no longer parses: the sessions held stay, with the reason.
     std::fs::write(&file, "garbage, garbage and more garbage").expect("write");
-    assert!(shared.refresh(&sources, later()));
+    assert!(shared.refresh(&sources, &Default::default(), later()));
     let state = &shared.sources()[0];
     assert_eq!(state.status, SourceStatus::Loaded);
     assert_eq!(state.kept_previous, Some(SourceProblem::Empty));
@@ -217,7 +223,7 @@ fn a_changed_file_is_read_again_and_a_worse_one_keeps_the_previous_sessions() {
 
     // Gone: nothing stays connectable from a file that is not there.
     std::fs::remove_file(&file).expect("remove");
-    assert!(shared.refresh(&sources, later()));
+    assert!(shared.refresh(&sources, &Default::default(), later()));
     assert_eq!(
         shared.sources()[0].status,
         SourceStatus::Failed(SourceProblem::Missing)
@@ -226,7 +232,7 @@ fn a_changed_file_is_read_again_and_a_worse_one_keeps_the_previous_sessions() {
 
     // Back and good: the notice goes.
     std::fs::write(&file, TEAM).expect("write");
-    assert!(shared.refresh(&sources, later()));
+    assert!(shared.refresh(&sources, &Default::default(), later()));
     assert_eq!(shared.sources()[0].kept_previous, None);
     assert_eq!(shared.sessions().count(), 2);
 }
@@ -235,7 +241,7 @@ fn a_changed_file_is_read_again_and_a_worse_one_keeps_the_previous_sessions() {
 fn a_source_removed_from_the_settings_takes_its_sessions_with_it() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shared, _) = loaded(dir.path(), TEAM);
-    assert!(shared.refresh(&[], later()));
+    assert!(shared.refresh(&[], &Default::default(), later()));
     assert!(shared.is_empty());
     assert_eq!(shared.sessions().count(), 0);
 }
@@ -385,4 +391,25 @@ e=TOPSECRET3
     assert_eq!(shared.sources()[0].ignored_passwords, 3);
     let held = format!("{shared:?}");
     assert!(!held.contains("TOPSECRET"), "{held}");
+}
+
+#[test]
+fn the_users_variables_fill_in_a_login_as_the_file_import_does() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("vars.mxtsessions");
+    std::fs::write(
+        &file,
+        "[Bookmarks]
+web= #109#0%web.example.com%22%[ADMIN]%
+",
+    )
+    .expect("write");
+    let sources = vec![source("vars", &file)];
+    let variables = std::collections::BTreeMap::from([("ADMIN".to_owned(), "alice".to_owned())]);
+    let mut shared = SharedSessions::default();
+    shared.load(&sources, &variables);
+    let SharedTarget::Ssh(ssh) = &shared.sessions_of("vars")[0].target else {
+        panic!("an SSH session");
+    };
+    assert_eq!(ssh.username.as_deref(), Some("alice"));
 }

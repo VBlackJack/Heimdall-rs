@@ -2185,6 +2185,60 @@ fn settings_without_scheduled_connections_carry_none_over() {
 }
 
 #[test]
+fn a_tool_entry_is_imported_with_its_tool_host_and_port_and_never_taken_for_ssh() {
+    use heimdall_core::profile::ToolProfile;
+    let report = import(
+        &servers(
+            r#"{"id": "p", "displayName": "Ping core", "remoteServer": " core.lab ",
+                "connectionType": "TOOL:PING", "remotePort": 443, "group": "Lab/Tools",
+                "isFavorite": true},
+               {"id": "u", "displayName": "", "remoteServer": "", "connectionType": "tool:uuid",
+                "remotePort": 0},
+               {"id": "x", "displayName": "Future", "remoteServer": "h",
+                "connectionType": "TOOL:PRIVLAUNCH"},
+               {"id": "n", "remoteServer": "h", "connectionType": "TOOL:"},
+               {"id": "", "remoteServer": "h", "connectionType": "TOOL:DNS"}"#,
+        ),
+        None,
+    )
+    .expect("imports");
+    assert_eq!(
+        report.tools,
+        [
+            ToolProfile {
+                id: ProfileId::new("p"),
+                name: "Ping core".to_owned(),
+                group: Some("Lab/Tools".to_owned()),
+                tool: "PING".to_owned(),
+                host: Some("core.lab".to_owned()),
+                port: Some(443),
+            },
+            ToolProfile {
+                id: ProfileId::new("u"),
+                name: "UUID".to_owned(),
+                group: None,
+                tool: "UUID".to_owned(),
+                host: None,
+                port: None,
+            },
+            ToolProfile {
+                id: ProfileId::new("x"),
+                name: "Future".to_owned(),
+                group: None,
+                tool: "PRIVLAUNCH".to_owned(),
+                host: Some("h".to_owned()),
+                port: None,
+            },
+        ],
+        "a tool this build does not have is carried, not dropped"
+    );
+    assert!(report.profiles.is_empty(), "never taken for SSH");
+    assert_eq!(report.favorites, [ProfileId::new("p")]);
+    assert_eq!(report.skipped.len(), 2, "no tool, no identifier");
+    assert!(report.dropped.is_empty());
+}
+
+#[test]
 fn a_web_console_is_imported_with_its_address_account_and_gateway_never_its_password() {
     use heimdall_core::import::csharp::{Dropped, DroppedSettings};
     use heimdall_core::profile::WebProfile;

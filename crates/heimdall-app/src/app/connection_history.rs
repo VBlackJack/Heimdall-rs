@@ -57,6 +57,7 @@ fn connection_type(kind: ProfileKind) -> &'static str {
         ProfileKind::WinRm => "WINRM",
         ProfileKind::Citrix => "Citrix",
         ProfileKind::Web => "WEB",
+        ProfileKind::Tool => "TOOL",
     }
 }
 

@@ -2509,3 +2509,60 @@ fn the_default_resolution_is_kept_ranged_exported_and_reset() {
     read.reset_rdp();
     assert_eq!(read.rdp_default_size(), (1920, 1080), "reset with RDP");
 }
+
+#[test]
+fn the_mobaxterm_variables_default_to_das_and_are_written_and_read_back_whole() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let das = std::collections::BTreeMap::from([("DAS".to_owned(), "%USERNAME%".to_owned())]);
+    assert_eq!(Settings::default().mobaxterm_variables, das);
+
+    let custom = std::collections::BTreeMap::from([
+        ("TEAM".to_owned(), "ops".to_owned()),
+        ("DAS".to_owned(), "jb".to_owned()),
+    ]);
+    let settings = Settings {
+        mobaxterm_variables: custom.clone(),
+        ..Settings::default()
+    };
+    settings.save(&path).expect("saved");
+    assert_eq!(
+        Settings::load(&path).expect("read").mobaxterm_variables,
+        custom
+    );
+
+    // The user's choice of none is kept; a file written before the setting takes the default.
+    let none = Settings {
+        mobaxterm_variables: std::collections::BTreeMap::new(),
+        ..Settings::default()
+    };
+    none.save(&path).expect("saved");
+    assert!(
+        Settings::load(&path)
+            .expect("read")
+            .mobaxterm_variables
+            .is_empty()
+    );
+    std::fs::write(&path, "version = 1\n").expect("an old file");
+    assert_eq!(
+        Settings::load(&path).expect("read").mobaxterm_variables,
+        das
+    );
+}
+
+#[test]
+fn a_reset_keeps_the_mobaxterm_variables_and_an_export_carries_them() {
+    let custom = std::collections::BTreeMap::from([("TEAM".to_owned(), "ops".to_owned())]);
+    let settings = Settings {
+        mobaxterm_variables: custom.clone(),
+        ..Settings::default()
+    };
+    let mut reset = settings.clone();
+    reset.reset_all();
+    assert_eq!(reset.mobaxterm_variables, custom, "as the C# reset");
+
+    let (text, _) = settings.export(None, false);
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(read.settings.mobaxterm_variables, custom);
+    assert!(read.ignored.is_empty(), "{:?}", read.ignored);
+}

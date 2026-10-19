@@ -110,6 +110,7 @@ const fn kind_badge(kind: ProfileKind) -> &'static str {
         ProfileKind::Citrix => "CTX",
         ProfileKind::Web => "WEB",
         ProfileKind::Local => "SH",
+        ProfileKind::Tool => "TOOL",
     }
 }
 

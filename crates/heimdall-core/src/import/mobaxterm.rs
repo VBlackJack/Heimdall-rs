@@ -22,9 +22,11 @@
 //! Passwords are encrypted by `MobaXterm` with its own algorithm: they are only counted, so
 //! the user can be told to enter them again.
 
+use std::collections::{BTreeMap, HashSet};
+
 use serde_json::{Map, Value};
 
-use super::foreign::{Parsed, set_text};
+use super::foreign::{FileWarning, Parsed, set_text};
 
 /// Sections whose entries are stored passwords, counted and never read.
 const PASSWORD_SECTIONS: [&str; 2] = ["Passwords", "Credentials"];
@@ -93,16 +95,39 @@ pub struct Skipped {
     pub truncated: bool,
 }
 
-/// Reads a `MobaXterm` file.
+/// Opens and closes a variable token in a login field, as the C# `VariableTokenRegex`.
+const TOKEN_OPEN: char = '[';
+const TOKEN_CLOSE: char = ']';
+
+/// Delimits an environment variable reference, as .NET `ExpandEnvironmentVariables`.
+const ENV_DELIMITER: char = '%';
+
+/// A variable's value: the text it stands for, or `None` when it has none.
+pub type VariableResolver<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+/// Reads a `MobaXterm` file, no variable known: every `[NAME]` in a login is kept as written
+/// and reported, as the C# `MobaXtermImportOptions.Default`.
 #[must_use]
 pub fn parse(text: &str) -> Parsed {
-    parse_limited(text, &Limits::UNLIMITED).0
+    parse_with(text, &|_| None)
 }
 
-/// Reads a `MobaXterm` file within `limits`, and says what it left out. Stored passwords
-/// are counted as they are met and never decoded nor kept.
+/// Reads a `MobaXterm` file, each `[NAME]` of a session's login replaced through `resolve`
+/// (the C# `ParseContext.ResolveVariables`, `MobaXtermImporter.cs:511`). A name `resolve`
+/// gives nothing for stays as written and is reported once for its session.
 #[must_use]
-pub fn parse_limited(text: &str, limits: &Limits) -> (Parsed, Skipped) {
+pub fn parse_with(text: &str, resolve: VariableResolver<'_>) -> Parsed {
+    parse_limited(text, resolve, &Limits::UNLIMITED).0
+}
+
+/// Reads a `MobaXterm` file as [`parse_with`] does, within `limits`, and says what it left
+/// out. Stored passwords are counted as they are met and never decoded nor kept.
+#[must_use]
+pub fn parse_limited(
+    text: &str,
+    resolve: VariableResolver<'_>,
+    limits: &Limits,
+) -> (Parsed, Skipped) {
     let mut parsed = Parsed::default();
     let mut skipped = Skipped::default();
     let sections = sections(text, limits, &mut parsed.stored_credentials, &mut skipped);
@@ -119,8 +144,21 @@ pub fn parse_limited(text: &str, limits: &Limits) -> (Parsed, Skipped) {
             if key.eq_ignore_ascii_case(FOLDER_KEY) || key.eq_ignore_ascii_case(ICON_KEY) {
                 continue;
             }
-            if let Some(fields) = session(key, value, &folder) {
+            let mut unresolved = Vec::new();
+            if let Some(fields) = session(key, value, &folder, resolve, &mut unresolved) {
                 parsed.push(fields);
+                // Once per session, whichever fields carry the token: the user has one
+                // value to define (`MobaXtermImporter.cs:527`).
+                let mut reported = HashSet::new();
+                parsed.warnings.extend(
+                    unresolved
+                        .into_iter()
+                        .filter(|variable| reported.insert(variable.to_uppercase()))
+                        .map(|variable| FileWarning::UnresolvedVariable {
+                            session: key.clone(),
+                            name: variable,
+                        }),
+                );
             } else {
                 skipped.entries += 1;
             }
@@ -232,7 +270,13 @@ fn sections(
 
 /// A session line as the C# `ParseSession`: `None` when it names no host or a protocol
 /// Heimdall does not map.
-fn session(name: &str, value: &str, folder: &str) -> Option<Map<String, Value>> {
+fn session(
+    name: &str,
+    value: &str,
+    folder: &str,
+    resolve: VariableResolver<'_>,
+    unresolved: &mut Vec<String>,
+) -> Option<Map<String, Value>> {
     let value = value.trim();
     let code = protocol_code(value)?;
     let (_, connection_type) = PROTOCOLS.iter().find(|(known, _)| *known == code)?;
@@ -252,7 +296,8 @@ fn session(name: &str, value: &str, folder: &str) -> Option<Map<String, Value>> 
     set_text(&mut dto, "group", folder);
     // A port that is not a positive number is the protocol's default, as the C#.
     let port = field(1).trim().parse::<i64>().ok().filter(|port| *port > 0);
-    let user = field(2);
+    let user = replace_variables(field(2), resolve, unresolved);
+    let user = user.as_str();
     match *connection_type {
         "SSH" | "SFTP" => {
             set_port(&mut dto, "sshPort", port);
@@ -309,6 +354,148 @@ fn set_port(dto: &mut Map<String, Value>, key: &str, port: Option<i64>) {
     }
 }
 
+/// `value` with each `[NAME]` replaced through `resolve`, as the C# `ResolveVariables`: a name
+/// it gives nothing for (or an empty value) stays as written and is added to `unresolved`.
+/// The result is not scanned again, so a value naming another variable cannot loop.
+fn replace_variables(
+    value: &str,
+    resolve: VariableResolver<'_>,
+    unresolved: &mut Vec<String>,
+) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(open) = rest.find(TOKEN_OPEN) {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + TOKEN_OPEN.len_utf8()..];
+        let name = after
+            .find(TOKEN_CLOSE)
+            .map(|close| &after[..close])
+            .filter(|name| is_valid_variable_name(name));
+        let Some(name) = name else {
+            // Not a token: the bracket is text, the scan goes on after it.
+            out.push(TOKEN_OPEN);
+            rest = after;
+            continue;
+        };
+        if let Some(resolved) = resolve(name).filter(|resolved| !resolved.is_empty()) {
+            out.push_str(&resolved);
+        } else {
+            unresolved.push(name.to_owned());
+            out.push(TOKEN_OPEN);
+            out.push_str(name);
+            out.push(TOKEN_CLOSE);
+        }
+        rest = &after[name.len() + TOKEN_CLOSE.len_utf8()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether `name` can name a variable: letters, digits and underscores, not starting with a
+/// digit, as the C# `MobaXtermVariableResolver.IsValidName`. A name outside it could be saved
+/// but would never be replaced.
+#[must_use]
+pub fn is_valid_variable_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The resolver for the user's variables, as the C# `MobaXtermVariableResolver.FromVariables`:
+/// a name is looked up without case and its value has the environment variables expanded. A
+/// value that expands to nothing, or still names an environment variable the system does not
+/// define, gives nothing, so the token is kept and reported rather than imported as a login
+/// such as `%USERNAME%` spelled out.
+pub fn variable_resolver(
+    variables: &BTreeMap<String, String>,
+) -> impl Fn(&str) -> Option<String> + use<> {
+    // Keyed in lower case; the later of two names that differ only by case wins, as the C#
+    // dictionary assignment.
+    let lookup: BTreeMap<String, String> = variables
+        .iter()
+        .filter(|(name, _)| !name.trim().is_empty())
+        .map(|(name, value)| (name.trim().to_lowercase(), value.clone()))
+        .collect();
+    move |name| {
+        lookup
+            .get(&name.to_lowercase())
+            .and_then(|raw| resolve_value(raw))
+    }
+}
+
+/// The value a variable resolves to: `raw` with environment variables expanded, or `None`
+/// when that leaves nothing or an undefined `%NAME%` (the C# `ResolveValue`). The one place a
+/// value is resolved, for the import and for the settings preview alike.
+#[must_use]
+pub fn resolve_value(raw: &str) -> Option<String> {
+    resolve_value_with(raw, &environment_variable)
+}
+
+/// [`resolve_value`] over the environment `lookup` gives, so that a test needs no real one.
+fn resolve_value_with(raw: &str, lookup: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let expanded = expand_environment(raw, lookup);
+    let expanded = expanded.trim();
+    (!expanded.is_empty() && !has_unexpanded_reference(expanded)).then(|| expanded.to_owned())
+}
+
+/// `text` with each `%NAME%` replaced through `lookup`, as .NET `ExpandEnvironmentVariables`:
+/// a name `lookup` does not know is left as written, and its closing `%` may open the next
+/// reference.
+fn expand_environment(text: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find(ENV_DELIMITER) {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + ENV_DELIMITER.len_utf8()..];
+        let Some(close) = after.find(ENV_DELIMITER) else {
+            out.push(ENV_DELIMITER);
+            rest = after;
+            break;
+        };
+        let name = &after[..close];
+        match lookup(name) {
+            Some(value) if !name.is_empty() => {
+                out.push_str(&value);
+                rest = &after[close + ENV_DELIMITER.len_utf8()..];
+            }
+            _ => {
+                out.push(ENV_DELIMITER);
+                out.push_str(name);
+                rest = &after[close..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether `text` still holds a `%NAME%`, the C# `%[^%\s]+%`: a name of one or more
+/// characters that are neither `%` nor white space, between two `%`.
+fn has_unexpanded_reference(text: &str) -> bool {
+    let mut parts = text.split(ENV_DELIMITER).skip(1).peekable();
+    // Each part but the last lies between two `%`.
+    while let Some(part) = parts.next() {
+        if parts.peek().is_some() && !part.is_empty() && !part.contains(char::is_whitespace) {
+            return true;
+        }
+    }
+    false
+}
+
+/// An environment variable of this process, named without case as Windows names them.
+fn environment_variable(name: &str) -> Option<String> {
+    std::env::var(name).ok().or_else(|| {
+        std::env::vars_os()
+            .find(|(known, _)| known.to_string_lossy().eq_ignore_ascii_case(name))
+            .and_then(|(_, value)| value.into_string().ok())
+    })
+}
+
 /// The number between the first two `#`, as the C# `#(\d+)#`.
 fn protocol_code(value: &str) -> Option<u32> {
     let mut search = value;
@@ -362,4 +549,144 @@ fn key_path(path: &str) -> Option<String> {
         && !path.contains(UNSAFE_PATH_CHARACTERS)
         && !path.contains(".."))
     .then(|| path.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::default_mobaxterm_variables;
+
+    /// A file with one SSH session whose login is `login`.
+    fn file(login: &str) -> String {
+        format!("[Bookmarks]\nweb= #109#0%web.lab%22%{login}\n")
+    }
+
+    fn user(parsed: &Parsed) -> Option<&str> {
+        parsed.servers[0]["sshUsername"].as_str()
+    }
+
+    fn variables(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            pairs
+                .iter()
+                .find(|(known, _)| known.eq_ignore_ascii_case(name))
+                .map(|(_, value)| (*value).to_owned())
+        }
+    }
+
+    #[test]
+    fn the_default_variable_is_das_and_it_names_the_user_through_the_environment() {
+        assert_eq!(
+            default_mobaxterm_variables(),
+            variables(&[("DAS", "%USERNAME%")])
+        );
+        // The C# default value, expanded: `%USERNAME%` is the Windows account.
+        assert_eq!(
+            resolve_value_with("%USERNAME%", &env(&[("USERNAME", "jbombled")])),
+            Some("jbombled".to_owned())
+        );
+        let resolve = |name: &str| (name == "DAS").then(|| "jbombled".to_owned());
+        let parsed = parse_with(&file("[DAS]"), &resolve);
+        assert_eq!(user(&parsed), Some("jbombled"));
+        assert!(parsed.warnings.is_empty());
+    }
+
+    #[test]
+    fn a_custom_variable_is_found_without_case_and_replaces_every_token_of_the_login() {
+        let resolve = variable_resolver(&variables(&[("Team", "ops"), ("DAS", "jb")]));
+        let parsed = parse_with(&file("[TEAM]-[das]-x"), &resolve);
+        assert_eq!(user(&parsed), Some("ops-jb-x"));
+        assert!(parsed.warnings.is_empty());
+        // Text that is not a token is left as it is.
+        let parsed = parse_with(&file("a[1x]b[ c ]d[DAS"), &resolve);
+        assert_eq!(user(&parsed), Some("a[1x]b[ c ]d[DAS"));
+        assert!(parsed.warnings.is_empty());
+    }
+
+    #[test]
+    fn a_value_has_its_environment_variables_expanded_as_net_does() {
+        let lookup = env(&[("USERNAME", "jb"), ("DOMAIN", "CORP")]);
+        let resolve = |raw: &str| resolve_value_with(raw, &lookup);
+        assert_eq!(resolve("%DOMAIN%\\%USERNAME%"), Some("CORP\\jb".to_owned()));
+        assert_eq!(resolve("  %username%  "), Some("jb".to_owned()), "any case");
+        assert_eq!(resolve("100%"), Some("100%".to_owned()), "a lone percent");
+        // Nothing, or a reference the system does not define, is no value.
+        assert_eq!(resolve(""), None);
+        assert_eq!(resolve("   "), None);
+        assert_eq!(resolve("%NOPE%"), None);
+        assert_eq!(resolve("%USERNAME%\\%NOPE%"), None);
+        assert_eq!(
+            resolve("%%"),
+            Some("%%".to_owned()),
+            "an empty name is text"
+        );
+        assert_eq!(resolve("a % b % c"), Some("a % b % c".to_owned()));
+    }
+
+    #[test]
+    fn a_name_without_a_value_keeps_its_token_and_is_reported_once_per_session() {
+        let text = "[Bookmarks]\n\
+            a= #109#0%a.lab%22%[NOPE]\n\
+            b= #109#0%b.lab%22%[nope]-[Nope]\n\
+            c= #109#0%c.lab%22%plain\n";
+        let resolve = variable_resolver(&variables(&[("EMPTY", "")]));
+        let parsed = parse_with(text, &resolve);
+        assert_eq!(parsed.servers[0]["sshUsername"], "[NOPE]");
+        assert_eq!(parsed.servers[1]["sshUsername"], "[nope]-[Nope]");
+        assert_eq!(
+            parsed.warnings,
+            [
+                FileWarning::UnresolvedVariable {
+                    session: "a".to_owned(),
+                    name: "NOPE".to_owned()
+                },
+                FileWarning::UnresolvedVariable {
+                    session: "b".to_owned(),
+                    name: "nope".to_owned()
+                },
+            ],
+            "once for a session, the case of its first token"
+        );
+        // A variable whose value resolves to nothing is unresolved too.
+        let parsed = parse_with(&file("[EMPTY]"), &resolve);
+        assert_eq!(user(&parsed), Some("[EMPTY]"));
+        assert_eq!(parsed.warnings.len(), 1);
+        // With no resolver at all, as the C# default options.
+        assert_eq!(parse(&file("[DAS]")).warnings.len(), 1);
+    }
+
+    #[test]
+    fn a_value_naming_another_variable_is_not_resolved_again() {
+        let resolve = variable_resolver(&variables(&[
+            ("A", "[B]"),
+            ("B", "[A]"),
+            ("SELF", "[SELF]"),
+        ]));
+        let parsed = parse_with(&file("[A]"), &resolve);
+        assert_eq!(
+            user(&parsed),
+            Some("[B]"),
+            "the result is not scanned again"
+        );
+        let parsed = parse_with(&file("[SELF]"), &resolve);
+        assert_eq!(user(&parsed), Some("[SELF]"));
+        assert!(parsed.warnings.is_empty(), "it resolved, to that text");
+    }
+
+    #[test]
+    fn a_variable_name_is_letters_digits_and_underscores_not_starting_with_a_digit() {
+        for valid in ["DAS", "_x", "a1", "A_b_2"] {
+            assert!(is_valid_variable_name(valid), "{valid}");
+        }
+        for invalid in ["", "1a", "a-b", "a b", "é", "a]"] {
+            assert!(!is_valid_variable_name(invalid), "{invalid}");
+        }
+    }
 }

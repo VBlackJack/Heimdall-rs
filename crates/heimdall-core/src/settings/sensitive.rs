@@ -225,6 +225,8 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     // C# `SharedSessionSources`: files other people write, whose sessions this computer then
     // offers to connect to.
     ("shared_sessions.sources", RUNS),
+    // C# `MobaXtermUserVariables`: logins an import fills in, nothing that runs.
+    ("mobaxterm.variables", PLAIN),
     ("reachability.enabled", PLAIN),
     ("reachability.interval", PLAIN),
     ("reachability.timeout", PLAIN),

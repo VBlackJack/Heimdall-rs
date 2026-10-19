@@ -58,6 +58,7 @@ use crate::browse::{BrowseTarget, browse_button};
 use crate::external_tools_view::ToolsEdit;
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
+use crate::mobaxterm_variables_view::VariablesEdit;
 use crate::search_keys::SearchKeys;
 use crate::settings_rows::{
     PostureKey, PostureLine, PostureState, SettingRow, SettingsCard, posture,
@@ -233,6 +234,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::X11 => fl!("ui-settings-x11"),
         SettingsCard::ExternalEditor => fl!("ui-settings-external-editor"),
         SettingsCard::ExternalTools => fl!("ui-external-tools-title"),
+        SettingsCard::MobaxtermVariables => fl!("ui-mobaxterm-variables-title"),
         SettingsCard::RdpDefaults => fl!("ui-settings-rdp-defaults"),
         SettingsCard::ConnectionChecks => fl!("ui-settings-connection-checks"),
         _ => return None,
@@ -250,6 +252,7 @@ fn card_framed(card: SettingsCard) -> bool {
         card,
         SettingsCard::Macros
             | SettingsCard::ExternalTools
+            | SettingsCard::MobaxtermVariables
             | SettingsCard::SshTrusted
             | SettingsCard::RdpReset
             | SettingsCard::RdpTrusted
@@ -295,6 +298,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::LocalFollow => fl!("ui-settings-local-follow"),
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-path"),
         SettingRow::ExternalTools => fl!("ui-external-tools-title"),
+        SettingRow::MobaxtermVariables => fl!("ui-mobaxterm-variables-title"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path"),
@@ -342,6 +346,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::SshAgentPreference => fl!("ui-settings-ssh-agent-preference-hint"),
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-hint"),
         SettingRow::ExternalTools => fl!("ui-external-tools-description"),
+        SettingRow::MobaxtermVariables => fl!("ui-mobaxterm-variables-description"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path-hint"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode-hint"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
@@ -1100,6 +1105,7 @@ impl Shell {
             | SettingRow::RdpDefaults
             | SettingRow::RdpResolutionPresets
             | SettingRow::ExternalTools
+            | SettingRow::MobaxtermVariables
             | SettingRow::RdpResetAll => self.list_card_row(row),
             SettingRow::Pin | SettingRow::Vault | SettingRow::Provider => self.security_row(row),
             SettingRow::UpdateVersion => self.update_version_row(),
@@ -1656,6 +1662,20 @@ impl Shell {
         }
     }
 
+    /// A change in the `MobaXterm` variables card: applied once every row passes the C# row
+    /// checks.
+    pub(super) fn mobaxterm_variables_edit(&mut self, edit: VariablesEdit) -> Vec<Effect> {
+        match self.mobaxterm_variables.edit(edit) {
+            Some(variables) => {
+                self.app
+                    .update(AppMessage::Settings(SettingsMessage::MobaxtermVariables(
+                        variables,
+                    )))
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// A program's path, `PuTTY` or the X server, typed and applied with Enter, "Browse..."
     /// beside it, what is said of it under it.
     fn tool_path_row(&self, row: SettingRow) -> Element<'_, Message> {
@@ -1799,6 +1819,7 @@ impl Shell {
                 crate::rdp_options::defaults(self.app.settings().rdp_defaults)
             }
             SettingRow::RdpResolutionPresets => self.presets.view(),
+            SettingRow::MobaxtermVariables => self.mobaxterm_variables.view(),
             SettingRow::ExternalTools => self.external_tools.view(
                 self.external_tools
                     .selected()

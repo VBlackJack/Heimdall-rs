@@ -673,6 +673,18 @@ impl Draft {
         }
     }
 
+    /// The draft of a new command that starts as a copy of `command`, as the C#
+    /// `CommandActionDialogViewModel.AsCopyOf`: it has no identity, so saving it makes a
+    /// command of its own, and it is called `title`.
+    #[must_use]
+    pub fn copy_of(command: &UserCommand, title: String) -> Self {
+        Self {
+            id: None,
+            title,
+            ..Self::of(command)
+        }
+    }
+
     /// The pattern of `platform` the platform chosen asks for: the other is left out.
     fn pattern_for(&self, platform: TemplatePlatform) -> Option<&str> {
         let wanted = matches!(

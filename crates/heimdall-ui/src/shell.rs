@@ -59,8 +59,8 @@ use heimdall_app::{
     master_password_problem, open_vault, server_text,
 };
 use heimdall_app::{
-    LegacyMigrationMessage, QuickRow, SendConfirmation, ToolsMessage, VaultHelloMessage,
-    VaultTicket, vault_hello, windows_hello,
+    BroadcastConfirmation, LegacyMigrationMessage, QuickRow, SendConfirmation, ToolsMessage,
+    VaultHelloMessage, VaultTicket, vault_hello, windows_hello,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::import::csharp_settings::PreferenceOutcome;
@@ -608,6 +608,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if is_copy_key(&key, physical_key, modifiers) {
                 return (!repeat).then_some(Message::PasswordCopyKey);
             }
+            if is_duplicate_key(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::CmdLibDuplicateKey);
+            }
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
                 // Held down, the panel's key would flip it, and save it, at each repeat.
                 return (!repeat || shortcut.repeats()).then_some(Message::TreeShortcut(shortcut));
@@ -676,6 +679,19 @@ fn is_copy_key(
         && crate::terminal_view::keys::letter(key, physical) == Some('c')
 }
 
+/// Whether the key is Ctrl+D, as the C# command library's Duplicate.
+fn is_duplicate_key(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && crate::terminal_view::keys::letter(key, physical) == Some('d')
+}
+
 /// What the window reacts to.
 #[derive(Clone)]
 pub enum Message {
@@ -718,6 +734,9 @@ pub enum Message {
     /// Ctrl+C, uncaptured by any widget: copies the password of a Password Generator tab
     /// shown, as the C# `PasswordGeneratorView.OnKeyDown`.
     PasswordCopyKey,
+    /// Ctrl+D, uncaptured by any widget: duplicates the command last used in a command
+    /// library tab shown, as the C# `CommandLibraryView` binds it.
+    CmdLibDuplicateKey,
     /// Tab: the next field of a dialog, or the other pane of a Files tab.
     TabKey {
         /// With Shift: the previous field.
@@ -877,6 +896,8 @@ pub enum Message {
     SystemHighContrast(bool),
     /// Whether Windows asks for reduced motion, looked at again: the cursors follow it.
     SystemReducedMotion(bool),
+    /// A reading of the pointer, while full screen puts its exit button away.
+    ChromeTick(std::time::Instant),
     /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
     /// cannot be read.
     UserInput,
@@ -1039,6 +1060,8 @@ pub enum Message {
     PresetsEdited(iced::widget::text_editor::Action),
     /// A change in the Settings page's external tools.
     ExternalToolsEdit(crate::external_tools_view::ToolsEdit),
+    /// A change in the Settings page's `MobaXterm` import variables.
+    MobaxtermVariablesEdit(crate::mobaxterm_variables_view::VariablesEdit),
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
     OpenWithSystem(std::path::PathBuf),
     /// Write a note about the session `id` from `template`, then open it in the editor set.
@@ -1138,6 +1161,7 @@ impl fmt::Debug for Message {
             Self::EscapeUntaken => f.write_str("EscapeUntaken"),
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
             Self::PasswordCopyKey => f.write_str("PasswordCopyKey"),
+            Self::CmdLibDuplicateKey => f.write_str("CmdLibDuplicateKey"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
@@ -1213,6 +1237,7 @@ impl fmt::Debug for Message {
             Self::IdleTick => f.write_str("IdleTick"),
             Self::SystemHighContrast(on) => write!(f, "SystemHighContrast({on})"),
             Self::SystemReducedMotion(on) => write!(f, "SystemReducedMotion({on})"),
+            Self::ChromeTick(_) => f.write_str("ChromeTick"),
             Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1279,6 +1304,7 @@ impl fmt::Debug for Message {
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
             Self::ExternalToolsEdit(_) => f.write_str("ExternalToolsEdit(..)"),
+            Self::MobaxtermVariablesEdit(_) => f.write_str("MobaxtermVariablesEdit(..)"),
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
@@ -1332,7 +1358,7 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
 }
 
 /// Widget identifier of the name field of a dialog.
-fn name_field_id() -> iced::widget::Id {
+pub(crate) fn name_field_id() -> iced::widget::Id {
     iced::widget::Id::new("dialog-name")
 }
 
@@ -1575,6 +1601,8 @@ pub struct Shell {
     page: Page,
     /// Full screen: the window shows the session only.
     fullscreen: bool,
+    /// The exit button's visibility in full screen; none outside it.
+    fullscreen_chrome: Option<crate::fullscreen_chrome::FullscreenChrome>,
     /// Physical pixels per logical one on the window's screen: remote desktops are drawn
     /// one of their pixels per physical one.
     density: f32,
@@ -1672,6 +1700,8 @@ pub struct Shell {
     presets: crate::presets_editor::PresetsEditor,
     /// The Settings page's external tools, as edited.
     external_tools: crate::external_tools_view::ExternalToolsEditor,
+    /// The Settings page's `MobaXterm` import variables, as edited.
+    mobaxterm_variables: crate::mobaxterm_variables_view::MobaxtermVariablesEditor,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -1894,6 +1924,9 @@ impl Shell {
             crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
         let external_tools =
             crate::external_tools_view::ExternalToolsEditor::new(&app.settings().external_tools);
+        let mobaxterm_variables = crate::mobaxterm_variables_view::MobaxtermVariablesEditor::new(
+            &app.settings().mobaxterm_variables,
+        );
         let language_shown = app.settings().language;
         Self {
             app,
@@ -1918,6 +1951,7 @@ impl Shell {
             menu_parent: None,
             page: Page::Tab,
             fullscreen: false,
+            fullscreen_chrome: None,
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
@@ -1962,6 +1996,7 @@ impl Shell {
             tool_paths_typed: Default::default(),
             presets,
             external_tools,
+            mobaxterm_variables,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -2303,6 +2338,15 @@ impl Shell {
                     Message::SystemReducedMotion(heimdall_app::reduced_motion::system_on())
                 }),
             );
+        }
+        // Full screen: the pointer read as the C# polls it, and the fade drawn while it runs.
+        if let Some(chrome) = self.fullscreen_chrome.as_ref().filter(|_| self.fullscreen) {
+            let interval = if chrome.is_fading(std::time::Instant::now()) {
+                crate::fullscreen_chrome::FADE_FRAME
+            } else {
+                crate::fullscreen_chrome::POLL_INTERVAL
+            };
+            ticks.push(iced::time::every(interval).map(Message::ChromeTick));
         }
         ticks
     }
@@ -2735,6 +2779,16 @@ impl Shell {
         if let Some((tab, key)) = self.password_key(&message) {
             return self.update(Message::Tool(tab, crate::tools::ToolMessage::Password(key)));
         }
+        // Ctrl+D no field took duplicates the command last used while a command library is
+        // shown, as the C# `CommandLibraryView` binds it.
+        if let Some(tab) = self.cmdlib_duplicate_key(&message) {
+            return self.update(Message::Tool(
+                tab,
+                crate::tools::ToolMessage::CmdLib(
+                    crate::tools::CommandLibraryMessage::DuplicateSelected,
+                ),
+            ));
+        }
         // Escape no widget took leaves full screen when there is nothing else to close, as
         // the C# Heimdall's.
         if matches!(message, Message::EscapeUntaken) {
@@ -2799,6 +2853,7 @@ impl Shell {
             // shown, and nothing else copies on it.
             Message::EscapeUntaken
             | Message::PasswordCopyKey
+            | Message::CmdLibDuplicateKey
             | Message::Float(..)
             | Message::InFloating(..) => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
@@ -2831,6 +2886,10 @@ impl Shell {
             }
             Message::SystemReducedMotion(on) => {
                 self.reduced_motion = on;
+                Vec::new()
+            }
+            Message::ChromeTick(now) => {
+                self.read_fullscreen_chrome(now);
                 Vec::new()
             }
             Message::UserInput => {
@@ -2903,6 +2962,7 @@ impl Shell {
             Message::BrowseKeyFile => return pick_key_file(self.main_window),
             Message::Browse(target) => return self.browse(target),
             Message::ExternalToolsEdit(edit) => self.external_tools_edit(edit),
+            Message::MobaxtermVariablesEdit(edit) => self.mobaxterm_variables_edit(edit),
             Message::Browsed(target, path) => self.browsed(target, path),
             Message::CopyError(tab) => return self.copy_error(tab),
             Message::ToggleFailureDetails(tab) => {
@@ -3073,6 +3133,10 @@ impl Shell {
         self.editors.prune(&self.app);
         // The tool tabs' states follow their tabs, and those just opened start their work.
         self.tools.sync(&self.app);
+        // The commands written into terminals since, for the history of the library that
+        // asked.
+        let sent = self.app.take_sent_commands();
+        self.tools.record_sent(&sent);
         tasks.push(self.tools.opening());
         // What the detail panel says of the session selected, read again once it changed.
         self.app.refresh_detail();
@@ -3092,6 +3156,9 @@ impl Shell {
         // As the external tools: an import, or a list that could not be saved.
         self.external_tools
             .sync(&self.app.settings().external_tools);
+        // And the `MobaXterm` variables.
+        self.mobaxterm_variables
+            .sync(&self.app.settings().mobaxterm_variables);
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
         if let Some(field) = self.focus_next.take() {
@@ -3209,6 +3276,9 @@ impl Shell {
             }
             Message::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
+                self.fullscreen_chrome = self.fullscreen.then(|| {
+                    crate::fullscreen_chrome::FullscreenChrome::entered(std::time::Instant::now())
+                });
                 let mode = if self.fullscreen {
                     window::Mode::Fullscreen
                 } else {
@@ -3538,6 +3608,22 @@ impl Shell {
     /// tunnels, the scheduled connections or About. The tab's keys are not its then.
     fn page_over_tab(&self) -> bool {
         self.settings_shown() || matches!(self.page, Page::Tunnels | Page::Scheduled | Page::About)
+    }
+
+    /// One reading of the pointer for the full-screen exit button, at `now`.
+    fn read_fullscreen_chrome(&mut self, now: std::time::Instant) {
+        let overlay_open = self.app.dialog.is_some()
+            || self.menu.is_some()
+            || self.palette.is_some()
+            || self.tour.is_some();
+        let reading = crate::fullscreen_chrome::Reading {
+            pointer: self.cursor.get(),
+            overlay_open,
+            reduced_motion: self.reduced_motion,
+        };
+        if let Some(chrome) = self.fullscreen_chrome.as_mut() {
+            chrome.read(now, reading);
+        }
     }
 
     /// Whether the window is behind a gate: the lock screen, or the PIN asked at start.
@@ -4011,6 +4097,23 @@ impl Shell {
         (free && self.tools.is_password(tab)).then_some((tab, key))
     }
 
+    /// The command library tab Ctrl+D is for: shown, with nothing over it.
+    fn cmdlib_duplicate_key(&self, message: &Message) -> Option<TabId> {
+        if !matches!(message, Message::CmdLibDuplicateKey) {
+            return None;
+        }
+        let free = !self.gated()
+            && !self.settings_shown()
+            && !self.tree_focused
+            && self.tour.is_none()
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && self.finder.is_none()
+            && self.menu.is_none();
+        let tab = self.shown_tab_id()?;
+        (free && self.tools.is_cmdlib(tab)).then_some(tab)
+    }
+
     /// Whether Escape leaves full screen: in it, with no dialog, menu, Quick Connect, search
     /// bar or path bar for Escape to close first.
     fn escape_leaves_fullscreen(&self) -> bool {
@@ -4259,6 +4362,7 @@ impl Shell {
                 | Dialog::SaveMacro { .. }
                 | Dialog::RenameTab { .. }
                 | Dialog::CustomResolution { .. }
+                | Dialog::AddTool(_)
                 | Dialog::FolderName { .. }
                 | Dialog::RenameProfile { .. }
                 | Dialog::BulkEdit { .. },
@@ -4995,12 +5099,20 @@ impl Shell {
         let mut layers = stack![body];
         // Full screen, a way out the mouse finds, as the C# floating button: a desktop's
         // header is put away in full screen, as the C# one.
-        if self.fullscreen && !locked {
+        // It puts itself away after a few seconds of stillness and comes back at the top
+        // edge, as the C# one; hidden, it takes no click.
+        let chrome_opacity = self
+            .fullscreen_chrome
+            .filter(|chrome| chrome.is_visible(std::time::Instant::now()))
+            .map(|chrome| chrome.opacity(std::time::Instant::now()));
+        if let (true, false, Some(opacity)) = (self.fullscreen, locked, chrome_opacity) {
             layers = layers.push(
                 container(
                     tooltip(
                         button(text(fl!("ui-fullscreen-exit")).size(font_size::CAPTION))
-                            .style(styles::secondary)
+                            .style(move |theme, status| {
+                                styles::faded_to(&styles::secondary(theme, status), opacity)
+                            })
                             .on_press(Message::ToggleFullscreen),
                         text(fl!("ui-fullscreen-exit-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Left,
@@ -11561,7 +11673,7 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
 }
 
 /// Cancel, then `confirm` in the accent sending `ConfirmDialog`, at a dialog's bottom right.
-fn confirm_buttons<'a>(confirm: String) -> iced::widget::Row<'a, Message> {
+pub(crate) fn confirm_buttons<'a>(confirm: String) -> iced::widget::Row<'a, Message> {
     dialog_parts::buttons([
         dialog_parts::cancel(),
         dialog_parts::confirm(confirm, Some(Message::App(AppMessage::ConfirmDialog))),
@@ -12226,6 +12338,59 @@ fn send_command_dialog(confirmation: &SendConfirmation) -> Element<'_, Message> 
             dialog_parts::cancel(),
             dialog_parts::action(
                 fl!("ui-dialog-send-command-confirm"),
+                if confirmation.dangerous {
+                    styles::danger
+                } else {
+                    styles::primary
+                },
+            )
+            .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]),
+    )
+}
+
+/// The question before a command is typed into several terminals: the command whole and
+/// the name of every terminal that receives it, one question for all.
+fn broadcast_command_dialog(confirmation: &BroadcastConfirmation) -> Element<'_, Message> {
+    let names = confirmation
+        .targets
+        .iter()
+        .fold(column![].spacing(spacing::XS), |list, target| {
+            list.push(text(target.name.as_str()).size(font_size::BODY))
+        });
+    let mut body = column![
+        dialog_parts::body(fl!(
+            "ui-dialog-broadcast-command-body",
+            count = confirmation.targets.len()
+        )),
+        container(styles::scroll(names).height(Length::Shrink))
+            .max_height(LOCAL_COMMAND_HEIGHT)
+            .padding(spacing::MD)
+            .style(container::rounded_box),
+        container(
+            styles::scroll(
+                text(confirmation.shown.as_str())
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::Glyph)
+            )
+            .height(Length::Shrink)
+        )
+        .max_height(LOCAL_COMMAND_HEIGHT)
+        .padding(spacing::MD)
+        .style(container::rounded_box),
+    ]
+    .spacing(spacing::SM);
+    if confirmation.dangerous {
+        body = body.push(dialog_parts::error(fl!("ui-dialog-send-command-dangerous")));
+    }
+    dialog_parts::message(
+        Severity::Warning,
+        fl!("ui-dialog-broadcast-command-title"),
+        body,
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(
+                fl!("ui-dialog-broadcast-command-confirm"),
                 if confirmation.dangerous {
                     styles::danger
                 } else {
@@ -13551,6 +13716,7 @@ fn ok_button<'a>() -> iced::widget::Button<'a, Message> {
 #[expect(clippy::too_many_lines, reason = "one arm per dialog")]
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
     match dialog {
+        Dialog::AddTool(form) => crate::tool_picker::dialog(form),
         Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
         Dialog::ConfirmSudoDelete { names, more, .. } => {
             files_view::sudo_delete_question(names, *more)
@@ -13617,6 +13783,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ConfirmRunScript(confirmation) => run_script_dialog(confirmation),
         Dialog::ConfirmSendCommand(confirmation) => send_command_dialog(confirmation),
+        Dialog::ConfirmBroadcastCommand(confirmation) => broadcast_command_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::TrustedHostKeyDetails(entry) => crate::trusted_keys_view::details(entry),

@@ -45,7 +45,8 @@ impl App {
     /// follow the files and the settings alike.
     pub(super) fn load_shared(&mut self) {
         let sources = self.settings.shared_sources.clone();
-        self.shared.load(&sources);
+        let variables = self.settings.mobaxterm_variables.clone();
+        self.shared.load(&sources, &variables);
     }
 
     /// Whether the files are worth looking at on a timer: a source is configured.
@@ -58,7 +59,8 @@ impl App {
     /// settings' list of sources followed.
     pub(super) fn shared_tick(&mut self, now: SystemTime) {
         let sources = self.settings.shared_sources.clone();
-        self.shared.refresh(&sources, now);
+        let variables = self.settings.mobaxterm_variables.clone();
+        self.shared.refresh(&sources, &variables, now);
     }
 
     /// Opens the shared session `id` as a session never saved, a copy of what the file

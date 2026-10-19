@@ -199,7 +199,7 @@ fn faded(style: &ButtonStyle) -> ButtonStyle {
 }
 
 /// `style` at `opacity`.
-fn faded_to(style: &ButtonStyle, opacity: f32) -> ButtonStyle {
+pub(crate) fn faded_to(style: &ButtonStyle, opacity: f32) -> ButtonStyle {
     ButtonStyle {
         background: style
             .background

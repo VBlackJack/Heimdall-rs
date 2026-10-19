@@ -259,7 +259,11 @@ pub fn auth_parts(
             }
         }
         // A web console signs in inside the browser: nothing here to describe.
-        ProfileKind::Telnet | ProfileKind::Local | ProfileKind::Citrix | ProfileKind::Web => {
+        ProfileKind::Telnet
+        | ProfileKind::Local
+        | ProfileKind::Citrix
+        | ProfileKind::Web
+        | ProfileKind::Tool => {
             return None;
         }
     }

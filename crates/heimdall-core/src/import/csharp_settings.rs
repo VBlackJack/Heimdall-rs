@@ -29,22 +29,24 @@
 //! access token, the credential provider's unlock secret and the vault's material are left
 //! out, and named. They are encrypted with Windows DPAPI for the C# Windows account anyway.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use serde_json::{Map, Value};
 use thiserror::Error;
 
 use super::csharp::audio_playback;
+use super::mobaxterm::is_valid_variable_name;
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind};
 use crate::profile::{ColorDepth, RESOLUTION_PRESETS, RdpMode, SshMode};
 use crate::settings::{
     Accent, AgentPreference, AppTheme, BroadcastScope, ColorScheme, ExecutionPolicy, Language,
     RDP_DEFAULT_HEIGHT_DEFAULT, RDP_DEFAULT_WIDTH_DEFAULT, Settings, anti_idle_interval_accepted,
-    auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
-    rdp_default_resolution_accepted, rdp_keep_alive_interval_accepted,
-    rdp_resize_enable_delay_accepted, reachability_interval_accepted, reachability_probes_accepted,
-    reachability_timeout_accepted, reconnect_delay_accepted, session_log_retention_days_accepted,
+    auto_lock_idle_minutes_accepted, default_mobaxterm_variables, max_sessions_accepted,
+    rdp_auto_reconnect_attempts_accepted, rdp_default_resolution_accepted,
+    rdp_keep_alive_interval_accepted, rdp_resize_enable_delay_accepted,
+    reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
+    reconnect_delay_accepted, session_log_retention_days_accepted,
     ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_size_accepted, update_interval_accepted,
     windows_hello_grace_minutes_accepted, windows_hello_vault_max_days_accepted,
@@ -341,6 +343,32 @@ fn words(value: &Value, default: &str, field: &mut String) -> Read {
         return Read::Invalid;
     }
     text.clone_into(field);
+    Read::Set
+}
+
+/// The C# `MobaXtermUserVariables`: an object of names to logins, laid over `field` unless it
+/// is the C# default. Every name must be one the import recognises and every login must say
+/// something, as the C# settings page refuses to save otherwise
+/// (`SettingsViewModel.MobaXtermVariables.cs:108`); one that does not is invalid as a whole.
+/// An empty object is the user's choice of none.
+fn variables(value: &Value, field: &mut BTreeMap<String, String>) -> Read {
+    let Value::Object(object) = value else {
+        return Read::Invalid;
+    };
+    let mut read = BTreeMap::new();
+    for (name, login) in object {
+        let (name, Some(login)) = (name.trim(), login.as_str().map(str::trim)) else {
+            return Read::Invalid;
+        };
+        if !is_valid_variable_name(name) || login.is_empty() || has_control(login) {
+            return Read::Invalid;
+        }
+        read.insert(name.to_owned(), login.to_owned());
+    }
+    if read == default_mobaxterm_variables() {
+        return Read::CSharpDefault;
+    }
+    *field = read;
     Read::Set
 }
 
@@ -965,6 +993,11 @@ fn preferences_table() -> Vec<Preference> {
                 &mut settings.external_editor
             ),
             external_editor
+        ),
+        preference!(
+            "MobaXtermUserVariables",
+            |value, settings| variables(value, &mut settings.mobaxterm_variables),
+            mobaxterm_variables
         ),
         preference!(
             "PreventSleepDuringSession",

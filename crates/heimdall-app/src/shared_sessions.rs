@@ -47,6 +47,10 @@ use heimdall_core::shared_sessions::{
 };
 use serde_json::Value;
 
+/// The user's `MobaXterm` variables, the C# `MobaXtermUserVariables`: the shared provider fills
+/// in the `[NAME]` of a login with them as the file import does (`SharedSessionProvider.cs`).
+pub type Variables = std::collections::BTreeMap<String, String>;
+
 use crate::text_codec::decode_windows_1252_fallback;
 
 /// How often the files are looked at for a change.
@@ -245,7 +249,7 @@ impl SharedSessions {
 
     /// Reads every enabled source of `sources` and replaces what is held, as the C#
     /// `LoadAsync`. Never fails over a source: it is reported in its state.
-    pub fn load(&mut self, sources: &[SharedSource]) {
+    pub fn load(&mut self, sources: &[SharedSource], variables: &Variables) {
         let previous: HashMap<String, Loaded> = std::mem::take(&mut self.sources)
             .into_iter()
             .map(|loaded| (loaded.state.id.clone(), loaded))
@@ -261,14 +265,19 @@ impl SharedSessions {
                         .path
                         .eq_ignore_ascii_case(&expand(&source.path))
                 });
-                read_source(source, &mut seen, kept)
+                read_source(source, &mut seen, kept, variables)
             })
             .collect();
     }
 
     /// Reads again the sources whose file changed and settled since it was read, appeared
     /// or disappeared; true when something shown changed. Called on a timer.
-    pub fn refresh(&mut self, sources: &[SharedSource], now: SystemTime) -> bool {
+    pub fn refresh(
+        &mut self,
+        sources: &[SharedSource],
+        variables: &Variables,
+        now: SystemTime,
+    ) -> bool {
         let wanted: Vec<&SharedSource> = sources.iter().take(MAX_SOURCES).collect();
         let same_list = wanted.len() == self.sources.len()
             && wanted.iter().zip(&self.sources).all(|(source, loaded)| {
@@ -277,7 +286,7 @@ impl SharedSessions {
                     && source.enabled == (loaded.state.status != SourceStatus::Disabled)
             });
         if !same_list {
-            self.load(sources);
+            self.load(sources, variables);
             return true;
         }
         let mut changed = false;
@@ -309,7 +318,7 @@ impl SharedSessions {
                 .map(|(_, loaded)| loaded.state.id.clone())
                 .collect();
             let kept = (path == slot.state.path).then_some(slot);
-            let reloaded = read_source(source, &mut seen, kept);
+            let reloaded = read_source(source, &mut seen, kept, variables);
             if reloaded.state != slot.state || reloaded.sessions != slot.sessions {
                 changed = true;
             }
@@ -369,6 +378,7 @@ fn read_source(
     source: &SharedSource,
     seen: &mut HashSet<String>,
     previous: Option<&Loaded>,
+    variables: &Variables,
 ) -> Loaded {
     let path = expand(&source.path);
     let stamp = stamp_of(&path);
@@ -406,7 +416,7 @@ fn read_source(
         return failed(SourceProblem::NoPath);
     }
     let had_sessions = previous.is_some_and(|loaded| !loaded.sessions.is_empty());
-    let problem = match read_bounded(&path).and_then(|bytes| parse(&source.id, &bytes)) {
+    let problem = match read_bounded(&path).and_then(|bytes| parse(&source.id, &bytes, variables)) {
         // A file with nothing usable in it is no source of sessions: it reports why, and
         // keeps the previous sessions when there are some.
         Ok(parsed) if !parsed.sessions.is_empty() => {
@@ -479,9 +489,14 @@ struct ParsedSource {
 }
 
 /// The sessions of a file's `bytes`, sanitized as the C# `SharedProfileSanitizer`.
-fn parse(source_id: &str, bytes: &[u8]) -> Result<ParsedSource, SourceProblem> {
+fn parse(
+    source_id: &str,
+    bytes: &[u8],
+    variables: &Variables,
+) -> Result<ParsedSource, SourceProblem> {
     let text = decode_windows_1252_fallback(bytes);
-    let (parsed, left_out): (Parsed, _) = mobaxterm::parse_limited(&text, &LIMITS);
+    let resolve = mobaxterm::variable_resolver(variables);
+    let (parsed, left_out): (Parsed, _) = mobaxterm::parse_limited(&text, &resolve, &LIMITS);
     if let Some(FileWarning::Unreadable(reason)) = parsed
         .warnings
         .iter()

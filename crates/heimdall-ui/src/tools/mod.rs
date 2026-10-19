@@ -661,6 +661,8 @@ pub enum CopySlot {
     CmdLibCommand(SnippetId),
     /// The command of the user's command at this place of the library.
     CmdLibUserCommand(usize),
+    /// The command of the history entry at this place.
+    CmdLibHistory(usize),
 }
 
 /// What a tool's tab is asked.
@@ -1169,6 +1171,27 @@ impl ToolPanes {
         Task::batch(tasks)
     }
 
+    /// Whether tool tab `tab` is a command library.
+    #[must_use]
+    pub fn is_cmdlib(&self, tab: TabId) -> bool {
+        self.panes
+            .get(&tab)
+            .is_some_and(|state| matches!(state.pane, Pane::CmdLib(_)))
+    }
+
+    /// The commands the application wrote into terminals, told to the command libraries
+    /// that asked for them, for their history.
+    pub fn record_sent(&mut self, receipts: &[heimdall_app::SentCommand]) {
+        if receipts.is_empty() {
+            return;
+        }
+        for state in self.panes.values_mut() {
+            if let Pane::CmdLib(pane) = &mut state.pane {
+                pane.record_sent(receipts);
+            }
+        }
+    }
+
     /// Whether tool tab `tab` is a Password Generator.
     #[must_use]
     pub fn is_password(&self, tab: TabId) -> bool {
@@ -1623,6 +1646,18 @@ impl ToolPanes {
                             dangerous,
                         },
                     ))),
+                    command_library_tool::Outcome::Broadcast {
+                        targets,
+                        command,
+                        dangerous,
+                    } => Task::done(Message::App(heimdall_app::Message::Tools(
+                        heimdall_app::ToolsMessage::BroadcastCommand {
+                            targets,
+                            command,
+                            dangerous,
+                        },
+                    ))),
+                    outcome => outcome.task(tab, main),
                 };
             }
             (message, pane) => {

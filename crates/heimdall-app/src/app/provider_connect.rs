@@ -139,9 +139,11 @@ impl App {
                 .winrm_profiles()
                 .iter()
                 .any(|winrm| winrm.id == *id && winrm.username.is_some()),
-            ProfileKind::Telnet | ProfileKind::Local | ProfileKind::Web | ProfileKind::Citrix => {
-                false
-            }
+            ProfileKind::Telnet
+            | ProfileKind::Local
+            | ProfileKind::Web
+            | ProfileKind::Tool
+            | ProfileKind::Citrix => false,
         }
     }
 
