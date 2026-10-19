@@ -178,8 +178,8 @@ fn window_shortcuts_do_nothing_behind_the_pin() {
         heimdall_ui::terminal_view::keys::WindowShortcut::Broadcast,
     ));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Security,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Vault,
     ));
     simulator(&shell)
         .find("Enter PIN")
@@ -212,8 +212,8 @@ fn the_settings_card_sets_a_pin_in_two_fields() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Security,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Vault,
     ));
     {
         let mut ui = simulator(&shell);
@@ -253,8 +253,8 @@ fn a_pin_set_is_asked_before_it_is_changed_or_removed() {
     type_into(&mut shell, 0, PIN);
     click(&mut shell, "Unlock");
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Security,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Vault,
     ));
     click(&mut shell, "Configure PIN...");
     simulator(&shell)
@@ -276,8 +276,8 @@ fn a_new_pin_refused_says_why() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Security,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Vault,
     ));
     for (pin, confirm, said) in [
         ("12", "12", "PIN must be at least 4 digits."),

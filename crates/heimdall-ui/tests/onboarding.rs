@@ -232,6 +232,9 @@ fn show_the_tour_again_shows_it_from_its_first_step() {
         heimdall_ui::shell::SettingsTab::General
     );
     let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Onboarding,
+    ));
     assert_eq!(
         shell.settings_found("welcome tour"),
         [SettingRow::Onboarding]

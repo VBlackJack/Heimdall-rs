@@ -171,6 +171,165 @@ impl SettingsCard {
             .filter(|row| row.card() == self)
             .collect()
     }
+
+    /// The section of its tab's rail it is shown in; none on a tab drawn as one page, or for
+    /// a card drawn under the rail whatever section is open, as the C# "Reset RDP defaults"
+    /// under the RDP tab's sections.
+    #[must_use]
+    pub fn section(self) -> Option<SettingsSection> {
+        Some(match self {
+            Self::Appearance | Self::SessionTree => SettingsSection::Appearance,
+            // The C# keeps the background check on its Advanced tab, which this version
+            // does not have: it is a behaviour of the window.
+            Self::Behavior | Self::Reachability => SettingsSection::Behavior,
+            Self::Updates => SettingsSection::Updates,
+            Self::MobaxtermVariables => SettingsSection::Import,
+            Self::SharedSources => SettingsSection::SharedSources,
+            Self::ExternalTools => SettingsSection::Tools,
+            Self::Onboarding => SettingsSection::Onboarding,
+            Self::Putty => SettingsSection::SshConnection,
+            Self::SshReconnect
+            | Self::SshSession
+            | Self::Sftp
+            | Self::X11
+            | Self::ExternalEditor => SettingsSection::SshSession,
+            Self::SshTrusted => SettingsSection::SshHostKeys,
+            Self::RdpDefaults => SettingsSection::RdpDisplay,
+            Self::RdpSession | Self::RdpPresets => SettingsSection::RdpBehavior,
+            Self::RdpTrusted => SettingsSection::RdpCertificates,
+            Self::Pin | Self::Vault => SettingsSection::Vault,
+            Self::Provider => SettingsSection::Provider,
+            Self::ConnectionChecks => SettingsSection::ConnectionChecks,
+            Self::Terminal
+            | Self::SessionLogging
+            | Self::Macros
+            | Self::RdpReset
+            | Self::Gateways => return None,
+        })
+    }
+}
+
+/// A section of a Settings tab's rail, as the C# `SettingsRailTabControlStyle`: the cards
+/// a tab holds, split so each is read without scrolling the whole tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SettingsSection {
+    /// The language, theme and accent, and the session tree's view.
+    Appearance,
+    /// The tunnels panel, the computer's sleep, the most sessions, the background check.
+    Behavior,
+    /// The look for a newer release, and the migration from the C# version.
+    Updates,
+    /// The values of a `MobaXterm` file's variables.
+    Import,
+    /// The shared session sources.
+    SharedSources,
+    /// The user's external tools, as the C# "Tools & integrations".
+    Tools,
+    /// "Show the tour again", last as the C# "Welcome tour".
+    Onboarding,
+    /// `PuTTY` and the default SSH mode, as the C# SSH "Connection".
+    SshConnection,
+    /// Auto-reconnect, the session's numbers, SFTP and X11, as the C# SSH "Session".
+    SshSession,
+    /// The trusted host keys and certificates.
+    SshHostKeys,
+    /// The RDP options profiles take, as the C# "Display & Audio".
+    RdpDisplay,
+    /// Reconnecting, waiting, and the sizes offered, as the C# RDP "Behavior".
+    RdpBehavior,
+    /// The trusted RDP certificates.
+    RdpCertificates,
+    /// The security overview, first as the C# "Overview".
+    Overview,
+    /// The PIN and the master password.
+    Vault,
+    /// The external credential provider.
+    Provider,
+    /// What a connection passes first.
+    ConnectionChecks,
+}
+
+impl SettingsSection {
+    /// Every section, in the rails' order.
+    pub const ALL: [Self; 17] = [
+        Self::Appearance,
+        Self::Behavior,
+        Self::Updates,
+        Self::Import,
+        Self::SharedSources,
+        Self::Tools,
+        Self::Onboarding,
+        Self::SshConnection,
+        Self::SshSession,
+        Self::SshHostKeys,
+        Self::RdpDisplay,
+        Self::RdpBehavior,
+        Self::RdpCertificates,
+        Self::Overview,
+        Self::Vault,
+        Self::Provider,
+        Self::ConnectionChecks,
+    ];
+
+    /// The tab whose rail lists it.
+    #[must_use]
+    pub const fn tab(self) -> SettingsTab {
+        match self {
+            Self::Appearance
+            | Self::Behavior
+            | Self::Updates
+            | Self::Import
+            | Self::SharedSources
+            | Self::Tools
+            | Self::Onboarding => SettingsTab::General,
+            Self::SshConnection | Self::SshSession | Self::SshHostKeys => SettingsTab::Ssh,
+            Self::RdpDisplay | Self::RdpBehavior | Self::RdpCertificates => SettingsTab::Rdp,
+            Self::Overview | Self::Vault | Self::Provider | Self::ConnectionChecks => {
+                SettingsTab::Security
+            }
+        }
+    }
+
+    /// The sections of `tab`'s rail, in its order; none for a tab drawn as one page.
+    #[must_use]
+    pub fn of_tab(tab: SettingsTab) -> Vec<Self> {
+        Self::ALL
+            .into_iter()
+            .filter(|section| section.tab() == tab)
+            .collect()
+    }
+
+    /// Its cards, in the page's order.
+    #[must_use]
+    pub fn cards(self) -> Vec<SettingsCard> {
+        SettingsCard::ALL
+            .into_iter()
+            .filter(|card| card.section() == Some(self))
+            .collect()
+    }
+}
+
+/// The section open on each tab's rail, kept while the application runs, as each C# rail
+/// keeps its own; the first of a tab until another is chosen.
+#[derive(Debug, Clone, Default)]
+pub struct OpenSections(Vec<SettingsSection>);
+
+impl OpenSections {
+    /// The section open on `tab`, none for a tab drawn as one page.
+    #[must_use]
+    pub fn of(&self, tab: SettingsTab) -> Option<SettingsSection> {
+        self.0
+            .iter()
+            .copied()
+            .find(|section| section.tab() == tab)
+            .or_else(|| SettingsSection::of_tab(tab).first().copied())
+    }
+
+    /// `section` opened on its tab.
+    pub fn open(&mut self, section: SettingsSection) {
+        self.0.retain(|kept| kept.tab() != section.tab());
+        self.0.push(section);
+    }
 }
 
 /// A row of the Settings page: one setting, or a list or card that holds several and is
@@ -1111,6 +1270,107 @@ mod tests {
         assert_eq!(
             row.toggled(&defaults, true),
             Some(SettingsMessage::RdpBuiltinCompression(true))
+        );
+    }
+
+    #[test]
+    fn every_section_is_on_its_card_s_tab_and_every_card_of_a_rail_tab_in_a_section_or_under_it() {
+        for card in SettingsCard::ALL {
+            if let Some(section) = card.section() {
+                assert_eq!(section.tab(), card.tab(), "{card:?}");
+            }
+        }
+        // Under the RDP rail whatever section is open, as the C# reset under its sections.
+        let under = [SettingsCard::RdpReset];
+        for card in SettingsCard::ALL {
+            let railed = SettingsSection::of_tab(card.tab()).len() > 1;
+            assert_eq!(
+                card.section().is_some(),
+                railed && !under.contains(&card),
+                "{card:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_rails_hold_the_c_sharp_sections_in_its_order() {
+        use SettingsSection as S;
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::General),
+            [
+                S::Appearance,
+                S::Behavior,
+                S::Updates,
+                S::Import,
+                S::SharedSources,
+                S::Tools,
+                S::Onboarding
+            ],
+            "Appearance first, the tour last, as the C# rail"
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Security),
+            [S::Overview, S::Vault, S::Provider, S::ConnectionChecks]
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Ssh),
+            [S::SshConnection, S::SshSession, S::SshHostKeys]
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Rdp),
+            [S::RdpDisplay, S::RdpBehavior, S::RdpCertificates]
+        );
+        // One page each, as the C# Terminal tab.
+        assert!(SettingsSection::of_tab(SettingsTab::Terminal).is_empty());
+        assert!(SettingsSection::of_tab(SettingsTab::Gateways).is_empty());
+        assert_eq!(
+            SettingsSection::Appearance.cards(),
+            [SettingsCard::Appearance, SettingsCard::SessionTree]
+        );
+        assert_eq!(
+            SettingsSection::Vault.cards(),
+            [SettingsCard::Pin, SettingsCard::Vault]
+        );
+    }
+
+    #[test]
+    fn every_section_but_the_overview_holds_a_card() {
+        for section in SettingsSection::ALL {
+            // The overview is drawn from the settings, not from rows.
+            assert_eq!(
+                section.cards().is_empty(),
+                section == SettingsSection::Overview,
+                "{section:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tab_opens_its_first_section_then_the_one_chosen_on_it_alone() {
+        let mut open = OpenSections::default();
+        assert_eq!(
+            open.of(SettingsTab::Security),
+            Some(SettingsSection::Overview)
+        );
+        assert_eq!(open.of(SettingsTab::Terminal), None);
+        open.open(SettingsSection::Provider);
+        open.open(SettingsSection::Updates);
+        assert_eq!(
+            open.of(SettingsTab::Security),
+            Some(SettingsSection::Provider)
+        );
+        assert_eq!(
+            open.of(SettingsTab::General),
+            Some(SettingsSection::Updates)
+        );
+        assert_eq!(
+            open.of(SettingsTab::Ssh),
+            Some(SettingsSection::SshConnection)
+        );
+        open.open(SettingsSection::ConnectionChecks);
+        assert_eq!(
+            open.of(SettingsTab::Security),
+            Some(SettingsSection::ConnectionChecks)
         );
     }
 

@@ -38,7 +38,8 @@ use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, SettingsTab, Shell};
+use heimdall_ui::settings_rows::SettingsSection;
+use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -205,7 +206,7 @@ fn the_sftp_browser_card_toggles_the_settings_with_the_csharp_wording() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SshSession));
     {
         let mut ui = simulator(&shell, SETTINGS_WINDOW);
         ui.find("SFTP browser").expect("the C# section");

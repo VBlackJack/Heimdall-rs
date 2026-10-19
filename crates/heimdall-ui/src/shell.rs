@@ -107,7 +107,7 @@ pub use crate::profile_tabs::ProfileTab;
 use crate::report;
 use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
-use crate::settings_rows::{SettingRow, ToolPath};
+use crate::settings_rows::{OpenSections, SettingRow, SettingsSection, ToolPath};
 use crate::split_view::{self, Shape, SplitView};
 use crate::styles;
 use crate::terminal_view::TerminalView;
@@ -833,6 +833,8 @@ pub enum Message {
     SubmitBulkPassword,
     /// Show this tab of the Settings page.
     SettingsTab(SettingsTab),
+    /// Open this section of its Settings tab's rail.
+    SettingsSection(SettingsSection),
     /// Show this tab of the profile form.
     ProfileTab(ProfileTab),
     /// The RDP profile form's "Refresh" of its monitors, as the C# `RefreshMonitorsCommand`:
@@ -1207,6 +1209,7 @@ impl fmt::Debug for Message {
             Self::FocusBulkPasswordField(index) => write!(f, "FocusBulkPasswordField({index})"),
             Self::SubmitBulkPassword => f.write_str("SubmitBulkPassword"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
+            Self::SettingsSection(section) => write!(f, "SettingsSection({section:?})"),
             Self::ProfileTab(tab) => write!(f, "ProfileTab({tab:?})"),
             Self::RefreshMonitors => f.write_str("RefreshMonitors"),
             Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
@@ -1723,6 +1726,8 @@ pub struct Shell {
     host_key_sort: HostKeySort,
     /// The Settings tab shown, kept while the application runs.
     settings_tab: SettingsTab,
+    /// The section open on each Settings tab's rail, kept while the application runs.
+    settings_sections: OpenSections,
     /// The profile form's tab shown, General each time the form opens.
     profile_tab: ProfileTab,
     /// Whether a save of the open profile form was refused: from then on, as the C# server
@@ -2016,6 +2021,7 @@ impl Shell {
             host_key_search: String::new(),
             host_key_sort: HostKeySort::default(),
             settings_tab: SettingsTab::default(),
+            settings_sections: OpenSections::default(),
             profile_tab: ProfileTab::default(),
             profile_refused: false,
             settings_search: String::new(),
@@ -2848,6 +2854,7 @@ impl Shell {
             | Message::ProviderUnlock(_)
             | Message::Search(_)
             | Message::SettingsTab(_)
+            | Message::SettingsSection(_)
             | Message::ProfileTab(_)
             | Message::ProfilePassword(_)
             | Message::BulkPasswordField { .. }
@@ -3216,6 +3223,14 @@ impl Shell {
                 // A tab chosen is shown whole: the search, and the row outlined, give way.
                 self.settings_search.clear();
                 self.settings_highlight = None;
+            }
+            Message::SettingsSection(section) => {
+                self.settings_tab = section.tab();
+                self.settings_sections.open(section);
+                self.settings_search.clear();
+                self.settings_highlight = None;
+                // A section opens at its top.
+                return operation::snap_to(settings_page::scroll_id(), RelativeOffset::START);
             }
             Message::ProfileTab(tab) => {
                 self.profile_tab = tab;
@@ -4240,6 +4255,11 @@ impl Shell {
         // Quick Connect's first, while open.
         if let Some(effects) = self.palette_key(key) {
             return effects;
+        }
+        // Over the Settings page, Up and Down no field took move along its rail, as the C#
+        // rail's arrow keys; the tree hidden under the page does not see them.
+        if self.settings_rail_key(key) {
+            return Vec::new();
         }
         // The tree's first, while it has the keyboard.
         if let Some(effects) = self.tree_key(key) {

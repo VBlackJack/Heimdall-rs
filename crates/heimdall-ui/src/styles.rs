@@ -553,6 +553,28 @@ pub fn sidebar_tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonSty
     }
 }
 
+/// A section on a Settings tab's rail, as the C# `SettingsRailTabItemStyle`: its text
+/// secondary until `selected` or under the pointer, then the text's own colour on the
+/// highlight. The rail sits on the card, which the highlight's colour is here, so the
+/// window's own background marks it. The accent's bar at its left is its caller's.
+pub fn rail_item(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
+    move |theme, status| {
+        let brushes = Brushes::of(theme);
+        let lit = selected || matches!(status, ButtonStatus::Hovered | ButtonStatus::Pressed);
+        ButtonStyle {
+            background: lit.then_some(Background::Color(brushes.surface)),
+            text_color: if lit { brushes.text } else { brushes.secondary },
+            border: Border {
+                color: brushes.quiet_edge,
+                width: brushes.width,
+                radius: radius::SM.into(),
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
 /// A drop-down, as the C# `ThemedComboBoxStyle`: outlined as a field, in the accent while
 /// its list is open.
 pub fn pick_list(theme: &Theme, status: ListStatus) -> ListStyle {

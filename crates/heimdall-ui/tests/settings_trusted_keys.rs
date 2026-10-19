@@ -29,15 +29,17 @@ use heimdall_core::profile::{FtpProfile, ProfileId};
 use heimdall_rdp::{CertificateHash, KnownRdpHosts};
 use heimdall_ssh::{AgentSource, KnownHosts, PublicKey};
 use heimdall_term::GridSize;
+use heimdall_ui::settings_rows::SettingsSection;
 use heimdall_ui::shell::{Message, SettingsTab, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::trusted_keys_view::TrustedList;
 use iced::{Settings, Size};
 
-/// A window tall enough for the whole Settings page.
-const WINDOW: Size = Size::new(1100.0, 2400.0);
+/// A window tall enough for the whole Settings page, as wide as the application's first one:
+/// the lists' columns fit beside the section rail.
+const WINDOW: Size = Size::new(1400.0, 2400.0);
 /// A window tall enough for the whole SSH tab, the FTPS certificates at its end.
-const TALL_WINDOW: Size = Size::new(1100.0, 3200.0);
+const TALL_WINDOW: Size = Size::new(1400.0, 3200.0);
 const ED25519: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEdv/0kqpfKUkuXCpQIlyU34zlRbf2MM2wBP+uTTnDTR";
 const PIN: &str = "SHA256:rgJ0Y04RcqyBpgUaWIbkDqk3bEPjR9jNUxyEc7cvFq0";
@@ -78,9 +80,14 @@ fn trust(dir: &Path) {
 }
 
 /// The Settings page on its `tab`.
+/// The Settings page on the section of `tab`'s rail that lists what is trusted.
 fn show(shell: &mut Shell, tab: SettingsTab) {
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(tab));
+    let section = match tab {
+        SettingsTab::Rdp => SettingsSection::RdpCertificates,
+        _ => SettingsSection::SshHostKeys,
+    };
+    let _ = shell.update(Message::SettingsSection(section));
 }
 
 #[test]
