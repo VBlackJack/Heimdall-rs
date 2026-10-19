@@ -1561,3 +1561,49 @@ fn a_file_held_open_without_delete_sharing_is_left_untouched_and_no_temporary_fi
         "no temporary file left"
     );
 }
+
+#[test]
+fn a_shared_gateway_is_reached_by_a_route_and_is_in_no_list_and_no_file() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_gateways([gateway("mine", None)]);
+    store.save().expect("saves");
+    let before = fs::read_to_string(&path).expect("file");
+    let mut store = ProfileStore::open(&path).expect("reopens");
+    store.set_shared_gateways([
+        gateway("shared-team-bastion", Some("elsewhere")),
+        // Not in the shared namespace: a shared file cannot name a gateway of its own kind.
+        gateway("impostor", None),
+    ]);
+    let route = store
+        .route(Some(&ProfileId::new("shared-team-bastion")))
+        .expect("route");
+    assert_eq!(route.len(), 1, "a parent outside the namespace is dropped");
+    assert!(route[0].parent.is_none());
+    assert_eq!(
+        store.route(Some(&ProfileId::new("impostor"))),
+        Err(RouteError::MissingGateway(ProfileId::new("impostor")))
+    );
+    // The saved gateways are the saved ones alone, and a save writes nothing of the shared;
+    // a change kept by `apply` leaves them reachable.
+    assert_eq!(store.gateways().len(), 1);
+    store
+        .apply(|store| store.merge_gateways([gateway("other", None)]))
+        .expect("apply");
+    let written = fs::read_to_string(&path).expect("file");
+    assert_ne!(written, before);
+    assert!(!written.contains("shared-team-bastion"), "{written}");
+    assert!(
+        store
+            .route(Some(&ProfileId::new("shared-team-bastion")))
+            .is_ok()
+    );
+    // Replaced, not added to.
+    store.set_shared_gateways([]);
+    assert!(
+        store
+            .route(Some(&ProfileId::new("shared-team-bastion")))
+            .is_err()
+    );
+}

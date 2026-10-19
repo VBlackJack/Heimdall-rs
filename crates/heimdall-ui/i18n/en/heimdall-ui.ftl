@@ -621,6 +621,7 @@ ui-import-file-nothing = No sessions found in the selected file.
 ui-import-file-unreadable = The file could not be read: { $detail }
 ui-import-file-encrypted = The file is fully encrypted. Decrypt it in mRemoteNG first (File > Save As with no encryption).
 ui-import-mobaxterm-unresolved-variable = Session "{ $session }": the variable [{ $name }] has no value, so its login was kept as written. Define it in Settings > MobaXterm variables and import again.
+ui-import-mobaxterm-invalid-gateway = Session "{ $session }" was not imported: its SSH gateway "{ $host }" is not a valid host. Importing it would reach the server around the gateway the file asked for.
 ui-import-file-too-large = The file is too large to import ({ $size } bytes).
 ui-import-mobaxterm-passwords = MobaXterm passwords are encrypted with a proprietary algorithm and could not be imported. Please re-enter credentials for each session.
 ui-import-mobaxterm-passwords-detected = { $count ->
@@ -5908,6 +5909,7 @@ ui-shared-report-duplicate-host =
     }
 ui-shared-report-reason-other-protocol = Protocol { $protocol } is not supported, only SSH and RDP are taken.
 ui-shared-report-reason-invalid-host = The host { $host } is not a host name or an address.
+ui-shared-report-reason-invalid-gateway = The SSH gateway { $host } is not a host name or an address, so the session was not taken: it would reach its host around the gateway.
 ui-shared-report-reason-duplicate-session = Another session of the file has the same folder and name.
 ui-shared-report-reason-over-limit = The source already holds as many sessions as one may.
 ui-shared-report-detail-unresolved = The login names the variable { $name }, which has no value. Define it in the MobaXterm import variables.

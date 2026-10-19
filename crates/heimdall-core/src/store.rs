@@ -221,6 +221,10 @@ pub struct ProfileStore {
     vnc: Vec<VncProfile>,
     local: Vec<LocalProfile>,
     gateways: Vec<SshGateway>,
+    /// The gateways of the shared sources, read-only and in memory: reached by [`Self::route`]
+    /// so that a shared session crosses the bastion its file names, and in no list, no
+    /// export and no save.
+    shared_gateways: Vec<SshGateway>,
     winrm: Vec<WinRmProfile>,
     ftp: Vec<FtpProfile>,
     citrix: Vec<CitrixProfile>,
@@ -279,6 +283,7 @@ impl ProfileStore {
             vnc: Vec::new(),
             local: Vec::new(),
             gateways: Vec::new(),
+            shared_gateways: Vec::new(),
             winrm: Vec::new(),
             ftp: Vec::new(),
             citrix: Vec::new(),
@@ -334,6 +339,7 @@ impl ProfileStore {
             vnc: file.vnc,
             local: file.local,
             gateways: file.gateway,
+            shared_gateways: Vec::new(),
             winrm: file.winrm,
             ftp: file.ftp,
             citrix: file.citrix,
@@ -483,6 +489,26 @@ impl ProfileStore {
         &self.gateways
     }
 
+    /// Replaces the gateways of the shared sources. Only those in the shared namespace are
+    /// kept, and a parent outside it is dropped, as the C# `SharedProfileSanitizer`: a shared
+    /// file can neither name nor shadow a gateway of the user's own. Nothing is saved.
+    pub fn set_shared_gateways(&mut self, gateways: impl IntoIterator<Item = SshGateway>) {
+        self.shared_gateways = gateways
+            .into_iter()
+            .filter(|gateway| crate::shared_sessions::is_shared(gateway.id.as_str()))
+            .map(|mut gateway| {
+                if gateway
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| !crate::shared_sessions::is_shared(parent.as_str()))
+                {
+                    gateway.parent = None;
+                }
+                gateway
+            })
+            .collect();
+    }
+
     /// The gateways to go through to reach a server whose gateway is `gateway`, nearest to
     /// this machine first: the gateway's parents from the farthest back, then the gateway.
     ///
@@ -500,9 +526,12 @@ impl ProfileStore {
             if route.len() >= MAX_GATEWAY_CHAIN_DEPTH {
                 return Err(RouteError::TooDeep(id.clone()));
             }
+            // A shared identifier is never a saved gateway's: the saved ones are looked at
+            // first all the same.
             let found = self
                 .gateways
                 .iter()
+                .chain(&self.shared_gateways)
                 .find(|candidate| &candidate.id == id)
                 .ok_or_else(|| RouteError::MissingGateway(id.clone()))?;
             route.push(found.clone());

@@ -515,3 +515,91 @@ fn a_mobaxterm_login_variable_takes_the_value_of_the_settings_and_an_unknown_one
     assert_eq!(app.settings().mobaxterm_variables.len(), 1);
     assert!(app.settings().mobaxterm_variables.contains_key("team"));
 }
+
+#[test]
+fn a_mobaxterm_gateway_is_created_linked_and_counted_and_a_saved_one_is_reused() {
+    use heimdall_core::import::gateways::Reconciliation;
+    use heimdall_core::profile::{ProfileId, SshGateway};
+    use heimdall_core::store::ProfileStore;
+
+    let text = "[Bookmarks]\n\
+        a= #109#0%a.lab%22%root%%%%%jump.lab%22%[team]\n\
+        b= #109#0%b.lab%22%root%%%%%JUMP.lab%22%OPS\n\
+        c= #109#0%c.lab%22%root%%%%%bastion.lab%2222%jb\n";
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge_gateways([SshGateway {
+        id: ProfileId::new("saved"),
+        name: "Bastion".to_owned(),
+        host: "bastion.lab".to_owned(),
+        port: 2222,
+        username: Some("jb".to_owned()),
+        key_path: None,
+        parent: None,
+    }]);
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::MobaxtermVariables(std::collections::BTreeMap::from([(
+            "team".to_owned(),
+            "ops".to_owned(),
+        )])),
+    ));
+    read(&mut app, "sessions.mxtsessions", text, None);
+    app.update(Message::ConfirmDialog);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        summary.gateways,
+        Reconciliation {
+            created: 1,
+            merged: 2,
+            orphans: 0
+        },
+        "jump.lab once for a and b (the variable resolved), bastion.lab is the saved one"
+    );
+    assert_eq!(app.gateways().len(), 2);
+    let jump = app
+        .gateways()
+        .iter()
+        .find(|g| g.host == "jump.lab")
+        .expect("jump");
+    assert_eq!(jump.username.as_deref(), Some("ops"));
+    let route = |host: &str| {
+        app.profiles()
+            .iter()
+            .find(|p| p.host == host)
+            .and_then(|p| p.gateway.clone())
+    };
+    assert_eq!(route("a.lab"), Some(jump.id.clone()));
+    assert_eq!(route("b.lab"), Some(jump.id.clone()));
+    assert_eq!(route("c.lab"), Some(ProfileId::new("saved")));
+}
+
+#[test]
+fn a_mobaxterm_session_with_an_unusable_gateway_is_not_imported_and_is_said() {
+    let text = "[Bookmarks]\n\
+        bad= #109#0%bad.lab%22%root%%%%%bad host%22%ops\n\
+        fine= #109#0%fine.lab%22%root\n";
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    read(&mut app, "sessions.mxtsessions", text, None);
+    let Some(Dialog::ConfirmImportFile(pending)) = &app.dialog else {
+        panic!("not asked: {:?}", app.dialog);
+    };
+    assert_eq!(
+        pending.warnings,
+        [FileWarning::InvalidGatewayHost {
+            session: "bad".to_owned(),
+            folder: String::new(),
+            host: "bad host".to_owned()
+        }]
+    );
+    assert_eq!(pending.count(), 1);
+    app.update(Message::ConfirmDialog);
+    let hosts: Vec<&str> = app.profiles().iter().map(|p| p.host.as_str()).collect();
+    assert_eq!(hosts, ["fine.lab"]);
+    assert!(app.gateways().is_empty());
+}

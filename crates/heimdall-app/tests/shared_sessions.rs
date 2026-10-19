@@ -634,3 +634,137 @@ fn the_settings_keep_a_list_of_sources_that_passes_the_rows_checks_and_refuse_an
     ));
     assert!(app.settings().shared_sources.is_empty());
 }
+
+const BEHIND_A_BASTION: &str = "[Bookmarks]\r\n\
+inner= #109#0%inner.example.com%22%deploy%%-1%-1%%jump.example.com%2200%[ops]\r\n\
+desk= #91#4%desk.example.com%3389%admin%0%-1%-1%%%%%%%jump.example.com%2200%OPS\r\n\
+open= #109#0%open.example.com%22%deploy\r\n\
+evil= #109#0%evil.example.com%22%deploy%%-1%-1%%bad host%22%x\r\n";
+
+#[test]
+fn a_shared_session_keeps_the_gateway_its_file_names_and_a_bad_one_refuses_the_session() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, BEHIND_A_BASTION).expect("write");
+    let variables = Variables::from([("ops".to_owned(), "ops".to_owned())]);
+    let mut shared = SharedSessions::default();
+    shared.load(&[source("team", &file)], &variables);
+    let state = &shared.sources()[0];
+    assert_eq!(state.sessions, 3, "{state:?}");
+    assert_eq!(state.refused, 1, "the one whose gateway is not a host");
+    let report = shared.report_of("team").expect("report");
+    assert!(
+        report.entries.iter().any(|entry| entry.reason
+            == Some(heimdall_app::shared_report::SkipReason::InvalidGateway)
+            && entry.session == "evil"
+            && entry.detail == "bad host"),
+        "{report:?}"
+    );
+    // The two sessions through the same host, port and account (any case) share one gateway,
+    // in the shared namespace, with a host, a port and an account and nothing else.
+    let gateways = shared.gateways();
+    assert_eq!(gateways.len(), 1, "{gateways:?}");
+    let gateway = &gateways[0];
+    assert!(is_shared(gateway.id.as_str()));
+    assert_eq!(
+        (gateway.host.as_str(), gateway.port),
+        ("jump.example.com", 2200)
+    );
+    assert_eq!(gateway.username.as_deref(), Some("ops"));
+    assert!(gateway.key_path.is_none() && gateway.parent.is_none());
+    let sessions = shared.sessions_of("team");
+    let SharedTarget::Ssh(inner) = &sessions[0].target else {
+        panic!("{sessions:?}");
+    };
+    assert_eq!(inner.gateway.as_ref(), Some(&gateway.id));
+    let SharedTarget::Rdp(desk) = &sessions[1].target else {
+        panic!("{sessions:?}");
+    };
+    assert_eq!(desk.gateway.as_ref(), Some(&gateway.id));
+    let SharedTarget::Ssh(open) = &sessions[2].target else {
+        panic!("{sessions:?}");
+    };
+    assert!(open.gateway.is_none());
+}
+
+#[test]
+fn a_shared_gateway_login_takes_the_users_variables() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, BEHIND_A_BASTION).expect("write");
+    let variables = Variables::from([("ops".to_owned(), "jb".to_owned())]);
+    let mut shared = SharedSessions::default();
+    shared.load(&[source("team", &file)], &variables);
+    let users: Vec<Option<String>> = shared
+        .gateways()
+        .into_iter()
+        .map(|gateway| gateway.username)
+        .collect();
+    assert_eq!(users, [Some("jb".to_owned()), Some("OPS".to_owned())]);
+}
+
+#[test]
+fn a_shared_gateway_never_joins_the_saved_ones_and_nothing_is_written() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, BEHIND_A_BASTION).expect("write");
+    let profiles_file = dir.path().join("profiles.toml");
+    let settings = Settings {
+        shared_sources: vec![source("team", &file)],
+        ..Settings::default()
+    };
+    settings
+        .save(&settings_path(&profiles_file))
+        .expect("settings");
+    let app = App::new(AppConfig {
+        profiles_file: profiles_file.clone(),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    });
+    // No variable is defined here: `[ops]` and `OPS` are two logins, so two gateways.
+    assert_eq!(app.shared_sessions().gateways().len(), 2);
+    // Not among the saved gateways, and nothing written to the store.
+    assert!(app.gateways().is_empty());
+    assert!(app.profiles().is_empty());
+}
+
+#[test]
+fn a_copy_of_a_source_keeps_the_gateway_and_a_copy_without_a_usable_one_drops_the_session() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, BEHIND_A_BASTION).expect("write");
+    let sources = vec![source("team", &file)];
+    let cache = dir.path().join("cache");
+    let mut shared = SharedSessions::default();
+    shared.set_cache_directory(Some(cache.clone()));
+    shared.load(&sources, &Variables::default());
+    let before = shared.gateways();
+    // The share disappears: the copy serves, gateway included.
+    std::fs::remove_file(&file).expect("remove");
+    let mut offline = SharedSessions::default();
+    offline.set_cache_directory(Some(cache.clone()));
+    offline.load(&sources, &Variables::default());
+    assert!(offline.sources()[0].offline.is_some());
+    assert_eq!(offline.gateways(), before);
+    let SharedTarget::Ssh(inner) = &offline.sessions_of("team")[0].target else {
+        panic!("an SSH session");
+    };
+    assert_eq!(inner.gateway.as_ref(), Some(&before[0].id));
+    // A gateway of the copy that is not a host: the sessions through it are not served.
+    let copy = cache.join("team.json");
+    let text = std::fs::read_to_string(&copy).expect("copy");
+    std::fs::write(&copy, text.replace("jump.example.com", "bad host")).expect("tamper");
+    let mut tampered = SharedSessions::default();
+    tampered.set_cache_directory(Some(cache));
+    tampered.load(&sources, &Variables::default());
+    let hosts: Vec<&str> = tampered
+        .sessions_of("team")
+        .iter()
+        .map(|session| session.endpoint().0)
+        .collect();
+    assert_eq!(hosts, ["open.example.com"], "no session goes direct");
+}

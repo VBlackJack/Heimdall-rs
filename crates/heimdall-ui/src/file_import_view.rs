@@ -162,6 +162,11 @@ pub fn warning_lines(warnings: &[FileWarning]) -> Vec<String> {
                 session = session.as_str(),
                 name = name.as_str()
             ),
+            FileWarning::InvalidGatewayHost { session, host, .. } => fl!(
+                "ui-import-mobaxterm-invalid-gateway",
+                session = session.as_str(),
+                host = host.as_str()
+            ),
         })
         .collect()
 }

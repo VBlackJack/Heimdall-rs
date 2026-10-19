@@ -22,11 +22,13 @@
 //! Passwords are encrypted by `MobaXterm` with its own algorithm: they are only counted, so
 //! the user can be told to enter them again.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{Map, Value};
 
-use super::foreign::{FileWarning, Parsed, set_text};
+use super::foreign::{FileWarning, GATEWAY_ID_KEY, Parsed, set_text};
+use crate::profile::DEFAULT_SSH_PORT;
+use crate::shared_sessions::is_valid_host;
 
 /// Sections whose entries are stored passwords, counted and never read.
 const PASSWORD_SECTIONS: [&str; 2] = ["Passwords", "Credentials"];
@@ -62,6 +64,17 @@ const PROTOCOLS: [(u32, &str); 6] = [
 const SSH_KEY_FIELD: usize = 4;
 const SSH_COMPRESSION_FIELD: usize = 11;
 const SSH_AGENT_FIELD: usize = 12;
+
+/// Where an SSH session names its gateway (jump host): host, port and user, as the C#
+/// `SessionLayouts` (`MobaXtermImporter.cs:98-106`).
+const SSH_GATEWAY_FIELDS: [usize; 3] = [7, 8, 9];
+
+/// Where an RDP session names its SSH gateway: host, port and user
+/// (`MobaXtermImporter.cs:107-113`).
+const RDP_GATEWAY_FIELDS: [usize; 3] = [12, 13, 14];
+
+/// Prefix of the identifier a gateway carries until the caller gives it its own.
+const GATEWAY_PLACEHOLDER_ID: &str = "foreign-gateway-";
 
 /// Where the fields of an FTP session are.
 const FTP_PASSIVE_FIELD: usize = 3;
@@ -130,6 +143,7 @@ pub fn parse_limited(
 ) -> (Parsed, Skipped) {
     let mut parsed = Parsed::default();
     let mut skipped = Skipped::default();
+    let mut gateways = GatewayBook::default();
     let sections = sections(text, limits, &mut parsed.stored_credentials, &mut skipped);
     for (name, entries) in &sections {
         if !starts_with_ignore_case(name, BOOKMARKS_PREFIX) {
@@ -145,7 +159,17 @@ pub fn parse_limited(
                 continue;
             }
             let mut unresolved = Vec::new();
-            if let Some(fields) = session(key, value, &folder, resolve, &mut unresolved) {
+            let outcome = session(key, value, &folder, resolve, &mut gateways, &mut unresolved);
+            if let Err(Refusal::GatewayHost(host)) = &outcome {
+                // Never imported as a direct connection: that would reach the host around
+                // the bastion the file asked for (`MobaXtermImporter.cs:221-229`).
+                parsed.warnings.push(FileWarning::InvalidGatewayHost {
+                    session: key.clone(),
+                    folder: folder.clone(),
+                    host: host.clone(),
+                });
+            }
+            if let Ok(fields) = outcome {
                 parsed.push(fields);
                 // Once per session, whichever fields carry the token: the user has one
                 // value to define (`MobaXtermImporter.cs:527`).
@@ -164,7 +188,62 @@ pub fn parse_limited(
             }
         }
     }
+    parsed.gateways = gateways.list;
     (parsed, skipped)
+}
+
+/// Why a session line gives no session.
+enum Refusal {
+    /// No host, a protocol Heimdall does not map, or a line of another shape.
+    NotASession,
+    /// The session names a gateway whose host is not usable.
+    GatewayHost(String),
+}
+
+/// The gateways the sessions of a file name, each once: two sessions through the same host,
+/// port and user (compared without case) share it, as the C# `ParseContext.GetOrAddGateway`.
+#[derive(Default)]
+struct GatewayBook {
+    ids: HashMap<(String, u16, String), String>,
+    /// The gateways, as the C# `SshGatewayDto`.
+    list: Vec<Value>,
+}
+
+impl GatewayBook {
+    fn get_or_add(&mut self, host: &str, port: u16, user: &str) -> String {
+        let key = (host.to_uppercase(), port, user.to_uppercase());
+        if let Some(id) = self.ids.get(&key) {
+            return id.clone();
+        }
+        let id = format!("{GATEWAY_PLACEHOLDER_ID}{}", self.list.len());
+        let mut dto = Map::new();
+        dto.insert("id".to_owned(), Value::String(id.clone()));
+        dto.insert(
+            "name".to_owned(),
+            Value::String(gateway_name(host, port, user)),
+        );
+        dto.insert("host".to_owned(), Value::String(host.to_owned()));
+        dto.insert("port".to_owned(), Value::from(port));
+        set_text(&mut dto, "user", user);
+        self.list.push(Value::Object(dto));
+        self.ids.insert(key, id.clone());
+        id
+    }
+}
+
+/// A gateway's name: `user@host`, then `:port` unless it is the SSH default, as the C#
+/// `BuildGatewayName`.
+fn gateway_name(host: &str, port: u16, user: &str) -> String {
+    let mut name = if user.is_empty() {
+        host.to_owned()
+    } else {
+        format!("{user}@{host}")
+    };
+    if port != DEFAULT_SSH_PORT {
+        name.push(':');
+        name.push_str(&port.to_string());
+    }
+    name
 }
 
 fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
@@ -268,23 +347,27 @@ fn sections(
     sections
 }
 
-/// A session line as the C# `ParseSession`: `None` when it names no host or a protocol
-/// Heimdall does not map.
+/// A session line as the C# `ParseSession`: refused when it names no host, a protocol
+/// Heimdall does not map, or a gateway whose host is not usable.
 fn session(
     name: &str,
     value: &str,
     folder: &str,
     resolve: VariableResolver<'_>,
+    gateways: &mut GatewayBook,
     unresolved: &mut Vec<String>,
-) -> Option<Map<String, Value>> {
+) -> Result<Map<String, Value>, Refusal> {
     let value = value.trim();
-    let code = protocol_code(value)?;
-    let (_, connection_type) = PROTOCOLS.iter().find(|(known, _)| *known == code)?;
+    let code = protocol_code(value).ok_or(Refusal::NotASession)?;
+    let (_, connection_type) = PROTOCOLS
+        .iter()
+        .find(|(known, _)| *known == code)
+        .ok_or(Refusal::NotASession)?;
     let fields: Vec<&str> = fields_part(value).split('%').collect();
     let field = |index: usize| fields.get(index).copied().unwrap_or_default();
     let host = field(0);
     if host.trim().is_empty() {
-        return None;
+        return Err(Refusal::NotASession);
     }
     let mut dto = Map::new();
     set_text(&mut dto, "displayName", name);
@@ -294,6 +377,29 @@ fn session(
         Value::String((*connection_type).to_owned()),
     );
     set_text(&mut dto, "group", folder);
+    // The gateway first, as the C#: its login's variables are met before the session's own.
+    let route = match *connection_type {
+        "SSH" => Some(SSH_GATEWAY_FIELDS),
+        "RDP" => Some(RDP_GATEWAY_FIELDS),
+        _ => None,
+    };
+    if let Some([host_at, port_at, user_at]) = route {
+        let gateway_host = field(host_at).trim();
+        if !gateway_host.is_empty() {
+            if !is_valid_host(gateway_host) {
+                return Err(Refusal::GatewayHost(gateway_host.to_owned()));
+            }
+            let gateway_port = field(port_at)
+                .trim()
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .unwrap_or(DEFAULT_SSH_PORT);
+            let gateway_user = replace_variables(field(user_at), resolve, unresolved);
+            let id = gateways.get_or_add(gateway_host, gateway_port, gateway_user.trim());
+            dto.insert(GATEWAY_ID_KEY.to_owned(), Value::String(id));
+        }
+    }
     // A port that is not a positive number is the protocol's default, as the C#.
     let port = field(1).trim().parse::<i64>().ok().filter(|port| *port > 0);
     let user = replace_variables(field(2), resolve, unresolved);
@@ -345,7 +451,7 @@ fn session(
             set_port(&mut dto, "telnetPort", port);
         }
     }
-    Some(dto)
+    Ok(dto)
 }
 
 fn set_port(dto: &mut Map<String, Value>, key: &str, port: Option<i64>) {

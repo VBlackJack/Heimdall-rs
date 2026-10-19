@@ -103,6 +103,24 @@ pub fn session_id(source_id: &str, group: &str, name: &str) -> String {
     format!("{}{hex}", prefix_for(source_id))
 }
 
+/// The identifier of the gateway of source `source_id` that logs in to `host` on `port` as
+/// `user` (without case), so the same file read twice gives the same one, as the C#
+/// `ParseContext.GetOrAddGateway` builds it.
+#[must_use]
+pub fn gateway_id(source_id: &str, host: &str, port: u16, user: &str) -> String {
+    let input = format!(
+        "gateway\u{1f}{}\u{1f}{port}\u{1f}{}",
+        host.to_uppercase(),
+        user.to_uppercase()
+    );
+    let digest = hash::sha256(input.as_bytes());
+    let mut hex = String::with_capacity(ID_HASH_BYTES * 2);
+    for byte in digest.iter().take(ID_HASH_BYTES) {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    format!("{}{hex}", prefix_for(source_id))
+}
+
 /// Whether `host` is a host name, an IPv4 address or an IPv6 address, as the C#
 /// `SchemaValidator.IsValidHost`: a file other people write may not slip anything else
 /// into a connection.

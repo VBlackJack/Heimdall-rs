@@ -31,6 +31,9 @@ use crate::profile::ProfileId;
 /// Prefix of the identifier a session carries until it is given its own.
 const PLACEHOLDER_ID: &str = "foreign-";
 
+/// The key of a session's SSH gateway in its C# fields.
+pub const GATEWAY_ID_KEY: &str = "sshGatewayId";
+
 /// Something a whole file says, beyond its sessions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileWarning {
@@ -46,6 +49,16 @@ pub enum FileWarning {
         /// The variable name, without brackets.
         name: String,
     },
+    /// A `MobaXterm` session names an SSH gateway whose host is not usable: the session is not
+    /// imported, since it would otherwise reach its host around the bastion the file asked for.
+    InvalidGatewayHost {
+        /// The session, as named in the file.
+        session: String,
+        /// The folder it is filed in.
+        folder: String,
+        /// The gateway host, as written.
+        host: String,
+    },
 }
 
 /// What a file gives.
@@ -53,6 +66,8 @@ pub enum FileWarning {
 pub struct Parsed {
     /// The sessions, as the C# `ServerProfileDto`, in the file's order.
     pub servers: Vec<Value>,
+    /// The SSH gateways the sessions go through, as the C# `SshGatewayDto`, each once.
+    pub gateways: Vec<Value>,
     /// What the file says as a whole.
     pub warnings: Vec<FileWarning>,
     /// Passwords the file stores, never read: counted to say they must be entered again.
@@ -60,14 +75,15 @@ pub struct Parsed {
 }
 
 impl Parsed {
-    /// Adds a session: its C# fields, a placeholder identifier, and a direct connection, as
-    /// every C# importer of these files sets it.
+    /// Adds a session: its C# fields, a placeholder identifier, and a direct connection unless
+    /// it names a gateway, as every C# importer of these files sets it.
     pub(super) fn push(&mut self, mut fields: Map<String, Value>) {
         fields.insert(
             "id".to_owned(),
             Value::String(format!("{PLACEHOLDER_ID}{}", self.servers.len())),
         );
-        fields.insert("useDirectConnection".to_owned(), Value::Bool(true));
+        let direct = !fields.contains_key(GATEWAY_ID_KEY);
+        fields.insert("useDirectConnection".to_owned(), Value::Bool(direct));
         self.servers.push(Value::Object(fields));
     }
 
@@ -75,10 +91,27 @@ impl Parsed {
     /// one that is kept its own identifier, as the C# `Guid.NewGuid()`.
     #[must_use]
     pub fn report(&self, new_id: &mut dyn FnMut() -> String) -> ImportReport {
-        let document = json!({ "servers": self.servers }).to_string();
+        let document = json!({ "servers": self.servers, "gateways": self.gateways }).to_string();
         // The document is written here, of the shape the import reads: it cannot be refused.
         let mut report = csharp::import(&document, None).unwrap_or_default();
         let mut renamed: HashMap<ProfileId, ProfileId> = HashMap::new();
+        // The gateways get their own identifiers, and the sessions through them follow: none
+        // keeps a placeholder, which another file's would share.
+        let mut gateways: HashMap<ProfileId, ProfileId> = HashMap::new();
+        for gateway in &mut report.gateways {
+            let new = ProfileId::new(new_id());
+            gateways.insert(std::mem::replace(&mut gateway.id, new.clone()), new);
+        }
+        let rewire = |route: &mut Option<ProfileId>| {
+            if let Some(new) = route.as_ref().and_then(|old| gateways.get(old)) {
+                *route = Some(new.clone());
+            }
+        };
+        report
+            .profiles
+            .iter_mut()
+            .for_each(|p| rewire(&mut p.gateway));
+        report.rdp.iter_mut().for_each(|p| rewire(&mut p.gateway));
         let mut fresh = |id: &mut ProfileId| {
             let new = ProfileId::new(new_id());
             renamed.insert(std::mem::replace(id, new.clone()), new);
