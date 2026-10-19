@@ -555,10 +555,10 @@ fn a_mobaxterm_gateway_is_created_linked_and_counted_and_a_saved_one_is_reused()
         summary.gateways,
         Reconciliation {
             created: 1,
-            merged: 2,
+            merged: 1,
             orphans: 0
         },
-        "jump.lab once for a and b (the variable resolved), bastion.lab is the saved one"
+        "jump.lab is one gateway for a and b (the variable resolved), bastion.lab is the saved one"
     );
     assert_eq!(app.gateways().len(), 2);
     let jump = app
