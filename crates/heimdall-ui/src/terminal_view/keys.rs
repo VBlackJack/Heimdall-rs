@@ -296,8 +296,7 @@ pub fn is_search_key(
 
 /// Whether `physical` with `modifiers` is Ctrl+Shift+F11, which toggles the window's full
 /// screen over an embedded session as in the C# Heimdall (`FullscreenShortcutRouter.cs:48-51`):
-/// the window's wherever the keyboard is, and never the session's. F11 alone is the window's
-/// as well, but a terminal still passes it on to its programs.
+/// the window's wherever the keyboard is, and never the session's.
 #[must_use]
 pub fn is_fullscreen_key(physical: Physical, modifiers: keyboard::Modifiers) -> bool {
     physical == Physical::Code(Code::F11)
@@ -305,6 +304,29 @@ pub fn is_fullscreen_key(physical: Physical, modifiers: keyboard::Modifiers) -> 
         && modifiers.shift()
         && !modifiers.alt()
         && !modifiers.logo()
+}
+
+/// Whether `physical` with `modifiers` toggles the window's full screen: F11 alone or
+/// Ctrl+Shift+F11. The window takes both for itself, so a terminal, a desktop or a VNC view
+/// never sends them to its session: sent on, F11 left the tail `~` of its escape sequence
+/// at a shell's prompt.
+#[must_use]
+pub fn toggles_fullscreen(physical: Physical, modifiers: keyboard::Modifiers) -> bool {
+    (physical == Physical::Code(Code::F11) && modifiers.is_empty())
+        || is_fullscreen_key(physical, modifiers)
+}
+
+/// Whether a terminal leaves a key to the window, neither capturing it nor sending it to its
+/// session: a window shortcut (`window_key`, unless it is Ctrl+K kept for the session, `kept`),
+/// and the full-screen keys, which are never the session's.
+#[must_use]
+pub fn left_to_window(
+    window_key: Option<WindowShortcut>,
+    kept: bool,
+    physical: Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    (!kept && window_key.is_some()) || toggles_fullscreen(physical, modifiers)
 }
 
 /// The letter of Ctrl+letter, `key` with `modifiers`, whatever the keyboard's layout: Ctrl
@@ -553,7 +575,8 @@ mod tests {
 
     use super::{
         LAST_TAB_ORDINAL, Shortcut, WindowShortcut, Zoom, is_ctrl_k, is_ctrl_w, is_lock_key,
-        is_reopen_closed_key, is_search_key, key_input, shortcut, tab_ordinal, window_shortcut,
+        is_reopen_closed_key, is_search_key, key_input, left_to_window, shortcut, tab_ordinal,
+        toggles_fullscreen, window_shortcut,
     };
 
     #[test]
@@ -1178,6 +1201,49 @@ mod tests {
             None,
             "AltGr is Ctrl+Alt on Windows"
         );
+    }
+
+    #[test]
+    fn f11_and_ctrl_shift_f11_toggle_full_screen_and_are_left_to_the_window() {
+        let f11 = Physical::Code(Code::F11);
+        assert!(toggles_fullscreen(f11, Modifiers::empty()));
+        assert!(toggles_fullscreen(f11, Modifiers::CTRL | Modifiers::SHIFT));
+        assert!(
+            !toggles_fullscreen(f11, Modifiers::CTRL),
+            "Ctrl+F11 is the session's"
+        );
+        assert!(!toggles_fullscreen(f11, Modifiers::SHIFT));
+        assert!(!toggles_fullscreen(f11, Modifiers::ALT));
+        assert!(!toggles_fullscreen(
+            Physical::Code(Code::F10),
+            Modifiers::empty()
+        ));
+        // The terminal leaves both to the window: no `ESC [ 2 3 ~` reaches the shell, whose
+        // tail `~` showed at its prompt on every press.
+        let key = keyboard::Key::Named(Named::F11);
+        for modifiers in [Modifiers::empty(), Modifiers::CTRL | Modifiers::SHIFT] {
+            assert!(left_to_window(
+                window_shortcut(&key, f11, modifiers),
+                false,
+                f11,
+                modifiers
+            ));
+        }
+        // What the terminal does send: other function keys, and Ctrl+F11.
+        assert!(!left_to_window(
+            None,
+            false,
+            Physical::Code(Code::F10),
+            Modifiers::empty()
+        ));
+        assert!(!left_to_window(None, false, f11, Modifiers::CTRL));
+        // Ctrl+K kept for the session is not left.
+        assert!(!left_to_window(
+            Some(WindowShortcut::QuickConnect),
+            true,
+            Physical::Code(Code::KeyK),
+            Modifiers::CTRL
+        ));
     }
 
     #[test]

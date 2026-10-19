@@ -417,7 +417,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 ..
             }) if state.focused => {
                 // Left uncaptured: the window acts on it. Ctrl+K alone stays the session's
-                // when the settings say so; Ctrl+Shift+F11, full screen, is never the shell's.
+                // when the settings say so; F11 and Ctrl+Shift+F11, full screen, are never the shell's.
                 let kept = keys::is_ctrl_k(key, *physical_key, *modifiers)
                     && !self.ctrl_k.opens_quick_connect();
                 let window_key = window_shortcut(key, *physical_key, *modifiers);
@@ -433,9 +433,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                     shell.capture_event();
                     return;
                 }
-                if (!kept && window_key.is_some())
-                    || keys::is_fullscreen_key(*physical_key, *modifiers)
-                {
+                if keys::left_to_window(window_key, kept, *physical_key, *modifiers) {
                     return;
                 }
                 if state.preedit.is_some() {
