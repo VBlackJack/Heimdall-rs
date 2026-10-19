@@ -428,6 +428,10 @@ const EVERY_PREFERENCE: &[(&str, &str)] = &[
     ("DefaultResolutionWidth", "1280"),
     ("DefaultResolutionHeight", "720"),
     ("RdpResolutionPresets", r#"["1280x720"]"#),
+    (
+        "SharedSessionSources",
+        r#"[{"Id": "team", "Name": "Team", "Path": "D:\\share\\team.mxtsessions", "Enabled": true}]"#,
+    ),
     ("MaxEmbeddedSessions", "4"),
     ("SftpBrowserEnabled", "false"),
     ("SftpAutoOpenOnSsh", "false"),
@@ -537,6 +541,53 @@ fn read_text_out_of_range() -> Preferences {
     read(&settings_json(
         r#""sshAutoReconnectFirstDelaySeconds": 0, "sshAutoReconnectSubsequentDelaySeconds": 601"#,
     ))
+}
+
+#[test]
+fn shared_session_sources_are_taken_whole_or_not_at_all() {
+    let taken = read(&settings_json(
+        r#""sharedSessionSources": [
+            {"id": "team", "name": " Team ", "path": "\\\\srv\\share\\team.mxtsessions", "enabled": false},
+            {"id": "ops", "name": "Ops", "path": "%USERPROFILE%\\ops.ini"}]"#,
+    ));
+    assert_eq!(
+        outcome(&taken, "SharedSessionSources"),
+        Some(PreferenceOutcome::Taken)
+    );
+    let sources = &taken.settings.shared_sources;
+    assert_eq!(sources.len(), 2);
+    // Files other people write decide what this computer offers to connect to: the review
+    // shows them first.
+    let review = Settings::default().csharp_import(&taken);
+    let change = review
+        .changes
+        .iter()
+        .find(|change| change.key == "shared_sessions.sources")
+        .expect("shown");
+    assert_eq!(
+        change.sensitivity,
+        Some(heimdall_core::settings::Sensitivity::RunsOnThisComputer)
+    );
+    assert_eq!(sources[0].name, "Team");
+    assert!(!sources[0].enabled);
+    assert!(sources[1].enabled, "on unless the file says otherwise");
+    for bad in [
+        // A relative path, a repeated or foreign identifier, a control character.
+        r#"[{"id": "team", "path": "team.ini"}]"#,
+        r#"[{"id": "a", "path": "/x"}, {"id": "a", "path": "/y"}]"#,
+        r#"[{"id": "Shared-1", "path": "/x"}]"#,
+        r#"[{"id": "a", "path": "/x\ny"}]"#,
+        r#"[{"id": "a", "path": "/x", "enabled": "yes"}]"#,
+        r#"["a"]"#,
+    ] {
+        let read = read(&settings_json(&format!(r#""sharedSessionSources": {bad}"#)));
+        assert_eq!(
+            outcome(&read, "SharedSessionSources"),
+            Some(PreferenceOutcome::Invalid),
+            "{bad}"
+        );
+        assert!(read.settings.shared_sources.is_empty());
+    }
 }
 
 #[test]

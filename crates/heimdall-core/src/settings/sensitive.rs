@@ -222,6 +222,9 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("files.follow_local_directory", PLAIN),
     // C# `ExternalTools`, a `SensitiveKeys` entry: programs started from the menus.
     ("external_tools.tools", RUNS),
+    // C# `SharedSessionSources`: files other people write, whose sessions this computer then
+    // offers to connect to.
+    ("shared_sessions.sources", RUNS),
     // C# `MobaXtermUserVariables`: logins an import fills in, nothing that runs.
     ("mobaxterm.variables", PLAIN),
     ("reachability.enabled", PLAIN),

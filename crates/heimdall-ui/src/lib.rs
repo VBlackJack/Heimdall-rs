@@ -92,6 +92,7 @@ pub mod session_settings;
 pub mod sessions_view;
 mod settings_file;
 pub mod settings_rows;
+pub mod shared_view;
 pub mod shell;
 mod shortcuts_view;
 mod single_instance;

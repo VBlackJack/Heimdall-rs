@@ -2279,6 +2279,13 @@ impl Shell {
                     .map(|_| Message::App(AppMessage::ScheduledTick)),
             );
         }
+        // The shared session files looked at for a change, as the C# source watcher.
+        if self.app.watches_shared_sources() {
+            ticks.push(
+                iced::time::every(heimdall_app::shared_sessions::POLL_INTERVAL)
+                    .map(|_| Message::App(AppMessage::SharedTick)),
+            );
+        }
         // Every server checked in the background, as the C# session health monitor.
         if let Some(interval) = self.app.reachability_interval() {
             ticks.push(
@@ -6261,6 +6268,10 @@ impl Shell {
                 }
             }
         }));
+        // The shared files' sessions, read-only, under the saved ones.
+        if let Some(shared) = crate::shared_view::section(&self.app) {
+            list = list.push(shared);
+        }
         list
     }
 

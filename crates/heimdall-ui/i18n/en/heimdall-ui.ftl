@@ -5814,6 +5814,36 @@ ui-settings-rdp-default-resolution-refused = The default resolution must be betw
 ui-settings-pixels-unit = px
 ui-tool-route-udp-skipped = The NetBIOS name query uses UDP, which an SSH gateway cannot carry, so it was not sent. Choose Direct to send it from this computer.
 
+ui-shared-title = Shared sessions
+ui-shared-source-header = { $name } ({ $count })
+ui-shared-badge = shared
+ui-shared-row-tooltip = Read-only: this session comes from the shared file of { $source }. { $address }
+ui-shared-disabled = Turned off.
+ui-shared-problem-invalid-id = The source has an identifier that is not valid.
+ui-shared-problem-duplicate-id = Another source has the same identifier.
+ui-shared-problem-no-path = The source has no file path.
+ui-shared-problem-missing = The file { $path } was not found.
+ui-shared-problem-too-large = The file { $path } is larger than { $limit } MB and was not read.
+ui-shared-problem-unreadable = The file { $path } could not be read. { $reason }
+ui-shared-problem-unparsable = The file { $path } could not be understood. { $reason }
+ui-shared-problem-empty = The file { $path } holds no SSH or RDP session that can be used.
+ui-shared-kept-previous = The last change could not be taken, the previous sessions are kept. { $reason }
+ui-shared-refused =
+    { $count ->
+        [one] { $count } session of the file was left out: another protocol or an invalid host.
+       *[other] { $count } sessions of the file were left out: another protocol or an invalid host.
+    }
+ui-shared-passwords =
+    { $count ->
+        [one] { $count } password stored in the file is never read.
+       *[other] { $count } passwords stored in the file are never read.
+    }
+ui-shared-skipped =
+    { $count ->
+        [one] { $count } entry of the file could not be read and was skipped.
+       *[other] { $count } entries of the file could not be read and were skipped.
+    }
+ui-shared-truncated = The file holds more than a shared source may, the rest was not read.
 ui-mobaxterm-variables-title = MobaXterm import variables
 ui-mobaxterm-variables-description = When a MobaXterm session file is imported, [NAME] in a user field is replaced by the value of NAME: [DAS] becomes the value of DAS.
 ui-mobaxterm-variables-name = Name
