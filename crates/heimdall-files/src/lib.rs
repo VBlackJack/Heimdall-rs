@@ -34,6 +34,7 @@ mod plan;
 pub mod privileged;
 pub mod privileged_mode;
 pub mod server_copy;
+pub mod share;
 
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

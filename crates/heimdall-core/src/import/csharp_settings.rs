@@ -51,8 +51,8 @@ use crate::profile::{ColorDepth, RESOLUTION_PRESETS, RdpMode, SshMode};
 use crate::settings::{
     Accent, AgentPreference, AppTheme, BroadcastScope, ColorScheme, ExecutionPolicy, Language,
     RDP_DEFAULT_HEIGHT_DEFAULT, RDP_DEFAULT_WIDTH_DEFAULT, Settings, anti_idle_interval_accepted,
-    auto_lock_idle_minutes_accepted, default_mobaxterm_variables, max_sessions_accepted,
-    rdp_auto_reconnect_attempts_accepted, rdp_default_resolution_accepted,
+    auto_lock_idle_minutes_accepted, default_mobaxterm_variables, file_share_port_accepted,
+    max_sessions_accepted, rdp_auto_reconnect_attempts_accepted, rdp_default_resolution_accepted,
     rdp_keep_alive_interval_accepted, rdp_resize_enable_delay_accepted,
     reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
     reconnect_delay_accepted, session_log_retention_days_accepted,
@@ -715,6 +715,18 @@ fn preferences_table() -> Vec<Preference> {
                 &mut settings.ssh_keep_alive_interval
             ),
             ssh_keep_alive_interval
+        ),
+        // The C# share's HTTP port; its TFTP listener (`EphemeralTftpPort`,
+        // `FileShareEnableTftp`) is not ported, so those two have nothing to land on.
+        preference!(
+            "EphemeralHttpPort",
+            |value, settings| number(
+                value,
+                8080,
+                file_share_port_accepted,
+                &mut settings.file_share_port
+            ),
+            file_share_port
         ),
         preference!(
             "EnableLogging",

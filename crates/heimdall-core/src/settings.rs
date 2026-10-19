@@ -722,6 +722,13 @@ pub struct Settings {
     /// and never written. Carried by an export, shown first by an import as it decides which
     /// files this computer trusts to give it sessions; kept by a reset.
     pub shared_sources: Vec<SharedSource>,
+    /// The port "Share folder" listens on, as the C# `EphemeralHttpPort`
+    /// (`AppSettings.cs:176`): 0 asks the system for a free one, else within
+    /// [`FILE_SHARE_PORT_MAX`].
+    pub file_share_port: u32,
+    /// Minutes after which "Share folder" stops by itself, within
+    /// [`FILE_SHARE_MINUTES_MIN`] and [`FILE_SHARE_MINUTES_MAX`]. The C# share had no limit.
+    pub file_share_minutes: u32,
 }
 
 /// The offer to migrate from the legacy PowerShell Heimdall (`RDPManager`) the user declined,
@@ -1225,6 +1232,33 @@ pub fn anti_idle_interval_accepted(seconds: u32) -> bool {
     seconds == 0 || (ANTI_IDLE_INTERVAL_MIN..=ANTI_IDLE_INTERVAL_MAX).contains(&seconds)
 }
 
+/// The port "Share folder" listens on by default, as the C# `EphemeralHttpPort`.
+pub const FILE_SHARE_PORT_DEFAULT: u32 = 8080;
+
+/// The highest port "Share folder" accepts, as the C# setting's range.
+pub const FILE_SHARE_PORT_MAX: u32 = 65_535;
+
+/// Minutes "Share folder" lasts by default.
+pub const FILE_SHARE_MINUTES_DEFAULT: u32 = 30;
+
+/// The shortest life of a share, in minutes.
+pub const FILE_SHARE_MINUTES_MIN: u32 = 1;
+
+/// The longest life of a share, in minutes: a day.
+pub const FILE_SHARE_MINUTES_MAX: u32 = 1440;
+
+/// Whether `port` is a port "Share folder" accepts; 0 asks the system for a free one.
+#[must_use]
+pub fn file_share_port_accepted(port: u32) -> bool {
+    port <= FILE_SHARE_PORT_MAX
+}
+
+/// Whether `minutes` is a life of a share the settings accept.
+#[must_use]
+pub fn file_share_minutes_accepted(minutes: u32) -> bool {
+    (FILE_SHARE_MINUTES_MIN..=FILE_SHARE_MINUTES_MAX).contains(&minutes)
+}
+
 /// Seconds between two SSH keep-alives by default, as the C#
 /// `DefaultSshKeepAliveIntervalSeconds`.
 pub const SSH_KEEP_ALIVE_INTERVAL_DEFAULT: u32 = 30;
@@ -1352,6 +1386,8 @@ impl Default for Settings {
             legacy_migration: LegacyMigration::default(),
             onboarding_completed: false,
             shared_sources: Vec::new(),
+            file_share_port: FILE_SHARE_PORT_DEFAULT,
+            file_share_minutes: FILE_SHARE_MINUTES_DEFAULT,
         }
     }
 }
@@ -1403,6 +1439,17 @@ struct SettingsFile {
     onboarding: OnboardingSection,
     #[serde(default)]
     shared_sessions: SharedSessionsSection,
+    #[serde(default)]
+    file_share: FileShareSection,
+}
+
+/// The "Share folder" settings; absent values are the defaults.
+#[derive(Serialize, Deserialize, Default)]
+struct FileShareSection {
+    #[serde(default)]
+    port: Option<u32>,
+    #[serde(default)]
+    minutes: Option<u32>,
 }
 
 /// The shared session files, carried by an export.
@@ -2318,6 +2365,16 @@ impl Settings {
             legacy_migration: file.legacy_migration.settings(),
             onboarding_completed: file.onboarding.completed,
             shared_sources: file.shared_sessions.sources,
+            file_share_port: within(
+                file.file_share.port,
+                file_share_port_accepted,
+                FILE_SHARE_PORT_DEFAULT,
+            ),
+            file_share_minutes: within(
+                file.file_share.minutes,
+                file_share_minutes_accepted,
+                FILE_SHARE_MINUTES_DEFAULT,
+            ),
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -2476,6 +2533,10 @@ impl Settings {
             },
             shared_sessions: SharedSessionsSection {
                 sources: self.shared_sources.clone(),
+            },
+            file_share: FileShareSection {
+                port: Some(self.file_share_port),
+                minutes: Some(self.file_share_minutes),
             },
         }
     }
@@ -2676,7 +2737,7 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 15] = [
+const TRANSFERRED: [&str; 16] = [
     "terminal",
     "session_log",
     "general",
@@ -2692,6 +2753,7 @@ const TRANSFERRED: [&str; 15] = [
     "updates",
     "windows_hello",
     "shared_sessions",
+    "file_share",
 ];
 
 /// The name a portable settings file is offered under.

@@ -166,6 +166,9 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("ssh.auto_reconnect_subsequent_delay", PLAIN),
     ("ssh.anti_idle_interval", PLAIN),
     ("ssh.keep_alive_interval", PLAIN),
+    // The share folder's port and time: numbers, no secret.
+    ("file_share.port", PLAIN),
+    ("file_share.minutes", PLAIN),
     ("ssh.tmout_reset_interval", PLAIN),
     ("ssh.agent_preference", PLAIN),
     // C# `PuttyPath`.

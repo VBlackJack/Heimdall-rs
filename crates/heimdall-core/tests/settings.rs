@@ -699,6 +699,63 @@ fn the_anti_idle_interval_is_a_minute_by_default_zero_or_within_the_csharp_range
 }
 
 #[test]
+fn the_share_folder_port_and_time_have_defaults_ranges_and_survive_a_save() {
+    use heimdall_core::settings::{
+        FILE_SHARE_MINUTES_DEFAULT, FILE_SHARE_MINUTES_MAX, FILE_SHARE_MINUTES_MIN,
+        FILE_SHARE_PORT_DEFAULT, FILE_SHARE_PORT_MAX,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let read = written(
+        dir.path(),
+        "version = 1
+",
+    );
+    // The C# `EphemeralHttpPort` default, and a half hour: the C# share never stopped.
+    assert_eq!((read.file_share_port, read.file_share_minutes), (8080, 30));
+    assert_eq!(
+        (
+            FILE_SHARE_PORT_DEFAULT,
+            FILE_SHARE_PORT_MAX,
+            FILE_SHARE_MINUTES_DEFAULT,
+            FILE_SHARE_MINUTES_MIN,
+            FILE_SHARE_MINUTES_MAX
+        ),
+        (8080, 65_535, 30, 1, 1440)
+    );
+    for (port, minutes, read) in [
+        (0, 1, (0, 1)),
+        (65_535, 1440, (65_535, 1440)),
+        // Out of the range: the default.
+        (65_536, 0, (8080, 30)),
+        (9000, 1441, (9000, 30)),
+    ] {
+        let text = format!(
+            "version = 1
+[file_share]
+port = {port}
+minutes = {minutes}
+"
+        );
+        let settings = written(dir.path(), &text);
+        assert_eq!(
+            (settings.file_share_port, settings.file_share_minutes),
+            read,
+            "{port} {minutes}"
+        );
+    }
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        file_share_port: 9090,
+        file_share_minutes: 90,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+}
+
+#[test]
 fn ssh_keep_alive_and_tmout_reset_intervals_are_the_csharp_defaults_and_ranges() {
     use heimdall_core::settings::{
         SSH_KEEP_ALIVE_INTERVAL_DEFAULT, SSH_KEEP_ALIVE_INTERVAL_MAX, SSH_KEEP_ALIVE_INTERVAL_MIN,

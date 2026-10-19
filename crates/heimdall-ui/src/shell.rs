@@ -2289,6 +2289,13 @@ impl Shell {
                 iced::time::every(interval).map(|_| Message::App(AppMessage::TmoutResetTick)),
             );
         }
+        // The time left of a share running, drawn every second.
+        if self.app.share_status().is_some() {
+            ticks.push(
+                iced::time::every(crate::share_view::TICK)
+                    .map(|_| Message::App(AppMessage::Share(heimdall_app::ShareMessage::Tick))),
+            );
+        }
         // The scheduled connections looked at every minute, as the C# task scheduler.
         if self.app.schedules_connections() {
             ticks.push(
@@ -3502,6 +3509,7 @@ impl Shell {
             gateway_passphrase: &self.gateway_passphrase,
             gateways: self.app.gateways(),
             tunnel_problem: self.app.tunnel_problem(),
+            share: self.app.share_info(),
             agent_chip: self.app.agent_chip(),
             bulk_password: &self.bulk_password,
             passwords: self.password_store(),
@@ -4589,6 +4597,36 @@ impl Shell {
             | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
             | Effect::SurveyAgents(_)) => probe_task(effect),
+            Effect::ListShareAddresses => Task::perform(
+                async {
+                    tokio::task::spawn_blocking(heimdall_app::share::local_addresses)
+                        .await
+                        .unwrap_or_default()
+                },
+                |addresses| {
+                    Message::App(AppMessage::Share(heimdall_app::ShareMessage::Addresses(
+                        addresses,
+                    )))
+                },
+            ),
+            Effect::PickShareFolder { start } => pick_share_folder(start, main),
+            Effect::StartShare { run, request } => {
+                let labels = crate::share_view::listing_labels();
+                // Started once the task runs, on the runtime; the stream ends with the share.
+                let updates =
+                    stream::once(
+                        async move { heimdall_app::share::share_events(*request, labels) },
+                    )
+                    .flatten()
+                    .map(Some)
+                    .chain(stream::iter([None]));
+                Task::stream(updates).map(move |update| {
+                    Message::App(AppMessage::Share(heimdall_app::ShareMessage::Update {
+                        run,
+                        update,
+                    }))
+                })
+            }
             Effect::OpenTunnel { id, request } => {
                 // Its end is the tunnel's own: closing it cancels the attempt, which ends
                 // the stream.
@@ -5739,13 +5777,97 @@ impl Shell {
         let tunnels = self.app.live_tunnels();
         crate::status_bar::view(
             crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
-            row![self.tunnels_toggle(), self.broadcast_controls(targets)]
-                .spacing(spacing::SM)
-                .align_y(iced::Alignment::Center)
-                .into(),
+            row![
+                self.share_controls(),
+                self.tunnels_toggle(),
+                self.broadcast_controls(targets)
+            ]
+            .spacing(spacing::SM)
+            .align_y(iced::Alignment::Center)
+            .into(),
             crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
             fl!("ui-tunnels-count", count = tunnels),
         )
+    }
+
+    /// "Share folder" in the bar, as the C# toolbar toggle: a folder that opens the dialog,
+    /// then, while a share runs, the time left (a click stops it) and the buttons copying
+    /// its URL and its `curl` command.
+    fn share_controls(&self) -> Element<'_, Message> {
+        let share = |message| Message::App(AppMessage::Share(message));
+        let tip = |button: Element<'static, Message>, label: String| {
+            tooltip(
+                button,
+                text(label).size(font_size::CAPTION),
+                tooltip::Position::Top,
+            )
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
+        };
+        let Some(status) = self.app.share_status() else {
+            return tip(
+                crate::status_bar::glyph_button(
+                    Icon::FolderGlyph,
+                    Tint::Text,
+                    text(fl!("ui-share-button"))
+                        .size(font_size::CAPTION)
+                        .font(styles::SEMIBOLD)
+                        .into(),
+                )
+                .style(styles::subtle)
+                .on_press(share(heimdall_app::ShareMessage::Toggle))
+                .into(),
+                fl!("ui-share-toggle-tooltip"),
+            )
+            .into();
+        };
+        let time = match status {
+            heimdall_app::ShareStatus::Starting => fl!("ui-share-starting"),
+            heimdall_app::ShareStatus::Running { remaining } => {
+                crate::share_view::remaining_text(remaining)
+            }
+        };
+        row![
+            tip(
+                crate::status_bar::glyph_button(
+                    Icon::FolderGlyph,
+                    Tint::Danger,
+                    text(time)
+                        .size(font_size::CAPTION)
+                        .font(styles::SEMIBOLD)
+                        .into(),
+                )
+                .style(styles::broadcasting)
+                .on_press(share(heimdall_app::ShareMessage::Toggle))
+                .into(),
+                fl!("ui-share-stop-tooltip"),
+            ),
+            tip(
+                crate::status_bar::glyph_button(
+                    Icon::Link,
+                    Tint::Text,
+                    iced::widget::space().into()
+                )
+                .style(styles::subtle)
+                .on_press(share(heimdall_app::ShareMessage::CopyUrl))
+                .into(),
+                fl!("ui-share-copy-url-tooltip"),
+            ),
+            tip(
+                crate::status_bar::glyph_button(
+                    Icon::CommandPrompt,
+                    Tint::Text,
+                    iced::widget::space().into()
+                )
+                .style(styles::subtle)
+                .on_press(share(heimdall_app::ShareMessage::CopyCommand))
+                .into(),
+                fl!("ui-share-copy-command-tooltip"),
+            ),
+        ]
+        .spacing(spacing::XS)
+        .align_y(iced::Alignment::Center)
+        .into()
     }
 
     /// The tunnels panel's button, as the C# bar's: a lightning bolt and how many tunnels
@@ -9629,6 +9751,30 @@ fn pick_uploads(tab: TabId, main: Option<window::Id>) -> Task<Message> {
     })
 }
 
+/// The folder picker of "Share folder", held by the window and opened on `start`.
+fn pick_share_folder(start: Option<std::path::PathBuf>, main: Option<window::Id>) -> Task<Message> {
+    let title = fl!("ui-share-folder-choose-title");
+    main_window_task(main).then(move |id| {
+        let mut dialog = crate::file_dialog::FileDialog::new().set_title(title.clone());
+        if let Some(start) = &start {
+            dialog = dialog.set_directory(start);
+        }
+        let pick = match id {
+            Some(id) => window::run(id, move |window| dialog.set_parent(window).pick_folder()),
+            None => Task::done(dialog.pick_folder()),
+        };
+        pick.then(move |pick| {
+            Task::future(pick).then(move |picked| match picked {
+                Ok(Some(folder)) => Task::done(Message::App(AppMessage::Share(
+                    heimdall_app::ShareMessage::FolderChosen(folder),
+                ))),
+                Ok(None) => Task::none(),
+                Err(unavailable) => Task::done(crate::file_dialog::failed(&unavailable)),
+            })
+        })
+    })
+}
+
 /// The folder picker of a download from a Files tab without its local pane, held by the
 /// window and opened on `start`, as the C# `PickDownloadFolder`; nothing when it is closed.
 fn pick_download_folder(
@@ -10158,6 +10304,8 @@ struct Forms<'a> {
     gateways: &'a [SshGateway],
     /// What stops the "New tunnel" dialog's tunnel from opening, if anything.
     tunnel_problem: Option<heimdall_app::tunnel::TunnelProblem>,
+    /// The share running, for the dialog shown once it started.
+    share: Option<&'a heimdall_app::share::ShareInfo>,
     /// What the SSH agent chip knows.
     agent_chip: &'a heimdall_app::AgentChip,
     /// Whether a password typed now can be saved.
@@ -13883,6 +14031,10 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             fingerprint,
             algorithm,
         } => crate::tunnels_view::host_key(host, *port, fingerprint, algorithm),
+        Dialog::ShareFolder(form) => crate::share_view::dialog(form),
+        Dialog::ShareStarted => forms
+            .share
+            .map_or_else(|| iced::widget::space().into(), crate::share_view::started),
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
