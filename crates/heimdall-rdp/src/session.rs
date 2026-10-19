@@ -203,6 +203,9 @@ const CLIPBOARD_TIMEOUTS: Duration = Duration::from_secs(5);
 /// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
 const LOG_TARGET: &str = "heimdall::fullscreen";
 
+/// How long every update is logged after the framebuffer was made again.
+const REALLOCATION_TRACE: Duration = Duration::from_secs(3);
+
 /// How long a wanted size must hold before the server is asked for it.
 pub const RESIZE_SETTLE: Duration = Duration::from_millis(300);
 
@@ -257,6 +260,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         updates: 0,
         outside: 0,
         updates_since: None,
+        reallocated: None,
         desktop_scale,
         keep_alive: KeepAlive::new(keep_alive),
         reader: FrameReader::new(read_half, leftover),
@@ -832,6 +836,9 @@ struct Running {
     updates: u32,
     outside: u32,
     updates_since: Option<Instant>,
+    /// After a framebuffer was made again: when, and the updates seen since, how many of
+    /// them outside it. Every one is logged for `REALLOCATION_TRACE`.
+    reallocated: Option<(Instant, u32, u32)>,
     /// When the next keep-alive is due: every frame sent puts it back.
     keep_alive: KeepAlive,
     reader: FrameReader<ReadHalf<Upgraded>>,
@@ -1281,6 +1288,17 @@ impl Running {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) =
             DecodedImage::new(PixelFormat::RgbA32, width, height);
+        log::debug!(
+            target: LOG_TARGET,
+            "framebuffer reallocated {}x{} -> {width}x{height} (empty), triggered by an update of {}x{} at ({}, {})",
+            current.0,
+            current.1,
+            u32::from(region.right) - u32::from(region.left) + 1,
+            u32::from(region.bottom) - u32::from(region.top) + 1,
+            region.left,
+            region.top
+        );
+        self.reallocated = Some((Instant::now(), 0, 0));
         let _ = self.events.send(RdpEvent::Resized { width, height }).await;
         Some((width, height))
     }
@@ -1289,8 +1307,31 @@ impl Running {
     /// any fell outside the framebuffer (dropped by the decoder: a frozen picture).
     fn note_update(&mut self, region: &InclusiveRectangle) {
         let (width, height) = self.framebuffer.read(|width, height, _| (width, height));
-        if region.right >= width || region.bottom >= height {
+        let outside = region.right >= width || region.bottom >= height;
+        if outside {
             self.outside += 1;
+        }
+        if let Some((since, count, outside_count)) = self.reallocated.as_mut() {
+            *count += 1;
+            *outside_count += u32::from(outside);
+            let elapsed = since.elapsed();
+            if elapsed <= REALLOCATION_TRACE {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "update {count} {elapsed:?} after the reallocation: rectangle ({}, {}) to ({}, {}) in a {width}x{height} buffer: {} (codec not known at this layer); {outside_count} outside so far",
+                    region.left,
+                    region.top,
+                    region.right,
+                    region.bottom,
+                    if outside {
+                        "OUTSIDE the buffer, ironrdp skips it and the pixels are lost"
+                    } else {
+                        "inside the buffer, applied"
+                    }
+                );
+            } else {
+                self.reallocated = None;
+            }
         }
         self.updates += 1;
         let now = Instant::now();
@@ -1477,6 +1518,45 @@ fn adopted_size(
 
 #[cfg(test)]
 mod resize_tests {
+    #[test]
+    fn a_rectangle_beyond_u16_or_wholly_outside_is_no_resize_and_no_panic() {
+        use ironrdp::pdu::geometry::InclusiveRectangle;
+
+        let huge = InclusiveRectangle {
+            left: 0,
+            top: 0,
+            right: u16::MAX,
+            bottom: u16::MAX,
+        };
+        // A whole-desktop rectangle whose size would overflow u16: not the size asked.
+        assert_eq!(
+            super::adopted_size(Some((3440, 1440)), (1280, 800), &huge),
+            None
+        );
+        // Wholly outside the size asked and the framebuffer.
+        let far = InclusiveRectangle {
+            left: 9000,
+            top: 9000,
+            right: 9100,
+            bottom: 9100,
+        };
+        assert_eq!(
+            super::adopted_size(Some((3440, 1440)), (1280, 800), &far),
+            None
+        );
+        // Partly outside the size asked.
+        let partial = InclusiveRectangle {
+            left: 3000,
+            top: 1000,
+            right: 4000,
+            bottom: 1100,
+        };
+        assert_eq!(
+            super::adopted_size(Some((3440, 1440)), (1280, 800), &partial),
+            None
+        );
+    }
+
     use ironrdp::pdu::geometry::InclusiveRectangle;
 
     use super::{RESIZE_GIVE_UP, adopted_size, asks_again};

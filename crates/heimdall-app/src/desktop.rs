@@ -288,6 +288,9 @@ pub struct DesktopPane {
     save: Option<SaveState>,
     /// Frames received since the last line of the log, and when it was written.
     frames: (u32, Option<Instant>),
+    /// The framebuffer's size at the last frame, and until when every frame is logged after
+    /// it changed.
+    traced_size: ((u16, u16), Option<Instant>),
 }
 
 /// The proportions of a desktop that follows its tab, kept with its profile.
@@ -343,6 +346,7 @@ impl DesktopPane {
             remote_files: false,
             save: None,
             frames: (0, None),
+            traced_size: ((0, 0), None),
         }
     }
 
@@ -350,7 +354,30 @@ impl DesktopPane {
     /// framebuffer's size: whether frames stop arriving or stop being drawn.
     pub(crate) fn note_frame(&mut self) {
         const EVERY: Duration = Duration::from_secs(1);
+        const AFTER_RESIZE: Duration = Duration::from_secs(3);
         let now = Instant::now();
+        let size = self.framebuffer.read(|width, height, _| (width, height));
+        if size != self.traced_size.0 {
+            log::debug!(
+                target: "heimdall::fullscreen",
+                "view side: framebuffer {}x{} -> {}x{} at generation {}",
+                self.traced_size.0.0,
+                self.traced_size.0.1,
+                size.0,
+                size.1,
+                self.generation
+            );
+            self.traced_size = (size, Some(now + AFTER_RESIZE));
+        }
+        if self.traced_size.1.is_some_and(|until| now <= until) {
+            log::debug!(
+                target: "heimdall::fullscreen",
+                "view side: frame, generation bumped to {} (framebuffer {}x{})",
+                self.generation,
+                size.0,
+                size.1
+            );
+        }
         let (count, since) = self.frames;
         let since = since.unwrap_or(now);
         if now.duration_since(since) >= EVERY {
@@ -811,6 +838,7 @@ impl DesktopPane {
             remote_files: false,
             save: None,
             frames: (0, None),
+            traced_size: ((0, 0), None),
             sink: DesktopSink::Vnc(VncSink {
                 input,
                 buttons: AtomicU8::new(0),
