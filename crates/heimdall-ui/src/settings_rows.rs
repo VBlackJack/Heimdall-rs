@@ -188,11 +188,9 @@ impl SettingsCard {
             Self::ExternalTools => SettingsSection::Tools,
             Self::Onboarding => SettingsSection::Onboarding,
             Self::Putty => SettingsSection::SshConnection,
-            Self::SshReconnect
-            | Self::SshSession
-            | Self::Sftp
-            | Self::X11
-            | Self::ExternalEditor => SettingsSection::SshSession,
+            Self::SshReconnect | Self::SshSession => SettingsSection::SshSession,
+            // The editor opens a server's file over SFTP; the C# keeps it on Advanced.
+            Self::Sftp | Self::X11 | Self::ExternalEditor => SettingsSection::SftpX11,
             Self::SshTrusted => SettingsSection::SshHostKeys,
             Self::RdpDefaults => SettingsSection::RdpDisplay,
             Self::RdpSession | Self::RdpPresets => SettingsSection::RdpBehavior,
@@ -229,8 +227,10 @@ pub enum SettingsSection {
     Onboarding,
     /// `PuTTY` and the default SSH mode, as the C# SSH "Connection".
     SshConnection,
-    /// Auto-reconnect, the session's numbers, SFTP and X11, as the C# SSH "Session".
+    /// Auto-reconnect and the session's numbers, as the C# SSH "Session".
     SshSession,
+    /// The SFTP browser, the X server and the external editor, as the C# "SFTP & X11".
+    SftpX11,
     /// The trusted host keys and certificates.
     SshHostKeys,
     /// The RDP options profiles take, as the C# "Display & Audio".
@@ -251,7 +251,7 @@ pub enum SettingsSection {
 
 impl SettingsSection {
     /// Every section, in the rails' order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Appearance,
         Self::Behavior,
         Self::Updates,
@@ -261,6 +261,7 @@ impl SettingsSection {
         Self::Onboarding,
         Self::SshConnection,
         Self::SshSession,
+        Self::SftpX11,
         Self::SshHostKeys,
         Self::RdpDisplay,
         Self::RdpBehavior,
@@ -282,7 +283,9 @@ impl SettingsSection {
             | Self::SharedSources
             | Self::Tools
             | Self::Onboarding => SettingsTab::General,
-            Self::SshConnection | Self::SshSession | Self::SshHostKeys => SettingsTab::Ssh,
+            Self::SshConnection | Self::SshSession | Self::SftpX11 | Self::SshHostKeys => {
+                SettingsTab::Ssh
+            }
             Self::RdpDisplay | Self::RdpBehavior | Self::RdpCertificates => SettingsTab::Rdp,
             Self::Overview | Self::Vault | Self::Provider | Self::ConnectionChecks => {
                 SettingsTab::Security
@@ -1293,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rails_hold_the_c_sharp_sections_in_its_order() {
+    fn the_rails_hold_the_c_sharp_sections_in_its_order_less_those_with_no_card_here() {
         use SettingsSection as S;
         assert_eq!(
             SettingsSection::of_tab(SettingsTab::General),
@@ -1312,10 +1315,13 @@ mod tests {
             SettingsSection::of_tab(SettingsTab::Security),
             [S::Overview, S::Vault, S::Provider, S::ConnectionChecks]
         );
+        // The C# Gateways section is a tab of its own here.
         assert_eq!(
             SettingsSection::of_tab(SettingsTab::Ssh),
-            [S::SshConnection, S::SshSession, S::SshHostKeys]
+            [S::SshConnection, S::SshSession, S::SftpX11, S::SshHostKeys]
         );
+        // The C# Devices and Performance hold options this version keeps in one card, the
+        // RDP defaults, on Display & Audio.
         assert_eq!(
             SettingsSection::of_tab(SettingsTab::Rdp),
             [S::RdpDisplay, S::RdpBehavior, S::RdpCertificates]

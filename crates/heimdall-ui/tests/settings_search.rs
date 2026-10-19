@@ -883,7 +883,7 @@ fn putty_and_the_x_server_are_typed_applied_found_and_reset_on_the_ssh_tab() {
     simulator(&shell)
         .find("PuTTY path (for External SSH mode)")
         .expect("on Connection, the SSH rail's first");
-    let _ = shell.update(Message::SettingsSection(SettingsSection::SshSession));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SftpX11));
     {
         let mut ui = simulator(&shell);
         for said in ["X11 server path", "Auto-start X11 server when needed"] {
@@ -1792,13 +1792,19 @@ fn go_to_setting_opens_the_section_that_shows_the_row() {
 }
 
 #[test]
-fn up_and_down_no_field_takes_move_along_the_rail_and_round() {
+fn up_and_down_move_along_the_rail_once_clicked_and_round() {
     use heimdall_app::files::FilesKey;
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     let _ = shell.update(Message::SettingsTab(SettingsTab::General));
-    assert!(shows(&shell, "Language"));
+    // Before the rail is clicked, a field or a list may have the keys: they move nothing.
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(
+        shows(&shell, "Language"),
+        "the rail does not have the keyboard"
+    );
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Appearance));
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
     assert!(
         shows(&shell, "Enable background reachability probes"),
@@ -1813,7 +1819,17 @@ fn up_and_down_no_field_takes_move_along_the_rail_and_round() {
     );
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
     assert!(shows(&shell, "Language"), "down from the last, the first");
+    // A press elsewhere, a field or a list, takes the keyboard from the rail.
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(shows(&shell, "Language"), "a press elsewhere");
+    // So does Tab.
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Appearance));
+    let _ = shell.update(Message::TabKey { backward: false });
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(shows(&shell, "Language"), "Tab leaves the rail");
     // A search shown has no rail: the keys leave the sections alone.
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Appearance));
     let _ = shell.update(Message::SettingsSearch("tour".to_owned()));
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
     let _ = shell.update(Message::SettingsSearch(String::new()));

@@ -206,7 +206,7 @@ fn the_sftp_browser_card_toggles_the_settings_with_the_csharp_wording() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsSection(SettingsSection::SshSession));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SftpX11));
     {
         let mut ui = simulator(&shell, SETTINGS_WINDOW);
         ui.find("SFTP browser").expect("the C# section");

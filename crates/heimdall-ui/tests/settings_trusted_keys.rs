@@ -79,7 +79,6 @@ fn trust(dir: &Path) {
         .expect("record");
 }
 
-/// The Settings page on its `tab`.
 /// The Settings page on the section of `tab`'s rail that lists what is trusted.
 fn show(shell: &mut Shell, tab: SettingsTab) {
     let _ = shell.update(Message::ShowSettings);

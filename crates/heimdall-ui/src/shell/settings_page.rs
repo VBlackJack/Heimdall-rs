@@ -225,9 +225,10 @@ fn scrolled(body: Column<'_, Message>) -> Element<'_, Message> {
 
 /// The sections of `tab` down the left, as the C# `SettingsRailTabControlStyle`: each a
 /// line of its name, the one `open` marked by the accent's bar at its left and its name
-/// semi-bold. Up and Down no field takes move along it, as the C# rail's arrow keys.
+/// semi-bold. Once a section is clicked, Up and Down move along it, as the C# rail's arrow
+/// keys. Scrolled when the window is too short for it, as the C# rail's `ScrollViewer`.
 fn section_rail<'a>(tab: SettingsTab, open: SettingsSection) -> Element<'a, Message> {
-    SettingsSection::of_tab(tab)
+    let rail = SettingsSection::of_tab(tab)
         .into_iter()
         .fold(
             Column::new().spacing(RAIL_ITEM_GAP).width(RAIL_WIDTH),
@@ -259,7 +260,8 @@ fn section_rail<'a>(tab: SettingsTab, open: SettingsSection) -> Element<'a, Mess
                 )
             },
         )
-        .into()
+        .padding(RAIL_PADDING);
+    styles::scroll(rail).height(Length::Fill).into()
 }
 
 /// The upright line between the rail and the section open, as the C# rail's right edge.
@@ -283,6 +285,7 @@ fn section_label(section: SettingsSection) -> String {
         SettingsSection::Onboarding => fl!("ui-settings-section-onboarding"),
         SettingsSection::SshConnection => fl!("ui-settings-section-ssh-connection"),
         SettingsSection::SshSession => fl!("ui-settings-section-ssh-session"),
+        SettingsSection::SftpX11 => fl!("ui-settings-section-sftp-x11"),
         SettingsSection::SshHostKeys => fl!("ui-settings-section-ssh-host-keys"),
         SettingsSection::RdpDisplay => fl!("ui-settings-section-rdp-display"),
         SettingsSection::RdpBehavior => fl!("ui-settings-section-rdp-behavior"),
@@ -952,7 +955,7 @@ impl Shell {
         // The rail stays while the section open scrolls, as the C# rail beside its
         // `ScrollViewer`.
         row![
-            container(section_rail(tab, open)).padding(RAIL_PADDING),
+            section_rail(tab, open),
             vertical_divider(),
             scrolled(section),
         ]
@@ -2153,18 +2156,22 @@ impl Shell {
             .into()
     }
 
-    /// `key`, when it is Up or Down over the Settings page with no search and no dialog: the
-    /// section above or below opened on the rail of the tab shown, cycling round as the C#
-    /// rail's `DirectionalNavigation="Cycle"`. Whether the key was the rail's.
+    /// `key`, when it is Up or Down while the rail has the keyboard, over the Settings page
+    /// with no search, dialog, menu, tour or gate: the section above or below opened on the
+    /// rail of the tab shown, cycling round as the C# rail's `DirectionalNavigation="Cycle"`.
+    /// Whether the key was the rail's.
     pub(super) fn settings_rail_key(&mut self, key: FilesKey) -> bool {
         let step = match key {
             FilesKey::Previous => -1,
             FilesKey::Next => 1,
             _ => return false,
         };
-        if !self.settings_shown()
+        if !self.settings_rail_focused
+            || !self.settings_shown()
             || self.app.dialog.is_some()
             || self.menu.is_some()
+            || self.tour.is_some()
+            || self.gated()
             || !self.settings_search.is_empty()
         {
             return false;

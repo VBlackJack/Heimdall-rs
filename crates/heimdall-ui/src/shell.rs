@@ -1728,6 +1728,10 @@ pub struct Shell {
     settings_tab: SettingsTab,
     /// The section open on each Settings tab's rail, kept while the application runs.
     settings_sections: OpenSections,
+    /// Whether the Settings rail has the keyboard, as the C# rail's single Tab stop: from a
+    /// click on a section until the next press elsewhere or Tab, so Up and Down never move
+    /// it while a field or a list has them.
+    settings_rail_focused: bool,
     /// The profile form's tab shown, General each time the form opens.
     profile_tab: ProfileTab,
     /// Whether a save of the open profile form was refused: from then on, as the C# server
@@ -2022,6 +2026,7 @@ impl Shell {
             host_key_sort: HostKeySort::default(),
             settings_tab: SettingsTab::default(),
             settings_sections: OpenSections::default(),
+            settings_rail_focused: false,
             profile_tab: ProfileTab::default(),
             profile_refused: false,
             settings_search: String::new(),
@@ -2844,6 +2849,11 @@ impl Shell {
             message,
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
         ) || (matches!(message, Message::TypeAhead(_)) && !self.tree_focused);
+        if let Message::FilesKey(key) = &message
+            && self.settings_rail_key(*key)
+        {
+            return operation::snap_to(settings_page::scroll_id(), RelativeOffset::START);
+        }
         let effects = match message {
             Message::App(message) => self.update_app(message),
             Message::Editor(message) => self.editors.update(message, &mut self.app),
@@ -2879,6 +2889,8 @@ impl Shell {
             | Message::InFloating(..) => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
             Message::TabKey { backward } => {
+                // Tab leaves the rail, as from the C# rail's single stop.
+                self.settings_rail_focused = false;
                 if self.tab_moves_focus() {
                     // Through the dialog's fields alone, never those under its veil; else
                     // the main window's: an operation reaches every window, and a tab's own
@@ -3220,6 +3232,7 @@ impl Shell {
             Message::Search(term) => self.search = term,
             Message::SettingsTab(tab) => {
                 self.settings_tab = tab;
+                self.settings_rail_focused = false;
                 // A tab chosen is shown whole: the search, and the row outlined, give way.
                 self.settings_search.clear();
                 self.settings_highlight = None;
@@ -3227,6 +3240,9 @@ impl Shell {
             Message::SettingsSection(section) => {
                 self.settings_tab = section.tab();
                 self.settings_sections.open(section);
+                // A click on the rail gives it the keyboard; the press before it took it
+                // from wherever it was.
+                self.settings_rail_focused = true;
                 self.settings_search.clear();
                 self.settings_highlight = None;
                 // A section opens at its top.
@@ -4255,11 +4271,6 @@ impl Shell {
         // Quick Connect's first, while open.
         if let Some(effects) = self.palette_key(key) {
             return effects;
-        }
-        // Over the Settings page, Up and Down no field took move along its rail, as the C#
-        // rail's arrow keys; the tree hidden under the page does not see them.
-        if self.settings_rail_key(key) {
-            return Vec::new();
         }
         // The tree's first, while it has the keyboard.
         if let Some(effects) = self.tree_key(key) {
@@ -6926,6 +6937,9 @@ impl Shell {
                 }
             }
             Message::PointerPressed => {
+                // Whatever the press is on, the rail no longer has the keyboard; a click on
+                // a section gives it back once released.
+                self.settings_rail_focused = false;
                 self.dragged_out.clear();
                 self.tab_drop_area = None;
                 self.tab_drag = self

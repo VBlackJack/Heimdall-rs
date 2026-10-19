@@ -77,6 +77,7 @@ ui-settings-section-tools = Outils et intégrations
 ui-settings-section-onboarding = Visite guidée
 ui-settings-section-ssh-connection = Connexion
 ui-settings-section-ssh-session = Session
+ui-settings-section-sftp-x11 = SFTP et X11
 ui-settings-section-ssh-host-keys = Clés d'hôtes
 ui-settings-section-rdp-display = Affichage et audio
 ui-settings-section-rdp-behavior = Comportement

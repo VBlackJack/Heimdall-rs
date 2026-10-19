@@ -304,7 +304,7 @@ fn the_settings_card_docks_the_local_browser_or_not_whatever_the_sftp_browser() 
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsSection(SettingsSection::SshSession));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SftpX11));
     let label = "Dock a file browser beside local shells";
     let defaults = SftpBrowser::default();
     let off = SftpBrowser {
@@ -382,7 +382,7 @@ fn the_settings_card_lets_the_local_browser_follow_its_shell_while_it_docks() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsSection(SettingsSection::SshSession));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SftpX11));
     let label = "Local file browser follows the shell's working directory";
     let defaults = SftpBrowser::default();
     let off = SftpBrowser {
