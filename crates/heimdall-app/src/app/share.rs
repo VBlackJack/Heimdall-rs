@@ -215,6 +215,7 @@ impl App {
                 self.tell(Notice::Share(ShareNotice::Failed(failure)));
             }
             Some(ShareUpdate::Event(ShareEvent::Request(_))) => current.requests += 1,
+            Some(ShareUpdate::Event(ShareEvent::Dropped(lost))) => current.requests += lost,
             Some(ShareUpdate::Event(ShareEvent::Stopped(reason))) => {
                 self.share = None;
                 let notice = match reason {

@@ -19,7 +19,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::{Receiver, channel};
 use tokio::task::JoinHandle;
 
 use super::request::{MAX_HEAD_BYTES, MAX_HEADERS, MAX_REQUEST_LINE_BYTES};
@@ -31,7 +31,7 @@ struct Running {
     addr: SocketAddr,
     token: String,
     cancel: CancellationToken,
-    events: UnboundedReceiver<ShareEvent>,
+    events: Receiver<ShareEvent>,
     task: JoinHandle<StopReason>,
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -71,7 +71,7 @@ async fn start_with(lifetime: Duration, head_timeout: Duration) -> Running {
     let mut config = config(root.clone(), lifetime);
     config.head_timeout = head_timeout;
     let share = Share::bind(config).await.unwrap();
-    let (sender, events) = unbounded_channel();
+    let (sender, events) = channel(EVENT_QUEUE);
     let cancel = CancellationToken::new();
     let addr = share.local_addr();
     let token = share.token().to_owned();
@@ -434,4 +434,42 @@ async fn a_share_stops_by_itself_when_its_lifetime_is_over() {
         Some(ShareEvent::Stopped(StopReason::Expired))
     );
     assert!(TcpStream::connect(share.addr).await.is_err());
+}
+
+#[tokio::test]
+async fn debug_output_never_shows_the_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let share = Share::bind(config(dir.path().to_path_buf(), LONG_LIFE))
+        .await
+        .unwrap();
+    let token = share.token().to_owned();
+    assert!(!format!("{share:?}").contains(&token));
+    let request = Request {
+        method: Method::Get,
+        target: format!("/x?token={token}"),
+        authorization: Some(format!("Bearer {token}")),
+    };
+    assert!(!format!("{request:?}").contains(&token));
+}
+
+#[tokio::test]
+async fn a_flood_of_requests_is_counted_not_queued_without_bound() {
+    let mut share = start().await;
+    let total = EVENT_QUEUE + 50;
+    for _ in 0..total {
+        // Refused requests report too.
+        assert_eq!(send(share.addr, &get("/", None)).await.status, 401);
+    }
+    share.cancel.cancel();
+    let (mut reported, mut dropped) = (0_usize, 0_u64);
+    while let Some(event) = share.events.recv().await {
+        match event {
+            ShareEvent::Request(_) => reported += 1,
+            ShareEvent::Dropped(lost) => dropped += lost,
+            ShareEvent::Stopped(_) => break,
+        }
+    }
+    assert!(reported <= EVENT_QUEUE);
+    assert!(dropped >= 50, "{dropped}");
+    assert_eq!(reported as u64 + dropped, total as u64);
 }

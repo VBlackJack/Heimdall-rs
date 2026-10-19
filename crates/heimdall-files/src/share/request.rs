@@ -54,7 +54,7 @@ impl Method {
 }
 
 /// What the server reads from a request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Request {
     /// The method.
     pub method: Method,
@@ -62,6 +62,20 @@ pub struct Request {
     pub target: String,
     /// The value of the `Authorization` header, when there is one.
     pub authorization: Option<String>,
+}
+
+impl std::fmt::Debug for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The query and the credentials can hold the token: only the path is shown.
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("path", &self.target.split('?').next().unwrap_or_default())
+            .field(
+                "authorization",
+                &self.authorization.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 /// Why a request is refused before it is looked at.
@@ -191,6 +205,15 @@ mod tests {
         assert_eq!(request.method, Method::Get);
         assert_eq!(request.target, "/a/b?token=x");
         assert_eq!(request.authorization.as_deref(), Some("Bearer abc"));
+    }
+
+    #[test]
+    fn debug_never_shows_the_credentials() {
+        let request =
+            head("GET /a?token=SECRETQ HTTP/1.1\r\nAuthorization: Bearer SECRETH").unwrap();
+        let shown = format!("{request:?}");
+        assert!(!shown.contains("SECRET"), "{shown}");
+        assert!(shown.contains("/a"));
     }
 
     #[test]

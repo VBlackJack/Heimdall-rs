@@ -222,6 +222,129 @@ pub fn resolve(root: &Path, segments: &[String]) -> Result<Resolved, PathError> 
     })
 }
 
+/// `O_NOFOLLOW` of the platforms std gives no portable name for: opening a final component
+/// that is a symbolic link then fails instead of following it.
+#[cfg(all(
+    target_os = "linux",
+    any(
+        target_arch = "x86",
+        target_arch = "x86_64",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "loongarch64"
+    )
+))]
+const OPEN_NO_FOLLOW: i32 = 0o400_000;
+#[cfg(all(
+    target_os = "linux",
+    any(
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "powerpc64"
+    )
+))]
+const OPEN_NO_FOLLOW: i32 = 0o100_000;
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+const OPEN_NO_FOLLOW: i32 = 0x100;
+
+/// `FILE_FLAG_OPEN_REPARSE_POINT`: open a link itself, not what it points to.
+#[cfg(windows)]
+const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+/// Whether two looks at a file are of the same file as far as std can tell: the same size
+/// and modification time, and on Unix the same device and inode.
+fn same_file(a: &Metadata, b: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if a.dev() != b.dev() || a.ino() != b.ino() {
+            return false;
+        }
+    }
+    // A folder changes whenever a file comes or goes: only a file is held to its size and time.
+    a.is_dir() == b.is_dir()
+        && (a.is_dir() || (a.len() == b.len() && a.modified().ok() == b.modified().ok()))
+}
+
+/// Checks, after a file or folder was opened or read, that the path still names what it
+/// named when it was resolved, and still lies under the root. This narrows the window
+/// between checking a path and using it (std has no `openat`): a component swapped for a
+/// link, or the file replaced, in between is refused.
+fn recheck(root: &Path, resolved: &Resolved, opened: Option<&Metadata>) -> Result<(), PathError> {
+    let after = std::fs::symlink_metadata(&resolved.path).map_err(|_| PathError::NotFound)?;
+    if is_link(&after) || !same_file(&after, &resolved.metadata) {
+        return Err(PathError::Forbidden);
+    }
+    if opened.is_some_and(|opened| is_link(opened) || !same_file(opened, &resolved.metadata)) {
+        return Err(PathError::Forbidden);
+    }
+    let canonical = std::fs::canonicalize(&resolved.path).map_err(|_| PathError::NotFound)?;
+    if canonical.starts_with(root) {
+        Ok(())
+    } else {
+        Err(PathError::Forbidden)
+    }
+}
+
+/// Opens the file `resolved` names without following a link in its last component, then
+/// checks it again with [`recheck`].
+///
+/// Residual risk: a local user able to write in the shared folder can still race the
+/// intermediate folders between [`resolve`] and the open; the checks after the open catch a
+/// swap that is still in place, not one undone in time.
+///
+/// # Errors
+///
+/// The file cannot be opened, or is not the one resolved.
+pub fn open_file(root: &Path, resolved: &Resolved) -> Result<std::fs::File, PathError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(any(
+        all(
+            target_os = "linux",
+            any(
+                target_arch = "x86",
+                target_arch = "x86_64",
+                target_arch = "riscv64",
+                target_arch = "s390x",
+                target_arch = "loongarch64",
+                target_arch = "aarch64",
+                target_arch = "arm",
+                target_arch = "powerpc64"
+            )
+        ),
+        target_os = "macos",
+        target_os = "freebsd"
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(OPEN_NO_FOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        options.custom_flags(OPEN_REPARSE_POINT);
+    }
+    let file = options
+        .open(&resolved.path)
+        .map_err(|_| PathError::NotFound)?;
+    let opened = file.metadata().map_err(|_| PathError::NotFound)?;
+    if !opened.is_file() {
+        return Err(PathError::NotFound);
+    }
+    recheck(root, resolved, Some(&opened))?;
+    Ok(file)
+}
+
+/// Checks a folder again after it was listed.
+///
+/// # Errors
+///
+/// The folder is not the one resolved any more, or left the root.
+pub fn recheck_dir(root: &Path, resolved: &Resolved) -> Result<(), PathError> {
+    recheck(root, resolved, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,5 +472,38 @@ mod tests {
             resolve(&root, &["out".to_owned(), "secret".to_owned()]).unwrap_err(),
             PathError::Forbidden
         );
+    }
+
+    #[test]
+    fn a_file_replaced_after_it_was_resolved_is_refused() {
+        let (_dir, root) = tree();
+        let resolved = resolve(&root, &["a.txt".to_owned()]).unwrap();
+        assert!(open_file(&root, &resolved).is_ok());
+        std::fs::write(root.join("a.txt"), "a much longer content than before").unwrap();
+        assert_eq!(
+            open_file(&root, &resolved).unwrap_err(),
+            PathError::Forbidden
+        );
+    }
+
+    #[test]
+    fn a_folder_swapped_after_it_was_resolved_is_refused() {
+        let (_dir, root) = tree();
+        let resolved = resolve(&root, &["sub".to_owned()]).unwrap();
+        assert!(recheck_dir(&root, &resolved).is_ok());
+        std::fs::remove_dir_all(root.join("sub")).unwrap();
+        assert!(recheck_dir(&root, &resolved).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_swapped_for_a_symlink_after_it_was_resolved_is_refused() {
+        let (_dir, root) = tree();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), "a").unwrap();
+        let resolved = resolve(&root, &["a.txt".to_owned()]).unwrap();
+        std::fs::remove_file(root.join("a.txt")).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret"), root.join("a.txt")).unwrap();
+        assert!(open_file(&root, &resolved).is_err());
     }
 }

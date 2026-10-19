@@ -30,13 +30,16 @@ use heimdall_core::tools::network_interfaces::{OperStatus, run_interfaces_comman
 use heimdall_files::share::{Share, ShareConfig, ShareError};
 use tokio::sync::mpsc;
 use tokio_stream::Stream;
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 pub use heimdall_files::share::{BindChoice, ListingLabels, RequestRecord, ShareEvent, StopReason};
 
 /// The placeholder the `curl` command leaves for the file to fetch, as the C#.
 pub const CURL_FILE_PLACEHOLDER: &str = "<filename>";
+
+/// Updates queued for the window: more are dropped, request reports first.
+const EVENT_QUEUE: usize = heimdall_files::share::EVENT_QUEUE;
 
 /// Seconds in a minute.
 const SECONDS_PER_MINUTE: u64 = 60;
@@ -288,7 +291,7 @@ pub fn share_events(
     request: ShareRequest,
     labels: ListingLabels,
 ) -> impl Stream<Item = ShareUpdate> + Send {
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let (sender, receiver) = mpsc::channel(EVENT_QUEUE);
     tokio::spawn(async move {
         let config = ShareConfig::new(
             request.folder,
@@ -301,7 +304,9 @@ pub fn share_events(
             Ok(share) => share,
             Err(error) => {
                 log::warn!("share: not started: {error}");
-                let _ = sender.send(ShareUpdate::Failed(ShareFailure::from(&error)));
+                let _ = sender
+                    .send(ShareUpdate::Failed(ShareFailure::from(&error)))
+                    .await;
                 return;
             }
         };
@@ -317,18 +322,32 @@ pub fn share_events(
             info.addr,
             info.folder.display()
         );
-        let _ = sender.send(ShareUpdate::Started(info));
-        let (events, mut reported) = mpsc::unbounded_channel();
+        let _ = sender.send(ShareUpdate::Started(info)).await;
+        let (events, mut reported) = mpsc::channel(EVENT_QUEUE);
         let running = tokio::spawn(share.run(request.cancel, events));
+        // Request reports never wait for the window: when its queue is full they are
+        // dropped and counted, and the count is sent before the end.
+        let mut lost = 0_u64;
         while let Some(event) = reported.recv().await {
+            if matches!(event, ShareEvent::Request(_)) {
+                if sender.try_send(ShareUpdate::Event(event)).is_err() {
+                    lost += 1;
+                }
+                continue;
+            }
             if let ShareEvent::Stopped(reason) = &event {
                 log::info!("share: stopped ({reason:?})");
+                if lost > 0 {
+                    let _ = sender
+                        .send(ShareUpdate::Event(ShareEvent::Dropped(lost)))
+                        .await;
+                }
             }
-            let _ = sender.send(ShareUpdate::Event(event));
+            let _ = sender.send(ShareUpdate::Event(event)).await;
         }
         let _ = running.await;
     });
-    UnboundedReceiverStream::new(receiver)
+    ReceiverStream::new(receiver)
 }
 
 #[cfg(test)]

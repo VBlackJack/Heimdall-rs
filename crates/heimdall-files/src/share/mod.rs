@@ -39,12 +39,13 @@ pub mod request;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
 pub use self::listing::ListingLabels;
@@ -73,6 +74,13 @@ const READ_BYTES: usize = 1024;
 
 /// Pause after a failed `accept`, so a persistent failure does not spin.
 const ACCEPT_RETRY: Duration = Duration::from_millis(100);
+
+/// Events queued for the owner of a share: when it is full, request reports are dropped and
+/// counted, so a flood of requests (refused ones too) cannot grow memory.
+pub const EVENT_QUEUE: usize = 256;
+
+/// Time given to hand the last events over when the share ends.
+const FINAL_EVENTS_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Bytes of the path kept in the log and the events.
 const LOGGED_PATH_CHARS: usize = 256;
@@ -189,6 +197,9 @@ pub enum StopReason {
 pub enum ShareEvent {
     /// A request was answered.
     Request(RequestRecord),
+    /// This many request reports were dropped because the queue was full (sent before the
+    /// end, with the total).
+    Dropped(u64),
     /// The share ended; nothing follows.
     Stopped(StopReason),
 }
@@ -218,11 +229,12 @@ struct Context {
     token: String,
     labels: ListingLabels,
     head_timeout: Duration,
-    events: UnboundedSender<ShareEvent>,
+    events: Sender<ShareEvent>,
+    /// Request reports that did not fit in the queue.
+    dropped: AtomicU64,
 }
 
 /// A share that listens and has not served yet.
-#[derive(Debug)]
 pub struct Share {
     listener: TcpListener,
     addr: SocketAddr,
@@ -231,6 +243,16 @@ pub struct Share {
     labels: ListingLabels,
     lifetime: Duration,
     head_timeout: Duration,
+}
+
+impl std::fmt::Debug for Share {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The token is a secret.
+        f.debug_struct("Share")
+            .field("addr", &self.addr)
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Share {
@@ -283,11 +305,7 @@ impl Share {
 
     /// Serves until `cancel` is cancelled or the lifetime is over, then drops the
     /// connections and reports [`ShareEvent::Stopped`].
-    pub async fn run(
-        self,
-        cancel: CancellationToken,
-        events: UnboundedSender<ShareEvent>,
-    ) -> StopReason {
+    pub async fn run(self, cancel: CancellationToken, events: Sender<ShareEvent>) -> StopReason {
         let stop = cancel.child_token();
         let context = Arc::new(Context {
             root: self.root,
@@ -295,6 +313,7 @@ impl Share {
             labels: self.labels,
             head_timeout: self.head_timeout,
             events: events.clone(),
+            dropped: AtomicU64::new(0),
         });
         let permits = Arc::new(Semaphore::new(MAX_CONNECTIONS));
         let deadline = tokio::time::sleep(self.lifetime);
@@ -327,7 +346,14 @@ impl Share {
             }
         };
         stop.cancel();
-        let _ = events.send(ShareEvent::Stopped(reason));
+        let dropped = context.dropped.load(Ordering::Relaxed);
+        let _ = tokio::time::timeout(FINAL_EVENTS_TIMEOUT, async {
+            if dropped > 0 {
+                let _ = events.send(ShareEvent::Dropped(dropped)).await;
+            }
+            let _ = events.send(ShareEvent::Stopped(reason)).await;
+        })
+        .await;
         reason
     }
 }
@@ -481,12 +507,16 @@ async fn serve(mut stream: TcpStream, peer: SocketAddr, context: &Context) {
     let status = reply.status;
     let head_only = method == "HEAD";
     log::info!("share: {} {method} {path} -> {status}", peer.ip());
-    let _ = context.events.send(ShareEvent::Request(RequestRecord {
+    let record = ShareEvent::Request(RequestRecord {
         client: peer.ip(),
         method,
         path,
         status,
-    }));
+    });
+    // Never waits: a full queue costs the report, counted, not the answer.
+    if context.events.try_send(record).is_err() {
+        context.dropped.fetch_add(1, Ordering::Relaxed);
+    }
     let _ = write_reply(&mut stream, reply, head_only).await;
     let _ = stream.shutdown().await;
 }
@@ -515,10 +545,18 @@ async fn answer(request: &Request, context: &Context) -> Reply {
         Err(_) => return Reply::status(500),
     };
     if resolved.metadata.is_dir() {
-        let dir = resolved.path;
-        let entries = tokio::task::spawn_blocking(move || listing::read_entries(&dir)).await;
-        let Ok(Ok(entries)) = entries else {
-            return Reply::status(PathError::NotFound.status());
+        let root = context.root.clone();
+        // Listed, then looked at again: a folder swapped for a link meanwhile is refused.
+        let entries = tokio::task::spawn_blocking(move || {
+            let entries = listing::read_entries(&resolved.path).map_err(|_| PathError::NotFound)?;
+            paths::recheck_dir(&root, &resolved)?;
+            Ok::<_, PathError>(entries)
+        })
+        .await;
+        let entries = match entries {
+            Ok(Ok(entries)) => entries,
+            Ok(Err(error)) => return Reply::status(error.status()),
+            Err(_) => return Reply::status(500),
         };
         let page = listing::render(&segments, &entries, &context.token, &context.labels);
         return Reply::bytes(200, "text/html; charset=utf-8", page.into_bytes());
@@ -526,8 +564,12 @@ async fn answer(request: &Request, context: &Context) -> Reply {
     if !resolved.metadata.is_file() {
         return Reply::status(PathError::NotFound.status());
     }
-    let Ok(file) = tokio::fs::File::open(&resolved.path).await else {
-        return Reply::status(PathError::NotFound.status());
+    let root = context.root.clone();
+    let opened = tokio::task::spawn_blocking(move || paths::open_file(&root, &resolved)).await;
+    let file = match opened {
+        Ok(Ok(file)) => tokio::fs::File::from_std(file),
+        Ok(Err(error)) => return Reply::status(error.status()),
+        Err(_) => return Reply::status(500),
     };
     let Ok(metadata) = file.metadata().await else {
         return Reply::status(PathError::NotFound.status());
