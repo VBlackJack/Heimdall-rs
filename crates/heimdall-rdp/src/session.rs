@@ -1311,14 +1311,27 @@ impl Running {
         if outside {
             self.outside += 1;
         }
+        let painted = self
+            .framebuffer
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take_paint_stats();
         if let Some((since, count, outside_count)) = self.reallocated.as_mut() {
             *count += 1;
             *outside_count += u32::from(outside);
             let elapsed = since.elapsed();
             if elapsed <= REALLOCATION_TRACE {
+                let bounding = (u64::from(region.right) - u64::from(region.left) + 1)
+                    * (u64::from(region.bottom) - u64::from(region.top) + 1);
                 log::debug!(
                     target: LOG_TARGET,
-                    "update {count} {elapsed:?} after the reallocation: rectangle ({}, {}) to ({}, {}) in a {width}x{height} buffer: {} (codec not known at this layer); {outside_count} outside so far",
+                    "update {count} {elapsed:?} after the reallocation: carries {} tiles ({} skipped) painting {} px of its bounding box of {bounding} px; 64 px cells touched since the reallocation: {} of {}; rectangle ({}, {}) to ({}, {}) in a {width}x{height} buffer: {} (codec not known at this layer); {outside_count} outside so far",
+                    painted.tiles,
+                    painted.skipped,
+                    painted.area,
+                    painted.cells_touched,
+                    painted.cells_total,
                     region.left,
                     region.top,
                     region.right,
