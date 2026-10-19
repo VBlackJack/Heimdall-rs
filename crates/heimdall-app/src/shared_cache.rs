@@ -45,7 +45,7 @@ use crate::shared_report::ImportReport;
 pub const DIRECTORY_NAME: &str = "SharedSessionCache";
 
 /// The version of the copy's layout; a copy of another version is ignored, as the C#'s.
-const FORMAT_VERSION: u64 = 1;
+const FORMAT_VERSION: u64 = 2;
 
 /// The extension of a copy.
 const EXTENSION: &str = "json";
@@ -64,6 +64,22 @@ pub struct CachedSession {
     /// Its port.
     pub port: u16,
     /// Its account, when the file names one.
+    pub username: Option<String>,
+    /// The SSH gateway it goes through, when the file names one.
+    pub gateway: Option<CachedGateway>,
+}
+
+/// A shared session's gateway as the copy keeps it: what the file said of it and nothing
+/// else, no key and no password. Its identifier is derived again when the copy is read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedGateway {
+    /// Its name.
+    pub name: String,
+    /// Its host.
+    pub host: String,
+    /// Its port.
+    pub port: u16,
+    /// The account it logs in as, when the file names one.
     pub username: Option<String>,
 }
 
@@ -136,6 +152,12 @@ impl SourceCache {
                 "host": session.host,
                 "port": session.port,
                 "username": session.username,
+                "gateway": session.gateway.as_ref().map(|gateway| json!({
+                    "name": gateway.name,
+                    "host": gateway.host,
+                    "port": gateway.port,
+                    "username": gateway.username,
+                })),
             })).collect::<Vec<_>>(),
         });
         let bytes = serde_json::to_vec_pretty(&document).map_err(io::Error::other)?;
@@ -174,6 +196,17 @@ impl SourceCache {
             .as_array()?
             .iter()
             .filter_map(|session| {
+                // A gateway that cannot be read drops the session: it would otherwise be
+                // taken as a direct one.
+                let gateway = match session.get("gateway") {
+                    None | Some(Value::Null) => None,
+                    Some(gateway) => Some(CachedGateway {
+                        name: text(gateway, "name")?,
+                        host: text(gateway, "host")?,
+                        port: u16::try_from(gateway.get("port")?.as_u64()?).ok()?,
+                        username: text(gateway, "username"),
+                    }),
+                };
                 Some(CachedSession {
                     folder: text(session, "folder"),
                     name: text(session, "name")?,
@@ -181,6 +214,7 @@ impl SourceCache {
                     host: text(session, "host")?,
                     port: u16::try_from(session.get("port")?.as_u64()?).ok()?,
                     username: text(session, "username"),
+                    gateway,
                 })
             })
             .collect();
@@ -262,6 +296,12 @@ mod tests {
                 host: "web01.example.com".to_owned(),
                 port: 22,
                 username: Some("admin".to_owned()),
+                gateway: Some(CachedGateway {
+                    name: "jump@bastion".to_owned(),
+                    host: "bastion.example.com".to_owned(),
+                    port: 2222,
+                    username: Some("jump".to_owned()),
+                }),
             }],
             refused: 2,
             ignored_passwords: 1,
@@ -291,7 +331,15 @@ mod tests {
         let text = fs::read_to_string(&path).expect("read");
         fs::write(
             &path,
-            text.replace("\"formatVersion\": 1", "\"formatVersion\": 9"),
+            text.replace("\"formatVersion\": 2", "\"formatVersion\": 9"),
+        )
+        .expect("written");
+        assert_eq!(cache.read("team"), None);
+        // A version-1 copy was made when the gateways of a file were dropped: a session of it
+        // may have crossed one, so it is not served.
+        fs::write(
+            &path,
+            text.replace("\"formatVersion\": 2", "\"formatVersion\": 1"),
         )
         .expect("written");
         assert_eq!(cache.read("team"), None);

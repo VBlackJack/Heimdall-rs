@@ -79,6 +79,12 @@ pub fn entry_text(entry: &ReportEntry) -> String {
             }
             Some(SkipReason::DuplicateSession) => fl!("ui-shared-report-reason-duplicate-session"),
             Some(SkipReason::OverLimit) => fl!("ui-shared-report-reason-over-limit"),
+            Some(SkipReason::InvalidGateway) => {
+                fl!(
+                    "ui-shared-report-reason-invalid-gateway",
+                    host = entry.detail.as_str()
+                )
+            }
             None => String::new(),
         },
         ReportCheck::UnresolvedVariable => {

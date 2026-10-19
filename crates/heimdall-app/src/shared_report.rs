@@ -21,7 +21,7 @@
 //! that is not one, a session listed twice), the logins that name a `[NAME]` variable with no
 //! value, the sessions whose name is not their host's, and the hosts filed twice in one
 //! folder. The C# also flags a session whose gateway differs from its folder's usual one:
-//! gateways of a shared file are not read here, so that check has nothing to look at.
+//! that check is not made here.
 //!
 //! It is plain data, so the offline copy of a source can keep it.
 
@@ -54,6 +54,9 @@ pub enum SkipReason {
     DuplicateSession,
     /// The source already holds as many sessions as one may.
     OverLimit,
+    /// The session names an SSH gateway whose host is not one: taking it would reach its
+    /// host around the gateway the file asked for.
+    InvalidGateway,
 }
 
 impl SkipReason {
@@ -63,6 +66,7 @@ impl SkipReason {
             Self::InvalidHost => "invalid-host",
             Self::DuplicateSession => "duplicate-session",
             Self::OverLimit => "over-limit",
+            Self::InvalidGateway => "invalid-gateway",
         }
     }
 
@@ -72,6 +76,7 @@ impl SkipReason {
             Self::InvalidHost,
             Self::DuplicateSession,
             Self::OverLimit,
+            Self::InvalidGateway,
         ]
         .into_iter()
         .find(|reason| reason.key() == key)

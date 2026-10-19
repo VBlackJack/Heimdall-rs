@@ -20,9 +20,13 @@
 //!
 //! A shared file is written by other people, so what comes out of it is what the C#
 //! `SharedProfileSanitizer` lets through and no more: SSH and RDP sessions with a valid host,
-//! a name, a folder, a port and an account. A key path, a saved password, a command to run
-//! after connecting, an agent or a gateway of the file never become a session's, and the
-//! file's folder never gives a session the defaults of a local folder. Nothing here opens a
+//! a name, a folder, a port, an account and the SSH gateway the file names, as a host, a port
+//! and an account and nothing else. A key path, a saved password, a command to run after
+//! connecting or an agent of the file never become a session's, and the file's folder never
+//! gives a session the defaults of a local folder. A gateway of the file lives in the shared
+//! namespace, read-only and in memory: it is never added to the user's saved gateways, and
+//! its host key is asked about like any server's. A session whose gateway is not usable is
+//! refused rather than taken as a direct connection. Nothing here opens a
 //! file for writing, and a session handed out is a copy.
 //!
 //! A source that cannot be read, or that no longer parses, loads nothing the first time and
@@ -40,19 +44,19 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use heimdall_core::import::foreign::{FileWarning, Parsed};
+use heimdall_core::import::foreign::{FileWarning, GATEWAY_ID_KEY, Parsed};
 use heimdall_core::import::mobaxterm;
 use heimdall_core::import::mobaxterm::Limits;
 use heimdall_core::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, Forwards, ProfileId, RdpExtras, RdpOptions, RdpProfile,
-    SshMode, SshProfile,
+    SshGateway, SshMode, SshProfile,
 };
 use heimdall_core::shared_sessions::{
-    MAX_SOURCE_FILE_BYTES, SharedSource, is_valid_host, is_valid_source_id, session_id,
+    MAX_SOURCE_FILE_BYTES, SharedSource, gateway_id, is_valid_host, is_valid_source_id, session_id,
 };
 use serde_json::Value;
 
-use crate::shared_cache::{CachedSession, CachedSource, SourceCache};
+use crate::shared_cache::{CachedGateway, CachedSession, CachedSource, SourceCache};
 use crate::shared_report::{ImportReport, Refused, SkipReason, Taken};
 
 /// The user's `MobaXterm` variables, the C# `MobaXtermUserVariables`: the shared provider fills
@@ -175,6 +179,8 @@ pub struct SharedSession {
     pub source_id: String,
     /// The folder the file files it in, shown in the tree and nothing else.
     pub folder: Option<String>,
+    /// The SSH gateway it goes through, in the shared namespace; none for a direct session.
+    pub gateway: Option<SshGateway>,
     /// What it connects with.
     pub target: SharedTarget,
 }
@@ -264,6 +270,17 @@ impl SharedSessions {
     /// nor used.
     pub fn set_cache_directory(&mut self, directory: Option<PathBuf>) {
         self.cache = directory.map(SourceCache::new);
+    }
+
+    /// The SSH gateways the sessions go through, each once: held in memory beside the saved
+    /// ones, never among them.
+    #[must_use]
+    pub fn gateways(&self) -> Vec<SshGateway> {
+        let mut seen = HashSet::new();
+        self.sessions()
+            .filter_map(|session| session.gateway.clone())
+            .filter(|gateway| seen.insert(gateway.id.clone()))
+            .collect()
     }
 
     /// Every session of every source.
@@ -549,6 +566,12 @@ fn cached_session(session: &SharedSession) -> CachedSession {
         host: host.to_owned(),
         port,
         username,
+        gateway: session.gateway.as_ref().map(|gateway| CachedGateway {
+            name: gateway.name.clone(),
+            host: gateway.host.clone(),
+            port: gateway.port,
+            username: gateway.username.clone(),
+        }),
     }
 }
 
@@ -619,6 +642,17 @@ fn session_of_copy(source_id: &str, cached: &CachedSession) -> Option<SharedSess
     if cached.port == 0 {
         return None;
     }
+    // A gateway the copy cannot vouch for drops the session, never makes it a direct one.
+    let gateway = match &cached.gateway {
+        None => None,
+        Some(gateway) => Some(shared_gateway(
+            source_id,
+            Some(&gateway.name),
+            &gateway.host,
+            gateway.port,
+            gateway.username.as_deref(),
+        )?),
+    };
     Some(build_session(
         source_id,
         kind,
@@ -626,7 +660,7 @@ fn session_of_copy(source_id: &str, cached: &CachedSession) -> Option<SharedSess
         name,
         host,
         cached.port,
-        username,
+        Login { username, gateway },
     ))
 }
 
@@ -683,11 +717,12 @@ fn parse(
     {
         return Err(SourceProblem::Unparsable(reason.clone()));
     }
+    let routes = gateways_of(source_id, &parsed.gateways);
     let mut sessions = Vec::new();
     let mut refused = Vec::new();
     let mut ids = HashSet::new();
     for server in &parsed.servers {
-        let outcome = sanitize(source_id, server).and_then(|session| {
+        let outcome = sanitize(source_id, server, &routes).and_then(|session| {
             if sessions.len() >= MAX_SESSIONS_PER_SOURCE {
                 Err((SkipReason::OverLimit, String::new()))
             } else if !ids.insert(session.id.clone()) {
@@ -707,6 +742,22 @@ fn parse(
                     detail,
                 });
             }
+        }
+    }
+    // A session whose gateway has no usable host was left out by the reader: said as refused.
+    for warning in &parsed.warnings {
+        if let FileWarning::InvalidGatewayHost {
+            session,
+            folder,
+            host,
+        } = warning
+        {
+            refused.push(Refused {
+                folder: display_text(folder),
+                name: display_text(session),
+                reason: SkipReason::InvalidGateway,
+                detail: display_text(host),
+            });
         }
     }
     // The warning names the session as the file does; its folder is the one of the entry of
@@ -787,7 +838,11 @@ fn port_of(server: &Value, key: &str, default: u16) -> u16 {
 /// The session `server` of a file as the C# sanitizer keeps it: SSH or RDP, a valid host,
 /// and the fields of its whitelist; for any other, why it is refused and what the file gives
 /// that is the reason.
-fn sanitize(source_id: &str, server: &Value) -> Result<SharedSession, (SkipReason, String)> {
+fn sanitize(
+    source_id: &str,
+    server: &Value,
+    routes: &HashMap<String, Result<SshGateway, String>>,
+) -> Result<SharedSession, (SkipReason, String)> {
     let kind = text_of(server, "connectionType")
         .ok_or_else(|| (SkipReason::OtherProtocol, String::new()))?;
     let host = text_of(server, "remoteServer")
@@ -801,6 +856,16 @@ fn sanitize(source_id: &str, server: &Value) -> Result<SharedSession, (SkipReaso
         })?;
     let folder = text_of(server, "group");
     let name = text_of(server, "displayName").unwrap_or(host);
+    // A gateway the file names and the sanitizer cannot keep refuses the session: dropping it
+    // would turn a session meant to cross a bastion into a direct one.
+    let gateway = match server.get(GATEWAY_ID_KEY).and_then(Value::as_str) {
+        None => None,
+        Some(placeholder) => match routes.get(placeholder) {
+            Some(Ok(gateway)) => Some(gateway.clone()),
+            Some(Err(host)) => return Err((SkipReason::InvalidGateway, display_text(host))),
+            None => return Err((SkipReason::InvalidGateway, String::new())),
+        },
+    };
     if kind.eq_ignore_ascii_case("SSH") {
         Ok(build_session(
             source_id,
@@ -809,7 +874,10 @@ fn sanitize(source_id: &str, server: &Value) -> Result<SharedSession, (SkipReaso
             name,
             host,
             port_of(server, "sshPort", DEFAULT_SSH_PORT),
-            text_of(server, "sshUsername"),
+            Login {
+                username: text_of(server, "sshUsername"),
+                gateway,
+            },
         ))
     } else if kind.eq_ignore_ascii_case("RDP") {
         Ok(build_session(
@@ -819,11 +887,71 @@ fn sanitize(source_id: &str, server: &Value) -> Result<SharedSession, (SkipReaso
             name,
             host,
             port_of(server, "remotePort", DEFAULT_RDP_PORT),
-            text_of(server, "rdpUsername"),
+            Login {
+                username: text_of(server, "rdpUsername"),
+                gateway,
+            },
         ))
     } else {
         Err((SkipReason::OtherProtocol, display_text(kind)))
     }
+}
+
+/// The gateways of a file as the shared namespace keeps them, by the identifier the reader gave
+/// them: each with the host, port and account the file says and nothing else, or the host the
+/// file gives when it is not one.
+fn gateways_of(source_id: &str, gateways: &[Value]) -> HashMap<String, Result<SshGateway, String>> {
+    gateways
+        .iter()
+        .filter_map(|gateway| {
+            let placeholder = gateway.get("id").and_then(Value::as_str)?;
+            let host = gateway
+                .get("host")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let kept = shared_gateway(
+                source_id,
+                text_of(gateway, "name"),
+                host,
+                port_of(gateway, "port", DEFAULT_SSH_PORT),
+                text_of(gateway, "user"),
+            )
+            .ok_or_else(|| host.to_owned());
+            Some((placeholder.to_owned(), kept))
+        })
+        .collect()
+}
+
+/// A gateway of a shared source: its identifier follows its host, port and account, so the
+/// same file read twice gives the same one, and it holds no key, no password and no parent.
+/// None when its host is not one or its port is zero.
+fn shared_gateway(
+    source_id: &str,
+    name: Option<&str>,
+    host: &str,
+    port: u16,
+    username: Option<&str>,
+) -> Option<SshGateway> {
+    let host = clean(host).filter(|host| is_valid_host(host))?;
+    if port == 0 {
+        return None;
+    }
+    let username = username.and_then(clean);
+    let id = ProfileId::new(gateway_id(
+        source_id,
+        host,
+        port,
+        username.unwrap_or_default(),
+    ));
+    Some(SshGateway {
+        id,
+        name: name.and_then(clean).unwrap_or(host).to_owned(),
+        host: host.to_owned(),
+        port,
+        username: username.map(str::to_owned),
+        key_path: None,
+        parent: None,
+    })
 }
 
 /// The longest text of a file shown back in a report.
@@ -837,6 +965,12 @@ fn display_text(text: &str) -> String {
         .collect()
 }
 
+/// How a shared session logs in: its account and the gateway it goes through.
+struct Login<'a> {
+    username: Option<&'a str>,
+    gateway: Option<SshGateway>,
+}
+
 /// The shared session of a source: its identifier follows its folder and name, as the C#
 /// `MobaXtermImporter.BuildId`.
 fn build_session(
@@ -846,29 +980,34 @@ fn build_session(
     name: &str,
     host: &str,
     port: u16,
-    username: Option<&str>,
+    login: Login<'_>,
 ) -> SharedSession {
+    let Login { username, gateway } = login;
     let id = ProfileId::new(session_id(source_id, folder.unwrap_or_default(), name));
+    let route = gateway.as_ref().map(|gateway| gateway.id.clone());
     let target = match kind {
-        Protocol::Ssh => SharedTarget::Ssh(ssh_profile(&id, name, host, port, username)),
-        Protocol::Rdp => SharedTarget::Rdp(rdp_profile(&id, name, host, port, username)),
+        Protocol::Ssh => SharedTarget::Ssh(ssh_profile(&id, name, host, port, username, route)),
+        Protocol::Rdp => SharedTarget::Rdp(rdp_profile(&id, name, host, port, username, route)),
     };
     SharedSession {
         id,
         source_id: source_id.to_owned(),
         folder: folder.map(str::to_owned),
+        gateway,
         target,
     }
 }
 
-/// An SSH session of a shared file: its own fields and nothing else. No key, no gateway, no
-/// command after connecting, no agent, no folder: a local folder's defaults never reach it.
+/// An SSH session of a shared file: its own fields and nothing else. No key, no command after
+/// connecting, no agent, no folder: a local folder's defaults never reach it. Its gateway is
+/// one of the shared namespace.
 fn ssh_profile(
     id: &ProfileId,
     name: &str,
     host: &str,
     port: u16,
     username: Option<&str>,
+    gateway: Option<ProfileId>,
 ) -> SshProfile {
     SshProfile {
         id: id.clone(),
@@ -878,7 +1017,7 @@ fn ssh_profile(
         port,
         username: username.map(str::to_owned),
         key_path: None,
-        gateway: None,
+        gateway,
         local_tunnel_port: None,
         vault_entry: None,
         forwards: Forwards::default(),
@@ -900,6 +1039,7 @@ fn rdp_profile(
     host: &str,
     port: u16,
     username: Option<&str>,
+    gateway: Option<ProfileId>,
 ) -> RdpProfile {
     RdpProfile {
         extras: RdpExtras::default(),
@@ -911,7 +1051,7 @@ fn rdp_profile(
         username: username.map(str::to_owned),
         domain: None,
         allow_tls_only: false,
-        gateway: None,
+        gateway,
         local_tunnel_port: None,
         redirect_clipboard: true,
         redirect_drives: false,

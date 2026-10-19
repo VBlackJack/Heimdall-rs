@@ -496,6 +496,7 @@ ui-import-file-nothing = No se encontraron sesiones en el archivo seleccionado.
 ui-import-file-unreadable = No se pudo leer el archivo: { $detail }
 ui-import-file-encrypted = El archivo está cifrado por completo. Descífralo antes en mRemoteNG (Archivo > Guardar como, sin cifrado).
 ui-import-mobaxterm-unresolved-variable = Sesión "{ $session }": la variable [{ $name }] no tiene valor, así que su usuario se conservó tal como estaba. Defínela en Ajustes > Variables de MobaXterm y vuelve a importar.
+ui-import-mobaxterm-invalid-gateway = La sesión "{ $session }" no se importó: su pasarela SSH "{ $host }" no es un host válido. Importarla alcanzaría el servidor sin pasar por la pasarela que pide el archivo.
 ui-import-file-too-large = El archivo es demasiado grande para importar ({ $size } bytes).
 ui-import-mobaxterm-passwords = Las contraseñas de MobaXterm están cifradas con un algoritmo propietario y no se pudieron importar. Vuelve a introducir las credenciales de cada sesión.
 ui-import-mobaxterm-passwords-detected = { $count ->
@@ -5953,6 +5954,7 @@ ui-shared-report-duplicate-host =
     }
 ui-shared-report-reason-other-protocol = El protocolo { $protocol } no es compatible, solo se toman SSH y RDP.
 ui-shared-report-reason-invalid-host = El host { $host } no es un nombre de host ni una dirección.
+ui-shared-report-reason-invalid-gateway = La pasarela SSH { $host } no es un nombre de host ni una dirección, así que la sesión no se tomó: alcanzaría su host sin pasar por la pasarela.
 ui-shared-report-reason-duplicate-session = Otra sesión del archivo tiene la misma carpeta y el mismo nombre.
 ui-shared-report-reason-over-limit = La fuente ya contiene tantas sesiones como puede contener.
 ui-shared-report-detail-unresolved = El inicio de sesión usa la variable { $name }, que no tiene valor. Defínala en las variables de importación de MobaXterm.

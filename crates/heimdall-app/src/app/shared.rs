@@ -53,6 +53,15 @@ impl App {
             .map(|folder| folder.join(crate::shared_cache::DIRECTORY_NAME));
         self.shared.set_cache_directory(cache);
         self.shared.load(&sources, &variables);
+        self.sync_shared_gateways();
+    }
+
+    /// Hands the store the gateways the shared sessions go through, so that a shared session
+    /// crosses the bastion its file names. They are held in memory beside the saved ones: in
+    /// no list, no export and no save.
+    fn sync_shared_gateways(&mut self) {
+        let gateways = self.shared.gateways();
+        self.store.set_shared_gateways(gateways);
     }
 
     /// Whether the files are worth looking at on a timer: a source is configured.
@@ -67,6 +76,7 @@ impl App {
         let sources = self.settings.shared_sources.clone();
         let variables = self.settings.mobaxterm_variables.clone();
         self.shared.refresh(&sources, &variables, now);
+        self.sync_shared_gateways();
     }
 
     /// Opens the shared session `id` as a session never saved, a copy of what the file
