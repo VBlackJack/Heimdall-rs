@@ -1055,8 +1055,9 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     // The last rows added, the welcome tour's button, the RDP keep-alive interval, the
     // built-in client's compression, the properties panel's box, the SSH reconnect waits,
     // the RDP disconnect confirmation and redirection indicators, hold no path; the external
-    // tools' card holds the Browse buttons of the tool chosen, which its own tests cover.
-    assert_eq!(SettingRow::ALL.len(), 74, "no row added");
+    // tools' card holds the Browse buttons of the tool chosen, which its own tests cover, and
+    // the MobaXterm variables' card holds none.
+    assert_eq!(SettingRow::ALL.len(), 75, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1563,4 +1564,53 @@ fn an_external_tool_is_added_from_its_card_and_applied_once_its_program_is_found
     assert_eq!(tools[0].name, "New Tool");
     assert_eq!(tools[0].executable_path, program);
     assert_eq!(tools[0].arguments, "{Host}");
+}
+
+#[test]
+fn a_mobaxterm_variable_is_added_from_its_card_and_applied_once_it_has_a_name_and_a_value() {
+    use heimdall_ui::mobaxterm_variables_view::VariablesEdit;
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("import variables"),
+        [SettingRow::MobaxtermVariables]
+    );
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Add));
+    assert_eq!(
+        shell.app().settings().mobaxterm_variables.len(),
+        1,
+        "the empty row waits in the card"
+    );
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Name(
+        1,
+        "TEAM".to_owned(),
+    )));
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Value(
+        1,
+        "ops".to_owned(),
+    )));
+    assert_eq!(
+        shell.app().settings().mobaxterm_variables.get("TEAM"),
+        Some(&"ops".to_owned())
+    );
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Remove(0)));
+    let _ = shell.update(Message::MobaxtermVariablesEdit(VariablesEdit::Remove(0)));
+    assert!(shell.app().settings().mobaxterm_variables.is_empty());
+}
+
+#[test]
+fn an_unresolved_mobaxterm_variable_is_a_line_of_the_import_report() {
+    use heimdall_core::import::foreign::FileWarning;
+    let _english = english();
+    let lines = heimdall_ui::file_import_view::warning_lines(&[FileWarning::UnresolvedVariable {
+        session: "db".to_owned(),
+        name: "GHOST".to_owned(),
+    }]);
+    assert_eq!(lines.len(), 1);
+    assert!(
+        lines[0].contains("has no value") && lines[0].contains("GHOST") && lines[0].contains("db"),
+        "{}",
+        lines[0]
+    );
 }
