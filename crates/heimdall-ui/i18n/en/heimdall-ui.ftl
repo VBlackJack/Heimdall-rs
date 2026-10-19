@@ -5856,3 +5856,60 @@ ui-mobaxterm-variables-name-required = Enter a name.
 ui-mobaxterm-variables-name-invalid = Use letters, digits and underscores, starting with a letter or an underscore.
 ui-mobaxterm-variables-name-duplicate = Another variable has this name.
 ui-mobaxterm-variables-value-required = Enter a value.
+ui-shared-sources-title = Shared session sources
+ui-shared-sources-description = MobaXterm session files kept by a team, read and never written. Their SSH and RDP sessions appear in the tree, read-only. The path is absolute or starts with a variable such as %USERPROFILE%.
+ui-shared-sources-name = Name
+ui-shared-sources-path = Path of the file
+ui-shared-sources-enabled = Read this source
+ui-shared-sources-report = Import report
+ui-shared-sources-remove = Remove
+ui-shared-sources-add = Add a source
+ui-shared-sources-browse-title = Select a shared session file
+ui-shared-sources-browse-filter = MobaXterm session files
+ui-shared-sources-status =
+    { $count ->
+        [one] { $count } session held.
+       *[other] { $count } sessions held.
+    }
+ui-shared-sources-name-required = Enter a name.
+ui-shared-sources-name-duplicate = Another source has this name.
+ui-shared-sources-path-required = Enter the path of the file.
+ui-shared-sources-path-invalid = The path must be absolute, or start with a variable such as %USERPROFILE%.
+ui-shared-sources-id-invalid = The identifier of the source is not valid.
+ui-shared-sources-id-duplicate = Another source has the same identifier.
+ui-shared-offline = The file cannot be reached: these sessions come from the copy kept on { $date }. { $reason }
+ui-shared-report-title = Import report: { $name }
+ui-shared-report-taken =
+    { $count ->
+        [one] { $count } session taken from the file.
+       *[other] { $count } sessions taken from the file.
+    }
+ui-shared-report-empty = Nothing to report: every session of the file was taken as it stands.
+ui-shared-report-close = Close
+ui-shared-report-skipped =
+    { $count ->
+        [one] { $count } session skipped
+       *[other] { $count } sessions skipped
+    }
+ui-shared-report-unresolved =
+    { $count ->
+        [one] { $count } login with an undefined variable
+       *[other] { $count } logins with an undefined variable
+    }
+ui-shared-report-mismatch =
+    { $count ->
+        [one] { $count } name that is not its host
+       *[other] { $count } names that are not their host
+    }
+ui-shared-report-duplicate-host =
+    { $count ->
+        [one] { $count } session on a host filed twice
+       *[other] { $count } sessions on a host filed twice
+    }
+ui-shared-report-reason-other-protocol = Protocol { $protocol } is not supported, only SSH and RDP are taken.
+ui-shared-report-reason-invalid-host = The host { $host } is not a host name or an address.
+ui-shared-report-reason-duplicate-session = Another session of the file has the same folder and name.
+ui-shared-report-reason-over-limit = The source already holds as many sessions as one may.
+ui-shared-report-detail-unresolved = The login names the variable { $name }, which has no value. Define it in the MobaXterm import variables.
+ui-shared-report-detail-mismatch = The name is not the host { $host } nor its first label.
+ui-shared-report-detail-duplicate-host = The host { $host } is also used by { $others }.

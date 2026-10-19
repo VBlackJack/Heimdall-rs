@@ -20,6 +20,7 @@
 //! so a shared session can never stand in for a saved one.
 
 use sealvault::hash;
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -36,6 +37,9 @@ const MAX_SOURCE_ID_LEN: usize = 64;
 
 /// Bytes of the digest an identifier keeps, as the C# `IdHashBytes`.
 const ID_HASH_BYTES: usize = 16;
+
+/// Random bytes of a new source's identifier, as a GUID.
+const NEW_ID_BYTES: usize = 16;
 
 /// The longest host name, as DNS.
 const MAX_HOST_LEN: usize = 253;
@@ -132,6 +136,124 @@ pub fn is_valid_host(host: &str) -> bool {
     })
 }
 
+/// Why a source's name cannot be saved, as the C# `SettingsSharedSourceName*` errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameProblem {
+    /// No name.
+    Required,
+    /// Another source has this name, in any case.
+    Duplicate,
+}
+
+/// Why a source's path cannot be saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathProblem {
+    /// No path.
+    Required,
+    /// Not an absolute path, nor one that starts with a `%VARIABLE%`, or it holds a control
+    /// character: the checks of the C# settings import.
+    Invalid,
+}
+
+/// Why a source's identifier cannot be saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdProblem {
+    /// Not lower-case letters and digits, or too long.
+    Invalid,
+    /// Another source has the same identifier.
+    Duplicate,
+}
+
+/// What is wrong with one source of a list, each part checked on its own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SourceProblems {
+    /// Its identifier.
+    pub id: Option<IdProblem>,
+    /// Its name.
+    pub name: Option<NameProblem>,
+    /// Its path.
+    pub path: Option<PathProblem>,
+}
+
+impl SourceProblems {
+    /// Whether the source can be saved.
+    #[must_use]
+    pub fn is_ok(self) -> bool {
+        self.id.is_none() && self.name.is_none() && self.path.is_none()
+    }
+}
+
+/// Why `path` cannot be a source's file, by the checks of the C# settings import: it must say
+/// something, hold no control character, and be absolute or start with a `%VARIABLE%`.
+#[must_use]
+pub fn path_problem(path: &str) -> Option<PathProblem> {
+    let path = path.trim();
+    if path.is_empty() {
+        Some(PathProblem::Required)
+    } else if path.chars().any(char::is_control)
+        || !crate::import::csharp_settings::absolute_or_expanded(path)
+    {
+        Some(PathProblem::Invalid)
+    } else {
+        None
+    }
+}
+
+/// What is wrong with each source of `sources`, in order, as the C# settings page checks its
+/// rows (a name that is required and not repeated in any case, a path) and its import checks
+/// them (a valid identifier of its own, an absolute path).
+#[must_use]
+pub fn source_problems(sources: &[SharedSource]) -> Vec<SourceProblems> {
+    let mut names: HashMap<String, usize> = HashMap::new();
+    let mut ids: HashMap<&str, usize> = HashMap::new();
+    for source in sources {
+        let name = source.name.trim();
+        if !name.is_empty() {
+            *names.entry(name.to_lowercase()).or_default() += 1;
+        }
+        *ids.entry(source.id.as_str()).or_default() += 1;
+    }
+    sources
+        .iter()
+        .map(|source| {
+            let name = source.name.trim();
+            SourceProblems {
+                id: if !is_valid_source_id(&source.id) {
+                    Some(IdProblem::Invalid)
+                } else if ids.get(source.id.as_str()).is_some_and(|n| *n > 1) {
+                    Some(IdProblem::Duplicate)
+                } else {
+                    None
+                },
+                name: if name.is_empty() {
+                    Some(NameProblem::Required)
+                } else if names.get(&name.to_lowercase()).is_some_and(|n| *n > 1) {
+                    Some(NameProblem::Duplicate)
+                } else {
+                    None
+                },
+                path: path_problem(&source.path),
+            }
+        })
+        .collect()
+}
+
+/// A new identifier for a source, as the C# `SharedSessionIds.NewSourceId` (a GUID without
+/// dashes): 32 lower-case hexadecimal digits, so it is one [`is_valid_source_id`] accepts.
+///
+/// # Errors
+///
+/// The system's random source failed.
+pub fn new_source_id() -> Result<String, sealvault::Error> {
+    let mut bytes = [0_u8; NEW_ID_BYTES];
+    sealvault::random::fill(&mut bytes)?;
+    let mut id = String::with_capacity(NEW_ID_BYTES * 2);
+    for byte in bytes {
+        let _ = write!(id, "{byte:02x}");
+    }
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +265,56 @@ mod tests {
         assert!(!is_valid_source_id("Team"));
         assert!(!is_valid_source_id("a-b"));
         assert!(!is_valid_source_id(&"a".repeat(65)));
+    }
+
+    fn source(id: &str, name: &str, path: &str) -> SharedSource {
+        SharedSource {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            path: path.to_owned(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn a_new_source_identifier_is_valid_and_new_each_time() {
+        let first = new_source_id().expect("random");
+        assert!(is_valid_source_id(&first));
+        assert_eq!(first.len(), 32);
+        assert_ne!(first, new_source_id().expect("random"));
+    }
+
+    #[test]
+    fn a_source_path_is_absolute_or_starts_with_a_variable() {
+        assert_eq!(path_problem(""), Some(PathProblem::Required));
+        assert_eq!(path_problem("  "), Some(PathProblem::Required));
+        assert_eq!(path_problem("team.mxtsessions"), Some(PathProblem::Invalid));
+        assert_eq!(path_problem("/srv/a\u{7}b"), Some(PathProblem::Invalid));
+        assert_eq!(path_problem("C:\\share\\team.mxtsessions"), None);
+        assert_eq!(path_problem("\\\\server\\share\\team.mxtsessions"), None);
+        assert_eq!(path_problem("/srv/team.mxtsessions"), None);
+        assert_eq!(path_problem("%USERPROFILE%\\team.mxtsessions"), None);
+    }
+
+    #[test]
+    fn source_rows_need_a_unique_id_a_unique_name_and_a_path() {
+        let rows = [
+            source("one", "Team", "/srv/a"),
+            source("two", "team", "/srv/b"),
+            source("one", "Other", "/srv/c"),
+            source("Bad", "", "relative"),
+        ];
+        let problems = source_problems(&rows);
+        assert_eq!(problems[0].id, Some(IdProblem::Duplicate));
+        assert_eq!(problems[0].name, Some(NameProblem::Duplicate));
+        assert_eq!(problems[1].name, Some(NameProblem::Duplicate));
+        assert_eq!(problems[1].id, None);
+        assert!(problems[1].path.is_none());
+        assert_eq!(problems[2].name, None);
+        assert_eq!(problems[3].id, Some(IdProblem::Invalid));
+        assert_eq!(problems[3].name, Some(NameProblem::Required));
+        assert_eq!(problems[3].path, Some(PathProblem::Invalid));
+        assert!(source_problems(&[source("one", "Team", "/srv/a")])[0].is_ok());
     }
 
     #[test]

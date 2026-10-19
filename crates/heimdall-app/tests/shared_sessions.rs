@@ -413,3 +413,224 @@ web= #109#0%web.example.com%22%[ADMIN]%
     };
     assert_eq!(ssh.username.as_deref(), Some("alice"));
 }
+
+/// A shared set that holds the kinds of finding a report lists.
+const REPORTED: &str = "[Bookmarks]\r\nSubRep=Prod\r\n\
+web01= #109#0%web01.example.com%22%[GHOST]%\r\n\
+db= #109#0%db01.example.com%22%admin%\r\n\
+replica= #109#0%db01.example.com%22%admin%\r\n\
+bad host= #109#0%evil host;rm -rf%22%root%\r\n\
+telnet= #98#1%tel.example.com%23%%\r\n\
+[Passwords]\r\nadmin@db=SECRET-PASSWORD-VALUE\r\n";
+
+fn cached(dir: &Path) -> SharedSessions {
+    let mut shared = SharedSessions::default();
+    shared.set_cache_directory(Some(dir.join("cache")));
+    shared
+}
+
+#[test]
+fn the_report_lists_what_was_not_taken_as_it_stood() {
+    use heimdall_app::shared_report::{ReportCheck, SkipReason};
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(dir.path(), REPORTED);
+    let report = shared.report_of("team").expect("a report");
+    let skipped: Vec<_> = report
+        .entries
+        .iter()
+        .filter(|entry| entry.check == ReportCheck::SkippedSession)
+        .map(|entry| (entry.session.as_str(), entry.reason, entry.detail.as_str()))
+        .collect();
+    assert!(skipped.contains(&(
+        "bad host",
+        Some(SkipReason::InvalidHost),
+        "evil host;rm -rf"
+    )));
+    assert!(
+        skipped.iter().any(
+            |(name, reason, _)| *name == "telnet" && *reason == Some(SkipReason::OtherProtocol)
+        )
+    );
+    let unresolved = report
+        .entries
+        .iter()
+        .find(|entry| entry.check == ReportCheck::UnresolvedVariable)
+        .expect("an unresolved variable");
+    assert_eq!(
+        (
+            unresolved.session.as_str(),
+            unresolved.detail.as_str(),
+            unresolved.folder.as_str()
+        ),
+        ("web01", "GHOST", "Prod")
+    );
+    // "db" and "replica" share a host in one folder, and "replica" is not its host's name.
+    assert_eq!(report.count_of(ReportCheck::DuplicateHost), 2);
+    assert!(report.entries.iter().any(
+        |entry| entry.check == ReportCheck::NameHostMismatch && entry.session == "replica"
+    ));
+    assert!(shared.report_of("nobody").is_none());
+}
+
+#[test]
+fn a_source_read_leaves_a_private_copy_with_no_password_in_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, REPORTED).expect("write");
+    let mut shared = cached(dir.path());
+    shared.load(&[source("team", &file)], &Variables::default());
+    let copy = dir.path().join("cache").join("team.json");
+    let text = std::fs::read_to_string(&copy).expect("a copy");
+    assert!(text.contains("db01.example.com"));
+    assert!(!text.contains("SECRET-PASSWORD-VALUE"), "{text}");
+    // Only the count of passwords is kept, never the section nor what it holds.
+    assert!(
+        !text.contains("[Passwords]") && !text.contains("admin@db"),
+        "{text}"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&copy).expect("meta").permissions().mode();
+        assert_eq!(mode & 0o077, 0, "readable by the user alone");
+    }
+}
+
+#[test]
+fn an_unreachable_source_offers_its_offline_copy_with_a_notice() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, TEAM).expect("write");
+    let sources = vec![source("team", &file)];
+    let mut shared = cached(dir.path());
+    shared.load(&sources, &Variables::default());
+    assert!(shared.sources()[0].offline.is_none());
+    let online: Vec<_> = shared.sessions().map(|s| s.id.clone()).collect();
+    // The next start, with the share gone: nothing in memory, the copy answers.
+    std::fs::remove_file(&file).expect("remove");
+    let mut restarted = cached(dir.path());
+    restarted.load(&sources, &Variables::default());
+    let state = &restarted.sources()[0];
+    assert_eq!(state.status, SourceStatus::Loaded);
+    assert_eq!(state.sessions, 2);
+    let offline = state.offline.as_ref().expect("an offline copy");
+    assert_eq!(offline.reason, SourceProblem::Missing);
+    let offered: Vec<_> = restarted.sessions().map(|s| s.id.clone()).collect();
+    assert_eq!(
+        offered, online,
+        "the very sessions, under the very identifiers"
+    );
+    let SharedTarget::Ssh(ssh) = &restarted.sessions_of("team")[0].target else {
+        panic!("an SSH session");
+    };
+    assert_eq!(ssh.host, "web01.example.com");
+    assert_eq!(ssh.port, 2222);
+    assert_eq!(ssh.username.as_deref(), Some("deploy"));
+    assert!(ssh.key_path.is_none(), "a key path never comes back");
+    // The file coming back replaces the copy at the next look.
+    std::fs::write(&file, TEAM).expect("write");
+    assert!(restarted.refresh(&sources, &Variables::default(), later()));
+    assert!(restarted.sources()[0].offline.is_none());
+}
+
+#[test]
+fn a_moved_file_does_not_use_the_copy_of_another() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, TEAM).expect("write");
+    let mut shared = cached(dir.path());
+    shared.load(&[source("team", &file)], &Variables::default());
+    // The source now points at another file that is not there: not this source's copy.
+    let moved = dir.path().join("moved.mxtsessions");
+    let mut restarted = cached(dir.path());
+    restarted.load(&[source("team", &moved)], &Variables::default());
+    assert_eq!(
+        restarted.sources()[0].status,
+        SourceStatus::Failed(SourceProblem::Missing)
+    );
+    assert_eq!(restarted.sessions().count(), 0);
+    // Without a cache folder, nothing is made nor used.
+    let mut none = SharedSessions::default();
+    std::fs::remove_file(&file).expect("remove");
+    none.load(&[source("team", &file)], &Variables::default());
+    assert_eq!(none.sessions().count(), 0);
+}
+
+#[test]
+fn a_tampered_copy_goes_through_the_checks_of_a_file() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, TEAM).expect("write");
+    let sources = vec![source("team", &file)];
+    let mut shared = cached(dir.path());
+    shared.load(&sources, &Variables::default());
+    let copy = dir.path().join("cache").join("team.json");
+    let text = std::fs::read_to_string(&copy).expect("a copy");
+    std::fs::write(&copy, text.replace("web01.example.com", "evil host;rm -rf")).expect("write");
+    std::fs::remove_file(&file).expect("remove");
+    let mut restarted = cached(dir.path());
+    restarted.load(&sources, &Variables::default());
+    let hosts: Vec<_> = restarted
+        .sessions()
+        .map(|session| session.endpoint().0.to_owned())
+        .collect();
+    assert_eq!(hosts, ["desk.example.com"], "the bad host is refused again");
+}
+
+#[test]
+fn a_source_taken_out_of_the_settings_leaves_no_copy() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, TEAM).expect("write");
+    let mut shared = cached(dir.path());
+    shared.load(&[source("team", &file)], &Variables::default());
+    assert!(dir.path().join("cache").join("team.json").exists());
+    shared.load(&[], &Variables::default());
+    assert!(!dir.path().join("cache").join("team.json").exists());
+}
+
+#[test]
+fn the_settings_keep_a_list_of_sources_that_passes_the_rows_checks_and_refuse_any_other() {
+    use heimdall_app::SettingsMessage;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_source(dir.path());
+    let row = |id: &str, name: &str, path: &str| SharedSource {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        path: path.to_owned(),
+        enabled: true,
+    };
+    let abs = dir
+        .path()
+        .join("other.mxtsessions")
+        .to_string_lossy()
+        .into_owned();
+    // Padding is trimmed, as the C# Save trims it.
+    app.update(Message::Settings(SettingsMessage::SharedSources(vec![
+        row("one", "  Ops  ", &format!(" {abs} ")),
+        row("two", "Lab", &abs),
+    ])));
+    let kept = &app.settings().shared_sources;
+    assert_eq!(kept.len(), 2);
+    assert_eq!(
+        (kept[0].name.as_str(), kept[0].path.as_str()),
+        ("Ops", abs.as_str())
+    );
+    assert_eq!(app.shared_sessions().sources().len(), 2, "followed at once");
+    // A relative path, a repeated name in another case, a repeated or invalid id, no name.
+    for refused in [
+        vec![row("one", "Ops", "relative.mxtsessions")],
+        vec![row("one", "Ops", &abs), row("two", "ops", &abs)],
+        vec![row("one", "Ops", &abs), row("one", "Lab", &abs)],
+        vec![row("Bad-Id", "Ops", &abs)],
+        vec![row("one", " ", &abs)],
+    ] {
+        app.update(Message::Settings(SettingsMessage::SharedSources(refused)));
+        assert_eq!(app.settings().shared_sources.len(), 2);
+    }
+    // Removing them all is a choice too.
+    app.update(Message::Settings(
+        SettingsMessage::SharedSources(Vec::new()),
+    ));
+    assert!(app.settings().shared_sources.is_empty());
+}

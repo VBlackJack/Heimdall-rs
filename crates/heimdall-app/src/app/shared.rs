@@ -46,6 +46,12 @@ impl App {
     pub(super) fn load_shared(&mut self) {
         let sources = self.settings.shared_sources.clone();
         let variables = self.settings.mobaxterm_variables.clone();
+        // The offline copies beside the settings file, in a folder of their own.
+        let cache = self
+            .settings_file
+            .parent()
+            .map(|folder| folder.join(crate::shared_cache::DIRECTORY_NAME));
+        self.shared.set_cache_directory(cache);
         self.shared.load(&sources, &variables);
     }
 

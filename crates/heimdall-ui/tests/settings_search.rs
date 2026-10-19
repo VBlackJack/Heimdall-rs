@@ -1056,8 +1056,9 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     // built-in client's compression, the properties panel's box, the SSH reconnect waits,
     // the RDP disconnect confirmation and redirection indicators, hold no path; the external
     // tools' card holds the Browse buttons of the tool chosen, which its own tests cover, and
-    // the MobaXterm variables' card holds none.
-    assert_eq!(SettingRow::ALL.len(), 75, "no row added");
+    // the MobaXterm variables' card holds none; the shared sources' card holds one per source,
+    // which its own test covers.
+    assert_eq!(SettingRow::ALL.len(), 76, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1613,4 +1614,64 @@ fn an_unresolved_mobaxterm_variable_is_a_line_of_the_import_report() {
         "{}",
         lines[0]
     );
+}
+
+#[test]
+fn a_shared_source_is_added_from_its_card_picked_and_applied_once_it_passes_the_row_checks() {
+    use heimdall_ui::browse::BrowseTarget;
+    use heimdall_ui::shared_sources_view::SourcesEdit;
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("shared session sources"),
+        [SettingRow::SharedSources]
+    );
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Add));
+    assert!(
+        shell.app().settings().shared_sources.is_empty(),
+        "the empty row waits in the card"
+    );
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Name(
+        0,
+        "Team".to_owned(),
+    )));
+    // Picked with Browse, as the typed path is applied.
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(
+        &file,
+        "[Bookmarks]
+web= #109#0%web.lab%22%ops%
+",
+    )
+    .expect("write");
+    let picked = file.to_string_lossy().into_owned();
+    let _ = shell.update(Message::Browsed(
+        BrowseTarget::SharedSourcePath(0),
+        picked.clone(),
+    ));
+    let sources = &shell.app().settings().shared_sources;
+    assert_eq!(sources.len(), 1);
+    assert_eq!(
+        (sources[0].name.as_str(), sources[0].path.as_str()),
+        ("Team", picked.as_str())
+    );
+    assert_eq!(sources[0].id.len(), 32, "an identifier of its own");
+    assert_eq!(
+        shell.app().shared_sessions().sessions().count(),
+        1,
+        "read at once"
+    );
+    // The report opens and closes without changing the list.
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Report(0)));
+    let _ = shell.update(Message::SharedReportClose);
+    assert_eq!(shell.app().settings().shared_sources.len(), 1);
+    // A relative path is refused as the import refuses it, and the list stays as it was.
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Path(
+        0,
+        "relative.mxtsessions".to_owned(),
+    )));
+    assert_eq!(shell.app().settings().shared_sources[0].path, picked);
+    let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Remove(0)));
+    assert!(shell.app().settings().shared_sources.is_empty());
 }

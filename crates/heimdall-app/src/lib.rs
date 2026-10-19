@@ -69,6 +69,8 @@ pub mod scheduled_form;
 pub mod script_shell;
 pub mod server_health;
 pub mod session_log;
+pub mod shared_cache;
+pub mod shared_report;
 pub mod shared_sessions;
 mod sink;
 pub mod steps_draft;

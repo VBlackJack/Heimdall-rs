@@ -157,6 +157,11 @@ pub enum SettingsMessage {
     /// refused, as the C# settings page refuses it, when a name is not one the import
     /// recognises, two names differ only by case, or a value is empty.
     MobaxtermVariables(std::collections::BTreeMap<String, String>),
+    /// The shared session sources, in their order, name and path trimmed; refused, as the
+    /// C# settings page and import refuse them, when a source has no name or one used twice
+    /// in any case, a path that is not absolute (or does not start with a `%VARIABLE%`), or
+    /// an identifier that is not valid or is used twice.
+    SharedSources(Vec<heimdall_core::shared_sessions::SharedSource>),
     /// The RDP settings back to their own values, asked first as the C# asks.
     ResetRdpDefaults,
     /// Minutes without input before the workspace locks, 0 for never; refused out of the
@@ -493,6 +498,17 @@ impl App {
                     .map(|(name, value)| (name.trim().to_owned(), value.trim().to_owned()))
                     .collect();
             }
+            SettingsMessage::SharedSources(sources) if shared_sources_accepted(sources) => {
+                self.settings.shared_sources = sources
+                    .iter()
+                    .map(|source| heimdall_core::shared_sessions::SharedSource {
+                        id: source.id.clone(),
+                        name: source.name.trim().to_owned(),
+                        path: source.path.trim().to_owned(),
+                        enabled: source.enabled,
+                    })
+                    .collect();
+            }
             _ => return false,
         }
         true
@@ -612,7 +628,8 @@ impl App {
             }
             message @ (SettingsMessage::RdpResolutionPresets(_)
             | SettingsMessage::ExternalTools(_)
-            | SettingsMessage::MobaxtermVariables(_)) => {
+            | SettingsMessage::MobaxtermVariables(_)
+            | SettingsMessage::SharedSources(_)) => {
                 if !self.set_list(message) {
                     return Vec::new();
                 }
@@ -662,6 +679,10 @@ impl App {
     /// as it now runs, and Credential Guard checked when just required, so that the first
     /// session does not wait for it.
     fn settings_changed(&mut self, before: &Settings) -> Vec<Effect> {
+        // A list of shared sources edited is followed at once, not at the timer's next look.
+        if before.shared_sources != self.settings.shared_sources {
+            self.shared_tick(std::time::SystemTime::now());
+        }
         let mut effects = self.reachability_changed(before.reachability);
         if !before.require_credential_guard {
             effects.extend(self.warm_credential_guard());
@@ -680,4 +701,12 @@ fn variables_accepted(variables: &std::collections::BTreeMap<String, String>) ->
         let name = name.trim();
         is_valid_variable_name(name) && seen.insert(name.to_lowercase()) && !value.trim().is_empty()
     })
+}
+
+/// Whether `sources` can be kept: every row passes the checks of the C# settings page and
+/// import (`SettingsViewModel.SharedSessionSources.cs:247`).
+fn shared_sources_accepted(sources: &[heimdall_core::shared_sessions::SharedSource]) -> bool {
+    heimdall_core::shared_sessions::source_problems(sources)
+        .iter()
+        .all(|problems| problems.is_ok())
 }

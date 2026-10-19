@@ -5901,3 +5901,60 @@ ui-mobaxterm-variables-name-required = Introduce un nombre.
 ui-mobaxterm-variables-name-invalid = Usa letras, dígitos y guiones bajos, empezando por una letra o un guion bajo.
 ui-mobaxterm-variables-name-duplicate = Otra variable tiene este nombre.
 ui-mobaxterm-variables-value-required = Introduce un valor.
+ui-shared-sources-title = Fuentes de sesiones compartidas
+ui-shared-sources-description = Archivos de sesiones de MobaXterm mantenidos por un equipo, leídos y nunca escritos. Sus sesiones SSH y RDP aparecen en el árbol, de solo lectura. La ruta es absoluta o empieza por una variable como %USERPROFILE%.
+ui-shared-sources-name = Nombre
+ui-shared-sources-path = Ruta del archivo
+ui-shared-sources-enabled = Leer esta fuente
+ui-shared-sources-report = Informe de importación
+ui-shared-sources-remove = Quitar
+ui-shared-sources-add = Añadir una fuente
+ui-shared-sources-browse-title = Seleccionar un archivo de sesiones compartidas
+ui-shared-sources-browse-filter = Archivos de sesiones de MobaXterm
+ui-shared-sources-status =
+    { $count ->
+        [one] { $count } sesión cargada.
+       *[other] { $count } sesiones cargadas.
+    }
+ui-shared-sources-name-required = Escriba un nombre.
+ui-shared-sources-name-duplicate = Otra fuente tiene este nombre.
+ui-shared-sources-path-required = Escriba la ruta del archivo.
+ui-shared-sources-path-invalid = La ruta debe ser absoluta, o empezar por una variable como %USERPROFILE%.
+ui-shared-sources-id-invalid = El identificador de la fuente no es válido.
+ui-shared-sources-id-duplicate = Otra fuente tiene el mismo identificador.
+ui-shared-offline = No se puede acceder al archivo: estas sesiones vienen de la copia guardada el { $date }. { $reason }
+ui-shared-report-title = Informe de importación: { $name }
+ui-shared-report-taken =
+    { $count ->
+        [one] { $count } sesión tomada del archivo.
+       *[other] { $count } sesiones tomadas del archivo.
+    }
+ui-shared-report-empty = Nada que señalar: todas las sesiones del archivo se tomaron tal cual.
+ui-shared-report-close = Cerrar
+ui-shared-report-skipped =
+    { $count ->
+        [one] { $count } sesión omitida
+       *[other] { $count } sesiones omitidas
+    }
+ui-shared-report-unresolved =
+    { $count ->
+        [one] { $count } inicio de sesión con una variable sin definir
+       *[other] { $count } inicios de sesión con una variable sin definir
+    }
+ui-shared-report-mismatch =
+    { $count ->
+        [one] { $count } nombre que no es el de su host
+       *[other] { $count } nombres que no son los de su host
+    }
+ui-shared-report-duplicate-host =
+    { $count ->
+        [one] { $count } sesión en un host archivado dos veces
+       *[other] { $count } sesiones en un host archivado dos veces
+    }
+ui-shared-report-reason-other-protocol = El protocolo { $protocol } no es compatible, solo se toman SSH y RDP.
+ui-shared-report-reason-invalid-host = El host { $host } no es un nombre de host ni una dirección.
+ui-shared-report-reason-duplicate-session = Otra sesión del archivo tiene la misma carpeta y el mismo nombre.
+ui-shared-report-reason-over-limit = La fuente ya contiene tantas sesiones como puede contener.
+ui-shared-report-detail-unresolved = El inicio de sesión usa la variable { $name }, que no tiene valor. Defínala en las variables de importación de MobaXterm.
+ui-shared-report-detail-mismatch = El nombre no es el host { $host } ni su primera etiqueta.
+ui-shared-report-detail-duplicate-host = El host { $host } también lo usa { $others }.
