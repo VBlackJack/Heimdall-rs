@@ -153,6 +153,10 @@ pub enum SettingsMessage {
     /// trims them; refused, as the C# Save refuses it, when one has no name or no program or
     /// two share a name. Whether each program is there is the editor's to check.
     ExternalTools(Vec<heimdall_core::external_tools::ExternalTool>),
+    /// The values of a `MobaXterm` file's `[NAME]` variables, name to login, names trimmed;
+    /// refused, as the C# settings page refuses it, when a name is not one the import
+    /// recognises, two names differ only by case, or a value is empty.
+    MobaxtermVariables(std::collections::BTreeMap<String, String>),
     /// The RDP settings back to their own values, asked first as the C# asks.
     ResetRdpDefaults,
     /// Minutes without input before the workspace locks, 0 for never; refused out of the
@@ -483,6 +487,12 @@ impl App {
             SettingsMessage::ExternalTools(tools) if problem(tools, |_| true).is_none() => {
                 self.settings.external_tools = saved(tools);
             }
+            SettingsMessage::MobaxtermVariables(variables) if variables_accepted(variables) => {
+                self.settings.mobaxterm_variables = variables
+                    .iter()
+                    .map(|(name, value)| (name.trim().to_owned(), value.trim().to_owned()))
+                    .collect();
+            }
             _ => return false,
         }
         true
@@ -601,7 +611,8 @@ impl App {
                 }
             }
             message @ (SettingsMessage::RdpResolutionPresets(_)
-            | SettingsMessage::ExternalTools(_)) => {
+            | SettingsMessage::ExternalTools(_)
+            | SettingsMessage::MobaxtermVariables(_)) => {
                 if !self.set_list(message) {
                     return Vec::new();
                 }
@@ -657,4 +668,16 @@ impl App {
         }
         effects
     }
+}
+
+/// Whether `variables` can be kept, as the C# row checks
+/// (`SettingsViewModel.MobaXtermVariables.cs:108`): every name is one the import recognises,
+/// none repeats another in any case, and every value says something.
+fn variables_accepted(variables: &std::collections::BTreeMap<String, String>) -> bool {
+    use heimdall_core::import::mobaxterm::is_valid_variable_name;
+    let mut seen = std::collections::HashSet::new();
+    variables.iter().all(|(name, value)| {
+        let name = name.trim();
+        is_valid_variable_name(name) && seen.insert(name.to_lowercase()) && !value.trim().is_empty()
+    })
 }

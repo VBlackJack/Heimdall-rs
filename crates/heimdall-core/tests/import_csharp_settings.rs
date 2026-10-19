@@ -433,6 +433,7 @@ const EVERY_PREFERENCE: &[(&str, &str)] = &[
     ("SftpAutoOpenOnSsh", "false"),
     ("SftpFollowSshDirectory", "true"),
     ("ExternalEditorPath", r#""C:\\Tools\\edit.exe""#),
+    ("MobaXtermUserVariables", r#"{"DAS": "jbombled"}"#),
     ("PreventSleepDuringSession", "false"),
     ("SessionLoggingEnabled", "true"),
     ("SessionLogDirectory", r#""\\\\share\\logs""#),
@@ -536,4 +537,32 @@ fn read_text_out_of_range() -> Preferences {
     read(&settings_json(
         r#""sshAutoReconnectFirstDelaySeconds": 0, "sshAutoReconnectSubsequentDelaySeconds": 601"#,
     ))
+}
+
+#[test]
+fn the_mobaxterm_variables_are_carried_unless_the_csharp_default_or_unusable() {
+    let key = "MobaXtermUserVariables";
+    // The C# default says nothing about the user.
+    let default = read(&export_file(&format!(
+        r#""{key}": {{"DAS": "%USERNAME%"}}"#
+    )));
+    assert_eq!(outcome(&default, key), None);
+    // Every name is one the import recognises and every login says something.
+    for bad in [
+        r#"{"1x": "a"}"#,
+        r#"{"DAS": ""}"#,
+        r#"{"DAS": 3}"#,
+        r#"["DAS"]"#,
+    ] {
+        let refused = read(&export_file(&format!(r#""{key}": {bad}"#)));
+        assert_eq!(
+            outcome(&refused, key),
+            Some(PreferenceOutcome::Invalid),
+            "{bad}"
+        );
+    }
+    // None at all is the user's choice.
+    let none = read(&export_file(&format!(r#""{key}": {{}}"#)));
+    assert_eq!(outcome(&none, key), Some(PreferenceOutcome::Taken));
+    assert!(none.settings.mobaxterm_variables.is_empty());
 }

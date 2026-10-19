@@ -478,3 +478,40 @@ fn a_profile_whose_gateway_is_missing_is_imported_naming_it_and_counted_as_the_c
         "connecting says the gateway is missing"
     );
 }
+
+#[test]
+fn a_mobaxterm_login_variable_takes_the_value_of_the_settings_and_an_unknown_one_is_said() {
+    use heimdall_app::SettingsMessage;
+    let text = "[Bookmarks]\nweb= #109#0%web.lab%22%[TEAM]\ndb= #109#0%db.lab%22%[GHOST]\n";
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(SettingsMessage::MobaxtermVariables(
+        std::collections::BTreeMap::from([("team".to_owned(), "ops".to_owned())]),
+    )));
+    assert_eq!(app.settings().mobaxterm_variables["team"], "ops");
+    read(&mut app, "sessions.mxtsessions", text, None);
+    let Some(Dialog::ConfirmImportFile(pending)) = &app.dialog else {
+        panic!("not asked: {:?}", app.dialog);
+    };
+    assert_eq!(
+        pending.warnings,
+        [FileWarning::UnresolvedVariable {
+            session: "db".to_owned(),
+            name: "GHOST".to_owned()
+        }]
+    );
+    app.update(Message::ConfirmDialog);
+    let logins: Vec<_> = app
+        .profiles()
+        .iter()
+        .map(|p| (p.host.as_str(), p.username.as_deref()))
+        .collect();
+    assert!(logins.contains(&("web.lab", Some("ops"))), "{logins:?}");
+    assert!(logins.contains(&("db.lab", Some("[GHOST]"))), "{logins:?}");
+    // A list a row of which the C# would refuse is not kept.
+    app.update(Message::Settings(SettingsMessage::MobaxtermVariables(
+        std::collections::BTreeMap::from([("1x".to_owned(), "a".to_owned())]),
+    )));
+    assert_eq!(app.settings().mobaxterm_variables.len(), 1);
+    assert!(app.settings().mobaxterm_variables.contains_key("team"));
+}

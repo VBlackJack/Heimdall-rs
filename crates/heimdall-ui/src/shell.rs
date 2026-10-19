@@ -1060,6 +1060,8 @@ pub enum Message {
     PresetsEdited(iced::widget::text_editor::Action),
     /// A change in the Settings page's external tools.
     ExternalToolsEdit(crate::external_tools_view::ToolsEdit),
+    /// A change in the Settings page's `MobaXterm` import variables.
+    MobaxtermVariablesEdit(crate::mobaxterm_variables_view::VariablesEdit),
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
     OpenWithSystem(std::path::PathBuf),
     /// Write a note about the session `id` from `template`, then open it in the editor set.
@@ -1302,6 +1304,7 @@ impl fmt::Debug for Message {
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
             Self::ExternalToolsEdit(_) => f.write_str("ExternalToolsEdit(..)"),
+            Self::MobaxtermVariablesEdit(_) => f.write_str("MobaxtermVariablesEdit(..)"),
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
@@ -1697,6 +1700,8 @@ pub struct Shell {
     presets: crate::presets_editor::PresetsEditor,
     /// The Settings page's external tools, as edited.
     external_tools: crate::external_tools_view::ExternalToolsEditor,
+    /// The Settings page's `MobaXterm` import variables, as edited.
+    mobaxterm_variables: crate::mobaxterm_variables_view::MobaxtermVariablesEditor,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -1919,6 +1924,9 @@ impl Shell {
             crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
         let external_tools =
             crate::external_tools_view::ExternalToolsEditor::new(&app.settings().external_tools);
+        let mobaxterm_variables = crate::mobaxterm_variables_view::MobaxtermVariablesEditor::new(
+            &app.settings().mobaxterm_variables,
+        );
         let language_shown = app.settings().language;
         Self {
             app,
@@ -1988,6 +1996,7 @@ impl Shell {
             tool_paths_typed: Default::default(),
             presets,
             external_tools,
+            mobaxterm_variables,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -2946,6 +2955,7 @@ impl Shell {
             Message::BrowseKeyFile => return pick_key_file(self.main_window),
             Message::Browse(target) => return self.browse(target),
             Message::ExternalToolsEdit(edit) => self.external_tools_edit(edit),
+            Message::MobaxtermVariablesEdit(edit) => self.mobaxterm_variables_edit(edit),
             Message::Browsed(target, path) => self.browsed(target, path),
             Message::CopyError(tab) => return self.copy_error(tab),
             Message::ToggleFailureDetails(tab) => {
@@ -3139,6 +3149,9 @@ impl Shell {
         // As the external tools: an import, or a list that could not be saved.
         self.external_tools
             .sync(&self.app.settings().external_tools);
+        // And the `MobaXterm` variables.
+        self.mobaxterm_variables
+            .sync(&self.app.settings().mobaxterm_variables);
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
         if let Some(field) = self.focus_next.take() {
