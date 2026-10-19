@@ -520,12 +520,10 @@ struct PropertiesDrag {
 }
 
 /// Whether `physical` with `modifiers` toggles the window's full screen, as the C#
-/// `FullscreenShortcutRouter`: F11 alone, which a desktop keeps from its server, or
-/// Ctrl+Shift+F11, full screen over an embedded session, which neither a terminal nor a
-/// desktop passes on.
+/// `FullscreenShortcutRouter`: F11 alone, or Ctrl+Shift+F11, full screen over an embedded
+/// session. Neither a terminal nor a desktop passes either on to its session.
 fn toggles_fullscreen(physical: keyboard::key::Physical, modifiers: keyboard::Modifiers) -> bool {
-    (physical == keyboard::key::Physical::Code(keyboard::key::Code::F11) && modifiers.is_empty())
-        || crate::terminal_view::keys::is_fullscreen_key(physical, modifiers)
+    crate::terminal_view::keys::toggles_fullscreen(physical, modifiers)
 }
 
 #[expect(clippy::too_many_lines, reason = "one arm per window key")]
