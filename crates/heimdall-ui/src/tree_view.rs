@@ -2701,7 +2701,7 @@ impl CursorSpot {
         *self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn set(&self, point: Point) {
+    pub(crate) fn set(&self, point: Point) {
         *self.0.lock().unwrap_or_else(PoisonError::into_inner) = point;
     }
 }

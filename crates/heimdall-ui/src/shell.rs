@@ -3641,15 +3641,24 @@ impl Shell {
         self.settings_shown() || matches!(self.page, Page::Tunnels | Page::Scheduled | Page::About)
     }
 
+    /// Whether a dialog, a menu, Quick Connect or the tour is drawn over the window now.
+    /// What is drawn, not what is held: a menu whose entries are gone (its tab closed, its
+    /// desktop no longer shown) stays in `self.menu` until something closes it, and holding
+    /// the full-screen exit button for it kept the button on screen for good (#502).
+    fn overlay_shown(&self) -> bool {
+        self.app.dialog.is_some()
+            || self.palette.is_some()
+            || self.tour.is_some()
+            || self.menu.as_ref().is_some_and(|(menu, _)| {
+                !self.menu_in_floating(menu) && self.open_menu_entries(menu).is_some()
+            })
+    }
+
     /// One reading of the pointer for the full-screen exit button, at `now`.
     fn read_fullscreen_chrome(&mut self, now: std::time::Instant) {
-        let overlay_open = self.app.dialog.is_some()
-            || self.menu.is_some()
-            || self.palette.is_some()
-            || self.tour.is_some();
         let reading = crate::fullscreen_chrome::Reading {
             pointer: self.cursor.get(),
-            overlay_open,
+            overlay_open: self.overlay_shown(),
             reduced_motion: self.reduced_motion,
         };
         if let Some(chrome) = self.fullscreen_chrome.as_mut() {
@@ -8496,6 +8505,7 @@ impl Shell {
             .on_release(Message::ContentRelease)
             .interactive(self.takes_keys(tab, focused))
             .fit(fit)
+            .fullscreen(self.fullscreen)
             .density(self.density_of(tab.id));
         let tab_id = tab.id;
         // A fixed size that does not fill the tab says so for a while, at the bottom right of
@@ -14972,5 +14982,82 @@ mod tests {
             main_only((None, (other, Message::ToggleFullscreen))),
             Some(Message::ToggleFullscreen)
         ));
+    }
+    fn fullscreen_shell(dir: &std::path::Path) -> Shell {
+        Shell::with_app(App::new(AppConfig {
+            profiles_file: dir.join("profiles.toml"),
+            known_hosts: dir.join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: INITIAL_GRID,
+            files_start: dir.to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        }))
+    }
+
+    /// Reads the pointer as the chrome tick does, `millis` after `start`.
+    fn chrome_tick(shell: &mut Shell, start: std::time::Instant, millis: u64) {
+        let now = start + std::time::Duration::from_millis(millis);
+        let _ = shell.update(Message::ChromeTick(now));
+    }
+
+    fn exit_button_shown(shell: &Shell, start: std::time::Instant, millis: u64) -> bool {
+        let at = start + std::time::Duration::from_millis(millis);
+        shell
+            .fullscreen_chrome
+            .is_some_and(|chrome| chrome.is_visible(at))
+    }
+
+    #[test]
+    fn a_menu_with_nothing_to_draw_does_not_hold_the_exit_button() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = fullscreen_shell(dir.path());
+        let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Uuid));
+        let tab = shell.shown_tab_id().expect("the tool's tab");
+        let _ = shell.update(Message::ToggleFullscreen);
+        // A Resolution menu is drawn only while its tab shows a desktop: this one is a tool.
+        shell.menu = Some((TreeMenu::Resolution(tab), iced::Point::ORIGIN));
+        assert!(!shell.overlay_shown(), "nothing of it is drawn");
+        let start = std::time::Instant::now();
+        shell.cursor.set(iced::Point::new(1700.0, 1000.0));
+        for millis in (0..=5_000).step_by(100) {
+            chrome_tick(&mut shell, start, millis);
+        }
+        assert!(!exit_button_shown(&shell, start, 5_000));
+    }
+
+    #[test]
+    fn a_dialog_the_tour_or_a_drawn_menu_holds_the_exit_button() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = fullscreen_shell(dir.path());
+        let _ = shell.update(Message::ToggleFullscreen);
+        assert!(!shell.overlay_shown());
+        shell.menu = Some((TreeMenu::Add, iced::Point::ORIGIN));
+        assert!(shell.overlay_shown(), "the Add menu is drawn");
+        shell.menu = None;
+        let _ = shell.update(Message::App(AppMessage::NewProfile));
+        assert!(shell.overlay_shown(), "a dialog is open");
+        let start = std::time::Instant::now();
+        shell.cursor.set(iced::Point::new(1700.0, 1000.0));
+        for millis in (0..=6_000).step_by(100) {
+            chrome_tick(&mut shell, start, millis);
+        }
+        assert!(exit_button_shown(&shell, start, 6_000));
+    }
+
+    #[test]
+    fn the_exit_button_hides_after_the_delay_with_the_pointer_still_in_the_middle() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = fullscreen_shell(dir.path());
+        let _ = shell.update(Message::ToggleFullscreen);
+        let start = std::time::Instant::now();
+        shell.cursor.set(iced::Point::new(1700.0, 1000.0));
+        for millis in (0..=5_000).step_by(100) {
+            chrome_tick(&mut shell, start, millis);
+        }
+        assert!(
+            !exit_button_shown(&shell, start, 5_000),
+            "a still pointer far from the top edge hides the button"
+        );
     }
 }
