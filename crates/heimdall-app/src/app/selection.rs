@@ -135,7 +135,7 @@ impl App {
                 let before = self.organizations(&ids);
                 let moved = self.store.apply(|store| {
                     for id in &ids {
-                        store.set_group(id, to.clone());
+                        store.move_into_folder(id, to.clone());
                     }
                 });
                 if let Err(error) = moved {

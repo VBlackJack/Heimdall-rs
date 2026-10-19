@@ -63,6 +63,7 @@ use heimdall_app::{
     VaultHelloMessage, VaultTicket, vault_hello, windows_hello,
 };
 use heimdall_core::folder::FolderError;
+use heimdall_core::folder_defaults::InheritedField;
 use heimdall_core::import::csharp_settings::PreferenceOutcome;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
@@ -1837,6 +1838,8 @@ impl Destination {
 
 /// The application's name, at the head of the navigation: a name, not translated.
 const APP_NAME: &str = "Heimdall";
+/// Between the folders listed in a question.
+const FOLDER_LIST_SEPARATOR: &str = ", ";
 
 /// Room after the application's name.
 const NAV_TITLE_PADDING: [f32; 2] = [0.0, 16.0];
@@ -10416,6 +10419,11 @@ fn labelled_field(
         ),
     };
     let placeholder = shown.unwrap_or(placeholder);
+    let inherited = match field {
+        ProfileField::Username => Some(InheritedField::Username),
+        ProfileField::Port => Some(InheritedField::Port),
+        _ => None,
+    };
     column![
         dialog_parts::label(label),
         text_input(&placeholder, draft.value(field))
@@ -10424,8 +10432,20 @@ fn labelled_field(
             .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
             .on_submit(Message::SaveProfileForm),
     ]
+    .extend(inherited.and_then(|field| from_folder_hint(draft, field)))
     .spacing(spacing::XS)
     .into()
+}
+
+/// Says that the value of `field` was taken from its folder's defaults, while the user has
+/// not changed it.
+fn from_folder_hint<'a>(
+    draft: &ProfileDraft,
+    field: InheritedField,
+) -> Option<Element<'a, Message>> {
+    draft.inherited_from(field).map(|folder| {
+        dialog_parts::hint(fl!("ui-profile-from-folder", folder = server_text(folder))).into()
+    })
 }
 
 /// The SSH key field, with the C# "Browse..." button beside it.
@@ -10446,6 +10466,7 @@ fn key_field(draft: &ProfileDraft) -> Element<'_, Message> {
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
     ]
+    .extend(from_folder_hint(draft, InheritedField::KeyPath))
     .spacing(spacing::XS)
     .into()
 }
@@ -10697,6 +10718,7 @@ fn network_section<'a>(
             ]
             .spacing(spacing::SM),
         );
+        section_column = section_column.extend(from_folder_hint(draft, InheritedField::Gateway));
         section_column = section_column.push(dialog_parts::hint(if routed.is_some() {
             fl!("ui-profile-gateway-explain-tunnel")
         } else {
@@ -13005,6 +13027,7 @@ fn environment_choice(draft: &ProfileDraft) -> Element<'_, Message> {
         .menu_style(styles::menu)
         .width(Length::Fill),
     ]
+    .extend(from_folder_hint(draft, InheritedField::Environment))
     .spacing(spacing::XS)
     .into()
 }
@@ -13704,6 +13727,7 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             name,
             servers,
             gateways,
+            folders,
             ..
         } => (
             fl!("ui-dialog-delete-gateway-title"),
@@ -13711,7 +13735,13 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
                 "ui-dialog-delete-gateway-body",
                 name = server_text(name),
                 servers = (*servers),
-                gateways = (*gateways)
+                gateways = (*gateways),
+                folder_count = folders.len(),
+                folders = folders
+                    .iter()
+                    .map(|path| server_text(path))
+                    .collect::<Vec<_>>()
+                    .join(FOLDER_LIST_SEPARATOR)
             ),
             fl!("ui-gateways-delete"),
         ),

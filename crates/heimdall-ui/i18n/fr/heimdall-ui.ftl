@@ -2357,6 +2357,10 @@ ui-dialog-delete-gateway-body = Supprimer la passerelle "{ $name }" ?
     Références à effacer :
     - Serveurs : { $servers }
     - Passerelles enfants : { $gateways }
+    - Valeurs par défaut de dossiers : { $folder_count ->
+        [0] 0
+       *[other] { $folder_count } ({ $folders })
+      }
 ui-status-gateway-deleted = Passerelle "{ $name }" supprimée.
 ui-status-gateways-reassigned = { $count ->
     [one] { $count } session réassignée.
@@ -5971,3 +5975,4 @@ ui-shared-report-reason-over-limit = La source contient déjà autant de session
 ui-shared-report-detail-unresolved = L'identifiant utilise la variable { $name }, qui n'a pas de valeur. Définissez-la dans les variables d'import MobaXterm.
 ui-shared-report-detail-mismatch = Le nom n'est ni l'hôte { $host } ni son premier libellé.
 ui-shared-report-detail-duplicate-host = L'hôte { $host } est aussi utilisé par { $others }.
+ui-profile-from-folder = Repris du dossier "{ $folder }".

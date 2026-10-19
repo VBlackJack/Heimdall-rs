@@ -69,15 +69,26 @@ impl App {
                 if let Some(Dialog::EditProfile { draft, error }) = self.dialog.as_mut()
                     && draft.editing.is_none()
                 {
+                    // The folder the form was opened from stays.
+                    let group = std::mem::take(&mut draft.group);
                     **draft = ProfileDraft::new_for(protocol);
+                    draft.group = group;
                     // As the C# "Add server" starts with the settings' default SSH and RDP
                     // modes (`ServerListViewModel.cs:1527-1531`).
                     draft.ssh_mode = ssh_mode;
-                    if let Some(gateway) = gateway {
-                        draft.choose_gateway(gateway);
-                    }
                     draft.rdp_extras.external = rdp_mode.is_external();
                     *error = None;
+                }
+                // The folder's gateway comes before the last one used: the folder is the
+                // more specific choice.
+                self.fill_draft_from_folder();
+                if let Some(gateway) = gateway
+                    && let Some(Dialog::EditProfile { draft, .. }) = self.dialog.as_mut()
+                    && draft.editing.is_none()
+                    && draft.gateway.is_none()
+                    && !draft.is_on(ProfileToggle::DirectConnection)
+                {
+                    draft.choose_gateway(gateway);
                 }
             }
             Message::ProfileToggle { toggle, on } => {
@@ -194,6 +205,26 @@ impl App {
             draft.set(field, value);
             // The message named what to fix; once the user fixes something, it goes.
             *error = None;
+        }
+        // Another folder typed gives another set of defaults.
+        if field == ProfileField::Group {
+            self.fill_draft_from_folder();
+        }
+    }
+
+    /// Fills the form of a new session from the defaults of the folder it names, what the
+    /// user has not set only (see [`ProfileDraft::apply_folder_defaults`]).
+    pub(super) fn fill_draft_from_folder(&mut self) {
+        let Some(Dialog::EditProfile { draft, .. }) = self.dialog.as_ref() else {
+            return;
+        };
+        if draft.editing.is_some() {
+            return;
+        }
+        let resolved = self.store.resolve_folder_defaults(draft.group.trim());
+        let known: Vec<ProfileId> = self.gateways().iter().map(|g| g.id.clone()).collect();
+        if let Some(Dialog::EditProfile { draft, .. }) = self.dialog.as_mut() {
+            draft.apply_folder_defaults(&resolved, |id| known.contains(id));
         }
     }
 

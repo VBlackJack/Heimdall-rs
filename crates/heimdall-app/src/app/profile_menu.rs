@@ -118,7 +118,7 @@ impl App {
             ProfileMenuMessage::Favorite { id, favorite } => self.set_favorites(&[id], favorite),
             ProfileMenuMessage::Move { id, to } => {
                 let before = self.organizations(std::slice::from_ref(&id));
-                if let Err(error) = self.store.apply(|store| store.set_group(&id, to)) {
+                if let Err(error) = self.store.apply(|store| store.move_into_folder(&id, to)) {
                     self.dialog = Some(Dialog::save_failed(&error));
                 } else {
                     // As the C# "Move to folder": undone from the Undo bar.

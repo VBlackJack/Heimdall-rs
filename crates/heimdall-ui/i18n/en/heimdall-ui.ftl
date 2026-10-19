@@ -2531,6 +2531,10 @@ ui-dialog-delete-gateway-body = Delete gateway "{ $name }"?
     References to clear:
     - Servers: { $servers }
     - Child gateways: { $gateways }
+    - Folder defaults: { $folder_count ->
+        [0] 0
+       *[other] { $folder_count } ({ $folders })
+      }
 ui-status-gateway-deleted = Gateway "{ $name }" deleted.
 ui-status-gateways-reassigned = { $count ->
     [one] Reassigned { $count } session.
@@ -5915,3 +5919,4 @@ ui-shared-report-reason-over-limit = The source already holds as many sessions a
 ui-shared-report-detail-unresolved = The login names the variable { $name }, which has no value. Define it in the MobaXterm import variables.
 ui-shared-report-detail-mismatch = The name is not the host { $host } nor its first label.
 ui-shared-report-detail-duplicate-host = The host { $host } is also used by { $others }.
+ui-profile-from-folder = Taken from folder "{ $folder }".

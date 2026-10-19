@@ -2928,6 +2928,9 @@ pub enum Dialog {
         servers: usize,
         /// Gateways reached through it.
         gateways: usize,
+        /// Folders whose defaults send their sessions through it, as the C#
+        /// `GatewayReferenceAnalyzer` lists them.
+        folders: Vec<String>,
     },
     /// Quit with live sessions, or text not saved in an integrated editor.
     ConfirmExit {
