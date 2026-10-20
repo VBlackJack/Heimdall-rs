@@ -835,7 +835,7 @@ mod tests {
             let mut profile = dc();
             profile.extras.compression = compression;
             let request = request(profile);
-            assert!(!request.builtin_compression, "off by default");
+            assert!(!request.builtin_compression, "the settings do not allow it");
             assert!(!rdp_config(&request).compression, "profile {compression}");
             assert!(!compresses(&request), "nothing to fall back from");
         }

@@ -2042,21 +2042,21 @@ fn credential_guard_is_not_required_by_default_kept_carried_and_reset_with_every
 }
 
 #[test]
-fn the_built_in_client_compresses_only_once_chosen_kept_carried_and_reset_with_rdp() {
+fn the_built_in_client_compresses_by_default_kept_carried_and_reset_with_rdp() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
     let mut settings = Settings::load(&path).expect("defaults");
-    assert!(!settings.builtin_rdp_compression, "off until chosen");
+    assert!(settings.builtin_rdp_compression, "on by default (#442)");
 
-    settings.builtin_rdp_compression = true;
+    settings.builtin_rdp_compression = false;
     settings.save(&path).expect("save");
     let text = std::fs::read_to_string(&path).expect("read");
     assert!(
-        text.contains("[rdp_session]") && text.contains("builtin_compression = true"),
+        text.contains("[rdp_session]") && text.contains("builtin_compression = false"),
         "{text}"
     );
-    assert!(Settings::load(&path).expect("load").builtin_rdp_compression);
-    // A file written before the setting existed: off, whatever its profiles say.
+    assert!(!Settings::load(&path).expect("load").builtin_rdp_compression);
+    // A file written before the setting existed: the default, on.
     let read = written(
         dir.path(),
         "version = 1
@@ -2064,15 +2064,20 @@ fn the_built_in_client_compresses_only_once_chosen_kept_carried_and_reset_with_r
 connect_timeout = 30
 ",
     );
-    assert!(!read.builtin_rdp_compression);
+    assert!(read.builtin_rdp_compression);
 
     // Carried, and turning it on is shown first: the server's data is then decompressed.
+    settings.builtin_rdp_compression = true;
     let (exported, _) = settings.export(None, false);
     assert!(
         exported.contains("builtin_compression = true"),
         "{exported}"
     );
-    let imported = Settings::default().import(&exported).expect("read");
+    let off = Settings {
+        builtin_rdp_compression: false,
+        ..Settings::default()
+    };
+    let imported = off.import(&exported).expect("read");
     assert!(imported.settings.builtin_rdp_compression);
     assert!(
         imported.changes.iter().any(|change| {
@@ -2087,8 +2092,9 @@ connect_timeout = 30
         settings.rdp_defaults.compression,
         "the C# RdpDefaultCompression"
     );
+    settings.builtin_rdp_compression = false;
     settings.reset_rdp();
-    assert!(!settings.builtin_rdp_compression, "reset with RDP");
+    assert!(settings.builtin_rdp_compression, "reset with RDP, to on");
 }
 
 #[test]
