@@ -212,8 +212,18 @@ fn connection_event(event: RdpEvent, target: &str) -> ConnectionEvent {
                 reason: safe(reason),
             }
         }
-        RdpEvent::Closed(_) => {
-            log::info!("RDP session to {target} ended");
+        RdpEvent::Closed(reason) => {
+            // Never a bare "ended": the side that stopped it is said. The server's own end
+            // is a warning, as the session logged the cause of it.
+            match reason {
+                CloseReason::Local => {
+                    log::info!("RDP session to {target} ended: stopped from this side");
+                }
+                CloseReason::Server => {
+                    log::info!("RDP session to {target} ended: closed by the server");
+                }
+                other => log::warn!("RDP session to {target} ended: {other:?}"),
+            }
             ConnectionEvent::Closed { exit_status: None }
         }
     }
@@ -319,6 +329,7 @@ async fn serve(
         .await
         .is_err()
     {
+        log::info!("RDP session to {target} stopped: the tab no longer listens");
         request.cancel.cancel();
         return;
     }
@@ -329,6 +340,7 @@ async fn serve(
             .await
             .is_err()
     {
+        log::info!("RDP session to {target} stopped: the tab no longer listens");
         request.cancel.cancel();
         return;
     }
@@ -353,6 +365,7 @@ async fn serve(
                 | ConnectionEvent::Failed(_)
         );
         if events.send(event).await.is_err() {
+            log::info!("RDP session to {target} stopped: the tab no longer listens");
             request.cancel.cancel();
             return;
         }
@@ -360,7 +373,12 @@ async fn serve(
             return;
         }
     }
+    // The session task dropped its events without closing: a panic or a bug, never a normal end.
+    log::warn!("RDP session to {target} ended: {SESSION_LOST_DETAIL}");
 }
+
+/// What a session says when its task ended without closing.
+const SESSION_LOST_DETAIL: &str = "the session task ended without a reason";
 
 /// Whether a session that ended for `reason`, `open_for` after it opened, connects again
 /// without compression: it could not read what its server compressed, it was compressing,
