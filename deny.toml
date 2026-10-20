@@ -12,6 +12,7 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained (merged into zbus 6); pulled by zbus 5, same path as RUSTSEC-2026-0372" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained (merged into zbus 6); pulled by zbus 5, same path as RUSTSEC-2026-0372" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained (merged into zbus 6); pulled by zbus 5 through iced (mundy), keepawake and the Linux keyring store; no zbus 6 release of those yet" },
+    { id = "RUSTSEC-2026-0374", reason = "basic-toml is unmaintained; pulled by i18n-config through i18n-embed (Fluent), which reads only the project's own i18n.toml, at build time" },
     # Decided by Julien Bombled on 2026-10-04, with iced's highlighter for the integrated
     # editor: syntect 5.3 through two-face. Nothing either crate reads comes from the
     # network or from a user's file.
