@@ -807,9 +807,9 @@ impl App {
         {
             return Vec::new();
         }
-        // The live session is stopped on purpose here: said at warn, so the session that
+        // The live session is stopped on purpose here: said, so the session that
         // ends right after a resize request is never a mystery.
-        log::warn!(
+        log::info!(
             "RDP resize path: the server refused {}x{} through Display Control, the live session ends and reconnects at that size",
             size.0,
             size.1

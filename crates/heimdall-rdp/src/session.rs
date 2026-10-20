@@ -995,7 +995,8 @@ impl Running {
                 frame = self.reader.read() => {
                     let (action, frame) = frame.map_err(|error| error.to_string())?;
                     if is_disconnect_ultimatum(action, &frame) {
-                        log::warn!("RDP session ended: {ULTIMATUM_LINE}");
+                        // A normal logoff ends this way too.
+                        log::info!("RDP session ended: {ULTIMATUM_LINE}");
                         return Ok(CloseReason::Server);
                     }
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1071,7 +1072,12 @@ impl Running {
                     }
                     ActiveStageOutput::Terminate(reason) => {
                         let (close, said) = graceful_close(reason);
-                        log::warn!("RDP session ended: {said}");
+                        // Warn only for a reason the server gave that is not a logoff.
+                        if matches!(close, CloseReason::Disconnected(_)) {
+                            log::warn!("RDP session ended: {said}");
+                        } else {
+                            log::info!("RDP session ended: {said}");
+                        }
                         return Ok(close);
                     }
                     ActiveStageOutput::DeactivateAll => {
@@ -1350,7 +1356,7 @@ impl Running {
             }
             // Not encodable, or no display channel after all this time.
             Some(Err(_)) | None => {
-                log::warn!(
+                log::info!(
                     "RDP resize {width}x{height}: Display Control unusable (not advertised or not encodable), refused; the application connects again at that size"
                 );
                 self.waiting_since = None;

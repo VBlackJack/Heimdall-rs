@@ -215,10 +215,14 @@ fn connection_event(event: RdpEvent, target: &str) -> ConnectionEvent {
         RdpEvent::Closed(reason) => {
             // Never a bare "ended": the side that stopped it is said. The server's own end
             // is a warning, as the session logged the cause of it.
-            if reason == CloseReason::Local {
-                log::info!("RDP session to {target} ended: stopped from this side");
-            } else {
-                log::warn!("RDP session to {target} ended: {reason:?}");
+            match reason {
+                CloseReason::Local => {
+                    log::info!("RDP session to {target} ended: stopped from this side");
+                }
+                CloseReason::Server => {
+                    log::info!("RDP session to {target} ended: closed by the server");
+                }
+                other => log::warn!("RDP session to {target} ended: {other:?}"),
             }
             ConnectionEvent::Closed { exit_status: None }
         }
@@ -325,7 +329,7 @@ async fn serve(
         .await
         .is_err()
     {
-        log::warn!("RDP session to {target} stopped: the tab no longer listens");
+        log::info!("RDP session to {target} stopped: the tab no longer listens");
         request.cancel.cancel();
         return;
     }
@@ -336,7 +340,7 @@ async fn serve(
             .await
             .is_err()
     {
-        log::warn!("RDP session to {target} stopped: the tab no longer listens");
+        log::info!("RDP session to {target} stopped: the tab no longer listens");
         request.cancel.cancel();
         return;
     }
@@ -361,7 +365,7 @@ async fn serve(
                 | ConnectionEvent::Failed(_)
         );
         if events.send(event).await.is_err() {
-            log::warn!("RDP session to {target} stopped: the tab no longer listens");
+            log::info!("RDP session to {target} stopped: the tab no longer listens");
             request.cancel.cancel();
             return;
         }
@@ -371,11 +375,6 @@ async fn serve(
     }
     // The session task dropped its events without closing: a panic or a bug, never a normal end.
     log::warn!("RDP session to {target} ended: {SESSION_LOST_DETAIL}");
-    let _ = events
-        .send(ConnectionEvent::Failed(UiError::RdpProtocol {
-            detail: SESSION_LOST_DETAIL.to_owned(),
-        }))
-        .await;
 }
 
 /// What a session says when its task ended without closing.
