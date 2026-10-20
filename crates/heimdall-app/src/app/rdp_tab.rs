@@ -807,9 +807,10 @@ impl App {
         {
             return Vec::new();
         }
-        log::debug!(
-            target: "heimdall::fullscreen",
-            "RDP resize path: the server refused {}x{} through Display Control, reconnecting at that size",
+        // The live session is stopped on purpose here: said at warn, so the session that
+        // ends right after a resize request is never a mystery.
+        log::warn!(
+            "RDP resize path: the server refused {}x{} through Display Control, the live session ends and reconnects at that size",
             size.0,
             size.1
         );
