@@ -677,6 +677,9 @@ pub struct Settings {
     /// The open sessions past which a banner says what they cost, as the C#
     /// `MaxEmbeddedSessions` (`AppSettings.cs:304-306`): a threshold, never a limit.
     pub max_sessions: u32,
+    /// How far the pointer must move between two readings for the full-screen exit button
+    /// to count it as moved, in logical pixels; 0 counts any change.
+    pub fullscreen_pointer_tolerance: u32,
     /// The application writes its diagnostics log, as the C# `EnableLogging`: on.
     pub diagnostics_log: bool,
     /// Whether, and how often, every server is checked for an answer in the background.
@@ -1190,6 +1193,20 @@ pub fn rdp_auto_reconnect_attempts_accepted(attempts: u32) -> bool {
     (RDP_AUTO_RECONNECT_ATTEMPTS_MIN..=RDP_AUTO_RECONNECT_ATTEMPTS_MAX).contains(&attempts)
 }
 
+/// How far, in logical pixels, the pointer must move between two readings (100 ms apart) for
+/// the full-screen exit button to count it as moved, by default. The C# compares exact
+/// pixels of the computer's own pointer; a window sees the pointer through its events, and
+/// the lab saw a still pointer creep a pixel every few seconds. 0 counts any change.
+pub const FULLSCREEN_POINTER_TOLERANCE_DEFAULT: u32 = 3;
+/// The largest tolerance accepted.
+pub const FULLSCREEN_POINTER_TOLERANCE_MAX: u32 = 50;
+
+/// Whether `pixels` is a full-screen pointer tolerance the settings accept.
+#[must_use]
+pub fn fullscreen_pointer_tolerance_accepted(pixels: u32) -> bool {
+    pixels <= FULLSCREEN_POINTER_TOLERANCE_MAX
+}
+
 /// The open sessions threshold by default, as the C# `DefaultMaxEmbeddedSessions`.
 pub const MAX_SESSIONS_DEFAULT: u32 = 10;
 /// The lowest threshold, as the C# setting's range.
@@ -1372,6 +1389,7 @@ impl Default for Settings {
             collapse_tunnels_panel: true,
             prevent_sleep: true,
             max_sessions: MAX_SESSIONS_DEFAULT,
+            fullscreen_pointer_tolerance: FULLSCREEN_POINTER_TOLERANCE_DEFAULT,
             diagnostics_log: true,
             reachability: Reachability::default(),
             sftp_browser: SftpBrowser::default(),
@@ -1909,6 +1927,9 @@ struct GeneralSection {
     /// Absent is no limit.
     #[serde(default)]
     max_sessions: Option<u32>,
+    /// Absent is the default, 3 pixels.
+    #[serde(default)]
+    fullscreen_pointer_tolerance: Option<u32>,
     /// Absent is the C# default: written.
     #[serde(default)]
     diagnostics_log: Option<bool>,
@@ -2323,6 +2344,11 @@ impl Settings {
                 max_sessions_accepted,
                 MAX_SESSIONS_DEFAULT,
             ),
+            fullscreen_pointer_tolerance: within(
+                file.general.fullscreen_pointer_tolerance,
+                fullscreen_pointer_tolerance_accepted,
+                FULLSCREEN_POINTER_TOLERANCE_DEFAULT,
+            ),
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
             show_gateway_badge: file.general.show_gateway_badge.unwrap_or(true),
             show_properties_panel: file.general.show_properties_panel.unwrap_or(false),
@@ -2468,6 +2494,7 @@ impl Settings {
                 collapse_tunnels_panel: Some(self.collapse_tunnels_panel),
                 prevent_sleep: Some(self.prevent_sleep),
                 max_sessions: Some(self.max_sessions),
+                fullscreen_pointer_tolerance: Some(self.fullscreen_pointer_tolerance),
                 diagnostics_log: Some(self.diagnostics_log),
                 show_gateway_badge: Some(self.show_gateway_badge),
                 show_properties_panel: Some(self.show_properties_panel),

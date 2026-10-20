@@ -43,6 +43,12 @@ pub const FADE_FRAME: Duration = Duration::from_millis(16);
 /// pixels, as the C# `FullscreenChromeRevealThresholdPx`.
 pub const REVEAL_THRESHOLD: f32 = 30.0;
 
+/// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
+pub const LOG_TARGET: &str = "heimdall::fullscreen";
+
+/// How often the readings are summed up in the log.
+const TRACE_EVERY: Duration = Duration::from_secs(1);
+
 /// What the window tells the chrome at each reading.
 #[derive(Debug, Clone, Copy)]
 pub struct Reading {
@@ -52,7 +58,75 @@ pub struct Reading {
     pub overlay_open: bool,
     /// Animations are turned off: the chrome shows and hides at once.
     pub reduced_motion: bool,
+    /// How far, in logical pixels, the pointer must go between two readings to count as
+    /// moved: the `fullscreen_pointer_tolerance` setting; 0 counts any change.
+    pub tolerance: f32,
 }
+
+/// What the window's pointer events were over the last second, for the log: how many, how far
+/// in all, so a pointer that is still but reported moving shows which feed does it.
+#[derive(Debug, Clone, Copy)]
+pub struct PointerTrace {
+    events: u32,
+    travel: f32,
+    since: Option<Instant>,
+}
+
+impl PointerTrace {
+    /// No event yet.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            events: 0,
+            travel: 0.0,
+            since: None,
+        }
+    }
+
+    /// An event of the window's pointer feed that moved the pointer by `distance`.
+    pub fn note(&mut self, distance: f32) {
+        if distance > 0.0 {
+            self.events += 1;
+            self.travel += distance;
+            if distance < SMALL_MOVE {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "window pointer event (feed: window CursorMoved): small move of {distance:.1} px"
+                );
+            }
+        }
+    }
+
+    /// Says the last second's events in the log once a second, with how far the other feed,
+    /// the widget tracker, is from the window's (`tracker_gap`).
+    pub fn flush(&mut self, now: Instant, tracker_gap: f32) {
+        let since = *self.since.get_or_insert(now);
+        if now.saturating_duration_since(since) >= TRACE_EVERY {
+            log::debug!(
+                target: LOG_TARGET,
+                "window pointer feed: {} moves, {:.1} px in all, in the last {:?}; widget tracker is {:.1} px from it",
+                self.events,
+                self.travel,
+                now.saturating_duration_since(since),
+                tracker_gap
+            );
+            *self = Self {
+                since: Some(now),
+                ..Self::new()
+            };
+        }
+    }
+}
+
+impl Default for PointerTrace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A move below this, in logical pixels, is logged one by one: the creeping of a still
+/// pointer, not a hand.
+const SMALL_MOVE: f32 = 8.0;
 
 /// The chrome's visibility in full screen.
 #[derive(Debug, Clone, Copy)]
@@ -66,18 +140,31 @@ pub struct FullscreenChrome {
     /// The opacity when the last fade began, and when.
     fade_from: f32,
     fade_start: Instant,
+    /// Readings since the last summary in the log, and when it was written.
+    traced: (u32, Instant),
+    /// The overlay flag at the last reading, to log a change only.
+    last_overlay: bool,
+    /// Whether the pointer's position changed since the last summary in the log.
+    moved_since_trace: bool,
 }
 
 impl FullscreenChrome {
     /// A chrome shown at `now`, as full screen begins.
     #[must_use]
     pub fn entered(now: Instant) -> Self {
+        log::debug!(
+            target: LOG_TARGET,
+            "chrome timer armed: entered full screen, hides in {AUTO_HIDE_DELAY:?}"
+        );
         Self {
             shown: true,
             hide_at: now + AUTO_HIDE_DELAY,
             last_pointer: None,
             fade_from: 1.0,
             fade_start: now,
+            traced: (0, now),
+            last_overlay: false,
+            moved_since_trace: false,
         }
     }
 
@@ -120,15 +207,42 @@ impl FullscreenChrome {
 
     /// One reading of the pointer at `now`.
     pub fn read(&mut self, now: Instant, reading: Reading) {
-        let moved = self
-            .last_pointer
-            .is_some_and(|last| last != reading.pointer);
+        // Between two readings, not from an anchor: a pointer creeping a pixel in seven
+        // seconds (measured in the lab) never adds up to a move.
+        let moved = self.last_pointer.is_some_and(|last| {
+            let (dx, dy) = (last.x - reading.pointer.x, last.y - reading.pointer.y);
+            let distance = dx.hypot(dy);
+            distance > 0.0 && distance >= reading.tolerance
+        });
+        if let Some(last) = self.last_pointer.filter(|_| moved) {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome pointer moved by {:.1} px",
+                (last.x - reading.pointer.x).hypot(last.y - reading.pointer.y)
+            );
+        }
         self.last_pointer = Some(reading.pointer);
+        self.moved_since_trace |= moved;
         let near_top = reading.pointer.y >= 0.0 && reading.pointer.y <= REVEAL_THRESHOLD;
         if near_top {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome timer reset: pointer at the top edge"
+            );
             self.show(now, reading.reduced_motion);
         } else if moved && self.shown {
+            // Only a shown chrome waits again: a hidden one comes back at the top edge alone,
+            // as the C# poll (`OnFullscreenChromeMousePollTick`).
+            log::debug!(target: LOG_TARGET, "chrome timer reset: pointer position changed");
             self.hide_at = now + AUTO_HIDE_DELAY;
+        }
+        if reading.overlay_open != self.last_overlay {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome overlay open: {}",
+                reading.overlay_open
+            );
+            self.last_overlay = reading.overlay_open;
         }
         // Under a menu or a dialog the wait starts again at each reading: the chrome goes
         // a full delay after the last of them closes, never while one is open.
@@ -136,7 +250,26 @@ impl FullscreenChrome {
             self.hide_at = now + AUTO_HIDE_DELAY;
         }
         if self.shown && now >= self.hide_at {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome timer fired: hiding"
+            );
             self.set_shown(false, now, reading.reduced_motion);
+        }
+        self.traced.0 += 1;
+        if now.saturating_duration_since(self.traced.1) >= TRACE_EVERY {
+            log::debug!(
+                target: LOG_TARGET,
+                "chrome: {} readings in the last {:?}, shown={}, pointer changed since the last summary={}, overlay={}, hides in {:?}",
+                self.traced.0,
+                now.saturating_duration_since(self.traced.1),
+                self.shown,
+                self.moved_since_trace,
+                reading.overlay_open,
+                self.hide_at.saturating_duration_since(now)
+            );
+            self.traced = (0, now);
+            self.moved_since_trace = false;
         }
     }
 
@@ -173,6 +306,7 @@ mod tests {
             pointer,
             overlay_open: false,
             reduced_motion: false,
+            tolerance: 3.0,
         }
     }
 
@@ -201,6 +335,65 @@ mod tests {
         let done = late + FADE_DURATION;
         assert!(chrome.opacity(done).abs() < f32::EPSILON);
         assert!(!chrome.is_visible(done));
+    }
+
+    #[test]
+    fn a_still_pointer_whose_readings_wander_a_little_does_not_keep_the_chrome() {
+        let start = Instant::now();
+        let mut chrome = FullscreenChrome::entered(start);
+        let (a, b) = (Point::new(1700.0, 1000.0), Point::new(1701.0, 999.5));
+        for step in 0..=60_u32 {
+            let pointer = if step % 2 == 0 { a } else { b };
+            chrome.read(at(start, u64::from(step) * 100), reading(pointer));
+        }
+        assert!(
+            !chrome.is_shown(),
+            "hidden after 3 s although the readings differ"
+        );
+    }
+
+    #[test]
+    fn only_the_top_edge_brings_a_hidden_chrome_back_not_a_creep_nor_a_real_move() {
+        let start = Instant::now();
+        let mut chrome = FullscreenChrome::entered(start);
+        chrome.read(start, reading(MIDDLE));
+        chrome.read(at(start, 3_000), reading(MIDDLE));
+        assert!(!chrome.is_shown());
+        // One pixel every 100 ms for a minute: 600 px in all, none of them a move.
+        for step in 1..=600_u16 {
+            let creep = Point::new(100.0 + f32::from(step), 400.0);
+            chrome.read(at(start, 3_000 + u64::from(step) * 100), reading(creep));
+        }
+        assert!(!chrome.is_shown(), "the readings differ by a pixel each");
+        let last = Point::new(700.0, 400.0);
+        chrome.read(
+            at(start, 70_000),
+            reading(Point::new(last.x + 20.0, last.y)),
+        );
+        assert!(
+            !chrome.is_shown(),
+            "a move far from the top edge does not show it"
+        );
+        chrome.read(at(start, 70_100), reading(TOP));
+        assert!(chrome.is_shown(), "the top edge does");
+    }
+
+    #[test]
+    fn a_tolerance_of_zero_counts_any_change_as_a_move() {
+        let start = Instant::now();
+        let mut chrome = FullscreenChrome::entered(start);
+        let exact = |pointer| Reading {
+            tolerance: 0.0,
+            ..reading(pointer)
+        };
+        chrome.read(start, exact(MIDDLE));
+        // A pixel each 2 s, as the lab's creeping pointer: with no tolerance each one counts
+        // and the chrome never hides.
+        for step in 1..=5_u16 {
+            let creep = Point::new(100.0 + f32::from(step), 400.0);
+            chrome.read(at(start, u64::from(step) * 2_000), exact(creep));
+        }
+        assert!(chrome.is_shown());
     }
 
     #[test]
@@ -235,9 +428,9 @@ mod tests {
     fn the_reveal_rule_stops_at_the_threshold() {
         let start = Instant::now();
         let mut chrome = FullscreenChrome::entered(start);
-        chrome.read(start, reading(MIDDLE));
-        chrome.read(at(start, 3_000), reading(MIDDLE));
         let just_below = Point::new(100.0, REVEAL_THRESHOLD + 1.0);
+        chrome.read(start, reading(just_below));
+        chrome.read(at(start, 3_000), reading(just_below));
         chrome.read(at(start, 3_100), reading(just_below));
         assert!(!chrome.is_shown());
         let on_edge = Point::new(100.0, REVEAL_THRESHOLD);

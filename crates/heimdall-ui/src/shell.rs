@@ -488,6 +488,24 @@ fn sidebar_drag_event(
     }
 }
 
+/// In full screen: where the pointer is, for the exit button's auto-hide.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the signature `event::listen_with` takes"
+)]
+fn fullscreen_pointer_event(
+    event: iced::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+            Some(Message::ChromePointer(position))
+        }
+        _ => None,
+    }
+}
+
 /// While the splitter above the properties panel is held: where the pointer is, and its
 /// release.
 #[expect(
@@ -897,6 +915,8 @@ pub enum Message {
     SystemReducedMotion(bool),
     /// A reading of the pointer, while full screen puts its exit button away.
     ChromeTick(std::time::Instant),
+    /// The pointer moved in full screen, seen by the window whatever widget took the event.
+    ChromePointer(Point),
     /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
     /// cannot be read.
     UserInput,
@@ -1241,6 +1261,7 @@ impl fmt::Debug for Message {
             Self::SystemHighContrast(on) => write!(f, "SystemHighContrast({on})"),
             Self::SystemReducedMotion(on) => write!(f, "SystemReducedMotion({on})"),
             Self::ChromeTick(_) => f.write_str("ChromeTick"),
+            Self::ChromePointer(_) => f.write_str("ChromePointer"),
             Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1608,6 +1629,13 @@ pub struct Shell {
     fullscreen: bool,
     /// The exit button's visibility in full screen; none outside it.
     fullscreen_chrome: Option<crate::fullscreen_chrome::FullscreenChrome>,
+    /// The overlay flags at the last reading of the pointer, to log a change only.
+    chrome_overlay_flags: (bool, bool, bool, bool),
+    /// The pointer as the window's events say, the one feed the full-screen exit button
+    /// reads: two feeds disagreeing kept its timer resetting.
+    chrome_pointer: Point,
+    /// The window's pointer events of the last second, for the log.
+    chrome_trace: crate::fullscreen_chrome::PointerTrace,
     /// Physical pixels per logical one on the window's screen: remote desktops are drawn
     /// one of their pixels per physical one.
     density: f32,
@@ -1965,6 +1993,9 @@ impl Shell {
             page: Page::Tab,
             fullscreen: false,
             fullscreen_chrome: None,
+            chrome_overlay_flags: (false, false, false, false),
+            chrome_pointer: Point::ORIGIN,
+            chrome_trace: crate::fullscreen_chrome::PointerTrace::new(),
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
@@ -2369,6 +2400,12 @@ impl Shell {
                 crate::fullscreen_chrome::POLL_INTERVAL
             };
             ticks.push(iced::time::every(interval).map(Message::ChromeTick));
+            // The pointer as the window sees it, whatever widget took the event: a tree of
+            // widgets may not hand every move to the tracker that records it.
+            ticks.push(in_main_window(
+                window_tagged!(fullscreen_pointer_event),
+                self.main_window,
+            ));
         }
         ticks
     }
@@ -2914,6 +2951,15 @@ impl Shell {
                 self.read_fullscreen_chrome(now);
                 Vec::new()
             }
+            Message::ChromePointer(position) => {
+                let (dx, dy) = (
+                    position.x - self.chrome_pointer.x,
+                    position.y - self.chrome_pointer.y,
+                );
+                self.chrome_trace.note(dx.hypot(dy));
+                self.chrome_pointer = position;
+                Vec::new()
+            }
             Message::UserInput => {
                 self.last_input = std::time::Instant::now();
                 Vec::new()
@@ -3306,6 +3352,13 @@ impl Shell {
             }
             Message::ToggleFullscreen => {
                 self.fullscreen = !self.fullscreen;
+                log::debug!(
+                    target: crate::fullscreen_chrome::LOG_TARGET,
+                    "full screen {}",
+                    if self.fullscreen { "entered" } else { "left" }
+                );
+                // Where it was last seen, until the first move says better.
+                self.chrome_pointer = self.cursor.get();
                 self.fullscreen_chrome = self.fullscreen.then(|| {
                     crate::fullscreen_chrome::FullscreenChrome::entered(std::time::Instant::now())
                 });
@@ -3641,17 +3694,50 @@ impl Shell {
         self.settings_shown() || matches!(self.page, Page::Tunnels | Page::Scheduled | Page::About)
     }
 
+    /// Whether a dialog, a menu, Quick Connect or the tour is drawn over the window now.
+    /// What is drawn, not what is held: a menu whose entries are gone (its tab closed, its
+    /// desktop no longer shown) stays in `self.menu` until something closes it, and holding
+    /// the full-screen exit button for it kept the button on screen for good (#502).
+    fn overlay_shown(&self) -> bool {
+        self.app.dialog.is_some()
+            || self.palette.is_some()
+            || self.tour.is_some()
+            || self.menu.as_ref().is_some_and(|(menu, _)| {
+                !self.menu_in_floating(menu) && self.open_menu_entries(menu).is_some()
+            })
+    }
+
     /// One reading of the pointer for the full-screen exit button, at `now`.
     fn read_fullscreen_chrome(&mut self, now: std::time::Instant) {
-        let overlay_open = self.app.dialog.is_some()
-            || self.menu.is_some()
-            || self.palette.is_some()
-            || self.tour.is_some();
+        let flags = (
+            self.app.dialog.is_some(),
+            self.menu.is_some(),
+            self.palette.is_some(),
+            self.tour.is_some(),
+        );
+        if flags != self.chrome_overlay_flags {
+            log::debug!(
+                target: crate::fullscreen_chrome::LOG_TARGET,
+                "overlay flags (dialog, menu held, palette, tour): {flags:?}, drawn: {}",
+                self.overlay_shown()
+            );
+            self.chrome_overlay_flags = flags;
+        }
         let reading = crate::fullscreen_chrome::Reading {
-            pointer: self.cursor.get(),
-            overlay_open,
+            pointer: self.chrome_pointer,
+            overlay_open: self.overlay_shown(),
             reduced_motion: self.reduced_motion,
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a tolerance of a few pixels, far below f32's exact integers"
+            )]
+            tolerance: self.app.settings().fullscreen_pointer_tolerance as f32,
         };
+        let tracker = self.cursor.get();
+        self.chrome_trace.flush(
+            now,
+            (tracker.x - self.chrome_pointer.x).hypot(tracker.y - self.chrome_pointer.y),
+        );
         if let Some(chrome) = self.fullscreen_chrome.as_mut() {
             chrome.read(now, reading);
         }
@@ -8496,6 +8582,7 @@ impl Shell {
             .on_release(Message::ContentRelease)
             .interactive(self.takes_keys(tab, focused))
             .fit(fit)
+            .fullscreen(self.fullscreen)
             .density(self.density_of(tab.id));
         let tab_id = tab.id;
         // A fixed size that does not fill the tab says so for a while, at the bottom right of
@@ -14972,5 +15059,104 @@ mod tests {
             main_only((None, (other, Message::ToggleFullscreen))),
             Some(Message::ToggleFullscreen)
         ));
+    }
+    fn fullscreen_shell(dir: &std::path::Path) -> Shell {
+        Shell::with_app(App::new(AppConfig {
+            profiles_file: dir.join("profiles.toml"),
+            known_hosts: dir.join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: INITIAL_GRID,
+            files_start: dir.to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        }))
+    }
+
+    /// Reads the pointer as the chrome tick does, `millis` after `start`.
+    fn chrome_tick(shell: &mut Shell, start: std::time::Instant, millis: u64) {
+        let now = start + std::time::Duration::from_millis(millis);
+        let _ = shell.update(Message::ChromeTick(now));
+    }
+
+    fn exit_button_shown(shell: &Shell, start: std::time::Instant, millis: u64) -> bool {
+        let at = start + std::time::Duration::from_millis(millis);
+        shell
+            .fullscreen_chrome
+            .is_some_and(|chrome| chrome.is_visible(at))
+    }
+
+    #[test]
+    fn a_menu_with_nothing_to_draw_does_not_hold_the_exit_button() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = fullscreen_shell(dir.path());
+        let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Uuid));
+        let tab = shell.shown_tab_id().expect("the tool's tab");
+        let _ = shell.update(Message::ToggleFullscreen);
+        // A Resolution menu is drawn only while its tab shows a desktop: this one is a tool.
+        shell.menu = Some((TreeMenu::Resolution(tab), iced::Point::ORIGIN));
+        assert!(!shell.overlay_shown(), "nothing of it is drawn");
+        let start = std::time::Instant::now();
+        shell.chrome_pointer = iced::Point::new(1700.0, 1000.0);
+        for millis in (0..=5_000).step_by(100) {
+            chrome_tick(&mut shell, start, millis);
+        }
+        assert!(!exit_button_shown(&shell, start, 5_000));
+    }
+
+    #[test]
+    fn a_dialog_the_tour_or_a_drawn_menu_holds_the_exit_button() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = fullscreen_shell(dir.path());
+        let _ = shell.update(Message::ToggleFullscreen);
+        assert!(!shell.overlay_shown());
+        shell.menu = Some((TreeMenu::Add, iced::Point::ORIGIN));
+        assert!(shell.overlay_shown(), "the Add menu is drawn");
+        shell.menu = None;
+        let _ = shell.update(Message::App(AppMessage::NewProfile));
+        assert!(shell.overlay_shown(), "a dialog is open");
+        let start = std::time::Instant::now();
+        shell.chrome_pointer = iced::Point::new(1700.0, 1000.0);
+        for millis in (0..=6_000).step_by(100) {
+            chrome_tick(&mut shell, start, millis);
+        }
+        assert!(exit_button_shown(&shell, start, 6_000));
+    }
+
+    #[test]
+    fn the_window_pointer_events_feed_the_exit_button_and_repeats_do_not_rearm_it() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = fullscreen_shell(dir.path());
+        let _ = shell.update(Message::ToggleFullscreen);
+        let moved = iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position: iced::Point::new(1700.0, 1000.0),
+        });
+        let message =
+            fullscreen_pointer_event(moved, event::Status::Captured, window::Id::unique())
+                .expect("a move is the window's whatever took it");
+        let _ = shell.update(message);
+        assert_eq!(shell.chrome_pointer, iced::Point::new(1700.0, 1000.0));
+        let start = std::time::Instant::now();
+        // The same position over and over, as events that do not move it: the wait runs on.
+        for millis in (0..=5_000).step_by(100) {
+            let _ = shell.update(Message::ChromePointer(iced::Point::new(1700.0, 1000.0)));
+            chrome_tick(&mut shell, start, millis);
+        }
+        assert!(!exit_button_shown(&shell, start, 5_000));
+    }
+
+    #[test]
+    fn the_exit_button_hides_after_the_delay_with_the_pointer_still_in_the_middle() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = fullscreen_shell(dir.path());
+        let _ = shell.update(Message::ToggleFullscreen);
+        let start = std::time::Instant::now();
+        shell.chrome_pointer = iced::Point::new(1700.0, 1000.0);
+        for millis in (0..=5_000).step_by(100) {
+            chrome_tick(&mut shell, start, millis);
+        }
+        assert!(
+            !exit_button_shown(&shell, start, 5_000),
+            "a still pointer far from the top edge hides the button"
+        );
     }
 }

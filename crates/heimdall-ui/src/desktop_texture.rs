@@ -104,6 +104,9 @@ impl shader::Primitive for Desktop {
     }
 }
 
+/// How many uploads are logged after a texture was made at another size.
+const TRACED_UPLOADS: u32 = 30;
+
 /// A tab's texture.
 struct Slot {
     width: u16,
@@ -122,6 +125,8 @@ pub struct Pipeline {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     textures: HashMap<TabId, Slot>,
+    /// Uploads still to log, after a texture was made at another size.
+    traced_uploads: u32,
 }
 
 impl Pipeline {
@@ -131,6 +136,7 @@ impl Pipeline {
             layout,
             sampler,
             textures,
+            traced_uploads: traced,
             ..
         } = self;
         desktop.framebuffer.read(|width, height, pixels| {
@@ -143,6 +149,13 @@ impl Pipeline {
                 .entry(desktop.tab)
                 .and_modify(|texture| {
                     if (texture.width, texture.height) != (width, height) {
+                        log::debug!(
+                            target: "heimdall::fullscreen",
+                            "texture made again {}x{} -> {width}x{height}",
+                            texture.width,
+                            texture.height
+                        );
+                        *traced = TRACED_UPLOADS;
                         *texture = Slot::new(device, layout, sampler, width, height);
                     }
                 })
@@ -167,6 +180,14 @@ impl Pipeline {
                 extent(width, height),
             );
             texture.generation = Some(desktop.generation);
+            if *traced > 0 {
+                *traced -= 1;
+                log::debug!(
+                    target: "heimdall::fullscreen",
+                    "texture uploaded: generation {}, {width}x{height}",
+                    desktop.generation
+                );
+            }
         });
     }
 }
@@ -293,6 +314,7 @@ impl shader::Pipeline for Pipeline {
             layout,
             sampler,
             textures: HashMap::new(),
+            traced_uploads: 0,
         }
     }
 

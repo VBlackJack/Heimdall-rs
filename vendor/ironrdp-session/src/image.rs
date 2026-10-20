@@ -12,8 +12,28 @@ use crate::{SessionResult, custom_err};
 
 const TILE_SIZE: u16 = 64;
 
+/// What the tiles applied to an image painted, for diagnostics only: nothing here changes how
+/// an image is decoded.
+#[derive(Debug, Clone, Default)]
+pub struct PaintStats {
+    /// Tiles applied since the last [`DecodedImage::take_paint_stats`].
+    pub tiles: u32,
+    /// Tiles skipped as outside the image since then.
+    pub skipped: u32,
+    /// Sum of the areas the tiles painted since then, in pixels (overlaps counted twice).
+    pub area: u64,
+    /// 64x64 cells of the image touched by a tile since the image was made.
+    pub cells_touched: u32,
+    /// 64x64 cells the image has.
+    pub cells_total: u32,
+}
+
 pub struct DecodedImage {
     pixel_format: PixelFormat,
+    /// The tiles applied, see [`PaintStats`].
+    paint: PaintStats,
+    /// One flag per 64x64 cell of the image, row by row: touched by a tile.
+    cells: Vec<bool>,
     data: Vec<u8>,
 
     /// Part of the pointer image which should be drawn
@@ -146,8 +166,15 @@ impl DecodedImage {
     pub fn new(pixel_format: PixelFormat, width: u16, height: u16) -> Self {
         let len = usize::from(width) * usize::from(height) * usize::from(pixel_format.bytes_per_pixel());
 
+        let columns = usize::from(width).div_ceil(usize::from(TILE_SIZE));
+        let rows = usize::from(height).div_ceil(usize::from(TILE_SIZE));
         Self {
             pixel_format,
+            paint: PaintStats {
+                cells_total: u32::try_from(columns * rows).unwrap_or(u32::MAX),
+                ..PaintStats::default()
+            },
+            cells: vec![false; columns * rows],
             data: vec![0; len],
             width,
             height,
@@ -173,8 +200,52 @@ impl DecodedImage {
         self.pixel_format
     }
 
+    /// What the tiles painted since the last call, and the cells touched since the image was
+    /// made; the counters since the last call start again.
+    pub fn take_paint_stats(&mut self) -> PaintStats {
+        let stats = self.paint.clone();
+        self.paint.tiles = 0;
+        self.paint.skipped = 0;
+        self.paint.area = 0;
+        stats
+    }
+
+    fn note_painted(&mut self, rectangle: &InclusiveRectangle) {
+        self.paint.area += u64::from(rectangle.width()) * u64::from(rectangle.height());
+        let columns = usize::from(self.width).div_ceil(usize::from(TILE_SIZE));
+        let (first_column, last_column) = (
+            usize::from(rectangle.left / TILE_SIZE),
+            usize::from(rectangle.right / TILE_SIZE),
+        );
+        let (first_row, last_row) = (
+            usize::from(rectangle.top / TILE_SIZE),
+            usize::from(rectangle.bottom / TILE_SIZE),
+        );
+        for row in first_row..=last_row {
+            for column in first_column..=last_column {
+                if let Some(cell) = self.cells.get_mut(row * columns + column)
+                    && !*cell
+                {
+                    *cell = true;
+                    self.paint.cells_touched += 1;
+                }
+            }
+        }
+    }
+
     pub fn data(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Which 64x64 cells of the image a tile touched since it was made, row by row.
+    pub fn touched_cells(&self) -> &[bool] {
+        &self.cells
+    }
+
+    /// The pixels, to write: for a client that keeps what an older image held when the
+    /// desktop is made again at another size.
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        &mut self.data
     }
 
     pub fn width(&self) -> u16 {
@@ -506,13 +577,16 @@ impl DecodedImage {
                 "Skipping tile update {:?} outside image bounds {}x{}",
                 clipping_rectangles.extents, self.width, self.height,
             );
+            self.paint.skipped += 1;
             return Ok(InclusiveRectangle::empty());
         }
 
         let pointer_rendering_state = self.pointer_rendering_begin(&clipping_rectangles.extents)?;
 
+        self.paint.tiles += 1;
         let update_region = clipping_rectangles.intersect_rectangle(update_rectangle);
         for region_rectangle in &update_region.rectangles {
+            self.note_painted(region_rectangle);
             let source_x = region_rectangle.left - update_rectangle.left;
             let source_y = region_rectangle.top - update_rectangle.top;
             let stride = u16::from(pixel_format.bytes_per_pixel()) * TILE_SIZE;

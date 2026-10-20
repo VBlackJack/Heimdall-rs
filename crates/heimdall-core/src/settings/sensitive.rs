@@ -134,6 +134,7 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("general.collapse_tunnels_panel", PLAIN),
     ("general.prevent_sleep", PLAIN),
     ("general.max_sessions", PLAIN),
+    ("general.fullscreen_pointer_tolerance", PLAIN),
     ("general.diagnostics_log", PLAIN),
     ("general.show_gateway_badge", PLAIN),
     ("general.show_properties_panel", PLAIN),

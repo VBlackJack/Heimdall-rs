@@ -286,6 +286,11 @@ pub struct DesktopPane {
     remote_files: bool,
     /// Saving the server's files, from the folder asked for until it ends.
     save: Option<SaveState>,
+    /// Frames received since the last line of the log, and when it was written.
+    frames: (u32, Option<Instant>),
+    /// The framebuffer's size at the last frame, and until when every frame is logged after
+    /// it changed.
+    traced_size: ((u16, u16), Option<Instant>),
 }
 
 /// The proportions of a desktop that follows its tab, kept with its profile.
@@ -340,6 +345,53 @@ impl DesktopPane {
             cursor: None,
             remote_files: false,
             save: None,
+            frames: (0, None),
+            traced_size: ((0, 0), None),
+        }
+    }
+
+    /// Counts a frame received and, once a second, says how many came, with the
+    /// framebuffer's size: whether frames stop arriving or stop being drawn.
+    pub(crate) fn note_frame(&mut self) {
+        const EVERY: Duration = Duration::from_secs(1);
+        const AFTER_RESIZE: Duration = Duration::from_secs(3);
+        let now = Instant::now();
+        let size = self.framebuffer.read(|width, height, _| (width, height));
+        if size != self.traced_size.0 {
+            log::debug!(
+                target: "heimdall::fullscreen",
+                "view side: framebuffer {}x{} -> {}x{} at generation {}",
+                self.traced_size.0.0,
+                self.traced_size.0.1,
+                size.0,
+                size.1,
+                self.generation
+            );
+            self.traced_size = (size, Some(now + AFTER_RESIZE));
+        }
+        if self.traced_size.1.is_some_and(|until| now <= until) {
+            log::debug!(
+                target: "heimdall::fullscreen",
+                "view side: frame, generation bumped to {} (framebuffer {}x{})",
+                self.generation,
+                size.0,
+                size.1
+            );
+        }
+        let (count, since) = self.frames;
+        let since = since.unwrap_or(now);
+        if now.duration_since(since) >= EVERY {
+            let (width, height) = self.framebuffer.read(|width, height, _| (width, height));
+            log::debug!(
+                target: "heimdall::fullscreen",
+                "{} frames received in the last {:?}: generation {}, framebuffer {width}x{height}",
+                count + 1,
+                now.duration_since(since),
+                self.generation
+            );
+            self.frames = (0, Some(now));
+        } else {
+            self.frames = (count + 1, Some(since));
         }
     }
 
@@ -370,8 +422,16 @@ impl DesktopPane {
             // the one it connected with, as the C# control starts at its own size. Only the
             // later ones wait for the session to settle.
             if stabilizing_until.is_some() && size.borrow().is_some() {
+                log::debug!(
+                    target: "heimdall::fullscreen",
+                    "RDP resize to {width}x{height} kept for after the post-connect wait"
+                );
                 return;
             }
+            log::debug!(
+                target: "heimdall::fullscreen",
+                "RDP resize to {width}x{height} handed to the session"
+            );
             size.send_replace(Some(self.aspect.fit((width, height))));
         }
     }
@@ -777,6 +837,8 @@ impl DesktopPane {
             clipboard: None,
             remote_files: false,
             save: None,
+            frames: (0, None),
+            traced_size: ((0, 0), None),
             sink: DesktopSink::Vnc(VncSink {
                 input,
                 buttons: AtomicU8::new(0),

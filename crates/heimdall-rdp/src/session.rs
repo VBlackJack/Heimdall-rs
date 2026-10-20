@@ -28,6 +28,9 @@ use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::input::Database;
 use ironrdp::pdu::Action;
+use ironrdp::pdu::geometry::InclusiveRectangle;
+use ironrdp::pdu::rdp::headers::ShareDataPdu;
+use ironrdp::pdu::rdp::refresh_rectangle::RefreshRectanglePdu;
 use ironrdp::session::fast_path::ProcessorBuilder;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{
@@ -197,6 +200,18 @@ const SAVE_PROGRESS_EVERY: Duration = Duration::from_millis(250);
 /// left is released.
 const CLIPBOARD_TIMEOUTS: Duration = Duration::from_secs(5);
 
+/// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
+const LOG_TARGET: &str = "heimdall::fullscreen";
+
+/// When the new area of a framebuffer made larger is looked at, the old size and the new.
+type NewAreaWatch = (Instant, (u16, u16), (u16, u16));
+
+/// How long after a framebuffer was made again the cells of its new area are counted.
+const NEW_AREA_SETTLE: Duration = Duration::from_secs(3);
+
+/// How long every update is logged after the framebuffer was made again.
+const REALLOCATION_TRACE: Duration = Duration::from_secs(3);
+
 /// How long a wanted size must hold before the server is asked for it.
 pub const RESIZE_SETTLE: Duration = Duration::from_millis(300);
 
@@ -248,6 +263,11 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         asked: None,
         settle: None,
         waiting_since: None,
+        updates: 0,
+        outside: 0,
+        updates_since: None,
+        reallocated: None,
+        account_at: None,
         desktop_scale,
         keep_alive: KeepAlive::new(keep_alive),
         reader: FrameReader::new(read_half, leftover),
@@ -818,6 +838,16 @@ struct Running {
     settle: Option<Instant>,
     /// Since when a size waits for the display channel to open.
     waiting_since: Option<Instant>,
+    /// Updates received since the last line of the log, how many fell outside the
+    /// framebuffer, and when the line was written.
+    updates: u32,
+    outside: u32,
+    updates_since: Option<Instant>,
+    /// After a framebuffer was made again: when, and the updates seen since, how many of
+    /// them outside it. Every one is logged for `REALLOCATION_TRACE`.
+    reallocated: Option<(Instant, u32, u32)>,
+    /// When the new area of a framebuffer made larger is looked at, and the old and new sizes.
+    account_at: Option<NewAreaWatch>,
     /// When the next keep-alive is due: every frame sent puts it back.
     keep_alive: KeepAlive,
     reader: FrameReader<ReadHalf<Upgraded>>,
@@ -849,6 +879,10 @@ impl Running {
         let _ = self.events.send(RdpEvent::Closed(reason)).await;
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per event the session waits for"
+    )]
     async fn serve(
         &mut self,
         result: ConnectionResult,
@@ -892,6 +926,10 @@ impl Running {
                     }
                     Vec::new()
                 }
+                () = sleep_until_settled(self.account_at.map(|(at, ..)| at)), if self.account_at.is_some() => {
+                    self.report_new_area();
+                    Vec::new()
+                }
                 () = sleep_until_settled(self.settle), if self.settle.is_some() => {
                     self.settle = None;
                     self.ask_for_size(&mut stage).await?;
@@ -919,6 +957,15 @@ impl Running {
                 match output {
                     ActiveStageOutput::ResponseFrame(frame) => self.send(&frame).await?,
                     ActiveStageOutput::GraphicsUpdate(region) => {
+                        self.note_update(&region);
+                        if let Some((width, height)) = self.adopt_asked_size(&region).await {
+                            let frame = full_refresh_frame(&stage, width, height)?;
+                            log::debug!(
+                                target: LOG_TARGET,
+                                "full refresh requested: {width}x{height}"
+                            );
+                            self.send(&frame).await?;
+                        }
                         let _ = self
                             .events
                             .send(RdpEvent::Updated {
@@ -1187,22 +1234,40 @@ impl Running {
             (u32::from(current_width), u32::from(current_height))
         });
         if (width, height) == current {
+            log::debug!(
+                target: LOG_TARGET,
+                "RDP resize to {width}x{height}: the framebuffer has it already, nothing sent"
+            );
             return Ok(());
         }
         // The scale asked at the connection, kept: 100 is the server's own, said as none.
         let scale = (self.desktop_scale > 100).then_some(self.desktop_scale);
         match stage.encode_resize(width, height, scale, None) {
             Some(Ok(frame)) => {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "RDP resize path: Display Control request {width}x{height} sent (framebuffer {}x{})",
+                    current.0,
+                    current.1
+                );
                 self.waiting_since = None;
                 self.send(&frame).await
             }
             None if asks_again(&mut self.waiting_since, Instant::now()) => {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "RDP resize {width}x{height}: the Display Control channel is not open, asked again soon"
+                );
                 self.wanted = Some((width, height));
                 self.settle = Some(Instant::now() + RESIZE_RETRY);
                 Ok(())
             }
             // Not encodable, or no display channel after all this time.
             Some(Err(_)) | None => {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "RDP resize {width}x{height}: Display Control unusable (not advertised or not encodable), refused"
+                );
                 self.waiting_since = None;
                 let (Ok(width), Ok(height)) = (u16::try_from(width), u16::try_from(height)) else {
                     return Ok(());
@@ -1213,6 +1278,158 @@ impl Running {
                     .await;
                 Ok(())
             }
+        }
+    }
+
+    /// A server that applied the size asked through Display Control without the
+    /// Deactivation-Reactivation Sequence (xrdp does not send one) draws the new desktop in
+    /// updates larger than the framebuffer, which the decoder skips: the picture froze at the
+    /// size the session connected with (measured in the lab, 3440x1440 asked, 1280x800
+    /// kept). The framebuffer takes the size asked, empty, and the server's next update
+    /// fills it.
+    async fn adopt_asked_size(&mut self, region: &InclusiveRectangle) -> Option<(u16, u16)> {
+        let current = self.framebuffer.read(|width, height, _| (width, height));
+        let asked = self.asked.and_then(|(width, height)| {
+            Some((u16::try_from(width).ok()?, u16::try_from(height).ok()?))
+        });
+        let (width, height) = adopted_size(asked, current, region)?;
+        log::debug!(
+            target: LOG_TARGET,
+            "RDP resize path: the server drew {width}x{height} without a reactivation, the framebuffer follows (was {}x{})",
+            current.0,
+            current.1
+        );
+        {
+            let mut image = self
+                .framebuffer
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut grown = DecodedImage::new(PixelFormat::RgbA32, width, height);
+            // The old picture stays where it was: the server's record of what the client
+            // has is by position, and it sends only the tiles that differ from it.
+            let bytes = usize::from(PixelFormat::RgbA32.bytes_per_pixel());
+            copy_overlap(
+                image.data(),
+                (usize::from(image.width()), usize::from(image.height())),
+                grown.data_mut(),
+                (usize::from(width), usize::from(height)),
+                bytes,
+            );
+            *image = grown;
+        }
+        log::debug!(
+            target: LOG_TARGET,
+            "framebuffer reallocated {}x{} -> {width}x{height} (old picture kept where it overlaps), triggered by an update of {}x{} at ({}, {})",
+            current.0,
+            current.1,
+            u32::from(region.right) - u32::from(region.left) + 1,
+            u32::from(region.bottom) - u32::from(region.top) + 1,
+            region.left,
+            region.top
+        );
+        self.reallocated = Some((Instant::now(), 0, 0));
+        self.account_at = Some((Instant::now() + NEW_AREA_SETTLE, current, (width, height)));
+        let _ = self.events.send(RdpEvent::Resized { width, height }).await;
+        Some((width, height))
+    }
+
+    /// Says how many cells of the area the framebuffer gained, outside the old picture kept,
+    /// the server has not painted since: debug always, warn when some are left.
+    fn report_new_area(&mut self) {
+        let Some((_, old, new)) = self.account_at.take() else {
+            return;
+        };
+        let touched = self
+            .framebuffer
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .touched_cells()
+            .to_vec();
+        let accounting = new_area_accounting(&touched, old, new);
+        log::debug!(
+            target: LOG_TARGET,
+            "{} of {} new-area cells still unpainted {:?} after the reallocation (old picture {}x{}, new {}x{})",
+            accounting.unpainted,
+            accounting.total,
+            NEW_AREA_SETTLE,
+            old.0,
+            old.1,
+            new.0,
+            new.1
+        );
+        if accounting.unpainted > 0 {
+            log::warn!(
+                target: LOG_TARGET,
+                "{} of {} cells of the area the desktop gained were never painted by the server; they span cells columns {}..={} rows {}..={} (64 px cells)",
+                accounting.unpainted,
+                accounting.total,
+                accounting.span.0,
+                accounting.span.2,
+                accounting.span.1,
+                accounting.span.3
+            );
+        }
+    }
+
+    /// Counts the updates the server sent and, once a second, says how many, and whether
+    /// any fell outside the framebuffer (dropped by the decoder: a frozen picture).
+    fn note_update(&mut self, region: &InclusiveRectangle) {
+        let (width, height) = self.framebuffer.read(|width, height, _| (width, height));
+        let outside = region.right >= width || region.bottom >= height;
+        if outside {
+            self.outside += 1;
+        }
+        let painted = self
+            .framebuffer
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take_paint_stats();
+        if let Some((since, count, outside_count)) = self.reallocated.as_mut() {
+            *count += 1;
+            *outside_count += u32::from(outside);
+            let elapsed = since.elapsed();
+            if elapsed <= REALLOCATION_TRACE {
+                let bounding = (u64::from(region.right) - u64::from(region.left) + 1)
+                    * (u64::from(region.bottom) - u64::from(region.top) + 1);
+                log::debug!(
+                    target: LOG_TARGET,
+                    "update {count} {elapsed:?} after the reallocation: carries {} tiles ({} skipped) painting {} px of its bounding box of {bounding} px; 64 px cells touched since the reallocation: {} of {}; rectangle ({}, {}) to ({}, {}) in a {width}x{height} buffer: {} (codec not known at this layer); {outside_count} outside so far",
+                    painted.tiles,
+                    painted.skipped,
+                    painted.area,
+                    painted.cells_touched,
+                    painted.cells_total,
+                    region.left,
+                    region.top,
+                    region.right,
+                    region.bottom,
+                    if outside {
+                        "OUTSIDE the buffer, ironrdp skips it and the pixels are lost"
+                    } else {
+                        "inside the buffer, applied"
+                    }
+                );
+            } else {
+                self.reallocated = None;
+            }
+        }
+        self.updates += 1;
+        let now = Instant::now();
+        let since = *self.updates_since.get_or_insert(now);
+        if now.duration_since(since) >= Duration::from_secs(1) {
+            log::debug!(
+                target: LOG_TARGET,
+                "RDP: {} updates from the server in the last {:?} ({} outside the {width}x{height} framebuffer)",
+                self.updates,
+                now.duration_since(since),
+                self.outside
+            );
+            self.updates = 0;
+            self.outside = 0;
+            self.updates_since = Some(now);
         }
     }
 
@@ -1326,6 +1543,12 @@ impl Running {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) =
             DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
+        log::debug!(
+            target: LOG_TARGET,
+            "RDP reactivated: desktop {}x{}",
+            desktop_size.width,
+            desktop_size.height
+        );
         let _ = self
             .events
             .send(RdpEvent::Resized {
@@ -1337,9 +1560,292 @@ impl Running {
     }
 }
 
+/// The Refresh Rect PDU (MS-RDPBCGR 2.2.11.2) for the whole `width`x`height` desktop, under
+/// the share `stage` is in: a server sends dirty regions only, and a framebuffer just made is
+/// empty.
+fn full_refresh_frame(stage: &ActiveStage, width: u16, height: u16) -> Result<Vec<u8>, String> {
+    let mut buffer = WriteBuf::new();
+    stage
+        .encode_static(
+            &mut buffer,
+            ShareDataPdu::RefreshRectangle(RefreshRectanglePdu {
+                areas_to_refresh: vec![InclusiveRectangle {
+                    left: 0,
+                    top: 0,
+                    right: width.saturating_sub(1),
+                    bottom: height.saturating_sub(1),
+                }],
+            }),
+        )
+        .map_err(|error| error.kind().to_string())?;
+    Ok(buffer.into_inner())
+}
+
+/// What the server painted of the area a desktop gained.
+#[derive(Debug, PartialEq, Eq)]
+struct NewAreaAccounting {
+    /// 64 px cells of the new picture outside the old one.
+    total: u32,
+    /// Those no tile touched.
+    unpainted: u32,
+    /// The columns and rows (first column, first row, last column, last row) the unpainted
+    /// ones span; all zero when there are none.
+    span: (u32, u32, u32, u32),
+}
+
+/// Counts the cells of a `new`-sized picture, outside the `old`-sized one kept at its top
+/// left, that no tile touched (`touched`, one flag per 64x64 cell, row by row). A cell is
+/// outside the old picture when it starts beyond it, so the cells that straddle its edge
+/// count as old ones; a smaller picture gains no area.
+fn new_area_accounting(touched: &[bool], old: (u16, u16), new: (u16, u16)) -> NewAreaAccounting {
+    const CELL: u32 = 64;
+    let columns = u32::from(new.0).div_ceil(CELL);
+    let rows = u32::from(new.1).div_ceil(CELL);
+    let mut accounting = NewAreaAccounting {
+        total: 0,
+        unpainted: 0,
+        span: (0, 0, 0, 0),
+    };
+    for row in 0..rows {
+        for column in 0..columns {
+            if column * CELL < u32::from(old.0) && row * CELL < u32::from(old.1) {
+                continue;
+            }
+            accounting.total += 1;
+            let index = usize::try_from(row * columns + column).unwrap_or(usize::MAX);
+            if touched.get(index).copied().unwrap_or(false) {
+                continue;
+            }
+            if accounting.unpainted == 0 {
+                accounting.span = (column, row, column, row);
+            } else {
+                let span = &mut accounting.span;
+                *span = (
+                    span.0.min(column),
+                    span.1.min(row),
+                    span.2.max(column),
+                    span.3.max(row),
+                );
+            }
+            accounting.unpainted += 1;
+        }
+    }
+    accounting
+}
+
+/// Copies the pixels `old` (`old_size` wide and high, `bytes` per pixel) has where `new`
+/// (`new_size`) overlaps it, from the top left; the rest of `new` is left as it is. Rows and
+/// columns beyond either image are never read or written, and a slice shorter than its size
+/// says copies only what it has.
+fn copy_overlap(
+    old: &[u8],
+    old_size: (usize, usize),
+    new: &mut [u8],
+    new_size: (usize, usize),
+    bytes: usize,
+) {
+    let width = old_size.0.min(new_size.0);
+    let height = old_size.1.min(new_size.1);
+    let row_bytes = width.saturating_mul(bytes);
+    if row_bytes == 0 {
+        return;
+    }
+    for row in 0..height {
+        let from = row.saturating_mul(old_size.0).saturating_mul(bytes);
+        let to = row.saturating_mul(new_size.0).saturating_mul(bytes);
+        let (Some(source), Some(target)) = (
+            old.get(from..from.saturating_add(row_bytes)),
+            new.get_mut(to..to.saturating_add(row_bytes)),
+        ) else {
+            return;
+        };
+        target.copy_from_slice(source);
+    }
+}
+
+/// The size the framebuffer takes when `region` was drawn by a server that applied the size
+/// `asked` without a reactivation: `asked` when the region does not fit the framebuffer
+/// but fits `asked`, or is exactly `asked` (a whole-desktop update). `None` otherwise: a
+/// region beyond what was asked is not a resize this side made.
+fn adopted_size(
+    asked: Option<(u16, u16)>,
+    current: (u16, u16),
+    region: &InclusiveRectangle,
+) -> Option<(u16, u16)> {
+    let asked = asked.filter(|asked| *asked != current)?;
+    let fits = |size: (u16, u16)| region.right < size.0 && region.bottom < size.1;
+    let whole = region.left == 0
+        && region.top == 0
+        && region.right.checked_add(1) == Some(asked.0)
+        && region.bottom.checked_add(1) == Some(asked.1);
+    ((fits(asked) && !fits(current)) || whole).then_some(asked)
+}
+
 #[cfg(test)]
 mod resize_tests {
-    use super::{RESIZE_GIVE_UP, asks_again};
+    #[test]
+    fn the_cells_of_the_area_gained_are_counted_painted_or_not() {
+        use super::new_area_accounting;
+
+        // Old 128x128 (2x2 cells) grown to 256x192 (4x3 cells): 8 of the 12 are new.
+        let mut touched = vec![false; 12];
+        let none = new_area_accounting(&touched, (128, 128), (256, 192));
+        assert_eq!((none.total, none.unpainted), (8, 8));
+        assert_eq!(none.span, (0, 0, 3, 2));
+        // Partial coverage: the old cells touched do not count, two new ones do.
+        for index in [0, 1, 4, 5, 2, 3] {
+            touched[index] = true;
+        }
+        let partial = new_area_accounting(&touched, (128, 128), (256, 192));
+        assert_eq!((partial.total, partial.unpainted), (8, 6));
+        assert_eq!(
+            partial.span,
+            (0, 1, 3, 2),
+            "row 1 columns 2-3 and the bottom row"
+        );
+        // Full coverage.
+        let full = new_area_accounting(&[true; 12], (128, 128), (256, 192));
+        assert_eq!((full.total, full.unpainted), (8, 0));
+        assert_eq!(full.span, (0, 0, 0, 0));
+        // Shrunk: no new area at all.
+        let shrunk = new_area_accounting(&[false; 4], (256, 192), (128, 128));
+        assert_eq!((shrunk.total, shrunk.unpainted), (0, 0));
+        // A cell straddling the old edge is an old one; a short flag list counts unpainted.
+        let odd = new_area_accounting(&[], (100, 100), (200, 100));
+        assert_eq!((odd.total, odd.unpainted), (4, 4));
+    }
+
+    #[test]
+    fn the_old_picture_is_kept_where_the_new_one_overlaps_it() {
+        use super::copy_overlap;
+
+        // One byte per pixel, each its own number, to see where it lands.
+        let old: Vec<u8> = (0..12).collect(); // 4 wide, 3 high
+        // Grown to 6x4: the old rows at the left, the rest untouched.
+        let mut grown = vec![99_u8; 24];
+        copy_overlap(&old, (4, 3), &mut grown, (6, 4), 1);
+        assert_eq!(&grown[0..6], &[0, 1, 2, 3, 99, 99]);
+        assert_eq!(&grown[6..12], &[4, 5, 6, 7, 99, 99]);
+        assert_eq!(&grown[12..18], &[8, 9, 10, 11, 99, 99]);
+        assert_eq!(&grown[18..24], &[99; 6], "no old row 4");
+        // Shrunk to 3x2: the top left corner only, nothing written beyond it.
+        let mut shrunk = vec![99_u8; 6];
+        copy_overlap(&old, (4, 3), &mut shrunk, (3, 2), 1);
+        assert_eq!(shrunk, vec![0, 1, 2, 4, 5, 6]);
+        // Odd sizes and four bytes per pixel.
+        let old: Vec<u8> = (0..(5 * 3 * 4))
+            .map(|n| u8::try_from(n).unwrap_or(0))
+            .collect();
+        let mut new = vec![0_u8; 3 * 7 * 4];
+        copy_overlap(&old, (5, 3), &mut new, (7, 3), 4);
+        assert_eq!(&new[0..20], &old[0..20]);
+        assert_eq!(&new[28..48], &old[20..40]);
+    }
+
+    #[test]
+    fn copying_the_old_picture_never_reads_or_writes_out_of_bounds() {
+        use super::copy_overlap;
+
+        let mut new = vec![7_u8; 4];
+        // No overlap at all, or an empty side.
+        copy_overlap(&[1, 2, 3, 4], (0, 4), &mut new, (4, 1), 1);
+        copy_overlap(&[1, 2, 3, 4], (4, 0), &mut new, (4, 1), 1);
+        copy_overlap(&[1, 2, 3, 4], (4, 1), &mut new, (0, 1), 1);
+        assert_eq!(new, vec![7; 4]);
+        // Slices shorter than the sizes say: copies what exists, no panic.
+        copy_overlap(&[1, 2], (4, 1), &mut new, (4, 1), 1);
+        assert_eq!(new, vec![7; 4], "a short row is not half copied");
+        let mut small = vec![0_u8; 2];
+        copy_overlap(&[1, 2, 3, 4, 5, 6], (3, 2), &mut small, (3, 2), 1);
+        assert_eq!(small, vec![0; 2]);
+        // Huge sizes do not overflow.
+        copy_overlap(
+            &[1],
+            (usize::MAX, usize::MAX),
+            &mut new,
+            (usize::MAX, usize::MAX),
+            4,
+        );
+    }
+
+    #[test]
+    fn a_rectangle_beyond_u16_or_wholly_outside_is_no_resize_and_no_panic() {
+        use ironrdp::pdu::geometry::InclusiveRectangle;
+
+        let huge = InclusiveRectangle {
+            left: 0,
+            top: 0,
+            right: u16::MAX,
+            bottom: u16::MAX,
+        };
+        // A whole-desktop rectangle whose size would overflow u16: not the size asked.
+        assert_eq!(
+            super::adopted_size(Some((3440, 1440)), (1280, 800), &huge),
+            None
+        );
+        // Wholly outside the size asked and the framebuffer.
+        let far = InclusiveRectangle {
+            left: 9000,
+            top: 9000,
+            right: 9100,
+            bottom: 9100,
+        };
+        assert_eq!(
+            super::adopted_size(Some((3440, 1440)), (1280, 800), &far),
+            None
+        );
+        // Partly outside the size asked.
+        let partial = InclusiveRectangle {
+            left: 3000,
+            top: 1000,
+            right: 4000,
+            bottom: 1100,
+        };
+        assert_eq!(
+            super::adopted_size(Some((3440, 1440)), (1280, 800), &partial),
+            None
+        );
+    }
+
+    use ironrdp::pdu::geometry::InclusiveRectangle;
+
+    use super::{RESIZE_GIVE_UP, adopted_size, asks_again};
+
+    fn region(right: u16, bottom: u16) -> InclusiveRectangle {
+        InclusiveRectangle {
+            left: 0,
+            top: 0,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn a_whole_desktop_update_beyond_the_framebuffer_makes_it_the_size_asked() {
+        let current = (1280, 800);
+        let asked = Some((3440, 1440));
+        assert_eq!(
+            adopted_size(asked, current, &region(3439, 1439)),
+            Some((3440, 1440))
+        );
+        // Part of the new desktop, outside the old framebuffer, inside the size asked.
+        assert_eq!(
+            adopted_size(asked, current, &region(2000, 900)),
+            Some((3440, 1440))
+        );
+        // Inside the framebuffer already, and not the whole desktop: nothing to do.
+        assert_eq!(adopted_size(asked, current, &region(100, 100)), None);
+        // Beyond what was asked: not this side's resize.
+        assert_eq!(adopted_size(asked, current, &region(4000, 1439)), None);
+        // Nothing asked, or the framebuffer has it.
+        assert_eq!(adopted_size(None, current, &region(3439, 1439)), None);
+        assert_eq!(adopted_size(asked, (3440, 1440), &region(3439, 1439)), None);
+        // A smaller desktop asked and drawn whole replaces a larger framebuffer.
+        assert_eq!(
+            adopted_size(Some((1134, 724)), current, &region(1133, 723)),
+            Some((1134, 724))
+        );
+    }
     use std::time::Duration;
     use tokio::time::Instant;
 

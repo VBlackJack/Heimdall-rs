@@ -28,7 +28,8 @@
 //! over the desktop, as noVNC does; noVNC's dot stands for a shape nothing of which shows, as
 //! the C# Heimdall asks it with `showDotCursor`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::time::{Duration, Instant};
 
 use heimdall_app::{DesktopInput, DesktopPane, Message as AppMessage, PointerButton, TabId};
 use heimdall_rdp::Scancode;
@@ -69,12 +70,33 @@ struct State {
     reported: Option<(u16, u16)>,
     /// The size last reported for the tab, asked or kept only, so a change is said once.
     shown: Option<(u16, u16)>,
+    /// Whether the window was full screen at the last event.
+    fullscreen: bool,
+    /// Draws of the desktop since the last line of the log, and when it was written: how
+    /// often it is drawn, against how often it changes, tells frames that do not come from
+    /// frames that are not drawn.
+    drawn: Cell<(u32, Option<Instant>)>,
     /// Keys held, with the keysym sent when each went down: a release sends the same one,
     /// or Shift released first would turn a held `!` into a `1` and leave `!` stuck.
     held: Vec<(Physical, u32)>,
     /// Buttons pressed on the desktop and not let go yet: only their releases are the
     /// server's, a press elsewhere in the window never reached it.
     buttons: Vec<PointerButton>,
+}
+
+impl State {
+    /// Notes whether the window is full screen. A toggle forgets the size asked last, so the
+    /// screen's is asked again even when it happens to be the one asked before: the C#
+    /// re-runs its display resolver on every toggle (`RdpFullscreenRetriggerPolicy`).
+    /// Whether it was a toggle.
+    fn follow_fullscreen(&mut self, fullscreen: bool) -> bool {
+        if self.fullscreen == fullscreen {
+            return false;
+        }
+        self.fullscreen = fullscreen;
+        self.reported = None;
+        true
+    }
 }
 
 /// The desktop of one tab.
@@ -85,6 +107,7 @@ pub struct DesktopView<'a, M> {
     release: Option<M>,
     interactive: bool,
     fit: bool,
+    fullscreen: bool,
     density: f32,
 }
 
@@ -99,6 +122,7 @@ impl<'a, M> DesktopView<'a, M> {
             release: None,
             interactive: true,
             fit: false,
+            fullscreen: false,
             density: 1.0,
         }
     }
@@ -119,6 +143,16 @@ impl<'a, M> DesktopView<'a, M> {
     #[must_use]
     pub fn fit(mut self, fit: bool) -> Self {
         self.fit = fit;
+        self
+    }
+
+    /// The window is full screen: the desktop is asked for the screen's size anew, as the C#
+    /// re-runs its display resolver on the toggle (`RdpFullscreenRetriggerPolicy`), and a
+    /// server that does not give it is scaled up to fill the screen instead of left in a
+    /// corner.
+    #[must_use]
+    pub fn fullscreen(mut self, fullscreen: bool) -> Self {
+        self.fullscreen = fullscreen;
         self
     }
 
@@ -189,6 +223,13 @@ impl<'a, M> DesktopView<'a, M> {
             return;
         }
         if ask && state.reported != Some(size) {
+            log::debug!(
+                target: LOG_TARGET,
+                "desktop view asks the server for {}x{} (full screen: {})",
+                size.0,
+                size.1,
+                self.fullscreen
+            );
             state.reported = Some(size);
             state.shown = Some(size);
             shell.publish((self.wrap)(AppMessage::DesktopResize {
@@ -257,7 +298,7 @@ impl<'a, M> DesktopView<'a, M> {
         desktop_point(
             bounds,
             (width, height),
-            self.placement(),
+            self.placement_in(bounds, (width, height)),
             self.density,
             position,
         )
@@ -265,6 +306,17 @@ impl<'a, M> DesktopView<'a, M> {
 
     /// How the desktop is placed in its tab: fitted, or pixel for pixel, centred when it
     /// keeps a size of its own as the C# letterbox is.
+    /// [`Self::placement`] in `bounds`, for a desktop of `size`: in full screen, a desktop
+    /// that is not the screen's size is scaled up to fill it, whatever the tab's choice.
+    fn placement_in(&self, bounds: Rectangle, size: (u16, u16)) -> Placement {
+        fullscreen_placement(
+            self.placement(),
+            self.fullscreen,
+            area_pixels(bounds, self.density),
+            size,
+        )
+    }
+
     fn placement(&self) -> Placement {
         if self.fit {
             Placement::Fitted
@@ -281,6 +333,9 @@ impl<'a, M> DesktopView<'a, M> {
 pub enum Placement {
     /// As large as the tab allows with its proportions, never larger than itself, centred.
     Fitted,
+    /// As large as the tab allows with its proportions, enlarged past its own size if need
+    /// be, centred: a full screen the server did not resize the desktop to.
+    Filled,
     /// Pixel for pixel from the tab's corner.
     Corner,
     /// Pixel for pixel, centred; from the corner on a side larger than the tab, the rest
@@ -302,6 +357,7 @@ pub fn placed(
     let native = Size::new(f32::from(size.0) * own, f32::from(size.1) * own);
     match placement {
         Placement::Fitted => fitted(bounds, size, density),
+        Placement::Filled => filled(bounds, size),
         Placement::Corner => (Rectangle::new(bounds.position(), native), own),
         Placement::Centred => {
             let origin = iced::Point::new(
@@ -322,6 +378,65 @@ pub fn fitted(bounds: Rectangle, (width, height): (u16, u16), density: f32) -> (
     let scale = (bounds.width / width)
         .min(bounds.height / height)
         .min(1.0 / density);
+    let size = Size::new(width * scale, height * scale);
+    let origin = iced::Point::new(
+        bounds.x + (bounds.width - size.width) / 2.0,
+        bounds.y + (bounds.height - size.height) / 2.0,
+    );
+    (Rectangle::new(origin, size), scale)
+}
+
+/// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
+const LOG_TARGET: &str = crate::fullscreen_chrome::LOG_TARGET;
+
+/// How often the draws in full screen are summed up in the log.
+const TRACE_EVERY: Duration = Duration::from_secs(1);
+
+/// How far, in pixels, a desktop may be from the screen's size in full screen and still count
+/// as having it: the server rounds a size it is asked for to an even number of pixels.
+const FULLSCREEN_SIZE_SLACK: u16 = 2;
+
+/// `bounds` in physical pixels, as the desktop is asked for it.
+#[must_use]
+pub fn area_pixels(bounds: Rectangle, density: f32) -> (u16, u16) {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to the u16 range first"
+    )]
+    let pixels = |side: f32| (side * density).clamp(0.0, f32::from(u16::MAX)) as u16;
+    (pixels(bounds.width), pixels(bounds.height))
+}
+
+/// Where a desktop of `desktop` pixels is drawn in a full screen of `area` pixels: as
+/// `base` says when it has the screen's size (or the window is not full screen), else
+/// scaled up to fill the screen, so that a server which does not resize, or has not yet,
+/// leaves no desktop in a corner of a black screen.
+#[must_use]
+pub fn fullscreen_placement(
+    base: Placement,
+    fullscreen: bool,
+    area: (u16, u16),
+    desktop: (u16, u16),
+) -> Placement {
+    let near = |a: u16, b: u16| a.abs_diff(b) <= FULLSCREEN_SIZE_SLACK;
+    if fullscreen
+        && desktop.0 > 0
+        && desktop.1 > 0
+        && !(near(area.0, desktop.0) && near(area.1, desktop.1))
+    {
+        Placement::Filled
+    } else {
+        base
+    }
+}
+
+/// Where a desktop of `size` is drawn in `bounds`: as large as fits with its proportions,
+/// enlarged if need be, centred; and the scale it is drawn at.
+#[must_use]
+pub fn filled(bounds: Rectangle, (width, height): (u16, u16)) -> (Rectangle, f32) {
+    let (width, height) = (f32::from(width.max(1)), f32::from(height.max(1)));
+    let scale = (bounds.width / width).min(bounds.height / height);
     let size = Size::new(width * scale, height * scale);
     let origin = iced::Point::new(
         bounds.x + (bounds.width - size.width) / 2.0,
@@ -562,9 +677,24 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             };
         }
         let bounds = layout.bounds();
+        let toggled = state.follow_fullscreen(self.fullscreen);
         // Fitted, the server keeps its own size, once it has had the tab's when its profile
         // asks for it once; a desktop of a size of its own is never asked another.
         let ask = self.pane.asks_tab_size() && (!self.fit || self.pane.wants_first_size());
+        if toggled {
+            log::debug!(
+                target: LOG_TARGET,
+                "desktop view {} full screen: area {:?}, density {}, framebuffer {:?}, \
+                 asks the server: {ask} (follows tab: {}, fit: {}, first size wanted: {})",
+                if self.fullscreen { "entered" } else { "left" },
+                area_pixels(bounds, self.density),
+                self.density,
+                self.pane.framebuffer.read(|width, height, _| (width, height)),
+                self.pane.asks_tab_size(),
+                self.fit,
+                self.pane.wants_first_size()
+            );
+        }
         self.report_size(state, shell, bounds, ask);
         if !self.interactive {
             // Keys held when a dialog or Quick Connect came over it are let go on the server:
@@ -675,13 +805,41 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
 }
 
 impl<M> DesktopView<'_, M> {
+    /// Counts a draw in full screen and, once a second, says how many there were, with the
+    /// generation (the frames received) and the sizes drawn.
+    fn trace_draw(&self, state: &State, bounds: Rectangle, size: (u16, u16), placement: Placement) {
+        let (count, since) = state.drawn.get();
+        let now = Instant::now();
+        let since = since.unwrap_or(now);
+        if now.duration_since(since) >= TRACE_EVERY {
+            log::debug!(
+                target: LOG_TARGET,
+                "desktop drawn {} times in the last {:?}: generation {}, framebuffer {}x{}, \
+                 area {:?}, placement {placement:?}",
+                count + 1,
+                now.duration_since(since),
+                self.pane.generation,
+                size.0,
+                size.1,
+                area_pixels(bounds, self.density)
+            );
+            state.drawn.set((0, Some(now)));
+        } else {
+            state.drawn.set((count + 1, Some(since)));
+        }
+    }
+
     /// Draws the desktop in `bounds`.
     fn draw_desktop(&self, state: &State, renderer: &mut iced::Renderer, bounds: Rectangle) {
         let size = self
             .pane
             .framebuffer
             .read(|width, height, _| (width, height));
-        let (area, _) = placed(bounds, size, self.placement(), self.density);
+        let placement = self.placement_in(bounds, size);
+        let (area, _) = placed(bounds, size, placement, self.density);
+        if self.fullscreen {
+            self.trace_draw(state, bounds, size, placement);
+        }
         // The GPU renderer keeps the desktop in a texture it rewrites; see `desktop_texture`.
         if matches!(renderer, fallback::Renderer::Primary(_)) {
             let desktop = Desktop {
@@ -976,6 +1134,88 @@ mod tests {
         // Fitted, a desktop already that small is never enlarged past one pixel per pixel.
         let (_, scale) = fitted(bounds, (600, 450), 1.5);
         assert!((scale - 1.0 / 1.5).abs() < f32::EPSILON, "{scale}");
+    }
+
+    #[test]
+    fn a_full_screen_desktop_that_is_not_the_screens_size_is_scaled_up_to_fill_it() {
+        let screen = (3440, 1440);
+        // The server has not resized (or cannot): the windowed size fills the screen.
+        assert_eq!(
+            fullscreen_placement(Placement::Corner, true, screen, (1130, 720)),
+            Placement::Filled
+        );
+        assert_eq!(
+            fullscreen_placement(Placement::Fitted, true, screen, (1130, 720)),
+            Placement::Filled,
+            "a fitted desktop is never enlarged otherwise"
+        );
+        // It has the screen's size, give or take the server's rounding: the tab's choice.
+        assert_eq!(
+            fullscreen_placement(Placement::Corner, true, screen, (3440, 1440)),
+            Placement::Corner
+        );
+        assert_eq!(
+            fullscreen_placement(Placement::Corner, true, screen, (3438, 1440)),
+            Placement::Corner
+        );
+        // Not full screen: never.
+        assert_eq!(
+            fullscreen_placement(Placement::Corner, false, screen, (1130, 720)),
+            Placement::Corner
+        );
+        // No desktop yet: nothing to scale.
+        assert_eq!(
+            fullscreen_placement(Placement::Corner, true, screen, (0, 0)),
+            Placement::Corner
+        );
+    }
+
+    #[test]
+    fn a_filled_desktop_keeps_its_proportions_and_is_pointed_at_where_it_is_drawn() {
+        let bounds = Rectangle::new(iced::Point::ORIGIN, Size::new(3440.0, 1440.0));
+        let (area, scale) = placed(bounds, (1280, 800), Placement::Filled, 1.0);
+        assert!((scale - 1.8).abs() < 1e-4, "the height decides: {scale}");
+        assert!((area.height - 1440.0).abs() < 0.01);
+        assert!((area.width - 2304.0).abs() < 0.01);
+        assert!((area.x - 568.0).abs() < 0.01, "centred: {area:?}");
+        let middle = iced::Point::new(area.x + area.width / 2.0, area.y + area.height / 2.0);
+        assert_eq!(
+            desktop_point(bounds, (1280, 800), Placement::Filled, 1.0, middle),
+            (640, 400)
+        );
+        // The screen's pixels, as the desktop is asked for them.
+        assert_eq!(area_pixels(bounds, 1.0), (3440, 1440));
+        assert_eq!(
+            area_pixels(
+                Rectangle::new(iced::Point::ORIGIN, Size::new(800.0, 600.0)),
+                1.5
+            ),
+            (1200, 900)
+        );
+    }
+
+    #[test]
+    fn a_full_screen_toggle_asks_the_screens_size_again_even_when_it_is_the_one_asked_before() {
+        let mut state = State {
+            reported: Some((1130, 720)),
+            ..State::default()
+        };
+        assert!(!state.follow_fullscreen(false), "no toggle yet");
+        assert_eq!(
+            state.reported,
+            Some((1130, 720)),
+            "kept while nothing toggles"
+        );
+        assert!(state.follow_fullscreen(true), "entering full screen");
+        assert_eq!(state.reported, None, "asked anew");
+        state.reported = Some((3440, 1440));
+        assert!(!state.follow_fullscreen(true));
+        assert_eq!(state.reported, Some((3440, 1440)));
+        assert!(
+            state.follow_fullscreen(false),
+            "leaving it asks the tab's size again"
+        );
+        assert_eq!(state.reported, None);
     }
 
     #[test]

@@ -48,6 +48,10 @@ const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 /// Environment variable choosing the level of every crate: `error` to `trace`.
 const LEVEL_VARIABLE: &str = "HEIMDALL_LOG";
 
+/// Environment variable that turns on the debug lines of the full-screen diagnostics, and
+/// nothing else: no other target, in this workspace or outside it, is made more verbose.
+const FULLSCREEN_TRACE_VARIABLE: &str = "HEIMDALL_LOG_FULLSCREEN";
+
 /// Prefix of the crates of this workspace.
 const OWN_TARGET_PREFIX: &str = "heimdall";
 
@@ -74,6 +78,8 @@ struct FileLogger {
     file: Mutex<File>,
     own: LevelFilter,
     others: LevelFilter,
+    /// The full-screen diagnostics are written at debug.
+    fullscreen_trace: bool,
 }
 
 /// Crates whose most verbose levels write server data as is, capped whatever
@@ -82,7 +88,15 @@ struct FileLogger {
 const CAPPED_TARGETS: [(&str, LevelFilter); 1] = [("suppaftp", LevelFilter::Debug)];
 
 /// The most verbose level written for `target`.
-fn limit_for(own: LevelFilter, others: LevelFilter, target: &str) -> LevelFilter {
+fn limit_for(
+    own: LevelFilter,
+    others: LevelFilter,
+    fullscreen_trace: bool,
+    target: &str,
+) -> LevelFilter {
+    if fullscreen_trace && target == crate::fullscreen_chrome::LOG_TARGET {
+        return own.max(LevelFilter::Debug);
+    }
     if target.starts_with(OWN_TARGET_PREFIX) {
         return own;
     }
@@ -94,7 +108,13 @@ fn limit_for(own: LevelFilter, others: LevelFilter, target: &str) -> LevelFilter
 
 impl Log for FileLogger {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-        metadata.level() <= limit_for(self.own, self.others, metadata.target())
+        metadata.level()
+            <= limit_for(
+                self.own,
+                self.others,
+                self.fullscreen_trace,
+                metadata.target(),
+            )
     }
 
     fn log(&self, record: &Record<'_>) {
@@ -178,6 +198,8 @@ pub fn init(dir: Option<PathBuf>) {
         return;
     };
     let (own, others) = levels(std::env::var(LEVEL_VARIABLE).ok().as_deref());
+    let fullscreen_trace =
+        std::env::var_os(FULLSCREEN_TRACE_VARIABLE).is_some_and(|v| !v.is_empty());
     let mut unrestricted = None;
     if let Ok((file, error)) = open_log(&dir) {
         unrestricted = error;
@@ -185,9 +207,15 @@ pub fn init(dir: Option<PathBuf>) {
             file: Mutex::new(file),
             own,
             others,
+            fullscreen_trace,
         };
         if log::set_boxed_logger(Box::new(logger)).is_ok() {
-            log::set_max_level(own.max(others));
+            let trace = if fullscreen_trace {
+                LevelFilter::Debug
+            } else {
+                LevelFilter::Off
+            };
+            log::set_max_level(own.max(others).max(trace));
         }
     }
     install_panic_hook(dir);
@@ -264,7 +292,7 @@ fn crash_report(info: &PanicHookInfo<'_>) -> String {
 #[cfg(test)]
 fn written(requested: Option<&str>, target: &str, level: Level) -> bool {
     let (own, others) = levels(requested);
-    level <= limit_for(own, others, target)
+    level <= limit_for(own, others, false, target)
 }
 
 #[cfg(test)]
@@ -337,5 +365,27 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+    #[test]
+    fn the_full_screen_trace_switch_opens_its_own_target_and_no_other() {
+        use log::LevelFilter;
+
+        use super::limit_for;
+
+        let (own, others) = (LevelFilter::Info, LevelFilter::Warn);
+        let target = crate::fullscreen_chrome::LOG_TARGET;
+        assert_eq!(limit_for(own, others, false, target), LevelFilter::Info);
+        assert_eq!(limit_for(own, others, true, target), LevelFilter::Debug);
+        for other in [
+            "heimdall_app::app",
+            "ironrdp_connector::connection",
+            "russh::session",
+        ] {
+            assert_eq!(
+                limit_for(own, others, true, other),
+                limit_for(own, others, false, other),
+                "{other} is no more verbose with the switch on"
+            );
+        }
     }
 }
