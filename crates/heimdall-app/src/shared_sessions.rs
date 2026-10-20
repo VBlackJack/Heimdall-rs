@@ -21,9 +21,11 @@
 //! A shared file is written by other people, so what comes out of it is what the C#
 //! `SharedProfileSanitizer` lets through and no more: SSH and RDP sessions with a valid host,
 //! a name, a folder, a port, an account and the SSH gateway the file names, as a host, a port
-//! and an account and nothing else. A key path, a saved password, a command to run after
-//! connecting or an agent of the file never become a session's, and the file's folder never
-//! gives a session the defaults of a local folder. A gateway of the file lives in the shared
+//! and an account and nothing else. A key path, a saved password or an agent of the file never
+//! become a session's, and the file's folder never gives a session the defaults of a local
+//! folder. The command a file asks an SSH session to type after connecting is kept as a
+//! step nobody approved: it is typed only once the user approved it, and asked again when the
+//! file changes it (`app::shared`). A gateway of the file lives in the shared
 //! namespace, read-only and in memory: it is never added to the user's saved gateways, and
 //! its host key is asked about like any server's. A session whose gateway is not usable is
 //! refused rather than taken as a direct connection. Nothing here opens a
@@ -47,6 +49,7 @@ use std::time::{Duration, SystemTime};
 use heimdall_core::import::foreign::{FileWarning, GATEWAY_ID_KEY, Parsed};
 use heimdall_core::import::mobaxterm;
 use heimdall_core::import::mobaxterm::Limits;
+use heimdall_core::post_connect::{PostConnect, PostConnectStep};
 use heimdall_core::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, Forwards, ProfileId, RdpExtras, RdpOptions, RdpProfile,
     SshGateway, SshMode, SshProfile,
@@ -81,6 +84,10 @@ const MAX_SESSIONS_PER_SOURCE: usize = 5000;
 /// The longest name, folder or session line kept, in bytes. A folder is copied into each of
 /// its sessions, so it bounds what a crafted file can make the reader allocate.
 const MAX_TEXT_LEN: usize = 2048;
+
+/// The most post-connect steps a shared SSH session keeps. `MobaXterm` gives one command per
+/// session; the bound is for a file that gives more.
+const MAX_STEPS_PER_SESSION: usize = 16;
 
 /// The most sections and entries kept from one file.
 const MAX_ENTRIES: usize = 10_000;
@@ -660,7 +667,12 @@ fn session_of_copy(source_id: &str, cached: &CachedSession) -> Option<SharedSess
         name,
         host,
         cached.port,
-        Login { username, gateway },
+        // The offline copy keeps no command: a copy of a file is not a reason to type one.
+        Login {
+            username,
+            gateway,
+            steps: Vec::new(),
+        },
     ))
 }
 
@@ -784,6 +796,15 @@ fn parse(
             folder: session.folder.as_deref().unwrap_or_default(),
             name: session.name(),
             host: session.endpoint().0,
+            protocol: session.protocol(),
+            route: session
+                .gateway
+                .as_ref()
+                .map_or("", |gateway| gateway.id.as_str()),
+            route_name: session
+                .gateway
+                .as_ref()
+                .map_or("", |gateway| gateway.name.as_str()),
         })
         .collect();
     let refused_count = refused.len();
@@ -805,6 +826,25 @@ fn listed_as(server: &Value) -> (String, String) {
         .or_else(|| text_of(server, "remoteServer"))
         .unwrap_or_default();
     (folder.to_owned(), name.to_owned())
+}
+
+/// The post-connect steps a file asks for, as the C# `SharedProfileSanitizer.SanitizeSteps`
+/// keeps them: the text typed, on, with the default delay. Stricter than the C#: a command
+/// with a control character (an escape sequence, a second line) or longer than
+/// [`MAX_TEXT_LEN`] is dropped rather than shown to be approved, since what is displayed is
+/// not always what a terminal would act on.
+fn steps_of(server: &Value) -> Vec<PostConnectStep> {
+    server
+        .get("postConnectSteps")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|step| step.get("input").and_then(Value::as_str))
+        .filter_map(clean)
+        .filter(|input| input.len() <= MAX_TEXT_LEN)
+        .take(MAX_STEPS_PER_SESSION)
+        .map(PostConnectStep::new)
+        .collect()
 }
 
 /// `text` trimmed, or none when it is empty or holds a control character.
@@ -877,6 +917,7 @@ fn sanitize(
             Login {
                 username: text_of(server, "sshUsername"),
                 gateway,
+                steps: steps_of(server),
             },
         ))
     } else if kind.eq_ignore_ascii_case("RDP") {
@@ -890,6 +931,7 @@ fn sanitize(
             Login {
                 username: text_of(server, "rdpUsername"),
                 gateway,
+                steps: Vec::new(),
             },
         ))
     } else {
@@ -969,6 +1011,9 @@ fn display_text(text: &str) -> String {
 struct Login<'a> {
     username: Option<&'a str>,
     gateway: Option<SshGateway>,
+    /// The commands the file asks a shell to type once it is ready, SSH only. Never approved
+    /// by the file: they run only once the user approved them (see `app::shared`).
+    steps: Vec<PostConnectStep>,
 }
 
 /// The shared session of a source: its identifier follows its folder and name, as the C#
@@ -982,11 +1027,17 @@ fn build_session(
     port: u16,
     login: Login<'_>,
 ) -> SharedSession {
-    let Login { username, gateway } = login;
+    let Login {
+        username,
+        gateway,
+        steps,
+    } = login;
     let id = ProfileId::new(session_id(source_id, folder.unwrap_or_default(), name));
     let route = gateway.as_ref().map(|gateway| gateway.id.clone());
     let target = match kind {
-        Protocol::Ssh => SharedTarget::Ssh(ssh_profile(&id, name, host, port, username, route)),
+        Protocol::Ssh => {
+            SharedTarget::Ssh(ssh_profile(&id, name, host, port, username, route, steps))
+        }
         Protocol::Rdp => SharedTarget::Rdp(rdp_profile(&id, name, host, port, username, route)),
     };
     SharedSession {
@@ -998,9 +1049,10 @@ fn build_session(
     }
 }
 
-/// An SSH session of a shared file: its own fields and nothing else. No key, no command after
-/// connecting, no agent, no folder: a local folder's defaults never reach it. Its gateway is
-/// one of the shared namespace.
+/// An SSH session of a shared file: its own fields and nothing else. No key, no agent, no
+/// folder: a local folder's defaults never reach it. Its gateway is one of the shared
+/// namespace. The commands the file asks to type after connecting are kept as steps the user
+/// has not approved: they are typed only once approved.
 fn ssh_profile(
     id: &ProfileId,
     name: &str,
@@ -1008,6 +1060,7 @@ fn ssh_profile(
     port: u16,
     username: Option<&str>,
     gateway: Option<ProfileId>,
+    steps: Vec<PostConnectStep>,
 ) -> SshProfile {
     SshProfile {
         id: id.clone(),
@@ -1021,7 +1074,10 @@ fn ssh_profile(
         local_tunnel_port: None,
         vault_entry: None,
         forwards: Forwards::default(),
-        post_connect: heimdall_core::post_connect::PostConnect::default(),
+        post_connect: PostConnect {
+            steps,
+            approved: None,
+        },
         forward_agent: false,
         compression: false,
         sftp: false,

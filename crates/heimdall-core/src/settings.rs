@@ -27,6 +27,7 @@ use crate::external_tools::ExternalTool;
 use crate::last_good_copy::Document;
 use crate::lockout::{LOCKOUT_DURATION, Lockout};
 use crate::pin::PinHash;
+use crate::post_connect::PostConnectStep;
 use crate::profile::{
     ProfileId, RESOLUTION_PRESETS, RdpDefaults, RdpMode, SshMode, preset_fits, resolution_preset,
     resolution_text,
@@ -725,6 +726,12 @@ pub struct Settings {
     /// and never written. Carried by an export, shown first by an import as it decides which
     /// files this computer trusts to give it sessions; kept by a reset.
     pub shared_sources: Vec<SharedSource>,
+    /// The post-connect commands of shared sessions the user allowed to run, as the C#
+    /// `SharedPostConnectApprovals` (`AppSettings.cs:466`): by shared session identifier, the
+    /// steps as they were approved, so a change to them in the shared file asks again. Kept
+    /// here and not on the session, which is rebuilt from a file other people edit. This
+    /// computer's own: never exported, and cleared by a reset.
+    pub shared_post_connect_approvals: BTreeMap<String, Vec<PostConnectStep>>,
     /// The port "Share folder" listens on, as the C# `EphemeralHttpPort`
     /// (`AppSettings.cs:176`): 0 asks the system for a free one, else within
     /// [`FILE_SHARE_PORT_MAX`].
@@ -1404,6 +1411,7 @@ impl Default for Settings {
             legacy_migration: LegacyMigration::default(),
             onboarding_completed: false,
             shared_sources: Vec::new(),
+            shared_post_connect_approvals: BTreeMap::new(),
             file_share_port: FILE_SHARE_PORT_DEFAULT,
             file_share_minutes: FILE_SHARE_MINUTES_DEFAULT,
         }
@@ -1458,7 +1466,17 @@ struct SettingsFile {
     #[serde(default)]
     shared_sessions: SharedSessionsSection,
     #[serde(default)]
+    shared_approvals: SharedApprovalsSection,
+    #[serde(default)]
     file_share: FileShareSection,
+}
+
+/// The post-connect steps of shared sessions the user approved. This computer's own: never
+/// exported.
+#[derive(Serialize, Deserialize, Default)]
+struct SharedApprovalsSection {
+    #[serde(default)]
+    post_connect: BTreeMap<String, Vec<PostConnectStep>>,
 }
 
 /// The "Share folder" settings; absent values are the defaults.
@@ -2391,6 +2409,7 @@ impl Settings {
             legacy_migration: file.legacy_migration.settings(),
             onboarding_completed: file.onboarding.completed,
             shared_sources: file.shared_sessions.sources,
+            shared_post_connect_approvals: file.shared_approvals.post_connect,
             file_share_port: within(
                 file.file_share.port,
                 file_share_port_accepted,
@@ -2560,6 +2579,9 @@ impl Settings {
             },
             shared_sessions: SharedSessionsSection {
                 sources: self.shared_sources.clone(),
+            },
+            shared_approvals: SharedApprovalsSection {
+                post_connect: self.shared_post_connect_approvals.clone(),
             },
             file_share: FileShareSection {
                 port: Some(self.file_share_port),
@@ -2786,6 +2808,36 @@ const TRANSFERRED: [&str; 16] = [
 /// The name a portable settings file is offered under.
 pub const SETTINGS_EXPORT_FILE_NAME: &str = "heimdall-settings.toml";
 
+impl Settings {
+    /// Whether the user approved `steps` for the shared session `id` exactly as they are, as
+    /// the C# `SharedPostConnectTrust.AuthorizeAsync` compares fingerprints: a change to a
+    /// command, its delay, whether it runs or what a failure does is not approved.
+    #[must_use]
+    pub fn shared_post_connect_approved(&self, id: &ProfileId, steps: &[PostConnectStep]) -> bool {
+        self.shared_post_connect_approvals
+            .get(id.as_str())
+            .is_some_and(|approved| approved.as_slice() == steps)
+    }
+
+    /// Records that the user approved `steps` for the shared session `id`.
+    pub fn approve_shared_post_connect(&mut self, id: &ProfileId, steps: &[PostConnectStep]) {
+        self.shared_post_connect_approvals
+            .insert(id.as_str().to_owned(), steps.to_vec());
+    }
+
+    /// Forgets the approvals of the sessions of every source not in `kept_sources`, as the
+    /// C# `ForgetAllExceptAsync`; an approval whose key names no source is left alone. How
+    /// many were forgotten.
+    pub fn forget_shared_post_connect_approvals_except(&mut self, kept_sources: &[&str]) -> usize {
+        let before = self.shared_post_connect_approvals.len();
+        self.shared_post_connect_approvals.retain(|id, _| {
+            crate::shared_sessions::source_id_of(id)
+                .is_none_or(|source| kept_sources.contains(&source))
+        });
+        before - self.shared_post_connect_approvals.len()
+    }
+}
+
 /// Settings read from a portable settings file, and what they change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsImport {
@@ -2973,7 +3025,7 @@ mod transfer_tests {
     /// The sections that never travel: this computer's PIN and lockouts, its last look for a
     /// newer release, the gateway its profile form starts on, the legacy migration it
     /// declined, the welcome tour it saw, and the file's own version.
-    const HELD_BACK: [&str; 8] = [
+    const HELD_BACK: [&str; 9] = [
         "version",
         "vault_unlock",
         "pin",
@@ -2982,6 +3034,7 @@ mod transfer_tests {
         "tools",
         "legacy_migration",
         "onboarding",
+        "shared_approvals",
     ];
 
     #[test]

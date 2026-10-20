@@ -26,7 +26,9 @@
 
 use std::time::SystemTime;
 
-use heimdall_core::profile::ProfileId;
+use heimdall_core::post_connect::{PostConnect, PostConnectStep};
+use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::store::StoreError;
 
 use super::connect_as::transient_id;
 use super::reconnect::Reopen;
@@ -54,6 +56,7 @@ impl App {
         self.shared.set_cache_directory(cache);
         self.shared.load(&sources, &variables);
         self.sync_shared_gateways();
+        self.forget_removed_approvals();
     }
 
     /// Hands the store the gateways the shared sessions go through, so that a shared session
@@ -77,6 +80,83 @@ impl App {
         let variables = self.settings.mobaxterm_variables.clone();
         self.shared.refresh(&sources, &variables, now);
         self.sync_shared_gateways();
+        self.forget_removed_approvals();
+    }
+
+    /// Forgets the approved commands of the sessions of sources the settings no longer list,
+    /// as the C# `ForgetAllExceptAsync`: a source added again under the same identifier must
+    /// not inherit what was allowed for a file that was once there.
+    fn forget_removed_approvals(&mut self) {
+        let ids: Vec<String> = self
+            .settings
+            .shared_sources
+            .iter()
+            .map(|source| source.id.clone())
+            .collect();
+        let kept: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let forgotten = self
+            .settings
+            .forget_shared_post_connect_approvals_except(&kept);
+        if forgotten == 0 {
+            return;
+        }
+        log::info!(
+            "approved commands of {forgotten} shared session(s) of removed sources forgotten"
+        );
+        if let Err(error) = self.settings.save(&self.settings_file) {
+            log::error!("the approved commands could not be forgotten on disk: {error}");
+        }
+    }
+
+    /// Marks `profile`, a shell opened from a shared session, approved when the user already
+    /// approved exactly its commands for that session. Nothing else approves them: the file
+    /// is rebuilt by other people, so what it says next is asked about again.
+    pub(super) fn approve_known_shared_steps(&self, profile: &mut SshProfile) {
+        let Some(shared) = self.shared_origins.get(&profile.id) else {
+            return;
+        };
+        if self
+            .settings
+            .shared_post_connect_approved(shared, &profile.post_connect.steps)
+        {
+            profile.post_connect = PostConnect::approved_as(profile.post_connect.steps.clone());
+        }
+    }
+
+    /// Whether the shell `profile` was opened from a shared session.
+    pub(super) fn is_shared_shell(&self, profile: &SshProfile) -> bool {
+        self.shared_origins.contains_key(&profile.id)
+    }
+
+    /// Records the approval of `steps` for the shared session the shell `id` was opened from,
+    /// saved at once. None when the shell is not from a shared session; the error leaves the
+    /// approval unrecorded.
+    pub(super) fn approve_shared_steps(
+        &mut self,
+        id: &ProfileId,
+        steps: &[PostConnectStep],
+    ) -> Option<Result<(), StoreError>> {
+        let shared = self.shared_origins.get(id)?.clone();
+        let previous = self
+            .settings
+            .shared_post_connect_approvals
+            .get(shared.as_str())
+            .cloned();
+        self.settings.approve_shared_post_connect(&shared, steps);
+        let saved = self.settings.save(&self.settings_file);
+        if saved.is_err() {
+            match previous {
+                Some(previous) => self
+                    .settings
+                    .approve_shared_post_connect(&shared, &previous),
+                None => {
+                    self.settings
+                        .shared_post_connect_approvals
+                        .remove(shared.as_str());
+                }
+            }
+        }
+        Some(saved)
     }
 
     /// Opens the shared session `id` as a session never saved, a copy of what the file
@@ -85,7 +165,15 @@ impl App {
         let Some(session) = self.shared.find(id) else {
             return Vec::new();
         };
+        let shared_id = session.id.clone();
         let (profile, purpose) = opened(session);
+        // Its commands, if the file asks for any, are looked up against what the user
+        // approved when the shell opens, never taken as approved.
+        if let TabProfile::Ssh(ssh) = &profile
+            && ssh.post_connect.runnable() > 0
+        {
+            self.shared_origins.insert(ssh.id.clone(), shared_id);
+        }
         let effects = self.open_transient(profile.clone(), purpose);
         self.reopened_by(Reopen::Transient(Box::new(profile), purpose));
         effects

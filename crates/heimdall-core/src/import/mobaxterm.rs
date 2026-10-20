@@ -65,6 +65,10 @@ const SSH_KEY_FIELD: usize = 4;
 const SSH_COMPRESSION_FIELD: usize = 11;
 const SSH_AGENT_FIELD: usize = 12;
 
+/// Where an SSH session keeps the command `MobaXterm` runs on the remote host after login, as
+/// the C# `LoginCommandIndex` (`MobaXtermImporter.cs:123`).
+const SSH_LOGIN_COMMAND_FIELD: usize = 6;
+
 /// Where an SSH session names its gateway (jump host): host, port and user, as the C#
 /// `SessionLayouts` (`MobaXtermImporter.cs:98-106`).
 const SSH_GATEWAY_FIELDS: [usize; 3] = [7, 8, 9];
@@ -409,6 +413,16 @@ fn session(
             set_port(&mut dto, "sshPort", port);
             set_text(&mut dto, "sshUsername", user);
             if *connection_type == "SSH" {
+                // The command run after login is one post-connect step, as the C#
+                // `ApplyLoginCommand`. Never approved by the file: whoever imports it, or
+                // opens it as a shared session, is asked before it is typed.
+                let command = field(SSH_LOGIN_COMMAND_FIELD).trim();
+                if !command.is_empty() {
+                    dto.insert(
+                        "postConnectSteps".to_owned(),
+                        serde_json::json!([{ "input": command }]),
+                    );
+                }
                 if let Some(path) = key_path(field(SSH_KEY_FIELD)) {
                     dto.insert("sshKeyPath".to_owned(), Value::String(path));
                 }

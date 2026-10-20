@@ -42,10 +42,11 @@ const LIST_HEIGHT: f32 = 360.0;
 const VEIL_ALPHA: f32 = 0.7;
 
 /// The checks in the order a report lists them.
-const CHECKS: [ReportCheck; 4] = [
+const CHECKS: [ReportCheck; 5] = [
     ReportCheck::SkippedSession,
     ReportCheck::UnresolvedVariable,
     ReportCheck::NameHostMismatch,
+    ReportCheck::GatewayOutlier,
     ReportCheck::DuplicateHost,
 ];
 
@@ -56,6 +57,7 @@ pub fn check_title(check: ReportCheck, count: usize) -> String {
         ReportCheck::SkippedSession => fl!("ui-shared-report-skipped", count = count),
         ReportCheck::UnresolvedVariable => fl!("ui-shared-report-unresolved", count = count),
         ReportCheck::NameHostMismatch => fl!("ui-shared-report-mismatch", count = count),
+        ReportCheck::GatewayOutlier => fl!("ui-shared-report-gateway-outlier", count = count),
         ReportCheck::DuplicateHost => fl!("ui-shared-report-duplicate-host", count = count),
     }
 }
@@ -99,11 +101,25 @@ pub fn entry_text(entry: &ReportEntry) -> String {
                 host = entry.detail.as_str()
             )
         }
+        ReportCheck::GatewayOutlier => fl!(
+            "ui-shared-report-detail-gateway-outlier",
+            route = route_label(&entry.detail),
+            usual = route_label(&entry.context)
+        ),
         ReportCheck::DuplicateHost => fl!(
             "ui-shared-report-detail-duplicate-host",
             host = entry.detail.as_str(),
             others = entry.context.as_str()
         ),
+    }
+}
+
+/// A route as the report says it: the gateway's name, or that there is none.
+fn route_label(route: &str) -> String {
+    if route.is_empty() {
+        fl!("ui-shared-report-route-direct")
+    } else {
+        route.to_owned()
     }
 }
 
@@ -231,6 +247,11 @@ mod tests {
         assert!(said.contains("GHOST"), "{said}");
         let said = entry_text(&entry(ReportCheck::DuplicateHost, None, "db01"));
         assert!(said.contains("db01") && said.contains("db"), "{said}");
+        // The route the session takes, and the one its folder takes: empty is no gateway.
+        let said = entry_text(&entry(ReportCheck::GatewayOutlier, None, "bastion-b"));
+        assert!(said.contains("bastion-b") && said.contains("db"), "{said}");
+        let said = entry_text(&entry(ReportCheck::GatewayOutlier, None, ""));
+        assert!(said.contains("direct"), "{said}");
         for reason in [
             SkipReason::InvalidHost,
             SkipReason::DuplicateSession,

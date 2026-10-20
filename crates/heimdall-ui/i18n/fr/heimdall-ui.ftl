@@ -1125,6 +1125,10 @@ ui-dialog-post-connect-body = { $count ->
 }
 ui-dialog-post-connect-run = Exécuter et mémoriser
 ui-dialog-post-connect-skip = Se connecter sans elles
+ui-dialog-post-connect-shared-body = { $count ->
+    [one] "{ $name }" vient d'un fichier partagé que d'autres personnes peuvent modifier. Elle va exécuter automatiquement { $count } commande dans cette session. Ne continuez que si vous faites confiance à ce fichier : la question est reposée chaque fois que le fichier la modifie. L'exécuter et mémoriser ce choix ?
+   *[other] "{ $name }" vient d'un fichier partagé que d'autres personnes peuvent modifier. Elle va exécuter automatiquement { $count } commandes dans cette session. Ne continuez que si vous faites confiance à ce fichier : la question est reposée chaque fois que le fichier les modifie. Les exécuter et mémoriser ce choix ?
+}
 ui-profile-toggle-forward-agent = Transférer l'agent SSH
 ui-profile-ssh-mode = Mode SSH
 ui-profile-ssh-mode-embedded = Intégré (dans l'application)
@@ -5968,6 +5972,11 @@ ui-shared-report-mismatch =
         [one] { $count } nom qui n'est pas celui de son hôte
        *[other] { $count } noms qui ne sont pas ceux de leur hôte
     }
+ui-shared-report-gateway-outlier =
+    { $count ->
+        [one] { $count } session qui passe par une autre passerelle que son dossier
+       *[other] { $count } sessions qui passent par une autre passerelle que leur dossier
+    }
 ui-shared-report-duplicate-host =
     { $count ->
         [one] { $count } session sur un hôte classé deux fois
@@ -5981,6 +5990,8 @@ ui-shared-report-reason-over-limit = La source contient déjà autant de session
 ui-shared-report-detail-unresolved = L'identifiant utilise la variable { $name }, qui n'a pas de valeur. Définissez-la dans les variables d'import MobaXterm.
 ui-shared-report-detail-mismatch = Le nom n'est ni l'hôte { $host } ni son premier libellé.
 ui-shared-report-detail-duplicate-host = L'hôte { $host } est aussi utilisé par { $others }.
+ui-shared-report-detail-gateway-outlier = Elle se connecte par { $route }, alors que la plupart des sessions de son dossier passent par { $usual }.
+ui-shared-report-route-direct = aucune passerelle (connexion directe)
 
 ## Partager un dossier : un dossier servi en lecture seule par HTTP, pour une durée limitée.
 ui-share-button = Partager

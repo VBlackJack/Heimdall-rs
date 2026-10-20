@@ -3434,6 +3434,10 @@ pub struct App {
     monitor: reachability_monitor::Monitor,
     /// The sessions of the shared files, held in memory and never written back.
     shared: crate::shared_sessions::SharedSessions,
+    /// The shared session each shell opened from one was made from, by the identifier of the
+    /// shell's profile: where the approval of its post-connect commands is looked up, now and
+    /// when the tab reconnects.
+    shared_origins: std::collections::HashMap<ProfileId, ProfileId>,
     /// The look for a newer release.
     updates: updates::Updates,
     /// Credential Guard required before an embedded RDP session, asked before Windows
@@ -3637,6 +3641,7 @@ impl App {
             macros,
             monitor: reachability_monitor::Monitor::default(),
             shared: crate::shared_sessions::SharedSessions::default(),
+            shared_origins: std::collections::HashMap::new(),
             updates: updates::Updates::new(crate::update_check::running_release()),
             credential_guard: credential_guard_gate::CredentialGuardGate::default(),
             known_hosts_synced: false,

@@ -1258,6 +1258,10 @@ ui-dialog-post-connect-body = { $count ->
 }
 ui-dialog-post-connect-run = Run and remember
 ui-dialog-post-connect-skip = Connect without them
+ui-dialog-post-connect-shared-body = { $count ->
+    [one] "{ $name }" comes from a shared file that other people can edit. It will automatically run { $count } command in this session. Only continue if you trust that file: you are asked again whenever the file changes it. Run it and remember this choice?
+   *[other] "{ $name }" comes from a shared file that other people can edit. It will automatically run { $count } commands in this session. Only continue if you trust that file: you are asked again whenever the file changes them. Run them and remember this choice?
+}
 ui-profile-toggle-forward-agent = Forward SSH agent
 ui-profile-ssh-mode = SSH mode
 ui-profile-ssh-mode-embedded = Embedded (integrated)
@@ -5912,6 +5916,11 @@ ui-shared-report-mismatch =
         [one] { $count } name that is not its host
        *[other] { $count } names that are not their host
     }
+ui-shared-report-gateway-outlier =
+    { $count ->
+        [one] { $count } session that takes another gateway than its folder
+       *[other] { $count } sessions that take another gateway than their folder
+    }
 ui-shared-report-duplicate-host =
     { $count ->
         [one] { $count } session on a host filed twice
@@ -5925,6 +5934,8 @@ ui-shared-report-reason-over-limit = The source already holds as many sessions a
 ui-shared-report-detail-unresolved = The login names the variable { $name }, which has no value. Define it in the MobaXterm import variables.
 ui-shared-report-detail-mismatch = The name is not the host { $host } nor its first label.
 ui-shared-report-detail-duplicate-host = The host { $host } is also used by { $others }.
+ui-shared-report-detail-gateway-outlier = It connects through { $route }, while most of its folder connects through { $usual }.
+ui-shared-report-route-direct = no gateway (direct connection)
 
 ## Share folder: a folder served read-only over HTTP, for a limited time.
 ui-share-button = Share

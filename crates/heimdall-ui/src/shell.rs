@@ -12782,12 +12782,23 @@ fn command_question<'a>(
 /// shown: Yes types them and remembers the choice, No opens the shell without them.
 fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Message> {
     let count = confirmation.commands.len();
-    let body = column![
-        dialog_parts::body(fl!(
+    // Commands of a shared file are asked about with the file's authors in mind: other people
+    // edit it, and the question comes back when they change the commands.
+    let question = if confirmation.shared {
+        fl!(
+            "ui-dialog-post-connect-shared-body",
+            name = confirmation.name.as_str(),
+            count = count
+        )
+    } else {
+        fl!(
             "ui-dialog-post-connect-body",
             name = confirmation.name.as_str(),
             count = count
-        )),
+        )
+    };
+    let body = column![
+        dialog_parts::body(question),
         container(
             styles::scroll(
                 text(confirmation.commands.join("\n"))
