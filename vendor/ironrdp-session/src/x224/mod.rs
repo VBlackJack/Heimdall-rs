@@ -127,7 +127,7 @@ impl Processor {
     /// Processes a received PDU. Returns a vector of [`ProcessorOutput`] that must be processed
     /// in the returned order.
     pub fn process(&mut self, frame: &[u8]) -> SessionResult<Vec<ProcessorOutput>> {
-        self.process_with_bulk(frame, None)
+        self.process_with_bulk(frame, None, &mut crate::BulkTally::default())
     }
 
     /// [`Processor::process`], a bulk-compressed slow-path data PDU decompressed first by
@@ -137,6 +137,7 @@ impl Processor {
         &mut self,
         frame: &[u8],
         bulk: Option<&mut BulkCompressor>,
+        tally: &mut crate::BulkTally,
     ) -> SessionResult<Vec<ProcessorOutput>> {
         let data_ctx: SendDataIndicationCtx<'_> =
             ironrdp_pdu::mcs::decode_send_data_indication(frame).map_err(SessionError::decode)?;
@@ -144,7 +145,7 @@ impl Processor {
 
         if channel_id == self.io_channel_id {
             let decompressed;
-            let data_ctx = match decompress_share_data(data_ctx.user_data, bulk)? {
+            let data_ctx = match decompress_share_data(data_ctx.user_data, bulk, tally)? {
                 Some(data) => {
                     decompressed = data;
                     SendDataIndicationCtx {
@@ -319,7 +320,11 @@ const BULK_FLAGS_MASK: u8 = 0xE0;
 /// it reads the PDU. `None` when the PDU carries no compression flags. A PDU with compression
 /// flags and no decompressor (compression not negotiated) is an error: its bytes are never
 /// decoded as plain data. Bytes past `compressedLength` are dropped, as FreeRDP drops them.
-fn decompress_share_data(user_data: &[u8], bulk: Option<&mut BulkCompressor>) -> SessionResult<Option<Vec<u8>>> {
+fn decompress_share_data(
+    user_data: &[u8],
+    bulk: Option<&mut BulkCompressor>,
+    tally: &mut crate::BulkTally,
+) -> SessionResult<Option<Vec<u8>>> {
     if user_data.len() < SHARE_HEADERS_LEN {
         return Ok(None);
     }
@@ -329,6 +334,7 @@ fn decompress_share_data(user_data: &[u8], bulk: Option<&mut BulkCompressor>) ->
     }
     let compressed_type = user_data[COMPRESSED_TYPE_OFFSET];
     if compressed_type & BULK_FLAGS_MASK == 0 {
+        tally.record_uncompressed();
         return Ok(None);
     }
     let Some(bulk) = bulk else {
@@ -355,6 +361,10 @@ fn decompress_share_data(user_data: &[u8], bulk: Option<&mut BulkCompressor>) ->
     let data = bulk
         .decompress(&user_data[SHARE_HEADERS_LEN..end], u32::from(compressed_type))
         .map_err(|e| reason_err!("IO channel", "bulk decompression failed: {e}").with_source(crate::BulkDataRefused))?;
+    match crate::BulkType::from_wire(compressed_type) {
+        Some(bulk_type) => tally.record_compressed(bulk_type),
+        None => tally.record_uncompressed(),
+    }
     let mut pdu = Vec::with_capacity(SHARE_HEADERS_LEN + data.len());
     pdu.extend_from_slice(&user_data[..SHARE_HEADERS_LEN]);
     pdu.extend_from_slice(data);

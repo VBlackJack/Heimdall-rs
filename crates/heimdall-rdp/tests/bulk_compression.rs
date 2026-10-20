@@ -42,7 +42,8 @@ use ironrdp::pdu::x224::X224;
 use ironrdp::session::fast_path::ProcessorBuilder;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{
-    ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionResult,
+    ActiveStage, ActiveStageBuilder, ActiveStageOutput, BulkType, GracefulDisconnectReason,
+    SessionResult,
 };
 use ironrdp::svc::StaticChannelSet;
 
@@ -526,4 +527,166 @@ fn malformed_compressed_input_never_panics() {
 #[ignore = "about a minute: run by hand"]
 fn malformed_compressed_input_never_panics_long() {
     malformed_inputs_never_panic(5_000_000);
+}
+
+/// The type each level of `LEVELS` uses, in order.
+const LEVEL_TYPES: [BulkType; 4] = BulkType::ALL;
+
+/// A fast-path pointer position update, not compressed.
+fn fast_path_uncompressed() -> Vec<u8> {
+    let (x, y) = POINTER;
+    let mut frame = vec![0, 9, 0x08, 4, 0];
+    frame.extend_from_slice(&x.to_le_bytes());
+    frame.extend_from_slice(&y.to_le_bytes());
+    frame
+}
+
+#[test]
+fn the_first_pdu_of_each_type_is_reported_once_and_the_counts_add_up() {
+    for (level, bulk_type) in LEVELS.iter().zip(LEVEL_TYPES) {
+        let name = level.name;
+        let [first, second, third] = level.pdus;
+        let mut stage = stage(Some(CompressionType::Rdp61));
+        let mut image = image();
+        // A slow-path PDU first: the type is reported.
+        stage
+            .process(
+                &mut image,
+                Action::X224,
+                &slow_path(first.flags, first.data, None),
+            )
+            .expect("slow path read");
+        assert_eq!(
+            stage.take_first_seen_bulk_types(),
+            vec![bulk_type],
+            "{name}"
+        );
+        // A fast-path update of the same type: not reported again.
+        stage
+            .process(
+                &mut image,
+                Action::FastPath,
+                &fast_path(second.flags, second.data),
+            )
+            .expect("fast path read");
+        assert!(stage.take_first_seen_bulk_types().is_empty(), "{name}");
+        // And a slow-path PDU again, the last one: nothing new either.
+        stage
+            .process(
+                &mut image,
+                Action::X224,
+                &slow_path(third.flags, third.data, None),
+            )
+            .expect("slow path read");
+        assert!(stage.take_first_seen_bulk_types().is_empty(), "{name}");
+        let tally = stage.bulk_tally();
+        assert_eq!(tally.compressed(bulk_type), 3, "{name}");
+        assert_eq!(tally.uncompressed(), 0, "{name}");
+        for other in BulkType::ALL
+            .into_iter()
+            .filter(|other| *other != bulk_type)
+        {
+            assert_eq!(tally.compressed(other), 0, "{name}: {other}");
+        }
+    }
+}
+
+#[test]
+fn a_fast_path_update_alone_reports_its_type() {
+    let [_, second, _] = LEVELS[3].pdus;
+    let mut stage = stage(Some(CompressionType::Rdp61));
+    // The fast-path update refers into the first slow-path PDU's history, so feed it first.
+    let [first, _, _] = LEVELS[3].pdus;
+    let mut image = image();
+    stage
+        .process(
+            &mut image,
+            Action::X224,
+            &slow_path(first.flags, first.data, None),
+        )
+        .expect("slow path read");
+    assert_eq!(
+        stage.take_first_seen_bulk_types(),
+        vec![BulkType::Rdp61Xcrush]
+    );
+    stage
+        .process(
+            &mut image,
+            Action::FastPath,
+            &fast_path(second.flags, second.data),
+        )
+        .expect("fast path read");
+    assert!(stage.take_first_seen_bulk_types().is_empty());
+    assert_eq!(stage.bulk_tally().compressed(BulkType::Rdp61Xcrush), 2);
+}
+
+#[test]
+fn uncompressed_pdus_are_counted_and_report_no_type() {
+    let mut stage = stage(Some(CompressionType::Rdp61));
+    let mut image = image();
+    stage
+        .process(&mut image, Action::FastPath, &fast_path_uncompressed())
+        .expect("fast path read");
+    stage
+        .process(
+            &mut image,
+            Action::X224,
+            &slow_path(0, &[0; UNCOMPRESSED as usize], None),
+        )
+        .expect("slow path read");
+    assert!(stage.take_first_seen_bulk_types().is_empty());
+    let tally = stage.bulk_tally();
+    assert_eq!(tally.uncompressed(), 2);
+    assert!(BulkType::ALL.into_iter().all(|t| tally.compressed(t) == 0));
+}
+
+#[test]
+fn nothing_is_reported_when_compression_is_off() {
+    let mut stage = stage(None);
+    let mut image = image();
+    stage
+        .process(&mut image, Action::FastPath, &fast_path_uncompressed())
+        .expect("fast path read");
+    assert!(stage.take_first_seen_bulk_types().is_empty());
+    let tally = stage.bulk_tally();
+    assert!(BulkType::ALL.into_iter().all(|t| tally.compressed(t) == 0));
+}
+
+#[test]
+fn the_tally_goes_on_across_a_reactivation() {
+    let [first, second, _] = LEVELS[2].pdus;
+    let mut stage = stage(Some(CompressionType::Rdp61));
+    let mut image = image();
+    stage
+        .process(
+            &mut image,
+            Action::X224,
+            &slow_path(first.flags, first.data, None),
+        )
+        .expect("slow path read");
+    let bulk_decompressor = stage.take_bulk_decompressor();
+    stage.set_fastpath_processor(
+        ProcessorBuilder {
+            io_channel_id: IO_CHANNEL,
+            user_channel_id: USER_CHANNEL,
+            share_id: SHARE_ID,
+            enable_server_pointer: true,
+            pointer_software_rendering: true,
+            bulk_decompressor,
+        }
+        .build(),
+    );
+    stage
+        .process(
+            &mut image,
+            Action::FastPath,
+            &fast_path(second.flags, second.data),
+        )
+        .expect("fast path read");
+    assert_eq!(stage.bulk_tally().compressed(BulkType::Rdp6Ncrush), 2);
+    // Reported once, before the reactivation, and not again after it.
+    assert_eq!(
+        stage.take_first_seen_bulk_types(),
+        vec![BulkType::Rdp6Ncrush]
+    );
 }

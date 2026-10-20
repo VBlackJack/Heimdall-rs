@@ -44,6 +44,8 @@ pub struct Processor {
     /// Bulk decompressor for server-to-client compressed PDUs.
     /// `None` when compression was not negotiated.
     bulk_decompressor: Option<BulkCompressor>,
+    /// What arrived compressed and what did not (Heimdall-rs patch).
+    bulk_tally: crate::BulkTally,
     /// Current 8bpp color palette. Updated by Palette fast-path updates.
     palette: Palette,
     #[cfg(feature = "qoiz")]
@@ -61,6 +63,27 @@ impl Processor {
     /// reactivation: the server's history goes on. Heimdall-rs patch, see `vendor/PATCHES.md`.
     pub fn take_bulk_decompressor(&mut self) -> Option<BulkCompressor> {
         self.bulk_decompressor.take()
+    }
+
+    /// The decompressor and the tally together, for the slow-path processor, which needs both
+    /// at once. Heimdall-rs patch, see `vendor/PATCHES.md`.
+    pub fn bulk_parts_mut(&mut self) -> (Option<&mut BulkCompressor>, &mut crate::BulkTally) {
+        (self.bulk_decompressor.as_mut(), &mut self.bulk_tally)
+    }
+
+    /// The tally of the PDUs read so far.
+    pub fn bulk_tally(&self) -> &crate::BulkTally {
+        &self.bulk_tally
+    }
+
+    /// Takes the tally out, for the processor that replaces this one after a reactivation.
+    pub fn take_bulk_tally(&mut self) -> crate::BulkTally {
+        core::mem::take(&mut self.bulk_tally)
+    }
+
+    /// Installs the tally of the processor this one replaces.
+    pub fn set_bulk_tally(&mut self, tally: crate::BulkTally) {
+        self.bulk_tally = tally;
     }
 
     pub fn update_mouse_pos(&mut self, x: u16, y: u16) {
@@ -124,6 +147,10 @@ impl Processor {
                         })?;
                     // Copy decompressed data before accessing metrics (releases the mutable borrow).
                     decompressed_data = decompressed.to_vec();
+                    match update_pdu.compression_type.and_then(|ct| crate::BulkType::from_wire(ct.as_u8())) {
+                        Some(bulk_type) => self.bulk_tally.record_compressed(bulk_type),
+                        None => self.bulk_tally.record_uncompressed(),
+                    }
                     debug!(
                         compressed_size = update_pdu.data.len(),
                         decompressed_size = decompressed_data.len(),
@@ -145,9 +172,11 @@ impl Processor {
                 // Compression flags present but COMPRESSED bit not set — pass data through.
                 // Still need to inform the decompressor of FLUSHED/AT_FRONT flags even
                 // without compressed payload.
+                self.bulk_tally.record_uncompressed();
                 update_pdu.data
             }
         } else {
+            self.bulk_tally.record_uncompressed();
             update_pdu.data
         };
 
@@ -650,6 +679,7 @@ impl ProcessorBuilder {
             enable_server_pointer: self.enable_server_pointer,
             pointer_software_rendering: self.pointer_software_rendering,
             bulk_decompressor: self.bulk_decompressor,
+            bulk_tally: crate::BulkTally::default(),
             palette: Palette::system_default(),
             #[cfg(feature = "qoiz")]
             zdctx: zstd_safe::DCtx::default(),

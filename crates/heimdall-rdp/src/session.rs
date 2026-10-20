@@ -31,8 +31,8 @@ use ironrdp::pdu::Action;
 use ironrdp::session::fast_path::ProcessorBuilder;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{
-    ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason,
-    is_bulk_data_refused,
+    ActiveStage, ActiveStageBuilder, ActiveStageOutput, BulkTally, BulkType,
+    GracefulDisconnectReason, is_bulk_data_refused,
 };
 use ironrdp_core::WriteBuf;
 use tokio::io::{AsyncWriteExt as _, ReadHalf, WriteHalf};
@@ -803,6 +803,41 @@ fn active_stage(
     (stage, result.activation_factory, result.user_channel_id)
 }
 
+/// The line logged when a session opens: whether bulk compression was offered. Counts and
+/// types only reach the log, never what a PDU carries.
+fn opening_line(offered: bool) -> String {
+    if offered {
+        "RDP bulk compression offered to the server".to_owned()
+    } else {
+        "RDP bulk compression not offered".to_owned()
+    }
+}
+
+/// One line per compression type the server used for the first time.
+fn first_seen_lines(types: &[BulkType]) -> Vec<String> {
+    types
+        .iter()
+        .map(|bulk_type| format!("RDP bulk compression in use: {bulk_type}"))
+        .collect()
+}
+
+/// The line logged when a session ends: PDUs read compressed per type, and uncompressed.
+/// `None` when compression was not offered.
+fn closing_line(offered: bool, tally: &BulkTally) -> Option<String> {
+    if !offered {
+        return None;
+    }
+    let per_type = BulkType::ALL
+        .iter()
+        .map(|bulk_type| format!("{bulk_type} {}", tally.compressed(*bulk_type)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "RDP bulk compression summary: compressed PDUs {per_type}; uncompressed PDUs {}",
+        tally.uncompressed()
+    ))
+}
+
 struct Running {
     framebuffer: Framebuffer,
     events: mpsc::Sender<RdpEvent>,
@@ -852,13 +887,32 @@ impl Running {
     async fn serve(
         &mut self,
         result: ConnectionResult,
-        mut shared: Option<Shared>,
+        shared: Option<Shared>,
         cancel: CancellationToken,
     ) -> Result<CloseReason, String> {
+        let offered = result.compression_type.is_some();
+        log::info!("{}", opening_line(offered));
         let (stage, activation, user_channel_id) = active_stage(result);
         // Compression offered and its decompressor not built: the session ends here rather
         // than read what the server compresses.
         let mut stage = stage.map_err(|error| noted(&mut self.compression_refused, &error))?;
+        let outcome = self
+            .serve_stage(&mut stage, &activation, user_channel_id, shared, cancel)
+            .await;
+        if let Some(line) = closing_line(offered, stage.bulk_tally()) {
+            log::info!("{line}");
+        }
+        outcome
+    }
+
+    async fn serve_stage(
+        &mut self,
+        stage: &mut ActiveStage,
+        activation: &ConnectionActivationFactory,
+        user_channel_id: u16,
+        mut shared: Option<Shared>,
+        cancel: CancellationToken,
+    ) -> Result<CloseReason, String> {
         let mut keys = Database::new();
         self.keep_alive.activated(Instant::now());
         loop {
@@ -876,9 +930,13 @@ impl Running {
                         return Ok(CloseReason::Server);
                     }
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
-                    stage
+                    let outputs = stage
                         .process(&mut image, action, &frame)
-                        .map_err(|error| noted(&mut self.compression_refused, &error))?
+                        .map_err(|error| noted(&mut self.compression_refused, &error))?;
+                    for line in first_seen_lines(&stage.take_first_seen_bulk_types()) {
+                        log::info!("{line}");
+                    }
+                    outputs
                 }
                 changed = self.size.changed() => {
                     if changed.is_ok() {
@@ -894,11 +952,11 @@ impl Running {
                 }
                 () = sleep_until_settled(self.settle), if self.settle.is_some() => {
                     self.settle = None;
-                    self.ask_for_size(&mut stage).await?;
+                    self.ask_for_size(stage).await?;
                     Vec::new()
                 }
                 () = sleep_until_settled(self.keep_alive.due()), if self.keep_alive.due().is_some() => {
-                    self.send(&keep_alive::frame(&stage, user_channel_id)?).await?;
+                    self.send(&keep_alive::frame(stage, user_channel_id)?).await?;
                     Vec::new()
                 }
                 Some(inputs) = self.input.recv() => {
@@ -910,7 +968,7 @@ impl Running {
                 }
                 step = next_clipboard_step(&mut shared) => {
                     if let Some(shared) = shared.as_mut() {
-                        self.clipboard(&mut stage, step, shared).await?;
+                        self.clipboard(stage, step, shared).await?;
                     }
                     Vec::new()
                 }
@@ -942,7 +1000,7 @@ impl Running {
                         });
                     }
                     ActiveStageOutput::DeactivateAll => {
-                        self.reactivated(&activation, &mut stage).await?;
+                        self.reactivated(activation, stage).await?;
                     }
                     _ => {}
                 }
@@ -1367,6 +1425,47 @@ mod tests {
     use ironrdp::cliprdr::backend::CliprdrBackend as _;
 
     use super::*;
+
+    #[test]
+    fn the_opening_line_says_whether_compression_was_offered() {
+        assert_eq!(
+            opening_line(true),
+            "RDP bulk compression offered to the server"
+        );
+        assert_eq!(opening_line(false), "RDP bulk compression not offered");
+    }
+
+    #[test]
+    fn a_first_seen_type_is_named_in_its_line() {
+        assert_eq!(
+            first_seen_lines(&[BulkType::Rdp61Xcrush]),
+            vec!["RDP bulk compression in use: RDP 6.1 (XCRUSH)".to_owned()]
+        );
+        assert!(first_seen_lines(&[]).is_empty());
+    }
+
+    #[test]
+    fn the_closing_line_counts_each_type_and_the_uncompressed() {
+        let mut tally = BulkTally::default();
+        tally.record_compressed(BulkType::Rdp61Xcrush);
+        tally.record_compressed(BulkType::Rdp61Xcrush);
+        tally.record_compressed(BulkType::Rdp5Mppc64K);
+        tally.record_uncompressed();
+        assert_eq!(
+            closing_line(true, &tally).as_deref(),
+            Some(
+                "RDP bulk compression summary: compressed PDUs RDP 4 (MPPC 8K) 0, \
+                 RDP 5 (MPPC 64K) 1, RDP 6 (NCRUSH) 0, RDP 6.1 (XCRUSH) 2; uncompressed PDUs 1"
+            )
+        );
+    }
+
+    #[test]
+    fn nothing_is_summarised_when_compression_was_not_offered() {
+        let mut tally = BulkTally::default();
+        tally.record_uncompressed();
+        assert_eq!(closing_line(false, &tally), None);
+    }
 
     /// A clipboard channel not ready yet, as before the server's Monitor Ready, and the
     /// session's side of it.
