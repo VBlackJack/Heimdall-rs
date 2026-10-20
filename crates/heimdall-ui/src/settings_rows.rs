@@ -1096,17 +1096,17 @@ mod tests {
         );
         assert!(row.is_marked());
         let defaults = Settings::default();
-        assert_eq!(row.flag(&defaults), Some(false), "experimental: off");
+        assert_eq!(row.flag(&defaults), Some(true), "on by default (#442)");
         assert!(row.toggle_enabled(&defaults));
         assert!(!row.is_modified(&defaults));
         let changed = Settings {
-            builtin_rdp_compression: true,
+            builtin_rdp_compression: false,
             ..Settings::default()
         };
         assert!(row.is_modified(&changed));
         assert_eq!(
             row.reset(&changed),
-            Some(SettingsMessage::RdpBuiltinCompression(false))
+            Some(SettingsMessage::RdpBuiltinCompression(true))
         );
         assert_eq!(
             row.toggled(&defaults, true),
