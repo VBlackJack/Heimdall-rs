@@ -914,10 +914,6 @@ impl Running {
         let _ = self.events.send(RdpEvent::Closed(reason)).await;
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per event the session waits for"
-    )]
     async fn serve(
         &mut self,
         result: ConnectionResult,
@@ -939,6 +935,10 @@ impl Running {
         outcome
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per event the session waits for"
+    )]
     async fn serve_stage(
         &mut self,
         stage: &mut ActiveStage,
@@ -1017,7 +1017,7 @@ impl Running {
                     ActiveStageOutput::GraphicsUpdate(region) => {
                         self.note_update(&region);
                         if let Some((width, height)) = self.adopt_asked_size(&region).await {
-                            let frame = full_refresh_frame(&stage, width, height)?;
+                            let frame = full_refresh_frame(stage, width, height)?;
                             log::debug!(
                                 target: LOG_TARGET,
                                 "full refresh requested: {width}x{height}"
