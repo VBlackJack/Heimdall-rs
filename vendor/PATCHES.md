@@ -196,6 +196,11 @@ Also changed, for diagnostics only, in `src/image.rs`: `DecodedImage` counts the
 logs it at debug under `HEIMDALL_LOG_FULLSCREEN=1` to tell a full redraw from one that
 leaves out the tiles the server believes unchanged. Remove it with the investigation.
 
+Also changed, in `src/image.rs`: `DecodedImage::touched_cells`, which 64x64 cells a tile
+touched, to say which of the new area the server never painted. `DecodedImage::data_mut`, the pixels to write. Heimdall-rs
+copies the old image into the one it makes when the server resizes the desktop without a
+reactivation (xrdp), because that server sends only the tiles it believes the client lacks.
+
 Remove when: a published `ironrdp-session` crops the decoded rows to the rectangle (or
 decodes to the rectangle's width) and decompresses the slow-path PDUs with the fast-path
 history, kept across a reactivation. Then delete this directory and its

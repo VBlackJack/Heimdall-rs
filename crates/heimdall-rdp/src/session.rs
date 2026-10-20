@@ -203,6 +203,12 @@ const CLIPBOARD_TIMEOUTS: Duration = Duration::from_secs(5);
 /// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
 const LOG_TARGET: &str = "heimdall::fullscreen";
 
+/// When the new area of a framebuffer made larger is looked at, the old size and the new.
+type NewAreaWatch = (Instant, (u16, u16), (u16, u16));
+
+/// How long after a framebuffer was made again the cells of its new area are counted.
+const NEW_AREA_SETTLE: Duration = Duration::from_secs(3);
+
 /// How long every update is logged after the framebuffer was made again.
 const REALLOCATION_TRACE: Duration = Duration::from_secs(3);
 
@@ -261,6 +267,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         outside: 0,
         updates_since: None,
         reallocated: None,
+        account_at: None,
         desktop_scale,
         keep_alive: KeepAlive::new(keep_alive),
         reader: FrameReader::new(read_half, leftover),
@@ -839,6 +846,8 @@ struct Running {
     /// After a framebuffer was made again: when, and the updates seen since, how many of
     /// them outside it. Every one is logged for `REALLOCATION_TRACE`.
     reallocated: Option<(Instant, u32, u32)>,
+    /// When the new area of a framebuffer made larger is looked at, and the old and new sizes.
+    account_at: Option<NewAreaWatch>,
     /// When the next keep-alive is due: every frame sent puts it back.
     keep_alive: KeepAlive,
     reader: FrameReader<ReadHalf<Upgraded>>,
@@ -870,6 +879,10 @@ impl Running {
         let _ = self.events.send(RdpEvent::Closed(reason)).await;
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per event the session waits for"
+    )]
     async fn serve(
         &mut self,
         result: ConnectionResult,
@@ -911,6 +924,10 @@ impl Running {
                         // Nobody sets a size any more: stop listening for one.
                         self.size = watch::channel(None).1;
                     }
+                    Vec::new()
+                }
+                () = sleep_until_settled(self.account_at.map(|(at, ..)| at)), if self.account_at.is_some() => {
+                    self.report_new_area();
                     Vec::new()
                 }
                 () = sleep_until_settled(self.settle), if self.settle.is_some() => {
@@ -1282,15 +1299,28 @@ impl Running {
             current.0,
             current.1
         );
-        *self
-            .framebuffer
-            .0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) =
-            DecodedImage::new(PixelFormat::RgbA32, width, height);
+        {
+            let mut image = self
+                .framebuffer
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut grown = DecodedImage::new(PixelFormat::RgbA32, width, height);
+            // The old picture stays where it was: the server's record of what the client
+            // has is by position, and it sends only the tiles that differ from it.
+            let bytes = usize::from(PixelFormat::RgbA32.bytes_per_pixel());
+            copy_overlap(
+                image.data(),
+                (usize::from(image.width()), usize::from(image.height())),
+                grown.data_mut(),
+                (usize::from(width), usize::from(height)),
+                bytes,
+            );
+            *image = grown;
+        }
         log::debug!(
             target: LOG_TARGET,
-            "framebuffer reallocated {}x{} -> {width}x{height} (empty), triggered by an update of {}x{} at ({}, {})",
+            "framebuffer reallocated {}x{} -> {width}x{height} (old picture kept where it overlaps), triggered by an update of {}x{} at ({}, {})",
             current.0,
             current.1,
             u32::from(region.right) - u32::from(region.left) + 1,
@@ -1299,8 +1329,48 @@ impl Running {
             region.top
         );
         self.reallocated = Some((Instant::now(), 0, 0));
+        self.account_at = Some((Instant::now() + NEW_AREA_SETTLE, current, (width, height)));
         let _ = self.events.send(RdpEvent::Resized { width, height }).await;
         Some((width, height))
+    }
+
+    /// Says how many cells of the area the framebuffer gained, outside the old picture kept,
+    /// the server has not painted since: debug always, warn when some are left.
+    fn report_new_area(&mut self) {
+        let Some((_, old, new)) = self.account_at.take() else {
+            return;
+        };
+        let touched = self
+            .framebuffer
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .touched_cells()
+            .to_vec();
+        let accounting = new_area_accounting(&touched, old, new);
+        log::debug!(
+            target: LOG_TARGET,
+            "{} of {} new-area cells still unpainted {:?} after the reallocation (old picture {}x{}, new {}x{})",
+            accounting.unpainted,
+            accounting.total,
+            NEW_AREA_SETTLE,
+            old.0,
+            old.1,
+            new.0,
+            new.1
+        );
+        if accounting.unpainted > 0 {
+            log::warn!(
+                target: LOG_TARGET,
+                "{} of {} cells of the area the desktop gained were never painted by the server; they span cells columns {}..={} rows {}..={} (64 px cells)",
+                accounting.unpainted,
+                accounting.total,
+                accounting.span.0,
+                accounting.span.2,
+                accounting.span.1,
+                accounting.span.3
+            );
+        }
     }
 
     /// Counts the updates the server sent and, once a second, says how many, and whether
@@ -1511,6 +1581,88 @@ fn full_refresh_frame(stage: &ActiveStage, width: u16, height: u16) -> Result<Ve
     Ok(buffer.into_inner())
 }
 
+/// What the server painted of the area a desktop gained.
+#[derive(Debug, PartialEq, Eq)]
+struct NewAreaAccounting {
+    /// 64 px cells of the new picture outside the old one.
+    total: u32,
+    /// Those no tile touched.
+    unpainted: u32,
+    /// The columns and rows (first column, first row, last column, last row) the unpainted
+    /// ones span; all zero when there are none.
+    span: (u32, u32, u32, u32),
+}
+
+/// Counts the cells of a `new`-sized picture, outside the `old`-sized one kept at its top
+/// left, that no tile touched (`touched`, one flag per 64x64 cell, row by row). A cell is
+/// outside the old picture when it starts beyond it, so the cells that straddle its edge
+/// count as old ones; a smaller picture gains no area.
+fn new_area_accounting(touched: &[bool], old: (u16, u16), new: (u16, u16)) -> NewAreaAccounting {
+    const CELL: u32 = 64;
+    let columns = u32::from(new.0).div_ceil(CELL);
+    let rows = u32::from(new.1).div_ceil(CELL);
+    let mut accounting = NewAreaAccounting {
+        total: 0,
+        unpainted: 0,
+        span: (0, 0, 0, 0),
+    };
+    for row in 0..rows {
+        for column in 0..columns {
+            if column * CELL < u32::from(old.0) && row * CELL < u32::from(old.1) {
+                continue;
+            }
+            accounting.total += 1;
+            let index = usize::try_from(row * columns + column).unwrap_or(usize::MAX);
+            if touched.get(index).copied().unwrap_or(false) {
+                continue;
+            }
+            if accounting.unpainted == 0 {
+                accounting.span = (column, row, column, row);
+            } else {
+                let span = &mut accounting.span;
+                *span = (
+                    span.0.min(column),
+                    span.1.min(row),
+                    span.2.max(column),
+                    span.3.max(row),
+                );
+            }
+            accounting.unpainted += 1;
+        }
+    }
+    accounting
+}
+
+/// Copies the pixels `old` (`old_size` wide and high, `bytes` per pixel) has where `new`
+/// (`new_size`) overlaps it, from the top left; the rest of `new` is left as it is. Rows and
+/// columns beyond either image are never read or written, and a slice shorter than its size
+/// says copies only what it has.
+fn copy_overlap(
+    old: &[u8],
+    old_size: (usize, usize),
+    new: &mut [u8],
+    new_size: (usize, usize),
+    bytes: usize,
+) {
+    let width = old_size.0.min(new_size.0);
+    let height = old_size.1.min(new_size.1);
+    let row_bytes = width.saturating_mul(bytes);
+    if row_bytes == 0 {
+        return;
+    }
+    for row in 0..height {
+        let from = row.saturating_mul(old_size.0).saturating_mul(bytes);
+        let to = row.saturating_mul(new_size.0).saturating_mul(bytes);
+        let (Some(source), Some(target)) = (
+            old.get(from..from.saturating_add(row_bytes)),
+            new.get_mut(to..to.saturating_add(row_bytes)),
+        ) else {
+            return;
+        };
+        target.copy_from_slice(source);
+    }
+}
+
 /// The size the framebuffer takes when `region` was drawn by a server that applied the size
 /// `asked` without a reactivation: `asked` when the region does not fit the framebuffer
 /// but fits `asked`, or is exactly `asked` (a whole-desktop update). `None` otherwise: a
@@ -1531,6 +1683,91 @@ fn adopted_size(
 
 #[cfg(test)]
 mod resize_tests {
+    #[test]
+    fn the_cells_of_the_area_gained_are_counted_painted_or_not() {
+        use super::new_area_accounting;
+
+        // Old 128x128 (2x2 cells) grown to 256x192 (4x3 cells): 8 of the 12 are new.
+        let mut touched = vec![false; 12];
+        let none = new_area_accounting(&touched, (128, 128), (256, 192));
+        assert_eq!((none.total, none.unpainted), (8, 8));
+        assert_eq!(none.span, (0, 0, 3, 2));
+        // Partial coverage: the old cells touched do not count, two new ones do.
+        for index in [0, 1, 4, 5, 2, 3] {
+            touched[index] = true;
+        }
+        let partial = new_area_accounting(&touched, (128, 128), (256, 192));
+        assert_eq!((partial.total, partial.unpainted), (8, 6));
+        assert_eq!(
+            partial.span,
+            (0, 1, 3, 2),
+            "row 1 columns 2-3 and the bottom row"
+        );
+        // Full coverage.
+        let full = new_area_accounting(&[true; 12], (128, 128), (256, 192));
+        assert_eq!((full.total, full.unpainted), (8, 0));
+        assert_eq!(full.span, (0, 0, 0, 0));
+        // Shrunk: no new area at all.
+        let shrunk = new_area_accounting(&[false; 4], (256, 192), (128, 128));
+        assert_eq!((shrunk.total, shrunk.unpainted), (0, 0));
+        // A cell straddling the old edge is an old one; a short flag list counts unpainted.
+        let odd = new_area_accounting(&[], (100, 100), (200, 100));
+        assert_eq!((odd.total, odd.unpainted), (4, 4));
+    }
+
+    #[test]
+    fn the_old_picture_is_kept_where_the_new_one_overlaps_it() {
+        use super::copy_overlap;
+
+        // One byte per pixel, each its own number, to see where it lands.
+        let old: Vec<u8> = (0..12).collect(); // 4 wide, 3 high
+        // Grown to 6x4: the old rows at the left, the rest untouched.
+        let mut grown = vec![99_u8; 24];
+        copy_overlap(&old, (4, 3), &mut grown, (6, 4), 1);
+        assert_eq!(&grown[0..6], &[0, 1, 2, 3, 99, 99]);
+        assert_eq!(&grown[6..12], &[4, 5, 6, 7, 99, 99]);
+        assert_eq!(&grown[12..18], &[8, 9, 10, 11, 99, 99]);
+        assert_eq!(&grown[18..24], &[99; 6], "no old row 4");
+        // Shrunk to 3x2: the top left corner only, nothing written beyond it.
+        let mut shrunk = vec![99_u8; 6];
+        copy_overlap(&old, (4, 3), &mut shrunk, (3, 2), 1);
+        assert_eq!(shrunk, vec![0, 1, 2, 4, 5, 6]);
+        // Odd sizes and four bytes per pixel.
+        let old: Vec<u8> = (0..(5 * 3 * 4))
+            .map(|n| u8::try_from(n).unwrap_or(0))
+            .collect();
+        let mut new = vec![0_u8; 3 * 7 * 4];
+        copy_overlap(&old, (5, 3), &mut new, (7, 3), 4);
+        assert_eq!(&new[0..20], &old[0..20]);
+        assert_eq!(&new[28..48], &old[20..40]);
+    }
+
+    #[test]
+    fn copying_the_old_picture_never_reads_or_writes_out_of_bounds() {
+        use super::copy_overlap;
+
+        let mut new = vec![7_u8; 4];
+        // No overlap at all, or an empty side.
+        copy_overlap(&[1, 2, 3, 4], (0, 4), &mut new, (4, 1), 1);
+        copy_overlap(&[1, 2, 3, 4], (4, 0), &mut new, (4, 1), 1);
+        copy_overlap(&[1, 2, 3, 4], (4, 1), &mut new, (0, 1), 1);
+        assert_eq!(new, vec![7; 4]);
+        // Slices shorter than the sizes say: copies what exists, no panic.
+        copy_overlap(&[1, 2], (4, 1), &mut new, (4, 1), 1);
+        assert_eq!(new, vec![7; 4], "a short row is not half copied");
+        let mut small = vec![0_u8; 2];
+        copy_overlap(&[1, 2, 3, 4, 5, 6], (3, 2), &mut small, (3, 2), 1);
+        assert_eq!(small, vec![0; 2]);
+        // Huge sizes do not overflow.
+        copy_overlap(
+            &[1],
+            (usize::MAX, usize::MAX),
+            &mut new,
+            (usize::MAX, usize::MAX),
+            4,
+        );
+    }
+
     #[test]
     fn a_rectangle_beyond_u16_or_wholly_outside_is_no_resize_and_no_panic() {
         use ironrdp::pdu::geometry::InclusiveRectangle;

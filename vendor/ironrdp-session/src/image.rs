@@ -237,6 +237,17 @@ impl DecodedImage {
         &self.data
     }
 
+    /// Which 64x64 cells of the image a tile touched since it was made, row by row.
+    pub fn touched_cells(&self) -> &[bool] {
+        &self.cells
+    }
+
+    /// The pixels, to write: for a client that keeps what an older image held when the
+    /// desktop is made again at another size.
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+
     pub fn width(&self) -> u16 {
         self.width
     }
