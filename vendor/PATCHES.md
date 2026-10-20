@@ -188,6 +188,26 @@ against the 2,000,000-byte history before any addition). The `wrapping_*` calls 
 deliberate (a byte or bit accumulator). The vendored code here uses checked conversions
 (`u16::try_from`) and range checks on `compressedLength`. Nothing needed changing.
 
+Also changed, so that the session log says which compression the server uses (issue #442):
+
+- `src/lib.rs`: `BulkType` (RDP 4 MPPC 8K, RDP 5 MPPC 64K, RDP 6 NCRUSH, RDP 6.1 XCRUSH, read
+  from the low nibble of `compressedType`) and `BulkTally`: PDUs read compressed per type,
+  PDUs read uncompressed, and the types seen for the first time since the last
+  `take_first_seen`. Counts and types only, never a PDU's contents.
+- `src/fast_path.rs`, `src/x224/mod.rs`: each fast-path update and each slow-path Data PDU
+  is counted where it is decompressed (or found not to need it); `process_with_bulk` takes
+  the tally as a third argument, `Processor::bulk_parts_mut` hands out the decompressor and
+  the tally together.
+- `src/active_stage.rs`: `bulk_tally` and `take_first_seen_bulk_types`;
+  `set_fastpath_processor` carries the tally over to the processor built after a
+  reactivation.
+
+Why: the decompressor knows the type of each PDU and the package kept it to itself.
+`heimdall-rdp` logs, at INFO, the first PDU of each type ("RDP bulk compression in use: RDP
+6.1 (XCRUSH)") and, when the session ends, one line of counts. Tests:
+`crates/heimdall-rdp/tests/bulk_compression.rs` (first seen once across fast and slow path,
+counts, nothing when compression is off, across a reactivation).
+
 Validated against: xrdp MPPC (lab): pending its manual check; Windows: pending owner.
 
 Also changed, for diagnostics only, in `src/image.rs`: `DecodedImage` counts the tiles

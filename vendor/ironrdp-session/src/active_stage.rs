@@ -179,9 +179,8 @@ impl ActiveStage {
             }
             Action::X224 => {
                 // Heimdall-rs patch: slow-path PDUs are decompressed with the fast-path history.
-                let x224_outputs = self
-                    .x224_processor
-                    .process_with_bulk(frame, self.fast_path_processor.bulk_decompressor_mut())?;
+                let (bulk, tally) = self.fast_path_processor.bulk_parts_mut();
+                let x224_outputs = self.x224_processor.process_with_bulk(frame, bulk, tally)?;
                 let mut stage_outputs = Vec::new();
                 let mut processor_updates = Vec::new();
 
@@ -229,8 +228,21 @@ impl ActiveStage {
         Ok(stage_outputs)
     }
 
-    pub fn set_fastpath_processor(&mut self, processor: fast_path::Processor) {
+    pub fn set_fastpath_processor(&mut self, mut processor: fast_path::Processor) {
+        // Heimdall-rs patch: the tally of the session goes on across a reactivation.
+        processor.set_bulk_tally(self.fast_path_processor.take_bulk_tally());
         self.fast_path_processor = processor;
+    }
+
+    /// What arrived compressed, by type, and what did not, since the session began.
+    /// Heimdall-rs patch, see `vendor/PATCHES.md`.
+    pub fn bulk_tally(&self) -> &crate::BulkTally {
+        self.fast_path_processor.bulk_tally()
+    }
+
+    /// The compression types seen for the first time since the last call.
+    pub fn take_first_seen_bulk_types(&mut self) -> Vec<crate::BulkType> {
+        self.fast_path_processor.bulk_parts_mut().1.take_first_seen()
     }
 
     /// Takes the bulk decompressor out of the current fast-path processor, for the one

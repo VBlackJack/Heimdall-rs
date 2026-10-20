@@ -47,6 +47,103 @@ pub fn is_bulk_data_refused(error: &SessionError) -> bool {
     false
 }
 
+/// The bulk compression a server used on a PDU ([MS-RDPBCGR] 3.1.8, `compressedType` low
+/// nibble). Heimdall-rs patch, see `vendor/PATCHES.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkType {
+    /// RDP 4.0, MPPC with an 8 KiB history.
+    Rdp4Mppc8K,
+    /// RDP 5.0, MPPC with a 64 KiB history.
+    Rdp5Mppc64K,
+    /// RDP 6.0, NCRUSH.
+    Rdp6Ncrush,
+    /// RDP 6.1, XCRUSH.
+    Rdp61Xcrush,
+}
+
+impl BulkType {
+    /// Every type, in the order of the wire values.
+    pub const ALL: [BulkType; 4] = [
+        BulkType::Rdp4Mppc8K,
+        BulkType::Rdp5Mppc64K,
+        BulkType::Rdp6Ncrush,
+        BulkType::Rdp61Xcrush,
+    ];
+
+    /// The type a `compressedType` byte (or a fast-path compression type) names, from its
+    /// low nibble; `None` for a value no level uses.
+    pub fn from_wire(compressed_type: u8) -> Option<Self> {
+        match compressed_type & 0x0F {
+            0 => Some(Self::Rdp4Mppc8K),
+            1 => Some(Self::Rdp5Mppc64K),
+            2 => Some(Self::Rdp6Ncrush),
+            3 => Some(Self::Rdp61Xcrush),
+            _ => None,
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Rdp4Mppc8K => 0,
+            Self::Rdp5Mppc64K => 1,
+            Self::Rdp6Ncrush => 2,
+            Self::Rdp61Xcrush => 3,
+        }
+    }
+}
+
+impl fmt::Display for BulkType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Rdp4Mppc8K => "RDP 4 (MPPC 8K)",
+            Self::Rdp5Mppc64K => "RDP 5 (MPPC 64K)",
+            Self::Rdp6Ncrush => "RDP 6 (NCRUSH)",
+            Self::Rdp61Xcrush => "RDP 6.1 (XCRUSH)",
+        })
+    }
+}
+
+/// How many PDUs of a session arrived compressed, by type, and how many uncompressed. Only
+/// counts and types: never a PDU's contents. Heimdall-rs patch, see `vendor/PATCHES.md`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BulkTally {
+    compressed: [u64; 4],
+    uncompressed: u64,
+    first_seen: Vec<BulkType>,
+}
+
+impl BulkTally {
+    /// Counts a PDU that arrived compressed with `bulk_type`; the first of each type is queued
+    /// for [`BulkTally::take_first_seen`].
+    pub fn record_compressed(&mut self, bulk_type: BulkType) {
+        let count = &mut self.compressed[bulk_type.index()];
+        if *count == 0 {
+            self.first_seen.push(bulk_type);
+        }
+        *count = count.saturating_add(1);
+    }
+
+    /// Counts a PDU that arrived uncompressed.
+    pub fn record_uncompressed(&mut self) {
+        self.uncompressed = self.uncompressed.saturating_add(1);
+    }
+
+    /// The types seen for the first time since the last call.
+    pub fn take_first_seen(&mut self) -> Vec<BulkType> {
+        core::mem::take(&mut self.first_seen)
+    }
+
+    /// The PDUs that arrived compressed with `bulk_type`.
+    pub fn compressed(&self, bulk_type: BulkType) -> u64 {
+        self.compressed[bulk_type.index()]
+    }
+
+    /// The PDUs that arrived uncompressed.
+    pub fn uncompressed(&self) -> u64 {
+        self.uncompressed
+    }
+}
+
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum SessionErrorKind {
