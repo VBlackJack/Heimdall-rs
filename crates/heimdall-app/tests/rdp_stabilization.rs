@@ -123,19 +123,19 @@ fn a_desktop_following_its_tab_settles_for_the_default_wait_then_follows_it() {
     );
     assert_eq!(app.stabilization_interval(), Some(Duration::from_secs(1)));
 
-    // The first size replaces the 1280x800 connected with; a later one waits.
+    // Every size waits, the first one too.
     app.update(Message::DesktopResize {
         tab,
         width: 1600,
         height: 900,
     });
-    assert_eq!(*asked.borrow(), Some((1600, 900)));
+    assert_eq!(*asked.borrow(), None, "the first fit is held");
     app.update(Message::DesktopResize {
         tab,
         width: 1200,
         height: 800,
     });
-    assert_eq!(*asked.borrow(), Some((1600, 900)), "held");
+    assert_eq!(*asked.borrow(), None, "held");
 
     app.update(Message::StabilizationTick(
         end.checked_sub(Duration::from_millis(1))
@@ -198,8 +198,8 @@ fn each_connection_settles_again_a_reconnection_included() {
     });
     assert_eq!(
         *asked.borrow(),
-        Some((1600, 900)),
-        "the new connection's first size is not held either"
+        None,
+        "the new connection's first size is held too"
     );
 }
 
@@ -279,7 +279,7 @@ fn a_resolution_menu_choice_made_while_it_settles_is_asked_at_the_end() {
             height: 720,
         },
     }));
-    assert_eq!(*asked.borrow(), Some((1600, 900)), "deferred");
+    assert_eq!(*asked.borrow(), None, "deferred");
     app.update(Message::StabilizationTick(end));
     assert_eq!(*asked.borrow(), Some((1280, 720)));
 }

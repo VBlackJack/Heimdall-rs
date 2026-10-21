@@ -291,7 +291,18 @@ pub struct DesktopPane {
     /// The framebuffer's size at the last frame, and until when every frame is logged after
     /// it changed.
     traced_size: ((u16, u16), Option<Instant>),
+    /// When the first graphics update arrived: the wait after connecting does not end before
+    /// [`FIRST_FIT_DELAY`] has passed since.
+    first_frame: Option<Instant>,
 }
+
+/// How long after the first graphics update the tab's size may be asked of the server, on top
+/// of the wait after connecting. A server such as xrdp is still starting its session when the
+/// first picture goes out (login, backend connection, shared memory), and drops a session
+/// resized in that window ("Can't attach to shared memory", issue 509). It was seen to end
+/// about 1.5 s after the connection opened; two seconds clear it, and stay well inside the
+/// wait's default of ten.
+pub const FIRST_FIT_DELAY: Duration = Duration::from_secs(2);
 
 /// The proportions of a desktop that follows its tab, kept with its profile.
 pub use heimdall_core::profile::Aspect;
@@ -347,6 +358,7 @@ impl DesktopPane {
             save: None,
             frames: (0, None),
             traced_size: ((0, 0), None),
+            first_frame: None,
         }
     }
 
@@ -356,6 +368,7 @@ impl DesktopPane {
         const EVERY: Duration = Duration::from_secs(1);
         const AFTER_RESIZE: Duration = Duration::from_secs(3);
         let now = Instant::now();
+        self.first_frame.get_or_insert(now);
         let size = self.framebuffer.read(|width, height, _| (width, height));
         if size != self.traced_size.0 {
             log::debug!(
@@ -418,10 +431,10 @@ impl DesktopPane {
                 ..
             } = &self.sink
         {
-            // The first size the session gets is the tab's, whatever the wait: it replaces
-            // the one it connected with, as the C# control starts at its own size. Only the
-            // later ones wait for the session to settle.
-            if stabilizing_until.is_some() && size.borrow().is_some() {
+            // Every size waits for the session to settle, the first one too: a session that
+            // connected at the tab's size has nothing to resize, and one that did not is
+            // not resized while the server is still starting it (issue 509).
+            if stabilizing_until.is_some() {
                 log::debug!(
                     target: "heimdall::fullscreen",
                     "RDP resize to {width}x{height} kept for after the post-connect wait"
@@ -477,7 +490,12 @@ impl DesktopPane {
 
     /// Ends the wait after connecting when it is over at `now`; whether it ended.
     pub(crate) fn settle(&mut self, now: Instant) -> bool {
-        if self.stabilizing_until().is_some_and(|until| until <= now) {
+        // Past its time, and past the delay after the first picture when one came: the
+        // tab's size, the first one included, is held until then.
+        let picture_settled = self
+            .first_frame
+            .is_none_or(|first| first + FIRST_FIT_DELAY <= now);
+        if picture_settled && self.stabilizing_until().is_some_and(|until| until <= now) {
             self.end_stabilization()
         } else {
             false
@@ -839,6 +857,7 @@ impl DesktopPane {
             save: None,
             frames: (0, None),
             traced_size: ((0, 0), None),
+            first_frame: None,
             sink: DesktopSink::Vnc(VncSink {
                 input,
                 buttons: AtomicU8::new(0),
@@ -1055,28 +1074,20 @@ mod tests {
     }
 
     #[test]
-    fn the_first_size_replaces_the_connection_s_and_later_ones_wait_then_go_once() {
+    fn every_size_waits_for_the_settle_the_first_included_then_goes_once() {
         let (mut pane, watched) = rdp_pane(DesktopSizing::FollowsTab);
         let start = Instant::now();
         pane.stabilize(WAIT, start);
         assert_eq!(pane.stabilizing_until(), Some(start + WAIT));
 
         pane.resize(1600, 900);
-        assert_eq!(
-            *watched.borrow(),
-            Some((1600, 900)),
-            "the size connected with is replaced at once"
-        );
+        assert_eq!(*watched.borrow(), None, "the first one is held too");
         pane.resize(1400, 850);
         pane.resize(1200, 800);
-        assert_eq!(
-            *watched.borrow(),
-            Some((1600, 900)),
-            "held while it settles"
-        );
+        assert_eq!(*watched.borrow(), None, "held while it settles");
 
         assert!(!pane.settle(start + Duration::from_millis(9_999)));
-        assert_eq!(*watched.borrow(), Some((1600, 900)), "not yet");
+        assert_eq!(*watched.borrow(), None, "not yet");
         assert!(pane.settle(start + WAIT), "over");
         assert_eq!(*watched.borrow(), Some((1200, 800)), "the latest, once");
         assert_eq!(pane.stabilizing_until(), None);
@@ -1085,14 +1096,36 @@ mod tests {
     }
 
     #[test]
+    fn the_first_fit_waits_for_the_first_picture_and_a_delay_after_it_then_is_sent_once() {
+        let (mut pane, watched) = rdp_pane(DesktopSizing::FollowsTab);
+        let start = Instant::now();
+        pane.stabilize(Duration::from_secs(1), start);
+        pane.resize(1134, 724);
+        // The first picture comes after the wait is over: not before the delay since it.
+        let late = start + Duration::from_secs(5);
+        pane.first_frame = Some(late);
+        assert!(
+            !pane.settle(start + Duration::from_secs(6)),
+            "the wait is over, the picture is not settled"
+        );
+        assert_eq!(*watched.borrow(), None, "held");
+        assert!(!pane.settle(late + Duration::from_millis(1_999)));
+        assert!(pane.settle(late + FIRST_FIT_DELAY));
+        assert_eq!(*watched.borrow(), Some((1134, 724)), "sent");
+        assert!(!pane.settle(late + FIRST_FIT_DELAY * 2), "once");
+    }
+
+    #[test]
     fn a_wait_ending_on_the_size_asked_last_asks_nothing() {
         let (mut pane, mut watched) = rdp_pane(DesktopSizing::FollowsTab);
         let start = Instant::now();
         pane.stabilize(WAIT, start);
         pane.resize(1600, 900);
+        assert!(pane.end_stabilization());
+        assert_eq!(*watched.borrow_and_update(), Some((1600, 900)));
+        pane.stabilize(WAIT, start);
         pane.resize(1200, 800);
         pane.resize(1600, 900);
-        watched.mark_unchanged();
         assert!(pane.end_stabilization());
         assert!(
             !watched.has_changed().expect("open"),
@@ -1120,7 +1153,7 @@ mod tests {
         pane.resize(1600, 900);
         pane.choose_size(Some((1920, 1080)));
         assert_eq!(pane.fixed_size(), Some((1920, 1080)), "chosen");
-        assert_eq!(*watched.borrow(), Some((1600, 900)), "not asked yet");
+        assert_eq!(*watched.borrow(), None, "not asked yet");
         assert!(pane.settle(start + WAIT));
         assert_eq!(*watched.borrow(), Some((1920, 1080)), "asked at the end");
 
@@ -1131,7 +1164,7 @@ mod tests {
         pane.choose_size(Some((1920, 1080)));
         pane.resize(1500, 850);
         pane.choose_size(None);
-        assert_eq!(*watched.borrow(), Some((1600, 900)));
+        assert_eq!(*watched.borrow(), None);
         assert!(pane.end_stabilization());
         assert_eq!(*watched.borrow(), Some((1500, 850)));
     }
