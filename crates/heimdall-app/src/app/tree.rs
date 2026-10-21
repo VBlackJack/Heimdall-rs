@@ -29,6 +29,7 @@ use super::{App, Dialog, Effect, Message};
 use crate::driver::Purpose;
 use crate::profile_draft::new_id;
 use crate::text::server_text;
+use crate::tools::ToolId;
 
 /// Port an `ssh` command line leaves out.
 const DEFAULT_SSH_PORT: u16 = 22;
@@ -115,6 +116,9 @@ pub struct ProfileSummary {
     pub favorite: bool,
     /// What it says of its server: its environment, tags and MAC address.
     pub metadata: heimdall_core::metadata::ProfileMetadata,
+    /// The built-in tool of a tool entry, when it names one this version has: the tree
+    /// draws the tool's own icon, as the C# `ConnectionTypeToGeometryConverter` does.
+    pub tool: Option<ToolId>,
 }
 
 impl ProfileSummary {
@@ -192,6 +196,7 @@ impl App {
         let mut all = Vec::new();
         for profile in self.store.ssh_profiles() {
             all.push(ProfileSummary {
+                tool: None,
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
                 metadata: self.metadata_of(&profile.id),
@@ -209,6 +214,7 @@ impl App {
         }
         for profile in self.store.rdp_profiles() {
             all.push(ProfileSummary {
+                tool: None,
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
                 metadata: self.metadata_of(&profile.id),
@@ -222,6 +228,7 @@ impl App {
         }
         for profile in self.store.telnet_profiles() {
             all.push(ProfileSummary {
+                tool: None,
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
                 metadata: self.metadata_of(&profile.id),
@@ -235,6 +242,7 @@ impl App {
         }
         for profile in self.store.vnc_profiles() {
             all.push(ProfileSummary {
+                tool: None,
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
                 metadata: self.metadata_of(&profile.id),
@@ -248,6 +256,7 @@ impl App {
         }
         for profile in self.store.ftp_profiles() {
             all.push(ProfileSummary {
+                tool: None,
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
                 metadata: self.metadata_of(&profile.id),
@@ -277,6 +286,7 @@ impl App {
         }
         for profile in self.store.web_profiles() {
             all.push(ProfileSummary {
+                tool: None,
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
                 metadata: self.metadata_of(&profile.id),
@@ -290,6 +300,7 @@ impl App {
         }
         for profile in self.store.tool_profiles() {
             all.push(ProfileSummary {
+                tool: ToolId::from_code(&profile.tool),
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
                 metadata: self.metadata_of(&profile.id),
@@ -308,6 +319,7 @@ impl App {
         }
         for profile in self.store.winrm_profiles() {
             all.push(ProfileSummary {
+                tool: None,
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
                 metadata: self.metadata_of(&profile.id),
@@ -332,6 +344,7 @@ impl App {
         kind: ProfileKind,
     ) -> ProfileSummary {
         ProfileSummary {
+            tool: None,
             id: id.clone(),
             favorite: self.store.is_favorite(id),
             metadata: self.metadata_of(id),
@@ -690,6 +703,7 @@ mod tests {
 
     fn summary(username: Option<&str>, port: u16) -> ProfileSummary {
         ProfileSummary {
+            tool: None,
             id: ProfileId::new("a"),
             name: "a".to_owned(),
             group: None,

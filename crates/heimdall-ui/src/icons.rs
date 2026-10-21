@@ -78,8 +78,9 @@ pub enum Icon {
     Citrix,
     /// `Geo.Protocol.LocalShell`: a window with a prompt.
     LocalShell,
-    /// `Geo.Protocol.Tool`: a spanner, a tool saved as a tree entry.
-    Tool,
+    /// `Geo.Tree.Server`: a rack server, the C# fallback of a connection type with no icon of
+    /// its own, as a tool entry whose tool this version lacks.
+    Server,
     /// `Geo.Tree.Group`: a folder of the tree.
     Folder,
     /// The tree's expander closed: the arrow of the C# `TreeViewExpanderToggleButtonStyle`.
@@ -275,7 +276,7 @@ impl Icon {
         Self::Ftp,
         Self::Citrix,
         Self::LocalShell,
-        Self::Tool,
+        Self::Server,
         Self::Folder,
         Self::ChevronRight,
         Self::ChevronDown,
@@ -381,7 +382,7 @@ impl Icon {
             ProfileKind::Citrix => Self::Citrix,
             ProfileKind::Web => Self::Web,
             ProfileKind::Local => Self::LocalShell,
-            ProfileKind::Tool => Self::Tool,
+            ProfileKind::Tool => Self::Server,
         }
     }
 
@@ -428,9 +429,10 @@ impl Icon {
             Self::LocalShell => {
                 "M1,2 L15,2 L15,14 L1,14 Z M1,4 L15,4 M4,7 L7,9.5 L4,12 M8,12 L12,12"
             }
-            Self::Tool => {
-                "M11,1 A4,4 0 0 0 7.2,6.4 L1.6,12 A1.8,1.8 0 0 0 4,14.4 L9.6,8.8 \
-                 A4,4 0 0 0 15,5 L12.5,7.5 L9.5,6.5 L8.5,3.5 Z"
+            Self::Server => {
+                "M2,3 L14,3 L14,8 L2,8 Z M2,9 L14,9 L14,14 L2,14 Z M4,5 A1,1 0 1 1 4,6 \
+                 A1,1 0 1 1 4,5 Z M4,11 A1,1 0 1 1 4,12 A1,1 0 1 1 4,11 Z M8,5.5 L12,5.5 \
+                 M8,11.5 L12,11.5"
             }
             Self::Folder => {
                 "M3,1 L7,1 L8,3 L14,3 L14,9 L3,9 Z M1,5 L3,5 M1,5 L1,13 L12,13 L12,10 \
@@ -645,8 +647,14 @@ impl Icon {
             Self::ToolTraceroute => {
                 "M2,8 A1.5,1.5 0 1,1 5,8 L7,8 A1.5,1.5 0 1,1 10,8 L12,8 A1.5,1.5 0 1,1 15,8"
             }
+            // Non-zero and filled, as the C# geometry says: a root node over three leaf nodes
+            // joined by bars.
             Self::ToolSnmpWalker => {
-                "M8,2 L8,5 M8,5 L4,7 M8,5 L12,7 M4,7 L4,9 M4,9 L2,11 M4,9 L6,11 M12,7 L12,9 M12,9 L10,11 M12,9 L14,11"
+                "F1 M8,1 A2,2 0 1 1 8,5 A2,2 0 1 1 8,1 Z M7.5,4.5 L8.5,4.5 L8.5,8 L7.5,8 Z \
+                 M2.5,7.5 L13.5,7.5 L13.5,8.5 L2.5,8.5 Z M2.5,8 L3.5,8 L3.5,11 L2.5,11 Z \
+                 M7.5,8 L8.5,8 L8.5,11 L7.5,11 Z M12.5,8 L13.5,8 L13.5,11 L12.5,11 Z \
+                 M3,10.5 A2,2 0 1 1 3,14.5 A2,2 0 1 1 3,10.5 Z M8,10.5 A2,2 0 1 1 8,14.5 \
+                 A2,2 0 1 1 8,10.5 Z M13,10.5 A2,2 0 1 1 13,14.5 A2,2 0 1 1 13,10.5 Z"
             }
             Self::ToolArpMonitor => {
                 "M8,8 L8,2 A6,6 0 1,1 2,8 A6,6 0 1,1 14,8 M8,8 A4,4 0 0,1 12,8 M8,8 A2,2 0 0,1 10,8"
@@ -760,7 +768,6 @@ impl Icon {
             | Self::ToolHttpHeaders
             | Self::ToolCertInspector
             | Self::ToolTraceroute
-            | Self::ToolSnmpWalker
             | Self::ToolArpMonitor
             | Self::ToolFirewallTester
             | Self::ToolNetMap
@@ -1567,8 +1574,8 @@ mod tests {
                         && bounds.y + bounds.height <= BOX + 0.01),
                 "{icon:?}: {bounds:?}"
             );
-            // The globe alone says non-zero, as its C# geometry does.
-            let rule = if icon == Icon::Web {
+            // The globe and the SNMP walker say non-zero, as their C# geometries do.
+            let rule = if matches!(icon, Icon::Web | Icon::ToolSnmpWalker) {
                 Rule::NonZero
             } else {
                 Rule::EvenOdd
