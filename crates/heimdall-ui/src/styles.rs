@@ -840,6 +840,36 @@ pub fn large_card(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// The round badge of the C# Launchpad card (`MainWindow.xaml:2131-2137`, `:2188-2194`): the
+/// window's background outlined round, in the accent for the welcome and in the border
+/// colour for the "select a session" card. `side` is the badge's side, which `radius` halves.
+pub fn launchpad_badge(accented: bool, side: f32) -> impl Fn(&Theme) -> BoxStyle {
+    move |theme: &Theme| {
+        let brushes = Brushes::of(theme);
+        let edge = if accented {
+            brushes.accent
+        } else {
+            brushes.edge
+        };
+        BoxStyle {
+            background: Some(Background::Color(brushes.surface)),
+            border: brushes.outline(edge, side / 2.0),
+            ..BoxStyle::default()
+        }
+    }
+}
+
+/// The shortcuts pill under the C# Launchpad's buttons (`MainWindow.xaml:2166-2172`): the
+/// window's background outlined in the border colour, rounded as `CornerRadiusMd`.
+pub fn launchpad_pill(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        border: brushes.outline(brushes.edge, radius::MD),
+        ..BoxStyle::default()
+    }
+}
+
 /// A line across a card, in the border colour, as the C# About page's under the version
 /// (`MainWindow.xaml:4714`).
 pub fn rule(theme: &Theme) -> BoxStyle {
