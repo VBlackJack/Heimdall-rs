@@ -412,9 +412,11 @@ pub fn view<'a>(
         text(title),
         Space::new().width(Length::Fill),
         button(text(fl!("ui-editor-save")).size(font_size::CAPTION))
+            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
             .style(styles::primary)
             .on_press_maybe(can_save.then(|| key(EditorKey::Save))),
         button(text(fl!("ui-editor-close")).size(font_size::CAPTION))
+            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
             .style(styles::secondary)
             .on_press(key(EditorKey::Close)),
     ]
@@ -428,6 +430,7 @@ pub fn view<'a>(
         if edit.notice == Some(EditorNotice::ChangedOnServer) && can_save {
             line = line.push(
                 button(text(fl!("ui-editor-overwrite")).size(font_size::CAPTION))
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::danger)
                     .on_press(key(EditorKey::Overwrite)),
             );

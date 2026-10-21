@@ -88,6 +88,7 @@ pub fn view<'a>(
                 text(fl!("ui-gateways-configured")).size(font_size::SUBTITLE),
                 iced::widget::space::horizontal(),
                 button(text(fl!("ui-gateway-add")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::primary)
                     .on_press(Message::App(AppMessage::NewGateway)),
             ]
@@ -154,9 +155,11 @@ fn gateway_card<'a>(entry: &GatewayEntry) -> Element<'a, Message> {
             text(fl!("ui-gateways-sessions", count = entry.sessions.len()))
                 .size(font_size::CAPTION),
             button(text(fl!("ui-gateways-edit")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::EditGateway(entry.id.clone()))),
             button(text(fl!("ui-gateways-delete")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::danger)
                 .on_press(Message::App(AppMessage::Gateways(
                     GatewaysMessage::AskDelete(entry.id.clone())
@@ -203,6 +206,7 @@ fn missing_card<'a>(
             row![
                 text(fl!("ui-gateways-child", name = server_text(&name))).size(font_size::CAPTION),
                 button(text(fl!("ui-gateways-edit")).size(font_size::CAPTION))
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::EditGateway(child))),
             ]
@@ -234,12 +238,14 @@ fn missing_card<'a>(
                 )
                 .push(
                     button(text(fl!("ui-gateways-reassign")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::primary)
                         .on_press_maybe(reassign),
                 );
         }
         actions = actions.push(
             button(text(fl!("ui-gateways-clear")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::Gateways(GatewaysMessage::Clear(
                     id,

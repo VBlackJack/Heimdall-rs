@@ -150,6 +150,7 @@ fn terminate_button<'a>(tab: TabId, offer: &TerminateOffer) -> Option<Element<'a
     };
     Some(
         button(text(label))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::danger)
             .on_press(Message::App(AppMessage::CitrixTerminate { tab, force }))
             .into(),

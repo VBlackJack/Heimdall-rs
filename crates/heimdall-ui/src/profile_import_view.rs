@@ -105,9 +105,11 @@ pub fn preview(preview: &ProfileImportPreview) -> Element<'_, Message> {
     .spacing(spacing::SM);
     let mut choices = row![
         button(text(fl!("ui-rdp-select-all")).size(font_size::BODY))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press(app(ProfileImportMessage::ChooseAll(true))),
         button(text(fl!("ui-rdp-select-none")).size(font_size::BODY))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press(app(ProfileImportMessage::ChooseAll(false))),
     ]
@@ -118,6 +120,7 @@ pub fn preview(preview: &ProfileImportPreview) -> Element<'_, Message> {
         for choice in CONFLICTS {
             choices = choices.push(
                 button(text(choice.to_string()).size(font_size::BODY))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(app(ProfileImportMessage::ConflictAll(choice.0))),
             );

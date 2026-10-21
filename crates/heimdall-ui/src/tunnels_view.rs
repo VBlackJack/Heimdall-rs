@@ -25,8 +25,7 @@ use heimdall_app::tunnel::{
 use heimdall_app::{Message as AppMessage, Notice, TunnelMessage, server_text};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use iced::widget::{
-    Column, button, column, container, mouse_area, pick_list, row, rule, space, text, text_input,
-    tooltip,
+    Column, button, column, container, mouse_area, pick_list, row, rule, space, text, tooltip,
 };
 use iced::{Alignment, Border, Element, Font, Length, Theme};
 
@@ -108,7 +107,7 @@ pub fn problem_text(problem: TunnelProblem) -> String {
 fn field(label: String, value: &str, which: TunnelField) -> Element<'_, Message> {
     column![
         crate::dialog_parts::dialog_label(label),
-        text_input("", value)
+        styles::field("", value)
             .style(styles::text_input)
             .on_input(move |value| {
                 Message::App(AppMessage::Tunnel(TunnelMessage::Field {
@@ -215,6 +214,7 @@ pub fn host_key<'a>(
                 .font(Font::MONOSPACE)
                 .width(Length::Fill),
             button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press(tunnel(TunnelMessage::CopyKeyFingerprint)),
         ]
@@ -305,10 +305,12 @@ pub fn page<'a>(
         text(fl!("ui-tunnels-page-title")).size(font_size::TITLE),
         space::horizontal(),
         button(text(fl!("ui-tunnels-new")))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::primary)
             .on_press(tunnel(TunnelMessage::New)),
         tooltip(
             button(text(fl!("ui-tunnels-close-selected")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press_maybe(selected.map(|_| tunnel(TunnelMessage::CloseSelected))),
             text(fl!("ui-tunnels-close-selected-tooltip")).size(font_size::CAPTION),
@@ -318,6 +320,7 @@ pub fn page<'a>(
         .style(styles::tooltip),
         close_all(
             button(text(fl!("ui-tunnels-close-all")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::danger)
                 .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll)))
         ),

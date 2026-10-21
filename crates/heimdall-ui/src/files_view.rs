@@ -41,7 +41,7 @@ use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
 use iced::widget::{
     Column, Row, button, center, checkbox, column, container, mouse_area, responsive, row,
-    scrollable, text, text_input, tooltip,
+    scrollable, text, tooltip,
 };
 use iced::{Alignment, Element, Font, Length, Theme};
 
@@ -982,6 +982,7 @@ fn pane_toolbar<'a>(
                 Icon::NewFolder,
                 fl!("ui-files-new-folder-button")
             ))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press_maybe((!pending).then(|| files(FilesMessage::AskNewFolder { tab, side }))),
             text(if pending {
@@ -1114,7 +1115,7 @@ fn pane_narrowing<'a>(
         )
     });
     row![crate::search_keys::SearchKeys::escape_only(
-        text_input(&fl!("ui-files-filter-placeholder"), filter)
+        styles::field(&fl!("ui-files-filter-placeholder"), filter)
             .style(styles::text_input)
             .id(field_id(tab, side, PaneField::Filter))
             .size(font_size::CAPTION)
@@ -1331,6 +1332,7 @@ fn empty_state<'a>(
     let said = |words: String| text(words).size(font_size::CAPTION);
     let way = |label: String, message: FilesMessage| {
         button(text(label).size(font_size::CAPTION))
+            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
             .style(styles::secondary)
             .on_press(files(message))
     };
@@ -1393,6 +1395,7 @@ fn batch_row<'a>(tab: TabId, batch: &heimdall_app::files::Batch) -> Element<'a, 
             .into()
     } else {
         button(text(fl!("ui-files-batch-stop")).size(font_size::CAPTION))
+            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
             .style(styles::secondary)
             .on_press(files(FilesMessage::StopBatch { tab }))
             .into()
@@ -1413,7 +1416,7 @@ fn path_bar<'a>(
 ) -> Element<'a, Message> {
     let field = match breadcrumb.filter(|_| typed.is_none()) {
         Some(segments) => breadcrumb_bar(tab, side, segments),
-        None => text_input(location, typed.unwrap_or(location))
+        None => styles::field(location, typed.unwrap_or(location))
             .style(styles::text_input)
             .id(field_id(tab, side, PaneField::Path))
             .font(PATH_FONT)
@@ -1706,6 +1709,7 @@ fn edit_row(tab: TabId, edit: &EditSession, over_ssh: bool) -> Element<'_, Messa
     if sudo_helps {
         line = line.push(
             button(text(fl!("ui-files-edit-save-sudo")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::primary)
                 .on_press(files(FilesMessage::EditSaveWithSudo {
                     tab,
@@ -1716,6 +1720,7 @@ fn edit_row(tab: TabId, edit: &EditSession, over_ssh: bool) -> Element<'_, Messa
     if edit.refused.is_some() && !edit.privileged {
         line = line.push(
             button(text(fl!("ui-files-edit-send-anyway")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::primary)
                 .on_press(files(FilesMessage::EditSendAnyway {
                     tab,
@@ -1725,6 +1730,7 @@ fn edit_row(tab: TabId, edit: &EditSession, over_ssh: bool) -> Element<'_, Messa
     }
     line.push(
         button(text(fl!("ui-files-edit-open-folder")).size(font_size::CAPTION))
+            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
             .style(styles::secondary)
             .on_press(files(FilesMessage::EditOpenFolder {
                 tab,
@@ -1733,6 +1739,7 @@ fn edit_row(tab: TabId, edit: &EditSession, over_ssh: bool) -> Element<'_, Messa
     )
     .push(
         button(text(fl!("ui-files-edit-stop")).size(font_size::CAPTION))
+            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
             .style(styles::secondary)
             .on_press(files(FilesMessage::EditStop {
                 tab,
@@ -1841,6 +1848,7 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
     .align_y(Alignment::Center);
     let small = |label: String, message: FilesMessage| {
         button(text(label).size(font_size::CAPTION))
+            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
             .style(styles::secondary)
             .on_press(files(message))
     };
@@ -2070,6 +2078,7 @@ fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
     let action = |label: String, tip: String, message: Option<FilesMessage>| {
         tooltip(
             button(text(label).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press_maybe(message.map(files)),
             text(tip).size(font_size::CAPTION),
@@ -2108,6 +2117,7 @@ fn send_buttons(tab: TabId, files_pane: &FilesPane) -> Column<'_, Message> {
     column![
         while_listing(
             button(text(fl!("ui-files-upload-button")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::primary)
                 .on_press_maybe(can_upload.then(|| files(FilesMessage::Transfer {
                     tab,
@@ -2117,6 +2127,7 @@ fn send_buttons(tab: TabId, files_pane: &FilesPane) -> Column<'_, Message> {
         ),
         while_listing(
             button(text(fl!("ui-files-download-button")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::primary)
                 .on_press_maybe(can_download.then(|| files(FilesMessage::Transfer {
                     tab,
@@ -2166,6 +2177,7 @@ fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Messa
     {
         title = title.push(
             button(text(fl!("ui-files-clear-finished-button")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press(files(FilesMessage::ClearFinished { tab })),
         );

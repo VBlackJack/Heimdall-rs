@@ -25,9 +25,7 @@ use std::time::Duration;
 use heimdall_core::credential_provider::{
     MAX_TIMEOUT, MIN_TIMEOUT, PRESETS, ProviderKind, TemplateProblem,
 };
-use iced::widget::{
-    Column, button, checkbox, column, container, pick_list, radio, row, text, text_input,
-};
+use iced::widget::{Column, button, checkbox, column, container, pick_list, radio, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::browse::{BrowseTarget, browse_button};
@@ -164,7 +162,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
         ))
         .push(field(
             fl!("ui-settings-provider-command"),
-            text_input(
+            styles::field(
                 &fl!("ui-settings-provider-command-placeholder"),
                 &settings.command,
             )
@@ -174,7 +172,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
         ))
         .push(field(
             fl!("ui-settings-provider-username"),
-            text_input(
+            styles::field(
                 &fl!("ui-settings-provider-username-placeholder"),
                 &settings.username_command,
             )
@@ -186,7 +184,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
         .push(field(
             fl!("ui-settings-provider-database"),
             browsed(
-                text_input("", &settings.database)
+                styles::field("", &settings.database)
                     .style(styles::text_input)
                     .on_input(|value| provider(ProviderMessage::Database(value))),
                 BrowseTarget::ProviderDatabase,
@@ -196,7 +194,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
         .push(field(
             fl!("ui-settings-provider-key-file"),
             browsed(
-                text_input("", &settings.key_file)
+                styles::field("", &settings.key_file)
                     .style(styles::text_input)
                     .on_input(|value| provider(ProviderMessage::KeyFile(value))),
                 BrowseTarget::ProviderKeyFile,
@@ -206,6 +204,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
     let running = app.provider_test() == Some(&ProviderTest::Running);
     let mut test = row![
         button(text(fl!("ui-settings-provider-test")))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press_maybe((!running).then(|| provider(ProviderMessage::Test))),
     ]
@@ -270,6 +269,7 @@ fn unlock_field<'a>(app: &App, unlock: &'a str) -> Element<'a, Message> {
             text(fl!("ui-settings-provider-unlock-saved")),
             iced::widget::space::horizontal(),
             button(text(fl!("ui-settings-provider-unlock-forget")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(provider(ProviderMessage::ForgetUnlockSecret)),
         ]
@@ -279,12 +279,13 @@ fn unlock_field<'a>(app: &App, unlock: &'a str) -> Element<'a, Message> {
     } else {
         let save = (!unlock.is_empty()).then_some(Message::SaveProviderUnlock);
         row![
-            text_input(&fl!("ui-settings-provider-unlock-placeholder"), unlock)
+            styles::field(&fl!("ui-settings-provider-unlock-placeholder"), unlock)
                 .style(styles::text_input)
                 .secure(true)
                 .on_input(Message::ProviderUnlock)
                 .on_submit_maybe(save.clone()),
             button(text(fl!("ui-settings-provider-unlock-save")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::primary)
                 .on_press_maybe(save),
         ]

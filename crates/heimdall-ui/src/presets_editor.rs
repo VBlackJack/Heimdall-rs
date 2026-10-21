@@ -127,6 +127,7 @@ impl PresetsEditor {
         }
         card.push(row![
             button(text(fl!("ui-settings-rdp-resolution-presets-reset")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::Settings(
                     SettingsMessage::RdpResolutionPresets(RESOLUTION_PRESETS.to_vec()),

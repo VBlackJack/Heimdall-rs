@@ -21,9 +21,7 @@
 use heimdall_app::Message as AppMessage;
 use heimdall_app::steps_draft::{StepEdit, StepsDraft};
 use heimdall_core::post_connect::{OnFailure, PostConnectStep};
-use iced::widget::{
-    button, checkbox, column, container, mouse_area, pick_list, row, text, text_input,
-};
+use iced::widget::{button, checkbox, column, container, mouse_area, pick_list, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
@@ -72,15 +70,19 @@ pub fn view(draft: &StepsDraft) -> Element<'_, Message> {
         .push(
             row![
                 button(text(fl!("ui-post-connect-add")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(edit(StepEdit::Add)),
                 button(text(fl!("ui-post-connect-remove")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press_maybe(selected.then(|| edit(StepEdit::Remove))),
                 button(text(fl!("ui-post-connect-move-up")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press_maybe(draft.can_move_up().then(|| edit(StepEdit::MoveUp))),
                 button(text(fl!("ui-post-connect-move-down")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press_maybe(draft.can_move_down().then(|| edit(StepEdit::MoveDown))),
             ]
@@ -98,14 +100,14 @@ fn step_row(index: usize, step: &PostConnectStep, selected: bool) -> Element<'_,
             .on_toggle(move |on| edit(StepEdit::Enabled(index, on))),
         column![
             caption(fl!("ui-post-connect-command")),
-            text_input(&fl!("ui-post-connect-command-placeholder"), &step.input)
+            styles::field(&fl!("ui-post-connect-command-placeholder"), &step.input)
                 .style(styles::text_input)
                 .on_input(move |input| edit(StepEdit::Input(index, input))),
         ]
         .width(Length::Fill),
         column![
             caption(fl!("ui-post-connect-delay")),
-            text_input("", &step.delay_ms.to_string())
+            styles::field("", &step.delay_ms.to_string())
                 .style(styles::text_input)
                 .on_input(move |typed| edit(StepEdit::Delay(index, typed)))
                 .width(DELAY_WIDTH),

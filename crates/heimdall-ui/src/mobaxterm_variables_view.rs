@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use heimdall_core::import::mobaxterm::{is_valid_variable_name, resolve_value};
-use iced::widget::{Column, button, column, container, row, text, text_input};
+use iced::widget::{Column, button, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
@@ -210,16 +210,17 @@ impl MobaxtermVariablesEditor {
                 resolve_value(value).unwrap_or_else(|| fl!("ui-mobaxterm-variables-unresolved"));
             content = content.push(
                 row![
-                    text_input("", name)
+                    styles::field("", name)
                         .style(styles::text_input)
                         .width(Length::FillPortion(1))
                         .on_input(move |name| send(VariablesEdit::Name(at, name))),
-                    text_input("", value)
+                    styles::field("", value)
                         .style(styles::text_input)
                         .width(Length::FillPortion(2))
                         .on_input(move |value| send(VariablesEdit::Value(at, value))),
                     text(resolved).width(RESOLVED_WIDTH),
                     button(text(fl!("ui-mobaxterm-variables-remove")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::danger)
                         .on_press(send(VariablesEdit::Remove(at))),
                 ]
@@ -236,6 +237,7 @@ impl MobaxtermVariablesEditor {
         }
         content = content.push(column![
             button(text(fl!("ui-mobaxterm-variables-add")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(send(VariablesEdit::Add))
         ]);

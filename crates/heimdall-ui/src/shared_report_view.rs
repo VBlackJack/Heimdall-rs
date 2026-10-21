@@ -179,6 +179,7 @@ pub fn layer<'a>(state: &SourceState, report: &ImportReport) -> Element<'a, Mess
             row![
                 iced::widget::space::horizontal(),
                 button(text(fl!("ui-shared-report-close")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::primary)
                     .on_press(Message::SharedReportClose),
             ],

@@ -1582,3 +1582,27 @@ fn switch_to_auto_shows_outside_the_automatic_mode_and_goes_back_to_it() {
     ))));
     assert!(tall_simulator(&shell).find("Switch to Auto").is_err());
 }
+
+#[test]
+fn a_form_field_is_as_tall_as_the_csharp_text_box() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    let mut ui = simulator(&shell);
+    // iced's default 5 px padding left the field 27 px high, against the C#'s 33.
+    let host = ui
+        .find(heimdall_ui::shell::profile_field_id(ProfileField::Host))
+        .expect("the server field")
+        .bounds();
+    assert!(
+        host.height >= 32.0,
+        "the field is {} px high, the C# text box is 33",
+        host.height
+    );
+    assert!(
+        (host.height - heimdall_ui::tokens::INPUT_HEIGHT).abs() <= 1.0,
+        "the field is {} px high",
+        host.height
+    );
+}

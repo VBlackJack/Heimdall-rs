@@ -28,7 +28,7 @@ use heimdall_app::{
 use heimdall_core::profile::display_address;
 use heimdall_rdp::KnownRdpHost;
 use heimdall_ssh::{HostKeySource, KnownHostEntry};
-use iced::widget::{Column, button, column, container, row, text, text_input, tooltip};
+use iced::widget::{Column, button, column, container, row, text, tooltip};
 use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
@@ -295,7 +295,7 @@ fn card<'a>(
         column![
             text(title).size(font_size::SUBTITLE),
             text(hint).size(font_size::CAPTION),
-            text_input(&placeholder, typed)
+            styles::field(&placeholder, typed)
                 .style(styles::text_input)
                 .on_input(move |typed| Message::TrustedSearch(list, typed)),
             body,
