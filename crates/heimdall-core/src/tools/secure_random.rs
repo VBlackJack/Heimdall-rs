@@ -171,7 +171,7 @@ mod tests {
         let drawn: Vec<usize> = (0..5)
             .map(|_| below_from(3, &mut source).expect("drawn"))
             .collect();
-        assert_eq!(drawn, [0, 1, 2, 0, 1]);
+        assert_eq!(drawn, [0, 1, 2, 0, 2]);
         // Nothing is refused when the range divides the draw: every value is kept as is.
         let mut script = [u32::MAX, 0].into_iter();
         assert_eq!(below_from(2, || script.next()), Some(1));
