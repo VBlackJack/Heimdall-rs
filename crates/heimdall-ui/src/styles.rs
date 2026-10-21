@@ -44,8 +44,9 @@ use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
 use iced::{Background, Border, Color, Element, Font, Pixels, Shadow, Theme, font};
 
 use crate::tokens::{
-    ACCENT_SHIFT, BORDER_WIDTH, FOCUS_BORDER_WIDTH, HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT,
-    INPUT_PADDING, OPACITY_DISABLED, radius,
+    ACCENT_SHIFT, BORDER_WIDTH, DIALOG_SHADOW_ALPHA, DIALOG_SHADOW_BLUR, DIALOG_SHADOW_DEPTH,
+    FOCUS_BORDER_WIDTH, HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT, INPUT_PADDING,
+    OPACITY_DISABLED, radius,
 };
 
 /// Width of a scrollbar's track, as the C# `ThemedScrollBarStyle`'s.
@@ -395,8 +396,14 @@ pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
                 None
             },
             text_color: if lit { brushes.text } else { brushes.secondary },
+            // `BorderThickness="1,1,1,0"` (`CommonControls.xaml:1218`): transparent at
+            // rest, the border colour once hovered or selected (`:1237`, `:1242`).
             border: Border {
-                color: brushes.quiet_edge,
+                color: if lit {
+                    brushes.edge
+                } else {
+                    brushes.quiet_edge
+                },
                 width: brushes.width,
                 radius: TAB_RADIUS,
             },
@@ -943,13 +950,27 @@ pub fn step_dot(shown: bool) -> impl Fn(&Theme) -> BoxStyle {
     }
 }
 
+/// The drop shadow of a dialog card, as the C# popups' `DropShadowEffect`
+/// (`MainWindow.xaml:6107`: blur 24, depth 8 straight down, opacity 0.4, black).
+pub fn dialog_shadow() -> Shadow {
+    Shadow {
+        color: Color {
+            a: DIALOG_SHADOW_ALPHA,
+            ..Color::BLACK
+        },
+        offset: iced::Vector::new(0.0, DIALOG_SHADOW_DEPTH),
+        blur_radius: DIALOG_SHADOW_BLUR,
+    }
+}
+
 /// A dialog, as the C# dialog windows: the window's background, rounded as `CornerRadiusXl`,
-/// its edge the border colour.
+/// its edge the border colour, set above the window by the popups' [`dialog_shadow`].
 pub fn dialog(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.surface)),
         border: brushes.outline(brushes.edge, radius::XL),
+        shadow: dialog_shadow(),
         ..BoxStyle::default()
     }
 }
@@ -1157,6 +1178,30 @@ mod tests {
     /// Magellan tinted blue, the theme the C# screens were taken in.
     fn magellan() -> Theme {
         themes::theme(AppTheme::Magellan, Accent::Blue)
+    }
+
+    #[test]
+    fn a_dialog_has_the_csharp_popup_shadow() {
+        let style = dialog(&magellan());
+        assert!((style.shadow.blur_radius - 24.0).abs() < f32::EPSILON);
+        assert!((style.shadow.offset.y - 8.0).abs() < f32::EPSILON);
+        assert!(style.shadow.offset.x.abs() < f32::EPSILON);
+        assert!((style.shadow.color.a - 0.4).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_tab_is_edged_once_hovered_or_selected_as_the_csharp_tab_item() {
+        let theme = magellan();
+        let colors = themes::colors(AppTheme::Magellan);
+        let rest = tab(false)(&theme, ButtonStatus::Active);
+        assert_eq!(rest.border.color, Color::TRANSPARENT);
+        for style in [
+            tab(true)(&theme, ButtonStatus::Active),
+            tab(false)(&theme, ButtonStatus::Hovered),
+        ] {
+            assert_eq!(style.border.color, colors.current_line);
+            assert!((style.border.width - BORDER_WIDTH).abs() < f32::EPSILON);
+        }
     }
 
     #[test]
