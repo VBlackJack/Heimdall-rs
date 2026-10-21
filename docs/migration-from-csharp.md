@@ -63,6 +63,7 @@ not change the profiles already imported; import again to take it over.
 | NOTES | Work notes are Markdown files, edited as plain text; a note can be copied as Markdown or as an HTML page. | No embedded web engine. |
 | DIAGRAM | A text editor for the source (Mermaid, Graphviz DOT, PlantUML, ASCII). It does not draw the diagram: render it in an external tool. | No embedded web engine. |
 | CERT | Also reads the certificate of a TLS 1.0 to 1.2 server, for display only, with a warning. Heimdall-rs never negotiates those versions for a real connection. | Lets you inspect and audit old servers without weakening any connection. |
+| Commands imported or shared | A command that arrives from outside (a C# or MobaXterm import, a shared session file) is never typed until you press **Run and remember** in the confirmation, and each such step is asked about on its own: changing another step, a delay, the order or the enabled flag does not trust it, and saving the profile form does not either. A remembered approval of a shared session is bound to the exact text of the command, the destination (host, port, account, gateway) and the shared file, and is not remembered at all for a session whose account is asked at connection. | The C# approved imported commands when the profile form was saved, and a shared file is edited by other people: a command must never run because something else was saved. |
 
 ## Run a separate profile for testing
 

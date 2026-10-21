@@ -1349,3 +1349,49 @@ fn a_step_the_user_adds_does_not_trust_the_shared_one_and_run_trusts_both_once()
     let effects = app.update(Message::OpenProfile(id));
     assert_eq!(typed(&effects).len(), 2, "{:?}", app.dialog);
 }
+
+#[test]
+fn a_remembered_approval_is_for_the_exact_command_and_its_source() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    let id = id_of(&app, "web");
+    app.update(Message::ConnectShared(id.clone()));
+    app.update(Message::ConfirmDialog);
+
+    // Unchanged: not asked, after a restart too.
+    let mut same = app_with_text_keeping(dir.path());
+    assert_eq!(
+        typed(&same.update(Message::ConnectShared(id.clone()))).len(),
+        1
+    );
+    assert!(same.dialog.is_none());
+
+    // One character of the command changed: asked again, nothing typed.
+    std::fs::write(
+        dir.path().join("team.mxtsessions"),
+        WITH_COMMAND.replace("sudo -i", "sudo -s"),
+    )
+    .expect("write");
+    let mut edited = app_with_text_keeping(dir.path());
+    let effects = edited.update(Message::ConnectShared(id.clone()));
+    assert!(effects.is_empty(), "{effects:?}");
+    let Some(heimdall_app::Dialog::ConfirmPostConnect(asked)) = &edited.dialog else {
+        panic!("{:?}", edited.dialog);
+    };
+    assert_eq!(asked.commands, ["sudo -s"]);
+
+    // The very same command from another file: asked again too.
+    std::fs::write(dir.path().join("team.mxtsessions"), WITH_COMMAND).expect("write");
+    let other = dir.path().join("other.mxtsessions");
+    std::fs::write(&other, WITH_COMMAND).expect("write");
+    let mut moved = app_with_text_keeping(dir.path());
+    moved.update(Message::Settings(
+        heimdall_app::SettingsMessage::SharedSources(vec![source("team", &other)]),
+    ));
+    let effects = moved.update(Message::ConnectShared(id));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(matches!(
+        moved.dialog,
+        Some(heimdall_app::Dialog::ConfirmPostConnect(_))
+    ));
+}
