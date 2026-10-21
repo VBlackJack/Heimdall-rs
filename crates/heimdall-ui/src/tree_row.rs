@@ -189,7 +189,7 @@ impl Widget<Message, Theme, iced::Renderer> for RowChrome<'_> {
         let palette = theme.extended_palette();
         // The C# `HighlightBrush`, under the pointer and on the keyboard's folder.
         if cursor.is_over(bounds) || self.mark == Mark::Cursor {
-            fill(renderer, bounds, palette.background.weak.color);
+            fill(renderer, bounds, crate::themes::selection_of(theme));
         }
         let edge = Rectangle::new(
             Point::new(bounds.x, bounds.y),

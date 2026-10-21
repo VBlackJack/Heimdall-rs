@@ -97,8 +97,11 @@ struct Brushes {
     accent_pressed: Color,
     /// `TextOnAccentBrush`: the window's background, on the accent.
     on_accent: Color,
-    /// `CardBrush`, which `HighlightBrush` shares.
+    /// `CardBrush`.
     card: Color,
+    /// `HighlightBrush`: the theme's `SelectionColor`, what a hovered row, tab or menu
+    /// entry lies on. Apart from the card in every theme but Dracula's.
+    highlight: Color,
     /// `SurfaceBrush`: the window's background.
     surface: Color,
     /// `TextPrimaryBrush`.
@@ -132,6 +135,7 @@ impl Brushes {
             accent_pressed: palette::darken(accent, ACCENT_SHIFT),
             on_accent: extended.background.base.color,
             card: extended.background.weak.color,
+            highlight: crate::themes::selection_of(theme),
             surface: extended.background.base.color,
             text: extended.background.base.text,
             secondary,
@@ -234,6 +238,7 @@ pub fn secondary(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     match status {
         ButtonStatus::Active => rest,
         ButtonStatus::Hovered => ButtonStyle {
+            background: Some(Background::Color(brushes.highlight)),
             border: brushes.outline(brushes.accent, radius::MD),
             ..rest
         },
@@ -276,7 +281,7 @@ pub fn subtle(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
             ..rest
         },
         ButtonStatus::Pressed => ButtonStyle {
-            background: Some(Background::Color(brushes.card)),
+            background: Some(Background::Color(brushes.highlight)),
             border: brushes.outline(brushes.secondary, radius::MD),
             ..rest
         },
@@ -341,7 +346,13 @@ pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
         let brushes = Brushes::of(theme);
         let lit = selected || matches!(status, ButtonStatus::Hovered | ButtonStatus::Pressed);
         ButtonStyle {
-            background: lit.then_some(Background::Color(brushes.card)),
+            background: if selected {
+                Some(Background::Color(brushes.card))
+            } else if lit {
+                Some(Background::Color(brushes.highlight))
+            } else {
+                None
+            },
             text_color: if lit { brushes.text } else { brushes.secondary },
             border: Border {
                 color: brushes.quiet_edge,
@@ -514,13 +525,14 @@ pub fn filled(color: Color, corner: f32) -> BoxStyle {
 
 /// A tool's card on the Tools page, as the C# `CreateToolsTabCard`: a card outlined in the
 /// border colour, rounded as `CornerRadiusMd`; under the pointer or pressed, outlined in the
-/// accent on the highlight, which the card colour is.
+/// accent on the highlight.
 pub fn tool_card(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
     let rest = brushes.button(Some(brushes.card), brushes.text, brushes.edge);
     match status {
         ButtonStatus::Active => rest,
         ButtonStatus::Hovered | ButtonStatus::Pressed => ButtonStyle {
+            background: Some(Background::Color(brushes.highlight)),
             border: brushes.outline(brushes.accent, radius::MD),
             ..rest
         },
@@ -536,7 +548,7 @@ pub fn sidebar_tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonSty
         let brushes = Brushes::of(theme);
         let lit = matches!(status, ButtonStatus::Hovered | ButtonStatus::Pressed);
         ButtonStyle {
-            background: lit.then_some(Background::Color(brushes.card)),
+            background: lit.then_some(Background::Color(brushes.highlight)),
             text_color: if selected {
                 brushes.text
             } else {
@@ -578,7 +590,7 @@ pub fn pick_list(theme: &Theme, status: ListStatus) -> ListStyle {
 }
 
 /// A drop-down's open list, as the C# combo box's popup: the window's background outlined in
-/// the border colour, the entry under the pointer on the card colour, as `HighlightBrush`.
+/// the border colour, the entry under the pointer on the highlight, as `HighlightBrush`.
 pub fn menu(theme: &Theme) -> MenuStyle {
     let brushes = Brushes::of(theme);
     // High contrast's card is its background: the entry under the pointer takes the accent
@@ -586,7 +598,7 @@ pub fn menu(theme: &Theme) -> MenuStyle {
     let (lit, on_lit) = if crate::themes::is_high_contrast(theme) {
         (brushes.accent, brushes.on_accent)
     } else {
-        (brushes.card, brushes.text)
+        (brushes.highlight, brushes.text)
     };
     MenuStyle {
         background: Background::Color(brushes.surface),
@@ -791,6 +803,16 @@ pub fn edge_line<'a, Message: 'a>() -> Element<'a, Message> {
     iced::widget::container(iced::widget::space())
         .width(iced::Length::Fill)
         .height(BORDER_WIDTH)
+        .style(rule)
+        .into()
+}
+
+/// The one-sided edge of a [`bar`] on its right: a line down, as thick as a border, in the
+/// border colour, as the C# `BorderThickness="0,0,1,0"` of the sessions panel.
+pub fn vertical_edge_line<'a, Message: 'a>() -> Element<'a, Message> {
+    iced::widget::container(iced::widget::space())
+        .width(BORDER_WIDTH)
+        .height(iced::Length::Fill)
         .style(rule)
         .into()
 }
@@ -1187,5 +1209,69 @@ mod tests {
         let theme = magellan();
         let style = secondary(&theme, ButtonStatus::Disabled);
         assert!(style.text_color.a < 1.0);
+    }
+
+    #[test]
+    fn a_hovered_row_tab_and_menu_entry_lie_on_the_selection_not_the_card() {
+        for each in [AppTheme::Folio, AppTheme::Parchment, AppTheme::Slate] {
+            let theme = themes::theme(each, Accent::Blue);
+            let colors = themes::colors(each);
+            let on = |color| Some(Background::Color(color));
+            assert_eq!(themes::selection_of(&theme), colors.selection, "{each:?}");
+            assert_ne!(themes::selection_of(&theme), card_color(&theme), "{each:?}");
+            assert_eq!(
+                tab(false)(&theme, ButtonStatus::Hovered).background,
+                on(colors.selection),
+                "{each:?}: a tab under the pointer"
+            );
+            assert_eq!(
+                tab(true)(&theme, ButtonStatus::Active).background,
+                on(colors.current_line),
+                "{each:?}: the selected tab stays a card"
+            );
+            assert_eq!(
+                sidebar_tab(false)(&theme, ButtonStatus::Hovered).background,
+                on(colors.selection),
+                "{each:?}"
+            );
+            assert_eq!(
+                secondary(&theme, ButtonStatus::Hovered).background,
+                on(colors.selection),
+                "{each:?}"
+            );
+            assert_eq!(
+                subtle(&theme, ButtonStatus::Hovered).background,
+                on(colors.current_line),
+                "{each:?}: the C# ghost button hovers on the card"
+            );
+            assert_eq!(
+                menu(&theme).selected_background,
+                Background::Color(colors.selection),
+                "{each:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dracula_hovers_as_it_did_the_selection_being_its_card() {
+        let theme = themes::theme(AppTheme::Dracula, Accent::Default);
+        assert_eq!(themes::selection_of(&theme), card_color(&theme));
+    }
+
+    #[test]
+    fn the_sessions_panel_is_the_window_background_not_a_card() {
+        for each in AppTheme::ALL {
+            let theme = themes::theme(each, Accent::Default);
+            let panel = bar(&theme);
+            assert_eq!(
+                panel.background,
+                Some(Background::Color(themes::colors(each).background)),
+                "{each:?}"
+            );
+            assert!(
+                panel.border.width.abs() < f32::EPSILON,
+                "{each:?}: no border all round"
+            );
+        }
     }
 }

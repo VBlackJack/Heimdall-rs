@@ -6097,10 +6097,15 @@ impl Shell {
                 .push(self.filter_feedback())
                 .push(content)
         };
-        container(body.spacing(spacing::SM).padding(spacing::MD))
+        // As the C# `TreeViewPanel` (`MainWindow.xaml:381-386`): the window's background, not
+        // a card, a one-pixel border on its right alone, and margins of eight.
+        let panel = container(body.spacing(spacing::SM).padding(spacing::SM))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(styles::bar);
+        row![panel, styles::vertical_edge_line()]
             .width(self.sidebar_width)
             .height(Length::Fill)
-            .style(container::rounded_box)
             .into()
     }
 
