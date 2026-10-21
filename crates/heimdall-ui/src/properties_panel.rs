@@ -896,6 +896,7 @@ mod tests {
 
     fn profile(kind: ProfileKind) -> ProfileSummary {
         ProfileSummary {
+            tool: None,
             id: ProfileId::new("p"),
             name: "web".to_owned(),
             group: None,
@@ -1024,6 +1025,7 @@ mod tests {
             Some(vec![Username, Password])
         );
         let current = ProfileSummary {
+            tool: None,
             username: None,
             ..profile(ProfileKind::WinRm)
         };
@@ -1081,6 +1083,7 @@ mod tests {
         assert_eq!(lines[9].value, "12 ms");
 
         let bare = ProfileSummary {
+            tool: None,
             username: None,
             ..profile(ProfileKind::Telnet)
         };
@@ -1159,11 +1162,13 @@ mod tests {
             Some("web.lab:22")
         );
         let six = ProfileSummary {
+            tool: None,
             endpoint: Some(("fe80::1".to_owned(), 3389)),
             ..profile(ProfileKind::Rdp)
         };
         assert_eq!(endpoint(&six).as_deref(), Some("[fe80::1]:3389"));
         let local = ProfileSummary {
+            tool: None,
             endpoint: None,
             ..profile(ProfileKind::Local)
         };
@@ -1173,6 +1178,7 @@ mod tests {
     #[test]
     fn a_summary_counts_each_session_once_and_its_protocols_most_used_first() {
         let with = |id: &str, kind: ProfileKind| ProfileSummary {
+            tool: None,
             id: ProfileId::new(id),
             ..profile(kind)
         };

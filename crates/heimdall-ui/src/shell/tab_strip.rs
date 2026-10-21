@@ -758,6 +758,7 @@ mod tests {
         folder: Option<&str>,
     ) -> ProfileSummary {
         ProfileSummary {
+            tool: None,
             id: ProfileId::new("web"),
             name: "web-prod-01".to_owned(),
             group: folder.map(str::to_owned),

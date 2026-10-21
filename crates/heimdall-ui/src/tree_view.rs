@@ -540,6 +540,17 @@ pub fn search_context(profile: &ProfileSummary) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("  "))
 }
 
+/// The icon of a tree row and its colour: a protocol's in its brush, and a tool entry's own
+/// tool in its category's brush, as the C# `ConnectionTypeToGeometryConverter` and
+/// `ConnectionTypeToBrushConverter` pick them; a tool this version lacks keeps the C#'s
+/// fallback, the rack of `Geo.Tree.Server`.
+fn profile_icon(profile: &ProfileSummary) -> (Icon, Tint) {
+    match profile.tool {
+        Some(tool) => (crate::tools::icon(tool), Tint::Tool(tool.category())),
+        None => (Icon::of(profile.kind), Tint::Protocol(profile.kind)),
+    }
+}
+
 /// One profile: its protocol's icon in its colour, the state of its sessions and name, as
 /// the C# tree's row, with where it is under the name while searching; the host, account and
 /// protocol in its tooltip. It starts after the expander's column, as a C# leaf does.
@@ -550,14 +561,9 @@ pub fn owned_row(
     context: Option<String>,
 ) -> Element<'static, Message> {
     let id = profile.id.clone();
-    let kind = profile.kind;
+    let (glyph, tint) = profile_icon(profile);
     let mut label = row![
-        container(icons::icon(
-            Icon::of(kind),
-            Tint::Protocol(kind),
-            PROTOCOL_ICON_SIDE
-        ))
-        .center_y(ROW_CONTENT_HEIGHT),
+        container(icons::icon(glyph, tint, PROTOCOL_ICON_SIDE)).center_y(ROW_CONTENT_HEIGHT),
         container(profile_dot(state, reach.as_ref())).padding(DOT_HIT_PADDING),
         // On one line each, ended with an ellipsis where the badges' room starts, as the
         // C#'s: the tooltip opens with the whole name.
@@ -2857,6 +2863,43 @@ impl<'a> From<CursorTracker<'a>> for Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(kind: ProfileKind, tool: Option<heimdall_app::tools::ToolId>) -> ProfileSummary {
+        ProfileSummary {
+            id: ProfileId::new("p"),
+            name: "p".to_owned(),
+            group: None,
+            kind,
+            endpoint: None,
+            username: None,
+            gateway: None,
+            favorite: false,
+            metadata: heimdall_core::metadata::ProfileMetadata::default(),
+            tool,
+        }
+    }
+
+    #[test]
+    fn a_tool_entry_wears_its_tools_icon_and_category_brush_as_the_csharp_row() {
+        use heimdall_app::tools::ToolId;
+        let ping = entry(ProfileKind::Tool, Some(ToolId::Ping));
+        assert_eq!(
+            profile_icon(&ping),
+            (Icon::ToolSubnet, Tint::Tool(ToolId::Ping.category())),
+            "PING draws Geo.Tool.NetworkScanner"
+        );
+        let unknown = entry(ProfileKind::Tool, None);
+        assert_eq!(
+            profile_icon(&unknown),
+            (Icon::Server, Tint::Protocol(ProfileKind::Tool)),
+            "a tool this version lacks keeps Geo.Tree.Server"
+        );
+        let ssh = entry(ProfileKind::Ssh, None);
+        assert_eq!(
+            profile_icon(&ssh),
+            (Icon::Ssh, Tint::Protocol(ProfileKind::Ssh))
+        );
+    }
 
     #[test]
     fn each_open_folder_a_row_is_in_draws_its_guide_past_the_folders_expander() {
