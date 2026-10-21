@@ -204,6 +204,7 @@ impl BrowseTarget {
 /// The C# "Browse..." button of `target`.
 pub fn browse_button<'a>(target: BrowseTarget) -> Element<'a, Message> {
     button(text(fl!("ui-profile-browse-button")))
+        .padding(crate::tokens::BUTTON_PADDING)
         .style(styles::secondary)
         .on_press(Message::Browse(target))
         .into()

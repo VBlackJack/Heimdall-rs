@@ -28,7 +28,7 @@ use heimdall_core::shared_sessions::{
     IdProblem, NameProblem, PathProblem, SharedSource, SourceProblems, new_source_id,
     source_problems,
 };
-use iced::widget::{Column, button, checkbox, column, container, row, text, text_input};
+use iced::widget::{Column, button, checkbox, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::browse::{BrowseTarget, browse_button};
@@ -170,11 +170,11 @@ impl SharedSourcesEditor {
         for (at, source) in self.rows.iter().enumerate() {
             content = content.push(
                 row![
-                    text_input(&fl!("ui-shared-sources-name"), &source.name)
+                    styles::field(&fl!("ui-shared-sources-name"), &source.name)
                         .style(styles::text_input)
                         .width(Length::FillPortion(1))
                         .on_input(move |name| send(SourcesEdit::Name(at, name))),
-                    text_input(&fl!("ui-shared-sources-path"), &source.path)
+                    styles::field(&fl!("ui-shared-sources-path"), &source.path)
                         .style(styles::text_input)
                         .width(Length::FillPortion(2))
                         .on_input(move |path| send(SourcesEdit::Path(at, path))),
@@ -197,12 +197,14 @@ impl SharedSourcesEditor {
             if state.is_some_and(|state| state.sessions > 0) {
                 actions = actions.push(
                     button(text(fl!("ui-shared-sources-report")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(send(SourcesEdit::Report(at))),
                 );
             }
             actions = actions.push(
                 button(text(fl!("ui-shared-sources-remove")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::danger)
                     .on_press(send(SourcesEdit::Remove(at))),
             );
@@ -232,6 +234,7 @@ impl SharedSourcesEditor {
         }
         content = content.push(column![
             button(text(fl!("ui-shared-sources-add")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(send(SourcesEdit::Add))
         ]);

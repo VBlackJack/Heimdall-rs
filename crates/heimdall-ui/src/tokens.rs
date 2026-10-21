@@ -93,3 +93,27 @@ pub const OPACITY_DISABLED: f32 = 0.6;
 /// How much lighter the accent is under the pointer, and darker pressed, as `ThemeForge`'s
 /// accent tint moves its lightness.
 pub const ACCENT_SHIFT: f32 = 0.08;
+
+/// Padding inside a text field, vertical then horizontal, as the C# `ThemedTextBoxStyle`'s
+/// `10,6`: with the 13 px text, a field about 33 px high instead of iced's default 5 px
+/// all round.
+pub const INPUT_PADDING: [f32; 2] = [6.0, 10.0];
+
+/// Padding of a field in a tool's page, as the C# `PaddingInput` token (`8,6`).
+pub const TOOL_INPUT_PADDING: [f32; 2] = [6.0, 8.0];
+
+/// Padding of a button that carries an action, as the C# `PrimaryButtonStyle`,
+/// `SecondaryButtonStyle` and `QuietButtonStyle`: `16,8`.
+pub const BUTTON_PADDING: [f32; 2] = [8.0, 16.0];
+
+/// Padding of a small action beside a field or in a dense row, as the C# `PaddingButtonCopy`
+/// token (`10,4`): the caption-sized buttons of a toolbar or an editor.
+pub const BUTTON_COMPACT_PADDING: [f32; 2] = [4.0, 10.0];
+
+/// Height of a text field, as measured in the C# window (`ThemedTextBoxStyle`, 13 px text):
+/// about 33 px.
+pub const INPUT_HEIGHT: f32 = 33.0;
+
+/// Height of the line of text inside a field: the field's height less the vertical
+/// [`INPUT_PADDING`] twice. iced's default line (1.3 times the text) left a field 29 px high.
+pub const INPUT_LINE_HEIGHT: f32 = INPUT_HEIGHT - 2.0 * INPUT_PADDING[0];

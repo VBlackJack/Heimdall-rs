@@ -195,6 +195,7 @@ fn session_row<'a>(session: &SharedSession, source: &str) -> Element<'a, Message
     .spacing(spacing::XS)
     .align_y(iced::Alignment::Center);
     let open = button(content)
+        .padding(crate::tokens::BUTTON_PADDING)
         .width(Length::Fill)
         .style(styles::secondary)
         .on_press(Message::App(AppMessage::ConnectShared(session.id.clone())));

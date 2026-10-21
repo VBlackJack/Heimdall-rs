@@ -29,7 +29,6 @@ use heimdall_app::{
 use heimdall_core::scheduled::{Schedule, ScheduledTask};
 use iced::widget::{
     Column, button, checkbox, column, container, mouse_area, pick_list, row, rule, space, text,
-    text_input,
 };
 use iced::{Alignment, Element, Length};
 
@@ -74,12 +73,15 @@ pub fn page(app: &App) -> Element<'_, Message> {
         text(fl!("ui-scheduled-title")).size(font_size::TITLE),
         space::horizontal(),
         button(text(fl!("ui-scheduled-add")))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::primary)
             .on_press(scheduled(ScheduledMessage::Add)),
         button(text(fl!("ui-scheduled-edit")))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press_maybe(selected.map(|_| scheduled(ScheduledMessage::EditSelected))),
         button(text(fl!("ui-scheduled-delete")))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press_maybe(selected.map(|_| scheduled(ScheduledMessage::DeleteSelected))),
     ]
@@ -94,6 +96,7 @@ pub fn page(app: &App) -> Element<'_, Message> {
                     .size(font_size::LARGE)
                     .style(text::secondary),
                 button(text(fl!("ui-scheduled-empty-add")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::primary)
                     .on_press(scheduled(ScheduledMessage::Add)),
             ]
@@ -290,7 +293,7 @@ pub fn dialog<'a>(
             content.push(
                 dialog_parts::field(
                     fl!("ui-scheduled-field-time"),
-                    text_input("", &fields.time)
+                    styles::field("", &fields.time)
                         .style(styles::text_input)
                         .width(TIME_FIELD_WIDTH)
                         .on_input(move |time| changed(&time_fields, |fields| fields.time = time))
@@ -304,7 +307,7 @@ pub fn dialog<'a>(
             content.push(dialog_parts::field(
                 fl!("ui-scheduled-field-interval"),
                 row![
-                    text_input("", &fields.minutes)
+                    styles::field("", &fields.minutes)
                         .style(styles::text_input)
                         .width(INTERVAL_FIELD_WIDTH)
                         .on_input(move |minutes| {

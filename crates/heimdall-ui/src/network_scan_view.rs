@@ -29,7 +29,7 @@ use heimdall_app::{
 use heimdall_core::tools::network_cartography::SystemProber;
 use heimdall_core::tools::network_scanner::{self, PORT_PROBE_TIMEOUT_MS, RemoteKind, TargetError};
 use iced::futures::SinkExt as _;
-use iced::widget::{Column, button, checkbox, column, container, row, text, text_input};
+use iced::widget::{Column, button, checkbox, column, container, row, text};
 use iced::{Alignment, Element, Length, Task};
 
 use crate::dialog_parts;
@@ -127,7 +127,7 @@ fn kind_text(kind: RemoteKind) -> String {
 /// The dialog.
 #[must_use]
 pub fn dialog(scan: &NetworkScan) -> Element<'_, Message> {
-    let mut target = text_input(network_scanner::DEFAULT_SUBNET, &scan.target)
+    let mut target = styles::field(network_scanner::DEFAULT_SUBNET, &scan.target)
         .size(font_size::BODY)
         .style(styles::text_input);
     if !scan.running {
@@ -201,9 +201,11 @@ fn list(scan: &NetworkScan) -> Element<'_, Message> {
     .spacing(2.0);
     let choose = row![
         button(text(fl!("ui-rdp-select-all")).size(font_size::BODY))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press(app(NetworkScanMessage::ChooseAll(true))),
         button(text(fl!("ui-rdp-select-none")).size(font_size::BODY))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press(app(NetworkScanMessage::ChooseAll(false))),
     ]

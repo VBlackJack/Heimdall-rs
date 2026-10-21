@@ -25,7 +25,7 @@ use heimdall_app::tools::ToolId;
 use heimdall_app::{ProfileKind, QuickGroup, QuickResult, QuickRow, TabId, ToolWords};
 use iced::font::Weight;
 use iced::widget::text::Span;
-use iced::widget::{button, column, container, rich_text, row, span, text, text_input};
+use iced::widget::{button, column, container, rich_text, row, span, text};
 use iced::{Alignment, Color, Element, Font, Length, Theme};
 
 use crate::i18n::fl;
@@ -393,7 +393,7 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
         );
     }
     content = content.push(
-        text_input(&placeholder, &palette.query)
+        styles::field(&placeholder, &palette.query)
             .style(styles::text_input)
             .id(field_id())
             .on_input(Message::PaletteQuery)

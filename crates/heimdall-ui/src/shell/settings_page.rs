@@ -44,8 +44,7 @@ use heimdall_core::settings::{
 };
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, button, checkbox, column, container, operation, pick_list, row, text, text_input,
-    tooltip,
+    Column, button, checkbox, column, container, operation, pick_list, row, text, tooltip,
 };
 use iced::{Element, Length, Task, Theme};
 
@@ -209,6 +208,7 @@ fn onboarding_row<'a>() -> Element<'a, Message> {
             .size(font_size::CAPTION)
             .style(text::secondary),
         button(text(row_label(SettingRow::Onboarding)))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press(Message::ReplayTour),
     ]
@@ -709,6 +709,7 @@ fn posture_line<'a>(line: PostureLine) -> Element<'a, Message> {
     if risky {
         shown = shown.push(iced::widget::space::horizontal()).push(
             button(text(fl!("ui-settings-posture-go-to")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::GoToSetting(line.target)),
         );
@@ -761,7 +762,7 @@ impl Shell {
     /// at its right. Its Save and Undo are left out, every choice applying at once.
     fn settings_header(&self) -> Element<'_, Message> {
         let field = SearchKeys::escape_only(
-            text_input(
+            styles::field(
                 &fl!("ui-settings-search-placeholder"),
                 &self.settings_search,
             )
@@ -774,6 +775,7 @@ impl Shell {
         );
         let mut header = row![
             button(text(fl!("ui-settings-reset-all")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(send(SettingsMessage::ResetAllSettings)),
             iced::widget::space::horizontal(),
@@ -800,6 +802,7 @@ impl Shell {
             header = header.push(
                 tooltip(
                     button(text(fl!("ui-tree-search-clear-button")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::SettingsSearch(String::new())),
                     text(fl!("ui-settings-search-clear")).size(font_size::CAPTION),
@@ -1135,7 +1138,9 @@ impl Shell {
             |release| release.to_string(),
         );
         let status = self.app.update_status();
-        let mut check = button(text(fl!("ui-settings-updates-check-now"))).style(styles::secondary);
+        let mut check = button(text(fl!("ui-settings-updates-check-now")))
+            .padding(crate::tokens::BUTTON_PADDING)
+            .style(styles::secondary);
         if status != Some(UpdateStatus::Checking) {
             check = check.on_press(Message::App(AppMessage::Update(UpdateMessage::CheckNow)));
         }
@@ -1179,6 +1184,7 @@ impl Shell {
                     ))
                     .style(text::secondary),
                     button(text(fl!("ui-settings-updates-clear-skipped")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::App(AppMessage::Update(
                             UpdateMessage::ClearSkipped
@@ -1196,8 +1202,9 @@ impl Shell {
     /// once an offer was declined, said under it until then.
     fn legacy_migration_row(&self) -> Element<'_, Message> {
         let declined = self.app.settings().legacy_migration.has_decline();
-        let mut offer =
-            button(text(fl!("ui-settings-legacy-migration-reoffer"))).style(styles::secondary);
+        let mut offer = button(text(fl!("ui-settings-legacy-migration-reoffer")))
+            .padding(crate::tokens::BUTTON_PADDING)
+            .style(styles::secondary);
         if declined {
             offer = offer.on_press(Message::App(AppMessage::LegacyMigration(
                 LegacyMigrationMessage::OfferAgain,
@@ -1414,7 +1421,7 @@ impl Shell {
             && !self
                 .typed_session(field)
                 .is_some_and(|value| field.accepted(value));
-        let mut input = text_input("", &typed)
+        let mut input = styles::field("", &typed)
             .style(styles::text_input)
             .width(FONT_SIZE_FIELD_WIDTH);
         if enabled {
@@ -1452,7 +1459,7 @@ impl Shell {
         let mut body = column![labelled(
             row_label(SettingRow::FontSize),
             with_unit(
-                text_input("", &typed)
+                styles::field("", &typed)
                     .style(styles::text_input)
                     .width(FONT_SIZE_FIELD_WIDTH)
                     .on_input(Message::FontSizeEdited)
@@ -1530,7 +1537,7 @@ impl Shell {
                 .log_directory
                 .as_deref()
                 .unwrap_or(&settings.session_log_directory);
-            text_input(
+            styles::field(
                 heimdall_core::settings::DEFAULT_SESSION_LOG_DIRECTORY,
                 typed,
             )
@@ -1542,7 +1549,7 @@ impl Shell {
                 .editor_typed
                 .as_deref()
                 .unwrap_or(&settings.external_editor);
-            text_input("", typed)
+            styles::field("", typed)
                 .style(styles::text_input)
                 .on_input(Message::EditorEdited)
                 .on_submit(Message::EditorApply)
@@ -1733,7 +1740,7 @@ impl Shell {
         let typed = self.tool_paths_typed[path.index()]
             .as_deref()
             .unwrap_or_else(|| path.value(self.app.settings()));
-        let field = text_input("", typed)
+        let field = styles::field("", typed)
             .style(styles::text_input)
             .on_input(move |typed| Message::ToolPathEdited(path, typed))
             .on_submit(Message::ToolPathApply(path));
@@ -1759,6 +1766,7 @@ impl Shell {
         .menu_style(styles::menu);
         let apply = tooltip(
             button(text(fl!("ui-settings-apply-mode-to-all")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press(send(SettingsMessage::ApplySshModeToAll)),
             text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(font_size::CAPTION),
@@ -1791,6 +1799,7 @@ impl Shell {
         .menu_style(styles::menu);
         let apply = tooltip(
             button(text(fl!("ui-settings-apply-mode-to-all")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press(send(SettingsMessage::ApplyRdpModeToAll)),
             text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(font_size::CAPTION),
@@ -1877,6 +1886,7 @@ impl Shell {
             ),
             _ => tooltip(
                 button(text(fl!("ui-settings-rdp-reset-defaults")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(send(SettingsMessage::ResetRdpDefaults)),
                 text(fl!("ui-settings-rdp-reset-defaults-tooltip")).size(font_size::CAPTION),
@@ -1901,6 +1911,7 @@ impl Shell {
                         fl!("ui-settings-pin-disabled")
                     },
                     button(text(fl!("ui-settings-pin-configure")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::App(AppMessage::Pin(PinMessage::Configure))),
                 ),
@@ -1931,17 +1942,20 @@ impl Shell {
             actions = actions
                 .push(
                     button(text(fl!("ui-settings-vault-change")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::App(AppMessage::ChangeMasterPassword)),
                 )
                 .push(
                     button(text(fl!("ui-settings-vault-disable")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::App(AppMessage::DisableMasterPassword)),
                 );
         } else {
             actions = actions.push(
                 button(text(fl!("ui-settings-vault-enable")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::primary)
                     .on_press(Message::App(AppMessage::ShowVault)),
             );
@@ -1973,6 +1987,7 @@ impl Shell {
         if card.can_enable {
             line = line.push(
                 button(text(fl!("ui-settings-vault-hello-enable")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(hello(VaultHelloMessage::Enable)),
             );
@@ -1980,6 +1995,7 @@ impl Shell {
         if card.can_disable {
             line = line.push(
                 button(text(fl!("ui-settings-vault-hello-disable")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(hello(VaultHelloMessage::Disable)),
             );

@@ -183,9 +183,11 @@ pub fn preview(preview: &RdpPreview) -> Element<'_, Message> {
     }
     let mut choices = row![
         button(text(fl!("ui-rdp-select-all")).size(font_size::BODY))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press(app(RdpMessage::ChooseAll(true))),
         button(text(fl!("ui-rdp-select-none")).size(font_size::BODY))
+            .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::secondary)
             .on_press(app(RdpMessage::ChooseAll(false))),
     ]
@@ -196,6 +198,7 @@ pub fn preview(preview: &RdpPreview) -> Element<'_, Message> {
         for choice in CONFLICTS {
             choices = choices.push(
                 button(text(choice.to_string()).size(font_size::BODY))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(app(RdpMessage::ConflictAll(choice.0))),
             );

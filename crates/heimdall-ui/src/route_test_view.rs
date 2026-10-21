@@ -25,7 +25,7 @@ use heimdall_app::{Message as AppMessage, server_text};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use heimdall_core::utc::UtcTime;
 use heimdall_ssh::{Outcome, Step, StepOf};
-use iced::widget::{Column, button, column, container, row, text, text_input};
+use iced::widget::{Column, button, column, container, row, text};
 use iced::{Element, Font, Length};
 
 use crate::i18n::fl;
@@ -154,15 +154,16 @@ pub fn card<'a>(draft: &'a GatewayDraft, gateways: &'a [SshGateway]) -> Element<
     let running = matches!(draft.route_test, RouteTest::Running(_));
     let target =
         |field: TargetField| move |value| Message::App(AppMessage::RouteTarget { field, value });
-    let host = text_input(&fl!("ui-route-test-target-host"), &draft.target_host)
+    let host = styles::field(&fl!("ui-route-test-target-host"), &draft.target_host)
         .style(styles::text_input)
         .on_input_maybe((!running).then_some(target(TargetField::Host)));
-    let port = text_input(&fl!("ui-route-test-target-port"), &draft.target_port)
+    let port = styles::field(&fl!("ui-route-test-target-port"), &draft.target_port)
         .style(styles::text_input)
         .on_input_maybe((!running).then_some(target(TargetField::Port)))
         .width(PORT_WIDTH);
     let mut buttons = row![
         button(text(fl!("ui-route-test-test")).size(font_size::CAPTION))
+            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
             .style(styles::secondary)
             .on_press_maybe((!running).then_some(Message::TestRouteForm))
     ]

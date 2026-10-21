@@ -704,6 +704,7 @@ impl HostsEditorPane {
                         .into(),
                     row![
                         button(text(fl!("ui-tool-hosts-btn-apply")).size(font_size::CAPTION))
+                            .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                             .style(styles::secondary)
                             .on_press_maybe(
                                 (!self.saving && !self.loading)

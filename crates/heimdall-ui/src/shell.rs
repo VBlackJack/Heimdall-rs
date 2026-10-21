@@ -1390,7 +1390,8 @@ pub(crate) fn name_field_id() -> iced::widget::Id {
 }
 
 /// Widget identifier of a field of the profile form.
-fn profile_field_id(field: ProfileField) -> iced::widget::Id {
+#[must_use]
+pub fn profile_field_id(field: ProfileField) -> iced::widget::Id {
     iced::widget::Id::from(format!("profile-{field:?}"))
 }
 
@@ -5348,9 +5349,11 @@ impl Shell {
                     text(fl!("ui-update-banner-text", version = release.to_string())),
                     iced::widget::space::horizontal(),
                     button(text(fl!("ui-update-banner-view-release")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::primary)
                         .on_press(send(heimdall_app::UpdateMessage::ViewRelease)),
                     button(text(fl!("ui-update-banner-later")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(send(heimdall_app::UpdateMessage::Later)),
                     button(text(fl!("ui-update-banner-skip")))
@@ -5381,6 +5384,7 @@ impl Shell {
                     ))
                     .width(Length::Fill),
                     button(text(fl!("ui-session-load-notice-hide")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::App(AppMessage::HideSessionLoadNotice)),
                 ]
@@ -5686,9 +5690,11 @@ impl Shell {
                 text(fl!("ui-home-subtitle")),
                 row![
                     button(text(fl!("ui-home-add-button")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::primary)
                         .on_press(Message::App(AppMessage::NewProfile)),
                     button(text(fl!("ui-home-import-button")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press_maybe(
                             self.app
@@ -5698,6 +5704,7 @@ impl Shell {
                     // As the C# empty state's "Explore Tools", which opens the Tools page
                     // as the navigation does (`MainWindow.xaml.cs:2331`).
                     button(text(fl!("ui-home-explore-tools-button")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::Navigate(Destination::Tools)),
                 ]
@@ -5790,6 +5797,7 @@ impl Shell {
         let bar = bar.push(iced::widget::space::horizontal()).push(
             tooltip(
                 button(text(fl!("ui-nav-quick-connect")))
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(Message::TreeShortcut(TreeShortcut::QuickConnect)),
                 text(fl!("ui-nav-quick-connect-tooltip")).size(font_size::CAPTION),
@@ -5842,6 +5850,7 @@ impl Shell {
                 .push(rdp_status(tab))
                 .push(
                     button(text(fl!("ui-connect-cancel-button")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
                 )
@@ -6055,6 +6064,7 @@ impl Shell {
         let actions = (self.app.vault_status() == VaultStatus::Open).then(|| {
             tooltip(
                 button(text(fl!("ui-sidebar-lock-button")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .on_press(Message::App(AppMessage::LockVault))
                     .style(styles::secondary),
                 text(fl!("ui-sidebar-lock-tooltip")).size(font_size::CAPTION),
@@ -6455,6 +6465,7 @@ impl Shell {
             };
             list = list.push(text(said).size(font_size::CAPTION)).push(
                 button(text(way_back).size(font_size::CAPTION))
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(message),
             );
@@ -8283,12 +8294,14 @@ impl Shell {
         if pane.state != ElevatedState::Unsupported && self.app.can_reconnect(tab) {
             actions = actions.push(
                 button(action_label(fl!("ui-local-elevated-open-again-button")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::primary)
                     .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
             );
         }
         actions = actions.push(
             button(action_label(fl!("ui-session-close-button")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
         );
@@ -8445,6 +8458,7 @@ impl Shell {
         if let Some(label) = forget {
             actions = actions.push(
                 button(text(label))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::danger)
                     .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
             );
@@ -8460,6 +8474,7 @@ impl Shell {
         if self.app.can_reconnect(tab) {
             actions = actions.push(
                 button(action_label(fl!("ui-session-reconnect-button")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::primary)
                     .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
             );
@@ -8471,12 +8486,14 @@ impl Shell {
             actions = actions
                 .push(
                     button(action_label(fl!("ui-session-copy-error-button")))
+                        .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
                         .on_press(Message::CopyError(tab.id)),
                 )
                 .push(
                     tooltip(
                         button(action_label(fl!("ui-session-copy-anonymous-button")))
+                            .padding(crate::tokens::BUTTON_PADDING)
                             .style(styles::secondary)
                             .on_press(Message::CopyAnonymousError(tab.id)),
                         text(fl!("ui-error-report-anonymous-hint")).size(font_size::CAPTION),
@@ -8493,12 +8510,14 @@ impl Shell {
         {
             actions = actions.push(
                 button(action_label(fl!("ui-session-edit-profile-button")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::EditProfile(profile.id))),
             );
         }
         actions.push(
             button(action_label(fl!("ui-session-close-button")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
         )
@@ -8517,7 +8536,7 @@ impl Shell {
             .get(&question)
             .and_then(|fields| fields.get(index))
             .map_or("", |typed| typed.as_str());
-        text_input("", value)
+        styles::field("", value)
             .style(styles::text_input)
             .id(field_id(question, index))
             .secure(secure)
@@ -8784,6 +8803,7 @@ impl Shell {
         bar.push(
             tooltip(
                 button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
                 text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
@@ -8977,9 +8997,11 @@ impl Shell {
         form.push(
             row![
                 button(text(fl!("ui-prompt-cancel-button")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(Message::Decline(tab.id)),
                 button(text(fl!("ui-prompt-submit-button")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::primary)
                     .on_press(Message::Submit(tab.id)),
             ]
@@ -9095,6 +9117,7 @@ fn host_key_card<'a>(
                     button(
                         text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION)
                     )
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::CopyHostKeyFingerprint(tab))),
                 ]
@@ -9491,6 +9514,7 @@ fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, M
         return Some(
             tooltip(
                 button(text(fl!("ui-desktop-save-files")).size(font_size::CAPTION))
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::SaveRemoteFiles(tab_id))),
                 text(fl!("ui-desktop-save-files-tooltip")).size(font_size::CAPTION),
@@ -9509,6 +9533,7 @@ fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, M
             text(fl!("ui-desktop-saving-files", saved = saved, total = total))
                 .size(font_size::CAPTION),
             button(text(fl!("ui-desktop-save-files-cancel")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::CancelSave(tab_id))),
         ]
@@ -9569,6 +9594,7 @@ fn vnc_overlay<'a>(tab: &Tab, pane: &'a DesktopPane, fit: bool) -> Option<Elemen
     if pane.accepts_clipboard() {
         controls = controls.push(tip(
             button(text(fl!("ui-vnc-clipboard")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::SendClipboard(tab_id)))
                 .into(),
@@ -10447,7 +10473,7 @@ impl PasswordStore {
 /// The password of a profile, as the C# editor shows it: an empty field whatever is saved,
 /// "Password saved" and a button to clear it when one is.
 fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Message> {
-    let mut input = text_input("", forms.profile_password)
+    let mut input = styles::field("", forms.profile_password)
         .style(styles::text_input)
         .id(password_field_id())
         .secure(true);
@@ -10714,7 +10740,7 @@ fn labelled_field(
     };
     column![
         dialog_parts::label(label),
-        text_input(&placeholder, draft.value(field))
+        styles::field(&placeholder, draft.value(field))
             .style(styles::text_input)
             .id(profile_field_id(field))
             .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
@@ -10742,12 +10768,13 @@ fn key_field(draft: &ProfileDraft) -> Element<'_, Message> {
     column![
         dialog_parts::label(fl!("ui-profile-field-key")),
         row![
-            text_input(&fl!("ui-profile-optional"), draft.value(field))
+            styles::field(&fl!("ui-profile-optional"), draft.value(field))
                 .style(styles::text_input)
                 .id(profile_field_id(field))
                 .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
                 .on_submit(Message::SaveProfileForm),
             button(text(fl!("ui-profile-browse-button")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::BrowseKeyFile),
         ]
@@ -11001,6 +11028,7 @@ fn network_section<'a>(
                 .menu_style(styles::menu)
                 .width(Length::Fill),
                 button(text(fl!("ui-gateway-add")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(Message::App(AppMessage::NewGateway)),
             ]
@@ -11016,6 +11044,7 @@ fn network_section<'a>(
     if let Some(id) = routed.filter(|id| gateways.iter().any(|known| known.id == *id)) {
         section_column = section_column.push(
             button(text(fl!("ui-profile-edit-gateway")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
@@ -11065,7 +11094,7 @@ fn tunnel_port_card<'a>(
 ) -> Column<'a, Message> {
     let field = ProfileField::LocalTunnelPort;
     let automatic = draft.is_on(ProfileToggle::AutoTunnelPort);
-    let mut input = text_input("", draft.value(field))
+    let mut input = styles::field("", draft.value(field))
         .style(styles::text_input)
         .id(profile_field_id(field));
     if !automatic {
@@ -11186,7 +11215,7 @@ fn gateway_dialog<'a>(
             ProfileField::Username => fl!("ui-gateway-field-username"),
             _ => fl!("ui-gateway-field-key"),
         };
-        let input = text_input("", draft.value(field))
+        let input = styles::field("", draft.value(field))
             .style(styles::text_input)
             .id(gateway_field_id(field))
             .on_input(move |value| Message::App(AppMessage::GatewayField { field, value }))
@@ -11247,7 +11276,7 @@ fn gateway_dialog<'a>(
 /// Clear, then the C# hint.
 fn gateway_password<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Column<'a, Message> {
     let mut form = Column::new().spacing(spacing::SM);
-    let mut password = text_input("", forms.gateway_password)
+    let mut password = styles::field("", forms.gateway_password)
         .style(styles::text_input)
         .id(gateway_field_id(ProfileField::Domain))
         .secure(true);
@@ -11307,7 +11336,7 @@ struct Passphrase<'a> {
 /// The passphrase of the key file, as the C# dialog shows it: an empty field whatever is
 /// saved, "Passphrase saved" and a button to remove it when one is, then the C# hint.
 fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Column<'a, Message> {
-    let mut input = text_input("", passphrase.typed)
+    let mut input = styles::field("", passphrase.typed)
         .style(styles::text_input)
         .id(iced::widget::Id::new(passphrase.id))
         .secure(true);
@@ -11401,7 +11430,7 @@ fn parent_gateway<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Element<'a, Me
 fn host_key_fingerprint(draft: &GatewayDraft) -> Element<'_, Message> {
     column![
         dialog_parts::dialog_label(fl!("ui-gateway-field-host-key-fingerprint")),
-        text_input("", &draft.trusted_fingerprint)
+        styles::field("", &draft.trusted_fingerprint)
             .style(styles::text_input)
             .id(iced::widget::Id::new("gateway-host-key-fingerprint")),
         dialog_parts::hint(fl!("ui-gateway-host-key-fingerprint-hint")),
@@ -12004,7 +12033,7 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
         column![]
             .push(label)
             .push(
-                text_input(&placeholder, value)
+                styles::field(&placeholder, value)
                     .style(styles::text_input)
                     .id(name_field_id())
                     .on_input(|value| {
@@ -12053,7 +12082,7 @@ fn bulk_edit_dialog(
     let mut body = column![
         dialog_parts::section(header, None),
         dialog_parts::dialog_label(label),
-        text_input(&placeholder, value)
+        styles::field(&placeholder, value)
             .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| {
@@ -12116,7 +12145,7 @@ fn bulk_password_dialog(
     ];
     let last = labels.len() - 1;
     for (index, label) in labels.into_iter().enumerate() {
-        let input = text_input("", fields[index].as_str())
+        let input = styles::field("", fields[index].as_str())
             .style(styles::text_input)
             .id(bulk_password_field_id(index))
             .secure(true)
@@ -12151,7 +12180,7 @@ fn bulk_password_field_id(index: usize) -> iced::widget::Id {
 fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
     dialog_parts::form(
         dialog_parts::title(fl!("ui-tree-rename-title")),
-        text_input(&fl!("ui-dialog-name-placeholder"), value)
+        styles::field(&fl!("ui-dialog-name-placeholder"), value)
             .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| {
@@ -12185,7 +12214,7 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
             };
             let mut content = column![
                 dialog_parts::prompt(fl!("ui-folder-name-field")),
-                text_input(&fl!("ui-dialog-name-placeholder"), value)
+                styles::field(&fl!("ui-dialog-name-placeholder"), value)
                     .style(styles::text_input)
                     .id(name_field_id())
                     .on_input(
@@ -12484,6 +12513,7 @@ fn seconds_left(retry: Retry) -> u64 {
 /// The button that stops the attempts of `tab`.
 fn cancel_retry_button<'a>(tab: TabId) -> iced::widget::Button<'a, Message> {
     button(text(fl!("ui-session-reconnecting-cancel")))
+        .padding(crate::tokens::BUTTON_PADDING)
         .style(styles::secondary)
         .on_press(Message::App(AppMessage::CancelAutoReconnect(tab)))
 }
@@ -12537,7 +12567,7 @@ fn sudo_password_dialog<'a>(name: &str, typed: &'a str) -> Element<'a, Message> 
         dialog_parts::title(fl!("ui-dialog-sudo-title")),
         column![
             dialog_parts::prompt(fl!("ui-dialog-sudo-body", name = name)),
-            text_input("", typed)
+            styles::field("", typed)
                 .style(styles::text_input)
                 .id(name_field_id())
                 .secure(true)
@@ -12582,7 +12612,7 @@ fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
     input_dialog(
         fl!("ui-resolution-custom-title"),
         dialog_parts::prompt(fl!("ui-resolution-custom-prompt")),
-        text_input("", value).on_input(|value| {
+        styles::field("", value).on_input(|value| {
             Message::App(AppMessage::TabMenu(TabMenuMessage::ResolutionEdited(value)))
         }),
         fl!("ui-dialog-ok-button"),
@@ -12598,7 +12628,7 @@ fn save_macro_dialog(value: &str, count: usize) -> Element<'_, Message> {
             dialog_parts::hint(fl!("ui-dialog-save-macro-warning")),
         ]
         .spacing(spacing::XS),
-        text_input(&fl!("ui-dialog-name-placeholder"), value).on_input(|value| {
+        styles::field(&fl!("ui-dialog-name-placeholder"), value).on_input(|value| {
             Message::App(AppMessage::Macro(heimdall_app::MacroMessage::NameEdited(
                 value,
             )))
@@ -12613,7 +12643,7 @@ fn rename_tab_dialog(value: &str) -> Element<'_, Message> {
     input_dialog(
         fl!("ui-dialog-rename-tab-title"),
         dialog_parts::prompt(fl!("ui-dialog-rename-tab-prompt")),
-        text_input(&fl!("ui-dialog-name-placeholder"), value)
+        styles::field(&fl!("ui-dialog-name-placeholder"), value)
             .on_input(|value| Message::App(AppMessage::TabMenu(TabMenuMessage::NameEdited(value)))),
         fl!("ui-dialog-rename-confirm"),
     )
@@ -13686,7 +13716,7 @@ fn vault_dialog<'a>(
         form = form.push(said);
     }
     for (index, label) in labels.into_iter().enumerate() {
-        let mut input = text_input("", fields[index].as_str())
+        let mut input = styles::field("", fields[index].as_str())
             .style(styles::text_input)
             .id(vault_field_id(index))
             .secure(true);
@@ -13788,7 +13818,7 @@ fn pin_dialog<'a>(
     let count = labels.len();
     let mut form = Column::new().spacing(spacing::MD);
     for (index, label) in labels.into_iter().enumerate() {
-        let input = text_input("", fields[index].as_str())
+        let input = styles::field("", fields[index].as_str())
             .style(styles::text_input)
             .id(vault_field_id(index))
             .secure(true)

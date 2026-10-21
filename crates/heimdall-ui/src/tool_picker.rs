@@ -19,7 +19,7 @@
 
 use heimdall_app::tools::ToolId;
 use heimdall_app::{Message as AppMessage, ToolEntryEdit, ToolEntryForm, ToolsMessage};
-use iced::widget::{button, column, row, text, text_input};
+use iced::widget::{button, column, row, text};
 use iced::{Element, Length};
 
 use crate::dialog_parts;
@@ -78,7 +78,8 @@ pub fn dialog(form: &ToolEntryForm) -> Element<'_, Message> {
     }
     let mut body = column![
         dialog_parts::prompt(fl!("ui-tool-picker-prompt")),
-        text_input(&fl!("ui-tool-picker-search"), &form.query)
+        styles::field(&fl!("ui-tool-picker-search"), &form.query)
+            .padding(crate::tokens::TOOL_INPUT_PADDING)
             .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| edit(ToolEntryEdit::Query(value))),
@@ -89,7 +90,8 @@ pub fn dialog(form: &ToolEntryForm) -> Element<'_, Message> {
         body = body.push(
             row![
                 text(fl!("ui-tool-picker-host")).size(font_size::BODY),
-                text_input("", &form.host)
+                styles::field("", &form.host)
+                    .padding(crate::tokens::TOOL_INPUT_PADDING)
                     .style(styles::text_input)
                     .on_input(|value| edit(ToolEntryEdit::Host(value)))
                     .on_submit(Message::App(AppMessage::ConfirmDialog)),

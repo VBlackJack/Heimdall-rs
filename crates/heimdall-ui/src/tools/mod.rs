@@ -209,7 +209,7 @@ const CONTENT_MAX_WIDTH: f32 = 700.0;
 const TABLE_MAX_WIDTH: f32 = 1100.0;
 
 /// Padding inside a text box, as the C# `PaddingInput` (8 across, 6 down).
-const INPUT_PADDING: [f32; 2] = [6.0, 8.0];
+const INPUT_PADDING: [f32; 2] = crate::tokens::TOOL_INPUT_PADDING;
 
 /// Padding of a tool's main buttons, as the C# `PaddingButtonPrimary` (16 across, 6 down).
 const PRIMARY_PADDING: [f32; 2] = [6.0, 16.0];

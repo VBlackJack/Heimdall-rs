@@ -27,7 +27,7 @@
 use heimdall_app::external_tool::ToolFailure;
 use heimdall_app::{ExternalToolMessage, Message as AppMessage, Notice, server_text};
 use heimdall_core::external_tools::{self, ExternalTool, Placeholder, ToolsProblem};
-use iced::widget::{Column, button, checkbox, column, container, row, text, text_input};
+use iced::widget::{Column, button, checkbox, column, container, row, text};
 use iced::{Alignment, Element, Font, Length};
 
 use crate::browse::{BrowseTarget, browse_button};
@@ -243,20 +243,24 @@ impl ExternalToolsEditor {
         content = content.push(
             row![
                 button(text(fl!("ui-external-tools-add")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(send(ToolsEdit::Add)),
                 button(text(fl!("ui-external-tools-move-up")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press_maybe(
                         movable(chosen.is_some_and(|at| at > 0)).then(|| send(ToolsEdit::Up))
                     ),
                 button(text(fl!("ui-external-tools-move-down")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press_maybe(
                         movable(chosen.is_some_and(|at| at + 1 < self.rows.len()))
                             .then(|| send(ToolsEdit::Down))
                     ),
                 button(text(fl!("ui-external-tools-remove")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::danger)
                     .on_press_maybe(chosen.map(|_| send(ToolsEdit::Remove))),
             ]
@@ -305,14 +309,14 @@ fn tool_editor(
     let mut editor = column![
         field_row(
             fl!("ui-external-tools-name"),
-            text_input("", &tool.name)
+            styles::field("", &tool.name)
                 .style(styles::text_input)
                 .on_input(|name| send(ToolsEdit::Name(name))),
         ),
         field_row(
             fl!("ui-external-tools-program"),
             row![
-                text_input("", &tool.executable_path)
+                styles::field("", &tool.executable_path)
                     .style(styles::text_input)
                     .on_input(|program| send(ToolsEdit::Program(program))),
                 browse_button(BrowseTarget::ExternalToolProgram),
@@ -322,7 +326,7 @@ fn tool_editor(
         ),
         field_row(
             fl!("ui-external-tools-arguments"),
-            text_input("", &tool.arguments)
+            styles::field("", &tool.arguments)
                 .style(styles::text_input)
                 .font(Font::MONOSPACE)
                 .on_input(|arguments| send(ToolsEdit::Arguments(arguments))),
@@ -330,7 +334,7 @@ fn tool_editor(
         field_row(
             fl!("ui-external-tools-working-directory"),
             row![
-                text_input("", &tool.working_directory)
+                styles::field("", &tool.working_directory)
                     .style(styles::text_input)
                     .on_input(|folder| send(ToolsEdit::Folder(folder))),
                 browse_button(BrowseTarget::ExternalToolFolder),
@@ -384,6 +388,7 @@ fn tool_editor(
             row![
                 container(shown).width(Length::Fill),
                 button(text(fl!("ui-external-tools-test")))
+                    .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)
                     .on_press(send(ToolsEdit::Test)),
             ]

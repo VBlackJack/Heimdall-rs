@@ -25,7 +25,7 @@ use heimdall_app::{
 use heimdall_core::macros::{
     EXPECT_TIMEOUT_MAX, EXPECT_TIMEOUT_MIN, InputError, OnTimeout, TerminalMacro,
 };
-use iced::widget::{Column, button, checkbox, column, container, pick_list, row, text, text_input};
+use iced::widget::{Column, button, checkbox, column, container, pick_list, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
@@ -56,9 +56,11 @@ pub fn card(macros: &[TerminalMacro]) -> Element<'_, Message> {
                 text(fl!("ui-macros-inputs", count = kept.entries.len())).size(font_size::CAPTION),
                 iced::widget::space::horizontal(),
                 button(text(fl!("ui-macros-edit")).size(font_size::CAPTION))
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(named(MacroMessage::Edit)),
                 button(text(fl!("ui-macros-delete")).size(font_size::CAPTION))
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::danger)
                     .on_press(named(MacroMessage::AskDelete)),
             ]
@@ -136,7 +138,7 @@ fn entry_card(index: usize, count: usize, entry: &EntryDraft) -> Element<'_, Mes
     let mut content = column![
         row![
             text(fl!("ui-macro-editor-input")).size(font_size::CAPTION),
-            text_input("", &entry.input)
+            styles::field("", &entry.input)
                 .style(styles::text_input)
                 .on_input(move |typed| field(index, EntryField::Input(typed)))
                 .width(Length::Fill),
@@ -145,17 +147,20 @@ fn entry_card(index: usize, count: usize, entry: &EntryDraft) -> Element<'_, Mes
         .align_y(Alignment::Center),
         row![
             text(fl!("ui-macro-editor-delay")).size(font_size::CAPTION),
-            text_input("", &entry.delay)
+            styles::field("", &entry.delay)
                 .style(styles::text_input)
                 .on_input(move |typed| field(index, EntryField::Delay(typed)))
                 .width(NUMBER_WIDTH),
             button(text(fl!("ui-macro-editor-move-up")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press_maybe((index > 0).then(|| draft(MacroEdit::MoveUp(index)))),
             button(text(fl!("ui-macro-editor-move-down")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
                 .on_press_maybe((index + 1 < count).then(|| draft(MacroEdit::MoveDown(index)))),
             button(text(fl!("ui-macro-editor-delete-entry")).size(font_size::CAPTION))
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::danger)
                 .on_press(draft(MacroEdit::Remove(index))),
         ]
@@ -171,7 +176,7 @@ fn entry_card(index: usize, count: usize, entry: &EntryDraft) -> Element<'_, Mes
         content = content.push(
             row![
                 text(fl!("ui-macro-editor-pattern")).size(font_size::CAPTION),
-                text_input("", &entry.pattern)
+                styles::field("", &entry.pattern)
                     .style(styles::text_input)
                     .on_input(move |typed| field(index, EntryField::Pattern(typed)))
                     .width(Length::Fill),
@@ -186,7 +191,7 @@ fn entry_card(index: usize, count: usize, entry: &EntryDraft) -> Element<'_, Mes
                     .label(fl!("ui-macro-editor-regex"))
                     .on_toggle(move |on| field(index, EntryField::Regex(on))),
                 text(fl!("ui-macro-editor-timeout")).size(font_size::CAPTION),
-                text_input("", &entry.timeout)
+                styles::field("", &entry.timeout)
                     .style(styles::text_input)
                     .on_input(move |typed| field(index, EntryField::Timeout(typed)))
                     .width(NUMBER_WIDTH),
@@ -224,7 +229,7 @@ pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
         crate::dialog_parts::title(fl!("ui-macro-editor-title")),
         row![
             crate::dialog_parts::dialog_label(fl!("ui-macro-editor-name")),
-            text_input("", &edited.name)
+            styles::field("", &edited.name)
                 .style(styles::text_input)
                 .on_input(|typed| draft(MacroEdit::Name(typed)))
                 .width(Length::Fill),
@@ -235,9 +240,11 @@ pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
         styles::scroll(entries).height(ENTRIES_HEIGHT),
         row![
             button(text(fl!("ui-macro-editor-add-expect")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(draft(MacroEdit::Add { expects: true })),
             button(text(fl!("ui-macro-editor-add-send")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(draft(MacroEdit::Add { expects: false })),
         ]

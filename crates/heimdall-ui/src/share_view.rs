@@ -28,7 +28,7 @@ use heimdall_app::{Message as AppMessage, ShareMessage, server_text};
 use heimdall_core::settings::{
     FILE_SHARE_MINUTES_MAX, FILE_SHARE_MINUTES_MIN, FILE_SHARE_PORT_MAX,
 };
-use iced::widget::{column, pick_list, row, text, text_input};
+use iced::widget::{column, pick_list, row, text};
 use iced::{Alignment, Element, Font, Length};
 
 use crate::dialog_parts;
@@ -145,7 +145,7 @@ fn share(message: ShareMessage) -> Message {
 fn field(label: String, value: &str, which: ShareField) -> Element<'_, Message> {
     column![
         dialog_parts::dialog_label(label),
-        text_input("", value)
+        styles::field("", value)
             .style(styles::text_input)
             .on_input(move |value| share(ShareMessage::Field {
                 field: which,

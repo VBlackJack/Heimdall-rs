@@ -21,7 +21,7 @@
 
 use heimdall_app::TabId;
 use heimdall_term::{FindDirection, Found};
-use iced::widget::{button, container, row, text, text_input};
+use iced::widget::{button, container, row, text};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
@@ -70,7 +70,7 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
         FindDirection::Down
     };
     let mut bar = row![
-        text_input(&fl!("ui-find-placeholder"), &finder.query)
+        styles::field(&fl!("ui-find-placeholder"), &finder.query)
             .style(styles::text_input)
             .id(field_id(tab))
             .width(FIELD_WIDTH)
@@ -92,6 +92,7 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
     bar = bar
         .push(
             button(text(fl!("ui-find-previous")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::FinderFind {
                     tab,
@@ -100,6 +101,7 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
         )
         .push(
             button(text(fl!("ui-find-next")))
+                .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
                 .on_press(Message::FinderFind {
                     tab,

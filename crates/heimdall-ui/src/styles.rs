@@ -25,6 +25,7 @@
 use iced::border::Radius;
 use iced::overlay::menu::Style as MenuStyle;
 use iced::theme::palette::{self, Extended};
+use iced::widget::TextInput;
 use iced::widget::button::{Status as ButtonStatus, Style as ButtonStyle};
 use iced::widget::checkbox::{Status as CheckStatus, Style as CheckStyle};
 use iced::widget::container::Style as BoxStyle;
@@ -37,13 +38,14 @@ use iced::widget::scrollable::{
 use iced::widget::slider::{
     Handle, Rail as SliderRail, Status as SliderStatus, Style as SliderStyle,
 };
+use iced::widget::text::LineHeight;
 use iced::widget::text_editor::{Status as EditorStatus, Style as EditorStyle};
 use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
-use iced::{Background, Border, Color, Element, Font, Shadow, Theme, font};
+use iced::{Background, Border, Color, Element, Font, Pixels, Shadow, Theme, font};
 
 use crate::tokens::{
-    ACCENT_SHIFT, BORDER_WIDTH, FOCUS_BORDER_WIDTH, HIGH_CONTRAST_BORDER_WIDTH, OPACITY_DISABLED,
-    radius,
+    ACCENT_SHIFT, BORDER_WIDTH, FOCUS_BORDER_WIDTH, HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT,
+    INPUT_PADDING, OPACITY_DISABLED, radius,
 };
 
 /// Width of a scrollbar's track, as the C# `ThemedScrollBarStyle`'s.
@@ -1014,6 +1016,17 @@ pub fn scrollbars(theme: &Theme, status: ScrollStatus) -> ScrollStyle {
     }
 }
 
+/// A text field as the C# `ThemedTextBoxStyle` draws it: padded `10,6`, a line tall enough
+/// for the C# field's height, and styled as [`text_input`]. Every field is made here, so one
+/// cannot fall back to iced's default 5 px padding, which left it 27 px high with its text
+/// against the edge.
+pub fn field<'a, Message: Clone + 'a>(placeholder: &str, value: &str) -> TextInput<'a, Message> {
+    iced::widget::text_input(placeholder, value)
+        .padding(INPUT_PADDING)
+        .line_height(LineHeight::Absolute(Pixels(INPUT_LINE_HEIGHT)))
+        .style(text_input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1273,5 +1286,29 @@ mod tests {
                 "{each:?}: no border all round"
             );
         }
+    }
+
+    /// Whether two paddings are the same, to a float's precision.
+    fn same(left: [f32; 2], right: [f32; 2]) -> bool {
+        left.iter()
+            .zip(right)
+            .all(|(left, right)| (left - right).abs() < f32::EPSILON)
+    }
+
+    #[test]
+    fn the_padding_tokens_are_the_csharp_values() {
+        use crate::tokens::{
+            BUTTON_COMPACT_PADDING, BUTTON_PADDING, INPUT_HEIGHT, TOOL_INPUT_PADDING,
+        };
+        // `ThemedTextBoxStyle` Padding="10,6": vertical then horizontal here.
+        assert!(same(INPUT_PADDING, [6.0, 10.0]));
+        // `PaddingInput` 8,6.
+        assert!(same(TOOL_INPUT_PADDING, [6.0, 8.0]));
+        // `PrimaryButtonStyle` and `SecondaryButtonStyle` Padding="16,8".
+        assert!(same(BUTTON_PADDING, [8.0, 16.0]));
+        // `PaddingButtonCopy` 10,4.
+        assert!(same(BUTTON_COMPACT_PADDING, [4.0, 10.0]));
+        // The measured C# field, 33 px: the line fills what the padding leaves.
+        assert!((INPUT_LINE_HEIGHT + 2.0 * INPUT_PADDING[0] - INPUT_HEIGHT).abs() < f32::EPSILON);
     }
 }
