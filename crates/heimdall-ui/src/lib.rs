@@ -95,6 +95,7 @@ pub mod sessions_view;
 mod settings_file;
 pub mod settings_rows;
 pub mod share_view;
+mod shared_report_export;
 pub mod shared_report_view;
 pub mod shared_sources_view;
 pub mod shared_view;

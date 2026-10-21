@@ -5896,7 +5896,7 @@ ui-shared-problem-missing = Le fichier { $path } est introuvable.
 ui-shared-problem-too-large = Le fichier { $path } dépasse { $limit } Mo et n'a pas été lu.
 ui-shared-problem-unreadable = Le fichier { $path } n'a pas pu être lu. { $reason }
 ui-shared-problem-unparsable = Le fichier { $path } n'a pas pu être compris. { $reason }
-ui-shared-problem-empty = Le fichier { $path } ne contient aucune session SSH ou RDP utilisable.
+ui-shared-problem-empty = Le fichier { $path } ne contient aucune session SSH, SFTP, RDP, Telnet ou VNC utilisable.
 ui-shared-kept-previous = La dernière modification n'a pas pu être prise en compte, les sessions précédentes sont conservées. { $reason }
 ui-shared-refused =
     { $count ->
@@ -5927,7 +5927,7 @@ ui-mobaxterm-variables-name-invalid = Utilisez des lettres, des chiffres et des 
 ui-mobaxterm-variables-name-duplicate = Une autre variable porte ce nom.
 ui-mobaxterm-variables-value-required = Saisissez une valeur.
 ui-shared-sources-title = Sources de sessions partagées
-ui-shared-sources-description = Fichiers de sessions MobaXterm tenus par une équipe, lus et jamais modifiés. Leurs sessions SSH et RDP apparaissent dans l'arborescence, en lecture seule. Le chemin est absolu ou commence par une variable comme %USERPROFILE%.
+ui-shared-sources-description = Fichiers de sessions MobaXterm tenus par une équipe, lus et jamais modifiés. Leurs sessions SSH, SFTP, RDP, Telnet et VNC apparaissent dans l'arborescence, en lecture seule. Le chemin est absolu ou commence par une variable comme %USERPROFILE%.
 ui-shared-sources-name = Nom
 ui-shared-sources-path = Chemin du fichier
 ui-shared-sources-enabled = Lire cette source
@@ -5981,7 +5981,7 @@ ui-shared-report-duplicate-host =
         [one] { $count } session sur un hôte classé deux fois
        *[other] { $count } sessions sur un hôte classé deux fois
     }
-ui-shared-report-reason-other-protocol = Le protocole { $protocol } n'est pas pris en charge, seuls SSH et RDP sont pris.
+ui-shared-report-reason-other-protocol = Le protocole { $protocol } n'est pas pris en charge, seuls SSH, SFTP, RDP, Telnet et VNC sont pris.
 ui-shared-report-reason-invalid-host = L'hôte { $host } n'est ni un nom d'hôte ni une adresse.
 ui-shared-report-reason-invalid-gateway = La passerelle SSH { $host } n'est ni un nom d'hôte ni une adresse, la session n'a donc pas été prise : elle atteindrait son hôte sans passer par la passerelle.
 ui-shared-report-reason-duplicate-session = Une autre session du fichier a le même dossier et le même nom.
@@ -5991,6 +5991,34 @@ ui-shared-report-detail-mismatch = Le nom n'est ni l'hôte { $host } ni son prem
 ui-shared-report-detail-duplicate-host = L'hôte { $host } est aussi utilisé par { $others }.
 ui-shared-report-detail-gateway-outlier = Elle se connecte par { $route }, alors que la plupart des sessions de son dossier passent par { $usual }.
 ui-shared-report-route-direct = aucune passerelle (connexion directe)
+ui-shared-report-reason-jump-host = La session passe par l'hôte de rebond SSH { $host } ; Heimdall n'achemine pas ce protocole par un hôte de rebond, et une connexion directe le contournerait.
+ui-shared-report-reason-proxy = La session passe par le proxy { $host } ; Heimdall n'utilise pas de proxy pour ce protocole, et une connexion directe le contournerait.
+ui-shared-report-reason-proxy-no-host = La session passe par un proxy ; Heimdall n'utilise pas de proxy pour ce protocole, et une connexion directe le contournerait.
+ui-shared-report-check-skipped = Sessions ignorées
+ui-shared-report-check-unresolved = Variables non résolues
+ui-shared-report-check-mismatch = Nom et hôte différents
+ui-shared-report-check-gateway-outlier = Passerelles inhabituelles
+ui-shared-report-check-duplicate-host = Hôtes en double
+ui-shared-report-top-folder = (racine)
+ui-shared-report-total =
+    { $count ->
+        [one] { $count } constat
+       *[other] { $count } constats
+    }
+ui-shared-report-summary-line = { $check } : { $count }
+ui-shared-report-plain-entry = { $folder } / { $session } : { $explanation }
+ui-shared-report-column-check = Vérification
+ui-shared-report-column-folder = Dossier
+ui-shared-report-column-session = Session
+ui-shared-report-column-detail = Détail
+ui-shared-report-column-explanation = Explication
+ui-shared-report-copy = Copier
+ui-shared-report-export-csv = Exporter en CSV...
+ui-shared-report-copied = Rapport copié dans le presse-papiers.
+ui-shared-report-exported = Rapport exporté dans { $path }.
+ui-shared-report-export-failed = Le rapport n'a pas pu être exporté : { $detail }
+ui-shared-report-export-title = Exporter le rapport d'import
+ui-shared-report-csv-filter = Fichiers CSV
 
 ## Partager un dossier : un dossier servi en lecture seule par HTTP, pour une durée limitée.
 ui-share-toggle-tooltip = Partager un dossier par HTTP

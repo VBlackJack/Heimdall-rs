@@ -77,6 +77,62 @@ const SSH_GATEWAY_FIELDS: [usize; 3] = [7, 8, 9];
 /// (`MobaXtermImporter.cs:107-113`).
 const RDP_GATEWAY_FIELDS: [usize; 3] = [12, 13, 14];
 
+/// Key of the field a session gets when it names an SSH jump host its protocol cannot be routed
+/// through (Telnet, VNC): the host, as written. The C# refuses such a session
+/// (`MobaXtermImporter.cs:308-316`); a reader that took it as a direct connection would reach
+/// its host around the bastion the file asked for, so a caller that must not do that (the shared
+/// sessions) refuses on this key.
+pub const UNSUPPORTED_JUMP_HOST_KEY: &str = "mobaxtermUnsupportedJumpHost";
+
+/// Key of the field a session gets when it goes through a proxy Heimdall does not use: the
+/// proxy host, as written, possibly empty (`MobaXtermImporter.cs:318-326`).
+pub const UNSUPPORTED_PROXY_KEY: &str = "mobaxtermUnsupportedProxy";
+
+/// `MobaXterm` writes this in a proxy type field that names no proxy.
+const NO_PROXY_TYPE: &str = "0";
+
+/// Where a session keeps the jump host and the proxy its protocol cannot honour, as the C#
+/// `SessionLayouts` (`MobaXtermImporter.cs:100-157`): the jump host's host field (Telnet and
+/// VNC, which have a slot but are never routed through one), the proxy's type and host fields.
+#[derive(Clone, Copy)]
+struct UnsupportedRoutes {
+    jump_host: Option<usize>,
+    proxy: Option<(usize, usize)>,
+}
+
+/// The routes of `connection_type` that Heimdall cannot take, as the C# layout table: no jump
+/// host slot is read for SSH, SFTP and RDP (SSH and RDP are routed through one, SFTP has no
+/// slot), no proxy for RDP.
+fn unsupported_routes(connection_type: &str) -> UnsupportedRoutes {
+    let (jump_host, proxy) = match connection_type {
+        "SSH" => (None, Some((18, 19))),
+        "SFTP" => (None, Some((9, 10))),
+        "Telnet" => (Some(5), Some((10, 11))),
+        "VNC" => (Some(4), Some((12, 13))),
+        _ => (None, None),
+    };
+    UnsupportedRoutes { jump_host, proxy }
+}
+
+/// Marks on `dto` the jump host and the proxy a session of `connection_type` names and
+/// Heimdall cannot take for it, read from the session's `fields`.
+fn mark_unsupported_routes(dto: &mut Map<String, Value>, connection_type: &str, fields: &[&str]) {
+    let field = |index: usize| fields.get(index).copied().unwrap_or_default().trim();
+    let unsupported = unsupported_routes(connection_type);
+    if let Some(at) = unsupported.jump_host {
+        set_text(dto, UNSUPPORTED_JUMP_HOST_KEY, field(at));
+    }
+    if let Some((type_at, host_at)) = unsupported.proxy {
+        let (proxy_type, proxy_host) = (field(type_at), field(host_at));
+        if (!proxy_type.is_empty() && proxy_type != NO_PROXY_TYPE) || !proxy_host.is_empty() {
+            dto.insert(
+                UNSUPPORTED_PROXY_KEY.to_owned(),
+                Value::String(proxy_host.to_owned()),
+            );
+        }
+    }
+}
+
 /// Prefix of the identifier a gateway carries until the caller gives it its own.
 const GATEWAY_PLACEHOLDER_ID: &str = "foreign-gateway-";
 
@@ -376,6 +432,7 @@ fn session(
     let mut dto = Map::new();
     set_text(&mut dto, "displayName", name);
     set_text(&mut dto, "remoteServer", host);
+    mark_unsupported_routes(&mut dto, connection_type, &fields);
     dto.insert(
         "connectionType".to_owned(),
         Value::String((*connection_type).to_owned()),
@@ -413,31 +470,7 @@ fn session(
             set_port(&mut dto, "sshPort", port);
             set_text(&mut dto, "sshUsername", user);
             if *connection_type == "SSH" {
-                // The command run after login is one post-connect step, as the C#
-                // `ApplyLoginCommand`. Never approved by the file: whoever imports it, or
-                // opens it as a shared session, is asked before it is typed.
-                let command = field(SSH_LOGIN_COMMAND_FIELD).trim();
-                if !command.is_empty() {
-                    dto.insert(
-                        "postConnectSteps".to_owned(),
-                        serde_json::json!([{ "input": command }]),
-                    );
-                }
-                if let Some(path) = key_path(field(SSH_KEY_FIELD)) {
-                    dto.insert("sshKeyPath".to_owned(), Value::String(path));
-                }
-                if fields.len() > SSH_COMPRESSION_FIELD {
-                    dto.insert(
-                        "sshCompression".to_owned(),
-                        Value::Bool(field(SSH_COMPRESSION_FIELD) == "1"),
-                    );
-                }
-                if fields.len() > SSH_AGENT_FIELD {
-                    dto.insert(
-                        "sshAgentForwarding".to_owned(),
-                        Value::Bool(field(SSH_AGENT_FIELD) == "1"),
-                    );
-                }
+                ssh_options(&mut dto, &fields);
             }
         }
         "RDP" => {
@@ -466,6 +499,37 @@ fn session(
         }
     }
     Ok(dto)
+}
+
+/// What only an SSH session of the file carries: the command run after login, the key, the
+/// compression and the agent forwarding.
+fn ssh_options(dto: &mut Map<String, Value>, fields: &[&str]) {
+    let field = |index: usize| fields.get(index).copied().unwrap_or_default();
+    // The command run after login is one post-connect step, as the C# `ApplyLoginCommand`.
+    // Never approved by the file: whoever imports it, or opens it as a shared session, is
+    // asked before it is typed.
+    let command = field(SSH_LOGIN_COMMAND_FIELD).trim();
+    if !command.is_empty() {
+        dto.insert(
+            "postConnectSteps".to_owned(),
+            serde_json::json!([{ "input": command }]),
+        );
+    }
+    if let Some(path) = key_path(field(SSH_KEY_FIELD)) {
+        dto.insert("sshKeyPath".to_owned(), Value::String(path));
+    }
+    if fields.len() > SSH_COMPRESSION_FIELD {
+        dto.insert(
+            "sshCompression".to_owned(),
+            Value::Bool(field(SSH_COMPRESSION_FIELD) == "1"),
+        );
+    }
+    if fields.len() > SSH_AGENT_FIELD {
+        dto.insert(
+            "sshAgentForwarding".to_owned(),
+            Value::Bool(field(SSH_AGENT_FIELD) == "1"),
+        );
+    }
 }
 
 fn set_port(dto: &mut Map<String, Value>, key: &str, port: Option<i64>) {
@@ -808,5 +872,62 @@ mod tests {
         for invalid in ["", "1a", "a-b", "a b", "é", "a]"] {
             assert!(!is_valid_variable_name(invalid), "{invalid}");
         }
+    }
+
+    /// A session line: `code` and each `(index, value)` at its place in the `%` list.
+    fn line(name: &str, code: u32, fields: &[(usize, &str)]) -> String {
+        let mut values = vec![""; 32];
+        for (at, value) in fields {
+            values[*at] = value;
+        }
+        format!("{name}= #{code}#0%{}\n", values.join("%"))
+    }
+
+    #[test]
+    fn a_route_the_protocol_cannot_take_is_marked_on_the_session_so_a_caller_can_refuse_it() {
+        // Telnet: jump host at 5, proxy at 10-11. VNC: jump host at 4, proxy at 12-13.
+        // SFTP: no jump host slot, proxy at 9-10. SSH: proxy at 18-19.
+        let text = format!(
+            "[Bookmarks]\n{}{}{}{}{}{}{}",
+            line("tj", 98, &[(0, "t.lab"), (5, "jump.lab"), (6, "22")]),
+            line("tp", 98, &[(0, "t.lab"), (10, "1"), (11, "proxy.lab")]),
+            line("vj", 128, &[(0, "v.lab"), (4, "jump.lab"), (5, "22")]),
+            line("vp", 128, &[(0, "v.lab"), (12, "2"), (13, "proxy.lab")]),
+            line("sp", 140, &[(0, "f.lab"), (9, "1"), (10, "proxy.lab")]),
+            line("xp", 109, &[(0, "s.lab"), (18, "3")]),
+            line("ok", 98, &[(0, "t.lab"), (10, "0")]),
+        );
+        let parsed = parse(&text);
+        let get = |at: usize, key: &str| parsed.servers[at][key].as_str().map(str::to_owned);
+        assert_eq!(
+            get(0, UNSUPPORTED_JUMP_HOST_KEY).as_deref(),
+            Some("jump.lab")
+        );
+        assert_eq!(get(1, UNSUPPORTED_PROXY_KEY).as_deref(), Some("proxy.lab"));
+        assert_eq!(
+            get(2, UNSUPPORTED_JUMP_HOST_KEY).as_deref(),
+            Some("jump.lab")
+        );
+        assert_eq!(get(3, UNSUPPORTED_PROXY_KEY).as_deref(), Some("proxy.lab"));
+        assert_eq!(get(4, UNSUPPORTED_PROXY_KEY).as_deref(), Some("proxy.lab"));
+        // A proxy type without a host is still a proxy, with an empty host.
+        assert_eq!(get(5, UNSUPPORTED_PROXY_KEY).as_deref(), Some(""));
+        // "0" names no proxy: nothing is marked.
+        assert!(parsed.servers[6].get(UNSUPPORTED_PROXY_KEY).is_none());
+        assert!(parsed.servers[6].get(UNSUPPORTED_JUMP_HOST_KEY).is_none());
+    }
+
+    #[test]
+    fn an_ssh_or_rdp_jump_host_is_a_gateway_not_an_unsupported_route() {
+        let parsed = parse(&format!(
+            "[Bookmarks]\n{}",
+            line(
+                "s",
+                109,
+                &[(0, "s.lab"), (7, "jump.lab"), (8, "22"), (9, "ops")]
+            )
+        ));
+        assert!(parsed.servers[0].get(UNSUPPORTED_JUMP_HOST_KEY).is_none());
+        assert!(parsed.servers[0].get(GATEWAY_ID_KEY).is_some());
     }
 }

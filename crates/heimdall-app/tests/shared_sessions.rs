@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-//! Shared sessions, as the C# `SharedSessionProvider`: a `MobaXterm` file read for its SSH
-//! and RDP sessions, in memory and read-only, followed when it changes, and refused when it
-//! is not a file Heimdall can read.
+//! Shared sessions, as the C# `SharedSessionProvider`: a `MobaXterm` file read for its SSH,
+//! SFTP, RDP, Telnet and VNC sessions, in memory and read-only, followed when it changes,
+//! and refused when it is not a file Heimdall can read.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -34,9 +34,9 @@ use heimdall_term::GridSize;
 const TEAM: &str = "[Bookmarks]\r\nSubRep=Prod\\Web\r\nImgNum=42\r\n\
 web01= #109#0%web01.example.com%2222%deploy%%-1%-1%%%%%0%0%0%C:\\Keys\\id_rsa%%-1%0%0%0%%1080%%0\r\n\
 desk= #91#4%desk.example.com%3390%admin%0%-1%-1%\r\n\
-files= #140#5%files.example.com%22%bob%\r\n\
+files= #130#5%files.example.com%21%bob%\r\n\
 bad host= #109#0%evil host;rm -rf%22%root%\r\n\
-telnet= #98#1%tel.example.com%23%%\r\n\
+ftp= #130#1%ftp.example.com%21%%\r\n\
 [Passwords]\r\ndeploy@web01=SECRET-PASSWORD-VALUE\r\n";
 
 fn source(id: &str, path: &Path) -> SharedSource {
@@ -69,7 +69,7 @@ fn a_good_file_gives_its_ssh_and_rdp_sessions_and_says_what_it_left_out() {
     let state = &shared.sources()[0];
     assert_eq!(state.status, SourceStatus::Loaded);
     assert_eq!(state.sessions, 2, "{state:?}");
-    // The SFTP session, the Telnet one and the one with a host that is not one.
+    // The two FTP sessions and the one with a host that is not one.
     assert_eq!(state.refused, 3);
     assert_eq!(state.ignored_passwords, 1);
     let sessions = shared.sessions_of("team");
@@ -420,7 +420,7 @@ web01= #109#0%web01.example.com%22%[GHOST]%\r\n\
 db= #109#0%db01.example.com%22%admin%\r\n\
 replica= #109#0%db01.example.com%22%admin%\r\n\
 bad host= #109#0%evil host;rm -rf%22%root%\r\n\
-telnet= #98#1%tel.example.com%23%%\r\n\
+ftp= #130#1%ftp.example.com%21%%\r\n\
 [Passwords]\r\nadmin@db=SECRET-PASSWORD-VALUE\r\n";
 
 fn cached(dir: &Path) -> SharedSessions {
@@ -447,9 +447,9 @@ fn the_report_lists_what_was_not_taken_as_it_stood() {
         "evil host;rm -rf"
     )));
     assert!(
-        skipped.iter().any(
-            |(name, reason, _)| *name == "telnet" && *reason == Some(SkipReason::OtherProtocol)
-        )
+        skipped
+            .iter()
+            .any(|(name, reason, _)| *name == "ftp" && *reason == Some(SkipReason::OtherProtocol))
     );
     let unresolved = report
         .entries
@@ -1394,4 +1394,339 @@ fn a_remembered_approval_is_for_the_exact_command_and_its_source() {
         moved.dialog,
         Some(heimdall_app::Dialog::ConfirmPostConnect(_))
     ));
+}
+
+/// A session line of a `MobaXterm` file: the protocol `code`, and each `(index, value)` of
+/// `fields` at its place in the `%` list, the others empty. The indexes are those the C#
+/// `SessionLayouts` documents (`MobaXtermImporter.cs:100-157`).
+fn line(name: &str, code: u32, fields: &[(usize, &str)]) -> String {
+    const FIELD_COUNT: usize = 32;
+    let mut values = vec![""; FIELD_COUNT];
+    for (at, value) in fields {
+        values[*at] = value;
+    }
+    format!("{name}= #{code}#0%{}\r\n", values.join("%"))
+}
+
+/// A file with an SFTP, a Telnet and a VNC session, each with fields that must not come along.
+fn other_protocols() -> String {
+    format!(
+        "[Bookmarks]\r\nSubRep=Ops\r\n{}{}{}",
+        line(
+            "files",
+            140,
+            &[
+                (0, "files.example.com"),
+                (1, "2222"),
+                (2, "bob"),
+                (4, "C:\\Keys\\id_rsa"),
+                (11, "UNIX-LOGIN-OPTION")
+            ]
+        ),
+        line(
+            "console",
+            98,
+            &[(0, "tel.example.com"), (1, "2323"), (2, "TELNET-LOGIN")]
+        ),
+        line(
+            "desk",
+            128,
+            &[
+                (0, "vnc.example.com"),
+                (1, "5901"),
+                (11, "UNIX-LOGIN-OPTION")
+            ]
+        ),
+    )
+}
+
+#[test]
+fn sftp_telnet_and_vnc_sessions_are_taken_with_the_fields_of_their_protocol_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(dir.path(), &other_protocols());
+    let state = &shared.sources()[0];
+    assert_eq!((state.sessions, state.refused), (3, 0), "{state:?}");
+    let sessions = shared.sessions_of("team");
+
+    let SharedTarget::Sftp(files) = &sessions[0].target else {
+        panic!("{sessions:?}");
+    };
+    assert_eq!(sessions[0].protocol(), "SFTP");
+    assert!(files.sftp, "it opens its files");
+    assert_eq!(
+        (files.host.as_str(), files.port),
+        ("files.example.com", 2222)
+    );
+    assert_eq!(files.username.as_deref(), Some("bob"));
+    assert!(files.key_path.is_none() && files.gateway.is_none());
+    assert!(!files.forward_agent && !files.compression && !files.x11_forwarding);
+    assert!(files.post_connect.is_empty());
+    assert_eq!(sessions[0].folder.as_deref(), Some("Ops"));
+    assert!(sessions[0].gateway.is_none());
+
+    let SharedTarget::Telnet(console) = &sessions[1].target else {
+        panic!("{sessions:?}");
+    };
+    assert_eq!(sessions[1].protocol(), "Telnet");
+    assert_eq!(
+        (console.host.as_str(), console.port),
+        ("tel.example.com", 2323)
+    );
+    assert!(console.group.is_none() && console.session_logging.is_none());
+
+    let SharedTarget::Vnc(desk) = &sessions[2].target else {
+        panic!("{sessions:?}");
+    };
+    assert_eq!(sessions[2].protocol(), "VNC");
+    assert_eq!((desk.host.as_str(), desk.port), ("vnc.example.com", 5901));
+    // Nothing the file could use to weaken the connection: the defaults of a new profile.
+    assert!(!desk.view_only && !desk.allow_no_password && !desk.require_tls);
+    assert!(desk.username.is_none() && desk.vault_entry.is_none() && desk.group.is_none());
+
+    // The Telnet login and the Unix login option are not read, and nothing keeps them.
+    let held = format!("{shared:?}");
+    assert!(!held.contains("TELNET-LOGIN"), "{held}");
+    assert!(!held.contains("UNIX-LOGIN-OPTION"), "{held}");
+    assert!(!held.contains("id_rsa"), "{held}");
+}
+
+#[test]
+fn the_default_port_of_each_protocol_is_used_when_the_file_gives_none() {
+    let dir = tempfile::tempdir().expect("dir");
+    let text = format!(
+        "[Bookmarks]\r\n{}{}{}",
+        line("files", 140, &[(0, "files.example.com")]),
+        line("console", 98, &[(0, "tel.example.com")]),
+        line("desk", 128, &[(0, "vnc.example.com")]),
+    );
+    let (shared, _) = loaded(dir.path(), &text);
+    let ports: Vec<u16> = shared
+        .sessions_of("team")
+        .iter()
+        .map(|session| session.endpoint().1)
+        .collect();
+    assert_eq!(ports, [22, 23, 5900]);
+}
+
+#[test]
+fn a_session_going_around_a_route_heimdall_cannot_take_is_refused_not_taken_direct() {
+    use heimdall_app::shared_report::{ReportCheck, SkipReason};
+    let dir = tempfile::tempdir().expect("dir");
+    let text = format!(
+        "[Bookmarks]\r\n{}{}{}{}{}{}{}",
+        // A jump host on a protocol that is never routed through one.
+        line(
+            "tel-jump",
+            98,
+            &[(0, "t.example.com"), (5, "jump.example.com"), (6, "22")]
+        ),
+        line(
+            "vnc-jump",
+            128,
+            &[(0, "v.example.com"), (4, "jump.example.com"), (5, "22")]
+        ),
+        // A proxy on every protocol that has a slot for one; the proxy host may be missing.
+        line(
+            "sftp-proxy",
+            140,
+            &[(0, "f.example.com"), (9, "1"), (10, "proxy.example.com")]
+        ),
+        line("tel-proxy", 98, &[(0, "t2.example.com"), (10, "2")]),
+        line(
+            "vnc-proxy",
+            128,
+            &[(0, "v2.example.com"), (12, "3"), (13, "proxy.example.com")]
+        ),
+        line(
+            "ssh-proxy",
+            109,
+            &[(0, "s.example.com"), (18, "1"), (19, "proxy.example.com")]
+        ),
+        // "0" names no proxy: the session is a direct one and is taken.
+        line("tel-ok", 98, &[(0, "ok.example.com"), (10, "0")]),
+    );
+    let (shared, _) = loaded(dir.path(), &text);
+    let names: Vec<&str> = shared
+        .sessions_of("team")
+        .iter()
+        .map(heimdall_app::shared_sessions::SharedSession::name)
+        .collect();
+    assert_eq!(
+        names,
+        ["tel-ok"],
+        "the others would reach their host around the route"
+    );
+    let report = shared.report_of("team").expect("a report");
+    let skipped: Vec<_> = report
+        .entries
+        .iter()
+        .filter(|entry| entry.check == ReportCheck::SkippedSession)
+        .map(|entry| (entry.session.as_str(), entry.reason, entry.detail.as_str()))
+        .collect();
+    assert_eq!(skipped.len(), 6, "{skipped:?}");
+    for (name, reason, detail) in [
+        (
+            "tel-jump",
+            SkipReason::JumpHostNotSupported,
+            "jump.example.com",
+        ),
+        (
+            "vnc-jump",
+            SkipReason::JumpHostNotSupported,
+            "jump.example.com",
+        ),
+        (
+            "sftp-proxy",
+            SkipReason::ProxyNotSupported,
+            "proxy.example.com",
+        ),
+        ("tel-proxy", SkipReason::ProxyNotSupported, ""),
+        (
+            "vnc-proxy",
+            SkipReason::ProxyNotSupported,
+            "proxy.example.com",
+        ),
+        (
+            "ssh-proxy",
+            SkipReason::ProxyNotSupported,
+            "proxy.example.com",
+        ),
+    ] {
+        assert!(
+            skipped.contains(&(name, Some(reason), detail)),
+            "{name}: {skipped:?}"
+        );
+    }
+    assert_eq!(shared.sources()[0].refused, 6);
+}
+
+#[test]
+fn only_the_sessions_that_can_name_a_gateway_vote_on_the_route_of_a_folder() {
+    use heimdall_app::shared_report::ReportCheck;
+    let dir = tempfile::tempdir().expect("dir");
+    let ssh = |name: &str, host: &str| {
+        line(
+            name,
+            109,
+            &[
+                (0, host),
+                (1, "22"),
+                (2, "deploy"),
+                (7, "jump.example.com"),
+                (8, "22"),
+                (9, "ops"),
+            ],
+        )
+    };
+    // Three SSH sessions through one bastion, then a Telnet, a VNC and an SFTP session that
+    // are direct whatever the folder does: none of them stands out, and an SSH and an SFTP
+    // session on one host are two ways to use it, not a repetition.
+    let text = format!(
+        "[Bookmarks]\r\nSubRep=Prod\r\n{}{}{}{}{}{}",
+        ssh("a", "a.example.com"),
+        ssh("b", "b.example.com"),
+        ssh("c", "c.example.com"),
+        line("a-telnet", 98, &[(0, "a.example.com")]),
+        line("a-vnc", 128, &[(0, "a.example.com")]),
+        line("a-files", 140, &[(0, "a.example.com")]),
+    );
+    let (shared, _) = loaded(dir.path(), &text);
+    assert_eq!(shared.sources()[0].sessions, 6);
+    let report = shared.report_of("team").expect("a report");
+    assert_eq!(
+        report.count_of(ReportCheck::GatewayOutlier),
+        0,
+        "{report:?}"
+    );
+    assert_eq!(report.count_of(ReportCheck::DuplicateHost), 0, "{report:?}");
+
+    // Two Telnet sessions on one host are a repetition.
+    let twice = format!(
+        "[Bookmarks]\r\n{}{}",
+        line("t1", 98, &[(0, "tel.example.com")]),
+        line("t2", 98, &[(0, "tel.example.com"), (1, "2323")]),
+    );
+    let (shared, _) = loaded(dir.path(), &twice);
+    assert_eq!(
+        shared
+            .report_of("team")
+            .expect("a report")
+            .count_of(ReportCheck::DuplicateHost),
+        2
+    );
+}
+
+#[test]
+fn the_offline_copy_keeps_the_sessions_of_every_protocol() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, other_protocols()).expect("write");
+    let sources = vec![source("team", &file)];
+    let mut shared = cached(dir.path());
+    shared.load(&sources, &Variables::default());
+    assert_eq!(shared.sessions().count(), 3);
+    std::fs::remove_file(&file).expect("remove");
+    let mut restarted = cached(dir.path());
+    restarted.load(&sources, &Variables::default());
+    let kinds: Vec<_> = restarted
+        .sessions()
+        .map(|session| (session.protocol(), session.endpoint().1))
+        .collect();
+    assert_eq!(kinds, [("SFTP", 2222), ("Telnet", 2323), ("VNC", 5901)]);
+    assert!(restarted.sources()[0].offline.is_some());
+}
+
+#[test]
+fn opening_a_shared_sftp_session_opens_its_files_and_saves_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), &other_protocols());
+    let before = app.tabs.len();
+    let effects = app.update(Message::ConnectShared(id_of(&app, "files")));
+    assert_eq!(app.tabs.len(), before + 1);
+    let [heimdall_app::Effect::Connect { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(request.purpose, heimdall_app::Purpose::Files);
+    assert!(request.profile.sftp);
+    assert_eq!(request.profile.username.as_deref(), Some("bob"));
+    assert!(request.route.is_empty(), "direct");
+    assert!(request.profile.post_connect.to_run().is_empty());
+    // A copy under an identifier of this run: nothing saved answers to it.
+    assert!(!is_shared(request.profile.id.as_str()));
+    assert!(app.profiles().is_empty() && app.profile_summaries().is_empty());
+}
+
+#[test]
+fn opening_a_shared_telnet_session_connects_with_what_the_file_said_and_saves_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), &other_protocols());
+    let effects = app.update(Message::ConnectShared(id_of(&app, "console")));
+    let [heimdall_app::Effect::ConnectTelnet { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(
+        (request.profile.host.as_str(), request.profile.port),
+        ("tel.example.com", 2323)
+    );
+    assert!(!is_shared(request.profile.id.as_str()));
+    assert!(app.profiles().is_empty());
+}
+
+#[test]
+fn opening_a_shared_vnc_session_keeps_the_safe_defaults_and_saves_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), &other_protocols());
+    let effects = app.update(Message::ConnectShared(id_of(&app, "desk")));
+    let [heimdall_app::Effect::ConnectVnc { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let profile = &request.profile;
+    assert_eq!(
+        (profile.host.as_str(), profile.port),
+        ("vnc.example.com", 5901)
+    );
+    assert!(!profile.view_only && !profile.allow_no_password && !profile.require_tls);
+    assert!(profile.username.is_none());
+    assert!(!is_shared(profile.id.as_str()));
+    assert!(app.profiles().is_empty());
 }

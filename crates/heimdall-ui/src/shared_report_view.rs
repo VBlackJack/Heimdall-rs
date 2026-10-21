@@ -50,6 +50,25 @@ const CHECKS: [ReportCheck; 5] = [
     ReportCheck::DuplicateHost,
 ];
 
+/// The name of a check, without a count: the C# `CheckLabel`, used by the plain text and the
+/// CSV of a report.
+#[must_use]
+pub fn check_label(check: ReportCheck) -> String {
+    match check {
+        ReportCheck::SkippedSession => fl!("ui-shared-report-check-skipped"),
+        ReportCheck::UnresolvedVariable => fl!("ui-shared-report-check-unresolved"),
+        ReportCheck::NameHostMismatch => fl!("ui-shared-report-check-mismatch"),
+        ReportCheck::GatewayOutlier => fl!("ui-shared-report-check-gateway-outlier"),
+        ReportCheck::DuplicateHost => fl!("ui-shared-report-check-duplicate-host"),
+    }
+}
+
+/// The checks in the order a report lists them.
+#[must_use]
+pub fn checks() -> [ReportCheck; 5] {
+    CHECKS
+}
+
 /// The title of a section of findings, with how many it holds.
 #[must_use]
 pub fn check_title(check: ReportCheck, count: usize) -> String {
@@ -87,6 +106,21 @@ pub fn entry_text(entry: &ReportEntry) -> String {
                     host = entry.detail.as_str()
                 )
             }
+            Some(SkipReason::JumpHostNotSupported) => {
+                fl!(
+                    "ui-shared-report-reason-jump-host",
+                    host = entry.detail.as_str()
+                )
+            }
+            Some(SkipReason::ProxyNotSupported) if entry.detail.is_empty() => {
+                fl!("ui-shared-report-reason-proxy-no-host")
+            }
+            Some(SkipReason::ProxyNotSupported) => {
+                fl!(
+                    "ui-shared-report-reason-proxy",
+                    host = entry.detail.as_str()
+                )
+            }
             None => String::new(),
         },
         ReportCheck::UnresolvedVariable => {
@@ -115,7 +149,7 @@ pub fn entry_text(entry: &ReportEntry) -> String {
 }
 
 /// A route as the report says it: the gateway's name, or that there is none.
-fn route_label(route: &str) -> String {
+pub(crate) fn route_label(route: &str) -> String {
     if route.is_empty() {
         fl!("ui-shared-report-route-direct")
     } else {
@@ -134,7 +168,11 @@ fn entry_session(entry: &ReportEntry) -> String {
 
 /// The report of `state`'s source over the window, veiled as under a dialog: what is under it
 /// is neither hovered nor clicked.
-pub fn layer<'a>(state: &SourceState, report: &ImportReport) -> Element<'a, Message> {
+pub fn layer<'a>(
+    state: &SourceState,
+    report: &ImportReport,
+    status: Option<&str>,
+) -> Element<'a, Message> {
     let mut summary = Column::new()
         .spacing(spacing::XS)
         .push(text(fl!("ui-shared-report-taken", count = state.sessions)).size(font_size::CAPTION));
@@ -171,25 +209,43 @@ pub fn layer<'a>(state: &SourceState, report: &ImportReport) -> Element<'a, Mess
     if report.is_empty() {
         list = list.push(text(fl!("ui-shared-report-empty")).style(text::secondary));
     }
-    let card = container(
-        column![
-            text(fl!("ui-shared-report-title", name = source_label(state))).size(font_size::TITLE),
-            summary,
-            scrollable(list).height(Length::Shrink).width(Length::Fill),
-            row![
-                iced::widget::space::horizontal(),
-                button(text(fl!("ui-shared-report-close")))
-                    .padding(crate::tokens::BUTTON_PADDING)
-                    .style(styles::primary)
-                    .on_press(Message::SharedReportClose),
-            ],
-        ]
-        .spacing(spacing::MD),
-    )
-    .padding(spacing::LG)
-    .max_width(REPORT_WIDTH)
-    .max_height(LIST_HEIGHT + REPORT_HEADROOM)
-    .style(styles::panel);
+    let copy = button(text(fl!("ui-shared-report-copy")))
+        .padding(crate::tokens::BUTTON_PADDING)
+        .style(styles::secondary)
+        .on_press(Message::SharedReportCopy);
+    let export = button(text(fl!("ui-shared-report-export-csv")))
+        .padding(crate::tokens::BUTTON_PADDING)
+        .style(styles::secondary)
+        .on_press(Message::SharedReportExport);
+    let mut buttons = row![
+        copy,
+        export,
+        iced::widget::space::horizontal(),
+        button(text(fl!("ui-shared-report-close")))
+            .padding(crate::tokens::BUTTON_PADDING)
+            .style(styles::primary)
+            .on_press(Message::SharedReportClose),
+    ]
+    .spacing(spacing::SM);
+    buttons = buttons.align_y(iced::Alignment::Center);
+    let mut body = column![
+        text(fl!("ui-shared-report-title", name = source_label(state))).size(font_size::TITLE),
+        summary,
+        scrollable(list).height(Length::Shrink).width(Length::Fill),
+    ]
+    .spacing(spacing::MD);
+    if let Some(status) = status {
+        body = body.push(
+            text(status.to_owned())
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+        );
+    }
+    let card = container(body.push(buttons))
+        .padding(spacing::LG)
+        .max_width(REPORT_WIDTH)
+        .max_height(LIST_HEIGHT + REPORT_HEADROOM)
+        .style(styles::panel);
     iced::widget::opaque(
         container(card)
             .center(Length::Fill)
@@ -253,6 +309,28 @@ mod tests {
         assert!(said.contains("bastion-b") && said.contains("db"), "{said}");
         let said = entry_text(&entry(ReportCheck::GatewayOutlier, None, ""));
         assert!(said.contains("direct"), "{said}");
+        // A route Heimdall cannot take names the host it goes through, when the file gives one.
+        let said = entry_text(&entry(
+            ReportCheck::SkippedSession,
+            Some(SkipReason::JumpHostNotSupported),
+            "jump.example.com",
+        ));
+        assert!(
+            said.contains("jump.example.com") && said.contains("jump host"),
+            "{said}"
+        );
+        let said = entry_text(&entry(
+            ReportCheck::SkippedSession,
+            Some(SkipReason::ProxyNotSupported),
+            "proxy.example.com",
+        ));
+        assert!(said.contains("proxy.example.com"), "{said}");
+        let said = entry_text(&entry(
+            ReportCheck::SkippedSession,
+            Some(SkipReason::ProxyNotSupported),
+            "",
+        ));
+        assert!(said.contains("a proxy"), "{said}");
         for reason in [
             SkipReason::InvalidHost,
             SkipReason::DuplicateSession,

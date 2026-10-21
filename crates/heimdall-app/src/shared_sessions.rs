@@ -19,9 +19,11 @@
 //! memory, read-only.
 //!
 //! A shared file is written by other people, so what comes out of it is what the C#
-//! `SharedProfileSanitizer` lets through and no more: SSH and RDP sessions with a valid host,
-//! a name, a folder, a port, an account and the SSH gateway the file names, as a host, a port
-//! and an account and nothing else. A key path, a saved password or an agent of the file never
+//! `SharedProfileSanitizer` lets through and no more: SSH, SFTP, RDP, Telnet and VNC sessions
+//! with a valid host, a name, a folder, a port, an account (SSH, SFTP and RDP) and the SSH
+//! gateway the file names (SSH and RDP), as a host, a port and an account and nothing else.
+//! A session that names a route Heimdall cannot take for its protocol (a jump host on Telnet or
+//! VNC, a proxy on SSH, SFTP, Telnet or VNC) is refused, never taken as a direct connection. A key path, a saved password or an agent of the file never
 //! become a session's, and the file's folder never gives a session the defaults of a local
 //! folder. The command a file asks an SSH session to type after connecting is kept as a
 //! step nobody approved: it is typed only once the user approved it, and asked again when the
@@ -49,10 +51,11 @@ use std::time::{Duration, SystemTime};
 use heimdall_core::import::foreign::{FileWarning, GATEWAY_ID_KEY, Parsed};
 use heimdall_core::import::mobaxterm;
 use heimdall_core::import::mobaxterm::Limits;
+use heimdall_core::import::mobaxterm::{UNSUPPORTED_JUMP_HOST_KEY, UNSUPPORTED_PROXY_KEY};
 use heimdall_core::post_connect::{PostConnect, PostConnectStep};
 use heimdall_core::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, Forwards, ProfileId, RdpExtras, RdpOptions, RdpProfile,
-    SshGateway, SshMode, SshProfile,
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, Forwards, ProfileId,
+    RdpExtras, RdpOptions, RdpProfile, SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile,
 };
 use heimdall_core::shared_sessions::{
     MAX_SOURCE_FILE_BYTES, SharedSource, gateway_id, is_valid_host, is_valid_source_id, session_id,
@@ -173,8 +176,14 @@ pub struct Offline {
 pub enum SharedTarget {
     /// A shell.
     Ssh(SshProfile),
+    /// The files of a server over SFTP: an SSH profile that opens its files.
+    Sftp(SshProfile),
     /// A remote desktop.
     Rdp(RdpProfile),
+    /// A Telnet terminal.
+    Telnet(TelnetProfile),
+    /// A VNC remote desktop.
+    Vnc(VncProfile),
 }
 
 /// One shared session.
@@ -197,8 +206,10 @@ impl SharedSession {
     #[must_use]
     pub fn name(&self) -> &str {
         match &self.target {
-            SharedTarget::Ssh(profile) => &profile.name,
+            SharedTarget::Ssh(profile) | SharedTarget::Sftp(profile) => &profile.name,
             SharedTarget::Rdp(profile) => &profile.name,
+            SharedTarget::Telnet(profile) => &profile.name,
+            SharedTarget::Vnc(profile) => &profile.name,
         }
     }
 
@@ -206,8 +217,12 @@ impl SharedSession {
     #[must_use]
     pub fn endpoint(&self) -> (&str, u16) {
         match &self.target {
-            SharedTarget::Ssh(profile) => (&profile.host, profile.port),
+            SharedTarget::Ssh(profile) | SharedTarget::Sftp(profile) => {
+                (&profile.host, profile.port)
+            }
             SharedTarget::Rdp(profile) => (&profile.host, profile.port),
+            SharedTarget::Telnet(profile) => (&profile.host, profile.port),
+            SharedTarget::Vnc(profile) => (&profile.host, profile.port),
         }
     }
 
@@ -215,11 +230,21 @@ impl SharedSession {
     #[must_use]
     pub fn protocol(&self) -> &'static str {
         match self.target {
-            SharedTarget::Ssh(_) => "SSH",
-            SharedTarget::Rdp(_) => "RDP",
+            SharedTarget::Ssh(_) => PROTOCOL_SSH,
+            SharedTarget::Sftp(_) => PROTOCOL_SFTP,
+            SharedTarget::Rdp(_) => PROTOCOL_RDP,
+            SharedTarget::Telnet(_) => PROTOCOL_TELNET,
+            SharedTarget::Vnc(_) => PROTOCOL_VNC,
         }
     }
 }
+
+/// The protocols of a shared session, as the tree and the report name them.
+const PROTOCOL_SSH: &str = "SSH";
+const PROTOCOL_SFTP: &str = "SFTP";
+const PROTOCOL_RDP: &str = "RDP";
+const PROTOCOL_TELNET: &str = "Telnet";
+const PROTOCOL_VNC: &str = "VNC";
 
 /// What a look at a file saw of it, to tell a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -563,8 +588,9 @@ fn keep_copy(cache: &SourceCache, source: &SharedSource, path: &str, parsed: &Pa
 fn cached_session(session: &SharedSession) -> CachedSession {
     let (host, port) = session.endpoint();
     let username = match &session.target {
-        SharedTarget::Ssh(profile) => profile.username.clone(),
+        SharedTarget::Ssh(profile) | SharedTarget::Sftp(profile) => profile.username.clone(),
         SharedTarget::Rdp(profile) => profile.username.clone(),
+        SharedTarget::Telnet(_) | SharedTarget::Vnc(_) => None,
     };
     CachedSession {
         folder: session.folder.clone(),
@@ -635,21 +661,24 @@ fn offline_copy(
 
 /// A session of an offline copy, through the checks a session of a file goes through.
 fn session_of_copy(source_id: &str, cached: &CachedSession) -> Option<SharedSession> {
-    let kind = if cached.protocol.eq_ignore_ascii_case("ssh") {
-        Protocol::Ssh
-    } else if cached.protocol.eq_ignore_ascii_case("rdp") {
-        Protocol::Rdp
-    } else {
-        return None;
-    };
+    let kind = Protocol::of_name(&cached.protocol)?;
     let host = clean(&cached.host).filter(|host| is_valid_host(host))?;
     let name = clean(&cached.name)?;
     let folder = cached.folder.as_deref().and_then(clean);
-    let username = cached.username.as_deref().and_then(clean);
+    // Telnet and VNC have no account: a copy that gives one is not one the reader wrote.
+    let username = cached
+        .username
+        .as_deref()
+        .and_then(clean)
+        .filter(|_| kind.has_account());
     if cached.port == 0 {
         return None;
     }
-    // A gateway the copy cannot vouch for drops the session, never makes it a direct one.
+    // A gateway the copy cannot vouch for drops the session, never makes it a direct one; a
+    // protocol that cannot carry one never gets one.
+    if cached.gateway.is_some() && !kind.carries_gateway() {
+        return None;
+    }
     let gateway = match &cached.gateway {
         None => None,
         Some(gateway) => Some(shared_gateway(
@@ -862,7 +891,57 @@ fn text_of<'a>(server: &'a Value, key: &str) -> Option<&'a str> {
 #[derive(Clone, Copy)]
 enum Protocol {
     Ssh,
+    Sftp,
     Rdp,
+    Telnet,
+    Vnc,
+}
+
+impl Protocol {
+    /// The protocol a file or an offline copy names, in any case; none for another.
+    fn of_name(name: &str) -> Option<Self> {
+        [
+            (PROTOCOL_SSH, Self::Ssh),
+            (PROTOCOL_SFTP, Self::Sftp),
+            (PROTOCOL_RDP, Self::Rdp),
+            (PROTOCOL_TELNET, Self::Telnet),
+            (PROTOCOL_VNC, Self::Vnc),
+        ]
+        .into_iter()
+        .find(|(known, _)| known.eq_ignore_ascii_case(name))
+        .map(|(_, protocol)| protocol)
+    }
+
+    /// Whether it names an account: Telnet asks for its login in the terminal and a VNC
+    /// session has no login field (`MobaXtermImporter.cs:100-157`).
+    fn has_account(self) -> bool {
+        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp)
+    }
+
+    /// Whether it can go through an SSH gateway: the SSH and RDP sessions of a `MobaXterm` file
+    /// are the ones with a jump host slot (`MobaXtermImporter.CanCarryGateway`).
+    fn carries_gateway(self) -> bool {
+        matches!(self, Self::Ssh | Self::Rdp)
+    }
+
+    /// The key a session of the file gives its port under, and the port when it gives none.
+    fn port_key(self) -> (&'static str, u16) {
+        match self {
+            Self::Ssh | Self::Sftp => ("sshPort", DEFAULT_SSH_PORT),
+            Self::Rdp => ("remotePort", DEFAULT_RDP_PORT),
+            Self::Telnet => ("telnetPort", DEFAULT_TELNET_PORT),
+            Self::Vnc => ("vncPort", DEFAULT_VNC_PORT),
+        }
+    }
+
+    /// The key of the account in a session of the file, for the protocols that name one.
+    fn account_key(self) -> Option<&'static str> {
+        match self {
+            Self::Ssh | Self::Sftp => Some("sshUsername"),
+            Self::Rdp => Some("rdpUsername"),
+            Self::Telnet | Self::Vnc => None,
+        }
+    }
 }
 
 /// A port of the file, or `default`.
@@ -875,9 +954,9 @@ fn port_of(server: &Value, key: &str, default: u16) -> u16 {
         .unwrap_or(default)
 }
 
-/// The session `server` of a file as the C# sanitizer keeps it: SSH or RDP, a valid host,
-/// and the fields of its whitelist; for any other, why it is refused and what the file gives
-/// that is the reason.
+/// The session `server` of a file as the C# sanitizer keeps it: SSH, SFTP, RDP, Telnet or VNC,
+/// a valid host, and the fields of its whitelist; for any other, why it is refused and what the
+/// file gives that is the reason.
 fn sanitize(
     source_id: &str,
     server: &Value,
@@ -885,6 +964,20 @@ fn sanitize(
 ) -> Result<SharedSession, (SkipReason, String)> {
     let kind = text_of(server, "connectionType")
         .ok_or_else(|| (SkipReason::OtherProtocol, String::new()))?;
+    let protocol =
+        Protocol::of_name(kind).ok_or_else(|| (SkipReason::OtherProtocol, display_text(kind)))?;
+    // A jump host or a proxy the protocol cannot honour is a route the file asked for and
+    // Heimdall cannot take: the session is refused rather than taken as a direct connection,
+    // as the C# parser does (`MobaXtermImporter.cs:308-326`).
+    if let Some(jump_host) = server
+        .get(UNSUPPORTED_JUMP_HOST_KEY)
+        .and_then(Value::as_str)
+    {
+        return Err((SkipReason::JumpHostNotSupported, display_text(jump_host)));
+    }
+    if let Some(proxy) = server.get(UNSUPPORTED_PROXY_KEY).and_then(Value::as_str) {
+        return Err((SkipReason::ProxyNotSupported, display_text(proxy)));
+    }
     let host = text_of(server, "remoteServer")
         .filter(|host| is_valid_host(host))
         .ok_or_else(|| {
@@ -897,46 +990,38 @@ fn sanitize(
     let folder = text_of(server, "group");
     let name = text_of(server, "displayName").unwrap_or(host);
     // A gateway the file names and the sanitizer cannot keep refuses the session: dropping it
-    // would turn a session meant to cross a bastion into a direct one.
+    // would turn a session meant to cross a bastion into a direct one. A protocol that cannot
+    // carry one refuses it the same way.
     let gateway = match server.get(GATEWAY_ID_KEY).and_then(Value::as_str) {
         None => None,
+        Some(_) if !protocol.carries_gateway() => {
+            return Err((SkipReason::InvalidGateway, String::new()));
+        }
         Some(placeholder) => match routes.get(placeholder) {
             Some(Ok(gateway)) => Some(gateway.clone()),
             Some(Err(host)) => return Err((SkipReason::InvalidGateway, display_text(host))),
             None => return Err((SkipReason::InvalidGateway, String::new())),
         },
     };
-    if kind.eq_ignore_ascii_case("SSH") {
-        Ok(build_session(
-            source_id,
-            Protocol::Ssh,
-            folder,
-            name,
-            host,
-            port_of(server, "sshPort", DEFAULT_SSH_PORT),
-            Login {
-                username: text_of(server, "sshUsername"),
-                gateway,
-                steps: steps_of(server),
+    let (port_key, default_port) = protocol.port_key();
+    Ok(build_session(
+        source_id,
+        protocol,
+        folder,
+        name,
+        host,
+        port_of(server, port_key, default_port),
+        Login {
+            username: protocol.account_key().and_then(|key| text_of(server, key)),
+            gateway,
+            // Only a shell types commands; the other protocols have no post-connect step.
+            steps: if matches!(protocol, Protocol::Ssh) {
+                steps_of(server)
+            } else {
+                Vec::new()
             },
-        ))
-    } else if kind.eq_ignore_ascii_case("RDP") {
-        Ok(build_session(
-            source_id,
-            Protocol::Rdp,
-            folder,
-            name,
-            host,
-            port_of(server, "remotePort", DEFAULT_RDP_PORT),
-            Login {
-                username: text_of(server, "rdpUsername"),
-                gateway,
-                steps: Vec::new(),
-            },
-        ))
-    } else {
-        Err((SkipReason::OtherProtocol, display_text(kind)))
-    }
+        },
+    ))
 }
 
 /// The gateways of a file as the shared namespace keeps them, by the identifier the reader gave
@@ -1038,7 +1123,22 @@ fn build_session(
         Protocol::Ssh => {
             SharedTarget::Ssh(ssh_profile(&id, name, host, port, username, route, steps))
         }
+        Protocol::Sftp => {
+            let mut files = ssh_profile(&id, name, host, port, username, route, steps);
+            // Opens its files, as the C# SFTP connection type.
+            files.sftp = true;
+            SharedTarget::Sftp(files)
+        }
         Protocol::Rdp => SharedTarget::Rdp(rdp_profile(&id, name, host, port, username, route)),
+        Protocol::Telnet => SharedTarget::Telnet(TelnetProfile {
+            id: id.clone(),
+            name: name.to_owned(),
+            group: None,
+            host: host.to_owned(),
+            port,
+            session_logging: None,
+        }),
+        Protocol::Vnc => SharedTarget::Vnc(vnc_profile(&id, name, host, port)),
     };
     SharedSession {
         id,
@@ -1089,6 +1189,25 @@ fn ssh_profile(
         session_logging: None,
         ssh_mode: SshMode::Embedded,
         x11_forwarding: false,
+    }
+}
+
+/// A VNC session of a shared file: the C# sanitizer keeps a name, a host and a port and leaves
+/// every other option at the default of a new profile. No account, no stored password, and
+/// the safe defaults: a server asking for no password or offering no encryption is not
+/// accepted on the file's word.
+fn vnc_profile(id: &ProfileId, name: &str, host: &str, port: u16) -> VncProfile {
+    VncProfile {
+        id: id.clone(),
+        name: name.to_owned(),
+        group: None,
+        host: host.to_owned(),
+        port,
+        view_only: false,
+        allow_no_password: false,
+        require_tls: false,
+        username: None,
+        vault_entry: None,
     }
 }
 
