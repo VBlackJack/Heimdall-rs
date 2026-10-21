@@ -299,11 +299,15 @@ impl App {
         let result = self.store.apply(|store| {
             match profile {
                 // Steps written in the form are approved by the one who wrote them, as the
-                // C# dialog confirms them when it saves.
+                // C# dialog confirms them when it saves; steps that arrived by an import keep
+                // their mark (deliberately stricter than the C#).
                 DraftProfile::Ssh(profile) => {
                     let steps = profile.post_connect.steps.clone();
                     let saved = profile.id.clone();
                     let report = store.merge([profile]);
+                    // A step that came from outside and whose text the user did not write or
+                    // change keeps its mark: the sequence is approved, but that step still
+                    // waits for an explicit Run (see `PostConnect::needs_approval`).
                     store.approve_post_connect(&saved, &steps);
                     report
                 }

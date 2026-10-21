@@ -641,7 +641,30 @@ impl ProfileStore {
     pub fn approve_post_connect(&mut self, id: &ProfileId, steps: &[PostConnectStep]) -> bool {
         match self.ssh.iter_mut().find(|profile| profile.id == *id) {
             Some(profile) => {
-                profile.post_connect.approved = Some(steps.to_vec());
+                // What each step does is approved; a step that arrived from outside keeps
+                // its mark until the user says yes to it (`trust_post_connect`).
+                profile.post_connect.approved = Some(
+                    steps
+                        .iter()
+                        .map(|step| PostConnectStep {
+                            untrusted: false,
+                            ..step.clone()
+                        })
+                        .collect(),
+                );
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Records the user's yes to the steps `steps` of profile `id`, shown to them as they
+    /// are: approved, and none of them waits for a Run any more.
+    pub fn trust_post_connect(&mut self, id: &ProfileId, steps: &[PostConnectStep]) -> bool {
+        match self.ssh.iter_mut().find(|profile| profile.id == *id) {
+            Some(profile) => {
+                profile.post_connect =
+                    crate::post_connect::PostConnect::approved_as(steps.to_vec());
                 true
             }
             None => false,

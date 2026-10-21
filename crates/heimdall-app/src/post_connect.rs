@@ -115,6 +115,7 @@ mod tests {
 
     fn step(input: &str) -> PostConnectStep {
         PostConnectStep {
+            untrusted: false,
             delay_ms: 0,
             ..PostConnectStep::new(input)
         }
@@ -147,6 +148,7 @@ mod tests {
     #[tokio::test]
     async fn steps_are_typed_in_order_each_on_its_line_and_the_off_ones_skipped() {
         let off = PostConnectStep {
+            untrusted: false,
             enabled: false,
             ..step("rm -rf /tmp/x")
         };
@@ -179,6 +181,7 @@ mod tests {
     async fn a_step_waits_its_delay_and_a_stop_during_it_types_nothing_more() {
         let stop = CancellationToken::new();
         let slow = PostConnectStep {
+            untrusted: false,
             delay_ms: 60_000,
             ..step("never")
         };
@@ -236,6 +239,7 @@ mod tests {
             "continue: the next step is tried"
         );
         let stopping = PostConnectStep {
+            untrusted: false,
             on_failure: OnFailure::Stop,
             ..step("a")
         };

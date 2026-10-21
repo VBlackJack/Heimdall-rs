@@ -108,7 +108,14 @@ impl StepsDraft {
                 }
             }
             StepEdit::Enabled(index, on) => self.change(index, |step| step.enabled = on),
-            StepEdit::Input(index, input) => self.change(index, |step| step.input = input),
+            StepEdit::Input(index, input) => self.change(index, |step| {
+                // The user writing or changing this step's text is what trusts it, this step
+                // only.
+                if step.input != input {
+                    step.input = input;
+                    step.untrusted = false;
+                }
+            }),
             StepEdit::Delay(index, typed) => {
                 let delay = match typed.trim() {
                     "" => Some(0),

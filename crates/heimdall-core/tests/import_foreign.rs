@@ -531,3 +531,25 @@ fn a_session_whose_gateway_is_not_a_host_is_left_out_never_imported_direct() {
     // A port out of range is the SSH default.
     assert_eq!(report(&parsed).gateways[0].port, 22);
 }
+
+#[test]
+fn the_login_command_of_an_ssh_session_is_one_unapproved_step_and_other_protocols_have_none() {
+    let parsed = mobaxterm::parse(
+        "[Bookmarks]\nweb= #109#0%web.lab%22%root%%%%  sudo -i  %%\nplain= #109#0%plain.lab%22%root\n\
+         desk= #91#4%desk.lab%3389%admin%0%-1%-1%whoami\n",
+    );
+    let command = |name: &str| {
+        parsed
+            .servers
+            .iter()
+            .find(|server| server["displayName"] == name)
+            .map(|server| server.get("postConnectSteps").cloned())
+    };
+    // Trimmed, and a step with nothing else set: the model's own defaults.
+    assert_eq!(
+        command("web"),
+        Some(Some(serde_json::json!([{ "input": "sudo -i" }])))
+    );
+    assert_eq!(command("plain"), Some(None));
+    assert_eq!(command("desk"), Some(None), "only SSH has the field");
+}

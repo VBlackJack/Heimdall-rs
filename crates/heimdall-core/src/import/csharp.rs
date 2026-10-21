@@ -1626,6 +1626,7 @@ fn post_connect_of(server: &LegacyServer) -> Vec<PostConnectStep> {
         .iter()
         .flatten()
         .map(|step| PostConnectStep {
+            untrusted: true,
             input: step.input.clone(),
             delay_ms: step.delay_ms.map_or(DEFAULT_STEP_DELAY_MS, |delay| {
                 u32::try_from(delay.max(0)).unwrap_or(u32::MAX)
@@ -1652,7 +1653,7 @@ fn post_connect_of(server: &LegacyServer) -> Vec<PostConnectStep> {
         .split('\n')
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(PostConnectStep::new)
+        .map(|line| PostConnectStep::new(line).from_outside())
         .collect()
 }
 

@@ -103,6 +103,16 @@ pub fn session_id(source_id: &str, group: &str, name: &str) -> String {
     format!("{}{hex}", prefix_for(source_id))
 }
 
+/// The source a shared identifier belongs to, as the C# `SharedSessionIds.SourceIdOf`: what
+/// sits between the prefix and the next dash. None for an identifier that is not shared or
+/// whose source part is not a valid source identifier.
+#[must_use]
+pub fn source_id_of(id: &str) -> Option<&str> {
+    let rest = id.strip_prefix(SHARED_PREFIX)?;
+    let (source, _) = rest.split_once('-')?;
+    is_valid_source_id(source).then_some(source)
+}
+
 /// The identifier of the gateway of source `source_id` that logs in to `host` on `port` as
 /// `user` (without case), so the same file read twice gives the same one, as the C#
 /// `ParseContext.GetOrAddGateway` builds it.
@@ -275,6 +285,20 @@ pub fn new_source_id() -> Result<String, sealvault::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_source_of_a_shared_identifier_is_read_back_from_it() {
+        let id = session_id("team01", "Prod", "web01");
+        assert_eq!(source_id_of(&id), Some("team01"));
+        assert_eq!(
+            source_id_of(&gateway_id("team01", "h", 22, "u")),
+            Some("team01")
+        );
+        assert_eq!(source_id_of("local-profile"), None);
+        assert_eq!(source_id_of("shared-nodash"), None);
+        assert_eq!(source_id_of("shared-Bad-abc"), None);
+        assert_eq!(source_id_of("shared--abc"), None);
+    }
 
     #[test]
     fn source_ids_are_lower_case_letters_and_digits() {

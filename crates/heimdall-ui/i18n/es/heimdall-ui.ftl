@@ -1125,6 +1125,10 @@ ui-dialog-post-connect-body = { $count ->
 }
 ui-dialog-post-connect-run = Ejecutar y recordar
 ui-dialog-post-connect-skip = Conectar sin ellos
+ui-dialog-post-connect-shared-body = { $count ->
+    [one] "{ $name }" procede de un archivo compartido que otras personas pueden modificar. Ejecutará automáticamente { $count } comando en esta sesión. Continúa solo si confías en ese archivo: se vuelve a preguntar cada vez que el archivo lo cambia. ¿Ejecutarlo y recordar esta elección?
+   *[other] "{ $name }" procede de un archivo compartido que otras personas pueden modificar. Ejecutará automáticamente { $count } comandos en esta sesión. Continúa solo si confías en ese archivo: se vuelve a preguntar cada vez que el archivo los cambia. ¿Ejecutarlos y recordar esta elección?
+}
 ui-profile-toggle-forward-agent = Reenviar agente SSH
 ui-profile-ssh-mode = Modo SSH
 ui-profile-ssh-mode-embedded = Incrustado (integrado)
@@ -5957,6 +5961,11 @@ ui-shared-report-mismatch =
         [one] { $count } nombre que no es el de su host
        *[other] { $count } nombres que no son los de su host
     }
+ui-shared-report-gateway-outlier =
+    { $count ->
+        [one] { $count } sesión que usa otra pasarela que su carpeta
+       *[other] { $count } sesiones que usan otra pasarela que su carpeta
+    }
 ui-shared-report-duplicate-host =
     { $count ->
         [one] { $count } sesión en un host archivado dos veces
@@ -5970,6 +5979,8 @@ ui-shared-report-reason-over-limit = La fuente ya contiene tantas sesiones como 
 ui-shared-report-detail-unresolved = El inicio de sesión usa la variable { $name }, que no tiene valor. Defínala en las variables de importación de MobaXterm.
 ui-shared-report-detail-mismatch = El nombre no es el host { $host } ni su primera etiqueta.
 ui-shared-report-detail-duplicate-host = El host { $host } también lo usa { $others }.
+ui-shared-report-detail-gateway-outlier = Se conecta por { $route }, mientras que la mayoría de las sesiones de su carpeta se conectan por { $usual }.
+ui-shared-report-route-direct = sin pasarela (conexión directa)
 
 ## Compartir carpeta: una carpeta servida en solo lectura por HTTP, durante un tiempo limitado.
 ui-share-button = Compartir

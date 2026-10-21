@@ -39,16 +39,20 @@ pub struct PostConnectConfirmation {
     pub name: String,
     /// The commands that would be typed, in order, made safe.
     pub commands: Vec<String>,
+    /// The session comes from a shared file other people edit: the approval is for these
+    /// commands only, and is asked again when the file changes them.
+    pub shared: bool,
 }
 
 impl App {
     /// Opens a shell for `profile`, asking first when it would type steps the user has not
     /// approved as they are.
-    pub(super) fn open_ssh(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
+    pub(super) fn open_ssh(&mut self, mut profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
         // Opened in PuTTY, which types no step: no tab, nothing to approve.
         if let Some(effects) = self.open_ssh_external(&profile, purpose) {
             return effects;
         }
+        self.approve_known_shared_steps(&mut profile);
         if purpose == Purpose::Shell && profile.post_connect.needs_approval() {
             let commands = profile
                 .post_connect
@@ -61,6 +65,7 @@ impl App {
                 PostConnectConfirmation {
                     name: server_text(&profile.name),
                     commands,
+                    shared: self.is_shared_shell(&profile),
                     profile,
                 },
             )));
@@ -75,10 +80,17 @@ impl App {
         confirmation: PostConnectConfirmation,
     ) -> Vec<Effect> {
         let mut profile = confirmation.profile;
+        let pristine = profile.clone();
         let steps = profile.post_connect.steps.clone();
-        let recorded = self
-            .store
-            .apply(|store| store.approve_post_connect(&profile.id, &steps));
+        // A shell from a shared session is approved against that session, on this computer's
+        // settings; any other, against its saved profile.
+        let recorded = match self.approve_shared_steps(&profile.id, &steps) {
+            Some(recorded) => recorded,
+            None => self
+                .store
+                .apply(|store| store.trust_post_connect(&profile.id, &steps))
+                .map(|_| ()),
+        };
         if let Err(error) = recorded {
             self.dialog = Some(Dialog::save_failed(&error));
             return Vec::new();
@@ -86,7 +98,9 @@ impl App {
         // Approved for this session whether or not the profile is still saved: the user
         // agreed to what was shown.
         profile.post_connect = PostConnect::approved_as(steps);
-        self.open_ssh_now(profile, Purpose::Shell)
+        let effects = self.open_ssh_now(profile, Purpose::Shell);
+        self.remember_shared_reopen(pristine);
+        effects
     }
 
     /// Handles the post-connect messages.
@@ -107,7 +121,10 @@ impl App {
         let Some(Dialog::ConfirmPostConnect(confirmation)) = self.dialog.take() else {
             return Vec::new();
         };
-        self.open_ssh_now(confirmation.profile, Purpose::Shell)
+        let pristine = confirmation.profile.clone();
+        let effects = self.open_ssh_now(confirmation.profile, Purpose::Shell);
+        self.remember_shared_reopen(pristine);
+        effects
     }
 
     /// Stops the steps the tab `tab` is typing; those typed stay typed.

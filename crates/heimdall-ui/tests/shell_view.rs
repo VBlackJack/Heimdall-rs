@@ -3764,6 +3764,7 @@ fn one_post_connect_command_is_said_in_the_singular() {
             profile: profile("a", None),
             name: "server a".to_owned(),
             commands: vec!["uptime".to_owned()],
+            shared: false,
         },
     )));
     let shell = Shell::with_app(core);

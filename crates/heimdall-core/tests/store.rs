@@ -1607,3 +1607,66 @@ fn a_shared_gateway_is_reached_by_a_route_and_is_in_no_list_and_no_file() {
             .is_err()
     );
 }
+
+#[test]
+fn a_store_from_before_the_untrusted_mark_trusts_only_the_steps_its_approval_covers() {
+    use heimdall_core::post_connect::{PostConnect, PostConnectStep};
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    let mut imported = profile("imported", "h1");
+    imported.post_connect = PostConnect {
+        steps: vec![PostConnectStep::new("sudo -i").from_outside()],
+        approved: None,
+    };
+    let mut approved = profile("approved", "h2");
+    approved.post_connect.steps = vec![PostConnectStep::new("uptime")];
+    // One step approved, one added after: the approval no longer covers the steps.
+    let mut changed = profile("changed", "h3");
+    changed.post_connect.steps = vec![PostConnectStep::new("ls"), PostConnectStep::new("pwd")];
+    store.merge([imported, approved, changed]);
+    assert!(store.approve_post_connect(
+        &ProfileId::new("approved"),
+        &[PostConnectStep::new("uptime")]
+    ));
+    assert!(store.approve_post_connect(&ProfileId::new("changed"), &[PostConnectStep::new("ls")]));
+    store.save().expect("saves");
+
+    // The mark is written explicitly from now on.
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(text.contains("untrusted = true"), "{text}");
+    assert!(text.contains("untrusted = false"), "{text}");
+
+    // The file as an older version wrote it: no mark at all.
+    let legacy: String = text
+        .lines()
+        .filter(|line| !line.contains("untrusted ="))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&path, legacy).expect("write");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    let post_connect = |id: &str| {
+        reopened
+            .ssh_profiles()
+            .iter()
+            .find(|profile| profile.id.as_str() == id)
+            .expect(id)
+            .post_connect
+            .clone()
+    };
+    // Never approved: its steps are untrusted, and stay asked about.
+    assert!(post_connect("imported").steps[0].untrusted);
+    assert!(post_connect("imported").needs_approval());
+    // Approved exactly as they are: no question.
+    assert!(!post_connect("approved").steps[0].untrusted);
+    assert!(!post_connect("approved").needs_approval());
+    // An approval that does not cover the steps trusts none of them.
+    assert!(
+        post_connect("changed")
+            .steps
+            .iter()
+            .all(|step| step.untrusted)
+    );
+    assert!(post_connect("changed").needs_approval());
+}

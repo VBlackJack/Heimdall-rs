@@ -1309,16 +1309,19 @@ fn post_connect_steps_are_imported_as_the_csharp_migration_reads_them_and_never_
         steps.steps,
         [
             PostConnectStep {
+                untrusted: true,
                 delay_ms: 500,
                 on_failure: OnFailure::Stop,
                 ..PostConnectStep::new("sudo -i")
             },
             PostConnectStep {
+                untrusted: true,
                 delay_ms: 0,
                 enabled: false,
                 ..PostConnectStep::new("cd /srv")
             },
             PostConnectStep {
+                untrusted: true,
                 on_failure: OnFailure::Stop,
                 ..PostConnectStep::new("ls")
             },
@@ -1327,10 +1330,10 @@ fn post_connect_steps_are_imported_as_the_csharp_migration_reads_them_and_never_
     assert_eq!(
         by_id("legacy").steps,
         [
-            PostConnectStep::new("sudo -i"),
-            PostConnectStep::new("cd /srv")
+            PostConnectStep::new("sudo -i").from_outside(),
+            PostConnectStep::new("cd /srv").from_outside()
         ],
-        "one step per line, as PostConnectMigration splits it"
+        "one step per line, as PostConnectMigration splits it, all waiting for a Run"
     );
     assert_eq!(by_id("none"), PostConnect::default());
 }

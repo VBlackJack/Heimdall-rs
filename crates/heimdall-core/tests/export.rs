@@ -73,6 +73,7 @@ fn ssh() -> Vec<SshProfile> {
             steps: vec![
                 PostConnectStep::new("sudo -i"),
                 PostConnectStep {
+                    untrusted: false,
                     input: "cd /srv".to_owned(),
                     delay_ms: 50,
                     enabled: false,
@@ -367,7 +368,15 @@ fn every_profile_comes_back_the_same_through_the_import() {
         store.gateways(),
         "from the document's gateways"
     );
-    assert_eq!(report.profiles, store.ssh_profiles());
+    // The steps come back exactly, but as steps that arrived from outside: whatever an export
+    // says, an import trusts none of them until the user does.
+    let mut expected = store.ssh_profiles().to_vec();
+    for profile in &mut expected {
+        for step in &mut profile.post_connect.steps {
+            step.untrusted = true;
+        }
+    }
+    assert_eq!(report.profiles, expected);
     assert_eq!(report.rdp, store.rdp_profiles());
     assert_eq!(report.telnet, store.telnet_profiles());
     assert_eq!(
