@@ -418,7 +418,7 @@ pub fn folder_row<'a>(
                     text(count)
                         .size(font_size::SMALL_CAPTION)
                         .font(SEMIBOLD)
-                        .style(text::secondary)
+                        .style(text::base)
                 )
                 .padding(crate::tokens::COUNT_BADGE_PADDING)
                 .style(styles::count_badge),

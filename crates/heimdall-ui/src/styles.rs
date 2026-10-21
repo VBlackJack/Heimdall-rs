@@ -838,11 +838,14 @@ pub fn tip<'a, Message: 'a>(
 }
 
 /// The count on a tree folder, as the C# folder row's badge (`MainWindow.xaml:882-896`): a
-/// card outlined in the border colour, rounded as `SessionTreeBadgeCornerRadius`.
+/// card outlined in the border colour, rounded as `SessionTreeBadgeCornerRadius`. Its count is
+/// in the primary text, not the C#'s `TextSecondaryBrush`: that is under 4.5:1 on the card
+/// in Dracula, too faint for small text.
 pub fn count_badge(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.card)),
+        text_color: Some(brushes.text),
         border: brushes.outline(brushes.edge, radius::BADGE),
         ..BoxStyle::default()
     }
@@ -1215,6 +1218,23 @@ mod tests {
                         "{each:?}/{accent:?}: the {what} is {ratio:.2}:1"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn the_folder_count_reads_at_4_5_to_1_on_its_badge_in_every_theme() {
+        for each in AppTheme::ALL {
+            for accent in Accent::ALL {
+                let style = count_badge(&themes::theme(each, accent));
+                let Some(Background::Color(card)) = style.background else {
+                    panic!("{each:?}: the badge has a card");
+                };
+                let ratio = contrast(style.text_color.expect("the badge sets its text"), card);
+                assert!(
+                    ratio >= SMALL_TEXT_CONTRAST,
+                    "{each:?}/{accent:?}: the count is {ratio:.2}:1"
+                );
             }
         }
     }
