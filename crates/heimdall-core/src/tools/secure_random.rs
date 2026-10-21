@@ -78,19 +78,7 @@ impl SecureRandom {
     /// `bound` is drawn again. `None` when `bound` is zero, past `u32::MAX`, or the system's
     /// generator cannot be read.
     pub fn below(&mut self, bound: usize) -> Option<usize> {
-        let bound = u64::try_from(bound).ok().filter(|bound| *bound > 0)?;
-        let span = 1_u64 << 32;
-        if bound > span {
-            return None;
-        }
-        // The draws at or past `zone` would favour the first values: they are refused.
-        let zone = span - span % bound;
-        loop {
-            let drawn = u64::from(self.next_u32()?);
-            if drawn < zone {
-                return usize::try_from(drawn % bound).ok();
-            }
-        }
+        below_from(bound, || self.next_u32())
     }
 
     /// One element of `items`, each as likely; `None` when there is none.
@@ -102,6 +90,25 @@ impl SecureRandom {
     /// `bytes` filled from the system's generator; `false` when it cannot be read.
     pub fn fill(&mut self, bytes: &mut [u8]) -> bool {
         sealvault::random::fill(bytes).is_ok()
+    }
+}
+
+/// A value in `0..bound` from `next_u32`, refusing the draws past the last whole multiple
+/// of `bound`. Split from [`SecureRandom::below`] so the refusal can be tested with a
+/// scripted source instead of by statistics on the system's generator.
+fn below_from(bound: usize, mut next_u32: impl FnMut() -> Option<u32>) -> Option<usize> {
+    let bound = u64::try_from(bound).ok().filter(|bound| *bound > 0)?;
+    let span = 1_u64 << 32;
+    if bound > span {
+        return None;
+    }
+    // The draws at or past `zone` would favour the first values: they are refused.
+    let zone = span - span % bound;
+    loop {
+        let drawn = u64::from(next_u32()?);
+        if drawn < zone {
+            return usize::try_from(drawn % bound).ok();
+        }
     }
 }
 
@@ -122,17 +129,30 @@ mod tests {
         assert!(random.pick::<u8>(&[]).is_none());
     }
 
+    /// A fixed-seed xorshift32: the same sequence on every run, so a statistical check over
+    /// it passes or fails for good instead of by chance.
+    fn xorshift(mut state: u32) -> impl FnMut() -> Option<u32> {
+        move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            Some(state)
+        }
+    }
+
     #[test]
     fn draws_are_spread_evenly_over_their_range() {
-        // A chi-squared test over ten values and two hundred thousand draws: with nine
-        // degrees of freedom, 27.88 is passed one time in a thousand by a fair source.
+        // A chi-squared test over ten values and two hundred thousand draws of a fixed-seed
+        // source: nine degrees of freedom, 27.88 being the one-in-a-thousand critical value
+        // for a fair source. The sequence is fixed, so the outcome never varies between runs.
         const DRAWS: usize = 200_000;
         const VALUES: usize = 10;
         const CRITICAL: f64 = 27.88;
-        let mut random = SecureRandom::new();
+        const SEED: u32 = 0x9E37_79B9;
+        let mut source = xorshift(SEED);
         let mut counts = [0_u32; VALUES];
         for _ in 0..DRAWS {
-            counts[random.below(VALUES).expect("drawn")] += 1;
+            counts[below_from(VALUES, &mut source).expect("drawn")] += 1;
         }
         let expected = f64::from(u32::try_from(DRAWS / VALUES).expect("small"));
         let chi: f64 = counts
@@ -144,18 +164,44 @@ mod tests {
 
     #[test]
     fn a_range_that_does_not_divide_the_draw_is_not_biased_toward_its_start() {
-        // Three does not divide 2^32: a modulo without refusal favours 0. Over three hundred
-        // thousand draws each value has to stay within a fraction of a percent of a third.
-        const DRAWS: u32 = 300_000;
+        // Three does not divide 2^32: its zone ends at 2^32 - 1, so the single draw
+        // 0xFFFF_FFFF, which a bare modulo would fold onto 0, is refused and the next one used.
+        let mut script = [u32::MAX, 0, 1, 2, 3, u32::MAX - 1].into_iter();
+        let mut source = || script.next();
+        let drawn: Vec<usize> = (0..5)
+            .map(|_| below_from(3, &mut source).expect("drawn"))
+            .collect();
+        assert_eq!(drawn, [0, 1, 2, 0, 1]);
+        // Nothing is refused when the range divides the draw: every value is kept as is.
+        let mut script = [u32::MAX, 0].into_iter();
+        assert_eq!(below_from(2, || script.next()), Some(1));
+        assert_eq!(below_from(2, || script.next()), Some(0));
+    }
+
+    #[test]
+    fn a_source_that_cannot_be_read_ends_the_draw() {
+        assert_eq!(below_from(3, || None), None);
+        assert_eq!(below_from(0, || Some(1)), None);
+        assert_eq!(below_from(1 << 33, || Some(1)), None);
+    }
+
+    #[test]
+    fn production_draws_come_from_the_system_generator() {
+        // No statistics: two independent 32-byte reads of the system's generator equal each
+        // other with probability 2^-256, and an all-zero pool (never filled) would be caught.
+        let mut first = [0_u8; 32];
+        let mut second = [0_u8; 32];
         let mut random = SecureRandom::new();
-        let mut counts = [0_u32; 3];
-        for _ in 0..DRAWS {
-            counts[random.below(3).expect("drawn")] += 1;
-        }
-        for count in counts {
-            let share = f64::from(count) / f64::from(DRAWS);
-            assert!((share - 1.0 / 3.0).abs() < 0.005, "{counts:?}");
-        }
+        assert!(random.fill(&mut first));
+        assert!(random.fill(&mut second));
+        assert_ne!(first, second);
+        assert_ne!(first, [0_u8; 32]);
+        // `below` reads the pool from the same source: a fresh generator draws 64 times a
+        // range of 2^32 and does not return one constant (2^-1984 for a fair source).
+        let draws: Vec<usize> = (0..64)
+            .map(|_| random.below(1 << 32).expect("drawn"))
+            .collect();
+        assert!(draws.iter().any(|draw| *draw != draws[0]));
     }
 
     #[test]
