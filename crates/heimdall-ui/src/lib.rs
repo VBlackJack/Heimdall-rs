@@ -40,6 +40,7 @@ pub mod drop_batch;
 pub mod editor_history;
 mod editor_syntax;
 pub mod ellipsis;
+mod even_grid;
 pub mod export_file;
 pub mod external_tools_view;
 pub mod file_dialog;
