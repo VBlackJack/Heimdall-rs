@@ -37,6 +37,10 @@ pub struct ThemeColors {
     pub background: Color,
     /// The surface a row or field stands out on.
     pub current_line: Color,
+    /// The C# `SelectionColor`, which `HighlightBrush` reads: what a hovered row, a hovered
+    /// tab and a hovered menu entry lie on. Distinct from the current line in 16 of the 18
+    /// themes (Dracula and Drakul share it).
+    pub selection: Color,
     /// The text.
     pub foreground: Color,
     /// The secondary text.
@@ -93,6 +97,7 @@ const fn hex(value: u32) -> Color {
 const DRACULA: ThemeColors = ThemeColors {
     background: hex(0x0028_2A36),
     current_line: hex(0x0044_475A),
+    selection: hex(0x0044_475A),
     foreground: hex(0x00F8_F8F2),
     comment: hex(0x0062_72A4),
     accent: hex(0x00BD_93F9),
@@ -116,10 +121,17 @@ const DRAKUL: ThemeColors = ThemeColors {
 
 /// A dark palette of `ThemeForge`: its surfaces and text, over the accents every dark one
 /// shares.
-const fn dark(background: u32, current_line: u32, foreground: u32, comment: u32) -> ThemeColors {
+const fn dark(
+    background: u32,
+    current_line: u32,
+    selection: u32,
+    foreground: u32,
+    comment: u32,
+) -> ThemeColors {
     ThemeColors {
         background: hex(background),
         current_line: hex(current_line),
+        selection: hex(selection),
         foreground: hex(foreground),
         comment: hex(comment),
         accent: hex(0x00C8_85E5),
@@ -138,10 +150,17 @@ const fn dark(background: u32, current_line: u32, foreground: u32, comment: u32)
 
 /// A light palette of `ThemeForge`: its surfaces and text, over the darker accents every
 /// light one shares.
-const fn light(background: u32, current_line: u32, foreground: u32, comment: u32) -> ThemeColors {
+const fn light(
+    background: u32,
+    current_line: u32,
+    selection: u32,
+    foreground: u32,
+    comment: u32,
+) -> ThemeColors {
     ThemeColors {
         background: hex(background),
         current_line: hex(current_line),
+        selection: hex(selection),
         foreground: hex(foreground),
         comment: hex(comment),
         accent: hex(0x008E_18C1),
@@ -164,6 +183,7 @@ const fn light(background: u32, current_line: u32, foreground: u32, comment: u32
 const HIGH_CONTRAST: ThemeColors = ThemeColors {
     background: hex(0x0000_0000),
     current_line: hex(0x0000_0000),
+    selection: hex(0x0000_0000),
     foreground: hex(0x00FF_FFFF),
     comment: hex(0x00FF_FFFF),
     accent: hex(0x00FF_FF00),
@@ -181,36 +201,127 @@ const HIGH_CONTRAST: ThemeColors = ThemeColors {
 
 /// The colours of `theme`, as `ThemeForge` 2.1.0 defines them.
 #[must_use]
+#[allow(clippy::too_many_lines)] // One palette per theme, five numbers each.
 pub const fn colors(theme: AppTheme) -> ThemeColors {
     match theme {
         AppTheme::Dracula => DRACULA,
         AppTheme::Drakul => DRAKUL,
-        AppTheme::Striga => dark(0x0028_211F, 0x003D_312F, 0x00F3_F2F1, 0x00B9_A09A),
-        AppTheme::Cinder => dark(0x0028_271F, 0x003D_3A2F, 0x00F3_F3F1, 0x00AD_A688),
-        AppTheme::Bracken => dark(0x0021_281F, 0x0031_3D2F, 0x00F2_F3F1, 0x0090_AD8A),
-        AppTheme::Tarn => dark(0x001F_2827, 0x002F_3D3A, 0x00F1_F3F3, 0x008A_ADA7),
-        AppTheme::Mortis => dark(0x001F_2528, 0x002F_383D, 0x00F1_F3F3, 0x0094_AAB4),
-        AppTheme::Slate => dark(0x001F_2128, 0x002F_323D, 0x00F1_F2F3, 0x009E_A6BC),
+        AppTheme::Striga => dark(
+            0x0028_211F,
+            0x003D_312F,
+            0x004B_3D3A,
+            0x00F3_F2F1,
+            0x00B9_A09A,
+        ),
+        AppTheme::Cinder => dark(
+            0x0028_271F,
+            0x003D_3A2F,
+            0x004B_483A,
+            0x00F3_F3F1,
+            0x00AD_A688,
+        ),
+        AppTheme::Bracken => dark(
+            0x0021_281F,
+            0x0031_3D2F,
+            0x003D_4B3A,
+            0x00F2_F3F1,
+            0x0090_AD8A,
+        ),
+        AppTheme::Tarn => dark(
+            0x001F_2827,
+            0x002F_3D3A,
+            0x003A_4B48,
+            0x00F1_F3F3,
+            0x008A_ADA7,
+        ),
+        AppTheme::Mortis => dark(
+            0x001F_2528,
+            0x002F_383D,
+            0x003A_454B,
+            0x00F1_F3F3,
+            0x0094_AAB4,
+        ),
+        AppTheme::Slate => dark(
+            0x001F_2128,
+            0x002F_323D,
+            0x003A_3E4B,
+            0x00F1_F2F3,
+            0x009E_A6BC,
+        ),
         // Its own accent, an indigo.
         AppTheme::Magellan => ThemeColors {
             accent: hex(0x008C_9CFF),
-            ..dark(0x001B_1F33, 0x002A_3050, 0x00F1_F3FB, 0x00A7_AED0)
+            ..dark(
+                0x001B_1F33,
+                0x002A_3050,
+                0x0035_3C63,
+                0x00F1_F3FB,
+                0x00A7_AED0,
+            )
         },
-        AppTheme::Voivode => dark(0x0021_1F28, 0x0032_2F3D, 0x00F2_F1F3, 0x00A9_A2BE),
-        AppTheme::Carmilla => dark(0x0027_1F28, 0x003A_2F3D, 0x00F3_F1F3, 0x00B6_9EBB),
-        AppTheme::Whitby => dark(0x0028_1F25, 0x003D_2F38, 0x00F3_F1F3, 0x00BB_9DB1),
-        AppTheme::Vesper => dark(0x0028_1F21, 0x003D_2F32, 0x00F3_F1F2, 0x00BC_9FA6),
-        AppTheme::Parchment => light(0x00F4_F3F1, 0x00E4_E2DC, 0x001C_1A17, 0x0062_5842),
-        AppTheme::Folio => light(0x00F1_F2F4, 0x00DC_DFE4, 0x0017_191C, 0x004D_5973),
+        AppTheme::Voivode => dark(
+            0x0021_1F28,
+            0x0032_2F3D,
+            0x003E_3A4B,
+            0x00F2_F1F3,
+            0x00A9_A2BE,
+        ),
+        AppTheme::Carmilla => dark(
+            0x0027_1F28,
+            0x003A_2F3D,
+            0x0048_3A4B,
+            0x00F3_F1F3,
+            0x00B6_9EBB,
+        ),
+        AppTheme::Whitby => dark(
+            0x0028_1F25,
+            0x003D_2F38,
+            0x004B_3A45,
+            0x00F3_F1F3,
+            0x00BB_9DB1,
+        ),
+        AppTheme::Vesper => dark(
+            0x0028_1F21,
+            0x003D_2F32,
+            0x004B_3A3E,
+            0x00F3_F1F2,
+            0x00BC_9FA6,
+        ),
+        AppTheme::Parchment => light(
+            0x00F4_F3F1,
+            0x00E4_E2DC,
+            0x00D7_D3CB,
+            0x001C_1A17,
+            0x0062_5842,
+        ),
+        AppTheme::Folio => light(
+            0x00F1_F2F4,
+            0x00DC_DFE4,
+            0x00CB_CFD7,
+            0x0017_191C,
+            0x004D_5973,
+        ),
         // Green moved to viridian.
         AppTheme::Wormwood => ThemeColors {
             green: hex(0x0013_C282),
-            ..dark(0x001F_2824, 0x002F_3D36, 0x00F1_F3F2, 0x008A_AD9C)
+            ..dark(
+                0x001F_2824,
+                0x002F_3D36,
+                0x003A_4B42,
+                0x00F1_F3F2,
+                0x008A_AD9C,
+            )
         },
         // Orange moved to amber.
         AppTheme::Sconce => ThemeColors {
             orange: hex(0x00DC_9316),
-            ..dark(0x0028_231F, 0x003D_342F, 0x00F3_F2F1, 0x00B5_A395)
+            ..dark(
+                0x0028_231F,
+                0x003D_342F,
+                0x004B_413A,
+                0x00F3_F2F1,
+                0x00B5_A395,
+            )
         },
         AppTheme::HighContrast => HIGH_CONTRAST,
     }
@@ -233,6 +344,9 @@ fn build(theme: AppTheme, accent: Accent) -> Theme {
     Theme::custom_with_fn(theme.name(), palette, move |palette| {
         let mut extended = Extended::generate(palette);
         extended.background.weak = Pair::new(colors.current_line, colors.foreground);
+        // iced has no selection slot: the C# `HighlightBrush` rides the weaker background,
+        // which nothing else reads, for `styles` to find from a bare `Theme`.
+        extended.background.weaker = Pair::new(colors.selection, colors.foreground);
         // High contrast's secondary is its text: what stands on it is the background.
         let on_secondary = if colors.high_contrast {
             colors.background
@@ -281,6 +395,13 @@ pub fn colors_of(theme: &Theme) -> ThemeColors {
         .map_or_else(|| palette_colors(theme), colors)
 }
 
+/// The C# `SelectionColor` of the window's theme `theme`, which `HighlightBrush` reads:
+/// read from the weaker background [`build`] stores it in, with no lookup by name.
+#[must_use]
+pub fn selection_of(theme: &Theme) -> Color {
+    theme.extended_palette().background.weaker.color
+}
+
 /// Whether `theme` is high contrast, which [`crate::styles`] outlines wider.
 #[must_use]
 pub fn is_high_contrast(theme: &Theme) -> bool {
@@ -294,6 +415,7 @@ fn palette_colors(theme: &Theme) -> ThemeColors {
     ThemeColors {
         background: palette.background,
         current_line: extended.background.weak.color,
+        selection: extended.background.weaker.color,
         foreground: palette.text,
         comment: extended.secondary.base.color,
         accent: palette.primary,
@@ -515,6 +637,84 @@ mod tests {
     fn a_light_theme_highlights_code_in_light_colours() {
         for each in AppTheme::ALL {
             assert_eq!(syntax(each).is_dark(), !LIGHT.contains(&each), "{each:?}");
+        }
+    }
+
+    #[test]
+    fn the_selection_is_the_themeforge_selection_colour_and_the_window_theme_carries_it() {
+        // `SelectionColor` of `ThemeForge` 2.1.0 `Themes/*.xaml`, line 28 (38 for the
+        // Magellan family): the C# `HighlightBrush`.
+        let expected = [
+            (AppTheme::Striga, 0x004B_3D3A),
+            (AppTheme::Cinder, 0x004B_483A),
+            (AppTheme::Bracken, 0x003D_4B3A),
+            (AppTheme::Tarn, 0x003A_4B48),
+            (AppTheme::Mortis, 0x003A_454B),
+            (AppTheme::Slate, 0x003A_3E4B),
+            (AppTheme::Magellan, 0x0035_3C63),
+            (AppTheme::Voivode, 0x003E_3A4B),
+            (AppTheme::Carmilla, 0x0048_3A4B),
+            (AppTheme::Whitby, 0x004B_3A45),
+            (AppTheme::Vesper, 0x004B_3A3E),
+            (AppTheme::Parchment, 0x00D7_D3CB),
+            (AppTheme::Folio, 0x00CB_CFD7),
+            (AppTheme::Wormwood, 0x003A_4B42),
+            (AppTheme::Sconce, 0x004B_413A),
+        ];
+        for (each, value) in expected {
+            assert_eq!(colors(each).selection, hex(value), "{each:?}");
+            assert_ne!(
+                colors(each).selection,
+                colors(each).current_line,
+                "{each:?}: apart from the card, as the C#"
+            );
+        }
+        for each in AppTheme::ALL {
+            for accent in Accent::ALL {
+                assert_eq!(
+                    selection_of(&theme(each, accent)),
+                    colors(each).selection,
+                    "{each:?} {accent:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dracula_and_drakul_select_on_their_current_line_as_the_csharp() {
+        for each in [AppTheme::Dracula, AppTheme::Drakul] {
+            assert_eq!(colors(each).selection, hex(0x0044_475A), "{each:?}");
+            assert_eq!(colors(each).selection, colors(each).current_line);
+        }
+        assert_eq!(
+            colors(AppTheme::HighContrast).selection,
+            colors(AppTheme::HighContrast).background,
+            "black on black: high contrast keeps its own lit entries"
+        );
+    }
+
+    #[test]
+    fn a_light_theme_selects_darker_than_its_card_and_a_dark_one_lighter() {
+        let luma = |c: Color| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        for each in AppTheme::ALL {
+            let colors = colors(each);
+            if each == AppTheme::HighContrast
+                || each == AppTheme::Dracula
+                || each == AppTheme::Drakul
+            {
+                continue;
+            }
+            if colors.light {
+                assert!(
+                    luma(colors.selection) < luma(colors.current_line),
+                    "{each:?}"
+                );
+            } else {
+                assert!(
+                    luma(colors.selection) > luma(colors.current_line),
+                    "{each:?}"
+                );
+            }
         }
     }
 }
