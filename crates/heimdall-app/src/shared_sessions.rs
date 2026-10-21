@@ -814,7 +814,8 @@ fn parse(
                     .find(|server| text_of(server, "displayName") == Some(session.as_str()))
                     .and_then(|server| text_of(server, "group"))
                     .unwrap_or_default();
-                Some((folder.to_owned(), session.clone(), name.clone()))
+                // The name is the file's own text: cleaned like every other the report shows.
+                Some((folder.to_owned(), display_text(session), name.clone()))
             }
             _ => None,
         })

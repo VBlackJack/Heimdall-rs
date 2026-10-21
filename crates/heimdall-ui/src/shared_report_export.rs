@@ -72,12 +72,48 @@ fn total_text(report: &ImportReport) -> String {
     fl!("ui-shared-report-total", count = report.entries.len())
 }
 
+/// What replaces a control or bidirectional control character in the plain text.
+const CONTROL_REPLACEMENT: char = '?';
+
+/// Bidirectional controls, which `char::is_control` does not cover: they reorder what is read.
+const BIDI_CONTROLS: [char; 12] = [
+    '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}', '\u{202e}',
+    '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+];
+
+/// `text` of the file made safe to paste: each control character (a tab or a line break would
+/// start a new spreadsheet cell or row, so a name could put a formula in a cell of its own)
+/// and each bidirectional control is replaced by a visible mark.
+fn plain(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() || BIDI_CONTROLS.contains(&c) {
+                CONTROL_REPLACEMENT
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// `entry` with every field that comes from the file made safe to paste.
+fn cleaned(entry: &ReportEntry) -> ReportEntry {
+    ReportEntry {
+        folder: plain(&entry.folder),
+        session: plain(&entry.session),
+        detail: plain(&entry.detail),
+        context: plain(&entry.context),
+        ..entry.clone()
+    }
+}
+
 /// The report as plain text: the title, the counts per check, then every entry by check, as
-/// the C# `ToPlainText`. `source` is the name of the source the report is about.
+/// the C# `ToPlainText`. `source` is the name of the source the report is about. Every text of
+/// the file is cleaned of control characters, since the text is pasted into other programs.
 #[must_use]
 pub fn plain_text(source: &str, report: &ImportReport) -> String {
     let mut lines = vec![
-        fl!("ui-shared-report-title", name = source),
+        fl!("ui-shared-report-title", name = plain(source)),
         total_text(report),
     ];
     let summary = |check| {
@@ -89,17 +125,18 @@ pub fn plain_text(source: &str, report: &ImportReport) -> String {
     };
     lines.extend(checks().into_iter().map(summary));
     for check in checks() {
-        let entries: Vec<&ReportEntry> = report
+        let entries: Vec<ReportEntry> = report
             .entries
             .iter()
             .filter(|entry| entry.check == check)
+            .map(cleaned)
             .collect();
         if entries.is_empty() {
             continue;
         }
         lines.push(String::new());
         lines.push(summary(check));
-        lines.extend(entries.into_iter().map(|entry| {
+        lines.extend(entries.iter().map(|entry| {
             fl!(
                 "ui-shared-report-plain-entry",
                 folder = folder_label(&entry.folder),
@@ -366,6 +403,78 @@ Prod / api: It connects through no gateway (direct connection), while most of it
                 assert!(!line.starts_with(cell), "{line}");
             }
         }
+    }
+
+    #[test]
+    fn the_plain_text_holds_no_control_character_from_the_file() {
+        let hostile = ImportReport {
+            entries: vec![
+                entry(
+                    ReportCheck::UnresolvedVariable,
+                    "Pr\tod",
+                    "a\t+1+1\tb\r\n=2\u{202e}x",
+                    "GH\tOST",
+                    "",
+                    None,
+                ),
+                entry(
+                    ReportCheck::DuplicateHost,
+                    "F\u{85}",
+                    "x",
+                    "h\tost",
+                    "o\nther",
+                    None,
+                ),
+            ],
+        };
+        let text = plain_text("So\turce", &hostile);
+        // Only the line ends this export writes remain.
+        assert!(
+            !text.contains(['\t', '\r', '\u{85}', '\u{202e}']),
+            "{text:?}"
+        );
+        assert!(text.contains("a?+1+1?b??=2?x"), "{text:?}");
+        assert!(text.contains("GH?OST"), "{text:?}");
+        assert!(text.contains("So?urce"), "{text:?}");
+        assert!(text.contains("h?ost is also used by o?ther"), "{text:?}");
+    }
+
+    #[test]
+    fn a_bookmark_named_to_become_a_formula_cell_cannot_reach_the_clipboard_text() {
+        use heimdall_app::shared_sessions::{SharedSessions, Variables};
+        use heimdall_core::shared_sessions::SharedSource;
+        let dir = tempfile::tempdir().expect("dir");
+        let file = dir.path().join("team.mxtsessions");
+        std::fs::write(
+            &file,
+            "[Bookmarks]\r\na\t+1+1\tb= #109#0%web.example.com%22%[UNDEFINED]%\r\n",
+        )
+        .expect("write");
+        let mut shared = SharedSessions::default();
+        shared.load(
+            &[SharedSource {
+                id: "team".to_owned(),
+                name: "Team".to_owned(),
+                path: file.to_string_lossy().into_owned(),
+                enabled: true,
+            }],
+            &Variables::default(),
+        );
+        let report = shared.report_of("team").expect("a report");
+        assert!(
+            report
+                .entries
+                .iter()
+                .any(|entry| entry.check == ReportCheck::UnresolvedVariable),
+            "{report:?}"
+        );
+        let text = plain_text("Team", report);
+        assert!(!text.contains('\t'), "{text:?}");
+        assert!(
+            csv(report)
+                .find('\t')
+                .is_none_or(|at| csv(report)[..at].ends_with('\''))
+        );
     }
 
     #[test]
