@@ -626,7 +626,7 @@ fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
     .style(styles::tool_card)
     .on_press(Message::OpenTool(tool));
     // The whole description, as the C# card's tooltip.
-    let launch = tooltip(
+    let launch = styles::tip(
         container(launch).id(card_id(tool)),
         container(text(super::description(tool)).size(font_size::CAPTION))
             .max_width(CARD_WIDTH)
@@ -650,7 +650,7 @@ fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
             fl!("ui-tools-pin-tooltip"),
         )
     };
-    let pin = tooltip(
+    let pin = styles::tip(
         button(icons::faded(glyph, tint, PIN_SIDE, opacity))
             .padding(PIN_PADDING)
             .style(styles::subtle)

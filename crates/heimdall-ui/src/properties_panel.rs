@@ -581,7 +581,7 @@ pub fn splitter<'a>(height: f32, available: f32) -> Element<'a, Message> {
 
 /// The panel, `height` high: its title and its close mark, then what it shows, scrolled.
 pub fn view<'a>(shown: Shown, height: f32) -> Element<'a, Message> {
-    let close = tooltip(
+    let close = styles::tip(
         button(icons::icon(Icon::Close, Tint::Secondary, CLOSE_SIDE))
             .style(styles::subtle)
             .padding(CLOSE_PADDING)
@@ -658,7 +658,7 @@ fn session<'a>(
     let id = profile.id.clone();
     let mut panel = Column::new()
         .push(
-            tooltip(
+            styles::tip(
                 crate::ellipsis::text(name.clone())
                     .size(font_size::BODY_LARGE)
                     .font(styles::SEMIBOLD)
@@ -756,7 +756,7 @@ impl<'a> From<ValueText<'a>> for Element<'a, Message> {
 /// text it was, in the accent under the pointer, its whole value and how to copy it said on
 /// hover, for a value cut at the sidebar's narrowest.
 fn copy_value<'a>(shown: impl Into<Element<'a, Message>>, value: String) -> Element<'a, Message> {
-    tooltip(
+    styles::tip(
         button(shown)
             .style(copy_style)
             .padding(0.0)

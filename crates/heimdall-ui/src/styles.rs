@@ -24,7 +24,7 @@
 
 use iced::border::Radius;
 use iced::overlay::menu::Style as MenuStyle;
-use iced::theme::palette::{self, Extended};
+use iced::theme::palette::Extended;
 use iced::widget::TextInput;
 use iced::widget::button::{Status as ButtonStatus, Style as ButtonStyle};
 use iced::widget::checkbox::{Status as CheckStatus, Style as CheckStyle};
@@ -44,10 +44,14 @@ use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
 use iced::{Background, Border, Color, Element, Font, Pixels, Shadow, Theme, font};
 
 use crate::tokens::{
-    ACCENT_SHIFT, BORDER_WIDTH, DIALOG_SHADOW_ALPHA, DIALOG_SHADOW_BLUR, DIALOG_SHADOW_DEPTH,
-    FOCUS_BORDER_WIDTH, HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT, INPUT_PADDING,
-    OPACITY_DISABLED, radius,
+    BORDER_WIDTH, DIALOG_SHADOW_ALPHA, DIALOG_SHADOW_BLUR, DIALOG_SHADOW_DEPTH, FOCUS_BORDER_WIDTH,
+    HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT, INPUT_PADDING, OPACITY_DISABLED, radius,
 };
+
+// The C# `AppFocusVisualStyle` (`CommonControls.xaml:240-253`) rings a focused button in a
+// 2 px accent, rounded 4. iced 0.14 buttons take no keyboard focus and have no `Focused`
+// status to style, so no ring is drawn on them; the fields and the check boxes show their
+// focus (`FOCUS_BORDER_WIDTH`, the owner-approved 2 px border). Audit P3-5.
 
 /// Width of a scrollbar's track, as the C# `ThemedScrollBarStyle`'s.
 pub const SCROLLBAR_WIDTH: f32 = 12.0;
@@ -134,8 +138,8 @@ impl Brushes {
         let secondary = extended.secondary.base.color;
         Self {
             accent,
-            accent_hover: palette::lighten(accent, ACCENT_SHIFT),
-            accent_pressed: palette::darken(accent, ACCENT_SHIFT),
+            accent_hover: crate::themes::accent_states_of(theme).0,
+            accent_pressed: crate::themes::accent_states_of(theme).1,
             on_accent: extended.background.base.color,
             card: extended.background.weak.color,
             highlight: crate::themes::selection_of(theme),
@@ -806,9 +810,52 @@ pub fn progress(theme: &Theme) -> ProgressStyle {
     }
 }
 
-/// Room around a tooltip's text, as the C# `ThemedToolTipStyle`'s `8,6` above and below:
-/// iced pads a tooltip evenly, so on every side.
+/// Room above and below a tooltip's text, as the C# `ThemedToolTipStyle`'s `Padding="8,6"`
+/// (`CommonControls.xaml:1984`). iced pads a tooltip evenly, so the 2 more at each side
+/// come from [`tip`].
 pub const TOOLTIP_PADDING: f32 = 6.0;
+
+/// Room at each side of a tooltip's text, as the same `Padding="8,6"`.
+pub const TOOLTIP_PADDING_X: f32 = 8.0;
+
+/// `content` with `text` as its tooltip at `position`: iced's tooltip, its text given the
+/// 2 px at each side that make the C#'s `8,6` of the even [`TOOLTIP_PADDING`].
+pub fn tip<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message>>,
+    text: impl Into<Element<'a, Message>>,
+    position: iced::widget::tooltip::Position,
+) -> iced::widget::Tooltip<'a, Message> {
+    iced::widget::tooltip(
+        content,
+        iced::widget::container(text).padding(iced::Padding {
+            top: 0.0,
+            right: TOOLTIP_PADDING_X - TOOLTIP_PADDING,
+            bottom: 0.0,
+            left: TOOLTIP_PADDING_X - TOOLTIP_PADDING,
+        }),
+        position,
+    )
+}
+
+/// The count on a tree folder, as the C# folder row's badge (`MainWindow.xaml:882-896`): a
+/// card outlined in the border colour, rounded as `SessionTreeBadgeCornerRadius`. Its count is
+/// in the primary text, not the C#'s `TextSecondaryBrush`: that is under 4.5:1 on the card
+/// in Dracula, too faint for small text.
+pub fn count_badge(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        text_color: Some(brushes.text),
+        border: brushes.outline(brushes.edge, radius::BADGE),
+        ..BoxStyle::default()
+    }
+}
+
+/// The three dots on the sidebar's splitter, as the C# splitter's glyph (`MainWindow.xaml:1566`):
+/// the secondary text, round.
+pub fn splitter_dot(theme: &Theme) -> BoxStyle {
+    filled(Brushes::of(theme).secondary, f32::MAX)
+}
 
 /// A tooltip, as the C# `ThemedToolTipStyle`: the window's background, outlined in the
 /// border colour and rounded as `CornerRadiusMd`; outlined in white in high contrast.
@@ -1171,6 +1218,23 @@ mod tests {
                         "{each:?}/{accent:?}: the {what} is {ratio:.2}:1"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn the_folder_count_reads_at_4_5_to_1_on_its_badge_in_every_theme() {
+        for each in AppTheme::ALL {
+            for accent in Accent::ALL {
+                let style = count_badge(&themes::theme(each, accent));
+                let Some(Background::Color(card)) = style.background else {
+                    panic!("{each:?}: the badge has a card");
+                };
+                let ratio = contrast(style.text_color.expect("the badge sets its text"), card);
+                assert!(
+                    ratio >= SMALL_TEXT_CONTRAST,
+                    "{each:?}/{accent:?}: the count is {ratio:.2}:1"
+                );
             }
         }
     }

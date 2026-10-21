@@ -779,7 +779,7 @@ impl Shell {
                 .style(styles::secondary)
                 .on_press(send(SettingsMessage::ResetAllSettings)),
             iced::widget::space::horizontal(),
-            tooltip(
+            styles::tip(
                 button(text(fl!("ui-settings-find-modified")))
                     .style(styles::subtle)
                     .on_press(Message::FindModifiedSettings),
@@ -788,7 +788,7 @@ impl Shell {
             )
             .padding(styles::TOOLTIP_PADDING)
             .style(styles::tooltip),
-            tooltip(
+            styles::tip(
                 field,
                 text(fl!("ui-settings-search-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
@@ -800,7 +800,7 @@ impl Shell {
         .align_y(iced::Alignment::Center);
         if !self.settings_search.is_empty() {
             header = header.push(
-                tooltip(
+                styles::tip(
                     button(text(fl!("ui-tree-search-clear-button")))
                         .padding(crate::tokens::BUTTON_PADDING)
                         .style(styles::secondary)
@@ -971,7 +971,7 @@ impl Shell {
         .padding(BADGE_PADDING)
         .style(styles::badge);
         row![
-            tooltip(
+            styles::tip(
                 badge,
                 text(fl!(
                     "ui-settings-modified-from-default",
@@ -982,7 +982,7 @@ impl Shell {
             )
             .padding(styles::TOOLTIP_PADDING)
             .style(styles::tooltip),
-            tooltip(
+            styles::tip(
                 button(
                     row![
                         icons::icon(Icon::Restore, Tint::Text, RESET_GLYPH_SIDE),
@@ -1764,7 +1764,7 @@ impl Shell {
         )
         .style(styles::pick_list)
         .menu_style(styles::menu);
-        let apply = tooltip(
+        let apply = styles::tip(
             button(text(fl!("ui-settings-apply-mode-to-all")).size(font_size::CAPTION))
                 .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
@@ -1797,7 +1797,7 @@ impl Shell {
         )
         .style(styles::pick_list)
         .menu_style(styles::menu);
-        let apply = tooltip(
+        let apply = styles::tip(
             button(text(fl!("ui-settings-apply-mode-to-all")).size(font_size::CAPTION))
                 .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
@@ -1884,7 +1884,7 @@ impl Shell {
                     .map(|tool| self.app.external_tool_preview(tool)),
                 heimdall_app::elevated_shell::SUPPORTED,
             ),
-            _ => tooltip(
+            _ => styles::tip(
                 button(text(fl!("ui-settings-rdp-reset-defaults")))
                     .padding(crate::tokens::BUTTON_PADDING)
                     .style(styles::secondary)

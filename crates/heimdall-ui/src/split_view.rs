@@ -759,7 +759,7 @@ pub fn session_header(heading: Heading<'_>, actions: HeaderActions) -> Element<'
         ..
     } = heading;
     let tip = |content: Element<'static, Message>, said: String| {
-        tooltip(
+        styles::tip(
             content,
             text(said).size(font_size::CAPTION),
             tooltip::Position::Bottom,

@@ -196,7 +196,7 @@ pub fn elapsed_text(retry: Retry, now: Instant) -> String {
 /// The health dot, its state in its tip.
 #[must_use]
 pub fn health_dot<'a>(health: Health) -> Element<'a, Message> {
-    tooltip(
+    styles::tip(
         crate::tree_view::sized_state_dot(Some(health.state()), DOT_SIDE),
         text(fl!("ui-rdp-health-tooltip", state = health.label())).size(font_size::CAPTION),
         tooltip::Position::Bottom,
@@ -220,7 +220,7 @@ pub fn stepper<'a>(phase: ConnectPhase) -> Option<Element<'a, Message>> {
             .into()
     });
     Some(
-        tooltip(
+        styles::tip(
             Row::with_children(segments)
                 .spacing(SEGMENT_GAP)
                 .align_y(iced::Alignment::Center),
@@ -474,7 +474,7 @@ pub fn redirection_controls<'a>(
                     .style(text::secondary)
                     .into()
             };
-            tooltip(
+            styles::tip(
                 name,
                 text(tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
@@ -486,7 +486,7 @@ pub fn redirection_controls<'a>(
         .collect();
     if !expanded && count > 0 {
         controls.push(
-            tooltip(
+            styles::tip(
                 button(
                     text(fl!("ui-rdp-redirections-more", count = count.to_string()))
                         .size(font_size::CAPTION),

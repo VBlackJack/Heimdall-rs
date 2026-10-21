@@ -181,6 +181,13 @@ const TOOL_GAP: f32 = 2.0;
 /// Side of the dot on the filter button while a filter is on, as the C#'s.
 const FILTER_DOT_SIDE: f32 = 6.0;
 
+/// Side of one of the three dots on the sidebar's splitter, as the C# splitter's glyph
+/// (`MainWindow.xaml:1566`, `FontSizeSmallCaption`, turned 90 degrees).
+const SPLITTER_DOT_SIDE: f32 = 2.0;
+
+/// Space between two dots of the splitter's grip.
+const SPLITTER_DOT_GAP: f32 = 3.0;
+
 /// Space between two tabs, as the C# `ThemedTabItemStyle`'s right margin.
 const TAB_GAP: f32 = 4.0;
 
@@ -1490,7 +1497,7 @@ fn tab_badges<'a>(tab: &Tab, active: bool) -> Vec<Element<'a, Message>> {
 /// The mark of a tab whose output is recorded, as the C#'s; `None` when it is not.
 fn transcript_mark<'a>(tab: &Tab) -> Option<Element<'a, Message>> {
     tab.transcript.is_some().then(|| {
-        tooltip(
+        styles::tip(
             text(fl!("ui-tab-recording")).size(font_size::CAPTION),
             text(fl!("ui-tab-recording-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
@@ -5275,7 +5282,7 @@ impl Shell {
         if let (true, false, Some(opacity)) = (self.fullscreen, locked, chrome_opacity) {
             layers = layers.push(
                 container(
-                    tooltip(
+                    styles::tip(
                         button(text(fl!("ui-fullscreen-exit")).size(font_size::CAPTION))
                             .style(move |theme, status| {
                                 styles::faded_to(&styles::secondary(theme, status), opacity)
@@ -5837,7 +5844,7 @@ impl Shell {
         // At the end, as the C# toolbar's shortcuts: the lock (only while a master password
         // is set) and the share toggle as 32 px icons, then Quick Connect.
         let tip = |button: Element<'static, Message>, label: String| {
-            tooltip(
+            styles::tip(
                 button,
                 text(label).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
@@ -5876,7 +5883,7 @@ impl Shell {
             },
         ))
         .push(
-            tooltip(
+            styles::tip(
                 button(
                     row![
                         icons::icon(Icon::Zoom, Tint::Accent, font_size::BODY),
@@ -5972,7 +5979,7 @@ impl Shell {
     fn share_controls(&self) -> Option<Element<'_, Message>> {
         let share = |message| Message::App(AppMessage::Share(message));
         let tip = |button: Element<'static, Message>, label: String| {
-            tooltip(
+            styles::tip(
                 button,
                 text(label).size(font_size::CAPTION),
                 tooltip::Position::Top,
@@ -6033,7 +6040,7 @@ impl Shell {
     /// The tunnels panel's button, as the C# bar's: a lightning bolt and how many tunnels
     /// are open.
     fn tunnels_toggle(&self) -> Element<'_, Message> {
-        tooltip(
+        styles::tip(
             container(
                 crate::status_bar::glyph_button(
                     Icon::Lightning,
@@ -6061,7 +6068,7 @@ impl Shell {
         let scope = crate::status_bar::scope_label(self.app.settings().broadcast_scope, targets);
         let broadcast = |message| Message::App(AppMessage::Broadcast(message));
         row![
-            tooltip(
+            styles::tip(
                 crate::status_bar::glyph_button(
                     Icon::Broadcast,
                     if on { Tint::Danger } else { Tint::Text },
@@ -6086,7 +6093,7 @@ impl Shell {
             )
             .padding(styles::TOOLTIP_PADDING)
             .style(styles::tooltip),
-            tooltip(
+            styles::tip(
                 crate::status_bar::glyph_button(
                     Icon::List,
                     Tint::Text,
@@ -6110,7 +6117,7 @@ impl Shell {
         let shown = self.app.sidebar_tab();
         let header = row![
             sidebar_tabs(shown),
-            tooltip(
+            styles::tip(
                 container(
                     icons::button(Icon::ClosePane)
                         .style(styles::secondary)
@@ -6255,7 +6262,7 @@ impl Shell {
             .padding([4.0, 6.0])
             .style(styles::panel);
         Some(
-            tooltip(
+            styles::tip(
                 crate::tree_drag::drop_zone(
                     zone.into(),
                     heimdall_app::DropTarget::Folder(heimdall_app::NO_FOLDER.to_owned()),
@@ -6396,7 +6403,7 @@ impl Shell {
         }
         let chips = row(chips.into_iter().map(|(label, message)| {
             let remove = fl!("ui-tree-filter-chip-tooltip", filter = label.as_str());
-            tooltip(
+            styles::tip(
                 button(
                     row![
                         text(label)
@@ -6613,7 +6620,7 @@ impl Shell {
     /// ([`SearchKeys`], [`Shell::search_key`]). As the C#'s row: the clear button inside the
     /// box once something is typed, then the filters, Add and More as quiet icon buttons.
     fn search_box(&self) -> Element<'_, Message> {
-        let field = tooltip(
+        let field = styles::tip(
             SearchKeys::new(
                 text_input(&fl!("ui-tree-search-placeholder"), &self.search)
                     .style(styles::text_input)
@@ -6636,7 +6643,7 @@ impl Shell {
         let field = crate::press_tooltip::hide_on_press(field);
         let clear = (!self.search.is_empty()).then(|| {
             container(
-                tooltip(
+                styles::tip(
                     button(center(icons::icon(
                         Icon::Close,
                         Tint::Text,
@@ -6658,7 +6665,7 @@ impl Shell {
             .padding(SEARCH_CLEAR_PADDING)
         });
         let tool = |glyph: Element<'static, Message>, tip: String, menu: TreeMenu| {
-            tooltip(
+            styles::tip(
                 button(glyph)
                     .width(icons::BUTTON_SIDE)
                     .height(icons::BUTTON_SIDE)
@@ -8541,7 +8548,7 @@ impl Shell {
                         .on_press(Message::CopyError(tab.id)),
                 )
                 .push(
-                    tooltip(
+                    styles::tip(
                         button(action_label(fl!("ui-session-copy-anonymous-button")))
                             .padding(crate::tokens::BUTTON_PADDING)
                             .style(styles::secondary)
@@ -8741,7 +8748,7 @@ impl Shell {
         }
         let tab_id = tab.id;
         let tip = |content: Element<'a, Message>, said: String| -> Element<'a, Message> {
-            tooltip(
+            styles::tip(
                 content,
                 text(said).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
@@ -8816,7 +8823,7 @@ impl Shell {
         .text_size(font_size::CAPTION);
         let mut bar = row![
             // Beside it: below, it would cover the menu's first entry.
-            tooltip(
+            styles::tip(
                 send_keys,
                 text(fl!("ui-desktop-send-keys-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Right,
@@ -8851,7 +8858,7 @@ impl Shell {
             );
         }
         bar.push(
-            tooltip(
+            styles::tip(
                 button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
                     .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
@@ -8881,7 +8888,7 @@ impl Shell {
         // tip saying how to stop waiting.
         if let Some(seconds) = pane.stabilization_seconds_left(std::time::Instant::now()) {
             shown.push(
-                tooltip(
+                styles::tip(
                     text(fl!("ui-desktop-stabilizing", seconds = seconds))
                         .size(font_size::CAPTION)
                         .font(iced::Font {
@@ -8905,7 +8912,7 @@ impl Shell {
         // Shown while the session gets anti-idle keys; a click stops them, as the C# badge.
         if self.app.anti_idle_on(tab_id) {
             shown.push(
-                tooltip(
+                styles::tip(
                     button(text(fl!("ui-desktop-anti-idle")).size(font_size::CAPTION))
                         .style(styles::subtle)
                         .on_press(Message::App(AppMessage::StopAntiIdle(tab_id))),
@@ -9377,17 +9384,29 @@ fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message
 /// C# `GridSplitter`.
 fn splitter<'a>() -> Element<'a, Message> {
     // The card colour at rest, the accent under the pointer, as the C# splitter's brushes.
+    let dot = || {
+        container(iced::widget::space())
+            .width(SPLITTER_DOT_SIDE)
+            .height(SPLITTER_DOT_SIDE)
+            .style(styles::splitter_dot)
+    };
     let handle = |lit: bool| {
-        container(iced::widget::space().width(SPLITTER_WIDTH))
-            .height(Length::Fill)
-            .style(move |theme: &Theme| container::Style {
-                background: Some(if lit {
-                    theme.extended_palette().primary.base.color.into()
-                } else {
-                    styles::card_color(theme).into()
-                }),
-                ..container::Style::default()
-            })
+        // The C# grip: three dots in the middle of the bar, in the secondary text.
+        container(
+            column![dot(), dot(), dot()]
+                .spacing(SPLITTER_DOT_GAP)
+                .align_x(iced::Alignment::Center),
+        )
+        .center_x(SPLITTER_WIDTH)
+        .center_y(Length::Fill)
+        .style(move |theme: &Theme| container::Style {
+            background: Some(if lit {
+                theme.extended_palette().primary.base.color.into()
+            } else {
+                styles::card_color(theme).into()
+            }),
+            ..container::Style::default()
+        })
     };
     mouse_area(iced::widget::hover(handle(false), handle(true)))
         .on_press(Message::SidebarDragStart)
@@ -9583,7 +9602,7 @@ fn read_explorer_files(tab: TabId) -> Task<Message> {
 fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, Message>> {
     if pane.can_save_files() {
         return Some(
-            tooltip(
+            styles::tip(
                 button(text(fl!("ui-desktop-save-files")).size(font_size::CAPTION))
                     .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
@@ -9632,7 +9651,7 @@ fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, 
     .menu_style(styles::menu)
     .text_size(font_size::CAPTION);
     Some(
-        tooltip(
+        styles::tip(
             choices,
             text(fl!("ui-session-vnc-quality")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
@@ -9651,7 +9670,7 @@ fn vnc_overlay<'a>(tab: &Tab, pane: &'a DesktopPane, fit: bool) -> Option<Elemen
     }
     let tab_id = tab.id;
     let tip = |content: Element<'a, Message>, said: String| -> Element<'a, Message> {
-        tooltip(
+        styles::tip(
             content,
             text(said).size(font_size::CAPTION),
             tooltip::Position::Bottom,
@@ -10560,7 +10579,7 @@ fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Me
             field = field.push(
                 row![
                     dialog_parts::hint(fl!("ui-profile-password-saved")),
-                    tooltip(
+                    styles::tip(
                         button(text(fl!("ui-profile-password-clear")).size(font_size::CAPTION))
                             .style(styles::subtle)
                             .on_press(Message::App(AppMessage::ClearPassword)),
@@ -11426,7 +11445,7 @@ fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Colum
             field = field.push(
                 row![
                     text(fl!("ui-profile-passphrase-saved")).size(font_size::CAPTION),
-                    tooltip(
+                    styles::tip(
                         button(text(fl!("ui-profile-password-clear")).size(font_size::CAPTION))
                             .style(styles::subtle)
                             .on_press(Message::App(passphrase.clear.clone())),
@@ -11874,7 +11893,7 @@ fn protocol_line<'a>(protocol: DraftProtocol, adding: bool) -> Element<'a, Messa
     .spacing(spacing::XS)
     .align_y(iced::Alignment::Center);
     let chip: Element<'a, Message> = if adding {
-        tooltip(
+        styles::tip(
             button(chip)
                 .padding(CHIP_PADDING)
                 .style(styles::subtle)

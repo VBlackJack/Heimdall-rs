@@ -77,7 +77,7 @@ pub fn view(chip: &AgentChip) -> Option<Element<'_, Message>> {
         AgentTone::Ok => label.style(text::success),
     };
     Some(
-        tooltip(
+        styles::tip(
             button(label)
                 .style(styles::subtle)
                 .padding(0)

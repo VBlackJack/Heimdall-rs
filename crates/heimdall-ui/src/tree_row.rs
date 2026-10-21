@@ -22,7 +22,8 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::Widget;
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
-use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, Vector, window};
+use iced::border::Radius;
+use iced::{Border, Color, Element, Event, Length, Point, Rectangle, Size, Theme, Vector, window};
 
 use crate::shell::Message;
 
@@ -71,16 +72,36 @@ struct Hover {
     drawn: Option<bool>,
 }
 
-/// `bounds` filled with `color`.
-fn fill(renderer: &mut iced::Renderer, bounds: Rectangle, color: Color) {
+/// `bounds` filled with `color`, its corners rounded by `radius`.
+fn fill(renderer: &mut iced::Renderer, bounds: Rectangle, color: Color, radius: Radius) {
     use iced::advanced::Renderer as _;
     renderer.fill_quad(
         renderer::Quad {
             bounds,
+            border: Border {
+                radius,
+                ..Border::default()
+            },
             ..renderer::Quad::default()
         },
         color,
     );
+}
+
+/// The row's corners, as the C# chrome's `CornerRadiusSm` (`MainWindow.xaml:792`, `:918`).
+fn row_radius() -> Radius {
+    Radius::from(crate::tokens::radius::SM)
+}
+
+/// The accent bar's corners: the row's at its left, square at its right, as the C# left
+/// border follows the rounded chrome.
+fn edge_radius() -> Radius {
+    Radius {
+        top_left: crate::tokens::radius::SM,
+        bottom_left: crate::tokens::radius::SM,
+        top_right: 0.0,
+        bottom_right: 0.0,
+    }
 }
 
 impl Widget<Message, Theme, iced::Renderer> for RowChrome<'_> {
@@ -189,7 +210,12 @@ impl Widget<Message, Theme, iced::Renderer> for RowChrome<'_> {
         let palette = theme.extended_palette();
         // The C# `HighlightBrush`, under the pointer and on the keyboard's folder.
         if cursor.is_over(bounds) || self.mark == Mark::Cursor {
-            fill(renderer, bounds, crate::themes::selection_of(theme));
+            fill(
+                renderer,
+                bounds,
+                crate::themes::selection_of(theme),
+                row_radius(),
+            );
         }
         let edge = Rectangle::new(
             Point::new(bounds.x, bounds.y),
@@ -199,11 +225,21 @@ impl Widget<Message, Theme, iced::Renderer> for RowChrome<'_> {
             Mark::None => {}
             Mark::Selected => {
                 let accent = palette.primary.base.color;
-                fill(renderer, bounds, accent.scale_alpha(SELECTED_ALPHA));
-                fill(renderer, edge, accent);
+                fill(
+                    renderer,
+                    bounds,
+                    accent.scale_alpha(SELECTED_ALPHA),
+                    row_radius(),
+                );
+                fill(renderer, edge, accent, edge_radius());
             }
             // The C# `FocusIndicatorBrush`.
-            Mark::Cursor => fill(renderer, edge, crate::themes::colors_of(theme).cyan),
+            Mark::Cursor => fill(
+                renderer,
+                edge,
+                crate::themes::colors_of(theme).cyan,
+                edge_radius(),
+            ),
         }
         self.content.as_widget().draw(
             &tree.children[0],
@@ -371,7 +407,7 @@ impl Widget<Message, Theme, iced::Renderer> for Guided<'_> {
             .color
             .scale_alpha(GUIDE_ALPHA);
         for guide in guide_bounds(layout.bounds(), &self.offsets, self.reach) {
-            fill(renderer, guide, color);
+            fill(renderer, guide, color, Radius::default());
         }
         self.content.as_widget().draw(
             &tree.children[0],

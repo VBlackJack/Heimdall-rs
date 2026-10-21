@@ -275,7 +275,7 @@ impl Shell {
             }
         };
         Some(
-            tooltip(
+            styles::tip(
                 text(fl!("ui-tab-route-badge"))
                     .size(font_size::CAPTION)
                     .style(colour),
@@ -324,7 +324,7 @@ impl Shell {
             .align_y(iced::Alignment::Center);
         if tab.pinned {
             label = label.push(
-                tooltip(
+                styles::tip(
                     icons::icon(Icon::Pin, Tint::Accent, TAB_PIN_SIDE),
                     text(fl!("ui-tab-pinned-badge")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
@@ -353,7 +353,7 @@ impl Shell {
         let profile = self.app.tab_profile(tab);
         let lines = tooltip_lines(name, profile.as_ref(), Self::state_text(tab));
         label = label.push(
-            tooltip(
+            styles::tip(
                 titled,
                 text(lines.join("\n")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
@@ -459,7 +459,7 @@ impl Shell {
             // A target of broadcast input, or not, as the C# tab's marker.
             let target = self.app.is_broadcast_target(tab.id);
             marks.push(
-                tooltip(
+                styles::tip(
                     button(
                         text(if target {
                             fl!("ui-broadcast-target-on")
@@ -503,7 +503,7 @@ impl Shell {
         // The sidebar hidden, a way to show it again, as the C# button where it was.
         if self.sidebar_hidden {
             strip = strip.push(
-                tooltip(
+                styles::tip(
                     container(
                         icons::button(Icon::ChevronRight)
                             .style(styles::secondary)
@@ -538,7 +538,7 @@ impl Shell {
             let quiet = !active && self.tab_hover != Some(tab.id);
             // Naming the tab it closes, as the C# button's accessible name, in a tooltip.
             let close = container(
-                tooltip(
+                styles::tip(
                     button(center(icons::faded(
                         Icon::Close,
                         Tint::Text,
@@ -578,7 +578,7 @@ impl Shell {
         // Every open tab, for the ones scrolled out of the strip.
         if self.tab_overflow {
             strip = strip.push(
-                tooltip(
+                styles::tip(
                     icons::button(Icon::ChevronDown)
                         .style(styles::secondary)
                         .on_press(Message::OpenTreeMenu(TreeMenu::TabList)),
@@ -598,7 +598,7 @@ impl Shell {
 fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_, Message> {
     let count = format!("{}/{}", progress.step, progress.total);
     let status = texts::step_status(progress.status);
-    tooltip(
+    styles::tip(
         button(text(count.clone()).size(font_size::CAPTION))
             .style(styles::subtle)
             .on_press(Message::App(AppMessage::StopPostConnect(tab))),
