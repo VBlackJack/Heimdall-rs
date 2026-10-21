@@ -327,6 +327,26 @@ pub const fn colors(theme: AppTheme) -> ThemeColors {
     }
 }
 
+/// The hover and pressed colours `ThemeForge` writes for the accent of its own themes
+/// (`Themes/*.xaml`, `AccentHoverColor` and `AccentPressedColor`), by that accent: four
+/// distinct pairs across the 17 themes. Not the Oklab shift it computes for a tinted accent
+/// (`ThemeService.AccentTint.cs:42`), which clips differently.
+fn own_accent_states(accent: Color) -> Option<(Color, Color)> {
+    // Compared by 8-bit channels, as the XAML writes them.
+    let [r, g, b, _] = accent.into_rgba8();
+    match (r, g, b) {
+        // Dracula and Drakul.
+        (0xBD, 0x93, 0xF9) => Some((hex(0x00D5_BEFC), hex(0x00A1_70E6))),
+        // The dark themes.
+        (0xC8, 0x85, 0xE5) => Some((hex(0x00D3_9DEA), hex(0x0096_64AC))),
+        // The light themes.
+        (0x8E, 0x18, 0xC1) => Some((hex(0x00A5_46CD), hex(0x006A_1291))),
+        // Magellan.
+        (0x8C, 0x9C, 0xFF) => Some((hex(0x00A6_B2FF), hex(0x005C_6BD6))),
+        _ => None,
+    }
+}
+
 /// The window's theme `theme`, tinted with `accent`: the accent is the primary colour,
 /// green success, orange a warning and red danger, as the C# semantic colours; the weak
 /// background is the theme's current line, and the secondary colour its comment, as the C#
@@ -358,6 +378,22 @@ fn build(theme: AppTheme, accent: Accent) -> Theme {
         if colors.high_contrast {
             extended.background.strong = Pair::new(colors.foreground, colors.background);
         }
+        // iced has no hover slot for the primary colour: the accent's hover and pressed
+        // ride the secondary's weak and strong shades, which nothing else reads, for
+        // `accent_states_of` to find. Explicit for the theme's own accent, as the C#'s.
+        let own = if accent == Accent::Default {
+            own_accent_states(colors.accent)
+        } else {
+            None
+        };
+        let (hover, pressed) = own.unwrap_or_else(|| {
+            (
+                iced::theme::palette::lighten(colors.accent(accent), crate::tokens::ACCENT_SHIFT),
+                iced::theme::palette::darken(colors.accent(accent), crate::tokens::ACCENT_SHIFT),
+            )
+        });
+        extended.secondary.weak = Pair::new(hover, colors.background);
+        extended.secondary.strong = Pair::new(pressed, colors.background);
         extended.is_dark = !colors.light;
         extended
     })
@@ -400,6 +436,24 @@ pub fn colors_of(theme: &Theme) -> ThemeColors {
 #[must_use]
 pub fn selection_of(theme: &Theme) -> Color {
     theme.extended_palette().background.weaker.color
+}
+
+/// The accent's colours under the pointer and pressed, read from the secondary's weak and
+/// strong shades [`build`] stores them in. A theme not of `ThemeForge` shifts its primary
+/// colour as the C# does a tinted accent.
+#[must_use]
+pub fn accent_states_of(theme: &Theme) -> (Color, Color) {
+    let name = theme.to_string();
+    if AppTheme::ALL.into_iter().any(|each| each.name() == name) {
+        let secondary = &theme.extended_palette().secondary;
+        (secondary.weak.color, secondary.strong.color)
+    } else {
+        let accent = theme.palette().primary;
+        (
+            iced::theme::palette::lighten(accent, crate::tokens::ACCENT_SHIFT),
+            iced::theme::palette::darken(accent, crate::tokens::ACCENT_SHIFT),
+        )
+    }
 }
 
 /// Whether `theme` is high contrast, which [`crate::styles`] outlines wider.
@@ -498,6 +552,38 @@ mod tests {
 
     /// The light themes of `ThemeForge`: its Light family.
     const LIGHT: [AppTheme; 2] = [AppTheme::Parchment, AppTheme::Folio];
+
+    #[test]
+    fn the_default_accent_takes_the_explicit_hover_and_pressed_of_themeforge() {
+        // Dracula `AccentHoverColor` / `AccentPressedColor`, `Themes/Dracula.xaml:38-39`.
+        let dracula = theme(AppTheme::Dracula, Accent::Default);
+        assert_eq!(
+            accent_states_of(&dracula),
+            (hex(0x00D5_BEFC), hex(0x00A1_70E6))
+        );
+        // Folio, a light theme (`Themes/Folio.xaml`), and Magellan's indigo.
+        assert_eq!(
+            accent_states_of(&theme(AppTheme::Folio, Accent::Default)),
+            (hex(0x00A5_46CD), hex(0x006A_1291))
+        );
+        assert_eq!(
+            accent_states_of(&theme(AppTheme::Magellan, Accent::Default)),
+            (hex(0x00A6_B2FF), hex(0x005C_6BD6))
+        );
+    }
+
+    #[test]
+    fn a_tinted_accent_is_shifted_as_themeforge_does() {
+        let tinted = theme(AppTheme::Dracula, Accent::Blue);
+        let blue = colors(AppTheme::Dracula).blue;
+        assert_eq!(
+            accent_states_of(&tinted),
+            (
+                iced::theme::palette::lighten(blue, crate::tokens::ACCENT_SHIFT),
+                iced::theme::palette::darken(blue, crate::tokens::ACCENT_SHIFT)
+            )
+        );
+    }
 
     #[test]
     fn every_theme_builds_dark_or_light_as_its_family() {

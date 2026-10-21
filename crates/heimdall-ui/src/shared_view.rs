@@ -206,7 +206,7 @@ fn session_row<'a>(session: &SharedSession, source: &str) -> Element<'a, Message
     );
     row![
         iced::widget::space().width(SESSION_INDENT),
-        tooltip(
+        styles::tip(
             open,
             text(tip).size(font_size::CAPTION),
             tooltip::Position::Right

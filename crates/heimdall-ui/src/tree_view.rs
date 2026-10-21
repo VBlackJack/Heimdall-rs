@@ -413,9 +413,15 @@ pub fn folder_row<'a>(
                     .width(Length::Fill)
                     .size(font_size::BODY)
                     .font(SEMIBOLD),
-                text(count)
-                    .size(font_size::SMALL_CAPTION)
-                    .style(text::secondary),
+                // The C# badge: a small outlined card, its count semi-bold.
+                container(
+                    text(count)
+                        .size(font_size::SMALL_CAPTION)
+                        .font(SEMIBOLD)
+                        .style(text::secondary)
+                )
+                .padding(crate::tokens::COUNT_BADGE_PADDING)
+                .style(styles::count_badge),
             ]
             .spacing(FOLDER_ICON_GAP)
             .align_y(iced::Alignment::Center),
@@ -597,7 +603,7 @@ pub fn owned_row(
         iced::widget::space().width(EXPANDER_SIDE + EXPANDER_GAP),
         // Put away by a click, as the C# tooltip closes when its row is clicked.
         hide_on_press(
-            tooltip(
+            styles::tip(
                 area,
                 text(row_tooltip(profile, reach.as_ref())).size(font_size::CAPTION),
                 tooltip::Position::Right,
@@ -774,7 +780,7 @@ fn into_shown_entry<'a>(
     if !pending {
         return entry(label, Some(AppMessage::Files(message)));
     }
-    tooltip(
+    styles::tip(
         entry(label, None),
         text(fl!("ui-files-listing-in-progress-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Right,
@@ -854,7 +860,7 @@ fn keyed_entry<'a>(
 /// `entry`, greyed, saying `why` on hover, as the C# `ExplainDisabled`
 /// (`ContextMenuFactory.cs:1100-1109`), instead of leaving it to be puzzled over.
 fn explained(entry: Element<'_, Message>, why: String) -> Element<'_, Message> {
-    tooltip(
+    styles::tip(
         entry,
         text(why).size(font_size::BODY_LARGE),
         tooltip::Position::Right,
@@ -1152,7 +1158,7 @@ pub fn open_in_split_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
 /// "Connect with...", as the C# `CreateConnectWithMenu` (`ContextMenuFactory.cs:266-283`):
 /// the RDP modes an RDP profile opens in this once, what it does said beside it.
 fn connect_with_entry<'a>(id: &ProfileId) -> Element<'a, Message> {
-    tooltip(
+    styles::tip(
         submenu(
             fl!("ui-tree-connect-with"),
             TreeMenu::ConnectWith(id.clone()),
@@ -1973,7 +1979,7 @@ pub fn resolution_entries<'a>(
         );
         // A size the tab cannot show whole says so, as the C# preset tooltip.
         entries = entries.push(if state.larger_than_tab(size) {
-            tooltip(
+            styles::tip(
                 preset,
                 text(fl!("ui-resolution-larger-than-window")).size(font_size::BODY_LARGE),
                 tooltip::Position::Left,

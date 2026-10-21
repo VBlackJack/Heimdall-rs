@@ -268,7 +268,7 @@ pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, 
         button(text(fl!("ui-tunnels-new")).size(font_size::CAPTION))
             .style(styles::subtle)
             .on_press(tunnel(TunnelMessage::New)),
-        tooltip(
+        styles::tip(
             button(text(fl!("ui-tunnels-collapse-button")).size(font_size::CAPTION))
                 .style(styles::subtle)
                 .on_press(tunnel(TunnelMessage::TogglePanel)),
@@ -308,7 +308,7 @@ pub fn page<'a>(
             .padding(crate::tokens::BUTTON_PADDING)
             .style(styles::primary)
             .on_press(tunnel(TunnelMessage::New)),
-        tooltip(
+        styles::tip(
             button(text(fl!("ui-tunnels-close-selected")))
                 .padding(crate::tokens::BUTTON_PADDING)
                 .style(styles::secondary)
@@ -353,7 +353,7 @@ const PAGE_PADDING: f32 = 16.0;
 /// Close All, saying what it leaves: unlike the C# one, it never ends a session, whose
 /// route is carried inside Heimdall and goes with its tab.
 fn close_all(button: iced::widget::Button<'_, Message>) -> Element<'_, Message> {
-    tooltip(
+    styles::tip(
         button,
         text(fl!("ui-tunnels-close-all-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
@@ -394,7 +394,7 @@ fn said_whole(cell: Ellipsis<'_>, value: String) -> Element<'_, Message> {
     if value.is_empty() {
         return cell.into();
     }
-    tooltip(
+    styles::tip(
         cell,
         text(value).size(font_size::CAPTION),
         tooltip::Position::Top,
@@ -450,7 +450,7 @@ fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
         status_dot(route.interrupted),
         text_cell(gateways, Length::Fill),
         text_cell(server_text(&route.title), LABEL_WIDTH),
-        tooltip(
+        styles::tip(
             cell(fl!("ui-tunnels-session-route-local")).width(LOCAL_WIDTH),
             text(fl!("ui-tunnels-session-route-local-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
@@ -510,7 +510,7 @@ fn tunnel_row(open: &Tunnel, place: Place) -> Element<'_, Message> {
     ]
     .push(started.then(|| cell(open.started_clock()).width(STARTED_WIDTH)))
     .push(
-        tooltip(
+        styles::tip(
             button(text(fl!("ui-tab-close-button")).size(font_size::CAPTION))
                 .style(styles::subtle)
                 .width(CLOSE_WIDTH)
@@ -572,7 +572,7 @@ fn status_dot<'a>(interrupted: bool) -> Element<'a, Message> {
     } else {
         fl!("ui-tunnels-status-active")
     };
-    tooltip(
+    styles::tip(
         dot,
         text(label).size(font_size::CAPTION),
         tooltip::Position::Right,

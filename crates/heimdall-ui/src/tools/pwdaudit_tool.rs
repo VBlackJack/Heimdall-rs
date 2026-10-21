@@ -223,7 +223,7 @@ impl PwdAuditPane {
                 .padding(super::INPUT_PADDING)
                 .style(styles::text_input)
                 .on_input(move |typed| send(PwdAuditMessage::Password(typed))),
-            tooltip(
+            styles::tip(
                 icons::button(eye)
                     .style(styles::secondary)
                     .on_press(send(PwdAuditMessage::ToggleVisibility)),

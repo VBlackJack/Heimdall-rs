@@ -824,7 +824,7 @@ impl PasswordPane {
         .style(styles::pick_list)
         .menu_style(styles::menu)
         .text_size(font_size::BODY);
-        let presets = tooltip(
+        let presets = styles::tip(
             pick_list(
                 self.preset_entries(&saved),
                 Some(self.preset.clone()),
@@ -838,7 +838,7 @@ impl PasswordPane {
         )
         .padding(styles::TOOLTIP_PADDING)
         .style(styles::tooltip);
-        let save = tooltip(
+        let save = styles::tip(
             super::action_button(
                 fl!("ui-tool-password-save-preset"),
                 false,
@@ -849,7 +849,7 @@ impl PasswordPane {
         )
         .padding(styles::TOOLTIP_PADDING)
         .style(styles::tooltip);
-        let delete = tooltip(
+        let delete = styles::tip(
             super::action_button(
                 fl!("ui-tool-password-delete-preset"),
                 false,
@@ -861,7 +861,7 @@ impl PasswordPane {
         )
         .padding(styles::TOOLTIP_PADDING)
         .style(styles::tooltip);
-        let advanced = tooltip(
+        let advanced = styles::tip(
             super::action_button(
                 fl!("ui-tool-password-advanced"),
                 self.advanced,
@@ -1080,7 +1080,7 @@ impl PasswordPane {
             .height(OUTPUT_HEIGHT)
             .on_action(move |action| send(PasswordMessage::Output(action)));
         let buttons = column![
-            tooltip(
+            styles::tip(
                 super::action_button(
                     fl!("ui-tool-password-generate"),
                     true,
@@ -1586,7 +1586,7 @@ impl PasswordPane {
                 .style(styles::secondary)
                 .on_press(send(message));
             match tip {
-                Some(tip) => tooltip(
+                Some(tip) => styles::tip(
                     pressed,
                     text(tip).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
@@ -1601,7 +1601,7 @@ impl PasswordPane {
             row![].spacing(spacing::XS),
             |blocks, (index, token)| {
                 blocks.push(
-                    tooltip(
+                    styles::tip(
                         button(
                             container(
                                 text(token.to_string())
@@ -1868,7 +1868,7 @@ impl PasswordPane {
                 .size(font_size::CAPTION)
                 .font(styles::SEMIBOLD),
             iced::widget::space::horizontal(),
-            tooltip(
+            styles::tip(
                 super::action_button(
                     fl!("ui-tool-password-clear-history"),
                     false,

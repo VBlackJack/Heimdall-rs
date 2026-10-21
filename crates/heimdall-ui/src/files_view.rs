@@ -481,7 +481,7 @@ fn row_tooltip<'a, E: Listed>(
     line: iced::widget::Button<'a, Message>,
     entry: &E,
 ) -> Element<'a, Message> {
-    tooltip(
+    styles::tip(
         line,
         text(row_tooltip_lines(entry).join("\n")).size(font_size::CAPTION),
         tooltip::Position::FollowCursor,
@@ -884,7 +884,7 @@ fn glyph_button<'a>(
     } else {
         OPACITY_DISABLED
     };
-    tooltip(
+    styles::tip(
         container(
             button(center(icons::faded(
                 icon,
@@ -977,7 +977,7 @@ fn pane_toolbar<'a>(
             Some(files(FilesMessage::Refresh { tab, side })),
         ),
         tool_separator(),
-        tooltip(
+        styles::tip(
             button(glyph_label(
                 Icon::NewFolder,
                 fl!("ui-files-new-folder-button")
@@ -1034,7 +1034,7 @@ fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
         Side::Remote => fl!("ui-files-follow-tooltip"),
         Side::Local => fl!("ui-files-follow-local-tooltip"),
     };
-    tooltip(
+    styles::tip(
         button(glyph_label(
             Icon::FolderGlyph,
             fl!("ui-files-follow-toggle"),
@@ -1052,7 +1052,7 @@ fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
 /// The C# "sudo" toggle of the server pane, outlined in the warning colour while its
 /// folders are listed as root.
 fn sudo_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
-    tooltip(
+    styles::tip(
         button(glyph_label(Icon::Admin, fl!("ui-files-sudo-toggle")))
             .style(styles::toggle(on))
             .on_press(files(FilesMessage::ToggleSudo { tab })),
@@ -1125,7 +1125,7 @@ fn pane_narrowing<'a>(
     ),]
     .push(clear)
     .push(
-        tooltip(
+        styles::tip(
             checkbox(show_hidden)
                 .label(fl!("ui-files-hidden-toggle"))
                 .text_size(font_size::CAPTION)
@@ -1897,7 +1897,7 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
 /// C# `SecurityNoticeBadge` (`EmbeddedSftpView.xaml:161-186`): outlined and written in the
 /// warning colour, its text again in its tooltip.
 fn security_notice<'a>(notice: String) -> Element<'a, Message> {
-    tooltip(
+    styles::tip(
         container(
             text(notice.clone())
                 .size(font_size::SMALL_CAPTION)
@@ -2052,7 +2052,7 @@ fn panes<'a>(
 
 /// The toggle showing this computer's pane beside the server's, lit while it shows.
 fn local_toggle<'a>(tab: TabId, shown: bool) -> Element<'a, Message> {
-    tooltip(
+    styles::tip(
         button(text(fl!("ui-files-local-toggle")).size(font_size::CAPTION))
             .style(if shown {
                 styles::primary
@@ -2076,7 +2076,7 @@ fn pick_buttons(tab: TabId, files_pane: &FilesPane) -> Row<'_, Message> {
     let loading = files_pane.remote.awaits_other_folder();
     let can_download = connected && !files_pane.remote.chosen().is_empty();
     let action = |label: String, tip: String, message: Option<FilesMessage>| {
-        tooltip(
+        styles::tip(
             button(text(label).size(font_size::CAPTION))
                 .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                 .style(styles::secondary)
@@ -2149,7 +2149,7 @@ fn while_listing<'a>(
     if !loading {
         return control.into();
     }
-    tooltip(
+    styles::tip(
         control,
         text(fl!("ui-files-listing-in-progress-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,

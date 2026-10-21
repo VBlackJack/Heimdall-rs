@@ -1925,7 +1925,7 @@ fn header(
         ]
         .push(actions)
         .push(
-            tooltip(
+            styles::tip(
                 button(
                     container(
                         text(HELP_GLYPH)
@@ -1971,7 +1971,7 @@ fn help_panel<'a>(tab: TabId, help: String) -> Element<'a, Message> {
                 .height(Length::Shrink)
                 .width(Length::Fill)
                 .style(styles::scrollbars),
-            tooltip(
+            styles::tip(
                 crate::icons::button(Icon::Close)
                     .style(styles::subtle)
                     .on_press(Message::Tool(tab, ToolMessage::CloseHelp)),
@@ -2030,7 +2030,7 @@ fn feedback_button<'a>(
     tip: String,
 ) -> Element<'a, Message> {
     let shown = if done { CHECK_MARK.to_owned() } else { label };
-    tooltip(
+    styles::tip(
         button(text(shown).size(font_size::BODY))
             .padding(padding)
             .style(styles::secondary)

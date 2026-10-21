@@ -56,6 +56,8 @@ pub mod radius {
     pub const LG: f32 = 10.0;
     /// `CornerRadiusXl`: a dialog.
     pub const XL: f32 = 12.0;
+    /// `SessionTreeBadgeCornerRadius`: the count badge on a tree folder.
+    pub const BADGE: f32 = 3.0;
 }
 
 /// Spacing between and around elements, as the C# `Spacing*` keys.
@@ -95,6 +97,10 @@ pub const DIALOG_SHADOW_DEPTH: f32 = 8.0;
 
 /// Opacity of a dialog's black shadow, as the C#'s.
 pub const DIALOG_SHADOW_ALPHA: f32 = 0.4;
+
+/// Room inside the count badge of a tree folder, as the C# `Padding="5,0"`
+/// (`MainWindow.xaml:887`): none above and below, 5 at each side.
+pub const COUNT_BADGE_PADDING: [f32; 2] = [0.0, 5.0];
 
 /// Opacity of a control that cannot be used, as the C# `OpacityDisabled`.
 pub const OPACITY_DISABLED: f32 = 0.6;
