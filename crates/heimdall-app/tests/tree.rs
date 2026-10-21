@@ -529,6 +529,7 @@ fn the_search_finds_every_word_each_in_name_host_folder_account_or_protocol() {
 #[test]
 fn the_search_folds_the_accents_of_the_profile_too() {
     let summary = ProfileSummary {
+        tool: None,
         id: ProfileId::new("r"),
         name: "Contrôleur Élysée".to_owned(),
         group: Some("Réseau".to_owned()),

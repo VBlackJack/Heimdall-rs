@@ -2236,6 +2236,9 @@ pub struct Tab {
     pub(crate) desktop_sizing: Option<heimdall_core::profile::DesktopSizing>,
     /// The proportions chosen under "Match window", kept for the session's reconnections.
     pub(crate) desktop_aspect: crate::desktop::Aspect,
+    /// The room this tab last had for its remote desktop, in physical pixels: the session
+    /// connects again at it, so no resize follows the connection.
+    pub(crate) desktop_area: Option<(u16, u16)>,
     /// The desktop size the session connected again for, the server unable to take it
     /// live: asked at the next connection, then kept so the same refusal never loops.
     pub(crate) resize_fallback: Option<ResizeFallback>,
@@ -2481,6 +2484,7 @@ impl Tab {
             rdp_step: None,
             retry: None,
             desktop_sizing: None,
+            desktop_area: None,
             desktop_aspect: match &profile {
                 TabProfile::Rdp(rdp) => rdp.options.aspect,
                 _ => crate::desktop::Aspect::Stretch,
@@ -3503,6 +3507,9 @@ pub struct App {
     /// Physical pixels per logical one on the window's screen: RDP desktops ask for that
     /// scale, as mstsc does on a high-density screen.
     display_scale: f32,
+    /// The room a remote desktop last had in the window, in physical pixels: the next RDP
+    /// tab connects at it, so no resize follows the connection. `None` until one was shown.
+    desktop_area: Option<(u16, u16)>,
     pending_paste: Option<(TabId, String)>,
     /// Planned transfers waiting, one after the other, for the user's answers to the
     /// destinations in their way.
@@ -3609,6 +3616,7 @@ impl App {
             broadcast: broadcast::Broadcast::default(),
             viewport: config.initial_grid,
             display_scale: 1.0,
+            desktop_area: None,
             config,
             store,
             tabs: Vec::new(),
@@ -4123,15 +4131,34 @@ impl App {
         Vec::new()
     }
 
+    /// Keeps the room `tab` shows its remote desktop in, in physical pixels: the tab's own
+    /// connections use it, and so do the next tabs of the window, a pane of a split or a
+    /// tab's own window excepted, as for [`Self::viewport`]. A session connected at it has
+    /// nothing to resize, where a server that is still starting (xrdp) drops one that
+    /// arrives too early.
+    fn note_desktop_area(&mut self, tab: TabId, area: (u16, u16)) {
+        if area.0 == 0 || area.1 == 0 {
+            return;
+        }
+        if !self.in_split(tab) && !self.is_floating(tab) {
+            self.desktop_area = Some(area);
+        }
+        if let Some(found) = self.tab_mut(tab) {
+            found.desktop_area = Some(area);
+        }
+    }
+
     /// Applies a message for a remote desktop, or a session timer's.
     fn desktop_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::DesktopResize { tab, width, height } => {
+                self.note_desktop_area(tab, (width, height));
                 if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
                     pane.resize(width, height);
                 }
             }
             Message::DesktopShown { tab, width, height } => {
+                self.note_desktop_area(tab, (width, height));
                 if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
                     pane.shown_at(width, height);
                 }

@@ -447,6 +447,7 @@ mod tests {
     #[test]
     fn a_line_shows_the_address_and_the_account() {
         let profile = heimdall_app::ProfileSummary {
+            tool: None,
             id: heimdall_core::profile::ProfileId::new("p"),
             name: "alpha".to_owned(),
             group: None,

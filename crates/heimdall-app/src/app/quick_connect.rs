@@ -740,6 +740,7 @@ mod tests {
     fn the_name_and_host_count_fully_the_folder_account_and_protocol_by_half() {
         use super::super::tree::ProfileKind;
         let profile = ProfileSummary {
+            tool: None,
             id: heimdall_core::profile::ProfileId::new("p"),
             name: "alpha".to_owned(),
             group: Some("webfarm".to_owned()),
@@ -756,6 +757,7 @@ mod tests {
         assert_eq!(score(&profile, "webm"), 70, "its account, by half");
         assert_eq!(score(&profile, "ssh"), 65, "its protocol, by half");
         let bare = ProfileSummary {
+            tool: None,
             endpoint: None,
             group: None,
             username: None,

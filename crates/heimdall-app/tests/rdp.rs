@@ -1691,3 +1691,158 @@ fn the_built_in_client_compresses_unless_the_settings_turn_it_off() {
         &app.update(Message::OpenRdp(ProfileId::new("dc")))
     ));
 }
+
+/// Opens `dc` and says what the connection asks for.
+fn asked_size(app: &mut App) -> (TabId, AttemptId, (u16, u16)) {
+    let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+    let [
+        Effect::ConnectRdp {
+            tab,
+            attempt,
+            request,
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    (*tab, *attempt, request.desktop)
+}
+
+/// The tab reported its room, then went through a connection: the desktop it got.
+fn connected_at(app: &mut App, tab: TabId, attempt: AttemptId, framebuffer: (u16, u16)) {
+    let (input, _received) = mpsc::unbounded_channel();
+    let (size, _wanted) = tokio::sync::watch::channel(None);
+    event(
+        app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(framebuffer.0, framebuffer.1),
+            input,
+            size,
+            clipboard: None,
+        },
+    );
+}
+
+#[test]
+fn a_new_tab_connects_at_the_room_the_last_desktop_had_so_no_resize_follows() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    // Nothing shown yet: the default, and the resize after the wait.
+    let (first, attempt, asked) = asked_size(&mut app);
+    assert_eq!(asked, DEFAULT_DESKTOP);
+    connected_at(&mut app, first, attempt, DEFAULT_DESKTOP);
+    // The tab reports an odd width: the connection asks for what a resize would give.
+    app.update(Message::DesktopResize {
+        tab: first,
+        width: 1135,
+        height: 724,
+    });
+    let (second, attempt, asked) = asked_size(&mut app);
+    assert_eq!(asked, (1134, 724));
+    // Connected at that size, the same report asks the session for what its framebuffer has
+    // already, which it does not send.
+    let (input, _received) = mpsc::unbounded_channel();
+    let (size, wanted) = tokio::sync::watch::channel(None);
+    event(
+        &mut app,
+        second,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(asked.0, asked.1),
+            input,
+            size,
+            clipboard: None,
+        },
+    );
+    app.update(Message::DesktopResize {
+        tab: second,
+        width: 1135,
+        height: 724,
+    });
+    assert_eq!(*wanted.borrow(), Some((1135, 724)));
+    assert_eq!(heimdall_rdp::valid_desktop_size(1135, 724), asked);
+}
+
+#[test]
+fn the_room_is_physical_pixels_within_the_protocols_limits() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (first, attempt, _) = asked_size(&mut app);
+    connected_at(&mut app, first, attempt, DEFAULT_DESKTOP);
+    for (reported, expected) in [
+        ((150, 100), (200, 200)),
+        ((3841, 2161), (3840, 2161)),
+        ((20_000, 9_000), (8192, 8192)),
+    ] {
+        app.update(Message::DesktopShown {
+            tab: first,
+            width: reported.0,
+            height: reported.1,
+        });
+        assert_eq!(asked_size(&mut app).2, expected, "{reported:?}");
+    }
+}
+
+#[test]
+fn a_reconnection_connects_at_the_size_the_tab_is_shown_at() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt, _) = asked_size(&mut app);
+    connected_at(&mut app, tab, attempt, DEFAULT_DESKTOP);
+    app.update(Message::DesktopResize {
+        tab,
+        width: 1134,
+        height: 724,
+    });
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: Ending::Other("Another user connected".to_owned()),
+        },
+    );
+    // Another tab of the window is shown at another size meanwhile.
+    let (other, other_attempt, _) = asked_size(&mut app);
+    connected_at(&mut app, other, other_attempt, DEFAULT_DESKTOP);
+    app.update(Message::DesktopResize {
+        tab: other,
+        width: 900,
+        height: 600,
+    });
+    let effects = app.update(Message::ReconnectTab(tab));
+    let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(
+        request.desktop,
+        (1134, 724),
+        "its own, not the window's last"
+    );
+}
+
+#[test]
+fn a_fixed_size_is_still_the_profiles_whatever_the_room() {
+    use heimdall_core::profile::{RdpOptions, Resolution};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), |profile| {
+        profile.options = RdpOptions {
+            resolution: Resolution::Fixed,
+            fixed_width: 1366,
+            fixed_height: 768,
+            ..RdpOptions::default()
+        };
+    });
+    let (first, attempt, asked) = asked_size(&mut app);
+    assert_eq!(asked, (1364, 768));
+    connected_at(&mut app, first, attempt, asked);
+    app.update(Message::DesktopShown {
+        tab: first,
+        width: 1600,
+        height: 900,
+    });
+    assert_eq!(asked_size(&mut app).2, (1364, 768));
+}
