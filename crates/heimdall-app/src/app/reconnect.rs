@@ -128,6 +128,10 @@ impl App {
         let keyboard = self.keyboard_kept(tab_id);
         let before = self.tabs.len();
         self.replacing = true;
+        // The tab that replaces this one is shown in the room this one had, so a desktop
+        // connects at it and has nothing to resize (issue 509).
+        let window_area = self.desktop_area;
+        self.desktop_area = self.tabs[index].desktop_area.or(window_area);
         let effects = match (reopen, forced) {
             // The mode "Connect with" chose travels with the reconnect, as the C#
             // `RestoreServerAsync(serverId, ..., tab.RdpModeOverride)`
@@ -136,6 +140,7 @@ impl App {
             (Reopen::Profile(id), Some(mode)) => self.update(Message::OpenRdpWith { id, mode }),
             (reopen, _) => self.open_again(reopen, purpose),
         };
+        self.desktop_area = window_area;
         self.replacing = false;
         self.take_place(index, before, keyboard);
         effects

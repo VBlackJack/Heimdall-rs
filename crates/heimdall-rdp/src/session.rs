@@ -229,6 +229,14 @@ const RESIZE_RETRY: Duration = Duration::from_millis(500);
 /// without one never changes size while connected.
 const RESIZE_GIVE_UP: Duration = Duration::from_secs(10);
 
+/// Whether the desktop must be asked to change: not when its framebuffer has the wanted size
+/// already, as a session that connected at the tab's size has. Asking then would only start a
+/// server-side resize while the session is still starting, which xrdp answers with a
+/// disconnection (issue 509).
+fn needs_resize(wanted: (u32, u32), current: (u32, u32)) -> bool {
+    wanted != current
+}
+
 /// Whether a size still waiting for the display channel, first asked at `since`, is asked
 /// again at `now`; `since` starts on the first wait and ends on giving up.
 fn asks_again(since: &mut Option<Instant>, now: Instant) -> bool {
@@ -1325,7 +1333,7 @@ impl Running {
         let current = self.framebuffer.read(|current_width, current_height, _| {
             (u32::from(current_width), u32::from(current_height))
         });
-        if (width, height) == current {
+        if !needs_resize((width, height), current) {
             log::debug!(
                 target: LOG_TARGET,
                 "RDP resize to {width}x{height}: the framebuffer has it already, nothing sent"
@@ -1964,6 +1972,13 @@ mod tests {
     use ironrdp::cliprdr::backend::CliprdrBackend as _;
 
     use super::*;
+
+    #[test]
+    fn a_desktop_that_has_the_wanted_size_is_not_asked_to_resize() {
+        assert!(!needs_resize((1134, 724), (1134, 724)));
+        assert!(needs_resize((1134, 724), (1280, 800)));
+        assert!(needs_resize((1134, 724), (1134, 722)));
+    }
 
     #[test]
     fn the_opening_line_says_whether_compression_was_offered() {
