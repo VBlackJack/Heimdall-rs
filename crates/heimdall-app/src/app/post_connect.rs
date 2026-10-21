@@ -88,7 +88,7 @@ impl App {
             Some(recorded) => recorded,
             None => self
                 .store
-                .apply(|store| store.approve_post_connect(&profile.id, &steps))
+                .apply(|store| store.trust_post_connect(&profile.id, &steps))
                 .map(|_| ()),
         };
         if let Err(error) = recorded {

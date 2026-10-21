@@ -585,9 +585,6 @@ struct LegacyServer {
     post_connect_steps: Vec<Option<LegacyStep>>,
     /// The sequence before steps: one command per line.
     post_connect_command: Option<String>,
-    /// Written by Heimdall-rs for steps that came from a shared file.
-    #[serde(default)]
-    post_connect_untrusted: bool,
     /// The gateway's port of the remote forward; 0 opens none.
     remote_bind_port: Option<i64>,
     /// The local port of the remote forward; 0 is the same port.
@@ -1582,13 +1579,9 @@ fn convert(server: &LegacyServer, suggested_tunnel_port: u16) -> Result<SshProfi
         local_tunnel_port: local_tunnel_port_of(server, suggested_tunnel_port)?,
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
         forwards: forwards_of(server)?,
-        post_connect: {
-            let steps = post_connect_of(server);
-            PostConnect {
-                untrusted: server.post_connect_untrusted && !steps.is_empty(),
-                steps,
-                approved: None,
-            }
+        post_connect: PostConnect {
+            steps: post_connect_of(server),
+            approved: None,
         },
         forward_agent: server.ssh_agent_forwarding,
         compression: server.ssh_compression,
@@ -1633,6 +1626,7 @@ fn post_connect_of(server: &LegacyServer) -> Vec<PostConnectStep> {
         .iter()
         .flatten()
         .map(|step| PostConnectStep {
+            untrusted: true,
             input: step.input.clone(),
             delay_ms: step.delay_ms.map_or(DEFAULT_STEP_DELAY_MS, |delay| {
                 u32::try_from(delay.max(0)).unwrap_or(u32::MAX)
@@ -1659,7 +1653,7 @@ fn post_connect_of(server: &LegacyServer) -> Vec<PostConnectStep> {
         .split('\n')
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(PostConnectStep::new)
+        .map(|line| PostConnectStep::new(line).from_outside())
         .collect()
 }
 

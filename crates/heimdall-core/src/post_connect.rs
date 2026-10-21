@@ -61,6 +61,13 @@ pub struct PostConnectStep {
     /// What happens when it cannot be sent.
     #[serde(default, skip_serializing_if = "OnFailure::is_default")]
     pub on_failure: OnFailure,
+    /// The text arrived from outside (an import, a shared file) and nobody has said yes to it.
+    /// Set on arrival whatever the file says, so a file can never mark its own step trusted.
+    /// Only the question's Run, or the user writing or changing this step's text, clears it;
+    /// a change to another step, a delay, the order or whether it runs does not. A runnable
+    /// step with the mark is never typed (see [`PostConnect::needs_approval`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub untrusted: bool,
 }
 
 impl PostConnectStep {
@@ -72,6 +79,22 @@ impl PostConnectStep {
             delay_ms: DEFAULT_STEP_DELAY_MS,
             enabled: true,
             on_failure: OnFailure::Continue,
+            untrusted: false,
+        }
+    }
+
+    /// The same step, marked as arrived from outside.
+    #[must_use]
+    pub fn from_outside(mut self) -> Self {
+        self.untrusted = true;
+        self
+    }
+
+    /// The step as approved: what it does, without the mark.
+    fn trusted(&self) -> Self {
+        Self {
+            untrusted: false,
+            ..self.clone()
         }
     }
 
@@ -91,22 +114,22 @@ pub struct PostConnect {
     /// The steps as the user approved them; `None` until approved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved: Option<Vec<PostConnectStep>>,
-    /// The steps came from a file other people write (a shared session). However the profile
-    /// is edited, copied, converted or exported, only an explicit approval of these steps
-    /// (the question's Run) or the user writing or editing the steps themselves makes them
-    /// approved; saving a form that left them as they were does not.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub untrusted: bool,
 }
 
 impl PostConnect {
-    /// Steps approved as they are now.
+    /// Steps approved as they are now: the question's Run, which trusts every step shown.
     #[must_use]
     pub fn approved_as(steps: Vec<PostConnectStep>) -> Self {
+        let steps: Vec<PostConnectStep> = steps
+            .into_iter()
+            .map(|step| PostConnectStep {
+                untrusted: false,
+                ..step
+            })
+            .collect();
         Self {
             approved: Some(steps.clone()),
             steps,
-            untrusted: false,
         }
     }
 
@@ -116,22 +139,34 @@ impl PostConnect {
         self.steps.iter().filter(|step| step.runs()).count()
     }
 
-    /// Whether the steps as they are now were approved.
+    /// Whether the steps as they are now were approved (what each does, marks aside).
     #[must_use]
     pub fn is_approved(&self) -> bool {
-        self.approved.as_ref() == Some(&self.steps)
+        self.approved.as_ref().is_some_and(|approved| {
+            let now: Vec<PostConnectStep> =
+                self.steps.iter().map(PostConnectStep::trusted).collect();
+            *approved == now
+        })
     }
 
-    /// Whether steps would be typed but were not approved as they are.
+    /// Whether a step that would be typed arrived from outside and was not trusted.
+    #[must_use]
+    pub fn has_untrusted_step(&self) -> bool {
+        self.steps.iter().any(|step| step.runs() && step.untrusted)
+    }
+
+    /// Whether steps would be typed but were not approved as they are, or one of them still
+    /// waits for its Run.
     #[must_use]
     pub fn needs_approval(&self) -> bool {
-        self.runnable() > 0 && !self.is_approved()
+        self.runnable() > 0 && (!self.is_approved() || self.has_untrusted_step())
     }
 
-    /// The steps to type in a session: none unless approved.
+    /// The steps to type in a session: none unless approved, and none while a step that
+    /// arrived from outside is untrusted.
     #[must_use]
     pub fn to_run(&self) -> Vec<PostConnectStep> {
-        if self.is_approved() {
+        if self.is_approved() && !self.has_untrusted_step() {
             self.steps.clone()
         } else {
             Vec::new()
@@ -185,6 +220,7 @@ mod tests {
         vec![
             PostConnectStep::new("sudo -i"),
             PostConnectStep {
+                untrusted: false,
                 enabled: false,
                 ..PostConnectStep::new("off")
             },
@@ -195,7 +231,6 @@ mod tests {
     #[test]
     fn only_steps_on_with_something_to_type_run() {
         let sequence = PostConnect {
-            untrusted: false,
             steps: steps(),
             approved: None,
         };
@@ -205,7 +240,6 @@ mod tests {
     #[test]
     fn steps_run_only_as_they_were_approved() {
         let mut sequence = PostConnect {
-            untrusted: false,
             steps: steps(),
             approved: None,
         };
@@ -225,7 +259,6 @@ mod tests {
     #[test]
     fn nothing_to_type_needs_no_approval() {
         let sequence = PostConnect {
-            untrusted: false,
             steps: vec![PostConnectStep::new("")],
             approved: None,
         };

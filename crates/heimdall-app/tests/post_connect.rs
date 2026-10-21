@@ -71,8 +71,10 @@ fn config(dir: &Path) -> AppConfig {
         profile(
             "imported",
             PostConnect {
-                untrusted: false,
-                steps: steps(),
+                steps: steps()
+                    .into_iter()
+                    .map(PostConnectStep::from_outside)
+                    .collect(),
                 approved: None,
             },
         ),
@@ -83,7 +85,6 @@ fn config(dir: &Path) -> AppConfig {
     store.merge([profile(
         "approved",
         PostConnect {
-            untrusted: false,
             steps: steps(),
             approved: None,
         },
@@ -264,6 +265,7 @@ fn steps_written_in_the_form_are_saved_approved_and_a_command_with_a_control_cha
     assert_eq!(
         plain.post_connect.steps,
         [PostConnectStep {
+            untrusted: false,
             delay_ms: 500,
             ..PostConnectStep::new("sudo -i")
         }]
@@ -284,7 +286,10 @@ fn steps_written_in_the_form_are_saved_approved_and_a_command_with_a_control_cha
 }
 
 #[test]
-fn an_imported_profile_saved_from_its_form_has_its_steps_approved_as_the_csharp_dialog_does() {
+fn an_imported_profile_saved_from_its_form_keeps_its_steps_waiting_for_a_run() {
+    // Deliberately stricter than the C# dialog, which approved imported steps when the form
+    // was saved: steps that arrive by an import are untrusted whatever the file says, and a
+    // save that leaves their text alone does not trust them.
     let dir = tempfile::tempdir().expect("dir");
     let mut app = App::new(config(dir.path()));
     app.update(Message::EditProfile(ProfileId::new("imported")));
@@ -293,9 +298,49 @@ fn an_imported_profile_saved_from_its_form_has_its_steps_approved_as_the_csharp_
         passphrase: None,
     });
     let effects = app.update(Message::OpenProfile(ProfileId::new("imported")));
+    assert!(effects.is_empty(), "nothing is typed unasked: {effects:?}");
+    assert!(matches!(app.dialog, Some(Dialog::ConfirmPostConnect(_))));
+}
+
+#[test]
+fn changing_one_imported_step_trusts_that_step_only_and_run_trusts_the_rest() {
+    use heimdall_app::steps_draft::StepEdit;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = App::new(config(dir.path()));
+    app.update(Message::EditProfile(ProfileId::new("imported")));
+    app.update(Message::PostConnectEdit(StepEdit::Input(
+        0,
+        "sudo -s".to_owned(),
+    )));
+    // The other step's delay changes too: that is not its text.
+    app.update(Message::PostConnectEdit(StepEdit::Delay(
+        1,
+        "900".to_owned(),
+    )));
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    let effects = app.update(Message::OpenProfile(ProfileId::new("imported")));
+    assert!(effects.is_empty(), "{effects:?}");
+    let Some(Dialog::ConfirmPostConnect(asked)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(asked.commands, ["sudo -s", "cd /srv"]);
+
+    // Run clears the mark of the rest, and nothing is asked again.
+    let effects = app.update(Message::ConfirmDialog);
+    let typed = connect_request(&effects).profile.post_connect.to_run();
+    assert_eq!(typed.len(), 2);
+    assert!(typed.iter().all(|step| !step.untrusted));
+    let effects = app.update(Message::OpenProfile(ProfileId::new("imported")));
     assert_eq!(
-        connect_request(&effects).profile.post_connect.to_run(),
-        steps()
+        connect_request(&effects)
+            .profile
+            .post_connect
+            .to_run()
+            .len(),
+        2
     );
 }
 

@@ -830,7 +830,11 @@ fn a_command_the_file_asks_for_is_kept_as_an_unapproved_step_for_ssh_only() {
             .expect("a session")
     };
     let web = ssh("web");
-    assert_eq!(web.post_connect.steps, [PostConnectStep::new("sudo -i")]);
+    assert_eq!(
+        web.post_connect.steps,
+        [PostConnectStep::new("sudo -i").from_outside()],
+        "each step waits for its own Run"
+    );
     assert!(
         web.post_connect.approved.is_none(),
         "the file approves nothing"
@@ -1277,17 +1281,28 @@ fn assert_asked(app: &mut App, id: &heimdall_core::profile::ProfileId, what: &st
     );
 }
 
+fn save_form(app: &mut App) {
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+}
+
 #[test]
 fn editing_the_saved_profile_without_touching_the_commands_does_not_approve_them() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut app, id) = declined_and_saved(dir.path());
     app.update(Message::EditProfile(id.clone()));
-    app.update(Message::SaveProfile {
-        password: None,
-        passphrase: None,
-    });
+    save_form(&mut app);
     assert_asked(&mut app, &id, "edited, commands untouched");
-    // And again after a restart: the status is persisted with the profile.
+    // Another setting, the delay and the order change: still not the text.
+    app.update(Message::EditProfile(id.clone()));
+    app.update(Message::PostConnectEdit(
+        heimdall_app::steps_draft::StepEdit::Delay(0, "900".to_owned()),
+    ));
+    save_form(&mut app);
+    assert_asked(&mut app, &id, "delay changed");
+    // The status is persisted with the profile.
     let mut restarted = app_with_text_keeping(dir.path());
     assert_asked(&mut restarted, &id, "restarted");
 }
@@ -1308,18 +1323,29 @@ fn a_duplicate_of_the_saved_profile_keeps_the_commands_unapproved() {
 }
 
 #[test]
-fn only_run_approves_the_commands_of_the_saved_profile_and_once() {
+fn a_step_the_user_adds_does_not_trust_the_shared_one_and_run_trusts_both_once() {
+    use heimdall_app::steps_draft::StepEdit;
     let dir = tempfile::tempdir().expect("dir");
     let (mut app, id) = declined_and_saved(dir.path());
-    assert_asked(&mut app, &id, "before");
-    let effects = app.update(Message::ConfirmDialog);
-    assert_eq!(typed(&effects).len(), 1);
-    // Approved: no more question, and an edit that leaves the commands keeps it so.
     app.update(Message::EditProfile(id.clone()));
-    app.update(Message::SaveProfile {
-        password: None,
-        passphrase: None,
-    });
+    app.update(Message::PostConnectEdit(StepEdit::Add));
+    app.update(Message::PostConnectEdit(StepEdit::Input(
+        1,
+        "uptime".to_owned(),
+    )));
+    save_form(&mut app);
+    app.dialog = None;
+    let effects = app.update(Message::OpenProfile(id.clone()));
+    assert!(effects.is_empty(), "{effects:?}");
+    let Some(heimdall_app::Dialog::ConfirmPostConnect(asked)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(asked.commands, ["sudo -i", "uptime"]);
+    // Run is what trusts the shared step; then nothing is asked again, even after an edit.
+    let effects = app.update(Message::ConfirmDialog);
+    assert_eq!(typed(&effects).len(), 2);
+    app.update(Message::EditProfile(id.clone()));
+    save_form(&mut app);
     let effects = app.update(Message::OpenProfile(id));
-    assert_eq!(typed(&effects).len(), 1, "{:?}", app.dialog);
+    assert_eq!(typed(&effects).len(), 2, "{:?}", app.dialog);
 }

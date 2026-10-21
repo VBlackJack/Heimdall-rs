@@ -1075,10 +1075,11 @@ fn ssh_profile(
         vault_entry: None,
         forwards: Forwards::default(),
         post_connect: PostConnect {
-            // From a file other people write: however the profile made of it is edited or
-            // copied later, only an explicit approval of these steps approves them.
-            untrusted: !steps.is_empty(),
-            steps,
+            // From a file other people write: each step waits for its own Run.
+            steps: steps
+                .into_iter()
+                .map(PostConnectStep::from_outside)
+                .collect(),
             approved: None,
         },
         forward_agent: false,

@@ -279,7 +279,13 @@ impl SharedOrigin {
         SharedApproval {
             source_path: self.source_path.clone(),
             destination: self.destination.clone(),
-            steps: steps.to_vec(),
+            steps: steps
+                .iter()
+                .map(|step| PostConnectStep {
+                    untrusted: false,
+                    ..step.clone()
+                })
+                .collect(),
         }
     }
 }

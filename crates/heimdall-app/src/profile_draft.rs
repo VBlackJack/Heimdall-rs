@@ -22,7 +22,7 @@ use std::hash::{BuildHasher as _, RandomState};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use heimdall_core::post_connect::{PostConnect, PostConnectStep};
+use heimdall_core::post_connect::PostConnect;
 use heimdall_core::profile::{
     Aspect, AudioPlayback, CitrixProfile, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
@@ -560,11 +560,6 @@ pub struct ProfileDraft {
     pub remote_local_port: String,
     /// SSH: the post-connect steps and the one selected.
     pub post_connect: StepsDraft,
-    /// SSH: the steps the form was filled with that came from a shared file and nobody
-    /// approved, whether the profile is a session saved nowhere or a saved one. Saved unchanged they stay unapproved, and the profile asks about them the
-    /// first time it opens, showing the exact commands; only steps the user wrote or edited
-    /// in the form are approved by saving it.
-    pub unapproved_steps: Vec<PostConnectStep>,
     /// Local: the program, as typed.
     pub local_program: String,
     /// Local: the arguments, as one line.
@@ -759,13 +754,6 @@ impl ProfileDraft {
             remote_bind_port: port_text(profile.forwards.remote_bind_port),
             remote_local_port: port_text(profile.forwards.remote_local_port),
             post_connect: StepsDraft::of(&profile.post_connect.steps),
-            unapproved_steps: if profile.post_connect.untrusted
-                && !profile.post_connect.is_approved()
-            {
-                profile.post_connect.steps.clone()
-            } else {
-                Vec::new()
-            },
             toggles: [
                 (profile.compression, ProfileToggle::Compression),
                 (profile.forward_agent, ProfileToggle::ForwardAgent),
@@ -1567,9 +1555,6 @@ impl ProfileDraft {
         PostConnect {
             steps: self.post_connect.steps.clone(),
             approved: None,
-            // Left as they came: still waiting for an explicit approval.
-            untrusted: !self.post_connect.steps.is_empty()
-                && self.post_connect.steps == self.unapproved_steps,
         }
     }
 
