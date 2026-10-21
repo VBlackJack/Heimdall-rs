@@ -22,7 +22,7 @@ use std::hash::{BuildHasher as _, RandomState};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use heimdall_core::post_connect::PostConnect;
+use heimdall_core::post_connect::{PostConnect, PostConnectStep};
 use heimdall_core::profile::{
     Aspect, AudioPlayback, CitrixProfile, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
@@ -560,6 +560,11 @@ pub struct ProfileDraft {
     pub remote_local_port: String,
     /// SSH: the post-connect steps and the one selected.
     pub post_connect: StepsDraft,
+    /// SSH: the steps the form was filled with that nobody approved, from a session saved
+    /// nowhere (a shared session's). Saved unchanged they stay unapproved, and the profile asks about them the
+    /// first time it opens, showing the exact commands; only steps the user wrote or edited
+    /// in the form are approved by saving it.
+    pub unapproved_steps: Vec<PostConnectStep>,
     /// Local: the program, as typed.
     pub local_program: String,
     /// Local: the arguments, as one line.

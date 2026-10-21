@@ -283,6 +283,7 @@ impl App {
         let drops_password =
             matches!(&profile, DraftProfile::WinRm(winrm) if winrm.username.is_none());
         let favorite = draft.is_on(ProfileToggle::Favorite);
+        let untrusted_steps = draft.unapproved_steps.clone();
         let gateway = saved_gateway(&draft);
         // The key whose passphrase the form saves: an SSH profile's, which may have none.
         let key_file = match &profile {
@@ -304,7 +305,12 @@ impl App {
                     let steps = profile.post_connect.steps.clone();
                     let saved = profile.id.clone();
                     let report = store.merge([profile]);
-                    store.approve_post_connect(&saved, &steps);
+                    // Unless they are the steps the form was filled with and nobody approved:
+                    // those are asked about when the profile opens, never approved by a save
+                    // the user made for another reason.
+                    if steps != untrusted_steps {
+                        store.approve_post_connect(&saved, &steps);
+                    }
                     report
                 }
                 DraftProfile::Rdp(profile) => store.merge_rdp([profile]),

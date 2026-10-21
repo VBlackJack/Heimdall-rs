@@ -125,6 +125,9 @@ impl App {
         let Some(origin) = self.shared_origins.get(&profile.id) else {
             return;
         };
+        if !origin.remembers {
+            return;
+        }
         let approval = origin.approval(&profile.post_connect.steps);
         if self
             .settings
@@ -148,6 +151,11 @@ impl App {
         steps: &[PostConnectStep],
     ) -> Option<Result<(), StoreError>> {
         let origin = self.shared_origins.get(id)?.clone();
+        // The file names no account: the one typed when connecting is not known to the
+        // approval, so it is given for this session only and asked again the next time.
+        if !origin.remembers {
+            return Some(Ok(()));
+        }
         let shared = origin.shared.clone();
         let previous = self
             .settings
@@ -221,6 +229,8 @@ pub(super) struct SharedOrigin {
     shared: ProfileId,
     source_path: String,
     destination: String,
+    /// Whether an approval may be remembered: only for a session that names its account.
+    remembers: bool,
 }
 
 /// Separates the parts of a destination text; no host, account or name holds it.
@@ -255,6 +265,13 @@ impl SharedOrigin {
             shared: session.id.clone(),
             source_path,
             destination: parts.join(&DESTINATION_SEPARATOR.to_string()),
+            remembers: username.is_some_and(|name| !name.is_empty())
+                && session.gateway.as_ref().is_none_or(|gateway| {
+                    gateway
+                        .username
+                        .as_deref()
+                        .is_some_and(|name| !name.is_empty())
+                }),
         }
     }
 

@@ -1157,3 +1157,93 @@ fn the_question_about_shared_commands_does_not_retarget_another_tab_and_the_new_
         }
     }
 }
+
+#[test]
+fn saving_a_shared_session_as_a_profile_does_not_approve_the_commands_it_declined() {
+    use heimdall_app::TabMenuMessage;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    app.update(Message::ConnectShared(id_of(&app, "web")));
+    // "Connect without them": the shell opens typing nothing.
+    let (tab, _, _) = started(&app.update(Message::SkipPostConnect));
+    app.update(Message::TabMenu(TabMenuMessage::SaveAsProfile(tab)));
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    let saved = app.profile_summaries();
+    assert_eq!(saved.len(), 1, "the profile is saved");
+    let id = saved[0].id.clone();
+
+    // Opening it asks about the commands, with the exact text, and types nothing meanwhile.
+    let effects = app.update(Message::OpenProfile(id.clone()));
+    assert!(effects.is_empty(), "nothing runs unasked: {effects:?}");
+    let Some(heimdall_app::Dialog::ConfirmPostConnect(asked)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(asked.commands, ["sudo -i"]);
+    // Only an explicit yes approves them on the local profile.
+    let effects = app.update(Message::ConfirmDialog);
+    assert_eq!(typed(&effects).len(), 1);
+    assert!(
+        app.update(Message::OpenProfile(id)).iter().any(
+            |effect| matches!(effect, heimdall_app::Effect::Connect { request, .. }
+                if !request.profile.post_connect.to_run().is_empty())
+        ),
+        "approved once, remembered"
+    );
+}
+
+#[test]
+fn steps_written_in_the_form_are_still_approved_by_saving_it() {
+    use heimdall_app::TabMenuMessage;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    app.update(Message::ConnectShared(id_of(&app, "esc")));
+    let tab = app.tabs.last().expect("a tab").id;
+    app.update(Message::TabMenu(TabMenuMessage::SaveAsProfile(tab)));
+    app.update(Message::PostConnectEdit(
+        heimdall_app::steps_draft::StepEdit::Add,
+    ));
+    app.update(Message::PostConnectEdit(
+        heimdall_app::steps_draft::StepEdit::Input(0, "uptime".to_owned()),
+    ));
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    let id = app.profile_summaries()[0].id.clone();
+    let effects = app.update(Message::OpenProfile(id));
+    assert_eq!(typed(&effects).len(), 1, "{:?}", app.dialog);
+}
+
+/// A shared session that names no account: it is asked for when connecting.
+const NO_ACCOUNT: &str = "[Bookmarks]\r\nSubRep=Prod\r\n\
+web= #109#0%web.example.com%22%%%%%sudo -i%%\r\n";
+
+#[test]
+fn an_approval_is_not_remembered_for_a_session_whose_account_is_asked_at_connection() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), NO_ACCOUNT);
+    let id = id_of(&app, "web");
+    app.update(Message::ConnectShared(id.clone()));
+    let effects = app.update(Message::ConfirmDialog);
+    assert_eq!(typed(&effects).len(), 1, "approved for this session");
+    assert!(
+        app.settings().shared_post_connect_approvals.is_empty(),
+        "but not remembered: the account typed later is unknown to it"
+    );
+    // Connecting again, with whichever account is typed then, asks again.
+    let effects = app.update(Message::ConnectShared(id.clone()));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(matches!(
+        app.dialog,
+        Some(heimdall_app::Dialog::ConfirmPostConnect(_))
+    ));
+    let mut restarted = app_with_text_keeping(dir.path());
+    restarted.update(Message::ConnectShared(id));
+    assert!(matches!(
+        restarted.dialog,
+        Some(heimdall_app::Dialog::ConfirmPostConnect(_))
+    ));
+}
