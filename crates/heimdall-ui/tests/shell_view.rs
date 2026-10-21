@@ -1908,6 +1908,69 @@ fn with_no_session_saved_the_window_welcomes_and_offers_to_add_one() {
     );
 }
 
+/// The welcome is the C# Launchpad card (`MainWindow.xaml:2120-2178`): the title over the
+/// subtitle, the three actions in a row in the C# order, the shortcuts last, all centred in
+/// the page, and no action but the import off.
+#[test]
+fn the_welcome_is_a_card_of_a_title_three_actions_in_order_and_the_shortcuts() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    let mut ui = simulator(&shell);
+    let title = ui.find("Welcome to Heimdall-rs").expect("title").bounds();
+    let add = ui.find("Add Session").expect("add").bounds();
+    let import = ui.find("Import Connections").expect("import").bounds();
+    let tools = ui.find("Explore Tools").expect("tools").bounds();
+    let shortcuts = ui
+        .find("Ctrl+N to add a session, Ctrl+K to quick connect")
+        .expect("shortcuts")
+        .bounds();
+    assert!(
+        title.y < add.y && add.y < shortcuts.y,
+        "title, actions, shortcuts"
+    );
+    assert!(
+        add.x < import.x && import.x < tools.x,
+        "add, import, explore tools"
+    );
+    assert!(
+        (add.y - import.y).abs() < 1.0 && (import.y - tools.y).abs() < 1.0,
+        "the actions share a row"
+    );
+    // Centred in the page, which is the window less the sidebar: the title and the
+    // shortcuts share a middle.
+    assert!(
+        (title.center_x() - shortcuts.center_x()).abs() < 1.0,
+        "centred on one axis"
+    );
+    let messages: Vec<Message> = {
+        ui.click("Import Connections").expect("shown");
+        ui.into_messages().collect()
+    };
+    assert!(messages.is_empty(), "nothing to import: {messages:?}");
+}
+
+/// With sessions saved and none selected, the C#'s second card: how to open one, and the
+/// quick connect button.
+#[test]
+fn with_sessions_saved_and_none_selected_the_card_offers_quick_connect() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(app(dir.path()));
+    let mut ui = simulator(&shell);
+    ui.find("Select a session or press Ctrl+K to connect")
+        .expect("title");
+    let buttons = common::all_bounds(&mut ui, "Quick connect");
+    assert_eq!(buttons.len(), 2, "the toolbar's and the card's");
+    ui.click("Quick connect").expect("shown");
+}
+
 #[test]
 fn with_sessions_saved_the_window_says_how_to_open_one() {
     let dir = tempfile::tempdir().expect("dir");

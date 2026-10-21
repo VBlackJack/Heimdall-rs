@@ -5681,40 +5681,46 @@ impl Shell {
                     self.app.can_edit(&profile.id),
                     self.app.profile_state(&profile.id),
                 ),
-                None => center(text(fl!("ui-home-select"))).into(),
+                None => crate::launchpad::select(
+                    fl!("ui-home-select"),
+                    button(text(fl!("ui-nav-quick-connect")).size(font_size::BODY))
+                        .padding(crate::launchpad::SELECT_BUTTON_PADDING)
+                        .style(styles::secondary)
+                        .on_press(Message::TreeShortcut(TreeShortcut::QuickConnect))
+                        .into(),
+                ),
             };
         }
-        center(
-            column![
-                text(fl!("ui-home-welcome")).size(font_size::TITLE),
-                text(fl!("ui-home-subtitle")),
-                row![
-                    button(text(fl!("ui-home-add-button")))
-                        .padding(crate::tokens::BUTTON_PADDING)
-                        .style(styles::primary)
-                        .on_press(Message::App(AppMessage::NewProfile)),
-                    button(text(fl!("ui-home-import-button")))
-                        .padding(crate::tokens::BUTTON_PADDING)
-                        .style(styles::secondary)
-                        .on_press_maybe(
-                            self.app
-                                .can_import()
-                                .then_some(Message::App(AppMessage::ImportLegacy)),
-                        ),
-                    // As the C# empty state's "Explore Tools", which opens the Tools page
-                    // as the navigation does (`MainWindow.xaml.cs:2331`).
-                    button(text(fl!("ui-home-explore-tools-button")))
-                        .padding(crate::tokens::BUTTON_PADDING)
-                        .style(styles::secondary)
-                        .on_press(Message::Navigate(Destination::Tools)),
-                ]
-                .spacing(spacing::SM),
-                text(fl!("ui-home-shortcuts")).size(font_size::CAPTION),
-            ]
-            .spacing(spacing::SM)
-            .align_x(iced::Alignment::Center),
+        // The buttons keep the order and the state of the C# Launchpad's
+        // (`MainWindow.xaml:2155-2174`): the import is off with nothing to import.
+        let action = |label: String| {
+            button(text(label).size(font_size::BODY_LARGE)).padding(crate::tokens::BUTTON_PADDING)
+        };
+        crate::launchpad::welcome(
+            fl!("ui-home-welcome"),
+            fl!("ui-home-subtitle"),
+            fl!("ui-home-shortcuts"),
+            vec![
+                action(fl!("ui-home-add-button"))
+                    .style(styles::primary)
+                    .on_press(Message::App(AppMessage::NewProfile))
+                    .into(),
+                action(fl!("ui-home-import-button"))
+                    .style(styles::secondary)
+                    .on_press_maybe(
+                        self.app
+                            .can_import()
+                            .then_some(Message::App(AppMessage::ImportLegacy)),
+                    )
+                    .into(),
+                // As the C# empty state's "Explore Tools", which opens the Tools page
+                // as the navigation does (`MainWindow.xaml.cs:2331`).
+                action(fl!("ui-home-explore-tools-button"))
+                    .style(styles::secondary)
+                    .on_press(Message::Navigate(Destination::Tools))
+                    .into(),
+            ],
         )
-        .into()
     }
 
     /// The page of the window's navigation shown.
