@@ -66,7 +66,11 @@ pub struct PostConnectStep {
     /// Only the question's Run, or the user writing or changing this step's text, clears it;
     /// a change to another step, a delay, the order or whether it runs does not. A runnable
     /// step with the mark is never typed (see [`PostConnect::needs_approval`]).
-    #[serde(default, skip_serializing_if = "is_false")]
+    ///
+    /// Always written. A store from before the field existed has none: see [`PostConnect`]'s
+    /// reading, where such a step is trusted only if the profile's approval covers exactly
+    /// the steps it has.
+    #[serde(default)]
     pub untrusted: bool,
 }
 
@@ -107,6 +111,7 @@ impl PostConnectStep {
 
 /// A profile's sequence and what the user approved of it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "StoredPostConnect")]
 pub struct PostConnect {
     /// The steps, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -116,19 +121,73 @@ pub struct PostConnect {
     pub approved: Option<Vec<PostConnectStep>>,
 }
 
+/// A step as a store written before the `untrusted` mark may hold it.
+#[derive(Deserialize)]
+struct StoredStep {
+    input: String,
+    #[serde(default = "default_delay")]
+    delay_ms: u32,
+    #[serde(default = "enabled")]
+    enabled: bool,
+    #[serde(default)]
+    on_failure: OnFailure,
+    /// Absent in a store from before the mark.
+    untrusted: Option<bool>,
+}
+
+/// A sequence as stored; read into a [`PostConnect`] by [`From`].
+#[derive(Deserialize)]
+struct StoredPostConnect {
+    #[serde(default)]
+    steps: Vec<StoredStep>,
+    #[serde(default)]
+    approved: Option<Vec<StoredStep>>,
+}
+
+impl From<StoredPostConnect> for PostConnect {
+    /// A step with no mark (a store from before it) is trusted only if the profile's approval
+    /// covers exactly the steps it has now; any other never-approved or changed step is
+    /// untrusted, since whether it came from an import is not known.
+    fn from(stored: StoredPostConnect) -> Self {
+        let step = |stored: &StoredStep, untrusted: bool| PostConnectStep {
+            input: stored.input.clone(),
+            delay_ms: stored.delay_ms,
+            enabled: stored.enabled,
+            on_failure: stored.on_failure,
+            untrusted,
+        };
+        let approved: Option<Vec<PostConnectStep>> = stored
+            .approved
+            .as_ref()
+            .map(|approved| approved.iter().map(|s| step(s, false)).collect());
+        let steps_plain: Vec<PostConnectStep> =
+            stored.steps.iter().map(|s| step(s, false)).collect();
+        let legacy_trusted = approved.as_ref() == Some(&steps_plain);
+        let steps = stored
+            .steps
+            .iter()
+            .map(|s| step(s, s.untrusted.unwrap_or(!legacy_trusted)))
+            .collect();
+        Self { steps, approved }
+    }
+}
+
 impl PostConnect {
-    /// Steps approved as they are now: the question's Run, which trusts every step shown.
+    /// Steps approved as they are now: the question's Run. What each step does is approved;
+    /// the mark is cleared only on the steps that run, the ones the question showed. A
+    /// disabled step keeps it: turning it on later does not trust it.
     #[must_use]
     pub fn approved_as(steps: Vec<PostConnectStep>) -> Self {
+        let approved: Vec<PostConnectStep> = steps.iter().map(PostConnectStep::trusted).collect();
         let steps: Vec<PostConnectStep> = steps
             .into_iter()
             .map(|step| PostConnectStep {
-                untrusted: false,
+                untrusted: step.untrusted && !step.runs(),
                 ..step
             })
             .collect();
         Self {
-            approved: Some(steps.clone()),
+            approved: Some(approved),
             steps,
         }
     }
@@ -178,14 +237,6 @@ impl PostConnect {
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty() && self.approved.is_none()
     }
-}
-
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "serde's skip_serializing_if passes a reference"
-)]
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 fn default_delay() -> u32 {

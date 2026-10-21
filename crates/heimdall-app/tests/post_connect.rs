@@ -565,3 +565,96 @@ fn an_ftp_profile_opens_a_files_tab_and_its_certificate_question_reconnects_it()
     };
     assert_eq!(request.accepted, Some(whole));
 }
+
+/// A store of profiles written before the `untrusted` mark existed: the mark lines removed.
+fn without_marks(dir: &Path) {
+    let file = dir.join("profiles.toml");
+    let text = std::fs::read_to_string(&file).expect("text");
+    let legacy: String = text
+        .lines()
+        .filter(|line| !line.contains("untrusted ="))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&file, legacy).expect("write");
+}
+
+#[test]
+fn renaming_a_profile_of_an_older_store_does_not_approve_its_never_approved_steps() {
+    let dir = tempfile::tempdir().expect("dir");
+    let cfg = config(dir.path());
+    without_marks(dir.path());
+    let mut app = App::new(cfg);
+    app.update(Message::EditProfile(ProfileId::new("imported")));
+    app.update(Message::ProfileField {
+        field: heimdall_app::profile_draft::ProfileField::Name,
+        value: "renamed".to_owned(),
+    });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    let effects = app.update(Message::OpenProfile(ProfileId::new("imported")));
+    assert!(effects.is_empty(), "nothing is typed unasked: {effects:?}");
+    assert!(matches!(app.dialog, Some(Dialog::ConfirmPostConnect(_))));
+}
+
+#[test]
+fn an_older_store_with_approved_steps_asks_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let cfg = config(dir.path());
+    without_marks(dir.path());
+    let mut app = App::new(cfg);
+    let effects = app.update(Message::OpenProfile(ProfileId::new("approved")));
+    assert_eq!(
+        connect_request(&effects).profile.post_connect.to_run(),
+        steps()
+    );
+}
+
+#[test]
+fn run_trusts_only_the_steps_it_showed_and_enabling_another_asks_again() {
+    use heimdall_app::steps_draft::StepEdit;
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([profile(
+        "mixed",
+        PostConnect {
+            steps: vec![
+                PostConnectStep::new("uptime").from_outside(),
+                PostConnectStep {
+                    enabled: false,
+                    ..PostConnectStep::new("rm -rf /tmp/x").from_outside()
+                },
+            ],
+            approved: None,
+        },
+    )]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        ..config(dir.path())
+    });
+    app.update(Message::OpenProfile(ProfileId::new("mixed")));
+    let Some(Dialog::ConfirmPostConnect(asked)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(asked.commands, ["uptime"], "the disabled step is not shown");
+    let effects = app.update(Message::ConfirmDialog);
+    let typed = connect_request(&effects).profile.post_connect.to_run();
+    assert_eq!(typed.iter().filter(|step| step.runs()).count(), 1);
+
+    // Turning the step on in the form does not trust it.
+    app.update(Message::EditProfile(ProfileId::new("mixed")));
+    app.update(Message::PostConnectEdit(StepEdit::Enabled(1, true)));
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    let effects = app.update(Message::OpenProfile(ProfileId::new("mixed")));
+    assert!(effects.is_empty(), "{effects:?}");
+    let Some(Dialog::ConfirmPostConnect(asked)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(asked.commands, ["uptime", "rm -rf /tmp/x"]);
+}
