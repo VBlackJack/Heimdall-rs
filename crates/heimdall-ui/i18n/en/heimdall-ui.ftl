@@ -3903,7 +3903,7 @@ ui-settings-rdp-resize-delay = Resolution stabilization delay after connect (0 =
 ui-settings-rdp-resize-delay-refused = RDP resize delay must be zero or between { $min } and { $max } ms.
 ui-settings-rdp-keep-alive-interval = Session keep-alive interval
 ui-settings-rdp-keep-alive-interval-refused = RDP keep-alive interval must be between { $min } and { $max } ms.
-ui-settings-rdp-builtin-compression = Compress in the built-in client (experimental)
+ui-settings-rdp-builtin-compression = Compress in the built-in client
 ui-settings-rdp-builtin-compression-hint = Applies to the built-in RDP client only, for profiles with RDP compression enabled. Remote Desktop Connection follows the profile.
 ui-settings-rdp-connect-timeout-off = Off
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s

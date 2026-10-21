@@ -203,6 +203,13 @@ const CLIPBOARD_TIMEOUTS: Duration = Duration::from_secs(5);
 /// The log target of everything about full screen: `HEIMDALL_LOG=debug` writes it.
 const LOG_TARGET: &str = "heimdall::fullscreen";
 
+/// What the log says when the server closes the session with an MCS Disconnect Provider
+/// Ultimatum.
+const ULTIMATUM_LINE: &str = "the server sent an MCS Disconnect Provider Ultimatum";
+
+/// What the log says when this side stops the session.
+const CANCELLED_LINE: &str = "stopped from this side";
+
 /// When the new area of a framebuffer made larger is looked at, the old size and the new.
 type NewAreaWatch = (Instant, (u16, u16), (u16, u16));
 
@@ -777,6 +784,35 @@ const X224_DATA: u8 = 0xF0;
 /// Index of `disconnectProviderUltimatum` among the T.125 `DomainMCSPDU` choices.
 const MCS_DISCONNECT_PROVIDER_ULTIMATUM: u8 = 8;
 
+/// How a session that failed with `description` closes: a Set Error Info ending a
+/// reactivation is the server ending the session, bulk data that cannot be read is a
+/// refused compression, anything else a failure.
+fn failure_reason(compression_refused: bool, description: String) -> CloseReason {
+    if compression_refused {
+        return CloseReason::CompressionRefused(description);
+    }
+    match reason::ending_in_failure(&description) {
+        Some(Ending::Logoff) => CloseReason::Server,
+        Some(ending) => CloseReason::Disconnected(ending),
+        None => CloseReason::Failed(description),
+    }
+}
+
+/// How a session closes when the server (or this side) terminates it gracefully, and the
+/// words the log says it with.
+fn graceful_close(reason: GracefulDisconnectReason) -> (CloseReason, String) {
+    let said = format!("the connection was terminated: {reason}");
+    let close = match reason {
+        GracefulDisconnectReason::UserInitiated => CloseReason::Local,
+        GracefulDisconnectReason::ServerInitiated => CloseReason::Server,
+        GracefulDisconnectReason::Other(reason) => match reason::ending(&reason) {
+            Ending::Logoff => CloseReason::Server,
+            ending => CloseReason::Disconnected(ending),
+        },
+    };
+    (close, said)
+}
+
 /// Whether `frame` is the server's MCS Disconnect Provider Ultimatum: it closes the
 /// session. `IronRDP` 0.11 does not decode the short form xrdp sends
 /// (`03 00 00 09 02 f0 80 21 80`), so it is recognised here, by its header alone.
@@ -901,15 +937,12 @@ impl Running {
     ) {
         let reason = match self.serve(result, shared, cancel).await {
             Ok(reason) => reason,
-            // A Set Error Info ending a reactivation is the server ending the session.
-            Err(description) if self.compression_refused => {
-                CloseReason::CompressionRefused(description)
+            Err(description) => {
+                // Said here, before the mapping: a Set Error Info of a logoff turns into a
+                // plain `Server` end, which says nothing of what the connection died of.
+                log::warn!("RDP session failed: {description}");
+                failure_reason(self.compression_refused, description)
             }
-            Err(description) => match reason::ending_in_failure(&description) {
-                Some(Ending::Logoff) => CloseReason::Server,
-                Some(ending) => CloseReason::Disconnected(ending),
-                None => CloseReason::Failed(description),
-            },
         };
         let _ = self.events.send(RdpEvent::Closed(reason)).await;
     }
@@ -952,6 +985,7 @@ impl Running {
         loop {
             let outputs = tokio::select! {
                 () = cancel.cancelled() => {
+                    log::info!("RDP session ended: {CANCELLED_LINE}");
                     // A polite end first; the connection closes either way.
                     if let Ok(outputs) = stage.graceful_shutdown() {
                         let _ = self.answer(outputs).await;
@@ -961,6 +995,8 @@ impl Running {
                 frame = self.reader.read() => {
                     let (action, frame) = frame.map_err(|error| error.to_string())?;
                     if is_disconnect_ultimatum(action, &frame) {
+                        // A normal logoff ends this way too.
+                        log::info!("RDP session ended: {ULTIMATUM_LINE}");
                         return Ok(CloseReason::Server);
                     }
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1035,16 +1071,14 @@ impl Running {
                             .await;
                     }
                     ActiveStageOutput::Terminate(reason) => {
-                        return Ok(match reason {
-                            GracefulDisconnectReason::UserInitiated => CloseReason::Local,
-                            GracefulDisconnectReason::ServerInitiated => CloseReason::Server,
-                            GracefulDisconnectReason::Other(reason) => {
-                                match reason::ending(&reason) {
-                                    Ending::Logoff => CloseReason::Server,
-                                    ending => CloseReason::Disconnected(ending),
-                                }
-                            }
-                        });
+                        let (close, said) = graceful_close(reason);
+                        // Warn only for a reason the server gave that is not a logoff.
+                        if matches!(close, CloseReason::Disconnected(_)) {
+                            log::warn!("RDP session ended: {said}");
+                        } else {
+                            log::info!("RDP session ended: {said}");
+                        }
+                        return Ok(close);
                     }
                     ActiveStageOutput::DeactivateAll => {
                         self.reactivated(activation, stage).await?;
@@ -1322,9 +1356,8 @@ impl Running {
             }
             // Not encodable, or no display channel after all this time.
             Some(Err(_)) | None => {
-                log::debug!(
-                    target: LOG_TARGET,
-                    "RDP resize {width}x{height}: Display Control unusable (not advertised or not encodable), refused"
+                log::info!(
+                    "RDP resize {width}x{height}: Display Control unusable (not advertised or not encodable), refused; the application connects again at that size"
                 );
                 self.waiting_since = None;
                 let (Ok(width), Ok(height)) = (u16::try_from(width), u16::try_from(height)) else {
@@ -2136,5 +2169,41 @@ mod tests {
         assert!(!is_disconnect_ultimatum(Action::X224, &data));
         assert!(!is_disconnect_ultimatum(Action::FastPath, &ultimatum));
         assert!(!is_disconnect_ultimatum(Action::X224, &ultimatum[..7]));
+    }
+
+    #[test]
+    fn a_graceful_termination_closes_and_says_why() {
+        let (close, said) = graceful_close(GracefulDisconnectReason::ServerInitiated);
+        assert_eq!(close, CloseReason::Server);
+        assert_eq!(
+            said,
+            "the connection was terminated: server initiated disconnect"
+        );
+        let (close, said) = graceful_close(GracefulDisconnectReason::UserInitiated);
+        assert_eq!(close, CloseReason::Local);
+        assert!(said.ends_with("user initiated disconnect"), "{said}");
+        // A reason of the server's own is kept in the line, never dropped.
+        let (close, said) = graceful_close(GracefulDisconnectReason::Other("idle".to_owned()));
+        assert!(matches!(close, CloseReason::Disconnected(_)), "{close:?}");
+        assert!(said.ends_with("idle"), "{said}");
+    }
+
+    #[test]
+    fn a_failure_closes_as_the_reason_it_carries() {
+        let description = "connection error: boom".to_owned();
+        assert_eq!(
+            failure_reason(false, description.clone()),
+            CloseReason::Failed(description.clone())
+        );
+        assert_eq!(
+            failure_reason(true, description.clone()),
+            CloseReason::CompressionRefused(description)
+        );
+        // A Set Error Info of a logoff is the server ending the session.
+        let logoff = reason::error_info_description(0x0B).expect("a known code");
+        assert_eq!(
+            failure_reason(false, format!("server returned error info: {logoff}")),
+            CloseReason::Server
+        );
     }
 }

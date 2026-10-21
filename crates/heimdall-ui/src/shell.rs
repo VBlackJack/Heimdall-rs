@@ -97,6 +97,7 @@ pub use settings_page::search_field_id as settings_search_field_id;
 use crate::desktop_view::DesktopView;
 use crate::dialog_parts::{self, Severity};
 use crate::dialog_place::anchored;
+use crate::even_grid::EvenGrid;
 use crate::files_view;
 use crate::finder::Finder;
 use crate::floating_view::{FloatEvent, FloatingWindow};
@@ -10523,42 +10524,51 @@ fn protocol_description(protocol: DraftProtocol) -> String {
     }
 }
 
+/// The content of `protocol`'s card in the picker, which fills the card's inside: the tests
+/// read the card's height from it.
+#[must_use]
+pub fn protocol_card_id(protocol: DraftProtocol) -> iced::widget::Id {
+    iced::widget::Id::from(format!("protocol-card-{protocol:?}"))
+}
+
 /// The first step of a new session, as in the C# dialog: a card per protocol, four to a
 /// row, each its icon in the protocol's colour, its name and what it is.
-fn protocol_picker<'a>() -> Element<'a, Message> {
+#[must_use]
+pub fn protocol_picker<'a>() -> Element<'a, Message> {
     let card = |protocol: DraftProtocol| {
         let kind = protocol_kind(protocol);
         button(
-            column![
-                icons::icon(Icon::of(kind), Tint::Protocol(kind), PICKER_ICON_SIDE),
-                text(protocol_name(protocol)).font(styles::SEMIBOLD),
-                text(protocol_description(protocol))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary)
-                    .align_x(iced::alignment::Horizontal::Center),
-            ]
-            .spacing(spacing::XS)
-            .align_x(iced::Alignment::Center)
-            .width(Length::Fill),
+            container(
+                column![
+                    icons::icon(Icon::of(kind), Tint::Protocol(kind), PICKER_ICON_SIDE),
+                    text(protocol_name(protocol)).font(styles::SEMIBOLD),
+                    text(protocol_description(protocol))
+                        .size(font_size::CAPTION)
+                        .style(text::secondary)
+                        .align_x(iced::alignment::Horizontal::Center),
+                ]
+                .spacing(spacing::XS)
+                .align_x(iced::Alignment::Center)
+                .width(Length::Fill),
+            )
+            .id(protocol_card_id(protocol))
+            .center_y(Length::Fill),
         )
         .padding(spacing::MD)
         .width(Length::Fill)
+        .height(Length::Fill)
         .style(styles::secondary)
         .on_press(Message::App(AppMessage::ChooseProtocol(protocol)))
     };
-    let cards = DraftProtocol::ALL.chunks(PICKER_COLUMNS).fold(
-        Column::new().spacing(spacing::SM),
-        |cards, chunk| {
-            let mut line = row![].spacing(spacing::SM);
-            for protocol in chunk {
-                line = line.push(card(*protocol));
-            }
-            // A last row short of cards keeps their width.
-            for _ in chunk.len()..PICKER_COLUMNS {
-                line = line.push(iced::widget::space::horizontal());
-            }
-            cards.push(line)
-        },
+    // The cards of a row share the height of the tallest, as the C# UniformGrid gives every
+    // cell one height (ServerDialog.xaml:295-300, cells of MinHeight 100).
+    let cards = EvenGrid::new(
+        PICKER_COLUMNS,
+        spacing::SM,
+        DraftProtocol::ALL
+            .iter()
+            .map(|protocol| Element::from(card(*protocol)))
+            .collect(),
     );
     column![
         text(fl!("ui-profile-new-title"))
