@@ -5694,8 +5694,7 @@ impl Shell {
         // The buttons keep the order and the state of the C# Launchpad's
         // (`MainWindow.xaml:2155-2174`): the import is off with nothing to import.
         let action = |label: String| {
-            button(text(label).size(font_size::BODY_LARGE))
-                .padding(crate::tokens::BUTTON_PADDING)
+            button(text(label).size(font_size::BODY_LARGE)).padding(crate::tokens::BUTTON_PADDING)
         };
         crate::launchpad::welcome(
             fl!("ui-home-welcome"),
