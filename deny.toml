@@ -4,25 +4,26 @@
 [advisories]
 version = 2
 yanked = "deny"
-# Each ignore names one advisory, the path that brings it in, and why it cannot be
-# removed from here. Re-check them when iced, russh or rsa is upgraded.
+# Each ignore names one advisory, the path that brings it in, why it cannot be removed
+# from here, and the date it is to be reviewed by (also listed in the first-release
+# checklist). Re-check them sooner when iced, russh, rsa or i18n-embed is upgraded.
 ignore = [
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled by metal, the macOS backend of wgpu, through iced; not built for Linux or Windows" },
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled by fontdb and owned_ttf_parser through iced" },
-    { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained (merged into zbus 6); pulled by zbus 5, same path as RUSTSEC-2026-0372" },
-    { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained (merged into zbus 6); pulled by zbus 5, same path as RUSTSEC-2026-0372" },
-    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained (merged into zbus 6); pulled by zbus 5 through iced (mundy), keepawake and the Linux keyring store; no zbus 6 release of those yet" },
-    { id = "RUSTSEC-2026-0374", reason = "basic-toml is unmaintained; pulled by i18n-config through i18n-embed (Fluent), which reads only the project's own i18n.toml, at build time" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled by metal, the macOS backend of wgpu, through iced; not built for Linux or Windows; review by 2027-01-20" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled by fontdb and owned_ttf_parser through iced; review by 2027-01-20" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained (merged into zbus 6); pulled by zbus 5, same path as RUSTSEC-2026-0372; review by 2027-01-20" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained (merged into zbus 6); pulled by zbus 5, same path as RUSTSEC-2026-0372; review by 2027-01-20" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained (merged into zbus 6); pulled by zbus 5 through iced (mundy), keepawake and the Linux keyring store; no zbus 6 release of those yet; review by 2027-01-20" },
+    { id = "RUSTSEC-2026-0374", reason = "basic-toml is unmaintained; pulled by i18n-config through i18n-embed (Fluent), which reads only the project's own i18n.toml, at build time; review by 2027-01-20" },
     # Decided by Julien Bombled on 2026-10-04, with iced's highlighter for the integrated
     # editor: syntect 5.3 through two-face. Nothing either crate reads comes from the
     # network or from a user's file.
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1 is unmaintained; syntect decodes the syntax and theme packs compiled into the binary with it" },
-    { id = "RUSTSEC-2024-0320", reason = "yaml-rust is unmaintained; syntect loads .sublime-syntax files with it, which Heimdall never does" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1 is unmaintained; syntect decodes the syntax and theme packs compiled into the binary with it; review by 2027-01-20" },
+    { id = "RUSTSEC-2024-0320", reason = "yaml-rust is unmaintained; syntect loads .sublime-syntax files with it, which Heimdall never does; review by 2027-01-20" },
     # Decided by Julien Bombled on 2026-09-26. No fixed rsa release exists. Heimdall-rs only
     # signs with an RSA user key, locally, once per login; the only party observing that
     # timing is the server being logged into. Removing RSA would lock out servers that
     # accept only RSA keys.
-    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing attack, no fix released; client-side signing once per login, observed only by the server logged into; accepted 2026-09-26" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing attack, no fix released; client-side signing once per login, observed only by the server logged into; accepted 2026-09-26; review by 2027-01-20" },
 ]
 
 [licenses]

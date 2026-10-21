@@ -608,9 +608,9 @@ pub struct Settings {
     /// window is not concerned.
     pub require_credential_guard: bool,
     /// The built-in RDP client offers bulk compression to the server, when the profile in
-    /// effect asks for it: off unless chosen, experimental. No C# counterpart: the C#
-    /// control compresses as `RdpCompression` says, and Remote Desktop Connection still
-    /// does, whatever this says.
+    /// effect asks for it: on by default ([`BUILTIN_RDP_COMPRESSION_DEFAULT`]), turned off
+    /// here. No C# counterpart: the C# control compresses as `RdpCompression` says, and
+    /// Remote Desktop Connection still does, whatever this says.
     pub builtin_rdp_compression: bool,
     /// The sizes RDP tabs' Resolution menus offer, as the C# `RdpResolutionPresets`; empty
     /// offers [`RESOLUTION_PRESETS`]. See [`Settings::resolution_presets`].
@@ -1147,6 +1147,10 @@ pub const RDP_KEEP_ALIVE_INTERVAL_MAX_MS: u32 = 300_000;
 pub const RDP_DEFAULT_WIDTH_DEFAULT: u32 = 1920;
 /// Height of the default resolution by default, as the C# `DefaultResolutionHeight`.
 pub const RDP_DEFAULT_HEIGHT_DEFAULT: u32 = 1080;
+/// Whether the built-in RDP client compresses by default: on since the live XCRUSH test
+/// against a Windows server passed (issue #442); a server it cannot read still gets a
+/// connection without compression.
+pub const BUILTIN_RDP_COMPRESSION_DEFAULT: bool = true;
 /// Smallest side of the default resolution accepted, as the C# `MinimumSessionResolution`.
 pub const RDP_DEFAULT_RESOLUTION_MIN: u32 = 640;
 /// Largest side of the default resolution accepted, as the C# `MaximumSessionResolution`.
@@ -1367,7 +1371,7 @@ impl Default for Settings {
             rdp_default_width: RDP_DEFAULT_WIDTH_DEFAULT,
             rdp_default_height: RDP_DEFAULT_HEIGHT_DEFAULT,
             require_credential_guard: false,
-            builtin_rdp_compression: false,
+            builtin_rdp_compression: BUILTIN_RDP_COMPRESSION_DEFAULT,
             rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
@@ -2241,7 +2245,10 @@ impl Settings {
                 .rdp_session
                 .require_credential_guard
                 .unwrap_or_default(),
-            builtin_rdp_compression: file.rdp_session.builtin_compression.unwrap_or_default(),
+            builtin_rdp_compression: file
+                .rdp_session
+                .builtin_compression
+                .unwrap_or(BUILTIN_RDP_COMPRESSION_DEFAULT),
             rdp_confirm_disconnect: file.rdp_session.confirm_disconnect.unwrap_or(true),
             rdp_redirection_indicators_expanded: file
                 .rdp_session
