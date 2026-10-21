@@ -117,6 +117,39 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
     }
 }
 
+/// What one connection attempt is given besides its profile.
+#[derive(Default)]
+struct Attempt {
+    /// The certificate the user just agreed to.
+    accepted: Option<AcceptedCertificate>,
+    /// The size chosen from the tab's Resolution menu.
+    chosen: Option<DesktopSizing>,
+    /// A size the server could not take live, asked as the connection opens.
+    at: Option<(u16, u16)>,
+    /// The room the tab is shown in, in physical pixels, brought to its proportions.
+    shown: Option<(u16, u16)>,
+}
+
+/// The desktop size an RDP connection asks for, as the Client Core Data's desktop width and
+/// height: the fixed size when the sizing is one; else the room the tab is shown in, when it
+/// is known (`shown`, in physical pixels, brought to the proportions chosen), made a size the
+/// resize path would give it too, so the session finds it in place and sends no Display
+/// Control request right after connecting. The C# does the same: the host control's size
+/// goes to `DesktopWidth` and `DesktopHeight` before `Connect`
+/// (`RdpActiveXHost.cs:1746-1802` resolves it from the host display context,
+/// `RdpActiveXHost.cs:2001-2002` writes it). Until the tab has been laid out, the default
+/// size, and the resize after the post-connect wait.
+fn connect_desktop(sizing: DesktopSizing, shown: Option<(u16, u16)>) -> (u16, u16) {
+    match sizing {
+        DesktopSizing::Fixed { width, height } => (width, height),
+        DesktopSizing::FollowsTab | DesktopSizing::TabSizeOnce => shown
+            .filter(|(width, height)| *width > 0 && *height > 0)
+            .map_or(DEFAULT_DESKTOP, |(width, height)| {
+                heimdall_rdp::valid_desktop_size(width, height)
+            }),
+    }
+}
+
 /// The user's answer to a certificate question, for the attempt built on it.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Decided {
@@ -179,11 +212,12 @@ impl App {
     fn rdp_request(
         &self,
         profile: &RdpProfile,
-        (accepted, chosen, at): (
-            Option<AcceptedCertificate>,
-            Option<DesktopSizing>,
-            Option<(u16, u16)>,
-        ),
+        Attempt {
+            accepted,
+            chosen,
+            at,
+            shown,
+        }: Attempt,
         cancel: CancellationToken,
     ) -> Result<RdpRequest, UiError> {
         // Straight to the server, it could not be reached, or not the one meant.
@@ -200,14 +234,13 @@ impl App {
             known_hosts: self.known_rdp_hosts(),
             accepted,
             trusted_for_run: self.whole_certificates_trusted_for_run(&profile.host, profile.port),
-            desktop: match at.map_or_else(
-                || chosen.unwrap_or_else(|| profile.options.sizing()),
-                |(width, height)| DesktopSizing::Fixed { width, height },
-            ) {
-                DesktopSizing::Fixed { width, height } => (width, height),
-                // Replaced by the tab's size as soon as it is shown.
-                DesktopSizing::FollowsTab | DesktopSizing::TabSizeOnce => DEFAULT_DESKTOP,
-            },
+            desktop: connect_desktop(
+                at.map_or_else(
+                    || chosen.unwrap_or_else(|| profile.options.sizing()),
+                    |(width, height)| DesktopSizing::Fixed { width, height },
+                ),
+                shown,
+            ),
             desktop_scale: heimdall_rdp::desktop_scale_factor(self.display_scale),
             logon_timeout: match self.settings.rdp_connect_timeout {
                 0 => None,
@@ -269,7 +302,19 @@ impl App {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = self.rdp_request(&profile, (None, None, None), cancel.clone());
+        // A new tab opens in the room the last desktop of the window had: connected at that
+        // size, it has nothing to resize a second later.
+        let shown = self
+            .desktop_area
+            .map(|area| profile.options.aspect.fit(area));
+        let request = self.rdp_request(
+            &profile,
+            Attempt {
+                shown,
+                ..Attempt::default()
+            },
+            cancel.clone(),
+        );
         let mut tab = Tab::new(
             self.terminal_palette(),
             tab_id,
@@ -303,6 +348,7 @@ impl App {
         accepted: Option<AcceptedCertificate>,
     ) -> Vec<Effect> {
         let defaults = self.settings.rdp_defaults;
+        let window_area = self.desktop_area;
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -324,12 +370,24 @@ impl App {
         tab.rdp_step = None;
         tab.desktop = None;
         let chosen = tab.desktop_sizing;
+        let (aspect, shown) = (tab.desktop_aspect, tab.desktop_area.or(window_area));
         // A size the server could not take live is asked as the connection opens.
         let at = tab
             .resize_fallback
             .as_mut()
             .and_then(|fallback| fallback.pending.take());
-        match self.rdp_request(&profile, (accepted, chosen, at), cancel) {
+        // Connected again at the size the tab was shown at, as it was the first time.
+        let shown = shown.map(|area| aspect.fit(area));
+        match self.rdp_request(
+            &profile,
+            Attempt {
+                accepted,
+                chosen,
+                at,
+                shown,
+            },
+            cancel,
+        ) {
             Ok(request) => vec![Effect::ConnectRdp {
                 tab: tab_id,
                 attempt,

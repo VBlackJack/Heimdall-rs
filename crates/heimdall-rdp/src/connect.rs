@@ -44,6 +44,7 @@ use ironrdp::connector::{
 };
 use ironrdp::core::WriteBuf;
 use ironrdp::displaycontrol::client::DisplayControlClient;
+use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp::dvc::DrdynvcClient;
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::nego::NegoRequestData;
@@ -292,6 +293,20 @@ pub fn desktop_scale_factor(scale: f32) -> u32 {
             distance(*a).total_cmp(&distance(*b))
         })
         .unwrap_or(100)
+}
+
+/// The desktop size a session is asked for at `width` by `height`: the one a later Display
+/// Control request for the same size is brought to (MS-RDPEDISP 2.2.2.2.1: each side from 200
+/// to 8192, the width even), so a session that connects at a tab's size finds the tab's size
+/// already in place and has nothing to resize.
+#[must_use]
+pub fn valid_desktop_size(width: u16, height: u16) -> (u16, u16) {
+    let (width, height) =
+        MonitorLayoutEntry::adjust_display_size(u32::from(width), u32::from(height));
+    (
+        u16::try_from(width).unwrap_or(u16::MAX),
+        u16::try_from(height).unwrap_or(u16::MAX),
+    )
 }
 
 /// Why a connection did not open.
@@ -1629,6 +1644,16 @@ mod tests {
         ] {
             assert_eq!(desktop_scale_factor(scale), factor, "{scale}");
         }
+    }
+
+    #[test]
+    fn a_connect_size_is_brought_to_the_one_display_control_would_ask() {
+        // An odd width loses one pixel, as the resize path does.
+        assert_eq!(valid_desktop_size(1135, 724), (1134, 724));
+        assert_eq!(valid_desktop_size(1134, 724), (1134, 724));
+        // The protocol's limits.
+        assert_eq!(valid_desktop_size(100, 50), (200, 200));
+        assert_eq!(valid_desktop_size(20_000, 20_000), (8192, 8192));
     }
 
     #[test]
