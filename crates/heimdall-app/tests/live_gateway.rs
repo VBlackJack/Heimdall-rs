@@ -332,6 +332,7 @@ async fn approved_post_connect_steps_are_typed_into_the_lab_shell() {
     // Steps nobody approved: the shell opens and nothing is typed.
     let mut unapproved = request(&keys, &known_hosts, Purpose::Shell);
     unapproved.profile.post_connect = PostConnect {
+        untrusted: false,
         steps: vec![PostConnectStep::new("exit")],
         approved: None,
     };

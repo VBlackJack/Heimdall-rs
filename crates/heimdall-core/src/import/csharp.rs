@@ -585,6 +585,9 @@ struct LegacyServer {
     post_connect_steps: Vec<Option<LegacyStep>>,
     /// The sequence before steps: one command per line.
     post_connect_command: Option<String>,
+    /// Written by Heimdall-rs for steps that came from a shared file.
+    #[serde(default)]
+    post_connect_untrusted: bool,
     /// The gateway's port of the remote forward; 0 opens none.
     remote_bind_port: Option<i64>,
     /// The local port of the remote forward; 0 is the same port.
@@ -1579,9 +1582,13 @@ fn convert(server: &LegacyServer, suggested_tunnel_port: u16) -> Result<SshProfi
         local_tunnel_port: local_tunnel_port_of(server, suggested_tunnel_port)?,
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
         forwards: forwards_of(server)?,
-        post_connect: PostConnect {
-            steps: post_connect_of(server),
-            approved: None,
+        post_connect: {
+            let steps = post_connect_of(server);
+            PostConnect {
+                untrusted: server.post_connect_untrusted && !steps.is_empty(),
+                steps,
+                approved: None,
+            }
         },
         forward_agent: server.ssh_agent_forwarding,
         compression: server.ssh_compression,

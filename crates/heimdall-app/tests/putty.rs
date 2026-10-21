@@ -174,6 +174,7 @@ fn steps_to_type_ask_nothing_as_putty_types_none() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app_with(dir.path(), |profile| {
         profile.post_connect = PostConnect {
+            untrusted: false,
             steps: vec![PostConnectStep::new("sudo -i")],
             approved: None,
         };

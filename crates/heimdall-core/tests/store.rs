@@ -923,6 +923,7 @@ fn the_store_keeps_an_approval_of_post_connect_steps_and_never_takes_one_from_an
     let with = |approved: Option<Vec<PostConnectStep>>| {
         let mut profile = profile("a", "h1");
         profile.post_connect = PostConnect {
+            untrusted: false,
             steps: steps.clone(),
             approved,
         };

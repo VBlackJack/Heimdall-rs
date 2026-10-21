@@ -71,6 +71,7 @@ fn config(dir: &Path) -> AppConfig {
         profile(
             "imported",
             PostConnect {
+                untrusted: false,
                 steps: steps(),
                 approved: None,
             },
@@ -82,6 +83,7 @@ fn config(dir: &Path) -> AppConfig {
     store.merge([profile(
         "approved",
         PostConnect {
+            untrusted: false,
             steps: steps(),
             approved: None,
         },

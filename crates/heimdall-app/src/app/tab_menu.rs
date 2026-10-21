@@ -258,13 +258,6 @@ impl App {
                 if *purpose == Purpose::Files {
                     draft.protocol = DraftProtocol::Sftp;
                 }
-                // Commands nobody approved (a shared file's, declined or not) do not become
-                // approved by saving the session as a profile: it asks the first time.
-                if profile.post_connect.needs_approval() {
-                    draft
-                        .unapproved_steps
-                        .clone_from(&profile.post_connect.steps);
-                }
                 draft
             }
             TabProfile::Rdp(profile) => ProfileDraft::from_rdp(profile),

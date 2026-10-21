@@ -146,6 +146,10 @@ struct Entry {
     remote_local_port: Option<u16>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     post_connect_steps: Vec<Step>,
+    /// Heimdall-rs only (the C# ignores it): the steps came from a shared file and nobody
+    /// approved them, so an import does not let a form save approve them either.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    post_connect_untrusted: bool,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     rdp: Option<RdpKeys>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -417,6 +421,8 @@ fn ssh(profile: &SshProfile) -> Entry {
         ssh_x11_forwarding: profile.x11_forwarding,
         session_logging_override: profile.session_logging,
         post_connect_steps: profile.post_connect.steps.iter().map(step).collect(),
+        post_connect_untrusted: profile.post_connect.untrusted
+            && !profile.post_connect.is_approved(),
         ..server(
             &profile.id,
             &profile.name,

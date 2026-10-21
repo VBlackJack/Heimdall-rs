@@ -1075,6 +1075,9 @@ fn ssh_profile(
         vault_entry: None,
         forwards: Forwards::default(),
         post_connect: PostConnect {
+            // From a file other people write: however the profile made of it is edited or
+            // copied later, only an explicit approval of these steps approves them.
+            untrusted: !steps.is_empty(),
             steps,
             approved: None,
         },

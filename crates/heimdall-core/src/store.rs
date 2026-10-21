@@ -629,6 +629,10 @@ impl ProfileStore {
                     .iter()
                     .find(|existing| existing.id == profile.id)
                     .and_then(|existing| existing.post_connect.approved.clone());
+                // Steps the user approved as they are no longer wait for an approval.
+                if profile.post_connect.is_approved() {
+                    profile.post_connect.untrusted = false;
+                }
                 profile
             })
             .collect();
@@ -642,6 +646,7 @@ impl ProfileStore {
         match self.ssh.iter_mut().find(|profile| profile.id == *id) {
             Some(profile) => {
                 profile.post_connect.approved = Some(steps.to_vec());
+                profile.post_connect.untrusted = false;
                 true
             }
             None => false,

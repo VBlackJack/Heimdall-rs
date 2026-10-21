@@ -91,6 +91,12 @@ pub struct PostConnect {
     /// The steps as the user approved them; `None` until approved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved: Option<Vec<PostConnectStep>>,
+    /// The steps came from a file other people write (a shared session). However the profile
+    /// is edited, copied, converted or exported, only an explicit approval of these steps
+    /// (the question's Run) or the user writing or editing the steps themselves makes them
+    /// approved; saving a form that left them as they were does not.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub untrusted: bool,
 }
 
 impl PostConnect {
@@ -100,6 +106,7 @@ impl PostConnect {
         Self {
             approved: Some(steps.clone()),
             steps,
+            untrusted: false,
         }
     }
 
@@ -136,6 +143,14 @@ impl PostConnect {
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty() && self.approved.is_none()
     }
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn default_delay() -> u32 {
@@ -180,6 +195,7 @@ mod tests {
     #[test]
     fn only_steps_on_with_something_to_type_run() {
         let sequence = PostConnect {
+            untrusted: false,
             steps: steps(),
             approved: None,
         };
@@ -189,6 +205,7 @@ mod tests {
     #[test]
     fn steps_run_only_as_they_were_approved() {
         let mut sequence = PostConnect {
+            untrusted: false,
             steps: steps(),
             approved: None,
         };
@@ -208,6 +225,7 @@ mod tests {
     #[test]
     fn nothing_to_type_needs_no_approval() {
         let sequence = PostConnect {
+            untrusted: false,
             steps: vec![PostConnectStep::new("")],
             approved: None,
         };

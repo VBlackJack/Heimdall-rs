@@ -1247,3 +1247,79 @@ fn an_approval_is_not_remembered_for_a_session_whose_account_is_asked_at_connect
         Some(heimdall_app::Dialog::ConfirmPostConnect(_))
     ));
 }
+
+/// A saved profile made of the shared session `web`, its commands declined.
+fn declined_and_saved(dir: &Path) -> (App, heimdall_core::profile::ProfileId) {
+    use heimdall_app::TabMenuMessage;
+    let mut app = app_with_text(dir, WITH_COMMAND);
+    app.update(Message::ConnectShared(id_of(&app, "web")));
+    let (tab, _, _) = started(&app.update(Message::SkipPostConnect));
+    app.update(Message::TabMenu(TabMenuMessage::SaveAsProfile(tab)));
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    let id = app.profile_summaries()[0].id.clone();
+    (app, id)
+}
+
+/// Opening `id` must ask about the commands and type nothing.
+fn assert_asked(app: &mut App, id: &heimdall_core::profile::ProfileId, what: &str) {
+    app.dialog = None;
+    let effects = app.update(Message::OpenProfile(id.clone()));
+    assert!(effects.is_empty(), "{what}: ran without a question");
+    assert!(
+        matches!(
+            app.dialog,
+            Some(heimdall_app::Dialog::ConfirmPostConnect(_))
+        ),
+        "{what}: not asked"
+    );
+}
+
+#[test]
+fn editing_the_saved_profile_without_touching_the_commands_does_not_approve_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, id) = declined_and_saved(dir.path());
+    app.update(Message::EditProfile(id.clone()));
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    assert_asked(&mut app, &id, "edited, commands untouched");
+    // And again after a restart: the status is persisted with the profile.
+    let mut restarted = app_with_text_keeping(dir.path());
+    assert_asked(&mut restarted, &id, "restarted");
+}
+
+#[test]
+fn a_duplicate_of_the_saved_profile_keeps_the_commands_unapproved() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, id) = declined_and_saved(dir.path());
+    app.update(Message::DuplicateProfile {
+        id: id.clone(),
+        suffix: " (copy)".to_owned(),
+    });
+    let summaries = app.profile_summaries();
+    assert_eq!(summaries.len(), 2);
+    for summary in summaries {
+        assert_asked(&mut app, &summary.id, &summary.name);
+    }
+}
+
+#[test]
+fn only_run_approves_the_commands_of_the_saved_profile_and_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, id) = declined_and_saved(dir.path());
+    assert_asked(&mut app, &id, "before");
+    let effects = app.update(Message::ConfirmDialog);
+    assert_eq!(typed(&effects).len(), 1);
+    // Approved: no more question, and an edit that leaves the commands keeps it so.
+    app.update(Message::EditProfile(id.clone()));
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    let effects = app.update(Message::OpenProfile(id));
+    assert_eq!(typed(&effects).len(), 1, "{:?}", app.dialog);
+}

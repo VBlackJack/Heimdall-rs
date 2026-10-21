@@ -70,6 +70,7 @@ fn ssh() -> Vec<SshProfile> {
             remote_local_port: Some(8000),
         },
         post_connect: PostConnect {
+            untrusted: false,
             steps: vec![
                 PostConnectStep::new("sudo -i"),
                 PostConnectStep {
@@ -587,4 +588,33 @@ fn the_local_tunnel_port_is_always_written_never_0() {
     for id in ["switch", "screen", "ftp", "mail", "tool"] {
         assert_eq!(local_port(id), None, "{id}");
     }
+}
+
+#[test]
+fn steps_that_came_from_a_shared_file_are_still_unapproved_after_an_export_and_an_import() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut profile = ssh().remove(0);
+    let steps = vec![PostConnectStep::new("sudo -i")];
+    profile.post_connect = PostConnect {
+        untrusted: true,
+        steps: steps.clone(),
+        approved: None,
+    };
+    let mut kept = ProfileStore::open(dir.path().join("untrusted.toml")).expect("store");
+    kept.merge([profile.clone()]);
+    let text = export::csharp(&kept, &line, &RdpDefaults::default());
+    assert!(text.contains("postConnectUntrusted"), "{text}");
+    let back = import(&text, None).expect("import");
+    assert!(back.profiles[0].post_connect.untrusted);
+    assert!(back.profiles[0].post_connect.needs_approval());
+
+    // Steps the user approved carry no mark, and nothing else changes the C# document.
+    assert!(kept.approve_post_connect(&profile.id, &steps));
+    let text = export::csharp(&kept, &line, &RdpDefaults::default());
+    assert!(!text.contains("postConnectUntrusted"), "{text}");
+    assert!(
+        !import(&text, None).expect("import").profiles[0]
+            .post_connect
+            .untrusted
+    );
 }

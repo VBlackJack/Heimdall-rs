@@ -2742,6 +2742,7 @@ fn imported_post_connect_steps_are_shown_whole_and_enter_never_runs_them() {
     let dir = tempfile::tempdir().expect("dir");
     let mut imported = profile("d", None);
     imported.post_connect = PostConnect {
+        untrusted: false,
         steps: vec![
             PostConnectStep::new("sudo -i"),
             PostConnectStep::new("cd /srv"),
