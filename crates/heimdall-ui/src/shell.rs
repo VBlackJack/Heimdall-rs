@@ -1869,8 +1869,26 @@ const APP_NAME: &str = "Heimdall";
 /// Between the folders listed in a question.
 const FOLDER_LIST_SEPARATOR: &str = ", ";
 
-/// Room after the application's name.
-const NAV_TITLE_PADDING: [f32; 2] = [0.0, 16.0];
+/// Room after the application's name, as the C# title's `Margin="0,0,24,0"`: its 24 px, less
+/// the gap the row puts after it. Nothing before it.
+const NAV_TITLE_PADDING: iced::Padding = iced::Padding {
+    top: 0.0,
+    right: spacing::XL - spacing::XS,
+    bottom: 0.0,
+    left: 0.0,
+};
+
+/// Room at the toolbar's sides, as the C# `Mw_ToolbarLayout`'s `Margin="8,0"`.
+const NAV_BAR_PADDING: [f32; 2] = [spacing::XS, spacing::SM];
+
+/// Height of the Quick Connect button, as the C#'s `Height="30"`.
+const QUICK_CONNECT_HEIGHT: f32 = 30.0;
+
+/// Space between Quick Connect's magnifier and its words, as the C# glyph's `Margin="0,0,6,0"`.
+const QUICK_CONNECT_GAP: f32 = 6.0;
+
+/// Room after Quick Connect, as the C# button's `Margin="4,0,8,0"`.
+const QUICK_CONNECT_END: f32 = spacing::SM;
 
 /// Height of the line under the page shown.
 const NAV_UNDERLINE: f32 = 2.0;
@@ -5799,27 +5817,87 @@ impl Shell {
                 });
             bar = bar.push(column![entry, underline].width(Length::Shrink));
         }
-        // Quick Connect at the end, as the C# toolbar's button.
-        let bar = bar.push(iced::widget::space::horizontal()).push(
+        let bar = bar
+            .push(iced::widget::space::horizontal())
+            .push(self.toolbar_shortcuts());
+        // The C# toolbar: the window's background, its edge below it.
+        column![
+            container(bar)
+                .padding(NAV_BAR_PADDING)
+                .width(Length::Fill)
+                .style(styles::bar),
+            styles::edge_line(),
+        ]
+        .into()
+    }
+
+    /// The toolbar's shortcuts, at its end as the C#'s: the lock (only while a master
+    /// password is set) and the share toggle as 32 px icons, then Quick Connect.
+    fn toolbar_shortcuts(&self) -> Element<'_, Message> {
+        // At the end, as the C# toolbar's shortcuts: the lock (only while a master password
+        // is set) and the share toggle as 32 px icons, then Quick Connect.
+        let tip = |button: Element<'static, Message>, label: String| {
             tooltip(
-                button(text(fl!("ui-nav-quick-connect")))
-                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
-                    .style(styles::secondary)
-                    .on_press(Message::TreeShortcut(TreeShortcut::QuickConnect)),
+                button,
+                text(label).size(font_size::CAPTION),
+                tooltip::Position::Bottom,
+            )
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip)
+        };
+        let mut bar = row![].spacing(spacing::XS).align_y(iced::Alignment::Center);
+        if self.app.vault_status() == VaultStatus::Open {
+            bar = bar.push(tip(
+                container(
+                    icons::button(Icon::Lock)
+                        .style(styles::subtle)
+                        .on_press(Message::App(AppMessage::LockVault)),
+                )
+                .id(toolbar_lock_id())
+                .into(),
+                fl!("ui-sidebar-lock-tooltip"),
+            ));
+        }
+        let sharing = self.app.share_status().is_some();
+        bar.push(tip(
+            container(
+                icons::button(Icon::FolderGlyph)
+                    .style(styles::subtle)
+                    .on_press(Message::App(AppMessage::Share(
+                        heimdall_app::ShareMessage::Toggle,
+                    ))),
+            )
+            .id(toolbar_share_id())
+            .into(),
+            if sharing {
+                fl!("ui-share-stop-tooltip")
+            } else {
+                fl!("ui-share-toggle-tooltip")
+            },
+        ))
+        .push(
+            tooltip(
+                button(
+                    row![
+                        icons::icon(Icon::Zoom, Tint::Accent, font_size::BODY),
+                        text(fl!("ui-nav-quick-connect"))
+                            .size(font_size::CAPTION)
+                            .style(text::secondary),
+                    ]
+                    .spacing(QUICK_CONNECT_GAP)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding(crate::tokens::BUTTON_COMPACT_PADDING)
+                .height(QUICK_CONNECT_HEIGHT)
+                .style(styles::secondary)
+                .on_press(Message::TreeShortcut(TreeShortcut::QuickConnect)),
                 text(fl!("ui-nav-quick-connect-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .padding(styles::TOOLTIP_PADDING)
             .style(styles::tooltip),
-        );
-        // The C# toolbar: the window's background, its edge below it.
-        column![
-            container(bar)
-                .padding([spacing::XS, spacing::MD])
-                .width(Length::Fill)
-                .style(styles::bar),
-            styles::edge_line(),
-        ]
+        )
+        .push(iced::widget::space().width(QUICK_CONNECT_END))
         .into()
     }
 
@@ -5877,23 +5955,21 @@ impl Shell {
         let tunnels = self.app.live_tunnels();
         crate::status_bar::view(
             crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
-            row![
-                self.share_controls(),
-                self.tunnels_toggle(),
-                self.broadcast_controls(targets)
-            ]
-            .spacing(spacing::SM)
-            .align_y(iced::Alignment::Center)
-            .into(),
+            row(self.share_controls())
+                .push(self.tunnels_toggle())
+                .push(self.broadcast_controls(targets))
+                .spacing(crate::tokens::STATUS_PILL_GAP)
+                .align_y(iced::Alignment::Center)
+                .into(),
             crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
             fl!("ui-tunnels-count", count = tunnels),
         )
     }
 
-    /// "Share folder" in the bar, as the C# toolbar toggle: a folder that opens the dialog,
-    /// then, while a share runs, the time left (a click stops it) and the buttons copying
-    /// its URL and its `curl` command.
-    fn share_controls(&self) -> Element<'_, Message> {
+    /// The share running, in the bar, as the C# sharing status: the time left (a click stops
+    /// it) and the buttons copying its URL and its `curl` command. None while nothing is
+    /// shared; the toggle that starts it is the toolbar's, as the C# `ShareFolderButton`.
+    fn share_controls(&self) -> Option<Element<'_, Message>> {
         let share = |message| Message::App(AppMessage::Share(message));
         let tip = |button: Element<'static, Message>, label: String| {
             tooltip(
@@ -5904,70 +5980,54 @@ impl Shell {
             .padding(styles::TOOLTIP_PADDING)
             .style(styles::tooltip)
         };
-        let Some(status) = self.app.share_status() else {
-            return tip(
-                crate::status_bar::glyph_button(
-                    Icon::FolderGlyph,
-                    Tint::Text,
-                    text(fl!("ui-share-button"))
-                        .size(font_size::CAPTION)
-                        .font(styles::SEMIBOLD)
-                        .into(),
-                )
-                .style(styles::subtle)
-                .on_press(share(heimdall_app::ShareMessage::Toggle))
-                .into(),
-                fl!("ui-share-toggle-tooltip"),
-            )
-            .into();
-        };
+        let status = self.app.share_status()?;
         let time = match status {
             heimdall_app::ShareStatus::Starting => fl!("ui-share-starting"),
             heimdall_app::ShareStatus::Running { remaining } => {
                 crate::share_view::remaining_text(remaining)
             }
         };
-        row![
-            tip(
-                crate::status_bar::glyph_button(
-                    Icon::FolderGlyph,
-                    Tint::Danger,
-                    text(time)
-                        .size(font_size::CAPTION)
-                        .font(styles::SEMIBOLD)
-                        .into(),
-                )
-                .style(styles::broadcasting)
-                .on_press(share(heimdall_app::ShareMessage::Toggle))
-                .into(),
-                fl!("ui-share-stop-tooltip"),
-            ),
-            tip(
-                crate::status_bar::glyph_button(
-                    Icon::Link,
-                    Tint::Text,
-                    iced::widget::space().into()
-                )
-                .style(styles::subtle)
-                .on_press(share(heimdall_app::ShareMessage::CopyUrl))
-                .into(),
-                fl!("ui-share-copy-url-tooltip"),
-            ),
-            tip(
-                crate::status_bar::glyph_button(
-                    Icon::CommandPrompt,
-                    Tint::Text,
-                    iced::widget::space().into()
-                )
-                .style(styles::subtle)
-                .on_press(share(heimdall_app::ShareMessage::CopyCommand))
-                .into(),
-                fl!("ui-share-copy-command-tooltip"),
-            ),
-        ]
-        .spacing(spacing::XS)
-        .align_y(iced::Alignment::Center)
-        .into()
+        Some(
+            row![
+                tip(
+                    crate::status_bar::glyph_button(
+                        Icon::FolderGlyph,
+                        Tint::Danger,
+                        text(time)
+                            .size(font_size::CAPTION)
+                            .font(styles::SEMIBOLD)
+                            .into(),
+                    )
+                    .style(styles::status_pill_active)
+                    .on_press(share(heimdall_app::ShareMessage::Toggle))
+                    .into(),
+                    fl!("ui-share-stop-tooltip"),
+                ),
+                tip(
+                    crate::status_bar::glyph_button(
+                        Icon::Link,
+                        Tint::Text,
+                        iced::widget::space().into()
+                    )
+                    .on_press(share(heimdall_app::ShareMessage::CopyUrl))
+                    .into(),
+                    fl!("ui-share-copy-url-tooltip"),
+                ),
+                tip(
+                    crate::status_bar::glyph_button(
+                        Icon::CommandPrompt,
+                        Tint::Text,
+                        iced::widget::space().into()
+                    )
+                    .on_press(share(heimdall_app::ShareMessage::CopyCommand))
+                    .into(),
+                    fl!("ui-share-copy-command-tooltip"),
+                ),
+            ]
+            .spacing(crate::tokens::STATUS_PILL_GAP)
+            .align_y(iced::Alignment::Center)
+            .into(),
+        )
     }
 
     /// The tunnels panel's button, as the C# bar's: a lightning bolt and how many tunnels
@@ -5980,9 +6040,9 @@ impl Shell {
                     Tint::Text,
                     text(self.app.live_tunnels().to_string())
                         .size(font_size::CAPTION)
+                        .font(styles::SEMIBOLD)
                         .into(),
                 )
-                .style(styles::subtle)
                 .on_press(Message::App(AppMessage::Tunnel(TunnelMessage::TogglePanel))),
             )
             .id(tunnels_toggle_id()),
@@ -6011,9 +6071,9 @@ impl Shell {
                         .into(),
                 )
                 .style(if on {
-                    styles::broadcasting
+                    styles::status_pill_active
                 } else {
-                    styles::subtle
+                    styles::status_pill
                 })
                 .on_press(broadcast(BroadcastMessage::Toggle)),
                 text(if on {
@@ -6032,7 +6092,6 @@ impl Shell {
                     Tint::Text,
                     text(scope.clone()).size(font_size::CAPTION).into(),
                 )
-                .style(styles::subtle)
                 .on_press(broadcast(BroadcastMessage::Scope)),
                 text(fl!("ui-broadcast-scope-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Top,
@@ -6040,7 +6099,7 @@ impl Shell {
             .padding(styles::TOOLTIP_PADDING)
             .style(styles::tooltip),
         ]
-        .spacing(spacing::SM)
+        .spacing(crate::tokens::STATUS_PILL_GAP)
         .align_y(iced::Alignment::Center)
         .into()
     }
@@ -6066,19 +6125,6 @@ impl Shell {
         ]
         .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
-        // As the C# toolbar's lock: there only while a master password is set.
-        let actions = (self.app.vault_status() == VaultStatus::Open).then(|| {
-            tooltip(
-                button(text(fl!("ui-sidebar-lock-button")))
-                    .padding(crate::tokens::BUTTON_PADDING)
-                    .on_press(Message::App(AppMessage::LockVault))
-                    .style(styles::secondary),
-                text(fl!("ui-sidebar-lock-tooltip")).size(font_size::CAPTION),
-                tooltip::Position::Bottom,
-            )
-            .padding(styles::TOOLTIP_PADDING)
-            .style(styles::tooltip)
-        });
         // The Tools tab: its filter, its context and its tools, as the C#
         // `SidebarToolsContent`, in place of the tree.
         let body = if shown == SidebarTab::Tools {
@@ -6086,7 +6132,6 @@ impl Shell {
                 header,
                 crate::tools::catalog::sidebar_panel(&self.app, &self.tools_filter)
             ]
-            .push(actions)
         } else {
             // The tree over the properties panel, as the C# `SidebarContentGrid`: laid out
             // in the height the two share, so a height kept from a taller window leaves the
@@ -6109,7 +6154,6 @@ impl Shell {
                 content.into()
             });
             column![header, self.search_box()]
-                .push(actions)
                 .push(self.filter_feedback())
                 .push(content)
         };
@@ -13570,6 +13614,18 @@ fn search_field_id() -> iced::widget::Id {
 #[must_use]
 pub fn tunnels_toggle_id() -> iced::widget::Id {
     iced::widget::Id::new("status-tunnels")
+}
+
+/// Widget identifier of the toolbar's Lock button, which shows a glyph alone.
+#[must_use]
+pub fn toolbar_lock_id() -> iced::widget::Id {
+    iced::widget::Id::new("toolbar-lock")
+}
+
+/// Widget identifier of the toolbar's Share button, which shows a glyph alone.
+#[must_use]
+pub fn toolbar_share_id() -> iced::widget::Id {
+    iced::widget::Id::new("toolbar-share")
 }
 
 /// Widget identifier of the button hiding the sidebar, or showing it again: a glyph alone.

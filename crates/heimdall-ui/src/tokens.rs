@@ -117,3 +117,17 @@ pub const INPUT_HEIGHT: f32 = 33.0;
 /// Height of the line of text inside a field: the field's height less the vertical
 /// [`INPUT_PADDING`] twice. iced's default line (1.3 times the text) left a field 29 px high.
 pub const INPUT_LINE_HEIGHT: f32 = INPUT_HEIGHT - 2.0 * INPUT_PADDING[0];
+
+/// Padding inside a status bar pill, vertical then horizontal, as the C#
+/// `StatusBarPillButtonStyle`'s `8,2`.
+pub const STATUS_PILL_PADDING: [f32; 2] = [2.0, 8.0];
+
+/// Height of a status bar pill, as the C# `SessionHeaderMinTarget` it takes for its
+/// `MinHeight`: the 24 px target.
+pub const STATUS_PILL_HEIGHT: f32 = 24.0;
+
+/// Room above and below a status bar pill, as the C# pills' `3` margins.
+pub const STATUS_PILL_MARGIN: f32 = 3.0;
+
+/// Room before a status bar pill, as the C# pills' `6` right margin.
+pub const STATUS_PILL_GAP: f32 = 6.0;

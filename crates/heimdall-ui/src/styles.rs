@@ -321,22 +321,60 @@ pub fn close_mark(quiet: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
     }
 }
 
-/// Broadcast input's button while it is on, as the C# status bar's: the red faint behind
-/// it, its text red.
-pub fn broadcasting(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
+/// A button of the status bar, a pill as the C# `StatusBarPillButtonStyle`: the card
+/// colour, outlined in the border colour, rounded as `CornerRadiusSm`; the highlight and
+/// the accent outline under the pointer, the window's background pressed.
+pub fn status_pill(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
-    let rest = brushes.button(
-        Some(brushes.danger.scale_alpha(BROADCAST_ALPHA)),
-        brushes.danger,
-        brushes.quiet_edge,
-    );
+    let rest = ButtonStyle {
+        border: brushes.outline(brushes.edge, radius::SM),
+        ..brushes.button(Some(brushes.card), brushes.text, brushes.edge)
+    };
     match status {
-        ButtonStatus::Active | ButtonStatus::Hovered => rest,
+        ButtonStatus::Active => rest,
+        ButtonStatus::Hovered => ButtonStyle {
+            background: Some(Background::Color(brushes.highlight)),
+            border: brushes.outline(brushes.accent, radius::SM),
+            ..rest
+        },
         ButtonStatus::Pressed => ButtonStyle {
-            border: brushes.outline(brushes.danger, radius::MD),
+            background: Some(Background::Color(brushes.surface)),
             ..rest
         },
         ButtonStatus::Disabled => faded(&rest),
+    }
+}
+
+/// A pill of the status bar while its function is on, as the C# broadcast toggle's trigger:
+/// the red faint behind it, its border and text red.
+pub fn status_pill_active(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
+    let brushes = Brushes::of(theme);
+    let rest = ButtonStyle {
+        border: brushes.outline(brushes.danger, radius::SM),
+        ..brushes.button(
+            Some(brushes.danger.scale_alpha(BROADCAST_ALPHA)),
+            brushes.danger,
+            brushes.danger,
+        )
+    };
+    match status {
+        ButtonStatus::Active | ButtonStatus::Hovered => rest,
+        ButtonStatus::Pressed => ButtonStyle {
+            background: Some(Background::Color(brushes.surface)),
+            ..rest
+        },
+        ButtonStatus::Disabled => faded(&rest),
+    }
+}
+
+/// The status bar's counter, a pill that is not a button, as the C#
+/// `StatusBarPillBorderStyle`: the card colour, outlined in the border colour.
+pub fn status_pill_box(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        border: brushes.outline(brushes.edge, radius::SM),
+        ..BoxStyle::default()
     }
 }
 

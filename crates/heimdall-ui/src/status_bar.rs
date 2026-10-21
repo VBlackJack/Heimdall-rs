@@ -29,13 +29,14 @@ use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
-use crate::tokens::{font_size, spacing};
+use crate::tokens::{
+    STATUS_PILL_GAP, STATUS_PILL_HEIGHT, STATUS_PILL_MARGIN, STATUS_PILL_PADDING, font_size,
+    spacing,
+};
 
-/// Room around the bar's text.
-const PADDING: [f32; 2] = [2.0, 8.0];
-
-/// Room inside a button of the bar, as the C#'s `4,2`.
-const BUTTON_PADDING: [f32; 2] = [2.0, 4.0];
+/// Room around the bar's content, as the C# `Margin="8,0"` plus the pills' `3` margins
+/// above and below: the bar is as high as a pill and its margins.
+const PADDING: [f32; 2] = [STATUS_PILL_MARGIN, spacing::SM];
 
 /// Space between a button's glyph and its words, as the C#'s.
 const GLYPH_GAP: f32 = 3.0;
@@ -691,16 +692,21 @@ pub fn count_text(shown: usize, total: usize, filtering: bool) -> String {
     }
 }
 
-/// A button of the bar's right, as the C#'s: `icon` in `tint` before `label`, its style
-/// and action its caller's.
+/// A button of the bar's right, a pill as the C#'s: `icon` in `tint` before `label`, its
+/// action its caller's. A pill is [`STATUS_PILL_HEIGHT`] high, its words centred in it.
 #[must_use]
 pub fn glyph_button(icon: Icon, tint: Tint, label: Element<'_, Message>) -> Button<'_, Message> {
     button(
-        row![icons::icon(icon, tint, font_size::CAPTION), label]
-            .spacing(GLYPH_GAP)
-            .align_y(iced::Alignment::Center),
+        container(
+            row![icons::icon(icon, tint, font_size::CAPTION), label]
+                .spacing(GLYPH_GAP)
+                .align_y(iced::Alignment::Center),
+        )
+        .center_y(Length::Fill),
     )
-    .padding(BUTTON_PADDING)
+    .padding(STATUS_PILL_PADDING)
+    .height(STATUS_PILL_HEIGHT)
+    .style(styles::status_pill)
 }
 
 /// The bar: `left` and the shortcuts' hint, then at the right `controls`, the tunnels' and
@@ -712,17 +718,24 @@ pub fn view(
     sessions: String,
     tunnels: String,
 ) -> Element<'_, Message> {
-    let counts = row![
-        text(sessions)
-            .size(font_size::CAPTION)
-            .style(text::secondary),
-        text(fl!("ui-status-separator"))
-            .size(font_size::CAPTION)
-            .style(text::secondary),
-        text(tunnels)
-            .size(font_size::CAPTION)
-            .style(text::secondary),
-    ];
+    // The counter is a pill too, as the C# `StatusBarPillBorderStyle`'s border.
+    let counts = container(
+        row![
+            text(sessions)
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+            text(fl!("ui-status-separator"))
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+            text(tunnels)
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+        ]
+        .align_y(iced::Alignment::Center),
+    )
+    .padding(STATUS_PILL_PADDING)
+    .center_y(Length::Fixed(STATUS_PILL_HEIGHT))
+    .style(styles::status_pill_box);
     // The C# status bar: the window's background, its edge above it.
     let bar = container(
         row![
@@ -732,7 +745,7 @@ pub fn view(
             controls,
             counts,
         ]
-        .spacing(spacing::SM)
+        .spacing(STATUS_PILL_GAP)
         .align_y(iced::Alignment::Center)
         .width(Length::Fill),
     )

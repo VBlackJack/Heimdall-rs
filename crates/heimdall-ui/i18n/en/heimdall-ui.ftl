@@ -55,7 +55,6 @@ ui-tree-filter-gateway = Via gateway
 ui-tree-filter-gateway-badge = Show gateway badge
 ui-tree-filter-no-results = No sessions match your search and filters.
 ui-tree-filter-reset = Reset all filters
-ui-sidebar-lock-button = Lock
 ui-sidebar-lock-tooltip = Lock workspace (Ctrl+L)
 ui-settings-search-placeholder = Search settings...
 ui-settings-search-tooltip = Search settings (Ctrl+F)
@@ -5938,7 +5937,6 @@ ui-shared-report-detail-gateway-outlier = It connects through { $route }, while 
 ui-shared-report-route-direct = no gateway (direct connection)
 
 ## Share folder: a folder served read-only over HTTP, for a limited time.
-ui-share-button = Share
 ui-share-toggle-tooltip = Share a folder over HTTP
 ui-share-starting = Starting...
 ui-share-stop-tooltip = Stop sharing
