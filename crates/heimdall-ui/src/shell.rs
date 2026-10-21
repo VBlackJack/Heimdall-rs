@@ -5880,9 +5880,9 @@ impl Shell {
                 button(
                     row![
                         icons::icon(Icon::Zoom, Tint::Accent, font_size::BODY),
-                        text(fl!("ui-nav-quick-connect"))
-                            .size(font_size::CAPTION)
-                            .style(text::secondary),
+                        // The primary text, not the C#'s `TextSecondaryBrush`: that is about 3:1
+                        // on the button in Dracula, below the 4.5:1 small text needs.
+                        text(fl!("ui-nav-quick-connect")).size(font_size::CAPTION),
                     ]
                     .spacing(QUICK_CONNECT_GAP)
                     .align_y(iced::Alignment::Center),

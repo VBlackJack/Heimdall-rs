@@ -718,18 +718,14 @@ pub fn view(
     sessions: String,
     tunnels: String,
 ) -> Element<'_, Message> {
-    // The counter is a pill too, as the C# `StatusBarPillBorderStyle`'s border.
+    // The counter is a pill too, as the C# `StatusBarPillBorderStyle`'s border. Its words are
+    // the primary text, not the C#'s `TextSecondaryBrush`: that is about 3:1 on the card in
+    // Dracula, below the 4.5:1 small text needs.
     let counts = container(
         row![
-            text(sessions)
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-            text(fl!("ui-status-separator"))
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-            text(tunnels)
-                .size(font_size::CAPTION)
-                .style(text::secondary),
+            text(sessions).size(font_size::CAPTION),
+            text(fl!("ui-status-separator")).size(font_size::CAPTION),
+            text(tunnels).size(font_size::CAPTION),
         ]
         .align_y(iced::Alignment::Center),
     )
