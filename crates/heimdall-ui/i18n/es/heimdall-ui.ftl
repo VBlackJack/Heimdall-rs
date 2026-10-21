@@ -50,7 +50,6 @@ ui-tree-filter-gateway = Vía pasarela
 ui-tree-filter-gateway-badge = Mostrar insignia de pasarela
 ui-tree-filter-no-results = Ninguna sesión coincide con tu búsqueda y filtros.
 ui-tree-filter-reset = Restablecer todos los filtros
-ui-sidebar-lock-button = Bloquear
 ui-sidebar-lock-tooltip = Bloquear espacio de trabajo (Ctrl+L)
 ui-settings-search-placeholder = Buscar en ajustes...
 ui-settings-search-tooltip = Buscar en la configuración (Ctrl+F)
@@ -5983,7 +5982,6 @@ ui-shared-report-detail-gateway-outlier = Se conecta por { $route }, mientras qu
 ui-shared-report-route-direct = sin pasarela (conexión directa)
 
 ## Compartir carpeta: una carpeta servida en solo lectura por HTTP, durante un tiempo limitado.
-ui-share-button = Compartir
 ui-share-toggle-tooltip = Compartir una carpeta por HTTP
 ui-share-starting = Iniciando...
 ui-share-stop-tooltip = Dejar de compartir

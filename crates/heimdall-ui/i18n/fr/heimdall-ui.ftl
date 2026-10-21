@@ -50,7 +50,6 @@ ui-tree-filter-gateway = Via passerelle
 ui-tree-filter-gateway-badge = Afficher le badge passerelle
 ui-tree-filter-no-results = Aucune session ne correspond à la recherche et aux filtres.
 ui-tree-filter-reset = Réinitialiser les filtres
-ui-sidebar-lock-button = Verrouiller
 ui-sidebar-lock-tooltip = Verrouiller l'espace de travail (Ctrl+L)
 ui-settings-search-placeholder = Rechercher dans les paramètres...
 ui-settings-search-tooltip = Rechercher dans les paramètres (Ctrl+F)
@@ -5994,7 +5993,6 @@ ui-shared-report-detail-gateway-outlier = Elle se connecte par { $route }, alors
 ui-shared-report-route-direct = aucune passerelle (connexion directe)
 
 ## Partager un dossier : un dossier servi en lecture seule par HTTP, pour une durée limitée.
-ui-share-button = Partager
 ui-share-toggle-tooltip = Partager un dossier par HTTP
 ui-share-starting = Démarrage...
 ui-share-stop-tooltip = Arrêter le partage

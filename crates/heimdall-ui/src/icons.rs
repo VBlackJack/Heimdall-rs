@@ -258,11 +258,13 @@ pub enum Icon {
     Keyboard,
     /// The `FullScreen` glyph (`E1D9`): four corners pointing out, full screen.
     FullScreen,
+    /// The `Lock` glyph (`E72E`): a padlock, the toolbar's "Lock workspace".
+    Lock,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 99] = [
+    pub const ALL: [Self; 100] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -362,6 +364,7 @@ impl Icon {
         Self::Resolution,
         Self::Keyboard,
         Self::FullScreen,
+        Self::Lock,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -685,6 +688,9 @@ impl Icon {
             Self::FullScreen => {
                 "M1.5,5.5 L1.5,1.5 L5.5,1.5 M10.5,1.5 L14.5,1.5 L14.5,5.5                  M14.5,10.5 L14.5,14.5 L10.5,14.5 M5.5,14.5 L1.5,14.5 L1.5,10.5"
             }
+            Self::Lock => {
+                "M3.5,7.5 L12.5,7.5 L12.5,14 L3.5,14 Z M5.5,7.5 L5.5,5 A2.5,2.5 0 0 1 10.5,5 L10.5,7.5"
+            }
         }
     }
 
@@ -777,7 +783,8 @@ impl Icon {
             | Self::Monitor
             | Self::Resolution
             | Self::Keyboard
-            | Self::FullScreen => Some(GLYPH_STROKE_WIDTH),
+            | Self::FullScreen
+            | Self::Lock => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
     }

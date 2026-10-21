@@ -37,7 +37,10 @@ use heimdall_ssh::{
     SessionClosed, TerminalSize,
 };
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell, sidebar_tab_id, sidebar_toggle_id, tab_close_id};
+use heimdall_ui::shell::{
+    Message, Shell, sidebar_tab_id, sidebar_toggle_id, tab_close_id, toolbar_lock_id,
+    toolbar_share_id, tunnels_toggle_id,
+};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::terminal_view::keys::WindowShortcut;
 use iced::keyboard::key::Named;
@@ -638,6 +641,89 @@ fn the_navigation_shows_the_sessions_the_tunnels_the_tools_the_settings_and_abou
         .expect("the tree again");
 }
 
+/// Side of the toolbar's icon buttons, as the C# `LockWorkspaceButton`'s `Width="32" Height="32"`.
+const TOOLBAR_ICON_SIDE: f32 = 32.0;
+
+/// Height of a status bar pill, as the C# `StatusBarPillButtonStyle`'s `MinHeight`.
+const STATUS_PILL_HEIGHT: f32 = 24.0;
+
+#[test]
+fn the_toolbar_ends_with_the_share_icon_then_quick_connect_and_the_title_has_no_room_before_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(app(dir.path()));
+    let mut ui = simulator(&shell);
+    // No master password: nothing to lock, so no lock beside the share.
+    assert!(
+        ui.find(toolbar_lock_id()).is_err(),
+        "no lock without a master password"
+    );
+    let share = ui
+        .find(toolbar_share_id())
+        .expect("the share icon")
+        .bounds();
+    let quick = ui.find("Quick connect").expect("Quick connect").bounds();
+    let title = ui.find("Heimdall").expect("the title").bounds();
+    assert_eq!(
+        (share.width, share.height),
+        (TOOLBAR_ICON_SIDE, TOOLBAR_ICON_SIDE),
+        "the C# 32 by 32"
+    );
+    assert!(
+        share.x + share.width <= quick.x,
+        "the share is left of Quick connect"
+    );
+    // The toolbar's margin is 8 and the title has none of its own before it.
+    assert!(
+        (title.x - 8.0).abs() < 0.5,
+        "the title starts at the bar's margin: {title:?}"
+    );
+}
+
+#[test]
+fn the_lock_is_a_toolbar_icon_left_of_the_share_once_a_master_password_is_set() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    create_vault(&mut core);
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    let lock = ui.find(toolbar_lock_id()).expect("the lock icon").bounds();
+    let share = ui
+        .find(toolbar_share_id())
+        .expect("the share icon")
+        .bounds();
+    assert_eq!(
+        (lock.width, lock.height),
+        (TOOLBAR_ICON_SIDE, TOOLBAR_ICON_SIDE)
+    );
+    assert!(
+        lock.x + lock.width <= share.x,
+        "the lock comes first, as the C#"
+    );
+    assert!(
+        ui.find("Lock").is_err(),
+        "the sidebar has no text button for it any more"
+    );
+}
+
+#[test]
+fn the_status_bar_buttons_are_24_pixel_pills() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(app(dir.path()));
+    let mut ui = simulator(&shell);
+    let tunnels = ui
+        .find(tunnels_toggle_id())
+        .expect("the tunnels pill")
+        .bounds();
+    assert!(
+        (tunnels.height - STATUS_PILL_HEIGHT).abs() < 0.5,
+        "a 24 px pill: {tunnels:?}"
+    );
+    // Broadcast input's toggle and scope come after it, in the same row.
+    let broadcast = ui.find("BROADCAST").expect("the broadcast pill").bounds();
+    assert!(tunnels.x < broadcast.x);
+    ui.find("0 tunnels").expect("the counter pill's tunnels");
+}
+
 #[test]
 fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed() {
     let dir = tempfile::tempdir().expect("dir");
@@ -666,7 +752,7 @@ fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed
         ] {
             ui.find(label).expect(label);
         }
-        assert!(ui.find("Lock").is_err(), "nothing to lock yet");
+        assert!(ui.find(toolbar_lock_id()).is_err(), "nothing to lock yet");
         ui.click("Enable master password").expect("enable");
         assert!(
             ui.into_messages()
@@ -730,8 +816,8 @@ fn the_lock_hides_the_window_until_the_master_password_is_typed() {
     let mut shell = Shell::with_app(core);
     {
         let mut ui = simulator(&shell);
-        ui.click("Lock")
-            .expect("the sidebar's lock, once a master password is set");
+        ui.click(toolbar_lock_id())
+            .expect("the toolbar's lock, once a master password is set");
         assert!(
             ui.into_messages()
                 .any(|message| matches!(message, Message::App(AppMessage::LockVault)))
