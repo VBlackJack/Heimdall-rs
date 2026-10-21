@@ -87,6 +87,15 @@ pub const HIGH_CONTRAST_BORDER_WIDTH: f32 = 2.0;
 /// Width of the border of the field the keyboard is in, in every theme: seen at a glance.
 pub const FOCUS_BORDER_WIDTH: f32 = 2.0;
 
+/// Blur of a dialog's drop shadow, as the C# popups' `DropShadowEffect` (`MainWindow.xaml:6107`).
+pub const DIALOG_SHADOW_BLUR: f32 = 24.0;
+
+/// How far a dialog's shadow falls, straight down, as the C#'s `ShadowDepth`.
+pub const DIALOG_SHADOW_DEPTH: f32 = 8.0;
+
+/// Opacity of a dialog's black shadow, as the C#'s.
+pub const DIALOG_SHADOW_ALPHA: f32 = 0.4;
+
 /// Opacity of a control that cannot be used, as the C# `OpacityDisabled`.
 pub const OPACITY_DISABLED: f32 = 0.6;
 

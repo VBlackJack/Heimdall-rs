@@ -727,18 +727,18 @@ impl Shell {
         } else {
             self.search_results(query)
         };
-        // The tab shown joins the card under it, as the C#'s; its cards in the middle.
+        // The tab shown joins the card under it, in the rounded frame of the C#'s tab
+        // control; its cards in the middle.
         let content = container(
             container(body.spacing(spacing::LG).width(Length::Fill)).max_width(SETTINGS_WIDTH),
         )
         .center_x(Length::Fill)
-        .padding(spacing::LG)
-        .style(styles::strip);
+        .padding(spacing::LG);
         styles::scroll(
             column![
                 self.settings_header(),
                 divider(),
-                column![settings_tabs(self.settings_tab), content],
+                settings_tabs(self.settings_tab, content.into()),
             ]
             .spacing(spacing::SM)
             .padding(spacing::MD),

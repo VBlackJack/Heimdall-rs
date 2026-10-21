@@ -142,8 +142,8 @@ const SPLITTER_WIDTH: f32 = 6.0;
 /// Space between the terminal and the panels around it, in logical pixels.
 const TERMINAL_MARGIN: f32 = 6.0;
 
-/// Width of a question or dialog card, in logical pixels.
-const CARD_WIDTH: f32 = 520.0;
+/// Width of a question or message card, as the C# `MessageDialog` window: 460.
+const MESSAGE_CARD_WIDTH: f32 = 460.0;
 
 /// Widest a dialog holding a table grows.
 const WIDE_CARD_WIDTH: f32 = 1000.0;
@@ -185,8 +185,8 @@ const FILTER_DOT_SIDE: f32 = 6.0;
 const TAB_GAP: f32 = 4.0;
 
 /// Room inside a tab, around its heading and underline, as the C# `ThemedTabItemStyle`'s
-/// `16,10`.
-const TAB_PADDING: [f32; 2] = [10.0, 16.0];
+/// `Padding="14,8"` (`CommonControls.xaml:1210`): 8 above and below, 14 at each side.
+const TAB_PADDING: [f32; 2] = [8.0, 14.0];
 
 /// Thickness of a selected tab's underline, as the C#'s.
 const TAB_UNDERLINE: f32 = 3.0;
@@ -9303,7 +9303,7 @@ fn certificate_details<'a>(
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(content)
         .padding(spacing::LG)
-        .max_width(CARD_WIDTH)
+        .max_width(MESSAGE_CARD_WIDTH)
         .style(styles::dialog)
         .into()
 }
@@ -9414,15 +9414,36 @@ fn open_with_system(target: std::path::PathBuf) -> Task<Message> {
     )
 }
 
-/// The tabs of the Settings page.
-fn settings_tabs<'a>(shown: SettingsTab) -> Element<'a, Message> {
-    tab_strip(
+/// The tabs of the Settings page and the `page` of the one `shown`, as the C#
+/// `ThemedTabControlStyle` (`CommonControls.xaml:1118-1160`): the headers on the window's
+/// background over a line, then the page on a card, all in one rounded, bordered frame.
+fn settings_tabs(shown: SettingsTab, page: Element<'_, Message>) -> Element<'_, Message> {
+    let headers = tab_strip(
         SettingsTab::ALL,
         shown,
         SettingsTab::label,
         Message::SettingsTab,
         |_| 0,
-    )
+    );
+    container(column![tab_headers(headers), page])
+        .width(Length::Fill)
+        .style(styles::tab_frame)
+        .into()
+}
+
+/// The `headers` of a tab control on the window's background, rounded at the top, over the
+/// line that parts them from the page, as the C# header `Border` (`CommonControls.xaml:1136`).
+fn tab_headers(headers: iced::widget::Row<'_, Message>) -> Element<'_, Message> {
+    column![
+        container(headers)
+            .padding(TAB_HEADERS_PADDING)
+            .width(Length::Fill)
+            .style(styles::tab_headers),
+        container(iced::widget::space())
+            .width(Length::Fill)
+            .height(crate::tokens::BORDER_WIDTH)
+            .style(styles::divider),
+    ]
     .into()
 }
 
@@ -11894,14 +11915,7 @@ fn tab_control<'a>(
         |tab| tab.error_count(errors),
     );
     container(column![
-        container(headers)
-            .padding(TAB_HEADERS_PADDING)
-            .width(Length::Fill)
-            .style(styles::tab_headers),
-        container(iced::widget::space())
-            .width(Length::Fill)
-            .height(crate::tokens::BORDER_WIDTH)
-            .style(styles::divider),
+        tab_headers(headers),
         styles::scroll(container(page).padding(spacing::LG).width(Length::Fill))
             .id(profile_page_id())
             .height(Length::Fill),

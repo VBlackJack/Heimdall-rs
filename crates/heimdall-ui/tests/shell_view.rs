@@ -1450,6 +1450,30 @@ fn a_name_dialog_has_the_csharp_layout_prompt_above_its_field_and_the_action_at_
 }
 
 #[test]
+fn a_message_dialog_card_is_460_wide_as_the_csharp_message_dialog_window() {
+    use heimdall_app::FolderMessage;
+
+    // `MessageDialog.xaml:5` is 460 wide with a 20 margin, so the content is 420 wide.
+    const CONTENT_WIDTH: f32 = 420.0;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::MenuChoice(AppMessage::Folder(
+        FolderMessage::New {
+            parent: String::new(),
+        },
+    )));
+    let mut ui = simulator(&shell);
+    let title = ui.find("New Folder").expect("title").bounds();
+    let create = ui.find("Create").expect("Create").bounds();
+    // The button's text ends one button padding before the content's right edge.
+    let width = create.x + create.width + heimdall_ui::tokens::BUTTON_PADDING[1] - title.x;
+    assert!(
+        (width - CONTENT_WIDTH).abs() < 1.0,
+        "the content spans the card less its padding: {width}"
+    );
+}
+
+#[test]
 fn a_session_menu_writes_a_note_about_it_from_a_csharp_template() {
     use heimdall_app::notes::NoteTemplate;
     use heimdall_ui::tree_view::TreeMenu;
