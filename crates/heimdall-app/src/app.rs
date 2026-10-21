@@ -3437,7 +3437,7 @@ pub struct App {
     /// The shared session each shell opened from one was made from, by the identifier of the
     /// shell's profile: where the approval of its post-connect commands is looked up, now and
     /// when the tab reconnects.
-    shared_origins: std::collections::HashMap<ProfileId, ProfileId>,
+    shared_origins: std::collections::HashMap<ProfileId, shared::SharedOrigin>,
     /// The look for a newer release.
     updates: updates::Updates,
     /// Credential Guard required before an embedded RDP session, asked before Windows

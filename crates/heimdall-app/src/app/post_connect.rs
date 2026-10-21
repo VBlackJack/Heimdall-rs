@@ -80,6 +80,7 @@ impl App {
         confirmation: PostConnectConfirmation,
     ) -> Vec<Effect> {
         let mut profile = confirmation.profile;
+        let pristine = profile.clone();
         let steps = profile.post_connect.steps.clone();
         // A shell from a shared session is approved against that session, on this computer's
         // settings; any other, against its saved profile.
@@ -97,7 +98,9 @@ impl App {
         // Approved for this session whether or not the profile is still saved: the user
         // agreed to what was shown.
         profile.post_connect = PostConnect::approved_as(steps);
-        self.open_ssh_now(profile, Purpose::Shell)
+        let effects = self.open_ssh_now(profile, Purpose::Shell);
+        self.remember_shared_reopen(pristine);
+        effects
     }
 
     /// Handles the post-connect messages.
@@ -118,7 +121,10 @@ impl App {
         let Some(Dialog::ConfirmPostConnect(confirmation)) = self.dialog.take() else {
             return Vec::new();
         };
-        self.open_ssh_now(confirmation.profile, Purpose::Shell)
+        let pristine = confirmation.profile.clone();
+        let effects = self.open_ssh_now(confirmation.profile, Purpose::Shell);
+        self.remember_shared_reopen(pristine);
+        effects
     }
 
     /// Stops the steps the tab `tab` is typing; those typed stay typed.

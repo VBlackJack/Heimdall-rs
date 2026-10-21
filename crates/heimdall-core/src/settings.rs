@@ -731,7 +731,7 @@ pub struct Settings {
     /// steps as they were approved, so a change to them in the shared file asks again. Kept
     /// here and not on the session, which is rebuilt from a file other people edit. This
     /// computer's own: never exported, and cleared by a reset.
-    pub shared_post_connect_approvals: BTreeMap<String, Vec<PostConnectStep>>,
+    pub shared_post_connect_approvals: BTreeMap<String, SharedApproval>,
     /// The port "Share folder" listens on, as the C# `EphemeralHttpPort`
     /// (`AppSettings.cs:176`): 0 asks the system for a free one, else within
     /// [`FILE_SHARE_PORT_MAX`].
@@ -1476,7 +1476,7 @@ struct SettingsFile {
 #[derive(Serialize, Deserialize, Default)]
 struct SharedApprovalsSection {
     #[serde(default)]
-    post_connect: BTreeMap<String, Vec<PostConnectStep>>,
+    post_connect: BTreeMap<String, SharedApproval>,
 }
 
 /// The "Share folder" settings; absent values are the defaults.
@@ -2808,31 +2808,51 @@ const TRANSFERRED: [&str; 16] = [
 /// The name a portable settings file is offered under.
 pub const SETTINGS_EXPORT_FILE_NAME: &str = "heimdall-settings.toml";
 
+/// What the user approved for a shared session: the commands, and everything they would run
+/// against. The shared file is edited by other people, so an approval is for one place only:
+/// the same commands against another host, port, account or gateway, or from another file,
+/// are asked about again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedApproval {
+    /// The resolved path of the source's file the session came from.
+    pub source_path: String,
+    /// The destination the commands were approved for: host, port, account and the gateway
+    /// route with each hop's host, port and account, as one text.
+    pub destination: String,
+    /// The steps as approved: command, delay, whether it runs, what a failure does.
+    pub steps: Vec<PostConnectStep>,
+}
+
 impl Settings {
-    /// Whether the user approved `steps` for the shared session `id` exactly as they are, as
-    /// the C# `SharedPostConnectTrust.AuthorizeAsync` compares fingerprints: a change to a
-    /// command, its delay, whether it runs or what a failure does is not approved.
+    /// Whether the user approved `approval` for the shared session `id` exactly as it is, as
+    /// the C# `SharedPostConnectTrust.AuthorizeAsync` compares fingerprints, and more: the
+    /// destination and the source file are part of it.
     #[must_use]
-    pub fn shared_post_connect_approved(&self, id: &ProfileId, steps: &[PostConnectStep]) -> bool {
-        self.shared_post_connect_approvals
-            .get(id.as_str())
-            .is_some_and(|approved| approved.as_slice() == steps)
+    pub fn shared_post_connect_approved(&self, id: &ProfileId, approval: &SharedApproval) -> bool {
+        self.shared_post_connect_approvals.get(id.as_str()) == Some(approval)
     }
 
-    /// Records that the user approved `steps` for the shared session `id`.
-    pub fn approve_shared_post_connect(&mut self, id: &ProfileId, steps: &[PostConnectStep]) {
+    /// Records that the user approved `approval` for the shared session `id`.
+    pub fn approve_shared_post_connect(&mut self, id: &ProfileId, approval: SharedApproval) {
         self.shared_post_connect_approvals
-            .insert(id.as_str().to_owned(), steps.to_vec());
+            .insert(id.as_str().to_owned(), approval);
     }
 
-    /// Forgets the approvals of the sessions of every source not in `kept_sources`, as the
-    /// C# `ForgetAllExceptAsync`; an approval whose key names no source is left alone. How
-    /// many were forgotten.
-    pub fn forget_shared_post_connect_approvals_except(&mut self, kept_sources: &[&str]) -> usize {
+    /// Forgets the approvals of the sessions of every source not in `kept_sources`, given as
+    /// (identifier, resolved path), as the C# `ForgetAllExceptAsync`. A source kept under
+    /// another path is not the same source: a file put in its place inherits nothing. An
+    /// approval whose key names no source is left alone. How many were forgotten.
+    pub fn forget_shared_post_connect_approvals_except(
+        &mut self,
+        kept_sources: &[(&str, &str)],
+    ) -> usize {
         let before = self.shared_post_connect_approvals.len();
-        self.shared_post_connect_approvals.retain(|id, _| {
-            crate::shared_sessions::source_id_of(id)
-                .is_none_or(|source| kept_sources.contains(&source))
+        self.shared_post_connect_approvals.retain(|id, approval| {
+            crate::shared_sessions::source_id_of(id).is_none_or(|source| {
+                kept_sources
+                    .iter()
+                    .any(|(kept, path)| *kept == source && *path == approval.source_path)
+            })
         });
         before - self.shared_post_connect_approvals.len()
     }

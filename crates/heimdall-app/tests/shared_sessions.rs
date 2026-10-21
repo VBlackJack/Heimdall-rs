@@ -866,7 +866,8 @@ fn a_shared_command_is_asked_about_then_remembered_for_those_commands_only() {
     assert_eq!(typed(&effects), [PostConnectStep::new("sudo -i")]);
     assert!(
         app.settings()
-            .shared_post_connect_approved(&id, &[PostConnectStep::new("sudo -i")])
+            .shared_post_connect_approvals
+            .contains_key(id.as_str())
     );
     assert!(
         app.profiles().is_empty(),
@@ -874,7 +875,10 @@ fn a_shared_command_is_asked_about_then_remembered_for_those_commands_only() {
     );
     let saved =
         Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("settings");
-    assert!(saved.shared_post_connect_approved(&id, &[PostConnectStep::new("sudo -i")]));
+    assert_eq!(
+        saved.shared_post_connect_approvals[id.as_str()].steps,
+        [PostConnectStep::new("sudo -i")]
+    );
 
     // The next time, and a restart, ask nothing as long as the file says the same.
     let effects = app.update(Message::ConnectShared(id.clone()));
@@ -1007,4 +1011,149 @@ d= #109#0%d.example.com%22%deploy%\r\n",
         0,
         "two sessions are too few"
     );
+}
+
+/// A file with a command behind a bastion.
+const BEHIND: &str = "[Bookmarks]\r\nSubRep=Prod\r\n\
+web= #109#0%web.example.com%22%deploy%%%%sudo -i%jump.example.com%22%ops%\r\n";
+
+#[test]
+fn an_approval_is_for_the_destination_it_was_given_for() {
+    // Each edit keeps the session's folder, name and commands and moves where they run.
+    let edits = [
+        ("another host", "web.example.com", "evil.example.com"),
+        ("another port", "%22%deploy", "%2222%deploy"),
+        ("another account", "deploy%%%%sudo", "root%%%%sudo"),
+        ("another bastion", "jump.example.com", "other.example.com"),
+        (
+            "another bastion port",
+            "jump.example.com%22",
+            "jump.example.com%2200",
+        ),
+        ("another bastion account", "%ops%", "%adm%"),
+        (
+            "no bastion",
+            "sudo -i%jump.example.com%22%ops%",
+            "sudo -i%%%%",
+        ),
+    ];
+    for (what, from, to) in edits {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut app = app_with_text(dir.path(), BEHIND);
+        let id = id_of(&app, "web");
+        app.update(Message::ConnectShared(id.clone()));
+        app.update(Message::ConfirmDialog);
+        // Unchanged, it is not asked about again.
+        let mut same = app_with_text_keeping(dir.path());
+        assert!(
+            !typed(&same.update(Message::ConnectShared(id.clone()))).is_empty(),
+            "{what}: unchanged"
+        );
+
+        let text = BEHIND.replace(from, to);
+        assert_ne!(text, BEHIND, "{what}: the edit changed nothing");
+        std::fs::write(dir.path().join("team.mxtsessions"), text).expect("write");
+        let mut restarted = app_with_text_keeping(dir.path());
+        let id = id_of(&restarted, "web");
+        let effects = restarted.update(Message::ConnectShared(id));
+        assert!(effects.is_empty(), "{what}: ran without a question");
+        assert!(
+            matches!(
+                restarted.dialog,
+                Some(heimdall_app::Dialog::ConfirmPostConnect(_))
+            ),
+            "{what}: not asked"
+        );
+    }
+}
+
+#[test]
+fn a_source_pointed_at_another_file_forgets_what_was_approved_for_the_first() {
+    use heimdall_app::SettingsMessage;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with_text(dir.path(), WITH_COMMAND);
+    app.update(Message::ConnectShared(id_of(&app, "web")));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.settings().shared_post_connect_approvals.len(), 1);
+
+    // The same identifier and name, another file: it inherits nothing.
+    let other = dir.path().join("other.mxtsessions");
+    std::fs::write(&other, WITH_COMMAND).expect("write");
+    app.update(Message::Settings(SettingsMessage::SharedSources(vec![
+        source("team", &other),
+    ])));
+    assert!(app.settings().shared_post_connect_approvals.is_empty());
+    let effects = app.update(Message::ConnectShared(id_of(&app, "web")));
+    assert!(effects.is_empty(), "asked again: {effects:?}");
+    assert!(matches!(
+        app.dialog,
+        Some(heimdall_app::Dialog::ConfirmPostConnect(_))
+    ));
+}
+
+/// The tab, attempt and host of the connection `effects` starts.
+fn started(
+    effects: &[heimdall_app::Effect],
+) -> (heimdall_app::TabId, heimdall_app::AttemptId, String) {
+    match effects {
+        [
+            heimdall_app::Effect::Connect {
+                tab,
+                attempt,
+                request,
+            },
+        ] => (*tab, *attempt, request.profile.host.clone()),
+        other => panic!("expected one Connect, got {other:?}"),
+    }
+}
+
+/// Fails the connection of `tab`, which is what makes it reconnectable.
+fn fail(app: &mut App, tab: heimdall_app::TabId, attempt: heimdall_app::AttemptId) {
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: heimdall_app::ConnectionEvent::Failed(heimdall_app::UiError::Timeout),
+    });
+}
+
+#[test]
+fn the_question_about_shared_commands_does_not_retarget_another_tab_and_the_new_tab_reconnects_to_its_own()
+ {
+    for skip in [false, true] {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut app = app_with_text(dir.path(), WITH_COMMAND);
+        // A tab of an unrelated shared session, then the question for another.
+        let (first, first_attempt, _) =
+            started(&app.update(Message::ConnectShared(id_of(&app, "esc"))));
+        fail(&mut app, first, first_attempt);
+        app.update(Message::ConnectShared(id_of(&app, "web")));
+        assert_eq!(app.tabs.len(), 1, "nothing opened yet");
+        let (_, _, host) = started(&app.update(Message::ReconnectTab(first)));
+        assert_eq!(
+            host, "esc.example.com",
+            "the first tab keeps its own server"
+        );
+
+        // Answered: the tab that opens reconnects to its own server too.
+        let effects = app.update(if skip {
+            Message::SkipPostConnect
+        } else {
+            Message::ConfirmDialog
+        });
+        let (second, attempt, host) = started(&effects);
+        assert_eq!(host, "web.example.com");
+        fail(&mut app, second, attempt);
+        let effects = app.update(Message::ReconnectTab(second));
+        if skip {
+            // Nothing was approved, so the reopened session asks again, about its own server.
+            assert!(effects.is_empty(), "{effects:?}");
+            let Some(heimdall_app::Dialog::ConfirmPostConnect(asked)) = &app.dialog else {
+                panic!("{:?}", app.dialog);
+            };
+            assert_eq!(asked.profile.host, "web.example.com");
+        } else {
+            let (_, _, host) = started(&effects);
+            assert_eq!(host, "web.example.com", "approved: no second question");
+        }
+    }
 }
