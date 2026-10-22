@@ -257,7 +257,7 @@ fn an_empty_optional_value_takes_its_default_before_being_left_out() {
 fn a_safe_value_arrives_bare_on_both_platforms() {
     for value in [
         "8080",
-        "/var/log/syslog",
+        "var/log/syslog",
         "id_ed25519",
         "user@host:/srv/data",
     ] {
@@ -294,20 +294,16 @@ fn safe_values_around_literal_text_stay_one_token() {
 fn a_value_the_shell_would_read_stays_quoted() {
     let rows = [
         (LINUX, "a b", "'a b'"),
-        (LINUX, "x;y", "'x;y'"),
         (LINUX, "it's", "'it'\\''s'"),
-        (LINUX, "$HOME", "'$HOME'"),
         (LINUX, "~/backup", "'~/backup'"),
         (LINUX, "C:\\inetpub", "'C:\\inetpub'"),
         (LINUX, "*.log", "'*.log'"),
         (WINDOWS, "a b", "'a b'"),
-        (WINDOWS, "x;y", "'x;y'"),
         (WINDOWS, "it's", "'it''s'"),
-        (WINDOWS, "$env:TEMP", "'$env:TEMP'"),
         (
             WINDOWS,
-            "C:\\Program Files (x86)\\App",
-            "'C:\\Program Files (x86)\\App'",
+            "C:\\Program Files\\App",
+            "'C:\\Program Files\\App'",
         ),
     ];
     for (platform, value, expected) in rows {
@@ -321,7 +317,7 @@ fn a_value_the_shell_would_read_stays_quoted() {
 
 #[test]
 fn a_value_powershell_reads_unquoted_stays_quoted_on_windows_only() {
-    for value in ["-Force", "@args", "a,b"] {
+    for value in ["@args", "a,b"] {
         assert_eq!(
             render_one(WINDOWS, "run {v}", parameter("v", true), value),
             Ok(format!("run '{value}'"))
@@ -367,7 +363,7 @@ fn a_path_is_judged_by_its_shape_and_comes_out_bare_or_quoted_alike_on_both_plat
         ("/etc/nginx/nginx.conf", false),
         ("relative/dir", false),
         ("C:\\inetpub\\wwwroot", true),
-        ("C:\\Program Files (x86)\\App", true),
+        ("C:\\Program Files\\App", true),
         ("~/backup", true),
     ];
     for (value, quoted) in rows {
@@ -422,11 +418,12 @@ fn a_parameter_of_unknown_type_is_quoted_like_a_string_and_gets_the_blacklist() 
         render_one(LINUX, "echo {v}", of_kind("v", "text"), "a b").as_deref(),
         Ok("echo 'a b'")
     );
-    // Bare placement: the quotes protect, so a metacharacter is data.
-    assert_eq!(
-        render_one(LINUX, "echo {v}", of_kind("v", "text"), "a;b").as_deref(),
-        Ok("echo 'a;b'")
-    );
+    // Bare placement: stricter than the C#, a metacharacter is refused even though the
+    // quotes would carry it (a second-stage shell reads the value again).
+    assert!(refused_dangerous(
+        &render_one(LINUX, "echo {v}", of_kind("v", "text"), "a;b"),
+        "v"
+    ));
     // Double-quoted placement: the quotes do not protect.
     assert!(refused_dangerous(
         &render_one(LINUX, "echo \"{v}\"", of_kind("v", "text"), "$(id)"),
@@ -435,7 +432,9 @@ fn a_parameter_of_unknown_type_is_quoted_like_a_string_and_gets_the_blacklist() 
 }
 
 #[test]
-fn a_shell_character_in_a_string_arrives_literally_inside_the_quotes() {
+fn a_shell_character_in_a_string_is_refused_even_inside_the_quotes() {
+    // Intentionally stricter than the C#, which lets them through single quotes: ssh, sudo
+    // sh -c and cmd /c read the value a second time.
     for value in [
         "a&b",
         "a|b",
@@ -449,46 +448,42 @@ fn a_shell_character_in_a_string_arrives_literally_inside_the_quotes() {
         "(objectClass=user)",
         "error|warn",
         "$env:TEMP",
-        "-Confirm:$false",
+        "x -Confirm:$false",
     ] {
-        assert_eq!(
-            render_one(WINDOWS, "Write-Output {v}", parameter("v", true), value),
-            Ok(format!("Write-Output '{value}'"))
-        );
-        assert_eq!(
-            render_one(LINUX, "printf %s {v}", parameter("v", true), value),
-            Ok(format!("printf %s '{value}'"))
-        );
+        for (platform, pattern) in [(WINDOWS, "Write-Output {v}"), (LINUX, "printf %s {v}")] {
+            let result = render_one(platform, pattern, parameter("v", true), value);
+            assert!(refused_dangerous(&result, "v"), "{platform:?} {value}");
+        }
     }
 }
 
 #[test]
 fn a_value_closing_the_quote_stays_inside_the_quotes() {
     assert_eq!(
-        render_one(LINUX, "printf %s {v}", parameter("v", true), "x'; rm -rf /").as_deref(),
-        Ok("printf %s 'x'\\''; rm -rf /'")
+        render_one(LINUX, "printf %s {v}", parameter("v", true), "x' rm -rf /").as_deref(),
+        Ok("printf %s 'x'\\'' rm -rf /'")
     );
     assert_eq!(
         render_one(
             WINDOWS,
             "Write-Output {v}",
             parameter("v", true),
-            "x'; rm -rf /"
+            "x' rm -rf /"
         )
         .as_deref(),
-        Ok("Write-Output 'x''; rm -rf /'")
+        Ok("Write-Output 'x'' rm -rf /'")
     );
 }
 
 #[test]
 fn a_typographic_quote_is_doubled_on_windows_and_left_alone_on_linux() {
     for quote in ['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
-        let value = format!("a{quote}; Remove-Item x; {quote}b");
+        let value = format!("a{quote} Remove-Item x {quote}b");
         let windows = render_one(WINDOWS, "echo {v}", parameter("v", true), &value);
         assert_eq!(
             windows,
             Ok(format!(
-                "echo 'a{quote}{quote}; Remove-Item x; {quote}{quote}b'"
+                "echo 'a{quote}{quote} Remove-Item x {quote}{quote}b'"
             ))
         );
         let linux = render_one(LINUX, "echo {v}", parameter("v", true), &value);
@@ -497,28 +492,33 @@ fn a_typographic_quote_is_doubled_on_windows_and_left_alone_on_linux() {
 }
 
 #[test]
-fn an_inline_value_inside_single_quotes_may_hold_shell_characters() {
-    // The LDAP filter of the C# test: `&`, `(` and `)` are literal between single quotes.
+fn an_inline_value_inside_single_quotes_is_escaped_but_refuses_shell_characters() {
+    // The LDAP filter of the C# test is refused here: stricter than the C#.
+    assert!(refused_dangerous(
+        &render_one(
+            WINDOWS,
+            "Get-ADObject -LDAPFilter '{filter}'",
+            inline("filter"),
+            "(&(objectClass=user)(cn=O'Brien))"
+        ),
+        "filter"
+    ));
     assert_eq!(
         render_one(
             WINDOWS,
             "Get-ADObject -LDAPFilter '{filter}'",
             inline("filter"),
-            "(&(objectClass=user)(cn=O'Brien))"
+            "cn=O'Brien*"
         )
         .as_deref(),
-        Ok("Get-ADObject -LDAPFilter '(&(objectClass=user)(cn=O''Brien))'")
+        Ok("Get-ADObject -LDAPFilter 'cn=O''Brien*'")
     );
     for (platform, pattern, expected) in [
-        (LINUX, "grep -E '{v}' f", "grep -E 'a|b $x `y` ;z' f"),
-        (
-            WINDOWS,
-            "Select-String '{v}' f",
-            "Select-String 'a|b $x `y` ;z' f",
-        ),
+        (LINUX, "grep -E '{v}' f", "grep -E 'a b *z' f"),
+        (WINDOWS, "Select-String '{v}' f", "Select-String 'a b *z' f"),
     ] {
         assert_eq!(
-            render_one(platform, pattern, inline("v"), "a|b $x `y` ;z").as_deref(),
+            render_one(platform, pattern, inline("v"), "a b *z").as_deref(),
             Ok(expected)
         );
     }
@@ -527,19 +527,19 @@ fn an_inline_value_inside_single_quotes_may_hold_shell_characters() {
 #[test]
 fn an_inline_value_that_tries_to_close_the_pattern_quotes_cannot() {
     assert_eq!(
-        render_one(LINUX, "echo '{v}'", inline("v"), "x'; rm -rf /; echo '").as_deref(),
-        Ok("echo 'x'\\''; rm -rf /; echo '\\'''")
+        render_one(LINUX, "echo '{v}'", inline("v"), "x' rm -rf / echo '").as_deref(),
+        Ok("echo 'x'\\'' rm -rf / echo '\\'''")
     );
     assert_eq!(
-        render_one(WINDOWS, "echo '{v}'", inline("v"), "x'; rm -rf /; echo '").as_deref(),
-        Ok("echo 'x''; rm -rf /; echo '''")
+        render_one(WINDOWS, "echo '{v}'", inline("v"), "x' rm -rf / echo '").as_deref(),
+        Ok("echo 'x'' rm -rf / echo '''")
     );
     for quote in ['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
-        let value = format!("x{quote}; Remove-Item y; {quote}");
+        let value = format!("x{quote} Remove-Item y {quote}");
         assert_eq!(
             render_one(WINDOWS, "echo '{v}'", inline("v"), &value),
             Ok(format!(
-                "echo 'x{quote}{quote}; Remove-Item y; {quote}{quote}'"
+                "echo 'x{quote}{quote} Remove-Item y {quote}{quote}'"
             ))
         );
     }
@@ -764,9 +764,9 @@ fn a_value_holding_a_metacharacter_is_refused_or_quoted_never_bare() {
     for character in SHELL_METACHARACTERS {
         let value = format!("a{character}b");
         for platform in BOTH {
-            let command = render_one(platform, "run {v}", parameter("v", true), &value)
-                .expect("quoted whole, the character is data");
-            assert_eq!(command, format!("run '{value}'"), "{platform:?}");
+            // Bare, the quotes would carry it; refused all the same (second-stage shells).
+            let bare = render_one(platform, "run {v}", parameter("v", true), &value);
+            assert!(refused_dangerous(&bare, "v"), "{platform:?} {character}");
             // Where the quotes do not protect it, it is refused.
             let refused = render_one(platform, "run \"{v}\"", parameter("v", true), &value);
             assert!(refused_dangerous(&refused, "v"), "{platform:?} {character}");
@@ -783,10 +783,10 @@ fn a_value_cannot_borrow_another_parameters_placeholder() {
             platform,
             "run {a} {b}",
             vec![parameter("a", true), parameter("b", true)],
-            &[("a", "{b}"), ("b", "x; id")],
+            &[("a", "{b}"), ("b", "x id")],
         )
         .expect("both are data");
-        assert_eq!(command, "run '{b}' 'x; id'", "{platform:?}");
+        assert_eq!(command, "run '{b}' 'x id'", "{platform:?}");
     }
 }
 
@@ -1080,10 +1080,10 @@ fn leaving_an_argument_out_cannot_change_how_another_value_is_read() {
             LINUX,
             "echo '{v}'",
             vec![parameter("empty", false), inline("v")],
-            &[("v", "\\'; printf OK #")],
+            &[("v", "\\' printf OK #")],
         )
         .as_deref(),
-        Ok("echo '\\'\\''; printf OK #'")
+        Ok("echo '\\'\\'' printf OK #'")
     );
 }
 
@@ -1480,4 +1480,141 @@ fn a_typed_value_cannot_join_the_text_around_it_into_a_switch_or_a_splat() {
         .as_deref(),
         Ok("Test-Connection example.org")
     );
+}
+
+// ---- Review round: option injection and second-stage shells -----------------------------
+
+#[test]
+fn a_string_or_path_starting_with_a_dash_is_refused_on_both_platforms() {
+    // `ssh -oProxyCommand=x` runs a command on the local machine.
+    for platform in BOTH {
+        for kind in ["string", "path", "text"] {
+            let result = render_one(
+                platform,
+                "ssh {target}",
+                of_kind("target", kind),
+                "-oProxyCommand=x",
+            );
+            assert!(refused_dangerous(&result, "target"), "{platform:?} {kind}");
+        }
+    }
+}
+
+#[test]
+fn a_string_starting_with_a_slash_is_refused_on_windows_only_and_a_path_is_not() {
+    let result = render_one(WINDOWS, "ping {t}", parameter("t", true), "/t");
+    assert!(refused_dangerous(&result, "t"));
+    assert!(render_one(LINUX, "ls {t}", parameter("t", true), "/var/log").is_ok());
+    for value in [r"C:\Temp", r"\\server\share", "/var/log"] {
+        assert!(
+            render_one(WINDOWS, "dir {p}", of_kind("p", "path"), value).is_ok(),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn a_substitution_in_a_string_is_refused_on_linux_whatever_the_context() {
+    // `let` evaluates `a[$(cmd)]` as an arithmetic index, quoted or not.
+    for pattern in ["let n={v}", "let n='{v}'", "let \"n={v}\"", "echo {v}"] {
+        for value in ["a[$(cmd)]", "$(id)", "`id`", "a[$x]"] {
+            let result = render_one(LINUX, pattern, parameter("v", true), value);
+            assert!(refused_dangerous(&result, "v"), "{pattern} {value}");
+        }
+    }
+}
+
+#[test]
+fn metacharacters_are_refused_inside_single_quotes_too() {
+    // Intentionally stricter than the C# (single quotes relaxation undone): a second-stage
+    // shell (ssh, sudo sh -c, cmd /c) reads the value again.
+    for platform in BOTH {
+        for character in SHELL_METACHARACTERS {
+            let value = format!("a{character}b");
+            for (pattern, parameter) in [
+                ("run '{v}'", inline("v")),
+                ("run {v}", parameter("v", true)),
+                ("run {v}", of_kind("v", "path")),
+            ] {
+                let result = render_one(platform, pattern, parameter, &value);
+                assert!(
+                    refused_dangerous(&result, "v"),
+                    "{platform:?} {pattern} {value}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_double_quote_or_trailing_backslash_is_refused_on_windows() {
+    for value in [
+        "a\"b",
+        "a\u{201C}b",
+        "a\u{201D}b",
+        "a\u{201E}b",
+        "C:\\Temp\\",
+    ] {
+        for kind in ["string", "path"] {
+            let result = render_one(WINDOWS, "run {v}", of_kind("v", kind), value);
+            assert!(refused_dangerous(&result, "v"), "{kind} {value}");
+        }
+    }
+    assert!(render_one(LINUX, "run {v}", parameter("v", true), "a\"b").is_ok());
+    assert!(render_one(LINUX, "run {v}", parameter("v", true), "dir\\").is_ok());
+}
+
+#[test]
+fn an_exclamation_mark_is_refused_in_double_quotes_on_linux_only() {
+    let result = render_one(LINUX, "echo \"{v}\"", parameter("v", true), "a!b");
+    assert!(refused_dangerous(&result, "v"));
+    assert!(render_one(WINDOWS, "echo \"{v}\"", parameter("v", true), "a!b").is_ok());
+}
+
+#[test]
+fn a_number_holds_only_digits_signs_point_and_exponent() {
+    for platform in BOTH {
+        for value in ["inf", "NaN", "-infinity", "1_0", "0x10"] {
+            let result = render_one(platform, "run {v}", of_kind("v", "number"), value);
+            assert_eq!(
+                result,
+                Err(GenerateError::Values(vec![ValueError::NotNumber(
+                    "v".to_owned()
+                )])),
+                "{platform:?} {value}"
+            );
+        }
+        for value in ["3", "-1.5", "1e5", "2.5E+3"] {
+            assert!(
+                render_one(platform, "run {v}", of_kind("v", "number"), value).is_ok(),
+                "{platform:?} {value}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_shipped_snippet_still_generates_with_its_defaults() {
+    use crate::tools::command_library::{BUILTIN_SNIPPETS, SnippetPlatform};
+    for snippet in BUILTIN_SNIPPETS {
+        let platforms: &[TemplatePlatform] = match snippet.platform {
+            SnippetPlatform::Linux => &[LINUX],
+            SnippetPlatform::Windows => &[WINDOWS],
+            SnippetPlatform::CrossPlatform => &BOTH,
+        };
+        // Every value as a free string: the strictest reading of the catalog.
+        let parameters: Vec<UserParameter> = snippet
+            .parameters
+            .iter()
+            .map(|each| {
+                let mut parameter = parameter(each.key, true);
+                parameter.default_value = Some(each.default_value.to_owned());
+                parameter
+            })
+            .collect();
+        for platform in platforms {
+            let result = render(*platform, snippet.template, parameters.clone(), &[]);
+            assert!(result.is_ok(), "{:?} {platform:?}: {result:?}", snippet.id);
+        }
+    }
 }

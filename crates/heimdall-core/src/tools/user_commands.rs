@@ -99,6 +99,20 @@ const DANGEROUS_CHARACTERS: [char; 9] = ['&', '|', ';', '`', '$', '(', ')', '<',
 /// substitutes in bash or PowerShell. See [`is_safe_bare_value`].
 const SAFE_BARE_PUNCTUATION: [char; 10] = ['.', '_', '/', ':', '=', '@', '+', ',', '%', '-'];
 
+/// The characters a number value may hold: digits, a decimal point, an exponent and signs.
+/// Stricter than the Rust float parser, which also reads `inf` and `NaN`.
+const NUMBER_CHARACTERS: [char; 5] = ['.', 'e', 'E', '+', '-'];
+
+/// What a command line reads as an option when it starts a value.
+const OPTION_LEADING: char = '-';
+
+/// What `cmd` and many Windows tools read as a switch when it starts a value.
+const WINDOWS_SWITCH_LEADING: char = '/';
+
+/// The character a Windows value may not end with: a native program's argument parser reads
+/// it as an escape of the closing quote.
+const WINDOWS_BACKSLASH: char = '\\';
+
 /// What PowerShell reads specially at the start of an argument: `-` names a parameter and
 /// `@` splats a variable.
 const POWERSHELL_LEADING_SPECIAL: [char; 2] = ['-', '@'];
@@ -687,9 +701,14 @@ fn check_value(
         "int" | "integer" => ensure(value.trim().parse::<i32>().is_ok(), || {
             ValueError::NotInteger(label())
         })?,
-        "number" => ensure(value.trim().parse::<f64>().is_ok(), || {
-            ValueError::NotNumber(label())
-        })?,
+        "number" => ensure(
+            value.trim().parse::<f64>().is_ok()
+                && value
+                    .trim()
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || NUMBER_CHARACTERS.contains(&c)),
+            || ValueError::NotNumber(label()),
+        )?,
         "hostname" => ensure(is_hostname(value), || ValueError::Hostname(label()))?,
         "ipaddress" => ensure(IpAddr::from_str(value.trim()).is_ok(), || {
             ValueError::IpAddress(label())
@@ -708,19 +727,60 @@ fn check_value(
         // replaces.
         _ => {}
     }
+    // Stricter than the C#: the shape of a free text value, whatever the quoting around it.
+    if !parameter.is_choice()
+        && !typed_kind(&kind)
+        && holds_refused_shape(value, kind.as_str() == "path", platform)
+    {
+        return Err(ValueError::Dangerous(label()));
+    }
     // The place the value stands in is judged for every type, after the type: a valid number
     // or address is still a word that can be a heredoc delimiter, and typed values go in
     // as they are (trimmed), so that is what is judged.
-    let typed = matches!(
-        kind.as_str(),
-        "int" | "integer" | "number" | "hostname" | "ipaddress" | "driveletter"
-    );
+    let typed = typed_kind(&kind);
     let judged = if typed { value.trim() } else { value };
     ensure(
         !holds_refused_characters(pattern, parameter, judged, platform)
             && (!typed || typed_fits_around(pattern, parameter, judged, platform)),
         || ValueError::Dangerous(label()),
     )
+}
+
+/// Whether `kind` is one of the typed kinds, whose values always go in bare.
+fn typed_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "int" | "integer" | "number" | "hostname" | "ipaddress" | "driveletter"
+    )
+}
+
+/// Whether a free text value (a string, a path, an unknown type) has a shape the generator
+/// refuses at any place of the pattern, a deliberate tightening of the C# where the quoting
+/// of the pattern decides. A second-stage shell (`ssh host`, `sudo sh -c`, `cmd /c`) reads the
+/// value again after the first one, so the quotes protect nothing there:
+///
+/// - a leading `-` (both platforms) or, for a string on Windows, a leading `/`, which the
+///   program reads as an option or a switch (`ssh -oProxyCommand=x`); a path may start with
+///   a drive letter or `\\server`, so it is not judged for the `/`;
+/// - on Linux a command substitution `$(`, a backtick, or `[` with `$`, which bash arithmetic
+///   (`let n={v}`, `[[ ]]`, `$(( ))`) evaluates a second time even from a quoted value;
+/// - on Windows a double quote of any kind and a trailing backslash, which a native program's
+///   argument parser reads as an escape of the closing quote.
+fn holds_refused_shape(value: &str, is_path: bool, platform: TemplatePlatform) -> bool {
+    let windows = platform == TemplatePlatform::Windows;
+    let head = value.trim_start();
+    if head.starts_with(OPTION_LEADING) {
+        return true;
+    }
+    if windows {
+        (!is_path && head.starts_with(WINDOWS_SWITCH_LEADING))
+            || value.ends_with(WINDOWS_BACKSLASH)
+            || value
+                .chars()
+                .any(|c| c == '"' || POWERSHELL_TYPOGRAPHIC_DOUBLE_QUOTES.contains(&c))
+    } else {
+        value.contains("$(") || value.contains('`') || (value.contains('[') && value.contains('$'))
+    }
 }
 
 /// Whether a typed value, which always goes in bare, can stand at the bare places of the
@@ -785,8 +845,10 @@ fn refused_at(protection: Protection, c: char, powershell: bool) -> bool {
         || c == escape_character(powershell)
         || (powershell && POWERSHELL_TYPOGRAPHIC_DOUBLE_QUOTES.contains(&c));
     match protection {
-        Protection::Literal => false,
-        Protection::DoubleQuoted => metacharacter || ends_double,
+        // Stricter than the C#: a second-stage shell reads the value again (see
+        // `holds_refused_shape`), so the metacharacters stay refused inside single quotes.
+        Protection::Literal => metacharacter,
+        Protection::DoubleQuoted => metacharacter || ends_double || (!powershell && c == '!'),
         Protection::Words => {
             metacharacter
                 || ends_double
