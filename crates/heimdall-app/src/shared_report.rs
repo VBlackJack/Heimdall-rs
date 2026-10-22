@@ -76,6 +76,12 @@ pub enum SkipReason {
     /// The session goes through a proxy Heimdall does not use: a direct connection would
     /// go around it.
     ProxyNotSupported,
+    /// The RDP session signs in to its RD Gateway with a smart card, or in a way Heimdall does
+    /// not reproduce: a direct connection would go around the gateway.
+    RdGatewayNotSupported,
+    /// The RDP session names an RD Gateway whose host is not one: taking it without the gateway
+    /// would go around it.
+    InvalidRdGateway,
 }
 
 impl SkipReason {
@@ -88,6 +94,8 @@ impl SkipReason {
             Self::InvalidGateway => "invalid-gateway",
             Self::JumpHostNotSupported => "jump-host-not-supported",
             Self::ProxyNotSupported => "proxy-not-supported",
+            Self::RdGatewayNotSupported => "rd-gateway-not-supported",
+            Self::InvalidRdGateway => "invalid-rd-gateway",
         }
     }
 
@@ -100,6 +108,8 @@ impl SkipReason {
             Self::InvalidGateway,
             Self::JumpHostNotSupported,
             Self::ProxyNotSupported,
+            Self::RdGatewayNotSupported,
+            Self::InvalidRdGateway,
         ]
         .into_iter()
         .find(|reason| reason.key() == key)

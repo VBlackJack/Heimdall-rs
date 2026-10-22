@@ -43,6 +43,7 @@ pub mod pin;
 pub mod post_connect;
 pub mod powershell;
 pub mod profile;
+pub mod redaction;
 pub mod scheduled;
 pub mod session_snapshot;
 pub mod settings;
