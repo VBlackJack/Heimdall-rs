@@ -1428,7 +1428,7 @@ pub enum Effect {
         /// The masking's number.
         run: u64,
         /// The unmasked text.
-        text: std::sync::Arc<str>,
+        text: std::sync::Arc<zeroize::Zeroizing<String>>,
         /// What it is asked to do.
         options: heimdall_core::redaction::RedactionOptions,
     },

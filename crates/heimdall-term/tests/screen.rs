@@ -393,6 +393,13 @@ fn session_text_joins_wrapped_rows_and_keeps_the_history() {
 }
 
 #[test]
+fn session_text_keeps_the_line_break_after_a_row_that_fills_the_width() {
+    let mut term = terminal(10, 3);
+    term.feed(b"0123456789\r\nnext");
+    assert_eq!(term.session_text(), "0123456789\nnext");
+}
+
+#[test]
 fn session_text_drops_the_blank_rows_after_the_last_output() {
     let mut term = terminal(20, 6);
     term.feed(b"one  \r\ntwo");

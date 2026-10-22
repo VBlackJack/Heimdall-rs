@@ -60,8 +60,8 @@ pub(super) fn mask_groups(
 
 const COOKIE_WORD: &str = "cookie";
 
-/// The short form of the curl cookie option; a line without it or the word "cookie" has no cookie.
-const CURL_COOKIE_SHORT_OPTION: &str = "-b";
+/// The command whose `-b` is a cookie option; a line without it or the word "cookie" has no cookie.
+const CURL_COMMAND: &str = "curl";
 
 /// Attributes of a `Set-Cookie` header: not secrets, kept as they are.
 const COOKIE_ATTRIBUTES: [&str; 9] = [
@@ -82,7 +82,9 @@ pub(super) fn mask_cookies(
     for line in split_lines(text) {
         let hay = &text[line.start..line.end];
         let named = contains_ignore_ascii_case(hay, COOKIE_WORD);
-        if !named && !hay.contains(CURL_COOKIE_SHORT_OPTION) {
+        // The short option `-b` is a cookie only for curl: `grep -b`, `mv -b`, `rsync -b` are not.
+        let curl = contains_ignore_ascii_case(hay, CURL_COMMAND);
+        if !named && !curl {
             continue;
         }
         let mut lists = Vec::new();
@@ -92,8 +94,7 @@ pub(super) fn mask_cookies(
                 // `--cookie=a=b https://x`: a value after `=` with no quote ends at the first
                 // blank, as a shell argument does. After `:` it runs to the end of the line.
                 let name = hay[header.start..header.end].trim_end_matches([' ', '\t']);
-                let bare = name.ends_with('=');
-                let end = if bare {
+                let end = if name.ends_with('=') {
                     bare_cookie_end(hay, header.end)
                 } else {
                     cookie_header_end(hay, header.end)
@@ -106,8 +107,13 @@ pub(super) fn mask_cookies(
             }
         }
         let mut from = 0;
-        while let Some(option) = patterns::COOKIE_OPTION.find_from(hay, from, budget)? {
+        while curl && let Some(option) = patterns::COOKIE_OPTION.find_from(hay, from, budget)? {
             let quoted = hay[option.start..option.end].ends_with(['"', '\'']);
+            from = option.end;
+            // An option after it (`rsync -b --backup-dir=x`) is not a cookie list.
+            if !quoted && hay[option.end..].starts_with('-') {
+                continue;
+            }
             let end = if quoted {
                 cookie_header_end(hay, option.end)
             } else {
@@ -119,40 +125,40 @@ pub(super) fn mask_cookies(
                 break;
             }
         }
+        // A value found by two readings (`curl -b 'Cookie: a=b'`) is masked, and counted, once.
+        let mut spans = Vec::new();
         for (list_start, list_end) in lists {
             let mut offset = list_start;
             for pair in hay[list_start..list_end].split(';') {
                 if let Some((start, end)) = cookie_value_span(pair) {
-                    let (start, end) = (offset + start, offset + end);
-                    if !is_mask_token(&hay[start..end]) {
-                        edits.push(Edit {
-                            start: line.start + start,
-                            end: line.start + end,
-                            replacement: token.clone(),
-                        });
-                        run.count(rule);
-                    }
+                    spans.push((offset + start, offset + end));
                 }
                 offset += pair.len() + 1;
+            }
+        }
+        spans.sort_unstable();
+        spans.dedup();
+        for (start, end) in spans {
+            if !is_mask_token(&hay[start..end]) {
+                edits.push(Edit {
+                    start: line.start + start,
+                    end: line.start + end,
+                    replacement: token.clone(),
+                });
+                run.count(rule);
             }
         }
     }
     Ok(apply_edits(text, &edits))
 }
 
-/// The end of an unquoted cookie argument that starts at `from`: the first blank that does not
-/// follow a `;` (`a=b; c=d` is one list), or the end of the line.
+/// The end of an unquoted cookie argument that starts at `from`: the first blank, as a shell
+/// argument ends, or the end of the line. Later words (`cookie=abc; DB_HOST=db01`) are not
+/// cookies.
 fn bare_cookie_end(hay: &str, from: usize) -> usize {
-    let mut previous = ';';
-    for (offset, c) in hay[from..].char_indices() {
-        if c.is_whitespace() && previous != ';' {
-            return from + offset;
-        }
-        if !c.is_whitespace() {
-            previous = c;
-        }
-    }
-    hay.len()
+    hay[from..]
+        .find(char::is_whitespace)
+        .map_or(hay.len(), |offset| from + offset)
 }
 
 /// The end of a cookie header that starts at `from`: the end of the line, or the quote that

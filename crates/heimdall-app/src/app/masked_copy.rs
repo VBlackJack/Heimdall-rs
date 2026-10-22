@@ -27,6 +27,8 @@
 
 use std::sync::Arc;
 
+use zeroize::{Zeroize, Zeroizing};
+
 use heimdall_core::redaction::{Redacted, RedactionError, RedactionOptions};
 
 use super::tree::ProfileKind;
@@ -83,7 +85,7 @@ pub struct MaskedCopy {
     /// The masking whose answer is waited for; an older answer is dropped.
     run: u64,
     /// The unmasked text, kept to mask it again.
-    source: Arc<str>,
+    source: Arc<Zeroizing<String>>,
 }
 
 /// Debug never prints the text: it is the unmasked terminal output.
@@ -98,7 +100,28 @@ impl std::fmt::Debug for MaskedCopy {
     }
 }
 
+/// The masked text is wiped when the dialog goes, as the unmasked source is when its last
+/// holder goes.
+impl Drop for MaskedCopy {
+    fn drop(&mut self) {
+        self.wipe();
+    }
+}
+
 impl MaskedCopy {
+    /// Overwrites the masked text in memory. The dialog is closed after this.
+    pub fn wipe(&mut self) {
+        if let MaskedView::Ready(redacted) = &mut self.view {
+            redacted.text.zeroize();
+        }
+    }
+
+    /// Shows `view`, the masked text it replaces wiped first.
+    fn show(&mut self, view: MaskedView) {
+        self.wipe();
+        self.view = view;
+    }
+
     /// The text to copy, once it is masked.
     #[must_use]
     pub fn masked_text(&self) -> Option<&str> {
@@ -151,7 +174,7 @@ impl App {
             self.tell(Notice::MaskedCopyNoTerminal);
             return Vec::new();
         };
-        let source: Arc<str> = tab.terminal.session_text().into();
+        let source = Arc::new(Zeroizing::new(tab.terminal.session_text()));
         let pseudonymize_hosts = false;
         let run = self.start_masked_run();
         let effect = Effect::Redact {
@@ -181,7 +204,7 @@ impl App {
             return Vec::new();
         };
         state.pseudonymize_hosts = on;
-        state.view = MaskedView::Working;
+        state.show(MaskedView::Working);
         state.run = run;
         vec![Effect::Redact {
             run,
@@ -206,11 +229,12 @@ impl App {
         if state.run != run {
             return;
         }
-        state.view = match outcome {
+        let view = match outcome {
             Some(Ok(redacted)) => MaskedView::Ready(redacted),
             Some(Err(RedactionError::Timeout { rule })) => MaskedView::Refused { rule },
             None => MaskedView::Failed,
         };
+        state.show(view);
     }
 
     /// Copy: the masked text, exactly as shown, goes to the clipboard and the dialog closes.

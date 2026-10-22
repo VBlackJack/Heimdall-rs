@@ -497,11 +497,12 @@ lazy_pattern!(
 );
 
 // The curl cookie option and the quote that opens its argument: `-b 'a=b'`, `--cookie "a=b; c=d"`,
-// `-b a=b`. A bare file name (`-b jar.txt`) holds no pair and is left alone. The attached form
+// `-b a=b`, and a short flag cluster ending in b (`-sb`, `-Lb`), read on curl lines only. A bare
+// file name (`-b jar.txt`) holds no pair and is left alone. The attached form
 // (`--cookie=a=b`) is the header pattern's.
 lazy_pattern!(
     COOKIE_OPTION,
-    r#"(?:^|[ \t])(?:-b|--cookie)[ \t]+["']?"#,
+    r#"(?:^|[ \t])(?:--cookie|-[A-Za-z]*b)[ \t]+["']?"#,
     None
 );
 

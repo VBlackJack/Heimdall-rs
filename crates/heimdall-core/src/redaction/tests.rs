@@ -2013,6 +2013,40 @@ fn cookie_is_masked_in_quoted_equals_and_curl_option_forms() {
         "curl --cookie cookies.txt https://x",
         "cookie=accepted",
     ]);
+    // Another command's -b is not a cookie, nor an option after curl's.
+    assert_survives(&[
+        "rsync -b --backup-dir=/var/bak src dst",
+        "mv -b --suffix=.orig a b",
+        "grep -b 'Level=debug' f",
+        "curl -b --foo=bar https://x",
+    ]);
+    // An unquoted value ends at its blank: what follows is not a cookie.
+    assert_masked(&[
+        (
+            "cookie=abc; DB_HOST=db01; ls",
+            "cookie=abc; DB_HOST=db01; ls",
+        ),
+        (
+            "consent cookie=accepted; region=eu",
+            "consent cookie=accepted; region=eu",
+        ),
+        (
+            "x --cookie=session=abc123; DB_HOST=db01",
+            "x --cookie=session=[masked:cookie-header]; DB_HOST=db01",
+        ),
+        (
+            "curl -sb 'session=abc' https://x",
+            "curl -sb 'session=[masked:cookie-header]' https://x",
+        ),
+        (
+            "curl -Lb 'session=abc' https://x",
+            "curl -Lb 'session=[masked:cookie-header]' https://x",
+        ),
+    ]);
+    // Found by two readings, counted once.
+    let both = redact("curl -b 'Cookie: a=b'", RedactionOptions::default()).expect("done");
+    assert_eq!(both.text, "curl -b 'Cookie: a=[masked:cookie-header]'");
+    assert_eq!(both.count(rule_id::COOKIE_HEADER), 1);
     let once = mask("curl -b 'session=abc123secret' https://x");
     assert_eq!(mask(&once), once);
 }

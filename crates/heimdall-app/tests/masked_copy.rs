@@ -142,12 +142,14 @@ fn shell(app: &mut App, output: &str) -> TabId {
     tab
 }
 
-fn masking(app: &mut App, tab: TabId) -> (u64, Arc<str>, RedactionOptions) {
+type Source = Arc<zeroize::Zeroizing<String>>;
+
+fn masking(app: &mut App, tab: TabId) -> (u64, Source, RedactionOptions) {
     let effects = app.update(Message::MaskedCopy(MaskedCopyMessage::Open(tab)));
     redact_effect(&effects)
 }
 
-fn redact_effect(effects: &[Effect]) -> (u64, Arc<str>, RedactionOptions) {
+fn redact_effect(effects: &[Effect]) -> (u64, Source, RedactionOptions) {
     match effects {
         [Effect::Redact { run, text, options }] => (*run, Arc::clone(text), *options),
         other => panic!("one masking expected, got {other:?}"),
@@ -303,7 +305,7 @@ fn switching_the_host_option_masks_again_and_only_the_last_answer_counts() {
     let (second, again, options) =
         redact_effect(&app.update(Message::MaskedCopy(MaskedCopyMessage::HostsChanged(true))));
     assert!(options.pseudonymize_hosts);
-    assert_eq!(*again, *text, "the same text is masked again");
+    assert_eq!(**again, **text, "the same text is masked again");
     assert_eq!(dialog(&app).view, MaskedView::Working);
     assert!(
         app.update(Message::ConfirmDialog).is_empty(),
@@ -409,4 +411,21 @@ fn neither_the_dialog_nor_the_messages_print_the_text() {
     assert!(!format!("{message:?}").contains(SECRET));
     app.update(Message::MaskedCopy(message));
     assert!(!format!("{:?}", app.dialog).contains(SECRET));
+}
+
+#[test]
+fn the_masked_text_is_wiped_when_the_dialog_is_wiped() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let tab = shell(&mut app, &format!("password={SECRET}\r\n"));
+    let (run, text, options) = masking(&mut app, tab);
+    finish(&mut app, run, &text, options);
+    let mut copy = dialog(&app).clone();
+    assert!(copy.masked_text().is_some_and(|shown| !shown.is_empty()));
+    copy.wipe();
+    assert_eq!(
+        copy.masked_text(),
+        Some(""),
+        "overwritten, not only dropped"
+    );
 }
