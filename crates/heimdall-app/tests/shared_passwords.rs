@@ -425,6 +425,46 @@ fn nothing_is_remembered_unless_the_box_was_ticked() {
 }
 
 #[test]
+fn a_refused_password_typed_with_the_box_ticked_is_not_kept_for_the_one_typed_after_it() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    let (tab, attempt) = open(&mut app, "web");
+    let first = ask(
+        &mut app,
+        tab,
+        attempt,
+        password_question(HOST, 22, LOGIN, 1),
+    );
+    type_password(
+        &mut app,
+        tab,
+        first.question,
+        "WRONG-FIRST-PASSWORD",
+        Some(true),
+    );
+    // The server asks again; the right one is typed with the box left cleared.
+    let again = ask(
+        &mut app,
+        tab,
+        attempt,
+        password_question(HOST, 22, LOGIN, 2),
+    );
+    type_password(&mut app, tab, again.question, PASSWORD, None);
+    signed_in(&mut app, tab, attempt);
+    assert!(
+        entries(&system).is_empty(),
+        "nothing was ticked for the accepted one"
+    );
+    assert_nothing_logged();
+}
+
+#[test]
 fn a_ticked_password_is_kept_once_the_server_accepted_it_and_answers_the_next_time() {
     capture_logs();
     let dir = tempfile::tempdir().expect("dir");

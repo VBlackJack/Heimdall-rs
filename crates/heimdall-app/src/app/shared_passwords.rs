@@ -154,6 +154,11 @@ impl App {
         let Some(Answer::Secret(secret)) = answer else {
             return;
         };
+        // A new password typed replaces whatever was waiting to be remembered: a first one the
+        // server refused is never kept for the one typed after it with the box cleared.
+        if let Some(tab) = self.tab_mut(tab_id) {
+            tab.shared_password.pending = None;
+        }
         if secret.expose().is_empty() {
             return;
         }
@@ -314,7 +319,9 @@ impl App {
         let mut index = self.shared_index(source);
         let name = keys::entry_name(source, &digest);
         if let Err(error) = self.vault.write(&name, None) {
+            // Left listed: the source's Forget can still reach it.
             log::warn!("a remembered shared password could not be forgotten: {error}");
+            return;
         }
         index.retain(|known| *known != digest);
         self.save_index(source, &index);
