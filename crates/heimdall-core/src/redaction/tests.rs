@@ -1971,3 +1971,69 @@ fn cookie_values_are_masked_and_attributes_kept() {
     let once = mask("Set-Cookie: session=abc123secret; Path=/");
     assert_eq!(mask(&once), once);
 }
+
+#[test]
+fn cookie_is_masked_in_quoted_equals_and_curl_option_forms() {
+    assert_masked(&[
+        (
+            r#"{"Cookie": "session=abc123secret"}"#,
+            r#"{"Cookie": "session=[masked:cookie-header]"}"#,
+        ),
+        (
+            "{'Cookie': 'session=abc; theme=dark'}",
+            "{'Cookie': 'session=[masked:cookie-header]; theme=[masked:cookie-header]'}",
+        ),
+        (
+            r#"{\"Cookie\": \"session=abc123secret\"}"#,
+            r#"{\"Cookie\": \"session=[masked:cookie-header]\"}"#,
+        ),
+        (
+            r#"Invoke-WebRequest -Headers @{Cookie="session=abc123secret"} https://x"#,
+            r#"Invoke-WebRequest -Headers @{Cookie="session=[masked:cookie-header]"} https://x"#,
+        ),
+        (
+            "curl -b 'session=abc123secret' https://x",
+            "curl -b 'session=[masked:cookie-header]' https://x",
+        ),
+        (
+            r#"curl --cookie "session=abc; theme=dark" https://x"#,
+            r#"curl --cookie "session=[masked:cookie-header]; theme=[masked:cookie-header]" https://x"#,
+        ),
+        (
+            "curl -b session=abc123secret https://x",
+            "curl -b session=[masked:cookie-header] https://x",
+        ),
+        (
+            "curl --cookie=session=abc123secret https://x",
+            "curl --cookie=session=[masked:cookie-header] https://x",
+        ),
+    ]);
+    assert_survives(&[
+        "curl -b jar.txt https://x",
+        "curl --cookie cookies.txt https://x",
+        "cookie=accepted",
+    ]);
+    let once = mask("curl -b 'session=abc123secret' https://x");
+    assert_eq!(mask(&once), once);
+}
+
+#[test]
+fn log_prefix_limits_are_the_documented_ones() {
+    // Module doc, "Known limits": a short letters-only value after a log prefix is prose.
+    assert_survives(&["INFO token: ident"]);
+    // Several words after a log prefix: the first one only, the rest stays.
+    assert_masked(&[(
+        "WARN secret: blue-sky-9 mountain lake",
+        "WARN secret: [masked:key-value-secret] mountain lake",
+    )]);
+    // Where the key starts the line the whole value goes.
+    assert_masked(&[(
+        "secret: blue sky mountain",
+        "secret: [masked:key-value-secret]",
+    )]);
+    // A known shape is masked wherever it sits.
+    assert_masked(&[(
+        "INFO token: abc123xyz",
+        "INFO token: [masked:key-value-secret]",
+    )]);
+}

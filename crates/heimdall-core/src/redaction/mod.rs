@@ -25,6 +25,14 @@
 //! within one call only; the mapping lives in memory for that call and is never written to disk,
 //! to a log or to the clipboard.
 //!
+//! Known limits of the heuristics, which the preview has to be read for. After a log prefix
+//! (`INFO token: ...`, where the key does not start a line or a field) a value of letters only
+//! shorter than 16 characters is not masked, because it cannot be told from prose
+//! (`unexpected token: ident`), and a value of several words is masked up to its first word
+//! only (`WARN secret: blue-sky-9 mountain lake` keeps `mountain lake`). Where the key starts a
+//! line or a field the whole value is masked. Values of a known shape (a token, a header, a URL
+//! credential, a value with a digit or a symbol) do not have these limits.
+//!
 //! The result is idempotent: redacting the output again changes nothing and counts zero.
 //!
 //! Fail closed: when a rule runs out of its time budget the result is an error and no text is

@@ -6056,3 +6056,37 @@ ui-share-listing-index-of = Índice de
 ui-share-listing-name = Nombre
 ui-share-listing-size = Tamaño (bytes)
 ui-profile-from-folder = Tomado de la carpeta "{ $folder }".
+
+## Copy output, secrets masked (Ctrl+Shift+M): the review dialog, its menu entry and its status words.
+ui-masked-copy-menu = Copiar la salida, secretos enmascarados...
+ui-menu-keys-masked-copy = Ctrl+Shift+M
+ui-masked-copy-title = Copiar la salida, secretos enmascarados
+ui-masked-copy-intro = Revise el texto enmascarado de abajo. No se envía nada ni se escribe nada en el disco: Copiar solo coloca este texto en el portapapeles.
+ui-masked-copy-best-effort = El enmascarado se hace en la medida de lo posible. Un secreto de una forma que ninguna regla conoce no se enmascara, y una copia enmascarada aún puede contener alguno. Lea todo el texto antes de compartirlo.
+ui-masked-copy-nothing-masked = Ninguna regla encontró un secreto en este texto. Léalo antes de compartirlo.
+ui-masked-copy-count-line = { $rule }: { $count ->
+    [one] { $count } aparición
+   *[other] { $count } apariciones
+}
+ui-masked-copy-hosts-option = Enmascarar también los nombres de host y las direcciones
+ui-masked-copy-truncated = La salida superó el tamaño máximo: solo se muestra la parte más reciente.
+ui-masked-copy-working = Enmascarando el texto...
+ui-masked-copy-refused = El enmascarado se detuvo: la regla "{ $rule }" tardó demasiado en este texto, así que no se puede copiar nada.
+ui-masked-copy-copy = Copiar
+ui-masked-copy-copied = Salida copiada con los secretos enmascarados.
+ui-masked-copy-no-terminal = Esta pestaña no tiene texto de terminal que copiar.
+ui-shortcuts-masked-copy = Copiar la salida de la sesión con los secretos enmascarados, para leerla antes de compartirla
+ui-masked-copy-rule-private-key-block = Clave privada
+ui-masked-copy-rule-authorization-header = Encabezado de autorización
+ui-masked-copy-rule-cookie-header = Cookie
+ui-masked-copy-rule-url-credentials = Credenciales en una URL
+ui-masked-copy-rule-cli-password = Contraseña en línea de comandos
+ui-masked-copy-rule-key-value-secret = Secreto clave-valor
+ui-masked-copy-rule-aws-access-key = Clave de acceso de AWS
+ui-masked-copy-rule-github-token = Token de GitHub
+ui-masked-copy-rule-slack-token = Token de Slack
+ui-masked-copy-rule-jwt = JSON Web Token
+ui-masked-copy-rule-password-prompt = Contraseña escrita en un aviso
+ui-masked-copy-rule-ipv4-address = Dirección IPv4
+ui-masked-copy-rule-host-name = Nombre de host
+ui-masked-copy-failed = El enmascarado falló, así que no se puede copiar nada.

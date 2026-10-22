@@ -378,3 +378,24 @@ fn the_cursor_blinks_until_the_application_asks_for_a_steady_one() {
     term.feed(b"ab\r\nc");
     assert_eq!(term.cursor_position(), (1, 1));
 }
+
+// ---- the whole session's text, for the masked copy ---------------------------------------
+
+#[test]
+fn session_text_joins_wrapped_rows_and_keeps_the_history() {
+    let mut term = terminal(10, 3);
+    term.feed(b"first\r\nsecond\r\nthird\r\n0123456789abcdefghij\r\nlast");
+    // "first" and "second" scrolled into the history; the 20 characters wrapped over two rows.
+    assert_eq!(
+        term.session_text(),
+        "first\nsecond\nthird\n0123456789abcdefghij\nlast"
+    );
+}
+
+#[test]
+fn session_text_drops_the_blank_rows_after_the_last_output() {
+    let mut term = terminal(20, 6);
+    term.feed(b"one  \r\ntwo");
+    assert_eq!(term.session_text(), "one\ntwo");
+    assert_eq!(terminal(20, 6).session_text(), "");
+}
