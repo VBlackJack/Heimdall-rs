@@ -384,12 +384,17 @@ fn cap_input(text: &str, max_bytes: usize) -> (&str, bool) {
     }
     // The cut can fall inside a private key: its BEGIN line is gone, so the body that remains
     // would have no marker to be recognised by. Drop the rest of the body.
+    // The same holds for the continuation lines of a folded Authorization header.
     let inside_key = maskers::cut_inside_private_key(text, start);
+    let inside_header = maskers::cut_inside_folded_authorization(text, start);
     for _ in 0..CUT_CONTEXT_LINES {
         start = after_next_newline(text, start);
     }
     if inside_key {
         start = maskers::skip_private_key_body(text, start);
+    }
+    if inside_header {
+        start = maskers::skip_continuation_lines(text, start);
     }
     (&text[start..], true)
 }
@@ -432,9 +437,12 @@ fn redact_with_limits(
         // A rule that used up its time on its last step must not be accepted either.
         budget.check()?;
     }
+    // A mask token can be longer than the secret it replaces, so the output may exceed the cap.
+    // Cap it too: a second pass over the output then finds nothing to cut and changes nothing.
+    let (output, output_cut) = cap_input(&current, max_bytes);
     Ok(Redacted {
-        text: current,
+        text: output.to_owned(),
         counts: run.counts,
-        truncated,
+        truncated: truncated || output_cut,
     })
 }

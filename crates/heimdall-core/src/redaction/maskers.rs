@@ -62,6 +62,8 @@ const MARKER_LITERAL: &str = "-----";
 
 const END_MARKER_START: &str = "-----END ";
 
+const AUTHORIZATION_HEADER_NAME: &str = "authorization:";
+
 const BEGIN_MARKER_START: &str = "-----BEGIN ";
 
 const PRIVATE_KEY_MARKER_END: &str = "PRIVATE KEY-----";
@@ -72,8 +74,6 @@ const DEK_INFO_HEADER: &str = "DEK-Info:";
 
 /// PEM bodies wrap at 64 or 76 columns; the final line is at least one base64 quantum.
 const MIN_BODY_LINE_LENGTH: usize = 4;
-
-const MAX_BODY_LINE_LENGTH: usize = 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LineKind {
@@ -261,9 +261,49 @@ pub(super) fn skip_private_key_body(text: &str, from: usize) -> usize {
     let mut start = from;
     while start < text.len() {
         let line = line_from(text, start);
-        if !is_key_body(classify(text, line)) {
+        let last_line = !text[start..].contains('\n');
+        let in_body =
+            is_key_body(classify(text, line)) || (last_line && is_truncated_fragment(text, line));
+        if !in_body {
             break;
         }
+        start = text[start..]
+            .find('\n')
+            .map_or(text.len(), |offset| start + offset + 1);
+    }
+    start
+}
+
+fn starts_with_blank(text: &str, line: Line) -> bool {
+    text[line.start..].starts_with([' ', '\t'])
+}
+
+/// True when the text at `cut` is on a continuation line (one that starts with a blank) of an
+/// `Authorization:` header that begins before the cut. The cap would drop the header line and
+/// keep its continuation, which then has nothing to be recognised by.
+pub(super) fn cut_inside_folded_authorization(text: &str, cut: usize) -> bool {
+    let mut line_start = text[..cut].rfind('\n').map_or(0, |index| index + 1);
+    loop {
+        let line = line_from(text, line_start);
+        if !starts_with_blank(text, line) {
+            return contains_ignore_ascii_case(
+                &text[line.start..line.end],
+                AUTHORIZATION_HEADER_NAME,
+            );
+        }
+        if line_start == 0 {
+            return false;
+        }
+        line_start = text[..line_start - 1]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+    }
+}
+
+/// The offset of the first line at or after `from` that does not start with a blank.
+pub(super) fn skip_continuation_lines(text: &str, from: usize) -> usize {
+    let mut start = from;
+    while start < text.len() && starts_with_blank(text, line_from(text, start)) {
         start = text[start..]
             .find('\n')
             .map_or(text.len(), |offset| start + offset + 1);
@@ -279,7 +319,7 @@ fn classify(text: &str, line: Line) -> LineKind {
     if content.starts_with(PROC_TYPE_HEADER) || content.starts_with(DEK_INFO_HEADER) {
         return LineKind::Header;
     }
-    if content.len() < MIN_BODY_LINE_LENGTH || content.len() > MAX_BODY_LINE_LENGTH {
+    if content.len() < MIN_BODY_LINE_LENGTH {
         return LineKind::Other;
     }
     if content.bytes().all(is_base64_byte) {
@@ -297,7 +337,10 @@ const COMMAND_NOT_FOUND_WINDOW: usize = 3;
 
 const LOGIN_INCORRECT: &str = "login incorrect";
 
-const SHELL_PROMPT_CHARACTERS: &str = ":$#>";
+/// Shell and account names that stand alone before a prompt character (`root#`, `bash-5.1$`).
+const SHELL_PROMPT_NAMES: [&str; 11] = [
+    "root", "sh", "bash", "zsh", "fish", "ksh", "csh", "tcsh", "dash", "ash", "sudo",
+];
 
 const SHELL_PROMPT_SUFFIX_CHARACTERS: &str = "$#>%";
 
@@ -420,17 +463,35 @@ fn find_bare_token(text: &str, line: Line) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
+/// A bare shell prompt: a prompt character alone, after a shell or account name (`root#`,
+/// `bash-5.1$`) or after `user@host` with an optional `:path` (`user@host:~$`). Any other token
+/// ending in `$`, `#`, `>` or `%` may well be a password (`Tr0ub4dor#`) and is masked.
 fn looks_like_shell_prompt(token: &str) -> bool {
-    if token
-        .chars()
-        .next_back()
-        .is_some_and(|c| SHELL_PROMPT_SUFFIX_CHARACTERS.contains(c))
-    {
-        return true;
+    let Some(last) = token.chars().next_back() else {
+        return false;
+    };
+    if !SHELL_PROMPT_SUFFIX_CHARACTERS.contains(last) {
+        return false;
     }
-    token
-        .split_once('@')
-        .is_some_and(|(_, after)| after.contains(|c| SHELL_PROMPT_CHARACTERS.contains(c)))
+    let body = &token[..token.len() - last.len_utf8()];
+    body.is_empty() || is_shell_name(body) || is_user_host_prompt(body)
+}
+
+fn is_shell_name(body: &str) -> bool {
+    let (name, version) = body.split_once('-').unwrap_or((body, ""));
+    SHELL_PROMPT_NAMES.contains(&name) && version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+}
+
+fn is_user_host_prompt(body: &str) -> bool {
+    let Some((user, rest)) = body.split_once('@') else {
+        return false;
+    };
+    let host = rest.split_once(':').map_or(rest, |(host, _)| host);
+    let name_character = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-');
+    !user.is_empty()
+        && !host.is_empty()
+        && user.bytes().all(name_character)
+        && host.bytes().all(name_character)
 }
 
 // Pseudonyms.

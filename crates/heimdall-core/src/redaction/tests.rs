@@ -1082,7 +1082,7 @@ fn cap_inside_a_private_key_drops_the_rest_of_its_body() {
         + &"MIIEvQIBADANBgkq\n".repeat(16)
         + &"log\n".repeat((MAX_INPUT_BYTES - 128) / 4);
 
-    let result = redact(&input, RedactionOptions::default()).expect("redaction finishes");
+    let result = redact_unhurried(&input).expect("redaction finishes");
 
     assert!(result.truncated);
     assert_absent(&result.text, &["MIIEvQIBADANBgkq"]);
@@ -1095,7 +1095,7 @@ fn cap_inside_an_indented_crlf_private_key_drops_the_rest_of_its_body() {
         + &"  MIIEvQIBADANBgkq\r\n".repeat(40)
         + &"log\r\n".repeat((MAX_INPUT_BYTES - 200) / 5);
 
-    let result = redact(&input, RedactionOptions::default()).expect("redaction finishes");
+    let result = redact_unhurried(&input).expect("redaction finishes");
 
     assert!(result.truncated);
     assert_absent(&result.text, &["MIIEvQIBADANBgkq"]);
@@ -1107,7 +1107,7 @@ fn cap_outside_a_private_key_keeps_the_lines_after_the_context() {
         .to_owned()
         + &"log\n".repeat(MAX_INPUT_BYTES / 4);
 
-    let result = redact(&input, RedactionOptions::default()).expect("redaction finishes");
+    let result = redact_unhurried(&input).expect("redaction finishes");
 
     assert!(result.truncated);
     assert!(result.text.starts_with("log\n"));
@@ -1317,4 +1317,162 @@ fn documentation_states_best_effort_and_never_promises_safety() {
 
     assert!(module_doc.contains("Best effort, not a guarantee"));
     assert!(!module_doc.to_lowercase().contains("safe to share"));
+}
+
+// Codex review of PR #534, round 1: each input below leaked or misbehaved before.
+
+#[test]
+fn authorization_fold_after_trailing_blanks_is_masked() {
+    assert_masked(&[
+        (
+            "Authorization: Basic dXNlcjpw \r\n YXNzd29yZA==",
+            "Authorization: Basic [masked:authorization-header]",
+        ),
+        (
+            "Authorization: Bearer abcdef123456  \t\n\tghijkl789012\nafter",
+            "Authorization: Bearer [masked:authorization-header]\nafter",
+        ),
+    ]);
+}
+
+#[test]
+fn cap_inside_a_folded_authorization_header_drops_its_continuation() {
+    let input = "Authorization: Bearer FIRST\n".to_owned()
+        + &" CONTINUEDSECRET\n".repeat(8)
+        + &"x\n".repeat(2_097_084);
+
+    let result = redact_unhurried(&input).expect("redaction finishes");
+
+    assert!(result.truncated);
+    assert_absent(&result.text, &["CONTINUEDSECRET"]);
+}
+
+#[test]
+fn cap_inside_a_private_key_drops_a_final_truncated_fragment() {
+    let input = "-----BEGIN PRIVATE KEY-----\n".to_owned()
+        + &("A".repeat(64) + "\n").repeat(64_528)
+        + "AbC";
+
+    let result = redact_unhurried(&input).expect("redaction finishes");
+
+    assert!(result.truncated);
+    assert_absent(&result.text, &["AbC", "AAAA"]);
+}
+
+#[test]
+fn private_key_body_lines_of_any_length_are_masked() {
+    let input = "-----BEGIN PRIVATE KEY-----\n".to_owned()
+        + &"QUJD".repeat(257)
+        + "\n-----END PRIVATE KEY-----";
+
+    assert_eq!(mask(&input), "[masked:private-key-block]");
+}
+
+#[test]
+fn url_password_with_an_empty_user_or_an_apostrophe_is_masked() {
+    assert_masked(&[
+        (
+            "redis://:hunter2@localhost:6379/0",
+            "redis://:[masked:url-credentials]@localhost:6379/0",
+        ),
+        (
+            "postgres://alice:pa'ss@db.local/app",
+            "postgres://alice:[masked:url-credentials]@db.local/app",
+        ),
+    ]);
+}
+
+#[test]
+fn quoted_values_glued_to_more_text_are_masked_whole() {
+    assert_masked(&[
+        (
+            "run --password=\"first\"TAILSECRET",
+            "run --password=\"[masked:cli-password]",
+        ),
+        (
+            "api_key: 'first''TAILSECRET'",
+            "api_key: '[masked:key-value-secret]",
+        ),
+    ]);
+    assert_eq!(
+        mask("{\"password\":\"x\",\"user\":\"bob\"}"),
+        "{\"password\":\"[masked:key-value-secret]\",\"user\":\"bob\"}"
+    );
+}
+
+#[test]
+fn bare_key_value_secrets_run_past_commas_and_semicolons() {
+    assert_masked(&[
+        (
+            "DB_PASSWORD=first,TAILSECRET",
+            "DB_PASSWORD=[masked:key-value-secret]",
+        ),
+        (
+            "password=a;b&next=1",
+            "password=[masked:key-value-secret]&next=1",
+        ),
+    ]);
+}
+
+#[test]
+fn an_echoed_password_ending_in_a_prompt_character_is_masked() {
+    assert_eq!(
+        mask("Password:\nTr0ub4dor#\n"),
+        "Password:\n[masked:password-prompt]\n"
+    );
+    for prompt in [
+        "$",
+        "#",
+        "root#",
+        "bash-5.1$",
+        "user@host:~$",
+        "dev@build-01.lan:/srv#",
+    ] {
+        let input = format!("Password:\n{prompt}\n");
+        assert_eq!(mask(&input), input, "prompt {prompt:?}");
+    }
+}
+
+#[test]
+fn the_output_of_a_masking_that_grows_the_text_is_capped_and_stable() {
+    let input = "api_key=x\n".repeat(150_000);
+
+    let first = redact_unhurried(&input).expect("redaction finishes");
+    let second = redact_unhurried(&first.text).expect("redaction finishes");
+
+    assert!(first.text.len() <= MAX_INPUT_BYTES);
+    assert!(first.truncated);
+    assert_eq!(second.text, first.text);
+    assert!(!second.truncated);
+    assert_eq!(second.total(), 0);
+}
+
+#[test]
+fn mysql_password_option_does_not_cross_a_command_separator() {
+    assert_survives(&[
+        "mysql --version; ssh -p 2222 host",
+        "mysql --version | ssh -p 2222 host",
+        "mysql --version && ssh -p 2222 host",
+    ]);
+    assert_masked(&[
+        (
+            "mysql -u 'a;b' -pS3cret db",
+            "mysql -u 'a;b' -p[masked:cli-password] db",
+        ),
+        (
+            "mysql -h db -u root -pS3cret",
+            "mysql -h db -u root -p[masked:cli-password]",
+        ),
+    ]);
+}
+
+/// Redaction of a large input with the generous test budget: a debug build on a busy machine
+/// must not turn a correctness test into a timeout.
+fn redact_unhurried(input: &str) -> Result<Redacted, RedactionError> {
+    redact_with_limits(
+        input,
+        RedactionOptions::default(),
+        MAX_INPUT_BYTES,
+        TEST_RULE_BUDGET,
+    )
 }

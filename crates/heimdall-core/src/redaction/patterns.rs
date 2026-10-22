@@ -38,6 +38,13 @@ const DOUBLE_QUOTED: &str = r#""(?P<v1>(?:[^"\\\r\n]|\\[^\r\n])*)""#;
 /// A single quoted value, same escape handling.
 const SINGLE_QUOTED: &str = r"'(?P<v2>(?:[^'\\\r\n]|\\[^\r\n])*)'";
 
+/// A double quoted value glued to more text (`"first"TAILSECRET`, shell concatenation, or a YAML
+/// doubled quote): the whole glued run is the value. A closer such as `}` or `,` is not glue.
+const DOUBLE_QUOTED_GLUED: &str = r#""(?P<v6>(?:[^"\\\r\n]|\\[^\r\n])*"[A-Za-z0-9_"'][^\s;,&]*)"#;
+
+/// Same for single quotes.
+const SINGLE_QUOTED_GLUED: &str = r#"'(?P<v7>(?:[^'\\\r\n]|\\[^\r\n])*'[A-Za-z0-9_"'][^\s;,&]*)"#;
+
 /// An opening quote that is never closed on its line: the rest of the line is masked (fail
 /// closed) rather than left because no closing quote was found.
 const UNTERMINATED_QUOTED: &str = r#""(?P<v4>[^\r\n]+)|'(?P<v5>[^\r\n]+)"#;
@@ -52,6 +59,10 @@ const SECRET_KEY_ENDING: &str = "(?:password|passwd|secret|token|api_key|apikey|
 
 const MYSQL_COMMANDS: &str = "(?:mysql|mysqldump|mysqladmin|mariadb)";
 
+/// One character of a command's arguments before `-p`: a command separator (`;`, `|`, `&`) ends
+/// the command (`mysql --version; ssh -p 2222 h`), unless it is inside a quoted argument.
+const MYSQL_ARGUMENT: &str = r#"(?:[^\r\n;|&'"]|'[^'\r\n]*'|"[^"\r\n]*")"#;
+
 const PROMPT_WORDS: &str = r"(?:password|passphrase|mot de passe|passwort|contrase(?:na|\x{F1}a))";
 
 const PROMPT_FOR_WORDS: &str = r"(?:for|pour|f\x{FC}r|para)";
@@ -60,22 +71,29 @@ const HOST_LABEL: &str = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
 
 /// A quoted value (mask inside the quotes) or a bare value up to whitespace; empty never matches.
 fn quoted_or_bare() -> String {
-    format!(r#"(?:{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s"']+)|{UNTERMINATED_QUOTED})"#)
+    format!(
+        r#"(?:{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s"']+)|{UNTERMINATED_QUOTED})"#
+    )
 }
 
 /// Same, for a bare value that must not start with `-` (an option, not a password) or a quote.
 fn quoted_or_bare_no_option() -> String {
-    format!(r#"(?:{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s"'-][^\s"']*)|{UNTERMINATED_QUOTED})"#)
+    format!(
+        r#"(?:{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s"'-][^\s"']*)|{UNTERMINATED_QUOTED})"#
+    )
 }
 
-/// Key-value form: a bare value also stops at `;`, `,` and `&` (query strings, lists).
+/// Key-value form: a bare value also stops at `&` (query strings). It does not stop at `,` or `;`:
+/// those occur inside passwords, and an early stop would leave the tail in the clear.
 fn quoted_or_bare_delimited() -> String {
-    format!(r#"(?:{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s;,&"']+)|{UNTERMINATED_QUOTED})"#)
+    format!(
+        r#"(?:{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s&"']+)|{UNTERMINATED_QUOTED})"#
+    )
 }
 
 /// A header token that may continue on folded lines: `piece (fold piece)*`.
 fn folded(piece: &str) -> String {
-    format!("{piece}(?:{HEADER_FOLD}{piece})*")
+    format!("{piece}(?:[ \t]*{HEADER_FOLD}{piece})*")
 }
 
 // Look-behind and look-ahead stand-ins.
@@ -200,7 +218,7 @@ lazy_pattern!(
 // quote or bracket that cannot be part of a credential URL.
 lazy_pattern!(
     URL_CREDENTIALS,
-    r#"://[^/\s:@"'`<>]+:(?P<v>[^\s"'`<>]*)@"#,
+    r#"://[^/\s:@"`<>]*:(?P<v>[^\s"`<>]*)@"#,
     None
 );
 
@@ -239,7 +257,7 @@ lazy_pattern!(
 lazy_pattern!(
     CLI_MYSQL_PASSWORD,
     format!(
-        "{MYSQL_COMMANDS}[ \\t](?:[^\\r\\n]{{0,512}}?[ \\t])?-p[ \\t]?{}",
+        "{MYSQL_COMMANDS}[ \\t](?:{MYSQL_ARGUMENT}*?[ \\t])?-p[ \\t]?{}",
         quoted_or_bare_no_option()
     ),
     Some(after_word_dash_ok)
