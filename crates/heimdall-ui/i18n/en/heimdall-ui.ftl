@@ -5454,6 +5454,15 @@ ui-tool-cmdlib-platform-windows = Windows
 ui-tool-cmdlib-copy = Copy
 ui-tool-cmdlib-empty = No command matches the filters.
 ui-tool-cmdlib-show-more = Show more ({ $count } left)
+ui-tool-cmdlib-transfer-too-many = This file holds more than { $max } commands: it was not imported.
+ui-tool-cmdlib-import-skipped = { $done } First one left out: { $title } ({ $reason })
+ui-tool-cmdlib-issue-title-missing = it has no title
+ui-tool-cmdlib-issue-parameter-unnamed = a value has no name
+ui-tool-cmdlib-issue-parameter-duplicate = the value { $name } is declared twice
+ui-tool-cmdlib-issue-parameter-type = the type { $kind } is not supported
+ui-tool-cmdlib-issue-choice-empty = the choice { $name } offers no value
+ui-tool-cmdlib-issue-default-refused = its default values are refused as unsafe
+ui-tool-cmdlib-catalogue-unbuildable = This catalogue command cannot be built safely by Heimdall.
 ui-tool-cmdlib-count =
     { $count ->
         [one] { $count } command

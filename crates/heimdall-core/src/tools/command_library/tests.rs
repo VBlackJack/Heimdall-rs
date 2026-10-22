@@ -48,29 +48,18 @@ const KNOWN_FIELDS: [&str; 17] = [
 /// generator is stricter on purpose (`user_commands/generator_tests.rs`), so these are
 /// listed, not allowed. Each is `identity/platform`. A new refusal fails the test below; so
 /// does a listed one that is accepted since.
-const KNOWN_REFUSALS: [&str; 22] = [
+const KNOWN_REFUSALS: [&str; 11] = [
     "ansible-pull/windows",
     "at-schedule-task/linux",
     "build-dotnet-publish/windows",
-    "cert-check-expiration/windows",
     "defender-enable-realtime/windows",
     "docker-exec/windows",
-    "eventlog-application-crashes/windows",
-    "eventlog-export-to-csv/windows",
-    "eventlog-failed-authentication/windows",
-    "eventlog-filter-by-level/windows",
-    "eventlog-filter-by-source/windows",
-    "eventlog-get-critical-errors/windows",
-    "eventlog-search-by-eventid/windows",
-    "eventlog-system-startup-shutdown/windows",
     "git-clone/windows",
     "ldapsearch-query-directory/linux",
     "register-scheduledtask/windows",
     "security-audit-ntfs-permissions/windows",
-    "security-audit-rdp-sessions/windows",
     "unified-find-files/windows",
     "watch-repeat-command/linux",
-    "wsus-configure-client/windows",
 ];
 
 /// The templates whose pattern holds a line break in the C# seed.

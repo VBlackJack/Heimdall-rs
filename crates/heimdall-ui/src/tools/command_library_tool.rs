@@ -27,7 +27,9 @@ use heimdall_app::{SendTarget, SentCommand, TabId};
 use heimdall_core::tools::command_activity::{
     self, ACTIVITY_FILE, ActivityError, CommandActivity, HistoryEntry,
 };
-use heimdall_core::tools::command_library::{self, CatalogueEntry, LEGACY_SNIPPET_IDS};
+use heimdall_core::tools::command_library::{
+    self, CatalogueEntry, CommandIssue, LEGACY_SNIPPET_IDS,
+};
 use heimdall_core::tools::user_commands::{
     self, Criticality, Draft, DraftError, GenerateError, ImportReport, LIBRARY_FILE, LibraryError,
     TemplatePlatform, UserCommand, UserLibrary, UserPlatform, ValueError,
@@ -56,6 +58,9 @@ const MAX_AWAITED: usize = 8;
 
 /// The separator of several terminal names in one line.
 const NAME_SEPARATOR: &str = ", ";
+
+/// The one control character a command may hold.
+const TAB: char = '\t';
 
 /// What joins the tags of a command in the editor's field.
 const TAG_JOINER: &str = ", ";
@@ -89,6 +94,8 @@ pub enum CommandLibraryMessage {
     Search(String),
     /// Show more commands of the catalogue.
     ShowMore,
+    /// Show more of the user's own commands.
+    ShowMoreMine,
     /// Value `.1` of the catalogue's command `.0` typed.
     Param(String, String, String),
     /// The template of the catalogue's command `.0` shown.
@@ -168,6 +175,8 @@ pub enum TransferError {
     TooLarge,
     /// Not an export of the library.
     Format,
+    /// More actions than an import takes.
+    TooManyActions,
     /// What the system said.
     Failed(String),
 }
@@ -293,6 +302,8 @@ pub struct CommandLibraryPane {
     search: String,
     /// The pages of the catalogue shown besides the first.
     more_pages: usize,
+    /// The pages of the user's own commands shown besides the first.
+    more_mine_pages: usize,
     values: HashMap<(String, String), String>,
     templates: HashMap<String, TemplatePlatform>,
     /// Where the user's commands are kept; `None` when the platform has no folder.
@@ -353,7 +364,12 @@ impl CommandLibraryPane {
         if let Some(path) = &pane.file {
             match UserLibrary::load(path) {
                 Ok(library) => pane.library = library,
-                Err(LibraryError::Io(_) | LibraryError::TooLarge | LibraryError::Format) => {
+                Err(
+                    LibraryError::Io(_)
+                    | LibraryError::TooLarge
+                    | LibraryError::Format
+                    | LibraryError::TooManyActions,
+                ) => {
                     pane.failure = Some(Failure::Unreadable);
                 }
             }
@@ -380,12 +396,15 @@ impl CommandLibraryPane {
             CommandLibraryMessage::Platform(platform) => {
                 self.platform = platform;
                 self.more_pages = 0;
+                self.more_mine_pages = 0;
             }
             CommandLibraryMessage::Search(typed) => {
                 self.search = typed;
                 self.more_pages = 0;
+                self.more_mine_pages = 0;
             }
             CommandLibraryMessage::ShowMore => self.more_pages += 1,
+            CommandLibraryMessage::ShowMoreMine => self.more_mine_pages += 1,
             CommandLibraryMessage::Param(id, name, value) => {
                 self.values.insert((id, name), value);
             }
@@ -444,6 +463,7 @@ impl CommandLibraryPane {
             CommandLibraryMessage::FavoritesOnly => {
                 self.favorites_only = !self.favorites_only;
                 self.more_pages = 0;
+                self.more_mine_pages = 0;
             }
             CommandLibraryMessage::Duplicate(command) => self.duplicate(&command),
             CommandLibraryMessage::DuplicateSelected => {
@@ -499,6 +519,10 @@ impl CommandLibraryPane {
         let before = self.library.clone();
         match self.library.import(&text) {
             Ok(report) => {
+                // A level in a file is its author's claim: a destructive pattern is
+                // dangerous whatever the file says.
+                self.library
+                    .raise_dangerous(|pattern| heimdall_app::dangerous_command(pattern).is_some());
                 if self.keep(&before) {
                     self.notice = Some(Notice::Imported(report));
                 }
@@ -513,6 +537,9 @@ impl CommandLibraryPane {
             }
             Err(LibraryError::Format) => {
                 self.notice = Some(Notice::TransferFailed(TransferError::Format));
+            }
+            Err(LibraryError::TooManyActions) => {
+                self.notice = Some(Notice::TransferFailed(TransferError::TooManyActions));
             }
         }
     }
@@ -761,7 +788,14 @@ impl CommandLibraryPane {
     }
 
     /// Whether `command` is marked dangerous, as the C# `DangerousCommandGuard` asks of it.
-    fn is_dangerous(&self, command: &CommandRef) -> bool {
+    fn is_dangerous(&self, command: &CommandRef, text: &str) -> bool {
+        // The level a file or a user gave is not the only judge: the paste guard's list of
+        // destructive commands asks too, as for any text about to reach a shell.
+        heimdall_app::dangerous_command(text).is_some() || self.marked_dangerous(command)
+    }
+
+    /// Whether the level kept for `command` is the highest.
+    fn marked_dangerous(&self, command: &CommandRef) -> bool {
         match command {
             CommandRef::Catalog(id) => catalogue_entry(id)
                 .is_some_and(|entry| entry.command().level == Criticality::Dangerous),
@@ -835,7 +869,7 @@ impl CommandLibraryPane {
         else {
             return Outcome::None;
         };
-        let dangerous = self.is_dangerous(command);
+        let dangerous = self.is_dangerous(command, &text);
         self.await_receipt(command, &text, vec![(target.tab, target.name)], false);
         Outcome::Send {
             target: target.tab,
@@ -856,7 +890,7 @@ impl CommandLibraryPane {
         let Some(text) = self.command_text(command).filter(|_| !chosen.is_empty()) else {
             return Outcome::None;
         };
-        let dangerous = self.is_dangerous(command);
+        let dangerous = self.is_dangerous(command, &text);
         let targets = chosen.iter().map(|(tab, _)| *tab).collect();
         self.await_receipt(command, &text, chosen, true);
         Outcome::Broadcast {
@@ -937,7 +971,14 @@ impl CommandLibraryPane {
         let template = shown
             .template(platform)
             .ok_or(GenerateError::EmptyPattern)?;
-        user_commands::generate(template, platform, |name| self.typed(reference, name))
+        let command =
+            user_commands::generate(template, platform, |name| self.typed(reference, name))?;
+        // A line break would submit the first line before the rest is read, whatever the
+        // pattern's author meant: no copy, no send, no receipt for such a command.
+        if command.chars().any(|c| c != TAB && c.is_control()) {
+            return Err(GenerateError::Multiline);
+        }
+        Ok(command)
     }
 
     /// The commands of the catalogue the platform, the favorites and the search keep.
@@ -956,6 +997,13 @@ impl CommandLibraryPane {
                 query.is_empty()
                     || command_library::matches_query(
                         &entry.localized(&language),
+                        &category_name(&entry.command().category),
+                        query,
+                    )
+                    // The English text is searched in any language, as the C# keeps it
+                    // beside the translation.
+                    || command_library::matches_query(
+                        entry.command(),
                         &category_name(&entry.command().category),
                         query,
                     )
@@ -1093,8 +1141,22 @@ impl CommandLibraryPane {
                     .size(font_size::BODY_LARGE)
                     .font(styles::SEMIBOLD),
             );
-            for command in mine {
+            let visible_mine =
+                CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
+            let remaining_mine = mine.len().saturating_sub(visible_mine);
+            for command in mine.into_iter().take(visible_mine) {
                 cards = cards.push(self.user_card(tab, state, command));
+            }
+            if remaining_mine > 0 {
+                cards = cards.push(
+                    button(
+                        text(fl!("ui-tool-cmdlib-show-more", count = remaining_mine))
+                            .size(font_size::BODY),
+                    )
+                    .padding(super::COPY_PADDING)
+                    .style(styles::secondary)
+                    .on_press(send(CommandLibraryMessage::ShowMoreMine)),
+                );
             }
             if !shown.is_empty() {
                 cards = cards.push(
@@ -1367,6 +1429,7 @@ impl CommandLibraryPane {
             &reference,
             &shown,
             category_name(&shown.category),
+            entry.notes(&language()),
             None,
         )
     }
@@ -1381,6 +1444,7 @@ impl CommandLibraryPane {
         reference: &CommandRef,
         command: &UserCommand,
         category: String,
+        notes: Option<String>,
         manage: Option<Element<'a, Message>>,
     ) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
@@ -1412,6 +1476,9 @@ impl CommandLibraryPane {
                     .size(font_size::BODY)
                     .style(text::secondary),
             );
+        }
+        if let Some(notes) = notes.filter(|notes| !notes.trim().is_empty()) {
+            body = body.push(text(notes).size(font_size::CAPTION).style(text::secondary));
         }
         let platforms = command.template_platforms();
         if platforms.len() > 1 {
@@ -1479,10 +1546,28 @@ impl CommandLibraryPane {
                 ));
             }
             Err(error) => {
+                // A shipped command refused with nothing typed is refused for its own
+                // defaults: say so, instead of blaming a value nobody wrote.
+                let nothing_typed = command
+                    .template(shown.unwrap_or(TemplatePlatform::Linux))
+                    .is_none_or(|template| {
+                        template.parameters.iter().all(|parameter| {
+                            self.typed(reference, &parameter.name)
+                                .is_none_or(|typed| typed.trim().is_empty())
+                        })
+                    });
+                let unbuildable = matches!(reference, CommandRef::Catalog(_))
+                    && nothing_typed
+                    && matches!(&error, GenerateError::Values(values)
+                        if values.iter().any(|each| matches!(each, ValueError::Dangerous(_))));
                 body = body.push(
-                    text(generate_error(&error))
-                        .size(font_size::BODY)
-                        .style(text::danger),
+                    text(if unbuildable {
+                        fl!("ui-tool-cmdlib-catalogue-unbuildable")
+                    } else {
+                        generate_error(&error)
+                    })
+                    .size(font_size::BODY)
+                    .style(text::danger),
                 );
             }
         }
@@ -1548,6 +1633,7 @@ impl CommandLibraryPane {
             &CommandRef::User(command.id.clone()),
             command,
             command.category.clone(),
+            None,
             Some(manage),
         )
     }
@@ -1609,20 +1695,35 @@ fn now_unix() -> i64 {
 /// What the pane tells, in the window's language.
 fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
     let (message, failed) = match notice {
-        Notice::Imported(report) => (
-            fl!(
+        Notice::Imported(report) => {
+            let done = fl!(
                 "ui-tool-cmdlib-import-done",
                 imported = report.imported,
                 updated = report.updated,
                 skipped = report.skipped
-            ),
-            false,
-        ),
+            );
+            match &report.first_skipped {
+                Some((title, issue)) => (
+                    fl!(
+                        "ui-tool-cmdlib-import-skipped",
+                        done = done,
+                        title = title.as_str(),
+                        reason = issue_text(issue)
+                    ),
+                    false,
+                ),
+                None => (done, false),
+            }
+        }
         Notice::Exported => (fl!("ui-tool-cmdlib-export-done"), false),
         Notice::TransferFailed(error) => (
             match error {
                 TransferError::TooLarge => fl!("ui-tool-cmdlib-transfer-too-large"),
                 TransferError::Format => fl!("ui-tool-cmdlib-transfer-format"),
+                TransferError::TooManyActions => fl!(
+                    "ui-tool-cmdlib-transfer-too-many",
+                    max = user_commands::MAX_IMPORT_ACTIONS
+                ),
                 TransferError::Failed(detail) => {
                     fl!("ui-tool-cmdlib-transfer-failed", detail = detail.as_str())
                 }
@@ -1975,11 +2076,45 @@ fn draft_error(problem: DraftError) -> String {
     }
 }
 
+/// Why an imported command was left out, in the window's language.
+fn issue_text(issue: &CommandIssue) -> String {
+    match issue {
+        CommandIssue::MissingTitle => fl!("ui-tool-cmdlib-issue-title-missing"),
+        CommandIssue::TitleTooLong => fl!("ui-tool-cmdlib-error-title-long"),
+        CommandIssue::MissingCategory => fl!("ui-tool-cmdlib-error-category-missing"),
+        CommandIssue::CategoryTooLong => fl!("ui-tool-cmdlib-error-category-long"),
+        CommandIssue::DescriptionTooLong => fl!("ui-tool-cmdlib-error-description-long"),
+        CommandIssue::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
+        CommandIssue::NoTemplate => fl!("ui-tool-cmdlib-error-pattern-missing"),
+        CommandIssue::PatternTooLong(_) => fl!(
+            "ui-tool-cmdlib-error-pattern-long",
+            max = user_commands::MAX_PATTERN_LENGTH
+        ),
+        CommandIssue::PatternMultiline(_) => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        CommandIssue::TooManyParameters(_) => fl!("ui-tool-cmdlib-error-too-many-parameters"),
+        CommandIssue::UnnamedParameter(_) => fl!("ui-tool-cmdlib-issue-parameter-unnamed"),
+        CommandIssue::DuplicateParameter(_, name) => {
+            fl!(
+                "ui-tool-cmdlib-issue-parameter-duplicate",
+                name = name.as_str()
+            )
+        }
+        CommandIssue::UnknownParameterType(_, kind) => {
+            fl!("ui-tool-cmdlib-issue-parameter-type", kind = kind.as_str())
+        }
+        CommandIssue::ChoiceWithoutValues(_, name) => {
+            fl!("ui-tool-cmdlib-issue-choice-empty", name = name.as_str())
+        }
+        CommandIssue::RefusedDefault(_) => fl!("ui-tool-cmdlib-issue-default-refused"),
+    }
+}
+
 /// Why a command of the user cannot be made from the values typed.
 fn generate_error(error: &GenerateError) -> String {
     match error {
         GenerateError::EmptyPattern => fl!("ui-tool-cmdlib-error-empty-pattern"),
         GenerateError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
+        GenerateError::Multiline => fl!("ui-tool-cmdlib-error-pattern-multiline"),
         GenerateError::TooLong => fl!(
             "ui-tool-cmdlib-error-command-long",
             max = user_commands::MAX_COMMAND_LENGTH
@@ -2390,14 +2525,11 @@ mod tests {
         assert_eq!(pane.update(CommandLibraryMessage::Import), Outcome::Import);
         pane.update(CommandLibraryMessage::Imported(Some(Ok(exported.clone()))));
         assert_eq!(pane.library.commands().len(), 1);
-        assert_eq!(
-            pane.notice,
-            Some(Notice::Imported(ImportReport {
-                imported: 1,
-                updated: 0,
-                skipped: 0
-            }))
-        );
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(report))
+                if (report.imported, report.updated, report.skipped) == (1, 0, 0)
+        ));
         let again = self::pane(folder.path());
         assert_eq!(again.library.commands().len(), 1, "kept in the file");
 
@@ -2794,15 +2926,72 @@ mod tests {
             ]
         }"#;
         pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
-        assert_eq!(
-            pane.notice,
-            Some(Notice::Imported(ImportReport {
-                imported: 1,
-                updated: 0,
-                skipped: 2
-            }))
+        let Some(Notice::Imported(report)) = &pane.notice else {
+            panic!("said");
+        };
+        assert_eq!((report.imported, report.updated, report.skipped), (1, 0, 2));
+        assert!(
+            matches!(&report.first_skipped, Some((title, _)) if title == "Odd"),
+            "the first left out is named"
         );
         assert_eq!(pane.library.commands().len(), 1);
         assert_eq!(pane.library.commands()[0].title, "Good");
+    }
+
+    #[test]
+    fn a_catalogue_command_with_a_line_break_is_not_copied_sent_or_awaited() {
+        let mut pane = CommandLibraryPane::default();
+        let [first, second, _] = tab_ids();
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        pane.update(CommandLibraryMessage::BroadcastAll);
+        let memory = CommandRef::Catalog("perf-memory-analysis".to_owned());
+        for platform in [TemplatePlatform::Windows, TemplatePlatform::Linux] {
+            pane.update(CommandLibraryMessage::Template(
+                "perf-memory-analysis".to_owned(),
+                platform,
+            ));
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Copy(memory.clone())),
+                Outcome::None
+            );
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Send(memory.clone())),
+                Outcome::None
+            );
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Broadcast(memory.clone())),
+                Outcome::None
+            );
+        }
+        assert!(pane.awaited.is_empty(), "no receipt for a refused command");
+    }
+
+    #[test]
+    fn an_imported_destructive_command_asks_for_the_danger_confirmation_at_any_level() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let file = r#"{"actions": [
+            {"id": "wipe", "title": "Wipe", "category": "mine", "platform": 1, "level": 0,
+             "linuxCommandTemplate": {"platform": 1, "commandPattern": "rm -rf ~", "parameters": []}}
+        ]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        let id = pane.library.commands()[0].id.clone();
+        assert_eq!(pane.library.commands()[0].level, Criticality::Dangerous);
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Send(CommandRef::User(id))),
+            Outcome::Send {
+                dangerous: true,
+                ..
+            }
+        ));
+        // Even a level kept as Info is judged by the text that reaches the shell.
+        let mut other = CommandLibraryPane::default();
+        assert!(other.is_dangerous(&fsmo(), "shutdown -h now"));
+        assert!(!other.is_dangerous(&fsmo(), "netdom query fsmo"));
+        other.update(CommandLibraryMessage::ShowMoreMine);
+        assert_eq!(other.more_mine_pages, 1);
+        other.update(CommandLibraryMessage::Search("x".to_owned()));
+        assert_eq!(other.more_mine_pages, 0);
     }
 }

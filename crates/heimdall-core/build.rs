@@ -46,6 +46,8 @@ fn main() {
     let mut files: Vec<PathBuf> = fs::read_dir(&folder)
         .expect("the catalogue folder is part of the crate")
         .filter_map(Result::ok)
+        // Regular files only: a link or a folder named like an action is not one.
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
         .map(|entry| entry.path())
         .filter(|path| {
             path.extension()

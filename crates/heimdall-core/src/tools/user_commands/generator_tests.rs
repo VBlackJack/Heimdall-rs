@@ -1699,3 +1699,30 @@ fn a_windows_path_may_hold_a_slash_but_not_one_after_white_space() {
         );
     }
 }
+
+#[test]
+fn a_number_in_an_expression_slot_generates_and_a_string_there_does_not() {
+    let pattern = "Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddHours(-{hours})}";
+    for kind in ["int", "integer", "number"] {
+        let mut hours = of_kind("hours", kind);
+        hours.default_value = Some("24".to_owned());
+        assert_eq!(
+            render(WINDOWS, pattern, vec![hours.clone()], &[]).as_deref(),
+            Ok(&pattern.replace("{hours}", "24")[..]),
+            "{kind}"
+        );
+        // A value that is not a number is refused before the slot is looked at.
+        let result = render(WINDOWS, pattern, vec![hours], &[("hours", "1)+(whoami")]);
+        assert!(matches!(result, Err(GenerateError::Values(_))), "{kind}");
+    }
+    let result = render(
+        WINDOWS,
+        pattern,
+        vec![of_kind("hours", "string")],
+        &[("hours", "1)+(whoami")],
+    );
+    assert!(
+        matches!(result, Err(GenerateError::Values(_))),
+        "a string cannot use the slot of a number: {result:?}"
+    );
+}

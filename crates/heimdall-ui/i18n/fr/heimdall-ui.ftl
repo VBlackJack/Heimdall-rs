@@ -5510,6 +5510,15 @@ ui-tool-cmdlib-platform-windows = Windows
 ui-tool-cmdlib-copy = Copier
 ui-tool-cmdlib-empty = Aucune commande ne correspond aux filtres.
 ui-tool-cmdlib-show-more = Afficher plus ({ $count } restantes)
+ui-tool-cmdlib-transfer-too-many = Ce fichier contient plus de { $max } commandes : il n'a pas été importé.
+ui-tool-cmdlib-import-skipped = { $done } Première écartée : { $title } ({ $reason })
+ui-tool-cmdlib-issue-title-missing = elle n'a pas de titre
+ui-tool-cmdlib-issue-parameter-unnamed = une valeur n'a pas de nom
+ui-tool-cmdlib-issue-parameter-duplicate = la valeur { $name } est déclarée deux fois
+ui-tool-cmdlib-issue-parameter-type = le type { $kind } n'est pas pris en charge
+ui-tool-cmdlib-issue-choice-empty = le choix { $name } ne propose aucune valeur
+ui-tool-cmdlib-issue-default-refused = ses valeurs par défaut sont refusées comme dangereuses
+ui-tool-cmdlib-catalogue-unbuildable = Heimdall ne peut pas construire cette commande du catalogue en toute sécurité.
 ui-tool-cmdlib-count =
     { $count ->
         [one] { $count } commande

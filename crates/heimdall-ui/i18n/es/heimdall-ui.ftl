@@ -5499,6 +5499,15 @@ ui-tool-cmdlib-platform-windows = Windows
 ui-tool-cmdlib-copy = Copiar
 ui-tool-cmdlib-empty = Ningún comando coincide con los filtros.
 ui-tool-cmdlib-show-more = Mostrar más ({ $count } restantes)
+ui-tool-cmdlib-transfer-too-many = Este archivo contiene más de { $max } comandos: no se importó.
+ui-tool-cmdlib-import-skipped = { $done } Primero descartado: { $title } ({ $reason })
+ui-tool-cmdlib-issue-title-missing = no tiene título
+ui-tool-cmdlib-issue-parameter-unnamed = un valor no tiene nombre
+ui-tool-cmdlib-issue-parameter-duplicate = el valor { $name } está declarado dos veces
+ui-tool-cmdlib-issue-parameter-type = el tipo { $kind } no es compatible
+ui-tool-cmdlib-issue-choice-empty = la opción { $name } no ofrece ningún valor
+ui-tool-cmdlib-issue-default-refused = sus valores predeterminados se rechazan por inseguros
+ui-tool-cmdlib-catalogue-unbuildable = Heimdall no puede construir este comando del catálogo de forma segura.
 ui-tool-cmdlib-count =
     { $count ->
         [one] { $count } comando

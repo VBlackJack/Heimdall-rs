@@ -83,6 +83,9 @@ pub const MAX_TAGS: usize = 20;
 /// The largest file read, as the C# `MaxFileSizeBytes`.
 pub const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
+/// The most actions an imported file may hold: a file of more is refused whole.
+pub const MAX_IMPORT_ACTIONS: usize = 2000;
+
 /// The longest hostname, as the C# `IsValidHostname`.
 const MAX_HOSTNAME_LENGTH: usize = 255;
 
@@ -523,6 +526,10 @@ pub enum GenerateError {
     Values(Vec<ValueError>),
     /// The command is longer than [`MAX_COMMAND_LENGTH`].
     TooLong,
+    /// The command holds a line break or another control character (a pattern written with
+    /// one): typed into a terminal it would run more than one line. [`generate`] leaves that
+    /// to the window; the library's pane checks every command it builds.
+    Multiline,
 }
 
 /// The command of `template` with the values `value_of` gives, each put in as its type and
@@ -750,9 +757,13 @@ fn check_value(
     // as they are (trimmed), so that is what is judged.
     let typed = typed_kind(&kind);
     let judged = if typed { value.trim() } else { value };
+    // A value that parsed under the strict number shape (digits, one point, an exponent,
+    // signs) cannot be syntax: `AddHours(-{hours})` with 24 is a number, whatever stands
+    // around it. A string in the same place gets no such pass.
+    let is_number = matches!(kind.as_str(), "int" | "integer" | "number");
     ensure(
         !holds_refused_characters(pattern, parameter, judged, platform)
-            && (!typed || typed_fits_around(pattern, parameter, judged, platform)),
+            && (!typed || is_number || typed_fits_around(pattern, parameter, judged, platform)),
         || ValueError::Dangerous(label()),
     )
 }
@@ -1320,10 +1331,12 @@ pub enum LibraryError {
     TooLarge,
     /// It is not an envelope of actions.
     Format,
+    /// It holds more than [`MAX_IMPORT_ACTIONS`] actions.
+    TooManyActions,
 }
 
 /// What an import did, as the C# `CommandLibraryImportResult`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImportReport {
     /// Commands added.
     pub imported: usize,
@@ -1332,6 +1345,8 @@ pub struct ImportReport {
     /// Commands left out: no title or category, too long, or breaking a rule of an
     /// untrusted file (see [`UserLibrary::import`]).
     pub skipped: usize,
+    /// The title of the first command left out and the rule it broke, to say why.
+    pub first_skipped: Option<(String, command_library::CommandIssue)>,
 }
 
 /// The user's commands.
@@ -1431,19 +1446,33 @@ impl UserLibrary {
         } else {
             return Err(LibraryError::Format);
         };
+        if untrusted && actions.len() > MAX_IMPORT_ACTIONS {
+            return Err(LibraryError::TooManyActions);
+        }
         let mut report = ImportReport::default();
         for mut action in actions {
-            if action.title.trim().is_empty()
-                || action.category.trim().is_empty()
-                || action.title.chars().count() > MAX_TITLE_LENGTH
-                || action.category.chars().count() > MAX_CATEGORY_LENGTH
-            {
-                report.skipped += 1;
-                continue;
-            }
+            let basic = if action.title.trim().is_empty() {
+                Some(command_library::CommandIssue::MissingTitle)
+            } else if action.category.trim().is_empty() {
+                Some(command_library::CommandIssue::MissingCategory)
+            } else if action.title.chars().count() > MAX_TITLE_LENGTH {
+                Some(command_library::CommandIssue::TitleTooLong)
+            } else if action.category.chars().count() > MAX_CATEGORY_LENGTH {
+                Some(command_library::CommandIssue::CategoryTooLong)
+            } else {
+                None
+            };
             normalize_quoting(&mut action);
-            if untrusted && command_library::validate_import(&action).is_some() {
+            let issue = basic.or_else(|| {
+                untrusted
+                    .then(|| command_library::validate_import(&action))
+                    .flatten()
+            });
+            if let Some(issue) = issue {
                 report.skipped += 1;
+                if report.first_skipped.is_none() {
+                    report.first_skipped = Some((action.title.clone(), issue));
+                }
                 continue;
             }
             action.is_user_created = true;
@@ -1472,6 +1501,27 @@ impl UserLibrary {
             }
         }
         Ok(report)
+    }
+
+    /// Raises to [`Criticality::Dangerous`] every command with a pattern `destructive` says
+    /// destroys data or stops a machine, whatever level a file gave it: a level in an imported
+    /// file is the file's claim, not a fact. Never lowers one. How many were raised.
+    pub fn raise_dangerous(&mut self, destructive: impl Fn(&str) -> bool) -> usize {
+        let mut raised = 0;
+        for command in &mut self.commands {
+            let hit = [
+                &command.windows_command_template,
+                &command.linux_command_template,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|template| destructive(&template.command_pattern));
+            if hit && command.level != Criticality::Dangerous {
+                command.level = Criticality::Dangerous;
+                raised += 1;
+            }
+        }
+        raised
     }
 
     /// Makes or changes a command from `draft`; its identity.
