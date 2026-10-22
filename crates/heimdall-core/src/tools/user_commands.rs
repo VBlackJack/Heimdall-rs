@@ -698,15 +698,17 @@ fn check_value(
     }
     let kind = parameter.kind.to_lowercase();
     match kind.as_str() {
-        "int" | "integer" => ensure(value.trim().parse::<i32>().is_ok(), || {
-            ValueError::NotInteger(label())
-        })?,
+        "int" | "integer" => ensure(
+            value.trim().parse::<i32>().is_ok() && !negative_on_linux(value, platform),
+            || ValueError::NotInteger(label()),
+        )?,
         "number" => ensure(
             value.trim().parse::<f64>().is_ok()
                 && value
                     .trim()
                     .chars()
-                    .all(|c| c.is_ascii_digit() || NUMBER_CHARACTERS.contains(&c)),
+                    .all(|c| c.is_ascii_digit() || NUMBER_CHARACTERS.contains(&c))
+                && !negative_on_linux(value, platform),
             || ValueError::NotNumber(label()),
         )?,
         "hostname" => ensure(is_hostname(value), || ValueError::Hostname(label()))?,
@@ -746,6 +748,12 @@ fn check_value(
     )
 }
 
+/// Whether a number is negative on Linux, where a leading dash is an option to the program
+/// (`kill -s KILL -1`); PowerShell reads a negative number as a number.
+fn negative_on_linux(value: &str, platform: TemplatePlatform) -> bool {
+    platform == TemplatePlatform::Linux && value.trim_start().starts_with(OPTION_LEADING)
+}
+
 /// Whether `kind` is one of the typed kinds, whose values always go in bare.
 fn typed_kind(kind: &str) -> bool {
     matches!(
@@ -759,7 +767,8 @@ fn typed_kind(kind: &str) -> bool {
 /// of the pattern decides. A second-stage shell (`ssh host`, `sudo sh -c`, `cmd /c`) reads the
 /// value again after the first one, so the quotes protect nothing there:
 ///
-/// - a leading `-` (both platforms) or, for a string on Windows, a leading `/`, which the
+/// - a `-` (both platforms) or, for a string on Windows, a `/` that starts the value or follows
+///   white space, which the
 ///   program reads as an option or a switch (`ssh -oProxyCommand=x`); a path may start with
 ///   a drive letter or `\\server`, so it is not judged for the `/`;
 /// - on Linux a command substitution `$(`, a backtick, or `[` with `$`, which bash arithmetic
@@ -768,12 +777,23 @@ fn typed_kind(kind: &str) -> bool {
 ///   argument parser reads as an escape of the closing quote.
 fn holds_refused_shape(value: &str, is_path: bool, platform: TemplatePlatform) -> bool {
     let windows = platform == TemplatePlatform::Windows;
-    let head = value.trim_start();
-    if head.starts_with(OPTION_LEADING) {
+    // The start of the value and every start of a word in it: a second-stage shell splits the
+    // value on white space (`ssh h find {dir}` with `/ -exec cmd {} +`).
+    let word_starts = || {
+        std::iter::once(value.trim_start().chars().next())
+            .chain(
+                value
+                    .chars()
+                    .zip(value.chars().skip(1))
+                    .map(|(before, after)| before.is_whitespace().then_some(after)),
+            )
+            .flatten()
+    };
+    if word_starts().any(|c| c == OPTION_LEADING) {
         return true;
     }
     if windows {
-        (!is_path && head.starts_with(WINDOWS_SWITCH_LEADING))
+        (!is_path && word_starts().any(|c| c == WINDOWS_SWITCH_LEADING))
             || value.ends_with(WINDOWS_BACKSLASH)
             || value
                 .chars()
@@ -839,8 +859,11 @@ fn protection_of(context: QuoteContext, parameter: &UserParameter) -> Option<Pro
 }
 
 /// Whether `c` cannot be put in a value that is `protection` protected.
-fn refused_at(protection: Protection, c: char, powershell: bool) -> bool {
-    let metacharacter = DANGEROUS_CHARACTERS.contains(&c);
+fn refused_at(protection: Protection, c: char, powershell: bool, windows_path: bool) -> bool {
+    // Parentheses are common in Windows paths (`C:\Program Files (x86)`) and cmd is the only
+    // second-stage shell that reads them, inside quotes they stay literal.
+    let metacharacter = DANGEROUS_CHARACTERS.contains(&c)
+        && !(windows_path && protection == Protection::Literal && matches!(c, '(' | ')'));
     let ends_double = c == '"'
         || c == escape_character(powershell)
         || (powershell && POWERSHELL_TYPOGRAPHIC_DOUBLE_QUOTES.contains(&c));
@@ -870,8 +893,10 @@ fn refused_at(protection: Protection, c: char, powershell: bool) -> bool {
 /// literal only when every occurrence of the placeholder sits in a single-quoted span that
 /// no double-quoted string encloses. In both literal cases the only character that could
 /// end the span is a single quote, which both escapers double or close and reopen; that is
-/// why the blacklist adds nothing there and refused LDAP filters, grep alternations and
-/// `$env:TEMP`. Where the lexer does not follow the pattern ([`QuoteContext::Uncertain`])
+/// why the quoting alone is enough there. Stricter than the C#, the metacharacters are still
+/// refused in those places (LDAP filters, grep alternations and `$env:TEMP` do not pass),
+/// because a second-stage shell reads the value again; only the parentheses of a Windows
+/// path are let through. Where the lexer does not follow the pattern ([`QuoteContext::Uncertain`])
 /// only a value of plain characters is accepted, and it goes in bare.
 fn holds_refused_characters(
     pattern: &str,
@@ -880,6 +905,7 @@ fn holds_refused_characters(
     platform: TemplatePlatform,
 ) -> bool {
     let powershell = platform == TemplatePlatform::Windows;
+    let windows_path = powershell && parameter.kind.eq_ignore_ascii_case("path");
     let contexts = checked_placeholder_contexts(pattern, &parameter.name, powershell);
     // No substitution is trusted inside a document the lexer does not follow.
     if contexts.contains(&QuoteContext::Document) {
@@ -907,7 +933,11 @@ fn holds_refused_characters(
     contexts
         .into_iter()
         .filter_map(|context| protection_of(context, parameter))
-        .any(|protection| value.chars().any(|c| refused_at(protection, c, powershell)))
+        .any(|protection| {
+            value
+                .chars()
+                .any(|c| refused_at(protection, c, powershell, windows_path))
+        })
 }
 
 /// Whether `value` is a host name of RFC 1123.

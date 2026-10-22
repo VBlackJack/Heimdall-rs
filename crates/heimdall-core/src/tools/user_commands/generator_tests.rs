@@ -460,18 +460,18 @@ fn a_shell_character_in_a_string_is_refused_even_inside_the_quotes() {
 #[test]
 fn a_value_closing_the_quote_stays_inside_the_quotes() {
     assert_eq!(
-        render_one(LINUX, "printf %s {v}", parameter("v", true), "x' rm -rf /").as_deref(),
-        Ok("printf %s 'x'\\'' rm -rf /'")
+        render_one(LINUX, "printf %s {v}", parameter("v", true), "x' rm rf x").as_deref(),
+        Ok("printf %s 'x'\\'' rm rf x'")
     );
     assert_eq!(
         render_one(
             WINDOWS,
             "Write-Output {v}",
             parameter("v", true),
-            "x' rm -rf /"
+            "x' rm rf x"
         )
         .as_deref(),
-        Ok("Write-Output 'x'' rm -rf /'")
+        Ok("Write-Output 'x'' rm rf x'")
     );
 }
 
@@ -527,12 +527,12 @@ fn an_inline_value_inside_single_quotes_is_escaped_but_refuses_shell_characters(
 #[test]
 fn an_inline_value_that_tries_to_close_the_pattern_quotes_cannot() {
     assert_eq!(
-        render_one(LINUX, "echo '{v}'", inline("v"), "x' rm -rf / echo '").as_deref(),
-        Ok("echo 'x'\\'' rm -rf / echo '\\'''")
+        render_one(LINUX, "echo '{v}'", inline("v"), "x' rm rf x echo '").as_deref(),
+        Ok("echo 'x'\\'' rm rf x echo '\\'''")
     );
     assert_eq!(
-        render_one(WINDOWS, "echo '{v}'", inline("v"), "x' rm -rf / echo '").as_deref(),
-        Ok("echo 'x'' rm -rf / echo '''")
+        render_one(WINDOWS, "echo '{v}'", inline("v"), "x' rm rf x echo '").as_deref(),
+        Ok("echo 'x'' rm rf x echo '''")
     );
     for quote in ['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
         let value = format!("x{quote} Remove-Item y {quote}");
@@ -1536,6 +1536,14 @@ fn metacharacters_are_refused_inside_single_quotes_too() {
                 ("run {v}", parameter("v", true)),
                 ("run {v}", of_kind("v", "path")),
             ] {
+                // The parentheses of a Windows path are let through.
+                if platform == WINDOWS
+                    && pattern == "run {v}"
+                    && parameter.kind == "path"
+                    && matches!(character, "(" | ")")
+                {
+                    continue;
+                }
                 let result = render_one(platform, pattern, parameter, &value);
                 assert!(
                     refused_dangerous(&result, "v"),
@@ -1584,7 +1592,7 @@ fn a_number_holds_only_digits_signs_point_and_exponent() {
                 "{platform:?} {value}"
             );
         }
-        for value in ["3", "-1.5", "1e5", "2.5E+3"] {
+        for value in ["3", "1.5", "1e5", "2.5E+3", "1e-5"] {
             assert!(
                 render_one(platform, "run {v}", of_kind("v", "number"), value).is_ok(),
                 "{platform:?} {value}"
@@ -1617,4 +1625,45 @@ fn every_shipped_snippet_still_generates_with_its_defaults() {
             assert!(result.is_ok(), "{:?} {platform:?}: {result:?}", snippet.id);
         }
     }
+}
+
+#[test]
+fn an_option_after_white_space_is_refused_in_free_text() {
+    // `find {dir} -name x.log` in a second-stage shell: the value adds an `-exec`.
+    for platform in BOTH {
+        for kind in ["string", "path", "text"] {
+            let result = render_one(
+                platform,
+                "ssh h find {dir} -name x.log",
+                of_kind("dir", kind),
+                "/ -exec id {} +",
+            );
+            assert!(refused_dangerous(&result, "dir"), "{platform:?} {kind}");
+        }
+    }
+    let result = render_one(WINDOWS, "ssh h dir {d}", parameter("d", true), "x /s");
+    assert!(refused_dangerous(&result, "d"));
+    assert!(render_one(WINDOWS, "dir {p}", of_kind("p", "path"), r"C:\a /b").is_ok());
+    assert!(render_one(LINUX, "ls {d}", parameter("d", true), "a b/c").is_ok());
+}
+
+#[test]
+fn a_negative_integer_or_number_is_refused_on_linux_only() {
+    for kind in ["int", "number"] {
+        let result = render_one(LINUX, "kill -s KILL {pid}", of_kind("pid", kind), "-1");
+        assert!(matches!(result, Err(GenerateError::Values(_))), "{kind}");
+        assert!(render_one(WINDOWS, "Stop {pid}", of_kind("pid", kind), "-1").is_ok());
+        assert!(render_one(LINUX, "kill {pid}", of_kind("pid", kind), "1").is_ok());
+    }
+}
+
+#[test]
+fn parentheses_are_let_through_in_a_windows_path_only() {
+    let path = r"C:\Program Files (x86)\App";
+    assert_eq!(
+        render_one(WINDOWS, "dir {p}", of_kind("p", "path"), path).as_deref(),
+        Ok(r"dir 'C:\Program Files (x86)\App'")
+    );
+    assert!(render_one(WINDOWS, "dir {p}", parameter("p", true), path).is_err());
+    assert!(render_one(LINUX, "ls {p}", of_kind("p", "path"), path).is_err());
 }
