@@ -1,0 +1,491 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! The rules that are more than "mask the value group of a pattern": the private key blocks, the
+//! echoed password prompts (C# `PrivateKeyBlockMasker`, `PasswordPromptMasker`) and the
+//! pseudonyms (C# `PseudonymMasker`).
+
+use super::patterns;
+use super::scan::{Budget, Edit, Found, Line, Pattern, apply_edits, split_lines};
+use super::{MASK_PREFIX, RedactionError, Run, is_mask_token, mask_token};
+
+type Outcome = Result<String, RedactionError>;
+
+/// Masks the value group of each pattern in turn (C# `RedactionApply.GroupMasker`). A value that
+/// is empty or already exactly a mask token is left and not counted.
+pub(super) fn mask_groups(
+    text: &str,
+    patterns: &[&Pattern],
+    rule: &'static str,
+    run: &mut Run,
+    budget: &Budget,
+) -> Outcome {
+    let token = mask_token(rule);
+    let mut current = text.to_owned();
+    for pattern in patterns {
+        let mut edits = Vec::new();
+        for found in pattern.scan(&current, budget)? {
+            let Some((start, end)) = found.value else {
+                continue;
+            };
+            if start == end || is_mask_token(&current[start..end]) {
+                continue;
+            }
+            run.count(rule);
+            edits.push(Edit {
+                start,
+                end,
+                replacement: token.clone(),
+            });
+        }
+        current = apply_edits(&current, &edits);
+    }
+    Ok(current)
+}
+
+// Private key blocks.
+
+const MARKER_LITERAL: &str = "-----";
+
+const END_MARKER_START: &str = "-----END ";
+
+const PROC_TYPE_HEADER: &str = "Proc-Type:";
+
+const DEK_INFO_HEADER: &str = "DEK-Info:";
+
+/// PEM bodies wrap at 64 or 76 columns; the final line is at least one base64 quantum.
+const MIN_BODY_LINE_LENGTH: usize = 4;
+
+const MAX_BODY_LINE_LENGTH: usize = 1024;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineKind {
+    Other,
+    Base64,
+    Header,
+    Blank,
+}
+
+/// Masks PEM private key blocks with a single linear pass over the lines, so a buffer holding
+/// many BEGIN lines and no END cannot cost more than one scan. Three shapes are handled: a full
+/// block, an END line whose BEGIN was evicted (the text starts mid-key), and a BEGIN without END
+/// (the key is cut).
+pub(super) fn mask_private_keys(
+    text: &str,
+    rule: &'static str,
+    run: &mut Run,
+    budget: &Budget,
+) -> Outcome {
+    if !text.contains(MARKER_LITERAL) {
+        return Ok(text.to_owned());
+    }
+    let marker = &*patterns::PRIVATE_KEY_MARKER;
+    let token = mask_token(rule);
+    let lines = split_lines(text);
+    let mut edits = Vec::new();
+    let mut emit = |edits: &mut Vec<Edit>, start: usize, end: usize| {
+        edits.push(Edit {
+            start,
+            end,
+            replacement: token.clone(),
+        });
+        run.count(rule);
+    };
+    let mut floor_line = 0;
+    let mut index = 0;
+    let mut position = 0;
+
+    while index < lines.len() {
+        let line = lines[index];
+        position = position.max(line.start);
+        let hay = &text[position..line.end];
+        let Some(first) = marker.find_from(hay, 0, budget)? else {
+            index += 1;
+            continue;
+        };
+        let match_start = position + first.start;
+        let match_end = position + first.end;
+        if is_end_marker(hay, &first) {
+            let mut start_line = index;
+            while start_line > floor_line
+                && is_body_kind(classify(text, lines[start_line - 1]), false, false)
+            {
+                start_line -= 1;
+            }
+            let start = if start_line < index {
+                lines[start_line].start
+            } else {
+                match_start
+            };
+            emit(&mut edits, start, match_end);
+            floor_line = index;
+            position = match_end;
+            continue;
+        }
+
+        if let Some(next) = marker.find_from(hay, first.end, budget)?
+            && is_end_marker(hay, &next)
+        {
+            let same_line_end = position + next.end;
+            emit(&mut edits, match_start, same_line_end);
+            position = same_line_end;
+            continue;
+        }
+
+        let mut block_end = line.end;
+        let mut closed = false;
+        let mut after_header = false;
+        let mut scan = index + 1;
+        while scan < lines.len() {
+            let candidate = lines[scan];
+            let kind = classify(text, candidate);
+            if is_body_kind(kind, true, after_header) {
+                after_header = kind == LineKind::Header;
+                block_end = candidate.end;
+                scan += 1;
+                continue;
+            }
+            let candidate_hay = &text[candidate.start..candidate.end];
+            if let Some(end_match) = marker.find_from(candidate_hay, 0, budget)?
+                && is_end_marker(candidate_hay, &end_match)
+            {
+                block_end = candidate.start + end_match.end;
+                closed = true;
+            }
+            break;
+        }
+        emit(&mut edits, match_start, block_end);
+        floor_line = scan;
+        index = scan;
+        position = if closed { block_end } else { 0 };
+    }
+    Ok(apply_edits(text, &edits))
+}
+
+fn is_end_marker(hay: &str, found: &Found) -> bool {
+    hay[found.start..].starts_with(END_MARKER_START)
+}
+
+fn is_body_kind(kind: LineKind, allow_blank: bool, after_header: bool) -> bool {
+    match kind {
+        LineKind::Base64 | LineKind::Header => true,
+        LineKind::Blank => allow_blank && after_header,
+        LineKind::Other => false,
+    }
+}
+
+fn classify(text: &str, line: Line) -> LineKind {
+    let content = text[line.start..line.end].trim();
+    if content.is_empty() {
+        return LineKind::Blank;
+    }
+    if content.starts_with(PROC_TYPE_HEADER) || content.starts_with(DEK_INFO_HEADER) {
+        return LineKind::Header;
+    }
+    if content.len() < MIN_BODY_LINE_LENGTH || content.len() > MAX_BODY_LINE_LENGTH {
+        return LineKind::Other;
+    }
+    if content
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
+    {
+        LineKind::Base64
+    } else {
+        LineKind::Other
+    }
+}
+
+// Echoed password prompts.
+
+/// How many lines after a prompt (or after "Login incorrect") a "command not found" is still
+/// attributed to it.
+const COMMAND_NOT_FOUND_WINDOW: usize = 3;
+
+const LOGIN_INCORRECT: &str = "login incorrect";
+
+const SHELL_PROMPT_CHARACTERS: &str = ":$#>";
+
+const SHELL_PROMPT_SUFFIX_CHARACTERS: &str = "$#>%";
+
+/// An explicitly empty value (YAML or env style) holds no secret.
+const EMPTY_DOUBLE_QUOTES: &str = "\"\"";
+
+const EMPTY_SINGLE_QUOTES: &str = "''";
+
+/// Masks what a user typed at a password prompt and the terminal echoed. Three cases: the rest of
+/// the prompt line when it is not empty; the next line when the prompt line is empty and that
+/// line is a single token that does not look like a shell prompt or a message; and the token of
+/// a "command not found" line shortly after a prompt (the password typed into a shell).
+pub(super) fn mask_password_prompts(
+    text: &str,
+    rule: &'static str,
+    run: &mut Run,
+    budget: &Budget,
+) -> Outcome {
+    let token = mask_token(rule);
+    let lines = split_lines(text);
+    let mut edits = Vec::new();
+    let mut last_trigger: Option<usize> = None;
+    let mut pending_next: Option<usize> = None;
+
+    for (i, line) in lines.iter().enumerate() {
+        let hay = &text[line.start..line.end];
+        if let Some(prompt) = patterns::PASSWORD_PROMPT.find_from(hay, 0, budget)? {
+            last_trigger = Some(i);
+            let rest_start = skip_blanks(text, line.start + prompt.end, line.end);
+            if rest_start >= line.end {
+                pending_next = Some(i + 1);
+                continue;
+            }
+            let rest = &text[rest_start..line.end];
+            if rest == EMPTY_DOUBLE_QUOTES || rest == EMPTY_SINGLE_QUOTES {
+                continue;
+            }
+            if !is_mask_token(rest) {
+                edits.push(Edit {
+                    start: rest_start,
+                    end: line.end,
+                    replacement: token.clone(),
+                });
+                // A rest that already holds a token was counted by the rule that masked that part.
+                if !rest.contains(MASK_PREFIX) {
+                    run.count(rule);
+                }
+            }
+            continue;
+        }
+
+        if contains_ignore_ascii_case(hay, LOGIN_INCORRECT) {
+            last_trigger = Some(i);
+        }
+
+        if pending_next == Some(i)
+            && let Some((start, end)) = find_bare_token(text, *line)
+        {
+            edits.push(Edit {
+                start,
+                end,
+                replacement: token.clone(),
+            });
+            run.count(rule);
+            continue;
+        }
+
+        if last_trigger
+            .is_some_and(|trigger| i > trigger && i - trigger <= COMMAND_NOT_FOUND_WINDOW)
+            && let Some(not_found) = patterns::COMMAND_NOT_FOUND.find_from(hay, 0, budget)?
+            && let Some((start, end)) = not_found.value
+            && !is_mask_token(&hay[start..end])
+        {
+            edits.push(Edit {
+                start: line.start + start,
+                end: line.start + end,
+                replacement: token.clone(),
+            });
+            run.count(rule);
+        }
+    }
+    Ok(apply_edits(text, &edits))
+}
+
+fn skip_blanks(text: &str, start: usize, end: usize) -> usize {
+    let skipped = text.as_bytes()[start..end]
+        .iter()
+        .take_while(|&&b| b == b' ' || b == b'\t')
+        .count();
+    start + skipped
+}
+
+fn contains_ignore_ascii_case(hay: &str, needle_lowercase: &str) -> bool {
+    let needle = needle_lowercase.as_bytes();
+    hay.as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// The known messages ("Last login", "Sorry, try again.", "Permission denied", "Login
+/// incorrect", "Access denied") all contain a space, so the single-token test already excludes
+/// them; what remains to exclude is a bare shell prompt such as `user@host:~$` or `root#`.
+/// A token that merely starts like a mask token is still masked: only an exact one is skipped.
+fn find_bare_token(text: &str, line: Line) -> Option<(usize, usize)> {
+    let start = skip_blanks(text, line.start, line.end);
+    let mut end = line.end;
+    while end > start && matches!(text.as_bytes()[end - 1], b' ' | b'\t') {
+        end -= 1;
+    }
+    if end <= start {
+        return None;
+    }
+    let token = &text[start..end];
+    if token.chars().any(char::is_whitespace)
+        || is_mask_token(token)
+        || looks_like_shell_prompt(token)
+    {
+        return None;
+    }
+    Some((start, end))
+}
+
+fn looks_like_shell_prompt(token: &str) -> bool {
+    if token
+        .chars()
+        .next_back()
+        .is_some_and(|c| SHELL_PROMPT_SUFFIX_CHARACTERS.contains(c))
+    {
+        return true;
+    }
+    token
+        .split_once('@')
+        .is_some_and(|(_, after)| after.contains(|c| SHELL_PROMPT_CHARACTERS.contains(c)))
+}
+
+// Pseudonyms.
+
+const OCTET_COUNT: usize = 4;
+
+const MAX_OCTET: u32 = 255;
+
+const FULL_OCTET: u32 = 255;
+
+const EXCLUDED_ADDRESSES: [&str; 3] = ["0.0.0.0", "127.0.0.1", "255.255.255.255"];
+
+/// A name ending in one of these is a file name, not a host.
+const FILE_EXTENSIONS: [&str; 39] = [
+    "dll", "exe", "json", "yaml", "yml", "txt", "log", "cs", "md", "sh", "ps1", "py", "conf",
+    "ini", "xml", "html", "gz", "tgz", "bz2", "xz", "zip", "tar", "js", "css", "map", "so", "cfg",
+    "bak", "old", "tmp", "pem", "crt", "key", "pub", "csv", "sql", "jar", "war", "whl",
+];
+
+/// Replaces IPv4 addresses by stable pseudonyms (`ip-1`, `ip-2`, ...).
+pub(super) fn pseudonymize_ipv4(
+    text: &str,
+    rule: &'static str,
+    run: &mut Run,
+    budget: &Budget,
+) -> Outcome {
+    let mut edits = Vec::new();
+    for found in patterns::IPV4_ADDRESS.scan(text, budget)? {
+        let Some((start, end)) = found.value else {
+            continue;
+        };
+        if !is_maskable_address(&text[start..end]) {
+            continue;
+        }
+        run.count(rule);
+        edits.push(Edit {
+            start,
+            end,
+            replacement: run.ip_pseudonym(&text[start..end]),
+        });
+    }
+    Ok(apply_edits(text, &edits))
+}
+
+/// Replaces host names (the host of `user@host` forms, then fully qualified names) by stable
+/// pseudonyms (`host-1`, `host-2`, ...).
+pub(super) fn pseudonymize_hosts(
+    text: &str,
+    rule: &'static str,
+    run: &mut Run,
+    budget: &Budget,
+) -> Outcome {
+    let after_prompt_hosts = mask_hosts(text, &patterns::PROMPT_HOST, false, rule, run, budget)?;
+    mask_hosts(
+        &after_prompt_hosts,
+        &patterns::FULLY_QUALIFIED_NAME,
+        true,
+        rule,
+        run,
+        budget,
+    )
+}
+
+fn mask_hosts(
+    text: &str,
+    pattern: &Pattern,
+    check_extension: bool,
+    rule: &'static str,
+    run: &mut Run,
+    budget: &Budget,
+) -> Outcome {
+    let mut edits = Vec::new();
+    for found in pattern.scan(text, budget)? {
+        let Some((start, end)) = found.value else {
+            continue;
+        };
+        let host = &text[start..end];
+        if is_pseudonym(host) || (check_extension && has_file_extension(host)) {
+            continue;
+        }
+        run.count(rule);
+        edits.push(Edit {
+            start,
+            end,
+            replacement: run.host_pseudonym(host),
+        });
+    }
+    Ok(apply_edits(text, &edits))
+}
+
+fn is_pseudonym(value: &str) -> bool {
+    is_numbered_pseudonym(value, super::HOST_PSEUDONYM_PREFIX)
+        || is_numbered_pseudonym(value, super::IP_PSEUDONYM_PREFIX)
+}
+
+fn is_numbered_pseudonym(value: &str, prefix: &str) -> bool {
+    value
+        .strip_prefix(prefix)
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn has_file_extension(host: &str) -> bool {
+    let last = host.rsplit('.').next().unwrap_or(host);
+    FILE_EXTENSIONS
+        .iter()
+        .any(|extension| last.eq_ignore_ascii_case(extension))
+}
+
+fn is_maskable_address(address: &str) -> bool {
+    if EXCLUDED_ADDRESSES.contains(&address) {
+        return false;
+    }
+    let mut value: u32 = 0;
+    let mut first_octet = 0;
+    let mut octets = 0;
+    for part in address.split('.') {
+        let Ok(octet) = part.parse::<u32>() else {
+            return false;
+        };
+        if octet > MAX_OCTET {
+            return false;
+        }
+        if octets == 0 {
+            first_octet = octet;
+        }
+        value = (value << 8) | octet;
+        octets += 1;
+    }
+    octets == OCTET_COUNT && !is_netmask(first_octet, value)
+}
+
+/// 255.x.x.x with contiguous leading ones (255.255.255.0, 255.255.240.0, ...).
+fn is_netmask(first_octet: u32, value: u32) -> bool {
+    if first_octet != FULL_OCTET {
+        return false;
+    }
+    let inverted = !value;
+    inverted & inverted.wrapping_add(1) == 0
+}
