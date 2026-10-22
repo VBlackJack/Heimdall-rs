@@ -109,6 +109,8 @@ pub enum Action {
     Screenshot,
     /// Ctrl+Shift+A: what the status bar said lately, copied for a screen reader.
     CopyStatus,
+    /// Ctrl+Shift+M: the output of a session of text, secrets masked, to review and copy.
+    MaskedCopy,
     Lock,
     Help,
     Close,
@@ -187,6 +189,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
             ("Ctrl+,", Action::Settings),
             ("Ctrl+Shift+S", Action::Screenshot),
             ("Ctrl+Shift+A", Action::CopyStatus),
+            ("Ctrl+Shift+M", Action::MaskedCopy),
             ("Ctrl+L", Action::Lock),
             ("F1", Action::Help),
             ("Esc", Action::Close),
@@ -255,6 +258,7 @@ pub fn action_text(action: Action) -> String {
         Action::Settings => fl!("ui-shortcuts-settings"),
         Action::Screenshot => fl!("ui-shortcuts-screenshot"),
         Action::CopyStatus => fl!("ui-shortcuts-copy-status"),
+        Action::MaskedCopy => fl!("ui-shortcuts-masked-copy"),
         Action::Lock => fl!("ui-shortcuts-lock"),
         Action::Help => fl!("ui-shortcuts-help"),
         Action::Close => fl!("ui-shortcuts-close"),
@@ -319,6 +323,6 @@ mod tests {
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
 
-        assert_eq!(actions.len(), 50, "every action listed");
+        assert_eq!(actions.len(), 51, "every action listed");
     }
 }

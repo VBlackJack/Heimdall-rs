@@ -49,7 +49,7 @@ use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, CertificateContext,
     ConnectionEvent, DesktopPane, Dialog, Effect, ElevatedPane, ElevatedState, FilesMessage,
     FilterMessage, FloatId, FloatMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
-    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, MaskedCopyMessage,
     Message as AppMessage, NameAction, PastePreview, Phase, PinDialog, PinFailure, PinMessage,
     PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
     ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, ScriptConfirmation,
@@ -3810,6 +3810,28 @@ impl Shell {
             .map(|copied| Message::App(AppMessage::ScreenshotTaken { copied }))
     }
 
+    /// Ctrl+Shift+M: the review of the masked output of the session that has the keyboard,
+    /// as the C# shortcut, only for a session of text (SSH, Telnet, `WinRM`, a local shell);
+    /// nothing for a remote desktop, a Files tab, a web console or a tool, nor over a
+    /// dialog, the settings or the lock screen, which have the keyboard.
+    fn masked_copy_key(&mut self) -> Vec<Effect> {
+        let Some(active) = self.app.active else {
+            return Vec::new();
+        };
+        if self.gated()
+            || self.settings_shown()
+            || self.app.dialog.is_some()
+            || !self
+                .app
+                .tab(active)
+                .is_some_and(|tab| self.app.can_copy_masked(tab))
+        {
+            return Vec::new();
+        }
+        self.menu = None;
+        self.update_app(AppMessage::MaskedCopy(MaskedCopyMessage::Open(active)))
+    }
+
     /// Ctrl+Shift+A: [`Self::status_report`] put on the clipboard, for a screen reader to
     /// read what the C# live region would have announced. Over a dialog too: it reads
     /// nothing the window does not show.
@@ -3839,6 +3861,9 @@ impl Shell {
         }
         if shortcut == WindowShortcut::CopyStatus {
             return self.copy_status();
+        }
+        if shortcut == WindowShortcut::MaskedCopy {
+            return self.masked_copy_key();
         }
         // The sidebar's other tab, as the C# Ctrl+Shift+T, tab or no tab.
         if shortcut == WindowShortcut::ToggleToolsPanel {
@@ -3929,6 +3954,7 @@ impl Shell {
                 | WindowShortcut::Screenshot
                 | WindowShortcut::QuickConnect
                 | WindowShortcut::CopyStatus
+                | WindowShortcut::MaskedCopy
                 | WindowShortcut::ToggleToolsPanel
                 | WindowShortcut::ReopenClosedTab,
                 _,
@@ -4814,6 +4840,18 @@ impl Shell {
                 },
             ),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
+            // Off the UI thread: a 4 MiB text takes a moment. The text is neither logged nor
+            // kept past the call; a thread that fails leaves the dialog unable to copy.
+            Effect::Redact { run, text, options } => Task::future(async move {
+                let masked = tokio::task::spawn_blocking(move || {
+                    heimdall_core::redaction::redact(&text, options)
+                })
+                .await;
+                Message::App(AppMessage::MaskedCopy(match masked {
+                    Ok(outcome) => MaskedCopyMessage::Done { run, outcome },
+                    Err(_) => MaskedCopyMessage::Failed { run },
+                }))
+            }),
             Effect::OpenUrl(url) => Task::future(async move {
                 let opened =
                     tokio::task::spawn_blocking(move || heimdall_app::external_url::open_url(&url))
@@ -5233,6 +5271,7 @@ impl Shell {
                         | Dialog::NetworkScan(_)
                         | Dialog::HostKeysPreview(_)
                         | Dialog::FileConflicts { .. }
+                        | Dialog::MaskedCopy(_)
                 ) {
                     wide_card(content)
                 } else if matches!(dialog, Dialog::EditProfile { .. }) {
@@ -8037,6 +8076,7 @@ impl Shell {
             reopen_closed: self.app.reopen_closed_count(),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
+            masked_copy: self.app.can_copy_masked(tab),
             external_tools: !self.app.external_tools().is_empty(),
             pane: false,
             docked: self.app.is_docked(id),
@@ -14333,6 +14373,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             algorithm,
         } => crate::tunnels_view::host_key(host, *port, fingerprint, algorithm),
         Dialog::ShareFolder(form) => crate::share_view::dialog(form),
+        Dialog::MaskedCopy(state) => crate::masked_copy_view::dialog(state),
         Dialog::ShareStarted => forms
             .share
             .map_or_else(|| iced::widget::space().into(), crate::share_view::started),
