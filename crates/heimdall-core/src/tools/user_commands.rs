@@ -717,9 +717,30 @@ fn check_value(
     );
     let judged = if typed { value.trim() } else { value };
     ensure(
-        !holds_refused_characters(pattern, parameter, judged, platform),
+        !holds_refused_characters(pattern, parameter, judged, platform)
+            && (!typed || typed_fits_around(pattern, parameter, judged, platform)),
         || ValueError::Dangerous(label()),
     )
+}
+
+/// Whether a typed value, which always goes in bare, can stand at the bare places of the
+/// pattern without joining the text around it into a switch (`Probe -{v}` with the host name
+/// `Force`), a splat (`@prefix{v}`) or another syntax. A negative number is a number to
+/// PowerShell, not a parameter name, so the value's own leading dash is not judged here.
+fn typed_fits_around(
+    pattern: &str,
+    parameter: &UserParameter,
+    value: &str,
+    platform: TemplatePlatform,
+) -> bool {
+    let contexts = checked_placeholder_contexts(
+        pattern,
+        &parameter.name,
+        platform == TemplatePlatform::Windows,
+    );
+    // Where the lexer is lost the other checks already hold the value to a plain word.
+    contexts.contains(&QuoteContext::Uncertain)
+        || bare_fits_around(pattern, parameter, value, platform, false, false)
 }
 
 /// `Ok` when `holds`, else the error `otherwise` makes.
@@ -886,9 +907,22 @@ fn bare_fits(
     platform: TemplatePlatform,
     unfollowed: bool,
 ) -> bool {
-    if !is_safe_bare_value(value, platform) {
-        return false;
-    }
+    is_safe_bare_value(value, platform)
+        && bare_fits_around(pattern, parameter, value, platform, unfollowed, true)
+}
+
+/// The part of [`bare_fits`] about the places of the placeholder, not the value's characters.
+/// With `every_place` false the occurrences inside quotes are left alone (a typed value is
+/// made of plain characters that no quote span can be broken by) and only the bare ones are
+/// judged.
+fn bare_fits_around(
+    pattern: &str,
+    parameter: &UserParameter,
+    value: &str,
+    platform: TemplatePlatform,
+    unfollowed: bool,
+    every_place: bool,
+) -> bool {
     let placeholder = placeholder_text(&parameter.name);
     let contexts = checked_placeholder_contexts(
         pattern,
@@ -915,6 +949,9 @@ fn bare_fits(
         .iter()
         .zip(&contexts)
         .all(|((at, text), context)| {
+            if !every_place && !unfollowed && *context != QuoteContext::Bare {
+                return true;
+            }
             let before = pattern[..*at].chars().next_back();
             let after = pattern[at + text.len()..].chars().next();
             let around_ok = if unfollowed {

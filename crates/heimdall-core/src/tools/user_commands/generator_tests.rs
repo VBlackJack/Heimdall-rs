@@ -1422,3 +1422,62 @@ fn an_inline_value_outside_single_quotes_is_a_bare_word() {
         Ok("Write-Output '@args'")
     );
 }
+
+#[test]
+fn bash_arithmetic_is_not_a_place_for_a_quoted_value() {
+    // `(( x = '$(printf INJECTED >&2)0' ))` still runs the substitution.
+    for pattern in ["(( x = {v} ))", "[[ {v} -eq 1 ]]", "echo $[ {v} + 1 ]"] {
+        let result = render_one(
+            LINUX,
+            pattern,
+            parameter("v", true),
+            "$(printf INJECTED >&2)0",
+        );
+        assert!(refused_dangerous(&result, "v"), "{pattern}: {result:?}");
+    }
+}
+
+#[test]
+fn an_escaped_line_break_cannot_hide_a_heredoc() {
+    // Bash removes the continuation, so the pattern is `cat <<'END END'`.
+    let pattern = "cat <\\\n<'END END'\n{a} {b}\nprintf 'INJECTED\\n'\nEND END";
+    let result = render(
+        LINUX,
+        pattern,
+        vec![parameter("a", true), parameter("b", true)],
+        &[("a", "END"), ("b", "END")],
+    );
+    assert!(
+        matches!(&result, Err(GenerateError::Values(errors)) if errors.len() == 2),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_typed_value_cannot_join_the_text_around_it_into_a_switch_or_a_splat() {
+    // `Probe -Force` binds a switch, `@prefixargs` splats a variable.
+    for pattern in ["Probe -{v}", "Write-Output @prefix{v}"] {
+        let value = if pattern.starts_with("Probe") {
+            "Force"
+        } else {
+            "args"
+        };
+        let result = render_one(WINDOWS, pattern, of_kind("v", "hostname"), value);
+        assert!(refused_dangerous(&result, "v"), "{pattern}: {result:?}");
+    }
+    // A negative number is a number to PowerShell, and a typed value after a space is a word.
+    assert_eq!(
+        render_one(WINDOWS, "Probe -Count {v}", of_kind("v", "integer"), "-1").as_deref(),
+        Ok("Probe -Count -1")
+    );
+    assert_eq!(
+        render_one(
+            WINDOWS,
+            "Test-Connection {v}",
+            of_kind("v", "hostname"),
+            "example.org"
+        )
+        .as_deref(),
+        Ok("Test-Connection example.org")
+    );
+}

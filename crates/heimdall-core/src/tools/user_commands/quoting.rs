@@ -122,9 +122,18 @@ fn opens_nested_syntax(
 
 /// Whether the unquoted text at `chars[index]` opens a document the lexer does not follow to
 /// its end: a bash here-document `<<`, a PowerShell here-string `@'` or `@"`, a block comment
-/// `<#`.
+/// `<#`; or a bash arithmetic context (`((`, `[[`, `$[`), where a quoted `$(...)` is still
+/// evaluated.
 fn starts_document(chars: &[char], index: usize, powershell: bool) -> bool {
     let next = chars.get(index + 1);
+    if !powershell
+        && matches!(
+            (chars[index], next),
+            ('(', Some('(')) | ('[', Some('[')) | ('$', Some('['))
+        )
+    {
+        return true;
+    }
     match chars[index] {
         '<' => next == Some(if powershell { &'#' } else { &'<' }),
         '@' => {
@@ -219,6 +228,11 @@ pub fn placeholder_quote_contexts(
             }
             State::Double | State::Bare => {
                 if c == escape {
+                    // The shell removes an escaped line break before it reads the operators:
+                    // `<\<newline>'END END'` is a heredoc this lexer would not see.
+                    if matches!(chars.get(index + 1), Some('\n' | '\r')) {
+                        document = true;
+                    }
                     index += 2;
                     continue;
                 }
