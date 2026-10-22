@@ -2245,7 +2245,7 @@ mod tests {
     }
 
     #[test]
-    fn a_user_command_is_copied_and_sent_with_its_values_quoted() {
+    fn a_user_command_is_copied_and_sent_with_its_values_shaped_for_the_shell() {
         let folder = tempfile::tempdir().expect("folder");
         let mut pane = pane(folder.path());
         let id = make_ping(&mut pane);
@@ -2259,7 +2259,7 @@ mod tests {
             pane.update(CommandLibraryMessage::Copy(ping.clone())),
             Outcome::Copy(
                 CopySlot::CmdLibUserCommand(0),
-                "ping -c 3 'web.lab'".to_owned()
+                "ping -c 3 web.lab".to_owned()
             )
         );
         let terminal = tab_ids()[0];
@@ -2268,7 +2268,7 @@ mod tests {
             pane.update(CommandLibraryMessage::Send(ping.clone())),
             Outcome::Send {
                 target: terminal,
-                command: "ping -c 3 'web.lab'".to_owned(),
+                command: "ping -c 3 web.lab".to_owned(),
                 dangerous: false,
             }
         );
@@ -2525,7 +2525,7 @@ mod tests {
         else {
             panic!("a question");
         };
-        assert_eq!((target, command.as_str()), (first, "ping -c 3 'web.lab'"));
+        assert_eq!((target, command.as_str()), (first, "ping -c 3 web.lab"));
         assert!(!pane.history_open, "the history closes on a replay");
 
         // Its copy is the pattern.
