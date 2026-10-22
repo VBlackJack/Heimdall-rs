@@ -75,6 +75,7 @@ fn catalogue_rule_ids_match_the_pinned_list() {
         [
             "private-key-block",
             "authorization-header",
+            "cookie-header",
             "url-credentials",
             "cli-password",
             "password-prompt",
@@ -1846,4 +1847,127 @@ fn test_reports_and_prose_with_secret_words_stay_unchanged() {
         "lexer: unexpected token: ident foo at line 3",
         "checking authorization: user alice allowed",
     ]);
+}
+
+// Final review round.
+
+#[test]
+fn colon_secrets_after_a_log_prefix_are_masked() {
+    assert_masked(&[
+        (
+            "2026-10-22 10:00:00 INFO client_secret: abc123xyz",
+            "2026-10-22 10:00:00 INFO client_secret: [masked:key-value-secret]",
+        ),
+        (
+            "2026-10-22 10:00:00 INFO token: abc123xyz",
+            "2026-10-22 10:00:00 INFO token: [masked:key-value-secret]",
+        ),
+        (
+            "web_1  | api_key: abc123xyz",
+            "web_1  | api_key: [masked:key-value-secret]",
+        ),
+        (
+            "web-1  | secret: correct horse battery",
+            "web-1  | secret: [masked:key-value-secret]",
+        ),
+        (
+            "| api_token: abc123xyz |",
+            "| api_token: [masked:key-value-secret]",
+        ),
+        (
+            "retry=3; api_token: abc123xyz",
+            "retry=3; api_token: [masked:key-value-secret]",
+        ),
+        (
+            "using api_key: abc123xyz for request",
+            "using api_key: [masked:key-value-secret] for request",
+        ),
+    ]);
+}
+
+#[test]
+fn authorization_with_a_long_credential_is_masked_after_a_log_prefix() {
+    assert_masked(&[
+        (
+            "2026-10-22T10:00:00Z DEBUG Authorization: Negotiate YIIGhgYJKoZIhvcSAQICAQBuggZ1",
+            "2026-10-22T10:00:00Z DEBUG Authorization: Negotiate [masked:authorization-header]",
+        ),
+        (
+            "[2026-10-22 10:00:00] DEBUG Authorization: lin_api_abcdef123456",
+            "[2026-10-22 10:00:00] DEBUG Authorization: [masked:authorization-header]",
+        ),
+        (
+            "curl -H Authorization:lin_api_abcdef123456 https://x",
+            "curl -H Authorization:[masked:authorization-header] https://x",
+        ),
+    ]);
+}
+
+#[test]
+fn authorization_with_an_equals_sign_is_masked() {
+    assert_masked(&[
+        (
+            r#"Invoke-RestMethod -Uri $u -Headers @{Authorization="Bearer abcdef123456"}"#,
+            r#"Invoke-RestMethod -Uri $u -Headers @{Authorization="Bearer [masked:authorization-header]"}"#,
+        ),
+        (
+            "$h = @{ 'Authorization' = 'Bearer abcdef123456' }",
+            "$h = @{ 'Authorization' = 'Bearer [masked:authorization-header]' }",
+        ),
+        (
+            r#"-Headers @{Authorization = "Basic YWxpY2U6aHVudGVy"}"#,
+            r#"-Headers @{Authorization = "Basic [masked:authorization-header]"}"#,
+        ),
+        (
+            "Authorization=Bearer abcdef123456",
+            "Authorization=Bearer [masked:authorization-header]",
+        ),
+        (
+            "HTTP_AUTHORIZATION=Bearer abcdef123456",
+            "HTTP_AUTHORIZATION=Bearer [masked:authorization-header]",
+        ),
+        (
+            "authorization=abcdef123456",
+            "authorization=[masked:authorization-header]",
+        ),
+    ]);
+}
+
+#[test]
+fn block_scalar_stops_at_a_line_that_is_not_indented_deeper_than_its_key() {
+    assert_masked(&[
+        (
+            "  secret: >-\n    abc def\n  other: 1",
+            "  secret: [masked:key-value-secret]\n  other: 1",
+        ),
+        (
+            "password: |\n  line one\n  line two\nnext: x",
+            "password: [masked:key-value-secret]\nnext: x",
+        ),
+    ]);
+}
+
+#[test]
+fn cookie_values_are_masked_and_attributes_kept() {
+    assert_masked(&[
+        (
+            "< Set-Cookie: session=abc123secret; Path=/",
+            "< Set-Cookie: session=[masked:cookie-header]; Path=/",
+        ),
+        (
+            "Cookie: a=1; sid=abc.def; theme=dark",
+            "Cookie: a=[masked:cookie-header]; sid=[masked:cookie-header]; theme=[masked:cookie-header]",
+        ),
+        (
+            "curl -H 'Cookie: sid=abc123' https://x",
+            "curl -H 'Cookie: sid=[masked:cookie-header]' https://x",
+        ),
+        (
+            "Set-Cookie: id=xyz789; Expires=Wed, 21 Oct 2026 07:28:00 GMT; HttpOnly; Secure",
+            "Set-Cookie: id=[masked:cookie-header]; Expires=Wed, 21 Oct 2026 07:28:00 GMT; HttpOnly; Secure",
+        ),
+    ]);
+    assert_survives(&["Cookie: policy accepted", "we use a cookie: yes"]);
+    let once = mask("Set-Cookie: session=abc123secret; Path=/");
+    assert_eq!(mask(&once), once);
 }

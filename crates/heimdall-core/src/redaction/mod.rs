@@ -74,6 +74,7 @@ pub const HOST_PSEUDONYM_PREFIX: &str = "host-";
 pub mod rule_id {
     pub const PRIVATE_KEY_BLOCK: &str = "private-key-block";
     pub const AUTHORIZATION_HEADER: &str = "authorization-header";
+    pub const COOKIE_HEADER: &str = "cookie-header";
     pub const URL_CREDENTIALS: &str = "url-credentials";
     pub const CLI_PASSWORD: &str = "cli-password";
     pub const KEY_VALUE_SECRET: &str = "key-value-secret";
@@ -157,7 +158,7 @@ struct Rule {
 /// general one so a span is masked, and counted, once (a bearer JWT is the authorization
 /// header's, not the jwt rule's). The password prompt rule runs before key-value-secret so an
 /// echoed "Password: x" is the prompt rule's.
-static CATALOGUE: [Rule; 12] = [
+static CATALOGUE: [Rule; 13] = [
     Rule {
         id: rule_id::PRIVATE_KEY_BLOCK,
         requires_pseudonymization: false,
@@ -174,12 +175,18 @@ static CATALOGUE: [Rule; 12] = [
                 &[
                     &patterns::AUTHORIZATION_HEADER,
                     &patterns::AUTHORIZATION_OTHER,
+                    &patterns::AUTHORIZATION_BARE,
                 ],
                 rule_id::AUTHORIZATION_HEADER,
                 run,
                 budget,
             )
         },
+    },
+    Rule {
+        id: rule_id::COOKIE_HEADER,
+        requires_pseudonymization: false,
+        apply: |text, run, budget| maskers::mask_cookies(text, rule_id::COOKIE_HEADER, run, budget),
     },
     Rule {
         id: rule_id::URL_CREDENTIALS,
@@ -229,6 +236,7 @@ static CATALOGUE: [Rule; 12] = [
                 &[
                     &patterns::KEY_VALUE_BLOCK_SCALAR,
                     &patterns::KEY_VALUE_SECRET_COLON,
+                    &patterns::KEY_VALUE_SECRET_COLON_TOKEN,
                     &patterns::KEY_VALUE_SECRET,
                     &patterns::XML_ELEMENT_SECRET,
                     &patterns::ODBC_PASSWORD,

@@ -25,6 +25,7 @@
 
 use std::sync::LazyLock;
 
+use super::MASK_PREFIX;
 use super::scan::{Found, Pattern, char_at, char_before};
 
 // No bound limits a masked span: a value is masked to the end of its token or line, however long.
@@ -127,7 +128,8 @@ fn quoted_or_bare_delimited() -> String {
 
 /// Where a bare `=` value ends: before the `&` that starts another query string parameter
 /// (`&name=`), not at a raw `&` inside a password (`Abc&123xyz`).
-fn cut_before_next_parameter(value: &str) -> usize {
+fn cut_before_next_parameter(hay: &str, start: usize, end: usize) -> usize {
+    let value = &hay[start..end];
     let bytes = value.as_bytes();
     for (index, _) in value.match_indices('&') {
         let name_length = bytes[index + 1..]
@@ -135,10 +137,31 @@ fn cut_before_next_parameter(value: &str) -> usize {
             .take_while(|b| b.is_ascii_alphanumeric() || matches!(**b, b'_' | b'.' | b'-'))
             .count();
         if name_length > 0 && bytes.get(index + 1 + name_length) == Some(&b'=') {
-            return index;
+            return start + index;
         }
     }
-    value.len()
+    end
+}
+
+/// Where a YAML block scalar ends: at the first line that is not indented deeper than the line
+/// of its key (`  secret: >-` then `    abc` then `  other: 1`).
+fn cut_block_scalar(hay: &str, start: usize, end: usize) -> usize {
+    let key_line_start = hay[..start].rfind('\n').map_or(0, |index| index + 1);
+    let indent_of = |line: &str| line.len() - line.trim_start_matches([' ', '\t']).len();
+    let key_indent = indent_of(&hay[key_line_start..start]);
+    let value = &hay[start..end];
+    let mut kept = start;
+    let mut offset = 0;
+    for (number, line) in value.split('\n').enumerate() {
+        let content = line.strip_suffix('\r').unwrap_or(line);
+        if number == 0 || indent_of(content) > key_indent {
+            kept = start + offset + content.len();
+            offset += line.len() + 1;
+        } else {
+            break;
+        }
+    }
+    kept
 }
 
 /// Key-value form with `:` (YAML, `secret: correct horse battery`): a bare value is every word up
@@ -211,15 +234,28 @@ fn authorization_other_ok(hay: &str, found: &Found) -> bool {
         .map_or(name_before, |_| {
             &name_before[..name_before.len() - "proxy-".len()]
         });
-    starts_a_field(name_before) && authorization_value_ok(hay, found)
+    // A long token after the name is a credential wherever the header sits (after a log prefix);
+    // a short word needs the name to start a field, so prose stays unchanged.
+    let long_token = found.value.is_some_and(|(start, end)| {
+        hay[start..end]
+            .split_whitespace()
+            .next()
+            .is_some_and(|token| token.len() >= MIN_UNPREFIXED_CREDENTIAL_LENGTH)
+    });
+    (starts_a_field(name_before) || long_token) && authorization_value_ok(hay, found)
 }
+
+/// A credential at least this long is masked after an `Authorization` name even in the middle of
+/// a line.
+const MIN_UNPREFIXED_CREDENTIAL_LENGTH: usize = 12;
 
 /// True when what precedes a name is the start of a line (after blanks), or an opening quote,
 /// brace, bracket or comma, a list dash, a comment mark or a `>` of a verbose header dump:
 /// the name starts a header or a field instead of sitting in the middle of a sentence.
 fn starts_a_field(before: &str) -> bool {
     let trimmed = before.trim_end_matches([' ', '\t']);
-    trimmed.is_empty() || trimmed.ends_with(['\n', '"', '\'', '{', '[', ',', '-', '#', '>', '<'])
+    trimmed.is_empty()
+        || trimmed.ends_with(['\n', '"', '\'', '{', '[', ',', '-', '#', '>', '<', '|', ';'])
 }
 
 fn authorization_value_ok(hay: &str, found: &Found) -> bool {
@@ -234,8 +270,11 @@ fn authorization_value_ok(hay: &str, found: &Found) -> bool {
             .iter()
             .any(|scheme| word.eq_ignore_ascii_case(scheme))
     };
-    if before.ends_with(':') {
-        return !known_scheme(&hay[start..end]);
+    if before.ends_with([':', '=']) {
+        // No scheme: the scheme word alone is not a credential, and a scheme followed by a
+        // mask token is the first rule's output, not a bare token.
+        return !known_scheme(&hay[start..end])
+            && !hay[end..].trim_start().starts_with(MASK_PREFIX);
     }
     // A known scheme before the value is the other pattern's: it holds one token only.
     let scheme = before
@@ -290,14 +329,59 @@ fn key_ending_ok(hay: &str, found: &Found) -> bool {
 }
 
 fn key_value_ok(hay: &str, found: &Found) -> bool {
-    after_alnum_ok(hay, found) && key_ending_ok(hay, found)
+    after_alnum_ok(hay, found)
+        && key_ending_ok(hay, found)
+        && !is_authorization_scheme_value(hay, found)
+}
+
+/// `Authorization=Bearer abc` after the header rule: the value `Bearer` is a scheme, not a secret.
+fn is_authorization_scheme_value(hay: &str, found: &Found) -> bool {
+    let Some((start, end)) = found.value else {
+        return false;
+    };
+    let key_end = hay[found.start..]
+        .find(|c: char| !is_key_character(c))
+        .map_or(hay.len(), |offset| found.start + offset);
+    let key = &hay[found.start..key_end];
+    key.len() >= "authorization".len()
+        && key[key.len() - "authorization".len()..].eq_ignore_ascii_case("authorization")
+        && (hay[start..end].contains(MASK_PREFIX)
+            || hay[start..end]
+                .split_whitespace()
+                .next()
+                .is_some_and(|word| {
+                    TOKEN_SCHEMES
+                        .iter()
+                        .any(|scheme| word.eq_ignore_ascii_case(scheme))
+                }))
+}
+
+/// After a log prefix (`INFO token: abc123xyz`) the first token only, and only when it has a
+/// digit or a symbol or is long: a bare word is prose (`unexpected token: ident`).
+fn key_value_token_ok(hay: &str, found: &Found) -> bool {
+    const MIN_WORD_SECRET_LENGTH: usize = 16;
+    let Some((start, end)) = found.value else {
+        return false;
+    };
+    if starts_a_field(&hay[..found.start]) || !key_value_words_shape_ok(hay, found) {
+        return false;
+    }
+    let quoted = char_before(hay, start).is_some_and(|c| c == '"' || c == '\'');
+    let value = &hay[start..end];
+    quoted
+        || value.len() >= MIN_WORD_SECRET_LENGTH
+        || value.chars().any(|c| !c.is_ascii_alphabetic())
 }
 
 /// The words form (`key: a few words`, `key = a few words`) takes a whole value, so it is limited
 /// to a key that starts a line or a field, and a bare `pass` before a colon (`PASS: test_login`,
 /// `pass: 12 fail: 0`) is a test report, not a secret.
 fn key_value_words_ok(hay: &str, found: &Found) -> bool {
-    if !key_value_ok(hay, found) || !starts_a_field(&hay[..found.start]) {
+    starts_a_field(&hay[..found.start]) && key_value_words_shape_ok(hay, found)
+}
+
+fn key_value_words_shape_ok(hay: &str, found: &Found) -> bool {
+    if !key_value_ok(hay, found) {
         return false;
     }
     let key_end = hay[found.start..]
@@ -400,6 +484,9 @@ macro_rules! lazy_pattern {
     };
 }
 
+// The name of a cookie header; the cookies themselves are split by `maskers::mask_cookies`.
+lazy_pattern!(COOKIE_HEADER, r"(?i)cookie[ \t]*:[ \t]*", None);
+
 lazy_pattern!(
     PRIVATE_KEY_MARKER,
     "-----(?P<k>BEGIN|END) [A-Z ]{0,40}PRIVATE KEY-----",
@@ -419,7 +506,7 @@ lazy_pattern!(
 lazy_pattern!(
     AUTHORIZATION_HEADER,
     format!(
-        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*:{HEADER_BLANK}*\[?{OPTIONAL_QUOTE}(?:(?:Bearer|Basic|Token){HEADER_BLANK}+(?P<va>{})|Digest{HEADER_BLANK}+(?P<vd>{}))",
+        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*[:=]{HEADER_BLANK}*\[?{OPTIONAL_QUOTE}(?:(?:Bearer|Basic|Token){HEADER_BLANK}+(?P<va>{})|Digest{HEADER_BLANK}+(?P<vd>{}))",
         folded(r#"[^\s"'\\]+"#),
         folded(r"[^\r\n]+"),
     ),
@@ -432,8 +519,17 @@ lazy_pattern!(
 lazy_pattern!(
     AUTHORIZATION_OTHER,
     format!(
-        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*:{HEADER_BLANK}*(?:(?P<vm>\[masked:[a-z-]+\])|\[?{OPTIONAL_QUOTE}(?:[A-Za-z][A-Za-z0-9_-]*{HEADER_BLANK}+(?P<ve>{})|(?P<vf>{})))",
+        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*[:=]{HEADER_BLANK}*\[?{OPTIONAL_QUOTE}[A-Za-z][A-Za-z0-9_-]*{HEADER_BLANK}+(?P<ve>{})",
         folded(r#"[^\r\n"'\\]+"#),
+    ),
+    Some(authorization_other_ok)
+);
+
+// No scheme at all: the token is the credential (`lin_api_...`), under the same position rule.
+lazy_pattern!(
+    AUTHORIZATION_BARE,
+    format!(
+        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*[:=]{HEADER_BLANK}*(?:(?P<vm>\[masked:[a-z-]+\])|\[?{OPTIONAL_QUOTE}(?P<vf>{}))",
         folded(r#"[^\s"'\\]+"#),
     ),
     Some(authorization_other_ok)
@@ -504,7 +600,7 @@ pub(super) static KEY_VALUE_SECRET: LazyLock<Pattern> = LazyLock::new(|| {
     Pattern::with_trim(
         &format!(
             r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}(?:=>|=)[ \t]{{0,16}}{}",
-            key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
+            key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS, &["authorization"]]),
             quoted_or_bare_delimited()
         ),
         Some(key_value_ok),
@@ -523,13 +619,27 @@ lazy_pattern!(
 );
 
 // A YAML block scalar: `password: |` and the indented lines under it are the value.
+pub(super) static KEY_VALUE_BLOCK_SCALAR: LazyLock<Pattern> = LazyLock::new(|| {
+    Pattern::with_trim(
+        &format!(
+            r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}:[ \t]{{1,16}}(?P<v>[|>][+-]?[0-9]?[ \t]*\r?\n[ \t]+[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*)",
+            key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
+        ),
+        Some(key_value_words_ok),
+        cut_block_scalar,
+    )
+});
+
+// The same key and colon after a log prefix (`INFO token: abc123xyz`): the first token only, and
+// only when it looks like a secret, so `unexpected token: ident foo` is not masked.
 lazy_pattern!(
-    KEY_VALUE_BLOCK_SCALAR,
+    KEY_VALUE_SECRET_COLON_TOKEN,
     format!(
-        r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}:[ \t]{{1,16}}(?P<v>[|>][+-]?[0-9]?[ \t]*\r?\n[ \t]+[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*)",
+        r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}:[ \t]{{0,16}}{}",
         key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
+        quoted_or_bare_delimited()
     ),
-    Some(key_value_words_ok)
+    Some(key_value_token_ok)
 );
 
 // The XML element form: `<password>hunter2</password>`, also with a CDATA section.
@@ -626,8 +736,10 @@ lazy_pattern!(
 pub(super) fn warm_up() {
     for pattern in [
         &PRIVATE_KEY_MARKER,
+        &COOKIE_HEADER,
         &AUTHORIZATION_HEADER,
         &AUTHORIZATION_OTHER,
+        &AUTHORIZATION_BARE,
         &URL_CREDENTIALS,
         &URL_USER_TOKEN,
         &CLI_PASSWORD_OPTION,
@@ -637,6 +749,7 @@ pub(super) fn warm_up() {
         &CLI_MYSQL_PASSWORD,
         &KEY_VALUE_SECRET,
         &KEY_VALUE_SECRET_COLON,
+        &KEY_VALUE_SECRET_COLON_TOKEN,
         &KEY_VALUE_BLOCK_SCALAR,
         &XML_ELEMENT_SECRET,
         &ODBC_PASSWORD,

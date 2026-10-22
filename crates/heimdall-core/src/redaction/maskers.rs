@@ -56,6 +56,95 @@ pub(super) fn mask_groups(
     Ok(current)
 }
 
+// Cookies.
+
+const COOKIE_WORD: &str = "cookie";
+
+/// Attributes of a `Set-Cookie` header: not secrets, kept as they are.
+const COOKIE_ATTRIBUTES: [&str; 9] = [
+    "path", "domain", "expires", "max-age", "secure", "httponly", "samesite", "version", "comment",
+];
+
+/// Masks the value of each cookie of a `Cookie:` or `Set-Cookie:` header, keeping the names and
+/// the attributes (`session=[masked:cookie-header]; Path=/`).
+pub(super) fn mask_cookies(
+    text: &str,
+    rule: &'static str,
+    run: &mut Run,
+    budget: &Budget,
+) -> Outcome {
+    let token = mask_token(rule);
+    let mut edits = Vec::new();
+    for line in split_lines(text) {
+        let hay = &text[line.start..line.end];
+        if !contains_ignore_ascii_case(hay, COOKIE_WORD) {
+            continue;
+        }
+        let mut from = 0;
+        while let Some(header) = patterns::COOKIE_HEADER.find_from(hay, from, budget)? {
+            let header_end = cookie_header_end(hay, header.end);
+            let mut offset = header.end;
+            for pair in hay[header.end..header_end].split(';') {
+                if let Some((start, end)) = cookie_value_span(pair) {
+                    let (start, end) = (offset + start, offset + end);
+                    if !is_mask_token(&hay[start..end]) {
+                        edits.push(Edit {
+                            start: line.start + start,
+                            end: line.start + end,
+                            replacement: token.clone(),
+                        });
+                        run.count(rule);
+                    }
+                }
+                offset += pair.len() + 1;
+            }
+            from = header_end.max(header.end);
+            if from >= hay.len() {
+                break;
+            }
+        }
+    }
+    Ok(apply_edits(text, &edits))
+}
+
+/// The end of a cookie header that starts at `from`: the end of the line, or the quote that
+/// closes the header (`curl -H 'Cookie: a=b' https://x`). A quote right after `=` opens a quoted
+/// cookie value and is skipped with its closing quote.
+fn cookie_header_end(hay: &str, from: usize) -> usize {
+    let mut open: Option<char> = None;
+    let mut previous = '\0';
+    for (offset, c) in hay[from..].char_indices() {
+        if matches!(c, '"' | '\'') {
+            match open {
+                Some(quote) if quote == c => open = None,
+                Some(_) => {}
+                None if previous == '=' => open = Some(c),
+                None => return from + offset,
+            }
+        }
+        previous = c;
+    }
+    hay.len()
+}
+
+/// The span of the value in `name=value` (offsets in `pair`), or none for an attribute, a flag
+/// or an empty value.
+fn cookie_value_span(pair: &str) -> Option<(usize, usize)> {
+    let (name, value) = pair.split_once('=')?;
+    let name = name.trim();
+    if name.is_empty()
+        || COOKIE_ATTRIBUTES
+            .iter()
+            .any(|attribute| name.eq_ignore_ascii_case(attribute))
+    {
+        return None;
+    }
+    let value_start = pair.len() - value.len();
+    let leading = value.len() - value.trim_start().len();
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then_some((value_start + leading, value_start + leading + trimmed.len()))
+}
+
 // Private key blocks.
 
 const MARKER_LITERAL: &str = "-----";

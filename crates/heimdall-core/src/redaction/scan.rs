@@ -87,10 +87,11 @@ pub(super) struct Pattern {
     trim: Option<Trim>,
 }
 
-/// Shortens a value that runs to the end of its match: receives the value and returns the length
-/// to keep. A value cannot always be delimited by the pattern alone (`&` ends a query string
-/// parameter only when another parameter follows, which needs a look-ahead).
-pub(super) type Trim = fn(&str) -> usize;
+/// Shortens a value that runs to the end of its match: receives the haystack and the value span,
+/// and returns the end to keep. A value cannot always be delimited by the pattern alone (`&` ends
+/// a query string parameter only when another parameter follows, which needs a look-ahead; a
+/// block scalar ends at a line that is not indented deeper than its key).
+pub(super) type Trim = fn(&str, usize, usize) -> usize;
 
 impl Pattern {
     /// Compiles a static pattern. A pattern that does not compile is a programming error caught
@@ -175,7 +176,7 @@ impl Pattern {
         if end != found.end || quoted {
             return;
         }
-        let kept = start + trim(&hay[start..end]);
+        let kept = trim(hay, start, end);
         if kept < end {
             found.value = Some((start, kept));
             found.end = kept;
