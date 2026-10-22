@@ -1624,7 +1624,7 @@ fn an_option_after_white_space_is_refused_in_free_text() {
     }
     let result = render_one(WINDOWS, "ssh h dir {d}", parameter("d", true), "x /s");
     assert!(refused_dangerous(&result, "d"));
-    assert!(render_one(WINDOWS, "dir {p}", of_kind("p", "path"), r"C:\a /b").is_ok());
+    assert!(render_one(WINDOWS, "dir {p}", of_kind("p", "path"), r"C:\a b/c").is_ok());
     assert!(render_one(LINUX, "ls {d}", parameter("d", true), "a b/c").is_ok());
 }
 
@@ -1706,5 +1706,22 @@ fn only_the_x86_folder_text_keeps_its_parentheses_in_a_windows_path() {
     ] {
         let result = render_one(WINDOWS, "dir {p}", of_kind("p", "path"), value);
         assert!(refused_dangerous(&result, "p"), "{value}");
+    }
+}
+
+#[test]
+fn a_windows_path_may_hold_a_slash_but_not_one_after_white_space() {
+    let result = render_one(
+        WINDOWS,
+        "icacls {p}",
+        of_kind("p", "path"),
+        r"C:\x /grant Everyone:F",
+    );
+    assert!(refused_dangerous(&result, "p"));
+    for value in [r"C:\dir/sub", r"\server\share"] {
+        assert!(
+            render_one(WINDOWS, "dir {p}", of_kind("p", "path"), value).is_ok(),
+            "{value}"
+        );
     }
 }

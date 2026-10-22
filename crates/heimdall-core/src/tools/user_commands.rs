@@ -109,7 +109,9 @@ const OPTION_LEADING: char = '-';
 /// What a Linux second-stage shell reads as syntax once a value is split into words.
 const LINUX_SPLIT_SYNTAX: [char; 5] = ['\'', '"', '\\', '{', '}'];
 
-/// The only parenthesised text a Windows path may hold (`Program Files (x86)`).
+/// The only parenthesised text a Windows path may hold (`Program Files (x86)`). A
+/// second-stage PowerShell evaluates `(x86)` as a command, which is harmless by default
+/// (no such command exists).
 const WINDOWS_X86_FOLDER: &str = "(x86)";
 
 /// What `cmd` and many Windows tools read as a switch when it starts a value.
@@ -754,6 +756,14 @@ fn check_value(
     )
 }
 
+/// Whether `value` holds a `/` right after white space.
+fn slash_follows_white_space(value: &str) -> bool {
+    value
+        .chars()
+        .zip(value.chars().skip(1))
+        .any(|(before, after)| before.is_whitespace() && after == WINDOWS_SWITCH_LEADING)
+}
+
 /// Whether a number is negative on Linux, where a leading dash is an option to the program
 /// (`kill -s KILL -1`); PowerShell reads a negative number as a number.
 fn negative_on_linux(value: &str, platform: TemplatePlatform) -> bool {
@@ -802,6 +812,9 @@ fn holds_refused_shape(value: &str, is_path: bool, platform: TemplatePlatform) -
     }
     if windows {
         (!is_path && !after_alphanumeric(WINDOWS_SWITCH_LEADING))
+            // A path may hold a slash (`C:/dir`, `\server`), but not one that starts a word:
+            // `C:/x /grant Everyone:F` adds a switch for a second-stage `cmd`.
+            || (is_path && slash_follows_white_space(value))
             || value.ends_with(WINDOWS_BACKSLASH)
             || value
                 .chars()
@@ -907,7 +920,8 @@ fn refused_at(protection: Protection, c: char, powershell: bool) -> bool {
 /// why the quoting alone is enough there. Stricter than the C#, the metacharacters are still
 /// refused in those places (LDAP filters, grep alternations and `$env:TEMP` do not pass),
 /// because a second-stage shell reads the value again (PowerShell argument mode evaluates
-/// `(...)` as well); only the exact text `(x86)` of a Windows path is let through. Where the lexer does not follow the pattern ([`QuoteContext::Uncertain`])
+/// `(...)` as well); only the exact text `(x86)` of a Windows path is let through. Where the
+/// lexer does not follow the pattern ([`QuoteContext::Uncertain`])
 /// only a value of plain characters is accepted, and it goes in bare.
 fn holds_refused_characters(
     pattern: &str,
