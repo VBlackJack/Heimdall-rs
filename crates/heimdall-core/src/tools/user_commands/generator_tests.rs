@@ -815,21 +815,21 @@ fn a_hostname_or_number_cannot_carry_syntax() {
 
 #[test]
 fn the_lexer_classes_every_occurrence_in_order() {
-    use QuoteContext::{Bare, Expanding, SingleQuoted};
+    use QuoteContext::{AnsiC, Bare, DoubleQuoted, Expanding, SingleQuoted};
     let rows: [(&str, bool, &[QuoteContext]); 12] = [
         ("echo {x}", false, &[Bare]),
         ("echo '{x}'", false, &[SingleQuoted]),
-        ("echo \"{x}\"", false, &[Expanding]),
-        ("echo \"a '{x}'\"", false, &[Expanding]),
-        ("echo $'{x}'", false, &[Expanding]),
-        ("echo $'a\\'{x}'", false, &[Expanding]),
+        ("echo \"{x}\"", false, &[DoubleQuoted]),
+        ("echo \"a '{x}'\"", false, &[DoubleQuoted]),
+        ("echo $'{x}'", false, &[AnsiC]),
+        ("echo $'a\\'{x}'", false, &[AnsiC]),
         ("echo ${x}", false, &[Expanding]),
         ("echo ${x}", true, &[Expanding]),
         ("echo \\${x}", false, &[Bare]),
         (
             "echo '{x}' {x} \"{x}\"",
             false,
-            &[SingleQuoted, Bare, Expanding],
+            &[SingleQuoted, Bare, DoubleQuoted],
         ),
         ("echo {y}", false, &[]),
         ("{x} arg", false, &[Bare]),
@@ -845,7 +845,7 @@ fn the_lexer_classes_every_occurrence_in_order() {
 
 #[test]
 fn the_lexer_follows_the_escape_and_quote_rules_of_each_shell() {
-    use QuoteContext::{Bare, Expanding, SingleQuoted};
+    use QuoteContext::{Bare, DoubleQuoted, SingleQuoted};
     // Bash escapes with a backslash, PowerShell with a backtick.
     assert_eq!(
         placeholder_quote_contexts("echo \\'{x}", "x", false),
@@ -854,11 +854,11 @@ fn the_lexer_follows_the_escape_and_quote_rules_of_each_shell() {
     assert_eq!(placeholder_quote_contexts("echo `'{x}", "x", true), [Bare]);
     assert_eq!(
         placeholder_quote_contexts("echo \"a\\\"{x}\"", "x", false),
-        [Expanding]
+        [DoubleQuoted]
     );
     assert_eq!(
         placeholder_quote_contexts("echo \"a`\"{x}\"", "x", true),
-        [Expanding]
+        [DoubleQuoted]
     );
     // A typographic single quote opens and closes a literal in PowerShell, not in bash.
     assert_eq!(
@@ -872,7 +872,7 @@ fn the_lexer_follows_the_escape_and_quote_rules_of_each_shell() {
     // And a typographic double quote opens an expanding string in PowerShell only.
     assert_eq!(
         placeholder_quote_contexts("echo \u{201C}{x}\u{201D}", "x", true),
-        [Expanding]
+        [DoubleQuoted]
     );
     assert_eq!(
         placeholder_quote_contexts("echo \u{201C}{x}\u{201D}", "x", false),
@@ -938,4 +938,418 @@ fn an_inline_quoting_whose_placeholder_the_shell_expands_is_reset_on_import() {
     // Inside a double-quoted string the single quotes protect nothing.
     assert_eq!(quoting_of("x"), Some(Quoting::ShellQuote));
     assert_eq!(quoting_of("y"), Some(Quoting::InlineInQuotes));
+}
+
+// ---- Regressions found by review: the lexer and the generator must agree ----------------------
+
+#[test]
+fn an_escaped_placeholder_is_still_a_placeholder_and_keeps_the_blacklist() {
+    // The generator replaces `{v}` whatever precedes it, so `\{v}` is the value glued to a
+    // backslash, and the opening quote the generator adds is the one the backslash escapes.
+    assert_eq!(
+        placeholder_quote_contexts("echo \\{v}", "v", false),
+        [QuoteContext::Uncertain]
+    );
+    assert_eq!(
+        placeholder_quote_contexts("Write-Output `{v}", "v", true),
+        [QuoteContext::Uncertain]
+    );
+    for (platform, pattern) in [
+        (LINUX, "echo \\{v}"),
+        (WINDOWS, "Write-Output `{v}"),
+        (LINUX, "echo {v} \\{v}"),
+    ] {
+        for value in [
+            "x; printf INJECTED #",
+            "x | id",
+            "x & id",
+            "x $(id)",
+            "x`id`",
+        ] {
+            let result = render_one(platform, pattern, parameter("v", true), value);
+            assert!(
+                refused_dangerous(&result, "v"),
+                "{platform:?} {pattern} {value}: {result:?}"
+            );
+        }
+    }
+    // A word split would also leave the quotes the generator adds unbalanced.
+    assert!(refused_dangerous(
+        &render_one(LINUX, "echo \\{v}", parameter("v", true), "a b"),
+        "v"
+    ));
+}
+
+#[test]
+fn a_placeholder_after_a_substitution_or_expansion_is_not_trusted_to_any_quoting() {
+    use QuoteContext::Uncertain;
+    // The inner double quotes open a string of their own: the lexer used to take them for the
+    // end of the outer string and class the placeholder bare.
+    assert_eq!(
+        placeholder_quote_contexts("echo \"$(printf \"{v}\")\"", "v", false),
+        [Uncertain]
+    );
+    assert_eq!(
+        placeholder_quote_contexts("Write-Output \"$(Write-Output \"{v}\")\"", "v", true),
+        [Uncertain]
+    );
+    assert_eq!(
+        placeholder_quote_contexts("echo \"${x:-\"{v}\"}\"", "v", false),
+        [Uncertain]
+    );
+    assert_eq!(
+        placeholder_quote_contexts("echo \"`printf \"{v}\"`\"", "v", false),
+        [Uncertain]
+    );
+    for (platform, pattern, value) in [
+        (LINUX, "echo \"$(printf \"{v}\")\"", "$(printf INJECTED)"),
+        (
+            WINDOWS,
+            "Write-Output \"$(Write-Output \"{v}\")\"",
+            "$(Write-Output INJECTED)",
+        ),
+        (LINUX, "echo \"${x:-\"{v}\"}\"", "$(id)"),
+        (LINUX, "echo \"`printf \"{v}\"`\"", "$(id)"),
+    ] {
+        let result = render_one(platform, pattern, parameter("v", true), value);
+        assert!(
+            refused_dangerous(&result, "v"),
+            "{platform:?} {pattern}: {result:?}"
+        );
+    }
+    // What comes before the substitution is still followed; what comes after is not.
+    assert_eq!(
+        placeholder_quote_contexts("echo '{v}' $(date) \"{v}\"", "v", false),
+        [QuoteContext::SingleQuoted, Uncertain]
+    );
+}
+
+#[test]
+fn a_double_quote_or_an_escape_in_a_value_cannot_end_the_double_quoted_string() {
+    for (platform, pattern, values) in [
+        (LINUX, "echo \"{v}\"", ["x\" -rf \"y", "x\\", "a\"b"]),
+        (
+            WINDOWS,
+            "Write-Host \"{v}\"",
+            ["x\" -Force \"y", "x`", "a\u{201C}b"],
+        ),
+    ] {
+        for value in values {
+            let result = render_one(platform, pattern, parameter("v", true), value);
+            assert!(
+                refused_dangerous(&result, "v"),
+                "{platform:?} {pattern} {value}: {result:?}"
+            );
+        }
+    }
+    // An apostrophe is the escaper's business there: `''` inside a PowerShell filter.
+    assert_eq!(
+        render_one(
+            WINDOWS,
+            "Get-ADUser -Filter \"Name -like '*{v}*'\"",
+            inline("v"),
+            "O'Brien"
+        )
+        .as_deref(),
+        Ok("Get-ADUser -Filter \"Name -like '*O''Brien*'\"")
+    );
+}
+
+#[test]
+fn leaving_an_argument_out_cannot_change_how_another_value_is_read() {
+    // `echo ${empty}'{v}'` becomes `echo $'{v}'`, a bash ANSI-C string that reads backslash
+    // escapes: the value is judged against that pattern, not the one before the removal.
+    let result = render(
+        LINUX,
+        "echo ${empty}'{v}'",
+        vec![parameter("empty", false), inline("v")],
+        &[("v", "\\'; printf INJECTED #")],
+    );
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
+    // The same value is fine where the pattern is what it says it is.
+    assert_eq!(
+        render(
+            LINUX,
+            "echo ${empty}'{v}'",
+            vec![parameter("empty", false), inline("v")],
+            &[("v", "plain")],
+        )
+        .as_deref(),
+        Ok("echo $'plain'")
+    );
+    assert_eq!(
+        render(
+            LINUX,
+            "echo '{v}'",
+            vec![parameter("empty", false), inline("v")],
+            &[("v", "\\'; printf OK #")],
+        )
+        .as_deref(),
+        Ok("echo '\\'\\''; printf OK #'")
+    );
+}
+
+#[test]
+fn a_safe_value_stays_quoted_where_the_text_around_it_would_join_the_syntax() {
+    // `{{v}}` with `a,b` would be the bash brace expansion `{a,b}`.
+    assert_eq!(
+        render_one(LINUX, "printf '<%s>\\n' {{v}}", parameter("v", true), "a,b").as_deref(),
+        Ok("printf '<%s>\\n' {'a,b'}")
+    );
+    // `({v})` with `1+2` would be a PowerShell expression, `@{v}` a splat.
+    assert_eq!(
+        render_one(WINDOWS, "Write-Output ({v})", parameter("v", true), "1+2").as_deref(),
+        Ok("Write-Output ('1+2')")
+    );
+    assert_eq!(
+        render_one(WINDOWS, "Write-Output @{v}", parameter("v", true), "args").as_deref(),
+        Ok("Write-Output @'args'")
+    );
+    assert_eq!(
+        render_one(LINUX, "echo a,{v}", parameter("v", true), "b").as_deref(),
+        Ok("echo a,'b'")
+    );
+    // A value with `=` at the start of a command would be an assignment.
+    for platform in BOTH {
+        assert_eq!(
+            render_one(platform, "{v} run", parameter("v", true), "FOO=bar").as_deref(),
+            Ok("'FOO=bar' run")
+        );
+        assert_eq!(
+            render_one(platform, "run --opt={v}", parameter("v", true), "a=b").as_deref(),
+            Ok("run --opt=a=b")
+        );
+    }
+}
+
+#[test]
+fn a_misplaced_quoting_gets_the_strictest_refusals() {
+    // A ShellQuote value in the pattern's own single quotes ends up outside any quote, and an
+    // InlineInQuotes value outside any quote is not quoted at all.
+    for (pattern, parameter) in [
+        ("echo '{v}'", parameter("v", true)),
+        ("echo {v}", inline("v")),
+    ] {
+        for value in [
+            "a b", "a*", "a,b", "~", "a#b", "a'b", "a\\b", "a!b", "{a,b}",
+        ] {
+            let result = render_one(LINUX, pattern, parameter.clone(), value);
+            assert!(
+                refused_dangerous(&result, "v"),
+                "{pattern} {value}: {result:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_value_cannot_change_how_a_later_placeholder_is_read() {
+    // `\{a}` is the value glued to a backslash: if `a` were quoted, its opening quote would be
+    // the one the backslash escapes and the quotes after it would swap sides, exposing `b`.
+    for (platform, pattern) in [
+        (LINUX, "echo \\{a} '{b}'"),
+        (WINDOWS, "Write-Output `{a} '{b}'"),
+    ] {
+        let result = render(
+            platform,
+            pattern,
+            vec![parameter("a", true), inline("b")],
+            &[("a", "abc"), ("b", "x; printf INJECTED; #")],
+        );
+        assert!(result.is_err(), "{platform:?} {pattern}: {result:?}");
+    }
+}
+
+#[test]
+fn a_parameter_default_inside_double_quotes_reads_single_quotes_as_text() {
+    // `${absent:-'{v}'}` inside double quotes: the apostrophes are not quotes.
+    let pattern = "echo \"${absent:-'{v}'}\"";
+    let result = render_one(LINUX, pattern, inline("v"), "$(printf INJECTED)");
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
+    let result = render_one(LINUX, pattern, inline("v"), "x' y");
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
+    assert_eq!(
+        render_one(LINUX, pattern, inline("v"), "abc").as_deref(),
+        Ok("echo \"${absent:-'abc'}\"")
+    );
+}
+
+#[test]
+fn a_backtick_in_a_value_cannot_end_a_legacy_substitution() {
+    let value = "`\"; printf INJECTED; #";
+    for parameter in [parameter("v", true), inline("v")] {
+        for pattern in [
+            "echo \"`printf %s {v}`\"",
+            "echo \"`printf %s '{v}'`\"",
+            "echo `printf %s '{v}'`",
+            "echo $(printf %s '{v}')",
+        ] {
+            let result = render_one(LINUX, pattern, parameter.clone(), value);
+            assert!(refused_dangerous(&result, "v"), "{pattern}: {result:?}");
+        }
+    }
+    // A plain value is fine there, and goes in bare.
+    assert_eq!(
+        render_one(LINUX, "echo $(ls '{v}')", inline("v"), "logs").as_deref(),
+        Ok("echo $(ls 'logs')")
+    );
+    assert_eq!(
+        render_one(
+            WINDOWS,
+            "Write-Output $(Get-Item '{v}')",
+            inline("v"),
+            "logs"
+        )
+        .as_deref(),
+        Ok("Write-Output $(Get-Item 'logs')")
+    );
+}
+
+#[test]
+fn a_script_pattern_is_not_followed_and_takes_plain_values_only() {
+    // Comments and here-documents change what a quote means on the lines of a script.
+    let pattern = "echo 'start'\n# it's a comment\necho '{v}'";
+    let result = render_one(LINUX, pattern, inline("v"), "x y");
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
+    let result = render_one(LINUX, pattern, inline("v"), "x'; id; echo '");
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
+    assert_eq!(
+        render_one(LINUX, pattern, inline("v"), "plain").as_deref(),
+        Ok("echo 'start'\n# it's a comment\necho 'plain'")
+    );
+}
+
+#[test]
+fn a_comment_or_document_in_the_pattern_makes_the_quotes_after_it_untrusted() {
+    // The apostrophe of the block comment is text, not a quote.
+    let comment = "Write-Output <# user's label #> '{v}'";
+    for parameter in [parameter("v", true), inline("v")] {
+        let result = render_one(
+            WINDOWS,
+            comment,
+            parameter.clone(),
+            "; Write-Output INJECTED; #",
+        );
+        assert!(refused_dangerous(&result, "v"), "{result:?}");
+    }
+    assert_eq!(
+        render_one(WINDOWS, comment, inline("v"), "plain").as_deref(),
+        Ok("Write-Output <# user's label #> 'plain'")
+    );
+    for (platform, pattern) in [
+        (WINDOWS, "Write-Output a # user's note '{v}'"),
+        (LINUX, "echo a # user's note '{v}'"),
+        (WINDOWS, "Write-Output @'\nit's\n'@ '{v}'"),
+        (LINUX, "cat <<'EOF' | tee '{v}'"),
+    ] {
+        let result = render_one(platform, pattern, inline("v"), "x y");
+        assert!(
+            refused_dangerous(&result, "v"),
+            "{platform:?} {pattern}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn a_value_alone_on_a_line_of_a_script_cannot_end_a_heredoc() {
+    let pattern = "cat <<EOF\n{v}\nprintf INJECTED\nEOF";
+    for value in ["EOF", "abc"] {
+        let result = render_one(LINUX, pattern, parameter("v", true), value);
+        assert!(refused_dangerous(&result, "v"), "{value}: {result:?}");
+    }
+    // The same value inside a line is not a line of its own.
+    assert_eq!(
+        render_one(
+            LINUX,
+            "cat <<EOF\nvalue: {v}\nEOF",
+            parameter("v", true),
+            "EOF"
+        )
+        .as_deref(),
+        Ok("cat <<EOF\nvalue: EOF\nEOF")
+    );
+}
+
+#[test]
+fn a_bare_value_cannot_turn_the_word_around_it_into_syntax() {
+    // `-{v}` with `Force` would be the switch `-Force`, not the text `-Force`.
+    assert_eq!(
+        render_one(WINDOWS, "Probe -{v}", parameter("v", true), "Force").as_deref(),
+        Ok("Probe -'Force'")
+    );
+    // `@prefix{v}` with `args` would splat `@prefixargs`.
+    assert_eq!(
+        render_one(
+            WINDOWS,
+            "Write-Output @prefix{v}",
+            parameter("v", true),
+            "args"
+        )
+        .as_deref(),
+        Ok("Write-Output @prefix'args'")
+    );
+    // `{pre{v}post,end}` with `a,b` would be a three-way brace expansion.
+    assert_eq!(
+        render_one(
+            LINUX,
+            "printf '<%s>\\n' {pre{v}post,end}",
+            parameter("v", true),
+            "a,b"
+        )
+        .as_deref(),
+        Ok("printf '<%s>\\n' {pre'a,b'post,end}")
+    );
+    // Other placeholders in the word do not count against it.
+    assert_eq!(
+        render(
+            LINUX,
+            "run --addr={host}:{port}",
+            vec![parameter("host", true), parameter("port", true)],
+            &[("host", "example.org"), ("port", "8080")]
+        )
+        .as_deref(),
+        Ok("run --addr=example.org:8080")
+    );
+}
+
+#[test]
+fn a_value_glued_to_text_cannot_join_it_where_the_pattern_is_not_followed() {
+    // `END_{v}` with `CONFIG` is the line that ends the heredoc `END_CONFIG`.
+    let heredoc = "cat <<END_CONFIG\nEND_{v}\nprintf INJECTED\nEND_CONFIG";
+    let result = render_one(LINUX, heredoc, parameter("v", true), "CONFIG");
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
+    // The checks on the word around a value hold after a comment or a substitution too.
+    for (platform, pattern, value) in [
+        (WINDOWS, "Write-Output <# label #> @prefix{v}", "args"),
+        (
+            LINUX,
+            "printf '<%s>\n' \"$(printf stamp)\" {pre{v}post,end}",
+            "a,b",
+        ),
+        (WINDOWS, "Probe <# label #> -Fo{v}", "rce"),
+    ] {
+        let result = render_one(platform, pattern, parameter("v", true), value);
+        assert!(
+            refused_dangerous(&result, "v"),
+            "{platform:?} {pattern}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn a_value_cannot_complete_the_name_of_an_option() {
+    // `-Fo{v}` with `rce` would be the switch `-Force`.
+    assert_eq!(
+        render_one(WINDOWS, "Probe -Fo{v}", parameter("v", true), "rce").as_deref(),
+        Ok("Probe -Fo'rce'")
+    );
+    // A value after the `=` or `:` that binds it to the option is a value.
+    assert_eq!(
+        render_one(WINDOWS, "Probe -Name:{v}", parameter("v", true), "abc").as_deref(),
+        Ok("Probe -Name:abc")
+    );
+    assert_eq!(
+        render_one(LINUX, "run --opt={v}", parameter("v", true), "abc").as_deref(),
+        Ok("run --opt=abc")
+    );
 }
