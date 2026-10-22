@@ -6019,3 +6019,9 @@ ui-shared-sources-passwords =
         [one] { $count } password remembered on this computer.
        *[other] { $count } passwords remembered on this computer.
     }
+ui-shared-sources-forget-failed-title = Some remembered passwords could not be forgotten.
+ui-shared-sources-forget-failed-body =
+    { $count ->
+        [one] { $count } remembered password could not be deleted from the credential store. It stays listed: use Forget again to retry.
+       *[other] { $count } remembered passwords could not be deleted from the credential store. They stay listed: use Forget again to retry.
+    }

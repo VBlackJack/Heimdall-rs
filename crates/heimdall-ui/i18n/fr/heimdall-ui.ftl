@@ -6075,3 +6075,9 @@ ui-shared-sources-passwords =
         [one] { $count } mot de passe mémorisé sur cet ordinateur.
        *[other] { $count } mots de passe mémorisés sur cet ordinateur.
     }
+ui-shared-sources-forget-failed-title = Certains mots de passe mémorisés n'ont pas pu être oubliés.
+ui-shared-sources-forget-failed-body =
+    { $count ->
+        [one] { $count } mot de passe mémorisé n'a pas pu être supprimé du magasin d'identifiants. Il reste listé : utilisez Oublier à nouveau pour réessayer.
+       *[other] { $count } mots de passe mémorisés n'ont pas pu être supprimés du magasin d'identifiants. Ils restent listés : utilisez Oublier à nouveau pour réessayer.
+    }

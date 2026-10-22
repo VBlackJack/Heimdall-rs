@@ -351,6 +351,9 @@ impl App {
         let mut effects = self.apply_settings(&SettingsMessage::ResetAllSettings);
         // A save that failed says so in a dialog of its own.
         if self.dialog.is_none() {
+            // The remembered passwords of the shared sessions are not a setting, yet a reset
+            // to defaults leaves nothing remembered behind.
+            self.purge_shared_passwords();
             effects.push(Effect::SettingsReset);
         }
         effects

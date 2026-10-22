@@ -6064,3 +6064,9 @@ ui-shared-sources-passwords =
         [one] { $count } contraseña recordada en este equipo.
        *[other] { $count } contraseñas recordadas en este equipo.
     }
+ui-shared-sources-forget-failed-title = Algunas contraseñas recordadas no se pudieron olvidar.
+ui-shared-sources-forget-failed-body =
+    { $count ->
+        [one] { $count } contraseña recordada no se pudo eliminar del almacén de credenciales. Sigue en la lista: use Olvidar de nuevo para reintentar.
+       *[other] { $count } contraseñas recordadas no se pudieron eliminar del almacén de credenciales. Siguen en la lista: use Olvidar de nuevo para reintentar.
+    }

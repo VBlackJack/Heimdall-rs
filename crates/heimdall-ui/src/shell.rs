@@ -3305,7 +3305,10 @@ impl Shell {
                 question,
                 index,
                 value,
-            } => self.edit(question, index, value),
+            } => {
+                // Wrapped before anything can return: a typed password is wiped on every path.
+                self.edit(question, index, Zeroizing::new(value));
+            }
             Message::FocusField { question, index } => {
                 return operation::focus(field_id(question, index));
             }
@@ -3494,7 +3497,7 @@ impl Shell {
             .find(|prompt| prompt.question == question)
     }
 
-    fn edit(&mut self, question: QuestionId, index: usize, value: String) {
+    fn edit(&mut self, question: QuestionId, index: usize, value: Zeroizing<String>) {
         let Some(count) = self
             .prompt(question)
             .map(|prompt| field_count(&prompt.kind))
@@ -3506,7 +3509,7 @@ impl Shell {
         }
         let fields = self.drafts.entry(question).or_default();
         fields.resize_with(count, Zeroizing::default);
-        fields[index] = Zeroizing::new(value);
+        fields[index] = value;
     }
 
     fn reply(&mut self, tab: TabId, accept: bool) -> Vec<Effect> {
@@ -10182,6 +10185,16 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         Dialog::PasswordSaveFailed { detail: technical } => {
             (fl!("ui-vault-save-failed-title"), vec![detail(technical)])
         }
+        Dialog::PasswordForgetFailed { remaining } => {
+            let count: usize = *remaining;
+            (
+                fl!("ui-shared-sources-forget-failed-title"),
+                vec![text(fl!(
+                    "ui-shared-sources-forget-failed-body",
+                    count = count
+                ))],
+            )
+        }
         Dialog::ImportNothing { skipped, warnings } => (
             fl!("ui-import-file-title"),
             std::iter::once(fl!("ui-import-file-nothing"))
@@ -10229,6 +10242,7 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         Dialog::ExportFailed { .. }
         | Dialog::ImportFailed { .. }
         | Dialog::PasswordSaveFailed { .. }
+        | Dialog::PasswordForgetFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. } => Severity::Error,
         Dialog::StoreChanged { .. } | Dialog::ConfigRecovered { .. } => Severity::Warning,
@@ -14403,6 +14417,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::CitrixImportNothing { .. }
         | Dialog::CitrixImportDone(_)
         | Dialog::PasswordSaveFailed { .. }
+        | Dialog::PasswordForgetFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. }
         | Dialog::StoreChanged { .. }

@@ -72,7 +72,9 @@ impl App {
     /// Whether the files are worth looking at on a timer: a source is configured.
     #[must_use]
     pub fn watches_shared_sources(&self) -> bool {
-        !self.settings.shared_sources.is_empty() || !self.shared.is_empty()
+        !self.settings.shared_sources.is_empty()
+            || !self.shared.is_empty()
+            || self.shared_purge_pending()
     }
 
     /// A look at the shared files: a source whose file changed is read again, and the

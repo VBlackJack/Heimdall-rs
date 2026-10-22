@@ -3233,6 +3233,12 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// Remembered shared passwords could not all be deleted: they stay listed and the Forget
+    /// button tries again.
+    PasswordForgetFailed {
+        /// How many are left.
+        remaining: usize,
+    },
     /// A name for a tab.
     RenameTab {
         /// Tab.
@@ -5430,6 +5436,7 @@ impl App {
                 | Dialog::StoreChanged { .. }
                 | Dialog::ConfigRecovered { .. }
                 | Dialog::PasswordSaveFailed { .. }
+                | Dialog::PasswordForgetFailed { .. }
                 | Dialog::Shortcuts
                 // "Discard": the scheduled connection's dialog goes with what was changed.
                 | Dialog::ConfirmDiscardScheduled(_)

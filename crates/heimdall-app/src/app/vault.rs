@@ -273,6 +273,9 @@ pub async fn open_vault(
     })
 }
 
+/// What a test credential store holds, by entry name.
+pub type MemoryEntries = Arc<Mutex<HashMap<String, Zeroizing<Vec<u8>>>>>;
+
 /// Where saved passwords go while no master password is set.
 #[derive(Clone)]
 pub enum SystemCredentials {
@@ -281,7 +284,15 @@ pub enum SystemCredentials {
     /// The system's credential store, under this application's name.
     Keyring(SystemKeyring),
     /// Kept in this process only, lost on exit: for tests.
-    Memory(Arc<Mutex<HashMap<String, Zeroizing<Vec<u8>>>>>),
+    Memory(MemoryEntries),
+    /// As [`SystemCredentials::Memory`], with a switch that makes every deletion fail, as a
+    /// credential store that refuses can: for tests.
+    MemoryRefusingRemoval {
+        /// What is held.
+        entries: MemoryEntries,
+        /// While set, a deletion fails.
+        refusing: Arc<std::sync::atomic::AtomicBool>,
+    },
 }
 
 impl SystemCredentials {
@@ -304,6 +315,26 @@ impl SystemCredentials {
         Self::Memory(Arc::default())
     }
 
+    /// An empty store kept in this process whose deletions fail while the returned switch is
+    /// set: for tests of what happens when a credential cannot be deleted.
+    #[must_use]
+    pub fn memory_refusing_removal() -> (Self, Arc<std::sync::atomic::AtomicBool>) {
+        let refusing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let store = Self::MemoryRefusingRemoval {
+            entries: Arc::default(),
+            refusing: Arc::clone(&refusing),
+        };
+        (store, refusing)
+    }
+
+    /// The map a test store keeps its entries in.
+    fn held(&self) -> Option<&MemoryEntries> {
+        match self {
+            Self::Memory(entries) | Self::MemoryRefusingRemoval { entries, .. } => Some(entries),
+            Self::Unavailable | Self::Keyring(_) => None,
+        }
+    }
+
     fn available(&self) -> bool {
         !matches!(self, Self::Unavailable)
     }
@@ -312,11 +343,11 @@ impl SystemCredentials {
         match self {
             Self::Unavailable => Ok(None),
             Self::Keyring(keyring) => keyring.get(name).map_err(|error| error.to_string()),
-            Self::Memory(entries) => Ok(entries
-                .lock()
-                .map_err(|error| error.to_string())?
-                .get(name)
-                .cloned()),
+            Self::Memory(_) | Self::MemoryRefusingRemoval { .. } => Ok(self
+                .held()
+                .into_iter()
+                .filter_map(|entries| entries.lock().ok())
+                .find_map(|entries| entries.get(name).cloned())),
         }
     }
 
@@ -324,7 +355,7 @@ impl SystemCredentials {
         match self {
             Self::Unavailable => Err("no system credential store".to_owned()),
             Self::Keyring(keyring) => keyring.set(name, secret).map_err(|error| error.to_string()),
-            Self::Memory(entries) => {
+            Self::Memory(entries) | Self::MemoryRefusingRemoval { entries, .. } => {
                 entries
                     .lock()
                     .map_err(|error| error.to_string())?
@@ -348,6 +379,16 @@ impl SystemCredentials {
                     .remove(name);
                 Ok(())
             }
+            Self::MemoryRefusingRemoval { entries, refusing } => {
+                if refusing.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err("the credential store refused the deletion".to_owned());
+                }
+                entries
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .remove(name);
+                Ok(())
+            }
         }
     }
 }
@@ -358,6 +399,7 @@ impl std::fmt::Debug for SystemCredentials {
             Self::Unavailable => "SystemCredentials::Unavailable",
             Self::Keyring(_) => "SystemCredentials::Keyring",
             Self::Memory(_) => "SystemCredentials::Memory",
+            Self::MemoryRefusingRemoval { .. } => "SystemCredentials::MemoryRefusingRemoval",
         })
     }
 }

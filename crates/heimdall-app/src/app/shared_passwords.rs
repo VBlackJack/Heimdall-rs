@@ -47,6 +47,7 @@ use heimdall_ssh::Secret;
 use zeroize::Zeroizing;
 
 use super::App;
+use super::Dialog;
 use super::vault::{asked_endpoint, try_number};
 use crate::error::UiError;
 use crate::event::{Answer, QuestionKind};
@@ -58,6 +59,43 @@ struct PendingRemember {
     source: String,
     endpoint: Endpoint,
     password: Zeroizing<String>,
+    /// The source's revocation token when the user asked: a Forget, a removal of the source
+    /// or a reset since then makes it stale, and the password is never committed.
+    token: RevocationToken,
+}
+
+/// What the consent to remember a password was given under: the source's own count of
+/// revocations and the count of resets of every setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RevocationToken {
+    source: u64,
+    epoch: u64,
+}
+
+/// How often the consent to remember was withdrawn, so that a password still waiting for its
+/// server cannot be kept after the user said to forget.
+#[derive(Debug, Default)]
+struct Revocations {
+    sources: HashMap<String, u64>,
+    epoch: u64,
+}
+
+impl Revocations {
+    fn token(&self, source: &str) -> RevocationToken {
+        RevocationToken {
+            source: self.sources.get(source).copied().unwrap_or(0),
+            epoch: self.epoch,
+        }
+    }
+
+    fn revoke(&mut self, source: &str) {
+        let count = self.sources.entry(source.to_owned()).or_insert(0);
+        *count = count.wrapping_add(1);
+    }
+
+    fn revoke_all(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+    }
 }
 
 /// A remembered password given in an attempt, forgotten if the server refuses it.
@@ -87,6 +125,8 @@ impl std::fmt::Debug for TabPasswords {
 /// What the remembered passwords amount to, for the Settings page and the clean-up of the
 /// sources taken out.
 #[derive(Debug, Default)]
+// Four independent flags, each a fact about the store, not states of one machine.
+#[allow(clippy::struct_excessive_bools)]
 pub(super) struct Remembered {
     /// The source each shared SSH, SFTP or VNC tab's profile was opened from, by the
     /// identifier of the tab's profile: where its remembered password is looked up and kept.
@@ -100,6 +140,14 @@ pub(super) struct Remembered {
     /// Whether the store could be read when last looked at: the counts follow its opening
     /// and closing.
     readable: bool,
+    /// Consent withdrawn, per source and for every source at a reset.
+    revocations: Revocations,
+    /// A reset to defaults forgets every remembered password; waits for the store to be
+    /// readable, and for every deletion to succeed.
+    purge_pending: bool,
+    /// The user was told that some remembered passwords could not be deleted, until a pass
+    /// deletes them all: a retry on the timer does not ask again.
+    incomplete_reported: bool,
 }
 
 impl App {
@@ -178,6 +226,7 @@ impl App {
             return;
         };
         let attempt = tab.attempt;
+        let token = self.vault.shared.revocations.token(&source);
         let password = Zeroizing::new(secret.expose().to_owned());
         if let Some(tab) = self.tab_mut(tab_id) {
             tab.shared_password.pending = Some(PendingRemember {
@@ -185,6 +234,7 @@ impl App {
                 source,
                 endpoint,
                 password,
+                token,
             });
         }
     }
@@ -240,6 +290,11 @@ impl App {
         else {
             return;
         };
+        // Forgotten, or the source taken out, or every setting reset, while the server was
+        // still answering: the consent is gone with it.
+        if pending.token != self.vault.shared.revocations.token(&pending.source) {
+            return;
+        }
         match self.remember_shared_password(&pending.source, &pending.endpoint, &pending.password) {
             Ok(()) => self.refresh_shared_password_counts(),
             Err(detail) => self.password_save_failed(&detail),
@@ -275,7 +330,7 @@ impl App {
     }
 
     /// Keeps `password` for `endpoint` in `source`, replacing any; the oldest of a source
-    /// that holds [`MAX_PER_SOURCE`] goes.
+    /// that holds [`MAX_PER_SOURCE`] goes, and if one cannot be deleted nothing is kept.
     fn remember_shared_password(
         &mut self,
         source: &str,
@@ -284,11 +339,27 @@ impl App {
     ) -> Result<(), String> {
         let digest = keys::digest(endpoint);
         let name = keys::entry_name(source, &digest);
-        let mut index = self.shared_index(source);
+        let previous = self.shared_index(source);
+        let mut index = previous.clone();
         index.retain(|known| *known != digest);
         let mut evicted = Vec::new();
         while index.len() >= MAX_PER_SOURCE {
             evicted.push(index.remove(0));
+        }
+        // The room is made first: an entry whose deletion failed stays listed, so that the
+        // source's Forget still reaches it and it is never kept unseen.
+        let mut stuck = Vec::new();
+        for old in &evicted {
+            if let Err(error) = self.vault.write(&keys::entry_name(source, old), None) {
+                log::warn!("a remembered shared password could not be forgotten: {error}");
+                stuck.push(old.clone());
+            }
+        }
+        if !stuck.is_empty() {
+            let mut listed = previous;
+            listed.retain(|known| !evicted.contains(known) || stuck.contains(known));
+            self.save_index(source, &listed);
+            return Err("an older remembered password could not be deleted".to_owned());
         }
         index.push(digest);
         let saved = SavedPassword {
@@ -301,11 +372,10 @@ impl App {
             .and_then(|()| self.list_source(source, true));
         if let Err(detail) = listed {
             // Not listed is not kept: a password the source's Forget could not reach.
-            let _ = self.vault.write(&name, None);
+            if let Err(error) = self.vault.write(&name, None) {
+                log::warn!("a remembered shared password could not be forgotten: {error}");
+            }
             return Err(detail);
-        }
-        for old in evicted {
-            let _ = self.vault.write(&keys::entry_name(source, &old), None);
         }
         Ok(())
     }
@@ -329,23 +399,79 @@ impl App {
     }
 
     /// Forgets every password remembered for `source`, as the Forget button of the Settings
-    /// does. A locked vault is asked to be unlocked first.
+    /// does, and withdraws the consent of those still waiting for their server. A locked
+    /// vault is asked to be unlocked first; a deletion that fails leaves its entry listed, is
+    /// said, and is tried again by the next Forget.
     pub(super) fn forget_shared_passwords(&mut self, source: &str) {
+        self.revoke_source_consent(source);
         if !self.vault.usable() {
             self.show_vault_if_locked();
             return;
         }
-        self.forget_source_entries(source);
+        let remaining = self.forget_source_entries(source);
         self.refresh_shared_password_counts();
+        self.report_incomplete_forget(remaining, true);
     }
 
-    fn forget_source_entries(&mut self, source: &str) {
+    /// Withdraws the consent to remember given for `source`: what waits for a server's answer
+    /// is dropped, and never kept when the server answers.
+    fn revoke_source_consent(&mut self, source: &str) {
+        self.vault.shared.revocations.revoke(source);
+        for tab in &mut self.tabs {
+            if tab
+                .shared_password
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.source == source)
+            {
+                tab.shared_password.pending = None;
+            }
+        }
+    }
+
+    /// Deletes every entry of `source`; those whose deletion failed stay in its index, and
+    /// their number is returned.
+    fn forget_source_entries(&mut self, source: &str) -> usize {
+        let mut kept = Vec::new();
         for digest in self.shared_index(source) {
             if let Err(error) = self.vault.write(&keys::entry_name(source, &digest), None) {
                 log::warn!("a remembered shared password could not be forgotten: {error}");
+                kept.push(digest);
             }
         }
-        self.save_index(source, &[]);
+        self.save_index(source, &kept);
+        kept.len()
+    }
+
+    /// Says that `remaining` remembered passwords could not be deleted and will be tried
+    /// again; a pass that deleted everything re-arms the notice. A retry on the timer says it
+    /// once only, the user's own Forget always.
+    fn report_incomplete_forget(&mut self, remaining: usize, asked: bool) {
+        if remaining == 0 {
+            self.vault.shared.incomplete_reported = false;
+            return;
+        }
+        if (asked || !self.vault.shared.incomplete_reported) && self.dialog.is_none() {
+            self.dialog = Some(Dialog::PasswordForgetFailed { remaining });
+        }
+        self.vault.shared.incomplete_reported = true;
+    }
+
+    /// A reset to defaults: every remembered shared password goes, and none waiting for its
+    /// server is kept. A locked vault defers the deletion until it is opened.
+    pub(super) fn purge_shared_passwords(&mut self) {
+        self.vault.shared.revocations.revoke_all();
+        for tab in &mut self.tabs {
+            tab.shared_password.pending = None;
+            tab.shared_password.used = None;
+        }
+        self.vault.shared.purge_pending = true;
+        self.sync_shared_passwords();
+    }
+
+    /// Whether a reset's deletion of the remembered passwords still waits.
+    pub(super) fn shared_purge_pending(&self) -> bool {
+        self.vault.shared.purge_pending
     }
 
     /// Writes `source`'s index, or removes it (and the source from the list) when empty.
@@ -452,6 +578,14 @@ impl App {
             .map(|source| source.id.clone())
             .collect();
         let before = self.vault.shared.sources_seen.replace(listed.clone());
+        // A source taken out withdraws its consent at once, whether or not the store can be
+        // read yet.
+        for gone in before.iter().flatten().filter(|id| !listed.contains(id)) {
+            self.revoke_source_consent(gone);
+        }
+        if self.vault.shared.purge_pending && self.vault.usable() {
+            self.purge_listed_passwords();
+        }
         match &before {
             None if listed.is_empty() => return,
             Some(seen) if *seen == listed && !self.vault.shared.cleanup_pending => return,
@@ -461,12 +595,33 @@ impl App {
             self.vault.shared.cleanup_pending = true;
             return;
         }
-        self.vault.shared.cleanup_pending = false;
+        let mut remaining = 0;
         for source in self.sources_with_passwords() {
             if !listed.contains(&source) {
-                self.forget_source_entries(&source);
+                remaining += self.forget_source_entries(&source);
             }
         }
+        // Kept listed, they are tried again at the next look.
+        self.vault.shared.cleanup_pending = remaining > 0;
+        self.report_incomplete_forget(remaining, false);
+        self.refresh_shared_password_counts();
+    }
+
+    /// Deletes the passwords of every source, as a reset to defaults asks; what could not be
+    /// deleted keeps the purge waiting for the next look.
+    fn purge_listed_passwords(&mut self) {
+        let mut sources = self.sources_with_passwords();
+        for source in &self.settings.shared_sources {
+            if !sources.contains(&source.id) {
+                sources.push(source.id.clone());
+            }
+        }
+        let mut remaining = 0;
+        for source in sources {
+            remaining += self.forget_source_entries(&source);
+        }
+        self.vault.shared.purge_pending = remaining > 0;
+        self.report_incomplete_forget(remaining, false);
         self.refresh_shared_password_counts();
     }
 }
