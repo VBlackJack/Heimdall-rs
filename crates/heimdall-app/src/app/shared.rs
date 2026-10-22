@@ -58,6 +58,7 @@ impl App {
         self.shared.load(&sources, &variables);
         self.sync_shared_gateways();
         self.forget_removed_approvals();
+        self.sync_shared_passwords();
     }
 
     /// Hands the store the gateways the shared sessions go through, so that a shared session
@@ -82,6 +83,7 @@ impl App {
         self.shared.refresh(&sources, &variables, now);
         self.sync_shared_gateways();
         self.forget_removed_approvals();
+        self.sync_shared_passwords();
     }
 
     /// Forgets the approved commands of the sessions of sources the settings no longer list,
@@ -192,7 +194,15 @@ impl App {
             .map(|source| crate::shared_sessions::expand(&source.path))
             .unwrap_or_default();
         let origin = SharedOrigin::of(&session, source_path);
+        let source_id = session.source_id.clone();
         let (profile, purpose) = opened(session);
+        // The password asked for an SSH, SFTP or VNC session may be remembered, under what it
+        // opens and never under this session's identifier. RDP and Telnet ask nothing here.
+        match &profile {
+            TabProfile::Ssh(ssh) => self.note_password_origin(ssh.id.clone(), &source_id),
+            TabProfile::Vnc(vnc) => self.note_password_origin(vnc.id.clone(), &source_id),
+            _ => {}
+        }
         // Its commands, if the file asks for any, are looked up against what the user
         // approved when the shell opens, never taken as approved.
         if let TabProfile::Ssh(ssh) = &profile

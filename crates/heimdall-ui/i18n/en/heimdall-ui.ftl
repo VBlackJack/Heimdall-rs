@@ -6007,3 +6007,11 @@ ui-share-listing-index-of = Index of
 ui-share-listing-name = Name
 ui-share-listing-size = Size (bytes)
 ui-profile-from-folder = Taken from folder "{ $folder }".
+
+ui-prompt-remember-password = Remember this password on this computer
+ui-shared-sources-forget-passwords = Forget remembered passwords
+ui-shared-sources-passwords =
+    { $count ->
+        [one] { $count } password remembered on this computer.
+       *[other] { $count } passwords remembered on this computer.
+    }

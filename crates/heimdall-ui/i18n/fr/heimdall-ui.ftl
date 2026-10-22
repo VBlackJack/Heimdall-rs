@@ -6063,3 +6063,11 @@ ui-share-listing-index-of = Index de
 ui-share-listing-name = Nom
 ui-share-listing-size = Taille (octets)
 ui-profile-from-folder = Repris du dossier "{ $folder }".
+
+ui-prompt-remember-password = Mémoriser ce mot de passe sur cet ordinateur
+ui-shared-sources-forget-passwords = Oublier les mots de passe mémorisés
+ui-shared-sources-passwords =
+    { $count ->
+        [one] { $count } mot de passe mémorisé sur cet ordinateur.
+       *[other] { $count } mots de passe mémorisés sur cet ordinateur.
+    }

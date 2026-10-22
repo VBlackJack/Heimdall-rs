@@ -46,6 +46,7 @@ pub mod profile;
 pub mod scheduled;
 pub mod session_snapshot;
 pub mod settings;
+pub mod shared_passwords;
 pub mod shared_sessions;
 pub mod split_layouts;
 pub mod store;

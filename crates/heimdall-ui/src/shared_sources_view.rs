@@ -56,6 +56,8 @@ pub enum SourcesEdit {
     Enabled(usize, bool),
     /// Show the import report of the source at this place.
     Report(usize),
+    /// Forget the passwords remembered on this computer for the source at this place.
+    ForgetPasswords(usize),
 }
 
 /// The sources as edited, and what they last applied.
@@ -126,7 +128,7 @@ impl SharedSourcesEditor {
             SourcesEdit::Name(at, name) => self.rows.get_mut(at)?.name = name,
             SourcesEdit::Path(at, path) => self.rows.get_mut(at)?.path = path,
             SourcesEdit::Enabled(at, on) => self.rows.get_mut(at)?.enabled = on,
-            SourcesEdit::Report(_) => return None,
+            SourcesEdit::Report(_) | SourcesEdit::ForgetPasswords(_) => return None,
         }
         self.checked()
     }
@@ -202,6 +204,15 @@ impl SharedSourcesEditor {
                         .on_press(send(SourcesEdit::Report(at))),
                 );
             }
+            let remembered = app.shared_password_count(&source.id);
+            if remembered > 0 {
+                actions = actions.push(
+                    button(text(fl!("ui-shared-sources-forget-passwords")))
+                        .padding(crate::tokens::BUTTON_PADDING)
+                        .style(styles::secondary)
+                        .on_press(send(SourcesEdit::ForgetPasswords(at))),
+                );
+            }
             actions = actions.push(
                 button(text(fl!("ui-shared-sources-remove")))
                     .padding(crate::tokens::BUTTON_PADDING)
@@ -215,6 +226,13 @@ impl SharedSourcesEditor {
                         .size(font_size::CAPTION)
                         .style(text::secondary),
                 );
+                if remembered > 0 {
+                    content = content.push(
+                        text(fl!("ui-shared-sources-passwords", count = remembered))
+                            .size(font_size::CAPTION)
+                            .style(text::secondary),
+                    );
+                }
                 for (note, warning) in source_notes(state) {
                     content = content.push(text(note).size(font_size::CAPTION).style(if warning {
                         text::warning

@@ -9116,6 +9116,22 @@ impl Shell {
                 }
             }
         }
+        // Offered for the password of a shared session only, and never ticked by default: the
+        // C# "Remember this password on this computer".
+        if let Some(remember) = prompt.remember {
+            form = form.push(
+                checkbox(remember)
+                    .style(styles::checkbox)
+                    .label(fl!("ui-prompt-remember-password"))
+                    .on_toggle(move |remember| {
+                        Message::App(AppMessage::RememberPassword {
+                            tab: tab.id,
+                            question: id,
+                            remember,
+                        })
+                    }),
+            );
+        }
         form.push(
             row![
                 button(text(fl!("ui-prompt-cancel-button")))

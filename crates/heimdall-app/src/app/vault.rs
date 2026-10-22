@@ -378,6 +378,8 @@ pub(super) struct VaultState {
     lock_screen: Lockout,
     /// The last vault job's ticket.
     last_ticket: u64,
+    /// The passwords of shared sessions remembered in it, and what is known of them.
+    pub(super) shared: super::shared_passwords::Remembered,
 }
 
 impl VaultState {
@@ -395,6 +397,7 @@ impl VaultState {
             refused_passphrases: HashSet::new(),
             lock_screen: Lockout::default(),
             last_ticket: 0,
+            shared: super::shared_passwords::Remembered::default(),
         }
     }
 
@@ -455,7 +458,7 @@ impl VaultState {
     }
 
     /// Whether passwords can be read and saved now.
-    fn usable(&self) -> bool {
+    pub(super) fn usable(&self) -> bool {
         if self.exists() {
             self.open.is_some()
         } else {
@@ -477,6 +480,12 @@ impl VaultState {
             .inspect_err(|error| log::warn!("a saved password could not be read: {error}"))
             .ok()
             .flatten()
+    }
+
+    /// The entry `name` of the system's store, whether or not a vault exists: for what is
+    /// moved into a vault being created.
+    pub(super) fn read_system(&self, name: &str) -> Option<Zeroizing<Vec<u8>>> {
+        self.system.get(name).ok().flatten()
     }
 
     /// Writes entry `name`, or removes it for `None`.
@@ -705,7 +714,10 @@ pub fn master_password_problem(password: &str) -> Option<VaultProblem> {
 /// The profile and server a question in a tab is about, when it is the tab's own server
 /// asking for its account's password; `None` for anything else (a gateway, a passphrase, a
 /// keyboard-interactive round).
-fn asked_endpoint(profile: &TabProfile, kind: &QuestionKind) -> Option<(ProfileId, Endpoint)> {
+pub(super) fn asked_endpoint(
+    profile: &TabProfile,
+    kind: &QuestionKind,
+) -> Option<(ProfileId, Endpoint)> {
     let (id, protocol, host, port, username) = match (profile, kind) {
         (TabProfile::Ssh(profile), QuestionKind::Password(question)) => (
             &profile.id,
@@ -755,7 +767,7 @@ fn asked_endpoint(profile: &TabProfile, kind: &QuestionKind) -> Option<(ProfileI
 }
 
 /// Which try of the attempt a question is: only passwords count them.
-fn try_number(kind: &QuestionKind) -> u32 {
+pub(super) fn try_number(kind: &QuestionKind) -> u32 {
     match kind {
         QuestionKind::Password(question) => question.attempt,
         _ => 1,
@@ -1050,7 +1062,7 @@ impl App {
     /// passphrase, a Citrix profile's cache launch line. The system's store cannot be listed.
     fn password_entries(&self) -> Vec<String> {
         let store = &self.store;
-        store
+        let mut names: Vec<String> = store
             .ssh_profiles()
             .iter()
             .map(|profile| &profile.id)
@@ -1065,7 +1077,9 @@ impl App {
                     .iter()
                     .map(|profile| citrix_launch_entry(&profile.id)),
             )
-            .collect()
+            .collect();
+        names.extend(self.shared_password_entries());
+        names
     }
 
     /// Closes the vault: its saved passwords leave memory, and nothing is answered from it.
@@ -1119,6 +1133,9 @@ impl App {
         if let QuestionKind::Passphrase(question) = kind {
             let owner = self.key_owner(tab_id, &question.key_path)?;
             return self.saved_passphrase(&owner, &question.key_path, question.attempt);
+        }
+        if let Some(answer) = self.shared_stored_answer(tab_id, kind) {
+            return Some(answer);
         }
         let tab = self.tab(tab_id)?;
         let (profile, endpoint) = usable_endpoint(tab, kind).or_else(|| {

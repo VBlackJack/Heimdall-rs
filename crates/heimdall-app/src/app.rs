@@ -142,6 +142,7 @@ mod sessions_import;
 mod settings_transfer;
 mod share;
 mod shared;
+mod shared_passwords;
 mod shell_directory;
 pub mod split;
 mod status;
@@ -477,6 +478,18 @@ pub enum Message {
     SharedTick,
     /// Open a session of a shared file from the tree.
     ConnectShared(ProfileId),
+    /// The "Remember this password on this computer" box of a shared session's password
+    /// question ticked or cleared.
+    RememberPassword {
+        /// Tab.
+        tab: TabId,
+        /// Question.
+        question: QuestionId,
+        /// Whether to remember the password once the server accepted it.
+        remember: bool,
+    },
+    /// Forget every password remembered for the shared source with this identifier.
+    ForgetSharedPasswords(String),
     /// Time to look at the scheduled connections.
     ScheduledTick,
     /// The look for a newer release: its ticks, its answer, "Check now" and the banner.
@@ -1043,6 +1056,17 @@ impl fmt::Debug for Message {
             Self::ReachabilityTick => f.write_str("ReachabilityTick"),
             Self::SharedTick => f.write_str("SharedTick"),
             Self::ConnectShared(id) => write!(f, "ConnectShared({id})"),
+            Self::RememberPassword {
+                tab,
+                question,
+                remember,
+            } => write!(
+                f,
+                "RememberPassword({}, {}, {remember})",
+                tab.value(),
+                question.value()
+            ),
+            Self::ForgetSharedPasswords(source) => write!(f, "ForgetSharedPasswords({source})"),
             Self::ScheduledTick => f.write_str("ScheduledTick"),
             Self::Update(message) => write!(f, "Update({message:?})"),
             Self::HideSessionLoadNotice => f.write_str("HideSessionLoadNotice"),
@@ -2198,6 +2222,10 @@ pub struct Prompt {
     pub question: QuestionId,
     /// What is asked.
     pub kind: QuestionKind,
+    /// The "Remember this password on this computer" box: `None` when the question does not
+    /// offer it, else whether it is ticked. Offered for the password of a shared SSH, SFTP or
+    /// VNC session, never ticked by default.
+    pub remember: Option<bool>,
 }
 
 /// How writing the exported sessions went.
@@ -2298,6 +2326,9 @@ pub struct Tab {
     /// The saved passwords given in an attempt, each once: the server's, and a gateway's on
     /// the way.
     auto_answered: Vec<(AttemptId, ProfileId)>,
+    /// The password of a shared session this tab was asked to remember, and the remembered
+    /// one it used.
+    shared_password: shared_passwords::TabPasswords,
     /// How the tab opens again, for Reconnect.
     reopen: reconnect::Reopen,
     /// For a tool's tab, the name of the document it holds whose changes are not saved,
@@ -2543,6 +2574,7 @@ impl Tab {
             selecting: false,
             sync_generation: 0,
             auto_answered: Vec::new(),
+            shared_password: shared_passwords::TabPasswords::default(),
         }
     }
 
@@ -3882,6 +3914,18 @@ impl App {
                 Vec::new()
             }
             Message::ConnectShared(id) => self.connect_shared(&id),
+            Message::RememberPassword {
+                tab,
+                question,
+                remember,
+            } => {
+                self.set_remember_password(tab, question, remember);
+                Vec::new()
+            }
+            Message::ForgetSharedPasswords(source) => {
+                self.forget_shared_passwords(&source);
+                Vec::new()
+            }
             Message::ScheduledTick => {
                 self.scheduled_tick_at(crate::time_zone::unix_now(), &crate::time_zone::SystemClock)
             }
@@ -4362,6 +4406,7 @@ impl App {
 
     /// The user answered `question`; `None` declines it.
     fn answer(&mut self, tab: TabId, question: QuestionId, answer: Option<Answer>) -> Vec<Effect> {
+        self.note_remember_request(tab, question, answer.as_ref());
         if let Some(found) = self.tab_mut(tab) {
             found.prompts.retain(|prompt| prompt.question != question);
         }
@@ -4409,8 +4454,9 @@ impl App {
         {
             return vec![request];
         }
-        if matches!(event, ConnectionEvent::Failed(_)) {
+        if let ConnectionEvent::Failed(error) = &event {
             self.credentials_failed(tab_id);
+            self.shared_password_failed(tab_id, error);
         }
         if let ConnectionEvent::Output(bytes) = &event {
             self.record(tab_id, bytes);
@@ -4426,10 +4472,20 @@ impl App {
             _ => None,
         };
         let shell_up = matches!(event, ConnectionEvent::Connected { .. });
+        // The server signed in: a password the user asked to remember is kept now, not before.
+        let signed_in = matches!(
+            event,
+            ConnectionEvent::Connected { .. }
+                | ConnectionEvent::FilesReady { .. }
+                | ConnectionEvent::VncReady { .. }
+        );
         if matches!(event, ConnectionEvent::FilesReady { .. }) {
             self.docking_sftp.retain(|docking| *docking != tab_id);
         }
         let mut effects = self.apply_connection_event(tab_id, event);
+        if signed_in {
+            self.remember_signed_in_password(tab_id);
+        }
         if let Some(tab) = self.tab_mut(tab_id) {
             tab.time_session(was_connected, Instant::now());
         }
@@ -4470,6 +4526,9 @@ impl App {
     #[expect(clippy::too_many_lines, reason = "one arm per connection event")]
     fn apply_session_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
         let active = self.in_sight(tab_id);
+        let remember = matches!(&event, ConnectionEvent::Question { kind, .. }
+            if self.offers_remember(tab_id, kind))
+        .then_some(false);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -4479,6 +4538,7 @@ impl App {
                 tab.prompts.push_back(Prompt {
                     question,
                     kind: safe_question(kind),
+                    remember,
                 });
                 Vec::new()
             }

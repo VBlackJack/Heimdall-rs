@@ -6052,3 +6052,11 @@ ui-share-listing-index-of = Índice de
 ui-share-listing-name = Nombre
 ui-share-listing-size = Tamaño (bytes)
 ui-profile-from-folder = Tomado de la carpeta "{ $folder }".
+
+ui-prompt-remember-password = Recordar esta contraseña en este equipo
+ui-shared-sources-forget-passwords = Olvidar las contraseñas recordadas
+ui-shared-sources-passwords =
+    { $count ->
+        [one] { $count } contraseña recordada en este equipo.
+       *[other] { $count } contraseñas recordadas en este equipo.
+    }
