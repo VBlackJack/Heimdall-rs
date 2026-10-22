@@ -1730,3 +1730,86 @@ fn opening_a_shared_vnc_session_keeps_the_safe_defaults_and_saves_nothing() {
     assert!(!is_shared(profile.id.as_str()));
     assert!(app.profiles().is_empty());
 }
+
+/// Four RDP sessions, one per RD Gateway setting (C# fixture `MobaXtermSharedSessionsFixture`):
+/// the server at field 19 and the packed settings at field 30 (`flags,mode,server,login,?,auth,`).
+fn rd_gateway_file() -> String {
+    let session = |name: &str, server: &str, settings: &str| {
+        let mut fields = vec![""; 31];
+        fields[0] = "pc.example.com";
+        fields[19] = server;
+        fields[30] = settings;
+        format!("{name}= #91#4%{}\r\n", fields.join("%"))
+    };
+    format!(
+        "[Bookmarks]\r\n{}{}{}{}",
+        session("never", "", "0,0,,,,0,"),
+        session("detect", "", "0,1,,,,0,"),
+        session("always", "rdg.example.com", "0,2,rdg.example.com,svc,,2,"),
+        session("card", "rdg.example.com", "0,2,rdg.example.com,,,3,"),
+    )
+}
+
+#[test]
+fn a_shared_rdp_session_keeps_its_rd_gateway_and_a_smart_card_one_is_skipped_with_a_reason() {
+    use heimdall_app::shared_report::SkipReason;
+    let dir = tempfile::tempdir().expect("dir");
+    let (shared, _) = loaded(dir.path(), &rd_gateway_file());
+    let state = &shared.sources()[0];
+    assert_eq!(state.sessions, 3, "{state:?}");
+    assert_eq!(state.refused, 1, "{state:?}");
+    let gateway_of = |name: &str| {
+        let session = shared
+            .sessions_of("team")
+            .iter()
+            .find(|session| session.name() == name)
+            .unwrap_or_else(|| panic!("{name} not loaded"));
+        let SharedTarget::Rdp(rdp) = &session.target else {
+            panic!("an RDP session");
+        };
+        rdp.extras.rd_gateway.clone()
+    };
+    assert_eq!(gateway_of("never"), None);
+    assert_eq!(gateway_of("detect"), None);
+    assert_eq!(gateway_of("always").as_deref(), Some("rdg.example.com"));
+    let report = shared.report_of("team").expect("report");
+    assert!(
+        report.entries.iter().any(|entry| entry.session == "card"
+            && entry.reason == Some(SkipReason::RdGatewayNotSupported)
+            && entry.detail == "rdg.example.com"),
+        "{report:?}"
+    );
+    assert!(
+        shared.sessions().all(|session| session.name() != "card"),
+        "never loaded as a direct connection"
+    );
+}
+
+#[test]
+fn the_offline_copy_keeps_the_rd_gateway_of_a_session() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    std::fs::write(&file, rd_gateway_file()).expect("write");
+    let sources = vec![source("team", &file)];
+    let mut shared = cached(dir.path());
+    shared.load(&sources, &Variables::default());
+    std::fs::remove_file(&file).expect("remove");
+    let mut restarted = cached(dir.path());
+    restarted.load(&sources, &Variables::default());
+    assert!(restarted.sources()[0].offline.is_some());
+    let gateways: Vec<Option<String>> = restarted
+        .sessions_of("team")
+        .iter()
+        .map(|session| {
+            let SharedTarget::Rdp(rdp) = &session.target else {
+                panic!("an RDP session");
+            };
+            rdp.extras.rd_gateway.clone()
+        })
+        .collect();
+    assert_eq!(
+        gateways,
+        [None, None, Some("rdg.example.com".to_owned())],
+        "the copy goes through the gateway too"
+    );
+}
