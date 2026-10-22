@@ -344,9 +344,15 @@ fn pseudonym(
         .clone()
 }
 
+/// Lines dropped after the cut besides the partial first one. A rule looks back at most this
+/// many lines (the "command not found" window after a password prompt), so a line whose prompt
+/// was cut away would otherwise be kept unmasked.
+const CUT_CONTEXT_LINES: usize = 4;
+
 /// The last [`MAX_INPUT_BYTES`] of the text, starting on a line: a cut inside a UTF-8 sequence
-/// moves forward to the next character, and the partial first line is dropped, as the C#
-/// terminal bridge does, so no fragment of a secret whose start was cut away is kept.
+/// moves forward to the next character, the partial first line is dropped, as the C# terminal
+/// bridge does, and so are the next [`CUT_CONTEXT_LINES`] lines, whose masking depends on lines
+/// that are gone (`Password:` cut away, its echoed answer on the line after).
 fn cap_input(text: &str, max_bytes: usize) -> (&str, bool) {
     if text.len() <= max_bytes {
         return (text, false);
@@ -356,11 +362,19 @@ fn cap_input(text: &str, max_bytes: usize) -> (&str, bool) {
         start += 1;
     }
     if !text[..start].ends_with('\n') {
-        start = text[start..]
-            .find('\n')
-            .map_or(text.len(), |offset| start + offset + 1);
+        start = after_next_newline(text, start);
+    }
+    for _ in 0..CUT_CONTEXT_LINES {
+        start = after_next_newline(text, start);
     }
     (&text[start..], true)
+}
+
+/// The offset just after the next line feed at or after `from`, or the end of the text.
+fn after_next_newline(text: &str, from: usize) -> usize {
+    text[from..]
+        .find('\n')
+        .map_or(text.len(), |offset| from + offset + 1)
 }
 
 /// Masks the secrets of the session text.
@@ -389,6 +403,8 @@ fn redact_with_limits(
         }
         let budget = Budget::new(rule.id, rule_budget);
         current = (rule.apply)(&current, &mut run, &budget)?;
+        // A rule that used up its time on its last step must not be accepted either.
+        budget.check()?;
     }
     Ok(Redacted {
         text: current,

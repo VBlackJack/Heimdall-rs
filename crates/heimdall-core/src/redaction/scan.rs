@@ -259,22 +259,35 @@ pub(super) fn split_lines(text: &str) -> Vec<Line> {
     lines
 }
 
-/// Applies edits given in ascending order. An edit that overlaps the previous one is merged
-/// into it rather than dropped, so a span is never left unmasked by a bookkeeping slip.
+/// Applies edits. Edits that overlap are merged into one that covers their union and keeps the
+/// first one's replacement (the C# throws on overlapping edits), so no part of a masked span is
+/// ever left in the text, whatever order the rules produced the edits in.
 pub(super) fn apply_edits(text: &str, edits: &[Edit]) -> String {
     if edits.is_empty() {
         return text.to_owned();
     }
+    let mut ordered: Vec<&Edit> = edits.iter().collect();
+    ordered.sort_by_key(|edit| (edit.start, edit.end));
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
-    for edit in edits {
-        if edit.end <= copied {
-            continue;
+    let mut current: Option<(usize, usize, &str)> = None;
+    for edit in ordered {
+        match &mut current {
+            Some((_, end, _)) if edit.start < *end => *end = (*end).max(edit.end),
+            _ => {
+                if let Some((start, end, replacement)) = current.take() {
+                    out.push_str(&text[copied..start]);
+                    out.push_str(replacement);
+                    copied = end;
+                }
+                current = Some((edit.start, edit.end, edit.replacement.as_str()));
+            }
         }
-        let start = edit.start.max(copied);
+    }
+    if let Some((start, end, replacement)) = current {
         out.push_str(&text[copied..start]);
-        out.push_str(&edit.replacement);
-        copied = edit.end;
+        out.push_str(replacement);
+        copied = end;
     }
     out.push_str(&text[copied..]);
     out

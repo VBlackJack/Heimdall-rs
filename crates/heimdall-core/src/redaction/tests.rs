@@ -846,20 +846,40 @@ fn cap_never_cuts_inside_a_utf8_sequence_and_starts_on_a_line() {
 }
 
 #[test]
-fn cap_drops_the_partial_first_line_so_no_secret_fragment_survives() {
-    let text = "aaaaaaaaaaaaaaaaaaaa\npassword=hunter2\n";
+fn cap_drops_the_partial_first_line_and_the_context_lines_after_it() {
+    let tail = "l1\nl2\nl3\nl4\nl5\npassword=hunter2\n";
+    let text = format!("{}\n{tail}", "a".repeat(20));
 
-    let (capped, truncated) = cap_input(text, 25);
+    // The cut falls inside the first line: it goes, and so do the four lines after it.
+    let (capped, truncated) = cap_input(&text, tail.len() + 5);
 
     assert!(truncated);
-    assert_eq!(capped, "password=hunter2\n");
+    assert_eq!(capped, "l5\npassword=hunter2\n");
+}
+
+#[test]
+fn cap_does_not_keep_the_answer_of_a_prompt_that_was_cut_away() {
+    let text = "Password:\nhunter2\nl1\nl2\nl3\nl4\nl5\n";
+    // Cut exactly after "Password:\n": the retained text starts with the echoed answer.
+    let max_bytes = text.len() - "Password:\n".len();
+
+    let result = redact_with_limits(
+        text,
+        RedactionOptions::default(),
+        max_bytes,
+        RULE_TIME_BUDGET,
+    )
+    .unwrap();
+
+    assert!(result.truncated);
+    assert!(!result.text.contains("hunter2"), "{:?}", result.text);
 }
 
 #[test]
 fn redact_keeps_the_last_four_mebibytes_cut_at_a_character_boundary() {
     // Two-byte characters: an odd byte offset falls inside one.
     let filler = "\u{E9}".repeat(MAX_INPUT_BYTES / 2 + 10);
-    let text = format!("{filler}\npassword=hunter2\n");
+    let text = format!("{filler}\nl1\nl2\nl3\nl4\npassword=hunter2\n");
     assert!(text.len() > MAX_INPUT_BYTES);
 
     let result = redact(&text, RedactionOptions::default()).unwrap();
@@ -890,12 +910,29 @@ fn a_rule_out_of_time_refuses_and_returns_no_text() {
         Duration::ZERO,
     );
 
+    // The first rule already has no time: nothing is returned, not even a partial result.
     assert_eq!(
         result,
         Err(RedactionError::Timeout {
-            rule: "authorization-header"
+            rule: "private-key-block"
         })
     );
+}
+
+#[test]
+fn a_rule_in_the_middle_of_the_catalogue_out_of_time_fails_closed() {
+    let budget = Budget::new("jwt", Duration::ZERO);
+    let mut run = Run::new();
+
+    let result = maskers::mask_groups(
+        "x eyJhbGciOiJI.eyJzdWIiOiIx.c2lnbmF0dXJl y",
+        &[&patterns::JWT],
+        "jwt",
+        &mut run,
+        &budget,
+    );
+
+    assert_eq!(result, Err(RedactionError::Timeout { rule: "jwt" }));
 }
 
 #[test]
@@ -925,6 +962,51 @@ fn a_timeout_in_a_pseudonym_rule_is_fail_closed_too() {
     let result = maskers::pseudonymize_hosts("bob@hostA", "host-name", &mut run, &budget);
 
     assert_eq!(result, Err(RedactionError::Timeout { rule: "host-name" }));
+}
+
+#[test]
+fn a_rule_that_finds_nothing_but_ran_out_of_time_is_refused() {
+    // Nothing for any rule to scan: only the check after each rule can refuse.
+    let result = redact_with_limits(
+        "hello",
+        RedactionOptions::default(),
+        MAX_INPUT_BYTES,
+        Duration::ZERO,
+    );
+
+    assert!(matches!(result, Err(RedactionError::Timeout { .. })));
+}
+
+#[test]
+fn overlapping_edits_are_merged_so_no_masked_text_survives() {
+    // A second edit that starts before the end of the first, and before its start.
+    let edits = [
+        scan::Edit {
+            start: 13,
+            end: 66,
+            replacement: "[masked:a]".to_owned(),
+        },
+        scan::Edit {
+            start: 0,
+            end: 40,
+            replacement: "[masked:b]".to_owned(),
+        },
+    ];
+    let text = "0123456789".repeat(8);
+
+    let out = scan::apply_edits(&text, &edits);
+
+    assert_eq!(out, format!("[masked:b]{}", &text[66..]));
+}
+
+#[test]
+fn an_orphan_end_marker_after_a_complete_block_masks_the_lines_before_it() {
+    let input = "QUJDREVGR0g=\n-----BEGIN PRIVATE KEY-----x-----END PRIVATE KEY----- -----END PRIVATE KEY-----";
+
+    let out = mask(input);
+
+    assert!(!out.contains("QUJDREVGR0g="), "{out:?}");
+    assert!(!out.contains("PRIVATE KEY"), "{out:?}");
 }
 
 #[test]
