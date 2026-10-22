@@ -122,6 +122,12 @@ pub fn index_entry(source: &str) -> String {
     format!("{INDEX_PREFIX}{source}")
 }
 
+/// Whether `name` is the name of a remembered password's entry or of a source's index.
+#[must_use]
+pub fn is_entry_or_index(name: &str) -> bool {
+    name.starts_with(ENTRY_PREFIX) || name.starts_with(INDEX_PREFIX)
+}
+
 /// Whether `text` is a digest this module writes.
 fn is_digest(text: &str) -> bool {
     text.len() == DIGEST_CHARS

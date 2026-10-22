@@ -6071,4 +6071,4 @@ ui-shared-sources-forget-failed-body =
        *[other] { $count } contraseñas recordadas no se pudieron eliminar del almacén de credenciales. Siguen en la lista: use Olvidar de nuevo para reintentar.
     }
 ui-shared-sources-purge-unrecorded-title = Las contraseñas recordadas aún no se han olvidado.
-ui-shared-sources-purge-unrecorded-body = El restablecimiento no pudo eliminar ahora las contraseñas recordadas de las sesiones compartidas, ni anotar que aún debe hacerlo. Se eliminan en cuanto se desbloquea la bóveda durante esta ejecución; de lo contrario, use Olvidar en cada fuente compartida de la Configuración.
+ui-shared-sources-purge-unrecorded-body = La eliminación de las contraseñas recordadas de las sesiones compartidas espera a la bóveda, y no se pudo escribir la nota que la haría sobrevivir a un reinicio. Se hace en cuanto se desbloquea la bóveda durante esta ejecución; de lo contrario, siguen en este equipo.

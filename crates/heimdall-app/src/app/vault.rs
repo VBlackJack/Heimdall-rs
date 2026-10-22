@@ -304,6 +304,8 @@ pub struct StoreFaults {
     pub removals: std::sync::atomic::AtomicBool,
     /// While set, a write of an entry whose name starts with it fails.
     pub writes_under: Mutex<Option<String>>,
+    /// While set, a deletion of an entry whose name starts with it fails.
+    pub removals_under: Mutex<Option<String>>,
 }
 
 impl StoreFaults {
@@ -322,6 +324,20 @@ impl StoreFaults {
         if let Ok(mut held) = self.writes_under.lock() {
             *held = prefix.map(str::to_owned);
         }
+    }
+
+    /// Makes the deletions of entries named from `prefix` fail; `None` makes them work again.
+    pub fn fail_removals_under(&self, prefix: Option<&str>) {
+        if let Ok(mut held) = self.removals_under.lock() {
+            *held = prefix.map(str::to_owned);
+        }
+    }
+
+    fn refuses_removal(&self, name: &str) -> bool {
+        self.removals_under.lock().is_ok_and(|held| {
+            held.as_deref()
+                .is_some_and(|prefix| name.starts_with(prefix))
+        })
     }
 
     fn refuses_write(&self, name: &str) -> bool {
@@ -425,7 +441,9 @@ impl SystemCredentials {
                 Ok(())
             }
             Self::MemoryFaulty { entries, faults } => {
-                if faults.removals.load(std::sync::atomic::Ordering::SeqCst) {
+                if faults.removals.load(std::sync::atomic::Ordering::SeqCst)
+                    || faults.refuses_removal(name)
+                {
                     return Err("the credential store refused the deletion".to_owned());
                 }
                 entries
@@ -705,10 +723,17 @@ impl VaultState {
         }
         // Last first: the entries before the indexes that list them, so that a deletion that
         // fails leaves the listing a later clean-up follows.
+        // Once a remembered password's copy stays, the indexes that list it stay too (and
+        // the list of sources): a later clean-up follows them to the copy.
+        let mut listing_kept = false;
         for name in moved.into_iter().rev() {
+            if listing_kept && super::shared_passwords::is_shared_password_entry(name) {
+                continue;
+            }
             // Left behind, it is only a copy the vault makes unused.
             if let Err(error) = self.system.remove(name) {
                 log::warn!("a password moved into the vault stays in the system's store: {error}");
+                listing_kept |= super::shared_passwords::is_shared_password_entry(name);
             }
         }
         self.open = Some(vault);

@@ -6082,4 +6082,4 @@ ui-shared-sources-forget-failed-body =
        *[other] { $count } mots de passe mémorisés n'ont pas pu être supprimés du magasin d'identifiants. Ils restent listés : utilisez Oublier à nouveau pour réessayer.
     }
 ui-shared-sources-purge-unrecorded-title = Les mots de passe mémorisés ne sont pas encore oubliés.
-ui-shared-sources-purge-unrecorded-body = La réinitialisation n'a pas pu supprimer maintenant les mots de passe mémorisés des sessions partagées, ni noter qu'elle doit encore le faire. Ils sont supprimés dès que le coffre est déverrouillé pendant cette exécution ; sinon, utilisez Oublier pour chaque source partagée dans les Paramètres.
+ui-shared-sources-purge-unrecorded-body = La suppression des mots de passe mémorisés des sessions partagées attend le coffre, et la note qui la ferait survivre à un redémarrage n'a pas pu être écrite. Elle est faite dès que le coffre est déverrouillé pendant cette exécution ; sinon, ils restent sur cet ordinateur.

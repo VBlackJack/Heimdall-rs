@@ -1421,8 +1421,22 @@ fn a_password_the_server_asked_again_is_not_kept_when_another_means_then_signs_i
     assert_nothing_logged();
 }
 
+/// A keyboard-interactive round asking `prompt`, hidden.
+fn round(prompt: &str) -> QuestionKind {
+    QuestionKind::KeyboardInteractive(heimdall_ssh::KeyboardInteractiveQuestion {
+        host: HOST.to_owned(),
+        username: LOGIN.to_owned(),
+        name: String::new(),
+        instructions: String::new(),
+        prompts: vec![heimdall_ssh::KeyboardInteractivePrompt {
+            text: prompt.to_owned(),
+            echo: false,
+        }],
+    })
+}
+
 #[test]
-fn a_password_followed_by_a_keyboard_interactive_round_is_not_kept() {
+fn a_password_accepted_as_the_first_factor_is_kept_after_a_one_time_code() {
     capture_logs();
     let dir = tempfile::tempdir().expect("dir");
     let system = SystemCredentials::memory();
@@ -1432,23 +1446,103 @@ fn a_password_followed_by_a_keyboard_interactive_round_is_not_kept() {
         &system,
     );
     let (tab, attempt) = type_pending(&mut app, LOGIN);
-    ask(
-        &mut app,
-        tab,
-        attempt,
-        QuestionKind::KeyboardInteractive(heimdall_ssh::KeyboardInteractiveQuestion {
-            host: HOST.to_owned(),
-            username: LOGIN.to_owned(),
-            name: String::new(),
-            instructions: String::new(),
-            prompts: vec![heimdall_ssh::KeyboardInteractivePrompt {
-                text: "Code: ".to_owned(),
-                echo: false,
-            }],
-        }),
+    // The second step: a code, not a refusal.
+    ask(&mut app, tab, attempt, round("Verification code: "));
+    signed_in(&mut app, tab, attempt);
+    assert_eq!(app.shared_password_count("team"), 1);
+    assert!(store_holds(&system, PASSWORD));
+    assert_eq!(
+        web_answer(&mut app, HOST, 22, LOGIN).as_deref(),
+        Some(PASSWORD)
     );
+}
+
+#[test]
+fn a_password_asked_again_in_a_keyboard_interactive_round_is_a_refusal_and_not_kept() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    let (tab, attempt) = type_pending(&mut app, LOGIN);
+    ask(&mut app, tab, attempt, round("Password: "));
     signed_in(&mut app, tab, attempt);
     assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+}
+
+#[tokio::test]
+async fn a_copy_whose_deletion_failed_keeps_its_listing_so_it_cannot_come_back() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    // Only the password's own entry refuses its deletion when the vault is created.
+    faults.fail_removals_under(Some("shared-password/"));
+    unlock(&mut app, MASTER).await;
+    assert!(store_holds(&system, PASSWORD));
+    app.update(Message::ForgetSharedPasswords("team".to_owned()));
+
+    faults.fail_removals_under(None);
+    app.update(Message::DisableMasterPassword);
+    let effects = app.update(Message::SubmitVault {
+        password: Secret::new(MASTER.to_owned()),
+        new: None,
+        confirm: None,
+    });
+    let (ticket, result) = open_vault_job(effects).await;
+    app.update(Message::VaultOpened(ticket, result));
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+    assert_eq!(web_answer(&mut app, HOST, 22, LOGIN), None);
+}
+
+#[test]
+fn a_clean_up_that_cannot_be_noted_for_a_restart_is_reported_once() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    std::fs::create_dir(dir.path().join("shared-passwords-cleanup.pending")).expect("folder");
+    faults.fail_removals(true);
+    remove_sources(&mut app);
+    assert!(
+        matches!(app.dialog, Some(Dialog::PasswordPurgeUnrecorded)),
+        "{:?}",
+        app.dialog
+    );
+}
+
+#[test]
+fn a_marker_that_could_not_be_removed_does_not_wipe_what_was_remembered_since() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    // What a removal that failed leaves: the marker emptied of its meaning.
+    std::fs::write(dir.path().join("shared-passwords-purge.pending"), b"done").expect("marker");
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    app.update(Message::SharedTick);
+    assert_eq!(app.shared_password_count("team"), 1, "not wiped at start");
+    assert_eq!(
+        web_answer(&mut app, HOST, 22, LOGIN).as_deref(),
+        Some(PASSWORD)
+    );
 }
 
 #[tokio::test]

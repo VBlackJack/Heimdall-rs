@@ -57,6 +57,10 @@ use crate::ids::{AttemptId, QuestionId, TabId};
 /// not done: it holds no credential data.
 const PURGE_MARKER_FILE: &str = "shared-passwords-purge.pending";
 
+/// What a marker file that could not be removed is overwritten with: any content says the
+/// deletion it stood for is done.
+const MARKER_DONE: &[u8] = b"done";
+
 /// The file beside the settings that says the passwords of a source taken out are not all
 /// forgotten yet: it holds no credential data.
 const CLEANUP_MARKER_FILE: &str = "shared-passwords-cleanup.pending";
@@ -164,6 +168,9 @@ pub(super) struct Remembered {
     /// The user was told that some remembered passwords could not be deleted, until a pass
     /// deletes them all: a retry on the timer does not ask again.
     incomplete_reported: bool,
+    /// The user was told that a clean-up of the sources taken out waits and could not be noted
+    /// for a restart, until it is done.
+    cleanup_unrecorded_reported: bool,
 }
 
 impl App {
@@ -276,15 +283,21 @@ impl App {
     }
 
     /// A question `kind` reached `tab_id`. A password typed in this attempt that the server
-    /// asks again, or a question of another kind after it (a keyboard-interactive round, a
-    /// passphrase), shows the server refused it: it is dropped at once, so that a later
-    /// sign-in by another means never keeps a password that was refused.
+    /// asks again (a password question past the first try, the account's password alone in
+    /// a keyboard-interactive round, a VNC password again) shows the server refused it: it is
+    /// dropped at once, so that a later sign-in by another means never keeps a password
+    /// that was refused. A second factor (a one-time code, a key's passphrase) after it is
+    /// no refusal: the password was accepted as the first step and is kept once signed in.
     pub(super) fn shared_question_asked(&mut self, tab_id: TabId, kind: &QuestionKind) {
-        let first_try = matches!(kind, QuestionKind::Password(_)) && try_number(kind) <= 1;
-        if first_try {
-            return;
-        }
-        if let Some(tab) = self.tab_mut(tab_id) {
+        let refusal = match kind {
+            QuestionKind::Password(_) => try_number(kind) > 1,
+            QuestionKind::ServerPassword(_) => true,
+            QuestionKind::KeyboardInteractive(round) => {
+                heimdall_ssh::asks_for_the_account_password(round)
+            }
+            QuestionKind::Username(_) | QuestionKind::Passphrase(_) => false,
+        };
+        if refusal && let Some(tab) = self.tab_mut(tab_id) {
             tab.shared_password.pending = None;
         }
     }
@@ -566,8 +579,17 @@ impl App {
     /// is no longer in the settings, so nothing else would tell the next start.
     fn set_cleanup_pending(&mut self, pending: bool, persist: bool) {
         self.vault.shared.cleanup_pending = pending;
-        if persist || !pending {
-            self.set_marker(CLEANUP_MARKER_FILE, pending);
+        if !pending {
+            self.vault.shared.cleanup_unrecorded_reported = false;
+        }
+        if (persist || !pending) && !self.set_marker(CLEANUP_MARKER_FILE, pending) {
+            // A deletion still waiting that a restart would not take up: said once, since
+            // nothing else will.
+            let shared = &mut self.vault.shared;
+            if pending && !shared.cleanup_unrecorded_reported && self.dialog.is_none() {
+                shared.cleanup_unrecorded_reported = true;
+                self.dialog = Some(Dialog::PasswordPurgeUnrecorded);
+            }
         }
     }
 
@@ -580,7 +602,12 @@ impl App {
             std::fs::write(&marker, b"")
         } else {
             match std::fs::remove_file(&marker) {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+                // A marker that cannot be removed is emptied of its meaning instead: only an
+                // empty one says a deletion waits, so a later start does not wipe what was
+                // remembered after this one.
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    std::fs::write(&marker, MARKER_DONE).map_err(|_| error)
+                }
                 _ => Ok(()),
             }
         };
@@ -593,9 +620,9 @@ impl App {
     /// Takes up the deletions that a previous run could not finish.
     pub(super) fn resume_shared_purge(&mut self) {
         let marked = |name: &str| {
-            self.settings_file
-                .parent()
-                .is_some_and(|folder| folder.join(name).exists())
+            self.settings_file.parent().is_some_and(|folder| {
+                std::fs::read(folder.join(name)).is_ok_and(|content| content.is_empty())
+            })
         };
         let (purge, cleanup) = (marked(PURGE_MARKER_FILE), marked(CLEANUP_MARKER_FILE));
         self.vault.shared.purge_pending |= purge;
@@ -781,6 +808,12 @@ impl App {
         self.report_incomplete_forget(remaining, false);
         self.refresh_shared_password_counts();
     }
+}
+
+/// Whether `name` is an entry of the remembered shared passwords: one password, an index or
+/// the list of sources.
+pub(super) fn is_shared_password_entry(name: &str) -> bool {
+    name == SOURCES_ENTRY || keys::is_entry_or_index(name)
 }
 
 /// The name of every entry the remembered shared passwords occupy in the system's store, as
