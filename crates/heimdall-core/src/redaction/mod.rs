@@ -171,7 +171,10 @@ static CATALOGUE: [Rule; 12] = [
         apply: |text, run, budget| {
             maskers::mask_groups(
                 text,
-                &[&patterns::AUTHORIZATION_HEADER],
+                &[
+                    &patterns::AUTHORIZATION_HEADER,
+                    &patterns::AUTHORIZATION_OTHER,
+                ],
                 rule_id::AUTHORIZATION_HEADER,
                 run,
                 budget,
@@ -224,9 +227,12 @@ static CATALOGUE: [Rule; 12] = [
             maskers::mask_groups(
                 text,
                 &[
-                    &patterns::KEY_VALUE_SECRET,
+                    &patterns::KEY_VALUE_BLOCK_SCALAR,
                     &patterns::KEY_VALUE_SECRET_COLON,
+                    &patterns::KEY_VALUE_SECRET,
                     &patterns::XML_ELEMENT_SECRET,
+                    &patterns::ODBC_PASSWORD,
+                    &patterns::NAME_VALUE_PAIR_SECRET,
                 ],
                 rule_id::KEY_VALUE_SECRET,
                 run,

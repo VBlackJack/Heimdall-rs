@@ -84,7 +84,13 @@ pub(super) struct Pattern {
     regex: Regex,
     value_groups: Vec<usize>,
     guard: Option<Guard>,
+    trim: Option<Trim>,
 }
+
+/// Shortens a value that runs to the end of its match: receives the value and returns the length
+/// to keep. A value cannot always be delimited by the pattern alone (`&` ends a query string
+/// parameter only when another parameter follows, which needs a look-ahead).
+pub(super) type Trim = fn(&str) -> usize;
 
 impl Pattern {
     /// Compiles a static pattern. A pattern that does not compile is a programming error caught
@@ -105,6 +111,15 @@ impl Pattern {
             regex,
             value_groups,
             guard,
+            trim: None,
+        }
+    }
+
+    /// Same, with a value trimmer applied to a bare value that ends the match.
+    pub(super) fn with_trim(source: &str, guard: Option<Guard>, trim: Trim) -> Self {
+        Self {
+            trim: Some(trim),
+            ..Self::new(source, guard)
         }
     }
 
@@ -132,7 +147,7 @@ impl Pattern {
             let Some(whole) = self.regex.captures_read_at(locations, hay, at) else {
                 return Ok(None);
             };
-            let found = Found {
+            let mut found = Found {
                 start: whole.start(),
                 end: whole.end(),
                 value: self
@@ -140,12 +155,31 @@ impl Pattern {
                     .iter()
                     .find_map(|&index| locations.get(index)),
             };
+            self.trim_value(hay, &mut found);
             if self.guard.is_none_or(|guard| guard(hay, &found)) {
                 return Ok(Some(found));
             }
             at = next_boundary(hay, found.start);
         }
         Ok(None)
+    }
+
+    fn trim_value(&self, hay: &str, found: &mut Found) {
+        let Some(trim) = self.trim else {
+            return;
+        };
+        let Some((start, end)) = found.value else {
+            return;
+        };
+        let quoted = char_before(hay, start).is_some_and(|c| c == '"' || c == '\'');
+        if end != found.end || quoted {
+            return;
+        }
+        let kept = start + trim(&hay[start..end]);
+        if kept < end {
+            found.value = Some((start, kept));
+            found.end = kept;
+        }
     }
 
     /// Every non-overlapping match of the haystack, in order.

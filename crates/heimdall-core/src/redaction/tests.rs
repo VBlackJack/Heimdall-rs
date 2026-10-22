@@ -1750,3 +1750,100 @@ fn long_host_names_are_pseudonymised_whatever_their_label_count() {
     );
     assert_survives(&["mail alice@corp.com about it"]);
 }
+
+// Second review round.
+
+#[test]
+fn authorization_in_go_header_dumps_is_masked() {
+    assert_masked(&[
+        (
+            "map[Authorization:[Bearer abcdef123456] Accept:[*/*]]",
+            "map[Authorization:[Bearer [masked:authorization-header] Accept:[*/*]]",
+        ),
+        (
+            r#"{"Authorization":["Bearer abcdef123456"]}"#,
+            r#"{"Authorization":["Bearer [masked:authorization-header]"]}"#,
+        ),
+    ]);
+}
+
+#[test]
+fn raw_ampersand_inside_a_value_does_not_end_it() {
+    assert_masked(&[
+        (
+            "DB_PASSWORD=Abc&123xyz",
+            "DB_PASSWORD=[masked:key-value-secret]",
+        ),
+        (
+            "client_secret: Abc&123xyz",
+            "client_secret: [masked:key-value-secret]",
+        ),
+        (
+            "password=abc&user=bob",
+            "password=[masked:key-value-secret]&user=bob",
+        ),
+        (
+            "?token=abc&other=1&password=zz",
+            "?token=[masked:key-value-secret]&other=1&password=[masked:key-value-secret]",
+        ),
+    ]);
+}
+
+#[test]
+fn double_encoded_value_with_an_encoded_quote_is_masked_whole() {
+    assert_masked(&[(
+        r#"{"log":"{\"password\":\"hun\\\"ter2\"}"}"#,
+        r#"{"log":"{\"password\":\"[masked:key-value-secret]\"}"}"#,
+    )]);
+}
+
+#[test]
+fn odbc_connection_string_password_is_masked_but_the_shell_pwd_is_not() {
+    assert_masked(&[
+        (
+            "Driver={ODBC Driver 18};Server=db;Uid=sa;Pwd=hunter2;",
+            "Driver={ODBC Driver 18};Server=db;Uid=sa;Pwd=[masked:key-value-secret];",
+        ),
+        (
+            "Pwd=hunter2;Server=db",
+            "Pwd=[masked:key-value-secret];Server=db",
+        ),
+    ]);
+    assert_survives(&["PWD=/home/x", "PWD=~", "export PWD=/tmp; cd x"]);
+}
+
+#[test]
+fn ini_cdata_block_scalar_and_name_value_pairs_are_masked() {
+    assert_masked(&[
+        (
+            "password = correct horse battery",
+            "password = [masked:key-value-secret]",
+        ),
+        (
+            "<password><![CDATA[hunter2]]></password>",
+            "<password><![CDATA[[masked:key-value-secret]]]></password>",
+        ),
+        (
+            "password: |\n  line one\n  line two\nnext: x",
+            "password: [masked:key-value-secret]\nnext: x",
+        ),
+        (
+            r#"{"name": "Authorization", "value": "Bearer abc123"}"#,
+            r#"{"name": "Authorization", "value": "[masked:key-value-secret]"}"#,
+        ),
+        (
+            r#"{"name": "db_password", "value": "hunter2"}"#,
+            r#"{"name": "db_password", "value": "[masked:key-value-secret]"}"#,
+        ),
+    ]);
+}
+
+#[test]
+fn test_reports_and_prose_with_secret_words_stay_unchanged() {
+    assert_survives(&[
+        "PASS: test_login",
+        "pass: 12 fail: 0",
+        "lexer: unexpected token: ident foo at line 3",
+        "checking authorization: user alice allowed",
+    ]);
+}

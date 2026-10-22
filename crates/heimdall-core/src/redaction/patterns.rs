@@ -79,7 +79,7 @@ const WEAK_KEY_ENDINGS: [&str; 2] = ["pass", "pwd"];
 
 /// A double quoted value inside a JSON string that was itself encoded (`\"hunter2\"`): the value
 /// runs to the next escaped quote.
-const ESCAPED_DOUBLE_QUOTED: &str = r#"\\"(?P<v8>(?:[^\\\r\n]|\\[^"\r\n])*?)\\""#;
+const ESCAPED_DOUBLE_QUOTED: &str = r#"\\"(?P<v8>(?:\\\\\\"|\\[^"\r\n]|[^\\\r\n])*?)\\""#;
 
 /// An escaped opening quote that is never closed on its line: the rest of the line is masked.
 const ESCAPED_UNTERMINATED: &str = r#"\\"(?P<v9>[^\r\n]+)"#;
@@ -116,19 +116,36 @@ fn quoted_or_bare_no_option() -> String {
     )
 }
 
-/// Key-value form with `=`: a bare value also stops at `&` (query strings). It does not stop at
-/// `,` or `;`: those occur inside passwords, and an early stop would leave the tail in the clear.
+/// Key-value form with `=`: a bare value stops before `&name=` (query strings, see
+/// `cut_before_next_parameter`). It does not stop at `,` or `;`: those occur inside passwords,
+/// and an early stop would leave the tail in the clear.
 fn quoted_or_bare_delimited() -> String {
     format!(
-        r#"(?:{ESCAPED_DOUBLE_QUOTED}|{ESCAPED_UNTERMINATED}|{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s&"']+)|{UNTERMINATED_QUOTED})"#
+        r#"(?:{ESCAPED_DOUBLE_QUOTED}|{ESCAPED_UNTERMINATED}|{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s"']+)|{UNTERMINATED_QUOTED})"#
     )
 }
 
+/// Where a bare `=` value ends: before the `&` that starts another query string parameter
+/// (`&name=`), not at a raw `&` inside a password (`Abc&123xyz`).
+fn cut_before_next_parameter(value: &str) -> usize {
+    let bytes = value.as_bytes();
+    for (index, _) in value.match_indices('&') {
+        let name_length = bytes[index + 1..]
+            .iter()
+            .take_while(|b| b.is_ascii_alphanumeric() || matches!(**b, b'_' | b'.' | b'-'))
+            .count();
+        if name_length > 0 && bytes.get(index + 1 + name_length) == Some(&b'=') {
+            return index;
+        }
+    }
+    value.len()
+}
+
 /// Key-value form with `:` (YAML, `secret: correct horse battery`): a bare value is every word up
-/// to a quote or `&`, so a passphrase with spaces is masked whole.
+/// to a quote, so a passphrase with spaces is masked whole.
 fn quoted_or_bare_words() -> String {
     format!(
-        r#"(?:{ESCAPED_DOUBLE_QUOTED}|{ESCAPED_UNTERMINATED}|{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s&"']+(?:[ \t]+[^\s&"']+)*)|{UNTERMINATED_QUOTED})"#
+        r#"(?:{ESCAPED_DOUBLE_QUOTED}|{ESCAPED_UNTERMINATED}|{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s"']+(?:[ \t]+[^\s"']+)*)|{UNTERMINATED_QUOTED})"#
     )
 }
 
@@ -186,19 +203,46 @@ fn after_letter_ok(hay: &str, found: &Found) -> bool {
 
 /// A header with no scheme at all is the credential itself, unless that word is a scheme name
 /// left without a credential (`Authorization: Token`).
-fn authorization_ok(hay: &str, found: &Found) -> bool {
+fn authorization_other_ok(hay: &str, found: &Found) -> bool {
+    let name_before = &hay[..found.start];
+    let name_before = name_before
+        .get(name_before.len().saturating_sub("proxy-".len())..)
+        .filter(|tail| tail.eq_ignore_ascii_case("proxy-"))
+        .map_or(name_before, |_| {
+            &name_before[..name_before.len() - "proxy-".len()]
+        });
+    starts_a_field(name_before) && authorization_value_ok(hay, found)
+}
+
+/// True when what precedes a name is the start of a line (after blanks), or an opening quote,
+/// brace, bracket or comma, a list dash, a comment mark or a `>` of a verbose header dump:
+/// the name starts a header or a field instead of sitting in the middle of a sentence.
+fn starts_a_field(before: &str) -> bool {
+    let trimmed = before.trim_end_matches([' ', '\t']);
+    trimmed.is_empty() || trimmed.ends_with(['\n', '"', '\'', '{', '[', ',', '-', '#', '>', '<'])
+}
+
+fn authorization_value_ok(hay: &str, found: &Found) -> bool {
     let Some((start, end)) = found.value else {
         return true;
     };
-    let before = hay[..start]
-        .trim_end_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '\\');
-    if !before.ends_with(':') {
-        return true;
+    let before = hay[..start].trim_end_matches(|c: char| {
+        c.is_whitespace() || c == '"' || c == '\'' || c == '\\' || c == '['
+    });
+    let known_scheme = |word: &str| {
+        TOKEN_SCHEMES
+            .iter()
+            .any(|scheme| word.eq_ignore_ascii_case(scheme))
+    };
+    if before.ends_with(':') {
+        return !known_scheme(&hay[start..end]);
     }
-    let value = &hay[start..end];
-    !TOKEN_SCHEMES
-        .iter()
-        .any(|scheme| value.eq_ignore_ascii_case(scheme))
+    // A known scheme before the value is the other pattern's: it holds one token only.
+    let scheme = before
+        .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .next()
+        .unwrap_or_default();
+    !known_scheme(scheme)
 }
 
 fn is_key_character(c: char) -> bool {
@@ -247,6 +291,36 @@ fn key_ending_ok(hay: &str, found: &Found) -> bool {
 
 fn key_value_ok(hay: &str, found: &Found) -> bool {
     after_alnum_ok(hay, found) && key_ending_ok(hay, found)
+}
+
+/// The words form (`key: a few words`, `key = a few words`) takes a whole value, so it is limited
+/// to a key that starts a line or a field, and a bare `pass` before a colon (`PASS: test_login`,
+/// `pass: 12 fail: 0`) is a test report, not a secret.
+fn key_value_words_ok(hay: &str, found: &Found) -> bool {
+    if !key_value_ok(hay, found) || !starts_a_field(&hay[..found.start]) {
+        return false;
+    }
+    let key_end = hay[found.start..]
+        .find(|c: char| !is_key_character(c))
+        .map_or(hay.len(), |offset| found.start + offset);
+    let is_bare_pass = hay[found.start..key_end].eq_ignore_ascii_case("pass");
+    !(is_bare_pass
+        && hay[key_end..]
+            .trim_start_matches(['"', '\'', ' ', '\t'])
+            .starts_with(':'))
+}
+
+/// A bare `Pwd` key is a secret after a `;` of a connection string; at the start of a line only
+/// when the string goes on after the value, and never for a path (`PWD=/home/x`, `PWD=~`).
+fn odbc_password_ok(hay: &str, found: &Found) -> bool {
+    let Some((start, end)) = found.value else {
+        return false;
+    };
+    if hay[found.start..].starts_with(';') {
+        return true;
+    }
+    let value = &hay[start..end];
+    hay[end..].starts_with(';') && !value.starts_with(['/', '~'])
 }
 
 /// The secret in a user-only URL (`https://glpat-AbCd1234@gitlab.com`) has no `:` to tell it
@@ -345,13 +419,24 @@ lazy_pattern!(
 lazy_pattern!(
     AUTHORIZATION_HEADER,
     format!(
-        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*:{HEADER_BLANK}*{OPTIONAL_QUOTE}(?:(?:Bearer|Basic|Token){HEADER_BLANK}+(?P<va>{})|Digest{HEADER_BLANK}+(?P<vd>{})|[A-Za-z][A-Za-z0-9_-]*{HEADER_BLANK}+(?P<ve>{})|(?P<vf>{}))",
+        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*:{HEADER_BLANK}*\[?{OPTIONAL_QUOTE}(?:(?:Bearer|Basic|Token){HEADER_BLANK}+(?P<va>{})|Digest{HEADER_BLANK}+(?P<vd>{}))",
         folded(r#"[^\s"'\\]+"#),
         folded(r"[^\r\n]+"),
+    ),
+    None
+);
+
+// Any other scheme, or none, only where the name starts a header or a field: `checking
+// authorization: user alice allowed` is prose. Runs after the pattern above, so a known scheme
+// already holds its token.
+lazy_pattern!(
+    AUTHORIZATION_OTHER,
+    format!(
+        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*:{HEADER_BLANK}*(?:(?P<vm>\[masked:[a-z-]+\])|\[?{OPTIONAL_QUOTE}(?:[A-Za-z][A-Za-z0-9_-]*{HEADER_BLANK}+(?P<ve>{})|(?P<vf>{})))",
         folded(r#"[^\r\n"'\\]+"#),
         folded(r#"[^\s"'\\]+"#),
     ),
-    Some(authorization_ok)
+    Some(authorization_other_ok)
 );
 
 // The password runs to the last `@` of the token, so a raw `@`, `:`, `/`, `#`, `?` or `%` inside
@@ -414,35 +499,66 @@ lazy_pattern!(
 
 // The key may be quoted (`"password"`, `'password'`, escaped in double-encoded JSON) and any
 // prefix is allowed (`keyVaultReferenceIdentityClientApplicationSecret`). `=` and `=>` take one
-// bare token, `:` takes every word to the end of the value.
-lazy_pattern!(
-    KEY_VALUE_SECRET,
-    format!(
-        r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}(?:=>|=)[ \t]{{0,16}}{}",
-        key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
-        quoted_or_bare_delimited()
-    ),
-    Some(key_value_ok)
-);
+// bare token, `:` and the spaced INI `key = value` take every word of the value.
+pub(super) static KEY_VALUE_SECRET: LazyLock<Pattern> = LazyLock::new(|| {
+    Pattern::with_trim(
+        &format!(
+            r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}(?:=>|=)[ \t]{{0,16}}{}",
+            key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
+            quoted_or_bare_delimited()
+        ),
+        Some(key_value_ok),
+        cut_before_next_parameter,
+    )
+});
 
 lazy_pattern!(
     KEY_VALUE_SECRET_COLON,
     format!(
-        r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}:[ \t]{{0,16}}{}",
+        r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}(?:[ \t]{{0,16}}:[ \t]{{0,16}}|[ \t]{{1,16}}=[ \t]{{1,16}}){}",
         key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
         quoted_or_bare_words()
+    ),
+    Some(key_value_words_ok)
+);
+
+// A YAML block scalar: `password: |` and the indented lines under it are the value.
+lazy_pattern!(
+    KEY_VALUE_BLOCK_SCALAR,
+    format!(
+        r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}:[ \t]{{1,16}}(?P<v>[|>][+-]?[0-9]?[ \t]*\r?\n[ \t]+[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*)",
+        key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
+    ),
+    Some(key_value_words_ok)
+);
+
+// The XML element form: `<password>hunter2</password>`, also with a CDATA section.
+lazy_pattern!(
+    XML_ELEMENT_SECRET,
+    format!(
+        r"(?i)<[A-Za-z0-9_.:-]*{}(?:[ \t][^>\r\n]*)?>(?:<!\[CDATA\[(?P<vc>[^\r\n]*?)\]\]>|(?P<v>[^<\r\n]+))</",
+        key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS])
     ),
     Some(key_value_ok)
 );
 
-// The XML element form: `<password>hunter2</password>`.
+// An ODBC or ADO connection string: `Driver={ODBC Driver 18};Uid=sa;Pwd=hunter2;`. A bare `Pwd`
+// key is a secret only inside such a string (after a `;`, or a string that goes on after the
+// value), never as the shell's `PWD=/home/x`.
 lazy_pattern!(
-    XML_ELEMENT_SECRET,
+    ODBC_PASSWORD,
+    r"(?im)(?:^|;)[ \t]*Pwd[ \t]*=(?P<v>[^;\r\n]*)",
+    Some(odbc_password_ok)
+);
+
+// A HAR or similar name and value pair: `{"name": "Authorization", "value": "Bearer abc"}`.
+lazy_pattern!(
+    NAME_VALUE_PAIR_SECRET,
     format!(
-        r"(?i)<[A-Za-z0-9_.:-]*{}(?:[ \t][^>\r\n]*)?>(?P<v>[^<\r\n]+)</",
-        key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS])
+        r#"(?i)"name"[ \t]*:[ \t]*"[A-Za-z0-9_.-]*(?:{}|authorization)"[ \t]*,[ \t]*"value"[ \t]*:[ \t]*{DOUBLE_QUOTED}"#,
+        SECRET_KEY_ENDINGS.join("|")
     ),
-    Some(key_value_ok)
+    None
 );
 
 lazy_pattern!(
@@ -511,6 +627,7 @@ pub(super) fn warm_up() {
     for pattern in [
         &PRIVATE_KEY_MARKER,
         &AUTHORIZATION_HEADER,
+        &AUTHORIZATION_OTHER,
         &URL_CREDENTIALS,
         &URL_USER_TOKEN,
         &CLI_PASSWORD_OPTION,
@@ -520,7 +637,10 @@ pub(super) fn warm_up() {
         &CLI_MYSQL_PASSWORD,
         &KEY_VALUE_SECRET,
         &KEY_VALUE_SECRET_COLON,
+        &KEY_VALUE_BLOCK_SCALAR,
         &XML_ELEMENT_SECRET,
+        &ODBC_PASSWORD,
+        &NAME_VALUE_PAIR_SECRET,
         &AWS_ACCESS_KEY,
         &GITHUB_TOKEN,
         &SLACK_TOKEN,

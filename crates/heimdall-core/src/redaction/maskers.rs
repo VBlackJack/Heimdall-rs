@@ -439,7 +439,10 @@ pub(super) fn mask_password_prompts(
                 continue;
             }
             let rest = &text[rest_start..line.end];
-            if rest == EMPTY_DOUBLE_QUOTES || rest == EMPTY_SINGLE_QUOTES {
+            if rest == EMPTY_DOUBLE_QUOTES
+                || rest == EMPTY_SINGLE_QUOTES
+                || is_block_scalar_indicator(rest)
+            {
                 continue;
             }
             if !is_mask_token(rest) {
@@ -487,6 +490,13 @@ pub(super) fn mask_password_prompts(
         }
     }
     Ok(apply_edits(text, &edits))
+}
+
+/// A YAML block scalar header (`|`, `>-`, `|2`): the value is on the indented lines below, which
+/// the key-value rule masks, not an answer typed at a prompt.
+fn is_block_scalar_indicator(rest: &str) -> bool {
+    let mut chars = rest.chars();
+    matches!(chars.next(), Some('|' | '>')) && chars.all(|c| matches!(c, '+' | '-' | '0'..='9'))
 }
 
 fn skip_blanks(text: &str, start: usize, end: usize) -> usize {
