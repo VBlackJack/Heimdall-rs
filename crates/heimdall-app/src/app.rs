@@ -2578,6 +2578,14 @@ impl Tab {
         }
     }
 
+    /// Starts attempt `attempt` on this tab. The one place the attempt changes, so that a
+    /// password typed for an attempt the user left (a Disconnect during authentication, a
+    /// Reconnect before the failure arrived) is never kept for the next one.
+    fn begin_attempt(&mut self, attempt: AttemptId) {
+        self.attempt = attempt;
+        self.shared_password.clear();
+    }
+
     /// Whether the tab's integrated editor, or its tool's document, holds text not saved,
     /// or being saved.
     #[must_use]
@@ -3233,6 +3241,10 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// A reset's deletion of the remembered shared passwords waits for the vault, and the note
+    /// that would carry it across a restart could not be written: it is done only if the vault
+    /// is unlocked in this run.
+    PasswordPurgeUnrecorded,
     /// Remembered shared passwords could not all be deleted: they stay listed and the Forget
     /// button tries again.
     PasswordForgetFailed {
@@ -4441,6 +4453,9 @@ impl App {
                 _ => Vec::new(),
             };
         }
+        if let ConnectionEvent::Question { kind, .. } = &event {
+            self.shared_question_asked(tab_id, kind);
+        }
         if let ConnectionEvent::Question { question, kind } = &event
             && let Some(answer) = self.saved_answer(tab_id, kind)
         {
@@ -4778,7 +4793,7 @@ impl App {
         let grid = tab.terminal.size();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        tab.attempt = attempt;
+        tab.begin_attempt(attempt);
         tab.cancel = cancel.clone();
         tab.phase = Phase::Connecting;
         tab.connect_grid = grid;
@@ -5155,7 +5170,7 @@ impl App {
         let Some(tab) = self.tab_mut(tab_id) else {
             return;
         };
-        tab.attempt = AttemptId::fresh();
+        tab.begin_attempt(AttemptId::fresh());
         tab.retry = None;
         tab.stop();
         tab.end_reason = None;
@@ -5437,6 +5452,7 @@ impl App {
                 | Dialog::ConfigRecovered { .. }
                 | Dialog::PasswordSaveFailed { .. }
                 | Dialog::PasswordForgetFailed { .. }
+                | Dialog::PasswordPurgeUnrecorded
                 | Dialog::Shortcuts
                 // "Discard": the scheduled connection's dialog goes with what was changed.
                 | Dialog::ConfirmDiscardScheduled(_)

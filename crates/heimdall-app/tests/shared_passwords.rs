@@ -1321,6 +1321,344 @@ fn a_source_removal_whose_deletion_failed_is_taken_up_again_after_a_restart() {
     assert!(!app.watches_shared_sources(), "nothing left to wait for");
 }
 
+// ---- Review fixes ---------------------------------------------------------------------------
+
+/// Takes every shared source out of the settings.
+fn remove_sources(app: &mut App) {
+    app.update(Message::Settings(
+        SettingsMessage::SharedSources(Vec::new()),
+    ));
+}
+
+/// Reconnects `tab`: its replacement and attempt.
+fn reconnect(app: &mut App, tab: TabId) -> (TabId, AttemptId) {
+    let effects = app.update(Message::ReconnectTab(tab));
+    match effects.as_slice() {
+        [Effect::Connect { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("expected one connection, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_tab_of_a_removed_source_reconnected_offers_nothing_and_remembers_nothing() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    let (tab, attempt) = open(&mut app, "web");
+    signed_in(&mut app, tab, attempt);
+    remove_sources(&mut app);
+
+    let (tab, attempt) = reconnect(&mut app, tab);
+    let asked = ask(
+        &mut app,
+        tab,
+        attempt,
+        password_question(HOST, 22, LOGIN, 1),
+    );
+    assert_eq!(asked.box_shown, None, "no box for a source taken out");
+    // Ticked anyway, as a stale screen could: nothing is kept.
+    type_password(&mut app, tab, asked.question, PASSWORD, Some(true));
+    signed_in(&mut app, tab, attempt);
+    app.update(Message::SharedTick);
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+    assert_nothing_logged();
+}
+
+#[test]
+fn a_tab_of_a_removed_source_reconnected_is_not_answered_from_the_store() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    let (tab, attempt) = open(&mut app, "web");
+    signed_in(&mut app, tab, attempt);
+    // The store refuses the deletion: the password is still there, but the source is gone.
+    faults.fail_removals(true);
+    remove_sources(&mut app);
+    assert!(store_holds(&system, PASSWORD));
+
+    let (tab, attempt) = reconnect(&mut app, tab);
+    let asked = ask(
+        &mut app,
+        tab,
+        attempt,
+        password_question(HOST, 22, LOGIN, 1),
+    );
+    assert_eq!(asked.answered, None);
+    assert_eq!(asked.box_shown, None);
+}
+
+#[test]
+fn a_password_the_server_asked_again_is_not_kept_when_another_means_then_signs_in() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    // Refused: asked again for the second try, then an agent key signs in.
+    let (tab, attempt) = type_pending(&mut app, LOGIN);
+    ask(
+        &mut app,
+        tab,
+        attempt,
+        password_question(HOST, 22, LOGIN, 2),
+    );
+    signed_in(&mut app, tab, attempt);
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+    assert_nothing_logged();
+}
+
+#[test]
+fn a_password_followed_by_a_keyboard_interactive_round_is_not_kept() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    let (tab, attempt) = type_pending(&mut app, LOGIN);
+    ask(
+        &mut app,
+        tab,
+        attempt,
+        QuestionKind::KeyboardInteractive(heimdall_ssh::KeyboardInteractiveQuestion {
+            host: HOST.to_owned(),
+            username: LOGIN.to_owned(),
+            name: String::new(),
+            instructions: String::new(),
+            prompts: vec![heimdall_ssh::KeyboardInteractivePrompt {
+                text: "Code: ".to_owned(),
+                echo: false,
+            }],
+        }),
+    );
+    signed_in(&mut app, tab, attempt);
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+}
+
+#[tokio::test]
+async fn a_copy_left_in_the_system_store_by_the_vault_does_not_come_back_after_a_forget() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    // The system's store refuses the deletions the vault's creation asks for: copies stay.
+    faults.fail_removals(true);
+    unlock(&mut app, MASTER).await;
+    assert!(store_holds(&system, PASSWORD), "the copy is left behind");
+    app.update(Message::ForgetSharedPasswords("team".to_owned()));
+    assert_eq!(app.shared_password_count("team"), 0);
+
+    // The master password removed: the vault's passwords go back, and a copy with no
+    // counterpart in the vault goes instead of coming back to life.
+    faults.fail_removals(false);
+    app.update(Message::DisableMasterPassword);
+    let effects = app.update(Message::SubmitVault {
+        password: Secret::new(MASTER.to_owned()),
+        new: None,
+        confirm: None,
+    });
+    let (ticket, result) = open_vault_job(effects).await;
+    app.update(Message::VaultOpened(ticket, result));
+    assert_eq!(app.vault_status(), heimdall_app::VaultStatus::Missing);
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+    assert_eq!(web_answer(&mut app, HOST, 22, LOGIN), None);
+}
+
+/// Replaces the entry `name` of the memory store with `bytes`.
+fn overwrite(system: &SystemCredentials, name: &str, bytes: &[u8]) {
+    let (SystemCredentials::Memory(held) | SystemCredentials::MemoryFaulty { entries: held, .. }) =
+        system
+    else {
+        unreachable!("a test store")
+    };
+    held.lock()
+        .expect("held")
+        .insert(name.to_owned(), zeroize_bytes(bytes));
+}
+
+#[test]
+fn an_index_this_version_cannot_read_is_not_an_empty_one() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    let index = "shared-password-index/team";
+    let good = entries(&system)
+        .into_iter()
+        .find(|(name, _)| name == index)
+        .expect("an index")
+        .1;
+    // Written by a newer version, or damaged.
+    overwrite(&system, index, b"2\nfrom-the-future");
+
+    app.update(Message::ForgetSharedPasswords("team".to_owned()));
+    assert!(matches!(
+        app.dialog,
+        Some(Dialog::PasswordForgetFailed { .. })
+    ));
+    app.update(Message::DismissDialog);
+    remove_sources(&mut app);
+    app.update(Message::SharedTick);
+    assert!(store_holds(&system, PASSWORD), "nothing was orphaned");
+    assert!(app.watches_shared_sources(), "the clean-up stays pending");
+
+    overwrite(&system, index, &good);
+    app.update(Message::SharedTick);
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+}
+
+#[test]
+fn a_password_whose_entry_cannot_be_written_leaves_nothing_behind() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    faults.fail_writes_under(Some("shared-password/"));
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    assert!(matches!(
+        app.dialog,
+        Some(Dialog::PasswordSaveFailed { .. })
+    ));
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+    assert_eq!(app.shared_password_count("team"), 0);
+}
+
+#[test]
+fn a_password_whose_entry_fails_and_whose_rollback_fails_is_never_stored_unlisted() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    faults.fail_writes_under(Some("shared-password/"));
+    faults.fail_removals(true);
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    // At worst a name with nothing behind it: no password is held, listed or not.
+    assert!(!store_holds(&system, PASSWORD));
+    faults.fail_writes_under(None);
+    faults.fail_removals(false);
+    app.update(Message::ForgetSharedPasswords("team".to_owned()));
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+}
+
+#[test]
+fn a_password_whose_index_cannot_be_written_is_not_stored() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    faults.fail_writes_under(Some("shared-password-index/"));
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    assert!(!store_holds(&system, PASSWORD));
+    assert!(matches!(
+        app.dialog,
+        Some(Dialog::PasswordSaveFailed { .. })
+    ));
+}
+
+#[tokio::test]
+async fn a_deferred_reset_that_cannot_be_noted_for_a_restart_is_reported() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    unlock(&mut app, MASTER).await;
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    app.update(Message::LockVault);
+    // A folder where the note would be written: the write fails.
+    std::fs::create_dir(dir.path().join("shared-passwords-purge.pending")).expect("folder");
+    reset_to_defaults(&mut app);
+    assert!(
+        matches!(app.dialog, Some(Dialog::PasswordPurgeUnrecorded)),
+        "{:?}",
+        app.dialog
+    );
+}
+
+#[test]
+fn a_reset_done_at_once_does_not_need_its_note() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    std::fs::create_dir(dir.path().join("shared-passwords-purge.pending")).expect("folder");
+    reset_to_defaults(&mut app);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+}
+
+#[test]
+fn the_log_does_not_say_that_passwords_are_remembered() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    faults.fail_removals(true);
+    app.update(Message::ForgetSharedPasswords("team".to_owned()));
+    faults.fail_reads(true);
+    app.update(Message::ForgetSharedPasswords("team".to_owned()));
+    remove_sources(&mut app);
+    app.update(Message::SharedTick);
+    for line in LOGGED.0.lock().expect("log").iter() {
+        let line = line.to_lowercase();
+        assert!(
+            !line.contains("remember") && !line.contains("shared password"),
+            "logged: {line}"
+        );
+    }
+}
+
 // ---- VNC ------------------------------------------------------------------------------------
 
 const CHALLENGE: [u8; 16] = [

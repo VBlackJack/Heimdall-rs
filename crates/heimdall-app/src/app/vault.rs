@@ -302,6 +302,8 @@ pub struct StoreFaults {
     pub reads: std::sync::atomic::AtomicBool,
     /// While set, a deletion fails.
     pub removals: std::sync::atomic::AtomicBool,
+    /// While set, a write of an entry whose name starts with it fails.
+    pub writes_under: Mutex<Option<String>>,
 }
 
 impl StoreFaults {
@@ -313,6 +315,20 @@ impl StoreFaults {
     /// Makes deletions fail, or work again.
     pub fn fail_removals(&self, on: bool) {
         self.removals.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Makes the writes of entries named from `prefix` fail; `None` makes them work again.
+    pub fn fail_writes_under(&self, prefix: Option<&str>) {
+        if let Ok(mut held) = self.writes_under.lock() {
+            *held = prefix.map(str::to_owned);
+        }
+    }
+
+    fn refuses_write(&self, name: &str) -> bool {
+        self.writes_under.lock().is_ok_and(|held| {
+            held.as_deref()
+                .is_some_and(|prefix| name.starts_with(prefix))
+        })
     }
 }
 
@@ -381,6 +397,9 @@ impl SystemCredentials {
         match self {
             Self::Unavailable => Err("no system credential store".to_owned()),
             Self::Keyring(keyring) => keyring.set(name, secret).map_err(|error| error.to_string()),
+            Self::MemoryFaulty { faults, .. } if faults.refuses_write(name) => {
+                Err("the credential store refused the write".to_owned())
+            }
             Self::Memory(entries) | Self::MemoryFaulty { entries, .. } => {
                 entries
                     .lock()
@@ -684,7 +703,9 @@ impl VaultState {
             self.remove_files();
             return Err(VaultProblem::System { detail });
         }
-        for name in moved {
+        // Last first: the entries before the indexes that list them, so that a deletion that
+        // fails leaves the listing a later clean-up follows.
+        for name in moved.into_iter().rev() {
             // Left behind, it is only a copy the vault makes unused.
             if let Err(error) = self.system.remove(name) {
                 log::warn!("a password moved into the vault stays in the system's store: {error}");
@@ -698,10 +719,21 @@ impl VaultState {
     /// system's store, then deletes the vault. On a failure the vault stays where passwords
     /// are, whole; trying again finishes.
     fn move_out(&mut self, vault: &Vault) -> Result<(), VaultProblem> {
+        // Copies of remembered passwords a past `move_in` could not delete: forgotten in the
+        // vault since, they must not come back to life in the system's store.
+        let stale: Vec<String> = super::shared_passwords::system_entry_names(self)
+            .into_iter()
+            .filter(|name| vault.get(name).is_none())
+            .collect();
         for name in vault.names() {
             let bytes = vault.get(name).unwrap_or_default();
             self.system
                 .set(name, bytes)
+                .map_err(|detail| VaultProblem::System { detail })?;
+        }
+        for name in &stale {
+            self.system
+                .remove(name)
                 .map_err(|detail| VaultProblem::System { detail })?;
         }
         std::fs::remove_file(&self.path).map_err(|error| VaultProblem::System {

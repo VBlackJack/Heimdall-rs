@@ -10195,6 +10195,10 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
                 ))],
             )
         }
+        Dialog::PasswordPurgeUnrecorded => (
+            fl!("ui-shared-sources-purge-unrecorded-title"),
+            vec![text(fl!("ui-shared-sources-purge-unrecorded-body"))],
+        ),
         Dialog::ImportNothing { skipped, warnings } => (
             fl!("ui-import-file-title"),
             std::iter::once(fl!("ui-import-file-nothing"))
@@ -10243,6 +10247,7 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         | Dialog::ImportFailed { .. }
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::PasswordForgetFailed { .. }
+        | Dialog::PasswordPurgeUnrecorded
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. } => Severity::Error,
         Dialog::StoreChanged { .. } | Dialog::ConfigRecovered { .. } => Severity::Warning,
@@ -14418,6 +14423,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::CitrixImportDone(_)
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::PasswordForgetFailed { .. }
+        | Dialog::PasswordPurgeUnrecorded
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. }
         | Dialog::StoreChanged { .. }

@@ -6025,3 +6025,5 @@ ui-shared-sources-forget-failed-body =
         [one] { $count } remembered password could not be deleted from the credential store. It stays listed: use Forget again to retry.
        *[other] { $count } remembered passwords could not be deleted from the credential store. They stay listed: use Forget again to retry.
     }
+ui-shared-sources-purge-unrecorded-title = The remembered passwords are not forgotten yet.
+ui-shared-sources-purge-unrecorded-body = The reset could not delete the remembered passwords of shared sessions now, and could not note that it still has to. They are deleted once the vault is unlocked in this run; otherwise use Forget for each shared source in the Settings.

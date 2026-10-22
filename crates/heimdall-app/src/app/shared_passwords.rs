@@ -48,7 +48,7 @@ use zeroize::Zeroizing;
 
 use super::App;
 use super::Dialog;
-use super::vault::{asked_endpoint, try_number};
+use super::vault::{VaultState, asked_endpoint, try_number};
 use crate::error::UiError;
 use crate::event::{Answer, QuestionKind};
 use crate::ids::{AttemptId, QuestionId, TabId};
@@ -120,6 +120,14 @@ pub(super) struct TabPasswords {
     used: Option<UsedPassword>,
 }
 
+impl TabPasswords {
+    /// Forgets the password waiting for its server and the remembered one given.
+    pub(super) fn clear(&mut self) {
+        self.pending = None;
+        self.used = None;
+    }
+}
+
 impl std::fmt::Debug for TabPasswords {
     /// Neither the password nor the account it is for: only whether there is one.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -166,6 +174,15 @@ impl App {
         self.vault.shared.counts.get(source).copied().unwrap_or(0)
     }
 
+    /// Whether the settings still list the shared source `source`: a source taken out keeps
+    /// no password, whatever a tab opened from it still believes.
+    fn source_listed(&self, source: &str) -> bool {
+        self.settings
+            .shared_sources
+            .iter()
+            .any(|listed| listed.id == source)
+    }
+
     /// Records that `profile`, a shared SSH, SFTP or VNC session opened from `source`, may have
     /// its password remembered.
     pub(super) fn note_password_origin(&mut self, profile: ProfileId, source: &str) {
@@ -178,9 +195,13 @@ impl App {
         let Some(tab) = self.tab(tab_id) else {
             return false;
         };
-        asked_endpoint(&tab.profile, kind)
-            .is_some_and(|(profile, _)| self.vault.shared.origins.contains_key(&profile))
-            && self.vault.usable()
+        asked_endpoint(&tab.profile, kind).is_some_and(|(profile, _)| {
+            self.vault
+                .shared
+                .origins
+                .get(&profile)
+                .is_some_and(|source| self.source_listed(source))
+        }) && self.vault.usable()
     }
 
     /// Ticks or clears the box of question `question` in `tab_id`, if it offers one.
@@ -230,7 +251,14 @@ impl App {
         let Some((profile, endpoint)) = asked_endpoint(&tab.profile, &prompt.kind) else {
             return;
         };
-        let Some(source) = self.vault.shared.origins.get(&profile).cloned() else {
+        let Some(source) = self
+            .vault
+            .shared
+            .origins
+            .get(&profile)
+            .filter(|source| self.source_listed(source))
+            .cloned()
+        else {
             return;
         };
         let attempt = tab.attempt;
@@ -244,6 +272,20 @@ impl App {
                 password,
                 token,
             });
+        }
+    }
+
+    /// A question `kind` reached `tab_id`. A password typed in this attempt that the server
+    /// asks again, or a question of another kind after it (a keyboard-interactive round, a
+    /// passphrase), shows the server refused it: it is dropped at once, so that a later
+    /// sign-in by another means never keeps a password that was refused.
+    pub(super) fn shared_question_asked(&mut self, tab_id: TabId, kind: &QuestionKind) {
+        let first_try = matches!(kind, QuestionKind::Password(_)) && try_number(kind) <= 1;
+        if first_try {
+            return;
+        }
+        if let Some(tab) = self.tab_mut(tab_id) {
+            tab.shared_password.pending = None;
         }
     }
 
@@ -262,7 +304,13 @@ impl App {
         }
         let tab = self.tab(tab_id)?;
         let (profile, endpoint) = asked_endpoint(&tab.profile, kind)?;
-        let source = self.vault.shared.origins.get(&profile)?.clone();
+        let source = self
+            .vault
+            .shared
+            .origins
+            .get(&profile)
+            .filter(|source| self.source_listed(source))?
+            .clone();
         let attempt = tab.attempt;
         let answered_before = tab
             .auto_answered
@@ -305,7 +353,9 @@ impl App {
         };
         // Forgotten, or the source taken out, or every setting reset, while the server was
         // still answering: the consent is gone with it.
-        if pending.token != self.vault.shared.revocations.token(&pending.source) {
+        if pending.token != self.vault.shared.revocations.token(&pending.source)
+            || !self.source_listed(&pending.source)
+        {
             return;
         }
         match self.remember_shared_password(&pending.source, &pending.endpoint, &pending.password) {
@@ -364,7 +414,7 @@ impl App {
         let mut stuck = Vec::new();
         for old in &evicted {
             if let Err(error) = self.vault.write(&keys::entry_name(source, old), None) {
-                log::warn!("a remembered shared password could not be forgotten: {error}");
+                log::warn!("a credential store operation failed: {error}");
                 stuck.push(old.clone());
             }
         }
@@ -372,22 +422,24 @@ impl App {
             let mut listed = previous;
             listed.retain(|known| !evicted.contains(known) || stuck.contains(known));
             self.save_index(source, &listed);
-            return Err("an older remembered password could not be deleted".to_owned());
+            return Err("an older entry could not be deleted".to_owned());
         }
         index.push(digest);
-        let saved = SavedPassword {
-            endpoint: keys::normalized(endpoint),
-            password: Zeroizing::new(password.to_owned()),
-        };
-        self.vault.write(&name, Some(&encode(&saved)))?;
+        // Listed first, kept second: whatever fails after the listing leaves a name with no
+        // password behind it, never a password the source's Forget cannot reach.
         let listed = self
             .write_lines(&keys::index_entry(source), &index)
             .and_then(|()| self.list_source(source, true));
         if let Err(detail) = listed {
-            // Not listed is not kept: a password the source's Forget could not reach.
-            if let Err(error) = self.vault.write(&name, None) {
-                log::warn!("a remembered shared password could not be forgotten: {error}");
-            }
+            self.save_index(source, &previous);
+            return Err(detail);
+        }
+        let saved = SavedPassword {
+            endpoint: keys::normalized(endpoint),
+            password: Zeroizing::new(password.to_owned()),
+        };
+        if let Err(detail) = self.vault.write(&name, Some(&encode(&saved))) {
+            self.save_index(source, &previous);
             return Err(detail);
         }
         Ok(())
@@ -401,15 +453,13 @@ impl App {
         }
         let Ok(mut index) = self.shared_index(source) else {
             // Left as it is: an index that could not be read is not an empty one.
-            log::warn!(
-                "a remembered shared password could not be forgotten: the store is unreadable"
-            );
+            log::warn!("a credential store operation failed: the store is unreadable");
             return;
         };
         let name = keys::entry_name(source, &digest);
         if let Err(error) = self.vault.write(&name, None) {
             // Left listed: the source's Forget can still reach it.
-            log::warn!("a remembered shared password could not be forgotten: {error}");
+            log::warn!("a credential store operation failed: {error}");
             return;
         }
         index.retain(|known| *known != digest);
@@ -452,15 +502,13 @@ impl App {
     /// their number is returned.
     fn forget_source_entries(&mut self, source: &str) -> usize {
         let Ok(index) = self.shared_index(source) else {
-            log::warn!(
-                "the remembered shared passwords could not be forgotten: the store is unreadable"
-            );
+            log::warn!("a credential store operation failed: the store is unreadable");
             return 1;
         };
         let mut kept = Vec::new();
         for digest in index {
             if let Err(error) = self.vault.write(&keys::entry_name(source, &digest), None) {
-                log::warn!("a remembered shared password could not be forgotten: {error}");
+                log::warn!("a credential store operation failed: {error}");
                 kept.push(digest);
             }
         }
@@ -490,8 +538,13 @@ impl App {
             tab.shared_password.pending = None;
             tab.shared_password.used = None;
         }
-        self.set_purge_pending(true);
+        let noted = self.set_purge_pending(true);
         self.sync_shared_passwords();
+        // A deletion still waiting that a restart would not take up: the user is told, since
+        // nothing else will.
+        if !noted && self.vault.shared.purge_pending && self.dialog.is_none() {
+            self.dialog = Some(Dialog::PasswordPurgeUnrecorded);
+        }
     }
 
     /// Whether a deletion of remembered passwords (a reset's, or a source taken out's) still
@@ -503,9 +556,9 @@ impl App {
     /// Notes that a reset's deletion waits, or is done. A marker file beside the settings
     /// keeps it across a restart: the reset keeps the sources listed, so nothing else would
     /// tell the next start that their passwords were to go.
-    fn set_purge_pending(&mut self, pending: bool) {
+    fn set_purge_pending(&mut self, pending: bool) -> bool {
         self.vault.shared.purge_pending = pending;
-        self.set_marker(PURGE_MARKER_FILE, pending);
+        self.set_marker(PURGE_MARKER_FILE, pending)
     }
 
     /// Notes that the forgetting of the passwords of a source taken out waits, or is done;
@@ -518,10 +571,10 @@ impl App {
         }
     }
 
-    /// Creates or removes the marker file `name` beside the settings.
-    fn set_marker(&self, name: &str, present: bool) {
+    /// Creates or removes the marker file `name` beside the settings; whether it was done.
+    fn set_marker(&self, name: &str, present: bool) -> bool {
         let Some(marker) = self.settings_file.parent().map(|folder| folder.join(name)) else {
-            return;
+            return false;
         };
         let done = if present {
             std::fs::write(&marker, b"")
@@ -531,11 +584,10 @@ impl App {
                 _ => Ok(()),
             }
         };
-        if let Err(error) = done {
-            log::warn!(
-                "the pending forgetting of remembered passwords could not be noted: {error}"
-            );
+        if let Err(error) = &done {
+            log::warn!("a file beside the settings could not be written: {error}");
         }
+        done.is_ok()
     }
 
     /// Takes up the deletions that a previous run could not finish.
@@ -564,7 +616,7 @@ impl App {
             .write_lines(&keys::index_entry(source), index)
             .and_then(|()| self.list_source(source, !index.is_empty()));
         if let Err(error) = written {
-            log::warn!("the remembered shared passwords could not be updated: {error}");
+            log::warn!("a credential store operation failed: {error}");
         }
     }
 
@@ -586,20 +638,22 @@ impl App {
     /// `source`'s index; an error when the store could not be read, which is not an empty
     /// index: deleting by it would orphan every entry it lists.
     fn shared_index(&self, source: &str) -> Result<Vec<String>, String> {
-        Ok(self
-            .vault
-            .read_checked(&keys::index_entry(source))?
-            .and_then(|bytes| decode_index(&bytes))
-            .unwrap_or_default())
+        match self.vault.read_checked(&keys::index_entry(source))? {
+            None => Ok(Vec::new()),
+            // A newer version's or a damaged index is not an empty one: its entries would be
+            // lost to the clean-up, and the cleanup stays pending.
+            Some(bytes) => decode_index(&bytes).ok_or_else(|| "the index is unreadable".to_owned()),
+        }
     }
 
     /// The sources that have remembered passwords; an error when the store could not be read.
     fn sources_with_passwords(&self) -> Result<Vec<String>, String> {
-        Ok(self
-            .vault
-            .read_checked(SOURCES_ENTRY)?
-            .and_then(|bytes| decode_sources(&bytes))
-            .unwrap_or_default())
+        match self.vault.read_checked(SOURCES_ENTRY)? {
+            None => Ok(Vec::new()),
+            Some(bytes) => {
+                decode_sources(&bytes).ok_or_else(|| "the list of sources is unreadable".to_owned())
+            }
+        }
     }
 
     /// Writes `lines` as entry `name`, or removes the entry for none.
@@ -615,22 +669,7 @@ impl App {
     /// for moving them into a vault being created; the system's store cannot be listed. Read
     /// from the system's store itself: the vault file already exists by then, still closed.
     pub(super) fn shared_password_entries(&self) -> Vec<String> {
-        let read = |name: &str| self.vault.read_system(name);
-        let sources = read(SOURCES_ENTRY)
-            .and_then(|bytes| decode_sources(&bytes))
-            .unwrap_or_default();
-        if sources.is_empty() {
-            return Vec::new();
-        }
-        let mut names = vec![SOURCES_ENTRY.to_owned()];
-        for source in &sources {
-            names.push(keys::index_entry(source));
-            let index = read(&keys::index_entry(source))
-                .and_then(|bytes| decode_index(&bytes))
-                .unwrap_or_default();
-            names.extend(index.iter().map(|digest| keys::entry_name(source, digest)));
-        }
-        names
+        system_entry_names(&self.vault)
     }
 
     /// Counts again what is remembered per source listed in the settings; none while the
@@ -680,6 +719,12 @@ impl App {
             .iter()
             .map(|source| source.id.clone())
             .collect();
+        // A tab opened from a source since taken out must not keep offering, saving or
+        // answering a password under it.
+        self.vault
+            .shared
+            .origins
+            .retain(|_, source| listed.contains(source));
         let before = self.vault.shared.sources_seen.replace(listed.clone());
         // A source taken out withdraws its consent at once, whether or not the store can be
         // read yet.
@@ -735,5 +780,57 @@ impl App {
         self.set_purge_pending(remaining > 0);
         self.report_incomplete_forget(remaining, false);
         self.refresh_shared_password_counts();
+    }
+}
+
+/// The name of every entry the remembered shared passwords occupy in the system's store, as
+/// far as its own list of sources and indexes tell; read from the system's store itself,
+/// whether or not a vault exists.
+pub(super) fn system_entry_names(vault: &VaultState) -> Vec<String> {
+    let read = |name: &str| vault.read_system(name);
+    let sources = read(SOURCES_ENTRY)
+        .and_then(|bytes| decode_sources(&bytes))
+        .unwrap_or_default();
+    if sources.is_empty() {
+        return Vec::new();
+    }
+    let mut names = vec![SOURCES_ENTRY.to_owned()];
+    for source in &sources {
+        names.push(keys::index_entry(source));
+        let index = read(&keys::index_entry(source))
+            .and_then(|bytes| decode_index(&bytes))
+            .unwrap_or_default();
+        names.extend(index.iter().map(|digest| keys::entry_name(source, digest)));
+    }
+    names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_attempt_clears_what_was_typed_for_the_one_before() {
+        let mut passwords = TabPasswords {
+            pending: Some(PendingRemember {
+                attempt: AttemptId::fresh(),
+                source: "team".to_owned(),
+                endpoint: Endpoint {
+                    protocol: heimdall_core::credentials::CredentialProtocol::Vnc,
+                    host: "h".to_owned(),
+                    port: 5900,
+                    username: None,
+                },
+                password: Zeroizing::new("typed".to_owned()),
+                token: RevocationToken {
+                    source: 0,
+                    epoch: 0,
+                },
+            }),
+            used: None,
+        };
+        assert!(passwords.pending.is_some());
+        passwords.clear();
+        assert!(passwords.pending.is_none());
     }
 }
