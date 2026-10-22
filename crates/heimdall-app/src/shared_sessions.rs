@@ -243,6 +243,9 @@ impl SharedSession {
 const PROTOCOL_SSH: &str = "SSH";
 const PROTOCOL_SFTP: &str = "SFTP";
 const PROTOCOL_RDP: &str = "RDP";
+
+/// Key of the RD Gateway of an RDP session in a session of the file (the profile JSON key).
+const RD_GATEWAY_KEY: &str = "rdpGateway";
 const PROTOCOL_TELNET: &str = "Telnet";
 const PROTOCOL_VNC: &str = "VNC";
 
@@ -592,7 +595,12 @@ fn cached_session(session: &SharedSession) -> CachedSession {
         SharedTarget::Rdp(profile) => profile.username.clone(),
         SharedTarget::Telnet(_) | SharedTarget::Vnc(_) => None,
     };
+    let rd_gateway = match &session.target {
+        SharedTarget::Rdp(profile) => profile.extras.rd_gateway().map(str::to_owned),
+        _ => None,
+    };
     CachedSession {
+        rd_gateway,
         folder: session.folder.clone(),
         name: session.name().to_owned(),
         protocol: session.protocol().to_ascii_lowercase(),
@@ -679,6 +687,13 @@ fn session_of_copy(source_id: &str, cached: &CachedSession) -> Option<SharedSess
     if cached.gateway.is_some() && !kind.carries_gateway() {
         return None;
     }
+    // Same for an RD Gateway: one the copy holds that cannot be kept drops the session, and a
+    // protocol without one never gets one.
+    let rd_gateway = match cached.rd_gateway.as_deref().map(str::trim) {
+        None => None,
+        Some(host) if kind == Protocol::Rdp && is_valid_host(host) => Some(host.to_owned()),
+        Some(_) => return None,
+    };
     let gateway = match &cached.gateway {
         None => None,
         Some(gateway) => Some(shared_gateway(
@@ -700,6 +715,7 @@ fn session_of_copy(source_id: &str, cached: &CachedSession) -> Option<SharedSess
         Login {
             username,
             gateway,
+            rd_gateway: rd_gateway.as_deref(),
             steps: Vec::new(),
         },
     ))
@@ -785,22 +801,8 @@ fn parse(
             }
         }
     }
-    // A session whose gateway has no usable host was left out by the reader: said as refused.
-    for warning in &parsed.warnings {
-        if let FileWarning::InvalidGatewayHost {
-            session,
-            folder,
-            host,
-        } = warning
-        {
-            refused.push(Refused {
-                folder: display_text(folder),
-                name: display_text(session),
-                reason: SkipReason::InvalidGateway,
-                detail: display_text(host),
-            });
-        }
-    }
+    // A session the reader left out for its route is said as refused.
+    refused.extend(parsed.warnings.iter().filter_map(refused_by_reader));
     // The warning names the session as the file does; its folder is the one of the entry of
     // that name, as the C# looks the folder of a warning's section up.
     let unresolved = parsed
@@ -889,7 +891,7 @@ fn text_of<'a>(server: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 /// What a shared session connects with, before its profile is made.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Protocol {
     Ssh,
     Sftp,
@@ -1004,6 +1006,16 @@ fn sanitize(
             None => return Err((SkipReason::InvalidGateway, String::new())),
         },
     };
+    // The RD Gateway of an RDP session is kept (the RDP client goes through it); one that is not
+    // a host refuses the session, as dropping it would make the session a direct one
+    // (`SharedProfileSanitizer.cs`, `InvalidRdGateway`).
+    let rd_gateway = match (protocol, text_of(server, RD_GATEWAY_KEY)) {
+        (Protocol::Rdp, Some(gateway)) if is_valid_host(gateway) => Some(gateway),
+        (Protocol::Rdp, Some(gateway)) => {
+            return Err((SkipReason::InvalidRdGateway, display_text(gateway)));
+        }
+        _ => None,
+    };
     let (port_key, default_port) = protocol.port_key();
     Ok(build_session(
         source_id,
@@ -1015,6 +1027,7 @@ fn sanitize(
         Login {
             username: protocol.account_key().and_then(|key| text_of(server, key)),
             gateway,
+            rd_gateway,
             // Only a shell types commands; the other protocols have no post-connect step.
             steps: if matches!(protocol, Protocol::Ssh) {
                 steps_of(server)
@@ -1023,6 +1036,36 @@ fn sanitize(
             },
         },
     ))
+}
+
+/// The session a warning of the reader says it left out because of its route, as a refused one:
+/// its SSH gateway has no usable host, or its RD Gateway has none or is signed in to in a way
+/// Heimdall does not reproduce (a smart card). Taking it direct would go around the gateway.
+fn refused_by_reader(warning: &FileWarning) -> Option<Refused> {
+    let (session, folder, host, reason) = match warning {
+        FileWarning::InvalidGatewayHost {
+            session,
+            folder,
+            host,
+        } => (session, folder, host, SkipReason::InvalidGateway),
+        FileWarning::InvalidRdGatewayHost {
+            session,
+            folder,
+            host,
+        } => (session, folder, host, SkipReason::InvalidRdGateway),
+        FileWarning::RdGatewayNotSupported {
+            session,
+            folder,
+            host,
+        } => (session, folder, host, SkipReason::RdGatewayNotSupported),
+        _ => return None,
+    };
+    Some(Refused {
+        folder: display_text(folder),
+        name: display_text(session),
+        reason,
+        detail: display_text(host),
+    })
 }
 
 /// The gateways of a file as the shared namespace keeps them, by the identifier the reader gave
@@ -1097,6 +1140,8 @@ fn display_text(text: &str) -> String {
 struct Login<'a> {
     username: Option<&'a str>,
     gateway: Option<SshGateway>,
+    /// The RD Gateway of an RDP session, a host already checked. Its own login is never carried.
+    rd_gateway: Option<&'a str>,
     /// The commands the file asks a shell to type once it is ready, SSH only. Never approved
     /// by the file: they run only once the user approved them (see `app::shared`).
     steps: Vec<PostConnectStep>,
@@ -1116,6 +1161,7 @@ fn build_session(
     let Login {
         username,
         gateway,
+        rd_gateway,
         steps,
     } = login;
     let id = ProfileId::new(session_id(source_id, folder.unwrap_or_default(), name));
@@ -1130,7 +1176,9 @@ fn build_session(
             files.sftp = true;
             SharedTarget::Sftp(files)
         }
-        Protocol::Rdp => SharedTarget::Rdp(rdp_profile(&id, name, host, port, username, route)),
+        Protocol::Rdp => SharedTarget::Rdp(rdp_profile(
+            &id, name, host, port, username, route, rd_gateway,
+        )),
         Protocol::Telnet => SharedTarget::Telnet(TelnetProfile {
             id: id.clone(),
             name: name.to_owned(),
@@ -1220,9 +1268,13 @@ fn rdp_profile(
     port: u16,
     username: Option<&str>,
     gateway: Option<ProfileId>,
+    rd_gateway: Option<&str>,
 ) -> RdpProfile {
     RdpProfile {
-        extras: RdpExtras::default(),
+        extras: RdpExtras {
+            rd_gateway: rd_gateway.map(str::to_owned),
+            ..RdpExtras::default()
+        },
         id: id.clone(),
         name: name.to_owned(),
         group: None,

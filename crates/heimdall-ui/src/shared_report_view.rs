@@ -121,6 +121,18 @@ pub fn entry_text(entry: &ReportEntry) -> String {
                     host = entry.detail.as_str()
                 )
             }
+            Some(SkipReason::RdGatewayNotSupported) => {
+                fl!(
+                    "ui-shared-report-reason-rd-gateway",
+                    host = entry.detail.as_str()
+                )
+            }
+            Some(SkipReason::InvalidRdGateway) => {
+                fl!(
+                    "ui-shared-report-reason-invalid-rd-gateway",
+                    host = entry.detail.as_str()
+                )
+            }
             None => String::new(),
         },
         ReportCheck::UnresolvedVariable => {
@@ -335,6 +347,8 @@ mod tests {
             SkipReason::InvalidHost,
             SkipReason::DuplicateSession,
             SkipReason::OverLimit,
+            SkipReason::RdGatewayNotSupported,
+            SkipReason::InvalidRdGateway,
         ] {
             assert!(!entry_text(&entry(ReportCheck::SkippedSession, Some(reason), "x")).is_empty());
         }

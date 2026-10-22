@@ -604,3 +604,33 @@ fn a_mobaxterm_session_with_an_unusable_gateway_is_not_imported_and_is_said() {
     assert_eq!(hosts, ["fine.lab"]);
     assert!(app.gateways().is_empty());
 }
+
+#[test]
+fn a_mobaxterm_rdp_session_keeps_its_rd_gateway_and_a_smart_card_one_is_said_not_imported() {
+    let mut fields = vec![""; 31];
+    fields[0] = "pc.lab";
+    fields[19] = "rdg.lab";
+    fields[30] = "0,2,rdg.lab,svc,,1,";
+    let always = fields.join("%");
+    fields[30] = "0,2,rdg.lab,,,3,";
+    let card = fields.join("%");
+    let text = format!("[Bookmarks]\nalways= #91#4%{always}\ncard= #91#4%{card}\n");
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    read(&mut app, "sessions.mxtsessions", &text, None);
+    let Some(Dialog::ConfirmImportFile(pending)) = &app.dialog else {
+        panic!("not asked: {:?}", app.dialog);
+    };
+    assert_eq!(
+        pending.warnings,
+        [FileWarning::RdGatewayNotSupported {
+            session: "card".to_owned(),
+            folder: String::new(),
+            host: "rdg.lab".to_owned()
+        }]
+    );
+    assert_eq!(pending.count(), 1);
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.rdp_profiles().len(), 1);
+    assert_eq!(app.rdp_profiles()[0].extras.rd_gateway(), Some("rdg.lab"));
+}

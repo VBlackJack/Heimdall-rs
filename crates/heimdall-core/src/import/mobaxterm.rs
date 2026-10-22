@@ -77,6 +77,28 @@ const SSH_GATEWAY_FIELDS: [usize; 3] = [7, 8, 9];
 /// (`MobaXtermImporter.cs:107-113`).
 const RDP_GATEWAY_FIELDS: [usize; 3] = [12, 13, 14];
 
+/// Where an RDP session names its RD Gateway server, and the packed field holding the gateway
+/// settings (`MobaXtermImporter.cs`, `RdGatewaySlot(HostIndex: 19, SettingsIndex: 30)`).
+const RD_GATEWAY_HOST_FIELD: usize = 19;
+const RD_GATEWAY_SETTINGS_FIELD: usize = 30;
+
+/// The settings field is `flags,mode,server,login,?,auth,`, by position once split on ','.
+const RD_GATEWAY_SETTINGS_SEPARATOR: char = ',';
+const RD_GATEWAY_MODE_PART: usize = 1;
+const RD_GATEWAY_SERVER_PART: usize = 2;
+const RD_GATEWAY_AUTH_PART: usize = 5;
+
+/// "Use RDP gateway": Never 0, Detect 1, Always 2. Never and Detect clear the server.
+const RD_GATEWAY_MODE_ALWAYS: u32 = 2;
+
+/// The modes that leave the session direct when no server is named: Never 0 and Detect 1.
+const RD_GATEWAY_DIRECT_MODES: [u32; 2] = [0, 1];
+
+/// The gateway sign-ins Heimdall reproduces: 0 "Same as end server", 1 "Prompt during
+/// connection" and 2 "Specify login/password" all sign in with a password, which the RDP client
+/// asks for. 3 "Use smartcard" and any other code are not reproduced.
+const PASSWORD_RD_GATEWAY_AUTHS: [u32; 3] = [0, 1, 2];
+
 /// Key of the field a session gets when it names an SSH jump host its protocol cannot be routed
 /// through (Telnet, VNC): the host, as written. The C# refuses such a session
 /// (`MobaXtermImporter.cs:308-316`); a reader that took it as a direct connection would reach
@@ -229,6 +251,25 @@ pub fn parse_limited(
                     host: host.clone(),
                 });
             }
+            match &outcome {
+                Err(Refusal::RdGatewayHost(host)) => {
+                    parsed.warnings.push(FileWarning::InvalidRdGatewayHost {
+                        session: key.clone(),
+                        folder: folder.clone(),
+                        host: host.clone(),
+                    });
+                }
+                Err(Refusal::RdGatewayRoute(host)) => {
+                    // Never imported as a direct connection: that would go around the RD
+                    // Gateway the file asked for (`MobaXtermImporter.cs:330-335`).
+                    parsed.warnings.push(FileWarning::RdGatewayNotSupported {
+                        session: key.clone(),
+                        folder: folder.clone(),
+                        host: host.clone(),
+                    });
+                }
+                _ => {}
+            }
             if let Ok(fields) = outcome {
                 parsed.push(fields);
                 // Once per session, whichever fields carry the token: the user has one
@@ -252,12 +293,74 @@ pub fn parse_limited(
     (parsed, skipped)
 }
 
+/// The RD Gateway an RDP session goes through, as the C# `ReadRdGateway`
+/// (`MobaXtermImporter.cs:462-480`), and whether Heimdall can take that route.
+///
+/// Measured: "Never" and "Detect" leave the server empty in both fields, "Always" writes it in
+/// both, and a session never given gateway settings has no settings field at all. A session that
+/// names no server stays direct, as in `MobaXterm`. One that names a server is reproduced only
+/// when the settings confirm "Always", the same server and a password sign-in; anything else
+/// (smart card, a code not measured, a missing settings field, another server) is a route that
+/// cannot be taken as written, so the session is refused rather than imported as a direct
+/// connection that would go around the gateway.
+struct RdGatewayRoute {
+    server: String,
+    reproducible: bool,
+}
+
+fn read_rd_gateway<'a>(field: &dyn Fn(usize) -> &'a str) -> RdGatewayRoute {
+    let server = field(RD_GATEWAY_HOST_FIELD).trim();
+    let settings: Vec<&str> = field(RD_GATEWAY_SETTINGS_FIELD)
+        .split(RD_GATEWAY_SETTINGS_SEPARATOR)
+        .collect();
+    let part = |index: usize| settings.get(index).copied().unwrap_or_default().trim();
+    let settings_server = part(RD_GATEWAY_SERVER_PART);
+    let code = |index: usize| {
+        let text = part(index);
+        // Digits only, as the C# `NumberStyles.None`.
+        if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        text.parse::<u32>().ok()
+    };
+    if server.is_empty() && settings_server.is_empty() {
+        // No gateway named: direct, but only when the settings are absent or say Never or
+        // Detect. Anything else (Always without a server, a mode not measured, garbage) is a
+        // gateway setting that cannot be followed, not a license to go direct.
+        let absent = settings.iter().all(|setting| setting.trim().is_empty());
+        let direct = absent
+            || code(RD_GATEWAY_MODE_PART)
+                .is_some_and(|mode| RD_GATEWAY_DIRECT_MODES.contains(&mode));
+        return RdGatewayRoute {
+            server: String::new(),
+            reproducible: direct,
+        };
+    }
+    let reproducible = server.eq_ignore_ascii_case(settings_server)
+        && code(RD_GATEWAY_MODE_PART) == Some(RD_GATEWAY_MODE_ALWAYS)
+        && code(RD_GATEWAY_AUTH_PART).is_some_and(|auth| PASSWORD_RD_GATEWAY_AUTHS.contains(&auth));
+    let named = if server.is_empty() {
+        settings_server
+    } else {
+        server
+    };
+    RdGatewayRoute {
+        server: named.to_owned(),
+        reproducible,
+    }
+}
+
 /// Why a session line gives no session.
 enum Refusal {
     /// No host, a protocol Heimdall does not map, or a line of another shape.
     NotASession,
     /// The session names a gateway whose host is not usable.
     GatewayHost(String),
+    /// The RDP session names an RD Gateway whose host is not usable.
+    RdGatewayHost(String),
+    /// The RDP session goes through an RD Gateway Heimdall cannot take as written (a smart card
+    /// sign-in, or a setting not recognised).
+    RdGatewayRoute(String),
 }
 
 /// The gateways the sessions of a file name, each once: two sessions through the same host,
@@ -459,6 +562,19 @@ fn session(
             let gateway_user = replace_variables(field(user_at), resolve, unresolved);
             let id = gateways.get_or_add(gateway_host, gateway_port, gateway_user.trim());
             dto.insert(GATEWAY_ID_KEY.to_owned(), Value::String(id));
+        }
+    }
+    if *connection_type == "RDP" {
+        let route = read_rd_gateway(&field);
+        if !route.reproducible {
+            return Err(Refusal::RdGatewayRoute(route.server));
+        }
+        if !route.server.is_empty() {
+            if !is_valid_host(&route.server) {
+                return Err(Refusal::RdGatewayHost(route.server));
+            }
+            // The gateway's own login is not carried over: the RDP client asks for it.
+            set_text(&mut dto, "rdpGateway", &route.server);
         }
     }
     // A port that is not a positive number is the protocol's default, as the C#.
@@ -929,5 +1045,72 @@ mod tests {
         ));
         assert!(parsed.servers[0].get(UNSUPPORTED_JUMP_HOST_KEY).is_none());
         assert!(parsed.servers[0].get(GATEWAY_ID_KEY).is_some());
+    }
+
+    /// An RDP session with RD Gateway server `at19` and packed settings `at30`.
+    fn rdp_gateway(at19: &str, at30: &str) -> Parsed {
+        parse(&format!(
+            "[Bookmarks]\n{}",
+            line("r", 91, &[(0, "pc.lab"), (19, at19), (30, at30)])
+        ))
+    }
+
+    #[test]
+    fn an_rd_gateway_set_to_never_or_detect_leaves_the_session_direct() {
+        for settings in ["0,0,,,,0,", "0,1,,,,0,", ""] {
+            let parsed = rdp_gateway("", settings);
+            assert_eq!(parsed.servers.len(), 1, "{settings}");
+            assert!(parsed.servers[0].get("rdpGateway").is_none(), "{settings}");
+            assert!(parsed.warnings.is_empty(), "{settings}");
+        }
+    }
+
+    #[test]
+    fn an_rd_gateway_set_to_always_with_a_password_sign_in_is_kept_without_its_login() {
+        for auth in ["0", "1", "2"] {
+            let parsed = rdp_gateway("rdg.lab", &format!("0,2,rdg.lab,svc,,{auth},"));
+            assert_eq!(parsed.servers.len(), 1, "auth {auth}");
+            assert_eq!(parsed.servers[0]["rdpGateway"], "rdg.lab");
+            assert!(parsed.warnings.is_empty(), "auth {auth}");
+            assert!(!parsed.servers[0].to_string().contains("svc"), "login kept");
+        }
+    }
+
+    #[test]
+    fn an_rd_gateway_with_a_smart_card_or_an_unrecognised_setting_is_refused_not_made_direct() {
+        for (at19, at30) in [
+            ("rdg.lab", "0,2,rdg.lab,,,3,"),
+            ("rdg.lab", "0,2,rdg.lab,,,9,"),
+            ("rdg.lab", "0,2,rdg.lab,,,,"),
+            ("rdg.lab", "0,7,rdg.lab,,,0,"),
+            ("rdg.lab", "0,1,rdg.lab,,,0,"),
+            ("rdg.lab", ""),
+            ("rdg.lab", "0,2,other.lab,,,0,"),
+            ("", "0,2,rdg.lab,,,0,"),
+            ("", "0,2,,,,3,"),
+            ("", "0,7,,,,0,"),
+            ("", "garbage"),
+        ] {
+            let parsed = rdp_gateway(at19, at30);
+            assert!(parsed.servers.is_empty(), "{at19} {at30}");
+            assert!(
+                matches!(
+                    parsed.warnings[..],
+                    [FileWarning::RdGatewayNotSupported { .. }]
+                ),
+                "{at19} {at30}: {:?}",
+                parsed.warnings
+            );
+        }
+    }
+
+    #[test]
+    fn an_rd_gateway_that_is_not_a_host_is_refused() {
+        let parsed = rdp_gateway("-oProxy x", "0,2,-oProxy x,,,0,");
+        assert!(parsed.servers.is_empty());
+        assert!(matches!(
+            parsed.warnings[..],
+            [FileWarning::InvalidRdGatewayHost { .. }]
+        ));
     }
 }
