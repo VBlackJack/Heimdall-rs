@@ -91,6 +91,9 @@ const RD_GATEWAY_AUTH_PART: usize = 5;
 /// "Use RDP gateway": Never 0, Detect 1, Always 2. Never and Detect clear the server.
 const RD_GATEWAY_MODE_ALWAYS: u32 = 2;
 
+/// The modes that leave the session direct when no server is named: Never 0 and Detect 1.
+const RD_GATEWAY_DIRECT_MODES: [u32; 2] = [0, 1];
+
 /// The gateway sign-ins Heimdall reproduces: 0 "Same as end server", 1 "Prompt during
 /// connection" and 2 "Specify login/password" all sign in with a password, which the RDP client
 /// asks for. 3 "Use smartcard" and any other code are not reproduced.
@@ -312,12 +315,6 @@ fn read_rd_gateway<'a>(field: &dyn Fn(usize) -> &'a str) -> RdGatewayRoute {
         .collect();
     let part = |index: usize| settings.get(index).copied().unwrap_or_default().trim();
     let settings_server = part(RD_GATEWAY_SERVER_PART);
-    if server.is_empty() && settings_server.is_empty() {
-        return RdGatewayRoute {
-            server: String::new(),
-            reproducible: true,
-        };
-    }
     let code = |index: usize| {
         let text = part(index);
         // Digits only, as the C# `NumberStyles.None`.
@@ -326,6 +323,19 @@ fn read_rd_gateway<'a>(field: &dyn Fn(usize) -> &'a str) -> RdGatewayRoute {
         }
         text.parse::<u32>().ok()
     };
+    if server.is_empty() && settings_server.is_empty() {
+        // No gateway named: direct, but only when the settings are absent or say Never or
+        // Detect. Anything else (Always without a server, a mode not measured, garbage) is a
+        // gateway setting that cannot be followed, not a license to go direct.
+        let absent = settings.iter().all(|setting| setting.trim().is_empty());
+        let direct = absent
+            || code(RD_GATEWAY_MODE_PART)
+                .is_some_and(|mode| RD_GATEWAY_DIRECT_MODES.contains(&mode));
+        return RdGatewayRoute {
+            server: String::new(),
+            reproducible: direct,
+        };
+    }
     let reproducible = server.eq_ignore_ascii_case(settings_server)
         && code(RD_GATEWAY_MODE_PART) == Some(RD_GATEWAY_MODE_ALWAYS)
         && code(RD_GATEWAY_AUTH_PART).is_some_and(|auth| PASSWORD_RD_GATEWAY_AUTHS.contains(&auth));
@@ -1077,6 +1087,9 @@ mod tests {
             ("rdg.lab", ""),
             ("rdg.lab", "0,2,other.lab,,,0,"),
             ("", "0,2,rdg.lab,,,0,"),
+            ("", "0,2,,,,3,"),
+            ("", "0,7,,,,0,"),
+            ("", "garbage"),
         ] {
             let parsed = rdp_gateway(at19, at30);
             assert!(parsed.servers.is_empty(), "{at19} {at30}");

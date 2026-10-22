@@ -690,7 +690,7 @@ fn session_of_copy(source_id: &str, cached: &CachedSession) -> Option<SharedSess
     // Same for an RD Gateway: one the copy holds that cannot be kept drops the session, and a
     // protocol without one never gets one.
     let rd_gateway = match cached.rd_gateway.as_deref().map(str::trim) {
-        None | Some("") => None,
+        None => None,
         Some(host) if kind == Protocol::Rdp && is_valid_host(host) => Some(host.to_owned()),
         Some(_) => return None,
     };
