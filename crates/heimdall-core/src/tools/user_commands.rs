@@ -39,6 +39,10 @@ use super::date_time::{Instant, round_trip_utc};
 use super::private_file::write_private;
 use super::uuid_generator::{self, UuidFormat, UuidVersion};
 
+mod quoting;
+
+use quoting::{POWERSHELL_SINGLE_QUOTES, QuoteContext, placeholder_quote_contexts};
+
 /// The file of the user's commands, beside the profiles file.
 pub const LIBRARY_FILE: &str = "command-library.json";
 
@@ -46,10 +50,13 @@ pub const LIBRARY_FILE: &str = "command-library.json";
 pub const SCHEMA_VERSION: &str = "1.0";
 
 /// The longest value of a parameter, as the C# `MaxParameterLength`.
-pub const MAX_PARAMETER_LENGTH: usize = 256;
+pub const MAX_PARAMETER_LENGTH: usize = 1024;
 
 /// The longest generated command, as the C# `MaxCommandLength`.
-pub const MAX_COMMAND_LENGTH: usize = 1024;
+pub const MAX_COMMAND_LENGTH: usize = 4096;
+
+/// The longest path value, as the C# `MaxPathLength` (the Windows `MAX_PATH`).
+pub const MAX_PATH_LENGTH: usize = 260;
 
 /// The most parameters of a template, as the C# `MaxParametersPerTemplate`.
 pub const MAX_PARAMETERS: usize = 50;
@@ -64,7 +71,7 @@ pub const MAX_DESCRIPTION_LENGTH: usize = 2000;
 pub const MAX_CATEGORY_LENGTH: usize = 100;
 
 /// The longest command pattern, as the C# `MaxTemplateCommandPatternLength`.
-pub const MAX_PATTERN_LENGTH: usize = 1000;
+pub const MAX_PATTERN_LENGTH: usize = 4000;
 
 /// The most tags, as the C# `MaxActionTagsCount`.
 pub const MAX_TAGS: usize = 20;
@@ -84,8 +91,20 @@ const TAG_SEPARATOR: char = ',';
 /// The characters a string value may not hold, as the C# `DangerousChars`.
 const DANGEROUS_CHARACTERS: [char; 9] = ['&', '|', ';', '`', '$', '(', ')', '<', '>'];
 
-/// The single quotes PowerShell reads as one: each is doubled to carry itself.
-const POWERSHELL_QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
+/// The punctuation, besides ASCII letters and digits, a value substituted bare may hold, as
+/// the C# `SafeBareValueRegex` (`CommandGeneratorService.cs`): none of it splits, expands or
+/// substitutes in bash or PowerShell. See [`is_safe_bare_value`].
+const SAFE_BARE_PUNCTUATION: [char; 10] = ['.', '_', '/', ':', '=', '@', '+', ',', '%', '-'];
+
+/// What PowerShell reads specially at the start of an argument: `-` names a parameter and
+/// `@` splats a variable.
+const POWERSHELL_LEADING_SPECIAL: [char; 2] = ['-', '@'];
+
+/// What PowerShell reads between words: a comma builds an array out of two arguments.
+const POWERSHELL_ARRAY_SEPARATOR: char = ',';
+
+/// What a removed placeholder leaves around it.
+const WORD_SEPARATOR: char = ' ';
 
 /// The type name of a parameter with a fixed set of values, as the C# `ChoiceTypeName`.
 pub const CHOICE_TYPE: &str = "choice";
@@ -450,7 +469,13 @@ pub enum GenerateError {
 
 /// The command of `template` with the values `value_of` gives, each put in as its type and
 /// quoting say for the shell of `platform`, as the C# `CommandGeneratorService.GenerateCommand`;
-/// a blank value is its default.
+/// a blank value is its default. An optional value still blank is left out of the command
+/// together with the space it leaves, instead of being quoted into an empty argument.
+///
+/// Every placeholder is replaced in one pass over the pattern, so a value that happens to
+/// hold the text `{other}` stays that text: replaced one parameter after another it would
+/// be read as the placeholder of the next, and the next value would land inside the quotes
+/// of the first.
 ///
 /// # Errors
 ///
@@ -467,17 +492,31 @@ pub fn generate<'v>(
     if template.parameters.len() > MAX_PARAMETERS {
         return Err(GenerateError::TooManyParameters);
     }
-    let mut command = template.command_pattern.clone();
+    let pattern = template.command_pattern.as_str();
+    let mut substitutions: Vec<Substitution> = Vec::new();
     let mut refused = Vec::new();
     for parameter in &template.parameters {
         let value = value_of(&parameter.name)
             .filter(|typed| !typed.trim().is_empty())
             .or(parameter.default_value.as_deref())
             .unwrap_or("");
-        match check_value(parameter, value) {
+        match check_value(pattern, parameter, value, platform) {
             Ok(()) => {
-                let quoted = quote_value(parameter, value, platform);
-                command = command.replace(&format!("{{{}}}", parameter.name), &quoted);
+                let placeholder = format!("{{{}}}", parameter.name);
+                // The first parameter of a name owns its placeholders, as in the C# where
+                // the second finds nothing left to replace.
+                if substitutions
+                    .iter()
+                    .any(|known| known.placeholder == placeholder)
+                {
+                    continue;
+                }
+                let replacement = (!value.trim().is_empty())
+                    .then(|| quote_value(pattern, parameter, value, platform));
+                substitutions.push(Substitution {
+                    placeholder,
+                    replacement,
+                });
             }
             Err(error) => refused.push(error),
         }
@@ -485,15 +524,74 @@ pub fn generate<'v>(
     if !refused.is_empty() {
         return Err(GenerateError::Values(refused));
     }
+    let command = substitute(pattern, &substitutions);
     if command.chars().count() > MAX_COMMAND_LENGTH {
         return Err(GenerateError::TooLong);
     }
     Ok(command)
 }
 
+/// One placeholder of a pattern and what takes its place.
+struct Substitution {
+    /// The text looked for, `{name}`.
+    placeholder: String,
+    /// The value as it goes into the command; `None` leaves the argument out.
+    replacement: Option<String>,
+}
+
+/// `pattern` with every placeholder of `substitutions` replaced in one pass.
+///
+/// A placeholder left out takes with it the run of spaces it leaves, as the C#
+/// `RemoveEmptyPlaceholder`: only the spaces next to it are touched (two spaces the author
+/// wrote inside a quoted grep expression stay), and one that ends the command takes the
+/// space before it along, so `hostname {name}` becomes `hostname`.
+fn substitute(pattern: &str, substitutions: &[Substitution]) -> String {
+    let mut result = String::with_capacity(pattern.len());
+    let mut rest = pattern;
+    while let Some(next) = rest.chars().next() {
+        let hit = substitutions
+            .iter()
+            .find(|each| rest.starts_with(each.placeholder.as_str()));
+        match hit {
+            Some(Substitution {
+                placeholder,
+                replacement: Some(value),
+            }) => {
+                result.push_str(value);
+                rest = &rest[placeholder.len()..];
+            }
+            Some(Substitution {
+                placeholder,
+                replacement: None,
+            }) => {
+                rest = &rest[placeholder.len()..];
+                if result.is_empty() || result.ends_with(WORD_SEPARATOR) {
+                    rest = rest.trim_start_matches(WORD_SEPARATOR);
+                }
+                if rest.is_empty() {
+                    let kept = result.trim_end_matches(WORD_SEPARATOR).len();
+                    result.truncate(kept);
+                }
+            }
+            None => {
+                result.push(next);
+                rest = &rest[next.len_utf8()..];
+            }
+        }
+    }
+    result
+}
+
 /// Checks `value` against `parameter`, as the C# `ValidateParameterValue` and
-/// `ValidateParameters` together; a blank value passes unless required.
-fn check_value(parameter: &UserParameter, value: &str) -> Result<(), ValueError> {
+/// `ValidateParameters` together; a blank value passes unless required. `pattern` and
+/// `platform` say where the value will stand, which decides whether the shell characters
+/// are refused.
+fn check_value(
+    pattern: &str,
+    parameter: &UserParameter,
+    value: &str,
+    platform: TemplatePlatform,
+) -> Result<(), ValueError> {
     let label = || {
         if parameter.label.trim().is_empty() {
             parameter.name.clone()
@@ -501,6 +599,8 @@ fn check_value(parameter: &UserParameter, value: &str) -> Result<(), ValueError>
             parameter.label.clone()
         }
     };
+    // A control character is refused for every type, the unknown ones included: a line feed
+    // submits the command on the terminal before it is read, and no quoting stops that.
     if value.chars().any(char::is_control) {
         return Err(ValueError::Control(label()));
     }
@@ -523,22 +623,85 @@ fn check_value(parameter: &UserParameter, value: &str) -> Result<(), ValueError>
             return Err(ValueError::NotOffered(label()));
         }
     }
+    let refused_characters = || holds_refused_characters(pattern, parameter, value, platform);
     match parameter.kind.to_lowercase().as_str() {
-        "int" | "integer" if value.trim().parse::<i32>().is_err() => {
-            Err(ValueError::NotInteger(label()))
+        "int" | "integer" => ensure(value.trim().parse::<i32>().is_ok(), || {
+            ValueError::NotInteger(label())
+        }),
+        "number" => ensure(value.trim().parse::<f64>().is_ok(), || {
+            ValueError::NotNumber(label())
+        }),
+        "hostname" => ensure(is_hostname(value), || ValueError::Hostname(label())),
+        "ipaddress" => ensure(IpAddr::from_str(value.trim()).is_ok(), || {
+            ValueError::IpAddress(label())
+        }),
+        "driveletter" => ensure(
+            value.len() == 1 && value.chars().all(|c| c.is_ascii_alphabetic()),
+            || ValueError::DriveLetter(label()),
+        ),
+        // Judged by its shape, never by where it points: the command runs on another
+        // machine, so resolving the value on this one would say nothing about it.
+        "path" => {
+            if value.chars().count() > MAX_PATH_LENGTH {
+                Err(ValueError::Path(label()))
+            } else {
+                ensure(!refused_characters(), || ValueError::Dangerous(label()))
+            }
         }
-        "number" if value.trim().parse::<f64>().is_err() => Err(ValueError::NotNumber(label())),
-        "hostname" if !is_hostname(value) => Err(ValueError::Hostname(label())),
-        "ipaddress" if IpAddr::from_str(value.trim()).is_err() => {
-            Err(ValueError::IpAddress(label()))
-        }
-        "driveletter" if !(value.len() == 1 && value.chars().all(|c| c.is_ascii_alphabetic())) => {
-            Err(ValueError::DriveLetter(label()))
-        }
-        "path" if value.trim().is_empty() => Err(ValueError::Path(label())),
-        "string" if value.contains(DANGEROUS_CHARACTERS) => Err(ValueError::Dangerous(label())),
-        _ => Ok(()),
+        // A string, and any type this build does not know (a name typed by hand into an
+        // imported file): quoted like a string, so it gets at least the checks no quoting
+        // replaces.
+        _ => ensure(!refused_characters(), || ValueError::Dangerous(label())),
     }
+}
+
+/// `Ok` when `holds`, else the error `otherwise` makes.
+fn ensure(holds: bool, otherwise: impl FnOnce() -> ValueError) -> Result<(), ValueError> {
+    if holds { Ok(()) } else { Err(otherwise()) }
+}
+
+/// Whether `value` holds a character the generator will not put in for `parameter`: a shell
+/// metacharacter, where [`requires_character_blacklist`] says the quoting cannot neutralize
+/// it.
+fn holds_refused_characters(
+    pattern: &str,
+    parameter: &UserParameter,
+    value: &str,
+    platform: TemplatePlatform,
+) -> bool {
+    value.contains(DANGEROUS_CHARACTERS)
+        && requires_character_blacklist(pattern, parameter, platform)
+}
+
+/// Whether a value for `parameter` would reach the shell outside a literal single-quoted
+/// span, so shell metacharacters in it would be interpreted; as the C#
+/// `RequiresCharacterBlacklist`.
+///
+/// `ShellQuote` wraps the value in single quotes itself, which is literal only when the
+/// placeholder stands bare in the pattern: inside a double-quoted string the shell still
+/// expands `$(...)` between those quotes. `InlineInQuotes` only escapes the value, so it is
+/// literal only when every occurrence of the placeholder sits in a single-quoted span that
+/// no double-quoted string encloses. In both literal cases the only character that could
+/// end the span is a single quote, which both escapers double or close and reopen; that is
+/// why the blacklist adds nothing there and refused LDAP filters, grep alternations and
+/// `$env:TEMP`.
+fn requires_character_blacklist(
+    pattern: &str,
+    parameter: &UserParameter,
+    platform: TemplatePlatform,
+) -> bool {
+    let literal = if parameter.quoting == Some(Quoting::InlineInQuotes) {
+        QuoteContext::SingleQuoted
+    } else {
+        QuoteContext::Bare
+    };
+    placeholder_quote_contexts(
+        pattern,
+        &parameter.name,
+        platform == TemplatePlatform::Windows,
+    )
+    .iter()
+    .any(|context| *context != literal)
 }
 
 /// Whether `value` is a host name of RFC 1123.
@@ -554,16 +717,69 @@ fn is_hostname(value: &str) -> bool {
         })
 }
 
-/// `value` as it goes into the command: typed values as they are, strings and paths quoted
-/// or escaped for `platform`'s shell, as the C# `EscapeParameterValue`.
-fn quote_value(parameter: &UserParameter, value: &str, platform: TemplatePlatform) -> String {
+/// `value` as it goes into the command: typed values as they are, strings and paths bare
+/// where nothing in them is readable by the shell, else quoted or escaped for `platform`'s
+/// shell, as the C# `EscapeParameterValue`.
+fn quote_value(
+    pattern: &str,
+    parameter: &UserParameter,
+    value: &str,
+    platform: TemplatePlatform,
+) -> String {
     match parameter.kind.to_lowercase().as_str() {
         "hostname" | "ipaddress" | "driveletter" | "int" | "integer" | "number" => {
             value.trim().to_owned()
         }
+        // The quotes are the pattern's: only the content is escaped.
         _ if parameter.quoting == Some(Quoting::InlineInQuotes) => escape_content(value, platform),
+        _ if is_safe_bare_value(value, platform)
+            && every_occurrence_bare(pattern, parameter, platform) =>
+        {
+            value.to_owned()
+        }
         _ => format!("'{}'", escape_content(value, platform)),
     }
+}
+
+/// Whether every occurrence of the placeholder stands outside quotes and after no dollar
+/// sign. After `$` the shell would read a bare value as a variable name, and inside a quoted
+/// span the pattern's own quoting decides.
+fn every_occurrence_bare(
+    pattern: &str,
+    parameter: &UserParameter,
+    platform: TemplatePlatform,
+) -> bool {
+    placeholder_quote_contexts(
+        pattern,
+        &parameter.name,
+        platform == TemplatePlatform::Windows,
+    )
+    .iter()
+    .all(|context| *context == QuoteContext::Bare)
+}
+
+/// Whether `value` means the same to the shell with or without quotes, so it can be
+/// substituted bare (`--add-port=8080/tcp` rather than `--add-port='8080'/'tcp'`), as the
+/// C# `IsSafeBareValue`.
+///
+/// The class is ASCII letters and digits plus [`SAFE_BARE_PUNCTUATION`]: no space, no quote,
+/// no glob character, no `$`, no backslash and no tilde, so no shell splits, expands or
+/// substitutes anything in such a value. PowerShell reads three of those characters
+/// differently at the start of an argument or between words, so on Windows those values
+/// keep their quotes: a leading `-` makes a parameter name of the value, a leading `@`
+/// splats a variable, and a comma builds an array of two arguments out of one. Bash gives
+/// none of them a meaning.
+fn is_safe_bare_value(value: &str, platform: TemplatePlatform) -> bool {
+    let in_class = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || SAFE_BARE_PUNCTUATION.contains(&c));
+    if !in_class {
+        return false;
+    }
+    platform != TemplatePlatform::Windows
+        || (!value.starts_with(POWERSHELL_LEADING_SPECIAL)
+            && !value.contains(POWERSHELL_ARRAY_SEPARATOR))
 }
 
 /// `value` escaped to sit between single quotes of `platform`'s shell.
@@ -572,7 +788,7 @@ fn escape_content(value: &str, platform: TemplatePlatform) -> String {
         TemplatePlatform::Windows => value
             .chars()
             .flat_map(|c| {
-                let doubled = POWERSHELL_QUOTES.contains(&c);
+                let doubled = POWERSHELL_SINGLE_QUOTES.contains(&c);
                 std::iter::once(c).chain(doubled.then_some(c))
             })
             .collect(),
@@ -580,29 +796,19 @@ fn escape_content(value: &str, platform: TemplatePlatform) -> String {
     }
 }
 
-/// Whether `{name}` in `pattern` sits between single quotes, as the C#
-/// `CommandPatternQuoting.IsPlaceholderInsideSingleQuotedSpan`: an `InlineInQuotes` value
-/// anywhere else would be put in with no quote at all.
+/// Whether `{name}` is written in `pattern` and every occurrence of it sits in a literal
+/// single-quoted span of `platform`'s shell, as the C#
+/// `CommandPatternQuoting.IsPlaceholderOnlyInSingleQuotedSpans`: an `InlineInQuotes` value
+/// anywhere else would be put in with no quote at all. Read off the same lexer the
+/// generator uses, not a count of single quotes: the count called
+/// `-Filter "Name -like '*{x}*'"` single-quoted although the shell expands `$(...)` there.
 #[must_use]
-pub fn placeholder_in_single_quotes(pattern: &str, name: &str) -> bool {
-    let placeholder = format!("{{{name}}}");
-    let mut inside = false;
-    let mut rest = pattern;
-    while let Some(next) = rest.find(['\'', '{']) {
-        let tail = &rest[next..];
-        if tail.starts_with('\'') {
-            inside = !inside;
-            rest = &tail[1..];
-        } else if tail.starts_with(&placeholder) {
-            if inside {
-                return true;
-            }
-            rest = &tail[placeholder.len()..];
-        } else {
-            rest = &tail[1..];
-        }
-    }
-    false
+pub fn placeholder_in_single_quotes(pattern: &str, name: &str, platform: TemplatePlatform) -> bool {
+    let contexts = placeholder_quote_contexts(pattern, name, platform == TemplatePlatform::Windows);
+    !contexts.is_empty()
+        && contexts
+            .iter()
+            .all(|context| *context == QuoteContext::SingleQuoted)
 }
 
 /// The names between braces in `pattern`, each once, in order of appearance.
@@ -1001,7 +1207,7 @@ fn template_of(
         .collect();
     for parameter in &mut parameters {
         if parameter.quoting == Some(Quoting::InlineInQuotes)
-            && !placeholder_in_single_quotes(pattern, &parameter.name)
+            && !placeholder_in_single_quotes(pattern, &parameter.name, platform)
         {
             parameter.quoting = Some(Quoting::ShellQuote);
         }
@@ -1020,17 +1226,23 @@ fn template_of(
 /// Resets every `InlineInQuotes` whose placeholder is outside single quotes, as the C#
 /// `NormalizeParameterQuoting`: an imported file cannot make a value go in bare.
 fn normalize_quoting(action: &mut UserCommand) {
-    for template in [
-        action.windows_command_template.as_mut(),
-        action.linux_command_template.as_mut(),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for (template, platform) in [
+        (
+            action.windows_command_template.as_mut(),
+            TemplatePlatform::Windows,
+        ),
+        (
+            action.linux_command_template.as_mut(),
+            TemplatePlatform::Linux,
+        ),
+    ] {
+        let Some(template) = template else {
+            continue;
+        };
         let pattern = template.command_pattern.clone();
         for parameter in &mut template.parameters {
             if parameter.quoting == Some(Quoting::InlineInQuotes)
-                && !placeholder_in_single_quotes(&pattern, &parameter.name)
+                && !placeholder_in_single_quotes(&pattern, &parameter.name, platform)
             {
                 parameter.quoting = Some(Quoting::ShellQuote);
             }
@@ -1061,3 +1273,6 @@ fn now_text() -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod generator_tests;

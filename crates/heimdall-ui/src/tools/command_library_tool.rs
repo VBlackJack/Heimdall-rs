@@ -1970,7 +1970,10 @@ fn draft_error(problem: DraftError) -> String {
         DraftError::CategoryTooLong => fl!("ui-tool-cmdlib-error-category-long"),
         DraftError::DescriptionTooLong => fl!("ui-tool-cmdlib-error-description-long"),
         DraftError::PatternMissing => fl!("ui-tool-cmdlib-error-pattern-missing"),
-        DraftError::PatternTooLong => fl!("ui-tool-cmdlib-error-pattern-long"),
+        DraftError::PatternTooLong => fl!(
+            "ui-tool-cmdlib-error-pattern-long",
+            max = user_commands::MAX_PATTERN_LENGTH
+        ),
         DraftError::PatternMultiline => fl!("ui-tool-cmdlib-error-pattern-multiline"),
         DraftError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
         DraftError::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
@@ -1983,7 +1986,10 @@ fn generate_error(error: &GenerateError) -> String {
     match error {
         GenerateError::EmptyPattern => fl!("ui-tool-cmdlib-error-empty-pattern"),
         GenerateError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
-        GenerateError::TooLong => fl!("ui-tool-cmdlib-error-command-long"),
+        GenerateError::TooLong => fl!(
+            "ui-tool-cmdlib-error-command-long",
+            max = user_commands::MAX_COMMAND_LENGTH
+        ),
         GenerateError::Values(values) => {
             values.iter().map(value_error).collect::<Vec<_>>().join(" ")
         }
@@ -2006,7 +2012,11 @@ fn value_error(error: &ValueError) -> String {
         ValueError::Hostname(label) => fl!("ui-tool-cmdlib-value-hostname", label = label.as_str()),
         ValueError::IpAddress(label) => fl!("ui-tool-cmdlib-value-ip", label = label.as_str()),
         ValueError::DriveLetter(label) => fl!("ui-tool-cmdlib-value-drive", label = label.as_str()),
-        ValueError::Path(label) => fl!("ui-tool-cmdlib-value-path", label = label.as_str()),
+        ValueError::Path(label) => fl!(
+            "ui-tool-cmdlib-value-path",
+            label = label.as_str(),
+            max = user_commands::MAX_PATH_LENGTH
+        ),
         ValueError::TooLong(label) => fl!(
             "ui-tool-cmdlib-value-long",
             label = label.as_str(),
