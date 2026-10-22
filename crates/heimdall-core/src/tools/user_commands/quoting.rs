@@ -35,6 +35,10 @@
 //!   quote it adds would be the one the escape protects;
 //! - a comment or a document (`#`, PowerShell `<#` and `@'`, bash `<<`) in the pattern: a quote
 //!   inside one is text;
+//! - a here-document or here-string (bash `<<`, PowerShell `@'`, `@"` and `<#`): every
+//!   placeholder after it is [`QuoteContext::Document`] and no value is put in there, because
+//!   several placeholders can jointly spell the delimiter line that ends the document and
+//!   lets the next line run (`cat <<'END END'` with `{a} {b}` and both values `END`);
 //! - a pattern holding a line break or another control character (a script): comments and
 //!   here-documents there change what a quote means.
 
@@ -63,6 +67,10 @@ pub enum QuoteContext {
     Expanding,
     /// A place the lexer does not follow with certainty (see the module documentation).
     Uncertain,
+    /// After a here-document (bash `<<`) or a PowerShell here-string or block comment has
+    /// opened: the lexer does not track where it ends, and a delimiter line is built from
+    /// text, so no substitution is trusted there, whatever the value looks like.
+    Document,
 }
 
 /// The lexer's position relative to quotes.
@@ -112,6 +120,21 @@ fn opens_nested_syntax(
     }
 }
 
+/// Whether the unquoted text at `chars[index]` opens a document the lexer does not follow to
+/// its end: a bash here-document `<<`, a PowerShell here-string `@'` or `@"`, a block comment
+/// `<#`.
+fn starts_document(chars: &[char], index: usize, powershell: bool) -> bool {
+    let next = chars.get(index + 1);
+    match chars[index] {
+        '<' => next == Some(if powershell { &'#' } else { &'<' }),
+        '@' => {
+            powershell
+                && next.is_some_and(|c| is_single_quote(*c, true) || is_double_quote(*c, true))
+        }
+        _ => false,
+    }
+}
+
 /// Whether the unquoted text at `chars[index]` starts a comment (`#`, PowerShell's `<#`), a
 /// here-document (bash `<<`) or a here-string (PowerShell `@'` and `@"`): a quote inside one
 /// of those is text, not a quote.
@@ -152,10 +175,13 @@ pub fn placeholder_quote_contexts(
     // Set once the lexer has met syntax it does not follow: what comes after is not trusted.
     // A script (a pattern with a line break) is not followed at all.
     let mut lost = pattern.chars().any(char::is_control);
+    // Set once a document has opened: every placeholder after it is refused.
+    let mut document = false;
 
     while index < chars.len() {
         if chars[index..].starts_with(&placeholder) {
             contexts.push(match state {
+                _ if document => QuoteContext::Document,
                 _ if lost => QuoteContext::Uncertain,
                 State::Bare if index > 0 && bare_dollar == Some(index - 1) => {
                     QuoteContext::Expanding
@@ -201,6 +227,9 @@ pub fn placeholder_quote_contexts(
                         && starts_comment_or_document(&chars, index, powershell))
                 {
                     lost = true;
+                }
+                if state == State::Bare && starts_document(&chars, index, powershell) {
+                    document = true;
                 }
                 if state == State::Double {
                     if is_double_quote(c, powershell) {

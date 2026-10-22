@@ -682,36 +682,44 @@ fn check_value(
             return Err(ValueError::NotOffered(label()));
         }
     }
-    let refused_characters = || holds_refused_characters(pattern, parameter, value, platform);
-    match parameter.kind.to_lowercase().as_str() {
+    let kind = parameter.kind.to_lowercase();
+    match kind.as_str() {
         "int" | "integer" => ensure(value.trim().parse::<i32>().is_ok(), || {
             ValueError::NotInteger(label())
-        }),
+        })?,
         "number" => ensure(value.trim().parse::<f64>().is_ok(), || {
             ValueError::NotNumber(label())
-        }),
-        "hostname" => ensure(is_hostname(value), || ValueError::Hostname(label())),
+        })?,
+        "hostname" => ensure(is_hostname(value), || ValueError::Hostname(label()))?,
         "ipaddress" => ensure(IpAddr::from_str(value.trim()).is_ok(), || {
             ValueError::IpAddress(label())
-        }),
+        })?,
         "driveletter" => ensure(
             value.len() == 1 && value.chars().all(|c| c.is_ascii_alphabetic()),
             || ValueError::DriveLetter(label()),
-        ),
+        )?,
         // Judged by its shape, never by where it points: the command runs on another
         // machine, so resolving the value on this one would say nothing about it.
-        "path" => {
-            if value.chars().count() > MAX_PATH_LENGTH {
-                Err(ValueError::Path(label()))
-            } else {
-                ensure(!refused_characters(), || ValueError::Dangerous(label()))
-            }
-        }
+        "path" => ensure(value.chars().count() <= MAX_PATH_LENGTH, || {
+            ValueError::Path(label())
+        })?,
         // A string, and any type this build does not know (a name typed by hand into an
         // imported file): quoted like a string, so it gets at least the checks no quoting
         // replaces.
-        _ => ensure(!refused_characters(), || ValueError::Dangerous(label())),
+        _ => {}
     }
+    // The place the value stands in is judged for every type, after the type: a valid number
+    // or address is still a word that can be a heredoc delimiter, and typed values go in
+    // as they are (trimmed), so that is what is judged.
+    let typed = matches!(
+        kind.as_str(),
+        "int" | "integer" | "number" | "hostname" | "ipaddress" | "driveletter"
+    );
+    let judged = if typed { value.trim() } else { value };
+    ensure(
+        !holds_refused_characters(pattern, parameter, judged, platform),
+        || ValueError::Dangerous(label()),
+    )
 }
 
 /// `Ok` when `holds`, else the error `otherwise` makes.
@@ -744,7 +752,7 @@ fn protection_of(context: QuoteContext, parameter: &UserParameter) -> Option<Pro
             Some(Protection::Literal)
         }
         (QuoteContext::DoubleQuoted, _) => Some(Protection::DoubleQuoted),
-        (QuoteContext::Uncertain, _) => None,
+        (QuoteContext::Uncertain | QuoteContext::Document, _) => None,
         _ => Some(Protection::Words),
     }
 }
@@ -790,8 +798,28 @@ fn holds_refused_characters(
 ) -> bool {
     let powershell = platform == TemplatePlatform::Windows;
     let contexts = checked_placeholder_contexts(pattern, &parameter.name, powershell);
+    // No substitution is trusted inside a document the lexer does not follow.
+    if contexts.contains(&QuoteContext::Document) {
+        return true;
+    }
     if contexts.contains(&QuoteContext::Uncertain) {
         return !bare_fits(pattern, parameter, value, platform, true);
+    }
+    // `InlineInQuotes` brings no quote of its own: an occurrence outside a single-quoted
+    // span (or a double-quoted one, which has its own checks) is a bare word, and the value
+    // there must be one that is safe bare, glued to nothing (`Write-Output @args` splats,
+    // `-NoEnumerate` is a switch).
+    let outside = contexts.iter().any(|context| {
+        matches!(
+            context,
+            QuoteContext::Bare | QuoteContext::AnsiC | QuoteContext::Expanding
+        )
+    });
+    if parameter.quoting == Some(Quoting::InlineInQuotes)
+        && outside
+        && !bare_fits(pattern, parameter, value, platform, false)
+    {
+        return true;
     }
     contexts
         .into_iter()

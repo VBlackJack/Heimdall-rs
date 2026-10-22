@@ -1066,17 +1066,15 @@ fn leaving_an_argument_out_cannot_change_how_another_value_is_read() {
         &[("v", "\\'; printf INJECTED #")],
     );
     assert!(refused_dangerous(&result, "v"), "{result:?}");
-    // The same value is fine where the pattern is what it says it is.
-    assert_eq!(
-        render(
-            LINUX,
-            "echo ${empty}'{v}'",
-            vec![parameter("empty", false), inline("v")],
-            &[("v", "plain")],
-        )
-        .as_deref(),
-        Ok("echo $'plain'")
+    // Even a plain value is refused there (stricter than C#): `$'...'` is not a
+    // single-quoted span, and an inline value brings no quote of its own.
+    let result = render(
+        LINUX,
+        "echo ${empty}'{v}'",
+        vec![parameter("empty", false), inline("v")],
+        &[("v", "plain")],
     );
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
     assert_eq!(
         render(
             LINUX,
@@ -1232,10 +1230,9 @@ fn a_comment_or_document_in_the_pattern_makes_the_quotes_after_it_untrusted() {
         );
         assert!(refused_dangerous(&result, "v"), "{result:?}");
     }
-    assert_eq!(
-        render_one(WINDOWS, comment, inline("v"), "plain").as_deref(),
-        Ok("Write-Output <# user's label #> 'plain'")
-    );
+    // Nothing is put in after a block comment, plain or not (stricter than C#).
+    let result = render_one(WINDOWS, comment, inline("v"), "plain");
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
     for (platform, pattern) in [
         (WINDOWS, "Write-Output a # user's note '{v}'"),
         (LINUX, "echo a # user's note '{v}'"),
@@ -1257,17 +1254,16 @@ fn a_value_alone_on_a_line_of_a_script_cannot_end_a_heredoc() {
         let result = render_one(LINUX, pattern, parameter("v", true), value);
         assert!(refused_dangerous(&result, "v"), "{value}: {result:?}");
     }
-    // The same value inside a line is not a line of its own.
-    assert_eq!(
-        render_one(
-            LINUX,
-            "cat <<EOF\nvalue: {v}\nEOF",
-            parameter("v", true),
-            "EOF"
-        )
-        .as_deref(),
-        Ok("cat <<EOF\nvalue: EOF\nEOF")
+    // Inside a line too: no substitution is made in a heredoc body (stricter than C#).
+    let result = render_one(
+        LINUX,
+        "cat <<EOF
+value: {v}
+EOF",
+        parameter("v", true),
+        "EOF",
     );
+    assert!(refused_dangerous(&result, "v"), "{result:?}");
 }
 
 #[test]
@@ -1351,5 +1347,78 @@ fn a_value_cannot_complete_the_name_of_an_option() {
     assert_eq!(
         render_one(LINUX, "run --opt={v}", parameter("v", true), "abc").as_deref(),
         Ok("run --opt=abc")
+    );
+}
+
+#[test]
+fn placeholders_cannot_jointly_close_a_heredoc() {
+    // Neither value is alone on its line, yet `END END` is the delimiter line of `<<'END END'`.
+    let pattern = "cat <<'END END'\n{a} {b}\nprintf INJECTED\nEND END";
+    let result = render(
+        LINUX,
+        pattern,
+        vec![parameter("a", true), parameter("b", true)],
+        &[("a", "END"), ("b", "END")],
+    );
+    assert!(
+        matches!(&result, Err(GenerateError::Values(errors)) if errors.len() == 2),
+        "{result:?}"
+    );
+    // No substitution is made in the delimiter either, nor on the line of a PowerShell
+    // here-string.
+    for (platform, pattern, value) in [
+        (LINUX, "cat <<{v}\nbody\n{v}", "EOF"),
+        (WINDOWS, "Write-Output @'\n{v}\n'@", "text"),
+    ] {
+        let result = render_one(platform, pattern, parameter("v", true), value);
+        assert!(
+            refused_dangerous(&result, "v"),
+            "{platform:?} {pattern}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn a_typed_value_is_judged_by_where_it_stands() {
+    // `0` is a valid integer and also the delimiter line of `<<0`.
+    let result = render_one(
+        LINUX,
+        "cat <<0\n{n}\nprintf INJECTED\n0",
+        of_kind("n", "integer"),
+        "0",
+    );
+    assert!(refused_dangerous(&result, "n"), "{result:?}");
+    for (kind, value) in [
+        ("hostname", "END"),
+        ("ipaddress", "127.0.0.1"),
+        ("number", "1.5"),
+        ("driveletter", "C"),
+    ] {
+        let result = render_one(LINUX, "cat <<EOF\n{n}\nEOF", of_kind("n", kind), value);
+        assert!(refused_dangerous(&result, "n"), "{kind}: {result:?}");
+    }
+    // A typed value in a plain place is unchanged.
+    assert_eq!(
+        render_one(LINUX, "ping -c {n} host", of_kind("n", "integer"), " 4 ").as_deref(),
+        Ok("ping -c 4 host")
+    );
+}
+
+#[test]
+fn an_inline_value_outside_single_quotes_is_a_bare_word() {
+    // `@args` would splat `$args`, `-NoEnumerate` would be a switch.
+    for value in ["@args", "-NoEnumerate"] {
+        let result = render_one(WINDOWS, "Write-Output {v}", inline("v"), value);
+        assert!(refused_dangerous(&result, "v"), "{value}: {result:?}");
+    }
+    // A value safe bare in a bare place is accepted, and one inside single quotes is still
+    // only escaped.
+    assert_eq!(
+        render_one(WINDOWS, "Write-Output {v}", inline("v"), "plain").as_deref(),
+        Ok("Write-Output plain")
+    );
+    assert_eq!(
+        render_one(WINDOWS, "Write-Output '{v}'", inline("v"), "@args").as_deref(),
+        Ok("Write-Output '@args'")
     );
 }
