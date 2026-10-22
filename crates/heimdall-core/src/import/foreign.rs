@@ -59,6 +59,27 @@ pub enum FileWarning {
         /// The gateway host, as written.
         host: String,
     },
+    /// A `MobaXterm` RDP session names an RD Gateway whose host is not usable: not imported,
+    /// since it would otherwise reach its host around the gateway the file asked for.
+    InvalidRdGatewayHost {
+        /// The session, as named in the file.
+        session: String,
+        /// The folder it is filed in.
+        folder: String,
+        /// The RD Gateway host, as written.
+        host: String,
+    },
+    /// A `MobaXterm` RDP session signs in to its RD Gateway in a way Heimdall does not
+    /// reproduce (a smart card, or a setting not recognised): not imported, since a direct
+    /// connection would go around the gateway.
+    RdGatewayNotSupported {
+        /// The session, as named in the file.
+        session: String,
+        /// The folder it is filed in.
+        folder: String,
+        /// The RD Gateway host, as written.
+        host: String,
+    },
 }
 
 /// What a file gives.

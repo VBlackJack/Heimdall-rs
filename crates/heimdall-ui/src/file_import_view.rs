@@ -167,6 +167,16 @@ pub fn warning_lines(warnings: &[FileWarning]) -> Vec<String> {
                 session = session.as_str(),
                 host = host.as_str()
             ),
+            FileWarning::InvalidRdGatewayHost { session, host, .. } => fl!(
+                "ui-import-mobaxterm-invalid-rd-gateway",
+                session = session.as_str(),
+                host = host.as_str()
+            ),
+            FileWarning::RdGatewayNotSupported { session, host, .. } => fl!(
+                "ui-import-mobaxterm-rd-gateway-unsupported",
+                session = session.as_str(),
+                host = host.as_str()
+            ),
         })
         .collect()
 }
