@@ -101,7 +101,6 @@ use std::time::Duration;
 use heimdall_app::tool_route::RouteSupport;
 use heimdall_app::tools::{ToolCategory, ToolGroup, ToolId};
 use heimdall_app::{App, TabId};
-use heimdall_core::tools::command_library::SnippetId;
 use heimdall_core::tools::hash_computer::HashAlgorithm;
 use iced::advanced::text::highlighter::PlainText;
 use iced::widget::text_editor::{self, Action, Content};
@@ -657,8 +656,8 @@ pub enum CopySlot {
     NotesHtml,
     /// The diagram's source.
     DiagramSource,
-    /// The command of a snippet of the command library.
-    CmdLibCommand(SnippetId),
+    /// The command of the catalogue at this place.
+    CmdLibCommand(usize),
     /// The command of the user's command at this place of the library.
     CmdLibUserCommand(usize),
     /// The command of the history entry at this place.

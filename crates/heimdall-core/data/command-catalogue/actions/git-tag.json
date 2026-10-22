@@ -1,0 +1,98 @@
+{
+  "id": "git-tag",
+  "title": "Manage Git tags",
+  "description": "Create, list or delete tags (versions).",
+  "category": "development",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "git",
+    "tag",
+    "version",
+    "release"
+  ],
+  "windowsCommandTemplateId": "git-tag-win",
+  "windowsCommandTemplate": {
+    "id": "git-tag-win",
+    "platform": 0,
+    "name": "git",
+    "commandPattern": "git tag {tagName}",
+    "parameters": [
+      {
+        "name": "tagName",
+        "label": "Tag name",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Tag name (empty to list)"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "git-tag-linux",
+  "linuxCommandTemplate": {
+    "id": "git-tag-linux",
+    "platform": 1,
+    "name": "git",
+    "commandPattern": "git tag {tagName}",
+    "parameters": [
+      {
+        "name": "tagName",
+        "label": "Tag name",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Tag name"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "git tag",
+      "description": "List all tags",
+      "platform": 2
+    },
+    {
+      "command": "git tag v1.0.0",
+      "description": "Create a lightweight tag",
+      "platform": 2
+    },
+    {
+      "command": "git tag -a v1.0.0 -m \"Release 1.0.0\"",
+      "description": "Create an annotated tag",
+      "platform": 2
+    }
+  ],
+  "notes": "Use -a to create annotated tags (recommended). Remember to push the tags with 'git push --tags'.",
+  "links": [
+    {
+      "title": "Git Tag Documentation",
+      "url": "https://git-scm.com/docs/git-tag"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Gérer les tags Git",
+      "description": "Crée, liste ou supprime des tags (versions)",
+      "notes": "Utilisez -a pour créer des tags annotés (recommandé). N'oubliez pas de pousser les tags avec 'git push --tags'.",
+      "parameters": {
+        "windows": {
+          "tagName": {
+            "label": "Nom du tag",
+            "description": "Nom du tag (vide pour lister)"
+          }
+        },
+        "linux": {
+          "tagName": {
+            "label": "Nom du tag",
+            "description": "Nom du tag"
+          }
+        }
+      },
+      "examples": {
+        "git tag": "Liste tous les tags",
+        "git tag v1.0.0": "Crée un tag léger",
+        "git tag -a v1.0.0 -m \"Release 1.0.0\"": "Crée un tag annoté"
+      }
+    }
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "id": "ansible-inventory-list",
+  "title": "List the Ansible inventory",
+  "description": "Show the full list of hosts in the Ansible inventory",
+  "category": "services-automation",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "ansible",
+    "inventory",
+    "hosts"
+  ],
+  "windowsCommandTemplateId": "ansible-inventory-list-win",
+  "windowsCommandTemplate": {
+    "id": "ansible-inventory-list-win",
+    "platform": 0,
+    "name": "ansible-inventory",
+    "commandPattern": "ansible-inventory --list -i {inventory}",
+    "parameters": [
+      {
+        "name": "inventory",
+        "label": "Inventory",
+        "type": "string",
+        "defaultValue": "inventory.ini",
+        "required": true,
+        "description": "Inventory file"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "ansible-inventory-list-linux",
+  "linuxCommandTemplate": {
+    "id": "ansible-inventory-list-linux",
+    "platform": 1,
+    "name": "ansible-inventory",
+    "commandPattern": "ansible-inventory --list -i {inventory}",
+    "parameters": [
+      {
+        "name": "inventory",
+        "label": "Inventory",
+        "type": "string",
+        "defaultValue": "inventory.ini",
+        "required": true,
+        "description": "Inventory file"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "Use --graph for a hierarchical view of the inventory.",
+  "links": [
+    {
+      "title": "Ansible Inventory",
+      "url": "https://docs.ansible.com/ansible/latest/user_guide/intro_inventory.html"
+    }
+  ],
+  "windowsExamples": [
+    {
+      "command": "ansible-inventory --list -i inventory.ini",
+      "description": "List the inventory in JSON format.",
+      "platform": 0
+    },
+    {
+      "command": "ansible-inventory --graph -i hosts",
+      "description": "Show the inventory as a hierarchical tree.",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "ansible-inventory --list -i production",
+      "description": "List the production inventory in JSON format",
+      "platform": 1
+    },
+    {
+      "command": "ansible-inventory --graph",
+      "description": "Show the inventory as a tree",
+      "platform": 1
+    },
+    {
+      "command": "ansible-inventory --list -i inventory.ini",
+      "description": "List the inventory in JSON format.",
+      "platform": 1
+    },
+    {
+      "command": "ansible-inventory --list",
+      "description": "List everything",
+      "platform": 1
+    },
+    {
+      "command": "ansible-inventory -i inventory.ini --list",
+      "description": "Specific inventory",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Lister l'inventaire Ansible",
+      "description": "Affiche la liste complète des hôtes dans l'inventaire Ansible",
+      "notes": "Utilisez --graph pour une vue hiérarchique de l'inventaire.",
+      "parameters": {
+        "windows": {
+          "inventory": {
+            "label": "Inventaire",
+            "description": "Fichier d'inventaire"
+          }
+        },
+        "linux": {
+          "inventory": {
+            "label": "Inventaire",
+            "description": "Fichier d'inventaire"
+          }
+        }
+      },
+      "examples": {
+        "ansible-inventory --list -i inventory.ini": "Liste l'inventaire au format JSON.",
+        "ansible-inventory --graph -i hosts": "Affiche l'inventaire sous forme d'arbre hiérarchique.",
+        "ansible-inventory --list -i production": "Liste l'inventaire de production au format JSON",
+        "ansible-inventory --graph": "Affiche l'inventaire sous forme d'arbre",
+        "ansible-inventory --list": "Lister tout",
+        "ansible-inventory -i inventory.ini --list": "Inventaire spécifique"
+      }
+    }
+  }
+}

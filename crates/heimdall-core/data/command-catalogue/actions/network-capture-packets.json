@@ -1,0 +1,186 @@
+{
+  "id": "network-capture-packets",
+  "title": "Capture network traffic",
+  "description": "Start a network packet capture with netsh trace for later analysis.",
+  "category": "network-dns",
+  "platform": 2,
+  "level": 1,
+  "tags": [
+    "network",
+    "capture",
+    "packets",
+    "trace",
+    "diagnostic"
+  ],
+  "windowsCommandTemplateId": "network-capture-packets-cmd",
+  "windowsCommandTemplate": {
+    "id": "network-capture-packets-cmd",
+    "platform": 0,
+    "name": "netsh",
+    "commandPattern": "netsh trace start capture=yes tracefile={outputPath} maxSize={maxSizeMB}",
+    "parameters": [
+      {
+        "name": "outputPath",
+        "label": "Output file",
+        "type": "string",
+        "defaultValue": "C:\\Temp\\networktrace.etl",
+        "required": true,
+        "description": "Full path of the trace file (.etl)"
+      },
+      {
+        "name": "maxSizeMB",
+        "label": "Maximum size (MB)",
+        "type": "number",
+        "defaultValue": "250",
+        "required": true,
+        "description": "Maximum file size in MB"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "WARNING: requires administrator rights. To stop: 'netsh trace stop'. The .etl file can be analyzed with Microsoft Network Monitor or Wireshark. On Linux, tcpdump requires root (sudo).",
+  "links": [
+    {
+      "title": "Netsh Trace Commands",
+      "url": "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-R2-and-2012/jj129382(v=ws.11)"
+    }
+  ],
+  "linuxCommandTemplate": {
+    "id": "tcpdump-cmd",
+    "platform": 1,
+    "name": "tcpdump",
+    "commandPattern": "sudo tcpdump -i {interface} -c {count} {filter}",
+    "parameters": [
+      {
+        "name": "interface",
+        "label": "Interface",
+        "type": "string",
+        "defaultValue": "any",
+        "required": true,
+        "description": "Network interface (any, eth0, wlan0, etc.)"
+      },
+      {
+        "name": "count",
+        "label": "Number of packets",
+        "type": "number",
+        "defaultValue": "100",
+        "required": true,
+        "description": "Number of packets to capture"
+      },
+      {
+        "name": "filter",
+        "label": "Filter",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "BPF filter (port 80, host 192.168.1.1, etc.)"
+      }
+    ]
+  },
+  "windowsExamples": [
+    {
+      "command": "netsh trace start capture=yes tracefile=C:\\Temp\\trace.etl maxSize=500",
+      "description": "Start a network capture (max 500 MB)",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "sudo tcpdump -i any port 80 -A -n",
+      "description": "🔥 APP DEBUG: capture the HTTP traffic and show the content as ASCII (-A). The -n flag is CRITICAL for speed (no DNS). Lets you read the HTTP headers in real time.",
+      "platform": 1
+    },
+    {
+      "command": "sudo tcpdump -i eth0 host 192.168.1.50 -w capture.pcap",
+      "description": "Capture all the traffic of a target IP to a file (-w) for later analysis in Wireshark. Does not flood the console.",
+      "platform": 1
+    },
+    {
+      "command": "sudo tcpdump -i eth0 dst port 53",
+      "description": "DNS audit: watch only the outgoing DNS queries. Useful to diagnose resolution problems or spot malware that talks over DNS.",
+      "platform": 1
+    },
+    {
+      "command": "sudo tcpdump -i any -c 100",
+      "description": "Capture 100 packets on every interface",
+      "platform": 1
+    },
+    {
+      "command": "sudo tcpdump -i eth0 port 80",
+      "description": "Capture only the HTTP traffic",
+      "platform": 1
+    },
+    {
+      "command": "sudo tcpdump -i any -w capture.pcap",
+      "description": "Save to a pcap file",
+      "platform": 1
+    },
+    {
+      "command": "sudo tcpdump -i eth0",
+      "description": "Capture on eth0",
+      "platform": 1
+    },
+    {
+      "command": "sudo tcpdump -i any port 80",
+      "description": "HTTP traffic",
+      "platform": 1
+    },
+    {
+      "command": "sudo tcpdump -w capture.pcap",
+      "description": "Save to a file",
+      "platform": 1
+    },
+    {
+      "command": "tcpdump -r capture.pcap",
+      "description": "Read a capture file",
+      "platform": 1
+    }
+  ],
+  "linuxCommandTemplateId": "tcpdump-cmd",
+  "translations": {
+    "fr": {
+      "title": "Capturer le trafic réseau",
+      "description": "Démarre une capture de paquets réseau avec netsh trace pour analyse ultérieure",
+      "notes": "ATTENTION: Nécessite droits administrateur. Pour arrêter: 'netsh trace stop'. Le fichier .etl peut être analysé avec Microsoft Network Monitor ou Wireshark. Sous Linux, tcpdump nécessite les droits root (sudo).",
+      "parameters": {
+        "windows": {
+          "outputPath": {
+            "label": "Fichier de sortie",
+            "description": "Chemin complet du fichier de trace (.etl)"
+          },
+          "maxSizeMB": {
+            "label": "Taille maximale (MB)",
+            "description": "Taille maximale du fichier en MB"
+          }
+        },
+        "linux": {
+          "interface": {
+            "label": "Interface",
+            "description": "Interface réseau (any, eth0, wlan0, etc.)"
+          },
+          "count": {
+            "label": "Nombre de paquets",
+            "description": "Nombre de paquets à capturer"
+          },
+          "filter": {
+            "label": "Filtre",
+            "description": "Filtre BPF (port 80, host 192.168.1.1, etc.)"
+          }
+        }
+      },
+      "examples": {
+        "netsh trace start capture=yes tracefile=C:\\Temp\\trace.etl maxSize=500": "Démarre une capture réseau (max 500 MB)",
+        "sudo tcpdump -i any port 80 -A -n": "🔥 DEBUG APP : Capture le trafic HTTP et affiche le contenu en ASCII (-A). Le flag -n est CRITIQUE pour la vitesse (pas de DNS). Permet de lire les headers HTTP en temps réel.",
+        "sudo tcpdump -i eth0 host 192.168.1.50 -w capture.pcap": "Capture tout le trafic d'une IP cible vers un fichier (-w) pour analyse ultérieure sur Wireshark. Ne sature pas la console.",
+        "sudo tcpdump -i eth0 dst port 53": "Audit DNS : Surveille uniquement les requêtes DNS sortantes. Utile pour diagnostiquer des problèmes de résolution ou repérer des malwares communiquant par DNS.",
+        "sudo tcpdump -i any -c 100": "Capture 100 paquets sur toutes les interfaces",
+        "sudo tcpdump -i eth0 port 80": "Capture uniquement le trafic HTTP",
+        "sudo tcpdump -i any -w capture.pcap": "Sauvegarde dans un fichier pcap",
+        "sudo tcpdump -i eth0": "Capturer sur eth0",
+        "sudo tcpdump -i any port 80": "Trafic HTTP",
+        "sudo tcpdump -w capture.pcap": "Sauvegarder dans un fichier",
+        "tcpdump -r capture.pcap": "Lire un fichier de capture"
+      }
+    }
+  }
+}

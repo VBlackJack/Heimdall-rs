@@ -1,0 +1,118 @@
+{
+  "id": "strace-trace-syscalls",
+  "title": "Trace the system calls of a process",
+  "description": "Trace every system call a process makes (debugging)",
+  "category": "performance",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "strace",
+    "syscalls",
+    "debug",
+    "performance",
+    "trace"
+  ],
+  "linuxCommandTemplateId": "strace-cmd",
+  "linuxCommandTemplate": {
+    "id": "strace-cmd",
+    "platform": 1,
+    "name": "strace",
+    "commandPattern": "strace {options} {command}",
+    "parameters": [
+      {
+        "name": "options",
+        "label": "Options",
+        "type": "choice",
+        "allowedValues": [
+          "-c",
+          "-f",
+          "-tt",
+          "-etrace=network"
+        ],
+        "defaultValue": "-c",
+        "required": false,
+        "description": "-c = summary statistics, -f = follow child processes, -tt = timestamps with microseconds, -etrace=network = network calls only"
+      },
+      {
+        "name": "command",
+        "label": "Command",
+        "type": "string",
+        "defaultValue": "ls",
+        "required": true,
+        "description": "Command to trace, or -p PID"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "strace ls",
+      "description": "Trace every syscall of ls",
+      "platform": 1
+    },
+    {
+      "command": "strace -c ls",
+      "description": "System call statistics",
+      "platform": 1
+    },
+    {
+      "command": "strace -p 1234",
+      "description": "Attach to a running process",
+      "platform": 1
+    },
+    {
+      "command": "strace -e open ls",
+      "description": "Trace open() only",
+      "platform": 1
+    },
+    {
+      "command": "strace -o trace.log command",
+      "description": "Save to a file",
+      "platform": 1
+    },
+    {
+      "command": "strace ls -la",
+      "description": "Trace the ls command",
+      "platform": 1
+    },
+    {
+      "command": "strace -o trace.log -f ./script.sh",
+      "description": "Trace with the child processes",
+      "platform": 1
+    }
+  ],
+  "notes": "May require sudo. -c for a statistical summary. Very useful for debugging.",
+  "links": [
+    {
+      "title": "strace documentation",
+      "url": "https://man7.org/linux/man-pages/man1/strace.1.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Tracer les appels système d'un processus",
+      "description": "Trace tous les appels système effectués par un processus (debugging)",
+      "notes": "Peut nécessiter sudo. -c pour résumé statistique. Très utile pour le debugging.",
+      "parameters": {
+        "linux": {
+          "options": {
+            "label": "Options",
+            "description": "-c = statistiques résumées, -f = suit les processus enfants, -tt = horodatage à la microseconde, -etrace=network = appels réseau seulement"
+          },
+          "command": {
+            "label": "Commande",
+            "description": "Commande à tracer ou -p PID"
+          }
+        }
+      },
+      "examples": {
+        "strace ls": "Trace tous les syscalls de ls",
+        "strace -c ls": "Statistiques d'appels système",
+        "strace -p 1234": "Attache à un processus existant",
+        "strace -e open ls": "Tracer uniquement open()",
+        "strace -o trace.log command": "Sauvegarder dans un fichier",
+        "strace ls -la": "Tracer la commande ls",
+        "strace -o trace.log -f ./script.sh": "Tracer avec enfants"
+      }
+    }
+  }
+}

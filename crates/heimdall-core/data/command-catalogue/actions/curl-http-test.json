@@ -1,0 +1,107 @@
+{
+  "id": "curl-http-test",
+  "title": "Test an HTTP request",
+  "description": "Send an HTTP/HTTPS request and show the response",
+  "category": "network-dns",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "curl",
+    "http",
+    "https",
+    "api",
+    "web",
+    "linux"
+  ],
+  "linuxCommandTemplateId": "curl-cmd",
+  "linuxCommandTemplate": {
+    "id": "curl-cmd",
+    "platform": 1,
+    "name": "curl",
+    "commandPattern": "curl -I {url}",
+    "parameters": [
+      {
+        "name": "url",
+        "label": "URL",
+        "type": "string",
+        "defaultValue": "http://localhost",
+        "required": true,
+        "description": "URL to test"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "curl -I http://google.com",
+      "description": "Show the HTTP headers only",
+      "platform": 1
+    },
+    {
+      "command": "curl -X GET https://api.example.com/users",
+      "description": "GET request to an API",
+      "platform": 1
+    },
+    {
+      "command": "curl -o file.html http://example.com",
+      "description": "Download into a file",
+      "platform": 1
+    },
+    {
+      "command": "curl https://api.example.com",
+      "description": "Simple GET request",
+      "platform": 1
+    },
+    {
+      "command": "curl -X POST -d '{\"key\":\"value\"}' -H \"Content-Type: application/json\" https://api.example.com",
+      "description": "JSON POST request",
+      "platform": 1
+    },
+    {
+      "command": "curl -IL http://localhost",
+      "description": "Show the headers while following redirects",
+      "platform": 1
+    },
+    {
+      "command": "curl -k https://dev-interne.local",
+      "description": "Ignore SSL certificate errors (-k)",
+      "platform": 1
+    },
+    {
+      "command": "curl -L -v https://google.com",
+      "description": "Follow redirects (-L) and show the details of the SSL connection (-v)",
+      "platform": 1
+    }
+  ],
+  "notes": "Does not require sudo. -v for verbose mode. wget is an alternative for downloads.",
+  "links": [
+    {
+      "title": "curl documentation",
+      "url": "https://curl.se/docs/manpage.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Tester une requête HTTP",
+      "description": "Effectue une requête HTTP/HTTPS et affiche la réponse",
+      "notes": "Ne nécessite pas sudo. -v pour mode verbose. wget est une alternative pour télécharger.",
+      "parameters": {
+        "linux": {
+          "url": {
+            "label": "URL",
+            "description": "URL à tester"
+          }
+        }
+      },
+      "examples": {
+        "curl -I http://google.com": "Affiche uniquement les headers HTTP",
+        "curl -X GET https://api.example.com/users": "Requête GET sur une API",
+        "curl -o file.html http://example.com": "Télécharge dans un fichier",
+        "curl https://api.example.com": "Requête GET simple",
+        "curl -X POST -d '{\"key\":\"value\"}' -H \"Content-Type: application/json\" https://api.example.com": "Requête POST JSON",
+        "curl -IL http://localhost": "Affiche les headers en suivant les redirections",
+        "curl -k https://dev-interne.local": "Ignore les erreurs de certificat SSL (-k)",
+        "curl -L -v https://google.com": "Suit les redirections (-L) et affiche le détail de la connexion SSL (-v)"
+      }
+    }
+  }
+}

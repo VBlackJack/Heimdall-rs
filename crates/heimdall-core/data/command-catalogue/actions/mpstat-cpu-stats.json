@@ -1,0 +1,82 @@
+{
+  "id": "mpstat-cpu-stats",
+  "title": "CPU statistics per processor",
+  "description": "Show the CPU usage statistics of each individual processor.",
+  "category": "monitoring-logs",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "mpstat",
+    "cpu",
+    "stats",
+    "performance",
+    "sysstat"
+  ],
+  "linuxCommandTemplateId": "mpstat-cmd",
+  "linuxCommandTemplate": {
+    "id": "mpstat-cmd",
+    "platform": 1,
+    "name": "mpstat",
+    "commandPattern": "mpstat {interval} {count}",
+    "parameters": [
+      {
+        "name": "interval",
+        "label": "Interval",
+        "type": "number",
+        "defaultValue": "5",
+        "required": true,
+        "description": "Interval in seconds"
+      },
+      {
+        "name": "count",
+        "label": "Count",
+        "type": "number",
+        "defaultValue": "3",
+        "required": true,
+        "description": "Number of samples"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "mpstat",
+      "description": "CPU stats per processor",
+      "platform": 1
+    },
+    {
+      "command": "nproc",
+      "description": "Number of processors",
+      "platform": 1
+    }
+  ],
+  "notes": "Part of the sysstat package. -P ALL to see each core separately.",
+  "links": [
+    {
+      "title": "mpstat documentation",
+      "url": "https://man7.org/linux/man-pages/man1/mpstat.1.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Statistiques CPU par processeur",
+      "description": "Affiche les statistiques d'utilisation CPU par processeur individuel",
+      "notes": "Fait partie du package sysstat. -P ALL pour voir chaque coeur séparément.",
+      "parameters": {
+        "linux": {
+          "interval": {
+            "label": "Intervalle",
+            "description": "Intervalle en secondes"
+          },
+          "count": {
+            "label": "Nombre",
+            "description": "Nombre de mesures"
+          }
+        }
+      },
+      "examples": {
+        "mpstat": "Stats CPU par processeur",
+        "nproc": "Nombre de processeurs"
+      }
+    }
+  }
+}

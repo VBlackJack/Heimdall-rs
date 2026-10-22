@@ -1,0 +1,68 @@
+{
+  "id": "bitlocker-test-protectors",
+  "title": "Test the BitLocker key protectors",
+  "description": "Check that every BitLocker key protector of a volume is valid and working.",
+  "category": "security",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "bitlocker",
+    "test",
+    "validation"
+  ],
+  "windowsCommandTemplateId": "bitlocker-test-protectors-cmd",
+  "windowsCommandTemplate": {
+    "id": "bitlocker-test-protectors-cmd",
+    "platform": 0,
+    "name": "Get-BitLockerVolume",
+    "commandPattern": "$vol = Get-BitLockerVolume -MountPoint \"{driveLetter}:\"; Write-Host \"Volume: $($vol.MountPoint)\" -ForegroundColor Cyan; Write-Host \"Protection: $($vol.ProtectionStatus)\" -ForegroundColor $(if($vol.ProtectionStatus -eq 'On'){'Green'}else{'Red'}); Write-Host \"Protecteurs:\" -ForegroundColor Yellow; $vol.KeyProtector | Select-Object KeyProtectorType,KeyProtectorId | Format-Table",
+    "parameters": [
+      {
+        "name": "driveLetter",
+        "label": "Drive letter",
+        "type": "driveletter",
+        "defaultValue": "C",
+        "required": true,
+        "description": "Volume letter"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "$vol = Get-BitLockerVolume C:; $vol.KeyProtector | Group-Object KeyProtectorType | Select-Object Name,Count",
+      "description": "Count the protectors by type (how many Recovery, TPM and so on)",
+      "platform": 0
+    },
+    {
+      "command": "(Get-Tpm).TpmPresent -and (Get-Tpm).TpmReady",
+      "description": "Check that the TPM is present and working",
+      "platform": 0
+    }
+  ],
+  "notes": "Protector types: RecoveryPassword (mandatory!), Tpm, TpmPin, TpmStartupKey, ExternalKey, Password. Good practice: always keep at least 1 RecoveryPassword backed up. Check regularly that the TPM works.",
+  "links": [
+    {
+      "title": "BitLocker Key Protectors",
+      "url": "https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/operations-guide"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Tester les protecteurs de clé BitLocker",
+      "description": "Vérifie que tous les protecteurs de clé BitLocker d'un volume sont valides et fonctionnels.",
+      "notes": "Types de protecteurs: RecoveryPassword (obligatoire!), Tpm, TpmPin, TpmStartupKey, ExternalKey, Password. Bonne pratique: toujours avoir au moins 1 RecoveryPassword sauvegardé. Vérifiez régulièrement que le TPM est fonctionnel.",
+      "parameters": {
+        "windows": {
+          "driveLetter": {
+            "label": "Lettre du disque",
+            "description": "Lettre du volume"
+          }
+        }
+      },
+      "examples": {
+        "$vol = Get-BitLockerVolume C:; $vol.KeyProtector | Group-Object KeyProtectorType | Select-Object Name,Count": "Compte les protecteurs par type (combien de Recovery, TPM, etc.)",
+        "(Get-Tpm).TpmPresent -and (Get-Tpm).TpmReady": "Vérifie que le TPM est présent et opérationnel"
+      }
+    }
+  }
+}

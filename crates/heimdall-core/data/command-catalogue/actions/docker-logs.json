@@ -1,0 +1,134 @@
+{
+  "id": "docker-logs",
+  "title": "Read the logs of a container",
+  "description": "Show the stdout/stderr logs of a Docker container",
+  "category": "containers-vms",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "docker",
+    "logs",
+    "container",
+    "debug",
+    "windows"
+  ],
+  "linuxCommandTemplateId": "docker-logs-cmd",
+  "linuxCommandTemplate": {
+    "id": "docker-logs-cmd",
+    "platform": 1,
+    "name": "docker",
+    "commandPattern": "docker logs -f {container}",
+    "parameters": [
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "string",
+        "defaultValue": "container_name",
+        "required": true,
+        "description": "Name or ID of the container"
+      }
+    ]
+  },
+  "notes": "Windows & Linux: Ctrl+C stops following. --tail limits the number of lines.",
+  "links": [
+    {
+      "title": "Docker logs",
+      "url": "https://docs.docker.com/engine/reference/commandline/logs/"
+    }
+  ],
+  "windowsCommandTemplate": {
+    "id": "docker-logs-win-cmd",
+    "platform": 0,
+    "name": "docker",
+    "commandPattern": "docker logs -f {container}",
+    "parameters": [
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "string",
+        "defaultValue": "container_name",
+        "required": true,
+        "description": "Name or ID of the container"
+      }
+    ]
+  },
+  "windowsCommandTemplateId": "docker-logs-win-cmd",
+  "windowsExamples": [
+    {
+      "command": "docker logs -f mycontainer",
+      "description": "Follow the logs in real time",
+      "platform": 0
+    },
+    {
+      "command": "docker logs --tail 100 mycontainer",
+      "description": "Show the last 100 lines",
+      "platform": 0
+    },
+    {
+      "command": "docker logs --since 1h mycontainer",
+      "description": "Logs of the last hour",
+      "platform": 0
+    },
+    {
+      "command": "docker logs -f {container}",
+      "description": "Example using the 'container' parameter: name or ID of the container. Replace it with the value that fits your environment.",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "docker logs -f mycontainer",
+      "description": "Follow the logs in real time",
+      "platform": 1
+    },
+    {
+      "command": "docker logs --tail 100 mycontainer",
+      "description": "Show the last 100 lines",
+      "platform": 1
+    },
+    {
+      "command": "docker logs --since 1h mycontainer",
+      "description": "Logs of the last hour",
+      "platform": 1
+    },
+    {
+      "command": "docker logs -f {container}",
+      "description": "Example using the 'container' parameter: name or ID of the container. Replace it with the value that fits your environment.",
+      "platform": 1
+    },
+    {
+      "command": "docker logs -f webapp",
+      "description": "Follow the logs of the webapp container",
+      "platform": 1
+    }
+  ],
+  "examples": [],
+  "translations": {
+    "fr": {
+      "title": "Consulter les logs d'un conteneur",
+      "description": "Affiche les logs stdout/stderr d'un conteneur Docker",
+      "notes": "Windows & Linux: Ctrl+C pour arrêter le suivi. --tail limite le nombre de lignes.",
+      "parameters": {
+        "windows": {
+          "container": {
+            "label": "Conteneur",
+            "description": "Nom ou ID du conteneur"
+          }
+        },
+        "linux": {
+          "container": {
+            "label": "Conteneur",
+            "description": "Nom ou ID du conteneur"
+          }
+        }
+      },
+      "examples": {
+        "docker logs -f mycontainer": "Suit les logs en temps réel",
+        "docker logs --tail 100 mycontainer": "Affiche les 100 dernières lignes",
+        "docker logs --since 1h mycontainer": "Logs de la dernière heure",
+        "docker logs -f {container}": "Exemple utilisant le paramètre 'container': nom ou ID du conteneur. Remplacez-le par la valeur appropriée selon votre environnement.",
+        "docker logs -f webapp": "Suivre les logs du conteneur webapp"
+      }
+    }
+  }
+}

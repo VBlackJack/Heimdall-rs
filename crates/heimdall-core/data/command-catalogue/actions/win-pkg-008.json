@@ -1,0 +1,76 @@
+{
+  "id": "win-pkg-008",
+  "title": "Add a Winget source",
+  "description": "Add a new custom Winget package source.",
+  "category": "package-management",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "winget",
+    "package",
+    "source",
+    "repository",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "winget-source-add-cmd",
+  "windowsCommandTemplate": {
+    "id": "winget-source-add-cmd",
+    "platform": 0,
+    "name": "winget",
+    "commandPattern": "winget source add --name {name} {url}",
+    "parameters": [
+      {
+        "name": "name",
+        "label": "Source name",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Name to give the source"
+      },
+      {
+        "name": "url",
+        "label": "Source URL",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "URL of the package repository"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "winget source add --name CustomRepo https://packages.example.com/winget",
+      "description": "Add a custom source",
+      "platform": 0
+    }
+  ],
+  "notes": "Requires administrator rights. Check that the source is trustworthy before adding it.",
+  "links": [
+    {
+      "title": "Winget source documentation",
+      "url": "https://learn.microsoft.com/en-us/windows/package-manager/winget/source"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Ajouter une source Winget",
+      "description": "Ajoute une nouvelle source de packages Winget personnalisée.",
+      "notes": "Nécessite des droits administrateur. Vérifier la fiabilité de la source avant de l'ajouter.",
+      "parameters": {
+        "windows": {
+          "name": {
+            "label": "Nom de la source",
+            "description": "Nom à donner à la source"
+          },
+          "url": {
+            "label": "URL de la source",
+            "description": "URL du dépôt de packages"
+          }
+        }
+      },
+      "examples": {
+        "winget source add --name CustomRepo https://packages.example.com/winget": "Ajoute une source personnalisée"
+      }
+    }
+  }
+}

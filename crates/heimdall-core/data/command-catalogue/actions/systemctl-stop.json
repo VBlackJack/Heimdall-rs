@@ -1,0 +1,75 @@
+{
+  "id": "systemctl-stop",
+  "title": "Stop a systemd service",
+  "description": "Stop a running systemd service now",
+  "category": "services-automation",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "systemctl",
+    "systemd",
+    "service",
+    "stop"
+  ],
+  "linuxCommandTemplateId": "systemctl-stop-cmd",
+  "linuxCommandTemplate": {
+    "id": "systemctl-stop-cmd",
+    "platform": 1,
+    "name": "systemctl",
+    "commandPattern": "sudo systemctl stop {service}",
+    "parameters": [
+      {
+        "name": "service",
+        "label": "Service name",
+        "type": "string",
+        "defaultValue": "nginx.service",
+        "required": true,
+        "description": "Name of the systemd unit to stop"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo systemctl stop nginx",
+      "description": "Stop the nginx service",
+      "platform": 1
+    },
+    {
+      "command": "sudo systemctl stop mysql.service",
+      "description": "Stop MySQL/MariaDB",
+      "platform": 1
+    },
+    {
+      "command": "sudo systemctl stop mysql",
+      "description": "Stop the MySQL service",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. The service may start again at the next boot if it is enabled.",
+  "links": [
+    {
+      "title": "systemctl stop",
+      "url": "https://www.freedesktop.org/software/systemd/man/systemctl.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Arrêter un service systemd",
+      "description": "Arrête immédiatement un service systemd en cours d'exécution",
+      "notes": "Nécessite sudo. Le service peut redémarrer automatiquement au prochain boot s'il est enabled.",
+      "parameters": {
+        "linux": {
+          "service": {
+            "label": "Nom du service",
+            "description": "Nom de l'unité systemd à arrêter"
+          }
+        }
+      },
+      "examples": {
+        "sudo systemctl stop nginx": "Arrête le service nginx",
+        "sudo systemctl stop mysql.service": "Arrête MySQL/MariaDB",
+        "sudo systemctl stop mysql": "Arrêter le service MySQL"
+      }
+    }
+  }
+}

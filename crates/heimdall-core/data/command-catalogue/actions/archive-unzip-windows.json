@@ -1,0 +1,75 @@
+{
+  "id": "archive-unzip-windows",
+  "title": "Extract a ZIP archive",
+  "description": "Extract the content of a ZIP archive.",
+  "category": "files-storage",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "decompression",
+    "unzip",
+    "extract",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "archive-unzip-windows-cmd",
+  "windowsCommandTemplate": {
+    "id": "archive-unzip-windows-cmd",
+    "platform": 0,
+    "name": "Expand-Archive",
+    "commandPattern": "Expand-Archive -Path {zipPath} -DestinationPath {destinationPath} -Force",
+    "parameters": [
+      {
+        "name": "zipPath",
+        "label": "ZIP file",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Path of the ZIP file"
+      },
+      {
+        "name": "destinationPath",
+        "label": "Destination",
+        "type": "string",
+        "defaultValue": ".",
+        "required": true,
+        "description": "Destination folder"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Expand-Archive -Path \"backup.zip\" -DestinationPath \"C:\\Restored\"",
+      "description": "Extract a ZIP archive",
+      "platform": 0
+    }
+  ],
+  "notes": "-Force overwrites the existing files.",
+  "links": [
+    {
+      "title": "Documentation Expand-Archive",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.archive/expand-archive"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Extraire une archive ZIP",
+      "description": "Extrait le contenu d'une archive ZIP.",
+      "notes": "-Force écrase les fichiers existants.",
+      "parameters": {
+        "windows": {
+          "zipPath": {
+            "label": "Fichier ZIP",
+            "description": "Chemin du fichier ZIP"
+          },
+          "destinationPath": {
+            "label": "Destination",
+            "description": "Dossier de destination"
+          }
+        }
+      },
+      "examples": {
+        "Expand-Archive -Path \"backup.zip\" -DestinationPath \"C:\\Restored\"": "Extrait une archive ZIP"
+      }
+    }
+  }
+}

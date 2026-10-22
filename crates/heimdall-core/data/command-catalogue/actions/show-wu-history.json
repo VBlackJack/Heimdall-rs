@@ -1,0 +1,46 @@
+{
+  "id": "show-wu-history",
+  "title": "Show the Windows Update history",
+  "description": "List the last 50 installed updates with their status",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "windows-update",
+    "history",
+    "diagnostic"
+  ],
+  "windowsCommandTemplateId": "show-wu-history-cmd",
+  "windowsCommandTemplate": {
+    "id": "show-wu-history-cmd",
+    "platform": 0,
+    "name": "Get-HotFix",
+    "commandPattern": "powershell -Command \"Get-HotFix | Sort-Object -Property InstalledOn -Descending | Select-Object -First 50 | Format-Table -AutoSize\"",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "Get-HotFix | Sort-Object -Property InstalledOn -Descending | Select-Object -First 10",
+      "description": "Show the last 10 installed updates",
+      "platform": 0
+    },
+    {
+      "command": "powershell -Command \"Get-HotFix | Sort-Object -Property InstalledOn -Descending | Select-Object -First 50 | Format-Table -AutoSize\"",
+      "description": "List the last 50 installed updates with their status.",
+      "platform": 0
+    }
+  ],
+  "notes": "Does not require administrator rights. Shows the installed KBs with their date.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Afficher l'historique Windows Update",
+      "description": "Liste les 50 dernières mises à jour installées avec leur statut",
+      "notes": "Ne nécessite pas de droits administrateur. Affiche les KB installés avec leur date.",
+      "examples": {
+        "Get-HotFix | Sort-Object -Property InstalledOn -Descending | Select-Object -First 10": "Affiche les 10 dernières mises à jour installées",
+        "powershell -Command \"Get-HotFix | Sort-Object -Property InstalledOn -Descending | Select-Object -First 50 | Format-Table -AutoSize\"": "Liste les 50 dernières mises à jour installées avec leur statut."
+      }
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "id": "ad-move-object",
+  "title": "Move an AD object to another OU",
+  "description": "Move a user, a computer or another object to a different organizational unit.",
+  "category": "active-directory",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "ad",
+    "move",
+    "ou",
+    "object"
+  ],
+  "windowsCommandTemplateId": "ad-move-object-cmd",
+  "windowsCommandTemplate": {
+    "id": "ad-move-object-cmd",
+    "platform": 0,
+    "name": "Move-ADObject",
+    "commandPattern": "Move-ADObject -Identity {objectDN} -TargetPath {targetOU}",
+    "parameters": [
+      {
+        "name": "objectDN",
+        "label": "Object DN",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Full Distinguished Name of the object to move"
+      },
+      {
+        "name": "targetOU",
+        "label": "Target OU",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Distinguished Name of the target OU"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Move-ADObject -Identity \"CN=Jean Dupont,OU=Users,DC=contoso,DC=com\" -TargetPath \"OU=IT,DC=contoso,DC=com\"",
+      "description": "Move Jean Dupont to the IT OU",
+      "platform": 0
+    }
+  ],
+  "notes": "Requires the full DN of the object. Use Get-ADUser/Get-ADComputer -Identity xxx to get the DN.",
+  "links": [
+    {
+      "title": "Documentation Move-ADObject",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/activedirectory/move-adobject"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Déplacer un objet AD vers une autre OU",
+      "description": "Déplace un utilisateur, ordinateur ou autre objet vers une unité d'organisation différente.",
+      "notes": "Nécessite le DN complet de l'objet. Utiliser Get-ADUser/Get-ADComputer -Identity xxx pour obtenir le DN.",
+      "parameters": {
+        "windows": {
+          "objectDN": {
+            "label": "DN de l'objet",
+            "description": "Distinguished Name complet de l'objet à déplacer"
+          },
+          "targetOU": {
+            "label": "OU de destination",
+            "description": "Distinguished Name de l'OU de destination"
+          }
+        }
+      },
+      "examples": {
+        "Move-ADObject -Identity \"CN=Jean Dupont,OU=Users,DC=contoso,DC=com\" -TargetPath \"OU=IT,DC=contoso,DC=com\"": "Déplace Jean Dupont vers l'OU IT"
+      }
+    }
+  }
+}

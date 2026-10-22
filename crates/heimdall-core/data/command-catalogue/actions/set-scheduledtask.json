@@ -1,0 +1,90 @@
+{
+  "id": "set-scheduledtask",
+  "title": "Modify a scheduled task",
+  "description": "Modify the properties of an existing scheduled task",
+  "category": "services-automation",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "taskscheduler",
+    "modify",
+    "update",
+    "automation",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "set-scheduledtask-cmd",
+  "windowsCommandTemplate": {
+    "id": "set-scheduledtask-cmd",
+    "platform": 0,
+    "name": "Set-ScheduledTask",
+    "commandPattern": "Set-ScheduledTask -TaskName '{taskname}' -Trigger (New-ScheduledTaskTrigger -Daily -At '{time}')",
+    "parameters": [
+      {
+        "name": "taskname",
+        "label": "Task name",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "MyTask",
+        "required": true,
+        "description": "Name of the task to modify"
+      },
+      {
+        "name": "time",
+        "label": "Daily run time",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "03:00",
+        "required": true,
+        "description": "New time of the daily trigger (e.g. 03:00). The other changes (-Action, -User) are in the examples."
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "$trigger = New-ScheduledTaskTrigger -Daily -At 3:00AM; Set-ScheduledTask -TaskName 'Backup' -Trigger $trigger",
+      "description": "Change the run time",
+      "platform": 0
+    },
+    {
+      "command": "$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-File C:\\Scripts\\new-backup.ps1'; Set-ScheduledTask -TaskName 'Backup' -Action $action",
+      "description": "Change the script that runs",
+      "platform": 0
+    },
+    {
+      "command": "Set-ScheduledTask -TaskName 'MyTask' -User 'DOMAIN\\ServiceAccount'",
+      "description": "Change the account the task runs as",
+      "platform": 0
+    }
+  ],
+  "notes": "Requires administrator rights. Use Get-ScheduledTask to see the current configuration before modifying it.",
+  "links": [
+    {
+      "title": "Set-ScheduledTask Documentation",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/set-scheduledtask"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Modifier une tâche planifiée",
+      "description": "Modifie les propriétés d'une tâche planifiée existante",
+      "notes": "Nécessite des privilèges admin. Utilisez Get-ScheduledTask pour voir la config actuelle avant modification.",
+      "parameters": {
+        "windows": {
+          "taskname": {
+            "label": "Nom de la tâche",
+            "description": "Nom de la tâche à modifier"
+          },
+          "time": {
+            "label": "Heure d'exécution quotidienne",
+            "description": "Nouvelle heure du déclenchement quotidien (ex: 03:00). Les autres modifications (-Action, -User) figurent dans les exemples."
+          }
+        }
+      },
+      "examples": {
+        "$trigger = New-ScheduledTaskTrigger -Daily -At 3:00AM; Set-ScheduledTask -TaskName 'Backup' -Trigger $trigger": "Change l'heure d'exécution",
+        "$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-File C:\\Scripts\\new-backup.ps1'; Set-ScheduledTask -TaskName 'Backup' -Action $action": "Change le script exécuté",
+        "Set-ScheduledTask -TaskName 'MyTask' -User 'DOMAIN\\ServiceAccount'": "Change le compte d'exécution"
+      }
+    }
+  }
+}

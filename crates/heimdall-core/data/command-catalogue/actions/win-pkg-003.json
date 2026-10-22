@@ -1,0 +1,64 @@
+{
+  "id": "win-pkg-003",
+  "title": "Update a Winget application",
+  "description": "Update a specific application to its latest version available through Winget.",
+  "category": "package-management",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "winget",
+    "package",
+    "update",
+    "upgrade",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "winget-upgrade-package-cmd",
+  "windowsCommandTemplate": {
+    "id": "winget-upgrade-package-cmd",
+    "platform": 0,
+    "name": "winget",
+    "commandPattern": "winget upgrade {packageName} --silent --accept-package-agreements --accept-source-agreements",
+    "parameters": [
+      {
+        "name": "packageName",
+        "label": "Package name",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Name or ID of the package to update"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "winget upgrade Microsoft.PowerToys --silent",
+      "description": "Update PowerToys to the latest version",
+      "platform": 0
+    }
+  ],
+  "notes": "Checks first whether an update is available before installing.",
+  "links": [
+    {
+      "title": "Winget upgrade documentation",
+      "url": "https://learn.microsoft.com/en-us/windows/package-manager/winget/upgrade"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Mettre à jour une application Winget",
+      "description": "Met à jour une application spécifique vers sa dernière version disponible via Winget.",
+      "notes": "Vérifie d'abord si une mise à jour est disponible avant d'installer.",
+      "parameters": {
+        "windows": {
+          "packageName": {
+            "label": "Nom du package",
+            "description": "Nom ou ID du package à mettre à jour"
+          }
+        }
+      },
+      "examples": {
+        "winget upgrade Microsoft.PowerToys --silent": "Met à jour PowerToys vers la dernière version"
+      }
+    }
+  }
+}

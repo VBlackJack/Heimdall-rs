@@ -1,0 +1,64 @@
+{
+  "id": "win-pkg-005",
+  "title": "Uninstall a Winget application",
+  "description": "Uninstall an application previously installed with Winget.",
+  "category": "package-management",
+  "platform": 0,
+  "level": 2,
+  "tags": [
+    "winget",
+    "package",
+    "uninstall",
+    "remove",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "winget-uninstall-cmd",
+  "windowsCommandTemplate": {
+    "id": "winget-uninstall-cmd",
+    "platform": 0,
+    "name": "winget",
+    "commandPattern": "winget uninstall {packageName} --silent",
+    "parameters": [
+      {
+        "name": "packageName",
+        "label": "Package name",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Name or ID of the package to uninstall"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "winget uninstall Microsoft.PowerToys --silent",
+      "description": "Uninstall PowerToys",
+      "platform": 0
+    }
+  ],
+  "notes": "⚠️ WARNING: this action removes the application from the system. Make sure to back up your data.",
+  "links": [
+    {
+      "title": "Winget uninstall documentation",
+      "url": "https://learn.microsoft.com/en-us/windows/package-manager/winget/uninstall"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Désinstaller une application Winget",
+      "description": "Désinstalle une application précédemment installée via Winget.",
+      "notes": "⚠️ ATTENTION : Cette action supprime l'application du système. Assurez-vous de sauvegarder vos données.",
+      "parameters": {
+        "windows": {
+          "packageName": {
+            "label": "Nom du package",
+            "description": "Nom ou ID du package à désinstaller"
+          }
+        }
+      },
+      "examples": {
+        "winget uninstall Microsoft.PowerToys --silent": "Désinstalle PowerToys"
+      }
+    }
+  }
+}

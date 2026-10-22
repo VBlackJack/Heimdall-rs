@@ -1,0 +1,146 @@
+{
+  "id": "ansible-ad-hoc",
+  "title": "Run an Ansible ad-hoc command",
+  "description": "Run a one-off command on a group of hosts without a playbook",
+  "category": "services-automation",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "ansible",
+    "ad-hoc",
+    "command"
+  ],
+  "windowsCommandTemplateId": "ansible-ad-hoc-win",
+  "windowsCommandTemplate": {
+    "id": "ansible-ad-hoc-win",
+    "platform": 0,
+    "name": "ansible",
+    "commandPattern": "ansible {hostPattern} -m {module} -a {args}",
+    "parameters": [
+      {
+        "name": "hostPattern",
+        "label": "Host pattern",
+        "type": "string",
+        "defaultValue": "all",
+        "required": true,
+        "description": "Pattern that targets the hosts (all, webservers and so on)"
+      },
+      {
+        "name": "module",
+        "label": "Module",
+        "type": "string",
+        "defaultValue": "ping",
+        "required": true,
+        "description": "Ansible module to use"
+      },
+      {
+        "name": "args",
+        "label": "Arguments",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Arguments for the module"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "ansible-ad-hoc-linux",
+  "linuxCommandTemplate": {
+    "id": "ansible-ad-hoc-linux",
+    "platform": 1,
+    "name": "ansible",
+    "commandPattern": "ansible {hostPattern} -m {module} -a {args}",
+    "parameters": [
+      {
+        "name": "hostPattern",
+        "label": "Host pattern",
+        "type": "string",
+        "defaultValue": "all",
+        "required": true,
+        "description": "Pattern that targets the hosts"
+      },
+      {
+        "name": "module",
+        "label": "Module",
+        "type": "string",
+        "defaultValue": "ping",
+        "required": true,
+        "description": "Ansible module to use"
+      },
+      {
+        "name": "args",
+        "label": "Arguments",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Arguments for the module"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "Ad-hoc commands are perfect for one-off tasks that do not need a full playbook.",
+  "links": [
+    {
+      "title": "Ansible Ad-Hoc Commands",
+      "url": "https://docs.ansible.com/ansible/latest/user_guide/intro_adhoc.html"
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "ansible all -m ping",
+      "description": "Test connectivity on every host",
+      "platform": 1
+    },
+    {
+      "command": "ansible webservers -m shell -a 'uptime'",
+      "description": "Run the uptime command on the web servers",
+      "platform": 1
+    },
+    {
+      "command": "ansible *.contoso.com -m pester -a \"-NoProfile -ExecutionPolicy Bypass\"",
+      "description": "Example using the 'args' parameter: arguments for the module. Replace -NoProfile -ExecutionPolicy Bypass with the value that fits your environment.",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Exécuter une commande Ansible ad-hoc",
+      "description": "Exécute une commande ponctuelle sur un groupe d'hôtes sans playbook",
+      "notes": "Les commandes ad-hoc sont parfaites pour les tâches ponctuelles sans nécessiter un playbook complet.",
+      "parameters": {
+        "windows": {
+          "hostPattern": {
+            "label": "Pattern hôtes",
+            "description": "Pattern pour cibler les hôtes (all, webservers, etc.)"
+          },
+          "module": {
+            "label": "Module",
+            "description": "Module Ansible à utiliser"
+          },
+          "args": {
+            "label": "Arguments",
+            "description": "Arguments pour le module"
+          }
+        },
+        "linux": {
+          "hostPattern": {
+            "label": "Pattern hôtes",
+            "description": "Pattern pour cibler les hôtes"
+          },
+          "module": {
+            "label": "Module",
+            "description": "Module Ansible à utiliser"
+          },
+          "args": {
+            "label": "Arguments",
+            "description": "Arguments pour le module"
+          }
+        }
+      },
+      "examples": {
+        "ansible all -m ping": "Teste la connectivité sur tous les hôtes",
+        "ansible webservers -m shell -a 'uptime'": "Exécute la commande uptime sur les serveurs web",
+        "ansible *.contoso.com -m pester -a \"-NoProfile -ExecutionPolicy Bypass\"": "Exemple utilisant le paramètre 'args': Arguments pour le module. Remplacez -NoProfile -ExecutionPolicy Bypass par la valeur appropriée selon votre environnement."
+      }
+    }
+  }
+}

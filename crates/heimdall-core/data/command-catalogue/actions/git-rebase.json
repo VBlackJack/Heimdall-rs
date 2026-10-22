@@ -1,0 +1,93 @@
+{
+  "id": "git-rebase",
+  "title": "Rebase a branch",
+  "description": "Reapply commits on top of a new base.",
+  "category": "development",
+  "platform": 2,
+  "level": 2,
+  "tags": [
+    "git",
+    "rebase",
+    "history"
+  ],
+  "windowsCommandTemplateId": "git-rebase-win",
+  "windowsCommandTemplate": {
+    "id": "git-rebase-win",
+    "platform": 0,
+    "name": "git",
+    "commandPattern": "git rebase {branch}",
+    "parameters": [
+      {
+        "name": "branch",
+        "label": "Base branch",
+        "type": "string",
+        "defaultValue": "main",
+        "required": true,
+        "description": "Branch to rebase onto"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "git-rebase-linux",
+  "linuxCommandTemplate": {
+    "id": "git-rebase-linux",
+    "platform": 1,
+    "name": "git",
+    "commandPattern": "git rebase {branch}",
+    "parameters": [
+      {
+        "name": "branch",
+        "label": "Base branch",
+        "type": "string",
+        "defaultValue": "main",
+        "required": true,
+        "description": "Branch to rebase onto"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "git rebase main",
+      "description": "Rebase the current branch onto main",
+      "platform": 2
+    }
+  ],
+  "notes": "WARNING: never rebase commits already pushed to a public repository. Use -i for an interactive rebase.",
+  "links": [
+    {
+      "title": "Git Rebase Documentation",
+      "url": "https://git-scm.com/docs/git-rebase"
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "git rebase -i HEAD~5",
+      "description": "Interactive rebase of the last 5 commits",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Rebaser une branche",
+      "description": "Réapplique des commits sur une nouvelle base",
+      "notes": "ATTENTION : Ne rebasez jamais des commits déjà poussés sur un dépôt public. Utilisez -i pour un rebase interactif.",
+      "parameters": {
+        "windows": {
+          "branch": {
+            "label": "Branche de base",
+            "description": "Branche sur laquelle rebaser"
+          }
+        },
+        "linux": {
+          "branch": {
+            "label": "Branche de base",
+            "description": "Branche sur laquelle rebaser"
+          }
+        }
+      },
+      "examples": {
+        "git rebase -i HEAD~5": "Rebase interactif des 5 derniers commits",
+        "git rebase main": "Rebase la branche actuelle sur main"
+      }
+    }
+  }
+}

@@ -1583,32 +1583,6 @@ fn a_number_holds_only_digits_signs_point_and_exponent() {
 }
 
 #[test]
-fn every_shipped_snippet_still_generates_with_its_defaults() {
-    use crate::tools::command_library::{BUILTIN_SNIPPETS, SnippetPlatform};
-    for snippet in BUILTIN_SNIPPETS {
-        let platforms: &[TemplatePlatform] = match snippet.platform {
-            SnippetPlatform::Linux => &[LINUX],
-            SnippetPlatform::Windows => &[WINDOWS],
-            SnippetPlatform::CrossPlatform => &BOTH,
-        };
-        // Every value as a free string: the strictest reading of the catalog.
-        let parameters: Vec<UserParameter> = snippet
-            .parameters
-            .iter()
-            .map(|each| {
-                let mut parameter = parameter(each.key, true);
-                parameter.default_value = Some(each.default_value.to_owned());
-                parameter
-            })
-            .collect();
-        for platform in platforms {
-            let result = render(*platform, snippet.template, parameters.clone(), &[]);
-            assert!(result.is_ok(), "{:?} {platform:?}: {result:?}", snippet.id);
-        }
-    }
-}
-
-#[test]
 fn an_option_after_white_space_is_refused_in_free_text() {
     // `find {dir} -name x.log` in a second-stage shell: the value adds an `-exec`.
     for platform in BOTH {

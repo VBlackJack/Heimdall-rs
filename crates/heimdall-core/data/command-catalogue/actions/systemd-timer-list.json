@@ -1,0 +1,81 @@
+{
+  "id": "systemd-timer-list",
+  "title": "List systemd timers",
+  "description": "Show every systemd timer (modern alternative to cron)",
+  "category": "services-automation",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "systemd",
+    "timer",
+    "scheduler",
+    "automation",
+    "cron"
+  ],
+  "linuxCommandTemplateId": "systemctl-timer-cmd",
+  "linuxCommandTemplate": {
+    "id": "systemctl-timer-cmd",
+    "platform": 1,
+    "name": "systemctl",
+    "commandPattern": "systemctl list-timers {options}",
+    "parameters": [
+      {
+        "name": "options",
+        "label": "Options",
+        "type": "choice",
+        "allowedValues": [
+          "--all",
+          "--state=active",
+          "--no-pager"
+        ],
+        "defaultValue": "--all",
+        "required": false,
+        "description": "--all = every timer, including inactive ones; --state=active = active timers only; --no-pager = print without a pager"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "systemctl list-timers",
+      "description": "List the active timers",
+      "platform": 1
+    },
+    {
+      "command": "systemctl list-timers --all",
+      "description": "List every timer",
+      "platform": 1
+    },
+    {
+      "command": "systemctl status my-backup.timer",
+      "description": "Status of a specific timer",
+      "platform": 1
+    }
+  ],
+  "notes": "systemd timers are more flexible than cron. See /etc/systemd/system/ for the definitions.",
+  "links": [
+    {
+      "title": "systemd timers",
+      "url": "https://www.freedesktop.org/software/systemd/man/systemd.timer.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Lister les timers systemd",
+      "description": "Affiche tous les timers systemd (alternative moderne à cron)",
+      "notes": "Les timers systemd sont plus flexibles que cron. Voir /etc/systemd/system/ pour les définitions.",
+      "parameters": {
+        "linux": {
+          "options": {
+            "label": "Options",
+            "description": "--all = tous les timers, inactifs compris ; --state=active = timers actifs seulement ; --no-pager = affiche sans pager"
+          }
+        }
+      },
+      "examples": {
+        "systemctl list-timers": "Liste les timers actifs",
+        "systemctl list-timers --all": "Liste tous les timers",
+        "systemctl status my-backup.timer": "État d'un timer spécifique"
+      }
+    }
+  }
+}

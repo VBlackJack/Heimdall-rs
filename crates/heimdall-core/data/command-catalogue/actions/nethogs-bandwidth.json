@@ -1,0 +1,88 @@
+{
+  "id": "nethogs-bandwidth",
+  "title": "Monitor bandwidth per process",
+  "description": "Show the network usage per process in real time.",
+  "category": "network-dns",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "nethogs",
+    "bandwidth",
+    "network",
+    "monitoring",
+    "traffic"
+  ],
+  "linuxCommandTemplateId": "nethogs-cmd",
+  "linuxCommandTemplate": {
+    "id": "nethogs-cmd",
+    "platform": 1,
+    "name": "nethogs",
+    "commandPattern": "sudo nethogs {interface}",
+    "parameters": [
+      {
+        "name": "interface",
+        "label": "Interface",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Network interface (empty = all)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo nethogs",
+      "description": "Monitor every interface",
+      "platform": 1
+    },
+    {
+      "command": "sudo nethogs eth0",
+      "description": "Monitor only eth0",
+      "platform": 1
+    },
+    {
+      "command": "sudo nethogs -t",
+      "description": "Text mode (for scripts)",
+      "platform": 1
+    },
+    {
+      "command": "sudo nethogs -d 5",
+      "description": "Refresh every 5 seconds",
+      "platform": 1
+    },
+    {
+      "command": "sudo nethogs -v 2",
+      "description": "Maximum verbosity",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo and the nethogs package. q to quit. Ideal to find the hungry processes.",
+  "links": [
+    {
+      "title": "nethogs documentation",
+      "url": "https://github.com/raboof/nethogs"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Monitorer la bande passante par processus",
+      "description": "Affiche l'utilisation réseau en temps réel par processus",
+      "notes": "Nécessite sudo et le package nethogs. q pour quitter. Idéal pour identifier les processus gourmands.",
+      "parameters": {
+        "linux": {
+          "interface": {
+            "label": "Interface",
+            "description": "Interface réseau (vide = toutes)"
+          }
+        }
+      },
+      "examples": {
+        "sudo nethogs": "Monitore toutes les interfaces",
+        "sudo nethogs eth0": "Monitore uniquement eth0",
+        "sudo nethogs -t": "Mode texte (pour scripts)",
+        "sudo nethogs -d 5": "Rafraîchir toutes les 5 secondes",
+        "sudo nethogs -v 2": "Verbosité maximale"
+      }
+    }
+  }
+}

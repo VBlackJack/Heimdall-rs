@@ -1,0 +1,68 @@
+{
+  "id": "linux-grep-recursive",
+  "title": "Text search (grep)",
+  "description": "Search the content of files for a string.",
+  "category": "files-storage",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "linux",
+    "grep",
+    "search",
+    "text",
+    "content"
+  ],
+  "linuxCommandTemplate": {
+    "id": "618a0557-eb37-4ce3-9dd8-3c9259176994",
+    "platform": 1,
+    "name": "grep",
+    "commandPattern": "grep -rnw {path} -e {pattern}",
+    "parameters": [
+      {
+        "name": "path",
+        "label": "Path",
+        "type": "string",
+        "defaultValue": ".",
+        "required": true,
+        "description": "Where to search"
+      },
+      {
+        "name": "pattern",
+        "label": "Text",
+        "type": "string",
+        "defaultValue": "error",
+        "required": true,
+        "description": "Text to find"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "grep -rnw '/var/log' -e 'Exception'",
+      "description": "Search /var/log for 'Exception' recursively (-r), with line numbers (-n) and whole words (-w).",
+      "platform": 1
+    }
+  ],
+  "linuxCommandTemplateId": "618a0557-eb37-4ce3-9dd8-3c9259176994",
+  "translations": {
+    "fr": {
+      "title": "Recherche texte (grep)",
+      "description": "Recherche une chaîne de caractères dans le contenu des fichiers.",
+      "parameters": {
+        "linux": {
+          "path": {
+            "label": "Chemin",
+            "description": "Où chercher"
+          },
+          "pattern": {
+            "label": "Texte",
+            "description": "Texte à trouver"
+          }
+        }
+      },
+      "examples": {
+        "grep -rnw '/var/log' -e 'Exception'": "Cherche 'Exception' récursivement (-r), avec numéro de ligne (-n) et mot entier (-w) dans /var/log."
+      }
+    }
+  }
+}

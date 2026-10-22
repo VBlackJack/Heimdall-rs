@@ -1,0 +1,46 @@
+{
+  "id": "sccm-trigger-hardware-inventory",
+  "title": "Force the SCCM hardware inventory",
+  "description": "Collect the hardware inventory now and send it to the SCCM server",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "sccm",
+    "inventory",
+    "hardware",
+    "trigger"
+  ],
+  "windowsCommandTemplateId": "sccm-trigger-hardware-inventory-cmd",
+  "windowsCommandTemplate": {
+    "id": "sccm-trigger-hardware-inventory-cmd",
+    "platform": 0,
+    "name": "Invoke-WmiMethod",
+    "commandPattern": "Invoke-WmiMethod -Namespace root\\ccm -Class sms_client -Name TriggerSchedule '{00000000-0000-0000-0000-000000000001}' -ErrorAction Stop",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "Invoke-WmiMethod -Namespace root\\ccm -Class sms_client -Name TriggerSchedule '{00000000-0000-0000-0000-000000000001}'",
+      "description": "Trigger the hardware inventory",
+      "platform": 0
+    }
+  ],
+  "notes": "Schedule ID {01} = Hardware Inventory Cycle. Useful after a hardware change or to force an inventory update in SCCM.",
+  "links": [
+    {
+      "title": "SCCM Trigger Schedule IDs",
+      "url": "https://www.systemcenterdudes.com/configuration-manager-2012-client-command-list/"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Forcer l'inventaire matériel SCCM",
+      "description": "Déclenche immédiatement la collecte de l'inventaire matériel et l'envoie au serveur SCCM",
+      "notes": "Schedule ID {01} = Hardware Inventory Cycle. Utile après modification matérielle ou pour forcer la mise à jour de l'inventaire dans SCCM.",
+      "examples": {
+        "Invoke-WmiMethod -Namespace root\\ccm -Class sms_client -Name TriggerSchedule '{00000000-0000-0000-0000-000000000001}'": "Déclenche l'inventaire matériel"
+      }
+    }
+  }
+}

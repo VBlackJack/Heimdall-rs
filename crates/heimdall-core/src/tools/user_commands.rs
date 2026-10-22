@@ -35,6 +35,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
+use super::command_library;
 use super::date_time::{Instant, round_trip_utc};
 use super::private_file::write_private;
 use super::uuid_generator::{self, UuidFormat, UuidVersion};
@@ -1328,7 +1329,8 @@ pub struct ImportReport {
     pub imported: usize,
     /// Commands of the user replaced.
     pub updated: usize,
-    /// Commands left out: no title or category, too long.
+    /// Commands left out: no title or category, too long, or breaking a rule of an
+    /// untrusted file (see [`UserLibrary::import`]).
     pub skipped: usize,
 }
 
@@ -1368,7 +1370,9 @@ impl UserLibrary {
         }
         let text = fs::read_to_string(path).map_err(LibraryError::Io)?;
         let mut library = Self::default();
-        library.import(&text)?;
+        // Our own file, written by this build: read as it is, so a rule added since never
+        // drops a command the user made.
+        library.merge(&text, false)?;
         Ok(library)
     }
 
@@ -1402,10 +1406,20 @@ impl UserLibrary {
     /// (`CommandLibraryTransferService.cs:76-135`): one already here is replaced, one
     /// without a title or a category is left out.
     ///
+    /// The file is not trusted: an action that breaks a rule of
+    /// [`command_library::validate_import`] (an unknown parameter type, a pattern with a line
+    /// break or too long, a default the generator refuses) is left out and counted as
+    /// skipped. Nothing is run; the commands are only kept.
+    ///
     /// # Errors
     ///
     /// [`LibraryError::Format`] when `json` holds no action.
     pub fn import(&mut self, json: &str) -> Result<ImportReport, LibraryError> {
+        self.merge(json, true)
+    }
+
+    /// [`UserLibrary::import`], with the rules of an untrusted file applied or not.
+    fn merge(&mut self, json: &str, untrusted: bool) -> Result<ImportReport, LibraryError> {
         let root: Value = serde_json::from_str(json).map_err(|_| LibraryError::Format)?;
         let actions: Vec<UserCommand> = if let Some(Value::Array(list)) = root.get("actions") {
             list.iter()
@@ -1428,6 +1442,10 @@ impl UserLibrary {
                 continue;
             }
             normalize_quoting(&mut action);
+            if untrusted && command_library::validate_import(&action).is_some() {
+                report.skipped += 1;
+                continue;
+            }
             action.is_user_created = true;
             let found = self.commands.iter().position(|known| {
                 (!action.public_id.is_empty() && known.public_id == action.public_id)

@@ -1,0 +1,130 @@
+{
+  "id": "rsync-sync-files",
+  "title": "Synchronize files with rsync",
+  "description": "Synchronize and copy files incrementally, locally or to a remote host",
+  "category": "files-storage",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "rsync",
+    "backup",
+    "sync",
+    "copy",
+    "transfer"
+  ],
+  "linuxCommandTemplateId": "rsync-cmd",
+  "linuxCommandTemplate": {
+    "id": "rsync-cmd",
+    "platform": 1,
+    "name": "rsync",
+    "commandPattern": "rsync -{options} {source} {destination}",
+    "parameters": [
+      {
+        "name": "options",
+        "label": "Short options",
+        "type": "choice",
+        "allowedValues": [
+          "avz",
+          "av",
+          "avzn",
+          "avzP"
+        ],
+        "defaultValue": "avz",
+        "required": true,
+        "description": "avz = archive, verbose, compress; av = without compression (local copy); avzn = dry run; avzP = with progress and resumable partial files. Long options such as --delete are in the examples"
+      },
+      {
+        "name": "source",
+        "label": "Source",
+        "type": "string",
+        "defaultValue": "/source/path/",
+        "required": true,
+        "description": "Source directory"
+      },
+      {
+        "name": "destination",
+        "label": "Destination",
+        "type": "string",
+        "defaultValue": "/dest/path/",
+        "required": true,
+        "description": "Destination directory (local or remote)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "rsync -avz /source/ /backup/",
+      "description": "Local backup with compression",
+      "platform": 1
+    },
+    {
+      "command": "rsync -avz /data/ user@server:/backup/",
+      "description": "Remote backup over SSH",
+      "platform": 1
+    },
+    {
+      "command": "rsync -avz --delete /source/ /backup/",
+      "description": "Mirror synchronization (deletes extra files)",
+      "platform": 1
+    },
+    {
+      "command": "rsync -avz /source/ /dest/",
+      "description": "Synchronize with compression",
+      "platform": 1
+    },
+    {
+      "command": "rsync -avz --delete /src/ user@server:/dest/",
+      "description": "Sync to a remote server with deletion",
+      "platform": 1
+    },
+    {
+      "command": "rsync -avzn /src/ /dest/",
+      "description": "Dry run (simulation)",
+      "platform": 1
+    },
+    {
+      "command": "rsync -avz --exclude=\"*.log\" /app/ /backup/",
+      "description": "Exclude .log files",
+      "platform": 1
+    }
+  ],
+  "notes": "A trailing / on the source changes the behavior. --delete removes the files missing from the source. Very efficient.",
+  "links": [
+    {
+      "title": "rsync documentation",
+      "url": "https://man7.org/linux/man-pages/man1/rsync.1.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Synchroniser des fichiers avec rsync",
+      "description": "Synchronise et copie des fichiers localement ou à distance de manière incrémentale",
+      "notes": "Le / final sur source change le comportement. --delete supprime les fichiers manquants. Très efficace.",
+      "parameters": {
+        "linux": {
+          "options": {
+            "label": "Options courtes",
+            "description": "avz = archive, détaillé, compression ; av = sans compression (copie locale) ; avzn = simulation ; avzP = avec progression et reprise des fichiers partiels. Les options longues comme --delete figurent dans les exemples"
+          },
+          "source": {
+            "label": "Source",
+            "description": "Répertoire source"
+          },
+          "destination": {
+            "label": "Destination",
+            "description": "Répertoire destination (local ou distant)"
+          }
+        }
+      },
+      "examples": {
+        "rsync -avz /source/ /backup/": "Sauvegarde locale avec compression",
+        "rsync -avz /data/ user@server:/backup/": "Sauvegarde distante via SSH",
+        "rsync -avz --delete /source/ /backup/": "Synchronisation miroir (supprime fichiers en trop)",
+        "rsync -avz /source/ /dest/": "Synchroniser avec compression",
+        "rsync -avz --delete /src/ user@server:/dest/": "Sync vers serveur distant avec suppression",
+        "rsync -avzn /src/ /dest/": "Dry-run (simulation)",
+        "rsync -avz --exclude=\"*.log\" /app/ /backup/": "Exclure les fichiers .log"
+      }
+    }
+  }
+}

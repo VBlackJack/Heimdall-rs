@@ -1,0 +1,81 @@
+{
+  "id": "journalctl-by-unit",
+  "title": "Show the logs of a given service",
+  "description": "Show the journald logs of a given systemd unit (service, timer, etc.).",
+  "category": "monitoring-logs",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "journalctl",
+    "logs",
+    "systemd",
+    "service"
+  ],
+  "linuxCommandTemplateId": "journalctl-unit-cmd",
+  "linuxCommandTemplate": {
+    "id": "journalctl-unit-cmd",
+    "platform": 1,
+    "name": "journalctl",
+    "commandPattern": "journalctl -u {unit} -n {lines} --no-pager",
+    "parameters": [
+      {
+        "name": "unit",
+        "label": "Unit name",
+        "type": "string",
+        "defaultValue": "nginx.service",
+        "required": true,
+        "description": "Name of the service or systemd unit"
+      },
+      {
+        "name": "lines",
+        "label": "Number of lines",
+        "type": "number",
+        "defaultValue": "100",
+        "required": true,
+        "description": "Number of lines to show"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "journalctl -u nginx.service",
+      "description": "Show every log of a given service (here nginx). The -u (unit) flag filters by systemd unit. The equivalent of reading /var/log/nginx/* but through journalctl. Every stdout/stderr output of the service is captured. Ideal for troubleshooting one service at a time.",
+      "platform": 1
+    },
+    {
+      "command": "journalctl -u ssh.service --since \"10 minutes ago\"",
+      "description": "Show the SSH logs of the last 10 minutes. --since accepts relative durations (minutes, hours, days ago). Useful to diagnose an SSH connection problem right after it happened. Adjust the service and the duration to your needs.",
+      "platform": 1
+    }
+  ],
+  "notes": "Use -f to follow the logs in real time. The .service extension can often be omitted.",
+  "links": [
+    {
+      "title": "systemd unit files",
+      "url": "https://www.freedesktop.org/software/systemd/man/systemd.unit.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Consulter les logs d'un service spécifique",
+      "description": "Affiche les logs journald d'une unité systemd spécifique (service, timer, etc.)",
+      "notes": "Utiliser -f pour suivre les logs en temps réel. L'extension .service peut souvent être omise.",
+      "parameters": {
+        "linux": {
+          "unit": {
+            "label": "Nom de l'unité",
+            "description": "Nom du service ou unité systemd"
+          },
+          "lines": {
+            "label": "Nombre de lignes",
+            "description": "Nombre de lignes à afficher"
+          }
+        }
+      },
+      "examples": {
+        "journalctl -u nginx.service": "Affiche tous les logs d'un service spécifique (ici nginx). Le flag -u (unit) filtre par unité systemd. Équivalent de consulter /var/log/nginx/* mais via journalctl. Toutes les sorties stdout/stderr du service sont capturées. Parfait pour le troubleshooting service par service.",
+        "journalctl -u ssh.service --since \"10 minutes ago\"": "Affiche les logs SSH des 10 dernières minutes. --since accepte des durées relatives (minutes, hours, days ago). Utile pour diagnostiquer un problème de connexion SSH juste après qu'il se soit produit. Adaptez le service et la durée selon vos besoins."
+      }
+    }
+  }
+}

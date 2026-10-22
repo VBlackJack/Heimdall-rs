@@ -312,3 +312,40 @@ fn a_copy_draft_has_no_identity_and_its_own_title() {
     assert_ne!(copy_id, id);
     assert_eq!(library.commands().len(), 2);
 }
+
+#[test]
+fn an_import_leaves_out_what_breaks_a_rule_but_our_own_file_is_read_whole() {
+    let action = |id: &str, pattern: &str, kind: &str, default: &str| {
+        serde_json::json!({
+            "id": id,
+            "title": id,
+            "category": "mine",
+            "platform": 1,
+            "linuxCommandTemplate": {
+                "platform": 1,
+                "commandPattern": pattern,
+                "parameters": [{"name": "x", "label": "X", "type": kind, "defaultValue": default}],
+            },
+        })
+    };
+    let file = serde_json::json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "actions": [
+            action("fine", "echo {x}", "string", "hello"),
+            action("unknown-type", "echo {x}", "magic", "hello"),
+            action("shell-default", "echo {x}", "string", "a; reboot"),
+            action("line-break", "echo {x}\nreboot", "string", "hello"),
+        ],
+    })
+    .to_string();
+    let mut library = UserLibrary::default();
+    let report = library.import(&file).expect("an envelope");
+    assert_eq!((report.imported, report.updated, report.skipped), (1, 0, 3));
+    assert_eq!(library.commands().len(), 1);
+
+    // Our own file is read as it is: a rule added since never drops what the user made.
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(LIBRARY_FILE);
+    fs::write(&path, &file).expect("written");
+    assert_eq!(UserLibrary::load(&path).expect("read").commands().len(), 4);
+}

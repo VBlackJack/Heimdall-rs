@@ -1,0 +1,73 @@
+{
+  "id": "unified-network-connections",
+  "title": "Show active network connections",
+  "description": "Show the open ports and active network connections",
+  "category": "network-dns",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "network",
+    "connections",
+    "ports",
+    "tcp",
+    "netstat",
+    "diagnostic"
+  ],
+  "windowsCommandTemplateId": "unified-network-connections-win-cmd",
+  "windowsCommandTemplate": {
+    "id": "unified-network-connections-win-cmd",
+    "platform": 0,
+    "commandPattern": "Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,@{Name='ProcessName';Expression={(Get-Process -Id $_.OwningProcess).ProcessName}},OwningProcess | Sort-Object LocalPort | Format-Table -AutoSize",
+    "parameters": []
+  },
+  "linuxCommandTemplateId": "unified-network-connections-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "unified-network-connections-linux-cmd",
+    "platform": 1,
+    "commandPattern": "netstat -tulpn",
+    "parameters": []
+  },
+  "examples": [],
+  "windowsExamples": [
+    {
+      "command": "Get-NetTCPConnection -State Established | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort | Sort-Object RemoteAddress",
+      "description": "Show the active TCP connections sorted by remote address.",
+      "platform": 0
+    },
+    {
+      "command": "Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,ProcessName | Format-Table",
+      "description": "List the listening ports on Windows",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "ss -tulpn",
+      "description": "List the listening ports with their processes (modern alternative to netstat).",
+      "platform": 1
+    },
+    {
+      "command": "netstat -i",
+      "description": "Interface statistics",
+      "platform": 1
+    },
+    {
+      "command": "netstat -s",
+      "description": "Protocol statistics",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Afficher les connexions réseau actives",
+      "description": "Affiche les ports ouverts et les connexions réseau actives",
+      "examples": {
+        "Get-NetTCPConnection -State Established | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort | Sort-Object RemoteAddress": "Affiche les connexions TCP actives triées par adresse distante.",
+        "Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,ProcessName | Format-Table": "Liste les ports en écoute sur Windows",
+        "ss -tulpn": "Liste les ports en ecoute avec les processus associes (alternative moderne a netstat).",
+        "netstat -i": "Statistiques des interfaces",
+        "netstat -s": "Statistiques des protocoles"
+      }
+    }
+  }
+}

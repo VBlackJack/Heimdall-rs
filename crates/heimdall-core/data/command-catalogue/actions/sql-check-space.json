@@ -1,0 +1,80 @@
+{
+  "id": "sql-check-space",
+  "title": "Check the disk space of SQL databases",
+  "description": "Analyze the used and free disk space of each SQL Server database, including the data (.mdf) and log (.ldf) files.",
+  "category": "database",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "sql",
+    "space",
+    "disk",
+    "storage",
+    "capacity",
+    "monitoring",
+    "diagnostic",
+    "mssql"
+  ],
+  "windowsCommandTemplateId": "sql-check-space-cmd",
+  "windowsCommandTemplate": {
+    "id": "sql-check-space-cmd",
+    "platform": 0,
+    "name": "Invoke-Sqlcmd",
+    "commandPattern": "Invoke-Sqlcmd -ServerInstance '{serverInstance}' -Query \"SELECT DB_NAME(database_id) AS DatabaseName, name AS FileName, type_desc AS FileType, (size*8.0)/1024 AS SizeMB, (size*8.0/1024) - (FILEPROPERTY(name, 'SpaceUsed')*8.0/1024) AS FreeSpaceMB, physical_name AS FilePath FROM sys.master_files WHERE database_id > 4 ORDER BY database_id, type\" | Format-Table -AutoSize",
+    "parameters": [
+      {
+        "name": "serverInstance",
+        "label": "SQL Server instance",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "localhost",
+        "required": true,
+        "description": "SQL Server instance to analyze"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Invoke-Sqlcmd -ServerInstance 'localhost' -Query \"EXEC sp_spaceused\"",
+      "description": "Space used by the current database",
+      "platform": 0
+    },
+    {
+      "command": "Invoke-Sqlcmd -Query \"SELECT name, (size*8/1024) AS SizeMB FROM sys.master_files\"",
+      "description": "Size of every SQL Server file",
+      "platform": 0
+    },
+    {
+      "command": "Get-ChildItem 'C:\\Program Files\\Microsoft SQL Server\\*\\*.mdf' | Measure-Object -Property Length -Sum",
+      "description": "Total size of the .mdf files",
+      "platform": 0
+    }
+  ],
+  "notes": "Watch the free space to avoid autogrowth errors. Log files (.ldf) can grow quickly.",
+  "links": [
+    {
+      "title": "Documentation sys.master_files",
+      "url": "https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-master-files-transact-sql"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Vérifier l'espace disque des bases SQL",
+      "description": "Analyse l'espace disque utilisé et disponible pour chaque base de données SQL Server, incluant les fichiers de données (.mdf) et journaux (.ldf).",
+      "notes": "Surveiller l'espace libre pour éviter les erreurs de croissance automatique. Les fichiers journaux (.ldf) peuvent grossir rapidement.",
+      "parameters": {
+        "windows": {
+          "serverInstance": {
+            "label": "Instance SQL Server",
+            "description": "Instance SQL Server à analyser"
+          }
+        }
+      },
+      "examples": {
+        "Invoke-Sqlcmd -ServerInstance 'localhost' -Query \"EXEC sp_spaceused\"": "Espace utilisé de la base courante",
+        "Invoke-Sqlcmd -Query \"SELECT name, (size*8/1024) AS SizeMB FROM sys.master_files\"": "Taille de tous les fichiers SQL Server",
+        "Get-ChildItem 'C:\\Program Files\\Microsoft SQL Server\\*\\*.mdf' | Measure-Object -Property Length -Sum": "Taille totale des fichiers .mdf"
+      }
+    }
+  }
+}
