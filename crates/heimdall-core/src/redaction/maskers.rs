@@ -122,10 +122,15 @@ pub(super) fn mask_private_keys(
         };
         let match_start = position + first.start;
         let match_end = position + first.end;
+        let prefix_width = match_start - line.start;
         if is_end_marker(hay, &first) {
             let mut start_line = index;
             while start_line > floor_line
-                && is_body_kind(classify(text, lines[start_line - 1]), false, false)
+                && is_body_kind(
+                    classify(text, lines[start_line - 1], prefix_width),
+                    false,
+                    false,
+                )
             {
                 start_line -= 1;
             }
@@ -155,16 +160,16 @@ pub(super) fn mask_private_keys(
         let mut scan = index + 1;
         while scan < lines.len() {
             let candidate = lines[scan];
-            let kind = classify(text, candidate);
-            // The last line of the text may be a base64 fragment cut by the end of the buffer.
-            let kind = if kind == LineKind::Other
-                && scan + 1 == lines.len()
-                && is_truncated_fragment(text, candidate)
+            let kind = body_line_kind(text, &lines, scan, prefix_width);
+            // A blank line inside the block is part of it when the body goes on after it.
+            if kind == LineKind::Blank
+                && !after_header
+                && let Some(resume) = next_base64_after_blanks(text, &lines, scan, prefix_width)
             {
-                LineKind::Base64
-            } else {
-                kind
-            };
+                after_header = false;
+                scan = resume;
+                continue;
+            }
             if is_body_kind(kind, true, after_header) {
                 after_header = kind == LineKind::Header;
                 block_end = candidate.end;
@@ -186,6 +191,33 @@ pub(super) fn mask_private_keys(
         position = if closed { block_end } else { 0 };
     }
     Ok(apply_edits(text, &edits))
+}
+
+/// The kind of the line at `index` in the forward walk of a key block. The last line of the text
+/// may be a base64 fragment cut by the end of the buffer.
+fn body_line_kind(text: &str, lines: &[Line], index: usize, prefix_width: usize) -> LineKind {
+    let line = lines[index];
+    let kind = classify(text, line, prefix_width);
+    if kind == LineKind::Other && index + 1 == lines.len() && is_truncated_fragment(text, line) {
+        LineKind::Base64
+    } else {
+        kind
+    }
+}
+
+/// The index of the first line after the blank ones from `from` on, when that line is base64.
+fn next_base64_after_blanks(
+    text: &str,
+    lines: &[Line],
+    from: usize,
+    prefix_width: usize,
+) -> Option<usize> {
+    let mut next = from;
+    while next < lines.len() && classify(text, lines[next], prefix_width) == LineKind::Blank {
+        next += 1;
+    }
+    (next < lines.len() && classify(text, lines[next], prefix_width) == LineKind::Base64)
+        .then_some(next)
 }
 
 fn is_end_marker(hay: &str, found: &Found) -> bool {
@@ -247,7 +279,7 @@ pub(super) fn cut_inside_private_key(text: &str, cut: usize) -> bool {
         if is_private_key_begin(&text[line.start..line.end]) {
             return true;
         }
-        if !is_key_body(classify(text, line)) || line_start == 0 {
+        if !is_key_body(classify(text, line, 0)) || line_start == 0 {
             return false;
         }
         line_start = text[..line_start - 1]
@@ -262,8 +294,8 @@ pub(super) fn skip_private_key_body(text: &str, from: usize) -> usize {
     while start < text.len() {
         let line = line_from(text, start);
         let last_line = !text[start..].contains('\n');
-        let in_body =
-            is_key_body(classify(text, line)) || (last_line && is_truncated_fragment(text, line));
+        let in_body = is_key_body(classify(text, line, 0))
+            || (last_line && is_truncated_fragment(text, line));
         if !in_body {
             break;
         }
@@ -311,8 +343,40 @@ pub(super) fn skip_continuation_lines(text: &str, from: usize) -> usize {
     start
 }
 
-fn classify(text: &str, line: Line) -> LineKind {
-    let content = text[line.start..line.end].trim();
+/// The kind of a line of a key block. A line that is not a body line as it stands is tried again
+/// without a prefix that a tool puts on every line: a text of the width of the BEGIN line's
+/// prefix (a timestamp, a file name), a diff marker (`-`, `+`) or a `cat -n` line number and tab.
+fn classify(text: &str, line: Line, prefix_width: usize) -> LineKind {
+    let raw = &text[line.start..line.end];
+    let kind = classify_content(raw.trim());
+    if kind != LineKind::Other {
+        return kind;
+    }
+    let width_stripped = raw
+        .get(prefix_width..)
+        .filter(|_| prefix_width > 0 && raw.len() > prefix_width);
+    let diff_stripped = raw.strip_prefix(['-', '+']);
+    let numbered = strip_line_number(raw);
+    for stripped in [width_stripped, diff_stripped, numbered]
+        .into_iter()
+        .flatten()
+    {
+        let stripped_kind = classify_content(stripped.trim());
+        if stripped_kind != LineKind::Other {
+            return stripped_kind;
+        }
+    }
+    LineKind::Other
+}
+
+/// `     2<tab>rest` of `cat -n`: the rest of the line.
+fn strip_line_number(raw: &str) -> Option<&str> {
+    let (number, rest) = raw.split_once('\t')?;
+    let digits = number.trim_start();
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some(rest)
+}
+
+fn classify_content(content: &str) -> LineKind {
     if content.is_empty() {
         return LineKind::Blank;
     }

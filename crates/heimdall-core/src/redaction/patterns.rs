@@ -55,7 +55,40 @@ const HEADER_BLANK: &str = r"(?:[ \t]|\r?\n[ \t])";
 /// Line break that continues a folded header value.
 const HEADER_FOLD: &str = r"\r?\n[ \t]+";
 
-const SECRET_KEY_ENDING: &str = "(?:password|passwd|secret|token|api_key|apikey|api-key|access_key|accesskey|private_key|privatekey|client-key-data|client_secret)";
+/// Key names that identify a secret by their ending (`db_password`, `GITHUB_TOKEN`).
+const SECRET_KEY_ENDINGS: [&str; 13] = [
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "api-key",
+    "access_key",
+    "accesskey",
+    "private_key",
+    "privatekey",
+    "client-key-data",
+    "client_secret",
+];
+
+/// Short endings that are secrets only as a separate word of the key (`DB_PASS`, `db.pwd`,
+/// `dbPass`, a bare `pass`): `bypass`, `compass` and the shell's `PWD` (the working directory)
+/// are not secrets. The guard `key_ending_ok` enforces the word boundary.
+const WEAK_KEY_ENDINGS: [&str; 2] = ["pass", "pwd"];
+
+/// A double quoted value inside a JSON string that was itself encoded (`\"hunter2\"`): the value
+/// runs to the next escaped quote.
+const ESCAPED_DOUBLE_QUOTED: &str = r#"\\"(?P<v8>(?:[^\\\r\n]|\\[^"\r\n])*?)\\""#;
+
+/// An escaped opening quote that is never closed on its line: the rest of the line is masked.
+const ESCAPED_UNTERMINATED: &str = r#"\\"(?P<v9>[^\r\n]+)"#;
+
+/// A quote of a key name, possibly escaped (`"`, `'`, `\"`).
+const OPTIONAL_QUOTE: &str = r#"(?:\\?["'])?"#;
+
+/// Authorization schemes whose credential is one token (`Bearer abc`).
+const TOKEN_SCHEMES: [&str; 4] = ["bearer", "basic", "token", "digest"];
 
 const MYSQL_COMMANDS: &str = "(?:mysql|mysqldump|mysqladmin|mariadb)";
 
@@ -83,12 +116,29 @@ fn quoted_or_bare_no_option() -> String {
     )
 }
 
-/// Key-value form: a bare value also stops at `&` (query strings). It does not stop at `,` or `;`:
-/// those occur inside passwords, and an early stop would leave the tail in the clear.
+/// Key-value form with `=`: a bare value also stops at `&` (query strings). It does not stop at
+/// `,` or `;`: those occur inside passwords, and an early stop would leave the tail in the clear.
 fn quoted_or_bare_delimited() -> String {
     format!(
-        r#"(?:{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s&"']+)|{UNTERMINATED_QUOTED})"#
+        r#"(?:{ESCAPED_DOUBLE_QUOTED}|{ESCAPED_UNTERMINATED}|{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s&"']+)|{UNTERMINATED_QUOTED})"#
     )
+}
+
+/// Key-value form with `:` (YAML, `secret: correct horse battery`): a bare value is every word up
+/// to a quote or `&`, so a passphrase with spaces is masked whole.
+fn quoted_or_bare_words() -> String {
+    format!(
+        r#"(?:{ESCAPED_DOUBLE_QUOTED}|{ESCAPED_UNTERMINATED}|{DOUBLE_QUOTED_GLUED}|{SINGLE_QUOTED_GLUED}|{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s&"']+(?:[ \t]+[^\s&"']+)*)|{UNTERMINATED_QUOTED})"#
+    )
+}
+
+/// The alternation of the key endings that identify a secret.
+fn key_endings(endings: &[&[&str]]) -> String {
+    let all: Vec<&str> = endings
+        .iter()
+        .flat_map(|group| group.iter().copied())
+        .collect();
+    format!("(?:{})", all.join("|"))
 }
 
 /// A header token that may continue on folded lines: `piece (fold piece)*`.
@@ -132,6 +182,91 @@ fn after_word_dash_ok(hay: &str, found: &Found) -> bool {
 
 fn after_letter_ok(hay: &str, found: &Found) -> bool {
     not_preceded_by(hay, found.start, |c| c.is_ascii_alphabetic())
+}
+
+/// A header with no scheme at all is the credential itself, unless that word is a scheme name
+/// left without a credential (`Authorization: Token`).
+fn authorization_ok(hay: &str, found: &Found) -> bool {
+    let Some((start, end)) = found.value else {
+        return true;
+    };
+    let before = hay[..start]
+        .trim_end_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '\\');
+    if !before.ends_with(':') {
+        return true;
+    }
+    let value = &hay[start..end];
+    !TOKEN_SCHEMES
+        .iter()
+        .any(|scheme| value.eq_ignore_ascii_case(scheme))
+}
+
+fn is_key_character(c: char) -> bool {
+    is_word_dash(c) || c == '.'
+}
+
+/// A key that ends in `pass` or `pwd` names a secret only when that is a word of its own: the
+/// whole key (`pass`, not `pwd`, which is the shell's working directory), after a separator
+/// (`DB_PASS`, `db.pwd`) or after a lower case letter in camel case (`dbPass`). Any other ending
+/// is a secret as it stands.
+fn key_ending_ok(hay: &str, found: &Found) -> bool {
+    let rest = &hay[found.start..];
+    let (rest, is_tag) = rest
+        .strip_prefix('<')
+        .map_or((rest, false), |tag| (tag, true));
+    let key_end = if is_tag {
+        rest.find(|c: char| c == '>' || c.is_whitespace())
+    } else {
+        rest.find(|c: char| !is_key_character(c))
+    };
+    let key = &rest[..key_end.unwrap_or(rest.len())];
+    let ends_with = |ending: &str| {
+        key.len() >= ending.len()
+            && key.is_char_boundary(key.len() - ending.len())
+            && key[key.len() - ending.len()..].eq_ignore_ascii_case(ending)
+    };
+    if SECRET_KEY_ENDINGS.iter().any(|ending| ends_with(ending)) {
+        return true;
+    }
+    let Some(weak) = WEAK_KEY_ENDINGS.iter().find(|ending| ends_with(ending)) else {
+        return true;
+    };
+    let stem = &key[..key.len() - weak.len()];
+    match stem.chars().next_back() {
+        None => *weak == "pass",
+        Some('_' | '-' | '.' | ':') => true,
+        Some(c) => {
+            c.is_ascii_lowercase()
+                && key[stem.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_uppercase())
+        }
+    }
+}
+
+fn key_value_ok(hay: &str, found: &Found) -> bool {
+    after_alnum_ok(hay, found) && key_ending_ok(hay, found)
+}
+
+/// The secret in a user-only URL (`https://glpat-AbCd1234@gitlab.com`) has no `:` to tell it
+/// from a user name, so it is judged by its shape: long enough, with letters and digits, and
+/// either very long or of mixed case. A plain `git@host` or `alice@corp.com` is not masked.
+fn token_like_user_ok(hay: &str, found: &Found) -> bool {
+    const MIN_TOKEN_LENGTH: usize = 12;
+    const LONG_TOKEN_LENGTH: usize = 16;
+    let Some((start, end)) = found.value else {
+        return false;
+    };
+    let user = &hay[start..end];
+    let has = |test: fn(&char) -> bool| user.chars().any(|c| test(&c));
+    let digit = has(char::is_ascii_digit);
+    let letter = has(char::is_ascii_alphabetic);
+    let mixed_case = has(char::is_ascii_uppercase) && has(char::is_ascii_lowercase);
+    user.len() >= MIN_TOKEN_LENGTH
+        && digit
+        && letter
+        && (user.len() >= LONG_TOKEN_LENGTH || mixed_case)
 }
 
 fn aws_ok(hay: &str, found: &Found) -> bool {
@@ -200,16 +335,23 @@ lazy_pattern!(
 // Short credentials are masked too: the explicit header and scheme already identify the value.
 // A folded header (`Authorization:` then a line break and a blank, or a value continued on an
 // indented line) is one value. A wrap without indentation is the caller's job to join.
+//
+// The header name may be quoted (JSON `"Authorization": "Bearer abc"`, also escaped), and the
+// name matches inside `Proxy-Authorization`. Bearer, Basic and Token take one token (anything up
+// to whitespace or a quote, so `12|hJ8k...` and `alice:hunter2` are whole). Digest takes the
+// rest of the line. Any other scheme (Negotiate, NTLM, AWS4-HMAC-SHA256 ...) keeps its name and
+// masks the rest of the value up to a quote, and no scheme at all (`lin_api_...`) masks the
+// token.
 lazy_pattern!(
     AUTHORIZATION_HEADER,
     format!(
-        r"(?i)Authorization:{HEADER_BLANK}*(?:Bearer{HEADER_BLANK}+(?P<va>{})|Basic{HEADER_BLANK}+(?P<vb>{})|Token{HEADER_BLANK}+(?P<vc>{})|Digest{HEADER_BLANK}+(?P<vd>{}))",
-        folded("[A-Za-z0-9._~+/=-]+"),
-        folded("[A-Za-z0-9+/=]+"),
-        folded("[A-Za-z0-9._~+/=-]+"),
+        r"(?i)Authorization{OPTIONAL_QUOTE}{HEADER_BLANK}*:{HEADER_BLANK}*{OPTIONAL_QUOTE}(?:(?:Bearer|Basic|Token){HEADER_BLANK}+(?P<va>{})|Digest{HEADER_BLANK}+(?P<vd>{})|[A-Za-z][A-Za-z0-9_-]*{HEADER_BLANK}+(?P<ve>{})|(?P<vf>{}))",
+        folded(r#"[^\s"'\\]+"#),
         folded(r"[^\r\n]+"),
+        folded(r#"[^\r\n"'\\]+"#),
+        folded(r#"[^\s"'\\]+"#),
     ),
-    None
+    Some(authorization_ok)
 );
 
 // The password runs to the last `@` of the token, so a raw `@`, `:`, `/`, `#`, `?` or `%` inside
@@ -218,8 +360,15 @@ lazy_pattern!(
 // quote or bracket that cannot be part of a credential URL.
 lazy_pattern!(
     URL_CREDENTIALS,
-    r#"://[^/\s:@"`<>]*:(?P<v>[^\s"`<>]*)@"#,
+    r#"://[^/\s:"`<>]*:(?P<v>[^\s"`<>]*)@"#,
     None
+);
+
+// A user part without a password: a token used as the user name.
+lazy_pattern!(
+    URL_USER_TOKEN,
+    r"://(?P<v>[A-Za-z0-9._~%+=-]+)@",
+    Some(token_like_user_ok)
 );
 
 lazy_pattern!(
@@ -263,13 +412,37 @@ lazy_pattern!(
     Some(after_word_dash_ok)
 );
 
+// The key may be quoted (`"password"`, `'password'`, escaped in double-encoded JSON) and any
+// prefix is allowed (`keyVaultReferenceIdentityClientApplicationSecret`). `=` and `=>` take one
+// bare token, `:` takes every word to the end of the value.
 lazy_pattern!(
     KEY_VALUE_SECRET,
     format!(
-        "(?i)[A-Za-z0-9_.-]{{0,40}}{SECRET_KEY_ENDING}[\"']?[ \\t]{{0,16}}[=:][ \\t]{{0,16}}{}",
+        r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}(?:=>|=)[ \t]{{0,16}}{}",
+        key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
         quoted_or_bare_delimited()
     ),
-    Some(after_alnum_ok)
+    Some(key_value_ok)
+);
+
+lazy_pattern!(
+    KEY_VALUE_SECRET_COLON,
+    format!(
+        r"(?i)[A-Za-z0-9_.-]*{}{OPTIONAL_QUOTE}[ \t]{{0,16}}:[ \t]{{0,16}}{}",
+        key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS]),
+        quoted_or_bare_words()
+    ),
+    Some(key_value_ok)
+);
+
+// The XML element form: `<password>hunter2</password>`.
+lazy_pattern!(
+    XML_ELEMENT_SECRET,
+    format!(
+        r"(?i)<[A-Za-z0-9_.:-]*{}(?:[ \t][^>\r\n]*)?>(?P<v>[^<\r\n]+)</",
+        key_endings(&[&SECRET_KEY_ENDINGS, &WEAK_KEY_ENDINGS])
+    ),
+    Some(key_value_ok)
 );
 
 lazy_pattern!(
@@ -321,14 +494,14 @@ lazy_pattern!(
 // The host part of user@HOST prompt forms.
 lazy_pattern!(
     PROMPT_HOST,
-    format!("[A-Za-z_][A-Za-z0-9_.-]{{0,31}}@(?P<v>{HOST_LABEL}(?:\\.{HOST_LABEL}){{0,5}})"),
+    format!("[A-Za-z_][A-Za-z0-9_.-]{{0,31}}@(?P<v>{HOST_LABEL}(?:\\.{HOST_LABEL})*)"),
     Some(prompt_host_ok)
 );
 
 // A fully qualified name: at least two dots, alphabetic last label of 2 to 24 characters.
 lazy_pattern!(
     FULLY_QUALIFIED_NAME,
-    format!("(?P<v>(?:{HOST_LABEL}\\.){{2,5}}[A-Za-z]{{2,24}})"),
+    format!("(?P<v>(?:{HOST_LABEL}\\.){{2,}}[A-Za-z]{{2,24}})"),
     Some(fully_qualified_ok)
 );
 
@@ -339,12 +512,15 @@ pub(super) fn warm_up() {
         &PRIVATE_KEY_MARKER,
         &AUTHORIZATION_HEADER,
         &URL_CREDENTIALS,
+        &URL_USER_TOKEN,
         &CLI_PASSWORD_OPTION,
         &CLI_SSHPASS,
         &CLI_EXPORT,
         &CLI_ENVIRONMENT_PASSWORD,
         &CLI_MYSQL_PASSWORD,
         &KEY_VALUE_SECRET,
+        &KEY_VALUE_SECRET_COLON,
+        &XML_ELEMENT_SECRET,
         &AWS_ACCESS_KEY,
         &GITHUB_TOKEN,
         &SLACK_TOKEN,

@@ -1476,3 +1476,277 @@ fn redact_unhurried(input: &str) -> Result<Redacted, RedactionError> {
         TEST_RULE_BUDGET,
     )
 }
+
+// Review round: false negatives of quoted, encoded and prefixed forms.
+
+#[test]
+fn authorization_json_quoted_header_is_masked() {
+    assert_masked(&[
+        (
+            r#"{"Authorization": "Bearer abcdef123456"}"#,
+            r#"{"Authorization": "Bearer [masked:authorization-header]"}"#,
+        ),
+        (
+            "{'Authorization': 'Bearer abcdef123456'}",
+            "{'Authorization': 'Bearer [masked:authorization-header]'}",
+        ),
+        (
+            r#"{"headers":"{\"Authorization\":\"Bearer abcdef123456\"}"}"#,
+            r#"{"headers":"{\"Authorization\":\"Bearer [masked:authorization-header]\"}"}"#,
+        ),
+    ]);
+}
+
+#[test]
+fn authorization_whole_token_is_masked_up_to_whitespace_or_quote() {
+    assert_masked(&[
+        (
+            "Authorization: Bearer 12|hJ8kLmNoPqRsTuVw",
+            "Authorization: Bearer [masked:authorization-header]",
+        ),
+        (
+            "Authorization: Basic alice:hunter2",
+            "Authorization: Basic [masked:authorization-header]",
+        ),
+        (
+            "curl -H 'Authorization: Bearer 12|hJ8kLmNoPqRsTuVw' https://x",
+            "curl -H 'Authorization: Bearer [masked:authorization-header]' https://x",
+        ),
+        (
+            "Authorization: Bearer 12|hJ8k\r\n LmNoPqRsTuVw\r\nHost: x",
+            "Authorization: Bearer [masked:authorization-header]\r\nHost: x",
+        ),
+    ]);
+}
+
+#[test]
+fn authorization_any_scheme_or_none_is_masked() {
+    assert_masked(&[
+        (
+            "Authorization: Negotiate YIIabc123def456",
+            "Authorization: Negotiate [masked:authorization-header]",
+        ),
+        (
+            "Authorization: NTLM TlRMTVNTUAABAAAA",
+            "Authorization: NTLM [masked:authorization-header]",
+        ),
+        (
+            "Authorization: lin_api_AbC123xyz456",
+            "Authorization: [masked:authorization-header]",
+        ),
+        (
+            "Authorization: AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=fe5f80f77d5fa3beca038a248ff027d0445342fe2855ddc963176630326f1024",
+            "Authorization: AWS4-HMAC-SHA256 [masked:authorization-header]",
+        ),
+        (
+            "Authorization: AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/s3/aws4_request,\r\n SignedHeaders=host,\r\n Signature=fe5f80f7\r\nHost: x",
+            "Authorization: AWS4-HMAC-SHA256 [masked:authorization-header]\r\nHost: x",
+        ),
+        (
+            "Proxy-Authorization: Negotiate YIIabc123def456",
+            "Proxy-Authorization: Negotiate [masked:authorization-header]",
+        ),
+        (
+            "Proxy-Authorization: Basic YWxpY2U6aHVudGVyMg==",
+            "Proxy-Authorization: Basic [masked:authorization-header]",
+        ),
+    ]);
+}
+
+#[test]
+fn authorization_masking_is_idempotent_for_every_scheme() {
+    for input in [
+        "Authorization: Negotiate YIIabc123def456",
+        "Authorization: lin_api_AbC123xyz456",
+        "Authorization: Bearer 12|hJ8kLmNoPqRsTuVw",
+    ] {
+        let once = mask(input);
+        let again = redact(&once, RedactionOptions::default()).unwrap();
+        assert_eq!(again.text, once, "input: {input:?}");
+        assert_eq!(again.total(), 0, "input: {input:?}");
+    }
+}
+
+#[test]
+fn double_encoded_json_secrets_are_masked() {
+    assert_masked(&[
+        (
+            r#"{"log":"{\"password\":\"hunter2\",\"user\":\"a\"}"}"#,
+            r#"{"log":"{\"password\":\"[masked:key-value-secret]\",\"user\":\"a\"}"}"#,
+        ),
+        (
+            r#"msg="{\"db_password\": \"hunter2\"}""#,
+            r#"msg="{\"db_password\": \"[masked:key-value-secret]\"}""#,
+        ),
+        (
+            r#"msg="{\"api_key\":\"abc"#,
+            r#"msg="{\"api_key\":\"[masked:key-value-secret]"#,
+        ),
+    ]);
+}
+
+#[test]
+fn url_user_part_with_a_raw_at_sign_keeps_the_password_masked() {
+    assert_masked(&[
+        (
+            "https://alice@corp.com:S3cr3t@git.corp.com/repo.git",
+            "https://alice@corp.com:[masked:url-credentials]@git.corp.com/repo.git",
+        ),
+        (
+            "https://alice@corp.com:S3@cr3t@git.corp.com/repo.git",
+            "https://alice@corp.com:[masked:url-credentials]@git.corp.com/repo.git",
+        ),
+    ]);
+}
+
+#[test]
+fn url_user_only_token_is_masked_and_plain_users_survive() {
+    assert_masked(&[(
+        "https://glpat-AbCdEf123456@gitlab.com/x",
+        "https://[masked:url-credentials]@gitlab.com/x",
+    )]);
+    assert_survives(&[
+        "git clone ssh://git@github.com/org/repo.git",
+        "https://alice@corp.com/x",
+        "contact alice@corp.com for access",
+    ]);
+}
+
+#[test]
+fn private_key_with_a_diff_prefix_is_masked() {
+    assert_masked(&[
+        (
+            "diff\n------BEGIN RSA PRIVATE KEY-----\n-MIIEowIBAAKCAQEA\n-VTLw7onLRnrq0/Iz\n------END RSA PRIVATE KEY-----\nafter",
+            "diff\n-[masked:private-key-block]\nafter",
+        ),
+        (
+            "------BEGIN RSA PRIVATE KEY-----\n-MIIEowIBAAKCAQEA\n-VTLw7onLRnrq0/Iz\nafter this",
+            "-[masked:private-key-block]\nafter this",
+        ),
+        (
+            "+-----BEGIN RSA PRIVATE KEY-----\n+MIIEowIBAAKCAQEA\n+VTLw7onLRnrq0/Iz\n+-----END RSA PRIVATE KEY-----",
+            "+[masked:private-key-block]",
+        ),
+    ]);
+}
+
+#[test]
+fn private_key_with_line_numbers_is_masked() {
+    assert_masked(&[
+        (
+            "     1\t-----BEGIN RSA PRIVATE KEY-----\n     2\tMIIEowIBAAKCAQEA\n     3\tVTLw7onLRnrq0/Iz\n     4\t-----END RSA PRIVATE KEY-----\n",
+            "     1\t[masked:private-key-block]\n",
+        ),
+        (
+            "     1\t-----BEGIN RSA PRIVATE KEY-----\n     2\tMIIEowIBAAKCAQEA\n     3\tVTLw7onLRnrq0/Iz\nafter this\n",
+            "     1\t[masked:private-key-block]\nafter this\n",
+        ),
+        (
+            "     2\tMIIEowIBAAKCAQEA\n     3\tVTLw7onLRnrq0/Iz\n     4\t-----END RSA PRIVATE KEY-----\n",
+            "[masked:private-key-block]\n",
+        ),
+    ]);
+}
+
+#[test]
+fn private_key_with_a_log_prefix_of_the_begin_width_is_masked() {
+    assert_masked(&[(
+        "build| -----BEGIN RSA PRIVATE KEY-----\nbuild| MIIEowIBAAKCAQEA\nbuild| VTLw7onLRnrq0/Iz\nbuild| finished ok",
+        "build| [masked:private-key-block]\nbuild| finished ok",
+    )]);
+}
+
+#[test]
+fn colon_form_bare_values_with_spaces_are_masked_to_the_end_of_the_line() {
+    assert_masked(&[
+        (
+            "secret: correct horse battery",
+            "secret: [masked:key-value-secret]",
+        ),
+        (
+            "passwd: two words\nnext: line",
+            "passwd: [masked:key-value-secret]\nnext: line",
+        ),
+        (
+            "api_secret: correct horse battery staple",
+            "api_secret: [masked:key-value-secret]",
+        ),
+        (
+            r#"{"token": 123, "next": 4}"#,
+            r#"{"token": [masked:key-value-secret] "next": 4}"#,
+        ),
+    ]);
+}
+
+#[test]
+fn key_names_pass_pwd_long_prefixes_arrows_and_xml_elements_are_masked() {
+    assert_masked(&[
+        ("DB_PASS=hunter2", "DB_PASS=[masked:key-value-secret]"),
+        ("db.pwd=hunter2", "db.pwd=[masked:key-value-secret]"),
+        ("dbPass=hunter2", "dbPass=[masked:key-value-secret]"),
+        ("pass=hunter2", "pass=[masked:key-value-secret]"),
+        (
+            "keyVaultReferenceIdentityClientApplicationSecret=hunter2",
+            "keyVaultReferenceIdentityClientApplicationSecret=[masked:key-value-secret]",
+        ),
+        (
+            "'password' => 'hunter2'",
+            "'password' => '[masked:key-value-secret]'",
+        ),
+        (
+            r#""password"=>"hunter2""#,
+            r#""password"=>"[masked:key-value-secret]""#,
+        ),
+        (
+            "<password>hunter2</password>",
+            "<password>[masked:key-value-secret]</password>",
+        ),
+        (
+            "<db.Password type=\"x\">hunter2</db.Password>",
+            "<db.Password type=\"x\">[masked:key-value-secret]</db.Password>",
+        ),
+    ]);
+}
+
+#[test]
+fn short_key_endings_do_not_mask_ordinary_names() {
+    assert_survives(&[
+        "PWD=/home/alice",
+        "OLDPWD=/home/alice",
+        "bypass=true",
+        "compass: north",
+        "pwd: /home/alice",
+        "<compass>north</compass>",
+    ]);
+}
+
+#[test]
+fn blank_line_inside_an_open_key_block_does_not_end_it() {
+    assert_masked(&[
+        (
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n\nVTLw7onLRnrq0/Iz\nplain text",
+            "[masked:private-key-block]\nplain text",
+        ),
+        (
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n\n\nVTLw7onLRnrq0/Iz\nplain text",
+            "[masked:private-key-block]\nplain text",
+        ),
+        (
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n\nplain text",
+            "[masked:private-key-block]\n\nplain text",
+        ),
+    ]);
+}
+
+#[test]
+fn long_host_names_are_pseudonymised_whatever_their_label_count() {
+    assert_eq!(
+        pseudonymize("ping node1.k8s.prod.eu-west-1.aws.corp.example.com now"),
+        "ping host-1 now"
+    );
+    assert_eq!(
+        pseudonymize("ssh bob@a.b.c.d.e.f.g.example.com"),
+        "ssh bob@host-1"
+    );
+    assert_survives(&["mail alice@corp.com about it"]);
+}
