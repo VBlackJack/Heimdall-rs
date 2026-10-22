@@ -59,7 +59,7 @@ pub enum ReportCheck {
 /// Why a session of the file was not taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipReason {
-    /// Not an SSH or an RDP session.
+    /// Not an SSH, SFTP, RDP, Telnet or VNC session.
     OtherProtocol,
     /// The host is not a host name nor an address.
     InvalidHost,
@@ -70,6 +70,12 @@ pub enum SkipReason {
     /// The session names an SSH gateway whose host is not one: taking it would reach its
     /// host around the gateway the file asked for.
     InvalidGateway,
+    /// The session goes through an SSH jump host its protocol cannot be routed through
+    /// (Telnet, VNC): a direct connection would go around it.
+    JumpHostNotSupported,
+    /// The session goes through a proxy Heimdall does not use: a direct connection would
+    /// go around it.
+    ProxyNotSupported,
 }
 
 impl SkipReason {
@@ -80,6 +86,8 @@ impl SkipReason {
             Self::DuplicateSession => "duplicate-session",
             Self::OverLimit => "over-limit",
             Self::InvalidGateway => "invalid-gateway",
+            Self::JumpHostNotSupported => "jump-host-not-supported",
+            Self::ProxyNotSupported => "proxy-not-supported",
         }
     }
 
@@ -90,6 +98,8 @@ impl SkipReason {
             Self::DuplicateSession,
             Self::OverLimit,
             Self::InvalidGateway,
+            Self::JumpHostNotSupported,
+            Self::ProxyNotSupported,
         ]
         .into_iter()
         .find(|reason| reason.key() == key)
@@ -321,7 +331,13 @@ pub fn name_matches_host(name: &str, host: &str) -> Option<bool> {
 fn gateway_outliers(taken: &[Taken<'_>]) -> Vec<ReportEntry> {
     // Folders compare without case, in the order they first appear.
     let mut folders: Vec<(String, Vec<&Taken<'_>>)> = Vec::new();
-    for session in taken {
+    // Only the sessions a MobaXterm file can give a jump host vote or stand out
+    // (`MobaXtermImporter.CanCarryGateway`): a Telnet, VNC or SFTP session is direct whatever
+    // its folder does.
+    for session in taken
+        .iter()
+        .filter(|session| can_carry_gateway(session.protocol))
+    {
         let key = session.folder.trim().to_uppercase();
         match folders.iter_mut().find(|(known, _)| *known == key) {
             Some((_, sessions)) => sessions.push(session),
@@ -361,6 +377,13 @@ fn gateway_outliers(taken: &[Taken<'_>]) -> Vec<ReportEntry> {
         }
     }
     entries
+}
+
+/// Whether sessions of `protocol` can name an SSH jump host in a `MobaXterm` file: SSH and RDP.
+fn can_carry_gateway(protocol: &str) -> bool {
+    ["SSH", "RDP"]
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(protocol.trim()))
 }
 
 /// The sessions that share a host and a protocol with another in the same folder, in any
@@ -593,5 +616,56 @@ mod tests {
         };
         let report = ImportReport::build(Vec::new(), Vec::new(), &[ssh, again]);
         assert_eq!(report.count_of(ReportCheck::DuplicateHost), 2);
+    }
+
+    #[test]
+    fn a_session_that_cannot_name_a_gateway_neither_votes_nor_stands_out() {
+        let direct = |name: &'static str, protocol: &'static str| Taken {
+            protocol,
+            ..routed(name, "")
+        };
+        let sessions = [
+            routed("a", "g1"),
+            routed("b", "g1"),
+            routed("c", "g1"),
+            direct("telnet", "Telnet"),
+            direct("vnc", "VNC"),
+            direct("files", "SFTP"),
+        ];
+        assert!(outliers(&sessions).is_empty());
+        // An SSH session that is direct still stands out.
+        let sessions = [
+            routed("a", "g1"),
+            routed("b", "g1"),
+            routed("c", "g1"),
+            direct("telnet", "Telnet"),
+            direct("ssh", "SSH"),
+        ];
+        let found = outliers(&sessions);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].session, "ssh");
+    }
+
+    #[test]
+    fn the_new_skip_reasons_survive_the_offline_copy() {
+        let report = ImportReport::build(
+            vec![
+                Refused {
+                    folder: String::new(),
+                    name: "tel".to_owned(),
+                    reason: SkipReason::JumpHostNotSupported,
+                    detail: "jump".to_owned(),
+                },
+                Refused {
+                    folder: String::new(),
+                    name: "vnc".to_owned(),
+                    reason: SkipReason::ProxyNotSupported,
+                    detail: String::new(),
+                },
+            ],
+            Vec::new(),
+            &[],
+        );
+        assert_eq!(ImportReport::from_json(&report.to_json()), report);
     }
 }

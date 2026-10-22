@@ -240,8 +240,9 @@ impl SharedOrigin {
     fn of(session: &SharedSession, source_path: String) -> Self {
         let (host, port) = session.endpoint();
         let username = match &session.target {
-            SharedTarget::Ssh(profile) => profile.username.as_deref(),
+            SharedTarget::Ssh(profile) | SharedTarget::Sftp(profile) => profile.username.as_deref(),
             SharedTarget::Rdp(profile) => profile.username.as_deref(),
+            SharedTarget::Telnet(_) | SharedTarget::Vnc(_) => None,
         };
         let mut parts = vec![
             host.to_owned(),
@@ -298,9 +299,22 @@ fn opened(session: SharedSession) -> (TabProfile, Purpose) {
             profile.id = transient_id();
             (TabProfile::Ssh(profile), Purpose::Shell)
         }
+        // Its files, as the C# SFTP connection type opens them.
+        SharedTarget::Sftp(mut profile) => {
+            profile.id = transient_id();
+            (TabProfile::Ssh(profile), Purpose::Files)
+        }
         SharedTarget::Rdp(mut profile) => {
             profile.id = transient_id();
             (TabProfile::Rdp(profile), Purpose::Rdp)
+        }
+        SharedTarget::Telnet(mut profile) => {
+            profile.id = transient_id();
+            (TabProfile::Telnet(profile), Purpose::Shell)
+        }
+        SharedTarget::Vnc(mut profile) => {
+            profile.id = transient_id();
+            (TabProfile::Vnc(profile), Purpose::Vnc)
         }
     }
 }

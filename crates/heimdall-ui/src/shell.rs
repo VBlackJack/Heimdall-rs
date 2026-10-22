@@ -1093,6 +1093,12 @@ pub enum Message {
     SharedSourcesEdit(crate::shared_sources_view::SourcesEdit),
     /// Close the import report of a shared source.
     SharedReportClose,
+    /// Copy the import report of the shared source open to the clipboard, as plain text.
+    SharedReportCopy,
+    /// Ask where to save the import report of the shared source open as a CSV file.
+    SharedReportExport,
+    /// The CSV of the report written at the path, or why it could not be.
+    SharedReportExported(Result<String, String>),
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
     OpenWithSystem(std::path::PathBuf),
     /// Write a note about the session `id` from `template`, then open it in the editor set.
@@ -1339,6 +1345,11 @@ impl fmt::Debug for Message {
             Self::MobaxtermVariablesEdit(_) => f.write_str("MobaxtermVariablesEdit(..)"),
             Self::SharedSourcesEdit(_) => f.write_str("SharedSourcesEdit(..)"),
             Self::SharedReportClose => f.write_str("SharedReportClose"),
+            Self::SharedReportCopy => f.write_str("SharedReportCopy"),
+            Self::SharedReportExport => f.write_str("SharedReportExport"),
+            Self::SharedReportExported(result) => {
+                write!(f, "SharedReportExported(ok: {})", result.is_ok())
+            }
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
@@ -1748,6 +1759,8 @@ pub struct Shell {
     shared_sources: crate::shared_sources_view::SharedSourcesEditor,
     /// The shared source whose import report is open.
     shared_report: Option<String>,
+    /// What the last copy or export of that report said, shown under it.
+    shared_report_status: Option<String>,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -2070,6 +2083,7 @@ impl Shell {
             mobaxterm_variables,
             shared_sources,
             shared_report: None,
+            shared_report_status: None,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -3061,6 +3075,16 @@ impl Shell {
             Message::SharedSourcesEdit(edit) => self.shared_sources_edit(edit),
             Message::SharedReportClose => {
                 self.shared_report = None;
+                self.shared_report_status = None;
+                Vec::new()
+            }
+            Message::SharedReportCopy => return self.shared_report_copy(),
+            Message::SharedReportExport => return self.shared_report_export(),
+            Message::SharedReportExported(result) => {
+                self.shared_report_status = Some(match result {
+                    Ok(path) => fl!("ui-shared-report-exported", path = path),
+                    Err(detail) => fl!("ui-shared-report-export-failed", detail = detail),
+                });
                 Vec::new()
             }
             Message::Browsed(target, path) => self.browsed(target, path),
@@ -5360,7 +5384,48 @@ impl Shell {
         let shared = self.app.shared_sessions();
         let state = shared.sources().into_iter().find(|state| state.id == id)?;
         let report = shared.report_of(id)?;
-        Some(crate::shared_report_view::layer(state, report))
+        Some(crate::shared_report_view::layer(
+            state,
+            report,
+            self.shared_report_status.as_deref(),
+        ))
+    }
+
+    /// The plain text of the report open and the identifier of its source, when one is open.
+    fn shared_report_text(
+        &self,
+    ) -> Option<(String, String, heimdall_app::shared_report::ImportReport)> {
+        let id = self.shared_report.as_deref()?;
+        let shared = self.app.shared_sessions();
+        let state = shared.sources().into_iter().find(|state| state.id == id)?;
+        let report = shared.report_of(id)?.clone();
+        Some((
+            id.to_owned(),
+            crate::shared_view::source_label(state),
+            report,
+        ))
+    }
+
+    /// Puts the report open on the clipboard as plain text, as the C# dialog's "Copy".
+    fn shared_report_copy(&mut self) -> Task<Message> {
+        let Some((_, name, report)) = self.shared_report_text() else {
+            return Task::none();
+        };
+        self.shared_report_status = Some(fl!("ui-shared-report-copied"));
+        iced::clipboard::write(crate::shared_report_export::plain_text(&name, &report))
+    }
+
+    /// Asks where to write the report open as a CSV file, as the C# dialog's "Export CSV...".
+    fn shared_report_export(&mut self) -> Task<Message> {
+        let Some((id, _, report)) = self.shared_report_text() else {
+            return Task::none();
+        };
+        self.shared_report_status = None;
+        crate::shared_report_export::save(
+            &id,
+            crate::shared_report_export::csv(&report),
+            self.main_window,
+        )
     }
 
     /// The banner of a newer release, as the C# one under its navigation: the version, then

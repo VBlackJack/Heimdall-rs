@@ -1695,6 +1695,7 @@ impl Shell {
     ) -> Vec<Effect> {
         if let crate::shared_sources_view::SourcesEdit::Report(at) = edit {
             self.shared_report = self.shared_sources.id_at(at).map(str::to_owned);
+            self.shared_report_status = None;
             return Vec::new();
         }
         // A source taken out has no report to show any more.

@@ -18,7 +18,9 @@
 //! with what became of its file, then its sessions, each marked shared. They are read-only:
 //! a row only opens the session, there is no menu to edit, move or delete it.
 
-use heimdall_app::shared_sessions::{SharedSession, SourceProblem, SourceState, SourceStatus};
+use heimdall_app::shared_sessions::{
+    SharedSession, SharedTarget, SourceProblem, SourceState, SourceStatus,
+};
 use heimdall_app::{Message as AppMessage, ProfileKind};
 use heimdall_core::shared_sessions::MAX_SOURCE_FILE_BYTES;
 use iced::widget::{Column, button, container, row, text, tooltip};
@@ -182,9 +184,12 @@ pub fn section(app: &heimdall_app::App) -> Option<Element<'_, Message>> {
 
 /// A session: its protocol, name and the "shared" badge. Pressing it opens it.
 fn session_row<'a>(session: &SharedSession, source: &str) -> Element<'a, Message> {
-    let kind = match session.protocol() {
-        "RDP" => ProfileKind::Rdp,
-        _ => ProfileKind::Ssh,
+    let kind = match &session.target {
+        SharedTarget::Ssh(_) => ProfileKind::Ssh,
+        SharedTarget::Sftp(_) => ProfileKind::Sftp,
+        SharedTarget::Rdp(_) => ProfileKind::Rdp,
+        SharedTarget::Telnet(_) => ProfileKind::Telnet,
+        SharedTarget::Vnc(_) => ProfileKind::Vnc,
     };
     let (host, port) = session.endpoint();
     let content = row![
