@@ -255,12 +255,7 @@ fn an_empty_optional_value_takes_its_default_before_being_left_out() {
 
 #[test]
 fn a_safe_value_arrives_bare_on_both_platforms() {
-    for value in [
-        "8080",
-        "var/log/syslog",
-        "id_ed25519",
-        "user@host:/srv/data",
-    ] {
+    for value in ["8080", "var/log/syslog", "id_ed25519", "user@host:srv/data"] {
         for platform in BOTH {
             assert_eq!(
                 render_one(platform, "run {v}", parameter("v", true), value),
@@ -363,7 +358,7 @@ fn a_path_is_judged_by_its_shape_and_comes_out_bare_or_quoted_alike_on_both_plat
         ("/etc/nginx/nginx.conf", false),
         ("relative/dir", false),
         ("C:\\inetpub\\wwwroot", true),
-        ("C:\\Program Files\\App", true),
+        ("My Documents/App", true),
         ("~/backup", true),
     ];
     for (value, quoted) in rows {
@@ -460,18 +455,12 @@ fn a_shell_character_in_a_string_is_refused_even_inside_the_quotes() {
 #[test]
 fn a_value_closing_the_quote_stays_inside_the_quotes() {
     assert_eq!(
-        render_one(LINUX, "printf %s {v}", parameter("v", true), "x' rm rf x").as_deref(),
-        Ok("printf %s 'x'\\'' rm rf x'")
+        render_one(LINUX, "printf %s {v}", parameter("v", true), "x'rmrfx").as_deref(),
+        Ok("printf %s 'x'\\''rmrfx'")
     );
     assert_eq!(
-        render_one(
-            WINDOWS,
-            "Write-Output {v}",
-            parameter("v", true),
-            "x' rm rf x"
-        )
-        .as_deref(),
-        Ok("Write-Output 'x'' rm rf x'")
+        render_one(WINDOWS, "Write-Output {v}", parameter("v", true), "x'rmrfx").as_deref(),
+        Ok("Write-Output 'x''rmrfx'")
     );
 }
 
@@ -527,12 +516,12 @@ fn an_inline_value_inside_single_quotes_is_escaped_but_refuses_shell_characters(
 #[test]
 fn an_inline_value_that_tries_to_close_the_pattern_quotes_cannot() {
     assert_eq!(
-        render_one(LINUX, "echo '{v}'", inline("v"), "x' rm rf x echo '").as_deref(),
-        Ok("echo 'x'\\'' rm rf x echo '\\'''")
+        render_one(LINUX, "echo '{v}'", inline("v"), "x'rmecho'").as_deref(),
+        Ok("echo 'x'\\''rmecho'\\'''")
     );
     assert_eq!(
-        render_one(WINDOWS, "echo '{v}'", inline("v"), "x' rm rf x echo '").as_deref(),
-        Ok("echo 'x'' rm rf x echo '''")
+        render_one(WINDOWS, "echo '{v}'", inline("v"), "x'rmecho'").as_deref(),
+        Ok("echo 'x''rmecho'''")
     );
     for quote in ['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
         let value = format!("x{quote} Remove-Item y {quote}");
@@ -1080,10 +1069,10 @@ fn leaving_an_argument_out_cannot_change_how_another_value_is_read() {
             LINUX,
             "echo '{v}'",
             vec![parameter("empty", false), inline("v")],
-            &[("v", "\\' printf OK #")],
+            &[("v", "\\'printfOK#")],
         )
         .as_deref(),
-        Ok("echo '\\'\\'' printf OK #'")
+        Ok("echo '\\'\\''printfOK#'")
     );
 }
 
@@ -1536,14 +1525,6 @@ fn metacharacters_are_refused_inside_single_quotes_too() {
                 ("run {v}", parameter("v", true)),
                 ("run {v}", of_kind("v", "path")),
             ] {
-                // The parentheses of a Windows path are let through.
-                if platform == WINDOWS
-                    && pattern == "run {v}"
-                    && parameter.kind == "path"
-                    && matches!(character, "(" | ")")
-                {
-                    continue;
-                }
                 let result = render_one(platform, pattern, parameter, &value);
                 assert!(
                     refused_dangerous(&result, "v"),
@@ -1666,4 +1647,64 @@ fn parentheses_are_let_through_in_a_windows_path_only() {
     );
     assert!(render_one(WINDOWS, "dir {p}", parameter("p", true), path).is_err());
     assert!(render_one(LINUX, "ls {p}", of_kind("p", "path"), path).is_err());
+}
+
+#[test]
+fn a_dash_is_let_through_only_after_a_letter_or_digit() {
+    let pattern = "ssh {host} find {dir} -name x.log";
+    let parameters = || vec![parameter("host", true), of_kind("dir", "path")];
+    for value in [
+        "/ -exec x {} +",
+        "/ '-exec' x {} +",
+        "/ \"-exec\" x {} +",
+        r"/ \-exec x {} +",
+        "/ {,-exec} x {} +",
+        "/ a,-exec",
+        "-x",
+    ] {
+        for platform in BOTH {
+            let result = render(
+                platform,
+                pattern,
+                parameters(),
+                &[("host", "h"), ("dir", value)],
+            );
+            assert!(
+                matches!(result, Err(GenerateError::Values(_))),
+                "{platform:?} {value}"
+            );
+        }
+    }
+    for value in ["my-file", "2026-10-22"] {
+        for platform in BOTH {
+            assert!(
+                render_one(platform, "ls {v}", parameter("v", true), value).is_ok(),
+                "{platform:?} {value}"
+            );
+        }
+    }
+    let result = render_one(WINDOWS, "ssh h dir {d}", parameter("d", true), "x ^/s");
+    assert!(refused_dangerous(&result, "d"));
+}
+
+#[test]
+fn quotes_escapes_and_braces_are_refused_on_linux_when_the_value_has_white_space() {
+    for value in ["a 'b", "a \"b", r"a \b", "a {b", "a b}"] {
+        let result = render_one(LINUX, "ls {v}", parameter("v", true), value);
+        assert!(refused_dangerous(&result, "v"), "{value}");
+    }
+    assert!(render_one(LINUX, "ls {v}", parameter("v", true), "it's").is_ok());
+}
+
+#[test]
+fn only_the_x86_folder_text_keeps_its_parentheses_in_a_windows_path() {
+    for value in [
+        r"C:\x(Stop-Computer)",
+        r"C:\a (calc)",
+        r"C:\(x86",
+        r"C:\x(x(x86)86)",
+    ] {
+        let result = render_one(WINDOWS, "dir {p}", of_kind("p", "path"), value);
+        assert!(refused_dangerous(&result, "p"), "{value}");
+    }
 }

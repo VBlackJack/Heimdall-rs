@@ -106,6 +106,12 @@ const NUMBER_CHARACTERS: [char; 5] = ['.', 'e', 'E', '+', '-'];
 /// What a command line reads as an option when it starts a value.
 const OPTION_LEADING: char = '-';
 
+/// What a Linux second-stage shell reads as syntax once a value is split into words.
+const LINUX_SPLIT_SYNTAX: [char; 5] = ['\'', '"', '\\', '{', '}'];
+
+/// The only parenthesised text a Windows path may hold (`Program Files (x86)`).
+const WINDOWS_X86_FOLDER: &str = "(x86)";
+
 /// What `cmd` and many Windows tools read as a switch when it starts a value.
 const WINDOWS_SWITCH_LEADING: char = '/';
 
@@ -777,29 +783,37 @@ fn typed_kind(kind: &str) -> bool {
 ///   argument parser reads as an escape of the closing quote.
 fn holds_refused_shape(value: &str, is_path: bool, platform: TemplatePlatform) -> bool {
     let windows = platform == TemplatePlatform::Windows;
-    // The start of the value and every start of a word in it: a second-stage shell splits the
-    // value on white space (`ssh h find {dir}` with `/ -exec cmd {} +`).
-    let word_starts = || {
-        std::iter::once(value.trim_start().chars().next())
-            .chain(
-                value
-                    .chars()
-                    .zip(value.chars().skip(1))
-                    .map(|(before, after)| before.is_whitespace().then_some(after)),
-            )
-            .flatten()
+    // A dash (or, for a Windows string, a slash) is let through only right after an ASCII
+    // letter or digit (`my-file`, `2026-10-22`): after anything else it can start an option
+    // of a second-stage shell, bare or behind a quote, a backslash or a brace (`find {dir}`
+    // with `/ -exec x {} +`, `/ '-exec'`, `/ {,-exec}`).
+    let after_alphanumeric = |target: char| {
+        let mut before: Option<char> = None;
+        for c in value.chars() {
+            if c == target && !before.is_some_and(|b| b.is_ascii_alphanumeric()) {
+                return false;
+            }
+            before = Some(c);
+        }
+        true
     };
-    if word_starts().any(|c| c == OPTION_LEADING) {
+    if !after_alphanumeric(OPTION_LEADING) {
         return true;
     }
     if windows {
-        (!is_path && word_starts().any(|c| c == WINDOWS_SWITCH_LEADING))
+        (!is_path && !after_alphanumeric(WINDOWS_SWITCH_LEADING))
             || value.ends_with(WINDOWS_BACKSLASH)
             || value
                 .chars()
                 .any(|c| c == '"' || POWERSHELL_TYPOGRAPHIC_DOUBLE_QUOTES.contains(&c))
     } else {
-        value.contains("$(") || value.contains('`') || (value.contains('[') && value.contains('$'))
+        value.contains("$(")
+            || value.contains('`')
+            || (value.contains('[') && value.contains('$'))
+            // A shell that splits the value on white space also reads its quotes, escapes and
+            // braces (`/ '-exec' x`, `/ {,-exec} x`).
+            || (value.contains(char::is_whitespace)
+                && value.contains(LINUX_SPLIT_SYNTAX))
     }
 }
 
@@ -859,11 +873,8 @@ fn protection_of(context: QuoteContext, parameter: &UserParameter) -> Option<Pro
 }
 
 /// Whether `c` cannot be put in a value that is `protection` protected.
-fn refused_at(protection: Protection, c: char, powershell: bool, windows_path: bool) -> bool {
-    // Parentheses are common in Windows paths (`C:\Program Files (x86)`) and cmd is the only
-    // second-stage shell that reads them, inside quotes they stay literal.
-    let metacharacter = DANGEROUS_CHARACTERS.contains(&c)
-        && !(windows_path && protection == Protection::Literal && matches!(c, '(' | ')'));
+fn refused_at(protection: Protection, c: char, powershell: bool) -> bool {
+    let metacharacter = DANGEROUS_CHARACTERS.contains(&c);
     let ends_double = c == '"'
         || c == escape_character(powershell)
         || (powershell && POWERSHELL_TYPOGRAPHIC_DOUBLE_QUOTES.contains(&c));
@@ -895,8 +906,8 @@ fn refused_at(protection: Protection, c: char, powershell: bool, windows_path: b
 /// end the span is a single quote, which both escapers double or close and reopen; that is
 /// why the quoting alone is enough there. Stricter than the C#, the metacharacters are still
 /// refused in those places (LDAP filters, grep alternations and `$env:TEMP` do not pass),
-/// because a second-stage shell reads the value again; only the parentheses of a Windows
-/// path are let through. Where the lexer does not follow the pattern ([`QuoteContext::Uncertain`])
+/// because a second-stage shell reads the value again (PowerShell argument mode evaluates
+/// `(...)` as well); only the exact text `(x86)` of a Windows path is let through. Where the lexer does not follow the pattern ([`QuoteContext::Uncertain`])
 /// only a value of plain characters is accepted, and it goes in bare.
 fn holds_refused_characters(
     pattern: &str,
@@ -934,9 +945,14 @@ fn holds_refused_characters(
         .into_iter()
         .filter_map(|context| protection_of(context, parameter))
         .any(|protection| {
-            value
+            let judged = if windows_path && protection == Protection::Literal {
+                value.replace(WINDOWS_X86_FOLDER, "")
+            } else {
+                value.to_owned()
+            };
+            judged
                 .chars()
-                .any(|c| refused_at(protection, c, powershell, windows_path))
+                .any(|c| refused_at(protection, c, powershell))
         })
 }
 
