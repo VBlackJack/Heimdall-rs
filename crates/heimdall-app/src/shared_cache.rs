@@ -45,7 +45,9 @@ use crate::shared_report::ImportReport;
 pub const DIRECTORY_NAME: &str = "SharedSessionCache";
 
 /// The version of the copy's layout; a copy of another version is ignored, as the C#'s.
-const FORMAT_VERSION: u64 = 2;
+/// 3 added the RD Gateway of an RDP session: a copy of version 2 may hold an RDP session that went
+/// through one as a direct connection, so it is not read.
+const FORMAT_VERSION: u64 = 3;
 
 /// The extension of a copy.
 const EXTENSION: &str = "json";
@@ -67,6 +69,8 @@ pub struct CachedSession {
     pub username: Option<String>,
     /// The SSH gateway it goes through, when the file names one.
     pub gateway: Option<CachedGateway>,
+    /// The RD Gateway an RDP session goes through, when the file names one.
+    pub rd_gateway: Option<String>,
 }
 
 /// A shared session's gateway as the copy keeps it: what the file said of it and nothing
@@ -158,6 +162,7 @@ impl SourceCache {
                     "port": gateway.port,
                     "username": gateway.username,
                 })),
+                "rdGateway": session.rd_gateway,
             })).collect::<Vec<_>>(),
         });
         let bytes = serde_json::to_vec_pretty(&document).map_err(io::Error::other)?;
@@ -207,6 +212,14 @@ impl SourceCache {
                         username: text(gateway, "username"),
                     }),
                 };
+                // An RD Gateway that cannot be read drops the session, for the same reason. The
+                // property is always written (null for a direct session), so a missing one, or
+                // an empty text, is a copy that was not written by this build.
+                let rd_gateway = match session.get("rdGateway")? {
+                    Value::Null => None,
+                    Value::String(host) if !host.trim().is_empty() => Some(host.clone()),
+                    _ => return None,
+                };
                 Some(CachedSession {
                     folder: text(session, "folder"),
                     name: text(session, "name")?,
@@ -215,6 +228,7 @@ impl SourceCache {
                     port: u16::try_from(session.get("port")?.as_u64()?).ok()?,
                     username: text(session, "username"),
                     gateway,
+                    rd_gateway,
                 })
             })
             .collect();
@@ -302,6 +316,7 @@ mod tests {
                     port: 2222,
                     username: Some("jump".to_owned()),
                 }),
+                rd_gateway: Some("rdg.example.com".to_owned()),
             }],
             refused: 2,
             ignored_passwords: 1,
@@ -331,7 +346,7 @@ mod tests {
         let text = fs::read_to_string(&path).expect("read");
         fs::write(
             &path,
-            text.replace("\"formatVersion\": 2", "\"formatVersion\": 9"),
+            text.replace("\"formatVersion\": 3", "\"formatVersion\": 9"),
         )
         .expect("written");
         assert_eq!(cache.read("team"), None);
@@ -339,13 +354,41 @@ mod tests {
         // may have crossed one, so it is not served.
         fs::write(
             &path,
-            text.replace("\"formatVersion\": 2", "\"formatVersion\": 1"),
+            text.replace("\"formatVersion\": 3", "\"formatVersion\": 1"),
         )
         .expect("written");
         assert_eq!(cache.read("team"), None);
         fs::write(&path, "not json").expect("written");
         assert_eq!(cache.read("team"), None);
         assert_eq!(cache.read("missing"), None);
+    }
+
+    #[test]
+    fn a_copy_with_a_missing_or_empty_rd_gateway_is_not_read_as_a_direct_session() {
+        let dir = tempfile::tempdir().expect("dir");
+        let cache = SourceCache::new(dir.path().join(DIRECTORY_NAME));
+        cache.store("team", &copy()).expect("stored");
+        let path = cache.path_for("team").expect("path");
+        let text = fs::read_to_string(&path).expect("read");
+        let key = "\"rdGateway\": \"rdg.example.com\"";
+        assert!(text.contains(key), "{text}");
+        for replacement in ["\"other\": 1", "\"rdGateway\": \"\"", "\"rdGateway\": 7"] {
+            fs::write(&path, text.replace(key, replacement)).expect("written");
+            let read = cache.read("team").expect("the copy itself");
+            assert!(read.sessions.is_empty(), "{replacement}: session kept");
+        }
+        fs::write(&path, text.replace(key, "\"rdGateway\": null")).expect("written");
+        assert_eq!(
+            cache.read("team").expect("copy").sessions[0].rd_gateway,
+            None
+        );
+        // A version-2 copy, written before the RD Gateway was kept, is not read.
+        fs::write(
+            &path,
+            text.replace("\"formatVersion\": 3", "\"formatVersion\": 2"),
+        )
+        .expect("written");
+        assert_eq!(cache.read("team"), None);
     }
 
     #[test]
