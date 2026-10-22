@@ -55,6 +55,7 @@ impl App {
             .parent()
             .map(|folder| folder.join(crate::shared_cache::DIRECTORY_NAME));
         self.shared.set_cache_directory(cache);
+        self.resume_shared_purge();
         self.shared.load(&sources, &variables);
         self.sync_shared_gateways();
         self.forget_removed_approvals();
@@ -74,7 +75,7 @@ impl App {
     pub fn watches_shared_sources(&self) -> bool {
         !self.settings.shared_sources.is_empty()
             || !self.shared.is_empty()
-            || self.shared_purge_pending()
+            || self.shared_deletion_pending()
     }
 
     /// A look at the shared files: a source whose file changed is read again, and the

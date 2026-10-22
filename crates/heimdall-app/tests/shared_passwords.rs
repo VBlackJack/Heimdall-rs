@@ -292,8 +292,8 @@ fn remember_on_web(app: &mut App, host: &str, port: u16, login: &str) {
 }
 
 fn entries(system: &SystemCredentials) -> Vec<(String, Vec<u8>)> {
-    let (SystemCredentials::Memory(entries)
-    | SystemCredentials::MemoryRefusingRemoval { entries, .. }) = system
+    let (SystemCredentials::Memory(entries) | SystemCredentials::MemoryFaulty { entries, .. }) =
+        system
     else {
         unreachable!("a test store")
     };
@@ -987,10 +987,6 @@ fn reset_to_defaults(app: &mut App) {
     app.update(Message::ConfirmDialog);
 }
 
-fn refuse(refusing: &std::sync::atomic::AtomicBool, on: bool) {
-    refusing.store(on, std::sync::atomic::Ordering::SeqCst);
-}
-
 #[test]
 fn reset_to_defaults_forgets_the_remembered_passwords() {
     capture_logs();
@@ -1110,14 +1106,14 @@ fn a_password_asked_after_a_forget_is_remembered_again() {
 fn a_deletion_the_store_refuses_keeps_the_entry_listed_says_so_and_can_be_retried() {
     capture_logs();
     let dir = tempfile::tempdir().expect("dir");
-    let (system, refusing) = SystemCredentials::memory_refusing_removal();
+    let (system, faults) = SystemCredentials::memory_faulty();
     let mut app = app_over(
         dir.path(),
         &[("team", &file(HOST, 22, LOGIN, 5901))],
         &system,
     );
     remember_on_web(&mut app, HOST, 22, LOGIN);
-    refuse(&refusing, true);
+    faults.fail_removals(true);
 
     app.update(Message::ForgetSharedPasswords("team".to_owned()));
     assert_eq!(
@@ -1131,7 +1127,7 @@ fn a_deletion_the_store_refuses_keeps_the_entry_listed_says_so_and_can_be_retrie
     ));
     app.update(Message::DismissDialog);
 
-    refuse(&refusing, false);
+    faults.fail_removals(false);
     app.update(Message::ForgetSharedPasswords("team".to_owned()));
     assert_eq!(app.shared_password_count("team"), 0);
     assert!(app.dialog.is_none());
@@ -1143,21 +1139,25 @@ fn a_deletion_the_store_refuses_keeps_the_entry_listed_says_so_and_can_be_retrie
 fn a_source_taken_out_whose_deletion_is_refused_is_tried_again_at_the_next_look() {
     capture_logs();
     let dir = tempfile::tempdir().expect("dir");
-    let (system, refusing) = SystemCredentials::memory_refusing_removal();
+    let (system, faults) = SystemCredentials::memory_faulty();
     let mut app = app_over(
         dir.path(),
         &[("team", &file(HOST, 22, LOGIN, 5901))],
         &system,
     );
     remember_on_web(&mut app, HOST, 22, LOGIN);
-    refuse(&refusing, true);
+    faults.fail_removals(true);
     app.update(Message::Settings(
         SettingsMessage::SharedSources(Vec::new()),
     ));
     app.update(Message::SharedTick);
     assert!(store_holds(&system, PASSWORD), "refused, so still held");
+    assert!(
+        app.watches_shared_sources(),
+        "no source left, yet the deletion is tried again"
+    );
 
-    refuse(&refusing, false);
+    faults.fail_removals(false);
     app.update(Message::SharedTick);
     assert!(entries(&system).is_empty(), "{:?}", entries(&system));
 }
@@ -1166,19 +1166,19 @@ fn a_source_taken_out_whose_deletion_is_refused_is_tried_again_at_the_next_look(
 fn a_reset_whose_deletion_is_refused_is_tried_again_at_the_next_look() {
     capture_logs();
     let dir = tempfile::tempdir().expect("dir");
-    let (system, refusing) = SystemCredentials::memory_refusing_removal();
+    let (system, faults) = SystemCredentials::memory_faulty();
     let mut app = app_over(
         dir.path(),
         &[("team", &file(HOST, 22, LOGIN, 5901))],
         &system,
     );
     remember_on_web(&mut app, HOST, 22, LOGIN);
-    refuse(&refusing, true);
+    faults.fail_removals(true);
     reset_to_defaults(&mut app);
     assert!(store_holds(&system, PASSWORD));
     assert_eq!(app.shared_password_count("team"), 1, "still listed");
 
-    refuse(&refusing, false);
+    faults.fail_removals(false);
     app.update(Message::SharedTick);
     assert!(entries(&system).is_empty(), "{:?}", entries(&system));
 }
@@ -1187,7 +1187,7 @@ fn a_reset_whose_deletion_is_refused_is_tried_again_at_the_next_look() {
 fn an_eviction_the_store_refuses_remembers_nothing_and_leaves_the_old_entry_listed() {
     capture_logs();
     let dir = tempfile::tempdir().expect("dir");
-    let (system, refusing) = SystemCredentials::memory_refusing_removal();
+    let (system, faults) = SystemCredentials::memory_faulty();
     let mut app = app_over(
         dir.path(),
         &[("team", &file(HOST, 22, LOGIN, 5901))],
@@ -1204,7 +1204,7 @@ fn an_eviction_the_store_refuses_remembers_nothing_and_leaves_the_old_entry_list
     assert_eq!(app.shared_password_count("team"), capacity);
     let held = entries(&system).len();
 
-    refuse(&refusing, true);
+    faults.fail_removals(true);
     remember(&mut app, "one-too-many");
     assert!(matches!(
         app.dialog,
@@ -1218,10 +1218,63 @@ fn an_eviction_the_store_refuses_remembers_nothing_and_leaves_the_old_entry_list
     );
     assert_eq!(app.shared_password_count("team"), capacity);
 
-    refuse(&refusing, false);
+    faults.fail_removals(false);
     remember(&mut app, "one-too-many");
     assert_eq!(app.shared_password_count("team"), capacity);
     assert_eq!(entries(&system).len(), held, "the oldest made room");
+}
+
+#[test]
+fn a_read_the_store_fails_is_not_an_empty_index_and_forgets_nothing_it_cannot_see() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    faults.fail_reads(true);
+
+    app.update(Message::ForgetSharedPasswords("team".to_owned()));
+    assert!(matches!(
+        app.dialog,
+        Some(Dialog::PasswordForgetFailed { .. })
+    ));
+    assert_eq!(app.shared_password_count("team"), 1, "still shown");
+    app.update(Message::DismissDialog);
+
+    faults.fail_reads(false);
+    assert!(store_holds(&system, PASSWORD), "nothing was orphaned");
+    app.update(Message::ForgetSharedPasswords("team".to_owned()));
+    assert_eq!(app.shared_password_count("team"), 0);
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+}
+
+#[tokio::test]
+async fn a_reset_with_a_locked_vault_is_still_done_after_the_application_restarted() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let files = [("team", file(HOST, 22, LOGIN, 5901))];
+    let listed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(id, text)| (*id, text.as_str()))
+        .collect();
+    let mut app = app_over(dir.path(), &listed, &system);
+    unlock(&mut app, MASTER).await;
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    app.update(Message::LockVault);
+    reset_to_defaults(&mut app);
+    drop(app);
+
+    let mut app = app_over(dir.path(), &listed, &system);
+    assert!(app.watches_shared_sources());
+    unlock(&mut app, MASTER).await;
+    app.update(Message::SharedTick);
+    assert_eq!(app.shared_password_count("team"), 0);
+    assert_eq!(web_answer(&mut app, HOST, 22, LOGIN), None);
 }
 
 // ---- VNC ------------------------------------------------------------------------------------

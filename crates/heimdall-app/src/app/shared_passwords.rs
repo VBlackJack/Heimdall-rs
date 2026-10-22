@@ -53,6 +53,10 @@ use crate::error::UiError;
 use crate::event::{Answer, QuestionKind};
 use crate::ids::{AttemptId, QuestionId, TabId};
 
+/// The file beside the settings that says a reset's forgetting of the remembered passwords is
+/// not done: it holds no credential data.
+const PURGE_MARKER_FILE: &str = "shared-passwords-purge.pending";
+
 /// A password the user asked to remember, until the server accepts it.
 struct PendingRemember {
     attempt: AttemptId,
@@ -339,7 +343,7 @@ impl App {
     ) -> Result<(), String> {
         let digest = keys::digest(endpoint);
         let name = keys::entry_name(source, &digest);
-        let previous = self.shared_index(source);
+        let previous = self.shared_index(source)?;
         let mut index = previous.clone();
         index.retain(|known| *known != digest);
         let mut evicted = Vec::new();
@@ -386,7 +390,13 @@ impl App {
         if !self.vault.usable() {
             return;
         }
-        let mut index = self.shared_index(source);
+        let Ok(mut index) = self.shared_index(source) else {
+            // Left as it is: an index that could not be read is not an empty one.
+            log::warn!(
+                "a remembered shared password could not be forgotten: the store is unreadable"
+            );
+            return;
+        };
         let name = keys::entry_name(source, &digest);
         if let Err(error) = self.vault.write(&name, None) {
             // Left listed: the source's Forget can still reach it.
@@ -432,8 +442,14 @@ impl App {
     /// Deletes every entry of `source`; those whose deletion failed stay in its index, and
     /// their number is returned.
     fn forget_source_entries(&mut self, source: &str) -> usize {
+        let Ok(index) = self.shared_index(source) else {
+            log::warn!(
+                "the remembered shared passwords could not be forgotten: the store is unreadable"
+            );
+            return 1;
+        };
         let mut kept = Vec::new();
-        for digest in self.shared_index(source) {
+        for digest in index {
             if let Err(error) = self.vault.write(&keys::entry_name(source, &digest), None) {
                 log::warn!("a remembered shared password could not be forgotten: {error}");
                 kept.push(digest);
@@ -465,13 +481,52 @@ impl App {
             tab.shared_password.pending = None;
             tab.shared_password.used = None;
         }
-        self.vault.shared.purge_pending = true;
+        self.set_purge_pending(true);
         self.sync_shared_passwords();
     }
 
-    /// Whether a reset's deletion of the remembered passwords still waits.
-    pub(super) fn shared_purge_pending(&self) -> bool {
-        self.vault.shared.purge_pending
+    /// Whether a deletion of remembered passwords (a reset's, or a source taken out's) still
+    /// waits for the store, and so for the timer.
+    pub(super) fn shared_deletion_pending(&self) -> bool {
+        self.vault.shared.purge_pending || self.vault.shared.cleanup_pending
+    }
+
+    /// Notes that a reset's deletion waits, or is done. A marker file beside the settings
+    /// keeps it across a restart: the reset keeps the sources listed, so nothing else would
+    /// tell the next start that their passwords were to go.
+    fn set_purge_pending(&mut self, pending: bool) {
+        self.vault.shared.purge_pending = pending;
+        let Some(marker) = self
+            .settings_file
+            .parent()
+            .map(|folder| folder.join(PURGE_MARKER_FILE))
+        else {
+            return;
+        };
+        let done = if pending {
+            std::fs::write(&marker, b"")
+        } else {
+            match std::fs::remove_file(&marker) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+                _ => Ok(()),
+            }
+        };
+        if let Err(error) = done {
+            log::warn!(
+                "the pending forgetting of remembered passwords could not be noted: {error}"
+            );
+        }
+    }
+
+    /// Takes up a reset's deletion that a previous run could not finish.
+    pub(super) fn resume_shared_purge(&mut self) {
+        let waiting = self
+            .settings_file
+            .parent()
+            .is_some_and(|folder| folder.join(PURGE_MARKER_FILE).exists());
+        if waiting {
+            self.vault.shared.purge_pending = true;
+        }
     }
 
     /// Writes `source`'s index, or removes it (and the source from the list) when empty.
@@ -486,7 +541,7 @@ impl App {
 
     /// Adds `source` to the list of sources that have remembered passwords, or takes it out.
     fn list_source(&mut self, source: &str, listed: bool) -> Result<(), String> {
-        let mut sources = self.sources_with_passwords();
+        let mut sources = self.sources_with_passwords()?;
         let was = sources.iter().any(|known| known == source);
         if was == listed {
             return Ok(());
@@ -499,18 +554,23 @@ impl App {
         self.write_lines(SOURCES_ENTRY, &sources)
     }
 
-    fn shared_index(&self, source: &str) -> Vec<String> {
-        self.vault
-            .read(&keys::index_entry(source))
+    /// `source`'s index; an error when the store could not be read, which is not an empty
+    /// index: deleting by it would orphan every entry it lists.
+    fn shared_index(&self, source: &str) -> Result<Vec<String>, String> {
+        Ok(self
+            .vault
+            .read_checked(&keys::index_entry(source))?
             .and_then(|bytes| decode_index(&bytes))
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
-    fn sources_with_passwords(&self) -> Vec<String> {
-        self.vault
-            .read(SOURCES_ENTRY)
+    /// The sources that have remembered passwords; an error when the store could not be read.
+    fn sources_with_passwords(&self) -> Result<Vec<String>, String> {
+        Ok(self
+            .vault
+            .read_checked(SOURCES_ENTRY)?
             .and_then(|bytes| decode_sources(&bytes))
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     /// Writes `lines` as entry `name`, or removes the entry for none.
@@ -551,7 +611,21 @@ impl App {
             self.settings
                 .shared_sources
                 .iter()
-                .map(|source| (source.id.clone(), self.shared_index(&source.id).len()))
+                .map(|source| {
+                    let count = self.shared_index(&source.id).map_or_else(
+                        // Unreadable now is not none: the Forget button stays.
+                        |_| {
+                            self.vault
+                                .shared
+                                .counts
+                                .get(&source.id)
+                                .copied()
+                                .unwrap_or(0)
+                        },
+                        |index| index.len(),
+                    );
+                    (source.id.clone(), count)
+                })
                 .filter(|(_, count)| *count > 0)
                 .collect()
         } else {
@@ -596,10 +670,14 @@ impl App {
             return;
         }
         let mut remaining = 0;
-        for source in self.sources_with_passwords() {
-            if !listed.contains(&source) {
-                remaining += self.forget_source_entries(&source);
+        match self.sources_with_passwords() {
+            Ok(sources) => {
+                for source in sources.iter().filter(|source| !listed.contains(source)) {
+                    remaining += self.forget_source_entries(source);
+                }
             }
+            // Unknown: tried again at the next look.
+            Err(_) => remaining += 1,
         }
         // Kept listed, they are tried again at the next look.
         self.vault.shared.cleanup_pending = remaining > 0;
@@ -610,17 +688,21 @@ impl App {
     /// Deletes the passwords of every source, as a reset to defaults asks; what could not be
     /// deleted keeps the purge waiting for the next look.
     fn purge_listed_passwords(&mut self) {
-        let mut sources = self.sources_with_passwords();
+        let mut remaining = 0;
+        let mut sources = self.sources_with_passwords().unwrap_or_else(|_| {
+            // The list could not be read: the sources of the settings only, and not done.
+            remaining += 1;
+            Vec::new()
+        });
         for source in &self.settings.shared_sources {
             if !sources.contains(&source.id) {
                 sources.push(source.id.clone());
             }
         }
-        let mut remaining = 0;
         for source in sources {
             remaining += self.forget_source_entries(&source);
         }
-        self.vault.shared.purge_pending = remaining > 0;
+        self.set_purge_pending(remaining > 0);
         self.report_incomplete_forget(remaining, false);
         self.refresh_shared_password_counts();
     }

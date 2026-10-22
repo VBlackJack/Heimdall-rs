@@ -285,14 +285,35 @@ pub enum SystemCredentials {
     Keyring(SystemKeyring),
     /// Kept in this process only, lost on exit: for tests.
     Memory(MemoryEntries),
-    /// As [`SystemCredentials::Memory`], with a switch that makes every deletion fail, as a
+    /// As [`SystemCredentials::Memory`], with switches that make reads or deletions fail, as a
     /// credential store that refuses can: for tests.
-    MemoryRefusingRemoval {
+    MemoryFaulty {
         /// What is held.
         entries: MemoryEntries,
-        /// While set, a deletion fails.
-        refusing: Arc<std::sync::atomic::AtomicBool>,
+        /// The failures asked for.
+        faults: Arc<StoreFaults>,
     },
+}
+
+/// The failures a faulty test credential store is asked to show.
+#[derive(Debug, Default)]
+pub struct StoreFaults {
+    /// While set, a read fails.
+    pub reads: std::sync::atomic::AtomicBool,
+    /// While set, a deletion fails.
+    pub removals: std::sync::atomic::AtomicBool,
+}
+
+impl StoreFaults {
+    /// Makes reads fail, or work again.
+    pub fn fail_reads(&self, on: bool) {
+        self.reads.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Makes deletions fail, or work again.
+    pub fn fail_removals(&self, on: bool) {
+        self.removals.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl SystemCredentials {
@@ -315,22 +336,22 @@ impl SystemCredentials {
         Self::Memory(Arc::default())
     }
 
-    /// An empty store kept in this process whose deletions fail while the returned switch is
-    /// set: for tests of what happens when a credential cannot be deleted.
+    /// An empty store kept in this process whose reads and deletions fail while the returned
+    /// switches are set: for tests of what happens when the store misbehaves.
     #[must_use]
-    pub fn memory_refusing_removal() -> (Self, Arc<std::sync::atomic::AtomicBool>) {
-        let refusing = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let store = Self::MemoryRefusingRemoval {
+    pub fn memory_faulty() -> (Self, Arc<StoreFaults>) {
+        let faults = Arc::new(StoreFaults::default());
+        let store = Self::MemoryFaulty {
             entries: Arc::default(),
-            refusing: Arc::clone(&refusing),
+            faults: Arc::clone(&faults),
         };
-        (store, refusing)
+        (store, faults)
     }
 
     /// The map a test store keeps its entries in.
     fn held(&self) -> Option<&MemoryEntries> {
         match self {
-            Self::Memory(entries) | Self::MemoryRefusingRemoval { entries, .. } => Some(entries),
+            Self::Memory(entries) | Self::MemoryFaulty { entries, .. } => Some(entries),
             Self::Unavailable | Self::Keyring(_) => None,
         }
     }
@@ -343,7 +364,12 @@ impl SystemCredentials {
         match self {
             Self::Unavailable => Ok(None),
             Self::Keyring(keyring) => keyring.get(name).map_err(|error| error.to_string()),
-            Self::Memory(_) | Self::MemoryRefusingRemoval { .. } => Ok(self
+            Self::MemoryFaulty { faults, .. }
+                if faults.reads.load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                Err("the credential store could not be read".to_owned())
+            }
+            Self::Memory(_) | Self::MemoryFaulty { .. } => Ok(self
                 .held()
                 .into_iter()
                 .filter_map(|entries| entries.lock().ok())
@@ -355,7 +381,7 @@ impl SystemCredentials {
         match self {
             Self::Unavailable => Err("no system credential store".to_owned()),
             Self::Keyring(keyring) => keyring.set(name, secret).map_err(|error| error.to_string()),
-            Self::Memory(entries) | Self::MemoryRefusingRemoval { entries, .. } => {
+            Self::Memory(entries) | Self::MemoryFaulty { entries, .. } => {
                 entries
                     .lock()
                     .map_err(|error| error.to_string())?
@@ -379,8 +405,8 @@ impl SystemCredentials {
                     .remove(name);
                 Ok(())
             }
-            Self::MemoryRefusingRemoval { entries, refusing } => {
-                if refusing.load(std::sync::atomic::Ordering::SeqCst) {
+            Self::MemoryFaulty { entries, faults } => {
+                if faults.removals.load(std::sync::atomic::Ordering::SeqCst) {
                     return Err("the credential store refused the deletion".to_owned());
                 }
                 entries
@@ -399,7 +425,7 @@ impl std::fmt::Debug for SystemCredentials {
             Self::Unavailable => "SystemCredentials::Unavailable",
             Self::Keyring(_) => "SystemCredentials::Keyring",
             Self::Memory(_) => "SystemCredentials::Memory",
-            Self::MemoryRefusingRemoval { .. } => "SystemCredentials::MemoryRefusingRemoval",
+            Self::MemoryFaulty { .. } => "SystemCredentials::MemoryFaulty",
         })
     }
 }
@@ -522,6 +548,20 @@ impl VaultState {
             .inspect_err(|error| log::warn!("a saved password could not be read: {error}"))
             .ok()
             .flatten()
+    }
+
+    /// The entry `name`, telling a failure to read (a locked vault, a failing store) from an
+    /// entry that is not there: what is then done to its index must not take a read that
+    /// failed for an index that is empty.
+    pub(super) fn read_checked(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+        if self.exists() {
+            let vault = self
+                .open
+                .as_ref()
+                .ok_or_else(|| "the vault is locked".to_owned())?;
+            return Ok(vault.get(name).map(|bytes| Zeroizing::new(bytes.to_vec())));
+        }
+        self.system.get(name)
     }
 
     /// The entry `name` of the system's store, whether or not a vault exists: for what is
