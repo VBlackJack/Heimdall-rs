@@ -361,7 +361,6 @@ fn authorization_header_unrelated_text_survives() {
         "WWW-Authenticate: Basic realm=\"x\"",
         "Visual Basic 6.0",
         "Basic auth enabled",
-        "Authorization: Basic abc",
         "Authorization: Token",
         "Authorization: Digest",
     ]);
@@ -1067,4 +1066,255 @@ fn secrets_survive_nowhere_in_the_output_of_the_mixed_sample() {
     ] {
         assert!(!text.contains(secret), "{secret} leaked");
     }
+}
+
+// Codex review of PR #534: masking is best effort, and each input below leaked before.
+
+fn assert_absent(output: &str, leaked: &[&str]) {
+    for piece in leaked {
+        assert!(!output.contains(piece), "{piece:?} left in {output:?}");
+    }
+}
+
+#[test]
+fn cap_inside_a_private_key_drops_the_rest_of_its_body() {
+    let input = "-----BEGIN PRIVATE KEY-----\n".to_owned()
+        + &"MIIEvQIBADANBgkq\n".repeat(16)
+        + &"log\n".repeat((MAX_INPUT_BYTES - 128) / 4);
+
+    let result = redact(&input, RedactionOptions::default()).expect("redaction finishes");
+
+    assert!(result.truncated);
+    assert_absent(&result.text, &["MIIEvQIBADANBgkq"]);
+    assert!(result.text.starts_with("log\n"));
+}
+
+#[test]
+fn cap_inside_an_indented_crlf_private_key_drops_the_rest_of_its_body() {
+    let input = "  -----BEGIN PRIVATE KEY-----\r\n".to_owned()
+        + &"  MIIEvQIBADANBgkq\r\n".repeat(40)
+        + &"log\r\n".repeat((MAX_INPUT_BYTES - 200) / 5);
+
+    let result = redact(&input, RedactionOptions::default()).expect("redaction finishes");
+
+    assert!(result.truncated);
+    assert_absent(&result.text, &["MIIEvQIBADANBgkq"]);
+}
+
+#[test]
+fn cap_outside_a_private_key_keeps_the_lines_after_the_context() {
+    let input = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\n"
+        .to_owned()
+        + &"log\n".repeat(MAX_INPUT_BYTES / 4);
+
+    let result = redact(&input, RedactionOptions::default()).expect("redaction finishes");
+
+    assert!(result.truncated);
+    assert!(result.text.starts_with("log\n"));
+}
+
+#[test]
+fn authorization_folded_headers_are_masked_whole() {
+    assert_masked(&[
+        (
+            "Authorization:\r\n Bearer abcdef123456",
+            "Authorization:\r\n Bearer [masked:authorization-header]",
+        ),
+        (
+            "Authorization: Bearer abcdef123456\r\n ghijkl789012",
+            "Authorization: Bearer [masked:authorization-header]",
+        ),
+        (
+            "Authorization:\n\tBasic dXNlcjpw\n\tYXNzd29yZA==\nnext: line",
+            "Authorization:\n\tBasic [masked:authorization-header]\nnext: line",
+        ),
+        (
+            "Authorization: Digest username=\"bob\",\r\n    response=\"6629fae4\"\r\nHost: x",
+            "Authorization: Digest [masked:authorization-header]\r\nHost: x",
+        ),
+    ]);
+}
+
+#[test]
+fn authorization_fold_across_a_chunk_boundary_is_masked() {
+    let filler = "x\n".repeat(scan::CHUNK_BYTES / 2 - 3);
+    let input = format!("{filler}Authorization:\r\n Bearer abcdef123456\n");
+
+    assert_absent(&mask(&input), &["abcdef123456"]);
+}
+
+#[test]
+fn authorization_short_credentials_after_a_scheme_are_masked() {
+    assert_masked(&[
+        (
+            "Authorization: Basic YTpi",
+            "Authorization: Basic [masked:authorization-header]",
+        ),
+        (
+            "Authorization: Bearer abc123",
+            "Authorization: Bearer [masked:authorization-header]",
+        ),
+        (
+            "Authorization: Basic abc",
+            "Authorization: Basic [masked:authorization-header]",
+        ),
+    ]);
+}
+
+#[test]
+fn url_password_with_raw_delimiters_is_masked_to_the_last_at_sign() {
+    assert_masked(&[
+        (
+            "postgres://alice:pa@ss:wo%25rd#?@db.local/app",
+            "postgres://alice:[masked:url-credentials]@db.local/app",
+        ),
+        (
+            "postgres://alice:pa/ss@db.local/app",
+            "postgres://alice:[masked:url-credentials]@db.local/app",
+        ),
+        (
+            "postgres://alice:p%40ss%3A%2F%23%3F@db.local/app",
+            "postgres://alice:[masked:url-credentials]@db.local/app",
+        ),
+    ]);
+    for password in [
+        "pa@ss", "pa:ss", "pa%ss", "pa/ss", "pa#ss", "pa?ss", "@", "/@/", "#?:",
+    ] {
+        let output = mask(&format!("mysql://root:{password}@db.local/app"));
+        assert_eq!(output, "mysql://root:[masked:url-credentials]@db.local/app");
+    }
+}
+
+#[test]
+fn url_password_in_a_json_string_stops_at_the_closing_quote() {
+    assert_eq!(
+        mask("{\"u\":\"ssh://bob:p@ss@h\",\"mail\":\"x@y.com\"}"),
+        "{\"u\":\"ssh://bob:[masked:url-credentials]@h\",\"mail\":\"x@y.com\"}"
+    );
+}
+
+#[test]
+fn length_bounds_never_expose_a_secret_suffix() {
+    let long_key = format!("api_key={}TAILSECRET", "a".repeat(4096));
+    let long_bearer = format!("Authorization: Bearer {}TAILSECRET", "a".repeat(8192));
+    let long_quoted = format!("api_key=\"{}\"", "a".repeat(4097));
+    let long_url = format!("ssh://bob:{}TAILSECRET@host", "a".repeat(2048));
+    let long_jwt = format!("eyJhbGciOiJI.{}TAILSECRET.c2lnbmF0dXJl", "a".repeat(9000));
+    let long_github = format!("ghp_{}TAILSECRET", "a".repeat(300));
+    let long_command = format!("bash: {}TAILSECRET: command not found", "a".repeat(300));
+    for input in [
+        &long_key,
+        &long_bearer,
+        &long_quoted,
+        &long_url,
+        &long_jwt,
+        &long_github,
+    ] {
+        let output = mask(input);
+        assert_absent(&output, &["TAILSECRET", "aaaa"]);
+    }
+    let prompted = mask(&format!("Password:\n{long_command}"));
+    assert_absent(&prompted, &["TAILSECRET"]);
+}
+
+#[test]
+fn escaped_quotes_do_not_end_a_quoted_secret() {
+    assert_masked(&[
+        (
+            r#"{"password":"abc\"TAILSECRET"}"#,
+            r#"{"password":"[masked:key-value-secret]"}"#,
+        ),
+        (
+            r#"--password "abc\"TAILSECRET" next"#,
+            r#"--password "[masked:cli-password]" next"#,
+        ),
+        (
+            r"token='it\'s TAILSECRET' ok",
+            "token='[masked:key-value-secret]' ok",
+        ),
+        (
+            r#"{"password":"back\\"}"#,
+            r#"{"password":"[masked:key-value-secret]"}"#,
+        ),
+    ]);
+}
+
+#[test]
+fn an_unterminated_quoted_secret_is_masked_to_the_end_of_the_line() {
+    assert_eq!(
+        mask("password=\"hunter2 and more\nnext"),
+        "password=\"[masked:key-value-secret]\nnext"
+    );
+}
+
+#[test]
+fn private_key_final_truncated_fragment_is_masked() {
+    for tail in ["AbC", "A", "ab="] {
+        let input = format!("  -----BEGIN PRIVATE KEY-----\r\n  MIIEvQIBADANBgkq\r\n  {tail}");
+        assert_eq!(
+            mask(&input),
+            "  [masked:private-key-block]",
+            "tail {tail:?}"
+        );
+    }
+}
+
+#[test]
+fn private_key_short_line_in_the_middle_of_the_text_ends_the_block() {
+    let input = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\nls\nMore text here\n";
+
+    assert_eq!(
+        mask(input),
+        "[masked:private-key-block]\nls\nMore text here\n"
+    );
+}
+
+#[test]
+fn realistic_leaks_are_masked_in_a_session_transcript() {
+    let transcript = concat!(
+        "deploy@build:~$ cat key.pem\r\n",
+        "    -----BEGIN RSA PRIVATE KEY-----\r\n",
+        "    MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun\r\n",
+        "    VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK\r\n",
+        "    Lxo=\r\n",
+        "    -----END RSA PRIVATE KEY-----\r\n",
+        "deploy@build:~$ curl -H 'Authorization:\r\n",
+        "    Bearer ya29.a0AfH6SMBx1234567890abcdef' https://api.example.com\r\n",
+        "deploy@build:~$ psql postgres://svc:p@ss:w/rd%25#?x@db.internal:5432/app\r\n",
+    );
+
+    let output = mask(transcript);
+
+    assert_absent(
+        &output,
+        &[
+            "MIIEowIB",
+            "VTLw7on",
+            "Lxo=",
+            "ya29.a0AfH6SMBx",
+            "w/rd%25",
+            "p@ss",
+        ],
+    );
+    assert!(output.contains("deploy@build:~$ cat key.pem"));
+    assert!(output.contains("@db.internal:5432/app"));
+}
+
+#[test]
+fn redacted_debug_never_prints_the_text() {
+    let result =
+        redact("note: nothing secret", RedactionOptions::default()).expect("redaction finishes");
+
+    let printed = format!("{result:?}");
+
+    assert!(!printed.contains("nothing secret"), "{printed}");
+    assert!(printed.contains("truncated"));
+}
+
+#[test]
+fn documentation_states_best_effort_and_never_promises_safety() {
+    let module_doc = include_str!("mod.rs");
+
+    assert!(module_doc.contains("Best effort, not a guarantee"));
+    assert!(!module_doc.to_lowercase().contains("safe to share"));
 }

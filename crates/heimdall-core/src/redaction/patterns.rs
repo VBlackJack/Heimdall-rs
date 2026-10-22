@@ -15,7 +15,8 @@
  */
 
 //! Every pattern of the catalogue, as the C# `RedactionPatterns`. All are line-oriented
-//! (`[ \t]` never `\s` between tokens) and every quantifier is bounded.
+//! (`[ \t]` never `\s` between tokens) and a quantifier is bounded only where it limits a
+//! gap, never a masked value.
 //!
 //! The `regex` crate has no look-around, so each look-behind and look-ahead of the C# pattern is
 //! a `Guard` function next to its pattern (see `scan::Guard`). The groups named `v...` hold the
@@ -26,11 +27,26 @@ use std::sync::LazyLock;
 
 use super::scan::{Found, Pattern, char_at, char_before};
 
-/// Upper bound for a secret value; longer runs are still masked up to this length.
-const MAX_VALUE: usize = 4096;
+// No bound limits a masked span: a value is masked to the end of its token or line, however long.
+// The `regex` engine is linear-time, the per-rule budget limits the work and the input cap limits
+// the size, so an unbounded value cannot cost more than one pass. A bound on a value would leave
+// its tail in the clear (a 4097 character secret masked up to 4096 and the rest kept).
 
-/// Upper bound for a token carried in a header (JWTs can exceed 4 KiB).
-const MAX_TOKEN: usize = 8192;
+/// A double quoted value: backslash escapes are part of the value, so `\"` does not close it.
+const DOUBLE_QUOTED: &str = r#""(?P<v1>(?:[^"\\\r\n]|\\[^\r\n])*)""#;
+
+/// A single quoted value, same escape handling.
+const SINGLE_QUOTED: &str = r"'(?P<v2>(?:[^'\\\r\n]|\\[^\r\n])*)'";
+
+/// An opening quote that is never closed on its line: the rest of the line is masked (fail
+/// closed) rather than left because no closing quote was found.
+const UNTERMINATED_QUOTED: &str = r#""(?P<v4>[^\r\n]+)|'(?P<v5>[^\r\n]+)"#;
+
+/// Whitespace of a header, including a folded continuation (line break then blank).
+const HEADER_BLANK: &str = r"(?:[ \t]|\r?\n[ \t])";
+
+/// Line break that continues a folded header value.
+const HEADER_FOLD: &str = r"\r?\n[ \t]+";
 
 const SECRET_KEY_ENDING: &str = "(?:password|passwd|secret|token|api_key|apikey|api-key|access_key|accesskey|private_key|privatekey|client-key-data|client_secret)";
 
@@ -44,23 +60,22 @@ const HOST_LABEL: &str = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
 
 /// A quoted value (mask inside the quotes) or a bare value up to whitespace; empty never matches.
 fn quoted_or_bare() -> String {
-    format!(
-        r#"(?:"(?P<v1>[^"\r\n]{{1,{MAX_VALUE}}})"|'(?P<v2>[^'\r\n]{{1,{MAX_VALUE}}})'|(?P<v3>[^\s"']{{1,{MAX_VALUE}}}))"#
-    )
+    format!(r#"(?:{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s"']+)|{UNTERMINATED_QUOTED})"#)
 }
 
 /// Same, for a bare value that must not start with `-` (an option, not a password) or a quote.
 fn quoted_or_bare_no_option() -> String {
-    format!(
-        r#"(?:"(?P<v1>[^"\r\n]{{1,{MAX_VALUE}}})"|'(?P<v2>[^'\r\n]{{1,{MAX_VALUE}}})'|(?P<v3>[^\s"'-][^\s"']{{0,{MAX_VALUE}}}))"#
-    )
+    format!(r#"(?:{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s"'-][^\s"']*)|{UNTERMINATED_QUOTED})"#)
 }
 
 /// Key-value form: a bare value also stops at `;`, `,` and `&` (query strings, lists).
 fn quoted_or_bare_delimited() -> String {
-    format!(
-        r#"(?:"(?P<v1>[^"\r\n]{{1,{MAX_VALUE}}})"|'(?P<v2>[^'\r\n]{{1,{MAX_VALUE}}})'|(?P<v3>[^\s;,&"']{{1,{MAX_VALUE}}}))"#
-    )
+    format!(r#"(?:{DOUBLE_QUOTED}|{SINGLE_QUOTED}|(?P<v3>[^\s;,&"']+)|{UNTERMINATED_QUOTED})"#)
+}
+
+/// A header token that may continue on folded lines: `piece (fold piece)*`.
+fn folded(piece: &str) -> String {
+    format!("{piece}(?:{HEADER_FOLD}{piece})*")
 }
 
 // Look-behind and look-ahead stand-ins.
@@ -164,17 +179,28 @@ lazy_pattern!(
     None
 );
 
+// Short credentials are masked too: the explicit header and scheme already identify the value.
+// A folded header (`Authorization:` then a line break and a blank, or a value continued on an
+// indented line) is one value. A wrap without indentation is the caller's job to join.
 lazy_pattern!(
     AUTHORIZATION_HEADER,
     format!(
-        r"(?i)Authorization:[ \t]{{0,16}}(?:Bearer[ \t]{{1,16}}(?P<va>[A-Za-z0-9._~+/=-]{{8,{MAX_TOKEN}}})|Basic[ \t]{{1,16}}(?P<vb>[A-Za-z0-9+/=]{{8,{MAX_TOKEN}}})|Token[ \t]{{1,16}}(?P<vc>[A-Za-z0-9._~+/=-]{{8,{MAX_TOKEN}}})|Digest[ \t]{{1,16}}(?P<vd>[^\r\n]{{1,{MAX_VALUE}}}))"
+        r"(?i)Authorization:{HEADER_BLANK}*(?:Bearer{HEADER_BLANK}+(?P<va>{})|Basic{HEADER_BLANK}+(?P<vb>{})|Token{HEADER_BLANK}+(?P<vc>{})|Digest{HEADER_BLANK}+(?P<vd>{}))",
+        folded("[A-Za-z0-9._~+/=-]+"),
+        folded("[A-Za-z0-9+/=]+"),
+        folded("[A-Za-z0-9._~+/=-]+"),
+        folded(r"[^\r\n]+"),
     ),
     None
 );
 
+// The password runs to the last `@` of the token, so a raw `@`, `:`, `/`, `#`, `?` or `%` inside
+// it cannot end the match early. Ambiguous tokens (`https://h:80/p?mail=a@b`) are masked too:
+// better a false positive than a password tail in the clear. The token ends at whitespace or a
+// quote or bracket that cannot be part of a credential URL.
 lazy_pattern!(
     URL_CREDENTIALS,
-    "://[^/\\s:@]{1,256}:(?P<v>[^/\\s@]{1,1024})@",
+    r#"://[^/\s:@"'`<>]+:(?P<v>[^\s"'`<>]*)@"#,
     None
 );
 
@@ -236,21 +262,19 @@ lazy_pattern!(
 
 lazy_pattern!(
     GITHUB_TOKEN,
-    "(?P<v>gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})",
+    "(?P<v>gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})",
     Some(after_word_ok)
 );
 
 lazy_pattern!(
     SLACK_TOKEN,
-    "(?P<v>xox[baprs]-[A-Za-z0-9-]{10,255})",
+    "(?P<v>xox[baprs]-[A-Za-z0-9-]{10,})",
     Some(after_alnum_ok)
 );
 
 lazy_pattern!(
     JWT,
-    format!(
-        "(?P<v>eyJ[A-Za-z0-9_-]{{8,{MAX_TOKEN}}}\\.[A-Za-z0-9_-]{{8,{MAX_TOKEN}}}\\.[A-Za-z0-9_-]{{8,{MAX_TOKEN}}})"
-    ),
+    r"(?P<v>eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})",
     Some(after_word_dash_ok)
 );
 
@@ -266,7 +290,7 @@ lazy_pattern!(
 
 lazy_pattern!(
     COMMAND_NOT_FOUND,
-    "(?:-?bash|zsh|sh|ksh|fish): (?P<v>\\S{1,256}): command not found",
+    "(?:-?bash|zsh|sh|ksh|fish): (?P<v>\\S+): command not found",
     Some(after_word_dash_ok)
 );
 

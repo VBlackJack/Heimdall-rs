@@ -15,15 +15,22 @@
  */
 
 //! Masked copy engine: pure, offline redaction of terminal output, as the C#
-//! `Heimdall.Core.Redaction.TextRedactor` (PR #647). Secrets are replaced by
+//! `Heimdall.Core.Redaction.TextRedactor` (PR #647). Secrets the rules recognise are replaced by
 //! `[masked:<rule-id>]` and counted per rule; host names and IPv4 addresses can optionally be
 //! replaced by stable pseudonyms (`host-1`, `ip-1`) within one call.
+//!
+//! Best effort, not a guarantee: the rules are heuristics over text, so a secret of a shape no
+//! rule knows is not masked, and a masked copy must still be reviewed by a person before it is
+//! shared. Any screen or message built on this engine has to say so. Pseudonyms are consistent
+//! within one call only; the mapping lives in memory for that call and is never written to disk,
+//! to a log or to the clipboard.
 //!
 //! The result is idempotent: redacting the output again changes nothing and counts zero.
 //!
 //! Fail closed: when a rule runs out of its time budget the result is an error and no text is
 //! returned, never a partially masked one. The input is a sequence of logical lines separated by
-//! `\n`; joining rows the terminal wrapped is the caller's job.
+//! `\n`; joining rows the terminal wrapped is the caller's job, and a header or value wrapped
+//! without indentation is not recognised as one (an indented, folded header is).
 //!
 //! No network, nothing written to disk, and neither the input nor a match is ever logged or put
 //! in an error.
@@ -98,15 +105,26 @@ pub enum RedactionError {
 }
 
 /// The outcome of one redaction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Redacted {
-    /// The masked text.
+    /// The masked text. Best effort: it can still hold a secret no rule recognised.
     pub text: String,
     /// Number of masked occurrences per rule, in catalogue order; every rule is present, zero
     /// allowed.
     pub counts: Vec<(&'static str, usize)>,
     /// True when the input was longer than [`MAX_INPUT_BYTES`] and its oldest part was dropped.
     pub truncated: bool,
+}
+
+/// Debug never prints the text: it can hold what the rules missed.
+impl std::fmt::Debug for Redacted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Redacted")
+            .field("text_bytes", &self.text.len())
+            .field("counts", &self.counts)
+            .field("truncated", &self.truncated)
+            .finish()
+    }
 }
 
 impl Redacted {
@@ -364,8 +382,14 @@ fn cap_input(text: &str, max_bytes: usize) -> (&str, bool) {
     if !text[..start].ends_with('\n') {
         start = after_next_newline(text, start);
     }
+    // The cut can fall inside a private key: its BEGIN line is gone, so the body that remains
+    // would have no marker to be recognised by. Drop the rest of the body.
+    let inside_key = maskers::cut_inside_private_key(text, start);
     for _ in 0..CUT_CONTEXT_LINES {
         start = after_next_newline(text, start);
+    }
+    if inside_key {
+        start = maskers::skip_private_key_body(text, start);
     }
     (&text[start..], true)
 }
@@ -377,7 +401,9 @@ fn after_next_newline(text: &str, from: usize) -> usize {
         .map_or(text.len(), |offset| from + offset + 1)
 }
 
-/// Masks the secrets of the session text.
+/// Masks the secrets of the session text that the rules recognise. Best effort: heuristic, so a
+/// secret of an unknown shape stays in the output and the result must be reviewed before it is
+/// shared.
 ///
 /// # Errors
 ///

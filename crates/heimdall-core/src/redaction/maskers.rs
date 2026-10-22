@@ -62,6 +62,10 @@ const MARKER_LITERAL: &str = "-----";
 
 const END_MARKER_START: &str = "-----END ";
 
+const BEGIN_MARKER_START: &str = "-----BEGIN ";
+
+const PRIVATE_KEY_MARKER_END: &str = "PRIVATE KEY-----";
+
 const PROC_TYPE_HEADER: &str = "Proc-Type:";
 
 const DEK_INFO_HEADER: &str = "DEK-Info:";
@@ -152,6 +156,15 @@ pub(super) fn mask_private_keys(
         while scan < lines.len() {
             let candidate = lines[scan];
             let kind = classify(text, candidate);
+            // The last line of the text may be a base64 fragment cut by the end of the buffer.
+            let kind = if kind == LineKind::Other
+                && scan + 1 == lines.len()
+                && is_truncated_fragment(text, candidate)
+            {
+                LineKind::Base64
+            } else {
+                kind
+            };
             if is_body_kind(kind, true, after_header) {
                 after_header = kind == LineKind::Header;
                 block_end = candidate.end;
@@ -187,6 +200,77 @@ fn is_body_kind(kind: LineKind, allow_blank: bool, after_header: bool) -> bool {
     }
 }
 
+/// One to three base64 characters: too short for a body line, but possible as the final line of
+/// a key whose end was cut off.
+fn is_truncated_fragment(text: &str, line: Line) -> bool {
+    let content = text[line.start..line.end].trim();
+    !content.is_empty()
+        && content.len() < MIN_BODY_LINE_LENGTH
+        && content.bytes().all(is_base64_byte)
+}
+
+fn is_base64_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/' || byte == b'='
+}
+
+/// The line that starts at `start`.
+fn line_from(text: &str, start: usize) -> Line {
+    let end = text[start..]
+        .find('\n')
+        .map_or(text.len(), |offset| start + offset);
+    let content_end = if end > start && text.as_bytes()[end - 1] == b'\r' {
+        end - 1
+    } else {
+        end
+    };
+    Line {
+        start,
+        end: content_end,
+    }
+}
+
+fn is_private_key_begin(content: &str) -> bool {
+    content.contains(BEGIN_MARKER_START) && content.contains(PRIVATE_KEY_MARKER_END)
+}
+
+fn is_key_body(kind: LineKind) -> bool {
+    matches!(kind, LineKind::Base64 | LineKind::Header | LineKind::Blank)
+}
+
+/// True when the text at `cut` is inside a private key whose BEGIN line precedes the cut: the
+/// line holding `cut` and the ones before it are body lines up to a BEGIN marker. Used by the
+/// input cap, which would otherwise keep the rest of the body with no marker left to recognise.
+pub(super) fn cut_inside_private_key(text: &str, cut: usize) -> bool {
+    let mut line_start = text[..cut].rfind('\n').map_or(0, |index| index + 1);
+    loop {
+        let line = line_from(text, line_start);
+        if is_private_key_begin(&text[line.start..line.end]) {
+            return true;
+        }
+        if !is_key_body(classify(text, line)) || line_start == 0 {
+            return false;
+        }
+        line_start = text[..line_start - 1]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+    }
+}
+
+/// The offset of the first line at or after `from` that is not a private key body line.
+pub(super) fn skip_private_key_body(text: &str, from: usize) -> usize {
+    let mut start = from;
+    while start < text.len() {
+        let line = line_from(text, start);
+        if !is_key_body(classify(text, line)) {
+            break;
+        }
+        start = text[start..]
+            .find('\n')
+            .map_or(text.len(), |offset| start + offset + 1);
+    }
+    start
+}
+
 fn classify(text: &str, line: Line) -> LineKind {
     let content = text[line.start..line.end].trim();
     if content.is_empty() {
@@ -198,10 +282,7 @@ fn classify(text: &str, line: Line) -> LineKind {
     if content.len() < MIN_BODY_LINE_LENGTH || content.len() > MAX_BODY_LINE_LENGTH {
         return LineKind::Other;
     }
-    if content
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
-    {
+    if content.bytes().all(is_base64_byte) {
         LineKind::Base64
     } else {
         LineKind::Other

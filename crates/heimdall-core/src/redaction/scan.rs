@@ -31,7 +31,7 @@ use super::RedactionError;
 
 /// Target chunk size for single-line rules; a chunk always ends on a line boundary
 /// (C# `RedactionApply.ChunkChars`).
-const CHUNK_BYTES: usize = 64 * 1024;
+pub(super) const CHUNK_BYTES: usize = 64 * 1024;
 
 /// Compiled-program size limit of one pattern: the bounded repetitions of a Unicode class
 /// (`{1,4096}` and `{8,8192}`) are large once expanded.
@@ -197,15 +197,25 @@ fn next_boundary(hay: &str, index: usize) -> usize {
         .map_or(hay.len() + 1, |c| index + c.len_utf8())
 }
 
+/// The end of the chunk starting at `start`: after a `\n`, and never before a continuation line
+/// (one that starts with a blank), so a folded header is not cut in two.
 fn next_chunk_end(text: &str, start: usize) -> usize {
     let target = start + CHUNK_BYTES;
     if target >= text.len() {
         return text.len();
     }
-    text.as_bytes()[target..]
+    let bytes = text.as_bytes();
+    let mut end = bytes[target..]
         .iter()
         .position(|&byte| byte == b'\n')
-        .map_or(text.len(), |offset| target + offset + 1)
+        .map_or(text.len(), |offset| target + offset + 1);
+    while end < text.len() && matches!(bytes[end], b' ' | b'\t') {
+        end = bytes[end..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .map_or(text.len(), |offset| end + offset + 1);
+    }
+    end
 }
 
 /// The character before `index`, if any.
