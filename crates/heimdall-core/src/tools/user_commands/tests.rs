@@ -65,12 +65,14 @@ fn a_blank_value_takes_the_default_and_typed_values_go_in_bare() {
     assert_eq!(rendered.as_deref(), Ok("nc example.com 22"));
 }
 
+// A value between double quotes is not protected by the quotes the generator adds, so
+// the shell characters are refused there (bare, they are quoted and pass: generator_tests).
 #[test]
 fn a_value_that_would_run_more_or_is_wrong_is_refused() {
     let mut port = UserParameter::new("port");
     port.kind = "int".to_owned();
     let template = linux_template(
-        "x {text} {port}",
+        "x \"{text}\" {port}",
         vec![UserParameter::new("text"), port.clone()],
     );
     let refused = |text: &'static str, port: &'static str| {
@@ -109,7 +111,7 @@ fn a_choice_takes_only_what_is_offered() {
     let template = linux_template("log {level}", vec![level]);
     let with =
         |value: &'static str| generate(&template, TemplatePlatform::Linux, move |_| Some(value));
-    assert_eq!(with("INFO").as_deref(), Ok("log 'INFO'"));
+    assert_eq!(with("INFO").as_deref(), Ok("log INFO"));
     assert!(matches!(with("trace"), Err(GenerateError::Values(_))));
 }
 
@@ -122,8 +124,16 @@ fn an_inline_value_is_escaped_only_and_only_inside_quotes_is_kept() {
         generate(&template, TemplatePlatform::Linux, |_| Some("it's")).as_deref(),
         Ok("echo 'a it'\\''s'")
     );
-    assert!(placeholder_in_single_quotes("echo 'a {text}'", "text"));
-    assert!(!placeholder_in_single_quotes("echo {text} 'b'", "text"));
+    assert!(placeholder_in_single_quotes(
+        "echo 'a {text}'",
+        "text",
+        TemplatePlatform::Linux
+    ));
+    assert!(!placeholder_in_single_quotes(
+        "echo {text} 'b'",
+        "text",
+        TemplatePlatform::Linux
+    ));
     assert_eq!(placeholders("a {x} {y_1} {x} {} {a-b}"), ["x", "y_1"]);
 }
 
