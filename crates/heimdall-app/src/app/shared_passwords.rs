@@ -57,6 +57,10 @@ use crate::ids::{AttemptId, QuestionId, TabId};
 /// not done: it holds no credential data.
 const PURGE_MARKER_FILE: &str = "shared-passwords-purge.pending";
 
+/// The file beside the settings that says the passwords of a source taken out are not all
+/// forgotten yet: it holds no credential data.
+const CLEANUP_MARKER_FILE: &str = "shared-passwords-cleanup.pending";
+
 /// A password the user asked to remember, until the server accepts it.
 struct PendingRemember {
     attempt: AttemptId,
@@ -252,6 +256,10 @@ impl App {
         tab_id: TabId,
         kind: &QuestionKind,
     ) -> Option<Answer> {
+        self.settle_pending_purge();
+        if self.vault.shared.purge_pending {
+            return None;
+        }
         let tab = self.tab(tab_id)?;
         let (profile, endpoint) = asked_endpoint(&tab.profile, kind)?;
         let source = self.vault.shared.origins.get(&profile)?.clone();
@@ -281,6 +289,7 @@ impl App {
 
     /// The server of `tab_id` signed in: the password the user asked to remember is kept.
     pub(super) fn remember_signed_in_password(&mut self, tab_id: TabId) {
+        self.settle_pending_purge();
         let Some(tab) = self.tab_mut(tab_id) else {
             return;
         };
@@ -496,14 +505,25 @@ impl App {
     /// tell the next start that their passwords were to go.
     fn set_purge_pending(&mut self, pending: bool) {
         self.vault.shared.purge_pending = pending;
-        let Some(marker) = self
-            .settings_file
-            .parent()
-            .map(|folder| folder.join(PURGE_MARKER_FILE))
-        else {
+        self.set_marker(PURGE_MARKER_FILE, pending);
+    }
+
+    /// Notes that the forgetting of the passwords of a source taken out waits, or is done;
+    /// kept across a restart by `persist`, as [`Self::set_purge_pending`] does: the source
+    /// is no longer in the settings, so nothing else would tell the next start.
+    fn set_cleanup_pending(&mut self, pending: bool, persist: bool) {
+        self.vault.shared.cleanup_pending = pending;
+        if persist || !pending {
+            self.set_marker(CLEANUP_MARKER_FILE, pending);
+        }
+    }
+
+    /// Creates or removes the marker file `name` beside the settings.
+    fn set_marker(&self, name: &str, present: bool) {
+        let Some(marker) = self.settings_file.parent().map(|folder| folder.join(name)) else {
             return;
         };
-        let done = if pending {
+        let done = if present {
             std::fs::write(&marker, b"")
         } else {
             match std::fs::remove_file(&marker) {
@@ -518,14 +538,23 @@ impl App {
         }
     }
 
-    /// Takes up a reset's deletion that a previous run could not finish.
+    /// Takes up the deletions that a previous run could not finish.
     pub(super) fn resume_shared_purge(&mut self) {
-        let waiting = self
-            .settings_file
-            .parent()
-            .is_some_and(|folder| folder.join(PURGE_MARKER_FILE).exists());
-        if waiting {
-            self.vault.shared.purge_pending = true;
+        let marked = |name: &str| {
+            self.settings_file
+                .parent()
+                .is_some_and(|folder| folder.join(name).exists())
+        };
+        let (purge, cleanup) = (marked(PURGE_MARKER_FILE), marked(CLEANUP_MARKER_FILE));
+        self.vault.shared.purge_pending |= purge;
+        self.vault.shared.cleanup_pending |= cleanup;
+    }
+
+    /// Finishes a reset's deletion that was waiting for the store, if it can be done now:
+    /// no remembered password is read or committed before a reset has taken its effect.
+    fn settle_pending_purge(&mut self) {
+        if self.vault.shared.purge_pending && self.vault.usable() {
+            self.purge_listed_passwords();
         }
     }
 
@@ -657,16 +686,17 @@ impl App {
         for gone in before.iter().flatten().filter(|id| !listed.contains(id)) {
             self.revoke_source_consent(gone);
         }
-        if self.vault.shared.purge_pending && self.vault.usable() {
-            self.purge_listed_passwords();
-        }
+        self.settle_pending_purge();
         match &before {
-            None if listed.is_empty() => return,
+            None if listed.is_empty() && !self.vault.shared.cleanup_pending => return,
             Some(seen) if *seen == listed && !self.vault.shared.cleanup_pending => return,
             _ => {}
         }
         if !self.vault.usable() {
-            self.vault.shared.cleanup_pending = true;
+            // Only a source really taken out is worth keeping across a restart.
+            let removed = before.iter().flatten().any(|id| !listed.contains(id));
+            let persist = removed || self.vault.shared.cleanup_pending;
+            self.set_cleanup_pending(true, persist);
             return;
         }
         let mut remaining = 0;
@@ -680,7 +710,7 @@ impl App {
             Err(_) => remaining += 1,
         }
         // Kept listed, they are tried again at the next look.
-        self.vault.shared.cleanup_pending = remaining > 0;
+        self.set_cleanup_pending(remaining > 0, true);
         self.report_incomplete_forget(remaining, false);
         self.refresh_shared_password_counts();
     }

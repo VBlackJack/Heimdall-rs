@@ -1277,6 +1277,50 @@ async fn a_reset_with_a_locked_vault_is_still_done_after_the_application_restart
     assert_eq!(web_answer(&mut app, HOST, 22, LOGIN), None);
 }
 
+#[tokio::test]
+async fn a_password_is_not_given_between_a_reset_and_its_deletion() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    unlock(&mut app, MASTER).await;
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    app.update(Message::LockVault);
+    reset_to_defaults(&mut app);
+
+    // Opened, and connected to at once, before any look at the files.
+    unlock(&mut app, MASTER).await;
+    assert_eq!(web_answer(&mut app, HOST, 22, LOGIN), None);
+}
+
+#[test]
+fn a_source_removal_whose_deletion_failed_is_taken_up_again_after_a_restart() {
+    capture_logs();
+    let dir = tempfile::tempdir().expect("dir");
+    let (system, faults) = SystemCredentials::memory_faulty();
+    let mut app = app_over(
+        dir.path(),
+        &[("team", &file(HOST, 22, LOGIN, 5901))],
+        &system,
+    );
+    remember_on_web(&mut app, HOST, 22, LOGIN);
+    faults.fail_removals(true);
+    app.update(Message::Settings(
+        SettingsMessage::SharedSources(Vec::new()),
+    ));
+    assert!(store_holds(&system, PASSWORD), "refused, so still held");
+    drop(app);
+
+    faults.fail_removals(false);
+    let app = app_over(dir.path(), &[], &system);
+    assert!(entries(&system).is_empty(), "{:?}", entries(&system));
+    assert!(!app.watches_shared_sources(), "nothing left to wait for");
+}
+
 // ---- VNC ------------------------------------------------------------------------------------
 
 const CHALLENGE: [u8; 16] = [
