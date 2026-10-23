@@ -60,13 +60,17 @@ pub(super) fn mask_groups(
 
 const COOKIE_WORD: &str = "cookie";
 
+/// The command whose `-b` is a cookie option; a line without it or the word "cookie" has no cookie.
+const CURL_COMMAND: &str = "curl";
+
 /// Attributes of a `Set-Cookie` header: not secrets, kept as they are.
 const COOKIE_ATTRIBUTES: [&str; 9] = [
     "path", "domain", "expires", "max-age", "secure", "httponly", "samesite", "version", "comment",
 ];
 
-/// Masks the value of each cookie of a `Cookie:` or `Set-Cookie:` header, keeping the names and
-/// the attributes (`session=[masked:cookie-header]; Path=/`).
+/// Masks the value of each cookie of a `Cookie:` or `Set-Cookie:` header, of a quoted or `=`
+/// form of it, or of a curl `-b` / `--cookie` argument, keeping the names and the attributes
+/// (`session=[masked:cookie-header]; Path=/`).
 pub(super) fn mask_cookies(
     text: &str,
     rule: &'static str,
@@ -77,34 +81,84 @@ pub(super) fn mask_cookies(
     let mut edits = Vec::new();
     for line in split_lines(text) {
         let hay = &text[line.start..line.end];
-        if !contains_ignore_ascii_case(hay, COOKIE_WORD) {
+        let named = contains_ignore_ascii_case(hay, COOKIE_WORD);
+        // The short option `-b` is a cookie only for curl: `grep -b`, `mv -b`, `rsync -b` are not.
+        let curl = contains_ignore_ascii_case(hay, CURL_COMMAND);
+        if !named && !curl {
             continue;
         }
-        let mut from = 0;
-        while let Some(header) = patterns::COOKIE_HEADER.find_from(hay, from, budget)? {
-            let header_end = cookie_header_end(hay, header.end);
-            let mut offset = header.end;
-            for pair in hay[header.end..header_end].split(';') {
-                if let Some((start, end)) = cookie_value_span(pair) {
-                    let (start, end) = (offset + start, offset + end);
-                    if !is_mask_token(&hay[start..end]) {
-                        edits.push(Edit {
-                            start: line.start + start,
-                            end: line.start + end,
-                            replacement: token.clone(),
-                        });
-                        run.count(rule);
-                    }
+        let mut lists = Vec::new();
+        if named {
+            let mut from = 0;
+            while let Some(header) = patterns::COOKIE_HEADER.find_from(hay, from, budget)? {
+                // `--cookie=a=b https://x`: a value after `=` with no quote ends at the first
+                // blank, as a shell argument does. After `:` it runs to the end of the line.
+                let name = hay[header.start..header.end].trim_end_matches([' ', '\t']);
+                let end = if name.ends_with('=') {
+                    bare_cookie_end(hay, header.end)
+                } else {
+                    cookie_header_end(hay, header.end)
+                };
+                lists.push((header.end, end));
+                from = end.max(header.end);
+                if from >= hay.len() {
+                    break;
                 }
-                offset += pair.len() + 1;
             }
-            from = header_end.max(header.end);
+        }
+        let mut from = 0;
+        while curl && let Some(option) = patterns::COOKIE_OPTION.find_from(hay, from, budget)? {
+            let quoted = hay[option.start..option.end].ends_with(['"', '\'']);
+            from = option.end;
+            // An option after it (`rsync -b --backup-dir=x`) is not a cookie list.
+            if !quoted && hay[option.end..].starts_with('-') {
+                continue;
+            }
+            let end = if quoted {
+                cookie_header_end(hay, option.end)
+            } else {
+                bare_cookie_end(hay, option.end)
+            };
+            lists.push((option.end, end));
+            from = end.max(option.end);
             if from >= hay.len() {
                 break;
             }
         }
+        // A value found by two readings (`curl -b 'Cookie: a=b'`) is masked, and counted, once.
+        let mut spans = Vec::new();
+        for (list_start, list_end) in lists {
+            let mut offset = list_start;
+            for pair in hay[list_start..list_end].split(';') {
+                if let Some((start, end)) = cookie_value_span(pair) {
+                    spans.push((offset + start, offset + end));
+                }
+                offset += pair.len() + 1;
+            }
+        }
+        spans.sort_unstable();
+        spans.dedup();
+        for (start, end) in spans {
+            if !is_mask_token(&hay[start..end]) {
+                edits.push(Edit {
+                    start: line.start + start,
+                    end: line.start + end,
+                    replacement: token.clone(),
+                });
+                run.count(rule);
+            }
+        }
     }
     Ok(apply_edits(text, &edits))
+}
+
+/// The end of an unquoted cookie argument that starts at `from`: the first blank, as a shell
+/// argument ends, or the end of the line. Later words (`cookie=abc; DB_HOST=db01`) are not
+/// cookies.
+fn bare_cookie_end(hay: &str, from: usize) -> usize {
+    hay[from..]
+        .find(char::is_whitespace)
+        .map_or(hay.len(), |offset| from + offset)
 }
 
 /// The end of a cookie header that starts at `from`: the end of the line, or the quote that
@@ -119,7 +173,9 @@ fn cookie_header_end(hay: &str, from: usize) -> usize {
                 Some(quote) if quote == c => open = None,
                 Some(_) => {}
                 None if previous == '=' => open = Some(c),
-                None => return from + offset,
+                // An escaped quote (`\"` inside a JSON string) ends the header before its
+                // backslash, which is not part of the last value.
+                None => return from + offset - usize::from(previous == '\\'),
             }
         }
         previous = c;

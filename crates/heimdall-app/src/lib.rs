@@ -132,6 +132,7 @@ pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, Ro
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
 pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use app::{MaskedCopy, MaskedCopyMessage, MaskedView};
 pub use app::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use app::{
     SCHEDULED_TICK, ScheduledChoice, ScheduledMessage, ScheduledNotice, local_time_text,

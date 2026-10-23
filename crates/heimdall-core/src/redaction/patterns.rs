@@ -485,7 +485,26 @@ macro_rules! lazy_pattern {
 }
 
 // The name of a cookie header; the cookies themselves are split by `maskers::mask_cookies`.
-lazy_pattern!(COOKIE_HEADER, r"(?i)cookie[ \t]*:[ \t]*", None);
+//
+// Same name grammar as the Authorization header: the name may be quoted (JSON `"Cookie": "a=b"`,
+// Python `{'Cookie': 'a=b'}`, escaped too) and the separator may be `=` (PowerShell
+// `-Headers @{Cookie="a=b"}`, `--cookie=a=b`). A value without a `name=value` pair in it
+// (`cookie=accepted`) has nothing to mask.
+lazy_pattern!(
+    COOKIE_HEADER,
+    format!(r"(?i)cookie{OPTIONAL_QUOTE}[ \t]*[:=][ \t]*{OPTIONAL_QUOTE}"),
+    None
+);
+
+// The curl cookie option and the quote that opens its argument: `-b 'a=b'`, `--cookie "a=b; c=d"`,
+// `-b a=b`, and a short flag cluster ending in b (`-sb`, `-Lb`), read on curl lines only. A bare
+// file name (`-b jar.txt`) holds no pair and is left alone. The attached form
+// (`--cookie=a=b`) is the header pattern's.
+lazy_pattern!(
+    COOKIE_OPTION,
+    r#"(?:^|[ \t])(?:--cookie|-[A-Za-z]*b)[ \t]+["']?"#,
+    None
+);
 
 lazy_pattern!(
     PRIVATE_KEY_MARKER,
@@ -747,6 +766,7 @@ pub(super) fn warm_up() {
         &CLI_EXPORT,
         &CLI_ENVIRONMENT_PASSWORD,
         &CLI_MYSQL_PASSWORD,
+        &COOKIE_OPTION,
         &KEY_VALUE_SECRET,
         &KEY_VALUE_SECRET_COLON,
         &KEY_VALUE_SECRET_COLON_TOKEN,

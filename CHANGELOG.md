@@ -21,6 +21,9 @@ work can be followed. It is not usable yet and no official release is published.
   PuTTY), agent and keyboard-interactive authentication, and a terminal with scrollback,
   selection, copy and paste, and mouse reporting.
 - SFTP: a Files tab, local and remote panes, transfers and edits.
+- Copy output, secrets masked (Ctrl+Shift+M, the tab menu): the session text is masked by
+  rule, reviewed in a preview and copied only on Copy. Best effort: the preview has to be read
+  before it is shared.
 - RDP and VNC: remote desktop sessions, with an `mstsc` fallback on Windows.
 - Tools: the network and security tools ported from the C#.
 - Localisation: English, French and Spanish, every string a Fluent key.

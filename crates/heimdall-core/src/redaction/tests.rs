@@ -1971,3 +1971,103 @@ fn cookie_values_are_masked_and_attributes_kept() {
     let once = mask("Set-Cookie: session=abc123secret; Path=/");
     assert_eq!(mask(&once), once);
 }
+
+#[test]
+fn cookie_is_masked_in_quoted_equals_and_curl_option_forms() {
+    assert_masked(&[
+        (
+            r#"{"Cookie": "session=abc123secret"}"#,
+            r#"{"Cookie": "session=[masked:cookie-header]"}"#,
+        ),
+        (
+            "{'Cookie': 'session=abc; theme=dark'}",
+            "{'Cookie': 'session=[masked:cookie-header]; theme=[masked:cookie-header]'}",
+        ),
+        (
+            r#"{\"Cookie\": \"session=abc123secret\"}"#,
+            r#"{\"Cookie\": \"session=[masked:cookie-header]\"}"#,
+        ),
+        (
+            r#"Invoke-WebRequest -Headers @{Cookie="session=abc123secret"} https://x"#,
+            r#"Invoke-WebRequest -Headers @{Cookie="session=[masked:cookie-header]"} https://x"#,
+        ),
+        (
+            "curl -b 'session=abc123secret' https://x",
+            "curl -b 'session=[masked:cookie-header]' https://x",
+        ),
+        (
+            r#"curl --cookie "session=abc; theme=dark" https://x"#,
+            r#"curl --cookie "session=[masked:cookie-header]; theme=[masked:cookie-header]" https://x"#,
+        ),
+        (
+            "curl -b session=abc123secret https://x",
+            "curl -b session=[masked:cookie-header] https://x",
+        ),
+        (
+            "curl --cookie=session=abc123secret https://x",
+            "curl --cookie=session=[masked:cookie-header] https://x",
+        ),
+    ]);
+    assert_survives(&[
+        "curl -b jar.txt https://x",
+        "curl --cookie cookies.txt https://x",
+        "cookie=accepted",
+    ]);
+    // Another command's -b is not a cookie, nor an option after curl's.
+    assert_survives(&[
+        "rsync -b --backup-dir=/var/bak src dst",
+        "mv -b --suffix=.orig a b",
+        "grep -b 'Level=debug' f",
+        "curl -b --foo=bar https://x",
+    ]);
+    // An unquoted value ends at its blank: what follows is not a cookie.
+    assert_masked(&[
+        (
+            "cookie=abc; DB_HOST=db01; ls",
+            "cookie=abc; DB_HOST=db01; ls",
+        ),
+        (
+            "consent cookie=accepted; region=eu",
+            "consent cookie=accepted; region=eu",
+        ),
+        (
+            "x --cookie=session=abc123; DB_HOST=db01",
+            "x --cookie=session=[masked:cookie-header]; DB_HOST=db01",
+        ),
+        (
+            "curl -sb 'session=abc' https://x",
+            "curl -sb 'session=[masked:cookie-header]' https://x",
+        ),
+        (
+            "curl -Lb 'session=abc' https://x",
+            "curl -Lb 'session=[masked:cookie-header]' https://x",
+        ),
+    ]);
+    // Found by two readings, counted once.
+    let both = redact("curl -b 'Cookie: a=b'", RedactionOptions::default()).expect("done");
+    assert_eq!(both.text, "curl -b 'Cookie: a=[masked:cookie-header]'");
+    assert_eq!(both.count(rule_id::COOKIE_HEADER), 1);
+    let once = mask("curl -b 'session=abc123secret' https://x");
+    assert_eq!(mask(&once), once);
+}
+
+#[test]
+fn log_prefix_limits_are_the_documented_ones() {
+    // Module doc, "Known limits": a short letters-only value after a log prefix is prose.
+    assert_survives(&["INFO token: ident"]);
+    // Several words after a log prefix: the first one only, the rest stays.
+    assert_masked(&[(
+        "WARN secret: blue-sky-9 mountain lake",
+        "WARN secret: [masked:key-value-secret] mountain lake",
+    )]);
+    // Where the key starts the line the whole value goes.
+    assert_masked(&[(
+        "secret: blue sky mountain",
+        "secret: [masked:key-value-secret]",
+    )]);
+    // A known shape is masked wherever it sits.
+    assert_masked(&[(
+        "INFO token: abc123xyz",
+        "INFO token: [masked:key-value-secret]",
+    )]);
+}

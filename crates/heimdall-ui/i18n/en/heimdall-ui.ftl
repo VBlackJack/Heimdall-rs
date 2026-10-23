@@ -6003,3 +6003,37 @@ ui-share-listing-index-of = Index of
 ui-share-listing-name = Name
 ui-share-listing-size = Size (bytes)
 ui-profile-from-folder = Taken from folder "{ $folder }".
+
+## Copy output, secrets masked (Ctrl+Shift+M): the review dialog, its menu entry and its status words.
+ui-masked-copy-menu = Copy output, secrets masked...
+ui-menu-keys-masked-copy = Ctrl+Shift+M
+ui-masked-copy-title = Copy output, secrets masked
+ui-masked-copy-intro = Check the masked text below. Nothing is sent anywhere and nothing is written to disk: Copy only places this text on the clipboard.
+ui-masked-copy-best-effort = Masking is best effort. A secret of a shape no rule knows is not masked, and a masked copy can still hold one. Read the whole text before you share it.
+ui-masked-copy-nothing-masked = No rule found a secret in this text. Read it before you share it.
+ui-masked-copy-count-line = { $rule }: { $count ->
+    [one] { $count } occurrence
+   *[other] { $count } occurrences
+}
+ui-masked-copy-hosts-option = Also mask host names and addresses
+ui-masked-copy-truncated = The output was longer than the size limit: only the most recent part is shown.
+ui-masked-copy-working = Masking the text...
+ui-masked-copy-refused = Masking stopped: the rule "{ $rule }" took too long on this text, so nothing can be copied.
+ui-masked-copy-copy = Copy
+ui-masked-copy-copied = Output copied with secrets masked.
+ui-masked-copy-no-terminal = This tab has no terminal text to copy.
+ui-shortcuts-masked-copy = Copy the output of the session with its secrets masked, to read before sharing
+ui-masked-copy-rule-private-key-block = Private key
+ui-masked-copy-rule-authorization-header = Authorization header
+ui-masked-copy-rule-cookie-header = Cookie
+ui-masked-copy-rule-url-credentials = Credentials in a URL
+ui-masked-copy-rule-cli-password = Password on a command line
+ui-masked-copy-rule-key-value-secret = Key-value secret
+ui-masked-copy-rule-aws-access-key = AWS access key
+ui-masked-copy-rule-github-token = GitHub token
+ui-masked-copy-rule-slack-token = Slack token
+ui-masked-copy-rule-jwt = JSON Web Token
+ui-masked-copy-rule-password-prompt = Password typed at a prompt
+ui-masked-copy-rule-ipv4-address = IPv4 address
+ui-masked-copy-rule-host-name = Host name
+ui-masked-copy-failed = The masking failed, so nothing can be copied.

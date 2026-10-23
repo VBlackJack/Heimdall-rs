@@ -27,7 +27,7 @@ use heimdall_app::reachability::{DownReason, Unchecked, Verdict};
 use heimdall_app::split::{Axis, Placement, SplitMessage};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FloatMessage, FolderMessage, GatewayBadge,
-    HostKeysMessage, Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind,
+    HostKeysMessage, MaskedCopyMessage, Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind,
     ProfileMenuMessage, ProfileSummary, RdpMessage, ResolutionChoice, SelectionMessage,
     SessionState, SessionsMessage, SpecialKeys, TabGroup, TabId, TabMenuMessage, TreeFilter,
 };
@@ -1716,6 +1716,8 @@ pub struct TabMenuState {
     pub saveable: bool,
     /// It takes terminal macros.
     pub macros: bool,
+    /// Its output can be copied with the secrets masked: a session of text.
+    pub masked_copy: bool,
     /// The user lists external tools, which its profile's entries start for it.
     pub external_tools: bool,
     /// Opened from a pane's header: Disconnect closes that pane alone.
@@ -2295,6 +2297,13 @@ fn terminal_entries<'a>(state: &TabMenuState) -> Vec<Element<'a, Message>> {
     }
     if state.macros {
         entries.push(submenu(fl!("ui-macros-menu"), TreeMenu::Macros(tab)));
+    }
+    if state.masked_copy {
+        entries.push(keyed_entry(
+            fl!("ui-masked-copy-menu"),
+            Some(fl!("ui-menu-keys-masked-copy")),
+            Some(AppMessage::MaskedCopy(MaskedCopyMessage::Open(tab))),
+        ));
     }
     if let Some(shown) = state.health {
         entries.push(health_entry(tab, shown));

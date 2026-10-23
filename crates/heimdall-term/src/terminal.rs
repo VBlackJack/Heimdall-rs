@@ -730,6 +730,21 @@ impl Terminal {
         }
     }
 
+    /// The text of the whole session, history and screen: the rows the terminal wrapped are
+    /// joined into one logical line (a row that fills the width and flows into the next has
+    /// no line break between them), the blanks after the last character of a row and after
+    /// the last row are dropped. The size is bounded by the scrollback the terminal keeps; the
+    /// caller caps what it works on (the C# terminal bridge hands over the last 4 MiB,
+    /// `MaskedTerminalCopyService`).
+    #[must_use]
+    pub fn session_text(&self) -> String {
+        let start = Point::new(self.term.topmost_line(), Column(0));
+        let end = Point::new(self.term.bottommost_line(), self.term.last_column());
+        let mut text = self.term.bounds_to_string(start, end);
+        text.truncate(text.trim_end().len());
+        text
+    }
+
     /// The text of a block selection as xterm.js copies one (`SelectionService.selectionText`
     /// in column mode): the columns of the block from each line, the blanks after the last
     /// character dropped, no-break spaces as spaces, lines joined by [`BLOCK_LINE_BREAK`]. A

@@ -6235,3 +6235,151 @@ fn a_migration_says_how_many_csharp_certificates_it_carried_over_or_why_not() {
     ui.find("The trusted certificates could not be carried over: disk full")
         .expect("why not");
 }
+
+// ---- Copy output, secrets masked (Ctrl+Shift+M) ------------------------------------------
+
+/// A connected shell that printed a secret, with the masked copy opened on it by the shortcut
+/// and the masking done as the window's task would do it.
+fn masked_copy_open(dir: &Path) -> (Shell, TabId) {
+    let (mut shell, tab, attempt) = connected_shell(dir);
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"db_password=hunter2-Zq9\r\n".to_vec()),
+    }));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::MaskedCopy));
+    (shell, tab)
+}
+
+fn masking_done(shell: &mut Shell, options: heimdall_core::redaction::RedactionOptions) {
+    let run = 1;
+    let text = "db_password=hunter2-Zq9";
+    let _ = shell.update(Message::App(AppMessage::MaskedCopy(
+        heimdall_app::MaskedCopyMessage::Done {
+            run,
+            outcome: heimdall_core::redaction::redact(text, options),
+        },
+    )));
+}
+
+#[test]
+fn the_masked_copy_shortcut_opens_a_review_that_says_masking_is_best_effort() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _) = masked_copy_open(dir.path());
+    assert!(matches!(
+        shell.app().dialog,
+        Some(heimdall_app::Dialog::MaskedCopy(_))
+    ));
+    masking_done(
+        &mut shell,
+        heimdall_core::redaction::RedactionOptions::default(),
+    );
+    let mut ui = simulator(&shell);
+    ui.find("Copy output, secrets masked").expect("its title");
+    ui.find("db_password=[masked:key-value-secret]")
+        .expect("the masked text, not the secret");
+    assert!(ui.find("hunter2-Zq9").is_err(), "the secret is nowhere");
+    ui.find("Key-value secret: 1 occurrence")
+        .expect("the count per rule");
+    ui.find("Also mask host names and addresses")
+        .expect("the host option");
+    // Best effort, to be read, never a promise.
+    ui.find(
+        "Masking is best effort. A secret of a shape no rule knows is not masked, and a masked copy can still hold one. Read the whole text before you share it.",
+    )
+    .expect("the best-effort wording");
+    assert!(ui.find("safe to share").is_err());
+    ui.click("Copy").expect("the button");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+    );
+}
+
+#[test]
+fn the_review_cannot_copy_while_masking_or_when_the_engine_gave_up() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _) = masked_copy_open(dir.path());
+    // Still masking: the button does nothing.
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Masking the text...").expect("it says so");
+        let _ = ui.click("Copy");
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::MaskedCopy(
+        heimdall_app::MaskedCopyMessage::Done {
+            run: 1,
+            outcome: Err(heimdall_core::redaction::RedactionError::Timeout {
+                rule: heimdall_core::redaction::rule_id::KEY_VALUE_SECRET,
+            }),
+        },
+    )));
+    let mut ui = simulator(&shell);
+    ui.find(
+        "Masking stopped: the rule \"Key-value secret\" took too long on this text, so nothing can be copied.",
+    )
+    .expect("the refusal");
+    let _ = ui.click("Copy");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog))),
+        "Copy is greyed out"
+    );
+}
+
+#[test]
+fn the_host_option_asks_to_mask_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _) = masked_copy_open(dir.path());
+    masking_done(
+        &mut shell,
+        heimdall_core::redaction::RedactionOptions::default(),
+    );
+    let mut ui = simulator(&shell);
+    ui.click("Also mask host names and addresses")
+        .expect("the option");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::MaskedCopy(
+            heimdall_app::MaskedCopyMessage::HostsChanged(true)
+        ))
+    )));
+}
+
+#[test]
+fn the_tab_menu_offers_the_masked_copy_for_a_session_of_text() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    let mut ui = simulator(&shell);
+    ui.click("Copy output, secrets masked...")
+        .expect("the entry");
+    let chosen: Vec<String> = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::MenuChoice(chosen) => Some(format!("{chosen:?}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chosen,
+        [format!(
+            "{:?}",
+            AppMessage::MaskedCopy(heimdall_app::MaskedCopyMessage::Open(tab))
+        )]
+    );
+}
+
+#[test]
+fn the_masked_copy_shortcut_does_nothing_without_a_session_of_text() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::MaskedCopy));
+    assert!(shell.app().dialog.is_none());
+}
