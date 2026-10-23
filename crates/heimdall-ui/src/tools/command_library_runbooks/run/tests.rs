@@ -337,6 +337,7 @@ fn skip_passes_over_a_step_without_sending_it_and_stop_leaves_the_run() {
         )],
     );
     update(&mut pane, RunbookMessage::Run(ids[0].clone()));
+    pane.set_guard(Duration::ZERO);
     update(&mut pane, RunbookMessage::RunSkip);
     assert_eq!(pane.status_of(0), Some(StepStatus::Skipped));
     assert_eq!(pane.current_index(), Some(1));
@@ -407,4 +408,26 @@ fn the_dangerous_question_follows_the_stored_level_the_paste_guard_and_a_literal
     pane.step_delivered(pane.run_id(), 0, Delivered::Sent);
     let literal = pane.ready_step(&library).expect("literal step");
     assert!(literal.is_dangerous(), "a literal step always asks");
+}
+
+#[test]
+fn a_skip_just_after_another_is_a_double_press_and_changes_nothing() {
+    let folder = tempfile::tempdir().expect("folder");
+    let (mut pane, ids) = pane_with(
+        folder.path(),
+        vec![runbook(
+            "Two",
+            &[],
+            vec![
+                Step::literal("uptime", TemplatePlatform::Linux),
+                Step::literal("df -h", TemplatePlatform::Linux),
+            ],
+        )],
+    );
+    update(&mut pane, RunbookMessage::Run(ids[0].clone()));
+    update(&mut pane, RunbookMessage::RunSkip);
+    update(&mut pane, RunbookMessage::RunSkip);
+    assert_eq!(pane.status_of(0), Some(StepStatus::Skipped));
+    assert_eq!(pane.status_of(1), Some(StepStatus::Pending));
+    assert_eq!(pane.current_index(), Some(1));
 }

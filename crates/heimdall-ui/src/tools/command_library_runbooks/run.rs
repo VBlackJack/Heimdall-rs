@@ -140,6 +140,12 @@ impl Run {
         self.values.iter().cloned().collect()
     }
 
+    /// Whether a step was delivered or skipped a moment ago.
+    fn is_guarded(&self) -> bool {
+        self.delivered_at
+            .is_some_and(|at| at.elapsed() < self.guard)
+    }
+
     fn is_finished(&self) -> bool {
         self.begun && self.current >= self.runbook.steps.len()
     }
@@ -241,13 +247,12 @@ impl RunbooksPane {
         });
     }
 
-    /// Pins the run to `tab` and to the system of the session as they are now, once its steps
-    /// are shown. A run does not follow the terminal chosen afterwards, nor a session that
+    /// Pins the run to `tab` and to the system of the session as they are now, the moment it
+    /// starts, which is when its variables are filled from the same session. A run does not follow the terminal chosen afterwards, nor a session that
     /// changes: it would send the next step somewhere the user did not look.
     pub fn pin(&mut self, tab: Option<TabId>) {
         let remote = self.session.remote;
         if let Some(run) = self.run.as_mut()
-            && run.begun
             && !run.bound
         {
             run.bound = true;
@@ -256,21 +261,25 @@ impl RunbooksPane {
         }
     }
 
-    /// The user picked a terminal: the run goes there from now on.
+    /// The user picked a terminal: the run goes there from now on. After a session change it
+    /// also takes the system of the session now open, for the templates of the steps to come;
+    /// the variables keep the values the first session gave them.
     pub fn repin(&mut self, tab: TabId) {
+        let remote = self.session.remote;
         if let Some(run) = self.run.as_mut()
             && run.bound
         {
             run.pinned = Some(tab);
+            if run.stale {
+                run.remote = remote;
+            }
             run.stale = false;
         }
     }
 
     /// The session of the library changed: a run in progress waits for a terminal to be picked.
     pub fn session_changed(&mut self) {
-        if let Some(run) = self.run.as_mut()
-            && run.bound
-        {
+        if let Some(run) = self.run.as_mut() {
             run.stale = true;
         }
     }
@@ -296,9 +305,7 @@ impl RunbooksPane {
     /// Whether a step was delivered a moment ago: a press now is a double click.
     #[must_use]
     pub fn is_guarded(&self) -> bool {
-        self.run
-            .as_ref()
-            .is_some_and(|run| run.delivered_at.is_some_and(|at| at.elapsed() < run.guard))
+        self.run.as_ref().is_some_and(Run::is_guarded)
     }
 
     /// How long a press is ignored after a delivery.
@@ -328,9 +335,11 @@ impl RunbooksPane {
             RunbookMessage::RunSkip => {
                 if let Some(run) = self.run.as_mut()
                     && run.begun
+                    && !run.is_guarded()
                     && let Some(status) = run.statuses.get_mut(run.current)
                 {
                     *status = StepStatus::Skipped;
+                    run.delivered_at = Some(Instant::now());
                     run.advance();
                 }
             }

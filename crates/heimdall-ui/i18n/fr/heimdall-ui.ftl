@@ -6215,4 +6215,5 @@ ui-tool-cmdlib-runbooks-run-err-no-template = L'action de cette étape n'a aucun
 ui-tool-cmdlib-runbooks-run-err-unknown = Cette étape utilise des variables que le runbook ne déclare pas : { $names }.
 ui-tool-cmdlib-runbooks-run-err-values = Cette étape ne peut pas être envoyée : { $reason }
 ui-tool-cmdlib-runbooks-run-target-gone = Le terminal pour lequel cette exécution a démarré n'est plus ouvert. Choisissez un terminal ci-dessus pour continuer, ou arrêtez l'exécution.
-ui-tool-cmdlib-runbooks-run-session-changed = La session de la bibliothèque a changé pendant cette exécution. Choisissez un terminal ci-dessus pour continuer, ou arrêtez l'exécution.
+ui-tool-cmdlib-runbooks-run-session-changed = La session de la bibliothèque a changé pendant cette exécution. Les valeurs demandées au début gardent l'hôte et l'utilisateur de la première session. Choisissez un terminal ci-dessus pour continuer, ou arrêtez l'exécution.
+ui-tool-cmdlib-runbooks-run-pick-terminal = Aucun terminal n'était ouvert au début de cette exécution. Choisissez un terminal ci-dessus pour continuer, ou arrêtez l'exécution.

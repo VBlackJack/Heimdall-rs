@@ -1133,6 +1133,19 @@ impl CommandLibraryPane {
         }
     }
 
+    /// What to tell about where the run's steps go, when they cannot go anywhere.
+    fn run_warning(&self) -> Option<String> {
+        match self.run_target() {
+            RunTarget::Gone => Some(fl!("ui-tool-cmdlib-runbooks-run-target-gone")),
+            RunTarget::Changed => Some(fl!("ui-tool-cmdlib-runbooks-run-session-changed")),
+            // Terminals are open but none was there when the run began: it has to be told.
+            RunTarget::NoTerminal if !self.targets.is_empty() => {
+                Some(fl!("ui-tool-cmdlib-runbooks-run-pick-terminal"))
+            }
+            RunTarget::Ready(_) | RunTarget::NoTerminal => None,
+        }
+    }
+
     /// Where the steps of the run go: its pinned terminal while it is offered.
     fn run_target(&self) -> RunTarget {
         if self.runbooks.is_stale() {
@@ -1521,11 +1534,7 @@ impl CommandLibraryPane {
             }
             page = page.push(self.target_row(tab));
             let run_target = self.run_target();
-            let warning = match run_target {
-                RunTarget::Gone => Some(fl!("ui-tool-cmdlib-runbooks-run-target-gone")),
-                RunTarget::Changed => Some(fl!("ui-tool-cmdlib-runbooks-run-session-changed")),
-                RunTarget::Ready(_) | RunTarget::NoTerminal => None,
-            };
+            let warning = self.run_warning();
             let can_send = if self.runbooks.is_bound() {
                 matches!(run_target, RunTarget::Ready(_))
             } else {
@@ -4541,5 +4550,65 @@ mod tests {
         assert!(pane.awaited.is_empty());
         assert!(pane.activity.history().is_empty());
         assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Pending));
+    }
+
+    #[test]
+    fn a_session_opened_between_the_start_and_the_variables_being_confirmed_blocks_the_run() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut runbook = Runbook::new("Trace");
+        runbook
+            .variables
+            .insert("target".to_owned(), "web.lab".to_owned());
+        runbook.steps = vec![Step::action(
+            TRACE,
+            "Trace",
+            BTreeMap::from([("target".to_owned(), "{{target}}".to_owned())]),
+        )];
+        let mut pane = run_pane(folder.path(), vec![runbook]);
+        let [first, second, _] = tab_ids();
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        open_for(&mut pane, "first.lab", None, RemoteOs::Linux);
+        let id = pane.runbooks.first_id().expect("a runbook");
+        run_message(&mut pane, RunbookMessage::Run(id));
+        pane.runbooks.set_guard(std::time::Duration::ZERO);
+
+        // A new session while the values are being confirmed.
+        open_for(&mut pane, "second.lab", None, RemoteOs::Windows);
+        run_message(&mut pane, RunbookMessage::RunBegin);
+        assert_eq!(pane.run_target(), RunTarget::Changed);
+        assert!(pane.run_warning().is_some());
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+
+        // Picking a terminal takes the system of the session now open, not the first one's.
+        pane.update(CommandLibraryMessage::Target(second));
+        let Outcome::Send { command, .. } = run_message(&mut pane, RunbookMessage::RunSend) else {
+            panic!("asked");
+        };
+        assert_eq!(
+            command, "tracert first.lab",
+            "first session's value, new system"
+        );
+    }
+
+    #[test]
+    fn terminals_opened_after_a_run_began_without_one_are_to_be_picked() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        start_run(&mut pane);
+        assert_eq!(
+            pane.run_warning(),
+            None,
+            "no terminal at all: the usual hint"
+        );
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        assert_eq!(pane.run_target(), RunTarget::NoTerminal);
+        assert!(pane.run_warning().is_some());
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
     }
 }

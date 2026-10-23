@@ -6159,4 +6159,5 @@ ui-tool-cmdlib-runbooks-run-err-no-template = The action of this step has no com
 ui-tool-cmdlib-runbooks-run-err-unknown = This step uses variables the runbook does not declare: { $names }.
 ui-tool-cmdlib-runbooks-run-err-values = This step cannot be sent: { $reason }
 ui-tool-cmdlib-runbooks-run-target-gone = The terminal this run was started for is no longer open. Pick a terminal above to go on, or stop the run.
-ui-tool-cmdlib-runbooks-run-session-changed = The session of the library changed during this run. Pick a terminal above to go on, or stop the run.
+ui-tool-cmdlib-runbooks-run-session-changed = The session of the library changed during this run. The values asked at the start still hold the first session's host and user. Pick a terminal above to go on, or stop the run.
+ui-tool-cmdlib-runbooks-run-pick-terminal = No terminal was open when this run started. Pick a terminal above to go on, or stop the run.
