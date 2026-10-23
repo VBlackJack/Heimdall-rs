@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 use heimdall_app::TabId;
 use heimdall_core::tools::command_library::{self, CatalogueEntry};
+use heimdall_core::tools::library_transfer::{self, FileRunbooks, RunbookImport, RunbookRefusal};
 use heimdall_core::tools::runbooks::{
     self, FailureMode, KeepError, MAX_STEPS, MAX_TAG_LENGTH, MAX_TAGS, MAX_VARIABLES,
     RUNBOOKS_FILE, Runbook, RunbookIssue, RunbookStore, Step, StepIssue,
@@ -487,8 +488,41 @@ impl RunbooksPane {
     }
 
     /// Whether the runbooks can be changed: their file was read, and has a place.
-    fn can_edit(&self) -> bool {
+    pub(in crate::tools) fn can_edit(&self) -> bool {
         self.failure != Some(Failure::Unreadable) && self.file.is_some()
+    }
+
+    /// The runbooks an export writes: those on disk now (another pane may have written since
+    /// this one read), else those this pane holds.
+    pub(in crate::tools) fn exportable(&self, library: &UserLibrary) -> Vec<Runbook> {
+        let find = lookup(library);
+        self.file
+            .as_ref()
+            .and_then(|path| RunbookStore::load(path, &find).ok())
+            .map_or_else(
+                || self.store.runbooks().to_vec(),
+                |store| store.runbooks().to_vec(),
+            )
+    }
+
+    /// Merges the runbooks `values` of an imported file into the file, as the C# merge, on
+    /// what is on disk now; `library` already holds the actions of the same file. `None`,
+    /// with nothing changed, when they cannot be read or written.
+    pub(in crate::tools) fn import(
+        &mut self,
+        values: &FileRunbooks,
+        library: &UserLibrary,
+    ) -> Option<RunbookImport> {
+        if !self.can_edit() {
+            return None;
+        }
+        let before = self.refresh(library)?;
+        let find = lookup(library);
+        let report = library_transfer::import_runbooks(&mut self.store, values, &find);
+        if report.imported + report.updated > 0 && !self.persist(before) {
+            return None;
+        }
+        Some(report)
     }
 
     /// Applies `message`; `library` is where the actions of the user are found.
@@ -1014,6 +1048,15 @@ fn problem_text(problem: &Problem) -> String {
                 fl!("ui-tool-cmdlib-runbooks-err-text")
             }
         },
+    }
+}
+
+/// Why an imported runbook was left out, in the window's language.
+pub(in crate::tools) fn refusal_text(why: &RunbookRefusal) -> String {
+    match why {
+        RunbookRefusal::Issue(issue) => problem_text(&Problem::Issue(issue.clone())),
+        RunbookRefusal::Full => problem_text(&Problem::Full),
+        RunbookRefusal::DuplicateInFile => fl!("ui-tool-cmdlib-runbooks-issue-duplicate"),
     }
 }
 

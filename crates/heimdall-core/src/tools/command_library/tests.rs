@@ -355,6 +355,11 @@ fn an_import_is_held_to_the_schema_and_the_generator() {
         validate_import(&imported("id\nwhoami", None)),
         Some(CommandIssue::PatternMultiline(TemplatePlatform::Linux))
     );
+    // A direction override has its own reason: it is no line break.
+    assert_eq!(
+        validate_import(&imported("ls \u{202E}-la", None)),
+        Some(CommandIssue::PatternHidden(TemplatePlatform::Linux))
+    );
     assert_eq!(
         validate_import(&imported(&"a".repeat(MAX_PATTERN_LENGTH + 1), None)),
         Some(CommandIssue::PatternTooLong(TemplatePlatform::Linux))

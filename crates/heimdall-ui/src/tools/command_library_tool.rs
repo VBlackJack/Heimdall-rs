@@ -32,6 +32,7 @@ use heimdall_core::tools::command_activity::{
 use heimdall_core::tools::command_library::{
     self, CatalogueEntry, CommandIssue, LEGACY_SNIPPET_IDS,
 };
+use heimdall_core::tools::library_transfer::{self, RunbookImport};
 use heimdall_core::tools::user_commands::{
     self, Criticality, Draft, DraftError, GenerateError, ImportReport, LIBRARY_FILE, LibraryError,
     TemplatePlatform, UserCommand, UserLibrary, UserParameter, UserPlatform, ValueError,
@@ -185,12 +186,25 @@ pub enum CommandLibraryMessage {
     Import,
     /// The file picked was read; `None` when none was picked.
     Imported(Option<Result<String, TransferError>>),
-    /// Ask where to export the library.
+    /// Open or close the question of what an export holds.
     Export,
+    /// Ask where to write an export of `.0`.
+    ExportScope(ExportScope),
     /// Something about the runbooks.
     Runbooks(RunbookMessage),
     /// The library was written to the file picked; `None` when none was picked.
     Exported(Option<Result<(), TransferError>>),
+}
+
+/// What an export writes, as the C# `CommandLibraryExportScope`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportScope {
+    /// What the user created or imported, and their runbooks: the default.
+    Mine,
+    /// The commands the list shows now, filters and search applied; no runbook.
+    CurrentFilter,
+    /// The whole catalogue as well as the user's commands and runbooks.
+    Everything,
 }
 
 /// Why a file of commands could not be imported or exported.
@@ -202,6 +216,16 @@ pub enum TransferError {
     Format,
     /// More actions than an import takes.
     TooManyActions,
+    /// More runbooks than an import takes.
+    TooManyRunbooks,
+    /// Written by another major version of the format.
+    Version(String),
+    /// The file's runbooks cannot be kept: nothing was imported.
+    RunbooksUnsaved,
+    /// As [`TransferError::RunbooksUnsaved`], and the library could not be put back as it was.
+    RunbooksUnsavedLibraryKept,
+    /// Nothing to write for this choice.
+    NothingToExport,
     /// What the system said.
     Failed(String),
 }
@@ -282,8 +306,8 @@ impl Outcome {
 /// What the pane tells under its buttons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Notice {
-    /// A file imported.
-    Imported(ImportReport),
+    /// A file imported: its actions, and its runbooks when it carried some.
+    Imported(ImportReport, Option<RunbookImport>),
     /// The library exported.
     Exported,
     /// A file that could not be used.
@@ -422,6 +446,8 @@ pub struct CommandLibraryPane {
     history_this_host_only: bool,
     /// The runbooks: the panel and the file they are kept in.
     runbooks: RunbooksPane,
+    /// Whether the question of what an export holds is open.
+    export_choice: bool,
     /// The category of the command last created in this pane, which a captured command starts
     /// in, as the C# `LastCreatedCategory`.
     last_category: Option<String>,
@@ -463,7 +489,9 @@ impl CommandLibraryPane {
                     LibraryError::Io(_)
                     | LibraryError::TooLarge
                     | LibraryError::Format
-                    | LibraryError::TooManyActions,
+                    | LibraryError::TooManyActions
+                    | LibraryError::TooManyRunbooks
+                    | LibraryError::Version(_),
                 ) => {
                     pane.failure = Some(Failure::Unreadable);
                 }
@@ -560,9 +588,8 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::Runbooks(message) => return self.runbooks_message(message),
             CommandLibraryMessage::Import if self.can_edit() => return Outcome::Import,
-            CommandLibraryMessage::Export if !self.library.commands().is_empty() => {
-                return Outcome::Export(self.library.export());
-            }
+            CommandLibraryMessage::Export => self.export_choice = !self.export_choice,
+            CommandLibraryMessage::ExportScope(scope) => return self.export(scope),
             CommandLibraryMessage::Replay(index) => return self.replay(index),
             CommandLibraryMessage::CopyHistory(index) => {
                 return match self.activity.history().get(index) {
@@ -633,7 +660,10 @@ impl CommandLibraryPane {
         }
     }
 
-    /// The file read is added to the library, as the C# import, and said what it did.
+    /// The file read is added to the library, as the C# import, and said what it did. The
+    /// file is held to its schema and its counts first; its actions are then kept, and its
+    /// runbooks against the library as those actions left it, so a runbook may use an action
+    /// of the same file.
     fn imported(&mut self, result: Result<String, TransferError>) {
         let text = match result {
             Ok(text) => text,
@@ -645,6 +675,18 @@ impl CommandLibraryPane {
         if !self.can_edit() {
             return;
         }
+        let runbooks = match library_transfer::precheck(&text) {
+            Ok(runbooks) => runbooks,
+            Err(error) => {
+                self.notice = Some(Notice::TransferFailed(transfer_error(error)));
+                return;
+            }
+        };
+        // Refused before anything is kept, so a file is never half imported for this reason.
+        if !runbooks.is_empty() && !self.runbooks.can_edit() {
+            self.notice = Some(Notice::TransferFailed(TransferError::RunbooksUnsaved));
+            return;
+        }
         let before = self.library.clone();
         match self.library.import(&text) {
             Ok(report) => {
@@ -653,23 +695,71 @@ impl CommandLibraryPane {
                 self.library.raise_dangerous(&report.touched, |pattern| {
                     heimdall_app::dangerous_command(pattern).is_some()
                 });
-                if self.keep(&before) {
-                    self.notice = Some(Notice::Imported(report));
+                if !self.keep(&before) {
+                    return;
                 }
+                let kept = if runbooks.is_empty() {
+                    Some(None)
+                } else {
+                    self.runbooks.import(&runbooks, &self.library).map(Some)
+                };
+                self.notice = Some(if let Some(runbooks) = kept {
+                    Notice::Imported(report, runbooks)
+                } else {
+                    // The runbooks could not be kept: the actions go back too, so a file is
+                    // never half imported.
+                    self.library = before.clone();
+                    Notice::TransferFailed(if self.keep(&before) {
+                        TransferError::RunbooksUnsaved
+                    } else {
+                        TransferError::RunbooksUnsavedLibraryKept
+                    })
+                });
             }
-            Err(LibraryError::TooLarge) => {
-                self.notice = Some(Notice::TransferFailed(TransferError::TooLarge));
+            Err(error) => self.notice = Some(Notice::TransferFailed(transfer_error(error))),
+        }
+    }
+
+    /// What an export of `scope` writes, asked to be saved where the user says; says so when
+    /// there is nothing to write.
+    fn export(&mut self, scope: ExportScope) -> Outcome {
+        self.export_choice = false;
+        let user: Vec<&UserCommand> = match scope {
+            ExportScope::CurrentFilter => self.shown_user(),
+            ExportScope::Mine | ExportScope::Everything => self.library.commands().iter().collect(),
+        };
+        // The shipped actions go out whole, their translations too, as the C# `Action`.
+        let shipped: Vec<_> = match scope {
+            ExportScope::CurrentFilter => self
+                .shown()
+                .into_iter()
+                .map(library_transfer::shipped_value)
+                .collect(),
+            ExportScope::Everything => command_library::shipped()
+                .entries()
+                .iter()
+                .map(library_transfer::shipped_value)
+                .collect(),
+            ExportScope::Mine => Vec::new(),
+        };
+        let runbooks = match scope {
+            ExportScope::CurrentFilter => Vec::new(),
+            ExportScope::Mine | ExportScope::Everything => self.runbooks.exportable(&self.library),
+        };
+        let actions: Vec<_> = shipped
+            .into_iter()
+            .chain(user.into_iter().map(library_transfer::action_value))
+            .collect();
+        let text = (!actions.is_empty() || !runbooks.is_empty())
+            .then(|| library_transfer::export_text(&actions, &runbooks));
+        match text {
+            Some(text) => {
+                self.notice = None;
+                Outcome::Export(text)
             }
-            Err(LibraryError::Io(error)) => {
-                self.notice = Some(Notice::TransferFailed(TransferError::Failed(
-                    error.to_string(),
-                )));
-            }
-            Err(LibraryError::Format) => {
-                self.notice = Some(Notice::TransferFailed(TransferError::Format));
-            }
-            Err(LibraryError::TooManyActions) => {
-                self.notice = Some(Notice::TransferFailed(TransferError::TooManyActions));
+            None => {
+                self.notice = Some(Notice::TransferFailed(TransferError::NothingToExport));
+                Outcome::None
             }
         }
     }
@@ -1505,6 +1595,14 @@ impl CommandLibraryPane {
                 (self.can_edit() && self.editor.is_none())
                     .then(|| send(CommandLibraryMessage::New)),
             );
+        // The button is another kind of widget while the editor is open, so its pressed or
+        // hovered state is dropped with the editor instead of coming back highlighted when
+        // the form closes.
+        let new: Element<'a, Message> = if self.editor.is_some() {
+            container(new).into()
+        } else {
+            new.into()
+        };
         let plain = |label: String, on: bool, message: Option<CommandLibraryMessage>| {
             button(text(label).size(font_size::BODY))
                 .padding(super::COPY_PADDING)
@@ -1524,8 +1622,8 @@ impl CommandLibraryPane {
             ),
             plain(
                 fl!("ui-tool-cmdlib-export"),
-                false,
-                (!self.library.commands().is_empty()).then_some(CommandLibraryMessage::Export)
+                self.export_choice,
+                Some(CommandLibraryMessage::Export)
             ),
             plain(
                 fl!("ui-tool-cmdlib-favorites-only"),
@@ -1548,6 +1646,9 @@ impl CommandLibraryPane {
         // commands left room for a few lines of it.
         if self.runbooks.is_open() {
             let mut page = column![tools].spacing(spacing::SM);
+            if self.export_choice {
+                page = page.push(export_choice_view(tab));
+            }
             if let Some(notice) = &self.notice {
                 page = page.push(notice_view(notice));
             }
@@ -1579,6 +1680,9 @@ impl CommandLibraryPane {
                 .style(text::secondary),
         ]
         .spacing(spacing::SM);
+        if self.export_choice {
+            page = page.push(export_choice_view(tab));
+        }
         if let Some(host) = self.session_host() {
             page = page.push(
                 text(fl!("ui-tool-cmdlib-session", host = host))
@@ -2244,29 +2348,56 @@ fn now_unix() -> i64 {
         })
 }
 
+/// What an import did: the counts of the actions and of the runbooks, the first runbook
+/// replaced, then the first action left out and the first runbook left out, each with its
+/// reason.
+fn import_text(report: &ImportReport, runbooks: Option<&RunbookImport>) -> String {
+    let mut done = fl!(
+        "ui-tool-cmdlib-import-done",
+        imported = report.imported,
+        updated = report.updated,
+        skipped = report.skipped
+    );
+    if let Some(runbooks) = runbooks {
+        done = fl!(
+            "ui-tool-cmdlib-import-runbooks",
+            done = done,
+            imported = runbooks.imported,
+            updated = runbooks.updated,
+            skipped = runbooks.skipped
+        );
+    }
+    if let Some((old, new)) = runbooks.and_then(|each| each.first_updated.as_ref()) {
+        done = fl!(
+            "ui-tool-cmdlib-import-replaced",
+            done = done,
+            old = old.as_str(),
+            name = new.as_str()
+        );
+    }
+    if let Some((title, issue)) = &report.first_skipped {
+        done = fl!(
+            "ui-tool-cmdlib-import-skipped",
+            done = done,
+            title = title.as_str(),
+            reason = issue_text(issue)
+        );
+    }
+    if let Some((name, why)) = runbooks.and_then(|each| each.first_skipped.as_ref()) {
+        done = fl!(
+            "ui-tool-cmdlib-import-skipped-runbook",
+            done = done,
+            title = name.as_str(),
+            reason = refusal_text(why)
+        );
+    }
+    done
+}
+
 /// What the pane tells, in the window's language.
 fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
     let (message, failed) = match notice {
-        Notice::Imported(report) => {
-            let done = fl!(
-                "ui-tool-cmdlib-import-done",
-                imported = report.imported,
-                updated = report.updated,
-                skipped = report.skipped
-            );
-            match &report.first_skipped {
-                Some((title, issue)) => (
-                    fl!(
-                        "ui-tool-cmdlib-import-skipped",
-                        done = done,
-                        title = title.as_str(),
-                        reason = issue_text(issue)
-                    ),
-                    false,
-                ),
-                None => (done, false),
-            }
-        }
+        Notice::Imported(report, runbooks) => (import_text(report, runbooks.as_ref()), false),
         Notice::Exported => (fl!("ui-tool-cmdlib-export-done"), false),
         Notice::TransferFailed(error) => (
             match error {
@@ -2276,6 +2407,19 @@ fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
                     "ui-tool-cmdlib-transfer-too-many",
                     max = user_commands::MAX_IMPORT_ACTIONS
                 ),
+                TransferError::TooManyRunbooks => fl!(
+                    "ui-tool-cmdlib-transfer-too-many-runbooks",
+                    max = heimdall_core::tools::runbooks::MAX_RUNBOOKS
+                ),
+                TransferError::Version(version) => fl!(
+                    "ui-tool-cmdlib-transfer-version",
+                    version = version.as_str()
+                ),
+                TransferError::RunbooksUnsaved => fl!("ui-tool-cmdlib-transfer-runbooks-unsaved"),
+                TransferError::RunbooksUnsavedLibraryKept => {
+                    fl!("ui-tool-cmdlib-transfer-runbooks-unsaved-kept")
+                }
+                TransferError::NothingToExport => fl!("ui-tool-cmdlib-export-nothing"),
                 TransferError::Failed(detail) => {
                     fl!("ui-tool-cmdlib-transfer-failed", detail = detail.as_str())
                 }
@@ -2627,10 +2771,70 @@ fn draft_error(problem: DraftError) -> String {
             max = user_commands::MAX_PATTERN_LENGTH
         ),
         DraftError::PatternMultiline => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        DraftError::PatternHidden => fl!("ui-tool-cmdlib-error-pattern-hidden"),
         DraftError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
         DraftError::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
         DraftError::Gone => fl!("ui-tool-cmdlib-error-gone"),
     }
+}
+
+/// The question of what an export holds, with the three answers and a word about secrets.
+fn export_choice_view<'a>(tab: TabId) -> Element<'a, Message> {
+    let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+    let choice = |label: String, scope: ExportScope| {
+        button(text(label).size(font_size::BODY))
+            .padding(super::COPY_PADDING)
+            .style(if scope == ExportScope::Mine {
+                styles::primary
+            } else {
+                styles::secondary
+            })
+            .on_press(send(CommandLibraryMessage::ExportScope(scope)))
+    };
+    column![
+        text(fl!("ui-tool-cmdlib-export-scope-title")).size(font_size::BODY),
+        row![
+            choice(fl!("ui-tool-cmdlib-export-scope-mine"), ExportScope::Mine),
+            choice(
+                fl!("ui-tool-cmdlib-export-scope-filtered"),
+                ExportScope::CurrentFilter
+            ),
+            choice(
+                fl!("ui-tool-cmdlib-export-scope-all"),
+                ExportScope::Everything
+            ),
+            button(text(fl!("ui-tool-cmdlib-cancel")).size(font_size::BODY))
+                .padding(super::COPY_PADDING)
+                .style(styles::secondary)
+                .on_press(send(CommandLibraryMessage::Export)),
+        ]
+        .spacing(spacing::SM),
+        text(fl!("ui-tool-cmdlib-export-scope-hint"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+        text(fl!("ui-tool-cmdlib-export-secrets-note"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+    ]
+    .spacing(spacing::XS)
+    .into()
+}
+
+/// What a refused file is told as.
+fn transfer_error(error: LibraryError) -> TransferError {
+    match error {
+        LibraryError::TooLarge => TransferError::TooLarge,
+        LibraryError::Io(error) => TransferError::Failed(error.to_string()),
+        LibraryError::Format => TransferError::Format,
+        LibraryError::TooManyActions => TransferError::TooManyActions,
+        LibraryError::TooManyRunbooks => TransferError::TooManyRunbooks,
+        LibraryError::Version(version) => TransferError::Version(version),
+    }
+}
+
+/// Why an imported runbook was left out, in the window's language.
+fn refusal_text(why: &library_transfer::RunbookRefusal) -> String {
+    super::command_library_runbooks::refusal_text(why)
 }
 
 /// Why an imported command was left out, in the window's language.
@@ -2648,6 +2852,7 @@ fn issue_text(issue: &CommandIssue) -> String {
             max = user_commands::MAX_PATTERN_LENGTH
         ),
         CommandIssue::PatternMultiline(_) => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        CommandIssue::PatternHidden(_) => fl!("ui-tool-cmdlib-error-pattern-hidden"),
         CommandIssue::TooManyParameters(_) => fl!("ui-tool-cmdlib-error-too-many-parameters"),
         CommandIssue::UnnamedParameter(_) => fl!("ui-tool-cmdlib-issue-parameter-unnamed"),
         CommandIssue::DuplicateParameter(_, name) => {
@@ -2663,6 +2868,7 @@ fn issue_text(issue: &CommandIssue) -> String {
             fl!("ui-tool-cmdlib-issue-choice-empty", name = name.as_str())
         }
         CommandIssue::RefusedDefault(_) => fl!("ui-tool-cmdlib-issue-default-refused"),
+        CommandIssue::InCatalogue => fl!("ui-tool-cmdlib-issue-in-catalogue"),
     }
 }
 
@@ -3219,9 +3425,14 @@ mod tests {
         let source = tempfile::tempdir().expect("folder");
         let mut origin = pane(source.path());
         make_ping(&mut origin);
-        let Outcome::Export(exported) = origin.update(CommandLibraryMessage::Export) else {
+        assert_eq!(origin.update(CommandLibraryMessage::Export), Outcome::None);
+        assert!(origin.export_choice, "the question is asked first");
+        let Outcome::Export(exported) =
+            origin.update(CommandLibraryMessage::ExportScope(ExportScope::Mine))
+        else {
             panic!("export asked");
         };
+        assert!(!origin.export_choice, "answered");
         assert!(exported.contains("schemaVersion"), "the C# envelope");
 
         let folder = tempfile::tempdir().expect("folder");
@@ -3231,7 +3442,7 @@ mod tests {
         assert_eq!(pane.library.commands().len(), 1);
         assert!(matches!(
             &pane.notice,
-            Some(Notice::Imported(report))
+            Some(Notice::Imported(report, None))
                 if (report.imported, report.updated, report.skipped) == (1, 0, 0)
         ));
         let again = self::pane(folder.path());
@@ -3242,7 +3453,7 @@ mod tests {
         assert_eq!(pane.library.commands().len(), 1);
         assert!(matches!(
             pane.notice,
-            Some(Notice::Imported(ImportReport { updated: 1, .. }))
+            Some(Notice::Imported(ImportReport { updated: 1, .. }, None))
         ));
 
         // Something that is not an export changes nothing and is said.
@@ -3269,6 +3480,215 @@ mod tests {
         let folder = tempfile::tempdir().expect("folder");
         let mut kept = self::pane(folder.path());
         assert_eq!(kept.update(CommandLibraryMessage::Export), Outcome::None);
+        assert_eq!(
+            kept.update(CommandLibraryMessage::ExportScope(ExportScope::Mine)),
+            Outcome::None
+        );
+        assert_eq!(
+            kept.notice,
+            Some(Notice::TransferFailed(TransferError::NothingToExport))
+        );
+    }
+
+    /// The `totalActions` and the runbooks of an export.
+    fn exported_counts(text: &str) -> (usize, usize) {
+        let total = text
+            .split("\"totalActions\":")
+            .nth(1)
+            .map(|rest| {
+                rest.trim_start()
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+            })
+            .and_then(|count| count.parse().ok())
+            .expect("a count");
+        (total, text.matches("\"executionMode\"").count())
+    }
+
+    #[test]
+    fn export_asks_what_to_include_and_a_file_with_runbooks_round_trips() {
+        let source = tempfile::tempdir().expect("folder");
+        let mut origin = run_pane(source.path(), vec![three_step_runbook()]);
+        origin.update(CommandLibraryMessage::Imported(Some(Ok(
+            TWO_ACTIONS.to_owned()
+        ))));
+        let export = |pane: &mut CommandLibraryPane, scope| {
+            pane.update(CommandLibraryMessage::Export);
+            match pane.update(CommandLibraryMessage::ExportScope(scope)) {
+                Outcome::Export(text) => text,
+                other => panic!("an export, not {other:?}"),
+            }
+        };
+
+        // My actions: what the user made or imported, and the runbooks.
+        let mine = export(&mut origin, ExportScope::Mine);
+        assert_eq!(exported_counts(&mine), (2, 1));
+        // The current filter: the actions listed, no runbook.
+        origin.update(CommandLibraryMessage::Search("Calm".to_owned()));
+        let filtered = export(&mut origin, ExportScope::CurrentFilter);
+        // The list shows the catalogue commands the search keeps as well as the user one.
+        assert_eq!(
+            exported_counts(&filtered),
+            (origin.shown().len() + origin.shown_user().len(), 0)
+        );
+        assert_eq!(origin.shown_user().len(), 1);
+        origin.update(CommandLibraryMessage::Search(String::new()));
+        // Everything: the shipped catalogue too.
+        let all = export(&mut origin, ExportScope::Everything);
+        let (count, runbooks) = exported_counts(&all);
+        assert_eq!(count, command_library::shipped().entries().len() + 2);
+        assert_eq!(runbooks, 1);
+
+        // Into another installation: the actions and the runbook come, and the summary says so.
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(mine.clone()))));
+        assert_eq!(pane.library.commands().len(), 2);
+        assert_eq!(pane.runbooks.exportable(&pane.library).len(), 1);
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(actions, Some(runbooks)))
+                if actions.imported == 2 && runbooks.imported == 1 && runbooks.skipped == 0
+        ));
+        assert_eq!(
+            self::pane(folder.path())
+                .runbooks
+                .exportable(&pane.library)
+                .len(),
+            1,
+            "kept in the file"
+        );
+        // The same file again replaces the runbook in place instead of copying it.
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(mine))));
+        assert_eq!(pane.runbooks.exportable(&pane.library).len(), 1);
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(_, Some(runbooks))) if runbooks.updated == 1
+        ));
+        // An export of everything does not copy the catalogue back into the user commands.
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(all))));
+        assert_eq!(pane.library.commands().len(), 2);
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(actions, _))
+                if actions.skipped == command_library::shipped().entries().len()
+                    && actions.first_skipped.as_ref().is_some_and(
+                        |(_, why)| *why == CommandIssue::InCatalogue
+                    )
+        ));
+    }
+
+    #[test]
+    fn a_hostile_file_is_refused_or_trimmed_and_nothing_is_run() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        for (file, expected) in [
+            (
+                r#"{"schemaVersion":"2.0","actions":[]}"#.to_owned(),
+                TransferError::Version("2.0".to_owned()),
+            ),
+            (
+                format!(
+                    "{{\"runbooks\":[{}]}}",
+                    vec!["{}"; heimdall_core::tools::runbooks::MAX_RUNBOOKS + 1].join(",")
+                ),
+                TransferError::TooManyRunbooks,
+            ),
+            (r#"{"runbooks":"x"}"#.to_owned(), TransferError::Format),
+        ] {
+            pane.update(CommandLibraryMessage::Imported(Some(Ok(file))));
+            assert_eq!(pane.notice, Some(Notice::TransferFailed(expected)));
+        }
+        assert!(pane.library.commands().is_empty());
+
+        // One good runbook, one with a control character, one with a refused value.
+        let file = r#"{"actions":[{"id":"calm","title":"Calm","category":"mine","platform":1,
+            "linuxCommandTemplate":{"platform":1,"commandPattern":"echo {w}",
+            "parameters":[{"name":"w","label":"W","type":"string"}]}}],
+          "runbooks":[
+            {"name":"Good","steps":[{"command":"uptime","platform":"Both"}]},
+            {"name":"Bell\u0007","steps":[{"command":"uptime"}]},
+            {"name":"Injected","steps":[{"actionId":"calm","parameters":{"w":"a; rm -rf /"}}]}]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        let Some(Notice::Imported(_, Some(runbooks))) = &pane.notice else {
+            panic!("said: {:?}", pane.notice);
+        };
+        assert_eq!((runbooks.imported, runbooks.skipped), (1, 2));
+        assert!(
+            matches!(&runbooks.first_skipped, Some((name, _)) if name == "Bell"),
+            "the first left out is named, without its control character"
+        );
+        let kept = pane.runbooks.exportable(&pane.library);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "Good");
+        // Both reads as Linux.
+        assert_eq!(
+            kept[0].steps,
+            [Step::literal("uptime", TemplatePlatform::Linux)]
+        );
+    }
+
+    #[test]
+    fn the_summary_names_the_first_action_and_the_first_runbook_left_out() {
+        let report = ImportReport {
+            skipped: 1,
+            first_skipped: Some((
+                "Odd".to_owned(),
+                CommandIssue::PatternHidden(TemplatePlatform::Linux),
+            )),
+            ..ImportReport::default()
+        };
+        let runbooks = RunbookImport {
+            skipped: 1,
+            first_skipped: Some((
+                "Bad runbook".to_owned(),
+                library_transfer::RunbookRefusal::DuplicateInFile,
+            )),
+            ..RunbookImport::default()
+        };
+        let text = import_text(&report, Some(&runbooks));
+        assert!(text.contains("Odd"), "{text}");
+        assert!(text.contains("Bad runbook"), "{text}");
+        let only_runbook = import_text(&ImportReport::default(), Some(&runbooks));
+        assert!(only_runbook.contains("Bad runbook"), "{only_runbook}");
+    }
+
+    #[test]
+    fn a_runbook_save_that_fails_takes_the_imported_actions_back() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        // The runbooks file becomes unreadable after the pane opened: the save fails late.
+        std::fs::create_dir(folder.path().join(RUNBOOKS_FILE)).expect("folder");
+        let file = r#"{"actions":[{"id":"calm","title":"Calm","category":"mine","platform":1,
+            "linuxCommandTemplate":{"platform":1,"commandPattern":"echo calm","parameters":[]}}],
+            "runbooks":[{"name":"R","steps":[{"command":"id"}]}]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        assert_eq!(
+            pane.notice,
+            Some(Notice::TransferFailed(TransferError::RunbooksUnsaved))
+        );
+        assert!(pane.library.commands().is_empty(), "nothing half imported");
+        assert!(
+            self::pane(folder.path()).library.commands().is_empty(),
+            "nor in the file"
+        );
+    }
+
+    #[test]
+    fn a_file_with_runbooks_is_refused_whole_when_the_runbooks_file_cannot_be_used() {
+        let folder = tempfile::tempdir().expect("folder");
+        std::fs::write(folder.path().join(RUNBOOKS_FILE), "not json").expect("written");
+        let mut pane = pane(folder.path());
+        let file = r#"{"actions":[{"id":"calm","title":"Calm","category":"mine","platform":1,
+            "linuxCommandTemplate":{"platform":1,"commandPattern":"echo calm","parameters":[]}}],
+            "runbooks":[{"name":"R","steps":[{"command":"id"}]}]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        assert_eq!(
+            pane.notice,
+            Some(Notice::TransferFailed(TransferError::RunbooksUnsaved))
+        );
+        assert!(pane.library.commands().is_empty(), "nothing half imported");
     }
 
     #[test]
@@ -3634,7 +4054,7 @@ mod tests {
             ]
         }"#;
         pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
-        let Some(Notice::Imported(report)) = &pane.notice else {
+        let Some(Notice::Imported(report, _)) = &pane.notice else {
             panic!("said");
         };
         assert_eq!((report.imported, report.updated, report.skipped), (1, 0, 2));

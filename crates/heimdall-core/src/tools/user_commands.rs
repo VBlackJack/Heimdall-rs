@@ -37,6 +37,7 @@ use serde_json::{Map, Value};
 
 use super::command_library;
 use super::date_time::{Instant, round_trip_utc};
+use super::library_transfer;
 use super::private_file::write_private;
 use super::uuid_generator::{self, UuidFormat, UuidVersion};
 
@@ -407,7 +408,7 @@ pub struct UserCommand {
     #[serde(default)]
     pub id: String,
     /// The identity moved between installations.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub public_id: String,
     /// The title.
     #[serde(default)]
@@ -434,10 +435,10 @@ pub struct UserCommand {
     #[serde(default)]
     pub linux_command_template: Option<UserTemplate>,
     /// When it was made, as the C# writes it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     /// When it was last changed.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
     /// Always set for the commands of this library.
     #[serde(default)]
@@ -1331,6 +1332,8 @@ pub enum DraftError {
     PatternTooLong,
     /// A pattern with a line break: it would run more than one command.
     PatternMultiline,
+    /// A pattern with a character that shows nothing.
+    PatternHidden,
     /// A pattern with more than [`MAX_PARAMETERS`] values.
     TooManyParameters,
     /// More than [`MAX_TAGS`] tags.
@@ -1350,6 +1353,10 @@ pub enum LibraryError {
     Format,
     /// It holds more than [`MAX_IMPORT_ACTIONS`] actions.
     TooManyActions,
+    /// It holds more than [`runbooks::MAX_RUNBOOKS`] runbooks.
+    TooManyRunbooks,
+    /// It is written by another major version of the format: left alone.
+    Version(String),
 }
 
 /// What an import did, as the C# `CommandLibraryImportResult`.
@@ -1425,15 +1432,12 @@ impl UserLibrary {
     /// The library as the C# export writes it.
     #[must_use]
     pub fn export(&self) -> String {
-        let mut envelope = Map::new();
-        envelope.insert("schemaVersion".to_owned(), Value::from(SCHEMA_VERSION));
-        envelope.insert("exportDate".to_owned(), Value::from(now_text()));
-        envelope.insert("totalActions".to_owned(), Value::from(self.commands.len()));
-        envelope.insert(
-            "actions".to_owned(),
-            serde_json::to_value(&self.commands).unwrap_or_default(),
-        );
-        serde_json::to_string_pretty(&Value::Object(envelope)).unwrap_or_default()
+        let all: Vec<library_transfer::ExportAction> = self
+            .commands
+            .iter()
+            .map(library_transfer::action_value)
+            .collect();
+        library_transfer::export_text(&all, &[])
     }
 
     /// Adds the commands of `json`, a C# export or a single action, as the C# import does
@@ -1462,10 +1466,20 @@ impl UserLibrary {
                 .map_err(|_| LibraryError::Format)?
         } else if root.get("id").is_some() && root.get("title").is_some() {
             vec![serde_json::from_value(root).map_err(|_| LibraryError::Format)?]
+        } else if matches!(root.get("runbooks"), Some(Value::Array(_))) {
+            // A file of runbooks alone: their import is `library_transfer`'s.
+            Vec::new()
         } else {
             return Err(LibraryError::Format);
         };
-        if untrusted && actions.len() > MAX_IMPORT_ACTIONS {
+        // The shipped actions of an export of everything do not count: it always re-imports.
+        if untrusted
+            && actions
+                .iter()
+                .filter(|action| !in_catalogue(action))
+                .count()
+                > MAX_IMPORT_ACTIONS
+        {
             return Err(LibraryError::TooManyActions);
         }
         let mut report = ImportReport::default();
@@ -1482,6 +1496,12 @@ impl UserLibrary {
                 None
             };
             normalize_quoting(&mut action);
+            // The C# keeps the shipped actions as they are (`existing.IsUserCreated` is false:
+            // skipped), so an export of everything imports without copying the catalogue.
+            let basic = basic.or_else(|| {
+                (untrusted && in_catalogue(&action))
+                    .then_some(command_library::CommandIssue::InCatalogue)
+            });
             let issue = basic.or_else(|| {
                 untrusted
                     .then(|| command_library::validate_import(&action))
@@ -1490,7 +1510,8 @@ impl UserLibrary {
             if let Some(issue) = issue {
                 report.skipped += 1;
                 if report.first_skipped.is_none() {
-                    report.first_skipped = Some((action.title.clone(), issue));
+                    report.first_skipped =
+                        Some((library_transfer::shown_text(&action.title), issue));
                 }
                 continue;
             }
@@ -1657,11 +1678,11 @@ fn template_of(
     }
     // A control character, or one that shows nothing (direction overrides, tags, zero-width):
     // the pattern would not read as what it runs.
-    if pattern
-        .chars()
-        .any(|c| c.is_control() || crate::invisible::is_invisible(c))
-    {
+    if pattern.chars().any(char::is_control) {
         return Err(DraftError::PatternMultiline);
+    }
+    if pattern.chars().any(crate::invisible::is_invisible) {
+        return Err(DraftError::PatternHidden);
     }
     let names = placeholders(pattern);
     if names.len() > MAX_PARAMETERS {
@@ -1721,6 +1742,12 @@ fn normalize_quoting(action: &mut UserCommand) {
     }
 }
 
+/// Whether `action` is one the catalogue ships, by its identity (the shipped files carry no
+/// other).
+fn in_catalogue(action: &UserCommand) -> bool {
+    !action.id.is_empty() && command_library::shipped().get(&action.id).is_some()
+}
+
 /// A new identity, a version 4 UUID as the C# `Guid.NewGuid`; a time-based text when the
 /// system gives no random bytes.
 fn new_identity() -> String {
@@ -1738,7 +1765,7 @@ fn now_seconds() -> i64 {
 }
 
 /// Now in UTC as .NET writes a `DateTime`.
-fn now_text() -> String {
+pub(super) fn now_text() -> String {
     round_trip_utc(Instant::from_unix_seconds(now_seconds()))
 }
 
