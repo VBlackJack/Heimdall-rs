@@ -82,6 +82,12 @@ pub const MAX_PARAMETER_NAME_LENGTH: usize = 100;
 /// The longest identity of a runbook, as a GUID with its hyphens.
 const MAX_PUBLIC_ID_LENGTH: usize = 36;
 
+/// The length of a GUID written without hyphens.
+const GUID_PLAIN_LENGTH: usize = 32;
+
+/// The lengths of the hyphen-separated groups of a GUID.
+const GUID_GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
+
 /// The major version of [`SCHEMA_VERSION`], the one this build reads.
 const SUPPORTED_MAJOR: &str = "1";
 
@@ -254,8 +260,6 @@ pub enum StepIssue {
     CommandMissing,
     /// The literal command is longer than [`MAX_COMMAND_LENGTH`].
     CommandTooLong,
-    /// The literal command names no platform it is written for.
-    PlatformMissing,
     /// The note is longer than [`MAX_DESCRIPTION_LENGTH`].
     DescriptionTooLong,
     /// The generator refuses the values for every template of the action.
@@ -612,14 +616,13 @@ fn step_from_value(value: &Value, number: usize) -> Result<Step, RunbookIssue> {
             description,
         });
     }
+    // A literal step written for both platforms, or for none that is readable, reads as
+    // Linux, as the C# editor shows it (`IsWindows` is false unless the platform is Windows).
     let platform = match text(key::PLATFORM).map(str::trim) {
         Some(name) if name.eq_ignore_ascii_case(PLATFORM_WINDOWS) || name == "0" => {
             TemplatePlatform::Windows
         }
-        Some(name) if name.eq_ignore_ascii_case(PLATFORM_LINUX) || name == "1" => {
-            TemplatePlatform::Linux
-        }
-        _ => return Err(RunbookIssue::Step(number, StepIssue::PlatformMissing)),
+        _ => TemplatePlatform::Linux,
     };
     Ok(Step::Literal {
         command: text(key::COMMAND).unwrap_or_default().trim().to_owned(),
@@ -694,11 +697,19 @@ fn note_of(text: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Whether `id` reads as a GUID: hexadecimal digits and hyphens, no longer than one.
+/// Whether `id` reads as a GUID: 32 hexadecimal digits, or 8-4-4-4-12 with hyphens.
 fn is_identity(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= MAX_PUBLIC_ID_LENGTH
-        && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    let hex = |part: &str| part.chars().all(|c| c.is_ascii_hexdigit());
+    if id.len() == GUID_PLAIN_LENGTH {
+        return hex(id);
+    }
+    let parts: Vec<&str> = id.split('-').collect();
+    id.len() == MAX_PUBLIC_ID_LENGTH
+        && parts.len() == GUID_GROUPS.len()
+        && parts
+            .iter()
+            .zip(GUID_GROUPS)
+            .all(|(part, length)| part.len() == length && hex(part))
 }
 
 /// A new identity, a version 4 UUID as the C# `Guid.NewGuid`.
@@ -842,11 +853,13 @@ fn check_values(
             }
             // A command that is too long once the variables are in is judged at the run.
             Err(GenerateError::TooLong) if !deferred.is_empty() => return Ok(()),
+            Err(GenerateError::TooLong) => {
+                refused.get_or_insert(StepIssue::CommandTooLong);
+            }
             // The pattern of the action is the action's own business.
             Err(
                 GenerateError::EmptyPattern
                 | GenerateError::TooManyParameters
-                | GenerateError::TooLong
                 | GenerateError::Multiline,
             ) => {}
         }
@@ -957,10 +970,15 @@ impl RunbookStore {
             let runbook = Runbook::from_value(value)
                 .and_then(|runbook| runbook.validate(lookup).map(|()| runbook));
             match runbook {
-                Ok(runbook) if store.get(&runbook.public_id).is_none() => {
+                Ok(mut runbook) => {
+                    // Two runbooks of one identity (a copied file): the later one is a runbook
+                    // of its own, not a loss.
+                    if store.get(&runbook.public_id).is_some() {
+                        runbook.public_id = new_identity();
+                    }
                     store.runbooks.push(runbook);
                 }
-                Ok(_) | Err(_) => store.unreadable.push(value.clone()),
+                Err(_) => store.unreadable.push(value.clone()),
             }
         }
         Ok(store)

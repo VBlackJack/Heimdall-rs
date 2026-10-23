@@ -370,3 +370,64 @@ fn an_action_of_the_user_is_found_and_one_that_is_gone_is_said() {
             if fields.iter().any(|field| field.value == "hi")
     ));
 }
+
+#[test]
+fn two_panes_over_one_file_do_not_erase_each_others_runbooks() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut first = pane_in(folder.path());
+    let mut second = pane_in(folder.path());
+    keep_literal(&mut first, "Y", "uptime");
+    // The second pane read the file before Y existed.
+    assert!(second.store.runbooks().is_empty());
+    keep_literal(&mut second, "X", "df");
+    let names = |pane: &RunbooksPane| -> Vec<String> {
+        pane.store
+            .runbooks()
+            .iter()
+            .map(|each| each.name.clone())
+            .collect()
+    };
+    assert_eq!(names(&pane_in(folder.path())).len(), 2);
+
+    // The first pane, still showing only Y, edits it: X survives.
+    let y = first.store.runbooks()[0].public_id.clone();
+    send(&mut first, RunbookMessage::Edit(y.clone()));
+    send(&mut first, RunbookMessage::Name("Y2".to_owned()));
+    send(&mut first, RunbookMessage::Save);
+    let mut on_disk = names(&pane_in(folder.path()));
+    on_disk.sort();
+    assert_eq!(on_disk, ["X", "Y2"]);
+
+    // A duplicate and a delete are made on what is on disk too.
+    let mut third = pane_in(folder.path());
+    keep_literal(&mut third, "Z", "w");
+    send(&mut first, RunbookMessage::Duplicate(y.clone()));
+    assert_eq!(names(&pane_in(folder.path())).len(), 4);
+    send(&mut second, RunbookMessage::ConfirmDelete(y));
+    let mut on_disk = names(&pane_in(folder.path()));
+    on_disk.sort();
+    assert_eq!(on_disk.len(), 3);
+    assert!(on_disk.contains(&"X".to_owned()) && on_disk.contains(&"Z".to_owned()));
+}
+
+#[test]
+fn a_change_is_refused_when_the_file_cannot_be_read_again() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    keep_literal(&mut pane, "R", "uptime");
+    std::fs::write(folder.path().join(RUNBOOKS_FILE), "not json").expect("a file");
+    let id = pane.store.runbooks()[0].public_id.clone();
+    send(&mut pane, RunbookMessage::Edit(id));
+    send(&mut pane, RunbookMessage::Name("Renamed".to_owned()));
+    send(&mut pane, RunbookMessage::Save);
+    assert_eq!(
+        pane.editor
+            .as_ref()
+            .and_then(|editor| editor.problem.clone()),
+        Some(Problem::Unsaved)
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.path().join(RUNBOOKS_FILE)).expect("the file"),
+        "not json"
+    );
+}

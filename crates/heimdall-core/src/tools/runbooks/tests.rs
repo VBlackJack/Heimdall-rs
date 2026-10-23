@@ -272,13 +272,98 @@ fn the_empty_and_the_unnamed_are_refused() {
         no_action.validate(&nothing),
         Err(RunbookIssue::Step(1, StepIssue::ActionMissing))
     );
-    // A literal step names the shell it is written for.
-    let json = r#"{"name": "R", "steps": [{"command": "ls", "platform": "Both"}]}"#;
+}
+
+#[test]
+fn a_literal_step_for_both_platforms_or_an_unreadable_one_reads_as_linux() {
+    for platform in ["Both", "2", "Solaris", ""] {
+        let json =
+            format!(r#"{{"name": "R", "steps": [{{"command": "ls", "platform": "{platform}"}}]}}"#);
+        let value: Value = serde_json::from_str(&json).expect("json");
+        let runbook = Runbook::from_value(&value).expect("a runbook");
+        assert_eq!(
+            runbook.steps,
+            [Step::literal("ls", TemplatePlatform::Linux)],
+            "{platform}"
+        );
+    }
+    let json = r#"{"name": "R", "steps": [{"command": "dir", "platform": "Windows"}]}"#;
     let value: Value = serde_json::from_str(json).expect("json");
     assert_eq!(
-        Runbook::from_value(&value),
-        Err(RunbookIssue::Step(1, StepIssue::PlatformMissing))
+        Runbook::from_value(&value).expect("a runbook").steps,
+        [Step::literal("dir", TemplatePlatform::Windows)]
     );
+}
+
+#[test]
+fn an_identity_that_is_not_a_guid_is_replaced() {
+    let bad = [
+        "abc",
+        "1234-",
+        "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz",
+        "00000000-0000-4000-8000-00000000000",
+        "0000000000004000800000000000000-",
+    ];
+    for id in bad {
+        let json = format!(r#"{{"publicId": "{id}", "name": "R"}}"#);
+        let value: Value = serde_json::from_str(&json).expect("json");
+        let runbook = Runbook::from_value(&value).expect("a runbook");
+        assert_ne!(runbook.public_id, id, "{id}");
+        assert_eq!(runbook.public_id.len(), 36, "{id}");
+    }
+    for id in [
+        "00000000-0000-4000-8000-000000000001",
+        "0000000000004000800000000000000A",
+    ] {
+        let json = format!(r#"{{"publicId": "{id}", "name": "R"}}"#);
+        let value: Value = serde_json::from_str(&json).expect("json");
+        let runbook = Runbook::from_value(&value).expect("a runbook");
+        assert_eq!(runbook.public_id, id.to_ascii_lowercase());
+    }
+}
+
+#[test]
+fn a_generated_command_too_long_is_refused_unless_a_variable_is_still_to_come() {
+    let mut library = UserLibrary::default();
+    let id = library
+        .upsert(&Draft {
+            title: "Echo".to_owned(),
+            category: "System".to_owned(),
+            platform: UserPlatform::Linux,
+            linux_pattern: format!("echo {{a}} {{b}} {{c}} {{d}} {{e}} {}", "x".repeat(300)),
+            ..Draft::default()
+        })
+        .expect("a command");
+    let lookup = |wanted: &str| library.get(wanted);
+    let long = "v".repeat(MAX_PARAMETER_LENGTH);
+    let mut runbook = Runbook::new("R");
+    runbook.steps.push(Step::action(
+        &id,
+        "Echo",
+        values(&[
+            ("a", &long),
+            ("b", &long),
+            ("c", &long),
+            ("d", &long),
+            ("e", &long),
+        ]),
+    ));
+    assert_eq!(
+        runbook.validate(&lookup),
+        Err(RunbookIssue::Step(1, StepIssue::CommandTooLong))
+    );
+    runbook.steps[0] = Step::action(
+        &id,
+        "Echo",
+        values(&[
+            ("a", &long),
+            ("b", &long),
+            ("c", &long),
+            ("d", &long),
+            ("e", "{{later}}"),
+        ]),
+    );
+    assert_eq!(runbook.validate(&lookup), Ok(()));
 }
 
 #[test]
@@ -407,12 +492,15 @@ fn a_hostile_file_keeps_its_bad_runbooks_unread_and_writes_them_back() {
         "n".repeat(MAX_TITLE_LENGTH + 1)
     );
     let store = RunbookStore::parse(&json, &nothing).expect("an envelope");
-    assert_eq!(store.runbooks().len(), 1);
+    // The runbook that repeats an identity is kept under a new one.
+    assert_eq!(store.runbooks().len(), 2);
     assert_eq!(store.runbooks()[0].name, "Good");
-    assert_eq!(store.unreadable_count(), 5);
+    assert_eq!(store.runbooks()[1].name, "Same identity");
+    assert_ne!(store.runbooks()[0].public_id, store.runbooks()[1].public_id);
+    assert_eq!(store.unreadable_count(), 4);
     let written: Value = serde_json::from_str(&store.to_text()).expect("json");
     assert_eq!(written["runbooks"].as_array().map(Vec::len), Some(6));
-    assert_eq!(written["runbooks"][1]["name"], "Hidden");
+    assert_eq!(written["runbooks"][2]["name"], "Hidden");
 }
 
 #[test]

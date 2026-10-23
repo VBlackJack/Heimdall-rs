@@ -25,12 +25,12 @@ use std::path::{Path, PathBuf};
 use heimdall_app::TabId;
 use heimdall_core::tools::command_library::{self, CatalogueEntry};
 use heimdall_core::tools::runbooks::{
-    self, FailureMode, KeepError, MAX_STEPS, MAX_VARIABLES, RUNBOOKS_FILE, Runbook, RunbookIssue,
-    RunbookStore, Step, StepIssue,
+    self, FailureMode, KeepError, MAX_STEPS, MAX_TAG_LENGTH, MAX_TAGS, MAX_VARIABLES,
+    RUNBOOKS_FILE, Runbook, RunbookIssue, RunbookStore, Step, StepIssue,
 };
 use heimdall_core::tools::user_commands::{
-    MAX_COMMAND_LENGTH, MAX_PARAMETER_LENGTH, MAX_TITLE_LENGTH, TemplatePlatform, UserCommand,
-    UserLibrary, UserParameter,
+    MAX_COMMAND_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_PARAMETER_LENGTH, MAX_TITLE_LENGTH,
+    TemplatePlatform, UserCommand, UserLibrary, UserParameter,
 };
 use iced::widget::{Column, Row, button, column, container, row, text, text_input};
 use iced::{Element, Length};
@@ -452,18 +452,19 @@ impl RunbooksPane {
                         name = runbook.name.as_str()
                     )
                 });
-                if let Some(name) = name {
-                    let before = self.store.clone();
-                    if self.store.duplicate(&id, &name).is_some() {
-                        self.persist(before);
-                    }
+                if let Some(name) = name
+                    && let Some(before) = self.refresh(library)
+                    && self.store.duplicate(&id, &name).is_some()
+                {
+                    self.persist(before);
                 }
             }
             RunbookMessage::AskDelete(id) if self.can_edit() => self.deleting = Some(id),
             RunbookMessage::ConfirmDelete(id) if self.can_edit() => {
                 self.deleting = None;
-                let before = self.store.clone();
-                if self.store.delete(&id) {
+                if let Some(before) = self.refresh(library)
+                    && self.store.delete(&id)
+                {
                     self.persist(before);
                 }
             }
@@ -474,6 +475,22 @@ impl RunbooksPane {
                 if let Some(editor) = self.editor.as_mut() {
                     edit(editor, other, library);
                 }
+            }
+        }
+    }
+
+    /// Reads the runbooks again from their file, to change them on what is there now (another
+    /// pane of the library may have written since this one read). The store as it was before,
+    /// to go back to if the write fails; `None`, with the failure said, when the file cannot be
+    /// read now: nothing is then changed.
+    fn refresh(&mut self, library: &UserLibrary) -> Option<RunbookStore> {
+        let path = self.file.clone()?;
+        let find = lookup(library);
+        match RunbookStore::load(&path, &find) {
+            Ok(fresh) => Some(std::mem::replace(&mut self.store, fresh)),
+            Err(_) => {
+                self.failure = Some(Failure::Unsaved);
+                None
             }
         }
     }
@@ -510,7 +527,12 @@ impl RunbooksPane {
                 return;
             }
         };
-        let before = self.store.clone();
+        // Another pane may have changed the file since this one read it: the change is made
+        // on what is on disk now, so it cannot erase theirs.
+        let Some(before) = self.refresh(library) else {
+            self.say(Problem::Unsaved);
+            return;
+        };
         let find = lookup(library);
         let kept = self.store.keep(runbook, &find);
         match kept {
@@ -870,11 +892,19 @@ fn problem_text(problem: &Problem) -> String {
                 fl!("ui-tool-cmdlib-runbooks-err-steps-many", max = MAX_STEPS)
             }
             RunbookIssue::Step(number, step) => step_problem_text(*number, step),
-            RunbookIssue::Shape
-            | RunbookIssue::DescriptionTooLong
-            | RunbookIssue::Hidden
-            | RunbookIssue::TooManyTags
-            | RunbookIssue::TagTooLong => fl!("ui-tool-cmdlib-runbooks-err-text"),
+            RunbookIssue::DescriptionTooLong => fl!(
+                "ui-tool-cmdlib-runbooks-err-description-long",
+                max = MAX_DESCRIPTION_LENGTH
+            ),
+            RunbookIssue::TooManyTags => {
+                fl!("ui-tool-cmdlib-runbooks-err-tags-many", max = MAX_TAGS)
+            }
+            RunbookIssue::TagTooLong => {
+                fl!("ui-tool-cmdlib-runbooks-err-tag-long", max = MAX_TAG_LENGTH)
+            }
+            RunbookIssue::Shape | RunbookIssue::Hidden => {
+                fl!("ui-tool-cmdlib-runbooks-err-text")
+            }
         },
     }
 }
@@ -906,11 +936,14 @@ fn step_problem_text(number: usize, issue: &StepIssue) -> String {
         | StepIssue::ActionTooLong
         | StepIssue::TitleTooLong
         | StepIssue::TooManyParameters
-        | StepIssue::ParameterName(_)
-        | StepIssue::PlatformMissing
-        | StepIssue::DescriptionTooLong => {
+        | StepIssue::ParameterName(_) => {
             fl!("ui-tool-cmdlib-runbooks-err-step-other", number = number)
         }
+        StepIssue::DescriptionTooLong => fl!(
+            "ui-tool-cmdlib-runbooks-err-step-note-long",
+            number = number,
+            max = MAX_DESCRIPTION_LENGTH
+        ),
     }
 }
 
@@ -962,6 +995,11 @@ fn editor_view<'a>(
     );
     form = form.push(
         text(fl!("ui-tool-cmdlib-runbooks-variables-hint"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+    );
+    form = form.push(
+        text(fl!("ui-tool-cmdlib-runbooks-secrets-hint"))
             .size(font_size::CAPTION)
             .style(text::secondary),
     );
