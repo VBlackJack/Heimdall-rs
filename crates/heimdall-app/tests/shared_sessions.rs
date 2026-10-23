@@ -327,11 +327,10 @@ fn a_crafted_folder_cannot_make_the_reader_allocate_without_bound() {
     }
     let dir = tempfile::tempdir().expect("dir");
     let (shared, _) = loaded(dir.path(), &text);
-    // The section whose folder is too long is not taken at all.
-    assert_eq!(
-        shared.sources()[0].status,
-        SourceStatus::Failed(SourceProblem::Empty)
-    );
+    // The section whose folder is too long is not taken at all: the file read, nothing in it
+    // was kept, and nothing earlier is brought back for it.
+    assert_eq!(shared.sources()[0].status, SourceStatus::Loaded);
+    assert_eq!(shared.sources()[0].sessions, 0);
     assert_eq!(shared.sessions().count(), 0);
 
     // A long name is left out on its own, the others are kept and the notice counts it.
@@ -1696,6 +1695,34 @@ fn a_file_that_adds_a_route_to_every_session_leaves_no_direct_session_behind() {
         restarted.load(&sources, &Variables::default());
         assert!(restarted.sessions_of("team").is_empty(), "{keep_file}");
     }
+}
+
+#[test]
+fn a_file_whose_session_lines_are_all_too_long_leaves_no_earlier_session_behind() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    let first = format!(
+        "[Bookmarks]
+{}",
+        line("tel", 98, &[(0, "t.example.com")])
+    );
+    std::fs::write(&file, &first).expect("write");
+    let sources = vec![source("team", &file)];
+    let mut shared = cached(dir.path());
+    shared.load(&sources, &Variables::default());
+    assert_eq!(shared.sessions_of("team").len(), 1);
+    let long = "x".repeat(3000);
+    let dropped = format!(
+        "[Bookmarks]
+{}",
+        line("tel", 98, &[(0, "t.example.com"), (2, &long)])
+    );
+    std::fs::write(&file, &dropped).expect("write");
+    assert!(shared.refresh(&sources, &Variables::default(), later()));
+    assert!(shared.sessions_of("team").is_empty());
+    let mut restarted = cached(dir.path());
+    restarted.load(&sources, &Variables::default());
+    assert!(restarted.sessions_of("team").is_empty());
 }
 
 #[test]

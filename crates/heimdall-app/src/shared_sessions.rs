@@ -523,7 +523,11 @@ fn read_source(
         // A file that read but whose sessions were all refused (a route Heimdall cannot follow
         // was added to each) loads none: falling back to the previous read or the offline copy
         // would reopen those sessions as direct connections around the route the file asks for.
-        Ok(parsed) if !parsed.sessions.is_empty() || parsed.refused > 0 => {
+        // Lines dropped unread (too long, malformed) count the same: they are not the file's
+        // sessions either.
+        Ok(parsed)
+            if !parsed.sessions.is_empty() || parsed.refused > 0 || parsed.skipped_entries > 0 =>
+        {
             if let Some(cache) = cache {
                 keep_copy(cache, source, &path, &parsed);
             }
