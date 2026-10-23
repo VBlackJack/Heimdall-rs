@@ -58,14 +58,14 @@ const FORMAT_VERSION: u32 = 1;
 /// The kept name of a command of the user, after this prefix its identity.
 pub const USER_KEY_PREFIX: &str = "user:";
 
-/// The kept name of a command of the catalog, after this prefix its snippet key.
+/// The kept name of a command of the catalog, after this prefix its identity in the catalogue.
 pub const CATALOG_KEY_PREFIX: &str = "catalog:";
 
 /// One command sent, as the history keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
-    /// The command it came from: `catalog:<snippet key>` or `user:<identity>`.
+    /// The command it came from: `catalog:<identity>` or `user:<identity>`.
     pub command: String,
     /// Its title when it was sent.
     pub title: String,
@@ -99,8 +99,8 @@ pub struct CommandActivity {
 
 /// The kept name of a command of the catalog.
 #[must_use]
-pub fn catalog_key(snippet: &str) -> String {
-    format!("{CATALOG_KEY_PREFIX}{snippet}")
+pub fn catalog_key(id: &str) -> String {
+    format!("{CATALOG_KEY_PREFIX}{id}")
 }
 
 /// The kept name of a command of the user.
@@ -134,6 +134,45 @@ impl CommandActivity {
         }
         self.favorites.push(key.to_owned());
         true
+    }
+
+    /// Renames the commands of the catalog `renames` name, as `(old, new)` pairs of the
+    /// names after [`CATALOG_KEY_PREFIX`], in the favorites and in the history: the command
+    /// library moved from ten commands written in code to the shipped catalogue, and what the
+    /// user starred or sent stays theirs. A favorite that is already there under the new
+    /// name is kept once. Whether anything changed.
+    pub fn rename_catalog_keys(&mut self, renames: &[(&str, &str)]) -> bool {
+        let renamed = |key: &str| -> Option<String> {
+            let name = key.strip_prefix(CATALOG_KEY_PREFIX)?;
+            renames
+                .iter()
+                .find(|(old, _)| *old == name)
+                .map(|(_, new)| catalog_key(new))
+        };
+        let mut changed = false;
+        let mut favorites: Vec<String> = Vec::with_capacity(self.favorites.len());
+        for favorite in &self.favorites {
+            let kept = renamed(favorite).map_or_else(
+                || favorite.clone(),
+                |new| {
+                    changed = true;
+                    new
+                },
+            );
+            if favorites.contains(&kept) {
+                changed = true;
+            } else {
+                favorites.push(kept);
+            }
+        }
+        self.favorites = favorites;
+        for entry in &mut self.history {
+            if let Some(new) = renamed(&entry.command) {
+                entry.command = new;
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// The history, the latest first.
@@ -254,6 +293,49 @@ mod tests {
         activity.prune(now + HISTORY_RETENTION_DAYS * SECONDS_PER_DAY);
         assert_eq!(activity.history().len(), 1);
         assert_eq!(activity.history()[0].at, now);
+    }
+
+    #[test]
+    fn the_catalog_names_are_renamed_in_the_favorites_and_the_history() {
+        let mut activity = CommandActivity::default();
+        activity.toggle_favorite(&catalog_key("mtr-probe"));
+        activity.toggle_favorite("user:1");
+        activity.toggle_favorite(&catalog_key("network-trace-route"));
+        activity.toggle_favorite(&catalog_key("linux-kill-port"));
+        activity.record(entry(5));
+        let renames = [("mtr-probe", "network-trace-route")];
+        assert!(activity.rename_catalog_keys(&renames));
+        assert_eq!(
+            activity.favorites(),
+            [
+                catalog_key("network-trace-route").as_str(),
+                "user:1",
+                catalog_key("linux-kill-port").as_str()
+            ]
+        );
+        assert_eq!(
+            activity.history()[0].command,
+            catalog_key("network-trace-route")
+        );
+        // Done once: nothing more to rename, a user's command of the same name untouched.
+        assert!(!activity.rename_catalog_keys(&renames));
+        activity.toggle_favorite("user:mtr-probe");
+        assert!(!activity.rename_catalog_keys(&renames));
+        assert!(activity.is_favorite("user:mtr-probe"));
+    }
+
+    #[test]
+    fn every_legacy_snippet_a_file_names_leads_to_a_command_of_the_catalogue() {
+        use crate::tools::command_library::{LEGACY_SNIPPET_IDS, shipped};
+        let mut activity = CommandActivity::default();
+        for (old, _) in LEGACY_SNIPPET_IDS {
+            activity.toggle_favorite(&catalog_key(old));
+        }
+        assert!(activity.rename_catalog_keys(&LEGACY_SNIPPET_IDS));
+        for favorite in activity.favorites() {
+            let id = favorite.strip_prefix(CATALOG_KEY_PREFIX).expect("catalog");
+            assert!(shipped().get(id).is_some(), "{id}");
+        }
     }
 
     #[test]

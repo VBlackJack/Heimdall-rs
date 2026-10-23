@@ -1,0 +1,40 @@
+{
+  "id": "test-wsus-connectivity",
+  "title": "Test the connection to the WSUS server",
+  "description": "Check the configuration of and the connectivity to the WSUS server",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "wsus",
+    "connectivity",
+    "diagnostics"
+  ],
+  "windowsCommandTemplateId": "test-wsus-connectivity-cmd",
+  "windowsCommandTemplate": {
+    "id": "test-wsus-connectivity-cmd",
+    "platform": 0,
+    "name": "Test-NetConnection",
+    "commandPattern": "powershell -Command \"$WUServer = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate' -ErrorAction SilentlyContinue).WUServer; if ($WUServer) { Write-Host 'WSUS Server: ' $WUServer; Test-NetConnection -ComputerName ($WUServer -replace 'http://|https://|/' -split ':')[0] -Port 8530 } else { Write-Host 'No WSUS server configured' }\"",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "Get-ItemProperty 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate'",
+      "description": "Show the full WSUS configuration",
+      "platform": 0
+    }
+  ],
+  "notes": "Checks the registry configuration and tests network connectivity. Port 8530 = HTTP, 8531 = HTTPS.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Tester la connexion au serveur WSUS",
+      "description": "Vérifie la configuration et la connectivité au serveur WSUS",
+      "notes": "Vérifie la configuration du registre et teste la connectivité réseau. Port 8530 = HTTP, 8531 = HTTPS.",
+      "examples": {
+        "Get-ItemProperty 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate'": "Affiche la configuration WSUS complète"
+      }
+    }
+  }
+}

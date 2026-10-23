@@ -1,0 +1,163 @@
+{
+  "id": "unified-file-hash",
+  "title": "Compute the hash of a file",
+  "description": "Compute the cryptographic fingerprint (SHA256 hash) of a file to check its integrity.",
+  "category": "security",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "hash",
+    "sha256",
+    "checksum",
+    "integrity",
+    "security",
+    "verify",
+    "windows",
+    "linux"
+  ],
+  "notes": "Windows: Get-FileHash supports SHA256 (default), SHA1, SHA384, SHA512, MD5.\nLinux: sha256sum is part of coreutils. Alternatives: sha1sum, sha512sum, md5sum.",
+  "links": [
+    {
+      "title": "Get-FileHash documentation",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/get-filehash"
+    },
+    {
+      "title": "sha256sum documentation",
+      "url": "https://man7.org/linux/man-pages/man1/sha256sum.1.html"
+    }
+  ],
+  "windowsCommandTemplateId": "file-hash-win-cmd",
+  "windowsCommandTemplate": {
+    "id": "file-hash-win-cmd",
+    "platform": 0,
+    "name": "Get-FileHash",
+    "commandPattern": "Get-FileHash -Path {filePath} -Algorithm SHA256",
+    "parameters": [
+      {
+        "name": "filePath",
+        "label": "File path",
+        "type": "string",
+        "defaultValue": "C:\\file.exe",
+        "required": true,
+        "description": "Full path of the file to hash"
+      }
+    ]
+  },
+  "windowsExamples": [
+    {
+      "command": "Get-FileHash -Path \"C:\\Downloads\\setup.exe\" -Algorithm SHA256",
+      "description": "Compute the SHA256 of a downloaded file",
+      "platform": 0
+    },
+    {
+      "command": "Get-FileHash -Path \"C:\\file.exe\" -Algorithm MD5",
+      "description": "Compute the MD5 (less secure)",
+      "platform": 0
+    },
+    {
+      "command": "Get-ChildItem -Path \"C:\\Folder\" -File | Get-FileHash",
+      "description": "Hash every file of a folder",
+      "platform": 0
+    },
+    {
+      "command": "(Get-FileHash -Path \"C:\\file.exe\").Hash -eq \"ABC123...\"",
+      "description": "Compare with a known hash",
+      "platform": 0
+    }
+  ],
+  "linuxCommandTemplateId": "file-hash-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "file-hash-linux-cmd",
+    "platform": 1,
+    "name": "sha256sum",
+    "commandPattern": "sha256sum {filePath}",
+    "parameters": [
+      {
+        "name": "filePath",
+        "label": "File path",
+        "type": "string",
+        "defaultValue": "/path/to/file",
+        "required": true,
+        "description": "Full path of the file to hash"
+      }
+    ]
+  },
+  "linuxExamples": [
+    {
+      "command": "sha256sum /home/user/download.iso",
+      "description": "Compute the SHA256 of an ISO file",
+      "platform": 1
+    },
+    {
+      "command": "sha256sum -c checksums.sha256",
+      "description": "Check the hashes from a checksum file",
+      "platform": 1
+    },
+    {
+      "command": "sha256sum * > checksums.sha256",
+      "description": "Generate the hashes of every file",
+      "platform": 1
+    },
+    {
+      "command": "echo \"expected_hash  file\" | sha256sum -c -",
+      "description": "Check a specific hash",
+      "platform": 1
+    },
+    {
+      "command": "sha256sum /etc/passwd",
+      "description": "SHA256 hash of a file",
+      "platform": 1
+    },
+    {
+      "command": "md5sum /var/log/syslog",
+      "description": "MD5 hash",
+      "platform": 1
+    },
+    {
+      "command": "sha512sum important_file.tar.gz",
+      "description": "SHA512 hash",
+      "platform": 1
+    },
+    {
+      "command": "sha256sum -c checksums.txt",
+      "description": "Check the checksums",
+      "platform": 1
+    }
+  ],
+  "examples": [],
+  "translations": {
+    "fr": {
+      "title": "Calculer le hash d'un fichier",
+      "description": "Calcule l'empreinte cryptographique (hash SHA256) d'un fichier pour vérification d'intégrité.",
+      "notes": "Windows: Get-FileHash supporte SHA256 (défaut), SHA1, SHA384, SHA512, MD5.\nLinux: sha256sum fait partie des coreutils. Alternatives: sha1sum, sha512sum, md5sum.",
+      "parameters": {
+        "windows": {
+          "filePath": {
+            "label": "Chemin du fichier",
+            "description": "Chemin complet du fichier à hasher"
+          }
+        },
+        "linux": {
+          "filePath": {
+            "label": "Chemin du fichier",
+            "description": "Chemin complet du fichier à hasher"
+          }
+        }
+      },
+      "examples": {
+        "Get-FileHash -Path \"C:\\Downloads\\setup.exe\" -Algorithm SHA256": "Calcule le SHA256 d'un fichier téléchargé",
+        "Get-FileHash -Path \"C:\\file.exe\" -Algorithm MD5": "Calcule le MD5 (moins sécurisé)",
+        "Get-ChildItem -Path \"C:\\Folder\" -File | Get-FileHash": "Hash de tous les fichiers d'un dossier",
+        "(Get-FileHash -Path \"C:\\file.exe\").Hash -eq \"ABC123...\"": "Compare avec un hash connu",
+        "sha256sum /home/user/download.iso": "Calcule le SHA256 d'un fichier ISO",
+        "sha256sum -c checksums.sha256": "Vérifie les hash depuis un fichier de checksums",
+        "sha256sum * > checksums.sha256": "Génère les hash de tous les fichiers",
+        "echo \"expected_hash  file\" | sha256sum -c -": "Vérifie un hash spécifique",
+        "sha256sum /etc/passwd": "Hash SHA256 d'un fichier",
+        "md5sum /var/log/syslog": "Hash MD5",
+        "sha512sum important_file.tar.gz": "Hash SHA512",
+        "sha256sum -c checksums.txt": "Vérifier les checksums"
+      }
+    }
+  }
+}

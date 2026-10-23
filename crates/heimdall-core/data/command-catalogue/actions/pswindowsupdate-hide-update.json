@@ -1,0 +1,69 @@
+{
+  "id": "pswindowsupdate-hide-update",
+  "title": "Hide a given update",
+  "description": "Hide a Windows update to prevent its automatic installation.",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "windows-update",
+    "hide",
+    "pswindowsupdate",
+    "management"
+  ],
+  "windowsCommandTemplateId": "pswindowsupdate-hide-update-cmd",
+  "windowsCommandTemplate": {
+    "id": "pswindowsupdate-hide-update-cmd",
+    "platform": 0,
+    "name": "Hide-WindowsUpdate",
+    "commandPattern": "Hide-WindowsUpdate -KBArticleID {kbNumber} -Confirm:$false",
+    "parameters": [
+      {
+        "name": "kbNumber",
+        "label": "KB number",
+        "type": "string",
+        "defaultValue": "KB5001234",
+        "required": true,
+        "description": "KB number of the update to hide (e.g. KB5001234)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Hide-WindowsUpdate -KBArticleID KB5001234",
+      "description": "Hide update KB5001234",
+      "platform": 0
+    },
+    {
+      "command": "Get-WindowsUpdate | Where-Object {$_.Title -like '*Driver*'} | Hide-WindowsUpdate",
+      "description": "Hide every driver update",
+      "platform": 0
+    }
+  ],
+  "notes": "WARNING: hiding security updates can create vulnerabilities. Requires PSWindowsUpdate.",
+  "links": [
+    {
+      "title": "Hide Windows Updates",
+      "url": "https://woshub.com/pswindowsupdate-module/"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Masquer une mise à jour spécifique",
+      "description": "Masque une mise à jour Windows pour empêcher son installation automatique",
+      "notes": "ATTENTION: Masquer des mises à jour de sécurité peut créer des vulnérabilités. Nécessite PSWindowsUpdate.",
+      "parameters": {
+        "windows": {
+          "kbNumber": {
+            "label": "Numéro KB",
+            "description": "Numéro KB de la mise à jour à masquer (ex: KB5001234)"
+          }
+        }
+      },
+      "examples": {
+        "Hide-WindowsUpdate -KBArticleID KB5001234": "Masque la mise à jour KB5001234",
+        "Get-WindowsUpdate | Where-Object {$_.Title -like '*Driver*'} | Hide-WindowsUpdate": "Masque toutes les mises à jour de pilotes"
+      }
+    }
+  }
+}

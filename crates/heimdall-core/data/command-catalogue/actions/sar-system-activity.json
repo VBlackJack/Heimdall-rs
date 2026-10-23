@@ -1,0 +1,131 @@
+{
+  "id": "sar-system-activity",
+  "title": "System activity report (SAR)",
+  "description": "Collect and show the history of system activity (CPU, memory, I/O, network)",
+  "category": "monitoring-logs",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "sar",
+    "performance",
+    "statistics",
+    "history",
+    "sysstat"
+  ],
+  "linuxCommandTemplateId": "sar-cmd",
+  "linuxCommandTemplate": {
+    "id": "sar-cmd",
+    "platform": 1,
+    "name": "sar",
+    "commandPattern": "sar {options} {interval} {count}",
+    "parameters": [
+      {
+        "name": "options",
+        "label": "Options",
+        "type": "choice",
+        "allowedValues": [
+          "-u",
+          "-r",
+          "-b",
+          "-q",
+          "-d"
+        ],
+        "defaultValue": "-u",
+        "required": true,
+        "description": "Statistics type: -u = CPU, -r = memory, -b = I/O, -q = load average, -d = block devices (network with -n DEV is in the examples)"
+      },
+      {
+        "name": "interval",
+        "label": "Interval",
+        "type": "number",
+        "defaultValue": "5",
+        "required": true,
+        "description": "Interval in seconds"
+      },
+      {
+        "name": "count",
+        "label": "Count",
+        "type": "number",
+        "defaultValue": "3",
+        "required": true,
+        "description": "Number of samples"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sar -u 5 3",
+      "description": "CPU every 5 s, 3 times",
+      "platform": 1
+    },
+    {
+      "command": "sar -r",
+      "description": "Today's memory usage history",
+      "platform": 1
+    },
+    {
+      "command": "sar -n DEV 1 5",
+      "description": "Network statistics",
+      "platform": 1
+    },
+    {
+      "command": "sar -u 1 5",
+      "description": "CPU every second, 5 times",
+      "platform": 1
+    },
+    {
+      "command": "sar -r 1 5",
+      "description": "Memory every second",
+      "platform": 1
+    },
+    {
+      "command": "sar -b 1 5",
+      "description": "I/O activity",
+      "platform": 1
+    },
+    {
+      "command": "sar -q",
+      "description": "System load (load average)",
+      "platform": 1
+    }
+  ],
+  "notes": "Part of the sysstat package. Historical data lives in /var/log/sysstat/.",
+  "links": [
+    {
+      "title": "sar command",
+      "url": "https://man7.org/linux/man-pages/man1/sar.1.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Rapport d'activité système (SAR)",
+      "description": "Collecte et affiche l'historique de l'activité système (CPU, mémoire, I/O, réseau)",
+      "notes": "Fait partie du package sysstat. Données historiques dans /var/log/sysstat/.",
+      "parameters": {
+        "linux": {
+          "options": {
+            "label": "Options",
+            "description": "Type de statistiques : -u = CPU, -r = mémoire, -b = E/S, -q = charge moyenne, -d = périphériques bloc (le réseau avec -n DEV figure dans les exemples)"
+          },
+          "interval": {
+            "label": "Intervalle",
+            "description": "Intervalle en secondes"
+          },
+          "count": {
+            "label": "Nombre",
+            "description": "Nombre de mesures"
+          }
+        }
+      },
+      "examples": {
+        "sar -u 5 3": "CPU toutes les 5s, 3 fois",
+        "sar -r": "Historique d'utilisation mémoire du jour",
+        "sar -n DEV 1 5": "Statistiques réseau",
+        "sar -u 1 5": "CPU toutes les secondes, 5 fois",
+        "sar -r 1 5": "Mémoire toutes les secondes",
+        "sar -b 1 5": "Activité I/O",
+        "sar -q": "Charge système (load average)"
+      }
+    }
+  }
+}

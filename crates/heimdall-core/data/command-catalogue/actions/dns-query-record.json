@@ -1,0 +1,236 @@
+{
+  "id": "dns-query-record",
+  "title": "Query a DNS record",
+  "description": "Run a DNS query to resolve a domain name or query a specific record type.",
+  "category": "network-dns",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "dns",
+    "query",
+    "nslookup",
+    "diagnostic",
+    "dig",
+    "lookup",
+    "resolution",
+    "nameserver"
+  ],
+  "windowsCommandTemplateId": "dns-query-record-windows-cmd",
+  "windowsCommandTemplate": {
+    "id": "dns-query-record-windows-cmd",
+    "platform": 0,
+    "name": "Resolve-DnsName",
+    "commandPattern": "Resolve-DnsName -Name {domainName} -Type {recordType}",
+    "parameters": [
+      {
+        "name": "domainName",
+        "label": "Domain name",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "The domain name to query"
+      },
+      {
+        "name": "recordType",
+        "label": "Record type",
+        "type": "choice",
+        "allowedValues": [
+          "A",
+          "AAAA",
+          "CNAME",
+          "MX",
+          "NS",
+          "PTR",
+          "SOA",
+          "SRV",
+          "TXT"
+        ],
+        "defaultValue": "A",
+        "required": false,
+        "description": "DNS record type (A, AAAA, MX, TXT and so on)"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "dns-query-record-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "dns-query-record-linux-cmd",
+    "platform": 1,
+    "name": "dig",
+    "commandPattern": "dig {domainName} {recordType}",
+    "parameters": [
+      {
+        "name": "domainName",
+        "label": "Domain name",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "The domain name to query"
+      },
+      {
+        "name": "recordType",
+        "label": "Record type",
+        "type": "string",
+        "defaultValue": "A",
+        "required": false,
+        "description": "DNS record type (A, AAAA, MX, TXT and so on)"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "On Linux, install bind-utils to use dig; +short gives a minimal output. Alternatives: nslookup on both platforms, host on Linux.",
+  "links": [
+    {
+      "title": "dig documentation",
+      "url": "https://man7.org/linux/man-pages/man1/dig.1.html"
+    }
+  ],
+  "windowsExamples": [
+    {
+      "command": "Resolve-DnsName google.com",
+      "description": "Resolve the domain name google.com to IP address(es). The PowerShell equivalent of 'nslookup'. Returns every associated A (IPv4) and AAAA (IPv6) record. Uses the DNS server configured on the machine.",
+      "platform": 0
+    },
+    {
+      "command": "Resolve-DnsName google.com -Type MX",
+      "description": "Query the MX (Mail eXchange) records of google.com. MX records name the mail servers responsible for the domain. Returns the mail servers with their priority. Essential to diagnose email problems and check SMTP configurations.",
+      "platform": 0
+    },
+    {
+      "command": "Resolve-DnsName contoso.com -Type ALL -Server 8.8.8.8",
+      "description": "Query ALL the DNS record types (A, AAAA, MX, TXT, NS, SOA and so on) through Google's public DNS server (8.8.8.8). -Type ALL returns every available record. -Server forces a specific DNS instead of the local one. Useful to compare resolutions or diagnose DNS propagation problems.",
+      "platform": 0
+    },
+    {
+      "command": "Resolve-DnsName _spf.google.com -Type TXT",
+      "description": "Query the TXT records, often used for SPF (Sender Policy Framework), DKIM, DMARC and domain verification. TXT records hold free text used for email configuration, security and domain ownership validation.",
+      "platform": 0
+    },
+    {
+      "command": "Resolve-DnsName 8.8.8.8 -Type PTR",
+      "description": "Reverse DNS resolution (reverse lookup): find the domain name associated with IP 8.8.8.8. PTR records map IP → name (the reverse of A, which maps name → IP). Useful to identify a server from its IP or to check DNS configuration consistency.",
+      "platform": 0
+    },
+    {
+      "command": "Resolve-DnsName contoso.com -Type NS",
+      "description": "Query the NS (Name Server) records, which tell which DNS servers are authoritative for the domain. NS records define where the DNS zones are hosted. Essential during DNS migrations or to find a domain's DNS host.",
+      "platform": 0
+    },
+    {
+      "command": "Resolve-DnsName google.com -DnsOnly",
+      "description": "Force a real DNS query and bypass the local cache. The -DnsOnly switch ignores the Windows resolver cache completely and queries the DNS server. Useful to check recent DNS changes or diagnose cache problems.",
+      "platform": 0
+    },
+    {
+      "command": "Get-Content C:\\domains.txt | ForEach-Object {Resolve-DnsName $_ -ErrorAction SilentlyContinue} | Select-Object Name,IPAddress",
+      "description": "Resolve a list of domains from a file in bulk. Get-Content loads the file. ForEach-Object resolves each line. -ErrorAction SilentlyContinue ignores errors (domains that do not exist). Select-Object formats the results. Ideal to validate a list of domains or build a DNS inventory.",
+      "platform": 0
+    },
+    {
+      "command": "Resolve-DnsName -Name microsoft.com -Server 8.8.8.8",
+      "description": "Force resolution through an external server (Google). Tells whether the problem comes from your internal DNS or from worldwide propagation.",
+      "platform": 0
+    },
+    {
+      "command": "Resolve-DnsName -Name gmail.com -Type TXT",
+      "description": "Check the TXT records (often used for SPF, DKIM, domain validation).",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "dig google.com",
+      "description": "Resolve google.com and show the full details of the DNS query. dig (Domain Information Groper) is the reference DNS diagnostic tool on Linux. Returns the A (IPv4) records, the query time, the DNS server used, the response flags and more. More verbose and detailed than nslookup.",
+      "platform": 1
+    },
+    {
+      "command": "dig google.com +short",
+      "description": "Minimal DNS resolution: show only the IP address(es). The +short flag drops every detail and returns just the answers. Perfect for scripts: IP=$(dig google.com +short). The ideal format when you only want the IP without the noise.",
+      "platform": 1
+    },
+    {
+      "command": "dig google.com MX",
+      "description": "Query the MX (Mail eXchange) records of google.com. MX records name the mail servers responsible for the domain with their priorities. Essential to diagnose email problems, check SMTP configurations and analyze mail infrastructures.",
+      "platform": 1
+    },
+    {
+      "command": "dig google.com ANY",
+      "description": "Ask for ALL the available DNS record types (A, AAAA, MX, TXT, NS, SOA and so on). The ANY type returns everything the DNS server is willing to disclose. WARNING: some public DNS servers ignore ANY queries to limit amplification attacks.",
+      "platform": 1
+    },
+    {
+      "command": "dig @8.8.8.8 contoso.com",
+      "description": "Query a specific DNS server (Google DNS 8.8.8.8) instead of the local DNS. The @server syntax forces a particular resolver. Useful to compare answers between DNS servers, check propagation or bypass a failing or filtering local DNS.",
+      "platform": 1
+    },
+    {
+      "command": "dig contoso.com NS +short",
+      "description": "Show only the authoritative DNS servers (Name Servers) of the domain. NS records tell where the DNS zone is hosted. +short gives clean output. Essential during DNS migrations, to find the hosting provider or to check delegations.",
+      "platform": 1
+    },
+    {
+      "command": "dig -x 8.8.8.8",
+      "description": "Reverse DNS resolution (reverse lookup): find the domain name associated with IP 8.8.8.8. The -x flag turns on reverse mode. Uses the PTR records. Useful to identify a server from its IP or to check that forward and reverse DNS configurations agree.",
+      "platform": 1
+    },
+    {
+      "command": "dig google.com +trace",
+      "description": "Full trace of the DNS resolution from the root servers. The +trace flag shows each step of the DNS recursion: root → TLD (.com) → authoritative domain. Extremely useful to diagnose DNS delegation problems, understand the DNS hierarchy and find where a resolution fails.",
+      "platform": 1
+    },
+    {
+      "command": "dig @8.8.8.8 example.com MX",
+      "description": "MX query through Google DNS",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Interroger un enregistrement DNS",
+      "description": "Effectue une requête DNS pour résoudre un nom de domaine ou interroger un type d'enregistrement spécifique.",
+      "notes": "Sur Linux, installer bind-utils pour utiliser dig ; +short donne un affichage minimal. Alternatives : nslookup sur les deux plateformes, host sur Linux.",
+      "parameters": {
+        "windows": {
+          "domainName": {
+            "label": "Nom de domaine",
+            "description": "Le nom de domaine à interroger"
+          },
+          "recordType": {
+            "label": "Type d'enregistrement",
+            "description": "Type d'enregistrement DNS (A, AAAA, MX, TXT, etc.)"
+          }
+        },
+        "linux": {
+          "domainName": {
+            "label": "Nom de domaine",
+            "description": "Le nom de domaine à interroger"
+          },
+          "recordType": {
+            "label": "Type d'enregistrement",
+            "description": "Type d'enregistrement DNS (A, AAAA, MX, TXT, etc.)"
+          }
+        }
+      },
+      "examples": {
+        "Resolve-DnsName google.com": "Résout le nom de domaine google.com en adresse(s) IP. Équivalent PowerShell de 'nslookup'. Retourne tous les enregistrements A (IPv4) et AAAA (IPv6) associés. Utilise le serveur DNS configuré sur la machine.",
+        "Resolve-DnsName google.com -Type MX": "Interroge les enregistrements MX (Mail eXchange) de google.com. Les enregistrements MX indiquent les serveurs de messagerie responsables du domaine. Retourne les serveurs mail avec leur priorité. Essentiel pour diagnostiquer les problèmes d'email et vérifier les configurations SMTP.",
+        "Resolve-DnsName contoso.com -Type ALL -Server 8.8.8.8": "Interroge TOUS les types d'enregistrements DNS (A, AAAA, MX, TXT, NS, SOA, etc.) en utilisant le serveur DNS public de Google (8.8.8.8). -Type ALL retourne absolument tous les enregistrements disponibles. -Server force l'utilisation d'un DNS spécifique au lieu du DNS local. Utile pour comparer les résolutions ou diagnostiquer des problèmes de propagation DNS.",
+        "Resolve-DnsName _spf.google.com -Type TXT": "Interroge les enregistrements TXT, souvent utilisés pour SPF (Sender Policy Framework), DKIM, DMARC et vérifications de domaine. Les enregistrements TXT contiennent du texte libre utilisé pour la configuration d'email, la sécurité et les validations de propriété de domaine.",
+        "Resolve-DnsName 8.8.8.8 -Type PTR": "Résolution DNS inverse (reverse lookup) : cherche le nom de domaine associé à l'IP 8.8.8.8. Les enregistrements PTR mappent IP → nom (inverse de A qui mappe nom → IP). Utile pour identifier un serveur à partir de son IP ou vérifier la cohérence des configurations DNS.",
+        "Resolve-DnsName contoso.com -Type NS": "Interroge les enregistrements NS (Name Server) qui indiquent quels serveurs DNS sont autoritaires pour le domaine. Les enregistrements NS définissent où sont hébergées les zones DNS. Essentiel lors de migrations DNS ou pour identifier l'hébergeur DNS d'un domaine.",
+        "Resolve-DnsName google.com -DnsOnly": "Force une vraie requête DNS en désactivant le cache local. Le switch -DnsOnly ignore complètement le cache de résolution Windows et force une interrogation du serveur DNS. Utile pour vérifier les changements DNS récents ou diagnostiquer des problèmes de cache.",
+        "Get-Content C:\\domains.txt | ForEach-Object {Resolve-DnsName $_ -ErrorAction SilentlyContinue} | Select-Object Name,IPAddress": "Résout en masse une liste de domaines depuis un fichier. Get-Content charge le fichier. ForEach-Object résout chaque ligne. -ErrorAction SilentlyContinue ignore les erreurs (domaines inexistants). Select-Object formate les résultats. Idéal pour valider une liste de domaines ou créer un inventaire DNS.",
+        "Resolve-DnsName -Name microsoft.com -Server 8.8.8.8": "Force la résolution via un serveur externe (Google). Permet de savoir si le problème vient de votre DNS interne ou de la propagation mondiale.",
+        "Resolve-DnsName -Name gmail.com -Type TXT": "Vérifie les enregistrements TXT (souvent utilisés pour SPF, DKIM, validation de domaine).",
+        "dig google.com": "Résout google.com et affiche des détails complets de la requête DNS. dig (Domain Information Groper) est l'outil de diagnostic DNS de référence sous Linux. Retourne les enregistrements A (IPv4), le temps de requête, le serveur DNS utilisé, les flags de réponse, etc. Plus verbeux et détaillé que nslookup.",
+        "dig google.com +short": "Résolution DNS minimaliste : affiche uniquement la/les adresse(s) IP. Le flag +short supprime tous les détails et retourne juste les réponses. Parfait pour les scripts : IP=$(dig google.com +short). Format idéal quand vous ne voulez que l'IP sans le bruit.",
+        "dig google.com MX": "Interroge les enregistrements MX (Mail eXchange) de google.com. Les MX indiquent les serveurs mail responsables du domaine avec leurs priorités. Essentiel pour diagnostiquer les problèmes d'email, vérifier les configurations SMTP et analyser les infrastructures mail.",
+        "dig google.com ANY": "Demande TOUS les types d'enregistrements DNS disponibles (A, AAAA, MX, TXT, NS, SOA, etc.). Le type ANY retourne absolument tout ce que le serveur DNS veut bien divulguer. ATTENTION : certains serveurs DNS publics ignorent les requêtes ANY pour limiter les attaques d'amplification.",
+        "dig @8.8.8.8 contoso.com": "Interroge un serveur DNS spécifique (Google DNS 8.8.8.8) au lieu du DNS local. La syntaxe @serveur force l'utilisation d'un résolveur particulier. Utile pour comparer les réponses entre différents DNS, vérifier la propagation ou contourner un DNS local défaillant/filtrant.",
+        "dig contoso.com NS +short": "Affiche uniquement les serveurs DNS autoritaires (Name Servers) du domaine. Les enregistrements NS identifient où est hébergée la zone DNS. +short donne un output propre. Essentiel lors de migrations DNS, pour identifier l'hébergeur ou vérifier les délégations.",
+        "dig -x 8.8.8.8": "Résolution DNS inverse (reverse lookup) : trouve le nom de domaine associé à l'IP 8.8.8.8. Le flag -x active le mode reverse. Utilise les enregistrements PTR. Utile pour identifier un serveur à partir de son IP ou vérifier la cohérence des configurations DNS forward/reverse.",
+        "dig google.com +trace": "Trace complète de la résolution DNS depuis les root servers. Le flag +trace affiche chaque étape de la récursion DNS : root → TLD (.com) → domaine autoritaire. Extrêmement utile pour diagnostiquer les problèmes de délégation DNS, comprendre la hiérarchie DNS et identifier où une résolution échoue.",
+        "dig @8.8.8.8 example.com MX": "Requête MX via DNS Google"
+      }
+    }
+  }
+}

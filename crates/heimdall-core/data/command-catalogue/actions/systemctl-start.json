@@ -1,0 +1,75 @@
+{
+  "id": "systemctl-start",
+  "title": "Start a systemd service",
+  "description": "Start a systemd service now",
+  "category": "services-automation",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "systemctl",
+    "systemd",
+    "service",
+    "start"
+  ],
+  "linuxCommandTemplateId": "systemctl-start-cmd",
+  "linuxCommandTemplate": {
+    "id": "systemctl-start-cmd",
+    "platform": 1,
+    "name": "systemctl",
+    "commandPattern": "sudo systemctl start {service}",
+    "parameters": [
+      {
+        "name": "service",
+        "label": "Service name",
+        "type": "string",
+        "defaultValue": "nginx.service",
+        "required": true,
+        "description": "Name of the systemd unit to start"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo systemctl start nginx",
+      "description": "Start the nginx service",
+      "platform": 1
+    },
+    {
+      "command": "sudo systemctl start apache2.service",
+      "description": "Start Apache (the .service suffix is optional)",
+      "platform": 1
+    },
+    {
+      "command": "sudo systemctl start apache2",
+      "description": "Start the Apache service",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. The service does not survive a reboot without 'enable'.",
+  "links": [
+    {
+      "title": "systemctl documentation",
+      "url": "https://www.freedesktop.org/software/systemd/man/systemctl.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Démarrer un service systemd",
+      "description": "Démarre immédiatement un service systemd",
+      "notes": "Nécessite sudo. Le service ne persiste pas au redémarrage sans 'enable'.",
+      "parameters": {
+        "linux": {
+          "service": {
+            "label": "Nom du service",
+            "description": "Nom de l'unité systemd à démarrer"
+          }
+        }
+      },
+      "examples": {
+        "sudo systemctl start nginx": "Démarre le service nginx",
+        "sudo systemctl start apache2.service": "Démarre Apache (l'extension .service est optionnelle)",
+        "sudo systemctl start apache2": "Démarrer le service Apache"
+      }
+    }
+  }
+}

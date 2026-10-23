@@ -1,0 +1,94 @@
+{
+  "id": "get-service-windows",
+  "title": "List Windows services",
+  "description": "Show every Windows service with its status (Running, Stopped, etc.).",
+  "category": "services-automation",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "service",
+    "windows",
+    "status",
+    "automation",
+    "management"
+  ],
+  "windowsCommandTemplateId": "get-service-cmd",
+  "windowsCommandTemplate": {
+    "id": "get-service-cmd",
+    "platform": 0,
+    "name": "Get-Service",
+    "commandPattern": "Get-Service -Name {name} | Format-Table Name, DisplayName, Status, StartType -AutoSize",
+    "parameters": [
+      {
+        "name": "name",
+        "label": "Service name",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Service name (e.g. -Name 'wuauserv') or leave empty"
+      },
+      {
+        "name": "displayname",
+        "label": "Display name",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Filter by display name (e.g. -DisplayName '*update*')"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Get-Service",
+      "description": "List all services",
+      "platform": 0
+    },
+    {
+      "command": "Get-Service | Where-Object {$_.Status -eq 'Running'}",
+      "description": "Running services",
+      "platform": 0
+    },
+    {
+      "command": "Get-Service -Name 'wuauserv'",
+      "description": "Windows Update service",
+      "platform": 0
+    },
+    {
+      "command": "Get-Service | Where-Object {$_.StartType -eq 'Automatic' -and $_.Status -ne 'Running'}",
+      "description": "Stopped automatic services (potential problem)",
+      "platform": 0
+    }
+  ],
+  "notes": "Essential on Windows Server Core. See also Start-Service, Stop-Service, Restart-Service to control services.",
+  "links": [
+    {
+      "title": "Get-Service Documentation",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/get-service"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Lister les services Windows",
+      "description": "Affiche tous les services Windows avec leur état (Running, Stopped, etc.)",
+      "notes": "Essentiel pour Windows Core. Voir aussi Start-Service, Stop-Service, Restart-Service pour contrôler les services.",
+      "parameters": {
+        "windows": {
+          "name": {
+            "label": "Nom du service",
+            "description": "Nom du service (ex: -Name 'wuauserv') ou laissez vide"
+          },
+          "displayname": {
+            "label": "Nom affiché",
+            "description": "Filtre par nom affiché (ex: -DisplayName '*update*')"
+          }
+        }
+      },
+      "examples": {
+        "Get-Service": "Liste tous les services",
+        "Get-Service | Where-Object {$_.Status -eq 'Running'}": "Services en cours d'exécution",
+        "Get-Service -Name 'wuauserv'": "Service Windows Update",
+        "Get-Service | Where-Object {$_.StartType -eq 'Automatic' -and $_.Status -ne 'Running'}": "Services automatiques arrêtés (problème potentiel)"
+      }
+    }
+  }
+}

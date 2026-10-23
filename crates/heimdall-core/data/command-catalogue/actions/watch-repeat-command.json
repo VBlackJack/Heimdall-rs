@@ -1,0 +1,82 @@
+{
+  "id": "watch-repeat-command",
+  "title": "Repeat a command periodically",
+  "description": "Run a command at a regular interval and show the result",
+  "category": "services-automation",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "watch",
+    "repeat",
+    "monitor",
+    "interval",
+    "automation"
+  ],
+  "linuxCommandTemplateId": "watch-cmd",
+  "linuxCommandTemplate": {
+    "id": "watch-cmd",
+    "platform": 1,
+    "name": "watch",
+    "commandPattern": "watch -n {interval} {command}",
+    "parameters": [
+      {
+        "name": "interval",
+        "label": "Interval (seconds)",
+        "type": "number",
+        "defaultValue": "2",
+        "required": true,
+        "description": "Interval in seconds between runs"
+      },
+      {
+        "name": "command",
+        "label": "Command",
+        "type": "string",
+        "defaultValue": "df -h",
+        "required": true,
+        "description": "Command to repeat"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "watch \"tail -n 10 /var/log/syslog\"",
+      "description": "Follow the last lines",
+      "platform": 1
+    },
+    {
+      "command": "watch -c \"ls --color\"",
+      "description": "Keep the colors",
+      "platform": 1
+    }
+  ],
+  "notes": "Ctrl+C to stop. -d highlights the changes. -n sets the interval.",
+  "links": [
+    {
+      "title": "watch command",
+      "url": "https://man7.org/linux/man-pages/man1/watch.1.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Répéter une commande périodiquement",
+      "description": "Exécute une commande à intervalle régulier et affiche le résultat",
+      "notes": "Ctrl+C pour arrêter. -d surligne les changements. -n définit l'intervalle.",
+      "parameters": {
+        "linux": {
+          "interval": {
+            "label": "Intervalle (secondes)",
+            "description": "Intervalle en secondes entre chaque exécution"
+          },
+          "command": {
+            "label": "Commande",
+            "description": "Commande à répéter"
+          }
+        }
+      },
+      "examples": {
+        "watch \"tail -n 10 /var/log/syslog\"": "Suivre les dernières lignes",
+        "watch -c \"ls --color\"": "Garder les couleurs"
+      }
+    }
+  }
+}

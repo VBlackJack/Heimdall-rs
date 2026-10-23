@@ -1,0 +1,96 @@
+{
+  "id": "lvm-list-volumes",
+  "title": "List LVM logical volumes",
+  "description": "Show the LVM logical volumes, volume groups and physical volumes.",
+  "category": "files-storage",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "lvm",
+    "volume",
+    "storage",
+    "lvs",
+    "vgs"
+  ],
+  "linuxCommandTemplateId": "lvm-list-cmd",
+  "linuxCommandTemplate": {
+    "id": "lvm-list-cmd",
+    "platform": 1,
+    "name": "lvs",
+    "commandPattern": "sudo {command}",
+    "parameters": [
+      {
+        "name": "command",
+        "label": "Command",
+        "type": "choice",
+        "allowedValues": [
+          "lvs",
+          "vgs",
+          "pvs",
+          "lvdisplay",
+          "vgdisplay",
+          "pvdisplay"
+        ],
+        "defaultValue": "lvs",
+        "required": true,
+        "description": "LVM report command (lvs, vgs and pvs summarize; lvdisplay, vgdisplay and pvdisplay detail)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo lvs",
+      "description": "List the logical volumes",
+      "platform": 1
+    },
+    {
+      "command": "sudo vgs",
+      "description": "List the volume groups",
+      "platform": 1
+    },
+    {
+      "command": "sudo pvs",
+      "description": "List the physical volumes",
+      "platform": 1
+    },
+    {
+      "command": "sudo lvdisplay",
+      "description": "Details of the logical volumes",
+      "platform": 1
+    },
+    {
+      "command": "sudo lvcreate -L 10G -n newvol vg0",
+      "description": "Create a 10 GB volume",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. LVM manages partitions dynamically.",
+  "links": [
+    {
+      "title": "LVM guide",
+      "url": "https://man7.org/linux/man-pages/man8/lvm.8.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Lister les volumes logiques LVM",
+      "description": "Affiche les volumes logiques, groupes de volumes et volumes physiques LVM",
+      "notes": "Nécessite sudo. LVM permet de gérer dynamiquement les partitions.",
+      "parameters": {
+        "linux": {
+          "command": {
+            "label": "Commande",
+            "description": "Commande de rapport LVM (lvs, vgs et pvs résument ; lvdisplay, vgdisplay et pvdisplay détaillent)"
+          }
+        }
+      },
+      "examples": {
+        "sudo lvs": "Liste les volumes logiques",
+        "sudo vgs": "Liste les groupes de volumes",
+        "sudo pvs": "Liste les volumes physiques",
+        "sudo lvdisplay": "Détails des volumes logiques",
+        "sudo lvcreate -L 10G -n newvol vg0": "Créer un volume de 10 Go"
+      }
+    }
+  }
+}

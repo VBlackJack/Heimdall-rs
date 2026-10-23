@@ -1,0 +1,112 @@
+{
+  "id": "du-directory-size",
+  "title": "Compute the size of a directory",
+  "description": "Compute the disk space used by a directory and its subdirectories",
+  "category": "monitoring-logs",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "du",
+    "disk",
+    "size",
+    "directory",
+    "storage"
+  ],
+  "linuxCommandTemplateId": "du-cmd",
+  "linuxCommandTemplate": {
+    "id": "du-cmd",
+    "platform": 1,
+    "name": "du",
+    "commandPattern": "du -sh {path} | sort -hr | head -n {lines}",
+    "parameters": [
+      {
+        "name": "path",
+        "label": "Path",
+        "type": "string",
+        "defaultValue": ".",
+        "required": true,
+        "description": "Directory to analyze"
+      },
+      {
+        "name": "lines",
+        "label": "Number of results",
+        "type": "number",
+        "defaultValue": "20",
+        "required": true,
+        "description": "Number of largest directories to show"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "du -sh /var/log",
+      "description": "Total size of the /var/log directory",
+      "platform": 1
+    },
+    {
+      "command": "du -h --max-depth=1 /home | sort -hr",
+      "description": "Sorted size of the subdirectories of /home",
+      "platform": 1
+    },
+    {
+      "command": "du -h --max-depth=1 /home",
+      "description": "Size of each subfolder of /home",
+      "platform": 1
+    },
+    {
+      "command": "du -sh /var/log/* | sort -hr | head -10",
+      "description": "Top 10 largest log files",
+      "platform": 1
+    },
+    {
+      "command": "du -ah /tmp | sort -rh | head -20",
+      "description": "The 20 largest files in /tmp",
+      "platform": 1
+    },
+    {
+      "command": "du -sm /var/* | sort -rn",
+      "description": "Size in MB of each folder in /var",
+      "platform": 1
+    },
+    {
+      "command": "du -sh /var/log/* | sort -hr | head",
+      "description": "Top files",
+      "platform": 1
+    }
+  ],
+  "notes": "Does not require sudo (except for protected directories). -s=summary, -h=human-readable.",
+  "links": [
+    {
+      "title": "du command",
+      "url": "https://man7.org/linux/man-pages/man1/du.1.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Calculer la taille d'un répertoire",
+      "description": "Calcule l'espace disque utilisé par un répertoire et ses sous-répertoires",
+      "notes": "Ne nécessite pas sudo (sauf répertoires protégés). -s=summary, -h=human-readable.",
+      "parameters": {
+        "linux": {
+          "path": {
+            "label": "Chemin",
+            "description": "Répertoire à analyser"
+          },
+          "lines": {
+            "label": "Nombre de résultats",
+            "description": "Nombre de plus gros répertoires à afficher"
+          }
+        }
+      },
+      "examples": {
+        "du -sh /var/log": "Taille totale du répertoire /var/log",
+        "du -h --max-depth=1 /home | sort -hr": "Taille des sous-répertoires de /home triée",
+        "du -h --max-depth=1 /home": "Taille de chaque sous-dossier de /home",
+        "du -sh /var/log/* | sort -hr | head -10": "Top 10 des plus gros fichiers de logs",
+        "du -ah /tmp | sort -rh | head -20": "Les 20 plus gros fichiers dans /tmp",
+        "du -sm /var/* | sort -rn": "Taille en Mo de chaque dossier dans /var",
+        "du -sh /var/log/* | sort -hr | head": "Top fichiers"
+      }
+    }
+  }
+}

@@ -15,7 +15,8 @@
  */
 
 //! The command library: the user's own commands, made, changed and deleted here, then the
-//! seeded catalog filtered by platform and by what is typed. Each command shows its
+//! shipped catalogue (the C# Heimdall's actions, read from its JSON files) filtered by
+//! platform and by what is typed, in the language of the window. Each command shows its
 //! description, the values it asks for and its command with them put in, copied by its own
 //! button or sent to a terminal tab, once the user agrees to the question that follows.
 
@@ -27,7 +28,7 @@ use heimdall_core::tools::command_activity::{
     self, ACTIVITY_FILE, ActivityError, CommandActivity, HistoryEntry,
 };
 use heimdall_core::tools::command_library::{
-    self, BUILTIN_SNIPPETS, CommandSnippet, ParamLabel, SnippetCategory, SnippetId, SnippetPlatform,
+    self, CatalogueEntry, CommandIssue, LEGACY_SNIPPET_IDS,
 };
 use heimdall_core::tools::user_commands::{
     self, Criticality, Draft, DraftError, GenerateError, ImportReport, LIBRARY_FILE, LibraryError,
@@ -58,11 +59,25 @@ const MAX_AWAITED: usize = 8;
 /// The separator of several terminal names in one line.
 const NAME_SEPARATOR: &str = ", ";
 
+/// What joins the tags of a command in the editor's field.
+const TAG_JOINER: &str = ", ";
+
+/// The commands of the catalogue shown at first, and added by each press of "show more": the
+/// catalogue is hundreds of commands, and a card with its values is not cheap to draw.
+const CATALOG_PAGE_SIZE: usize = 30;
+
+/// The platforms the filter offers, in order; a command for both is under each.
+const PLATFORM_FILTERS: [UserPlatform; 3] = [
+    UserPlatform::Linux,
+    UserPlatform::Windows,
+    UserPlatform::Both,
+];
+
 /// A command of the library: one of the seeded catalog or one of the user's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandRef {
-    /// A command of the catalog.
-    Catalog(SnippetId),
+    /// A command of the catalogue, by identity.
+    Catalog(String),
     /// A command of the user, by identity.
     User(String),
 }
@@ -71,11 +86,17 @@ pub enum CommandRef {
 #[derive(Debug, Clone)]
 pub enum CommandLibraryMessage {
     /// The platform shown; `None` for every one.
-    Platform(Option<SnippetPlatform>),
+    Platform(Option<UserPlatform>),
     /// The search typed.
     Search(String),
-    /// Value `.1` of snippet `.0` typed.
-    Param(SnippetId, &'static str, String),
+    /// Show more commands of the catalogue.
+    ShowMore,
+    /// Show more of the user's own commands.
+    ShowMoreMine,
+    /// Value `.1` of the catalogue's command `.0` typed.
+    Param(String, String, String),
+    /// The template of the catalogue's command `.0` shown.
+    Template(String, TemplatePlatform),
     /// Value `.1` of the user's command `.0` typed.
     UserParam(String, String, String),
     /// The template of the user's command `.0` shown.
@@ -151,6 +172,8 @@ pub enum TransferError {
     TooLarge,
     /// Not an export of the library.
     Format,
+    /// More actions than an import takes.
+    TooManyActions,
     /// What the system said.
     Failed(String),
 }
@@ -272,9 +295,14 @@ enum Failure {
 /// The command library's state.
 #[derive(Debug, Default)]
 pub struct CommandLibraryPane {
-    platform: Option<SnippetPlatform>,
+    platform: Option<UserPlatform>,
     search: String,
-    values: HashMap<(SnippetId, &'static str), String>,
+    /// The pages of the catalogue shown besides the first.
+    more_pages: usize,
+    /// The pages of the user's own commands shown besides the first.
+    more_mine_pages: usize,
+    values: HashMap<(String, String), String>,
+    templates: HashMap<String, TemplatePlatform>,
     /// Where the user's commands are kept; `None` when the platform has no folder.
     file: Option<PathBuf>,
     library: UserLibrary,
@@ -325,10 +353,20 @@ impl CommandLibraryPane {
                 }
             }
         }
+        // The ten commands the library had before the shipped catalogue keep their stars
+        // and their history under the names of their successors.
+        if pane.activity.rename_catalog_keys(&LEGACY_SNIPPET_IDS) {
+            pane.keep_activity();
+        }
         if let Some(path) = &pane.file {
             match UserLibrary::load(path) {
                 Ok(library) => pane.library = library,
-                Err(LibraryError::Io(_) | LibraryError::TooLarge | LibraryError::Format) => {
+                Err(
+                    LibraryError::Io(_)
+                    | LibraryError::TooLarge
+                    | LibraryError::Format
+                    | LibraryError::TooManyActions,
+                ) => {
                     pane.failure = Some(Failure::Unreadable);
                 }
             }
@@ -352,10 +390,23 @@ impl CommandLibraryPane {
     /// Applies `message`.
     pub fn update(&mut self, message: CommandLibraryMessage) -> Outcome {
         match message {
-            CommandLibraryMessage::Platform(platform) => self.platform = platform,
-            CommandLibraryMessage::Search(typed) => self.search = typed,
-            CommandLibraryMessage::Param(id, key, value) => {
-                self.values.insert((id, key), value);
+            CommandLibraryMessage::Platform(platform) => {
+                self.platform = platform;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::Search(typed) => {
+                self.search = typed;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::ShowMore => self.more_pages += 1,
+            CommandLibraryMessage::ShowMoreMine => self.more_mine_pages += 1,
+            CommandLibraryMessage::Param(id, name, value) => {
+                self.values.insert((id, name), value);
+            }
+            CommandLibraryMessage::Template(id, platform) => {
+                self.templates.insert(id, platform);
             }
             CommandLibraryMessage::UserParam(id, name, value) => {
                 self.user_values.insert((id, name), value);
@@ -406,7 +457,11 @@ impl CommandLibraryPane {
                 self.activity.toggle_favorite(&key);
                 self.keep_activity();
             }
-            CommandLibraryMessage::FavoritesOnly => self.favorites_only = !self.favorites_only,
+            CommandLibraryMessage::FavoritesOnly => {
+                self.favorites_only = !self.favorites_only;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
             CommandLibraryMessage::Duplicate(command) => self.duplicate(&command),
             CommandLibraryMessage::DuplicateSelected => {
                 if let Some(command) = self.selected.clone() {
@@ -461,6 +516,11 @@ impl CommandLibraryPane {
         let before = self.library.clone();
         match self.library.import(&text) {
             Ok(report) => {
+                // A level in a file is its author's claim: a destructive pattern is
+                // dangerous whatever the file says.
+                self.library.raise_dangerous(&report.touched, |pattern| {
+                    heimdall_app::dangerous_command(pattern).is_some()
+                });
                 if self.keep(&before) {
                     self.notice = Some(Notice::Imported(report));
                 }
@@ -476,13 +536,16 @@ impl CommandLibraryPane {
             Err(LibraryError::Format) => {
                 self.notice = Some(Notice::TransferFailed(TransferError::Format));
             }
+            Err(LibraryError::TooManyActions) => {
+                self.notice = Some(Notice::TransferFailed(TransferError::TooManyActions));
+            }
         }
     }
 
     /// The name a command is kept under in the favorites and the history.
     fn key_of(&self, command: &CommandRef) -> String {
         match command {
-            CommandRef::Catalog(id) => command_activity::catalog_key(id.key()),
+            CommandRef::Catalog(id) => command_activity::catalog_key(id),
             CommandRef::User(id) => command_activity::user_key(id),
         }
     }
@@ -490,7 +553,9 @@ impl CommandLibraryPane {
     /// The command named `key` in the favorites or the history, when it is still here.
     fn command_of_key(&self, key: &str) -> Option<CommandRef> {
         if let Some(name) = key.strip_prefix(command_activity::CATALOG_KEY_PREFIX) {
-            return SnippetId::from_key(name).map(CommandRef::Catalog);
+            return command_library::shipped()
+                .get(name)
+                .map(|entry| CommandRef::Catalog(entry.command().id.clone()));
         }
         let id = key.strip_prefix(command_activity::USER_KEY_PREFIX)?;
         self.library
@@ -533,7 +598,9 @@ impl CommandLibraryPane {
                     ),
                 )
             }),
-            CommandRef::Catalog(id) => command_library::snippet(*id).map(snippet_draft),
+            CommandRef::Catalog(id) => {
+                catalogue_entry(id).map(|entry| catalogue_draft(&entry.localized(&language())))
+            }
         };
         if let Some(draft) = draft {
             self.editor = Some(Editor {
@@ -692,7 +759,9 @@ impl CommandLibraryPane {
     /// The button that copies `command`.
     fn copy_slot(&self, command: &CommandRef) -> CopySlot {
         match command {
-            CommandRef::Catalog(id) => CopySlot::CmdLibCommand(*id),
+            CommandRef::Catalog(id) => {
+                CopySlot::CmdLibCommand(command_library::shipped().position(id).unwrap_or_default())
+            }
             CommandRef::User(id) => CopySlot::CmdLibUserCommand(
                 self.library
                     .commands()
@@ -707,18 +776,27 @@ impl CommandLibraryPane {
     /// from the values typed.
     fn command_text(&self, command: &CommandRef) -> Option<String> {
         match command {
-            CommandRef::Catalog(id) => command_library::snippet(*id).map(|each| self.render(each)),
+            CommandRef::Catalog(id) => catalogue_entry(id)
+                .and_then(|entry| self.render(command, &entry.localized(&language())).ok()),
             CommandRef::User(id) => self
                 .library
                 .get(id)
-                .and_then(|each| self.user_render(each).ok()),
+                .and_then(|each| self.render(command, each).ok()),
         }
     }
 
     /// Whether `command` is marked dangerous, as the C# `DangerousCommandGuard` asks of it.
-    fn is_dangerous(&self, command: &CommandRef) -> bool {
+    fn is_dangerous(&self, command: &CommandRef, text: &str) -> bool {
+        // The level a file or a user gave is not the only judge: the paste guard's list of
+        // destructive commands asks too, as for any text about to reach a shell.
+        heimdall_app::dangerous_command(text).is_some() || self.marked_dangerous(command)
+    }
+
+    /// Whether the level kept for `command` is the highest.
+    fn marked_dangerous(&self, command: &CommandRef) -> bool {
         match command {
-            CommandRef::Catalog(id) => command_library::is_dangerous(*id),
+            CommandRef::Catalog(id) => catalogue_entry(id)
+                .is_some_and(|entry| entry.command().level == Criticality::Dangerous),
             CommandRef::User(id) => self
                 .library
                 .get(id)
@@ -731,20 +809,18 @@ impl CommandLibraryPane {
     fn history_entry(&self, command: &CommandRef) -> Option<HistoryEntry> {
         let (title, pattern, parameters) = match command {
             CommandRef::Catalog(id) => {
-                let snippet = command_library::snippet(*id)?;
+                let entry = catalogue_entry(id)?;
+                let each = entry.localized(&language());
+                let template = each.template(self.template_shown(command, &each)?)?;
                 (
-                    snippet_texts(*id).0,
-                    snippet.template.to_owned(),
-                    snippet
-                        .parameters
-                        .iter()
-                        .map(|each| each.key.to_owned())
-                        .collect(),
+                    each.title.clone(),
+                    template.command_pattern.clone(),
+                    template.parameters.iter().map(|p| p.name.clone()).collect(),
                 )
             }
             CommandRef::User(id) => {
                 let each = self.library.get(id)?;
-                let template = each.template(self.template_shown(each)?)?;
+                let template = each.template(self.template_shown(command, each)?)?;
                 (
                     each.title.clone(),
                     template.command_pattern.clone(),
@@ -791,7 +867,7 @@ impl CommandLibraryPane {
         else {
             return Outcome::None;
         };
-        let dangerous = self.is_dangerous(command);
+        let dangerous = self.is_dangerous(command, &text);
         self.await_receipt(command, &text, vec![(target.tab, target.name)], false);
         Outcome::Send {
             target: target.tab,
@@ -812,7 +888,7 @@ impl CommandLibraryPane {
         let Some(text) = self.command_text(command).filter(|_| !chosen.is_empty()) else {
             return Outcome::None;
         };
-        let dangerous = self.is_dangerous(command);
+        let dangerous = self.is_dangerous(command, &text);
         let targets = chosen.iter().map(|(tab, _)| *tab).collect();
         self.await_receipt(command, &text, chosen, true);
         Outcome::Broadcast {
@@ -834,15 +910,21 @@ impl CommandLibraryPane {
             return Outcome::None;
         };
         self.selected = Some(command.clone());
-        if let CommandRef::User(id) = &command
-            && let Some(found) = self.library.get(id)
-            && let Some(platform) = found.template_platforms().into_iter().find(|platform| {
-                found
-                    .template(*platform)
-                    .is_some_and(|template| template.command_pattern == entry.pattern)
-            })
-        {
-            self.user_templates.insert(id.clone(), platform);
+        match &command {
+            CommandRef::User(id) => {
+                if let Some(found) = self.library.get(id)
+                    && let Some(platform) = pattern_platform(found, &entry.pattern)
+                {
+                    self.user_templates.insert(id.clone(), platform);
+                }
+            }
+            CommandRef::Catalog(id) => {
+                if let Some(found) = catalogue_entry(id)
+                    && let Some(platform) = pattern_platform(found.command(), &entry.pattern)
+                {
+                    self.templates.insert(id.clone(), platform);
+                }
+            }
         }
         self.history_open = false;
         let outcome = self.send(&command);
@@ -852,88 +934,92 @@ impl CommandLibraryPane {
         outcome
     }
 
-    /// The template of `command` shown: the one chosen, else this system's.
-    fn template_shown(&self, command: &UserCommand) -> Option<TemplatePlatform> {
-        let chosen = self
-            .user_templates
-            .get(&command.id)
-            .copied()
-            .filter(|platform| command.template_platforms().contains(platform));
-        chosen.or_else(|| command.preferred_platform(cfg!(windows)))
+    /// The template of `command`, written `shown`, that is shown: the one chosen, else this
+    /// system's.
+    fn template_shown(
+        &self,
+        reference: &CommandRef,
+        shown: &UserCommand,
+    ) -> Option<TemplatePlatform> {
+        let chosen = match reference {
+            CommandRef::Catalog(id) => self.templates.get(id),
+            CommandRef::User(id) => self.user_templates.get(id),
+        }
+        .copied()
+        .filter(|platform| shown.template_platforms().contains(platform));
+        chosen.or_else(|| shown.preferred_platform(cfg!(windows)))
     }
 
-    /// The command of the user with the values typed.
-    fn user_render(&self, command: &UserCommand) -> Result<String, GenerateError> {
+    /// The value typed for `name` of `reference`.
+    fn typed(&self, reference: &CommandRef, name: &str) -> Option<&str> {
+        let (values, id) = match reference {
+            CommandRef::Catalog(id) => (&self.values, id),
+            CommandRef::User(id) => (&self.user_values, id),
+        };
+        values
+            .get(&(id.clone(), name.to_owned()))
+            .map(String::as_str)
+    }
+
+    /// The command `shown`, of `reference`, with the values typed.
+    fn render(&self, reference: &CommandRef, shown: &UserCommand) -> Result<String, GenerateError> {
         let platform = self
-            .template_shown(command)
+            .template_shown(reference, shown)
             .ok_or(GenerateError::EmptyPattern)?;
-        let template = command
+        let template = shown
             .template(platform)
             .ok_or(GenerateError::EmptyPattern)?;
-        user_commands::generate(template, platform, |name| {
-            self.user_values
-                .get(&(command.id.clone(), name.to_owned()))
-                .map(String::as_str)
-        })
+        let command =
+            user_commands::generate(template, platform, |name| self.typed(reference, name))?;
+        // A line break would submit the first line before the rest is read, whatever the
+        // pattern's author meant: no copy, no send, no receipt for such a command.
+        if command.chars().any(|c| c.is_control()) {
+            return Err(GenerateError::Multiline);
+        }
+        Ok(command)
     }
 
-    /// The command of `snippet` with the values typed.
-    fn render(&self, snippet: &CommandSnippet) -> String {
-        snippet.render(|key| self.values.get(&(snippet.id, key)).map(String::as_str))
-    }
-
-    /// The snippets the platform and the search keep.
-    fn shown(&self) -> Vec<&'static CommandSnippet> {
-        BUILTIN_SNIPPETS
+    /// The commands of the catalogue the platform, the favorites and the search keep.
+    fn shown(&self) -> Vec<&'static CatalogueEntry> {
+        let language = language();
+        command_library::shipped()
+            .entries()
             .iter()
-            .filter(|snippet| command_library::on_platform(snippet, self.platform))
-            .filter(|snippet| {
-                !self.favorites_only || self.is_favorite(&CommandRef::Catalog(snippet.id))
+            .filter(|entry| command_library::on_platform(entry.command().platform, self.platform))
+            .filter(|entry| {
+                !self.favorites_only
+                    || self.is_favorite(&CommandRef::Catalog(entry.command().id.clone()))
             })
-            .filter(|snippet| {
-                let (title, description) = snippet_texts(snippet.id);
-                let category = category_name(snippet.category);
-                command_library::matches_query(
-                    snippet,
-                    &[&title, &description, &category],
-                    &self.search,
-                )
+            .filter(|entry| {
+                let query = self.search.trim();
+                query.is_empty()
+                    || command_library::matches_query(
+                        &entry.localized(&language),
+                        &category_name(&entry.command().category),
+                        query,
+                    )
+                    // The English text is searched in any language, as the C# keeps it
+                    // beside the translation.
+                    || command_library::matches_query(
+                        entry.command(),
+                        &category_name(&entry.command().category),
+                        query,
+                    )
             })
             .collect()
     }
 
     /// The commands of the user the platform and the search keep.
     fn shown_user(&self) -> Vec<&UserCommand> {
-        let query = self.search.trim().to_lowercase();
         self.library
             .commands()
             .iter()
             .filter(|command| {
                 !self.favorites_only || self.is_favorite(&CommandRef::User(command.id.clone()))
             })
+            .filter(|command| command_library::on_platform(command.platform, self.platform))
             .filter(|command| {
-                self.platform.is_none_or(|platform| match platform {
-                    SnippetPlatform::Linux => command.platform != UserPlatform::Windows,
-                    SnippetPlatform::Windows => command.platform != UserPlatform::Linux,
-                    SnippetPlatform::CrossPlatform => true,
-                })
-            })
-            .filter(|command| {
-                query.is_empty()
-                    || [&command.title, &command.description, &command.category]
-                        .iter()
-                        .any(|field| field.to_lowercase().contains(&query))
-                    || command
-                        .tags
-                        .iter()
-                        .any(|tag| tag.to_lowercase().contains(&query))
-                    || [
-                        &command.windows_command_template,
-                        &command.linux_command_template,
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .any(|t| t.command_pattern.to_lowercase().contains(&query))
+                command_library::matches_query(command, &command.category, &self.search)
             })
             .collect()
     }
@@ -942,7 +1028,7 @@ impl CommandLibraryPane {
     /// editor when open, then the user's commands and the catalog.
     pub fn view<'a>(&'a self, tab: TabId, state: &ToolPane) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-        let platform = |label: String, choice: Option<SnippetPlatform>| {
+        let platform = |label: String, choice: Option<UserPlatform>| {
             button(text(label).size(font_size::BODY))
                 .padding(super::COPY_PADDING)
                 .style(if self.platform == choice {
@@ -955,9 +1041,9 @@ impl CommandLibraryPane {
         };
         let platforms = Row::with_children(
             std::iter::once(platform(fl!("ui-tool-cmdlib-platform-all"), None)).chain(
-                SnippetPlatform::ALL
+                PLATFORM_FILTERS
                     .into_iter()
-                    .map(|choice| platform(platform_name(choice), Some(choice))),
+                    .map(|choice| platform(user_platform_name(choice), Some(choice))),
             ),
         )
         .spacing(spacing::SM);
@@ -1053,8 +1139,22 @@ impl CommandLibraryPane {
                     .size(font_size::BODY_LARGE)
                     .font(styles::SEMIBOLD),
             );
-            for command in mine {
+            let visible_mine =
+                CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
+            let remaining_mine = mine.len().saturating_sub(visible_mine);
+            for command in mine.into_iter().take(visible_mine) {
                 cards = cards.push(self.user_card(tab, state, command));
+            }
+            if remaining_mine > 0 {
+                cards = cards.push(
+                    button(
+                        text(fl!("ui-tool-cmdlib-show-more", count = remaining_mine))
+                            .size(font_size::BODY),
+                    )
+                    .padding(super::COPY_PADDING)
+                    .style(styles::secondary)
+                    .on_press(send(CommandLibraryMessage::ShowMoreMine)),
+                );
             }
             if !shown.is_empty() {
                 cards = cards.push(
@@ -1064,8 +1164,20 @@ impl CommandLibraryPane {
                 );
             }
         }
-        for snippet in shown {
-            cards = cards.push(self.card(tab, state, snippet));
+        let visible = CATALOG_PAGE_SIZE.saturating_mul(self.more_pages.saturating_add(1));
+        let remaining = shown.len().saturating_sub(visible);
+        for entry in shown.into_iter().take(visible) {
+            cards = cards.push(self.catalogue_card(tab, state, entry));
+        }
+        if remaining > 0 {
+            cards = cards.push(
+                button(
+                    text(fl!("ui-tool-cmdlib-show-more", count = remaining)).size(font_size::BODY),
+                )
+                .padding(super::COPY_PADDING)
+                .style(styles::secondary)
+                .on_press(send(CommandLibraryMessage::ShowMore)),
+            );
         }
         super::tool_body(page.push(scrollable(cards).height(Length::Fill)))
     }
@@ -1300,89 +1412,49 @@ impl CommandLibraryPane {
         .spacing(spacing::SM)
     }
 
-    /// One snippet: its title, platform and category, its description, its values and its
-    /// command with its buttons.
-    fn card<'a>(
+    /// One command of the catalogue, in the language of the window.
+    fn catalogue_card<'a>(
         &'a self,
         tab: TabId,
         state: &ToolPane,
-        snippet: &'static CommandSnippet,
+        entry: &'static CatalogueEntry,
     ) -> Element<'a, Message> {
-        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-        let (title, description) = snippet_texts(snippet.id);
-        let header = row![
-            text(title)
-                .size(font_size::BODY_LARGE)
-                .font(styles::SEMIBOLD),
-            text(platform_name(snippet.platform))
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-            text(category_name(snippet.category))
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-        ]
-        .spacing(spacing::SM)
-        .align_y(iced::Alignment::Center);
-        let params = Column::with_children(snippet.parameters.iter().map(|parameter| {
-            let id = snippet.id;
-            let key = parameter.key;
-            let value = self.values.get(&(id, key)).map_or("", String::as_str);
-            row![
-                text(param_label(parameter.label))
-                    .size(font_size::BODY)
-                    .width(PARAM_LABEL_WIDTH),
-                text_input(parameter.default_value, value)
-                    .size(font_size::BODY)
-                    .padding(super::INPUT_PADDING)
-                    .style(styles::text_input)
-                    .on_input(move |typed| send(CommandLibraryMessage::Param(id, key, typed))),
-            ]
-            .spacing(spacing::SM)
-            .align_y(iced::Alignment::Center)
-            .into()
-        }))
-        .spacing(spacing::XS);
-        let reference = CommandRef::Catalog(snippet.id);
-        let command = command_box(
-            self.render(snippet),
-            self.actions(tab, state, &reference, true),
-        );
-        container(
-            column![
-                header,
-                text(description)
-                    .size(font_size::BODY)
-                    .style(text::secondary),
-                params,
-                command,
-                self.extras(tab, &reference, true)
-            ]
-            .spacing(spacing::SM),
+        let shown = entry.localized(&language());
+        let reference = CommandRef::Catalog(shown.id.clone());
+        self.command_card(
+            tab,
+            state,
+            &reference,
+            &shown,
+            category_name(&shown.category),
+            entry.notes(&language()),
+            None,
         )
-        .padding(spacing::MD)
-        .width(Length::Fill)
-        .style(styles::card)
-        .into()
     }
 
-    /// One command of the user: as a snippet's card, with the template to use when it has
-    /// two, why its command cannot be made yet, and its edit and delete buttons.
-    fn user_card<'a>(
+    /// One command: its title, platform, category and level, its description, the template
+    /// to use when it has two, its values, its command with its buttons or why it cannot be
+    /// made yet, and `manage` (a user's command's edit and delete buttons) under them.
+    fn command_card<'a>(
         &'a self,
         tab: TabId,
         state: &ToolPane,
-        command: &'a UserCommand,
+        reference: &CommandRef,
+        command: &UserCommand,
+        category: String,
+        notes: Option<String>,
+        manage: Option<Element<'a, Message>>,
     ) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-        let shown = self.template_shown(command);
+        let shown = self.template_shown(reference, command);
         let header = row![
-            text(command.title.as_str())
+            text(command.title.clone())
                 .size(font_size::BODY_LARGE)
                 .font(styles::SEMIBOLD),
             text(user_platform_name(command.platform))
                 .size(font_size::CAPTION)
                 .style(text::secondary),
-            text(command.category.as_str())
+            text(category)
                 .size(font_size::CAPTION)
                 .style(text::secondary),
             text(level_name(command.level))
@@ -1398,14 +1470,18 @@ impl CommandLibraryPane {
         let mut body = column![header].spacing(spacing::SM);
         if !command.description.is_empty() {
             body = body.push(
-                text(command.description.as_str())
+                text(command.description.clone())
                     .size(font_size::BODY)
                     .style(text::secondary),
             );
         }
+        if let Some(notes) = notes.filter(|notes| !notes.trim().is_empty()) {
+            body = body.push(text(notes).size(font_size::CAPTION).style(text::secondary));
+        }
         let platforms = command.template_platforms();
         if platforms.len() > 1 {
             body = body.push(Row::with_children(platforms.into_iter().map(|choice| {
+                let id = command.id.clone();
                 button(text(template_name(choice)).size(font_size::BODY))
                     .padding(super::COPY_PADDING)
                     .style(if shown == Some(choice) {
@@ -1413,10 +1489,10 @@ impl CommandLibraryPane {
                     } else {
                         styles::secondary
                     })
-                    .on_press(send(CommandLibraryMessage::UserTemplate(
-                        command.id.clone(),
-                        choice,
-                    )))
+                    .on_press(send(match reference {
+                        CommandRef::Catalog(_) => CommandLibraryMessage::Template(id, choice),
+                        CommandRef::User(_) => CommandLibraryMessage::UserTemplate(id, choice),
+                    }))
                     .into()
             })));
         }
@@ -1425,15 +1501,13 @@ impl CommandLibraryPane {
                 Column::with_children(template.parameters.iter().map(|parameter| {
                     let id = command.id.clone();
                     let name = parameter.name.clone();
-                    let value = self
-                        .user_values
-                        .get(&(id.clone(), name.clone()))
-                        .map_or("", String::as_str);
+                    let value = self.typed(reference, &name).unwrap_or("");
+                    let catalog = matches!(reference, CommandRef::Catalog(_));
                     row![
                         text(if parameter.label.is_empty() {
-                            parameter.name.as_str()
+                            parameter.name.clone()
                         } else {
-                            parameter.label.as_str()
+                            parameter.label.clone()
                         })
                         .size(font_size::BODY)
                         .width(PARAM_LABEL_WIDTH),
@@ -1442,11 +1516,15 @@ impl CommandLibraryPane {
                             .padding(super::INPUT_PADDING)
                             .style(styles::text_input)
                             .on_input(move |typed| {
-                                send(CommandLibraryMessage::UserParam(
-                                    id.clone(),
-                                    name.clone(),
-                                    typed,
-                                ))
+                                send(if catalog {
+                                    CommandLibraryMessage::Param(id.clone(), name.clone(), typed)
+                                } else {
+                                    CommandLibraryMessage::UserParam(
+                                        id.clone(),
+                                        name.clone(),
+                                        typed,
+                                    )
+                                })
                             }),
                     ]
                     .spacing(spacing::SM)
@@ -1456,24 +1534,59 @@ impl CommandLibraryPane {
                 .spacing(spacing::XS),
             );
         }
-        let reference = CommandRef::User(command.id.clone());
-        let renders = self.user_render(command).is_ok();
-        body = body.push(self.extras(tab, &reference, renders));
-        match self.user_render(command) {
+        let made = self.render(reference, command);
+        body = body.push(self.extras(tab, reference, made.is_ok()));
+        match made {
             Ok(rendered) => {
                 body = body.push(command_box(
                     rendered,
-                    self.actions(tab, state, &reference, true),
+                    self.actions(tab, state, reference, true),
                 ));
             }
             Err(error) => {
+                // A shipped command refused with nothing typed is refused for its own
+                // defaults: say so, instead of blaming a value nobody wrote.
+                let nothing_typed = command
+                    .template(shown.unwrap_or(TemplatePlatform::Linux))
+                    .is_none_or(|template| {
+                        template.parameters.iter().all(|parameter| {
+                            self.typed(reference, &parameter.name)
+                                .is_none_or(|typed| typed.trim().is_empty())
+                        })
+                    });
+                let unbuildable = matches!(reference, CommandRef::Catalog(_))
+                    && nothing_typed
+                    && matches!(&error, GenerateError::Values(values)
+                        if values.iter().any(|each| matches!(each, ValueError::Dangerous(_))));
                 body = body.push(
-                    text(generate_error(&error))
-                        .size(font_size::BODY)
-                        .style(text::danger),
+                    text(if unbuildable {
+                        fl!("ui-tool-cmdlib-catalogue-unbuildable")
+                    } else {
+                        generate_error(&error)
+                    })
+                    .size(font_size::BODY)
+                    .style(text::danger),
                 );
             }
         }
+        if let Some(manage) = manage {
+            body = body.push(manage);
+        }
+        container(body)
+            .padding(spacing::MD)
+            .width(Length::Fill)
+            .style(styles::card)
+            .into()
+    }
+
+    /// One command of the user, with its edit and delete buttons.
+    fn user_card<'a>(
+        &'a self,
+        tab: TabId,
+        state: &ToolPane,
+        command: &'a UserCommand,
+    ) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
         let manage: Element<'a, Message> = if self.deleting.as_deref() == Some(&command.id) {
             row![
                 text(fl!(
@@ -1512,38 +1625,59 @@ impl CommandLibraryPane {
             .spacing(spacing::SM)
             .into()
         };
-        container(body.push(manage))
-            .padding(spacing::MD)
-            .width(Length::Fill)
-            .style(styles::card)
-            .into()
+        self.command_card(
+            tab,
+            state,
+            &CommandRef::User(command.id.clone()),
+            command,
+            command.category.clone(),
+            None,
+            Some(manage),
+        )
     }
 }
 
-/// The editor's draft for a copy of a snippet of the catalog: the platform it is written for
-/// keeps its pattern (both, for a cross-platform one), and a dangerous one stays so.
-fn snippet_draft(snippet: &CommandSnippet) -> Draft {
-    let (title, description) = snippet_texts(snippet.id);
-    let pattern = snippet.template.to_owned();
-    let (platform, windows_pattern, linux_pattern) = match snippet.platform {
-        SnippetPlatform::Windows => (UserPlatform::Windows, pattern, String::new()),
-        SnippetPlatform::Linux => (UserPlatform::Linux, String::new(), pattern),
-        SnippetPlatform::CrossPlatform => (UserPlatform::Both, pattern.clone(), pattern),
+/// The command of the catalogue of this identity.
+fn catalogue_entry(id: &str) -> Option<&'static CatalogueEntry> {
+    command_library::shipped().get(id)
+}
+
+/// The language of the window, as a catalogue file names it.
+fn language() -> String {
+    crate::i18n::current().code().to_owned()
+}
+
+/// The template of `command` whose pattern is `pattern`: the one a history row ran on.
+fn pattern_platform(command: &UserCommand, pattern: &str) -> Option<TemplatePlatform> {
+    command.template_platforms().into_iter().find(|platform| {
+        command
+            .template(*platform)
+            .is_some_and(|template| template.command_pattern == pattern)
+    })
+}
+
+/// The editor's draft for a copy of a command of the catalogue, shown in the language of the
+/// window: its patterns keep their platforms, and a dangerous one stays so.
+fn catalogue_draft(command: &UserCommand) -> Draft {
+    let pattern_of = |platform| {
+        command
+            .template(platform)
+            .map(|template| template.command_pattern.clone())
+            .unwrap_or_default()
     };
     Draft {
         id: None,
-        title: fl!("ui-tool-cmdlib-duplicate-title", title = title),
-        description,
-        category: category_name(snippet.category),
-        platform,
-        level: if command_library::is_dangerous(snippet.id) {
-            Criticality::Dangerous
-        } else {
-            Criticality::Info
-        },
-        windows_pattern,
-        linux_pattern,
-        tags: String::new(),
+        title: fl!(
+            "ui-tool-cmdlib-duplicate-title",
+            title = command.title.as_str()
+        ),
+        description: command.description.clone(),
+        category: category_name(&command.category),
+        platform: command.platform,
+        level: command.level,
+        windows_pattern: pattern_of(TemplatePlatform::Windows),
+        linux_pattern: pattern_of(TemplatePlatform::Linux),
+        tags: command.tags.join(TAG_JOINER),
     }
 }
 
@@ -1559,20 +1693,35 @@ fn now_unix() -> i64 {
 /// What the pane tells, in the window's language.
 fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
     let (message, failed) = match notice {
-        Notice::Imported(report) => (
-            fl!(
+        Notice::Imported(report) => {
+            let done = fl!(
                 "ui-tool-cmdlib-import-done",
                 imported = report.imported,
                 updated = report.updated,
                 skipped = report.skipped
-            ),
-            false,
-        ),
+            );
+            match &report.first_skipped {
+                Some((title, issue)) => (
+                    fl!(
+                        "ui-tool-cmdlib-import-skipped",
+                        done = done,
+                        title = title.as_str(),
+                        reason = issue_text(issue)
+                    ),
+                    false,
+                ),
+                None => (done, false),
+            }
+        }
         Notice::Exported => (fl!("ui-tool-cmdlib-export-done"), false),
         Notice::TransferFailed(error) => (
             match error {
                 TransferError::TooLarge => fl!("ui-tool-cmdlib-transfer-too-large"),
                 TransferError::Format => fl!("ui-tool-cmdlib-transfer-format"),
+                TransferError::TooManyActions => fl!(
+                    "ui-tool-cmdlib-transfer-too-many",
+                    max = user_commands::MAX_IMPORT_ACTIONS
+                ),
                 TransferError::Failed(detail) => {
                     fl!("ui-tool-cmdlib-transfer-failed", detail = detail.as_str())
                 }
@@ -1858,61 +2007,6 @@ fn editor_view(tab: TabId, editor: &Editor) -> Element<'_, Message> {
         .into()
 }
 
-/// The title and description of snippet `id`, in the window's language.
-fn snippet_texts(id: SnippetId) -> (String, String) {
-    match id {
-        SnippetId::LinuxListeningPorts => (
-            fl!("ui-tool-cmdlib-snippet-listening-ports"),
-            fl!("ui-tool-cmdlib-snippet-listening-ports-description"),
-        ),
-        SnippetId::LinuxKillPort => (
-            fl!("ui-tool-cmdlib-snippet-kill-port"),
-            fl!("ui-tool-cmdlib-snippet-kill-port-description"),
-        ),
-        SnippetId::LinuxJournalFollow => (
-            fl!("ui-tool-cmdlib-snippet-journal-follow"),
-            fl!("ui-tool-cmdlib-snippet-journal-follow-description"),
-        ),
-        SnippetId::LinuxCertExpiry => (
-            fl!("ui-tool-cmdlib-snippet-cert-expiry"),
-            fl!("ui-tool-cmdlib-snippet-cert-expiry-description"),
-        ),
-        SnippetId::WindowsTestConnection => (
-            fl!("ui-tool-cmdlib-snippet-test-connection"),
-            fl!("ui-tool-cmdlib-snippet-test-connection-description"),
-        ),
-        SnippetId::WindowsPortOwner => (
-            fl!("ui-tool-cmdlib-snippet-port-owner"),
-            fl!("ui-tool-cmdlib-snippet-port-owner-description"),
-        ),
-        SnippetId::WindowsRestartService => (
-            fl!("ui-tool-cmdlib-snippet-restart-service"),
-            fl!("ui-tool-cmdlib-snippet-restart-service-description"),
-        ),
-        SnippetId::WindowsFlushDns => (
-            fl!("ui-tool-cmdlib-snippet-flush-dns"),
-            fl!("ui-tool-cmdlib-snippet-flush-dns-description"),
-        ),
-        SnippetId::MtrProbe => (
-            fl!("ui-tool-cmdlib-snippet-mtr"),
-            fl!("ui-tool-cmdlib-snippet-mtr-description"),
-        ),
-        SnippetId::NmapServiceScan => (
-            fl!("ui-tool-cmdlib-snippet-nmap"),
-            fl!("ui-tool-cmdlib-snippet-nmap-description"),
-        ),
-    }
-}
-
-/// The name of `platform`.
-fn platform_name(platform: SnippetPlatform) -> String {
-    match platform {
-        SnippetPlatform::Linux => fl!("ui-tool-cmdlib-platform-linux"),
-        SnippetPlatform::Windows => fl!("ui-tool-cmdlib-platform-windows"),
-        SnippetPlatform::CrossPlatform => fl!("ui-tool-cmdlib-platform-cross"),
-    }
-}
-
 /// The name of the platforms of a command of the user.
 fn user_platform_name(platform: UserPlatform) -> String {
     match platform {
@@ -1939,25 +2033,24 @@ fn level_name(level: Criticality) -> String {
     }
 }
 
-/// The name of `category`.
-fn category_name(category: SnippetCategory) -> String {
-    match category {
-        SnippetCategory::Network => fl!("ui-tool-cmdlib-category-network"),
-        SnippetCategory::System => fl!("ui-tool-cmdlib-category-system"),
-        SnippetCategory::Services => fl!("ui-tool-cmdlib-category-services"),
-        SnippetCategory::Security => fl!("ui-tool-cmdlib-category-security"),
-        SnippetCategory::Diagnostics => fl!("ui-tool-cmdlib-category-diagnostics"),
-    }
-}
-
-/// The label of a value of kind `label`.
-fn param_label(label: ParamLabel) -> String {
-    match label {
-        ParamLabel::Host => fl!("ui-tool-cmdlib-param-host"),
-        ParamLabel::Port => fl!("ui-tool-cmdlib-param-port"),
-        ParamLabel::LocalPort => fl!("ui-tool-cmdlib-param-local-port"),
-        ParamLabel::PortRange => fl!("ui-tool-cmdlib-param-port-range"),
-        ParamLabel::Service => fl!("ui-tool-cmdlib-param-service"),
+/// The name of the category `key`, in the window's language; a category the user typed is
+/// shown as typed.
+fn category_name(key: &str) -> String {
+    match key {
+        "security" => fl!("ui-tool-cmdlib-category-security"),
+        "active-directory" => fl!("ui-tool-cmdlib-category-active-directory"),
+        "services-automation" => fl!("ui-tool-cmdlib-category-services-automation"),
+        "windows-updates" => fl!("ui-tool-cmdlib-category-windows-updates"),
+        "monitoring-logs" => fl!("ui-tool-cmdlib-category-monitoring-logs"),
+        "files-storage" => fl!("ui-tool-cmdlib-category-files-storage"),
+        "network-dns" => fl!("ui-tool-cmdlib-category-network-dns"),
+        "package-management" => fl!("ui-tool-cmdlib-category-package-management"),
+        "development" => fl!("ui-tool-cmdlib-category-development"),
+        "performance" => fl!("ui-tool-cmdlib-category-performance"),
+        "containers-vms" => fl!("ui-tool-cmdlib-category-containers-vms"),
+        "database" => fl!("ui-tool-cmdlib-category-database"),
+        "windows-debloat" => fl!("ui-tool-cmdlib-category-windows-debloat"),
+        other => other.to_owned(),
     }
 }
 
@@ -1981,11 +2074,45 @@ fn draft_error(problem: DraftError) -> String {
     }
 }
 
+/// Why an imported command was left out, in the window's language.
+fn issue_text(issue: &CommandIssue) -> String {
+    match issue {
+        CommandIssue::MissingTitle => fl!("ui-tool-cmdlib-issue-title-missing"),
+        CommandIssue::TitleTooLong => fl!("ui-tool-cmdlib-error-title-long"),
+        CommandIssue::MissingCategory => fl!("ui-tool-cmdlib-error-category-missing"),
+        CommandIssue::CategoryTooLong => fl!("ui-tool-cmdlib-error-category-long"),
+        CommandIssue::DescriptionTooLong => fl!("ui-tool-cmdlib-error-description-long"),
+        CommandIssue::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
+        CommandIssue::NoTemplate => fl!("ui-tool-cmdlib-error-pattern-missing"),
+        CommandIssue::PatternTooLong(_) => fl!(
+            "ui-tool-cmdlib-error-pattern-long",
+            max = user_commands::MAX_PATTERN_LENGTH
+        ),
+        CommandIssue::PatternMultiline(_) => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        CommandIssue::TooManyParameters(_) => fl!("ui-tool-cmdlib-error-too-many-parameters"),
+        CommandIssue::UnnamedParameter(_) => fl!("ui-tool-cmdlib-issue-parameter-unnamed"),
+        CommandIssue::DuplicateParameter(_, name) => {
+            fl!(
+                "ui-tool-cmdlib-issue-parameter-duplicate",
+                name = name.as_str()
+            )
+        }
+        CommandIssue::UnknownParameterType(_, kind) => {
+            fl!("ui-tool-cmdlib-issue-parameter-type", kind = kind.as_str())
+        }
+        CommandIssue::ChoiceWithoutValues(_, name) => {
+            fl!("ui-tool-cmdlib-issue-choice-empty", name = name.as_str())
+        }
+        CommandIssue::RefusedDefault(_) => fl!("ui-tool-cmdlib-issue-default-refused"),
+    }
+}
+
 /// Why a command of the user cannot be made from the values typed.
 fn generate_error(error: &GenerateError) -> String {
     match error {
         GenerateError::EmptyPattern => fl!("ui-tool-cmdlib-error-empty-pattern"),
         GenerateError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
+        GenerateError::Multiline => fl!("ui-tool-cmdlib-error-pattern-multiline"),
         GenerateError::TooLong => fl!(
             "ui-tool-cmdlib-error-command-long",
             max = user_commands::MAX_COMMAND_LENGTH
@@ -2069,6 +2196,40 @@ mod tests {
         CommandLibraryPane::new(Some(&folder.join("profiles.toml")))
     }
 
+    /// The route tracer of the catalogue, with a value to ask for and a template for each
+    /// shell.
+    const TRACE: &str = "network-trace-route";
+
+    /// The tracer of the catalogue, its Linux template shown (this host's shell decides
+    /// otherwise), and `target` typed.
+    fn trace(pane: &mut CommandLibraryPane, target: &str) -> CommandRef {
+        pane.update(CommandLibraryMessage::Template(
+            TRACE.to_owned(),
+            TemplatePlatform::Linux,
+        ));
+        pane.update(CommandLibraryMessage::Param(
+            TRACE.to_owned(),
+            "target".to_owned(),
+            target.to_owned(),
+        ));
+        CommandRef::Catalog(TRACE.to_owned())
+    }
+
+    /// A command of the catalogue for Windows only, with no value to ask for.
+    fn fsmo() -> CommandRef {
+        CommandRef::Catalog("ad-check-fsmo-roles".to_owned())
+    }
+
+    /// A command of the catalogue for Linux only, marked dangerous, whose values have defaults.
+    fn fsck() -> CommandRef {
+        CommandRef::Catalog("fsck-check-filesystem".to_owned())
+    }
+
+    /// A command of the catalogue for Linux only, not dangerous, whose value has a default.
+    fn follow() -> CommandRef {
+        CommandRef::Catalog("journalctl-follow".to_owned())
+    }
+
     fn type_into(pane: &mut CommandLibraryPane, field: Field, value: &str) {
         pane.update(CommandLibraryMessage::Field(field, value.to_owned()));
     }
@@ -2086,59 +2247,99 @@ mod tests {
     }
 
     #[test]
-    fn a_snippet_copies_its_command_with_the_values_typed_by_its_own_button() {
+    fn a_catalogue_command_copies_with_the_values_typed_by_its_own_button() {
         let mut pane = CommandLibraryPane::default();
-        pane.update(CommandLibraryMessage::Param(
-            SnippetId::MtrProbe,
-            "host",
-            "10.0.0.1".to_owned(),
-        ));
+        let trace = trace(&mut pane, "10.0.0.1");
+        let position = command_library::shipped().position(TRACE).expect("shipped");
         assert_eq!(
-            pane.update(CommandLibraryMessage::Copy(CommandRef::Catalog(
-                SnippetId::MtrProbe
-            ))),
+            pane.update(CommandLibraryMessage::Copy(trace)),
             Outcome::Copy(
-                CopySlot::CmdLibCommand(SnippetId::MtrProbe),
-                "mtr -rw -c 50 10.0.0.1".to_owned()
+                CopySlot::CmdLibCommand(position),
+                "traceroute 10.0.0.1".to_owned()
             )
         );
+        let position = command_library::shipped()
+            .position("ad-check-fsmo-roles")
+            .expect("shipped");
         assert_eq!(
-            pane.update(CommandLibraryMessage::Copy(CommandRef::Catalog(
-                SnippetId::WindowsFlushDns
-            ))),
+            pane.update(CommandLibraryMessage::Copy(fsmo())),
             Outcome::Copy(
-                CopySlot::CmdLibCommand(SnippetId::WindowsFlushDns),
-                "Clear-DnsClientCache".to_owned()
+                CopySlot::CmdLibCommand(position),
+                "netdom query fsmo".to_owned()
             )
         );
     }
 
     #[test]
-    fn the_platform_and_the_search_filter_the_catalog() {
+    fn a_value_refused_leaves_nothing_to_copy_and_a_missing_one_is_asked_for() {
         let mut pane = CommandLibraryPane::default();
-        assert_eq!(pane.shown().len(), BUILTIN_SNIPPETS.len());
-        pane.update(CommandLibraryMessage::Platform(Some(
-            SnippetPlatform::Windows,
-        )));
-        assert!(
-            pane.shown()
-                .iter()
-                .all(|snippet| { snippet.platform != SnippetPlatform::Linux })
+        let trace = trace(&mut pane, "");
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(trace.clone())),
+            Outcome::None,
+            "a required value not given"
         );
-        pane.update(CommandLibraryMessage::Search("dnsclient".to_owned()));
-        let shown: Vec<SnippetId> = pane.shown().iter().map(|snippet| snippet.id).collect();
-        assert_eq!(shown, [SnippetId::WindowsFlushDns]);
+        trace_value(&mut pane, "a; rm -rf x");
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(trace)),
+            Outcome::None,
+            "shell syntax"
+        );
+    }
+
+    fn trace_value(pane: &mut CommandLibraryPane, target: &str) {
+        pane.update(CommandLibraryMessage::Param(
+            TRACE.to_owned(),
+            "target".to_owned(),
+            target.to_owned(),
+        ));
+    }
+
+    #[test]
+    fn the_platform_and_the_search_filter_the_catalogue() {
+        let mut pane = CommandLibraryPane::default();
+        let all = command_library::shipped().entries().len();
+        assert_eq!(pane.shown().len(), all);
+        pane.update(CommandLibraryMessage::Platform(Some(UserPlatform::Windows)));
+        let windows = pane.shown();
+        assert!(windows.len() < all);
+        assert!(
+            windows
+                .iter()
+                .all(|entry| entry.command().platform != UserPlatform::Linux)
+        );
+        pane.update(CommandLibraryMessage::Search(
+            "netdom query fsmo".to_owned(),
+        ));
+        let shown: Vec<&str> = pane
+            .shown()
+            .iter()
+            .map(|entry| entry.command().id.as_str())
+            .collect();
+        assert!(shown.contains(&"ad-check-fsmo-roles"), "{shown:?}");
+        assert!(shown.len() < 5, "{shown:?}");
+    }
+
+    #[test]
+    fn more_of_the_catalogue_is_shown_page_by_page_and_a_new_filter_starts_over() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::ShowMore);
+        assert_eq!(pane.more_pages, 2);
+        pane.update(CommandLibraryMessage::Search("x".to_owned()));
+        assert_eq!(pane.more_pages, 0);
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::Platform(None));
+        assert_eq!(pane.more_pages, 0);
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::FavoritesOnly);
+        assert_eq!(pane.more_pages, 0);
     }
 
     #[test]
     fn a_send_asks_for_the_command_with_its_values_and_never_without_a_terminal() {
         let mut pane = CommandLibraryPane::default();
-        pane.update(CommandLibraryMessage::Param(
-            SnippetId::MtrProbe,
-            "host",
-            "10.0.0.1".to_owned(),
-        ));
-        let mtr = CommandRef::Catalog(SnippetId::MtrProbe);
+        let mtr = trace(&mut pane, "10.0.0.1");
         assert_eq!(
             pane.update(CommandLibraryMessage::Send(mtr.clone())),
             Outcome::None,
@@ -2154,7 +2355,7 @@ mod tests {
         };
         assert_eq!(
             (target, command.as_str()),
-            (first, "mtr -rw -c 50 10.0.0.1"),
+            (first, "traceroute 10.0.0.1"),
             "the first terminal until one is chosen"
         );
         pane.update(CommandLibraryMessage::Target(second));
@@ -2179,18 +2380,14 @@ mod tests {
         let mut pane = CommandLibraryPane::default();
         pane.set_targets(vec![target(tab_ids()[0], "A")]);
         assert!(matches!(
-            pane.update(CommandLibraryMessage::Send(CommandRef::Catalog(
-                SnippetId::LinuxKillPort
-            ))),
+            pane.update(CommandLibraryMessage::Send(fsck())),
             Outcome::Send {
                 dangerous: true,
                 ..
             }
         ));
         assert!(matches!(
-            pane.update(CommandLibraryMessage::Send(CommandRef::Catalog(
-                SnippetId::MtrProbe
-            ))),
+            pane.update(CommandLibraryMessage::Send(follow())),
             Outcome::Send {
                 dangerous: false,
                 ..
@@ -2208,7 +2405,10 @@ mod tests {
         // Another pane over the same folder sees it: kept, apart from the catalog.
         let again = self::pane(folder.path());
         assert_eq!(again.library.commands().len(), 1);
-        assert_eq!(again.shown().len(), BUILTIN_SNIPPETS.len());
+        assert_eq!(
+            again.shown().len(),
+            command_library::shipped().entries().len()
+        );
 
         pane.update(CommandLibraryMessage::Edit(id.clone()));
         type_into(&mut pane, Field::Title, "Ping three times");
@@ -2323,14 +2523,11 @@ mod tests {
         assert_eq!(pane.update(CommandLibraryMessage::Import), Outcome::Import);
         pane.update(CommandLibraryMessage::Imported(Some(Ok(exported.clone()))));
         assert_eq!(pane.library.commands().len(), 1);
-        assert_eq!(
-            pane.notice,
-            Some(Notice::Imported(ImportReport {
-                imported: 1,
-                updated: 0,
-                skipped: 0
-            }))
-        );
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(report))
+                if (report.imported, report.updated, report.skipped) == (1, 0, 0)
+        ));
         let again = self::pane(folder.path());
         assert_eq!(again.library.commands().len(), 1, "kept in the file");
 
@@ -2373,7 +2570,7 @@ mod tests {
         let folder = tempfile::tempdir().expect("folder");
         let mut pane = pane(folder.path());
         let id = make_ping(&mut pane);
-        let mtr = CommandRef::Catalog(SnippetId::MtrProbe);
+        let mtr = CommandRef::Catalog(TRACE.to_owned());
         let ping = CommandRef::User(id.clone());
         pane.update(CommandLibraryMessage::ToggleFavorite(mtr.clone()));
         assert!(pane.is_favorite(&mtr));
@@ -2388,8 +2585,12 @@ mod tests {
         );
 
         pane.update(CommandLibraryMessage::FavoritesOnly);
-        let shown: Vec<SnippetId> = pane.shown().iter().map(|each| each.id).collect();
-        assert_eq!(shown, [SnippetId::MtrProbe]);
+        let shown: Vec<&str> = pane
+            .shown()
+            .iter()
+            .map(|each| each.command().id.as_str())
+            .collect();
+        assert_eq!(shown, [TRACE]);
         assert!(pane.shown_user().is_empty());
         pane.update(CommandLibraryMessage::ToggleFavorite(ping.clone()));
         assert_eq!(pane.shown_user().len(), 1);
@@ -2425,17 +2626,14 @@ mod tests {
         assert_ne!(pane.library.commands()[1].id, id);
 
         // A snippet of the catalog is copied too: its pattern is kept for its platform.
-        pane.update(CommandLibraryMessage::Duplicate(CommandRef::Catalog(
-            SnippetId::WindowsFlushDns,
-        )));
+        pane.update(CommandLibraryMessage::Duplicate(fsmo()));
         let draft = &pane.editor.as_ref().expect("editor open").draft;
         assert_eq!(draft.platform, UserPlatform::Windows);
-        assert_eq!(draft.windows_pattern, "Clear-DnsClientCache");
+        assert_eq!(draft.windows_pattern, "netdom query fsmo");
         assert!(draft.linux_pattern.is_empty());
+        assert_eq!(draft.level, Criticality::Info);
         // The editor is open: a second duplicate changes nothing.
-        pane.update(CommandLibraryMessage::Duplicate(CommandRef::Catalog(
-            SnippetId::MtrProbe,
-        )));
+        pane.update(CommandLibraryMessage::Duplicate(follow()));
         assert_eq!(
             pane.editor.as_ref().expect("still open").draft.platform,
             UserPlatform::Windows
@@ -2448,12 +2646,10 @@ mod tests {
         let mut pane = pane(folder.path());
         pane.update(CommandLibraryMessage::DuplicateSelected);
         assert!(pane.editor.is_none(), "nothing used yet");
-        pane.update(CommandLibraryMessage::Copy(CommandRef::Catalog(
-            SnippetId::MtrProbe,
-        )));
+        pane.update(CommandLibraryMessage::Copy(follow()));
         pane.update(CommandLibraryMessage::DuplicateSelected);
         let editor = pane.editor.as_ref().expect("editor open");
-        assert_eq!(editor.draft.linux_pattern, "mtr -rw -c 50 {host}");
+        assert_eq!(editor.draft.linux_pattern, "journalctl -f -n {lines}");
     }
 
     #[test]
@@ -2462,12 +2658,7 @@ mod tests {
         let mut pane = pane(folder.path());
         let [first, ..] = tab_ids();
         pane.set_targets(vec![target(first, "web-1")]);
-        let mtr = CommandRef::Catalog(SnippetId::MtrProbe);
-        pane.update(CommandLibraryMessage::Param(
-            SnippetId::MtrProbe,
-            "host",
-            "secret-host.internal".to_owned(),
-        ));
+        let mtr = trace(&mut pane, "secret-host.internal");
         let Outcome::Send { command, .. } = pane.update(CommandLibraryMessage::Send(mtr)) else {
             panic!("asked");
         };
@@ -2483,8 +2674,8 @@ mod tests {
             panic!("one entry");
         };
         assert_eq!(entry.target, "web-1");
-        assert_eq!(entry.pattern, "mtr -rw -c 50 {host}");
-        assert_eq!(entry.parameters, ["host"]);
+        assert_eq!(entry.pattern, "traceroute {target}");
+        assert_eq!(entry.parameters, ["target"]);
         assert!(entry.at > 0);
         let kept = std::fs::read_to_string(folder.path().join(ACTIVITY_FILE)).expect("read");
         assert!(
@@ -2547,10 +2738,10 @@ mod tests {
     fn a_replay_without_a_terminal_is_said_and_asks_nothing() {
         let mut pane = CommandLibraryPane::default();
         pane.activity.record(HistoryEntry {
-            command: command_activity::catalog_key(SnippetId::MtrProbe.key()),
-            title: "Network path quality".to_owned(),
-            pattern: "mtr -rw -c 50 {host}".to_owned(),
-            parameters: vec!["host".to_owned()],
+            command: command_activity::catalog_key(TRACE),
+            title: "Trace the network route".to_owned(),
+            pattern: "traceroute {target}".to_owned(),
+            parameters: vec!["target".to_owned()],
             target: "web-1".to_owned(),
             at: now_unix(),
         });
@@ -2562,7 +2753,7 @@ mod tests {
     fn the_history_is_cleared_once_asked_and_the_favorites_stay() {
         let folder = tempfile::tempdir().expect("folder");
         let mut pane = pane(folder.path());
-        let mtr = CommandRef::Catalog(SnippetId::MtrProbe);
+        let mtr = trace(&mut pane, "10.0.0.1");
         pane.update(CommandLibraryMessage::ToggleFavorite(mtr.clone()));
         let [first, ..] = tab_ids();
         pane.set_targets(vec![target(first, "web-1")]);
@@ -2592,7 +2783,7 @@ mod tests {
             target(second, "B"),
             target(third, "C"),
         ]);
-        let flush = CommandRef::Catalog(SnippetId::WindowsFlushDns);
+        let flush = fsmo();
         assert_eq!(
             pane.update(CommandLibraryMessage::Broadcast(flush.clone())),
             Outcome::None,
@@ -2609,7 +2800,7 @@ mod tests {
             panic!("a question");
         };
         assert_eq!(targets, [first, third], "in the order of the strip");
-        assert_eq!(command, "Clear-DnsClientCache");
+        assert_eq!(command, "netdom query fsmo");
         assert!(!dangerous);
         pane.update(CommandLibraryMessage::BroadcastTarget(third));
         assert_eq!(pane.broadcast, [first], "unticked");
@@ -2620,9 +2811,7 @@ mod tests {
         // A dangerous command is marked so for the one question.
         pane.update(CommandLibraryMessage::BroadcastAll);
         assert!(matches!(
-            pane.update(CommandLibraryMessage::Broadcast(CommandRef::Catalog(
-                SnippetId::LinuxKillPort
-            ))),
+            pane.update(CommandLibraryMessage::Broadcast(fsck())),
             Outcome::Broadcast {
                 dangerous: true,
                 ..
@@ -2640,12 +2829,12 @@ mod tests {
             target(third, "C"),
         ]);
         pane.update(CommandLibraryMessage::BroadcastAll);
-        let flush = CommandRef::Catalog(SnippetId::WindowsFlushDns);
+        let flush = fsmo();
         pane.update(CommandLibraryMessage::Broadcast(flush));
         // The application wrote into two of the three: the third closed meanwhile.
         pane.record_sent(&[
-            receipt(first, "A", "Clear-DnsClientCache"),
-            receipt(second, "B", "Clear-DnsClientCache"),
+            receipt(first, "A", "netdom query fsmo"),
+            receipt(second, "B", "netdom query fsmo"),
         ]);
         assert_eq!(
             pane.notice,
@@ -2670,9 +2859,9 @@ mod tests {
         pane.update(CommandLibraryMessage::BroadcastTarget(first));
         pane.update(CommandLibraryMessage::BroadcastTarget(second));
         pane.set_targets(vec![target(second, "B")]);
-        let Outcome::Broadcast { targets, .. } = pane.update(CommandLibraryMessage::Broadcast(
-            CommandRef::Catalog(SnippetId::WindowsFlushDns),
-        )) else {
+        let Outcome::Broadcast { targets, .. } =
+            pane.update(CommandLibraryMessage::Broadcast(fsmo()))
+        else {
             panic!("a question");
         };
         assert_eq!(targets, [second], "never a terminal that is gone");
@@ -2681,5 +2870,126 @@ mod tests {
         pane.update(CommandLibraryMessage::BroadcastNone);
         pane.update(CommandLibraryMessage::BroadcastTarget(third));
         assert!(pane.broadcast.is_empty());
+    }
+
+    #[test]
+    fn the_favorites_and_the_history_of_the_first_ten_commands_follow_them_to_the_catalogue() {
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join(ACTIVITY_FILE);
+        let mut old = CommandActivity::default();
+        old.toggle_favorite(&command_activity::catalog_key("mtr-probe"));
+        old.toggle_favorite(&command_activity::catalog_key("linux-kill-port"));
+        old.record(HistoryEntry {
+            command: command_activity::catalog_key("mtr-probe"),
+            title: "Network path quality".to_owned(),
+            pattern: "mtr -rw -c 50 {host}".to_owned(),
+            parameters: vec!["host".to_owned()],
+            target: "web-1".to_owned(),
+            at: now_unix(),
+        });
+        old.save(&path).expect("written");
+
+        let mut pane = pane(folder.path());
+        let trace = CommandRef::Catalog(TRACE.to_owned());
+        assert!(pane.is_favorite(&trace), "starred under its new name");
+        assert_eq!(
+            pane.command_of_key(&pane.activity.history()[0].command),
+            Some(trace),
+            "the history finds it"
+        );
+        // Written back under the new names, so the next start has nothing to rename.
+        let kept = CommandActivity::load(&path).expect("read");
+        assert!(kept.is_favorite(&command_activity::catalog_key(TRACE)));
+        assert!(!kept.is_favorite(&command_activity::catalog_key("mtr-probe")));
+        // The command with no successor is kept in the file and finds no command.
+        assert!(kept.is_favorite(&command_activity::catalog_key("linux-kill-port")));
+        pane.update(CommandLibraryMessage::Replay(0));
+        assert_ne!(pane.notice, Some(Notice::ReplayGone));
+    }
+
+    #[test]
+    fn a_file_imported_that_breaks_a_rule_is_left_out_and_counted() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let file = r#"{
+            "schemaVersion": "1.0",
+            "actions": [
+                {"id": "good", "title": "Good", "category": "mine", "platform": 1,
+                 "linuxCommandTemplate": {"platform": 1, "commandPattern": "uptime", "parameters": []}},
+                {"id": "odd", "title": "Odd", "category": "mine", "platform": 1,
+                 "linuxCommandTemplate": {"platform": 1, "commandPattern": "run {x}",
+                  "parameters": [{"name": "x", "label": "X", "type": "magic"}]}},
+                {"id": "lines", "title": "Lines", "category": "mine", "platform": 1,
+                 "linuxCommandTemplate": {"platform": 1, "commandPattern": "id\nwhoami", "parameters": []}}
+            ]
+        }"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        let Some(Notice::Imported(report)) = &pane.notice else {
+            panic!("said");
+        };
+        assert_eq!((report.imported, report.updated, report.skipped), (1, 0, 2));
+        assert!(
+            matches!(&report.first_skipped, Some((title, _)) if title == "Odd"),
+            "the first left out is named"
+        );
+        assert_eq!(pane.library.commands().len(), 1);
+        assert_eq!(pane.library.commands()[0].title, "Good");
+    }
+
+    #[test]
+    fn a_catalogue_command_with_a_line_break_is_not_copied_sent_or_awaited() {
+        let mut pane = CommandLibraryPane::default();
+        let [first, second, _] = tab_ids();
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        pane.update(CommandLibraryMessage::BroadcastAll);
+        let memory = CommandRef::Catalog("perf-memory-analysis".to_owned());
+        for platform in [TemplatePlatform::Windows, TemplatePlatform::Linux] {
+            pane.update(CommandLibraryMessage::Template(
+                "perf-memory-analysis".to_owned(),
+                platform,
+            ));
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Copy(memory.clone())),
+                Outcome::None
+            );
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Send(memory.clone())),
+                Outcome::None
+            );
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Broadcast(memory.clone())),
+                Outcome::None
+            );
+        }
+        assert!(pane.awaited.is_empty(), "no receipt for a refused command");
+    }
+
+    #[test]
+    fn an_imported_destructive_command_asks_for_the_danger_confirmation_at_any_level() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let file = r#"{"actions": [
+            {"id": "wipe", "title": "Wipe", "category": "mine", "platform": 1, "level": 0,
+             "linuxCommandTemplate": {"platform": 1, "commandPattern": "rm -rf ~", "parameters": []}}
+        ]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        let id = pane.library.commands()[0].id.clone();
+        assert_eq!(pane.library.commands()[0].level, Criticality::Dangerous);
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Send(CommandRef::User(id))),
+            Outcome::Send {
+                dangerous: true,
+                ..
+            }
+        ));
+        // Even a level kept as Info is judged by the text that reaches the shell.
+        let mut other = CommandLibraryPane::default();
+        assert!(other.is_dangerous(&fsmo(), "shutdown -h now"));
+        assert!(!other.is_dangerous(&fsmo(), "netdom query fsmo"));
+        other.update(CommandLibraryMessage::ShowMoreMine);
+        assert_eq!(other.more_mine_pages, 1);
+        other.update(CommandLibraryMessage::Search("x".to_owned()));
+        assert_eq!(other.more_mine_pages, 0);
     }
 }

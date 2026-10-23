@@ -1,0 +1,76 @@
+{
+  "id": "systemctl-enable",
+  "title": "Enable a service at boot",
+  "description": "Configure a service to start automatically at boot",
+  "category": "services-automation",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "systemctl",
+    "systemd",
+    "enable",
+    "boot",
+    "autostart"
+  ],
+  "linuxCommandTemplateId": "systemctl-enable-cmd",
+  "linuxCommandTemplate": {
+    "id": "systemctl-enable-cmd",
+    "platform": 1,
+    "name": "systemctl",
+    "commandPattern": "sudo systemctl enable {service}",
+    "parameters": [
+      {
+        "name": "service",
+        "label": "Service name",
+        "type": "string",
+        "defaultValue": "nginx.service",
+        "required": true,
+        "description": "Name of the systemd unit to enable"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo systemctl enable nginx",
+      "description": "Enable nginx at boot",
+      "platform": 1
+    },
+    {
+      "command": "sudo systemctl enable --now nginx",
+      "description": "Enable and start immediately",
+      "platform": 1
+    },
+    {
+      "command": "sudo systemctl enable docker",
+      "description": "Enable Docker at boot",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. --now also starts the service immediately. Creates a symbolic link.",
+  "links": [
+    {
+      "title": "systemctl enable",
+      "url": "https://www.freedesktop.org/software/systemd/man/systemctl.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Activer un service au démarrage",
+      "description": "Configure un service pour démarrer automatiquement au boot",
+      "notes": "Nécessite sudo. --now démarre aussi le service immédiatement. Crée un lien symbolique.",
+      "parameters": {
+        "linux": {
+          "service": {
+            "label": "Nom du service",
+            "description": "Nom de l'unité systemd à activer"
+          }
+        }
+      },
+      "examples": {
+        "sudo systemctl enable nginx": "Active nginx au démarrage",
+        "sudo systemctl enable --now nginx": "Active et démarre immédiatement",
+        "sudo systemctl enable docker": "Activer Docker au démarrage"
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "id": "force-wu-detection",
+  "title": "Force update detection",
+  "description": "Make Windows Update search for new updates right away.",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "windows-update",
+    "detection",
+    "force"
+  ],
+  "windowsCommandTemplateId": "force-wu-detection-cmd",
+  "windowsCommandTemplate": {
+    "id": "force-wu-detection-cmd",
+    "platform": 0,
+    "name": "wuauclt",
+    "commandPattern": "wuauclt /detectnow /updatenow",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "wuauclt /detectnow",
+      "description": "Force detection only",
+      "platform": 0
+    }
+  ],
+  "notes": "Requires administrator rights. On Windows 10/11, prefer 'usoclient StartScan'.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Forcer la détection des mises à jour",
+      "description": "Force Windows Update à rechercher immédiatement les nouvelles mises à jour",
+      "notes": "Droits administrateur requis. Sur Windows 10/11, préférer 'usoclient StartScan'.",
+      "examples": {
+        "wuauclt /detectnow": "Force uniquement la détection"
+      }
+    }
+  }
+}

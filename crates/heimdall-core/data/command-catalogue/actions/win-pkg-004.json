@@ -1,0 +1,47 @@
+{
+  "id": "win-pkg-004",
+  "title": "Update every Winget application",
+  "description": "Update every installed application to its latest available version.",
+  "category": "package-management",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "winget",
+    "package",
+    "update",
+    "upgrade-all",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "winget-upgrade-all-cmd",
+  "windowsCommandTemplate": {
+    "id": "winget-upgrade-all-cmd",
+    "platform": 0,
+    "name": "winget",
+    "commandPattern": "winget upgrade --all --silent --accept-package-agreements --accept-source-agreements",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "winget upgrade --all --silent",
+      "description": "Update every application silently",
+      "platform": 0
+    }
+  ],
+  "notes": "Can take time depending on the number of applications to update.",
+  "links": [
+    {
+      "title": "Winget upgrade documentation",
+      "url": "https://learn.microsoft.com/en-us/windows/package-manager/winget/upgrade"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Mettre à jour toutes les applications Winget",
+      "description": "Met à jour toutes les applications installées vers leurs dernières versions disponibles.",
+      "notes": "Peut prendre du temps selon le nombre d'applications à mettre à jour.",
+      "examples": {
+        "winget upgrade --all --silent": "Met à jour toutes les applications en mode silencieux"
+      }
+    }
+  }
+}

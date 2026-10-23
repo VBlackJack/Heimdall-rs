@@ -1,0 +1,103 @@
+{
+  "id": "unified-logs-errors",
+  "title": "Show recent system errors",
+  "description": "Show the recent errors of the system log",
+  "category": "monitoring-logs",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "logs",
+    "errors",
+    "eventlog",
+    "journalctl",
+    "diagnostic",
+    "system"
+  ],
+  "windowsCommandTemplateId": "unified-logs-errors-win-cmd",
+  "windowsCommandTemplate": {
+    "id": "unified-logs-errors-win-cmd",
+    "platform": 0,
+    "commandPattern": "Get-EventLog -LogName {logName} -EntryType Error -Newest {count}",
+    "parameters": [
+      {
+        "name": "logName",
+        "label": "Log name",
+        "type": "string",
+        "required": true,
+        "defaultValue": "System"
+      },
+      {
+        "name": "count",
+        "label": "Number of entries",
+        "type": "integer",
+        "required": true,
+        "defaultValue": "20"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "unified-logs-errors-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "unified-logs-errors-linux-cmd",
+    "platform": 1,
+    "commandPattern": "journalctl -p {priority} -n {count}",
+    "parameters": [
+      {
+        "name": "priority",
+        "label": "Priority (0-7)",
+        "type": "string",
+        "required": true,
+        "defaultValue": "err"
+      },
+      {
+        "name": "count",
+        "label": "Number of entries",
+        "type": "integer",
+        "required": true,
+        "defaultValue": "20"
+      }
+    ]
+  },
+  "examples": [],
+  "windowsExamples": [
+    {
+      "command": "Get-EventLog -LogName System -EntryType Error -Newest 20",
+      "description": "Show the last 20 system errors on Windows",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "journalctl -p err -n 20",
+      "description": "Show the last 20 errors on Linux",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Afficher les erreurs système récentes",
+      "description": "Affiche les erreurs récentes du journal système",
+      "parameters": {
+        "windows": {
+          "logName": {
+            "label": "Nom du journal"
+          },
+          "count": {
+            "label": "Nombre d'entrées"
+          }
+        },
+        "linux": {
+          "priority": {
+            "label": "Priorité (0-7)"
+          },
+          "count": {
+            "label": "Nombre d'entrées"
+          }
+        }
+      },
+      "examples": {
+        "Get-EventLog -LogName System -EntryType Error -Newest 20": "Affiche les 20 dernières erreurs système sur Windows",
+        "journalctl -p err -n 20": "Affiche les 20 dernières erreurs sur Linux"
+      }
+    }
+  }
+}

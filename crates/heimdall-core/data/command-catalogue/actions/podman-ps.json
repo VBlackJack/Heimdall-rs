@@ -1,0 +1,82 @@
+{
+  "id": "podman-ps",
+  "title": "List Podman containers",
+  "description": "Show the Podman containers (the rootless alternative to Docker).",
+  "category": "containers-vms",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "podman",
+    "containers",
+    "rootless",
+    "docker"
+  ],
+  "linuxCommandTemplateId": "podman-ps-cmd",
+  "linuxCommandTemplate": {
+    "id": "podman-ps-cmd",
+    "platform": 1,
+    "name": "podman",
+    "commandPattern": "podman ps -a",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "podman ps",
+      "description": "List the running containers",
+      "platform": 1
+    },
+    {
+      "command": "podman ps -a",
+      "description": "List every container",
+      "platform": 1
+    },
+    {
+      "command": "podman pod list",
+      "description": "List the pods",
+      "platform": 1
+    },
+    {
+      "command": "podman images",
+      "description": "List the images",
+      "platform": 1
+    },
+    {
+      "command": "podman logs webapp",
+      "description": "Logs of a container",
+      "platform": 1
+    },
+    {
+      "command": "podman exec -it webapp bash",
+      "description": "Shell in a container",
+      "platform": 1
+    },
+    {
+      "command": "podman stats",
+      "description": "Real-time stats",
+      "platform": 1
+    }
+  ],
+  "notes": "Podman is Docker-compatible but needs no daemon. Rootless by default.",
+  "links": [
+    {
+      "title": "Podman documentation",
+      "url": "https://docs.podman.io/en/latest/Commands.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Lister les conteneurs Podman",
+      "description": "Affiche les conteneurs Podman (alternative rootless à Docker)",
+      "notes": "Podman est compatible Docker mais ne nécessite pas de daemon. Rootless par défaut.",
+      "examples": {
+        "podman ps": "Liste les conteneurs en cours",
+        "podman ps -a": "Liste tous les conteneurs",
+        "podman pod list": "Liste les pods",
+        "podman images": "Lister les images",
+        "podman logs webapp": "Logs d'un conteneur",
+        "podman exec -it webapp bash": "Shell dans un conteneur",
+        "podman stats": "Stats temps réel"
+      }
+    }
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "id": "lsof-open-files",
+  "title": "List open files",
+  "description": "List every file opened by the processes (files, sockets, etc.).",
+  "category": "monitoring-logs",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "lsof",
+    "files",
+    "processes",
+    "sockets",
+    "monitoring"
+  ],
+  "linuxCommandTemplateId": "lsof-cmd",
+  "linuxCommandTemplate": {
+    "id": "lsof-cmd",
+    "platform": 1,
+    "name": "lsof",
+    "commandPattern": "lsof -i",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "sudo lsof -i",
+      "description": "List every open network file",
+      "platform": 1
+    },
+    {
+      "command": "lsof -i :80",
+      "description": "Processes listening on port 80",
+      "platform": 1
+    },
+    {
+      "command": "lsof -u username",
+      "description": "Files opened by a user",
+      "platform": 1
+    },
+    {
+      "command": "lsof -i",
+      "description": "List the open network files",
+      "platform": 1
+    },
+    {
+      "command": "lsof -u www-data",
+      "description": "Files opened by www-data",
+      "platform": 1
+    },
+    {
+      "command": "lsof /var/log/syslog",
+      "description": "Processes using this file",
+      "platform": 1
+    },
+    {
+      "command": "lsof -i -P -n",
+      "description": "All network connections",
+      "platform": 1
+    },
+    {
+      "command": "lsof +D /tmp",
+      "description": "Open files in /tmp",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo to see every process. Very powerful to diagnose problems.",
+  "links": [
+    {
+      "title": "lsof examples",
+      "url": "https://man7.org/linux/man-pages/man8/lsof.8.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Lister les fichiers ouverts",
+      "description": "Liste tous les fichiers ouverts par les processus (fichiers, sockets, etc.)",
+      "notes": "Nécessite sudo pour voir tous les processus. Très puissant pour diagnostiquer les problèmes.",
+      "examples": {
+        "sudo lsof -i": "Liste tous les fichiers réseau ouverts",
+        "lsof -i :80": "Processus écoutant sur le port 80",
+        "lsof -u username": "Fichiers ouverts par un utilisateur",
+        "lsof -i": "Liste les fichiers réseau ouverts",
+        "lsof -u www-data": "Fichiers ouverts par www-data",
+        "lsof /var/log/syslog": "Processus utilisant ce fichier",
+        "lsof -i -P -n": "Toutes les connexions réseau",
+        "lsof +D /tmp": "Fichiers ouverts dans /tmp"
+      }
+    }
+  }
+}

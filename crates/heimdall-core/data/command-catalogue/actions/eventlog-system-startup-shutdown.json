@@ -1,0 +1,82 @@
+{
+  "id": "eventlog-system-startup-shutdown",
+  "title": "System startup and shutdown history",
+  "description": "List every system startup (EventID 6005) and shutdown (EventID 6006) event.",
+  "category": "monitoring-logs",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "eventlog",
+    "startup",
+    "shutdown",
+    "system",
+    "uptime"
+  ],
+  "windowsCommandTemplateId": "eventlog-system-startup-shutdown-cmd",
+  "windowsCommandTemplate": {
+    "id": "eventlog-system-startup-shutdown-cmd",
+    "platform": 0,
+    "name": "Get-WinEvent",
+    "commandPattern": "Get-WinEvent -FilterHashtable @{LogName='System'; Id=6005,6006,1074; StartTime=(Get-Date).AddDays(-{days})} | Select-Object TimeCreated,Id,Message | Format-Table -AutoSize",
+    "parameters": [
+      {
+        "name": "days",
+        "label": "Number of days",
+        "type": "number",
+        "defaultValue": "30",
+        "required": true,
+        "description": "Number of days to look back"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Get-WinEvent -FilterHashtable @{LogName='System'; Level=2; StartTime=(Get-Date).AddHours(-24)}",
+      "description": "Fast way to filter the errors (Level=2) of the last 24 hours. Much faster than Get-EventLog on large logs.",
+      "platform": 0
+    },
+    {
+      "command": "Get-WinEvent -LogName System -MaxEvents 100",
+      "description": "Show the last 100 events of the System log. Get-WinEvent is the modern cmdlet (it replaces Get-EventLog). -MaxEvents limits the results. It reads the classic logs AND the newer Applications and Services logs. Faster and more flexible than Get-EventLog.",
+      "platform": 0
+    },
+    {
+      "command": "Get-WinEvent -ListLog *",
+      "description": "List ALL the event logs available on the system. Returns the name, maximum size, record count and status (enabled or disabled). There can be hundreds of logs (System, Application, Security + all the Applications and Services logs). Use this command to discover the available logs.",
+      "platform": 0
+    },
+    {
+      "command": "Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents 20",
+      "description": "Show the events of the PowerShell log. Applications and Services logs have path-like names (slashes). This log records all PowerShell activity: commands run, errors, scripts. Essential for security audits and PowerShell troubleshooting.",
+      "platform": 0
+    }
+  ],
+  "notes": "EventID 6005 = Event Log service started, 6006 = Event Log service stopped, 1074 = shutdown initiated by a user or an application.",
+  "links": [
+    {
+      "title": "System Event IDs",
+      "url": "https://learn.microsoft.com/en-us/windows/win32/eventlog/event-logging"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Historique des démarrages et arrêts système",
+      "description": "Liste tous les événements de démarrage (EventID 6005) et arrêt (EventID 6006) du système",
+      "notes": "EventID 6005 = démarrage Event Log service, 6006 = arrêt Event Log service, 1074 = arrêt initié par utilisateur/application.",
+      "parameters": {
+        "windows": {
+          "days": {
+            "label": "Nombre de jours",
+            "description": "Nombre de jours à analyser en arrière"
+          }
+        }
+      },
+      "examples": {
+        "Get-WinEvent -FilterHashtable @{LogName='System'; Level=2; StartTime=(Get-Date).AddHours(-24)}": "Méthode performante pour filtrer les erreurs (Level=2) des dernières 24h. Beaucoup plus rapide que Get-EventLog sur les gros volumes.",
+        "Get-WinEvent -LogName System -MaxEvents 100": "Affiche les 100 derniers événements du journal Système. Get-WinEvent est la cmdlet moderne (remplace Get-EventLog). -MaxEvents limite les résultats. Supporte les journaux classiques ET les nouveaux journaux Applications and Services. Plus rapide et plus flexible que Get-EventLog.",
+        "Get-WinEvent -ListLog *": "Liste TOUS les journaux d'événements disponibles sur le système. Retourne le nom, la taille max, le nombre d'enregistrements et le statut (activé/désactivé). Il peut y avoir des centaines de journaux (System, Application, Security + tous les journaux Applications and Services). Utilisez cette commande pour découvrir les journaux disponibles.",
+        "Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents 20": "Affiche les événements du journal PowerShell. Les journaux Applications and Services ont des noms avec chemins (slashes). Ce journal enregistre toutes les activités PowerShell : commandes exécutées, erreurs, scripts. Essentiel pour l'audit de sécurité et le troubleshooting PowerShell."
+      }
+    }
+  }
+}

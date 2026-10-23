@@ -1,0 +1,46 @@
+{
+  "id": "ad-check-replication",
+  "title": "Check Active Directory replication",
+  "description": "Check the replication status between domain controllers.",
+  "category": "active-directory",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "ad",
+    "replication",
+    "diagnostic",
+    "dc"
+  ],
+  "windowsCommandTemplateId": "ad-check-replication-cmd",
+  "windowsCommandTemplate": {
+    "id": "ad-check-replication-cmd",
+    "platform": 0,
+    "name": "repadmin",
+    "commandPattern": "repadmin /showrepl",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "repadmin /showrepl",
+      "description": "Show the replication status of the local DC",
+      "platform": 0
+    }
+  ],
+  "notes": "Run it on a domain controller. To check every DC: repadmin /replsummary.",
+  "links": [
+    {
+      "title": "Documentation repadmin",
+      "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/replication/repadmin-showrepl"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Vérifier la réplication Active Directory",
+      "description": "Vérifie l'état de la réplication entre les contrôleurs de domaine.",
+      "notes": "À exécuter sur un contrôleur de domaine. Pour vérifier tous les DCs: repadmin /replsummary.",
+      "examples": {
+        "repadmin /showrepl": "Affiche l'état de réplication du DC local"
+      }
+    }
+  }
+}

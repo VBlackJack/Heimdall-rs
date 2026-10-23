@@ -1,0 +1,79 @@
+{
+  "id": "unified-disk-space",
+  "title": "Show the available disk space",
+  "description": "Show the used and available disk space of the partitions",
+  "category": "files-storage",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "disk",
+    "space",
+    "storage",
+    "partition",
+    "free",
+    "usage"
+  ],
+  "windowsCommandTemplateId": "unified-disk-space-win-cmd",
+  "windowsCommandTemplate": {
+    "id": "unified-disk-space-win-cmd",
+    "platform": 0,
+    "commandPattern": "Get-Volume | Where-Object {$_.DriveLetter} | Select-Object DriveLetter,FileSystemLabel,@{Name='Size_GB';Expression={[math]::Round($_.Size/1GB,2)}},@{Name='Free_GB';Expression={[math]::Round($_.SizeRemaining/1GB,2)}},@{Name='Free_%';Expression={[math]::Round(($_.SizeRemaining/$_.Size)*100,2)}} | Format-Table -AutoSize",
+    "parameters": []
+  },
+  "linuxCommandTemplateId": "unified-disk-space-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "unified-disk-space-linux-cmd",
+    "platform": 1,
+    "commandPattern": "df -h",
+    "parameters": []
+  },
+  "examples": [],
+  "windowsExamples": [
+    {
+      "command": "Get-Volume | Select-Object DriveLetter,Size,SizeRemaining | Format-Table",
+      "description": "Show the disk space on Windows with the total and remaining size",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "df -h",
+      "description": "Show the disk space on Linux",
+      "platform": 1
+    },
+    {
+      "command": "df -h /home",
+      "description": "Disk space of the /home mount point",
+      "platform": 1
+    },
+    {
+      "command": "df -T",
+      "description": "Show the filesystem type",
+      "platform": 1
+    },
+    {
+      "command": "df -i",
+      "description": "Show inode usage",
+      "platform": 1
+    },
+    {
+      "command": "df -h --total",
+      "description": "With the grand total",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Afficher l'espace disque disponible",
+      "description": "Affiche l'espace disque utilisé et disponible sur les partitions",
+      "examples": {
+        "Get-Volume | Select-Object DriveLetter,Size,SizeRemaining | Format-Table": "Affiche l'espace disque sur Windows avec taille totale et restante",
+        "df -h": "Affiche l'espace disque sur Linux",
+        "df -h /home": "Espace disque du point de montage /home",
+        "df -T": "Afficher le type de filesystem",
+        "df -i": "Afficher l'utilisation des inodes",
+        "df -h --total": "Avec le total global"
+      }
+    }
+  }
+}

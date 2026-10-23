@@ -1,0 +1,95 @@
+{
+  "id": "start-scheduledtask",
+  "title": "Start a scheduled task",
+  "description": "Run a scheduled task now",
+  "category": "services-automation",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "taskscheduler",
+    "start",
+    "run",
+    "automation",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "start-scheduledtask-cmd",
+  "windowsCommandTemplate": {
+    "id": "start-scheduledtask-cmd",
+    "platform": 0,
+    "name": "Start-ScheduledTask",
+    "commandPattern": "Start-ScheduledTask -TaskName '{taskname}' {taskpath}",
+    "parameters": [
+      {
+        "name": "taskname",
+        "label": "Task name",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "MyTask",
+        "required": true,
+        "description": "Name of the task to start"
+      },
+      {
+        "name": "taskpath",
+        "label": "Path",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Task path (e.g. \\CustomTasks\\), passed positionally after the task name"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Start-ScheduledTask -TaskName 'DailyBackup'",
+      "description": "Start the task now",
+      "platform": 0
+    },
+    {
+      "command": "Start-ScheduledTask -TaskName 'Cleanup' -TaskPath '\\Maintenance\\'",
+      "description": "Start a task in a specific path",
+      "platform": 0
+    },
+    {
+      "command": "Get-ScheduledTask -TaskPath '\\' | Where-Object {$_.State -eq 'Ready'} | Start-ScheduledTask",
+      "description": "Start every ready task",
+      "platform": 0
+    },
+    {
+      "command": "Start-ScheduledTask -TaskName 'DailyBackup' \\Microsoft\\Windows\\",
+      "description": "Example using the 'taskpath' parameter: Task path (e.g. -TaskPath '\\CustomTasks\\'). Replace \\Microsoft\\Windows\\ with the value that fits your environment.",
+      "platform": 0
+    }
+  ],
+  "notes": "Runs right away without waiting for the trigger. Check the state with Get-ScheduledTaskInfo.",
+  "links": [
+    {
+      "title": "Start-ScheduledTask Documentation",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/start-scheduledtask"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Démarrer une tâche planifiée",
+      "description": "Démarre immédiatement l'exécution d'une tâche planifiée",
+      "notes": "Exécute immédiatement sans attendre le déclencheur. Vérifiez l'état avec Get-ScheduledTaskInfo.",
+      "parameters": {
+        "windows": {
+          "taskname": {
+            "label": "Nom de la tâche",
+            "description": "Nom de la tâche à démarrer"
+          },
+          "taskpath": {
+            "label": "Chemin",
+            "description": "Chemin de la tâche (ex: \\CustomTasks\\), passé en position après le nom de la tâche"
+          }
+        }
+      },
+      "examples": {
+        "Start-ScheduledTask -TaskName 'DailyBackup'": "Démarre la tâche immédiatement",
+        "Start-ScheduledTask -TaskName 'Cleanup' -TaskPath '\\Maintenance\\'": "Démarre une tâche dans un chemin spécifique",
+        "Get-ScheduledTask -TaskPath '\\' | Where-Object {$_.State -eq 'Ready'} | Start-ScheduledTask": "Démarre toutes les tâches prêtes",
+        "Start-ScheduledTask -TaskName 'DailyBackup' \\Microsoft\\Windows\\": "Exemple utilisant le paramètre 'taskpath': Chemin de la tâche (ex: -TaskPath '\\CustomTasks\\'). Remplacez \\Microsoft\\Windows\\ par la valeur appropriée selon votre environnement."
+      }
+    }
+  }
+}

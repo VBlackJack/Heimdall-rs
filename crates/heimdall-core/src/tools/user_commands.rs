@@ -35,6 +35,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
+use super::command_library;
 use super::date_time::{Instant, round_trip_utc};
 use super::private_file::write_private;
 use super::uuid_generator::{self, UuidFormat, UuidVersion};
@@ -81,6 +82,9 @@ pub const MAX_TAGS: usize = 20;
 
 /// The largest file read, as the C# `MaxFileSizeBytes`.
 pub const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
+
+/// The most actions an imported file may hold: a file of more is refused whole.
+pub const MAX_IMPORT_ACTIONS: usize = 2000;
 
 /// The longest hostname, as the C# `IsValidHostname`.
 const MAX_HOSTNAME_LENGTH: usize = 255;
@@ -522,6 +526,10 @@ pub enum GenerateError {
     Values(Vec<ValueError>),
     /// The command is longer than [`MAX_COMMAND_LENGTH`].
     TooLong,
+    /// The command holds a line break or another control character (a pattern written with
+    /// one): typed into a terminal it would run more than one line. [`generate`] leaves that
+    /// to the window; the library's pane checks every command it builds.
+    Multiline,
 }
 
 /// The command of `template` with the values `value_of` gives, each put in as its type and
@@ -749,11 +757,29 @@ fn check_value(
     // as they are (trimmed), so that is what is judged.
     let typed = typed_kind(&kind);
     let judged = if typed { value.trim() } else { value };
+    // A value that parsed under the strict number shape (digits, one point, an exponent,
+    // signs) cannot be syntax: `AddHours(-{hours})` with 24 is a number, whatever stands
+    // around it. A string in the same place gets no such pass.
+    // On Linux a word that starts with a dash (`cmd -{n}`) is an option: there only plain
+    // digits pass (`1e5` would read as `-1e5`, an option's name).
+    let is_number = matches!(kind.as_str(), "int" | "integer" | "number")
+        && (platform != TemplatePlatform::Linux
+            || !dash_leads_slot(pattern, &parameter.name)
+            || judged.chars().all(|c| c.is_ascii_digit()));
     ensure(
         !holds_refused_characters(pattern, parameter, judged, platform)
-            && (!typed || typed_fits_around(pattern, parameter, judged, platform)),
+            && (!typed || is_number || typed_fits_around(pattern, parameter, judged, platform)),
         || ValueError::Dangerous(label()),
     )
+}
+
+/// Whether the white-space delimited word of `pattern` around the placeholder of `name`
+/// starts with a dash.
+fn dash_leads_slot(pattern: &str, name: &str) -> bool {
+    let placeholder = placeholder_text(name);
+    pattern
+        .split_whitespace()
+        .any(|word| word.contains(&placeholder) && word.starts_with(OPTION_LEADING))
 }
 
 /// Whether `value` holds a `/` right after white space.
@@ -1319,17 +1345,24 @@ pub enum LibraryError {
     TooLarge,
     /// It is not an envelope of actions.
     Format,
+    /// It holds more than [`MAX_IMPORT_ACTIONS`] actions.
+    TooManyActions,
 }
 
 /// What an import did, as the C# `CommandLibraryImportResult`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImportReport {
     /// Commands added.
     pub imported: usize,
     /// Commands of the user replaced.
     pub updated: usize,
-    /// Commands left out: no title or category, too long.
+    /// Commands left out: no title or category, too long, or breaking a rule of an
+    /// untrusted file (see [`UserLibrary::import`]).
     pub skipped: usize,
+    /// The title of the first command left out and the rule it broke, to say why.
+    pub first_skipped: Option<(String, command_library::CommandIssue)>,
+    /// The identities of the commands added or replaced.
+    pub touched: Vec<String>,
 }
 
 /// The user's commands.
@@ -1368,7 +1401,9 @@ impl UserLibrary {
         }
         let text = fs::read_to_string(path).map_err(LibraryError::Io)?;
         let mut library = Self::default();
-        library.import(&text)?;
+        // Our own file, written by this build: read as it is, so a rule added since never
+        // drops a command the user made.
+        library.merge(&text, false)?;
         Ok(library)
     }
 
@@ -1402,10 +1437,20 @@ impl UserLibrary {
     /// (`CommandLibraryTransferService.cs:76-135`): one already here is replaced, one
     /// without a title or a category is left out.
     ///
+    /// The file is not trusted: an action that breaks a rule of
+    /// [`command_library::validate_import`] (an unknown parameter type, a pattern with a line
+    /// break or too long, a default the generator refuses) is left out and counted as
+    /// skipped. Nothing is run; the commands are only kept.
+    ///
     /// # Errors
     ///
     /// [`LibraryError::Format`] when `json` holds no action.
     pub fn import(&mut self, json: &str) -> Result<ImportReport, LibraryError> {
+        self.merge(json, true)
+    }
+
+    /// [`UserLibrary::import`], with the rules of an untrusted file applied or not.
+    fn merge(&mut self, json: &str, untrusted: bool) -> Result<ImportReport, LibraryError> {
         let root: Value = serde_json::from_str(json).map_err(|_| LibraryError::Format)?;
         let actions: Vec<UserCommand> = if let Some(Value::Array(list)) = root.get("actions") {
             list.iter()
@@ -1417,17 +1462,35 @@ impl UserLibrary {
         } else {
             return Err(LibraryError::Format);
         };
+        if untrusted && actions.len() > MAX_IMPORT_ACTIONS {
+            return Err(LibraryError::TooManyActions);
+        }
         let mut report = ImportReport::default();
         for mut action in actions {
-            if action.title.trim().is_empty()
-                || action.category.trim().is_empty()
-                || action.title.chars().count() > MAX_TITLE_LENGTH
-                || action.category.chars().count() > MAX_CATEGORY_LENGTH
-            {
+            let basic = if action.title.trim().is_empty() {
+                Some(command_library::CommandIssue::MissingTitle)
+            } else if action.category.trim().is_empty() {
+                Some(command_library::CommandIssue::MissingCategory)
+            } else if action.title.chars().count() > MAX_TITLE_LENGTH {
+                Some(command_library::CommandIssue::TitleTooLong)
+            } else if action.category.chars().count() > MAX_CATEGORY_LENGTH {
+                Some(command_library::CommandIssue::CategoryTooLong)
+            } else {
+                None
+            };
+            normalize_quoting(&mut action);
+            let issue = basic.or_else(|| {
+                untrusted
+                    .then(|| command_library::validate_import(&action))
+                    .flatten()
+            });
+            if let Some(issue) = issue {
                 report.skipped += 1;
+                if report.first_skipped.is_none() {
+                    report.first_skipped = Some((action.title.clone(), issue));
+                }
                 continue;
             }
-            normalize_quoting(&mut action);
             action.is_user_created = true;
             let found = self.commands.iter().position(|known| {
                 (!action.public_id.is_empty() && known.public_id == action.public_id)
@@ -1443,17 +1506,41 @@ impl UserLibrary {
                 action.id.clone_from(&self.commands[index].id);
                 action.public_id.clone_from(&self.commands[index].public_id);
                 action.updated_at = Some(now_text());
+                report.touched.push(action.id.clone());
                 self.commands[index] = action;
                 report.updated += 1;
             } else {
                 let now = now_text();
                 action.created_at.get_or_insert_with(|| now.clone());
                 action.updated_at = Some(now);
+                report.touched.push(action.id.clone());
                 self.commands.push(action);
                 report.imported += 1;
             }
         }
         Ok(report)
+    }
+
+    /// Raises to [`Criticality::Dangerous`] every command of `ids` with a pattern `destructive` says
+    /// destroys data or stops a machine, whatever level a file gave it: a level in an imported
+    /// file is the file's claim, not a fact. Never lowers one, and leaves the other commands
+    /// of the library as their owner set them. How many were raised.
+    pub fn raise_dangerous(&mut self, ids: &[String], destructive: impl Fn(&str) -> bool) -> usize {
+        let mut raised = 0;
+        for command in self.commands.iter_mut().filter(|c| ids.contains(&c.id)) {
+            let hit = [
+                &command.windows_command_template,
+                &command.linux_command_template,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|template| destructive(&template.command_pattern));
+            if hit && command.level != Criticality::Dangerous {
+                command.level = Criticality::Dangerous;
+                raised += 1;
+            }
+        }
+        raised
     }
 
     /// Makes or changes a command from `draft`; its identity.

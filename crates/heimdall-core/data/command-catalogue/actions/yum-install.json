@@ -1,0 +1,106 @@
+{
+  "id": "yum-install",
+  "title": "Install a package with YUM",
+  "description": "Install a package with YUM on RHEL/CentOS (older versions)",
+  "category": "package-management",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "yum",
+    "install",
+    "rhel",
+    "centos",
+    "package"
+  ],
+  "linuxCommandTemplateId": "yum-install-cmd",
+  "linuxCommandTemplate": {
+    "id": "yum-install-cmd",
+    "platform": 1,
+    "name": "yum",
+    "commandPattern": "sudo yum install -y {package}",
+    "parameters": [
+      {
+        "name": "package",
+        "label": "Package name",
+        "type": "string",
+        "defaultValue": "httpd",
+        "required": true,
+        "description": "Name of the package to install"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo yum install httpd",
+      "description": "Install the Apache web server",
+      "platform": 1
+    },
+    {
+      "command": "sudo yum install vim wget curl",
+      "description": "Install several packages",
+      "platform": 1
+    },
+    {
+      "command": "sudo yum install -y nginx -v",
+      "description": "Run the command in verbose mode. The -v (verbose) flag shows every action as it happens. Essential to follow long operations and check that everything goes well.",
+      "platform": 1
+    },
+    {
+      "command": "sudo yum update -y",
+      "description": "Update every package",
+      "platform": 1
+    },
+    {
+      "command": "sudo yum install httpd -y",
+      "description": "Install Apache",
+      "platform": 1
+    },
+    {
+      "command": "sudo yum remove nginx",
+      "description": "Remove nginx",
+      "platform": 1
+    },
+    {
+      "command": "yum search php",
+      "description": "Search for PHP packages",
+      "platform": 1
+    },
+    {
+      "command": "yum list installed | grep mysql",
+      "description": "List the installed MySQL packages",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. On RHEL 8+/CentOS 8+, use dnf instead of yum.",
+  "links": [
+    {
+      "title": "YUM documentation",
+      "url": "https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/system_administrators_guide/ch-yum"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Installer un paquet avec YUM",
+      "description": "Installe un paquet avec YUM sur RHEL/CentOS (anciennes versions)",
+      "notes": "Nécessite sudo. Sur RHEL 8+/CentOS 8+, utiliser dnf au lieu de yum.",
+      "parameters": {
+        "linux": {
+          "package": {
+            "label": "Nom du paquet",
+            "description": "Nom du paquet à installer"
+          }
+        }
+      },
+      "examples": {
+        "sudo yum install httpd": "Installe le serveur web Apache",
+        "sudo yum install vim wget curl": "Installe plusieurs paquets",
+        "sudo yum install -y nginx -v": "Exécute la commande en mode verbeux. Le flag -v (verbose) affiche chaque action effectuée en temps réel. Essentiel pour suivre la progression des opérations longues et vérifier que tout se déroule correctement.",
+        "sudo yum update -y": "Mettre à jour tous les paquets",
+        "sudo yum install httpd -y": "Installer Apache",
+        "sudo yum remove nginx": "Désinstaller nginx",
+        "yum search php": "Rechercher des paquets PHP",
+        "yum list installed | grep mysql": "Lister les paquets MySQL installés"
+      }
+    }
+  }
+}

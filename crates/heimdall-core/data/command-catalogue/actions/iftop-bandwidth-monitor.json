@@ -1,0 +1,94 @@
+{
+  "id": "iftop-bandwidth-monitor",
+  "title": "Monitor network bandwidth",
+  "description": "Show the network bandwidth usage per connection in real time.",
+  "category": "network-dns",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "iftop",
+    "bandwidth",
+    "network",
+    "monitoring",
+    "traffic"
+  ],
+  "linuxCommandTemplateId": "iftop-cmd",
+  "linuxCommandTemplate": {
+    "id": "iftop-cmd",
+    "platform": 1,
+    "name": "iftop",
+    "commandPattern": "sudo iftop -i {interface}",
+    "parameters": [
+      {
+        "name": "interface",
+        "label": "Interface",
+        "type": "string",
+        "defaultValue": "eth0",
+        "required": false,
+        "description": "Network interface to monitor"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo iftop",
+      "description": "Monitor the default interface",
+      "platform": 1
+    },
+    {
+      "command": "sudo iftop -i eth0",
+      "description": "Monitor the eth0 interface",
+      "platform": 1
+    },
+    {
+      "command": "sudo iftop -n",
+      "description": "Turn off DNS resolution (faster)",
+      "platform": 1
+    },
+    {
+      "command": "sudo iftop -P",
+      "description": "Show the ports",
+      "platform": 1
+    },
+    {
+      "command": "sudo iftop -B",
+      "description": "Show in bytes/s",
+      "platform": 1
+    },
+    {
+      "command": "nload",
+      "description": "nload alternative",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo and the iftop package. q to quit. Very useful to identify network usage.",
+  "links": [
+    {
+      "title": "iftop documentation",
+      "url": "http://www.ex-parrot.com/pdw/iftop/"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Monitorer la bande passante réseau",
+      "description": "Affiche l'utilisation de la bande passante réseau en temps réel par connexion",
+      "notes": "Nécessite sudo et le package iftop. q pour quitter. Très utile pour identifier l'usage réseau.",
+      "parameters": {
+        "linux": {
+          "interface": {
+            "label": "Interface",
+            "description": "Interface réseau à monitorer"
+          }
+        }
+      },
+      "examples": {
+        "sudo iftop": "Monitore l'interface par défaut",
+        "sudo iftop -i eth0": "Monitore l'interface eth0",
+        "sudo iftop -n": "Désactive la résolution DNS (plus rapide)",
+        "sudo iftop -P": "Afficher les ports",
+        "sudo iftop -B": "Afficher en bytes/s",
+        "nload": "Alternative nload"
+      }
+    }
+  }
+}

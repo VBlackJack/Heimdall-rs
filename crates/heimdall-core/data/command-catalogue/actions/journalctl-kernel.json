@@ -1,0 +1,62 @@
+{
+  "id": "journalctl-kernel",
+  "title": "Show only the kernel messages",
+  "description": "Filter the journald logs to show only the kernel messages.",
+  "category": "monitoring-logs",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "journalctl",
+    "kernel",
+    "dmesg"
+  ],
+  "linuxCommandTemplateId": "journalctl-kernel-cmd",
+  "linuxCommandTemplate": {
+    "id": "journalctl-kernel-cmd",
+    "platform": 1,
+    "name": "journalctl",
+    "commandPattern": "journalctl -k -n {lines} --no-pager",
+    "parameters": [
+      {
+        "name": "lines",
+        "label": "Number of lines",
+        "type": "number",
+        "defaultValue": "100",
+        "required": true,
+        "description": "Number of kernel messages to show"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "journalctl -k -n 100",
+      "description": "Show the last 100 kernel messages. The -k (kernel) flag keeps only the kernel messages (the equivalent of dmesg). Essential to diagnose hardware and driver problems, kernel panics, low-level disk or network errors.",
+      "platform": 1
+    }
+  ],
+  "notes": "-k is a shortcut for --dmesg. The equivalent of dmesg, but persistent.",
+  "links": [
+    {
+      "title": "journalctl kernel logs",
+      "url": "https://www.freedesktop.org/software/systemd/man/journalctl.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Afficher uniquement les messages du noyau",
+      "description": "Filtre les logs journald pour n'afficher que les messages du kernel",
+      "notes": "-k est un raccourci pour --dmesg. Équivalent à dmesg mais avec persistance.",
+      "parameters": {
+        "linux": {
+          "lines": {
+            "label": "Nombre de lignes",
+            "description": "Nombre de messages kernel à afficher"
+          }
+        }
+      },
+      "examples": {
+        "journalctl -k -n 100": "Affiche les 100 derniers messages du kernel. Le flag -k (kernel) filtre uniquement les messages noyau (équivalent de dmesg). Essentiel pour diagnostiquer les problèmes hardware, drivers, panics kernel, erreurs disque/réseau de bas niveau."
+      }
+    }
+  }
+}

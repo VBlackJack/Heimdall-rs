@@ -1,0 +1,64 @@
+{
+  "id": "win-pkg-103",
+  "title": "Update a Chocolatey package",
+  "description": "Update a specific package to its latest version available through Chocolatey.",
+  "category": "package-management",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "chocolatey",
+    "package",
+    "update",
+    "upgrade",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "choco-upgrade-package-cmd",
+  "windowsCommandTemplate": {
+    "id": "choco-upgrade-package-cmd",
+    "platform": 0,
+    "name": "choco",
+    "commandPattern": "choco upgrade {packageName} -y",
+    "parameters": [
+      {
+        "name": "packageName",
+        "label": "Package name",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Name of the package to update"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "choco upgrade googlechrome -y",
+      "description": "Update Google Chrome to the latest version",
+      "platform": 0
+    }
+  ],
+  "notes": "Checks automatically whether an update is available before installing.",
+  "links": [
+    {
+      "title": "Chocolatey upgrade documentation",
+      "url": "https://docs.chocolatey.org/en-us/choco/commands/upgrade"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Mettre à jour un package Chocolatey",
+      "description": "Met à jour un package spécifique vers sa dernière version disponible via Chocolatey.",
+      "notes": "Vérifie automatiquement si une mise à jour est disponible avant d'installer.",
+      "parameters": {
+        "windows": {
+          "packageName": {
+            "label": "Nom du package",
+            "description": "Nom du package à mettre à jour"
+          }
+        }
+      },
+      "examples": {
+        "choco upgrade googlechrome -y": "Met à jour Google Chrome vers la dernière version"
+      }
+    }
+  }
+}

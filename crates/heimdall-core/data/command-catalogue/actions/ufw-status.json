@@ -1,0 +1,99 @@
+{
+  "id": "ufw-status",
+  "title": "Check the UFW firewall status",
+  "description": "Show the status and rules of the UFW (Uncomplicated Firewall) firewall",
+  "category": "security",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "ufw",
+    "firewall",
+    "ubuntu",
+    "security"
+  ],
+  "linuxCommandTemplateId": "ufw-status-cmd",
+  "linuxCommandTemplate": {
+    "id": "ufw-status-cmd",
+    "platform": 1,
+    "name": "ufw",
+    "commandPattern": "sudo ufw status {option}",
+    "parameters": [
+      {
+        "name": "option",
+        "label": "Option",
+        "type": "string",
+        "defaultValue": "verbose",
+        "required": false,
+        "description": "Display option (numbered, verbose, empty)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo ufw status",
+      "description": "Show the firewall status",
+      "platform": 1
+    },
+    {
+      "command": "sudo ufw status numbered",
+      "description": "Show with rule numbers",
+      "platform": 1
+    },
+    {
+      "command": "sudo ufw status verbose",
+      "description": "Detailed output",
+      "platform": 1
+    },
+    {
+      "command": "sudo ufw allow 22/tcp",
+      "description": "Allow SSH",
+      "platform": 1
+    },
+    {
+      "command": "sudo ufw allow from 192.168.1.0/24",
+      "description": "Allow a subnet",
+      "platform": 1
+    },
+    {
+      "command": "sudo ufw deny 3306",
+      "description": "Block MySQL",
+      "platform": 1
+    },
+    {
+      "command": "sudo ufw enable",
+      "description": "Enable the firewall",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. UFW comes preinstalled on Ubuntu/Debian. A simplified front end for iptables.",
+  "links": [
+    {
+      "title": "UFW documentation",
+      "url": "https://help.ubuntu.com/community/UFW"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Vérifier l'état du firewall UFW",
+      "description": "Affiche l'état et les règles du firewall UFW (Uncomplicated Firewall)",
+      "notes": "Nécessite sudo. UFW est préinstallé sur Ubuntu/Debian. Frontend simplifié pour iptables.",
+      "parameters": {
+        "linux": {
+          "option": {
+            "label": "Option",
+            "description": "Option d'affichage (numbered, verbose, vide)"
+          }
+        }
+      },
+      "examples": {
+        "sudo ufw status": "Affiche l'état du firewall",
+        "sudo ufw status numbered": "Affiche avec numéros de règles",
+        "sudo ufw status verbose": "Affichage détaillé",
+        "sudo ufw allow 22/tcp": "Autoriser SSH",
+        "sudo ufw allow from 192.168.1.0/24": "Autoriser un sous-réseau",
+        "sudo ufw deny 3306": "Bloquer MySQL",
+        "sudo ufw enable": "Activer le firewall"
+      }
+    }
+  }
+}

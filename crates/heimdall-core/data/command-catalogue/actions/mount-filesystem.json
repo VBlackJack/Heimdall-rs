@@ -1,0 +1,116 @@
+{
+  "id": "mount-filesystem",
+  "title": "Mount a filesystem",
+  "description": "Mount a partition or a device on a mount point.",
+  "category": "files-storage",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "mount",
+    "filesystem",
+    "partition"
+  ],
+  "linuxCommandTemplateId": "mount-cmd",
+  "linuxCommandTemplate": {
+    "id": "mount-cmd",
+    "platform": 1,
+    "name": "mount",
+    "commandPattern": "sudo mount {device} {mountpoint}",
+    "parameters": [
+      {
+        "name": "device",
+        "label": "Device",
+        "type": "string",
+        "defaultValue": "/dev/sdb1",
+        "required": true,
+        "description": "Partition to mount"
+      },
+      {
+        "name": "mountpoint",
+        "label": "Mount point",
+        "type": "string",
+        "defaultValue": "/mnt/data",
+        "required": true,
+        "description": "Directory to mount on"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo mount /dev/sdb1 /mnt/data",
+      "description": "Mount /dev/sdb1 on /mnt/data",
+      "platform": 1
+    },
+    {
+      "command": "mount",
+      "description": "List every active mount",
+      "platform": 1
+    },
+    {
+      "command": "sudo umount /mnt/data",
+      "description": "Unmount a filesystem",
+      "platform": 1
+    },
+    {
+      "command": "sudo mount /dev/sda1 /mnt/data",
+      "description": "Example using the 'mountpoint' parameter: directory to mount on. Replace /mnt/data with the value that fits your environment.",
+      "platform": 1
+    },
+    {
+      "command": "sudo mount -o remount,rw /",
+      "description": "Remount / read-write",
+      "platform": 1
+    },
+    {
+      "command": "sudo mount -t nfs server:/share /mnt/nfs",
+      "description": "Mount an NFS share",
+      "platform": 1
+    },
+    {
+      "command": "mount | grep ext4",
+      "description": "Show the ext4 mounts",
+      "platform": 1
+    },
+    {
+      "command": "sudo mount -a",
+      "description": "Mount every filesystem of fstab",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. The mount directory must exist. Edit /etc/fstab for automatic mounting.",
+  "links": [
+    {
+      "title": "mount command",
+      "url": "https://man7.org/linux/man-pages/man8/mount.8.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Monter un système de fichiers",
+      "description": "Monte une partition ou un périphérique sur un point de montage",
+      "notes": "Nécessite sudo. Le répertoire de montage doit exister. Éditer /etc/fstab pour montage automatique.",
+      "parameters": {
+        "linux": {
+          "device": {
+            "label": "Périphérique",
+            "description": "Partition à monter"
+          },
+          "mountpoint": {
+            "label": "Point de montage",
+            "description": "Répertoire où monter"
+          }
+        }
+      },
+      "examples": {
+        "sudo mount /dev/sdb1 /mnt/data": "Monte /dev/sdb1 sur /mnt/data",
+        "mount": "Liste tous les montages actifs",
+        "sudo umount /mnt/data": "Démonte un filesystem",
+        "sudo mount /dev/sda1 /mnt/data": "Exemple utilisant le paramètre 'mountpoint': Répertoire où monter. Remplacez /mnt/data par la valeur appropriée selon votre environnement.",
+        "sudo mount -o remount,rw /": "Remonter / en lecture-écriture",
+        "sudo mount -t nfs server:/share /mnt/nfs": "Monter un partage NFS",
+        "mount | grep ext4": "Afficher les montages ext4",
+        "sudo mount -a": "Monter tous les systèmes de fichiers de fstab"
+      }
+    }
+  }
+}

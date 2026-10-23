@@ -1,0 +1,132 @@
+{
+  "id": "build-dotnet-publish",
+  "title": "Publish a .NET project",
+  "description": "Publish a .NET project for deployment.",
+  "category": "development",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "build",
+    "dotnet",
+    "publish",
+    "deployment",
+    "development"
+  ],
+  "windowsCommandTemplateId": "build-dotnet-publish-win-cmd",
+  "windowsCommandTemplate": {
+    "id": "build-dotnet-publish-win-cmd",
+    "platform": 0,
+    "name": "dotnet publish",
+    "commandPattern": "dotnet publish {projectPath} --configuration Release --output {outputPath}",
+    "parameters": [
+      {
+        "name": "projectPath",
+        "label": "Project",
+        "type": "string",
+        "defaultValue": ".",
+        "required": false,
+        "description": "Path of the project"
+      },
+      {
+        "name": "outputPath",
+        "label": "Output folder",
+        "type": "string",
+        "defaultValue": "./publish",
+        "required": false,
+        "description": "Folder to publish to"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "build-dotnet-publish-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "build-dotnet-publish-linux-cmd",
+    "platform": 1,
+    "name": "dotnet publish",
+    "commandPattern": "dotnet publish {projectPath} --configuration Release --output {outputPath}",
+    "parameters": [
+      {
+        "name": "projectPath",
+        "label": "Project",
+        "type": "string",
+        "defaultValue": ".",
+        "required": false,
+        "description": "Path of the project"
+      },
+      {
+        "name": "outputPath",
+        "label": "Output folder",
+        "type": "string",
+        "defaultValue": "./publish",
+        "required": false,
+        "description": "Folder to publish to"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "--self-contained includes the runtime. --runtime sets the target platform (win-x64, linux-x64, osx-x64).",
+  "links": [
+    {
+      "title": "Documentation dotnet publish",
+      "url": "https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-publish"
+    }
+  ],
+  "windowsExamples": [
+    {
+      "command": "dotnet publish -c Release -o ./publish",
+      "description": "Publish in Release mode",
+      "platform": 0
+    },
+    {
+      "command": "dotnet publish --self-contained --runtime win-x64",
+      "description": "Publish with the runtime included for Windows x64",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "dotnet publish \"./MyApp\" --configuration Release --output \"./publish\"",
+      "description": "Publish a .NET project in Release mode",
+      "platform": 1
+    },
+    {
+      "command": "dotnet publish -c Release",
+      "description": "Publish in Release mode",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Publier un projet .NET",
+      "description": "Publie un projet .NET pour le déploiement.",
+      "notes": "--self-contained inclut le runtime. --runtime spécifie la plateforme cible (win-x64, linux-x64, osx-x64).",
+      "parameters": {
+        "windows": {
+          "projectPath": {
+            "label": "Projet",
+            "description": "Chemin du projet"
+          },
+          "outputPath": {
+            "label": "Dossier de sortie",
+            "description": "Dossier où publier"
+          }
+        },
+        "linux": {
+          "projectPath": {
+            "label": "Projet",
+            "description": "Chemin du projet"
+          },
+          "outputPath": {
+            "label": "Dossier de sortie",
+            "description": "Dossier où publier"
+          }
+        }
+      },
+      "examples": {
+        "dotnet publish -c Release -o ./publish": "Publie en mode Release",
+        "dotnet publish --self-contained --runtime win-x64": "Publie avec runtime inclus pour Windows x64",
+        "dotnet publish \"./MyApp\" --configuration Release --output \"./publish\"": "Publie un projet .NET en mode Release",
+        "dotnet publish -c Release": "Publier en mode Release"
+      }
+    }
+  }
+}
