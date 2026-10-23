@@ -194,7 +194,7 @@ fn a_pattern_holding_an_invisible_character_is_refused() {
         let pattern = format!("ls{hidden} -la");
         assert_eq!(
             library.upsert(&draft("a", &pattern)),
-            Err(DraftError::PatternMultiline),
+            Err(DraftError::PatternHidden),
             "{hidden:?}"
         );
     }

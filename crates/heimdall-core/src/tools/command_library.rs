@@ -526,6 +526,9 @@ pub enum CommandIssue {
     PatternTooLong(TemplatePlatform),
     /// A pattern with a line break: typed into a terminal it would run more than one line.
     PatternMultiline(TemplatePlatform),
+    /// A pattern with a character that shows nothing (a direction override, a zero-width
+    /// character): it would not read as what it runs.
+    PatternHidden(TemplatePlatform),
     /// More than [`MAX_PARAMETERS`] parameters.
     TooManyParameters(TemplatePlatform),
     /// A parameter without a name.
@@ -650,12 +653,15 @@ pub fn validate_import(command: &UserCommand) -> Option<CommandIssue> {
         return Some(issue);
     }
     for (platform, template) in templates(command) {
+        if template.command_pattern.chars().any(char::is_control) {
+            return Some(CommandIssue::PatternMultiline(platform));
+        }
         if template
             .command_pattern
             .chars()
-            .any(|c| c.is_control() || crate::invisible::is_invisible(c))
+            .any(crate::invisible::is_invisible)
         {
-            return Some(CommandIssue::PatternMultiline(platform));
+            return Some(CommandIssue::PatternHidden(platform));
         }
     }
     refused_defaults(command)

@@ -1332,6 +1332,8 @@ pub enum DraftError {
     PatternTooLong,
     /// A pattern with a line break: it would run more than one command.
     PatternMultiline,
+    /// A pattern with a character that shows nothing.
+    PatternHidden,
     /// A pattern with more than [`MAX_PARAMETERS`] values.
     TooManyParameters,
     /// More than [`MAX_TAGS`] tags.
@@ -1676,11 +1678,11 @@ fn template_of(
     }
     // A control character, or one that shows nothing (direction overrides, tags, zero-width):
     // the pattern would not read as what it runs.
-    if pattern
-        .chars()
-        .any(|c| c.is_control() || crate::invisible::is_invisible(c))
-    {
+    if pattern.chars().any(char::is_control) {
         return Err(DraftError::PatternMultiline);
+    }
+    if pattern.chars().any(crate::invisible::is_invisible) {
+        return Err(DraftError::PatternHidden);
     }
     let names = placeholders(pattern);
     if names.len() > MAX_PARAMETERS {

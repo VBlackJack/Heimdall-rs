@@ -1595,6 +1595,14 @@ impl CommandLibraryPane {
                 (self.can_edit() && self.editor.is_none())
                     .then(|| send(CommandLibraryMessage::New)),
             );
+        // The button is another kind of widget while the editor is open, so its pressed or
+        // hovered state is dropped with the editor instead of coming back highlighted when
+        // the form closes.
+        let new: Element<'a, Message> = if self.editor.is_some() {
+            container(new).into()
+        } else {
+            new.into()
+        };
         let plain = |label: String, on: bool, message: Option<CommandLibraryMessage>| {
             button(text(label).size(font_size::BODY))
                 .padding(super::COPY_PADDING)
@@ -2340,61 +2348,56 @@ fn now_unix() -> i64 {
         })
 }
 
+/// What an import did: the counts of the actions and of the runbooks, the first runbook
+/// replaced, then the first action left out and the first runbook left out, each with its
+/// reason.
+fn import_text(report: &ImportReport, runbooks: Option<&RunbookImport>) -> String {
+    let mut done = fl!(
+        "ui-tool-cmdlib-import-done",
+        imported = report.imported,
+        updated = report.updated,
+        skipped = report.skipped
+    );
+    if let Some(runbooks) = runbooks {
+        done = fl!(
+            "ui-tool-cmdlib-import-runbooks",
+            done = done,
+            imported = runbooks.imported,
+            updated = runbooks.updated,
+            skipped = runbooks.skipped
+        );
+    }
+    if let Some((old, new)) = runbooks.and_then(|each| each.first_updated.as_ref()) {
+        done = fl!(
+            "ui-tool-cmdlib-import-replaced",
+            done = done,
+            old = old.as_str(),
+            name = new.as_str()
+        );
+    }
+    if let Some((title, issue)) = &report.first_skipped {
+        done = fl!(
+            "ui-tool-cmdlib-import-skipped",
+            done = done,
+            title = title.as_str(),
+            reason = issue_text(issue)
+        );
+    }
+    if let Some((name, why)) = runbooks.and_then(|each| each.first_skipped.as_ref()) {
+        done = fl!(
+            "ui-tool-cmdlib-import-skipped-runbook",
+            done = done,
+            title = name.as_str(),
+            reason = refusal_text(why)
+        );
+    }
+    done
+}
+
 /// What the pane tells, in the window's language.
 fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
     let (message, failed) = match notice {
-        Notice::Imported(report, runbooks) => {
-            let mut done = fl!(
-                "ui-tool-cmdlib-import-done",
-                imported = report.imported,
-                updated = report.updated,
-                skipped = report.skipped
-            );
-            if let Some(runbooks) = runbooks {
-                done = fl!(
-                    "ui-tool-cmdlib-import-runbooks",
-                    done = done,
-                    imported = runbooks.imported,
-                    updated = runbooks.updated,
-                    skipped = runbooks.skipped
-                );
-            }
-            if let Some((old, new)) = runbooks
-                .as_ref()
-                .and_then(|each| each.first_updated.as_ref())
-            {
-                done = fl!(
-                    "ui-tool-cmdlib-import-replaced",
-                    done = done,
-                    old = old.as_str(),
-                    name = new.as_str()
-                );
-            }
-            // The first reason: the action's, else the runbook's.
-            let first = report
-                .first_skipped
-                .as_ref()
-                .map(|(title, issue)| (title.as_str(), issue_text(issue)))
-                .or_else(|| {
-                    runbooks.as_ref().and_then(|each| {
-                        each.first_skipped
-                            .as_ref()
-                            .map(|(name, why)| (name.as_str(), refusal_text(why)))
-                    })
-                });
-            match first {
-                Some((title, reason)) => (
-                    fl!(
-                        "ui-tool-cmdlib-import-skipped",
-                        done = done,
-                        title = title,
-                        reason = reason
-                    ),
-                    false,
-                ),
-                None => (done, false),
-            }
-        }
+        Notice::Imported(report, runbooks) => (import_text(report, runbooks.as_ref()), false),
         Notice::Exported => (fl!("ui-tool-cmdlib-export-done"), false),
         Notice::TransferFailed(error) => (
             match error {
@@ -2768,6 +2771,7 @@ fn draft_error(problem: DraftError) -> String {
             max = user_commands::MAX_PATTERN_LENGTH
         ),
         DraftError::PatternMultiline => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        DraftError::PatternHidden => fl!("ui-tool-cmdlib-error-pattern-hidden"),
         DraftError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
         DraftError::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
         DraftError::Gone => fl!("ui-tool-cmdlib-error-gone"),
@@ -2848,6 +2852,7 @@ fn issue_text(issue: &CommandIssue) -> String {
             max = user_commands::MAX_PATTERN_LENGTH
         ),
         CommandIssue::PatternMultiline(_) => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        CommandIssue::PatternHidden(_) => fl!("ui-tool-cmdlib-error-pattern-hidden"),
         CommandIssue::TooManyParameters(_) => fl!("ui-tool-cmdlib-error-too-many-parameters"),
         CommandIssue::UnnamedParameter(_) => fl!("ui-tool-cmdlib-issue-parameter-unnamed"),
         CommandIssue::DuplicateParameter(_, name) => {
@@ -3622,6 +3627,31 @@ mod tests {
             kept[0].steps,
             [Step::literal("uptime", TemplatePlatform::Linux)]
         );
+    }
+
+    #[test]
+    fn the_summary_names_the_first_action_and_the_first_runbook_left_out() {
+        let report = ImportReport {
+            skipped: 1,
+            first_skipped: Some((
+                "Odd".to_owned(),
+                CommandIssue::PatternHidden(TemplatePlatform::Linux),
+            )),
+            ..ImportReport::default()
+        };
+        let runbooks = RunbookImport {
+            skipped: 1,
+            first_skipped: Some((
+                "Bad runbook".to_owned(),
+                library_transfer::RunbookRefusal::DuplicateInFile,
+            )),
+            ..RunbookImport::default()
+        };
+        let text = import_text(&report, Some(&runbooks));
+        assert!(text.contains("Odd"), "{text}");
+        assert!(text.contains("Bad runbook"), "{text}");
+        let only_runbook = import_text(&ImportReport::default(), Some(&runbooks));
+        assert!(only_runbook.contains("Bad runbook"), "{only_runbook}");
     }
 
     #[test]
