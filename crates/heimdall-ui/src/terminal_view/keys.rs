@@ -200,6 +200,11 @@ pub enum WindowShortcut {
     /// to the window; a remote desktop keeps it for its own applications, and the window
     /// offers it for a session of text only.
     MaskedCopy,
+    /// Save the selection of the session shown to the command library, for review in the
+    /// editor of a new action: Ctrl+Shift+L, as the C# `TerminalLibraryCapture`. A terminal
+    /// leaves it to the window; a remote desktop keeps it for its own applications, and the
+    /// window offers it for a session of text only.
+    CaptureCommand,
     /// Open Quick Connect: Ctrl+K, as the C# one, wherever the keyboard is, and
     /// Ctrl+Shift+K, which a terminal never keeps.
     QuickConnect,
@@ -396,6 +401,9 @@ pub fn window_shortcut(
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('m') => {
             Some(WindowShortcut::MaskedCopy)
+        }
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('l') => {
+            Some(WindowShortcut::CaptureCommand)
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('o') => {
             Some(WindowShortcut::ToggleSplit)
@@ -911,6 +919,35 @@ mod tests {
         );
         assert!(left_to_window(
             Some(WindowShortcut::MaskedCopy),
+            false,
+            ANY_PLACE,
+            ctrl_shift
+        ));
+    }
+
+    #[test]
+    fn ctrl_shift_l_saves_the_selection_to_the_library_on_any_layout_and_a_terminal_leaves_it() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(
+            window_shortcut(&character("L"), ANY_PLACE, ctrl_shift),
+            Some(WindowShortcut::CaptureCommand)
+        );
+        assert_eq!(
+            window_shortcut(
+                &character("\u{0434}"),
+                Physical::Code(Code::KeyL),
+                ctrl_shift
+            ),
+            Some(WindowShortcut::CaptureCommand),
+            "the L key of a Cyrillic keyboard"
+        );
+        assert_eq!(
+            window_shortcut(&character("l"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "Ctrl+L locks the workspace and clears a shell: not this"
+        );
+        assert!(left_to_window(
+            Some(WindowShortcut::CaptureCommand),
             false,
             ANY_PLACE,
             ctrl_shift

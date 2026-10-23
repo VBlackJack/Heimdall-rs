@@ -39,7 +39,7 @@ use heimdall_app::session_log::{
     transfer_events_recorded,
 };
 use heimdall_app::telnet_driver::telnet_events;
-use heimdall_app::tools::SidebarTab;
+use heimdall_app::tools::{SidebarTab, ToolContext, ToolId};
 use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::type_ahead::TYPE_AHEAD_RESET;
 use heimdall_app::update_check::{Failure as UpdateFailure, GitHubSource, Outcome};
@@ -70,6 +70,7 @@ use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
 use heimdall_core::profile::{ProfileId, RemoteOs, SshGateway, SshMode, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{AppTheme, BroadcastScope, ColorScheme};
+use heimdall_core::tools::net_host::checked_host;
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -3308,6 +3309,10 @@ impl Shell {
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // A command captured from a terminal opens the command library on a new action.
+        if let Some(context) = self.app.take_capture() {
+            tasks.extend(self.open_capture(context));
+        }
         // The tool tabs' states follow their tabs, and those just opened start their work.
         self.tools.sync(&self.app);
         // The commands written into terminals since, for the history of the library that
@@ -3885,6 +3890,88 @@ impl Shell {
         self.update_app(AppMessage::MaskedCopy(MaskedCopyMessage::Open(active)))
     }
 
+    /// The shortcuts that read the text of a session: the status copied, the masked copy and
+    /// the capture into the command library; `None` for any other.
+    fn session_text_key(&mut self, shortcut: WindowShortcut) -> Option<Vec<Effect>> {
+        match shortcut {
+            WindowShortcut::CopyStatus => Some(self.copy_status()),
+            WindowShortcut::MaskedCopy => Some(self.masked_copy_key()),
+            WindowShortcut::CaptureCommand => Some(self.capture_key()),
+            _ => None,
+        }
+    }
+
+    /// Ctrl+Shift+L: the selection of the session that has the keyboard kept for the command
+    /// library, as the C# shortcut, only for a session of text (SSH, Telnet, `WinRM`, a local
+    /// shell); nothing for a remote desktop, a Files tab, a web console or a tool, nor over a
+    /// dialog, the settings or the lock screen, which have the keyboard. Nothing is sent to
+    /// the session.
+    fn capture_key(&mut self) -> Vec<Effect> {
+        let Some(active) = self.app.active else {
+            return Vec::new();
+        };
+        if self.gated()
+            || self.settings_shown()
+            || self.app.dialog.is_some()
+            || !self
+                .app
+                .tab(active)
+                .is_some_and(|tab| self.app.can_capture_command(tab))
+        {
+            return Vec::new();
+        }
+        self.menu = None;
+        self.update_app(AppMessage::CaptureCommand(active))
+    }
+
+    /// The command library shown on a command captured from a terminal: the tab already open
+    /// if there is one, else a new one, told the session it is opened from and the capture,
+    /// whose editor then opens on a new action.
+    fn open_capture(&mut self, context: ToolContext) -> Vec<Task<Message>> {
+        let Some(capture) = context.capture.clone() else {
+            return Vec::new();
+        };
+        self.menu = None;
+        self.page = Page::Tab;
+        let context = ToolContext {
+            host: context.host.as_deref().and_then(checked_host),
+            ..context
+        };
+        let open = self
+            .app
+            .tabs
+            .iter()
+            .find(|tab| tab.tool() == Some(ToolId::CmdLib))
+            .map(|tab| tab.id);
+        let Some(library) = open else {
+            let effects = self.app.update(AppMessage::Tools(ToolsMessage::Open {
+                tool: ToolId::CmdLib,
+                title: crate::tools::tab_title(ToolId::CmdLib, &context),
+                context,
+            }));
+            return effects.into_iter().map(|effect| self.run(effect)).collect();
+        };
+        let mut tasks: Vec<Task<Message>> = self
+            .app
+            .update(AppMessage::SelectTab(library))
+            .into_iter()
+            .map(|effect| self.run(effect))
+            .collect();
+        if context.has_session() {
+            tasks.push(self.update(Message::Tool(
+                library,
+                crate::tools::ToolMessage::CmdLib(crate::tools::session_message(&context)),
+            )));
+        }
+        tasks.push(self.update(Message::Tool(
+            library,
+            crate::tools::ToolMessage::CmdLib(crate::tools::CommandLibraryMessage::Capture(
+                capture,
+            )),
+        )));
+        tasks
+    }
+
     /// Ctrl+Shift+A: [`Self::status_report`] put on the clipboard, for a screen reader to
     /// read what the C# live region would have announced. Over a dialog too: it reads
     /// nothing the window does not show.
@@ -3912,11 +3999,8 @@ impl Shell {
             self.quick_connect_key();
             return Vec::new();
         }
-        if shortcut == WindowShortcut::CopyStatus {
-            return self.copy_status();
-        }
-        if shortcut == WindowShortcut::MaskedCopy {
-            return self.masked_copy_key();
+        if let Some(effects) = self.session_text_key(shortcut) {
+            return effects;
         }
         // The sidebar's other tab, as the C# Ctrl+Shift+T, tab or no tab.
         if shortcut == WindowShortcut::ToggleToolsPanel {
@@ -4008,6 +4092,7 @@ impl Shell {
                 | WindowShortcut::QuickConnect
                 | WindowShortcut::CopyStatus
                 | WindowShortcut::MaskedCopy
+                | WindowShortcut::CaptureCommand
                 | WindowShortcut::ToggleToolsPanel
                 | WindowShortcut::ReopenClosedTab,
                 _,
@@ -4129,14 +4214,21 @@ impl Shell {
     /// every terminal is drawn in, its Ctrl+V as chosen.
     #[must_use]
     pub fn terminal_view<'a>(&self, tab: &'a Tab, interactive: bool) -> TerminalView<'a, Message> {
-        TerminalView::new(&tab.terminal, tab.id, Message::App)
+        let view = TerminalView::new(&tab.terminal, tab.id, Message::App)
             .ctrl_v(self.app.settings().ctrl_v_paste)
             .ctrl_k(self.app.settings().ctrl_k_terminal)
             .interactive(interactive)
             .reduced_motion(self.reduced_motion)
             .font(self.terminal_font())
             .font_size(self.font_size(tab.id))
-            .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom)))
+            .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom)));
+        // Shift+right-click offers to save the selection to the command library, in a
+        // session of text drawn in the main window; a plain right-click still pastes.
+        if self.app.can_capture_command(tab) && !self.app.is_floating(tab.id) {
+            view.on_capture_menu(|tab| Message::OpenTreeMenu(TreeMenu::Capture(tab)))
+        } else {
+            view
+        }
     }
 
     /// The font every terminal is drawn in, those open included: the family the settings
@@ -5657,6 +5749,13 @@ impl Shell {
             tree_view::tunnel_menu_entries(id, self.app.tunnel(id)?.interrupted)
         } else if let TreeMenu::Macros(tab) = *menu {
             self.macros_menu(tab)?
+        } else if let TreeMenu::Capture(tab) = *menu {
+            // Only while its terminal can be captured.
+            let found = self
+                .app
+                .tab(tab)
+                .filter(|found| self.app.can_capture_command(found))?;
+            tree_view::capture_entries(tab, found.terminal.has_selection())
         } else if let TreeMenu::Notes(id) = menu {
             // Only while the session is saved.
             self.app.profile_summary(id)?;
@@ -5837,6 +5936,7 @@ impl Shell {
                 | TreeMenu::Resolution(_)
                 | TreeMenu::SendKeys(_)
                 | TreeMenu::Macros(_)
+                | TreeMenu::Capture(_)
                 | TreeMenu::Notes(_)
                 | TreeMenu::ExternalTools(_)
                 | TreeMenu::Tool(_)
@@ -7083,6 +7183,7 @@ impl Shell {
             Message::OpenTreeMenu(
                 TreeMenu::Tab(_)
                 | TreeMenu::Pane(_)
+                | TreeMenu::Capture(_)
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_),

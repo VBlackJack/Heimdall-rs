@@ -134,6 +134,9 @@ pub enum TreeMenu {
     SendKeys(TabId),
     /// A terminal tab's macros: record, play, stop.
     Macros(TabId),
+    /// What Shift+right-click offers in a terminal: save its selection to the command
+    /// library, as the C# one-item menu.
+    Capture(TabId),
     /// The notes a session's menu writes about it, as the C# Notes submenu.
     Notes(ProfileId),
     /// The user's external tools a session's menu, or its tab's, starts for it, as the C#
@@ -1805,6 +1808,17 @@ pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<
             macro_message(heimdall_app::MacroMessage::Edit(name.clone())),
         ));
     }
+    menu_card(entries).into()
+}
+
+/// What Shift+right-click offers in a terminal: one entry, enabled only while there is a
+/// selection to save, as the C# `TerminalLibraryCapture.CreateMenu`.
+pub fn capture_entries<'a>(tab: TabId, has_selection: bool) -> Element<'a, Message> {
+    let entries = MenuColumn::new().push(keyed_entry(
+        fl!("ui-capture-menu"),
+        Some(fl!("ui-menu-keys-capture")),
+        has_selection.then_some(AppMessage::CaptureCommand(tab)),
+    ));
     menu_card(entries).into()
 }
 

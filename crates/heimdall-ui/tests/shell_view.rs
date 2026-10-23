@@ -6384,3 +6384,159 @@ fn the_masked_copy_shortcut_does_nothing_without_a_session_of_text() {
     let _ = shell.update(Message::Shortcut(WindowShortcut::MaskedCopy));
     assert!(shell.app().dialog.is_none());
 }
+
+// ---- Capture a command from the terminal (Ctrl+Shift+L, Shift+right-click) ----------------
+
+/// Selects the first `columns` columns of the first row of `tab`'s terminal with the mouse.
+fn select_first_row(shell: &mut Shell, tab: TabId, columns: usize) {
+    use heimdall_app::PointerInput;
+    use heimdall_term::{CellPoint, Modifiers, MouseAction, MouseButton};
+
+    let at = |col: usize, right_half: bool| CellPoint {
+        row: 0,
+        col,
+        right_half,
+    };
+    let steps = [
+        (MouseAction::Press(MouseButton::Left), at(0, false)),
+        (
+            MouseAction::Motion {
+                held: Some(MouseButton::Left),
+            },
+            at(columns - 1, true),
+        ),
+        (
+            MouseAction::Release(MouseButton::Left),
+            at(columns - 1, true),
+        ),
+    ];
+    for (action, at) in steps {
+        let _ = shell.update(Message::App(AppMessage::Pointer {
+            tab,
+            input: PointerInput {
+                at,
+                action,
+                modifiers: Modifiers::default(),
+                clicks: 1,
+            },
+        }));
+    }
+}
+
+fn library_tabs(shell: &Shell) -> usize {
+    shell
+        .app()
+        .tabs
+        .iter()
+        .filter(|tab| tab.tool() == Some(heimdall_app::tools::ToolId::CmdLib))
+        .count()
+}
+
+#[test]
+fn the_capture_shortcut_opens_the_command_library_and_a_second_one_reuses_its_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"uptime\r\n".to_vec()),
+    }));
+    select_first_row(&mut shell, tab, 6);
+
+    let _ = shell.update(Message::Shortcut(WindowShortcut::CaptureCommand));
+    assert_eq!(library_tabs(&shell), 1, "the library opened");
+    assert_eq!(
+        shell.app().active_tab().and_then(heimdall_app::Tab::tool),
+        Some(heimdall_app::tools::ToolId::CmdLib),
+        "and shown"
+    );
+    assert!(shell.app().dialog.is_none());
+
+    // Back to the shell, capture again: the library tab already open is shown, none is added.
+    let _ = shell.update(Message::App(AppMessage::SelectTab(tab)));
+    select_first_row(&mut shell, tab, 6);
+    let _ = shell.update(Message::Shortcut(WindowShortcut::CaptureCommand));
+    assert_eq!(library_tabs(&shell), 1, "no second library tab");
+    assert_eq!(
+        shell.app().active_tab().and_then(heimdall_app::Tab::tool),
+        Some(heimdall_app::tools::ToolId::CmdLib)
+    );
+}
+
+#[test]
+fn the_capture_shortcut_with_nothing_selected_opens_nothing_and_says_so() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::Shortcut(WindowShortcut::CaptureCommand));
+    assert_eq!(library_tabs(&shell), 0);
+    assert_eq!(
+        shell.app().notice(),
+        Some(&heimdall_app::Notice::CaptureNothingSelected)
+    );
+}
+
+#[test]
+fn the_capture_shortcut_does_nothing_without_a_session_of_text() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::CaptureCommand));
+    assert_eq!(library_tabs(&shell), 0);
+    assert!(shell.app().dialog.is_none());
+}
+
+#[test]
+fn the_capture_menu_offers_one_entry_enabled_only_with_a_selection() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"uptime\r\n".to_vec()),
+    }));
+
+    // Nothing selected: the entry is there and does nothing.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Capture(tab)));
+    let mut ui = simulator(&shell);
+    let _ = ui.click("Save selection to Command Library");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::MenuChoice(_))),
+        "disabled without a selection"
+    );
+
+    select_first_row(&mut shell, tab, 6);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Capture(tab)));
+    let mut ui = simulator(&shell);
+    ui.click("Save selection to Command Library")
+        .expect("the entry");
+    let chosen: Vec<String> = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::MenuChoice(chosen) => Some(format!("{chosen:?}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chosen,
+        [format!("{:?}", AppMessage::CaptureCommand(tab))],
+        "choosing it asks for the capture of that terminal"
+    );
+}
+
+#[test]
+fn the_capture_menu_is_not_offered_for_a_session_that_is_not_text() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Uuid));
+    let tool = shell.app().active_tab().expect("the tool tab").id;
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Capture(tool)));
+    let mut ui = simulator(&shell);
+    assert!(
+        ui.find("Save selection to Command Library").is_err(),
+        "a tool is no terminal: no menu"
+    );
+}

@@ -24,7 +24,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use heimdall_app::{Delivery, SendTarget, SentCommand, TabId};
+use heimdall_app::{CapturedCommand, Delivery, SendTarget, SentCommand, TabId};
 use heimdall_core::profile::RemoteOs;
 use heimdall_core::tools::command_activity::{
     self, ACTIVITY_FILE, ActivityError, CommandActivity, HistoryEntry, HistoryMode,
@@ -130,6 +130,10 @@ pub enum CommandLibraryMessage {
     Target(TabId),
     /// Start a new command of the user.
     New,
+    /// Start a new command of the user from a command captured in a terminal: its text is the
+    /// pattern for the session's platform, at the level that runs, tagged with the protocol,
+    /// and the title is left for the user. Nothing is saved before the user does.
+    Capture(CapturedCommand),
     /// Edit the user's command of this identity.
     Edit(String),
     /// A field of the editor changed.
@@ -377,6 +381,9 @@ pub struct CommandLibraryPane {
     /// Whether the history shows only the rows of the session's host: ticked when the
     /// library belongs to a session, as the C# default.
     history_this_host_only: bool,
+    /// The category of the command last created in this pane, which a captured command starts
+    /// in, as the C# `LastCreatedCategory`.
+    last_category: Option<String>,
 }
 
 impl CommandLibraryPane {
@@ -820,6 +827,12 @@ impl CommandLibraryPane {
             CommandLibraryMessage::New if self.can_edit() => {
                 self.editor = Some(Editor::default());
             }
+            CommandLibraryMessage::Capture(capture) if self.can_edit() => {
+                self.editor = Some(Editor {
+                    draft: captured_draft(&capture, self.last_category.as_deref()),
+                    problem: None,
+                });
+            }
             CommandLibraryMessage::Edit(id) if self.can_edit() => {
                 if let Some(command) = self.library.get(&id) {
                     self.editor = Some(Editor {
@@ -882,10 +895,18 @@ impl CommandLibraryPane {
             return;
         };
         let before = self.library.clone();
+        let created = editor
+            .draft
+            .id
+            .is_none()
+            .then(|| editor.draft.category.trim().to_owned());
         match self.library.upsert(&editor.draft) {
             Ok(_) => {
                 if self.keep(&before) {
                     self.editor = None;
+                    if let Some(category) = created.filter(|category| !category.is_empty()) {
+                        self.last_category = Some(category);
+                    }
                 }
             }
             Err(problem) => editor.problem = Some(problem),
@@ -1951,6 +1972,27 @@ fn catalogue_draft(command: &UserCommand) -> Draft {
     }
 }
 
+/// The editor's draft for a command captured from a terminal: its text in the pattern of the
+/// session's platform and only there, at the level that runs, the protocol as a tag, no title
+/// (the user names it) and the category of the last command made, if any.
+fn captured_draft(capture: &CapturedCommand, category: Option<&str>) -> Draft {
+    let text = capture.text.clone();
+    let (platform, windows_pattern, linux_pattern) = match capture.platform {
+        TemplatePlatform::Windows => (UserPlatform::Windows, text, String::new()),
+        TemplatePlatform::Linux => (UserPlatform::Linux, String::new(), text),
+    };
+    Draft {
+        id: None,
+        category: category.unwrap_or_default().to_owned(),
+        platform,
+        level: Criticality::Run,
+        windows_pattern,
+        linux_pattern,
+        tags: capture.tag.clone().unwrap_or_default(),
+        ..Draft::default()
+    }
+}
+
 /// Now, in seconds since 1970.
 fn now_unix() -> i64 {
     std::time::SystemTime::now()
@@ -2716,6 +2758,115 @@ mod tests {
         pane.update(CommandLibraryMessage::CancelEdit);
         assert!(pane.editor.is_none());
         assert!(pane.library.commands().is_empty());
+    }
+
+    /// A command captured in a terminal of the given platform.
+    fn captured(text: &str, platform: TemplatePlatform) -> CapturedCommand {
+        CapturedCommand {
+            text: text.to_owned(),
+            platform,
+            tag: Some("ssh".to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_captured_linux_command_opens_the_editor_on_a_new_action_with_the_title_left_to_the_user() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "df -h && free -m",
+            TemplatePlatform::Linux,
+        )));
+        let draft = &pane.editor.as_ref().expect("the editor is open").draft;
+        assert_eq!(draft.id, None, "a new action, never an edit");
+        assert_eq!(draft.linux_pattern, "df -h && free -m");
+        assert_eq!(draft.windows_pattern, "", "one shell only");
+        assert_eq!(draft.platform, UserPlatform::Linux);
+        assert_eq!(draft.level, Criticality::Run);
+        assert_eq!(draft.tags, "ssh");
+        assert_eq!(draft.title, "", "the user names it");
+        assert!(
+            pane.library.commands().is_empty(),
+            "nothing is kept before the user saves"
+        );
+    }
+
+    #[test]
+    fn a_captured_windows_command_goes_to_the_powershell_pattern() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "cd C:\\logs ; Get-ChildItem",
+            TemplatePlatform::Windows,
+        )));
+        let draft = &pane.editor.as_ref().expect("the editor is open").draft;
+        assert_eq!(draft.windows_pattern, "cd C:\\logs ; Get-ChildItem");
+        assert_eq!(draft.linux_pattern, "");
+        assert_eq!(draft.platform, UserPlatform::Windows);
+    }
+
+    #[test]
+    fn a_captured_command_is_saved_through_the_checks_of_the_editor_as_the_users_own() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "uptime",
+            TemplatePlatform::Linux,
+        )));
+        // No title, no category: refused with the usual reason, the draft kept.
+        pane.update(CommandLibraryMessage::Save);
+        assert_eq!(
+            pane.editor.as_ref().and_then(|editor| editor.problem),
+            Some(DraftError::TitleMissing)
+        );
+        type_into(&mut pane, Field::Title, "Load");
+        type_into(&mut pane, Field::Category, "Network");
+        pane.update(CommandLibraryMessage::Save);
+        assert!(pane.editor.is_none(), "kept");
+        let kept = pane.library.commands();
+        assert_eq!(kept.len(), 1, "a command of the user, in their file");
+        assert_eq!(kept[0].tags, ["ssh"]);
+        assert_eq!(kept[0].level, Criticality::Run);
+
+        // The next capture starts in the category last created.
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "df -h",
+            TemplatePlatform::Linux,
+        )));
+        assert_eq!(
+            pane.editor
+                .as_ref()
+                .map(|editor| editor.draft.category.as_str()),
+            Some("Network")
+        );
+    }
+
+    #[test]
+    fn a_captured_command_holding_a_line_break_is_refused_at_save() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "ls\nrm -rf x",
+            TemplatePlatform::Linux,
+        )));
+        type_into(&mut pane, Field::Title, "Bad");
+        type_into(&mut pane, Field::Category, "Network");
+        pane.update(CommandLibraryMessage::Save);
+        assert_eq!(
+            pane.editor.as_ref().and_then(|editor| editor.problem),
+            Some(DraftError::PatternMultiline)
+        );
+        assert!(pane.library.commands().is_empty());
+    }
+
+    #[test]
+    fn a_capture_with_no_file_to_keep_it_in_opens_nothing() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "uptime",
+            TemplatePlatform::Linux,
+        )));
+        assert!(pane.editor.is_none());
     }
 
     #[test]
