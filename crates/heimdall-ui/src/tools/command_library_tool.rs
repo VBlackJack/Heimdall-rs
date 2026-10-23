@@ -1372,7 +1372,7 @@ impl CommandLibraryPane {
                     Failure::Unsaved => fl!("ui-tool-cmdlib-library-unsaved"),
                 })
                 .size(font_size::BODY)
-                .style(text::danger),
+                .style(styles::error_text),
             );
         }
         if let Some(notice) = &self.notice {
@@ -1758,7 +1758,7 @@ impl CommandLibraryPane {
             text(level_name(command.level))
                 .size(font_size::CAPTION)
                 .style(if command.level == Criticality::Dangerous {
-                    text::danger
+                    styles::error_text
                 } else {
                     text::secondary
                 }),
@@ -1877,7 +1877,7 @@ impl CommandLibraryPane {
                         generate_error(&error)
                     })
                     .size(font_size::BODY)
-                    .style(text::danger),
+                    .style(styles::error_text),
                 );
             }
         }
@@ -2096,7 +2096,7 @@ fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
     text(message)
         .size(font_size::BODY)
         .style(if failed {
-            text::danger
+            styles::error_text
         } else {
             text::secondary
         })
@@ -2322,7 +2322,7 @@ fn editor_view(tab: TabId, editor: &Editor) -> Element<'_, Message> {
         form = form.push(
             text(draft_error(problem))
                 .size(font_size::BODY)
-                .style(text::danger),
+                .style(styles::error_text),
         );
     }
     form = form.push(

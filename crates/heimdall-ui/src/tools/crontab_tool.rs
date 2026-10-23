@@ -307,7 +307,7 @@ impl CrontabPane {
                     .font(super::BOX_FONT)
                     .size(font_size::BODY_LARGE)
                     .style(|theme: &iced::Theme| text::Style {
-                        color: Some(theme.palette().primary),
+                        color: Some(styles::accent_text_color(theme)),
                     })
                     .width(Length::Fill),
                 super::copy_button(
@@ -345,10 +345,11 @@ impl CrontabPane {
                     .on_input(move |typed| send(CrontabMessage::ManualEdited(typed)))
                     .on_submit(send(CrontabMessage::ManualSubmitted)),
             ]
-            .push(
-                self.problem_text()
-                    .map(|problem| text(problem).size(font_size::CAPTION).style(text::danger)),
-            )
+            .push(self.problem_text().map(|problem| {
+                text(problem)
+                    .size(font_size::CAPTION)
+                    .style(styles::error_text)
+            }))
             .push(super::field_label(fl!("ui-tool-crontab-next-runs")))
             .push(runs)
             .spacing(spacing::SM + spacing::XS),

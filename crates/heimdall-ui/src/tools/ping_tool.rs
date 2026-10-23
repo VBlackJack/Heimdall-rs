@@ -402,9 +402,13 @@ impl PingPane {
 
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
@@ -481,9 +485,9 @@ impl PingPane {
             }
             for r in self.results.iter().skip(skipped) {
                 let style = match r.status {
-                    PingStatus::Success => text::success,
-                    PingStatus::Timeout => text::danger,
-                    PingStatus::Error => text::warning,
+                    PingStatus::Success => styles::success_text,
+                    PingStatus::Timeout => styles::error_text,
+                    PingStatus::Error => styles::warning_text,
                 };
                 let status_cell = text(detail_text(r))
                     .size(font_size::BODY)

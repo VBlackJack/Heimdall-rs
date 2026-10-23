@@ -237,9 +237,13 @@ impl DnsSecPane {
 
         if let Some(err) = &self.error {
             body_col = body_col.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
@@ -432,7 +436,7 @@ impl DnsSecPane {
             let name_text = text(res.kind.name())
                 .font(styles::SEMIBOLD)
                 .size(font_size::BODY)
-                .style(text::primary);
+                .style(styles::accent_text);
 
             let header_row = row![name_text, badge]
                 .spacing(spacing::SM)

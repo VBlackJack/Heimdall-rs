@@ -263,7 +263,7 @@ impl ChmodPane {
             .push(self.symbolic_error.then(|| {
                 text(fl!("ui-tool-chmod-error-symbolic"))
                     .size(font_size::CAPTION)
-                    .style(text::danger)
+                    .style(styles::error_text)
             }))
             .spacing(spacing::XS),
         );

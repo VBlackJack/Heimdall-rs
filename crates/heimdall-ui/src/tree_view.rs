@@ -585,7 +585,7 @@ pub fn owned_row(
         label = label.push(
             text(FAVORITE_MARK)
                 .size(font_size::SMALL_CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         );
     }
     if let Some(badge) = &profile.gateway {

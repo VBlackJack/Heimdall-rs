@@ -644,7 +644,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for SplitView<'_, M> {
             let color: Color = if held {
                 palette.primary.strong.color
             } else {
-                palette.background.strong.color
+                crate::themes::derived(theme, crate::themes::Derived::BorderStrong)
             };
             renderer.fill_quad(
                 renderer::Quad {

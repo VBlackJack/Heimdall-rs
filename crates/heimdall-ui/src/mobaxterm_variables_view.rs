@@ -231,7 +231,7 @@ impl MobaxtermVariablesEditor {
                 content = content.push(
                     text(problem.text())
                         .size(font_size::CAPTION)
-                        .style(text::danger),
+                        .style(styles::error_text),
                 );
             }
         }

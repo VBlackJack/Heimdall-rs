@@ -482,9 +482,13 @@ impl CertInspectorPane {
         }
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
         if let Some(notice) = &self.notice {
@@ -553,7 +557,7 @@ fn good(r: &CertInspectionSummary) -> fn(&Theme) -> text::Style {
     if r.legacy.is_some() {
         text::secondary
     } else {
-        text::success
+        styles::success_text
     }
 }
 
@@ -588,7 +592,7 @@ fn legacy_banner<'a>(
                 cipher = cipher_suite
             ))
             .size(font_size::BODY)
-            .style(text::warning),
+            .style(styles::warning_text),
             text(fl!("ui-tool-cert-legacy-warning")).size(font_size::BODY),
             super::action_button(
                 fl!("ui-tool-cert-legacy-audit"),
@@ -608,13 +612,17 @@ fn legacy_banner<'a>(
 fn certificate_card<'a>(r: &CertInspectionSummary, host: &str) -> Element<'a, Message> {
     let status_badge = match r.expiration_status {
         CertExpirationStatus::Valid => badge(fl!("ui-tool-cert-status-valid"), good(r)),
-        CertExpirationStatus::Warning => badge(fl!("ui-tool-cert-status-warning"), text::warning),
-        CertExpirationStatus::Expired => badge(fl!("ui-tool-cert-status-expired"), text::danger),
+        CertExpirationStatus::Warning => {
+            badge(fl!("ui-tool-cert-status-warning"), styles::warning_text)
+        }
+        CertExpirationStatus::Expired => {
+            badge(fl!("ui-tool-cert-status-expired"), styles::error_text)
+        }
     };
     let match_badge = if r.hostname_matches {
         badge(fl!("ui-tool-cert-match-yes"), good(r))
     } else {
-        badge(fl!("ui-tool-cert-match-no"), text::danger)
+        badge(fl!("ui-tool-cert-match-no"), styles::error_text)
     };
     let header_row = row![
         text(fl!(

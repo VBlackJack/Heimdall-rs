@@ -57,8 +57,8 @@ pub fn empty_state<'a>(hint: String) -> Element<'a, Message> {
 pub fn said<'a>(said: String, tone: Tone, size: f32, strong: bool) -> Element<'a, Message> {
     let line = text(said).size(size).style(match tone {
         Tone::Quiet => text::secondary,
-        Tone::Success => text::success,
-        Tone::Error => text::danger,
+        Tone::Success => styles::success_text,
+        Tone::Error => styles::error_text,
     });
     if strong {
         line.font(styles::SEMIBOLD).into()

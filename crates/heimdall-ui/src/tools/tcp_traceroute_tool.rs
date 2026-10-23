@@ -286,9 +286,13 @@ impl TcpTraceroutePane {
 
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
         if let Some(notice) = &self.notice {
@@ -347,9 +351,9 @@ impl TcpTraceroutePane {
 
             for h in &self.hops {
                 let style = match h.status {
-                    HopStatus::Reply => text::success,
+                    HopStatus::Reply => styles::success_text,
                     HopStatus::Timeout => text::secondary,
-                    HopStatus::Destination => text::primary,
+                    HopStatus::Destination => styles::accent_text,
                 };
                 let status_el = text(status_label(h.status))
                     .size(font_size::BODY)

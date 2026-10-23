@@ -172,7 +172,7 @@ fn line(index: usize, row: &ConflictRow) -> Element<'_, Message> {
         target = target.push(
             text(fl!("ui-files-conflict-folder-skip"))
                 .size(font_size::CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         );
     }
     let allowed: Vec<Named> = CHOICES

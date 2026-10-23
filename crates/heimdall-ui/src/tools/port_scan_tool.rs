@@ -470,7 +470,7 @@ impl PortScanPane {
                     count = count.to_string()
                 ))
                 .size(font_size::BODY)
-                .style(text::warning)
+                .style(styles::warning_text)
                 .width(Length::Fill),
                 super::action_button(
                     fl!("ui-tool-portscan-confirm"),
@@ -485,9 +485,13 @@ impl PortScanPane {
 
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
@@ -566,7 +570,7 @@ impl PortScanPane {
                 let status_cell = match r.status {
                     PortStatus::Open => text(fl!("ui-tool-portscan-status-open"))
                         .size(font_size::BODY)
-                        .style(text::success)
+                        .style(styles::success_text)
                         .width(Length::Fixed(90.0)),
                     PortStatus::Closed => text(fl!("ui-tool-portscan-status-closed"))
                         .size(font_size::BODY)
@@ -574,7 +578,7 @@ impl PortScanPane {
                         .width(Length::Fixed(90.0)),
                     PortStatus::Filtered => text(fl!("ui-tool-portscan-status-filtered"))
                         .size(font_size::BODY)
-                        .style(text::warning)
+                        .style(styles::warning_text)
                         .width(Length::Fixed(90.0)),
                 };
 

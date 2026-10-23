@@ -780,7 +780,7 @@ fn copy_style(theme: &Theme, status: button::Status) -> button::Style {
     let style = styles::bare(theme, status);
     match status {
         button::Status::Hovered | button::Status::Pressed => button::Style {
-            text_color: theme.extended_palette().primary.base.color,
+            text_color: styles::accent_text_color(theme),
             ..style
         },
         button::Status::Active | button::Status::Disabled => style,
@@ -826,7 +826,7 @@ fn line_value<'a>(line: &Line) -> Element<'a, Message> {
     let said = text_value(line.value.clone(), line.field.one_line())
         .size(font_size::CAPTION)
         .style(if line.warning {
-            text::warning
+            styles::warning_text
         } else {
             text::default
         });

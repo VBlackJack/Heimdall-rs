@@ -273,7 +273,7 @@ impl ExternalToolsEditor {
             content = content.push(
                 text(problem_text(problem))
                     .size(font_size::CAPTION)
-                    .style(text::danger),
+                    .style(styles::error_text),
             );
         }
         container(content)
@@ -380,7 +380,7 @@ fn tool_editor(
             .size(font_size::CAPTION),
         Some(Err(failure)) => text(failure_text(&failure))
             .size(font_size::CAPTION)
-            .style(text::danger),
+            .style(styles::error_text),
         None => text(String::new()),
     };
     editor

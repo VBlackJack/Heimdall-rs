@@ -135,8 +135,8 @@ pub fn view<'a>(draft: &'a ProfileDraft, gateways: &'a [SshGateway]) -> Element<
         let said = text(said).size(font_size::CAPTION);
         content = content.push(match tone {
             Tone::Neutral => said.style(text::secondary),
-            Tone::Answered => said.style(text::success),
-            Tone::Failed => said.style(text::danger),
+            Tone::Answered => said.style(styles::success_text),
+            Tone::Failed => said.style(styles::error_text),
         });
     }
     content.into()
