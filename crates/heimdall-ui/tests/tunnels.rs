@@ -339,6 +339,7 @@ fn a_session_through_a_gateway_says_so_on_its_tab_and_is_a_row_of_its_own_in_the
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path(), vec![bastion()]);

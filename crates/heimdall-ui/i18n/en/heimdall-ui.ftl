@@ -623,6 +623,12 @@ ui-import-mobaxterm-unresolved-variable = Session "{ $session }": the variable [
 ui-import-mobaxterm-invalid-gateway = Session "{ $session }" was not imported: its SSH gateway "{ $host }" is not a valid host. Importing it would reach the server around the gateway the file asked for.
 ui-import-mobaxterm-invalid-rd-gateway = Session "{ $session }" was not imported: its RD Gateway "{ $host }" is not a valid host. Importing it would reach the server around the gateway the file asked for.
 ui-import-mobaxterm-rd-gateway-unsupported = Session "{ $session }" was not imported: it signs in to its RD Gateway "{ $host }" in a way Heimdall does not reproduce (a smart card, or a setting it does not recognise). Importing it would reach the server around the gateway the file asked for.
+ui-import-mobaxterm-unsupported-type = Session "{ $session }" was not imported: session type { $kind } is not supported.
+ui-import-mobaxterm-ftp = Session "{ $session }" was not imported: FTP sends its password in clear, and FTP sessions are not imported yet.
+ui-import-mobaxterm-wsl = Session "{ $session }" was not imported: it is a WSL distribution, a Linux system on the computer that runs MobaXterm, with nothing to connect to.
+ui-import-mobaxterm-jump-host = Session "{ $session }" was not imported: it goes through the SSH jump host "{ $host }"; Heimdall does not route this protocol through a jump host, and a direct connection would go around it.
+ui-import-mobaxterm-proxy = Session "{ $session }" was not imported: it goes through the proxy "{ $host }"; Heimdall does not use a proxy for this protocol, and a direct connection would go around it.
+ui-import-mobaxterm-proxy-no-host = Session "{ $session }" was not imported: it goes through a proxy; Heimdall does not use a proxy for this protocol, and a direct connection would go around it.
 ui-import-file-too-large = The file is too large to import ({ $size } bytes).
 ui-import-mobaxterm-passwords = MobaXterm passwords are encrypted with a proprietary algorithm and could not be imported. Please re-enter credentials for each session.
 ui-import-mobaxterm-passwords-detected = { $count ->
@@ -1268,6 +1274,11 @@ ui-profile-ssh-mode = SSH mode
 ui-profile-ssh-mode-embedded = Embedded (integrated)
 ui-profile-ssh-mode-external = External (PuTTY)
 ui-profile-ssh-mode-external-desc = Opens PuTTY in a separate window. PuTTY asks for the password itself.
+ui-profile-remote-os = Operating system of the far end
+ui-profile-remote-os-auto = Automatic
+ui-profile-remote-os-windows = Windows
+ui-profile-remote-os-linux = Linux
+ui-profile-remote-os-hint = Automatic keeps the guess from the protocol (SSH reads as Linux). Say Windows for an SSH server that runs Windows: the command library then offers the commands that fit it.
 ui-profile-toggle-x11 = Enable X11 forwarding
 ui-profile-toggle-x11-hint = Forward X11 display to local machine for graphical applications (-X flag)
 ui-profile-x11-warning = X11 forwarding lets the remote host see this computer's display and the keys typed in its windows. Turn it on only for a server you trust.
@@ -5434,6 +5445,7 @@ ui-tool-cmdlib-help =
 
     Usage:
     Choose a platform or type a word to find a command. Type its values: the command shows them as it will be copied. A value left empty takes the example shown.
+    Opened from a session, the library starts on its platform and fills its host and user. Insert (Shift+Enter) types the command at the prompt of the terminal without running it: you read it, change it and press Enter yourself.
 ui-tool-cmdlib-search-placeholder = Search commands
 ui-tool-cmdlib-platform-all = All platforms
 ui-tool-cmdlib-category-security = Security & Encryption
@@ -5481,6 +5493,9 @@ ui-tool-cmdlib-delete-question = Delete { $title }?
 ui-tool-cmdlib-send = Send
 ui-tool-cmdlib-send-to = Send to:
 ui-tool-cmdlib-send-none = Open a connected terminal tab to send a command to it. Nothing is sent before you agree.
+ui-tool-cmdlib-insert = Insert
+ui-tool-cmdlib-inserted = Typed at the prompt of { $target }. Press Enter there to run it.
+ui-tool-cmdlib-session = Opened for the session of { $host }
 ui-tool-cmdlib-library-unreadable = The file of your commands could not be read. It is left as it is and cannot be changed here.
 ui-tool-cmdlib-library-unsaved = Your commands could not be saved. The change was not made.
 ui-tool-cmdlib-editor-new = New command
@@ -5545,6 +5560,11 @@ ui-tool-cmdlib-history-replay = Replay
 ui-tool-cmdlib-history-clear = Clear history
 ui-tool-cmdlib-history-clear-question = Clear the whole history? The favorites stay.
 ui-tool-cmdlib-history-clear-confirm = Clear
+ui-tool-cmdlib-history-inserted = Typed at the prompt of { $target } on { $when }
+ui-tool-cmdlib-history-copied = Copied on { $when }
+ui-tool-cmdlib-history-host = Host: { $host }
+ui-tool-cmdlib-history-this-host = This host only
+ui-tool-cmdlib-history-empty-host = Nothing for this host yet. Untick "This host only" to see the others.
 ui-tool-cmdlib-replay-gone = The command of this entry no longer exists.
 ui-tool-cmdlib-replay-blocked = This entry cannot be sent now: open a connected terminal tab and fill in the values it asks for.
 ui-tool-cmdlib-activity-unsaved = The favorites and the history could not be saved.
@@ -5919,7 +5939,9 @@ ui-shared-report-duplicate-host =
         [one] { $count } session on a host filed twice
        *[other] { $count } sessions on a host filed twice
     }
-ui-shared-report-reason-other-protocol = Protocol { $protocol } is not supported, only SSH, SFTP, RDP, Telnet and VNC are taken.
+ui-shared-report-reason-other-protocol = Session type { $kind } is not supported, only SSH, SFTP, RDP, Telnet and VNC are taken.
+ui-shared-report-reason-ftp = FTP sessions are not taken yet: FTP sends its password in clear.
+ui-shared-report-reason-wsl = WSL distribution: a Linux system on the computer that runs MobaXterm, nothing to connect to.
 ui-shared-report-reason-invalid-host = The host { $host } is not a host name or an address.
 ui-shared-report-reason-invalid-gateway = The SSH gateway { $host } is not a host name or an address, so the session was not taken: it would reach its host around the gateway.
 ui-shared-report-reason-duplicate-session = Another session of the file has the same folder and name.

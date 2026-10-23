@@ -211,7 +211,9 @@ pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
 pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
-pub use send_command::{BroadcastConfirmation, SendConfirmation, SendTarget, SentCommand};
+pub use send_command::{
+    BroadcastConfirmation, Delivery, SendConfirmation, SendTarget, SentCommand,
+};
 pub use session_load::SessionLoadNotice;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -2708,6 +2710,18 @@ impl TabProfile {
             Self::Local(_) | Self::Citrix(_) | Self::Tool(_) => None,
             Self::WinRm(profile) => Some((&profile.host, profile.port)),
         }
+    }
+
+    /// The platform of the far end: what the profile declares, else the protocol's guess;
+    /// `Auto` when neither tells, as the C# `RemoteOsResolver.Resolve`.
+    #[must_use]
+    pub fn platform(&self) -> heimdall_core::profile::RemoteOs {
+        let declared = match self {
+            Self::Ssh(profile) => profile.remote_os,
+            Self::Telnet(profile) => profile.remote_os,
+            _ => heimdall_core::profile::RemoteOs::Auto,
+        };
+        declared.or(self.kind().platform_guess())
     }
 
     /// Account, when the profile names one.

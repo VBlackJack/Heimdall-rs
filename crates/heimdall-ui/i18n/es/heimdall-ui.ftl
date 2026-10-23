@@ -498,6 +498,12 @@ ui-import-mobaxterm-unresolved-variable = Sesión "{ $session }": la variable [{
 ui-import-mobaxterm-invalid-gateway = La sesión "{ $session }" no se importó: su pasarela SSH "{ $host }" no es un host válido. Importarla alcanzaría el servidor sin pasar por la pasarela que pide el archivo.
 ui-import-mobaxterm-invalid-rd-gateway = La sesión "{ $session }" no se importó: su puerta de enlace RD "{ $host }" no es un host válido. Importarla alcanzaría el servidor sin pasar por la puerta de enlace que pide el archivo.
 ui-import-mobaxterm-rd-gateway-unsupported = La sesión "{ $session }" no se importó: inicia sesión en su puerta de enlace RD "{ $host }" de un modo que Heimdall no reproduce (una tarjeta inteligente, o un ajuste que no reconoce). Importarla alcanzaría el servidor sin pasar por la puerta de enlace que pide el archivo.
+ui-import-mobaxterm-unsupported-type = La sesión "{ $session }" no se importó: el tipo de sesión { $kind } no es compatible.
+ui-import-mobaxterm-ftp = La sesión "{ $session }" no se importó: FTP envía su contraseña en claro, y las sesiones FTP todavía no se importan.
+ui-import-mobaxterm-wsl = La sesión "{ $session }" no se importó: es una distribución WSL, un sistema Linux del equipo que ejecuta MobaXterm, sin nada a lo que conectarse.
+ui-import-mobaxterm-jump-host = La sesión "{ $session }" no se importó: pasa por el host de salto SSH "{ $host }"; Heimdall no enruta este protocolo a través de un host de salto, y una conexión directa lo eludiría.
+ui-import-mobaxterm-proxy = La sesión "{ $session }" no se importó: pasa por el proxy "{ $host }"; Heimdall no usa un proxy para este protocolo, y una conexión directa lo eludiría.
+ui-import-mobaxterm-proxy-no-host = La sesión "{ $session }" no se importó: pasa por un proxy; Heimdall no usa un proxy para este protocolo, y una conexión directa lo eludiría.
 ui-import-file-too-large = El archivo es demasiado grande para importar ({ $size } bytes).
 ui-import-mobaxterm-passwords = Las contraseñas de MobaXterm están cifradas con un algoritmo propietario y no se pudieron importar. Vuelve a introducir las credenciales de cada sesión.
 ui-import-mobaxterm-passwords-detected = { $count ->
@@ -1135,6 +1141,11 @@ ui-profile-ssh-mode = Modo SSH
 ui-profile-ssh-mode-embedded = Incrustado (integrado)
 ui-profile-ssh-mode-external = Externo (PuTTY)
 ui-profile-ssh-mode-external-desc = Abre PuTTY en una ventana separada. PuTTY pide la contraseña por sí mismo.
+ui-profile-remote-os = Sistema operativo del extremo remoto
+ui-profile-remote-os-auto = Automático
+ui-profile-remote-os-windows = Windows
+ui-profile-remote-os-linux = Linux
+ui-profile-remote-os-hint = Automático conserva la deducción hecha a partir del protocolo (SSH se lee como Linux). Indique Windows para un servidor SSH que ejecuta Windows: la biblioteca de comandos ofrecerá entonces los comandos que le convienen.
 ui-profile-toggle-x11 = Activar reenvío X11
 ui-profile-toggle-x11-hint = Reenvía la pantalla X11 al equipo local para aplicaciones gráficas (indicador -X)
 ui-profile-x11-warning = El reenvío X11 permite al host remoto ver la pantalla de este equipo y las teclas pulsadas en sus ventanas. Actívalo solo para un servidor de confianza.
@@ -5479,6 +5490,7 @@ ui-tool-cmdlib-help =
 
     Uso:
     Elige una plataforma o escribe una palabra para encontrar un comando. Escribe sus valores: el comando los muestra tal como se copiará. Un valor vacío toma el ejemplo mostrado.
+    Abierta desde una sesión, la biblioteca arranca en su plataforma y rellena su host y su usuario. Insertar (Mayús+Intro) escribe el comando en el indicador del terminal sin ejecutarlo: lo lees, lo cambias y pulsas Intro tú mismo.
 ui-tool-cmdlib-search-placeholder = Buscar comandos
 ui-tool-cmdlib-platform-all = Todas las plataformas
 ui-tool-cmdlib-category-security = Seguridad y cifrado
@@ -5526,6 +5538,9 @@ ui-tool-cmdlib-delete-question = ¿Eliminar { $title }?
 ui-tool-cmdlib-send = Enviar
 ui-tool-cmdlib-send-to = Enviar a:
 ui-tool-cmdlib-send-none = Abra una pestaña de terminal conectada para enviarle un comando. No se envía nada sin su acuerdo.
+ui-tool-cmdlib-insert = Insertar
+ui-tool-cmdlib-inserted = Escrito en el indicador de { $target }. Pulse Intro en el terminal para ejecutarlo.
+ui-tool-cmdlib-session = Abierta para la sesión de { $host }
 ui-tool-cmdlib-library-unreadable = No se pudo leer el archivo de sus comandos. Se deja como está y no se puede modificar aquí.
 ui-tool-cmdlib-library-unsaved = No se pudieron guardar sus comandos. El cambio no se hizo.
 ui-tool-cmdlib-editor-new = Nuevo comando
@@ -5590,6 +5605,11 @@ ui-tool-cmdlib-history-replay = Repetir
 ui-tool-cmdlib-history-clear = Borrar el historial
 ui-tool-cmdlib-history-clear-question = ¿Borrar todo el historial? Los favoritos se conservan.
 ui-tool-cmdlib-history-clear-confirm = Borrar
+ui-tool-cmdlib-history-inserted = Escrito en el indicador de { $target } el { $when }
+ui-tool-cmdlib-history-copied = Copiado el { $when }
+ui-tool-cmdlib-history-host = Host: { $host }
+ui-tool-cmdlib-history-this-host = Solo este host
+ui-tool-cmdlib-history-empty-host = Todavía nada para este host. Desmarque "Solo este host" para ver los demás.
 ui-tool-cmdlib-replay-gone = El comando de esta entrada ya no existe.
 ui-tool-cmdlib-replay-blocked = Esta entrada no se puede enviar ahora: abra una pestaña de terminal conectada y rellene los valores que pide.
 ui-tool-cmdlib-activity-unsaved = No se pudieron guardar los favoritos y el historial.
@@ -5964,7 +5984,9 @@ ui-shared-report-duplicate-host =
         [one] { $count } sesión en un host archivado dos veces
        *[other] { $count } sesiones en un host archivado dos veces
     }
-ui-shared-report-reason-other-protocol = El protocolo { $protocol } no es compatible, solo se toman SSH, SFTP, RDP, Telnet y VNC.
+ui-shared-report-reason-other-protocol = El tipo de sesión { $kind } no es compatible, solo se toman SSH, SFTP, RDP, Telnet y VNC.
+ui-shared-report-reason-ftp = Las sesiones FTP todavía no se toman: FTP envía su contraseña en claro.
+ui-shared-report-reason-wsl = Distribución WSL: un sistema Linux del equipo que ejecuta MobaXterm, nada a lo que conectarse.
 ui-shared-report-reason-invalid-host = El host { $host } no es un nombre de host ni una dirección.
 ui-shared-report-reason-invalid-gateway = La pasarela SSH { $host } no es un nombre de host ni una dirección, así que la sesión no se tomó: alcanzaría su host sin pasar por la pasarela.
 ui-shared-report-reason-duplicate-session = Otra sesión del archivo tiene la misma carpeta y el mismo nombre.

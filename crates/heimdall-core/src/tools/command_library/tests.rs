@@ -403,3 +403,109 @@ fn the_platform_filter_and_the_search_keep_the_commands_asked_for() {
     assert!(!matches_query(command, "", "nmap"));
     assert_eq!(command.level, Criticality::Info);
 }
+
+#[test]
+fn a_session_starts_the_platform_filter_on_its_own_platform() {
+    assert_eq!(
+        session_platform_filter(RemoteOs::Linux),
+        Some(UserPlatform::Linux)
+    );
+    assert_eq!(
+        session_platform_filter(RemoteOs::Windows),
+        Some(UserPlatform::Windows)
+    );
+    // Undetermined leaves every platform shown.
+    assert_eq!(session_platform_filter(RemoteOs::Auto), None);
+}
+
+#[test]
+fn a_host_parameter_takes_the_session_host_by_its_type_or_its_name() {
+    let host = Some("web.lab");
+    let by_type = typed("whatever", "hostname", None);
+    let by_name = typed("ComputerName", "string", None);
+    let other = typed("path", "string", None);
+    assert_eq!(session_value(&by_type, host, Some("bob")).as_deref(), host);
+    assert_eq!(session_value(&by_name, host, Some("bob")).as_deref(), host);
+    assert_eq!(session_value(&other, host, Some("bob")), None);
+    // The host is trimmed, and a blank one fills nothing.
+    assert_eq!(
+        session_value(&by_name, Some("  web.lab "), None).as_deref(),
+        host
+    );
+    assert_eq!(session_value(&by_name, Some("   "), None), None);
+    assert_eq!(session_value(&by_name, None, None), None);
+}
+
+#[test]
+fn an_ip_address_parameter_takes_an_address_and_never_a_name() {
+    let address = typed("target_ip", "ipaddress", None);
+    assert_eq!(
+        session_value(&address, Some("10.0.0.5"), None).as_deref(),
+        Some("10.0.0.5")
+    );
+    assert_eq!(
+        session_value(&address, Some("::1"), None).as_deref(),
+        Some("::1")
+    );
+    assert_eq!(session_value(&address, Some("web.lab"), None), None);
+}
+
+#[test]
+fn a_user_parameter_takes_the_session_user_by_its_name_alone() {
+    for name in ["user", "UserName", "login", "account", "samaccountname"] {
+        let parameter = typed(name, "string", None);
+        assert_eq!(
+            session_value(&parameter, Some("web.lab"), Some(" bob ")).as_deref(),
+            Some("bob"),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        session_value(&typed("owner", "string", None), None, Some("bob")),
+        None
+    );
+    assert_eq!(
+        session_value(&typed("user", "string", None), None, Some("  ")),
+        None
+    );
+    // The host wins when a parameter is both, as the C# checks it first.
+    let both = typed("host", "hostname", None);
+    assert_eq!(
+        session_value(&both, Some("web.lab"), Some("bob")).as_deref(),
+        Some("web.lab")
+    );
+}
+
+#[test]
+fn the_session_values_reach_the_command_through_the_generator_checks() {
+    // A prefilled host is a value like a typed one: quoted, and refused when it holds a
+    // character the shell could read.
+    let command = imported("ping {host}", Some(typed("host", "hostname", None)));
+    let template = command.template(TemplatePlatform::Linux).expect("template");
+    let parameter = &template.parameters[0];
+    let given = session_value(parameter, Some("web.lab"), None).expect("a value");
+    let made = generate(template, TemplatePlatform::Linux, |name| {
+        (name == "host").then_some(given.as_str())
+    });
+    assert_eq!(made.expect("generated"), "ping web.lab");
+    let hostile = generate(template, TemplatePlatform::Linux, |name| {
+        (name == "host").then_some("web.lab; rm -rf /")
+    });
+    assert!(hostile.is_err(), "a prefilled value is not trusted more");
+}
+
+#[test]
+fn a_command_is_previewed_on_one_line_and_cut_at_the_limit() {
+    assert_eq!(command_preview("ls -l"), "ls -l");
+    assert_eq!(command_preview("a\r\nb\nc\rd"), "a b c d");
+    assert_eq!(command_preview(""), "");
+    let exact = "x".repeat(PREVIEW_MAX_CHARS);
+    assert_eq!(command_preview(&exact), exact);
+    let long = "y".repeat(PREVIEW_MAX_CHARS + 5);
+    let cut = command_preview(&long);
+    assert_eq!(cut.chars().count(), PREVIEW_MAX_CHARS + 3);
+    assert!(cut.ends_with("..."));
+    // Characters are counted, not bytes.
+    let accented = "\u{e9}".repeat(PREVIEW_MAX_CHARS + 1);
+    assert!(command_preview(&accented).ends_with("..."));
+}

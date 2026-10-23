@@ -52,8 +52,9 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// The seconds of a day.
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
-/// The version of the file written.
-const FORMAT_VERSION: u32 = 1;
+/// The version of the file written: 2 added the host and the mode of a row. A file of version
+/// 1 reads with the defaults, every row of it having been sent.
+const FORMAT_VERSION: u32 = 2;
 
 /// The kept name of a command of the user, after this prefix its identity.
 pub const USER_KEY_PREFIX: &str = "user:";
@@ -61,7 +62,21 @@ pub const USER_KEY_PREFIX: &str = "user:";
 /// The kept name of a command of the catalog, after this prefix its identity in the catalogue.
 pub const CATALOG_KEY_PREFIX: &str = "catalog:";
 
-/// One command sent, as the history keeps it.
+/// What became of a command the history keeps, as the C# `IsExecuted` says it, the inserted
+/// case told apart from the copied one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryMode {
+    /// Written into a terminal and submitted with Enter.
+    #[default]
+    Sent,
+    /// Typed at a terminal's prompt without Enter: nothing ran until the user decides.
+    Inserted,
+    /// Only copied to the clipboard.
+    Copied,
+}
+
+/// One command sent, inserted or copied, as the history keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
@@ -75,8 +90,24 @@ pub struct HistoryEntry {
     pub parameters: Vec<String>,
     /// The name of the terminal tab that received it.
     pub target: String,
+    /// The host of the session the library was opened for, as the C# `TargetHost`; empty when
+    /// it was opened for none, and for a row written before hosts were recorded.
+    #[serde(default)]
+    pub host: String,
+    /// What became of the command. A row written before the field existed was sent.
+    #[serde(default)]
+    pub mode: HistoryMode,
     /// When, in seconds since 1970.
     pub at: i64,
+}
+
+impl HistoryEntry {
+    /// Whether the row belongs to `host`, whatever the case, as DNS compares names. A row
+    /// without a host is not any host's: nothing says it went there.
+    #[must_use]
+    pub fn is_for_host(&self, host: &str) -> bool {
+        !self.host.is_empty() && self.host.eq_ignore_ascii_case(host.trim())
+    }
 }
 
 /// Why the file could not be used.
@@ -253,6 +284,8 @@ mod tests {
             pattern: "mtr {host}".to_owned(),
             parameters: vec!["host".to_owned()],
             target: "web-1".to_owned(),
+            host: "web-1.lab".to_owned(),
+            mode: HistoryMode::Sent,
             at,
         }
     }
@@ -360,6 +393,76 @@ mod tests {
         let back = CommandActivity::load(&path).expect("loaded");
         assert_eq!(back.history(), activity.history());
         let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_row_of_the_first_version_reads_as_sent_with_no_host() {
+        let folder = scratch("activity-v1");
+        fs::create_dir_all(&folder).expect("folder");
+        let path = folder.join(ACTIVITY_FILE);
+        fs::write(
+            &path,
+            r#"{"version":1,"favorites":[],"history":[{"command":"catalog:a","title":"A","pattern":"a","parameters":[],"target":"t","at":5}]}"#,
+        )
+        .expect("write");
+        let activity = CommandActivity::load(&path).expect("loaded");
+        let row = &activity.history()[0];
+        assert_eq!((row.host.as_str(), row.mode), ("", HistoryMode::Sent));
+        // Saved again, it is the current version and keeps its row.
+        activity.save(&path).expect("saved");
+        let text = fs::read_to_string(&path).expect("read");
+        assert!(text.contains("\"version\": 2"));
+        assert_eq!(
+            CommandActivity::load(&path).expect("reloaded").history(),
+            activity.history()
+        );
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_file_of_a_newer_version_is_refused() {
+        let folder = scratch("activity-v3");
+        fs::create_dir_all(&folder).expect("folder");
+        let path = folder.join(ACTIVITY_FILE);
+        fs::write(&path, r#"{"version":3,"favorites":[],"history":[]}"#).expect("write");
+        assert!(matches!(
+            CommandActivity::load(&path),
+            Err(ActivityError::Format)
+        ));
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_host_and_the_mode_of_a_row_survive_a_save() {
+        let mut activity = CommandActivity::default();
+        let mut inserted = entry(7);
+        inserted.mode = HistoryMode::Inserted;
+        activity.record(inserted);
+        let mut copied = entry(8);
+        copied.mode = HistoryMode::Copied;
+        copied.host = String::new();
+        activity.record(copied);
+        let folder = scratch("activity-mode");
+        let path = folder.join(ACTIVITY_FILE);
+        activity.save(&path).expect("saved");
+        let back = CommandActivity::load(&path).expect("loaded");
+        assert_eq!(back.history(), activity.history());
+        assert_eq!(back.history()[0].mode, HistoryMode::Copied);
+        assert_eq!(back.history()[1].mode, HistoryMode::Inserted);
+        assert_eq!(back.history()[1].host, "web-1.lab");
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_row_is_for_a_host_by_name_without_case_and_never_when_it_has_none() {
+        let row = entry(1);
+        assert!(row.is_for_host("WEB-1.lab"));
+        assert!(row.is_for_host(" web-1.lab "));
+        assert!(!row.is_for_host("web-2.lab"));
+        let mut old = entry(2);
+        old.host = String::new();
+        assert!(!old.is_for_host("web-1.lab"));
+        assert!(!old.is_for_host(""));
     }
 
     #[test]

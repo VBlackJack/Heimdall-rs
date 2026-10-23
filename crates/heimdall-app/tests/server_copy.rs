@@ -133,6 +133,7 @@ fn tab(dir: &Path, client: RemoteSession, shell: Option<Connection>) -> (App, Ta
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

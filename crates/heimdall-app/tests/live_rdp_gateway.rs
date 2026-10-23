@@ -110,6 +110,7 @@ fn request(
             session_logging: None,
             ssh_mode: heimdall_core::profile::SshMode::Embedded,
             x11_forwarding: false,
+            remote_os: heimdall_core::profile::RemoteOs::Auto,
         }],
         ssh,
         cancel: CancellationToken::new(),

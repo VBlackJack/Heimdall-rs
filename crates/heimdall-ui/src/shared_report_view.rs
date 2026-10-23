@@ -86,9 +86,11 @@ pub fn entry_text(entry: &ReportEntry) -> String {
             Some(SkipReason::OtherProtocol) => {
                 fl!(
                     "ui-shared-report-reason-other-protocol",
-                    protocol = entry.detail.as_str()
+                    kind = entry.detail.as_str()
                 )
             }
+            Some(SkipReason::FtpNotSupported) => fl!("ui-shared-report-reason-ftp"),
+            Some(SkipReason::WslNotSupported) => fl!("ui-shared-report-reason-wsl"),
             Some(SkipReason::InvalidHost) => {
                 fl!(
                     "ui-shared-report-reason-invalid-host",
@@ -300,9 +302,21 @@ mod tests {
         let said = entry_text(&entry(
             ReportCheck::SkippedSession,
             Some(SkipReason::OtherProtocol),
-            "FTP",
+            "12",
         ));
-        assert!(said.contains("FTP"), "{said}");
+        assert!(said.contains("12"), "{said}");
+        let said = entry_text(&entry(
+            ReportCheck::SkippedSession,
+            Some(SkipReason::FtpNotSupported),
+            "",
+        ));
+        assert!(said.contains("FTP") && said.contains("clear"), "{said}");
+        let said = entry_text(&entry(
+            ReportCheck::SkippedSession,
+            Some(SkipReason::WslNotSupported),
+            "",
+        ));
+        assert!(said.contains("Linux") && said.contains("nothing"), "{said}");
         let said = entry_text(&entry(ReportCheck::UnresolvedVariable, None, "GHOST"));
         assert!(said.contains("GHOST"), "{said}");
         let said = entry_text(&entry(ReportCheck::DuplicateHost, None, "db01"));
@@ -340,6 +354,8 @@ mod tests {
             SkipReason::OverLimit,
             SkipReason::RdGatewayNotSupported,
             SkipReason::InvalidRdGateway,
+            SkipReason::FtpNotSupported,
+            SkipReason::WslNotSupported,
         ] {
             assert!(!entry_text(&entry(ReportCheck::SkippedSession, Some(reason), "x")).is_empty());
         }

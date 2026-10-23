@@ -949,6 +949,7 @@ fn the_default_ssh_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
         session_logging: None,
         ssh_mode: SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());
@@ -1614,6 +1615,47 @@ fn an_unresolved_mobaxterm_variable_is_a_line_of_the_import_report() {
         "{}",
         lines[0]
     );
+}
+
+#[test]
+fn every_mobaxterm_session_left_out_says_why_in_the_import_report() {
+    use heimdall_core::import::foreign::FileWarning;
+    let _english = english();
+    let session = || "box".to_owned();
+    let folder = || "Prod".to_owned();
+    let lines = heimdall_ui::file_import_view::warning_lines(&[
+        FileWarning::WslNotSupported {
+            session: session(),
+            folder: folder(),
+        },
+        FileWarning::UnsupportedSessionType {
+            session: session(),
+            folder: folder(),
+            type_code: "77".to_owned(),
+        },
+        FileWarning::JumpHostNotSupported {
+            session: session(),
+            folder: folder(),
+            host: "jump.lab".to_owned(),
+        },
+        FileWarning::ProxyNotSupported {
+            session: session(),
+            folder: folder(),
+            host: "proxy.lab".to_owned(),
+        },
+        FileWarning::ProxyNotSupported {
+            session: session(),
+            folder: folder(),
+            host: String::new(),
+        },
+    ]);
+    assert_eq!(lines.len(), 5);
+    assert!(lines[0].contains("WSL") && lines[0].contains("nothing to connect"));
+    assert!(lines[1].contains("77") && lines[1].contains("not supported"));
+    assert!(lines[2].contains("jump.lab") && lines[2].contains("jump host"));
+    assert!(lines[3].contains("proxy.lab"));
+    assert!(lines[4].contains("a proxy"));
+    assert!(lines.iter().all(|line| line.contains("not imported")));
 }
 
 #[test]

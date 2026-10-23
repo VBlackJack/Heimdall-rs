@@ -45,7 +45,7 @@ use crate::profile::{
     Aspect, AudioPlayback, CitrixProfile, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_FTP_PORT,
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
     DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, Forwards, FtpProfile, LocalArguments,
-    LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution,
+    LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, RemoteOs, Resolution,
     SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT, SUGGESTED_WINRM_TUNNEL_PORT, SshGateway,
     SshMode, SshProfile, TelnetProfile, ToolProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
@@ -490,6 +490,8 @@ struct LegacyServer {
     ssh_mode: Option<String>,
     #[serde(default)]
     ssh_x11_forwarding: bool,
+    /// The C# `RemoteOs`: a name (`Auto`, `Windows`, `Linux`) or its number; absent is `Auto`.
+    remote_os: Option<serde_json::Value>,
     /// `Embedded` (the C# default) or `External`.
     rdp_mode: Option<String>,
     #[serde(default)]
@@ -1596,6 +1598,12 @@ fn convert(server: &LegacyServer, suggested_tunnel_port: u16) -> Result<SshProfi
             SshMode::Embedded
         },
         x11_forwarding: !sftp && server.ssh_x11_forwarding,
+        // An SFTP profile opens no prompt for a command to be typed at.
+        remote_os: if sftp {
+            RemoteOs::Auto
+        } else {
+            remote_os_of(server)
+        },
     })
 }
 
@@ -1773,8 +1781,27 @@ fn convert_telnet(server: &LegacyServer) -> Result<TelnetProfile, SkipReason> {
         host: server.remote_server.trim().to_owned(),
         port,
         session_logging: server.session_logging_override,
+        remote_os: remote_os_of(server),
     })
 }
+
+/// The operating system the profile declares for its far end, as the C# `RemoteOs`: a name in
+/// any case or its number; `Auto` when absent or not known, which keeps the protocol's guess.
+fn remote_os_of(server: &LegacyServer) -> RemoteOs {
+    match server.remote_os.as_ref() {
+        Some(serde_json::Value::String(name)) => RemoteOs::named(name),
+        Some(serde_json::Value::Number(number)) => match number.as_i64() {
+            Some(CSHARP_REMOTE_OS_WINDOWS) => RemoteOs::Windows,
+            Some(CSHARP_REMOTE_OS_LINUX) => RemoteOs::Linux,
+            _ => RemoteOs::Auto,
+        },
+        _ => RemoteOs::Auto,
+    }
+}
+
+/// The C# `RemoteOs` numbers (`Auto` is 0).
+const CSHARP_REMOTE_OS_WINDOWS: i64 = 1;
+const CSHARP_REMOTE_OS_LINUX: i64 = 2;
 
 /// A VNC profile as `VncHandler` connects it: directly. The C# stored password is not
 /// carried over; a profile that had none reached its server without one, and keeps doing so.

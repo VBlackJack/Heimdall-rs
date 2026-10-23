@@ -28,7 +28,7 @@ use heimdall_core::profile::{
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
     DesktopSizing, Experience, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards,
     FtpProfile, LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile,
-    RdpSwitch, Resolution, SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT,
+    RdpSwitch, RemoteOs, Resolution, SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT,
     SUGGESTED_WINRM_TUNNEL_PORT, SshMode, SshProfile, TelnetProfile, VncProfile, WebProfile,
     WinRmProfile, fixed_desktop,
 };
@@ -454,6 +454,8 @@ pub enum ProfileChoice {
     External(bool),
     /// SSH: where the shell opens, in a tab or in `PuTTY`, as the C# "SSH mode".
     SshMode(SshMode),
+    /// SSH and Telnet: the operating system of the far end, as the C# list of that name.
+    RemoteOs(RemoteOs),
     /// A common size, written into the width and height.
     Preset(u16, u16),
     /// Whether a fixed desktop is scaled into the tab.
@@ -587,6 +589,9 @@ pub struct ProfileDraft {
     pub session_logging: Option<bool>,
     /// SSH: where the shell opens, in a tab or in `PuTTY`.
     pub ssh_mode: SshMode,
+    /// SSH and Telnet: the operating system of the far end, as the C# "Operating system of
+    /// the far end"; `Auto` keeps the guess from the protocol.
+    pub remote_os: RemoteOs,
     /// Through a gateway: how the local tunnel port is chosen, as the C# "Choose the tunnel
     /// port automatically".
     pub tunnel_port_choice: TunnelPortChoice,
@@ -771,6 +776,7 @@ impl ProfileDraft {
             protocol_chosen: true,
             session_logging: profile.session_logging,
             ssh_mode: profile.ssh_mode,
+            remote_os: profile.remote_os,
             tunnel_port_choice: TunnelPortChoice::of(profile.local_tunnel_port),
             local_tunnel_port: profile
                 .local_tunnel_port
@@ -1076,6 +1082,7 @@ impl ProfileDraft {
             protocol: DraftProtocol::Telnet,
             protocol_chosen: true,
             session_logging: profile.session_logging,
+            remote_os: profile.remote_os,
             ..Self::default()
         }
     }
@@ -1267,6 +1274,7 @@ impl ProfileDraft {
             ProfileChoice::Aspect(aspect) => self.rdp_options.aspect = aspect,
             ProfileChoice::External(on) => self.rdp_extras.external = on,
             ProfileChoice::SshMode(mode) => self.ssh_mode = mode,
+            ProfileChoice::RemoteOs(remote_os) => self.remote_os = remote_os,
             ProfileChoice::Preset(width, height) => {
                 self.fixed_width = width.to_string();
                 self.fixed_height = height.to_string();
@@ -1648,6 +1656,23 @@ impl ProfileDraft {
         }
     }
 
+    /// Whether the form offers the operating system of the far end: for the protocols that
+    /// open a prompt a command can be typed at, and whose platform the protocol alone cannot
+    /// tell (SSH reads as Linux, which is wrong towards Windows OpenSSH; Telnet is anything).
+    #[must_use]
+    pub fn shows_remote_os(&self) -> bool {
+        matches!(self.protocol, DraftProtocol::Ssh | DraftProtocol::Telnet)
+    }
+
+    /// The operating system saved: an SFTP profile opens no prompt and keeps `Auto`.
+    fn saved_remote_os(&self) -> RemoteOs {
+        if self.shows_remote_os() {
+            self.remote_os
+        } else {
+            RemoteOs::Auto
+        }
+    }
+
     /// X11 forwarding saved: for a shell only, as the C# box shows for SSH alone.
     fn saved_x11_forwarding(&self) -> bool {
         self.protocol == DraftProtocol::Ssh && self.is_on(ProfileToggle::X11Forwarding)
@@ -1807,6 +1832,7 @@ impl ProfileDraft {
                 session_logging: self.saved_session_logging(),
                 ssh_mode: self.saved_ssh_mode(),
                 x11_forwarding: self.saved_x11_forwarding(),
+                remote_os: self.saved_remote_os(),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 extras: RdpExtras {
@@ -1903,6 +1929,7 @@ impl ProfileDraft {
                 host,
                 port,
                 session_logging: self.session_logging,
+                remote_os: self.saved_remote_os(),
             }),
         })
     }
@@ -2121,6 +2148,7 @@ impl ProfileDraft {
             session_logging: self.session_logging,
             ssh_mode: self.saved_ssh_mode(),
             x11_forwarding: self.saved_x11_forwarding(),
+            remote_os: self.saved_remote_os(),
         })
     }
 }
@@ -2323,6 +2351,7 @@ mod tests {
             session_logging: None,
             ssh_mode: heimdall_core::profile::SshMode::Embedded,
             x11_forwarding: false,
+            remote_os: heimdall_core::profile::RemoteOs::Auto,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -2797,6 +2826,54 @@ mod tests {
     }
 
     #[test]
+    fn the_far_end_os_is_offered_for_ssh_and_telnet_saved_and_read_back() {
+        let mut ssh = ProfileDraft::new_for(DraftProtocol::Ssh);
+        ssh.set(ProfileField::Name, "win".to_owned());
+        ssh.set(ProfileField::Host, "win.lab".to_owned());
+        let saved = |draft: &ProfileDraft| match draft.to_saved(id()) {
+            Ok(DraftProfile::Ssh(profile)) => profile,
+            other => panic!("{other:?}"),
+        };
+        assert!(ssh.shows_remote_os());
+        assert_eq!(saved(&ssh).remote_os, RemoteOs::Auto, "nothing declared");
+        ssh.choose(ProfileChoice::RemoteOs(RemoteOs::Windows));
+        let profile = saved(&ssh);
+        assert_eq!(profile.remote_os, RemoteOs::Windows);
+        assert_eq!(
+            ProfileDraft::from_profile(&profile).remote_os,
+            RemoteOs::Windows
+        );
+        assert_eq!(
+            ssh.to_profile(id()).expect("profile").remote_os,
+            RemoteOs::Windows
+        );
+        // An SFTP profile opens no prompt: nothing is kept, even chosen.
+        ssh.protocol = DraftProtocol::Sftp;
+        assert!(!ssh.shows_remote_os());
+        assert_eq!(saved(&ssh).remote_os, RemoteOs::Auto);
+
+        let mut telnet = ProfileDraft::new_for(DraftProtocol::Telnet);
+        telnet.set(ProfileField::Name, "switch".to_owned());
+        telnet.set(ProfileField::Host, "switch.lab".to_owned());
+        telnet.choose(ProfileChoice::RemoteOs(RemoteOs::Linux));
+        let Ok(DraftProfile::Telnet(profile)) = telnet.to_saved(id()) else {
+            panic!("a Telnet profile");
+        };
+        assert_eq!(profile.remote_os, RemoteOs::Linux);
+        assert_eq!(
+            ProfileDraft::from_telnet(&profile).remote_os,
+            RemoteOs::Linux
+        );
+
+        // A protocol that reaches no prompt offers nothing and keeps nothing.
+        for protocol in [DraftProtocol::Rdp, DraftProtocol::Vnc, DraftProtocol::Ftp] {
+            let mut draft = ProfileDraft::new_for(protocol);
+            draft.choose(ProfileChoice::RemoteOs(RemoteOs::Linux));
+            assert!(!draft.shows_remote_os(), "{protocol:?}");
+        }
+    }
+
+    #[test]
     fn a_remote_forward_is_read_as_the_csharp_one_and_checked_only_through_a_gateway() {
         let remote = |draft: &ProfileDraft, bind: &str, local: &str| {
             let mut draft = draft.clone();
@@ -3176,6 +3253,7 @@ mod tests {
             host: "sw.lab".to_owned(),
             port: 2323,
             session_logging: None,
+            remote_os: heimdall_core::profile::RemoteOs::Auto,
         };
         assert_eq!(
             ProfileDraft::from_telnet(&telnet).to_saved(id()),

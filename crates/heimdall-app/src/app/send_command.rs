@@ -25,6 +25,13 @@
 //! shown whole with the terminal that receives it, and nothing is written before the
 //! question is answered. The command is typed as one line and submitted with Enter, as the
 //! C# `TerminalCommandFormatter.Submit` does, once agreed to.
+//!
+//! "Insert" is the other way to put a command in a terminal, as the C#
+//! `CommandLibraryViewModel.Insert` (`CommandLibraryViewModel.Commands.cs:101-108`): the
+//! command is typed at the prompt and left there, without Enter, for the user to read, change
+//! and run. Nothing runs, so no question is asked, the dangerous one included. It goes through
+//! the same refusal of a control character and the same encoding of a paste as Send, and only
+//! to a terminal that [`App::send_targets`] offers: never a remote desktop.
 
 use heimdall_term::encode_paste;
 
@@ -77,8 +84,16 @@ pub struct BroadcastConfirmation {
     pub dangerous: bool,
 }
 
-/// A command written into a terminal once the user agreed, which the window that asked
-/// records in its history.
+/// How a command was put in a terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// Typed and submitted with Enter.
+    Run,
+    /// Typed at the prompt and left there, without Enter.
+    Inserted,
+}
+
+/// A command written into a terminal, which the window that asked records in its history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SentCommand {
     /// The terminal tab.
@@ -87,6 +102,8 @@ pub struct SentCommand {
     pub target: String,
     /// The command as it was typed.
     pub command: String,
+    /// Whether it was submitted or only typed at the prompt.
+    pub delivery: Delivery,
 }
 
 impl App {
@@ -165,6 +182,24 @@ impl App {
         )));
     }
 
+    /// Types `command` at the prompt of terminal `target`, without Enter and without a
+    /// question. A command with a line break or another control character, an empty one, or a
+    /// terminal that no longer takes input (a remote desktop never does) is refused, as Send
+    /// refuses it: nothing is written.
+    pub(super) fn insert_command(&mut self, target: TabId, command: &str) {
+        if command.trim().is_empty() || command.chars().any(char::is_control) {
+            return;
+        }
+        let Some(found) = self
+            .send_targets()
+            .into_iter()
+            .find(|each| each.tab == target)
+        else {
+            return;
+        };
+        self.write_command(target, &found.name, command, Delivery::Inserted);
+    }
+
     /// Writes the command agreed to into its terminal, then Enter, while that terminal still
     /// takes input.
     pub(super) fn confirm_send(&mut self, confirmation: &SendConfirmation) -> Vec<Effect> {
@@ -172,6 +207,7 @@ impl App {
             confirmation.tab,
             &confirmation.target,
             &confirmation.command,
+            Delivery::Run,
         );
         Vec::new()
     }
@@ -184,13 +220,19 @@ impl App {
         confirmation: &BroadcastConfirmation,
     ) -> Vec<Effect> {
         for target in &confirmation.targets {
-            self.write_command(target.tab, &target.name, &confirmation.command);
+            self.write_command(
+                target.tab,
+                &target.name,
+                &confirmation.command,
+                Delivery::Run,
+            );
         }
         Vec::new()
     }
 
-    /// Types `command` and Enter into `tab` if it still takes input, and leaves a receipt.
-    fn write_command(&mut self, tab: TabId, name: &str, command: &str) {
+    /// Types `command` into `tab` if it still takes input, then Enter for a command to run,
+    /// and leaves a receipt.
+    fn write_command(&mut self, tab: TabId, name: &str, command: &str, delivery: Delivery) {
         let Some(found) = self
             .tab_mut(tab)
             .filter(|tab| super::broadcast::takes_input(tab))
@@ -198,12 +240,15 @@ impl App {
             return;
         };
         let mut bytes = encode_paste(command, &found.terminal.input_mode());
-        bytes.push(SUBMIT);
+        if delivery == Delivery::Run {
+            bytes.push(SUBMIT);
+        }
         found.write(bytes);
         self.keep_receipt(SentCommand {
             tab,
             target: name.to_owned(),
             command: command.to_owned(),
+            delivery,
         });
     }
 }

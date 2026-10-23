@@ -28,6 +28,7 @@ The user interface is native, built with [iced](https://iced.rs), with no
 embedded web engine.
 
 Coming from the C# Heimdall? See [Moving from Heimdall (C#) to Heimdall-rs](docs/migration-from-csharp.md).
+Team on MobaXterm? See [MobaXterm shared session sources](docs/MOBAXTERM-SHARED-SESSIONS.md).
 
 ## Layout
 
