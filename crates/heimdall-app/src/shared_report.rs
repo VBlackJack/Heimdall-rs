@@ -59,8 +59,14 @@ pub enum ReportCheck {
 /// Why a session of the file was not taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipReason {
-    /// Not an SSH, SFTP, RDP, Telnet or VNC session.
+    /// Not an SSH, SFTP, RDP, Telnet or VNC session, nor one of the two types said apart below;
+    /// the detail is the session type of the file.
     OtherProtocol,
+    /// An FTP session: it sends its password in clear and is not taken yet.
+    FtpNotSupported,
+    /// A WSL distribution: a Linux system on the computer that runs `MobaXterm`, with nothing to
+    /// connect to from another one.
+    WslNotSupported,
     /// The host is not a host name nor an address.
     InvalidHost,
     /// Another session of the file has the same folder and name.
@@ -88,6 +94,8 @@ impl SkipReason {
     fn key(self) -> &'static str {
         match self {
             Self::OtherProtocol => "other-protocol",
+            Self::FtpNotSupported => "ftp-not-supported",
+            Self::WslNotSupported => "wsl-not-supported",
             Self::InvalidHost => "invalid-host",
             Self::DuplicateSession => "duplicate-session",
             Self::OverLimit => "over-limit",
@@ -102,6 +110,8 @@ impl SkipReason {
     fn of_key(key: &str) -> Option<Self> {
         [
             Self::OtherProtocol,
+            Self::FtpNotSupported,
+            Self::WslNotSupported,
             Self::InvalidHost,
             Self::DuplicateSession,
             Self::OverLimit,

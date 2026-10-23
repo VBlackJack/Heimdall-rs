@@ -498,6 +498,12 @@ ui-import-mobaxterm-unresolved-variable = Session "{ $session }" : la variable [
 ui-import-mobaxterm-invalid-gateway = La session "{ $session }" n'a pas été importée : sa passerelle SSH "{ $host }" n'est pas un hôte valide. L'importer atteindrait le serveur sans passer par la passerelle que demande le fichier.
 ui-import-mobaxterm-invalid-rd-gateway = La session "{ $session }" n'a pas été importée : sa passerelle RD "{ $host }" n'est pas un hôte valide. L'importer atteindrait le serveur sans passer par la passerelle que demande le fichier.
 ui-import-mobaxterm-rd-gateway-unsupported = La session "{ $session }" n'a pas été importée : elle se connecte à sa passerelle RD "{ $host }" d'une façon que Heimdall ne reproduit pas (une carte à puce, ou un réglage qu'il ne reconnaît pas). L'importer atteindrait le serveur sans passer par la passerelle que demande le fichier.
+ui-import-mobaxterm-unsupported-type = La session "{ $session }" n'a pas été importée : le type de session { $kind } n'est pas pris en charge.
+ui-import-mobaxterm-ftp = La session "{ $session }" n'a pas été importée : FTP envoie son mot de passe en clair, et les sessions FTP ne sont pas encore importées.
+ui-import-mobaxterm-wsl = La session "{ $session }" n'a pas été importée : c'est une distribution WSL, un système Linux de l'ordinateur qui exécute MobaXterm, rien à quoi se connecter.
+ui-import-mobaxterm-jump-host = La session "{ $session }" n'a pas été importée : elle passe par l'hôte de rebond SSH "{ $host }" ; Heimdall n'achemine pas ce protocole par un hôte de rebond, et une connexion directe le contournerait.
+ui-import-mobaxterm-proxy = La session "{ $session }" n'a pas été importée : elle passe par le proxy "{ $host }" ; Heimdall n'utilise pas de proxy pour ce protocole, et une connexion directe le contournerait.
+ui-import-mobaxterm-proxy-no-host = La session "{ $session }" n'a pas été importée : elle passe par un proxy ; Heimdall n'utilise pas de proxy pour ce protocole, et une connexion directe le contournerait.
 ui-import-file-too-large = Le fichier est trop volumineux pour être importé ({ $size } octets).
 ui-import-mobaxterm-passwords = Les mots de passe MobaXterm sont chiffrés avec un algorithme propriétaire et n'ont pas pu être importés. Veuillez ressaisir les identifiants pour chaque session.
 ui-import-mobaxterm-passwords-detected = { $count ->
@@ -5989,7 +5995,9 @@ ui-shared-report-duplicate-host =
         [one] { $count } session sur un hôte classé deux fois
        *[other] { $count } sessions sur un hôte classé deux fois
     }
-ui-shared-report-reason-other-protocol = Le protocole { $protocol } n'est pas pris en charge, seuls SSH, SFTP, RDP, Telnet et VNC sont pris.
+ui-shared-report-reason-other-protocol = Le type de session { $kind } n'est pas pris en charge, seuls SSH, SFTP, RDP, Telnet et VNC sont pris.
+ui-shared-report-reason-ftp = Les sessions FTP ne sont pas encore prises : FTP envoie son mot de passe en clair.
+ui-shared-report-reason-wsl = Distribution WSL : un système Linux de l'ordinateur qui exécute MobaXterm, rien à quoi se connecter.
 ui-shared-report-reason-invalid-host = L'hôte { $host } n'est ni un nom d'hôte ni une adresse.
 ui-shared-report-reason-invalid-gateway = La passerelle SSH { $host } n'est ni un nom d'hôte ni une adresse, la session n'a donc pas été prise : elle atteindrait son hôte sans passer par la passerelle.
 ui-shared-report-reason-duplicate-session = Une autre session du fichier a le même dossier et le même nom.

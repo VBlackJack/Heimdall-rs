@@ -47,7 +47,7 @@ ftp= #130#6%ftp.lab%21%anon%0%1
 tel= #98#1%tel.lab%2323%op
 vnc= #128#5%vnc.lab%5901
 files= #140#7%files.lab%22%me
-unknown= #999#0%x.lab%1
+unknown= #999#99%x.lab%1
 nohost= #109#0%%22%root
 Unsafe= #109#0%u.lab%22%root%%key;rm
 Climb= #109#0%c.lab%22%root%%..\\..\\key
@@ -82,7 +82,21 @@ fn ssh_line(profile: &heimdall_core::profile::SshProfile) -> String {
 fn mobaxterm_ssh_sessions_are_read_with_their_folders_and_safe_key_paths() {
     let parsed = mobaxterm::parse(MOBA);
     assert_eq!(parsed.stored_credentials, 3, "both sections, any case");
-    assert!(parsed.warnings.is_empty());
+    // The one session of a type that is not taken says so; nothing else is said.
+    assert_eq!(
+        parsed.warnings,
+        [
+            FileWarning::FtpNotSupported {
+                session: "ftp".to_owned(),
+                folder: "Paris/Prod/DMZ".to_owned(),
+            },
+            FileWarning::UnsupportedSessionType {
+                session: "unknown".to_owned(),
+                folder: "Paris/Prod/DMZ".to_owned(),
+                type_code: "99".to_owned(),
+            }
+        ]
+    );
     let report = report(&parsed);
     let ssh: Vec<String> = report.profiles.iter().map(ssh_line).collect();
     assert_eq!(
@@ -113,18 +127,14 @@ fn mobaxterm_ssh_sessions_are_read_with_their_folders_and_safe_key_paths() {
 }
 
 #[test]
-fn mobaxterm_rdp_ftp_telnet_and_vnc_sessions_are_read_by_protocol_code() {
+fn mobaxterm_rdp_telnet_and_vnc_sessions_are_read_by_type_and_ftp_is_refused() {
     let report = report(&mobaxterm::parse(MOBA));
     let dc = &report.rdp[0];
     assert_eq!(
         (dc.name.as_str(), dc.port, dc.username.as_deref()),
         ("dc", 3389, Some("admin"))
     );
-    let ftp = &report.ftp[0];
-    assert_eq!(
-        (ftp.host.as_str(), ftp.port, ftp.passive, ftp.tls),
-        ("ftp.lab", 21, false, true)
-    );
+    assert!(report.ftp.is_empty(), "FTP is refused, as the C#");
     let telnet: Vec<(&str, u16)> = report
         .telnet
         .iter()

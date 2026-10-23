@@ -51,7 +51,6 @@ use std::time::{Duration, SystemTime};
 use heimdall_core::import::foreign::{FileWarning, GATEWAY_ID_KEY, Parsed};
 use heimdall_core::import::mobaxterm;
 use heimdall_core::import::mobaxterm::Limits;
-use heimdall_core::import::mobaxterm::{UNSUPPORTED_JUMP_HOST_KEY, UNSUPPORTED_PROXY_KEY};
 use heimdall_core::post_connect::{PostConnect, PostConnectStep};
 use heimdall_core::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, Forwards, ProfileId,
@@ -521,7 +520,14 @@ fn read_source(
     let problem = match read_bounded(&path).and_then(|bytes| parse(&source.id, &bytes, variables)) {
         // A file with nothing usable in it is no source of sessions: it reports why, and
         // keeps the previous sessions when there are some.
-        Ok(parsed) if !parsed.sessions.is_empty() => {
+        // A file that read but whose sessions were all refused (a route Heimdall cannot follow
+        // was added to each) loads none: falling back to the previous read or the offline copy
+        // would reopen those sessions as direct connections around the route the file asks for.
+        // Lines dropped unread (too long, malformed) count the same: they are not the file's
+        // sessions either.
+        Ok(parsed)
+            if !parsed.sessions.is_empty() || parsed.refused > 0 || parsed.skipped_entries > 0 =>
+        {
             if let Some(cache) = cache {
                 keep_copy(cache, source, &path, &parsed);
             }
@@ -967,20 +973,11 @@ fn sanitize(
 ) -> Result<SharedSession, (SkipReason, String)> {
     let kind = text_of(server, "connectionType")
         .ok_or_else(|| (SkipReason::OtherProtocol, String::new()))?;
+    // A jump host or a proxy the protocol cannot honour never gets here: the reader refuses
+    // such a session (`refused_by_reader`), as the C# parser does
+    // (`MobaXtermImporter.cs:308-326`).
     let protocol =
         Protocol::of_name(kind).ok_or_else(|| (SkipReason::OtherProtocol, display_text(kind)))?;
-    // A jump host or a proxy the protocol cannot honour is a route the file asked for and
-    // Heimdall cannot take: the session is refused rather than taken as a direct connection,
-    // as the C# parser does (`MobaXtermImporter.cs:308-326`).
-    if let Some(jump_host) = server
-        .get(UNSUPPORTED_JUMP_HOST_KEY)
-        .and_then(Value::as_str)
-    {
-        return Err((SkipReason::JumpHostNotSupported, display_text(jump_host)));
-    }
-    if let Some(proxy) = server.get(UNSUPPORTED_PROXY_KEY).and_then(Value::as_str) {
-        return Err((SkipReason::ProxyNotSupported, display_text(proxy)));
-    }
     let host = text_of(server, "remoteServer")
         .filter(|host| is_valid_host(host))
         .ok_or_else(|| {
@@ -1038,10 +1035,13 @@ fn sanitize(
     ))
 }
 
-/// The session a warning of the reader says it left out because of its route, as a refused one:
-/// its SSH gateway has no usable host, or its RD Gateway has none or is signed in to in a way
-/// Heimdall does not reproduce (a smart card). Taking it direct would go around the gateway.
+/// The session a warning of the reader says it left out, as a refused one: its SSH gateway has
+/// no usable host, its RD Gateway has none or is signed in to in a way Heimdall does not
+/// reproduce (a smart card), it goes through a jump host or a proxy its protocol cannot follow
+/// (taking any of these direct would go around the route), it is a WSL distribution, or it is of
+/// a type Heimdall does not take.
 fn refused_by_reader(warning: &FileWarning) -> Option<Refused> {
+    let no_detail = String::new();
     let (session, folder, host, reason) = match warning {
         FileWarning::InvalidGatewayHost {
             session,
@@ -1058,6 +1058,27 @@ fn refused_by_reader(warning: &FileWarning) -> Option<Refused> {
             folder,
             host,
         } => (session, folder, host, SkipReason::RdGatewayNotSupported),
+        FileWarning::JumpHostNotSupported {
+            session,
+            folder,
+            host,
+        } => (session, folder, host, SkipReason::JumpHostNotSupported),
+        FileWarning::ProxyNotSupported {
+            session,
+            folder,
+            host,
+        } => (session, folder, host, SkipReason::ProxyNotSupported),
+        FileWarning::UnsupportedSessionType {
+            session,
+            folder,
+            type_code,
+        } => (session, folder, type_code, SkipReason::OtherProtocol),
+        FileWarning::FtpNotSupported { session, folder } => {
+            (session, folder, &no_detail, SkipReason::FtpNotSupported)
+        }
+        FileWarning::WslNotSupported { session, folder } => {
+            (session, folder, &no_detail, SkipReason::WslNotSupported)
+        }
         _ => return None,
     };
     Some(Refused {

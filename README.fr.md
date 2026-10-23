@@ -31,6 +31,7 @@ L'interface est native, construite avec [iced](https://iced.rs), sans moteur web
 embarqué.
 
 Vous venez du Heimdall C# ? Voir [Passer de Heimdall (C#) à Heimdall-rs](docs/fr/migration-from-csharp.md).
+Une équipe sur MobaXterm ? Voir [Sources de sessions partagées MobaXterm](docs/fr/MOBAXTERM-SHARED-SESSIONS.md).
 
 ## Organisation
 
