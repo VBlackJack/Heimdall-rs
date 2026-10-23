@@ -35,6 +35,7 @@ pub mod catalog;
 mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
+mod command_library_runbooks;
 mod command_library_tool;
 mod context;
 mod cron_job_tool;

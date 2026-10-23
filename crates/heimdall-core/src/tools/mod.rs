@@ -76,6 +76,7 @@ pub mod private_file;
 pub mod probe_pool;
 pub mod regex_engine;
 pub mod route_table;
+pub mod runbooks;
 pub mod secnumcloud;
 pub mod secure_random;
 pub mod service_status;

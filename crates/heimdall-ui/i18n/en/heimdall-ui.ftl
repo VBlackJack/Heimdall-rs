@@ -6064,3 +6064,64 @@ ui-masked-copy-rule-password-prompt = Password typed at a prompt
 ui-masked-copy-rule-ipv4-address = IPv4 address
 ui-masked-copy-rule-host-name = Host name
 ui-masked-copy-failed = The masking failed, so nothing can be copied.
+ui-tool-cmdlib-runbooks = Runbooks
+ui-tool-cmdlib-runbooks-title = Runbooks
+ui-tool-cmdlib-runbooks-new = New runbook
+ui-tool-cmdlib-runbooks-duplicate = Duplicate
+ui-tool-cmdlib-runbooks-copy-name = { $name } (copy)
+ui-tool-cmdlib-runbooks-delete-question = Delete the runbook { $name }?
+ui-tool-cmdlib-runbooks-unreadable = The file of your runbooks could not be read. It is left as it is and cannot be changed here.
+ui-tool-cmdlib-runbooks-unsaved = Your runbooks could not be saved. The change was not made.
+ui-tool-cmdlib-runbooks-skipped =
+    { $count ->
+        [one] { $count } runbook of the file could not be used. It is kept as it is.
+       *[other] { $count } runbooks of the file could not be used. They are kept as they are.
+    }
+ui-tool-cmdlib-runbooks-empty = No runbook yet. A runbook chains the steps you would otherwise send one by one on every incident.
+ui-tool-cmdlib-runbooks-steps =
+    { $count ->
+        [one] { $count } step
+       *[other] { $count } steps
+    }
+ui-tool-cmdlib-runbooks-mode-stop = Stop the run
+ui-tool-cmdlib-runbooks-mode-continue = Carry on
+ui-tool-cmdlib-runbooks-err-name = Give the runbook a name.
+ui-tool-cmdlib-runbooks-err-name-long = The name is longer than { $max } characters.
+ui-tool-cmdlib-runbooks-err-text = A text holds a control or invisible character. Remove it.
+ui-tool-cmdlib-runbooks-err-variable-name = The variable name "{ $name }" is not valid or is used twice. A name starts with a letter or an underscore and holds letters, digits and underscores.
+ui-tool-cmdlib-runbooks-err-variables-many = A runbook holds at most { $max } variables.
+ui-tool-cmdlib-runbooks-err-variable-long = The default value of { $name } is longer than { $max } characters.
+ui-tool-cmdlib-runbooks-err-steps-many = A runbook holds at most { $max } steps.
+ui-tool-cmdlib-runbooks-err-full = The file already holds { $max } runbooks. Delete one first.
+ui-tool-cmdlib-runbooks-err-step-empty = Step { $number } has no command.
+ui-tool-cmdlib-runbooks-err-step-long = The command of step { $number } is longer than { $max } characters.
+ui-tool-cmdlib-runbooks-err-step-hidden = Step { $number } holds a control or invisible character. Remove it.
+ui-tool-cmdlib-runbooks-err-step-value-long = In step { $number }, the value of { $name } is longer than { $max } characters.
+ui-tool-cmdlib-runbooks-err-step-values = Step { $number }: { $reason }
+ui-tool-cmdlib-runbooks-err-step-other = Step { $number } is not valid.
+ui-tool-cmdlib-runbooks-editor-new = New runbook
+ui-tool-cmdlib-runbooks-editor-edit = Edit runbook
+ui-tool-cmdlib-runbooks-field-name = Name
+ui-tool-cmdlib-runbooks-field-description = Description
+ui-tool-cmdlib-runbooks-field-mode = When a step fails
+ui-tool-cmdlib-runbooks-variables = Variables
+ui-tool-cmdlib-runbooks-variables-hint = A value written {"{{"}name{"}}"} in a step is asked once when the run starts, prefilled from the session host and user.
+ui-tool-cmdlib-runbooks-variable-name = Name
+ui-tool-cmdlib-runbooks-variable-default = Default value
+ui-tool-cmdlib-runbooks-variable-add = Add a variable
+ui-tool-cmdlib-runbooks-remove = Remove
+ui-tool-cmdlib-runbooks-steps-title = Steps
+ui-tool-cmdlib-runbooks-steps-empty = No step yet. Add a library action or a command.
+ui-tool-cmdlib-runbooks-pick-placeholder = Search an action to add as a step
+ui-tool-cmdlib-runbooks-pick-none = No action matches.
+ui-tool-cmdlib-runbooks-pick-add = Add: { $title }
+ui-tool-cmdlib-runbooks-literal-add = Add a command typed as is
+ui-tool-cmdlib-runbooks-undeclared = Variables used but not declared above: { $names }. A run cannot fill them.
+ui-tool-cmdlib-runbooks-move-up = Up
+ui-tool-cmdlib-runbooks-move-down = Down
+ui-tool-cmdlib-runbooks-step-number = Step { $number }
+ui-tool-cmdlib-runbooks-step-missing = This action is no longer in the library.
+ui-tool-cmdlib-runbooks-step-no-values = This action asks for no value.
+ui-tool-cmdlib-runbooks-step-literal = Command for
+ui-tool-cmdlib-runbooks-step-command = Command
+ui-tool-cmdlib-runbooks-step-note = Note
