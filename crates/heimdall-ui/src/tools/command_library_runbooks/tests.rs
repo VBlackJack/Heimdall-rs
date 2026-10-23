@@ -525,3 +525,40 @@ fn a_runbook_deleted_from_another_window_is_not_brought_back_unasked() {
     assert!(second.editor.is_none());
     assert_eq!(names_on_disk(folder.path()), ["R2"]);
 }
+
+#[test]
+fn what_was_refused_goes_away_when_the_user_changes_the_form() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    send(&mut pane, RunbookMessage::New);
+    send(&mut pane, RunbookMessage::Save);
+    assert!(
+        pane.editor
+            .as_ref()
+            .is_some_and(|editor| editor.problem.is_some()),
+        "the empty name is said"
+    );
+    // The field fixed, the reason does not stay under a form that is now right.
+    send(&mut pane, RunbookMessage::Name("R".to_owned()));
+    assert!(
+        pane.editor
+            .as_ref()
+            .is_some_and(|editor| editor.problem.is_none())
+    );
+}
+
+#[test]
+fn the_labels_of_a_step_are_those_of_the_language_not_the_catalogue_pivot() {
+    let library = UserLibrary::default();
+    let label = |language: &str| {
+        let command = shown_action_in(&library, "restart-service", language).expect("shipped");
+        fields_of(Some(&command), &BTreeMap::new())
+            .first()
+            .map(|field| field.label.clone())
+            .expect("a field")
+    };
+    assert_eq!(label("en"), "Service name");
+    assert_eq!(label("fr"), "Nom du service");
+    // A language the catalogue has no text for shows the pivot's.
+    assert_eq!(label("xx"), "Service name");
+}

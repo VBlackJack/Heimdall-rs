@@ -663,6 +663,8 @@ pub enum CopySlot {
     CmdLibUserCommand(usize),
     /// The command of the history entry at this place.
     CmdLibHistory(usize),
+    /// The command of the step a runbook run is at.
+    CmdLibRunbookStep,
 }
 
 /// What a tool's tab is asked.

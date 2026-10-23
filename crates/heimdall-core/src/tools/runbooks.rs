@@ -41,12 +41,13 @@ use serde_json::{Map, Value};
 
 use super::private_file::write_private;
 use super::user_commands::{
-    self, GenerateError, MAX_COMMAND_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_FILE_BYTES,
+    self, Criticality, GenerateError, MAX_COMMAND_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_FILE_BYTES,
     MAX_PARAMETER_LENGTH, MAX_PARAMETERS, MAX_TITLE_LENGTH, TemplatePlatform, UserCommand,
     ValueError,
 };
 use super::uuid_generator::{self, UuidFormat, UuidVersion};
 use crate::invisible::is_invisible;
+use crate::profile::RemoteOs;
 
 /// The file of the runbooks, beside the file of the user's commands.
 pub const RUNBOOKS_FILE: &str = "runbooks.json";
@@ -1080,6 +1081,127 @@ impl RunbookStore {
         let id = copy.public_id.clone();
         self.runbooks.insert(0, copy);
         Some(id)
+    }
+}
+
+/// Why a step of a run cannot be sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunProblem {
+    /// The literal command is empty.
+    CommandMissing,
+    /// The literal command is longer than [`MAX_COMMAND_LENGTH`].
+    CommandTooLong,
+    /// The literal command holds a control character or one that shows nothing.
+    Hidden,
+    /// The library no longer has the action.
+    ActionMissing,
+    /// The action has no usable template.
+    NoTemplate,
+    /// The step refers to variables the run does not hold.
+    UnknownVariables(Vec<String>),
+    /// The generator refuses the values.
+    Values(Vec<ValueError>),
+    /// The generator cannot make the command (too long, no pattern, too many parameters).
+    Generate(GenerateError),
+}
+
+/// A step ready to be sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedStep {
+    /// The command, one line, as it is typed.
+    pub command: String,
+    /// The template it was made from; the step's own platform for a literal step.
+    pub platform: TemplatePlatform,
+    /// How dangerous it is: the action's stored level, and the highest for a literal step,
+    /// which nobody has judged.
+    pub level: Criticality,
+    /// Whether it is a literal step.
+    pub literal: bool,
+}
+
+/// The template an action step runs on for a session whose far end is `remote`, as the C#
+/// `SelectRunbookTemplate`: the matching one, the other when the action has only one, and
+/// Windows first when the platform cannot be told.
+#[must_use]
+pub fn select_template(command: &UserCommand, remote: RemoteOs) -> Option<TemplatePlatform> {
+    let usable = command.template_platforms();
+    let (first, second) = if remote == RemoteOs::Linux {
+        (TemplatePlatform::Linux, TemplatePlatform::Windows)
+    } else {
+        (TemplatePlatform::Windows, TemplatePlatform::Linux)
+    };
+    [first, second]
+        .into_iter()
+        .find(|platform| usable.contains(platform))
+}
+
+/// The command a step sends once the run holds `variables`, judged now as a command typed in
+/// the library is: every value of an action step goes through [`user_commands::generate`]
+/// after the variables are put in (the C# `ResolveAction` and `ValidateParameters`), and a
+/// literal step is refused for a control or invisible character. `action` is the library's
+/// action of an action step, `None` when it is gone.
+///
+/// # Errors
+///
+/// The reason the step cannot be sent, as a [`RunProblem`].
+pub fn resolve_step(
+    step: &Step,
+    variables: &BTreeMap<String, String>,
+    action: Option<&UserCommand>,
+    remote: RemoteOs,
+) -> Result<ResolvedStep, RunProblem> {
+    match step {
+        Step::Literal {
+            command, platform, ..
+        } => {
+            let command = command.trim();
+            if command.is_empty() {
+                return Err(RunProblem::CommandMissing);
+            }
+            if command.chars().count() > MAX_COMMAND_LENGTH {
+                return Err(RunProblem::CommandTooLong);
+            }
+            if holds_hidden(command) {
+                return Err(RunProblem::Hidden);
+            }
+            Ok(ResolvedStep {
+                command: command.to_owned(),
+                platform: *platform,
+                level: Criticality::Dangerous,
+                literal: true,
+            })
+        }
+        Step::Action { parameters, .. } => {
+            let action = action.ok_or(RunProblem::ActionMissing)?;
+            let platform = select_template(action, remote).ok_or(RunProblem::NoTemplate)?;
+            let template = action.template(platform).ok_or(RunProblem::NoTemplate)?;
+            let mut unknown = Vec::new();
+            let values: BTreeMap<&str, String> = parameters
+                .iter()
+                .map(|(name, value)| (name.as_str(), substitute(value, variables, &mut unknown)))
+                .collect();
+            if !unknown.is_empty() {
+                return Err(RunProblem::UnknownVariables(unknown));
+            }
+            let command = user_commands::generate(template, platform, |name| {
+                values.get(name).map(String::as_str)
+            })
+            .map_err(|error| match error {
+                GenerateError::Values(errors) => RunProblem::Values(errors),
+                other => RunProblem::Generate(other),
+            })?;
+            // A line break would submit the first line before the rest is read, whatever the
+            // pattern's author meant, as the library's own send refuses it.
+            if command.chars().any(is_hidden) {
+                return Err(RunProblem::Generate(GenerateError::Multiline));
+            }
+            Ok(ResolvedStep {
+                command,
+                platform,
+                level: action.level,
+                literal: false,
+            })
+        }
     }
 }
 
