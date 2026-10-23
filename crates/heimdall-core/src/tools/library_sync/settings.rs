@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-//! What the synchronization is told: the repository, the folder it is kept in, the branch and
-//! the author of the commits (the C# `CmdLibGitSyncUrl`, `CmdLibGitSyncBranch`,
-//! `CmdLibGitSyncAuthorName` and `CmdLibGitSyncAuthorEmail`), and what it remembers of the
-//! runbooks between two synchronizations.
+//! What the synchronization is told: the repository, the branch and the author of the commits
+//! (the C# `CmdLibGitSyncUrl`, `CmdLibGitSyncBranch`, `CmdLibGitSyncAuthorName` and
+//! `CmdLibGitSyncAuthorEmail`), and what it remembers of the runbooks between two
+//! synchronizations. The local repository is not a setting: it is a folder Heimdall makes in
+//! its own data folder (see the parent module).
 //!
 //! Every value a person typed ends up in the arguments of a `git` process, so each is held to
 //! a strict shape before it is used: no leading `-` (git would read it as an option), no
@@ -27,7 +28,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -52,9 +53,6 @@ pub const PLACEHOLDER_AUTHOR_EMAIL: &str = "heimdall@local";
 /// The longest URL taken.
 pub const MAX_URL_LENGTH: usize = 2048;
 
-/// The longest folder path taken.
-pub const MAX_PATH_LENGTH: usize = 1024;
-
 /// The longest branch name taken.
 pub const MAX_BRANCH_LENGTH: usize = 200;
 
@@ -64,9 +62,36 @@ pub const MAX_AUTHOR_NAME_LENGTH: usize = 100;
 /// The longest author e-mail address taken.
 pub const MAX_AUTHOR_EMAIL_LENGTH: usize = 254;
 
-/// The schemes of a remote URL: nothing else is passed to git (no `http`, no `git`, and above
-/// all no `ext::` or `fd::` transport helper, which run a command).
-pub const ALLOWED_SCHEMES: [&str; 3] = ["https", "ssh", "file"];
+/// The schemes of a remote URL: nothing else is passed to git (no `http`, no `git`, no `file`
+/// as the C# `GitUrlValidator`, and above all no `ext::` or `fd::` transport helper, which run
+/// a command).
+pub const ALLOWED_SCHEMES: [&str; 2] = ["https", "ssh"];
+
+#[cfg(test)]
+thread_local! {
+    /// Lets a test of this thread use a `file://` bare repository as the remote.
+    static FILE_URLS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether `file://` remotes are taken: never, except in the tests that need a bare
+/// repository on disk and say so with `allow_file_urls_in_this_test`.
+#[must_use]
+pub fn file_urls_allowed() -> bool {
+    #[cfg(test)]
+    {
+        FILE_URLS.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        false
+    }
+}
+
+/// Takes `file://` remotes for the rest of this test's thread.
+#[cfg(test)]
+pub fn allow_file_urls_in_this_test() {
+    FILE_URLS.with(|allowed| allowed.set(true));
+}
 
 /// What separates the scheme from the rest of a URL.
 const SCHEME_SEPARATOR: &str = "://";
@@ -110,16 +135,9 @@ pub enum SettingsIssue {
     UrlScheme,
     /// The URL is not one of the forms taken.
     UrlFormat,
-    /// No folder.
-    PathMissing,
-    /// The folder is not an absolute path.
-    PathRelative,
-    /// The folder goes through `..`.
-    PathParent,
-    /// The folder holds a control character or one that shows nothing, or starts with `-`.
-    PathHidden,
-    /// The folder is longer than [`MAX_PATH_LENGTH`].
-    PathTooLong,
+    /// An https URL carries a user name or a token: credentials belong to the credential
+    /// manager.
+    UrlCredentials,
     /// No branch.
     BranchMissing,
     /// The branch is not a name git takes, or starts with `-`.
@@ -136,8 +154,6 @@ pub enum SettingsIssue {
 pub struct SyncSettings {
     /// The repository: `https://`, `ssh://` or `file://`, or the scp-like `user@host:path`.
     pub remote_url: String,
-    /// The folder the repository is kept in on this computer.
-    pub local_path: String,
     /// The branch synchronized.
     pub branch: String,
     /// The name commits are signed with.
@@ -150,7 +166,6 @@ impl Default for SyncSettings {
     fn default() -> Self {
         Self {
             remote_url: String::new(),
-            local_path: String::new(),
             branch: DEFAULT_BRANCH.to_owned(),
             author_name: PLACEHOLDER_AUTHOR_NAME.to_owned(),
             author_email: PLACEHOLDER_AUTHOR_EMAIL.to_owned(),
@@ -163,8 +178,6 @@ impl Default for SyncSettings {
 pub struct ValidSettings {
     /// The repository URL, trimmed.
     pub remote_url: String,
-    /// The folder of the clone.
-    pub local_path: PathBuf,
     /// The branch.
     pub branch: String,
     /// The author name.
@@ -174,10 +187,10 @@ pub struct ValidSettings {
 }
 
 impl SyncSettings {
-    /// Whether the repository and the folder are both given, as the C# `IsConfigured`.
+    /// Whether the repository is given, as the C# `IsConfigured`.
     #[must_use]
     pub fn is_configured(&self) -> bool {
-        !self.remote_url.trim().is_empty() && !self.local_path.trim().is_empty()
+        !self.remote_url.trim().is_empty()
     }
 
     /// Holds every value to its shape.
@@ -188,8 +201,6 @@ impl SyncSettings {
     pub fn validate(&self) -> Result<ValidSettings, SettingsIssue> {
         let remote_url = self.remote_url.trim();
         url_issue(remote_url).map_or(Ok(()), Err)?;
-        let local_path = self.local_path.trim();
-        path_issue(local_path).map_or(Ok(()), Err)?;
         let branch = self.branch.trim();
         branch_issue(branch).map_or(Ok(()), Err)?;
         let author_name = self.author_name.trim();
@@ -202,7 +213,6 @@ impl SyncSettings {
         }
         Ok(ValidSettings {
             remote_url: remote_url.to_owned(),
-            local_path: PathBuf::from(local_path),
             branch: branch.to_owned(),
             author_name: author_name.to_owned(),
             author_email: author_email.to_owned(),
@@ -258,17 +268,32 @@ fn url_issue(url: &str) -> Option<SettingsIssue> {
     }
     if let Some((scheme, rest)) = url.split_once(SCHEME_SEPARATOR) {
         let scheme = scheme.to_ascii_lowercase();
-        if !ALLOWED_SCHEMES.contains(&scheme.as_str()) {
+        let is_file = scheme == "file" && file_urls_allowed();
+        if !ALLOWED_SCHEMES.contains(&scheme.as_str()) && !is_file {
             return Some(SettingsIssue::UrlScheme);
-        }
-        // `https://` alone, or a host that is only a user, names nothing.
-        let host = rest.rsplit(USER_SEPARATOR).next().unwrap_or_default();
-        let host = host.split('/').next().unwrap_or_default();
-        if scheme != "file" && host.is_empty() {
-            return Some(SettingsIssue::UrlFormat);
         }
         if rest.is_empty() {
             return Some(SettingsIssue::UrlFormat);
+        }
+        if is_file {
+            return None;
+        }
+        let authority = rest.split('/').next().unwrap_or_default();
+        let (user, host) = match authority.rfind(USER_SEPARATOR) {
+            Some(index) => (Some(&authority[..index]), &authority[index + 1..]),
+            None => (None, authority),
+        };
+        if host.is_empty() {
+            return Some(SettingsIssue::UrlFormat);
+        }
+        if scheme == "https" && user.is_some() {
+            return Some(SettingsIssue::UrlCredentials);
+        }
+        // ssh would read a user or a host that starts with a dash as an option.
+        if user.is_some_and(|user| user.starts_with(OPTION_LEADING))
+            || host.starts_with(OPTION_LEADING)
+        {
+            return Some(SettingsIssue::UrlOption);
         }
         return None;
     }
@@ -279,7 +304,15 @@ fn url_issue(url: &str) -> Option<SettingsIssue> {
     // The scp-like syntax, `user@host:path`: ssh. A single letter before the colon is a
     // Windows drive, and a path without a scheme is not one of the forms taken.
     if let Some((host_part, path)) = url.split_once(SCP_PATH_SEPARATOR) {
-        let host = host_part.rsplit(USER_SEPARATOR).next().unwrap_or_default();
+        let (user, host) = match host_part.rfind(USER_SEPARATOR) {
+            Some(index) => (Some(&host_part[..index]), &host_part[index + 1..]),
+            None => (None, host_part),
+        };
+        if user.is_some_and(|user| user.starts_with(OPTION_LEADING))
+            || host.starts_with(OPTION_LEADING)
+        {
+            return Some(SettingsIssue::UrlOption);
+        }
         let plausible = host.chars().count() >= MIN_SCP_HOST_LENGTH
             && !host.contains('/')
             && !host.contains('\\')
@@ -291,30 +324,6 @@ fn url_issue(url: &str) -> Option<SettingsIssue> {
         };
     }
     Some(SettingsIssue::UrlFormat)
-}
-
-/// Why the folder `path` is refused, when it is.
-fn path_issue(path: &str) -> Option<SettingsIssue> {
-    if path.is_empty() {
-        return Some(SettingsIssue::PathMissing);
-    }
-    if path.chars().count() > MAX_PATH_LENGTH {
-        return Some(SettingsIssue::PathTooLong);
-    }
-    if path.starts_with(OPTION_LEADING) || path.chars().any(is_hidden) {
-        return Some(SettingsIssue::PathHidden);
-    }
-    let path = Path::new(path);
-    if !path.is_absolute() {
-        return Some(SettingsIssue::PathRelative);
-    }
-    if path
-        .components()
-        .any(|component| component == Component::ParentDir)
-    {
-        return Some(SettingsIssue::PathParent);
-    }
-    None
 }
 
 /// Why the branch `name` is refused, when it is: the rules of `git check-ref-format`, kept to

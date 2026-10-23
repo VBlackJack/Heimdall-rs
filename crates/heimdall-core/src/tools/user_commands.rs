@@ -1612,6 +1612,7 @@ impl UserLibrary {
                 continue;
             }
             action.is_user_created = true;
+            clamp_future(&mut action);
             let now = now_text();
             let Some(index) = self.position_of(&action) else {
                 if action.id.is_empty() {
@@ -1879,6 +1880,18 @@ fn stamp(action: &mut UserCommand, untrusted: bool) {
 fn stamp_of(text: Option<&str>) -> Option<super::date_time::Instant> {
     text.and_then(|text| super::date_time::parse_written(text, &|_| 0))
         .map(|(instant, _)| instant)
+}
+
+/// A timestamp of a file later than now by more than the allowed clock skew is not believed:
+/// it becomes now. Otherwise a file from a clock set far ahead would stay "newer" than every
+/// edit made here afterwards, and be kept over them.
+fn clamp_future(action: &mut UserCommand) {
+    let limit = super::date_time::Instant::from_unix_seconds(
+        now_seconds().saturating_add(super::library_sync::CLOCK_SKEW_SECONDS),
+    );
+    if stamp_of(action.updated_at.as_deref()).is_some_and(|stamp| stamp > limit) {
+        action.updated_at = Some(now_text());
+    }
 }
 
 /// Whether two copies of a command say the same, their timestamps apart: a copy edited and

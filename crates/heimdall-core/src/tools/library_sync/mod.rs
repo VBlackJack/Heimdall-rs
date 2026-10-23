@@ -26,16 +26,22 @@
 //! the library the person works with is never inside it, so a push that failed, or a remote
 //! that moved, never costs them an edit.
 //!
+//! The mirror lives in a folder Heimdall makes inside its own data folder, marked when it is
+//! made. A folder the person picked, or any `.git` that is not ours, is never adopted: git is
+//! not run in a folder without the marker, because a repository's own configuration can name
+//! programs to run. If the remote or the branch is changed in the settings the mirror is made
+//! again, which costs nothing.
+//!
 //! This module only moves the file. Merging it is [`super::user_commands::UserLibrary::sync_merge`]
 //! for the actions and [`merge::merge_runbooks`] for the runbooks.
 //!
 //! Nothing pulled is ever run: the file is read from git's object database, not checked out,
 //! and its commands are only kept as text.
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::path::Path;
-use std::sync::{Mutex, TryLockError};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, TryLockError};
 
 use super::user_commands::{LIBRARY_FILE, MAX_FILE_BYTES, now_text};
 
@@ -56,6 +62,20 @@ pub const REPOSITORY_FILE: &str = LIBRARY_FILE;
 /// for its hooks there.
 const NO_HOOKS_FOLDER: &str = "command-library-sync-no-hooks";
 
+/// The folder, inside the one the settings are kept in, that holds the mirror.
+const REPOSITORY_FOLDER: &str = "command-library-sync-repository";
+
+/// The file that says Heimdall made the mirror folder, and what it holds.
+const MARKER_FILE: &str = ".heimdall-command-library-sync";
+const MARKER_TEXT: &str = "heimdall-command-library-sync 1\n";
+
+/// The file that keeps two Heimdall processes from synchronizing at once.
+const LOCK_FILE: &str = "command-library-sync.lock";
+
+/// The newest a pulled `updatedAt` is believed to be: a file from a clock set far ahead would
+/// otherwise stay "newer" than every later edit made here.
+pub const CLOCK_SKEW_SECONDS: i64 = 5 * 60;
+
 /// What every commit message starts with.
 const COMMIT_MESSAGE: &str = "Heimdall command library sync";
 
@@ -72,9 +92,16 @@ const DIFFERENCES: i32 = 1;
 /// The exit code of `git merge-base --is-ancestor` when it is not.
 const NOT_AN_ANCESTOR: i32 = 1;
 
-/// One operation at a time on the whole machine: two panes of the library must not both
-/// write the same folder.
+/// One operation at a time in this process; across processes the lock file does the same.
+/// Two panes of the library must not both write the same folder.
 static OPERATION: Mutex<()> = Mutex::new(());
+
+/// The right to run an operation, until it is dropped: the lock of the process and the lock
+/// of the file.
+struct Held {
+    _process: MutexGuard<'static, ()>,
+    _file: File,
+}
 
 /// Why an operation did not complete.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,12 +112,8 @@ pub enum SyncFailure {
     GitMissing,
     /// A value of the settings is refused.
     Settings(SettingsIssue),
-    /// The folder holds files and no repository: nothing is written into it.
-    FolderNotEmpty,
-    /// The folder is a repository of another remote.
-    OtherRepository,
-    /// The folder's repository is on another branch than the one set.
-    OtherBranch,
+    /// The mirror folder holds something Heimdall did not make: nothing is run or written in it.
+    FolderNotOurs,
     /// The folder or a file in it could not be used.
     Io(String),
     /// A call of git did not end in time.
@@ -139,12 +162,14 @@ pub struct GitIdentity {
 /// from (`GitConfigIdentityReader`, commit 337fca3b). `None` when there is no `git` or it says
 /// nothing; never an error. It runs git, so it is called off the interface's thread.
 #[must_use]
-pub fn read_global_identity() -> Option<GitIdentity> {
+pub fn read_global_identity(state_folder: &Path) -> Option<GitIdentity> {
     let program = git::program()?;
-    // `git config --global` reads no repository: any folder will do, and no hook can run.
-    let folder = Path::new(".");
-    let hooks = Path::new(NO_HOOKS_FOLDER);
-    let runner = git::Runner::new(program, folder, hooks, None);
+    // Run in the folder of the settings, which no repository is above (git is told not to look
+    // higher), with the empty hooks folder.
+    let state = std::path::absolute(state_folder).ok()?;
+    fs::create_dir_all(&state).ok()?;
+    let hooks = no_hooks(&state).ok()?;
+    let runner = git::Runner::new(program, &state, &hooks, None);
     let read = |key: &str| {
         runner
             .run(
@@ -171,14 +196,15 @@ pub fn read_global_identity() -> Option<GitIdentity> {
 ///
 /// [`SyncFailure`], told in the person's language by the caller.
 pub fn pull(state_folder: &Path, settings: &SyncSettings) -> Result<PullOutput, SyncFailure> {
-    let _only = acquire()?;
+    let state = std::path::absolute(state_folder).map_err(io_failure)?;
+    let _only = acquire(&state)?;
     let valid = settings.validate().map_err(SyncFailure::Settings)?;
     let program = git::program().ok_or(SyncFailure::GitMissing)?;
-    let hooks = no_hooks(state_folder)?;
-    prepare_folder(program, &hooks, &valid)?;
+    let hooks = no_hooks(&state)?;
+    let folder = prepare_folder(program, &hooks, &state, &valid)?;
     let runner = git::Runner::new(
         program,
-        &valid.local_path,
+        &folder,
         &hooks,
         Some((&valid.author_name, &valid.author_email)),
     );
@@ -214,17 +240,18 @@ pub fn push(
     settings: &SyncSettings,
     text: &str,
 ) -> Result<PushOutput, SyncFailure> {
-    let _only = acquire()?;
+    let state = std::path::absolute(state_folder).map_err(io_failure)?;
+    let _only = acquire(&state)?;
     if u64::try_from(text.len()).map_or(true, |size| size > MAX_FILE_BYTES) {
         return Err(SyncFailure::FileTooLarge);
     }
     let valid = settings.validate().map_err(SyncFailure::Settings)?;
     let program = git::program().ok_or(SyncFailure::GitMissing)?;
-    let hooks = no_hooks(state_folder)?;
-    prepare_folder(program, &hooks, &valid)?;
+    let hooks = no_hooks(&state)?;
+    let folder = prepare_folder(program, &hooks, &state, &valid)?;
     let runner = git::Runner::new(
         program,
-        &valid.local_path,
+        &folder,
         &hooks,
         Some((&valid.author_name, &valid.author_email)),
     );
@@ -242,8 +269,7 @@ pub fn push(
             _ => return Err(git::classify(&contained.stderr)),
         }
     }
-    fs::write(valid.local_path.join(REPOSITORY_FILE), text)
-        .map_err(|error| SyncFailure::Io(error.to_string()))?;
+    fs::write(folder.join(REPOSITORY_FILE), text).map_err(io_failure)?;
     expect(&runner, &git::args::stage(), git::LOCAL_TIMEOUT)?;
     let staged = call(&runner, &git::args::staged_changes(), git::LOCAL_TIMEOUT)?;
     match staged.code {
@@ -273,56 +299,94 @@ pub fn push(
     Ok(PushOutput { pushed: true })
 }
 
-/// Takes the lock of the operations, or says another one is running.
-fn acquire() -> Result<std::sync::MutexGuard<'static, ()>, SyncFailure> {
-    match OPERATION.try_lock() {
-        Ok(guard) => Ok(guard),
-        Err(TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
-        Err(TryLockError::WouldBlock) => Err(SyncFailure::Busy),
+/// The failure of an I/O error.
+fn io_failure(error: io::Error) -> SyncFailure {
+    SyncFailure::Io(error.to_string())
+}
+
+/// Takes the lock of the operations, or says another one is running: in this process, and in
+/// another Heimdall through a lock file beside the settings.
+fn acquire(state_folder: &Path) -> Result<Held, SyncFailure> {
+    let process = match OPERATION.try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return Err(SyncFailure::Busy),
+    };
+    fs::create_dir_all(state_folder).map_err(io_failure)?;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(state_folder.join(LOCK_FILE))
+        .map_err(io_failure)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Held {
+            _process: process,
+            _file: file,
+        }),
+        Err(fs::TryLockError::WouldBlock) => Err(SyncFailure::Busy),
+        Err(fs::TryLockError::Error(error)) => Err(io_failure(error)),
     }
+}
+
+/// Whether `folder` holds nothing.
+fn is_empty(folder: &Path) -> bool {
+    fs::read_dir(folder).is_ok_and(|mut entries| entries.next().is_none())
 }
 
 /// An empty folder to point git's hooks at, made beside the settings.
-fn no_hooks(state_folder: &Path) -> Result<std::path::PathBuf, SyncFailure> {
+fn no_hooks(state_folder: &Path) -> Result<PathBuf, SyncFailure> {
     let hooks = state_folder.join(NO_HOOKS_FOLDER);
-    fs::create_dir_all(&hooks).map_err(|error| SyncFailure::Io(error.to_string()))?;
+    fs::create_dir_all(&hooks).map_err(io_failure)?;
     Ok(hooks)
 }
 
-/// Makes the folder a repository of the remote and the branch, or checks that it already is
-/// one. A folder with other files in it is refused, as the C# `IsValidRepositoryPath` and its
-/// empty-folder rule do.
-fn prepare_folder(program: &Path, hooks: &Path, valid: &ValidSettings) -> Result<(), SyncFailure> {
-    let folder = &valid.local_path;
-    let io = |error: io::Error| SyncFailure::Io(error.to_string());
-    if folder.join(".git").exists() {
-        let runner = git::Runner::new(program, folder, hooks, None);
-        let url = call(&runner, &git::args::origin_url(), git::LOCAL_TIMEOUT)?;
-        if !url.ok() {
-            return Err(SyncFailure::OtherRepository);
-        }
-        if url.first_line() != valid.remote_url {
-            return Err(SyncFailure::OtherRepository);
-        }
-        let branch = call(&runner, &git::args::current_branch(), git::LOCAL_TIMEOUT)?;
-        // A repository with no commit yet reports no branch name through this call on some
-        // versions of git; the first fetch of the folder decides.
-        if branch.ok() && branch.first_line() != valid.branch {
-            return Err(SyncFailure::OtherBranch);
-        }
-        return Ok(());
-    }
-    match fs::read_dir(folder) {
-        Ok(mut entries) => {
-            if entries.next().is_some() {
-                return Err(SyncFailure::FolderNotEmpty);
+/// Whether `folder` is a mirror Heimdall made: the marker is there and holds the text, and
+/// `.git` is a real folder (not a file naming another place, not a link).
+fn is_ours(folder: &Path) -> bool {
+    fs::read_to_string(folder.join(MARKER_FILE)).is_ok_and(|text| text == MARKER_TEXT)
+        && fs::symlink_metadata(folder.join(".git")).is_ok_and(|meta| meta.is_dir())
+}
+
+/// The mirror folder of this remote and branch, made if need be. A folder that is not ours is
+/// refused before git is run in it; a folder that is ours but for another remote or branch is
+/// made again.
+fn prepare_folder(
+    program: &Path,
+    hooks: &Path,
+    state_folder: &Path,
+    valid: &ValidSettings,
+) -> Result<PathBuf, SyncFailure> {
+    let folder = state_folder.join(REPOSITORY_FOLDER);
+    match fs::symlink_metadata(&folder) {
+        Ok(meta) if !meta.is_dir() => return Err(SyncFailure::FolderNotOurs),
+        Ok(_) if is_ours(&folder) => {
+            if matches_settings(program, hooks, &folder, valid)? {
+                return Ok(folder);
             }
+            fs::remove_dir_all(&folder).map_err(io_failure)?;
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir_all(folder).map_err(io)?;
-        }
-        Err(error) => return Err(io(error)),
+        Ok(_) if is_empty(&folder) => {}
+        Ok(_) => return Err(SyncFailure::FolderNotOurs),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io_failure(error)),
     }
+    fs::create_dir_all(&folder).map_err(io_failure)?;
+    let made = initialize(program, hooks, &folder, valid);
+    if made.is_err() {
+        // Nothing of the person's was ever in it.
+        let _ = fs::remove_dir_all(&folder);
+    }
+    made.map(|()| folder)
+}
+
+/// Makes the repository in the empty `folder` and marks it.
+fn initialize(
+    program: &Path,
+    hooks: &Path,
+    folder: &Path,
+    valid: &ValidSettings,
+) -> Result<(), SyncFailure> {
     let runner = git::Runner::new(program, folder, hooks, None);
     expect(&runner, &git::args::init(), git::LOCAL_TIMEOUT)?;
     expect(
@@ -335,7 +399,24 @@ fn prepare_folder(program: &Path, hooks: &Path, valid: &ValidSettings) -> Result
         &git::args::add_origin(&valid.remote_url),
         git::LOCAL_TIMEOUT,
     )?;
-    Ok(())
+    fs::write(folder.join(MARKER_FILE), MARKER_TEXT).map_err(io_failure)
+}
+
+/// Whether our mirror is of the remote and the branch of the settings.
+fn matches_settings(
+    program: &Path,
+    hooks: &Path,
+    folder: &Path,
+    valid: &ValidSettings,
+) -> Result<bool, SyncFailure> {
+    let runner = git::Runner::new(program, folder, hooks, None);
+    let url = call(&runner, &git::args::origin_url(), git::LOCAL_TIMEOUT)?;
+    if !url.ok() || url.first_line() != valid.remote_url {
+        return Ok(false);
+    }
+    // A repository with no commit yet still names its branch.
+    let branch = call(&runner, &git::args::current_branch(), git::LOCAL_TIMEOUT)?;
+    Ok(branch.ok() && branch.first_line() == valid.branch)
 }
 
 /// Runs a call, returning what it said, success or not.
@@ -427,14 +508,10 @@ fn fetched_text(runner: &git::Runner<'_>) -> Result<Option<String>, SyncFailure>
     Ok(Some(text.trim_start_matches('\u{feff}').to_owned()))
 }
 
-/// Brings the folder to the last fetch: forward when it can, else (a commit of its own that a
-/// push never sent) by moving the branch, which leaves every file as it is.
+/// Moves the branch to the last fetch. Nothing is checked out: the files of the folder are not
+/// touched, and the library file is only ever read from git's objects.
 fn advance(runner: &git::Runner<'_>) -> Result<(), SyncFailure> {
-    let forward = call(runner, &git::args::fast_forward(), git::LOCAL_TIMEOUT)?;
-    if forward.ok() {
-        return Ok(());
-    }
-    expect(runner, &git::args::move_to_fetched(), git::LOCAL_TIMEOUT).map(|_| ())
+    expect(runner, &git::args::adopt_fetched(), git::LOCAL_TIMEOUT).map(|_| ())
 }
 
 #[cfg(test)]

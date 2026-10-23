@@ -21,10 +21,17 @@
 //! typed (the URL, the branch) comes after a `--` where git has one, and is checked before
 //! (see `settings`): a value that starts with `-` is refused, never passed.
 //!
-//! What git is allowed to do is narrowed on every call: only the `https`, `ssh` and `file`
-//! transports (the `ext::` and `fd::` helpers run a command), no hooks, no prompt that waits
-//! for a person who is not looking at a terminal, no editor, a time limit on each call, and
+//! What git is allowed to do is narrowed on every call: only the `https` and `ssh` transports
+//! (the `ext::` and `fd::` helpers run a command), no hooks, no prompt that waits for a person
+//! who is not looking at a terminal, no editor, no LFS download, a time limit on each call, and
 //! objects received checked for corruption.
+//!
+//! A call that does not end in time is killed, and waited for, so the lock of the operation is
+//! held until `git` itself has exited. Only `git` is killed: a process it started (the `ssh`
+//! of a transport, a credential helper) is not, because ending a process tree needs a Windows
+//! job object or `taskkill`, that is FFI or another program, which this project does not
+//! take. That process ends by itself when it finds its pipe closed or `BatchMode` stops it
+//! asking; the limitation is documented in the pull request.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -68,15 +75,32 @@ const READ_CHUNK: usize = 8 * 1024;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// The transports git may use.
-pub const ALLOWED_PROTOCOLS: &str = "https:ssh:file";
+/// The transports git may use. A test may add `file`, for a bare repository on disk.
+#[must_use]
+pub fn allowed_protocols() -> &'static str {
+    if super::settings::file_urls_allowed() {
+        "https:ssh:file"
+    } else {
+        "https:ssh"
+    }
+}
 
-/// The ssh command used unless the person has set their own: never asks anything (a pass
-/// phrase, an unknown host key) on a terminal nobody sees.
+/// The ssh command used unless the person has set their own (`core.sshCommand`,
+/// `GIT_SSH_COMMAND` or `GIT_SSH`): never asks anything (a pass phrase, an unknown host key)
+/// on a terminal nobody sees.
 const DEFAULT_SSH_COMMAND: &str = "ssh -o BatchMode=yes";
 
 /// The variable that names it.
 const SSH_COMMAND_VARIABLE: &str = "GIT_SSH_COMMAND";
+
+/// The variable that names a program to use instead of ssh.
+const SSH_PROGRAM_VARIABLE: &str = "GIT_SSH";
+
+/// The setting that names the ssh command.
+const SSH_COMMAND_SETTING: &str = "core.sshCommand";
+
+/// The variable that stops git looking for a repository above a folder.
+const CEILING_VARIABLE: &str = "GIT_CEILING_DIRECTORIES";
 
 /// The variables set for every call.
 const ENVIRONMENT: [(&str, &str); 8] = [
@@ -84,7 +108,8 @@ const ENVIRONMENT: [(&str, &str); 8] = [
     ("GIT_TERMINAL_PROMPT", "0"),
     // Nor by the credential manager's window.
     ("GCM_INTERACTIVE", "never"),
-    ("GIT_ALLOW_PROTOCOL", ALLOWED_PROTOCOLS),
+    // No file downloaded by a smudge filter of a repository we did not write.
+    ("GIT_LFS_SKIP_SMUDGE", "1"),
     // No editor: a message is always given, and a merge is never left to an editor.
     ("GIT_EDITOR", "true"),
     ("GIT_SEQUENCE_EDITOR", "true"),
@@ -212,6 +237,7 @@ pub fn environment(
     ssh_command_given: bool,
 ) -> (Vec<(&'static str, &'static str)>, Vec<&'static str>) {
     let mut set: Vec<(&'static str, &'static str)> = ENVIRONMENT.to_vec();
+    set.push(("GIT_ALLOW_PROTOCOL", allowed_protocols()));
     if !ssh_command_given {
         set.push((SSH_COMMAND_VARIABLE, DEFAULT_SSH_COMMAND));
     }
@@ -352,18 +378,14 @@ pub mod args {
         arguments
     }
 
-    /// Brings the folder to the last fetch when that is a straight line forward.
+    /// Moves the branch to the last fetch without touching the index or any file: the
+    /// library file is read from the object database, and nothing is ever checked out, so no
+    /// filter, hook or path of a repository we did not write can act on the folder. A commit
+    /// of the folder that a push never sent is dropped by the move; it only held an export of
+    /// the library, which is still here.
     #[must_use]
-    pub fn fast_forward() -> Vec<OsString> {
-        of(&["merge", "--ff-only", "--quiet", "FETCH_HEAD"])
-    }
-
-    /// Brings the branch to the last fetch when the folder has a commit the remote lacks (a
-    /// push that failed): the commit only held an export of the library, which is still here.
-    /// The files of the folder are not touched.
-    #[must_use]
-    pub fn move_to_fetched() -> Vec<OsString> {
-        of(&["reset", "--quiet", "--mixed", "FETCH_HEAD", "--"])
+    pub fn adopt_fetched() -> Vec<OsString> {
+        of(&["reset", "--quiet", "--soft", "FETCH_HEAD"])
     }
 
     /// Stages the library file.
@@ -409,6 +431,8 @@ pub struct Runner<'a> {
     program: &'a Path,
     folder: &'a Path,
     global: Vec<OsString>,
+    /// Whether the person has an ssh command of their own, asked of git once.
+    ssh_given: std::cell::Cell<Option<bool>>,
 }
 
 impl<'a> Runner<'a> {
@@ -424,6 +448,7 @@ impl<'a> Runner<'a> {
             program,
             folder,
             global: global_arguments(hooks, identity),
+            ssh_given: std::cell::Cell::new(None),
         }
     }
 
@@ -440,6 +465,42 @@ impl<'a> Runner<'a> {
         timeout: Duration,
         cap: usize,
     ) -> Result<Output, SyncFailure> {
+        let ssh_given = self.ssh_given()?;
+        self.execute(arguments, timeout, cap, ssh_given)
+    }
+
+    /// Whether the person set an ssh command of their own, in the environment or in git's
+    /// configuration, which is then left alone.
+    fn ssh_given(&self) -> Result<bool, SyncFailure> {
+        if let Some(known) = self.ssh_given.get() {
+            return Ok(known);
+        }
+        let in_environment = std::env::var_os(SSH_COMMAND_VARIABLE).is_some()
+            || std::env::var_os(SSH_PROGRAM_VARIABLE).is_some();
+        let given = in_environment
+            || self
+                .execute(
+                    &[
+                        OsString::from("config"),
+                        OsString::from("--get"),
+                        OsString::from(SSH_COMMAND_SETTING),
+                    ],
+                    LOCAL_TIMEOUT,
+                    SMALL_OUTPUT,
+                    true,
+                )?
+                .ok();
+        self.ssh_given.set(Some(given));
+        Ok(given)
+    }
+
+    fn execute(
+        &self,
+        arguments: &[OsString],
+        timeout: Duration,
+        cap: usize,
+        ssh_given: bool,
+    ) -> Result<Output, SyncFailure> {
         let mut command = Command::new(self.program);
         command
             .args(&self.global)
@@ -448,7 +509,11 @@ impl<'a> Runner<'a> {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let (set, removed) = environment(std::env::var_os(SSH_COMMAND_VARIABLE).is_some());
+        // Never look for a repository above the folder.
+        if let Some(parent) = self.folder.parent() {
+            command.env(CEILING_VARIABLE, parent);
+        }
+        let (set, removed) = environment(ssh_given);
         for name in removed {
             command.env_remove(name);
         }

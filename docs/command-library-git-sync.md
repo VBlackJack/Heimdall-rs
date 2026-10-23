@@ -9,12 +9,11 @@ a team keeps one library. Open the library, then **Git sync**.
 
 | Setting | Meaning |
 |---|---|
-| Repository | `https://`, `ssh://` or `file://` URL, or `user@host:path`. Nothing else is accepted (no `http`, no `git://`, no `ext::`). |
-| Local folder | An absolute path, empty or already a clone of this repository. It is only a mirror: your library is never kept inside it. |
+| Repository | `https://` or `ssh://` URL, or `user@host:path`. Nothing else is accepted (no `http`, no `git://`, no `file://`, no `ext::`). An https URL cannot carry a user name or a token: sign in through your credential manager. |
 | Branch | Default `main`. |
 | Author name, e-mail | Sign the commits. While they hold the shipped placeholder, the global Git identity (`git config --global user.name`, `user.email`) is offered. |
 
-The settings are kept in `command-library-sync.json` beside the library.
+The settings are kept in `command-library-sync.json` beside the library. Heimdall keeps its own copy of the repository in a folder it makes there, marked as its own; it never uses a folder you picked or a repository that was already there, and it makes the copy again if you change the repository or the branch.
 
 ## Pull, Push, Sync
 
@@ -37,7 +36,9 @@ and runbooks were kept and lists their titles; they travel to the repository wit
 
 - The installed `git` program is called, found on the `PATH`, with an argument list and never
   through a shell. If it is missing, the library says so.
-- Only the `https`, `ssh` and `file` transports are allowed, hooks are disabled, no prompt
-  waits for input and every call has a time limit. Sign in with your credential manager or your
+- Only the `https` and `ssh` transports are allowed, hooks are disabled, nothing pulled is ever
+  checked out (the file is read from Git's objects), no prompt waits for input and every call
+  has a time limit. A call that times out is killed; a process it started (such as `ssh`) is
+  not, and ends by itself. One synchronization runs at a time, across Heimdall windows. Sign in with your credential manager or your
   SSH agent beforehand.
 - Credentials embedded in a URL are masked in every message.

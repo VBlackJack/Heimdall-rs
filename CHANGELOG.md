@@ -30,7 +30,7 @@ work can be followed. It is not usable yet and no official release is published.
   protocol as a tag. A multi-line selection is joined with `;` (Windows) or `&&` (Linux) for
   review. Terminal escape sequences and control characters are removed; nothing is sent or run.
 - Command Library Git synchronization (Pull, Push, Sync) through the installed `git` program,
-  called with an argument list and no shell: `https`, `ssh` and `file` URLs only, hooks and
+  called with an argument list and no shell: `https` and `ssh` URLs only, hooks and
   prompts disabled, time limits, credentials masked in messages. The repository holds the
   library's export (actions and runbooks); a pulled file is untrusted and goes through the
   checks of an import. A copy newer here than the repository's is kept and listed. See

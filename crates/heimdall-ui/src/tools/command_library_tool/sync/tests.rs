@@ -78,15 +78,11 @@ fn pulled(text: &str) -> SyncMessage {
     )
 }
 
-fn configure(pane: &mut CommandLibraryPane, folder: &Path) {
+fn configure(pane: &mut CommandLibraryPane) {
     for (field, value) in [
         (
             SyncField::Url,
             "https://example.com/team/library.git".to_owned(),
-        ),
-        (
-            SyncField::Path,
-            folder.join("clone").to_string_lossy().into_owned(),
         ),
         (SyncField::AuthorName, "Tester".to_owned()),
         (SyncField::AuthorEmail, "tester@example.com".to_owned()),
@@ -285,12 +281,18 @@ fn the_buttons_refuse_what_the_settings_refuse_and_start_nothing_twice() {
         )))
     );
     // A transport that runs a command, and an option.
-    configure(&mut pane, folder.path());
+    configure(&mut pane);
     for (url, issue) in [
         ("ext::sh -c evil", SettingsIssue::UrlHidden),
         ("ext::evil", SettingsIssue::UrlScheme),
         ("--upload-pack=evil", SettingsIssue::UrlOption),
         ("http://example.com/x.git", SettingsIssue::UrlScheme),
+        ("file:///srv/x.git", SettingsIssue::UrlScheme),
+        ("ssh://-oProxyCommand=evil/x", SettingsIssue::UrlOption),
+        (
+            "https://user:token@example.com/x.git",
+            SettingsIssue::UrlCredentials,
+        ),
     ] {
         pane.sync_message(SyncMessage::Field(SyncField::Url, url.to_owned()));
         assert_eq!(pane.sync_message(SyncMessage::Sync), Outcome::None);
@@ -327,7 +329,7 @@ fn the_buttons_refuse_what_the_settings_refuse_and_start_nothing_twice() {
 fn a_sync_pulls_merges_and_then_pushes_the_merged_library() {
     let folder = tempfile::tempdir().expect("folder");
     let mut pane = pane(folder.path());
-    configure(&mut pane, folder.path());
+    configure(&mut pane);
     pane.sync_message(pulled(&file(
         &[action("a1", "Mine", NEW, "ls", "Info")],
         &[runbook("Restart", "systemctl restart x")],
@@ -367,7 +369,7 @@ fn a_sync_pulls_merges_and_then_pushes_the_merged_library() {
 fn a_failed_pull_stops_a_sync_and_is_told() {
     let folder = tempfile::tempdir().expect("folder");
     let mut pane = pane(folder.path());
-    configure(&mut pane, folder.path());
+    configure(&mut pane);
     pane.sync.busy = true;
     let outcome = pane.sync_message(SyncMessage::Pulled(
         Err(SyncFailure::Authentication("denied".to_owned())),
@@ -386,7 +388,7 @@ fn a_failed_pull_stops_a_sync_and_is_told() {
 fn a_push_of_an_empty_library_is_refused_rather_than_emptying_the_repository() {
     let folder = tempfile::tempdir().expect("folder");
     let mut pane = pane(folder.path());
-    configure(&mut pane, folder.path());
+    configure(&mut pane);
     assert_eq!(pane.sync_message(SyncMessage::Push), Outcome::None);
     assert_eq!(pane.notice, Some(Notice::Sync(SyncNotice::NothingToPush)));
     assert!(!pane.sync.busy);
@@ -397,7 +399,7 @@ fn nothing_is_synchronized_while_the_library_or_the_settings_cannot_be_read() {
     let folder = tempfile::tempdir().expect("folder");
     std::fs::write(folder.path().join(LIBRARY_FILE), "not json").expect("written");
     let mut library = pane(folder.path());
-    configure(&mut library, folder.path());
+    configure(&mut library);
     assert_eq!(library.sync_message(SyncMessage::Sync), Outcome::None);
     assert_eq!(
         library.notice,
@@ -406,7 +408,7 @@ fn nothing_is_synchronized_while_the_library_or_the_settings_cannot_be_read() {
     let other = tempfile::tempdir().expect("folder");
     std::fs::write(other.path().join(SETTINGS_FILE), "not json").expect("written");
     let mut settings = pane(other.path());
-    configure(&mut settings, other.path());
+    configure(&mut settings);
     assert_eq!(settings.sync_message(SyncMessage::Sync), Outcome::None);
     assert_eq!(
         settings.notice,
@@ -426,7 +428,9 @@ fn the_author_starts_from_the_git_identity_only_while_it_is_the_placeholder() {
     // The first opening asks Git, once.
     assert_eq!(
         pane.sync_message(SyncMessage::Toggle),
-        Outcome::Sync(SyncJob::Identity)
+        Outcome::Sync(SyncJob::Identity {
+            folder: folder.path().to_path_buf()
+        })
     );
     pane.sync_message(SyncMessage::Toggle);
     assert_eq!(pane.sync_message(SyncMessage::Toggle), Outcome::None);
@@ -467,11 +471,7 @@ fn every_message_of_the_synchronization_is_translated() {
         SettingsIssue::UrlTooLong,
         SettingsIssue::UrlScheme,
         SettingsIssue::UrlFormat,
-        SettingsIssue::PathMissing,
-        SettingsIssue::PathRelative,
-        SettingsIssue::PathParent,
-        SettingsIssue::PathHidden,
-        SettingsIssue::PathTooLong,
+        SettingsIssue::UrlCredentials,
         SettingsIssue::BranchMissing,
         SettingsIssue::BranchFormat,
         SettingsIssue::AuthorName,
@@ -480,9 +480,7 @@ fn every_message_of_the_synchronization_is_translated() {
     let failures = [
         SyncFailure::Busy,
         SyncFailure::GitMissing,
-        SyncFailure::FolderNotEmpty,
-        SyncFailure::OtherRepository,
-        SyncFailure::OtherBranch,
+        SyncFailure::FolderNotOurs,
         SyncFailure::Io("d".to_owned()),
         SyncFailure::TimedOut,
         SyncFailure::Authentication("d".to_owned()),

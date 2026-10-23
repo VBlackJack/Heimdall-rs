@@ -54,8 +54,6 @@ const TITLE_SEPARATOR: &str = ", ";
 pub enum SyncField {
     /// The repository URL.
     Url,
-    /// The folder of the clone.
-    Path,
     /// The branch.
     Branch,
     /// The author name.
@@ -91,7 +89,10 @@ pub enum SyncMessage {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SyncJob {
     /// Read the identity Git has.
-    Identity,
+    Identity {
+        /// The folder the settings are kept in.
+        folder: PathBuf,
+    },
     /// Pull; a push follows when `then_push`.
     Pull {
         /// The folder the settings are kept in.
@@ -122,9 +123,9 @@ impl SyncJob {
             )
         };
         match self {
-            Self::Identity => Task::perform(
-                async {
-                    tokio::task::spawn_blocking(library_sync::read_global_identity)
+            Self::Identity { folder } => Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || library_sync::read_global_identity(&folder))
                         .await
                         .unwrap_or(None)
                 },
@@ -280,16 +281,16 @@ impl CommandLibraryPane {
                 if self.sync.open
                     && !self.sync.identity_asked
                     && self.sync.state.settings.author_is_placeholder()
+                    && let Some(folder) = self.sync.folder()
                 {
                     self.sync.identity_asked = true;
-                    return Outcome::Sync(SyncJob::Identity);
+                    return Outcome::Sync(SyncJob::Identity { folder });
                 }
             }
             SyncMessage::Field(field, value) => {
                 let settings = &mut self.sync.state.settings;
                 match field {
                     SyncField::Url => settings.remote_url = value,
-                    SyncField::Path => settings.local_path = value,
                     SyncField::Branch => settings.branch = value,
                     SyncField::AuthorName => settings.author_name = value,
                     SyncField::AuthorEmail => settings.author_email = value,
@@ -571,11 +572,6 @@ impl CommandLibraryPane {
                 SyncField::Url
             ),
             field(
-                fl!("ui-tool-cmdlib-sync-path"),
-                &settings.local_path,
-                SyncField::Path
-            ),
-            field(
                 fl!("ui-tool-cmdlib-sync-branch"),
                 &settings.branch,
                 SyncField::Branch
@@ -685,11 +681,7 @@ fn settings_issue_text(issue: SettingsIssue) -> String {
         SettingsIssue::UrlTooLong => fl!("ui-tool-cmdlib-sync-issue-url-long"),
         SettingsIssue::UrlScheme => fl!("ui-tool-cmdlib-sync-issue-url-scheme"),
         SettingsIssue::UrlFormat => fl!("ui-tool-cmdlib-sync-issue-url-format"),
-        SettingsIssue::PathMissing => fl!("ui-tool-cmdlib-sync-issue-path-missing"),
-        SettingsIssue::PathRelative => fl!("ui-tool-cmdlib-sync-issue-path-relative"),
-        SettingsIssue::PathParent => fl!("ui-tool-cmdlib-sync-issue-path-parent"),
-        SettingsIssue::PathHidden => fl!("ui-tool-cmdlib-sync-issue-path-hidden"),
-        SettingsIssue::PathTooLong => fl!("ui-tool-cmdlib-sync-issue-path-long"),
+        SettingsIssue::UrlCredentials => fl!("ui-tool-cmdlib-sync-issue-url-credentials"),
         SettingsIssue::BranchMissing => fl!("ui-tool-cmdlib-sync-issue-branch-missing"),
         SettingsIssue::BranchFormat => fl!("ui-tool-cmdlib-sync-issue-branch-format"),
         SettingsIssue::AuthorName => fl!("ui-tool-cmdlib-sync-issue-author-name"),
@@ -704,9 +696,7 @@ fn failure_text(failure: &SyncFailure) -> String {
         SyncFailure::Busy => fl!("ui-tool-cmdlib-sync-failed-busy"),
         SyncFailure::GitMissing => fl!("ui-tool-cmdlib-sync-failed-git-missing"),
         SyncFailure::Settings(issue) => settings_issue_text(*issue),
-        SyncFailure::FolderNotEmpty => fl!("ui-tool-cmdlib-sync-failed-folder-not-empty"),
-        SyncFailure::OtherRepository => fl!("ui-tool-cmdlib-sync-failed-other-repository"),
-        SyncFailure::OtherBranch => fl!("ui-tool-cmdlib-sync-failed-other-branch"),
+        SyncFailure::FolderNotOurs => fl!("ui-tool-cmdlib-sync-failed-folder-not-ours"),
         SyncFailure::Io(detail) => {
             fl!("ui-tool-cmdlib-sync-failed-io", detail = detail.as_str())
         }

@@ -9,12 +9,11 @@ Git, pour qu'une équipe garde une seule bibliothèque. Ouvrez la bibliothèque,
 
 | Réglage | Sens |
 |---|---|
-| Dépôt | URL `https://`, `ssh://` ou `file://`, ou `utilisateur@hôte:chemin`. Rien d'autre n'est accepté (ni `http`, ni `git://`, ni `ext::`). |
-| Dossier local | Un chemin absolu, vide ou déjà un clone de ce dépôt. Ce n'est qu'un miroir : votre bibliothèque n'y est jamais conservée. |
+| Dépôt | URL `https://` ou `ssh://`, ou `utilisateur@hôte:chemin`. Rien d'autre n'est accepté (ni `http`, ni `git://`, ni `file://`, ni `ext::`). Une URL https ne peut pas porter de nom d'utilisateur ni de jeton : connectez-vous par votre gestionnaire d'identifiants. |
 | Branche | `main` par défaut. |
 | Nom et e-mail de l'auteur | Signent les commits. Tant qu'ils portent la valeur d'origine, l'identité Git globale (`git config --global user.name`, `user.email`) est proposée. |
 
-Les réglages sont conservés dans `command-library-sync.json`, à côté de la bibliothèque.
+Les réglages sont conservés dans `command-library-sync.json`, à côté de la bibliothèque. Heimdall garde sa propre copie du dépôt dans un dossier qu'il y crée et marque comme sien ; il n'utilise jamais un dossier que vous avez choisi ni un dépôt déjà présent, et il refait la copie si vous changez de dépôt ou de branche.
 
 ## Récupérer, Envoyer, Synchroniser
 
@@ -38,7 +37,10 @@ en liste les titres ; ils partent vers le dépôt à l'envoi suivant.
 
 - Le programme `git` installé est appelé, trouvé dans le `PATH`, avec une liste d'arguments et
   jamais par un interpréteur de commandes. S'il est absent, la bibliothèque le dit.
-- Seuls les transports `https`, `ssh` et `file` sont autorisés, les hooks sont désactivés,
-  aucune invite n'attend de saisie et chaque appel a une durée limite. Connectez-vous avant avec
+- Seuls les transports `https` et `ssh` sont autorisés, les hooks sont désactivés, rien de ce
+  qui est récupéré n'est extrait (le fichier est lu dans les objets de Git), aucune invite
+  n'attend de saisie et chaque appel a une durée limite. Un appel qui dépasse sa durée est
+  arrêté ; un processus qu'il a lancé (comme `ssh`) ne l'est pas et se termine de lui-même.
+  Une seule synchronisation s'exécute à la fois, d'une fenêtre Heimdall à l'autre. Connectez-vous avant avec
   votre gestionnaire d'identifiants ou votre agent SSH.
 - Les identifiants intégrés à une URL sont masqués dans tous les messages.
