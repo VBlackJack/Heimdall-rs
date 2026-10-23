@@ -1,0 +1,94 @@
+{
+  "id": "fsck-check-filesystem",
+  "title": "Check and repair a filesystem",
+  "description": "Check the integrity of a filesystem and try to repair the errors.",
+  "category": "files-storage",
+  "platform": 1,
+  "level": 2,
+  "tags": [
+    "fsck",
+    "filesystem",
+    "repair",
+    "check",
+    "integrity"
+  ],
+  "linuxCommandTemplateId": "fsck-cmd",
+  "linuxCommandTemplate": {
+    "id": "fsck-cmd",
+    "platform": 1,
+    "name": "fsck",
+    "commandPattern": "sudo fsck -y {device}",
+    "parameters": [
+      {
+        "name": "device",
+        "label": "Device",
+        "type": "string",
+        "defaultValue": "/dev/sdb1",
+        "required": true,
+        "description": "Partition to check (MUST be unmounted)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo fsck -y /dev/sdb1",
+      "description": "Check and repair automatically",
+      "platform": 1
+    },
+    {
+      "command": "sudo e2fsck -f /dev/sdb1",
+      "description": "Force the check of an ext4 partition",
+      "platform": 1
+    },
+    {
+      "command": "sudo fsck -y /dev/sda1",
+      "description": "Repair /dev/sda1 automatically",
+      "platform": 1
+    },
+    {
+      "command": "sudo fsck /dev/sdb1",
+      "description": "Check the filesystem",
+      "platform": 1
+    },
+    {
+      "command": "sudo fsck -n /dev/sdb1",
+      "description": "Dry run (no changes)",
+      "platform": 1
+    },
+    {
+      "command": "sudo xfs_repair /dev/sdc1",
+      "description": "Repair an XFS filesystem",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. DANGER: the partition MUST be unmounted. -y repairs automatically.",
+  "links": [
+    {
+      "title": "fsck documentation",
+      "url": "https://man7.org/linux/man-pages/man8/fsck.8.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Vérifier et réparer un filesystem",
+      "description": "Vérifie l'intégrité d'un système de fichiers et tente de réparer les erreurs",
+      "notes": "Nécessite sudo. DANGER: partition DOIT être démontée. -y répare automatiquement.",
+      "parameters": {
+        "linux": {
+          "device": {
+            "label": "Périphérique",
+            "description": "Partition à vérifier (DOIT être démontée)"
+          }
+        }
+      },
+      "examples": {
+        "sudo fsck -y /dev/sdb1": "Vérifie et répare automatiquement",
+        "sudo e2fsck -f /dev/sdb1": "Force la vérification d'une partition ext4",
+        "sudo fsck -y /dev/sda1": "Répare automatiquement /dev/sda1",
+        "sudo fsck /dev/sdb1": "Vérifier le filesystem",
+        "sudo fsck -n /dev/sdb1": "Dry-run (pas de modification)",
+        "sudo xfs_repair /dev/sdc1": "Réparer un filesystem XFS"
+      }
+    }
+  }
+}

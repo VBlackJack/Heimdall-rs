@@ -1,0 +1,52 @@
+{
+  "id": "win-legacy-dcdiag",
+  "title": "Domain controller health (DCDiag)",
+  "description": "Analyze the state of a domain controller (DNS, replication, system, NetLogon).",
+  "category": "active-directory",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "windows",
+    "ad",
+    "dcdiag",
+    "diagnostic",
+    "health",
+    "dns"
+  ],
+  "windowsCommandTemplate": {
+    "id": "c57ce5b7-d7a4-4349-950e-b77c237c7cdc",
+    "platform": 0,
+    "name": "dcdiag",
+    "commandPattern": "dcdiag /v",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "dcdiag /v",
+      "description": "Run every test in verbose mode (/v). The most complete diagnostic.",
+      "platform": 0
+    },
+    {
+      "command": "dcdiag /test:DNS /DnsBasic /v",
+      "description": "🔥 DNS CHECK: run only the in-depth DNS tests. 90% of AD problems are DNS problems.",
+      "platform": 0
+    },
+    {
+      "command": "dcdiag /a",
+      "description": "Test ALL domain controllers of the site. Useful for an overview.",
+      "platform": 0
+    }
+  ],
+  "windowsCommandTemplateId": "c57ce5b7-d7a4-4349-950e-b77c237c7cdc",
+  "translations": {
+    "fr": {
+      "title": "Santé Contrôleur de Domaine (DCDiag)",
+      "description": "Analyse l'état d'un contrôleur de domaine (DNS, Réplication, Système, NetLogon).",
+      "examples": {
+        "dcdiag /v": "Exécute tous les tests en mode verbeux (/v). Le diagnostic le plus complet.",
+        "dcdiag /test:DNS /DnsBasic /v": "🔥 DNS CHECK : Exécute uniquement les tests DNS approfondis. 90% des problèmes AD sont des problèmes DNS.",
+        "dcdiag /a": "Teste TOUS les contrôleurs de domaine du site. Utile pour une vue d'ensemble."
+      }
+    }
+  }
+}

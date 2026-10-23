@@ -1,0 +1,98 @@
+{
+  "id": "git-diff",
+  "title": "Show differences",
+  "description": "Show the differences between commits, branches or files.",
+  "category": "development",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "git",
+    "diff",
+    "changes"
+  ],
+  "windowsCommandTemplateId": "git-diff-win",
+  "windowsCommandTemplate": {
+    "id": "git-diff-win",
+    "platform": 0,
+    "name": "git",
+    "commandPattern": "git diff {target}",
+    "parameters": [
+      {
+        "name": "target",
+        "label": "Target",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Branch, commit or file to compare"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "git-diff-linux",
+  "linuxCommandTemplate": {
+    "id": "git-diff-linux",
+    "platform": 1,
+    "name": "git",
+    "commandPattern": "git diff {target}",
+    "parameters": [
+      {
+        "name": "target",
+        "label": "Target",
+        "type": "string",
+        "defaultValue": "",
+        "required": false,
+        "description": "Target to compare"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "Use --staged to see what will be committed, --stat for a summary.",
+  "links": [
+    {
+      "title": "Git Diff Documentation",
+      "url": "https://git-scm.com/docs/git-diff"
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "git diff",
+      "description": "Show the unstaged changes",
+      "platform": 1
+    },
+    {
+      "command": "git diff --staged",
+      "description": "Show the staged changes",
+      "platform": 1
+    },
+    {
+      "command": "git diff main..feature",
+      "description": "Compare two branches",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Afficher les différences",
+      "description": "Affiche les différences entre commits, branches ou fichiers",
+      "notes": "Utilisez --staged pour voir ce qui sera commité, --stat pour un résumé.",
+      "parameters": {
+        "windows": {
+          "target": {
+            "label": "Cible",
+            "description": "Branche, commit ou fichier à comparer"
+          }
+        },
+        "linux": {
+          "target": {
+            "label": "Cible",
+            "description": "Cible à comparer"
+          }
+        }
+      },
+      "examples": {
+        "git diff": "Affiche les modifications non staged",
+        "git diff --staged": "Affiche les modifications staged",
+        "git diff main..feature": "Compare deux branches"
+      }
+    }
+  }
+}

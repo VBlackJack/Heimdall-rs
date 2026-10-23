@@ -1,0 +1,136 @@
+{
+  "id": "scp-copy-remote",
+  "title": "Copy files over SSH",
+  "description": "Copy files securely between systems over SSH",
+  "category": "files-storage",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "scp",
+    "ssh",
+    "copy",
+    "transfer",
+    "remote"
+  ],
+  "linuxCommandTemplateId": "scp-cmd",
+  "linuxCommandTemplate": {
+    "id": "scp-cmd",
+    "platform": 1,
+    "name": "scp",
+    "commandPattern": "scp {options} {source} {destination}",
+    "parameters": [
+      {
+        "name": "options",
+        "label": "Options",
+        "type": "choice",
+        "allowedValues": [
+          "-r",
+          "-p",
+          "-rp",
+          "-C"
+        ],
+        "defaultValue": "-r",
+        "required": false,
+        "description": "-r = recursive, -p = keep times and modes, -rp = both, -C = compress (port and key options are in the examples)"
+      },
+      {
+        "name": "source",
+        "label": "Source",
+        "type": "string",
+        "defaultValue": "file.txt",
+        "required": true,
+        "description": "Source file (local or user@host:/path)"
+      },
+      {
+        "name": "destination",
+        "label": "Destination",
+        "type": "string",
+        "defaultValue": "user@server:/path/",
+        "required": true,
+        "description": "Destination (local or user@host:/path)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "scp file.txt user@server:/home/user/",
+      "description": "Copy a file to a remote server",
+      "platform": 1
+    },
+    {
+      "command": "scp -r /local/dir user@server:/remote/",
+      "description": "Copy a directory recursively",
+      "platform": 1
+    },
+    {
+      "command": "scp user@server:/remote/file.txt .",
+      "description": "Download from a remote server",
+      "platform": 1
+    },
+    {
+      "command": "scp file.txt user@server:/tmp/",
+      "description": "Copy a file to a server",
+      "platform": 1
+    },
+    {
+      "command": "scp user@server:/var/log/app.log .",
+      "description": "Download a file from a server",
+      "platform": 1
+    },
+    {
+      "command": "scp -r /local/folder user@server:/remote/",
+      "description": "Copy a folder recursively",
+      "platform": 1
+    },
+    {
+      "command": "scp -P 2222 file.txt user@server:/tmp/",
+      "description": "Use a non-standard SSH port",
+      "platform": 1
+    },
+    {
+      "command": "scp -C bigfile.tar.gz user@server:/backup/",
+      "description": "Enable compression",
+      "platform": 1
+    }
+  ],
+  "notes": "-r for directories. -P sets an SSH port. sftp is an interactive alternative.",
+  "links": [
+    {
+      "title": "scp documentation",
+      "url": "https://man7.org/linux/man-pages/man1/scp.1.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Copier des fichiers via SSH",
+      "description": "Copie des fichiers de manière sécurisée entre systèmes via SSH",
+      "notes": "-r pour répertoires. -P pour spécifier un port SSH. sftp est une alternative interactive.",
+      "parameters": {
+        "linux": {
+          "options": {
+            "label": "Options",
+            "description": "-r = récursif, -p = conserve dates et droits, -rp = les deux, -C = compression (les options de port et de clé figurent dans les exemples)"
+          },
+          "source": {
+            "label": "Source",
+            "description": "Fichier source (local ou user@host:/path)"
+          },
+          "destination": {
+            "label": "Destination",
+            "description": "Destination (local ou user@host:/path)"
+          }
+        }
+      },
+      "examples": {
+        "scp file.txt user@server:/home/user/": "Copie un fichier vers un serveur distant",
+        "scp -r /local/dir user@server:/remote/": "Copie récursive d'un répertoire",
+        "scp user@server:/remote/file.txt .": "Télécharge depuis serveur distant",
+        "scp file.txt user@server:/tmp/": "Copier un fichier vers un serveur",
+        "scp user@server:/var/log/app.log .": "Télécharger un fichier depuis un serveur",
+        "scp -r /local/folder user@server:/remote/": "Copier un dossier récursivement",
+        "scp -P 2222 file.txt user@server:/tmp/": "Utiliser un port SSH non standard",
+        "scp -C bigfile.tar.gz user@server:/backup/": "Activer la compression"
+      }
+    }
+  }
+}

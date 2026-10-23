@@ -1,0 +1,75 @@
+{
+  "id": "systemctl-disable",
+  "title": "Disable a service at boot",
+  "description": "Prevent a service from starting automatically at boot",
+  "category": "services-automation",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "systemctl",
+    "systemd",
+    "disable",
+    "boot"
+  ],
+  "linuxCommandTemplateId": "systemctl-disable-cmd",
+  "linuxCommandTemplate": {
+    "id": "systemctl-disable-cmd",
+    "platform": 1,
+    "name": "systemctl",
+    "commandPattern": "sudo systemctl disable {service}",
+    "parameters": [
+      {
+        "name": "service",
+        "label": "Service name",
+        "type": "string",
+        "defaultValue": "nginx.service",
+        "required": true,
+        "description": "Name of the systemd unit to disable"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo systemctl disable nginx",
+      "description": "Disable nginx at boot",
+      "platform": 1
+    },
+    {
+      "command": "sudo systemctl disable --now nginx",
+      "description": "Disable and stop immediately",
+      "platform": 1
+    },
+    {
+      "command": "sudo systemctl disable apache2",
+      "description": "Disable apache2 at boot",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. Does not stop the service if it is running (except with --now).",
+  "links": [
+    {
+      "title": "systemctl disable",
+      "url": "https://www.freedesktop.org/software/systemd/man/systemctl.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Désactiver un service au démarrage",
+      "description": "Empêche un service de démarrer automatiquement au boot",
+      "notes": "Nécessite sudo. N'arrête pas le service s'il est en cours d'exécution (sauf avec --now).",
+      "parameters": {
+        "linux": {
+          "service": {
+            "label": "Nom du service",
+            "description": "Nom de l'unité systemd à désactiver"
+          }
+        }
+      },
+      "examples": {
+        "sudo systemctl disable nginx": "Désactive nginx au démarrage",
+        "sudo systemctl disable --now nginx": "Désactive et arrête immédiatement",
+        "sudo systemctl disable apache2": "Désactive apache2 au démarrage"
+      }
+    }
+  }
+}

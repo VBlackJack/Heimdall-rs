@@ -1,0 +1,41 @@
+{
+  "id": "reset-windows-update-complete",
+  "title": "Fully reset Windows Update",
+  "description": "Stop the WU services, delete the SoftwareDistribution and Catroot2 caches, then start the services again",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 2,
+  "tags": [
+    "windows-update",
+    "troubleshooting",
+    "cache",
+    "reset"
+  ],
+  "windowsCommandTemplateId": "reset-windows-update-complete-cmd",
+  "windowsCommandTemplate": {
+    "id": "reset-windows-update-complete-cmd",
+    "platform": 0,
+    "name": "net",
+    "commandPattern": "net stop wuauserv && net stop cryptSvc && net stop bits && net stop msiserver && ren C:\\Windows\\SoftwareDistribution SoftwareDistribution.old && ren C:\\Windows\\System32\\catroot2 catroot2.old && net start wuauserv && net start cryptSvc && net start bits && net start msiserver",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "net stop wuauserv && net stop cryptSvc && net stop bits && net stop msiserver && ren C:\\Windows\\SoftwareDistribution SoftwareDistribution.old && ren C:\\Windows\\System32\\catroot2 catroot2.old && net start wuauserv && net start cryptSvc && net start bits && net start msiserver",
+      "description": "Stop the update services, rename the SoftwareDistribution and catroot2 folders, then start the services again",
+      "platform": 0
+    }
+  ],
+  "notes": "⚠️ Requires a restart of the PC afterwards. Deletes the whole update history. Run it with administrator rights.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Réinitialiser complètement Windows Update",
+      "description": "Arrête les services WU, supprime les caches SoftwareDistribution et Catroot2, puis redémarre les services",
+      "notes": "⚠️ Nécessite redémarrage du PC après exécution. Supprime tout l'historique de mises à jour. Commande à exécuter avec droits administrateur.",
+      "examples": {
+        "net stop wuauserv && net stop cryptSvc && net stop bits && net stop msiserver && ren C:\\Windows\\SoftwareDistribution SoftwareDistribution.old && ren C:\\Windows\\System32\\catroot2 catroot2.old && net start wuauserv && net start cryptSvc && net start bits && net start msiserver": "Arrête les services de mise à jour, renomme les dossiers SoftwareDistribution et catroot2, puis redémarre les services"
+      }
+    }
+  }
+}

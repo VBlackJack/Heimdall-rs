@@ -1,0 +1,77 @@
+{
+  "id": "systemd-detect-virt",
+  "title": "Detect virtualization",
+  "description": "Detect whether the system runs in a virtualized environment",
+  "category": "containers-vms",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "systemd",
+    "virtualization",
+    "container",
+    "vm",
+    "detection"
+  ],
+  "linuxCommandTemplateId": "systemd-detect-virt-cmd",
+  "linuxCommandTemplate": {
+    "id": "systemd-detect-virt-cmd",
+    "platform": 1,
+    "name": "systemd-detect-virt",
+    "commandPattern": "systemd-detect-virt",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "systemd-detect-virt",
+      "description": "Detect the virtualization type",
+      "platform": 1
+    },
+    {
+      "command": "systemd-detect-virt -c",
+      "description": "Detect whether it runs in a container",
+      "platform": 1
+    },
+    {
+      "command": "systemd-detect-virt -v",
+      "description": "Detect whether it runs in a VM",
+      "platform": 1
+    },
+    {
+      "command": "virt-what",
+      "description": "Alternative: virt-what",
+      "platform": 1
+    },
+    {
+      "command": "dmidecode -s system-product-name",
+      "description": "System product name",
+      "platform": 1
+    },
+    {
+      "command": "hostnamectl | grep Virtualization",
+      "description": "Through hostnamectl",
+      "platform": 1
+    }
+  ],
+  "notes": "Returns: none, kvm, qemu, vmware, docker, lxc, etc. Exit code 0 when virtualized.",
+  "links": [
+    {
+      "title": "systemd-detect-virt",
+      "url": "https://www.freedesktop.org/software/systemd/man/systemd-detect-virt.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Détecter la virtualisation",
+      "description": "Détecte si le système tourne dans un environnement virtualisé",
+      "notes": "Retourne: none, kvm, qemu, vmware, docker, lxc, etc. Code retour 0 si virtualisé.",
+      "examples": {
+        "systemd-detect-virt": "Détecte le type de virtualisation",
+        "systemd-detect-virt -c": "Détecte si dans un conteneur",
+        "systemd-detect-virt -v": "Détecte si dans une VM",
+        "virt-what": "Alternative: virt-what",
+        "dmidecode -s system-product-name": "Nom du produit système",
+        "hostnamectl | grep Virtualization": "Via hostnamectl"
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "id": "trigger-sccm-software-updates-scan",
+  "title": "Trigger the SCCM update scan",
+  "description": "Force an immediate search for available updates",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "sccm",
+    "updates",
+    "scan"
+  ],
+  "windowsCommandTemplateId": "trigger-sccm-software-updates-scan-cmd",
+  "windowsCommandTemplate": {
+    "id": "trigger-sccm-software-updates-scan-cmd",
+    "platform": 0,
+    "name": "Invoke-WmiMethod",
+    "commandPattern": "powershell -Command \"Invoke-WmiMethod -Namespace root\\ccm -Class SMS_Client -Name TriggerSchedule -ArgumentList '{00000000-0000-0000-0000-000000000113}'\"",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "powershell -Command \"Invoke-WmiMethod -Namespace root\\ccm -Class SMS_Client -Name TriggerSchedule -ArgumentList '{00000000-0000-0000-0000-000000000113}'\"",
+      "description": "Force the SCCM update scan",
+      "platform": 0
+    }
+  ],
+  "notes": "Requires administrator rights. GUID {00000000-0000-0000-0000-000000000113} = Software Updates Scan.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Déclencher scan des mises à jour SCCM",
+      "description": "Force la recherche immédiate des mises à jour disponibles",
+      "notes": "Droits administrateur requis. GUID {00000000-0000-0000-0000-000000000113} = Software Updates Scan.",
+      "examples": {
+        "powershell -Command \"Invoke-WmiMethod -Namespace root\\ccm -Class SMS_Client -Name TriggerSchedule -ArgumentList '{00000000-0000-0000-0000-000000000113}'\"": "Force le scan des mises à jour SCCM"
+      }
+    }
+  }
+}

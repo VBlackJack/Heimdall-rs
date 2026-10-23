@@ -1,0 +1,114 @@
+{
+  "id": "ansible-vault-rekey",
+  "title": "Change the Vault password",
+  "description": "Change the encryption password of an Ansible Vault file",
+  "category": "services-automation",
+  "platform": 2,
+  "level": 1,
+  "tags": [
+    "ansible",
+    "vault",
+    "rekey",
+    "password",
+    "security"
+  ],
+  "windowsCommandTemplateId": "ansible-vault-rekey-win",
+  "windowsCommandTemplate": {
+    "id": "ansible-vault-rekey-win",
+    "platform": 0,
+    "name": "ansible-vault",
+    "commandPattern": "ansible-vault rekey {filePath}",
+    "parameters": [
+      {
+        "name": "filePath",
+        "label": "File to rekey",
+        "type": "string",
+        "defaultValue": "secrets.yml",
+        "required": true,
+        "description": "Path of the file to encrypt again with a new password"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "ansible-vault-rekey-linux",
+  "linuxCommandTemplate": {
+    "id": "ansible-vault-rekey-linux",
+    "platform": 1,
+    "name": "ansible-vault",
+    "commandPattern": "ansible-vault rekey {filePath}",
+    "parameters": [
+      {
+        "name": "filePath",
+        "label": "File to rekey",
+        "type": "string",
+        "defaultValue": "secrets.yml",
+        "required": true,
+        "description": "Path of the file"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "Use this command to rotate Vault passwords. It asks for the old and the new password.",
+  "links": [
+    {
+      "title": "Ansible Vault",
+      "url": "https://docs.ansible.com/ansible/latest/user_guide/vault.html"
+    }
+  ],
+  "windowsExamples": [
+    {
+      "command": "ansible-vault rekey C:\\Data\\report.xlsx",
+      "description": "Windows example using ansible-vault. Replace the parameters between <> with your values.",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "ansible-vault rekey secrets.yml",
+      "description": "Change the password of the file",
+      "platform": 1
+    },
+    {
+      "command": "ansible-vault rekey --new-vault-id prod@prompt secrets.yml",
+      "description": "Use a new vault-id",
+      "platform": 1
+    },
+    {
+      "command": "ansible-vault rekey --new-vault-password-file=.new_vault secrets.yml",
+      "description": "With a password file",
+      "platform": 1
+    },
+    {
+      "command": "ansible-vault rekey group_vars/*/vault.yml",
+      "description": "Rekey several files",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Changer le mot de passe Vault",
+      "description": "Modifie le mot de passe de chiffrement d'un fichier Ansible Vault",
+      "notes": "Utilisez cette commande pour faire une rotation des mots de passe Vault. L'ancien et le nouveau mot de passe seront demandés.",
+      "parameters": {
+        "windows": {
+          "filePath": {
+            "label": "Fichier à rechiffrer",
+            "description": "Chemin du fichier à rechiffrer avec un nouveau mot de passe"
+          }
+        },
+        "linux": {
+          "filePath": {
+            "label": "Fichier à rechiffrer",
+            "description": "Chemin du fichier"
+          }
+        }
+      },
+      "examples": {
+        "ansible-vault rekey C:\\Data\\report.xlsx": "Exemple Windows utilisant ansible-vault. Remplacez les paramètres entre <> par vos valeurs.",
+        "ansible-vault rekey secrets.yml": "Change le mot de passe du fichier",
+        "ansible-vault rekey --new-vault-id prod@prompt secrets.yml": "Utilise un nouveau vault-id",
+        "ansible-vault rekey --new-vault-password-file=.new_vault secrets.yml": "Avec fichier",
+        "ansible-vault rekey group_vars/*/vault.yml": "Rekey plusieurs fichiers"
+      }
+    }
+  }
+}

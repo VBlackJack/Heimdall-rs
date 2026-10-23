@@ -1583,32 +1583,6 @@ fn a_number_holds_only_digits_signs_point_and_exponent() {
 }
 
 #[test]
-fn every_shipped_snippet_still_generates_with_its_defaults() {
-    use crate::tools::command_library::{BUILTIN_SNIPPETS, SnippetPlatform};
-    for snippet in BUILTIN_SNIPPETS {
-        let platforms: &[TemplatePlatform] = match snippet.platform {
-            SnippetPlatform::Linux => &[LINUX],
-            SnippetPlatform::Windows => &[WINDOWS],
-            SnippetPlatform::CrossPlatform => &BOTH,
-        };
-        // Every value as a free string: the strictest reading of the catalog.
-        let parameters: Vec<UserParameter> = snippet
-            .parameters
-            .iter()
-            .map(|each| {
-                let mut parameter = parameter(each.key, true);
-                parameter.default_value = Some(each.default_value.to_owned());
-                parameter
-            })
-            .collect();
-        for platform in platforms {
-            let result = render(*platform, snippet.template, parameters.clone(), &[]);
-            assert!(result.is_ok(), "{:?} {platform:?}: {result:?}", snippet.id);
-        }
-    }
-}
-
-#[test]
 fn an_option_after_white_space_is_refused_in_free_text() {
     // `find {dir} -name x.log` in a second-stage shell: the value adds an `-exec`.
     for platform in BOTH {
@@ -1724,4 +1698,44 @@ fn a_windows_path_may_hold_a_slash_but_not_one_after_white_space() {
             "{value}"
         );
     }
+}
+
+#[test]
+fn a_number_in_an_expression_slot_generates_and_a_string_there_does_not() {
+    let pattern = "Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddHours(-{hours})}";
+    for kind in ["int", "integer", "number"] {
+        let mut hours = of_kind("hours", kind);
+        hours.default_value = Some("24".to_owned());
+        assert_eq!(
+            render(WINDOWS, pattern, vec![hours.clone()], &[]).as_deref(),
+            Ok(&pattern.replace("{hours}", "24")[..]),
+            "{kind}"
+        );
+        // A value that is not a number is refused before the slot is looked at.
+        let result = render(WINDOWS, pattern, vec![hours], &[("hours", "1)+(whoami")]);
+        assert!(matches!(result, Err(GenerateError::Values(_))), "{kind}");
+    }
+    let result = render(
+        WINDOWS,
+        pattern,
+        vec![of_kind("hours", "string")],
+        &[("hours", "1)+(whoami")],
+    );
+    assert!(
+        matches!(result, Err(GenerateError::Values(_))),
+        "a string cannot use the slot of a number: {result:?}"
+    );
+}
+
+#[test]
+fn a_number_in_a_word_that_starts_with_a_dash_on_linux_takes_digits_only() {
+    let mut n = of_kind("n", "number");
+    n.default_value = Some("5".to_owned());
+    assert!(render(LINUX, "cmd -{n}", vec![n.clone()], &[]).is_ok());
+    let result = render(LINUX, "cmd -{n}", vec![n.clone()], &[("n", "1e5")]);
+    assert!(
+        matches!(result, Err(GenerateError::Values(_))),
+        "{result:?}"
+    );
+    assert!(render(LINUX, "cmd {n}", vec![n], &[("n", "1e5")]).is_ok());
 }

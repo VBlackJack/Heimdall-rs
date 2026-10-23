@@ -1,0 +1,135 @@
+{
+  "id": "process-list",
+  "title": "List running processes",
+  "description": "Show every running process.",
+  "category": "performance",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "process",
+    "list",
+    "monitoring"
+  ],
+  "windowsCommandTemplateId": "process-list-windows-cmd",
+  "windowsCommandTemplate": {
+    "id": "process-list-windows-cmd",
+    "platform": 0,
+    "name": "Get-Process",
+    "commandPattern": "Get-Process | Sort-Object CPU -Descending | Select-Object -First {count} Name,CPU,PM,Id",
+    "parameters": [
+      {
+        "name": "count",
+        "label": "Number of processes",
+        "type": "int",
+        "defaultValue": "20",
+        "required": false,
+        "description": "Number of processes to show"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "process-list-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "process-list-linux-cmd",
+    "platform": 1,
+    "name": "ps",
+    "commandPattern": "ps aux --sort=-%cpu | head -n {count}",
+    "parameters": [
+      {
+        "name": "count",
+        "label": "Number of processes",
+        "type": "int",
+        "defaultValue": "20",
+        "required": false,
+        "description": "Number of processes to show"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "On Linux, use 'top' or 'htop' for interactive monitoring.",
+  "links": [],
+  "linuxExamples": [
+    {
+      "command": "ps aux --sort=-%mem | head -n 10",
+      "description": "🔥 MEMORY: show the 10 processes that use the most RAM. Essential to diagnose OOM (Out Of Memory) events.",
+      "platform": 1
+    },
+    {
+      "command": "ps -ef | grep <name>",
+      "description": "Classic search for a process by its name.",
+      "platform": 1
+    },
+    {
+      "command": "ps aux --sort=-%cpu | head -n 20",
+      "description": "Top 20 processes by CPU (Linux)",
+      "platform": 1
+    },
+    {
+      "command": "ps aux --sort=-%cpu | head -10",
+      "description": "Top 10 processes by CPU",
+      "platform": 1
+    },
+    {
+      "command": "ps aux --sort=-%mem | head -10",
+      "description": "Top 10 processes by memory",
+      "platform": 1
+    },
+    {
+      "command": "ps -u www-data",
+      "description": "Processes of the www-data user",
+      "platform": 1
+    },
+    {
+      "command": "ps aux",
+      "description": "List every process of every user",
+      "platform": 1
+    },
+    {
+      "command": "ps -u username",
+      "description": "Processes of a given user",
+      "platform": 1
+    },
+    {
+      "command": "ps auxf",
+      "description": "Show the process tree",
+      "platform": 1
+    },
+    {
+      "command": "ps aux --sort=-%cpu | head",
+      "description": "Top CPU",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Lister les processus en cours",
+      "description": "Affiche la liste de tous les processus en cours d'exécution.",
+      "notes": "Sur Linux, utiliser 'top' ou 'htop' pour monitoring interactif.",
+      "parameters": {
+        "windows": {
+          "count": {
+            "label": "Nombre de processus",
+            "description": "Nombre de processus à afficher"
+          }
+        },
+        "linux": {
+          "count": {
+            "label": "Nombre de processus",
+            "description": "Nombre de processus à afficher"
+          }
+        }
+      },
+      "examples": {
+        "ps aux --sort=-%mem | head -n 10": "🔥 MEMOIRE : Affiche les 10 processus les plus gourmands en RAM. Indispensable pour diagnostiquer les OOM (Out Of Memory).",
+        "ps -ef | grep <name>": "Recherche classique d'un processus par son nom.",
+        "ps aux --sort=-%cpu | head -n 20": "Top 20 processus par CPU (Linux)",
+        "ps aux --sort=-%cpu | head -10": "Top 10 des processus par CPU",
+        "ps aux --sort=-%mem | head -10": "Top 10 des processus par mémoire",
+        "ps -u www-data": "Processus de l'utilisateur www-data",
+        "ps aux": "Liste tous les processus de tous les utilisateurs",
+        "ps -u username": "Processus d'un utilisateur spécifique",
+        "ps auxf": "Afficher l'arborescence des processus",
+        "ps aux --sort=-%cpu | head": "Top CPU"
+      }
+    }
+  }
+}

@@ -229,14 +229,7 @@ fn a_csharp_export_is_imported_with_its_fields_kept_and_unsafe_quoting_reset() {
         ]}"#;
     let mut library = UserLibrary::default();
     let report = library.import(json).expect("imported");
-    assert_eq!(
-        report,
-        ImportReport {
-            imported: 2,
-            updated: 0,
-            skipped: 1
-        }
-    );
+    assert_eq!((report.imported, report.updated, report.skipped), (2, 0, 1));
     let disk = library.get("a1").expect("disk");
     assert!(disk.is_user_created);
     assert_eq!(disk.level, Criticality::Dangerous);
@@ -311,4 +304,103 @@ fn a_copy_draft_has_no_identity_and_its_own_title() {
     let copy_id = library.upsert(&copy).expect("copy made");
     assert_ne!(copy_id, id);
     assert_eq!(library.commands().len(), 2);
+}
+
+#[test]
+fn an_import_leaves_out_what_breaks_a_rule_but_our_own_file_is_read_whole() {
+    let action = |id: &str, pattern: &str, kind: &str, default: &str| {
+        serde_json::json!({
+            "id": id,
+            "title": id,
+            "category": "mine",
+            "platform": 1,
+            "linuxCommandTemplate": {
+                "platform": 1,
+                "commandPattern": pattern,
+                "parameters": [{"name": "x", "label": "X", "type": kind, "defaultValue": default}],
+            },
+        })
+    };
+    let file = serde_json::json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "actions": [
+            action("fine", "echo {x}", "string", "hello"),
+            action("unknown-type", "echo {x}", "magic", "hello"),
+            action("shell-default", "echo {x}", "string", "a; reboot"),
+            action("line-break", "echo {x}\nreboot", "string", "hello"),
+        ],
+    })
+    .to_string();
+    let mut library = UserLibrary::default();
+    let report = library.import(&file).expect("an envelope");
+    assert_eq!((report.imported, report.updated, report.skipped), (1, 0, 3));
+    assert_eq!(library.commands().len(), 1);
+
+    // Our own file is read as it is: a rule added since never drops what the user made.
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(LIBRARY_FILE);
+    fs::write(&path, &file).expect("written");
+    assert_eq!(UserLibrary::load(&path).expect("read").commands().len(), 4);
+}
+
+#[test]
+fn a_level_in_a_file_is_raised_when_the_pattern_is_destructive_and_never_lowered() {
+    let json = r#"{"actions": [
+        {"id": "a", "title": "Wipe", "category": "c", "platform": 1, "level": 0,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "rm -rf ~", "parameters": []}},
+        {"id": "b", "title": "Safe", "category": "c", "platform": 1, "level": 0,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "uptime", "parameters": []}},
+        {"id": "c", "title": "Marked", "category": "c", "platform": 1, "level": 2,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "uptime", "parameters": []}}
+    ]}"#;
+    let mut library = UserLibrary::default();
+    library.import(json).expect("imported");
+    let ids = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+    assert_eq!(
+        library.raise_dangerous(&ids[1..], |pattern| pattern.contains("rm -rf")),
+        0,
+        "only the commands named"
+    );
+    assert_eq!(library.get("a").expect("a").level, Criticality::Info);
+    assert_eq!(
+        library.raise_dangerous(&ids, |pattern| pattern.contains("rm -rf")),
+        1
+    );
+    assert_eq!(library.get("a").expect("a").level, Criticality::Dangerous);
+    assert_eq!(library.get("b").expect("b").level, Criticality::Info);
+    assert_eq!(library.get("c").expect("c").level, Criticality::Dangerous);
+}
+
+#[test]
+fn an_import_says_the_first_command_left_out_and_refuses_a_file_of_too_many() {
+    let json = r#"{"actions": [
+        {"id": "a", "title": "Fine", "category": "c", "platform": 1,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "uptime", "parameters": []}},
+        {"id": "b", "title": "Odd", "category": "c", "platform": 1,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "run {x}",
+          "parameters": [{"name": "x", "type": "magic"}]}},
+        {"id": "c", "title": "", "category": "c"}
+    ]}"#;
+    let mut library = UserLibrary::default();
+    let report = library.import(json).expect("imported");
+    assert_eq!(report.skipped, 2);
+    assert_eq!(
+        report.first_skipped,
+        Some((
+            "Odd".to_owned(),
+            command_library::CommandIssue::UnknownParameterType(
+                TemplatePlatform::Linux,
+                "magic".to_owned()
+            )
+        ))
+    );
+    let one = r#"{"id": "x", "title": "T", "category": "c"}"#;
+    let many = format!(
+        r#"{{"actions": [{}]}}"#,
+        vec![one; MAX_IMPORT_ACTIONS + 1].join(",")
+    );
+    assert!(matches!(
+        UserLibrary::default().import(&many),
+        Err(LibraryError::TooManyActions)
+    ));
 }

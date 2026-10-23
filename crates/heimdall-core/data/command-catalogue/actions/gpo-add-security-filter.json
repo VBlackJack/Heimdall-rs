@@ -1,0 +1,82 @@
+{
+  "id": "gpo-add-security-filter",
+  "title": "Add a security filter to a GPO",
+  "description": "Add a group or user to the security filtering of a GPO.",
+  "category": "active-directory",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "gpo",
+    "security",
+    "filtering",
+    "permissions"
+  ],
+  "windowsCommandTemplateId": "gpo-add-security-filter-cmd",
+  "windowsCommandTemplate": {
+    "id": "gpo-add-security-filter-cmd",
+    "platform": 0,
+    "name": "Set-GPPermission",
+    "commandPattern": "Set-GPPermission -Name {gpoName} -TargetName {targetName} -TargetType {targetType} -PermissionLevel GpoApply",
+    "parameters": [
+      {
+        "name": "gpoName",
+        "label": "GPO name",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "GPO name"
+      },
+      {
+        "name": "targetName",
+        "label": "User or group",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Name of the user or group"
+      },
+      {
+        "name": "targetType",
+        "label": "Target type",
+        "type": "string",
+        "defaultValue": "Group",
+        "required": true,
+        "description": "User, Group or Computer"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Set-GPPermission -Name \"Security-Baseline\" -TargetName \"IT-Admins\" -TargetType Group -PermissionLevel GpoApply",
+      "description": "Apply the Security-Baseline GPO to the IT-Admins group",
+      "platform": 0
+    }
+  ],
+  "notes": "Security filtering limits the GPO to the given groups or users. Read is also required.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Ajouter un filtre de sécurité à une GPO",
+      "description": "Ajoute un groupe ou utilisateur au filtrage de sécurité d'une GPO.",
+      "notes": "Le filtrage de sécurité limite l'application de la GPO aux groupes/utilisateurs spécifiés. Nécessite aussi Read.",
+      "parameters": {
+        "windows": {
+          "gpoName": {
+            "label": "Nom de la GPO",
+            "description": "Nom de la GPO"
+          },
+          "targetName": {
+            "label": "Utilisateur/Groupe",
+            "description": "Nom de l'utilisateur ou du groupe"
+          },
+          "targetType": {
+            "label": "Type de cible",
+            "description": "User, Group, ou Computer"
+          }
+        }
+      },
+      "examples": {
+        "Set-GPPermission -Name \"Security-Baseline\" -TargetName \"IT-Admins\" -TargetType Group -PermissionLevel GpoApply": "Applique la GPO Security-Baseline au groupe IT-Admins"
+      }
+    }
+  }
+}

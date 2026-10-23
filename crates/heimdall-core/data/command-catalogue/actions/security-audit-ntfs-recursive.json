@@ -1,0 +1,77 @@
+{
+  "id": "security-audit-ntfs-recursive",
+  "title": "Audit NTFS permissions recursively",
+  "description": "Scan every subfolder recursively and report its NTFS permissions",
+  "category": "security",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "security",
+    "ntfs",
+    "permissions",
+    "recursive",
+    "audit"
+  ],
+  "windowsCommandTemplateId": "security-audit-ntfs-recursive-cmd",
+  "windowsCommandTemplate": {
+    "id": "security-audit-ntfs-recursive-cmd",
+    "platform": 0,
+    "name": "Get-ChildItem",
+    "commandPattern": "Get-ChildItem -Path '{path}' -Directory -Recurse -Depth {depth} -ErrorAction SilentlyContinue | ForEach-Object {$path=$_.FullName; (Get-Acl $path).Access | Select-Object @{Name='Path';Expression={$path}},IdentityReference,FileSystemRights,AccessControlType} | Format-Table -AutoSize",
+    "parameters": [
+      {
+        "name": "path",
+        "label": "Base path",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "C:\\Shares",
+        "required": true,
+        "description": "Path of the root folder to audit"
+      },
+      {
+        "name": "depth",
+        "label": "Depth",
+        "type": "number",
+        "defaultValue": "2",
+        "required": true,
+        "description": "Recursion depth (levels of subfolders)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Get-ChildItem C:\\Shares -Directory -Recurse | ForEach-Object {Get-Acl $_.FullName}",
+      "description": "Full audit of every subfolder of C:\\Shares",
+      "platform": 0
+    }
+  ],
+  "notes": "WARNING: can be slow on large trees. Use -Depth to limit the recursion. Export to CSV for analysis: | Export-Csv report.csv",
+  "links": [
+    {
+      "title": "NTFS Permissions Auditing",
+      "url": "https://jfrmilner.wordpress.com/2011/05/01/audit-ntfs-permissions-powershell-script/"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Auditer récursivement les permissions NTFS",
+      "description": "Analyse récursivement tous les sous-dossiers et génère un rapport des permissions NTFS",
+      "notes": "ATTENTION: Peut être lent sur de grandes arborescences. Utilisez -Depth pour limiter la récursion. Exportez vers CSV pour analyse: | Export-Csv report.csv",
+      "parameters": {
+        "windows": {
+          "path": {
+            "label": "Chemin de base",
+            "description": "Chemin du dossier racine à auditer"
+          },
+          "depth": {
+            "label": "Profondeur",
+            "description": "Profondeur de récursion (niveaux de sous-dossiers)"
+          }
+        }
+      },
+      "examples": {
+        "Get-ChildItem C:\\Shares -Directory -Recurse | ForEach-Object {Get-Acl $_.FullName}": "Audit complet de tous les sous-dossiers de C:\\Shares"
+      }
+    }
+  }
+}

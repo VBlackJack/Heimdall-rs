@@ -1,0 +1,40 @@
+{
+  "id": "show-pending-updates",
+  "title": "Show pending updates",
+  "description": "List every available update that is not installed",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "windows-update",
+    "pending",
+    "diagnostic"
+  ],
+  "windowsCommandTemplateId": "show-pending-updates-cmd",
+  "windowsCommandTemplate": {
+    "id": "show-pending-updates-cmd",
+    "platform": 0,
+    "name": "Get-WindowsUpdate",
+    "commandPattern": "powershell -Command \"$UpdateSession = New-Object -ComObject Microsoft.Update.Session; $UpdateSearcher = $UpdateSession.CreateUpdateSearcher(); $SearchResult = $UpdateSearcher.Search('IsInstalled=0'); $SearchResult.Updates | Select-Object Title, IsDownloaded, IsMandatory | Format-Table -AutoSize\"",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "powershell -Command \"$UpdateSession = New-Object -ComObject Microsoft.Update.Session; $UpdateSearcher = $UpdateSession.CreateUpdateSearcher(); $SearchResult = $UpdateSearcher.Search('IsInstalled=0'); $SearchResult.Updates.Count\"",
+      "description": "Count the pending updates",
+      "platform": 0
+    }
+  ],
+  "notes": "Uses the Windows Update COM API. Can take a few seconds.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Afficher les mises à jour en attente",
+      "description": "Liste toutes les mises à jour disponibles mais non installées",
+      "notes": "Utilise l'API COM de Windows Update. Peut prendre quelques secondes.",
+      "examples": {
+        "powershell -Command \"$UpdateSession = New-Object -ComObject Microsoft.Update.Session; $UpdateSearcher = $UpdateSession.CreateUpdateSearcher(); $SearchResult = $UpdateSearcher.Search('IsInstalled=0'); $SearchResult.Updates.Count\"": "Compte le nombre de mises à jour en attente"
+      }
+    }
+  }
+}

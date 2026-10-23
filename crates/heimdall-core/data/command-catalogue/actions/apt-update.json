@@ -1,0 +1,59 @@
+{
+  "id": "apt-update",
+  "title": "Update the APT package list",
+  "description": "Refresh the list of available packages from the configured repositories (Debian/Ubuntu)",
+  "category": "package-management",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "apt",
+    "update",
+    "debian",
+    "ubuntu",
+    "packages"
+  ],
+  "linuxCommandTemplateId": "apt-update-cmd",
+  "linuxCommandTemplate": {
+    "id": "apt-update-cmd",
+    "platform": 1,
+    "name": "apt",
+    "commandPattern": "sudo apt update",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "sudo apt update",
+      "description": "Update the package list",
+      "platform": 1
+    },
+    {
+      "command": "sudo apt update && apt list --upgradable",
+      "description": "Update and list the packages that can be upgraded",
+      "platform": 1
+    },
+    {
+      "command": "sudo apt update -v",
+      "description": "Run the command in verbose mode. The -v (verbose) flag prints each action as it happens. Essential to follow the progress of long operations and check that everything goes as expected.",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. Run it before apt upgrade. Installs no package, only refreshes the metadata.",
+  "links": [
+    {
+      "title": "APT documentation",
+      "url": "https://manpages.ubuntu.com/manpages/jammy/man8/apt.8.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Mettre à jour la liste des paquets APT",
+      "description": "Rafraîchit la liste des paquets disponibles depuis les dépôts configurés (Debian/Ubuntu)",
+      "notes": "Nécessite sudo. À exécuter avant apt upgrade. N'installe aucun paquet, ne fait que rafraîchir les métadonnées.",
+      "examples": {
+        "sudo apt update": "Met à jour la liste des paquets",
+        "sudo apt update && apt list --upgradable": "Met à jour et liste les paquets pouvant être mis à niveau",
+        "sudo apt update -v": "Exécute la commande en mode verbeux. Le flag -v (verbose) affiche chaque action effectuée en temps réel. Essentiel pour suivre la progression des opérations longues et vérifier que tout se déroule correctement."
+      }
+    }
+  }
+}

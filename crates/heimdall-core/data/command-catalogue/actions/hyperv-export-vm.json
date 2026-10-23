@@ -1,0 +1,92 @@
+{
+  "id": "hyperv-export-vm",
+  "title": "Export a virtual machine",
+  "description": "Export a whole Hyper-V VM (configuration, virtual disks, snapshots) to a folder for backup or migration.",
+  "category": "containers-vms",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "hyperv",
+    "export",
+    "backup",
+    "migration",
+    "vm",
+    "disaster-recovery",
+    "clone"
+  ],
+  "windowsCommandTemplateId": "hyperv-export-vm-cmd",
+  "windowsCommandTemplate": {
+    "id": "hyperv-export-vm-cmd",
+    "platform": 0,
+    "name": "Export-VM",
+    "commandPattern": "Export-VM -Name '{vmName}' -Path '{exportPath}'",
+    "parameters": [
+      {
+        "name": "vmName",
+        "label": "VM name",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "",
+        "required": true,
+        "description": "Name of the VM to export"
+      },
+      {
+        "name": "exportPath",
+        "label": "Export path",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "D:\\VM-Exports",
+        "required": true,
+        "description": "Destination folder of the export"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Export-VM -Name 'Windows11-Dev' -Path 'D:\\Backups\\VMs'",
+      "description": "Export a VM to D:\\Backups\\VMs",
+      "platform": 0
+    },
+    {
+      "command": "Export-VM -Name 'Production-DB' -Path '\\\\NAS\\VM-Backups' -CaptureLiveState CaptureSavedState",
+      "description": "Export and capture the current state",
+      "platform": 0
+    },
+    {
+      "command": "Import-VM -Path 'D:\\Backups\\VMs\\Windows11-Dev' -Copy -GenerateNewId",
+      "description": "Import an exported VM (with a new ID)",
+      "platform": 0
+    }
+  ],
+  "notes": "The export can take a while depending on the VM size. Check the free disk space. Use Import-VM to restore.",
+  "links": [
+    {
+      "title": "Documentation Export-VM",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/hyper-v/export-vm"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Exporter une machine virtuelle",
+      "description": "Exporte une VM Hyper-V complète (configuration, disques virtuels, snapshots) vers un dossier pour sauvegarde ou migration.",
+      "notes": "L'export peut être long selon la taille de la VM. Vérifiez l'espace disque disponible. Utilisez Import-VM pour restaurer.",
+      "parameters": {
+        "windows": {
+          "vmName": {
+            "label": "Nom de la VM",
+            "description": "Nom de la VM à exporter"
+          },
+          "exportPath": {
+            "label": "Chemin d'export",
+            "description": "Dossier de destination de l'export"
+          }
+        }
+      },
+      "examples": {
+        "Export-VM -Name 'Windows11-Dev' -Path 'D:\\Backups\\VMs'": "Exporte une VM vers D:\\Backups\\VMs",
+        "Export-VM -Name 'Production-DB' -Path '\\\\NAS\\VM-Backups' -CaptureLiveState CaptureSavedState": "Exporte avec capture de l'état actuel",
+        "Import-VM -Path 'D:\\Backups\\VMs\\Windows11-Dev' -Copy -GenerateNewId": "Importe une VM exportée (avec nouvel ID)"
+      }
+    }
+  }
+}

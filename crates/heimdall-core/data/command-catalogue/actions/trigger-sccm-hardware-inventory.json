@@ -1,0 +1,40 @@
+{
+  "id": "trigger-sccm-hardware-inventory",
+  "title": "Trigger the SCCM hardware inventory",
+  "description": "Force an immediate hardware inventory cycle",
+  "category": "windows-updates",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "sccm",
+    "inventory",
+    "hardware"
+  ],
+  "windowsCommandTemplateId": "trigger-sccm-hardware-inventory-cmd",
+  "windowsCommandTemplate": {
+    "id": "trigger-sccm-hardware-inventory-cmd",
+    "platform": 0,
+    "name": "Invoke-WmiMethod",
+    "commandPattern": "powershell -Command \"Invoke-WmiMethod -Namespace root\\ccm -Class SMS_Client -Name TriggerSchedule -ArgumentList '{00000000-0000-0000-0000-000000000001}'\"",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "powershell -Command \"Invoke-WmiMethod -Namespace root\\ccm -Class SMS_Client -Name TriggerSchedule -ArgumentList '{00000000-0000-0000-0000-000000000001}'\"",
+      "description": "Start a hardware inventory now",
+      "platform": 0
+    }
+  ],
+  "notes": "Requires administrator rights. GUID {00000000-0000-0000-0000-000000000001} = Hardware Inventory.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Déclencher inventaire matériel SCCM",
+      "description": "Force l'exécution immédiate d'un cycle d'inventaire matériel",
+      "notes": "Droits administrateur requis. GUID {00000000-0000-0000-0000-000000000001} = Hardware Inventory.",
+      "examples": {
+        "powershell -Command \"Invoke-WmiMethod -Namespace root\\ccm -Class SMS_Client -Name TriggerSchedule -ArgumentList '{00000000-0000-0000-0000-000000000001}'\"": "Lance un inventaire matériel immédiat"
+      }
+    }
+  }
+}

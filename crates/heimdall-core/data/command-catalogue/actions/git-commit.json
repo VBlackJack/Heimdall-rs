@@ -1,0 +1,99 @@
+{
+  "id": "git-commit",
+  "title": "Create a Git commit",
+  "description": "Record the changes of the index in the repository history.",
+  "category": "development",
+  "platform": 2,
+  "level": 1,
+  "tags": [
+    "git",
+    "commit",
+    "history"
+  ],
+  "windowsCommandTemplateId": "git-commit-win",
+  "windowsCommandTemplate": {
+    "id": "git-commit-win",
+    "platform": 0,
+    "name": "git",
+    "commandPattern": "git commit -m {message}",
+    "parameters": [
+      {
+        "name": "message",
+        "label": "Message",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Commit message"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "git-commit-linux",
+  "linuxCommandTemplate": {
+    "id": "git-commit-linux",
+    "platform": 1,
+    "name": "git",
+    "commandPattern": "git commit -m {message}",
+    "parameters": [
+      {
+        "name": "message",
+        "label": "Message",
+        "type": "string",
+        "defaultValue": "",
+        "required": true,
+        "description": "Commit message"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "git commit --amend",
+      "description": "Amend the last commit",
+      "platform": 2
+    }
+  ],
+  "notes": "Write clear, descriptive commit messages. Use --amend to fix the last commit.",
+  "links": [
+    {
+      "title": "Git Commit Documentation",
+      "url": "https://git-scm.com/docs/git-commit"
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "git commit -m \"Fix: correction du bug #123\"",
+      "description": "Create a commit with a message",
+      "platform": 1
+    },
+    {
+      "command": "git commit -m \"feat: ajout nouvelle fonctionnalité\"",
+      "description": "Create a commit",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Créer un commit Git",
+      "description": "Enregistre les modifications de l'index dans l'historique du dépôt",
+      "notes": "Écrivez des messages de commit clairs et descriptifs. Utilisez --amend pour corriger le dernier commit.",
+      "parameters": {
+        "windows": {
+          "message": {
+            "label": "Message",
+            "description": "Message du commit"
+          }
+        },
+        "linux": {
+          "message": {
+            "label": "Message",
+            "description": "Message du commit"
+          }
+        }
+      },
+      "examples": {
+        "git commit -m \"Fix: correction du bug #123\"": "Crée un commit avec un message",
+        "git commit -m \"feat: ajout nouvelle fonctionnalité\"": "Créer un commit",
+        "git commit --amend": "Modifie le dernier commit"
+      }
+    }
+  }
+}

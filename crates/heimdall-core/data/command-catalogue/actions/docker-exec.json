@@ -1,0 +1,154 @@
+{
+  "id": "docker-exec",
+  "title": "Run a command in a container",
+  "description": "Run a command in a running Docker container",
+  "category": "containers-vms",
+  "platform": 2,
+  "level": 1,
+  "tags": [
+    "docker",
+    "exec",
+    "container",
+    "bash",
+    "shell",
+    "windows"
+  ],
+  "linuxCommandTemplateId": "docker-exec-cmd",
+  "linuxCommandTemplate": {
+    "id": "docker-exec-cmd",
+    "platform": 1,
+    "name": "docker",
+    "commandPattern": "docker exec -it {container} {command}",
+    "parameters": [
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "string",
+        "defaultValue": "mycontainer",
+        "required": true,
+        "description": "Name or ID of the container"
+      },
+      {
+        "name": "command",
+        "label": "Command",
+        "type": "string",
+        "defaultValue": "/bin/bash",
+        "required": true,
+        "description": "Command to run"
+      }
+    ]
+  },
+  "notes": "Windows & Linux: -it is needed for an interactive shell. The container must be running.",
+  "links": [
+    {
+      "title": "Docker exec",
+      "url": "https://docs.docker.com/engine/reference/commandline/exec/"
+    }
+  ],
+  "windowsCommandTemplate": {
+    "id": "docker-exec-win-cmd",
+    "platform": 0,
+    "name": "docker",
+    "commandPattern": "docker exec -it {container} {command}",
+    "parameters": [
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "string",
+        "defaultValue": "mycontainer",
+        "required": true,
+        "description": "Name or ID of the container"
+      },
+      {
+        "name": "command",
+        "label": "Command",
+        "type": "string",
+        "defaultValue": "/bin/bash",
+        "required": true,
+        "description": "Command to run"
+      }
+    ]
+  },
+  "windowsCommandTemplateId": "docker-exec-win-cmd",
+  "windowsExamples": [
+    {
+      "command": "docker exec -it mycontainer /bin/bash",
+      "description": "Open an interactive shell in the container",
+      "platform": 0
+    },
+    {
+      "command": "docker exec mycontainer dir",
+      "description": "Run a simple command (dir) in the container.",
+      "platform": 0
+    },
+    {
+      "command": "docker exec -u root mycontainer apt update",
+      "description": "Run as root",
+      "platform": 0
+    },
+    {
+      "command": "docker exec -it {container} {command}",
+      "description": "Example using the 'container' and 'command' parameters. Replace them with the values that fit your environment.",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "docker exec -it mycontainer /bin/bash",
+      "description": "Open an interactive shell in the container",
+      "platform": 1
+    },
+    {
+      "command": "docker exec mycontainer ls /var/log",
+      "description": "Run a simple command",
+      "platform": 1
+    },
+    {
+      "command": "docker exec -u root mycontainer apt update",
+      "description": "Run as root",
+      "platform": 1
+    },
+    {
+      "command": "docker exec -it {container} {command}",
+      "description": "Example using the 'container' and 'command' parameters. Replace them with the values that fit your environment.",
+      "platform": 1
+    }
+  ],
+  "examples": [],
+  "translations": {
+    "fr": {
+      "title": "Exécuter une commande dans un conteneur",
+      "description": "Exécute une commande dans un conteneur Docker en cours d'exécution",
+      "notes": "Windows & Linux: -it nécessaire pour shell interactif. Le conteneur doit être en cours d'exécution.",
+      "parameters": {
+        "windows": {
+          "container": {
+            "label": "Conteneur",
+            "description": "Nom ou ID du conteneur"
+          },
+          "command": {
+            "label": "Commande",
+            "description": "Commande à exécuter"
+          }
+        },
+        "linux": {
+          "container": {
+            "label": "Conteneur",
+            "description": "Nom ou ID du conteneur"
+          },
+          "command": {
+            "label": "Commande",
+            "description": "Commande à exécuter"
+          }
+        }
+      },
+      "examples": {
+        "docker exec -it mycontainer /bin/bash": "Ouvre un shell interactif dans le conteneur",
+        "docker exec mycontainer dir": "Exécute une commande simple (dir) dans le conteneur.",
+        "docker exec -u root mycontainer apt update": "Exécute en tant que root",
+        "docker exec -it {container} {command}": "Exemple utilisant les paramètres 'container' et 'command'. Remplacez-les par les valeurs appropriées selon votre environnement.",
+        "docker exec mycontainer ls /var/log": "Exécute une commande simple"
+      }
+    }
+  }
+}
