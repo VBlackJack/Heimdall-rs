@@ -222,6 +222,8 @@ pub enum TransferError {
     Version(String),
     /// The file's runbooks cannot be kept: nothing was imported.
     RunbooksUnsaved,
+    /// As [`TransferError::RunbooksUnsaved`], and the library could not be put back as it was.
+    RunbooksUnsavedLibraryKept,
     /// Nothing to write for this choice.
     NothingToExport,
     /// What the system said.
@@ -707,8 +709,11 @@ impl CommandLibraryPane {
                     // The runbooks could not be kept: the actions go back too, so a file is
                     // never half imported.
                     self.library = before.clone();
-                    self.keep(&before);
-                    Notice::TransferFailed(TransferError::RunbooksUnsaved)
+                    Notice::TransferFailed(if self.keep(&before) {
+                        TransferError::RunbooksUnsaved
+                    } else {
+                        TransferError::RunbooksUnsavedLibraryKept
+                    })
                 });
             }
             Err(error) => self.notice = Some(Notice::TransferFailed(transfer_error(error))),
@@ -2354,14 +2359,15 @@ fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
                     skipped = runbooks.skipped
                 );
             }
-            if let Some(name) = runbooks
+            if let Some((old, new)) = runbooks
                 .as_ref()
                 .and_then(|each| each.first_updated.as_ref())
             {
                 done = fl!(
                     "ui-tool-cmdlib-import-replaced",
                     done = done,
-                    name = name.as_str()
+                    old = old.as_str(),
+                    name = new.as_str()
                 );
             }
             // The first reason: the action's, else the runbook's.
@@ -2407,6 +2413,9 @@ fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
                     version = version.as_str()
                 ),
                 TransferError::RunbooksUnsaved => fl!("ui-tool-cmdlib-transfer-runbooks-unsaved"),
+                TransferError::RunbooksUnsavedLibraryKept => {
+                    fl!("ui-tool-cmdlib-transfer-runbooks-unsaved-kept")
+                }
                 TransferError::NothingToExport => fl!("ui-tool-cmdlib-export-nothing"),
                 TransferError::Failed(detail) => {
                     fl!("ui-tool-cmdlib-transfer-failed", detail = detail.as_str())

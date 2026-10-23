@@ -155,8 +155,8 @@ pub struct RunbookImport {
     pub updated: usize,
     /// Runbooks left out.
     pub skipped: usize,
-    /// The name of the first runbook replaced, safe to show.
-    pub first_updated: Option<String>,
+    /// The first runbook replaced: its name before and after, safe to show.
+    pub first_updated: Option<(String, String)>,
     /// The name of the first runbook left out and why.
     pub first_skipped: Option<(String, RunbookRefusal)>,
 }
@@ -196,10 +196,12 @@ pub fn import_runbooks(
             .runbooks()
             .iter()
             .find(|each| bare(&each.public_id) == bare(&runbook.public_id))
-            .map(|each| each.public_id.clone());
+            .map(|each| (each.public_id.clone(), shown_text(&each.name)));
         let replaced = known.is_some();
-        if let Some(identity) = known {
+        let mut old_name = String::new();
+        if let Some((identity, name)) = known {
             runbook.public_id = identity;
+            old_name = name;
         }
         let identity = bare(&runbook.public_id);
         match store.keep(runbook, lookup) {
@@ -207,7 +209,7 @@ pub fn import_runbooks(
                 report.updated += 1;
                 report
                     .first_updated
-                    .get_or_insert_with(|| shown_text(&name_of(value)));
+                    .get_or_insert_with(|| (old_name, shown_text(&name_of(value))));
                 seen.push(identity);
             }
             Ok(()) => {

@@ -562,3 +562,52 @@ fn the_labels_of_a_step_are_those_of_the_language_not_the_catalogue_pivot() {
     // A language the catalogue has no text for shows the pivot's.
     assert_eq!(label("xx"), "Service name");
 }
+
+#[test]
+fn an_import_whose_save_fails_after_a_good_load_changes_nothing() {
+    use heimdall_core::tools::library_transfer;
+
+    // A file just under the size cap, read fine; one more runbook cannot be written.
+    let big = |name: &str| {
+        let mut runbook = Runbook::new(name);
+        for _ in 0..runbooks::MAX_STEPS {
+            runbook.steps.push(Step::literal(
+                &"x".repeat(MAX_COMMAND_LENGTH),
+                TemplatePlatform::Linux,
+            ));
+        }
+        runbook
+    };
+    let size = big("probe").to_value().to_string().len();
+    let folder = tempfile::tempdir().expect("folder");
+    let mut store = RunbookStore::default();
+    let none = |_: &str| None;
+    let cap = usize::try_from(heimdall_core::tools::user_commands::MAX_FILE_BYTES).expect("small");
+    let mut number = 0;
+    while store.to_text().len() + size * 2 <= cap {
+        store.keep(big(&format!("R{number}")), &none).expect("kept");
+        number += 1;
+    }
+    store
+        .save(&folder.path().join(RUNBOOKS_FILE))
+        .expect("just under the cap");
+
+    let mut pane = pane_in(folder.path());
+    assert!(pane.can_edit());
+    let before = pane.store.runbooks().len();
+    // Less than two runbooks of room are left: four more cannot be written.
+    let more: Vec<String> = (0..4)
+        .map(|n| big(&format!("One more {n}")).to_value().to_string())
+        .collect();
+    let file = format!("{{\"runbooks\":[{}]}}", more.join(","));
+    let values = library_transfer::precheck(&file).expect("an envelope");
+    assert!(pane.import(&values, &UserLibrary::default()).is_none());
+    assert_eq!(pane.store.runbooks().len(), before, "the store went back");
+    assert!(
+        pane.store
+            .runbooks()
+            .iter()
+            .all(|each| !each.name.starts_with("One more"))
+    );
+    assert_eq!(pane.failure, Some(Failure::Unsaved));
+}

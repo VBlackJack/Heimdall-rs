@@ -606,7 +606,10 @@ fn the_first_replaced_runbook_is_named_and_a_repeated_identity_in_one_file_is_no
     let values = precheck(&file).expect("an envelope");
     let report = import_runbooks(&mut store, &values, &nothing);
     assert_eq!((report.imported, report.updated, report.skipped), (1, 1, 2));
-    assert_eq!(report.first_updated.as_deref(), Some("First"));
+    assert_eq!(
+        report.first_updated,
+        Some(("Mine".to_owned(), "First".to_owned()))
+    );
     assert_eq!(
         report.first_skipped,
         Some(("Second".to_owned(), RunbookRefusal::DuplicateInFile))
