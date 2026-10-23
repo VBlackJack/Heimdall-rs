@@ -41,6 +41,7 @@ use iced::widget::{
 };
 use iced::{Element, Length, Task, window};
 
+use super::command_library_runbooks::{RunbookMessage, RunbooksPane};
 use super::{CopySlot, ToolMessage, ToolPane};
 use crate::file_dialog::{self, FileDialog};
 use crate::i18n::fl;
@@ -186,6 +187,8 @@ pub enum CommandLibraryMessage {
     Imported(Option<Result<String, TransferError>>),
     /// Ask where to export the library.
     Export,
+    /// Something about the runbooks.
+    Runbooks(RunbookMessage),
     /// The library was written to the file picked; `None` when none was picked.
     Exported(Option<Result<(), TransferError>>),
 }
@@ -401,6 +404,8 @@ pub struct CommandLibraryPane {
     /// Whether the history shows only the rows of the session's host: ticked when the
     /// library belongs to a session, as the C# default.
     history_this_host_only: bool,
+    /// The runbooks: the panel and the file they are kept in.
+    runbooks: RunbooksPane,
     /// The category of the command last created in this pane, which a captured command starts
     /// in, as the C# `LastCreatedCategory`.
     last_category: Option<String>,
@@ -448,6 +453,7 @@ impl CommandLibraryPane {
                 }
             }
         }
+        pane.runbooks = RunbooksPane::new(profiles_file, &pane.library);
         pane
     }
 
@@ -532,6 +538,9 @@ impl CommandLibraryPane {
                 return self.broadcast_outcome(&command);
             }
             CommandLibraryMessage::Target(tab) => self.target = Some(tab),
+            CommandLibraryMessage::Runbooks(message) => {
+                self.runbooks.update(message, &self.library);
+            }
             CommandLibraryMessage::Import if self.can_edit() => return Outcome::Import,
             CommandLibraryMessage::Export if !self.library.commands().is_empty() => {
                 return Outcome::Export(self.library.export());
@@ -1343,6 +1352,11 @@ impl CommandLibraryPane {
                 self.history_open,
                 Some(CommandLibraryMessage::ToggleHistory)
             ),
+            plain(
+                fl!("ui-tool-cmdlib-runbooks"),
+                self.runbooks.is_open(),
+                Some(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle))
+            ),
         ]
         .spacing(spacing::SM);
         let shown = self.shown();
@@ -1386,10 +1400,13 @@ impl CommandLibraryPane {
         if self.history_open {
             cards = cards.push(self.history_view(tab, state));
         }
+        if let Some(panel) = self.runbooks.view(tab, &self.library) {
+            cards = cards.push(panel);
+        }
         if let Some(editor) = &self.editor {
             cards = cards.push(editor_view(tab, editor));
         }
-        if count == 0 && self.editor.is_none() && !self.history_open {
+        if count == 0 && self.editor.is_none() && !self.history_open && !self.runbooks.is_open() {
             return super::tool_body(page.push(super::empty_state(fl!("ui-tool-cmdlib-empty"))));
         }
         if !mine.is_empty() {
@@ -1955,7 +1972,7 @@ fn catalogue_entry(id: &str) -> Option<&'static CatalogueEntry> {
 }
 
 /// The language of the window, as a catalogue file names it.
-fn language() -> String {
+pub(super) fn language() -> String {
     crate::i18n::current().code().to_owned()
 }
 
@@ -2373,7 +2390,7 @@ fn level_name(level: Criticality) -> String {
 
 /// The name of the category `key`, in the window's language; a category the user typed is
 /// shown as typed.
-fn category_name(key: &str) -> String {
+pub(super) fn category_name(key: &str) -> String {
     match key {
         "security" => fl!("ui-tool-cmdlib-category-security"),
         "active-directory" => fl!("ui-tool-cmdlib-category-active-directory"),
@@ -2462,7 +2479,7 @@ fn generate_error(error: &GenerateError) -> String {
 }
 
 /// Why a value is refused, naming its parameter.
-fn value_error(error: &ValueError) -> String {
+pub(super) fn value_error(error: &ValueError) -> String {
     match error {
         ValueError::Required(label) => fl!("ui-tool-cmdlib-value-required", label = label.as_str()),
         ValueError::NotOffered(label) => {

@@ -6109,3 +6109,70 @@ ui-masked-copy-rule-password-prompt = Contraseña escrita en un aviso
 ui-masked-copy-rule-ipv4-address = Dirección IPv4
 ui-masked-copy-rule-host-name = Nombre de host
 ui-masked-copy-failed = El enmascarado falló, así que no se puede copiar nada.
+ui-tool-cmdlib-runbooks = Runbooks
+ui-tool-cmdlib-runbooks-title = Runbooks
+ui-tool-cmdlib-runbooks-new = Nuevo runbook
+ui-tool-cmdlib-runbooks-duplicate = Duplicar
+ui-tool-cmdlib-runbooks-copy-name = { $name } (copia)
+ui-tool-cmdlib-runbooks-delete-question = ¿Eliminar el runbook { $name }?
+ui-tool-cmdlib-runbooks-unreadable = No se pudo leer el archivo de sus runbooks. Se deja tal cual y no se puede modificar aquí.
+ui-tool-cmdlib-runbooks-unsaved = No se pudieron guardar sus runbooks. El cambio no se realizó.
+ui-tool-cmdlib-runbooks-skipped =
+    { $count ->
+        [one] { $count } runbook del archivo no se pudo usar. Se conserva tal cual.
+       *[other] { $count } runbooks del archivo no se pudieron usar. Se conservan tal cual.
+    }
+ui-tool-cmdlib-runbooks-empty = Aún no hay ningún runbook. Un runbook encadena los pasos que de otro modo enviaría uno a uno en cada incidencia.
+ui-tool-cmdlib-runbooks-steps =
+    { $count ->
+        [one] { $count } paso
+       *[other] { $count } pasos
+    }
+ui-tool-cmdlib-runbooks-mode-stop = Detener la ejecución
+ui-tool-cmdlib-runbooks-mode-continue = Continuar
+ui-tool-cmdlib-runbooks-err-name = Póngale un nombre al runbook.
+ui-tool-cmdlib-runbooks-err-name-long = El nombre supera los { $max } caracteres.
+ui-tool-cmdlib-runbooks-err-text = Un texto contiene un carácter de control o invisible. Quítelo.
+ui-tool-cmdlib-runbooks-err-variable-name = El nombre de variable "{ $name }" no es válido o se usa dos veces. Un nombre empieza por una letra o un guion bajo y contiene letras, dígitos y guiones bajos.
+ui-tool-cmdlib-runbooks-err-variables-many = Un runbook contiene como máximo { $max } variables.
+ui-tool-cmdlib-runbooks-err-variable-long = El valor por defecto de { $name } supera los { $max } caracteres.
+ui-tool-cmdlib-runbooks-err-steps-many = Un runbook contiene como máximo { $max } pasos.
+ui-tool-cmdlib-runbooks-err-full = El archivo ya contiene { $max } runbooks. Elimine uno primero.
+ui-tool-cmdlib-runbooks-err-step-empty = El paso { $number } no tiene comando.
+ui-tool-cmdlib-runbooks-err-step-long = El comando del paso { $number } supera los { $max } caracteres.
+ui-tool-cmdlib-runbooks-err-step-hidden = El paso { $number } contiene un carácter de control o invisible. Quítelo.
+ui-tool-cmdlib-runbooks-err-step-value-long = En el paso { $number }, el valor de { $name } supera los { $max } caracteres.
+ui-tool-cmdlib-runbooks-err-step-values = Paso { $number }: { $reason }
+ui-tool-cmdlib-runbooks-err-step-other = El paso { $number } no es válido.
+ui-tool-cmdlib-runbooks-editor-new = Nuevo runbook
+ui-tool-cmdlib-runbooks-editor-edit = Modificar el runbook
+ui-tool-cmdlib-runbooks-field-name = Nombre
+ui-tool-cmdlib-runbooks-field-description = Descripción
+ui-tool-cmdlib-runbooks-field-mode = Cuando un paso falla
+ui-tool-cmdlib-runbooks-variables = Variables
+ui-tool-cmdlib-runbooks-variables-hint = Un valor escrito {"{{"}nombre{"}}"} en un paso se pide una vez al iniciar la ejecución, rellenado con el host y el usuario de la sesión.
+ui-tool-cmdlib-runbooks-variable-name = Nombre
+ui-tool-cmdlib-runbooks-variable-default = Valor por defecto
+ui-tool-cmdlib-runbooks-variable-add = Añadir una variable
+ui-tool-cmdlib-runbooks-remove = Quitar
+ui-tool-cmdlib-runbooks-steps-title = Pasos
+ui-tool-cmdlib-runbooks-steps-empty = Aún no hay ningún paso. Añada una acción de la biblioteca o un comando.
+ui-tool-cmdlib-runbooks-pick-placeholder = Buscar una acción para añadir como paso
+ui-tool-cmdlib-runbooks-pick-none = Ninguna acción coincide.
+ui-tool-cmdlib-runbooks-pick-add = Añadir: { $title }
+ui-tool-cmdlib-runbooks-literal-add = Añadir un comando escrito tal cual
+ui-tool-cmdlib-runbooks-undeclared = Variables usadas pero no declaradas arriba: { $names }. Una ejecución no podrá rellenarlas.
+ui-tool-cmdlib-runbooks-move-up = Subir
+ui-tool-cmdlib-runbooks-move-down = Bajar
+ui-tool-cmdlib-runbooks-step-number = Paso { $number }
+ui-tool-cmdlib-runbooks-step-missing = Esta acción ya no está en la biblioteca.
+ui-tool-cmdlib-runbooks-step-no-values = Esta acción no pide ningún valor.
+ui-tool-cmdlib-runbooks-step-literal = Comando para
+ui-tool-cmdlib-runbooks-step-command = Comando
+ui-tool-cmdlib-runbooks-step-note = Nota
+ui-tool-cmdlib-runbooks-err-description-long = La descripción supera los { $max } caracteres.
+ui-tool-cmdlib-runbooks-err-tags-many = Un runbook contiene como máximo { $max } etiquetas.
+ui-tool-cmdlib-runbooks-err-tag-long = Una etiqueta supera los { $max } caracteres.
+ui-tool-cmdlib-runbooks-err-step-note-long = La nota del paso { $number } supera los { $max } caracteres.
+ui-tool-cmdlib-runbooks-secrets-hint = Los valores se guardan en texto plano. Para un secreto como una contraseña, escriba una variable sin valor por defecto: se pide al iniciar la ejecución y nunca se conserva.
+ui-tool-cmdlib-runbooks-err-deleted = Este runbook se eliminó desde otra ventana. Guarde de nuevo para conservarlo como un nuevo runbook.
