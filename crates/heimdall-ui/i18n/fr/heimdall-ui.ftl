@@ -643,6 +643,7 @@ ui-dialog-run-script-body = { $name } se lance dans un nouvel onglet avec la com
 ui-dialog-send-command-title = Envoyer cette commande ?
 ui-dialog-send-command-body = La commande ci-dessous est saisie dans { $name } et exécutée avec Entrée, avec les droits de cette session. Heimdall redemande à chaque envoi.
 ui-dialog-send-command-dangerous = Cette commande est marquée dangereuse : elle peut détruire des données ou arrêter un service.
+ui-dialog-send-command-typed-as-is = Cette étape est une commande saisie telle quelle, et non une action de la bibliothèque. Relisez-la avant de l'envoyer.
 ui-dialog-send-command-confirm = Envoyer
 ui-dialog-broadcast-command-title = Envoyer cette commande à plusieurs sessions ?
 ui-dialog-broadcast-command-body = La commande ci-dessous est saisie dans chaque session listée ({ $count }) et exécutée avec Entrée, avec les droits de chaque session. Heimdall demande à chaque fois.

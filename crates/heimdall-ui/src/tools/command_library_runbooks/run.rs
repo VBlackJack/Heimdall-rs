@@ -186,13 +186,12 @@ pub struct Ready {
 }
 
 impl Ready {
-    /// Whether sending it must ask the dangerous-command question: the stored level of the
-    /// action, a command the paste guard knows, and always a literal step, which nobody has
-    /// judged.
+    /// Whether the question calls the command dangerous: the stored level of the action, or a
+    /// command the paste guard knows. A literal step is asked about whatever it is (a
+    /// separate wording says it is typed as is), but is not called dangerous for that.
     #[must_use]
     pub fn is_dangerous(&self) -> bool {
-        self.step.literal
-            || self.step.level == Criticality::Dangerous
+        self.step.level == Criticality::Dangerous && !self.step.literal
             || heimdall_app::dangerous_command(&self.step.command).is_some()
     }
 }

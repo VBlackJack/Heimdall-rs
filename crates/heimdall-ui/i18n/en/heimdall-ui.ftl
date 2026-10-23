@@ -787,6 +787,7 @@ ui-dialog-run-script-body = { $name } runs in a new tab with the command below, 
 ui-dialog-send-command-title = Send this command?
 ui-dialog-send-command-body = The command below is typed into { $name } and run there with Enter, with that session's rights. Heimdall asks each time.
 ui-dialog-send-command-dangerous = This command is marked dangerous: it can destroy data or stop a service.
+ui-dialog-send-command-typed-as-is = This step is a command typed as is, not one of the library's actions. Read it before sending.
 ui-dialog-send-command-confirm = Send
 ui-dialog-broadcast-command-title = Send this command to several sessions?
 ui-dialog-broadcast-command-body = The command below is typed into each session listed ({ $count }) and run there with Enter, with each session's rights. Heimdall asks each time.

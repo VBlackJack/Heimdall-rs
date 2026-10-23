@@ -238,6 +238,8 @@ pub enum Outcome {
         command: String,
         /// Marked dangerous.
         dangerous: bool,
+        /// A command typed as is, which no library action stands for.
+        typed_as_is: bool,
     },
     /// Type `command` at the prompt of terminal `target`, no question asked.
     Insert {
@@ -598,6 +600,9 @@ impl CommandLibraryPane {
             CommandLibraryMessage::ToggleHistory => {
                 self.history_open = !self.history_open;
                 self.clearing_history = false;
+                if self.history_open {
+                    self.runbooks.close();
+                }
             }
             CommandLibraryMessage::AskClearHistory => self.clearing_history = true,
             CommandLibraryMessage::CancelClearHistory => self.clearing_history = false,
@@ -731,6 +736,7 @@ impl CommandLibraryPane {
         };
         if let Some(draft) = draft {
             self.editor = Some(Editor::on(draft));
+            self.history_open = false;
         }
     }
 
@@ -884,6 +890,7 @@ impl CommandLibraryPane {
         match message {
             CommandLibraryMessage::New if self.can_edit() => {
                 self.editor = Some(Editor::default());
+                self.history_open = false;
             }
             // An editor with changes in it is never replaced by a capture: said, nothing lost.
             CommandLibraryMessage::Capture(_)
@@ -893,6 +900,7 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::Capture(capture) if self.can_edit() => {
                 self.notice = None;
+                self.history_open = false;
                 self.editor = Some(Editor::on(captured_draft(
                     &capture,
                     self.last_category.as_deref(),
@@ -901,6 +909,7 @@ impl CommandLibraryPane {
             CommandLibraryMessage::Edit(id) if self.can_edit() => {
                 if let Some(command) = self.library.get(&id) {
                     self.editor = Some(Editor::on(Draft::of(command)));
+                    self.history_open = false;
                 }
             }
             CommandLibraryMessage::Field(field, value) => {
@@ -1121,6 +1130,14 @@ impl CommandLibraryPane {
             RunbookMessage::RunInsert => self.run_step(RunStep::Insert),
             RunbookMessage::RunCopy => self.run_step(RunStep::Copy),
             other => {
+                // What an earlier send said is not about the run, and the history is not the
+                // view any more.
+                if matches!(other, RunbookMessage::Toggle | RunbookMessage::Run(_)) {
+                    self.notice = None;
+                }
+                if matches!(other, RunbookMessage::Toggle) {
+                    self.history_open = false;
+                }
                 if matches!(other, RunbookMessage::RunStop | RunbookMessage::RunSkip) {
                     self.awaited.retain(|each| each.run_step.is_none());
                 }
@@ -1227,6 +1244,7 @@ impl CommandLibraryPane {
                 target: tab,
                 command: text,
                 dangerous: ready.is_dangerous(),
+                typed_as_is: ready.step.literal,
             }
         } else {
             Outcome::Insert {
@@ -1255,6 +1273,7 @@ impl CommandLibraryPane {
             target: target.tab,
             command: text,
             dangerous,
+            typed_as_is: false,
         }
     }
 
@@ -3155,6 +3174,7 @@ mod tests {
                 target: terminal,
                 command: "ping -c 3 web.lab".to_owned(),
                 dangerous: false,
+                typed_as_is: false,
             }
         );
         // A value that would run more is refused: nothing to copy, nothing to send.
@@ -4194,13 +4214,14 @@ mod tests {
             target: asked,
             command,
             dangerous,
+            typed_as_is,
         } = run_message(&mut pane, RunbookMessage::RunSend)
         else {
             panic!("asked");
         };
         assert_eq!(
-            (asked, command.as_str(), dangerous),
-            (terminal, "echo calm", false)
+            (asked, command.as_str(), dangerous, typed_as_is),
+            (terminal, "echo calm", false, false)
         );
         assert_eq!(pane.runbooks.current_index(), Some(0));
         assert!(
@@ -4261,20 +4282,24 @@ mod tests {
         let mut asked = Vec::new();
         for _ in 0..3 {
             let Outcome::Send {
-                command, dangerous, ..
+                command,
+                dangerous,
+                typed_as_is,
+                ..
             } = run_message(&mut pane, RunbookMessage::RunSend)
             else {
                 panic!("asked");
             };
-            asked.push((command.clone(), dangerous));
+            asked.push((command.clone(), dangerous, typed_as_is));
             pane.record_sent(&[receipt(terminal, "web-1", &command)]);
         }
         assert_eq!(
             asked,
             [
-                ("echo calm".to_owned(), false),
-                ("uptime".to_owned(), true),
-                ("echo grave".to_owned(), true),
+                ("echo calm".to_owned(), false, false),
+                // Always asked, and said to be typed as is, not called dangerous for that.
+                ("uptime".to_owned(), false, true),
+                ("echo grave".to_owned(), true, false),
             ]
         );
         assert!(pane.runbooks.is_finished());
@@ -4610,5 +4635,39 @@ mod tests {
             run_message(&mut pane, RunbookMessage::RunSend),
             Outcome::None
         );
+    }
+
+    #[test]
+    fn opening_the_runbooks_clears_an_old_notice_and_leaves_the_history_and_the_editor_alone() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        pane.notice = Some(Notice::Inserted("A".to_owned()));
+        pane.update(CommandLibraryMessage::ToggleHistory);
+        assert!(pane.history_open);
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        assert_eq!(pane.notice, None);
+        assert!(!pane.history_open, "the history is not the view any more");
+
+        // And the other way round: the history takes the view back.
+        pane.update(CommandLibraryMessage::ToggleHistory);
+        assert!(pane.history_open);
+        assert!(!pane.runbooks.is_open());
+
+        // The editor takes the view from the history too.
+        pane.update(CommandLibraryMessage::New);
+        assert!(pane.editor.is_some());
+        assert!(!pane.history_open);
+    }
+
+    #[test]
+    fn a_run_started_clears_the_notice_of_an_insert() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        start_run(&mut pane);
+        pane.notice = Some(Notice::Inserted("A".to_owned()));
+        let id = pane.runbooks.first_id().expect("a runbook");
+        run_message(&mut pane, RunbookMessage::RunStop);
+        run_message(&mut pane, RunbookMessage::Run(id));
+        assert_eq!(pane.notice, None);
     }
 }

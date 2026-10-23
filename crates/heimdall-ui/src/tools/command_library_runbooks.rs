@@ -475,6 +475,11 @@ impl RunbooksPane {
             .map(|runbook| runbook.public_id.clone())
     }
 
+    /// Closes the panel.
+    pub fn close(&mut self) {
+        self.open = false;
+    }
+
     /// Whether the panel is open.
     #[must_use]
     pub const fn is_open(&self) -> bool {

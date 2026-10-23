@@ -407,7 +407,19 @@ fn the_dangerous_question_follows_the_stored_level_the_paste_guard_and_a_literal
     assert!(!action.is_dangerous(), "an info action asks nothing more");
     pane.step_delivered(pane.run_id(), 0, Delivered::Sent);
     let literal = pane.ready_step(&library).expect("literal step");
-    assert!(literal.is_dangerous(), "a literal step always asks");
+    assert!(
+        literal.step.literal,
+        "a literal step is asked about, as typed as is"
+    );
+    assert!(
+        !literal.is_dangerous(),
+        "and is not called dangerous for that"
+    );
+
+    // The paste guard still calls a destructive command dangerous.
+    let mut destructive = literal.clone();
+    destructive.step.command = "shutdown -h now".to_owned();
+    assert!(destructive.is_dangerous());
 }
 
 #[test]

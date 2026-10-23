@@ -1646,11 +1646,13 @@ impl ToolPanes {
                         target,
                         command,
                         dangerous,
+                        typed_as_is,
                     } => Task::done(Message::App(heimdall_app::Message::Tools(
                         heimdall_app::ToolsMessage::SendCommand {
                             target,
                             command,
                             dangerous,
+                            typed_as_is,
                         },
                     ))),
                     // Typed at the prompt, no Enter: nothing to agree to.

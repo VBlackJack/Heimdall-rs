@@ -643,6 +643,7 @@ ui-dialog-run-script-body = { $name } se ejecuta en una nueva pestaña con el co
 ui-dialog-send-command-title = ¿Enviar este comando?
 ui-dialog-send-command-body = El comando de abajo se escribe en { $name } y se ejecuta con Entrar, con los derechos de esa sesión. Heimdall lo pregunta cada vez.
 ui-dialog-send-command-dangerous = Este comando está marcado como peligroso: puede destruir datos o detener un servicio.
+ui-dialog-send-command-typed-as-is = Este paso es un comando escrito tal cual, no una acción de la biblioteca. Léalo antes de enviarlo.
 ui-dialog-send-command-confirm = Enviar
 ui-dialog-broadcast-command-title = ¿Enviar este comando a varias sesiones?
 ui-dialog-broadcast-command-body = El comando de abajo se escribe en cada sesión indicada ({ $count }) y se ejecuta allí con Intro, con los derechos de cada sesión. Heimdall pregunta cada vez.
