@@ -37,6 +37,7 @@ use serde_json::{Map, Value};
 
 use super::command_library;
 use super::date_time::{Instant, round_trip_utc};
+use super::library_transfer;
 use super::private_file::write_private;
 use super::uuid_generator::{self, UuidFormat, UuidVersion};
 
@@ -1350,6 +1351,10 @@ pub enum LibraryError {
     Format,
     /// It holds more than [`MAX_IMPORT_ACTIONS`] actions.
     TooManyActions,
+    /// It holds more than [`runbooks::MAX_RUNBOOKS`] runbooks.
+    TooManyRunbooks,
+    /// It is written by another major version of the format: left alone.
+    Version(String),
 }
 
 /// What an import did, as the C# `CommandLibraryImportResult`.
@@ -1425,15 +1430,8 @@ impl UserLibrary {
     /// The library as the C# export writes it.
     #[must_use]
     pub fn export(&self) -> String {
-        let mut envelope = Map::new();
-        envelope.insert("schemaVersion".to_owned(), Value::from(SCHEMA_VERSION));
-        envelope.insert("exportDate".to_owned(), Value::from(now_text()));
-        envelope.insert("totalActions".to_owned(), Value::from(self.commands.len()));
-        envelope.insert(
-            "actions".to_owned(),
-            serde_json::to_value(&self.commands).unwrap_or_default(),
-        );
-        serde_json::to_string_pretty(&Value::Object(envelope)).unwrap_or_default()
+        let all: Vec<&UserCommand> = self.commands.iter().collect();
+        library_transfer::export_text(&all, &[])
     }
 
     /// Adds the commands of `json`, a C# export or a single action, as the C# import does
@@ -1462,6 +1460,9 @@ impl UserLibrary {
                 .map_err(|_| LibraryError::Format)?
         } else if root.get("id").is_some() && root.get("title").is_some() {
             vec![serde_json::from_value(root).map_err(|_| LibraryError::Format)?]
+        } else if matches!(root.get("runbooks"), Some(Value::Array(_))) {
+            // A file of runbooks alone: their import is `library_transfer`'s.
+            Vec::new()
         } else {
             return Err(LibraryError::Format);
         };
@@ -1482,6 +1483,12 @@ impl UserLibrary {
                 None
             };
             normalize_quoting(&mut action);
+            // The C# keeps the shipped actions as they are (`existing.IsUserCreated` is false:
+            // skipped), so an export of everything imports without copying the catalogue.
+            let basic = basic.or_else(|| {
+                (untrusted && in_catalogue(&action))
+                    .then_some(command_library::CommandIssue::InCatalogue)
+            });
             let issue = basic.or_else(|| {
                 untrusted
                     .then(|| command_library::validate_import(&action))
@@ -1721,6 +1728,12 @@ fn normalize_quoting(action: &mut UserCommand) {
     }
 }
 
+/// Whether `action` is one the catalogue ships, by its identity (the shipped files carry no
+/// other).
+fn in_catalogue(action: &UserCommand) -> bool {
+    !action.id.is_empty() && command_library::shipped().get(&action.id).is_some()
+}
+
 /// A new identity, a version 4 UUID as the C# `Guid.NewGuid`; a time-based text when the
 /// system gives no random bytes.
 fn new_identity() -> String {
@@ -1738,7 +1751,7 @@ fn now_seconds() -> i64 {
 }
 
 /// Now in UTC as .NET writes a `DateTime`.
-fn now_text() -> String {
+pub(super) fn now_text() -> String {
     round_trip_utc(Instant::from_unix_seconds(now_seconds()))
 }
 

@@ -523,6 +523,9 @@ pub enum CommandIssue {
     ChoiceWithoutValues(TemplatePlatform, String),
     /// A default the generator refuses.
     RefusedDefault(TemplatePlatform),
+    /// An action the catalogue already ships: the shipped one is kept as it is, as the C#
+    /// keeps its seeded actions.
+    InCatalogue,
 }
 
 /// The templates of `command` with the platform each is written for.

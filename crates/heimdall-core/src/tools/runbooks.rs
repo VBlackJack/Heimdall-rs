@@ -714,7 +714,7 @@ fn is_identity(id: &str) -> bool {
 }
 
 /// A new identity, a version 4 UUID as the C# `Guid.NewGuid`.
-fn new_identity() -> String {
+pub(super) fn new_identity() -> String {
     uuid_generator::generate(UuidVersion::V4).map_or_else(
         |_| {
             format!(
