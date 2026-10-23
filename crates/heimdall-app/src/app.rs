@@ -79,6 +79,7 @@ mod bulk_edit;
 mod bulk_password;
 mod citrix_import;
 mod citrix_launch;
+mod command_capture;
 mod connect_as;
 mod connection_history;
 mod credential_guard_gate;
@@ -171,6 +172,10 @@ pub use broadcast::BroadcastMessage;
 pub use bulk_edit::{BulkField, BulkRefusal};
 pub use bulk_password::{BulkPasswordRefusal, BulkPasswordSkips, bulk_password_refusal};
 pub use citrix_import::CitrixImportOutcome;
+pub use command_capture::{
+    CapturedCommand, LINUX_LINE_SEPARATOR, WINDOWS_LINE_SEPARATOR, capture_platform,
+    clean_selection, to_command_line,
+};
 pub use connect_as::ConnectAs;
 pub use csharp_settings_import::{CarriedCertificates, ImportedPreferences};
 pub use detail::SavedCredentials;
@@ -537,6 +542,9 @@ pub enum Message {
     Share(ShareMessage),
     /// Something about "Copy output, secrets masked".
     MaskedCopy(MaskedCopyMessage),
+    /// Keep the selection of a session of text for the command library, as the C#
+    /// "Save selection to Command Library": the window then opens the library on it.
+    CaptureCommand(TabId),
     /// The Scheduled page and its dialog.
     Scheduled(ScheduledMessage),
     /// Show a tab.
@@ -1071,6 +1079,7 @@ impl fmt::Debug for Message {
             Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
             Self::Share(message) => write!(f, "Share({message:?})"),
             Self::MaskedCopy(message) => write!(f, "MaskedCopy({message:?})"),
+            Self::CaptureCommand(tab) => write!(f, "CaptureCommand({})", tab.value()),
             Self::Scheduled(_) => f.write_str("Scheduled"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::MoveTab { tab, onto } => {
@@ -3416,6 +3425,9 @@ pub struct App {
     /// The commands of the command library written into terminals, until the window takes
     /// them for its history.
     sent_commands: Vec<SentCommand>,
+    /// A command captured from a terminal, with the facts of its session, until the window
+    /// opens the command library on it.
+    pending_capture: Option<crate::tools::ToolContext>,
     /// The tabs detached to windows of their own, off the strip.
     floating: Vec<Floating>,
     /// Window-level dialog, if any.
@@ -3658,6 +3670,7 @@ impl App {
             active: None,
             closing_pane: None,
             sent_commands: Vec::new(),
+            pending_capture: None,
             floating: Vec::new(),
             dialog,
             route_test: None,
@@ -3934,6 +3947,10 @@ impl App {
             Message::Tunnel(message) => self.tunnel_message(message),
             Message::Share(message) => self.share_message(message),
             Message::MaskedCopy(message) => self.masked_copy_message(message),
+            Message::CaptureCommand(tab) => {
+                self.capture_command(tab);
+                Vec::new()
+            }
             Message::Scheduled(message) => {
                 self.scheduled_message(message);
                 Vec::new()

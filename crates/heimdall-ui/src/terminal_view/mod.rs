@@ -118,6 +118,7 @@ pub struct TerminalView<'a, M> {
     wrap: fn(AppMessage) -> M,
     interactive: bool,
     on_zoom: Option<fn(Zoom) -> M>,
+    on_capture_menu: Option<fn(TabId) -> M>,
     ctrl_v: heimdall_core::settings::CtrlVPaste,
     ctrl_k: heimdall_core::settings::CtrlKTerminal,
     /// Windows asks for reduced motion: the cursor does not blink.
@@ -136,6 +137,7 @@ impl<'a, M> TerminalView<'a, M> {
             wrap,
             interactive: true,
             on_zoom: None,
+            on_capture_menu: None,
             ctrl_v: heimdall_core::settings::CtrlVPaste::default(),
             ctrl_k: heimdall_core::settings::CtrlKTerminal::default(),
             reduced_motion: false,
@@ -196,6 +198,15 @@ impl<'a, M> TerminalView<'a, M> {
     #[must_use]
     pub fn on_zoom(mut self, on_zoom: fn(Zoom) -> M) -> Self {
         self.on_zoom = Some(on_zoom);
+        self
+    }
+
+    /// Shift with the right button asks for the menu that saves the selection to the command
+    /// library with `on_capture_menu`, as the C# terminal page does, instead of pasting; a
+    /// right click without Shift still pastes. Left unset, Shift+right-click does nothing.
+    #[must_use]
+    pub fn on_capture_menu(mut self, on_capture_menu: fn(TabId) -> M) -> Self {
+        self.on_capture_menu = Some(on_capture_menu);
         self
     }
 
@@ -323,6 +334,16 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 let Some(button) = mouse_button(*button) else {
                     return;
                 };
+                // Shift+right-click is the capture menu's, never a paste: where the capture is
+                // not offered (a detached window, a session still connecting) it does
+                // nothing, so a click meant for the menu cannot type the clipboard.
+                if button == MouseButton::Right && state.modifiers.shift() {
+                    if let Some(open) = self.on_capture_menu {
+                        shell.publish(open(self.tab));
+                    }
+                    shell.capture_event();
+                    return;
+                }
                 let at = self.metrics.cell_at(bounds, grid, position);
                 let now = Instant::now();
                 state.clicks = match state.last_press {

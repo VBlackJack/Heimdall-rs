@@ -126,10 +126,12 @@ pub use app::{
     VaultTicket, WHEEL_LINES, bulk_password_refusal, folder_label, local_date_time,
     master_password_problem, open_vault, search_folded, should_auto_lock,
 };
+pub use app::{CapturedCommand, capture_platform, clean_selection, to_command_line};
 pub use app::{CarriedCertificates, ImportedPreferences};
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
+pub use app::{LINUX_LINE_SEPARATOR, WINDOWS_LINE_SEPARATOR};
 pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use app::{MaskedCopy, MaskedCopyMessage, MaskedView};

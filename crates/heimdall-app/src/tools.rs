@@ -592,6 +592,9 @@ pub struct ToolContext {
     /// The terminal tab of that session, when the tool was opened from one shown: the
     /// command library types into it first.
     pub session_tab: Option<crate::ids::TabId>,
+    /// A command captured from that session's terminal, for the command library to open its
+    /// editor on: the selection, cleaned and joined, never run.
+    pub capture: Option<crate::app::CapturedCommand>,
 }
 
 impl ToolContext {

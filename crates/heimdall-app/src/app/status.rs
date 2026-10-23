@@ -237,6 +237,8 @@ pub enum Notice {
     MaskedCopyCopied,
     /// The tab has no terminal text to copy, as the C# `MaskedCopyStatusNoTerminal`.
     MaskedCopyNoTerminal,
+    /// Nothing is selected in the terminal to save to the command library.
+    CaptureNothingSelected,
     /// No file dialog could be shown, or its answer could not be used: what the user is
     /// told, in their language.
     FileDialogFailed(String),

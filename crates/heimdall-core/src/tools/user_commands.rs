@@ -690,7 +690,10 @@ fn check_value(
     };
     // A control character is refused for every type, the unknown ones included: a line feed
     // submits the command on the terminal before it is read, and no quoting stops that.
-    if value.chars().any(char::is_control) {
+    if value
+        .chars()
+        .any(|c| c.is_control() || crate::invisible::is_invisible(c))
+    {
         return Err(ValueError::Control(label()));
     }
     if value.trim().is_empty() {
@@ -1652,7 +1655,12 @@ fn template_of(
     if pattern.chars().count() > MAX_PATTERN_LENGTH {
         return Err(DraftError::PatternTooLong);
     }
-    if pattern.chars().any(char::is_control) {
+    // A control character, or one that shows nothing (direction overrides, tags, zero-width):
+    // the pattern would not read as what it runs.
+    if pattern
+        .chars()
+        .any(|c| c.is_control() || crate::invisible::is_invisible(c))
+    {
         return Err(DraftError::PatternMultiline);
     }
     let names = placeholders(pattern);

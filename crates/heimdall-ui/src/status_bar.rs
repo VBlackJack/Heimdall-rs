@@ -548,6 +548,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::ScreenshotFailed => fl!("ui-status-screenshot-failed"),
             Notice::MaskedCopyCopied => fl!("ui-masked-copy-copied"),
             Notice::MaskedCopyNoTerminal => fl!("ui-masked-copy-no-terminal"),
+            Notice::CaptureNothingSelected => fl!("ui-status-capture-nothing-selected"),
             Notice::FileDialogFailed(said) => said.clone(),
             // As the C# toast after its Send keys menu.
             Notice::KeysSent(keys) => fl!(

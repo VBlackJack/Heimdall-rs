@@ -24,6 +24,11 @@ work can be followed. It is not usable yet and no official release is published.
 - Copy output, secrets masked (Ctrl+Shift+M, the tab menu): the session text is masked by
   rule, reviewed in a preview and copied only on Copy. Best effort: the preview has to be read
   before it is shared.
+- Capture a command from the terminal (Ctrl+Shift+L, or Shift+right-click then "Save
+  selection to Command Library"): the selection of an SSH, Telnet, WinRM or local shell opens
+  the editor of a new action, its pattern for the session's platform, risk at Run, the
+  protocol as a tag. A multi-line selection is joined with `;` (Windows) or `&&` (Linux) for
+  review. Terminal escape sequences and control characters are removed; nothing is sent or run.
 - RDP and VNC: remote desktop sessions, with an `mstsc` fallback on Windows.
 - Tools: the network and security tools ported from the C#.
 - Localisation: English, French and Spanish, every string a Fluent key.

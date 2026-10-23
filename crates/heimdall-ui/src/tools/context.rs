@@ -306,11 +306,18 @@ pub(super) fn messages(tool: ToolId, context: &ToolContext) -> Vec<ToolMessage> 
         // The command library opened from a session, as the C# `Initialize` reads it: the
         // platform filter, the host and the user, told as one message.
         ToolId::CmdLib => {
+            let mut told = Vec::new();
             if context.has_session() {
-                vec![ToolMessage::CmdLib(session_message(context))]
-            } else {
-                Vec::new()
+                told.push(ToolMessage::CmdLib(session_message(context)));
             }
+            // A command captured in the terminal of that session, after the session so the
+            // editor opens on a library that knows it.
+            if let Some(capture) = &context.capture {
+                told.push(ToolMessage::CmdLib(CommandLibraryMessage::Capture(
+                    capture.clone(),
+                )));
+            }
+            told
         }
         // The others read nothing of it, as their C# views.
         _ => Vec::new(),
