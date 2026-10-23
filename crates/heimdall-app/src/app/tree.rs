@@ -96,16 +96,22 @@ impl ProfileKind {
 
     /// The platform the protocol suggests for its far end when the profile declares none, as
     /// the C# `RemoteOsResolver`: SSH reads as Linux, a remote desktop or `WinRM` as Windows,
-    /// a program on this computer as this computer's system; anything else cannot be told.
+    /// a program on this computer as Windows (the C# `LOCAL`); anything else, SFTP included,
+    /// cannot be told.
     #[must_use]
     pub fn platform_guess(self) -> RemoteOs {
         match self {
             Self::Rdp | Self::WinRm => RemoteOs::Windows,
             Self::Local if cfg!(windows) => RemoteOs::Windows,
-            Self::Ssh | Self::Sftp | Self::Local => RemoteOs::Linux,
-            Self::Telnet | Self::Vnc | Self::Ftp | Self::Citrix | Self::Web | Self::Tool => {
-                RemoteOs::Auto
-            }
+            Self::Ssh => RemoteOs::Linux,
+            Self::Sftp
+            | Self::Local
+            | Self::Telnet
+            | Self::Vnc
+            | Self::Ftp
+            | Self::Citrix
+            | Self::Web
+            | Self::Tool => RemoteOs::Auto,
         }
     }
 }

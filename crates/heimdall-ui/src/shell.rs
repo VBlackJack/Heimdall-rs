@@ -3246,11 +3246,27 @@ impl Shell {
                 self.menu = None;
                 self.page = Page::Tab;
                 let context = crate::tools::inherited_context(&self.app, tool);
-                self.app.update(AppMessage::Tools(ToolsMessage::Open {
+                let tabs_before = self.app.tabs.len();
+                let session = (tool == heimdall_app::tools::ToolId::CmdLib
+                    && context.has_session())
+                .then(|| crate::tools::session_message(&context));
+                let effects = self.app.update(AppMessage::Tools(ToolsMessage::Open {
                     tool,
                     title: crate::tools::tab_title(tool, &context),
                     context,
-                }))
+                }));
+                // A library tab that was already open is shown again, not opened anew: it is
+                // told the session it is now opened from (a new tab is told as it is made).
+                if let Some(session) = session
+                    && self.app.tabs.len() == tabs_before
+                    && let Some(tab) = self.app.active_tab().map(|tab| tab.id)
+                {
+                    let _ = self.update(Message::Tool(
+                        tab,
+                        crate::tools::ToolMessage::CmdLib(session),
+                    ));
+                }
+                effects
             }
             Message::NewNote { id, template } => {
                 self.menu = None;

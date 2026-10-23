@@ -306,18 +306,25 @@ pub(super) fn messages(tool: ToolId, context: &ToolContext) -> Vec<ToolMessage> 
         // The command library opened from a session, as the C# `Initialize` reads it: the
         // platform filter, the host and the user, told as one message.
         ToolId::CmdLib => {
-            if context.host.is_none() && context.user.is_none() && context.remote_os.is_auto() {
-                Vec::new()
+            if context.has_session() {
+                vec![ToolMessage::CmdLib(session_message(context))]
             } else {
-                vec![ToolMessage::CmdLib(CommandLibraryMessage::Session {
-                    host: context.host.clone(),
-                    user: context.user.clone(),
-                    platform: context.remote_os,
-                })]
+                Vec::new()
             }
         }
         // The others read nothing of it, as their C# views.
         _ => Vec::new(),
+    }
+}
+
+/// The message that tells a command library the session it belongs to.
+#[must_use]
+pub fn session_message(context: &ToolContext) -> CommandLibraryMessage {
+    CommandLibraryMessage::Session {
+        host: context.host.clone(),
+        user: context.user.clone(),
+        platform: context.remote_os,
+        tab: context.session_tab,
     }
 }
 

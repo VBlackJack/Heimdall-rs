@@ -196,15 +196,18 @@ impl App {
         let from_tab = self
             .shown_tab()
             .filter(|tab| tab.tool().is_none())
-            .map(|tab| &tab.profile)
-            .map(|profile| {
-                ToolContext::of_session(
-                    profile.endpoint().map(|(host, _)| host),
-                    profile.username(),
-                    profile.platform(),
-                )
+            .map(|tab| {
+                let profile = &tab.profile;
+                ToolContext {
+                    session_tab: Some(tab.id),
+                    ..ToolContext::of_session(
+                        profile.endpoint().map(|(host, _)| host),
+                        profile.username(),
+                        profile.platform(),
+                    )
+                }
             })
-            .filter(|context| !context.is_empty());
+            .filter(ToolContext::has_session);
         if from_tab.is_some() {
             return from_tab;
         }
@@ -219,7 +222,7 @@ impl App {
             summary.username.as_deref(),
             platform,
         ))
-        .filter(|context| !context.is_empty())
+        .filter(ToolContext::has_session)
     }
 
     /// The gateways a network tool can be routed through, as the C# "Route via" lists them.

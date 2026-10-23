@@ -121,6 +121,8 @@ pub enum CommandLibraryMessage {
         user: Option<String>,
         /// The platform of its far end; `Auto` when it cannot be told.
         platform: RemoteOs,
+        /// Its terminal tab, which commands go to first.
+        tab: Option<TabId>,
     },
     /// Limit the history to the session's host, or show every host's.
     HistoryThisHostOnly(bool),
@@ -370,6 +372,8 @@ pub struct CommandLibraryPane {
     notice: Option<Notice>,
     /// The session the library was opened for, when it was.
     session: Option<Session>,
+    /// The terminal tab of the session the library was opened from.
+    session_tab: Option<TabId>,
     /// Whether the history shows only the rows of the session's host: ticked when the
     /// library belongs to a session, as the C# default.
     history_this_host_only: bool,
@@ -426,10 +430,13 @@ impl CommandLibraryPane {
     }
 
     /// The terminal a command goes to: the one chosen while it is still there, else the
-    /// first.
+    /// session the library was opened from while it is still offered, else the first.
     fn effective_target(&self) -> Option<&SendTarget> {
-        self.target
-            .and_then(|chosen| self.targets.iter().find(|each| each.tab == chosen))
+        let offered = |wanted: Option<TabId>| {
+            wanted.and_then(|tab| self.targets.iter().find(|each| each.tab == tab))
+        };
+        offered(self.target)
+            .or_else(|| offered(self.session_tab))
             .or_else(|| self.targets.first())
     }
 
@@ -490,7 +497,8 @@ impl CommandLibraryPane {
                 host,
                 user,
                 platform,
-            } => self.open_for_session(host, user, platform),
+                tab,
+            } => self.open_for_session(host, user, platform, tab),
             CommandLibraryMessage::HistoryThisHostOnly(on) => self.history_this_host_only = on,
             CommandLibraryMessage::Broadcast(command) => {
                 self.selected = Some(command.clone());
@@ -745,7 +753,14 @@ impl CommandLibraryPane {
     /// `InitializeAsync` do: the platform filter on the session's platform (every platform when
     /// it cannot be told), its host and user kept to fill the parameters, and the history
     /// limited to its host.
-    fn open_for_session(&mut self, host: Option<String>, user: Option<String>, platform: RemoteOs) {
+    fn open_for_session(
+        &mut self,
+        host: Option<String>,
+        user: Option<String>,
+        platform: RemoteOs,
+        tab: Option<TabId>,
+    ) {
+        self.session_tab = tab;
         let given = |value: Option<String>| {
             value
                 .map(|text| text.trim().to_owned())
@@ -3263,6 +3278,7 @@ mod tests {
             host: Some(host.to_owned()),
             user: user.map(str::to_owned),
             platform: os,
+            tab: None,
         });
     }
 
@@ -3316,6 +3332,7 @@ mod tests {
             host: Some("  ".to_owned()),
             user: None,
             platform: RemoteOs::Auto,
+            tab: None,
         });
         assert_eq!(pane.session, None);
         assert_eq!(pane.platform, None);
@@ -3661,5 +3678,39 @@ mod tests {
             panic!("asked");
         };
         assert_eq!(command, "ping -c 3 localhost");
+    }
+
+    #[test]
+    fn commands_go_first_to_the_terminal_of_the_session_the_library_was_opened_from() {
+        let mut pane = CommandLibraryPane::default();
+        let [first, second, third] = tab_ids();
+        pane.set_targets(vec![
+            target(first, "A"),
+            target(second, "B"),
+            target(third, "C"),
+        ]);
+        pane.update(CommandLibraryMessage::Session {
+            host: Some("web.lab".to_owned()),
+            user: None,
+            platform: RemoteOs::Linux,
+            tab: Some(second),
+        });
+        let ping = trace(&mut pane, "10.0.0.1");
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Insert(ping.clone())),
+            Outcome::Insert { target, .. } if target == second
+        ));
+        // The user's own choice wins, and a session terminal gone leaves the first.
+        pane.update(CommandLibraryMessage::Target(third));
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Insert(ping.clone())),
+            Outcome::Insert { target, .. } if target == third
+        ));
+        pane.target = None;
+        pane.set_targets(vec![target(first, "A"), target(third, "C")]);
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Insert(ping)),
+            Outcome::Insert { target, .. } if target == first
+        ));
     }
 }

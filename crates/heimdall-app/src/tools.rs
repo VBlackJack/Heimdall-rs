@@ -589,6 +589,9 @@ pub struct ToolContext {
     /// The platform of that session's far end, as the C# `RemoteOs`: what the profile
     /// declares, else the protocol's guess; `Auto` when it cannot be told.
     pub remote_os: RemoteOs,
+    /// The terminal tab of that session, when the tool was opened from one shown: the
+    /// command library types into it first.
+    pub session_tab: Option<crate::ids::TabId>,
 }
 
 impl ToolContext {
@@ -631,13 +634,19 @@ impl ToolContext {
         }
     }
 
-    /// Whether it holds neither a host nor an argument nor a session's facts, as the C#
-    /// `hasContext` reads it (`MainViewModel.cs:1305`): such a tool reaching no host shows its
-    /// open tab again.
+    /// Whether it holds neither a host nor an argument, as the C# `hasContext` reads it
+    /// (`MainViewModel.cs:1305`): such a tool reaching no host shows its open tab again.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         let blank = |value: &Option<String>| value.as_deref().is_none_or(|v| v.trim().is_empty());
-        blank(&self.host) && blank(&self.argument) && blank(&self.user) && self.remote_os.is_auto()
+        blank(&self.host) && blank(&self.argument)
+    }
+
+    /// Whether it carries a session's facts: a host, an account or a platform.
+    #[must_use]
+    pub fn has_session(&self) -> bool {
+        let blank = |value: &Option<String>| value.as_deref().is_none_or(|v| v.trim().is_empty());
+        !(blank(&self.host) && blank(&self.user) && self.remote_os.is_auto())
     }
 
     /// What its title names after the tool's: the host, else the argument.

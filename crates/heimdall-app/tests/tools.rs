@@ -670,14 +670,68 @@ fn the_session_shown_gives_its_context_before_the_one_selected() {
 }
 
 #[test]
-fn a_context_carrying_a_session_is_not_empty_and_trims_what_it_holds() {
+fn a_context_carrying_a_session_trims_what_it_holds_and_only_a_host_makes_it_not_empty() {
     use heimdall_core::profile::RemoteOs;
     let context = ToolContext::of_session(Some(" web.lab "), Some(" ops "), RemoteOs::Linux);
     assert!(!context.is_empty());
+    assert!(context.has_session());
     assert_eq!(context.host.as_deref(), Some("web.lab"));
     assert_eq!(context.user.as_deref(), Some("ops"));
-    // Only a platform is still something to tell the tool.
-    assert!(!ToolContext::of_session(None, None, RemoteOs::Windows).is_empty());
+    // As the C# hasContext: a user or a platform alone leaves the context empty, so the open
+    // library tab is shown again (and told the session).
+    let platform = ToolContext::of_session(None, Some("ops"), RemoteOs::Windows);
+    assert!(platform.is_empty() && platform.has_session());
     // Blanks are nothing.
-    assert!(ToolContext::of_session(Some("  "), Some(""), RemoteOs::Auto).is_empty());
+    let blank = ToolContext::of_session(Some("  "), Some(""), RemoteOs::Auto);
+    assert!(blank.is_empty() && !blank.has_session());
+}
+
+#[test]
+fn the_protocol_guess_follows_the_csharp_resolver() {
+    use heimdall_app::ProfileKind;
+    use heimdall_core::profile::RemoteOs;
+    assert_eq!(ProfileKind::Ssh.platform_guess(), RemoteOs::Linux);
+    assert_eq!(ProfileKind::Rdp.platform_guess(), RemoteOs::Windows);
+    assert_eq!(ProfileKind::WinRm.platform_guess(), RemoteOs::Windows);
+    for kind in [
+        ProfileKind::Sftp,
+        ProfileKind::Telnet,
+        ProfileKind::Vnc,
+        ProfileKind::Ftp,
+    ] {
+        assert_eq!(kind.platform_guess(), RemoteOs::Auto, "{kind:?}");
+    }
+    assert_eq!(
+        ProfileKind::Local.platform_guess(),
+        if cfg!(windows) {
+            RemoteOs::Windows
+        } else {
+            RemoteOs::Auto
+        }
+    );
+}
+
+#[test]
+fn a_library_context_with_no_host_reuses_the_open_library_tab() {
+    use heimdall_core::profile::RemoteOs;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let open = |app: &mut App, context: ToolContext| {
+        let _ = app.update(Message::Tools(ToolsMessage::Open {
+            tool: ToolId::CmdLib,
+            title: "CMDLIB".to_owned(),
+            context,
+        }));
+    };
+    open(&mut app, ToolContext::default());
+    open(
+        &mut app,
+        ToolContext::of_session(None, Some("ops"), RemoteOs::Windows),
+    );
+    assert_eq!(app.tabs.len(), 1, "shown again, not opened anew");
+    open(
+        &mut app,
+        ToolContext::of_session(Some("web.lab"), None, RemoteOs::Linux),
+    );
+    assert_eq!(app.tabs.len(), 2, "a host opens a tab of its own");
 }
