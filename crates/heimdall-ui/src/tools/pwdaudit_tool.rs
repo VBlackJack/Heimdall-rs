@@ -190,15 +190,25 @@ impl PwdAuditPane {
         }
     }
 
-    /// The colour of a score's word, as the C# `UpdateStrengthBar`: the error, the warning,
+    /// The colour of a score's bar, as the C# `UpdateStrengthBar`: the error, the warning,
     /// the warning's text and the success brushes.
-    fn score_color(label: ScoreLabel, theme: &Theme) -> Color {
+    fn bar_color(label: ScoreLabel, theme: &Theme) -> Color {
         let palette = theme.extended_palette();
         match label {
             ScoreLabel::Weak => palette.danger.base.color,
             ScoreLabel::Fair => palette.warning.strong.color,
             ScoreLabel::Good => palette.warning.base.color,
             ScoreLabel::Strong => palette.success.base.color,
+        }
+    }
+
+    /// The colour of a score's word: the derived text colour of the bar's meaning, 4.5:1 on
+    /// the card.
+    fn label_color(label: ScoreLabel, theme: &Theme) -> Color {
+        match label {
+            ScoreLabel::Weak => styles::error_text_color(theme),
+            ScoreLabel::Fair | ScoreLabel::Good => styles::warning_text_color(theme),
+            ScoreLabel::Strong => styles::success_text_color(theme),
         }
     }
 
@@ -279,7 +289,7 @@ impl PwdAuditPane {
                 .size(font_size::BODY)
                 .font(styles::SEMIBOLD)
                 .style(move |theme: &Theme| text::Style {
-                    color: Some(Self::score_color(label, theme)),
+                    color: Some(Self::label_color(label, theme)),
                 }),
         ];
         let bar = progress_bar(0.0..=SCORE_MAX, f32::from(analysis.score))
@@ -287,7 +297,7 @@ impl PwdAuditPane {
             .style(move |theme: &Theme| {
                 let default = crate::styles::progress(theme);
                 progress_bar::Style {
-                    bar: iced::Background::Color(Self::score_color(label, theme)),
+                    bar: iced::Background::Color(Self::bar_color(label, theme)),
                     ..default
                 }
             });
@@ -298,12 +308,11 @@ impl PwdAuditPane {
                     .size(font_size::BODY)
                     .width(MARK_WIDTH)
                     .style(move |theme: &Theme| {
-                        let palette = theme.extended_palette();
                         text::Style {
                             color: Some(if passed {
-                                palette.success.base.color
+                                styles::success_text_color(theme)
                             } else {
-                                palette.danger.base.color
+                                styles::error_text_color(theme)
                             }),
                         }
                     }),

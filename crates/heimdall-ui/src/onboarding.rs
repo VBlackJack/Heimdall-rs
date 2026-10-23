@@ -230,7 +230,7 @@ pub fn card<'a>(tour: &Tour) -> Element<'a, Message> {
     .spacing(spacing::SM)
     .push(tour.save_failed().then(|| {
         text(fl!("ui-onboarding-save-failed"))
-            .style(text::danger)
+            .style(styles::error_text)
             .width(Length::Fill)
             .center()
     }))

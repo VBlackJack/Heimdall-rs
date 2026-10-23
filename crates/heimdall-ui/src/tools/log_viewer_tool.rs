@@ -647,18 +647,17 @@ pub enum LogMark {
 impl LogMark {
     /// How it is drawn in `theme`.
     fn format(&self, theme: &Theme) -> highlighter::Format<Font> {
-        let palette = theme.extended_palette();
         match self {
             Self::Error => highlighter::Format {
-                color: Some(palette.danger.base.color),
+                color: Some(styles::error_text_color(theme)),
                 font: None,
             },
             Self::Warning => highlighter::Format {
-                color: Some(palette.warning.base.color),
+                color: Some(styles::warning_text_color(theme)),
                 font: None,
             },
             Self::Match => highlighter::Format {
-                color: Some(palette.primary.base.color),
+                color: Some(styles::accent_text_color(theme)),
                 font: Some(Font {
                     weight: iced::font::Weight::Bold,
                     ..super::BOX_FONT

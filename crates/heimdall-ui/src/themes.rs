@@ -21,8 +21,9 @@
 //! Dracula reproduces the Dracula Theme palette by Zeno Rocha, under the MIT license, and
 //! Drakul is derived from it; `THIRD-PARTY-NOTICES.md` says so.
 
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 use heimdall_core::settings::{Accent, AppTheme};
 use iced::theme::palette::{Extended, Pair, Palette};
@@ -486,6 +487,258 @@ fn palette_colors(theme: &Theme) -> ThemeColors {
     }
 }
 
+/// The least contrast WCAG 1.4.3 asks of small text.
+pub const MIN_TEXT_CONTRAST: f64 = 4.5;
+
+/// The least contrast WCAG 1.4.11 asks of a line that marks out a region.
+pub const MIN_BOUNDARY_CONTRAST: f64 = 3.0;
+
+/// How far the lightness moves per step, on the 0 to 1 HSL scale, as the C#
+/// `ThemeTextColours.LightnessStep`.
+const LIGHTNESS_STEP: f64 = 0.01;
+
+/// Enough steps to walk the whole lightness scale from either end.
+const MAX_LIGHTNESS_STEPS: u32 = 100;
+
+/// Perceived (Rec. 601) luminance below which a background counts as dark, as the C#
+/// `ThemeLuminance.DarkThreshold`.
+const DARK_THRESHOLD: f64 = 0.5;
+
+/// A colour derived from the theme's own, to read on both grounds of the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Derived {
+    /// Error text (`ErrorTextBrush`), from the danger colour.
+    Error,
+    /// Warning text (`WarningTextBrush`).
+    Warning,
+    /// Success text (`SuccessTextBrush`).
+    Success,
+    /// Information text (`InfoTextBrush`), from the theme's cyan, which `ThemeForge` names
+    /// `InfoColor`.
+    Info,
+    /// Accent text (`AccentTextBrush`), from the accent chosen.
+    Accent,
+    /// A line that marks out a region (`BorderStrongBrush`), from the border colour.
+    BorderStrong,
+}
+
+impl Derived {
+    /// Every derived colour.
+    pub const ALL: [Self; 6] = [
+        Self::Error,
+        Self::Warning,
+        Self::Success,
+        Self::Info,
+        Self::Accent,
+        Self::BorderStrong,
+    ];
+
+    /// The contrast the colour must reach on the window background and on a card: 4.5 for
+    /// text, 3 for a boundary line, as the C# `ThemeTextColours.Pairs`.
+    #[must_use]
+    pub const fn target(self) -> f64 {
+        match self {
+            Self::BorderStrong => MIN_BOUNDARY_CONTRAST,
+            _ => MIN_TEXT_CONTRAST,
+        }
+    }
+}
+
+/// What a derivation was asked: the colour, both grounds (as 8-bit RGBA) and the contrast.
+type Question = ([u8; 4], [u8; 4], [u8; 4], u64);
+
+/// Every answer given so far. A window draws with a handful of themes, so the table holds a
+/// few dozen entries; a style call is a lookup, not a lightness walk.
+static ANSWERS: LazyLock<Mutex<HashMap<Question, Color>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The colour `role` takes in `theme`: the theme's own where it already reaches the
+/// contrast the role asks of the window background and of a card, the nearest one that does
+/// otherwise. No allocation on the way, but for the information colour, which is looked up
+/// by the theme's name.
+#[must_use]
+pub fn derived(theme: &Theme, role: Derived) -> Color {
+    let extended = theme.extended_palette();
+    let source = match role {
+        Derived::Error => extended.danger.base.color,
+        Derived::Warning => extended.warning.base.color,
+        Derived::Success => extended.success.base.color,
+        Derived::Info => colors_of(theme).cyan,
+        Derived::Accent => theme.palette().primary,
+        // The C# `BorderColor`: the current line, the text in high contrast, where the
+        // current line is black ([`build`] puts the text in the strong shade there).
+        Derived::BorderStrong
+            if extended.background.strong.color == extended.background.base.text =>
+        {
+            extended.background.base.text
+        }
+        Derived::BorderStrong => extended.background.weak.color,
+    };
+    let (background, card) = (theme.palette().background, extended.background.weak.color);
+    let question = (
+        source.into_rgba8(),
+        background.into_rgba8(),
+        card.into_rgba8(),
+        role.target().to_bits(),
+    );
+    if let Ok(answers) = ANSWERS.lock()
+        && let Some(answer) = answers.get(&question)
+    {
+        return *answer;
+    }
+    let answer = derive(source, background, card, role.target());
+    if let Ok(mut answers) = ANSWERS.lock() {
+        answers.insert(question, answer);
+    }
+    answer
+}
+
+/// The colour closest to `colour`, same hue and saturation, that reaches `target` against
+/// both grounds; `colour` itself when it already does. Its lightness moves one percent at a
+/// time, away from the grounds, as the C# `ThemeTextColours.Derive`.
+#[must_use]
+pub fn derive(colour: Color, background: Color, card: Color, target: f64) -> Color {
+    let readable =
+        |c: Color| contrast_ratio(c, background) >= target && contrast_ratio(c, card) >= target;
+    if readable(colour) {
+        return colour;
+    }
+    let lighten = perceived_luminance(background) < DARK_THRESHOLD;
+    let [r, g, b, _] = colour.into_rgba8();
+    let (hue, saturation, lightness) = to_hsl(r, g, b);
+    let mut candidate = colour;
+    for step in 1..=MAX_LIGHTNESS_STEPS {
+        let moved = f64::from(step) * LIGHTNESS_STEP;
+        let lightness = if lighten {
+            (lightness + moved).min(1.0)
+        } else {
+            (lightness - moved).max(0.0)
+        };
+        let (r, g, b) = from_hsl(hue, saturation, lightness);
+        candidate = Color {
+            a: colour.a,
+            ..Color::from_rgb8(r, g, b)
+        };
+        if readable(candidate) {
+            return candidate;
+        }
+    }
+    candidate
+}
+
+/// Black or white, whichever reads better on `fill`: the text of a badge on a raw status
+/// colour. At least 4.5:1 on any fill, the worst case being a mid-bright one.
+#[must_use]
+pub fn text_on(fill: Color) -> Color {
+    if contrast_ratio(Color::BLACK, fill) >= contrast_ratio(Color::WHITE, fill) {
+        Color::BLACK
+    } else {
+        Color::WHITE
+    }
+}
+
+/// WCAG 2 contrast ratio of two opaque colours, from 1 to 21, in double precision as the
+/// C# `ThemeTextColours.ContrastRatio`.
+#[must_use]
+pub fn contrast_ratio(a: Color, b: Color) -> f64 {
+    let (a, b) = (relative_luminance(a), relative_luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// Relative luminance of `color`, as WCAG 2, from its 8-bit channels.
+fn relative_luminance(color: Color) -> f64 {
+    let linear = |channel: u8| {
+        let c = f64::from(channel) / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let [r, g, b, _] = color.into_rgba8();
+    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+}
+
+/// Rec. 601 luma of `color`, from 0 to 1.
+fn perceived_luminance(color: Color) -> f64 {
+    let [r, g, b, _] = color.into_rgba8();
+    (0.299 * f64::from(r) + 0.587 * f64::from(g) + 0.114 * f64::from(b)) / 255.0
+}
+
+/// Hue, saturation and lightness, each from 0 to 1, of an 8-bit colour.
+#[allow(clippy::float_cmp)] // `max` is one of the three channels, exactly.
+fn to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
+    let (r, g, b) = (
+        f64::from(r) / 255.0,
+        f64::from(g) / 255.0,
+        f64::from(b) / 255.0,
+    );
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let lightness = max.midpoint(min);
+    let delta = max - min;
+    if delta == 0.0 {
+        return (0.0, 0.0, lightness);
+    }
+    let saturation = if lightness > 0.5 {
+        delta / (2.0 - max - min)
+    } else {
+        delta / (max + min)
+    };
+    let hue = if max == r {
+        (g - b) / delta + if g < b { 6.0 } else { 0.0 }
+    } else if max == g {
+        (b - r) / delta + 2.0
+    } else {
+        (r - g) / delta + 4.0
+    };
+    (hue / 6.0, saturation, lightness)
+}
+
+/// The 8-bit colour of a hue, saturation and lightness.
+#[allow(
+    clippy::float_cmp,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)] // A grey has a saturation of exactly 0; a channel is clamped to 0..=255 first.
+fn from_hsl(hue: f64, saturation: f64, lightness: f64) -> (u8, u8, u8) {
+    // Half to even, as .NET's `Math.Round`.
+    let byte = |unit: f64| (unit.clamp(0.0, 1.0) * 255.0).round_ties_even() as u8;
+    if saturation == 0.0 {
+        let grey = byte(lightness);
+        return (grey, grey, grey);
+    }
+    let q = if lightness < 0.5 {
+        lightness * (1.0 + saturation)
+    } else {
+        lightness + saturation - lightness * saturation
+    };
+    let p = 2.0 * lightness - q;
+    let channel = |mut t: f64| {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        let unit = if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        };
+        byte(unit)
+    };
+    (
+        channel(hue + 1.0 / 3.0),
+        channel(hue),
+        channel(hue - 1.0 / 3.0),
+    )
+}
+
 /// The colours the integrated editor highlights code with: dark ones on a dark theme,
 /// light ones on a light theme.
 #[must_use]
@@ -802,5 +1055,93 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_derived_colour_reaches_its_contrast_on_the_window_and_on_a_card_in_every_theme() {
+        let mut checked = 0;
+        for each in AppTheme::ALL {
+            for accent in Accent::ALL {
+                let built = theme(each, accent);
+                let background = built.palette().background;
+                let card = built.extended_palette().background.weak.color;
+                for role in Derived::ALL {
+                    let color = derived(&built, role);
+                    for (ground, name) in [(background, "window"), (card, "card")] {
+                        let ratio = contrast_ratio(color, ground);
+                        assert!(
+                            ratio >= role.target(),
+                            "{each:?}/{accent:?}: {role:?} is {ratio:.2}:1 on the {name}"
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        // The loop cannot pass by being empty: 17 themes and high contrast, nine accents,
+        // six colours.
+        assert_eq!(AppTheme::ALL.len(), 18);
+        assert_eq!(checked, 18 * Accent::ALL.len() * Derived::ALL.len());
+    }
+
+    #[test]
+    fn a_colour_that_already_reads_is_kept_byte_for_byte() {
+        let dark = Color::from_rgb8(0x28, 0x2A, 0x36);
+        let card = Color::from_rgb8(0x44, 0x47, 0x5A);
+        let white = Color::WHITE;
+        assert_eq!(derive(white, dark, card, MIN_TEXT_CONTRAST), white);
+        for each in AppTheme::ALL {
+            let built = theme(each, Accent::Default);
+            let source = built.extended_palette().danger.base.color;
+            let ground = built.palette().background;
+            let card = built.extended_palette().background.weak.color;
+            if contrast_ratio(source, ground) >= MIN_TEXT_CONTRAST
+                && contrast_ratio(source, card) >= MIN_TEXT_CONTRAST
+            {
+                assert_eq!(derived(&built, Derived::Error), source, "{each:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn drakul_error_text_is_lifted_as_the_csharp_derives_it() {
+        // `92ccb004`: the red #FF5555 is 2.91:1 on the card #44475A and becomes #FF9C9C.
+        let built = theme(AppTheme::Drakul, Accent::Default);
+        assert_eq!(
+            derived(&built, Derived::Error),
+            Color::from_rgb8(0xFF, 0x9C, 0x9C)
+        );
+    }
+
+    #[test]
+    fn the_strong_border_is_visible_where_the_theme_border_is_the_card() {
+        // `a07a2402`: the border is the card colour, 1.00:1 on a card.
+        let built = theme(AppTheme::Drakul, Accent::Default);
+        let card = built.extended_palette().background.weak.color;
+        assert!(contrast_ratio(derived(&built, Derived::BorderStrong), card) >= 3.0);
+        assert!(contrast_ratio(card, card) < 1.01);
+    }
+
+    #[test]
+    fn the_secondary_text_that_hints_are_drawn_in_reads_at_4_5_to_1_in_every_theme_but_dracula() {
+        // Dracula keeps the canonical comment colour of the Dracula Theme palette
+        // (#6272A4), 3.03:1 on its window; Drakul is the same theme with the comment lifted
+        // to read, and the C# keeps both as they are. Every other theme reads.
+        let mut short = Vec::new();
+        let mut checked = 0;
+        for each in AppTheme::ALL {
+            let built = theme(each, Accent::Default);
+            let text = built.extended_palette().secondary.base.color;
+            let card = built.extended_palette().background.weak.color;
+            if [built.palette().background, card]
+                .into_iter()
+                .any(|ground| contrast_ratio(text, ground) < MIN_TEXT_CONTRAST)
+            {
+                short.push(each);
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, AppTheme::ALL.len());
+        assert_eq!(short, [AppTheme::Dracula]);
     }
 }

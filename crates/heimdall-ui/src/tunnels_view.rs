@@ -136,7 +136,7 @@ pub fn new_tunnel<'a>(
     if gateways.is_empty() {
         return crate::dialog_parts::form(
             title,
-            content.push(text(fl!("ui-tunnel-no-gateways")).style(text::warning)),
+            content.push(text(fl!("ui-tunnel-no-gateways")).style(styles::warning_text)),
             crate::dialog_parts::buttons([crate::dialog_parts::cancel()]),
         );
     }

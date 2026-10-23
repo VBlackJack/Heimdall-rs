@@ -1586,14 +1586,18 @@ fn pane_notes<'a>(
         content = content.push(
             text(fl!("ui-files-sudo-on"))
                 .size(font_size::CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         );
     }
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(font_size::CAPTION));
     }
     for note in left_out_notes(left_out, terminal) {
-        content = content.push(text(note).size(font_size::CAPTION).style(text::warning));
+        content = content.push(
+            text(note)
+                .size(font_size::CAPTION)
+                .style(styles::warning_text),
+        );
     }
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
@@ -1684,7 +1688,7 @@ fn edit_row(tab: TabId, edit: &EditSession, over_ssh: bool) -> Element<'_, Messa
     let state = match &edit.refused {
         Some(error) => text(texts::files_error(error))
             .size(font_size::CAPTION)
-            .style(text::danger),
+            .style(styles::error_text),
         None => text(fl!("ui-files-edit-watching")).size(font_size::CAPTION),
     };
     let mut line = row![
@@ -1901,7 +1905,7 @@ fn security_notice<'a>(notice: String) -> Element<'a, Message> {
         container(
             text(notice.clone())
                 .size(font_size::SMALL_CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         )
         .padding(NOTICE_PADDING)
         .style(styles::warning_badge),

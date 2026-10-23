@@ -283,7 +283,7 @@ fn diagnostic_line(diagnostic: &HostKeyDiagnostic) -> Element<'_, Message> {
     text(said)
         .size(font_size::BODY)
         .style(move |theme: &Theme| text::Style {
-            color: warning.then(|| theme.extended_palette().danger.base.color),
+            color: warning.then(|| styles::error_text_color(theme)),
         })
         .into()
 }

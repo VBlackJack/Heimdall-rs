@@ -337,9 +337,13 @@ impl ArpMonitorPane {
 
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
@@ -374,11 +378,11 @@ impl ArpMonitorPane {
         let title = if alarming {
             text(fl!("ui-tool-arpmon-alert-title"))
                 .size(font_size::SUBTITLE)
-                .style(text::danger)
+                .style(styles::error_text)
         } else {
             text(fl!("ui-tool-arpmon-changes-title"))
                 .size(font_size::SUBTITLE)
-                .style(text::warning)
+                .style(styles::warning_text)
         };
         let header = row![
             container(title).width(Length::Fill),
@@ -393,8 +397,8 @@ impl ArpMonitorPane {
         let mut lines = column![header].spacing(spacing::XS);
         for (at, alert) in &self.alerts {
             let style = match alert {
-                ArpAlert::MacChanged { .. } | ArpAlert::Conflict { .. } => text::danger,
-                ArpAlert::Appeared(_) => text::primary,
+                ArpAlert::MacChanged { .. } | ArpAlert::Conflict { .. } => styles::error_text,
+                ArpAlert::Appeared(_) => styles::accent_text,
                 ArpAlert::Gone(_) => text::secondary,
             };
             lines = lines.push(
@@ -446,10 +450,10 @@ impl ArpMonitorPane {
 
         for e in &self.entries {
             let style = match e.status {
-                ArpStatus::New => text::primary,
+                ArpStatus::New => styles::accent_text,
                 ArpStatus::Stable => text::secondary,
-                ArpStatus::Changed => text::warning,
-                ArpStatus::Gone | ArpStatus::Conflict => text::danger,
+                ArpStatus::Changed => styles::warning_text,
+                ArpStatus::Gone | ArpStatus::Conflict => styles::error_text,
             };
             let status_el = text(status_label(e.status))
                 .size(font_size::BODY)

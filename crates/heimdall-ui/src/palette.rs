@@ -291,7 +291,7 @@ fn result_line<'a>(
     let (icon, tint) = mark(&row.result);
     let first = row![
         icons::icon(icon, tint, ICON_SIDE),
-        lit_title(shown.title, query, theme.palette().primary),
+        lit_title(shown.title, query, styles::accent_text_color(theme)),
     ]
     .spacing(ICON_GAP)
     .align_y(Alignment::Center);
@@ -389,7 +389,7 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
             text(fl!("ui-palette-mode-split"))
                 .size(font_size::CAPTION)
                 .font(styles::SEMIBOLD)
-                .style(text::primary),
+                .style(styles::accent_text),
         );
     }
     content = content.push(

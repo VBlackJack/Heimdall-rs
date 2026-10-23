@@ -830,9 +830,13 @@ impl NetworkCartographyPane {
         }
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
         if let Some(notice) = &self.notice {
@@ -890,7 +894,7 @@ impl NetworkCartographyPane {
             card = card.push(
                 text(diff_text(diff))
                     .size(font_size::BODY)
-                    .style(text::primary),
+                    .style(styles::accent_text),
             );
         }
         container(card)
@@ -925,12 +929,12 @@ impl NetworkCartographyPane {
             card(
                 fl!("ui-tool-netmap-hosts-up"),
                 self.summary.hosts_up,
-                text::success
+                styles::success_text
             ),
             card(
                 fl!("ui-tool-netmap-ports-open"),
                 self.summary.open_ports_count,
-                text::primary
+                styles::accent_text
             ),
         ]
         .spacing(spacing::SM)
@@ -1012,7 +1016,7 @@ impl NetworkCartographyPane {
                     .width(Length::FillPortion(2)),
                 text(role_label(n.role))
                     .size(font_size::BODY)
-                    .style(text::primary)
+                    .style(styles::accent_text)
                     .width(Length::FillPortion(2)),
                 text(ports_str)
                     .size(font_size::BODY)
@@ -1049,7 +1053,7 @@ fn confirm_row<'a>(question: String, buttons: Vec<Element<'a, Message>>) -> Elem
     let mut line = row![
         text(question)
             .size(font_size::BODY)
-            .style(text::warning)
+            .style(styles::warning_text)
             .width(Length::Fill)
     ]
     .spacing(spacing::SM)

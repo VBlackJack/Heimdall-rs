@@ -199,7 +199,7 @@ pub fn card<'a>(draft: &'a GatewayDraft, gateways: &'a [SshGateway]) -> Element<
                     RouteProblem::Target => fl!("ui-route-test-invalid-target"),
                 })
                 .size(font_size::CAPTION)
-                .style(text::danger),
+                .style(styles::error_text),
             );
         }
         RouteTest::Running(steps) => {

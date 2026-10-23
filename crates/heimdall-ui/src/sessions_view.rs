@@ -276,7 +276,7 @@ fn diagnostic_line(diagnostic: &Diagnostic) -> Element<'_, Message> {
     ))
     .size(font_size::BODY)
     .style(move |theme: &Theme| text::Style {
-        color: warning.then(|| theme.extended_palette().danger.base.color),
+        color: warning.then(|| styles::error_text_color(theme)),
     })
     .into()
 }
@@ -305,7 +305,7 @@ fn putty_line(diagnostic: &putty::Diagnostic) -> Element<'_, Message> {
     text(said)
         .size(font_size::BODY)
         .style(move |theme: &Theme| text::Style {
-            color: warning.then(|| theme.extended_palette().danger.base.color),
+            color: warning.then(|| styles::error_text_color(theme)),
         })
         .into()
 }

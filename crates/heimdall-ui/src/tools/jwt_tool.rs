@@ -261,10 +261,10 @@ impl JwtPane {
         let expiry = self.expiration.map(|expiration| {
             let (said, color): (String, fn(&Theme) -> Color) = match expiration {
                 Expiration::Expired(at) => (fl!("ui-tool-jwt-expired", date = date(at)), |theme| {
-                    theme.extended_palette().danger.base.color
+                    styles::error_text_color(theme)
                 }),
                 Expiration::Valid(at) => (fl!("ui-tool-jwt-valid", date = date(at)), |theme| {
-                    theme.extended_palette().success.base.color
+                    styles::success_text_color(theme)
                 }),
                 Expiration::NoExpiry | Expiration::InvalidClaim => {
                     (fl!("ui-tool-jwt-no-expiry"), |theme| {

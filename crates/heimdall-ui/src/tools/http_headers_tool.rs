@@ -336,21 +336,27 @@ impl HttpHeadersPane {
 
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
         if let (Some(fetched), Some(eval)) = (&self.fetched, &self.evaluation) {
             let info = &fetched.info;
             let (grade_color, grade_desc): (fn(&Theme) -> text::Style, String) = match eval.grade {
-                HttpGrade::APlus => (text::success, fl!("ui-tool-headers-grade-aplus")),
-                HttpGrade::A => (text::success, fl!("ui-tool-headers-grade-a")),
-                HttpGrade::BPlus | HttpGrade::B => (text::primary, fl!("ui-tool-headers-grade-b")),
-                HttpGrade::C => (text::warning, fl!("ui-tool-headers-grade-c")),
-                HttpGrade::D => (text::danger, fl!("ui-tool-headers-grade-d")),
-                HttpGrade::F => (text::danger, fl!("ui-tool-headers-grade-f")),
+                HttpGrade::APlus => (styles::success_text, fl!("ui-tool-headers-grade-aplus")),
+                HttpGrade::A => (styles::success_text, fl!("ui-tool-headers-grade-a")),
+                HttpGrade::BPlus | HttpGrade::B => {
+                    (styles::accent_text, fl!("ui-tool-headers-grade-b"))
+                }
+                HttpGrade::C => (styles::warning_text, fl!("ui-tool-headers-grade-c")),
+                HttpGrade::D => (styles::error_text, fl!("ui-tool-headers-grade-d")),
+                HttpGrade::F => (styles::error_text, fl!("ui-tool-headers-grade-f")),
             };
 
             let copy_report_btn = super::copy_button(
@@ -399,9 +405,9 @@ impl HttpHeadersPane {
             // The certificate, a finding of its own when the system refused it.
             if let Some(said) = certificate_text(fetched.certificate) {
                 let style = if matches!(fetched.certificate, CertificateCheck::Untrusted(_)) {
-                    text::danger
+                    styles::error_text
                 } else {
-                    text::success
+                    styles::success_text
                 };
                 body = body.push(
                     container(text(said).size(font_size::BODY).style(style))
@@ -420,15 +426,15 @@ impl HttpHeadersPane {
                 let status_cell = match check.status {
                     HeaderCheckStatus::Pass => text(fl!("ui-tool-headers-status-pass"))
                         .size(font_size::CAPTION)
-                        .style(text::success)
+                        .style(styles::success_text)
                         .width(Length::Fixed(60.0)),
                     HeaderCheckStatus::Warn => text(fl!("ui-tool-headers-status-warn"))
                         .size(font_size::CAPTION)
-                        .style(text::warning)
+                        .style(styles::warning_text)
                         .width(Length::Fixed(60.0)),
                     HeaderCheckStatus::Fail => text(fl!("ui-tool-headers-status-fail"))
                         .size(font_size::CAPTION)
-                        .style(text::danger)
+                        .style(styles::error_text)
                         .width(Length::Fixed(60.0)),
                 };
 
@@ -459,7 +465,7 @@ impl HttpHeadersPane {
                     row_col = row_col.push(
                         text(reason_text(reason))
                             .size(font_size::CAPTION)
-                            .style(text::warning),
+                            .style(styles::warning_text),
                     );
                 }
 
@@ -470,7 +476,7 @@ impl HttpHeadersPane {
                             flags = flags.as_str()
                         ))
                         .size(font_size::CAPTION)
-                        .style(text::warning),
+                        .style(styles::warning_text),
                     );
                 }
 
@@ -478,7 +484,7 @@ impl HttpHeadersPane {
                     row_col = row_col.push(
                         text(recommendation_text(rec_key))
                             .size(font_size::CAPTION)
-                            .style(text::warning),
+                            .style(styles::warning_text),
                     );
                 }
 
@@ -501,12 +507,12 @@ impl HttpHeadersPane {
                 let status_cell = match check.status {
                     HeaderCheckStatus::Pass => text(fl!("ui-tool-headers-status-clean"))
                         .size(font_size::CAPTION)
-                        .style(text::success)
+                        .style(styles::success_text)
                         .width(Length::Fixed(70.0)),
                     HeaderCheckStatus::Warn | HeaderCheckStatus::Fail => {
                         text(fl!("ui-tool-headers-status-exposed"))
                             .size(font_size::CAPTION)
-                            .style(text::danger)
+                            .style(styles::error_text)
                             .width(Length::Fixed(70.0))
                     }
                 };

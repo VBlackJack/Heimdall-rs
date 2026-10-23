@@ -280,9 +280,13 @@ impl TlsAuditPane {
 
         if let Some(err) = &self.error {
             body_col = body_col.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
@@ -359,13 +363,13 @@ impl TlsAuditPane {
                     let palette = t.extended_palette();
                     match grade {
                         TlsGrade::APlus | TlsGrade::A => text::Style {
-                            color: Some(palette.success.base.color),
+                            color: Some(styles::success_text_color(t)),
                         },
                         TlsGrade::B | TlsGrade::C => text::Style {
-                            color: Some(palette.warning.base.color),
+                            color: Some(styles::warning_text_color(t)),
                         },
                         TlsGrade::D | TlsGrade::F => text::Style {
-                            color: Some(palette.danger.base.color),
+                            color: Some(styles::error_text_color(t)),
                         },
                         TlsGrade::T => text::Style {
                             color: Some(palette.secondary.base.color),
@@ -424,15 +428,12 @@ impl TlsAuditPane {
                 text(status_text)
                     .size(font_size::CAPTION)
                     .font(styles::SEMIBOLD)
-                    .style(move |t: &Theme| {
-                        let palette = t.extended_palette();
-                        text::Style {
-                            color: Some(if is_good {
-                                palette.success.base.color
-                            } else {
-                                palette.danger.base.color
-                            }),
-                        }
+                    .style(move |t: &Theme| text::Style {
+                        color: Some(if is_good {
+                            styles::success_text_color(t)
+                        } else {
+                            styles::error_text_color(t)
+                        }),
                     }),
             )
             .padding([2.0, 8.0])
@@ -489,19 +490,16 @@ impl TlsAuditPane {
                 text(strength_text)
                     .size(font_size::CAPTION)
                     .font(styles::SEMIBOLD)
-                    .style(move |t: &Theme| {
-                        let palette = t.extended_palette();
-                        match strength {
-                            CipherStrength::Strong => text::Style {
-                                color: Some(palette.success.base.color),
-                            },
-                            CipherStrength::Acceptable => text::Style {
-                                color: Some(palette.warning.base.color),
-                            },
-                            CipherStrength::Weak => text::Style {
-                                color: Some(palette.danger.base.color),
-                            },
-                        }
+                    .style(move |t: &Theme| match strength {
+                        CipherStrength::Strong => text::Style {
+                            color: Some(styles::success_text_color(t)),
+                        },
+                        CipherStrength::Acceptable => text::Style {
+                            color: Some(styles::warning_text_color(t)),
+                        },
+                        CipherStrength::Weak => text::Style {
+                            color: Some(styles::error_text_color(t)),
+                        },
                     }),
             )
             .padding([2.0, 8.0])
@@ -610,24 +608,21 @@ impl TlsAuditPane {
             let icon_text = text(icon)
                 .font(styles::SEMIBOLD)
                 .size(font_size::BODY)
-                .style(move |t: &Theme| {
-                    let palette = t.extended_palette();
-                    text::Style {
-                        color: Some(if is_error {
-                            palette.danger.base.color
-                        } else if is_warn {
-                            palette.warning.base.color
-                        } else {
-                            palette.success.base.color
-                        }),
-                    }
+                .style(move |t: &Theme| text::Style {
+                    color: Some(if is_error {
+                        styles::error_text_color(t)
+                    } else if is_warn {
+                        styles::warning_text_color(t)
+                    } else {
+                        styles::success_text_color(t)
+                    }),
                 });
 
             let item = row![
                 container(icon_text).width(Length::Fixed(24.0)),
                 text(msg)
                     .size(font_size::BODY)
-                    .style(text::primary)
+                    .style(styles::accent_text)
                     .width(Length::Fill),
             ]
             .align_y(Alignment::Center);

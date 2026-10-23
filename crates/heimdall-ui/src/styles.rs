@@ -39,6 +39,7 @@ use iced::widget::slider::{
     Handle, Rail as SliderRail, Status as SliderStatus, Style as SliderStyle,
 };
 use iced::widget::text::LineHeight;
+use iced::widget::text::Style as TextStyle;
 use iced::widget::text_editor::{Status as EditorStatus, Style as EditorStyle};
 use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
 use iced::{Background, Border, Color, Element, Font, Pixels, Shadow, Theme, font};
@@ -58,6 +59,10 @@ pub const SCROLLBAR_WIDTH: f32 = 12.0;
 
 /// Width of its thumb: the track less the C# thumb's margin of 2 on each side.
 pub const SCROLLER_WIDTH: f32 = 8.0;
+
+/// Opacity of the scrim behind a dialog, as the C# `OverlayBackground` (the window's
+/// background at 0.70, `2758070d`): a light theme dims to a light veil.
+const SCRIM_ALPHA: f32 = 0.7;
 
 /// Opacity of a toolbar's separator, as the C# `ToolbarVerticalSeparatorStyle`'s.
 const SEPARATOR_OPACITY: f32 = 0.65;
@@ -261,7 +266,13 @@ pub fn secondary(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
 /// outlines it under the pointer.
 pub fn danger(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
-    let rest = brushes.button(Some(brushes.card), brushes.danger, brushes.secondary);
+    // The label is the derived error text, 4.5:1 on the card; the outline under the pointer
+    // is a line, the theme's own red.
+    let rest = brushes.button(
+        Some(brushes.card),
+        crate::themes::derived(theme, crate::themes::Derived::Error),
+        brushes.secondary,
+    );
     match status {
         ButtonStatus::Active => rest,
         ButtonStatus::Hovered => ButtonStyle {
@@ -358,7 +369,7 @@ pub fn status_pill_active(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
         border: brushes.outline(brushes.danger, radius::SM),
         ..brushes.button(
             Some(brushes.danger.scale_alpha(BROADCAST_ALPHA)),
-            brushes.danger,
+            crate::themes::derived(theme, crate::themes::Derived::Error),
             brushes.danger,
         )
     };
@@ -898,7 +909,7 @@ pub fn edge_line<'a, Message: 'a>() -> Element<'a, Message> {
     iced::widget::container(iced::widget::space())
         .width(iced::Length::Fill)
         .height(BORDER_WIDTH)
-        .style(rule)
+        .style(strong_rule)
         .into()
 }
 
@@ -908,7 +919,7 @@ pub fn vertical_edge_line<'a, Message: 'a>() -> Element<'a, Message> {
     iced::widget::container(iced::widget::space())
         .width(BORDER_WIDTH)
         .height(iced::Length::Fill)
-        .style(rule)
+        .style(strong_rule)
         .into()
 }
 
@@ -968,6 +979,19 @@ pub fn launchpad_pill(theme: &Theme) -> BoxStyle {
 pub fn rule(theme: &Theme) -> BoxStyle {
     BoxStyle {
         background: Some(Background::Color(Brushes::of(theme).edge)),
+        ..BoxStyle::default()
+    }
+}
+
+/// A line that marks out a region, in the strong border colour (3:1 on the window and on a
+/// card), as the C# `BorderStrongBrush` of the sidebar divider and of the bars' and tool
+/// headers' rules (`f2cf2263`).
+pub fn strong_rule(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(crate::themes::derived(
+            theme,
+            crate::themes::Derived::BorderStrong,
+        ))),
         ..BoxStyle::default()
     }
 }
@@ -1082,6 +1106,67 @@ pub fn warning_badge(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// Error text, derived to 4.5:1 on the window and on a card, as the C# `ErrorTextBrush`
+/// (`92ccb004`): an inline validation error, a failure line.
+pub fn error_text(theme: &Theme) -> TextStyle {
+    colored(error_text_color(theme))
+}
+
+/// Warning text, derived to 4.5:1 on the window and on a card (`WarningTextBrush`).
+pub fn warning_text(theme: &Theme) -> TextStyle {
+    colored(warning_text_color(theme))
+}
+
+/// Success text, derived to 4.5:1 on the window and on a card (`SuccessTextBrush`).
+pub fn success_text(theme: &Theme) -> TextStyle {
+    colored(success_text_color(theme))
+}
+
+/// Text in the accent, derived to 4.5:1 on the window and on a card, as the C#
+/// `AccentTextBrush` (`c5858a38`). The accent as a fill, a border or a glyph stays raw.
+pub fn accent_text(theme: &Theme) -> TextStyle {
+    colored(accent_text_color(theme))
+}
+
+/// The colour of [`error_text`], for a widget that takes a colour rather than a style.
+#[must_use]
+pub fn error_text_color(theme: &Theme) -> Color {
+    crate::themes::derived(theme, crate::themes::Derived::Error)
+}
+
+/// The colour of [`warning_text`].
+#[must_use]
+pub fn warning_text_color(theme: &Theme) -> Color {
+    crate::themes::derived(theme, crate::themes::Derived::Warning)
+}
+
+/// The colour of [`success_text`].
+#[must_use]
+pub fn success_text_color(theme: &Theme) -> Color {
+    crate::themes::derived(theme, crate::themes::Derived::Success)
+}
+
+/// The colour of [`accent_text`].
+#[must_use]
+pub fn accent_text_color(theme: &Theme) -> Color {
+    crate::themes::derived(theme, crate::themes::Derived::Accent)
+}
+
+fn colored(color: Color) -> TextStyle {
+    TextStyle { color: Some(color) }
+}
+
+/// The scrim behind a dialog or an overlay: the window's background at [`SCRIM_ALPHA`], as
+/// the C# `OverlayBackground`, so a light theme dims to a light veil and the secondary text
+/// on it stays readable.
+#[must_use]
+pub fn scrim(theme: &Theme) -> Color {
+    Color {
+        a: SCRIM_ALPHA,
+        ..theme.palette().background
+    }
+}
+
 /// A line between two parts, as the C# `BorderBrush` edges of a toolbar; faded as the C#
 /// toolbar's separator.
 pub fn divider(theme: &Theme) -> BoxStyle {
@@ -1171,29 +1256,10 @@ mod tests {
 
     use crate::themes;
 
-    /// Relative luminance of `color`, as WCAG 2.
-    fn luminance(color: Color) -> f32 {
-        let linear = |channel: f32| {
-            if channel <= 0.03928 {
-                channel / 12.92
-            } else {
-                ((channel + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
-    }
-
-    /// WCAG 2 contrast ratio of two opaque colours.
-    fn contrast(a: Color, b: Color) -> f32 {
-        let (high, low) = (
-            luminance(a).max(luminance(b)),
-            luminance(a).min(luminance(b)),
-        );
-        (high + 0.05) / (low + 0.05)
-    }
+    use crate::themes::contrast_ratio as contrast;
 
     /// The least contrast WCAG asks of small text.
-    const SMALL_TEXT_CONTRAST: f32 = 4.5;
+    const SMALL_TEXT_CONTRAST: f64 = crate::themes::MIN_TEXT_CONTRAST;
 
     #[test]
     fn the_quick_connect_label_and_the_counter_read_at_4_5_to_1_in_every_theme() {
@@ -1539,5 +1605,44 @@ mod tests {
         assert!(same(BUTTON_COMPACT_PADDING, [4.0, 10.0]));
         // The measured C# field, 33 px: the line fills what the padding leaves.
         assert!((INPUT_LINE_HEIGHT + 2.0 * INPUT_PADDING[0] - INPUT_HEIGHT).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_scrim_is_the_window_background_at_seventy_percent_and_light_on_a_light_theme() {
+        for each in AppTheme::ALL {
+            let theme = themes::theme(each, Accent::Default);
+            let veil = scrim(&theme);
+            let background = theme.palette().background;
+            assert!((veil.a - 0.7).abs() < f32::EPSILON, "{each:?}");
+            assert_eq!(
+                (veil.r, veil.g, veil.b),
+                (background.r, background.g, background.b),
+                "{each:?}"
+            );
+        }
+        let light = scrim(&themes::theme(AppTheme::Parchment, Accent::Default));
+        assert!(
+            light.r > 0.5 && light.g > 0.5 && light.b > 0.5,
+            "a light veil"
+        );
+    }
+
+    #[test]
+    fn the_text_on_a_status_fill_reads_at_4_5_to_1_in_every_theme() {
+        let mut checked = 0;
+        for each in AppTheme::ALL {
+            let theme = themes::theme(each, Accent::Default);
+            let extended = theme.extended_palette();
+            for fill in [
+                extended.success.base.color,
+                extended.warning.base.color,
+                extended.danger.base.color,
+            ] {
+                let ratio = contrast(themes::text_on(fill), fill);
+                assert!(ratio >= SMALL_TEXT_CONTRAST, "{each:?}: {ratio:.2}:1");
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, AppTheme::ALL.len() * 3);
     }
 }
