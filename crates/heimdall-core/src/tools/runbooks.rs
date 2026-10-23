@@ -897,6 +897,8 @@ pub struct RunbookStore {
     runbooks: Vec<Runbook>,
     /// What was read and broke a rule, as it was read, written back unchanged.
     unreadable: Vec<Value>,
+    /// Whether a runbook was given a new identity when the file was read.
+    reidentified: bool,
 }
 
 impl RunbookStore {
@@ -904,6 +906,14 @@ impl RunbookStore {
     #[must_use]
     pub fn runbooks(&self) -> &[Runbook] {
         &self.runbooks
+    }
+
+    /// Whether reading the file gave a runbook a new identity (it had none that was a GUID, or
+    /// repeated another's). The new identities are random: the store must be written back
+    /// before anything is changed on it, or the next read would draw others.
+    #[must_use]
+    pub const fn reidentified(&self) -> bool {
+        self.reidentified
     }
 
     /// The runbook of `public_id`.
@@ -976,6 +986,11 @@ impl RunbookStore {
                     if store.get(&runbook.public_id).is_some() {
                         runbook.public_id = new_identity();
                     }
+                    let written = value
+                        .get(key::PUBLIC_ID)
+                        .and_then(Value::as_str)
+                        .map(|id| id.trim().to_ascii_lowercase());
+                    store.reidentified |= written.as_deref() != Some(runbook.public_id.as_str());
                     store.runbooks.push(runbook);
                 }
                 Err(_) => store.unreadable.push(value.clone()),

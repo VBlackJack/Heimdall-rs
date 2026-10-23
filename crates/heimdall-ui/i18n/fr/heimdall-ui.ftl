@@ -6186,3 +6186,4 @@ ui-tool-cmdlib-runbooks-err-tags-many = Un runbook contient au plus { $max } ét
 ui-tool-cmdlib-runbooks-err-tag-long = Une étiquette dépasse { $max } caractères.
 ui-tool-cmdlib-runbooks-err-step-note-long = La note de l'étape { $number } dépasse { $max } caractères.
 ui-tool-cmdlib-runbooks-secrets-hint = Les valeurs sont enregistrées en clair. Pour un secret comme un mot de passe, écrivez une variable sans valeur par défaut : il est demandé au début de l'exécution et jamais conservé.
+ui-tool-cmdlib-runbooks-err-deleted = Ce runbook a été supprimé depuis une autre fenêtre. Enregistrez de nouveau pour le conserver comme un nouveau runbook.

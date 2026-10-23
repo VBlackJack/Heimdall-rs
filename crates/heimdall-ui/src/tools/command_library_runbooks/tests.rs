@@ -431,3 +431,97 @@ fn a_change_is_refused_when_the_file_cannot_be_read_again() {
         "not json"
     );
 }
+
+/// A file whose runbook has no identity a GUID, and one that repeats it.
+const UNSTABLE_IDENTITIES: &str = r#"{"schemaVersion": "1.0", "runbooks": [
+    {"publicId": "not-a-guid", "name": "A", "steps": [{"command": "ls", "platform": "Linux"}]},
+    {"publicId": "00000000-0000-4000-8000-000000000001", "name": "B", "steps": []},
+    {"publicId": "00000000-0000-4000-8000-000000000001", "name": "C", "steps": []}]}"#;
+
+fn names_on_disk(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = pane_in(folder)
+        .store
+        .runbooks()
+        .iter()
+        .map(|each| each.name.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn identities_given_at_load_are_written_back_so_an_edit_and_a_delete_find_their_runbook() {
+    let folder = tempfile::tempdir().expect("folder");
+    let path = folder.path().join(RUNBOOKS_FILE);
+    std::fs::write(&path, UNSTABLE_IDENTITIES).expect("a file");
+    let mut pane = pane_in(folder.path());
+    assert_eq!(pane.store.runbooks().len(), 3);
+    // Written at once: the next read draws no new identity.
+    let again = pane_in(folder.path());
+    let ids = |pane: &RunbooksPane| -> Vec<String> {
+        pane.store
+            .runbooks()
+            .iter()
+            .map(|each| each.public_id.clone())
+            .collect()
+    };
+    assert_eq!(ids(&again), ids(&pane));
+    assert!(!again.store.reidentified());
+
+    // An edit saved through the reload is one runbook with the edit, not a copy.
+    let a = pane
+        .store
+        .runbooks()
+        .iter()
+        .find(|each| each.name == "A")
+        .expect("A")
+        .public_id
+        .clone();
+    send(&mut pane, RunbookMessage::Edit(a));
+    send(&mut pane, RunbookMessage::Name("A2".to_owned()));
+    send(&mut pane, RunbookMessage::Save);
+    assert_eq!(names_on_disk(folder.path()), ["A2", "B", "C"]);
+
+    // A delete removes it on the first confirmation.
+    let b = pane
+        .store
+        .runbooks()
+        .iter()
+        .find(|each| each.name == "B")
+        .expect("B")
+        .public_id
+        .clone();
+    send(&mut pane, RunbookMessage::AskDelete(b.clone()));
+    send(&mut pane, RunbookMessage::ConfirmDelete(b));
+    assert_eq!(names_on_disk(folder.path()), ["A2", "C"]);
+}
+
+#[test]
+fn a_runbook_deleted_from_another_window_is_not_brought_back_unasked() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut first = pane_in(folder.path());
+    let mut second = pane_in(folder.path());
+    keep_literal(&mut first, "R", "uptime");
+    second.update(RunbookMessage::Toggle, &UserLibrary::default());
+    let mut second = pane_in(folder.path());
+    let id = second.store.runbooks()[0].public_id.clone();
+    send(&mut second, RunbookMessage::Edit(id.clone()));
+    send(&mut second, RunbookMessage::Name("R2".to_owned()));
+
+    send(&mut first, RunbookMessage::ConfirmDelete(id));
+    assert!(names_on_disk(folder.path()).is_empty());
+
+    send(&mut second, RunbookMessage::Save);
+    assert_eq!(
+        second
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.problem.clone()),
+        Some(Problem::DeletedElsewhere)
+    );
+    assert!(names_on_disk(folder.path()).is_empty());
+    // A second Save keeps it, as a new runbook.
+    send(&mut second, RunbookMessage::Save);
+    assert!(second.editor.is_none());
+    assert_eq!(names_on_disk(folder.path()), ["R2"]);
+}

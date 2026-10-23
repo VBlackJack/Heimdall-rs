@@ -126,6 +126,8 @@ pub enum Problem {
     Issue(RunbookIssue),
     /// The file holds as many runbooks as it can.
     Full,
+    /// The runbook being edited is no longer in the file: another window deleted it.
+    DeletedElsewhere,
     /// The file could not be written.
     Unsaved,
 }
@@ -421,6 +423,9 @@ impl RunbooksPane {
                 Err(_) => pane.failure = Some(Failure::Unreadable),
             }
         }
+        if pane.store.reidentified() {
+            pane.keep_identities();
+        }
         pane
     }
 
@@ -487,12 +492,32 @@ impl RunbooksPane {
         let path = self.file.clone()?;
         let find = lookup(library);
         match RunbookStore::load(&path, &find) {
-            Ok(fresh) => Some(std::mem::replace(&mut self.store, fresh)),
+            Ok(fresh) => {
+                let before = std::mem::replace(&mut self.store, fresh);
+                if self.store.reidentified() && !self.keep_identities() {
+                    self.store = before;
+                    return None;
+                }
+                Some(before)
+            }
             Err(_) => {
                 self.failure = Some(Failure::Unsaved);
                 None
             }
         }
+    }
+
+    /// Writes the store back after a read that gave runbooks new identities, which are
+    /// random: written once, they are the same at every later read. Whether it was written.
+    fn keep_identities(&mut self) -> bool {
+        let written = self
+            .file
+            .as_ref()
+            .is_some_and(|path| self.store.save(path).is_ok());
+        if !written {
+            self.failure = Some(Failure::Unsaved);
+        }
+        written
     }
 
     /// Writes the store; when that fails it goes back to `before` and the failure is said.
@@ -533,6 +558,17 @@ impl RunbooksPane {
             self.say(Problem::Unsaved);
             return;
         };
+        if self.editor.as_ref().is_some_and(|editor| editor.existing)
+            && self.store.get(&runbook.public_id).is_none()
+        {
+            // Deleted from another window: not brought back unasked. The editor stays open
+            // as a new runbook, and a second Save keeps it.
+            if let Some(editor) = self.editor.as_mut() {
+                editor.existing = false;
+            }
+            self.say(Problem::DeletedElsewhere);
+            return;
+        }
         let find = lookup(library);
         let kept = self.store.keep(runbook, &find);
         match kept {
@@ -864,6 +900,7 @@ fn problem_text(problem: &Problem) -> String {
                 name = name.as_str()
             )
         }
+        Problem::DeletedElsewhere => fl!("ui-tool-cmdlib-runbooks-err-deleted"),
         Problem::Full => fl!(
             "ui-tool-cmdlib-runbooks-err-full",
             max = runbooks::MAX_RUNBOOKS

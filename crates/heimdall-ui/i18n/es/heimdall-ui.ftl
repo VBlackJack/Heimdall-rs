@@ -6175,3 +6175,4 @@ ui-tool-cmdlib-runbooks-err-tags-many = Un runbook contiene como máximo { $max 
 ui-tool-cmdlib-runbooks-err-tag-long = Una etiqueta supera los { $max } caracteres.
 ui-tool-cmdlib-runbooks-err-step-note-long = La nota del paso { $number } supera los { $max } caracteres.
 ui-tool-cmdlib-runbooks-secrets-hint = Los valores se guardan en texto plano. Para un secreto como una contraseña, escriba una variable sin valor por defecto: se pide al iniciar la ejecución y nunca se conserva.
+ui-tool-cmdlib-runbooks-err-deleted = Este runbook se eliminó desde otra ventana. Guarde de nuevo para conservarlo como un nuevo runbook.
