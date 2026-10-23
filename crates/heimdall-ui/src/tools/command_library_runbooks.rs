@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 use heimdall_app::TabId;
 use heimdall_core::tools::command_library::{self, CatalogueEntry};
+use heimdall_core::tools::library_sync::{RunbookMerge, merge_runbooks};
 use heimdall_core::tools::library_transfer::{self, FileRunbooks, RunbookImport, RunbookRefusal};
 use heimdall_core::tools::runbooks::{
     self, FailureMode, KeepError, MAX_STEPS, MAX_TAG_LENGTH, MAX_TAGS, MAX_VARIABLES,
@@ -522,6 +523,31 @@ impl RunbooksPane {
         if report.imported + report.updated > 0 && !self.persist(before) {
             return None;
         }
+        Some(report)
+    }
+
+    /// Merges the runbooks `values` of a pulled file into the file, by the rule of a Git
+    /// synchronization: a runbook the user changed since the repository last agreed with it is
+    /// kept (see `library_sync::merge`). `bases` is updated for the runbooks now in agreement,
+    /// and only when the store was written. `None`, with nothing changed, when they cannot be
+    /// read or written.
+    pub(in crate::tools) fn sync(
+        &mut self,
+        values: &FileRunbooks,
+        library: &UserLibrary,
+        bases: &mut BTreeMap<String, u64>,
+    ) -> Option<RunbookMerge> {
+        if !self.can_edit() {
+            return None;
+        }
+        let before = self.refresh(library)?;
+        let find = lookup(library);
+        let mut next = bases.clone();
+        let report = merge_runbooks(&mut self.store, values, &find, &mut next);
+        if report.changed() && !self.persist(before) {
+            return None;
+        }
+        *bases = next;
         Some(report)
     }
 

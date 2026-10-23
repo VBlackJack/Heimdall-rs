@@ -42,6 +42,7 @@ use iced::widget::{
 };
 use iced::{Element, Length, Task, window};
 
+use self::sync::{SyncJob, SyncMessage, SyncNotice, SyncPane};
 use super::command_library_runbooks::{Delivered, Ready, RunTarget, RunbookMessage, RunbooksPane};
 use super::{CopySlot, ToolMessage, ToolPane};
 use crate::file_dialog::{self, FileDialog};
@@ -49,6 +50,8 @@ use crate::i18n::fl;
 use crate::shell::{Message, main_window_task};
 use crate::styles;
 use crate::tokens::{font_size, spacing};
+
+mod sync;
 
 /// Width of a value's label, as the result grids' label column.
 const PARAM_LABEL_WIDTH: f32 = 160.0;
@@ -192,6 +195,8 @@ pub enum CommandLibraryMessage {
     ExportScope(ExportScope),
     /// Something about the runbooks.
     Runbooks(RunbookMessage),
+    /// Something about the Git synchronization.
+    Sync(SyncMessage),
     /// The library was written to the file picked; `None` when none was picked.
     Exported(Option<Result<(), TransferError>>),
 }
@@ -285,6 +290,8 @@ pub enum Outcome {
     Import,
     /// Ask where to write this export of the library.
     Export(String),
+    /// Run a step of the Git synchronization off the interface's thread.
+    Sync(SyncJob),
 }
 
 impl Outcome {
@@ -294,6 +301,7 @@ impl Outcome {
         match self {
             Self::Import => pick_import(tab, main),
             Self::Export(text) => pick_export(tab, main, text),
+            Self::Sync(job) => job.task(tab),
             Self::None
             | Self::Copy(..)
             | Self::Send { .. }
@@ -328,6 +336,8 @@ enum Notice {
     Inserted(String),
     /// A capture from a terminal that the editor open with changes in it refused.
     CaptureBlocked,
+    /// What the Git synchronization did.
+    Sync(SyncNotice),
 }
 
 /// A command asked to be written, until the application says it was.
@@ -446,6 +456,8 @@ pub struct CommandLibraryPane {
     history_this_host_only: bool,
     /// The runbooks: the panel and the file they are kept in.
     runbooks: RunbooksPane,
+    /// The Git synchronization: its settings and what it is doing.
+    sync: SyncPane,
     /// Whether the question of what an export holds is open.
     export_choice: bool,
     /// The category of the command last created in this pane, which a captured command starts
@@ -498,6 +510,7 @@ impl CommandLibraryPane {
             }
         }
         pane.runbooks = RunbooksPane::new(profiles_file, &pane.library);
+        pane.sync = SyncPane::new(profiles_file);
         pane
     }
 
@@ -587,6 +600,7 @@ impl CommandLibraryPane {
                 self.runbooks.repin(tab);
             }
             CommandLibraryMessage::Runbooks(message) => return self.runbooks_message(message),
+            CommandLibraryMessage::Sync(message) => return self.sync_message(message),
             CommandLibraryMessage::Import if self.can_edit() => return Outcome::Import,
             CommandLibraryMessage::Export => self.export_choice = !self.export_choice,
             CommandLibraryMessage::ExportScope(scope) => return self.export(scope),
@@ -1626,6 +1640,11 @@ impl CommandLibraryPane {
                 Some(CommandLibraryMessage::Export)
             ),
             plain(
+                fl!("ui-tool-cmdlib-sync"),
+                self.sync.is_open(),
+                Some(CommandLibraryMessage::Sync(SyncMessage::Toggle))
+            ),
+            plain(
                 fl!("ui-tool-cmdlib-favorites-only"),
                 self.favorites_only,
                 Some(CommandLibraryMessage::FavoritesOnly)
@@ -1648,6 +1667,9 @@ impl CommandLibraryPane {
             let mut page = column![tools].spacing(spacing::SM);
             if self.export_choice {
                 page = page.push(export_choice_view(tab));
+            }
+            if self.sync.is_open() {
+                page = page.push(self.sync_view(tab));
             }
             if let Some(notice) = &self.notice {
                 page = page.push(notice_view(notice));
@@ -1682,6 +1704,9 @@ impl CommandLibraryPane {
         .spacing(spacing::SM);
         if self.export_choice {
             page = page.push(export_choice_view(tab));
+        }
+        if self.sync.is_open() {
+            page = page.push(self.sync_view(tab));
         }
         if let Some(host) = self.session_host() {
             page = page.push(
@@ -2394,38 +2419,40 @@ fn import_text(report: &ImportReport, runbooks: Option<&RunbookImport>) -> Strin
     done
 }
 
+/// What a file that could not be imported, exported or pulled is told as.
+fn transfer_error_text(error: &TransferError) -> String {
+    match error {
+        TransferError::TooLarge => fl!("ui-tool-cmdlib-transfer-too-large"),
+        TransferError::Format => fl!("ui-tool-cmdlib-transfer-format"),
+        TransferError::TooManyActions => fl!(
+            "ui-tool-cmdlib-transfer-too-many",
+            max = user_commands::MAX_IMPORT_ACTIONS
+        ),
+        TransferError::TooManyRunbooks => fl!(
+            "ui-tool-cmdlib-transfer-too-many-runbooks",
+            max = heimdall_core::tools::runbooks::MAX_RUNBOOKS
+        ),
+        TransferError::Version(version) => fl!(
+            "ui-tool-cmdlib-transfer-version",
+            version = version.as_str()
+        ),
+        TransferError::RunbooksUnsaved => fl!("ui-tool-cmdlib-transfer-runbooks-unsaved"),
+        TransferError::RunbooksUnsavedLibraryKept => {
+            fl!("ui-tool-cmdlib-transfer-runbooks-unsaved-kept")
+        }
+        TransferError::NothingToExport => fl!("ui-tool-cmdlib-export-nothing"),
+        TransferError::Failed(detail) => {
+            fl!("ui-tool-cmdlib-transfer-failed", detail = detail.as_str())
+        }
+    }
+}
+
 /// What the pane tells, in the window's language.
 fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
     let (message, failed) = match notice {
         Notice::Imported(report, runbooks) => (import_text(report, runbooks.as_ref()), false),
         Notice::Exported => (fl!("ui-tool-cmdlib-export-done"), false),
-        Notice::TransferFailed(error) => (
-            match error {
-                TransferError::TooLarge => fl!("ui-tool-cmdlib-transfer-too-large"),
-                TransferError::Format => fl!("ui-tool-cmdlib-transfer-format"),
-                TransferError::TooManyActions => fl!(
-                    "ui-tool-cmdlib-transfer-too-many",
-                    max = user_commands::MAX_IMPORT_ACTIONS
-                ),
-                TransferError::TooManyRunbooks => fl!(
-                    "ui-tool-cmdlib-transfer-too-many-runbooks",
-                    max = heimdall_core::tools::runbooks::MAX_RUNBOOKS
-                ),
-                TransferError::Version(version) => fl!(
-                    "ui-tool-cmdlib-transfer-version",
-                    version = version.as_str()
-                ),
-                TransferError::RunbooksUnsaved => fl!("ui-tool-cmdlib-transfer-runbooks-unsaved"),
-                TransferError::RunbooksUnsavedLibraryKept => {
-                    fl!("ui-tool-cmdlib-transfer-runbooks-unsaved-kept")
-                }
-                TransferError::NothingToExport => fl!("ui-tool-cmdlib-export-nothing"),
-                TransferError::Failed(detail) => {
-                    fl!("ui-tool-cmdlib-transfer-failed", detail = detail.as_str())
-                }
-            },
-            true,
-        ),
+        Notice::TransferFailed(error) => (transfer_error_text(error), true),
         Notice::Broadcast {
             delivered,
             total,
@@ -2457,6 +2484,7 @@ fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
             fl!("ui-tool-cmdlib-inserted", target = target.as_str()),
             false,
         ),
+        Notice::Sync(notice) => sync::notice_text(notice),
     };
     text(message)
         .size(font_size::BODY)
