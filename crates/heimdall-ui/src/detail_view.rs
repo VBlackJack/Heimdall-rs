@@ -216,7 +216,7 @@ fn card<'a>(
     )
 }
 
-/// The card's look, as the C# `CardBrush` in `BorderBrush`, rounded as `CornerRadiusSm`:
+/// The card's look, as the C# `CardBrush` in `BorderStrongBrush`, rounded as `CornerRadiusSm`:
 /// the detail panel's and the properties panel's.
 pub(crate) fn card_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();

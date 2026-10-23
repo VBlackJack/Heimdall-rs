@@ -613,7 +613,7 @@ impl SecNumCloudPane {
                     text(status_text)
                         .size(font_size::CAPTION)
                         .font(styles::SEMIBOLD)
-                        .color(iced::Color::WHITE),
+                        .color(crate::themes::text_on(status_color)),
                 )
                 .padding([2, 8])
                 .style(move |_| container::Style {

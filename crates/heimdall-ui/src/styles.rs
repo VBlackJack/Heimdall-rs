@@ -909,7 +909,7 @@ pub fn edge_line<'a, Message: 'a>() -> Element<'a, Message> {
     iced::widget::container(iced::widget::space())
         .width(iced::Length::Fill)
         .height(BORDER_WIDTH)
-        .style(rule)
+        .style(strong_rule)
         .into()
 }
 
@@ -919,7 +919,7 @@ pub fn vertical_edge_line<'a, Message: 'a>() -> Element<'a, Message> {
     iced::widget::container(iced::widget::space())
         .width(BORDER_WIDTH)
         .height(iced::Length::Fill)
-        .style(rule)
+        .style(strong_rule)
         .into()
 }
 
@@ -974,10 +974,19 @@ pub fn launchpad_pill(theme: &Theme) -> BoxStyle {
     }
 }
 
-/// A line across a card, in the strong border colour (3:1 on the window and on a card), as
-/// the C# `BorderStrongBrush` of the sidebar divider, the bars' and tool headers' rules
-/// (`f2cf2263`) and, as the About page's under the version (`MainWindow.xaml:4714`).
+/// A line across a card, in the border colour, as the C# About page's under the version
+/// (`MainWindow.xaml:4714`).
 pub fn rule(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(Brushes::of(theme).edge)),
+        ..BoxStyle::default()
+    }
+}
+
+/// A line that marks out a region, in the strong border colour (3:1 on the window and on a
+/// card), as the C# `BorderStrongBrush` of the sidebar divider and of the bars' and tool
+/// headers' rules (`f2cf2263`).
+pub fn strong_rule(theme: &Theme) -> BoxStyle {
     BoxStyle {
         background: Some(Background::Color(crate::themes::derived(
             theme,
@@ -1031,10 +1040,7 @@ pub fn dialog(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.surface)),
-        border: brushes.outline(
-            crate::themes::derived(theme, crate::themes::Derived::BorderStrong),
-            radius::XL,
-        ),
+        border: brushes.outline(brushes.edge, radius::XL),
         shadow: dialog_shadow(),
         ..BoxStyle::default()
     }
@@ -1253,7 +1259,7 @@ mod tests {
     use crate::themes::contrast_ratio as contrast;
 
     /// The least contrast WCAG asks of small text.
-    const SMALL_TEXT_CONTRAST: f32 = crate::themes::MIN_TEXT_CONTRAST;
+    const SMALL_TEXT_CONTRAST: f64 = crate::themes::MIN_TEXT_CONTRAST;
 
     #[test]
     fn the_quick_connect_label_and_the_counter_read_at_4_5_to_1_in_every_theme() {
@@ -1369,7 +1375,7 @@ mod tests {
     }
 
     #[test]
-    fn an_about_card_is_a_card_rounded_as_the_csharp_xl_and_its_rule_the_strong_border() {
+    fn an_about_card_is_a_card_rounded_as_the_csharp_xl_and_its_rule_the_card_edge() {
         let theme = magellan();
         let card = card(&theme);
         let large = large_card(&theme);
@@ -1378,11 +1384,8 @@ mod tests {
         assert!((large.border.radius.top_left - radius::XL).abs() < f32::EPSILON);
         assert_eq!(
             rule(&theme).background,
-            Some(Background::Color(themes::derived(
-                &theme,
-                themes::Derived::BorderStrong
-            ))),
-            "the C# BorderStrongBrush, unfaded"
+            Some(Background::Color(card.border.color)),
+            "the C# BorderBrush, unfaded"
         );
     }
 
@@ -1602,5 +1605,44 @@ mod tests {
         assert!(same(BUTTON_COMPACT_PADDING, [4.0, 10.0]));
         // The measured C# field, 33 px: the line fills what the padding leaves.
         assert!((INPUT_LINE_HEIGHT + 2.0 * INPUT_PADDING[0] - INPUT_HEIGHT).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_scrim_is_the_window_background_at_seventy_percent_and_light_on_a_light_theme() {
+        for each in AppTheme::ALL {
+            let theme = themes::theme(each, Accent::Default);
+            let veil = scrim(&theme);
+            let background = theme.palette().background;
+            assert!((veil.a - 0.7).abs() < f32::EPSILON, "{each:?}");
+            assert_eq!(
+                (veil.r, veil.g, veil.b),
+                (background.r, background.g, background.b),
+                "{each:?}"
+            );
+        }
+        let light = scrim(&themes::theme(AppTheme::Parchment, Accent::Default));
+        assert!(
+            light.r > 0.5 && light.g > 0.5 && light.b > 0.5,
+            "a light veil"
+        );
+    }
+
+    #[test]
+    fn the_text_on_a_status_fill_reads_at_4_5_to_1_in_every_theme() {
+        let mut checked = 0;
+        for each in AppTheme::ALL {
+            let theme = themes::theme(each, Accent::Default);
+            let extended = theme.extended_palette();
+            for fill in [
+                extended.success.base.color,
+                extended.warning.base.color,
+                extended.danger.base.color,
+            ] {
+                let ratio = contrast(themes::text_on(fill), fill);
+                assert!(ratio >= SMALL_TEXT_CONTRAST, "{each:?}: {ratio:.2}:1");
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, AppTheme::ALL.len() * 3);
     }
 }
