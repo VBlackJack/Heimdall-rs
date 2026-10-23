@@ -1125,7 +1125,7 @@ impl CommandLibraryPane {
                     self.awaited.retain(|each| each.run_step.is_none());
                 }
                 self.runbooks.update(other, &self.library);
-                // The terminal is pinned when the steps are first shown.
+                // The terminal is pinned when the run starts.
                 let tab = self.effective_target().map(|target| target.tab);
                 self.runbooks.pin(tab);
                 Outcome::None

@@ -121,7 +121,7 @@ pub(super) struct Run {
     /// Which run it is: a receipt for another one moves nothing.
     id: u64,
     /// Whether the terminal and the system of the far end were pinned, which happens once,
-    /// when the steps are first shown.
+    /// when the run starts.
     bound: bool,
     /// The terminal every step goes to.
     pinned: Option<TabId>,
@@ -248,8 +248,8 @@ impl RunbooksPane {
     }
 
     /// Pins the run to `tab` and to the system of the session as they are now, the moment it
-    /// starts, which is when its variables are filled from the same session. A run does not follow the terminal chosen afterwards, nor a session that
-    /// changes: it would send the next step somewhere the user did not look.
+    /// starts, which is when its variables are filled from the same session. A run does not
+    /// follow the terminal chosen afterwards, nor a session that changes: it would send the next step somewhere the user did not look.
     pub fn pin(&mut self, tab: Option<TabId>) {
         let remote = self.session.remote;
         if let Some(run) = self.run.as_mut()
