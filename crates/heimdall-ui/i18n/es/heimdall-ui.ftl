@@ -6203,3 +6203,5 @@ ui-tool-cmdlib-runbooks-run-err-action-gone = La acción de este paso ya no est�
 ui-tool-cmdlib-runbooks-run-err-no-template = La acción de este paso no tiene ningún comando que ejecutar.
 ui-tool-cmdlib-runbooks-run-err-unknown = Este paso usa variables que el runbook no declara: { $names }.
 ui-tool-cmdlib-runbooks-run-err-values = Este paso no se puede enviar: { $reason }
+ui-tool-cmdlib-runbooks-run-target-gone = El terminal para el que se inició esta ejecución ya no está abierto. Elija un terminal arriba para continuar, o detenga la ejecución.
+ui-tool-cmdlib-runbooks-run-session-changed = La sesión de la biblioteca cambió durante esta ejecución. Elija un terminal arriba para continuar, o detenga la ejecución.

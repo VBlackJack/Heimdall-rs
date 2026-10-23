@@ -305,18 +305,18 @@ fn a_step_moves_on_when_delivered_and_a_stale_receipt_changes_nothing() {
     );
     update(&mut pane, RunbookMessage::Run(ids[0].clone()));
     // A receipt for a step the run is not at.
-    pane.step_delivered(1, Delivered::Sent);
+    pane.step_delivered(pane.run_id(), 1, Delivered::Sent);
     assert_eq!(pane.current_index(), Some(0));
     assert_eq!(pane.status_of(0), Some(StepStatus::Pending));
 
-    pane.step_delivered(0, Delivered::Inserted);
+    pane.step_delivered(pane.run_id(), 0, Delivered::Inserted);
     assert_eq!(pane.status_of(0), Some(StepStatus::Inserted));
     assert_eq!(pane.current_index(), Some(1));
     // The same receipt twice does not move the run again.
-    pane.step_delivered(0, Delivered::Sent);
+    pane.step_delivered(pane.run_id(), 0, Delivered::Sent);
     assert_eq!(pane.current_index(), Some(1));
 
-    pane.step_delivered(1, Delivered::Copied);
+    pane.step_delivered(pane.run_id(), 1, Delivered::Copied);
     assert_eq!(pane.status_of(1), Some(StepStatus::Copied));
     assert!(pane.is_finished());
     assert_eq!(pane.ready_step(&UserLibrary::default()), None);
@@ -404,7 +404,7 @@ fn the_dangerous_question_follows_the_stored_level_the_paste_guard_and_a_literal
     let library = UserLibrary::default();
     let action = pane.ready_step(&library).expect("action step");
     assert!(!action.is_dangerous(), "an info action asks nothing more");
-    pane.step_delivered(0, Delivered::Sent);
+    pane.step_delivered(pane.run_id(), 0, Delivered::Sent);
     let literal = pane.ready_step(&library).expect("literal step");
     assert!(literal.is_dangerous(), "a literal step always asks");
 }

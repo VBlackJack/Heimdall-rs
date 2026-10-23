@@ -27,6 +27,7 @@
 //! is judged here. A step that is refused says why and cannot be sent.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use heimdall_app::TabId;
 use heimdall_core::profile::RemoteOs;
@@ -47,6 +48,24 @@ use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
 use crate::tools::command_library_tool::{generate_error, value_error};
+
+/// How long after a step is delivered the next one ignores a press: a double click or a key
+/// repeat on the button that just sent a step must not send the one after it, which nobody
+/// has read yet.
+const RUN_GUARD: Duration = Duration::from_millis(400);
+
+/// Where the steps of the run in progress can go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunTarget {
+    /// The terminal the run was pinned to when it began.
+    Ready(TabId),
+    /// There was none then, and none has been picked since.
+    NoTerminal,
+    /// The terminal the run was pinned to is no longer offered.
+    Gone,
+    /// The session of the library changed during the run: the user picks a terminal again.
+    Changed,
+}
 
 /// What became of a step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +118,21 @@ pub(super) struct Run {
     statuses: Vec<StepStatus>,
     /// The step the run is at; the number of steps once it is finished.
     current: usize,
+    /// Which run it is: a receipt for another one moves nothing.
+    id: u64,
+    /// Whether the terminal and the system of the far end were pinned, which happens once,
+    /// when the steps are first shown.
+    bound: bool,
+    /// The terminal every step goes to.
+    pinned: Option<TabId>,
+    /// The system of the far end the templates were chosen for.
+    remote: RemoteOs,
+    /// The session of the library changed since the run began.
+    stale: bool,
+    /// When the last step was delivered.
+    delivered_at: Option<Instant>,
+    /// How long a press is ignored after a delivery.
+    guard: Duration,
 }
 
 impl Run {
@@ -134,6 +168,8 @@ pub struct ActionRecord {
 /// The current step, made and checked, ready to be sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ready {
+    /// The run it belongs to.
+    pub run_id: u64,
     /// The place of the step in the runbook.
     pub index: usize,
     /// The command and how dangerous it is.
@@ -188,13 +224,89 @@ impl RunbooksPane {
             .collect();
         let begun = runbook.variables.is_empty();
         let statuses = vec![StepStatus::Pending; runbook.steps.len()];
+        self.runs_started += 1;
         self.run = Some(Run {
             runbook,
             values,
             begun,
             statuses,
             current: 0,
+            id: self.runs_started,
+            bound: false,
+            pinned: None,
+            remote: RemoteOs::Auto,
+            stale: false,
+            delivered_at: None,
+            guard: RUN_GUARD,
         });
+    }
+
+    /// Pins the run to `tab` and to the system of the session as they are now, once its steps
+    /// are shown. A run does not follow the terminal chosen afterwards, nor a session that
+    /// changes: it would send the next step somewhere the user did not look.
+    pub fn pin(&mut self, tab: Option<TabId>) {
+        let remote = self.session.remote;
+        if let Some(run) = self.run.as_mut()
+            && run.begun
+            && !run.bound
+        {
+            run.bound = true;
+            run.pinned = tab;
+            run.remote = remote;
+        }
+    }
+
+    /// The user picked a terminal: the run goes there from now on.
+    pub fn repin(&mut self, tab: TabId) {
+        if let Some(run) = self.run.as_mut()
+            && run.bound
+        {
+            run.pinned = Some(tab);
+            run.stale = false;
+        }
+    }
+
+    /// The session of the library changed: a run in progress waits for a terminal to be picked.
+    pub fn session_changed(&mut self) {
+        if let Some(run) = self.run.as_mut()
+            && run.bound
+        {
+            run.stale = true;
+        }
+    }
+
+    /// The terminal the run is pinned to, and whether the session changed since.
+    #[must_use]
+    pub fn pinned(&self) -> Option<TabId> {
+        self.run.as_ref().and_then(|run| run.pinned)
+    }
+
+    /// Whether the session changed since the run began.
+    #[must_use]
+    pub fn is_stale(&self) -> bool {
+        self.run.as_ref().is_some_and(|run| run.stale)
+    }
+
+    /// Whether the run in progress is shown its steps.
+    #[must_use]
+    pub fn is_bound(&self) -> bool {
+        self.run.as_ref().is_some_and(|run| run.bound)
+    }
+
+    /// Whether a step was delivered a moment ago: a press now is a double click.
+    #[must_use]
+    pub fn is_guarded(&self) -> bool {
+        self.run
+            .as_ref()
+            .is_some_and(|run| run.delivered_at.is_some_and(|at| at.elapsed() < run.guard))
+    }
+
+    /// How long a press is ignored after a delivery.
+    #[cfg(test)]
+    pub(in crate::tools) fn set_guard(&mut self, guard: Duration) {
+        if let Some(run) = self.run.as_mut() {
+            run.guard = guard;
+        }
     }
 
     /// Applies a message of the run that asks nothing of a terminal.
@@ -239,7 +351,13 @@ impl RunbooksPane {
             step,
             &run.variables(),
             shown.as_deref(),
-            self.session.remote,
+            self.run.as_ref().map_or(self.session.remote, |run| {
+                if run.bound {
+                    run.remote
+                } else {
+                    self.session.remote
+                }
+            }),
         );
         let ready = resolved.map(|resolved| {
             let action = match (step, shown.as_deref()) {
@@ -264,6 +382,7 @@ impl RunbooksPane {
                 _ => None,
             };
             Ready {
+                run_id: run.id,
                 index: run.current,
                 step: resolved,
                 action,
@@ -281,11 +400,11 @@ impl RunbooksPane {
 
     /// A step was written, typed or copied: it is marked and the run goes on to the next. A
     /// receipt for a step the run is no longer at (stopped, or moved on) changes nothing.
-    pub fn step_delivered(&mut self, index: usize, how: Delivered) {
+    pub fn step_delivered(&mut self, run_id: u64, index: usize, how: Delivered) {
         let Some(run) = self.run.as_mut() else {
             return;
         };
-        if !run.begun || run.current != index {
+        if run.id != run_id || !run.begun || run.current != index {
             return;
         }
         let Some(status) = run.statuses.get_mut(index) else {
@@ -299,7 +418,20 @@ impl RunbooksPane {
             Delivered::Inserted => StepStatus::Inserted,
             Delivered::Copied => StepStatus::Copied,
         };
+        run.delivered_at = Some(Instant::now());
         run.advance();
+    }
+
+    /// Ends the run in progress.
+    #[cfg(test)]
+    pub(in crate::tools) fn stop_for_test(&mut self) {
+        self.run = None;
+    }
+
+    /// The identity of the run in progress.
+    #[cfg(test)]
+    pub(in crate::tools) fn run_id(&self) -> u64 {
+        self.run.as_ref().map_or(0, |run| run.id)
     }
 
     /// The status of step `index` of the run in progress.
@@ -350,6 +482,7 @@ impl RunbooksPane {
         tab: TabId,
         library: &'a UserLibrary,
         has_terminal: bool,
+        warning: Option<String>,
     ) -> Option<Element<'a, Message>> {
         let run = self.run.as_ref()?;
         let send = move |message| send(tab, message);
@@ -388,7 +521,7 @@ impl RunbooksPane {
         if !run.begun {
             panel = panel.push(variables_view(tab, run));
         } else {
-            panel = panel.push(self.steps_view(tab, run, library, has_terminal));
+            panel = panel.push(self.steps_view(tab, run, library, has_terminal, warning));
         }
         Some(
             container(panel)
@@ -405,6 +538,7 @@ impl RunbooksPane {
         run: &'a Run,
         library: &'a UserLibrary,
         has_terminal: bool,
+        warning: Option<String>,
     ) -> Element<'a, Message> {
         let mut steps: Column<'a, Message> = Column::new().spacing(spacing::SM);
         if run.runbook.steps.is_empty() {
@@ -446,7 +580,7 @@ impl RunbooksPane {
                 if let Some(note) = step.description() {
                     block = block.push(text(note).size(font_size::CAPTION).style(text::secondary));
                 }
-                block = block.push(self.current_view(tab, library, has_terminal));
+                block = block.push(self.current_view(tab, library, has_terminal, warning.clone()));
             }
             steps = steps.push(
                 container(block)
@@ -471,6 +605,7 @@ impl RunbooksPane {
         tab: TabId,
         library: &'a UserLibrary,
         has_terminal: bool,
+        warning: Option<String>,
     ) -> Element<'a, Message> {
         let send = move |message| send(tab, message);
         let resolved = self.resolve_current(library).map(|(_, resolved)| resolved);
@@ -505,7 +640,13 @@ impl RunbooksPane {
             }
             None => {}
         }
-        if !has_terminal {
+        if let Some(warning) = warning {
+            body = body.push(
+                text(warning)
+                    .size(font_size::BODY)
+                    .style(styles::error_text),
+            );
+        } else if !has_terminal {
             body = body.push(
                 text(fl!("ui-tool-cmdlib-send-none"))
                     .size(font_size::CAPTION)

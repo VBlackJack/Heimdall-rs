@@ -207,6 +207,8 @@ pub struct RunbooksPane {
     run: Option<Run>,
     /// What the session the library was opened for gives a run.
     session: RunSession,
+    /// How many runs were started, which gives each its identity.
+    runs_started: u64,
 }
 
 /// The action of an identity: a command of the catalogue, else one of the user's.
@@ -648,11 +650,12 @@ impl RunbooksPane {
         tab: TabId,
         library: &'a UserLibrary,
         has_terminal: bool,
+        warning: Option<String>,
     ) -> Option<Element<'a, Message>> {
         if !self.open {
             return None;
         }
-        if let Some(run) = self.run_view(tab, library, has_terminal) {
+        if let Some(run) = self.run_view(tab, library, has_terminal, warning) {
             return Some(run);
         }
         Some(match &self.editor {
@@ -1340,7 +1343,7 @@ mod run;
 
 #[cfg(test)]
 pub(in crate::tools) use self::run::StepStatus;
-pub use self::run::{Delivered, Ready};
+pub use self::run::{Delivered, Ready, RunTarget};
 
 #[cfg(test)]
 mod tests;
