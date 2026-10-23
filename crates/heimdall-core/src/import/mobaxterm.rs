@@ -17,8 +17,8 @@
 //! `MobaXterm` sessions (`.mxtsessions`, `.mobaconf`, or the `[Bookmarks]` sections of
 //! `MobaXterm.ini`), read as the C# `MobaXtermImporter` reads them.
 //!
-//! A session is `name= #code#flags%host%port%user%...`: `code` names the protocol, and the
-//! `%` fields after it depend on it. `SubRep` names the folder, `\` separating its levels.
+//! A session is `name= #icon#type%host%port%user%...`: `type` names the protocol (the icon is
+//! the user's to change and decides nothing), and the `%` fields after it depend on it. `SubRep` names the folder, `\` separating its levels.
 //! Passwords are encrypted by `MobaXterm` with its own algorithm: they are only counted, so
 //! the user can be told to enter them again.
 
@@ -50,15 +50,21 @@ const UNSAFE_PATH_CHARACTERS: [char; 8] = [';', '|', '&', '`', '$', '>', '<', '!
 /// the separators aside.
 const UNSAFE_FOLDER_CHARACTERS: [char; 7] = ['<', '>', ':', '"', '|', '?', '*'];
 
-/// A `MobaXterm` protocol code and the C# `ConnectionType` it maps to.
+/// A `MobaXterm` session type and the C# `ConnectionType` it maps to, as the keys of the C#
+/// `SessionLayouts` (`MobaXtermImporter.cs:117-165`). FTP is read as well: the C# leaves it out,
+/// Heimdall has FTP profiles.
 const PROTOCOLS: [(u32, &str); 6] = [
-    (109, "SSH"),
-    (91, "RDP"),
-    (140, "SFTP"),
-    (130, "FTP"),
-    (128, "VNC"),
-    (98, "Telnet"),
+    (0, "SSH"),
+    (1, "Telnet"),
+    (4, "RDP"),
+    (5, "VNC"),
+    (6, "FTP"),
+    (7, "SFTP"),
 ];
+
+/// The session type of a WSL distribution (`MobaXtermImporter.cs`, `WslTypeCode`): a Linux system
+/// on the computer that runs `MobaXterm`, with nothing to connect to from another one.
+const WSL_TYPE_CODE: u32 = 14;
 
 /// Where the fields of an SSH session are, as the C# reads them.
 const SSH_KEY_FIELD: usize = 4;
@@ -99,17 +105,6 @@ const RD_GATEWAY_DIRECT_MODES: [u32; 2] = [0, 1];
 /// asks for. 3 "Use smartcard" and any other code are not reproduced.
 const PASSWORD_RD_GATEWAY_AUTHS: [u32; 3] = [0, 1, 2];
 
-/// Key of the field a session gets when it names an SSH jump host its protocol cannot be routed
-/// through (Telnet, VNC): the host, as written. The C# refuses such a session
-/// (`MobaXtermImporter.cs:308-316`); a reader that took it as a direct connection would reach
-/// its host around the bastion the file asked for, so a caller that must not do that (the shared
-/// sessions) refuses on this key.
-pub const UNSUPPORTED_JUMP_HOST_KEY: &str = "mobaxtermUnsupportedJumpHost";
-
-/// Key of the field a session gets when it goes through a proxy Heimdall does not use: the
-/// proxy host, as written, possibly empty (`MobaXtermImporter.cs:318-326`).
-pub const UNSUPPORTED_PROXY_KEY: &str = "mobaxtermUnsupportedProxy";
-
 /// `MobaXterm` writes this in a proxy type field that names no proxy.
 const NO_PROXY_TYPE: &str = "0";
 
@@ -136,23 +131,24 @@ fn unsupported_routes(connection_type: &str) -> UnsupportedRoutes {
     UnsupportedRoutes { jump_host, proxy }
 }
 
-/// Marks on `dto` the jump host and the proxy a session of `connection_type` names and
-/// Heimdall cannot take for it, read from the session's `fields`.
-fn mark_unsupported_routes(dto: &mut Map<String, Value>, connection_type: &str, fields: &[&str]) {
+/// Refuses a session that names a jump host or a proxy its protocol cannot honour, read from
+/// the session's `fields`: taken as a direct connection it would reach its host around the route
+/// the file asked for (`MobaXtermImporter.cs:308-326`).
+fn refuse_unsupported_routes(connection_type: &str, fields: &[&str]) -> Result<(), Refusal> {
     let field = |index: usize| fields.get(index).copied().unwrap_or_default().trim();
     let unsupported = unsupported_routes(connection_type);
-    if let Some(at) = unsupported.jump_host {
-        set_text(dto, UNSUPPORTED_JUMP_HOST_KEY, field(at));
+    if let Some(at) = unsupported.jump_host
+        && !field(at).is_empty()
+    {
+        return Err(Refusal::JumpHost(field(at).to_owned()));
     }
     if let Some((type_at, host_at)) = unsupported.proxy {
         let (proxy_type, proxy_host) = (field(type_at), field(host_at));
         if (!proxy_type.is_empty() && proxy_type != NO_PROXY_TYPE) || !proxy_host.is_empty() {
-            dto.insert(
-                UNSUPPORTED_PROXY_KEY.to_owned(),
-                Value::String(proxy_host.to_owned()),
-            );
+            return Err(Refusal::Proxy(proxy_host.to_owned()));
         }
     }
+    Ok(())
 }
 
 /// Prefix of the identifier a gateway carries until the caller gives it its own.
@@ -252,6 +248,31 @@ pub fn parse_limited(
                 });
             }
             match &outcome {
+                Err(Refusal::Wsl) => parsed.warnings.push(FileWarning::WslNotSupported {
+                    session: key.clone(),
+                    folder: folder.clone(),
+                }),
+                Err(Refusal::UnsupportedType(type_code)) => {
+                    parsed.warnings.push(FileWarning::UnsupportedSessionType {
+                        session: key.clone(),
+                        folder: folder.clone(),
+                        type_code: type_code.clone(),
+                    });
+                }
+                Err(Refusal::JumpHost(host)) => {
+                    parsed.warnings.push(FileWarning::JumpHostNotSupported {
+                        session: key.clone(),
+                        folder: folder.clone(),
+                        host: host.clone(),
+                    });
+                }
+                Err(Refusal::Proxy(host)) => {
+                    parsed.warnings.push(FileWarning::ProxyNotSupported {
+                        session: key.clone(),
+                        folder: folder.clone(),
+                        host: host.clone(),
+                    });
+                }
                 Err(Refusal::RdGatewayHost(host)) => {
                     parsed.warnings.push(FileWarning::InvalidRdGatewayHost {
                         session: key.clone(),
@@ -352,8 +373,16 @@ fn read_rd_gateway<'a>(field: &dyn Fn(usize) -> &'a str) -> RdGatewayRoute {
 
 /// Why a session line gives no session.
 enum Refusal {
-    /// No host, a protocol Heimdall does not map, or a line of another shape.
+    /// No host, or a line of another shape.
     NotASession,
+    /// A WSL distribution.
+    Wsl,
+    /// A session type Heimdall does not take; the type code as written.
+    UnsupportedType(String),
+    /// A jump host on a protocol that is never routed through one; the host as written.
+    JumpHost(String),
+    /// A proxy; the proxy host as written, possibly empty.
+    Proxy(String),
     /// The session names a gateway whose host is not usable.
     GatewayHost(String),
     /// The RDP session names an RD Gateway whose host is not usable.
@@ -521,21 +550,32 @@ fn session(
     unresolved: &mut Vec<String>,
 ) -> Result<Map<String, Value>, Refusal> {
     let value = value.trim();
-    let code = protocol_code(value).ok_or(Refusal::NotASession)?;
+    let (type_text, fields_text) = split_session(value).ok_or(Refusal::NotASession)?;
+    // Digits only, as the C# `NumberStyles.None`: anything else is a type to report, not a
+    // number to read.
+    let code = type_text
+        .bytes()
+        .all(|byte| byte.is_ascii_digit())
+        .then(|| type_text.parse::<u32>().ok())
+        .flatten();
+    if code == Some(WSL_TYPE_CODE) {
+        return Err(Refusal::Wsl);
+    }
     let (_, connection_type) = PROTOCOLS
         .iter()
-        .find(|(known, _)| *known == code)
-        .ok_or(Refusal::NotASession)?;
-    let fields: Vec<&str> = fields_part(value).split('%').collect();
+        .find(|(known, _)| Some(*known) == code)
+        .ok_or_else(|| Refusal::UnsupportedType(type_text.to_owned()))?;
+    let fields: Vec<&str> = fields_text.split('%').collect();
     let field = |index: usize| fields.get(index).copied().unwrap_or_default();
     let host = field(0);
     if host.trim().is_empty() {
         return Err(Refusal::NotASession);
     }
+    // Before anything else is read of the session: it is not taken at all, as the C#.
+    refuse_unsupported_routes(connection_type, &fields)?;
     let mut dto = Map::new();
     set_text(&mut dto, "displayName", name);
     set_text(&mut dto, "remoteServer", host);
-    mark_unsupported_routes(&mut dto, connection_type, &fields);
     dto.insert(
         "connectionType".to_owned(),
         Value::String((*connection_type).to_owned()),
@@ -796,32 +836,23 @@ fn environment_variable(name: &str) -> Option<String> {
     })
 }
 
-/// The number between the first two `#`, as the C# `#(\d+)#`.
-fn protocol_code(value: &str) -> Option<u32> {
-    let mut search = value;
-    while let Some(start) = search.find('#') {
-        let rest = &search[start + 1..];
-        let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-        if digits > 0 && rest[digits..].starts_with('#') {
-            return rest[..digits].parse().ok();
-        }
-        search = rest;
+/// The type and the `%` fields of a session value `#icon#type%host%port%...#font#...`, as the C#
+/// `TryReadSessionLine` (`MobaXtermImporter.cs:515-542`): the third `#` section, cut at its first
+/// `%`. The icon, the first number, is the user's to change and says nothing of the protocol.
+/// `None` for a value of another shape, or with no type.
+fn split_session(value: &str) -> Option<(&str, &str)> {
+    if !value.starts_with('#') {
+        return None;
     }
-    None
+    let main = value.split('#').nth(MAIN_SECTION)?;
+    let (type_text, fields) = main.split_once('%').unwrap_or((main, ""));
+    let type_text = type_text.trim();
+    (!type_text.is_empty()).then_some((type_text, fields))
 }
 
-/// What follows the first `%` after the second `#`, as the C# `ExtractFieldsPart`.
-fn fields_part(value: &str) -> &str {
-    let Some(first) = value.find('#') else {
-        return "";
-    };
-    let Some(second) = value[first + 1..].find('#').map(|at| first + 1 + at) else {
-        return "";
-    };
-    value[second..]
-        .find('%')
-        .map_or("", |percent| &value[second + percent + 1..])
-}
+/// Which `#` section of a session value holds the type and the fields: the value starts with
+/// `#`, so the first section is empty and the second is the icon.
+const MAIN_SECTION: usize = 2;
 
 /// A folder as a Heimdall group, as the C# `SanitizeGroupName`: `\` becomes `/`, `../` and
 /// `./` go, empty levels go, and what a file name may not hold goes.
@@ -990,68 +1021,147 @@ mod tests {
         }
     }
 
-    /// A session line: `code` and each `(index, value)` at its place in the `%` list.
-    fn line(name: &str, code: u32, fields: &[(usize, &str)]) -> String {
+    /// A session line: the session `kind` (the type of the file) and each `(index, value)` at its
+    /// place in the `%` list.
+    fn line(name: &str, kind: u32, fields: &[(usize, &str)]) -> String {
         let mut values = vec![""; 32];
         for (at, value) in fields {
             values[*at] = value;
         }
-        format!("{name}= #{code}#0%{}\n", values.join("%"))
+        format!(
+            "{name}= #109#{kind}%{}
+",
+            values.join("%")
+        )
+    }
+
+    const TELNET: u32 = 1;
+    const RDP: u32 = 4;
+    const VNC: u32 = 5;
+    const SFTP: u32 = 7;
+    const SSH: u32 = 0;
+
+    /// The warnings of `text`, as `(session, what)` pairs for the ones that refuse a route.
+    fn refused(parsed: &Parsed) -> Vec<(&str, String)> {
+        parsed
+            .warnings
+            .iter()
+            .filter_map(|warning| match warning {
+                FileWarning::JumpHostNotSupported { session, host, .. } => {
+                    Some((session.as_str(), format!("jump:{host}")))
+                }
+                FileWarning::ProxyNotSupported { session, host, .. } => {
+                    Some((session.as_str(), format!("proxy:{host}")))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
-    fn a_route_the_protocol_cannot_take_is_marked_on_the_session_so_a_caller_can_refuse_it() {
+    fn a_route_the_protocol_cannot_take_refuses_the_session_with_its_host() {
         // Telnet: jump host at 5, proxy at 10-11. VNC: jump host at 4, proxy at 12-13.
         // SFTP: no jump host slot, proxy at 9-10. SSH: proxy at 18-19.
         let text = format!(
-            "[Bookmarks]\n{}{}{}{}{}{}{}",
-            line("tj", 98, &[(0, "t.lab"), (5, "jump.lab"), (6, "22")]),
-            line("tp", 98, &[(0, "t.lab"), (10, "1"), (11, "proxy.lab")]),
-            line("vj", 128, &[(0, "v.lab"), (4, "jump.lab"), (5, "22")]),
-            line("vp", 128, &[(0, "v.lab"), (12, "2"), (13, "proxy.lab")]),
-            line("sp", 140, &[(0, "f.lab"), (9, "1"), (10, "proxy.lab")]),
-            line("xp", 109, &[(0, "s.lab"), (18, "3")]),
-            line("ok", 98, &[(0, "t.lab"), (10, "0")]),
+            "[Bookmarks]
+{}{}{}{}{}{}{}",
+            line("tj", TELNET, &[(0, "t.lab"), (5, "jump.lab"), (6, "22")]),
+            line("tp", TELNET, &[(0, "t.lab"), (10, "1"), (11, "proxy.lab")]),
+            line("vj", VNC, &[(0, "v.lab"), (4, "jump.lab"), (5, "22")]),
+            line("vp", VNC, &[(0, "v.lab"), (12, "2"), (13, "proxy.lab")]),
+            line("sp", SFTP, &[(0, "f.lab"), (9, "1"), (10, "proxy.lab")]),
+            line("xp", SSH, &[(0, "s.lab"), (18, "3")]),
+            line("ok", TELNET, &[(0, "t.lab"), (10, "0")]),
         );
         let parsed = parse(&text);
-        let get = |at: usize, key: &str| parsed.servers[at][key].as_str().map(str::to_owned);
+        let names: Vec<_> = parsed
+            .servers
+            .iter()
+            .map(|server| server["displayName"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(names, ["ok"], "the others would go around their route");
         assert_eq!(
-            get(0, UNSUPPORTED_JUMP_HOST_KEY).as_deref(),
-            Some("jump.lab")
+            refused(&parsed),
+            [
+                ("tj", "jump:jump.lab".to_owned()),
+                ("tp", "proxy:proxy.lab".to_owned()),
+                ("vj", "jump:jump.lab".to_owned()),
+                ("vp", "proxy:proxy.lab".to_owned()),
+                ("sp", "proxy:proxy.lab".to_owned()),
+                // A proxy type without a host is still a proxy, with an empty host.
+                ("xp", "proxy:".to_owned()),
+            ]
         );
-        assert_eq!(get(1, UNSUPPORTED_PROXY_KEY).as_deref(), Some("proxy.lab"));
-        assert_eq!(
-            get(2, UNSUPPORTED_JUMP_HOST_KEY).as_deref(),
-            Some("jump.lab")
-        );
-        assert_eq!(get(3, UNSUPPORTED_PROXY_KEY).as_deref(), Some("proxy.lab"));
-        assert_eq!(get(4, UNSUPPORTED_PROXY_KEY).as_deref(), Some("proxy.lab"));
-        // A proxy type without a host is still a proxy, with an empty host.
-        assert_eq!(get(5, UNSUPPORTED_PROXY_KEY).as_deref(), Some(""));
-        // "0" names no proxy: nothing is marked.
-        assert!(parsed.servers[6].get(UNSUPPORTED_PROXY_KEY).is_none());
-        assert!(parsed.servers[6].get(UNSUPPORTED_JUMP_HOST_KEY).is_none());
     }
 
     #[test]
     fn an_ssh_or_rdp_jump_host_is_a_gateway_not_an_unsupported_route() {
         let parsed = parse(&format!(
-            "[Bookmarks]\n{}",
+            "[Bookmarks]
+{}",
             line(
                 "s",
-                109,
+                SSH,
                 &[(0, "s.lab"), (7, "jump.lab"), (8, "22"), (9, "ops")]
             )
         ));
-        assert!(parsed.servers[0].get(UNSUPPORTED_JUMP_HOST_KEY).is_none());
+        assert!(parsed.warnings.is_empty());
         assert!(parsed.servers[0].get(GATEWAY_ID_KEY).is_some());
+    }
+
+    #[test]
+    fn the_type_decides_the_protocol_not_the_icon() {
+        // Every icon, one type: a custom icon does not make a Telnet session an SSH one.
+        let text = "[Bookmarks]
+            ssh= #42#0%a.lab%22%root
+            telnet= #109#1%b.lab%23
+            rdp= #7#4%c.lab%3389%admin
+";
+        let parsed = parse(text);
+        let types: Vec<_> = parsed
+            .servers
+            .iter()
+            .map(|server| server["connectionType"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(types, ["SSH", "Telnet", "RDP"]);
+    }
+
+    #[test]
+    fn a_wsl_session_and_any_other_type_are_refused_with_their_name() {
+        let text = "[Bookmarks]
+            wsl= #151#14%AlmaLinux-9%
+            odd= #12#99%x.lab%22
+            word= #12#abc%x.lab%22
+            ok= #109#0%ok.lab%22%root
+";
+        let parsed = parse(text);
+        assert_eq!(parsed.servers.len(), 1);
+        assert_eq!(
+            parsed.warnings,
+            [
+                FileWarning::WslNotSupported {
+                    session: "wsl".to_owned(),
+                    folder: String::new(),
+                },
+                FileWarning::UnsupportedSessionType {
+                    session: "odd".to_owned(),
+                    folder: String::new(),
+                    type_code: "99".to_owned(),
+                },
+                FileWarning::UnsupportedSessionType {
+                    session: "word".to_owned(),
+                    folder: String::new(),
+                    type_code: "abc".to_owned(),
+                },
+            ]
+        );
     }
 
     /// An RDP session with RD Gateway server `at19` and packed settings `at30`.
     fn rdp_gateway(at19: &str, at30: &str) -> Parsed {
         parse(&format!(
             "[Bookmarks]\n{}",
-            line("r", 91, &[(0, "pc.lab"), (19, at19), (30, at30)])
+            line("r", RDP, &[(0, "pc.lab"), (19, at19), (30, at30)])
         ))
     }
 

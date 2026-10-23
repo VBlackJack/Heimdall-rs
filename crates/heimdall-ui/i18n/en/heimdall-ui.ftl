@@ -623,6 +623,11 @@ ui-import-mobaxterm-unresolved-variable = Session "{ $session }": the variable [
 ui-import-mobaxterm-invalid-gateway = Session "{ $session }" was not imported: its SSH gateway "{ $host }" is not a valid host. Importing it would reach the server around the gateway the file asked for.
 ui-import-mobaxterm-invalid-rd-gateway = Session "{ $session }" was not imported: its RD Gateway "{ $host }" is not a valid host. Importing it would reach the server around the gateway the file asked for.
 ui-import-mobaxterm-rd-gateway-unsupported = Session "{ $session }" was not imported: it signs in to its RD Gateway "{ $host }" in a way Heimdall does not reproduce (a smart card, or a setting it does not recognise). Importing it would reach the server around the gateway the file asked for.
+ui-import-mobaxterm-unsupported-type = Session "{ $session }" was not imported: session type { $kind } is not supported.
+ui-import-mobaxterm-wsl = Session "{ $session }" was not imported: it is a WSL distribution, a Linux system on the computer that runs MobaXterm, with nothing to connect to.
+ui-import-mobaxterm-jump-host = Session "{ $session }" was not imported: it goes through the SSH jump host "{ $host }"; Heimdall does not route this protocol through a jump host, and a direct connection would go around it.
+ui-import-mobaxterm-proxy = Session "{ $session }" was not imported: it goes through the proxy "{ $host }"; Heimdall does not use a proxy for this protocol, and a direct connection would go around it.
+ui-import-mobaxterm-proxy-no-host = Session "{ $session }" was not imported: it goes through a proxy; Heimdall does not use a proxy for this protocol, and a direct connection would go around it.
 ui-import-file-too-large = The file is too large to import ({ $size } bytes).
 ui-import-mobaxterm-passwords = MobaXterm passwords are encrypted with a proprietary algorithm and could not be imported. Please re-enter credentials for each session.
 ui-import-mobaxterm-passwords-detected = { $count ->
@@ -5927,7 +5932,9 @@ ui-shared-report-duplicate-host =
         [one] { $count } session on a host filed twice
        *[other] { $count } sessions on a host filed twice
     }
-ui-shared-report-reason-other-protocol = Protocol { $protocol } is not supported, only SSH, SFTP, RDP, Telnet and VNC are taken.
+ui-shared-report-reason-other-protocol = Session type { $kind } is not supported, only SSH, SFTP, RDP, Telnet and VNC are taken.
+ui-shared-report-reason-ftp = FTP sessions are not taken yet: FTP sends its password in clear.
+ui-shared-report-reason-wsl = WSL distribution: a Linux system on the computer that runs MobaXterm, nothing to connect to.
 ui-shared-report-reason-invalid-host = The host { $host } is not a host name or an address.
 ui-shared-report-reason-invalid-gateway = The SSH gateway { $host } is not a host name or an address, so the session was not taken: it would reach its host around the gateway.
 ui-shared-report-reason-duplicate-session = Another session of the file has the same folder and name.

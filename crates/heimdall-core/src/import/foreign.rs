@@ -80,6 +80,45 @@ pub enum FileWarning {
         /// The RD Gateway host, as written.
         host: String,
     },
+    /// A `MobaXterm` session of a type Heimdall does not take: not imported
+    /// (`MobaXtermImporter.cs`, `UnsupportedSessionType`).
+    UnsupportedSessionType {
+        /// The session, as named in the file.
+        session: String,
+        /// The folder it is filed in.
+        folder: String,
+        /// The type code, as written in the file.
+        type_code: String,
+    },
+    /// A `MobaXterm` WSL session: a Linux system on the computer that runs `MobaXterm`, so
+    /// there is nothing to connect to from another one.
+    WslNotSupported {
+        /// The session, as named in the file.
+        session: String,
+        /// The folder it is filed in.
+        folder: String,
+    },
+    /// A `MobaXterm` Telnet or VNC session names an SSH jump host: not imported, since a direct
+    /// connection would go around the bastion the file asked for
+    /// (`MobaXtermImporter.cs:308-316`).
+    JumpHostNotSupported {
+        /// The session, as named in the file.
+        session: String,
+        /// The folder it is filed in.
+        folder: String,
+        /// The jump host, as written.
+        host: String,
+    },
+    /// A `MobaXterm` session goes through a proxy Heimdall does not use: not imported, since a
+    /// direct connection would go around it (`MobaXtermImporter.cs:318-326`).
+    ProxyNotSupported {
+        /// The session, as named in the file.
+        session: String,
+        /// The folder it is filed in.
+        folder: String,
+        /// The proxy host, as written; empty when the file gives none.
+        host: String,
+    },
 }
 
 /// What a file gives.
