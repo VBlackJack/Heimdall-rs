@@ -152,7 +152,7 @@ pub enum SettingsIssue {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SyncSettings {
-    /// The repository: `https://`, `ssh://` or `file://`, or the scp-like `user@host:path`.
+    /// The repository: `https://` or `ssh://`, or the scp-like `user@host:path`.
     pub remote_url: String,
     /// The branch synchronized.
     pub branch: String,

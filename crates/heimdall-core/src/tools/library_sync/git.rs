@@ -31,7 +31,7 @@
 //! of a transport, a credential helper) is not, because ending a process tree needs a Windows
 //! job object or `taskkill`, that is FFI or another program, which this project does not
 //! take. That process ends by itself when it finds its pipe closed or `BatchMode` stops it
-//! asking; the limitation is documented in the pull request.
+//! asking; the limitation is also stated in `docs/command-library-git-sync.md`.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
