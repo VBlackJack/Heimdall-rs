@@ -5623,6 +5623,7 @@ ui-tool-cmdlib-history-this-host = Cet hôte seulement
 ui-tool-cmdlib-history-empty-host = Rien pour cet hôte pour l'instant. Décochez "Cet hôte seulement" pour voir les autres.
 ui-tool-cmdlib-replay-gone = La commande de cette entrée n'existe plus.
 ui-tool-cmdlib-replay-blocked = Cette entrée ne peut pas être envoyée maintenant : ouvrez un onglet de terminal connecté et renseignez les valeurs demandées.
+ui-tool-cmdlib-capture-blocked = L'action en cours d'édition a des modifications non enregistrées. Enregistrez-la ou annulez, puis enregistrez de nouveau la sélection.
 ui-tool-cmdlib-activity-unsaved = Les favoris et l'historique n'ont pas pu être enregistrés.
 ui-tool-cmdlib-broadcast-to = Diffuser vers :
 ui-tool-cmdlib-broadcast = Diffuser

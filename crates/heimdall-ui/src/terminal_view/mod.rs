@@ -203,7 +203,7 @@ impl<'a, M> TerminalView<'a, M> {
 
     /// Shift with the right button asks for the menu that saves the selection to the command
     /// library with `on_capture_menu`, as the C# terminal page does, instead of pasting; a
-    /// right click without Shift still pastes. Left unset, Shift+right-click pastes too.
+    /// right click without Shift still pastes. Left unset, Shift+right-click does nothing.
     #[must_use]
     pub fn on_capture_menu(mut self, on_capture_menu: fn(TabId) -> M) -> Self {
         self.on_capture_menu = Some(on_capture_menu);
@@ -334,11 +334,13 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 let Some(button) = mouse_button(*button) else {
                     return;
                 };
-                if button == MouseButton::Right
-                    && state.modifiers.shift()
-                    && let Some(open) = self.on_capture_menu
-                {
-                    shell.publish(open(self.tab));
+                // Shift+right-click is the capture menu's, never a paste: where the capture is
+                // not offered (a detached window, a session still connecting) it does
+                // nothing, so a click meant for the menu cannot type the clipboard.
+                if button == MouseButton::Right && state.modifiers.shift() {
+                    if let Some(open) = self.on_capture_menu {
+                        shell.publish(open(self.tab));
+                    }
                     shell.capture_event();
                     return;
                 }

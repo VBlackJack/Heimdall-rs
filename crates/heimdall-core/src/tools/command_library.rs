@@ -632,7 +632,11 @@ pub fn validate_import(command: &UserCommand) -> Option<CommandIssue> {
         return Some(issue);
     }
     for (platform, template) in templates(command) {
-        if template.command_pattern.chars().any(|c| c.is_control()) {
+        if template
+            .command_pattern
+            .chars()
+            .any(|c| c.is_control() || crate::invisible::is_invisible(c))
+        {
             return Some(CommandIssue::PatternMultiline(platform));
         }
     }

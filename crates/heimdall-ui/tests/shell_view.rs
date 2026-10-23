@@ -6540,3 +6540,87 @@ fn the_capture_menu_is_not_offered_for_a_session_that_is_not_text() {
         "a tool is no terminal: no menu"
     );
 }
+
+/// What a Shift+right-click over the terminal produces.
+fn shift_right_click(shell: &Shell) -> Vec<Message> {
+    use iced::keyboard::{self, Modifiers};
+    use iced::{Event, Point, mouse};
+
+    let mut ui = simulator(shell);
+    ui.point_at(Point::new(700.0, 300.0));
+    let _ = ui.simulate([
+        Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::SHIFT)),
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+    ]);
+    ui.into_messages().collect()
+}
+
+fn pastes_or_clicks(messages: &[Message]) -> bool {
+    messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::App(
+                AppMessage::Pointer { .. }
+                    | AppMessage::PasteRequest(_)
+                    | AppMessage::ClipboardText { .. }
+            )
+        )
+    })
+}
+
+#[test]
+fn shift_right_click_opens_the_capture_menu_and_never_pastes() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab, _) = connected_shell(dir.path());
+    let messages = shift_right_click(&shell);
+    assert!(!pastes_or_clicks(&messages), "{messages:?}");
+    assert!(
+        messages.iter().any(
+            |message| matches!(message, Message::OpenTreeMenu(TreeMenu::Capture(t)) if *t == tab)
+        ),
+        "the menu is asked for: {messages:?}"
+    );
+}
+
+#[test]
+fn shift_right_click_never_pastes_where_the_capture_is_not_offered() {
+    // A session still connecting offers no capture: the click does nothing at all.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let _ = open(&mut core, "a");
+    let shell = Shell::with_app(core);
+    let messages = shift_right_click(&shell);
+    assert!(!pastes_or_clicks(&messages), "{messages:?}");
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::OpenTreeMenu(_))),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn a_plain_right_click_still_pastes() {
+    use iced::{Event, Point, mouse};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let mut ui = simulator(&shell);
+    ui.point_at(Point::new(700.0, 300.0));
+    let _ = ui.simulate([Event::Mouse(mouse::Event::ButtonPressed(
+        mouse::Button::Right,
+    ))]);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Pointer { input, .. })
+                if input.action
+                    == heimdall_term::MouseAction::Press(heimdall_term::MouseButton::Right)
+        )),
+        "{messages:?}"
+    );
+}

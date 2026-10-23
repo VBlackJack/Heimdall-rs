@@ -34,6 +34,7 @@ pub mod folder_defaults;
 pub mod gateway_parents;
 pub mod import;
 pub mod instance;
+pub mod invisible;
 pub mod last_good_copy;
 pub mod lockout;
 pub mod macros;

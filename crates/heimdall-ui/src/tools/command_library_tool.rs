@@ -297,6 +297,8 @@ enum Notice {
     ActivityUnsaved,
     /// A command typed at the prompt of this terminal, waiting for the user's Enter.
     Inserted(String),
+    /// A capture from a terminal that the editor open with changes in it refused.
+    CaptureBlocked,
 }
 
 /// A command asked to be written, until the application says it was.
@@ -327,7 +329,25 @@ struct Session {
 #[derive(Debug, Clone, Default)]
 struct Editor {
     draft: Draft,
+    /// The draft as the editor opened on it, to tell whether the user changed anything.
+    original: Draft,
     problem: Option<DraftError>,
+}
+
+impl Editor {
+    /// An editor opened on `draft`.
+    fn on(draft: Draft) -> Self {
+        Self {
+            original: draft.clone(),
+            draft,
+            problem: None,
+        }
+    }
+
+    /// Whether the user changed the draft since the editor opened.
+    fn is_changed(&self) -> bool {
+        self.draft != self.original
+    }
 }
 
 /// What went wrong with the user's file.
@@ -685,10 +705,7 @@ impl CommandLibraryPane {
             }
         };
         if let Some(draft) = draft {
-            self.editor = Some(Editor {
-                draft,
-                problem: None,
-            });
+            self.editor = Some(Editor::on(draft));
         }
     }
 
@@ -827,18 +844,22 @@ impl CommandLibraryPane {
             CommandLibraryMessage::New if self.can_edit() => {
                 self.editor = Some(Editor::default());
             }
+            // An editor with changes in it is never replaced by a capture: said, nothing lost.
+            CommandLibraryMessage::Capture(_)
+                if self.editor.as_ref().is_some_and(Editor::is_changed) =>
+            {
+                self.notice = Some(Notice::CaptureBlocked);
+            }
             CommandLibraryMessage::Capture(capture) if self.can_edit() => {
-                self.editor = Some(Editor {
-                    draft: captured_draft(&capture, self.last_category.as_deref()),
-                    problem: None,
-                });
+                self.notice = None;
+                self.editor = Some(Editor::on(captured_draft(
+                    &capture,
+                    self.last_category.as_deref(),
+                )));
             }
             CommandLibraryMessage::Edit(id) if self.can_edit() => {
                 if let Some(command) = self.library.get(&id) {
-                    self.editor = Some(Editor {
-                        draft: Draft::of(command),
-                        problem: None,
-                    });
+                    self.editor = Some(Editor::on(Draft::of(command)));
                 }
             }
             CommandLibraryMessage::Field(field, value) => {
@@ -2065,6 +2086,7 @@ fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
         }
         Notice::ReplayGone => (fl!("ui-tool-cmdlib-replay-gone"), true),
         Notice::ReplayBlocked => (fl!("ui-tool-cmdlib-replay-blocked"), true),
+        Notice::CaptureBlocked => (fl!("ui-tool-cmdlib-capture-blocked"), true),
         Notice::ActivityUnsaved => (fl!("ui-tool-cmdlib-activity-unsaved"), true),
         Notice::Inserted(target) => (
             fl!("ui-tool-cmdlib-inserted", target = target.as_str()),
@@ -2839,6 +2861,37 @@ mod tests {
                 .map(|editor| editor.draft.category.as_str()),
             Some("Network")
         );
+    }
+
+    #[test]
+    fn a_capture_never_replaces_an_editor_with_changes_and_says_so() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::New);
+        type_into(&mut pane, Field::Title, "Mine");
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "uptime",
+            TemplatePlatform::Linux,
+        )));
+        let editor = pane.editor.as_ref().expect("still open");
+        assert_eq!(editor.draft.title, "Mine", "nothing lost");
+        assert_eq!(editor.draft.linux_pattern, "");
+        assert_eq!(pane.notice, Some(Notice::CaptureBlocked));
+
+        // An editor nothing was typed in gives way.
+        pane.update(CommandLibraryMessage::CancelEdit);
+        pane.update(CommandLibraryMessage::New);
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "uptime",
+            TemplatePlatform::Linux,
+        )));
+        assert_eq!(
+            pane.editor
+                .as_ref()
+                .map(|editor| editor.draft.linux_pattern.as_str()),
+            Some("uptime")
+        );
+        assert_eq!(pane.notice, None);
     }
 
     #[test]

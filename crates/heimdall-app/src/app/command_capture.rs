@@ -68,7 +68,7 @@ const STRING_INTRODUCERS: [char; 5] = [']', 'P', 'X', '^', '_'];
 const ESC_WITH_ARGUMENT: [char; 10] = ['(', ')', '*', '+', '-', '.', '/', '#', '%', ' '];
 
 /// A command captured from a terminal, ready to prefill the editor of a new action.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CapturedCommand {
     /// The command line, cleaned and joined to one line.
     pub text: String,
@@ -77,6 +77,17 @@ pub struct CapturedCommand {
     pub platform: TemplatePlatform,
     /// The session's protocol in lower case, kept as a tag.
     pub tag: Option<String>,
+}
+
+impl std::fmt::Debug for CapturedCommand {
+    /// The text is whatever was on a screen, which may hold a secret: never written to a log.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CapturedCommand")
+            .field("text", &"<hidden>")
+            .field("platform", &self.platform)
+            .field("tag", &self.tag)
+            .finish()
+    }
 }
 
 /// The platform a command captured from a session is written for: Windows when the session
@@ -116,7 +127,7 @@ pub fn clean_selection(text: &str) -> String {
             c if STRING_C1.contains(&c) => skip_string(&mut chars),
             '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}' => out.push('\n'),
             '\t' => out.push(' '),
-            c if c.is_control() || is_invisible(c) => {}
+            c if c.is_control() || crate::text::is_invisible(c) => {}
             c => out.push(c),
         }
     }
@@ -146,19 +157,6 @@ fn skip_string(chars: &mut Peekable<Chars<'_>>) {
             _ => {}
         }
     }
-}
-
-/// Characters that draw nothing and change how text reads: the zero-width and direction
-/// marks and overrides, the isolates, and the byte-order mark.
-fn is_invisible(c: char) -> bool {
-    matches!(
-        c,
-        '\u{200b}'..='\u{200f}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{206f}'
-            | '\u{feff}'
-    )
 }
 
 /// The selection as one command line: cleaned, each line trimmed, blank lines dropped, the
@@ -235,6 +233,14 @@ impl App {
         self.pending_capture = Some(context);
     }
 
+    /// Forgets the command captured in every tool tab's stored context, once the library
+    /// tab was told of it: it is delivered once, not kept for as long as the tab lives.
+    pub fn clear_tool_captures(&mut self) {
+        for tab in &mut self.tabs {
+            tab.tool_context.capture = None;
+        }
+    }
+
     /// The capture waiting for the window, with the facts of its session, taken.
     pub fn take_capture(&mut self) -> Option<ToolContext> {
         self.pending_capture.take()
@@ -266,6 +272,27 @@ mod tests {
         );
         assert_eq!(to_command_line("  \n \r\n", TemplatePlatform::Linux), "");
         assert_eq!(to_command_line("", TemplatePlatform::Windows), "");
+    }
+
+    #[test]
+    fn debug_hides_the_captured_text() {
+        let shown = format!(
+            "{:?}",
+            CapturedCommand {
+                text: "mysql -pSECRET".to_owned(),
+                platform: TemplatePlatform::Linux,
+                tag: None,
+            }
+        );
+        assert!(!shown.contains("SECRET"), "{shown}");
+    }
+
+    #[test]
+    fn invisible_marks_of_the_shared_list_are_removed() {
+        assert_eq!(
+            clean_selection("a\u{061C}b\u{00AD}c\u{E0041}d\u{202E}e"),
+            "abcde"
+        );
     }
 
     #[test]

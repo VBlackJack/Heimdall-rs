@@ -3315,6 +3315,8 @@ impl Shell {
         }
         // The tool tabs' states follow their tabs, and those just opened start their work.
         self.tools.sync(&self.app);
+        // A capture is delivered once: the tabs just made have been told, none keeps it.
+        self.app.clear_tool_captures();
         // The commands written into terminals since, for the history of the library that
         // asked.
         let sent = self.app.take_sent_commands();

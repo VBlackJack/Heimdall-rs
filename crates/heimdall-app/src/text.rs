@@ -90,34 +90,10 @@ fn is_separator(c: char) -> bool {
     matches!(c, '\u{2028}' | '\u{2029}')
 }
 
-/// Whether `c` is one of the [`INVISIBLE`] characters.
+/// Whether `c` shows nothing, or changes how what follows shows; the list is the core's.
 pub(crate) fn is_invisible(c: char) -> bool {
-    INVISIBLE
-        .iter()
-        .any(|(first, last)| (*first..=*last).contains(&c))
+    heimdall_core::invisible::is_invisible(c)
 }
-
-/// Characters that show nothing, or change how what follows shows: format characters
-/// (Unicode category Cf: bidirectional controls, zero-width spaces and joiners, the byte
-/// order mark, tags) and the line and paragraph separators.
-const INVISIBLE: [(char, char); 16] = [
-    ('\u{00AD}', '\u{00AD}'),
-    ('\u{0600}', '\u{0605}'),
-    ('\u{061C}', '\u{061C}'),
-    ('\u{06DD}', '\u{06DD}'),
-    ('\u{070F}', '\u{070F}'),
-    ('\u{0890}', '\u{0891}'),
-    ('\u{08E2}', '\u{08E2}'),
-    ('\u{180E}', '\u{180E}'),
-    ('\u{200B}', '\u{200F}'),
-    ('\u{2028}', '\u{202E}'),
-    ('\u{2060}', '\u{2064}'),
-    ('\u{2066}', '\u{206F}'),
-    ('\u{FEFF}', '\u{FEFF}'),
-    ('\u{FFF9}', '\u{FFFB}'),
-    ('\u{E0001}', '\u{E0001}'),
-    ('\u{E0020}', '\u{E007F}'),
-];
 
 /// `text` with every character that would not show as itself written out as `\u{...}`:
 /// controls, format and separator characters, and any space other than the plain one.
@@ -170,7 +146,7 @@ const STRING_TERMINATORS: [char; 2] = ['\u{7}', '\u{9C}'];
 /// to copy while keeping its lines: a terminal escape sequence is removed whole, not only its
 /// escape character (a control sequence to its final byte, an operating system command or
 /// another string to its terminator); `\r\n` and a lone `\r` become `\n`; tabs stay; every
-/// other control character and every [`INVISIBLE`] one (bidirectional controls, zero-width
+/// other control character and every invisible one (bidirectional controls, zero-width
 /// characters, the byte order mark, tags, the line and paragraph separators) is dropped.
 /// Not cut: the caller bounds what it reads.
 #[must_use]

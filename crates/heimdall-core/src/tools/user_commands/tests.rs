@@ -188,6 +188,20 @@ fn a_command_is_made_changed_and_deleted_and_the_file_round_trips() {
 }
 
 #[test]
+fn a_pattern_holding_an_invisible_character_is_refused() {
+    let mut library = UserLibrary::default();
+    for hidden in ['\u{061C}', '\u{00AD}', '\u{E0041}', '\u{202E}'] {
+        let pattern = format!("ls{hidden} -la");
+        assert_eq!(
+            library.upsert(&draft("a", &pattern)),
+            Err(DraftError::PatternMultiline),
+            "{hidden:?}"
+        );
+    }
+    assert!(library.commands().is_empty());
+}
+
+#[test]
 fn a_draft_that_cannot_be_kept_is_refused_and_changes_nothing() {
     let mut library = UserLibrary::default();
     assert_eq!(
@@ -212,6 +226,22 @@ fn a_draft_that_cannot_be_kept_is_refused_and_changes_nothing() {
     gone.id = Some("missing".to_owned());
     assert_eq!(library.upsert(&gone), Err(DraftError::Gone));
     assert!(library.commands().is_empty());
+}
+
+#[test]
+fn an_import_with_an_invisible_character_in_a_pattern_skips_that_action() {
+    for hidden in ["\\u061C", "\\u00AD", "\\uDB40\\uDC41", "\\u202E"] {
+        let json = format!(
+            r#"{{"schemaVersion": "1.0", "totalActions": 1, "actions": [
+              {{"id": "a1", "title": "Odd", "category": "System", "platform": 1, "level": 0,
+                "linuxCommandTemplate": {{"platform": 1, "name": "n",
+                  "commandPattern": "ls{hidden} -la", "parameters": []}}}}]}}"#
+        );
+        let mut library = UserLibrary::default();
+        let report = library.import(&json).expect("an envelope");
+        assert_eq!((report.imported, report.skipped), (0, 1), "{hidden}");
+        assert!(library.commands().is_empty());
+    }
 }
 
 #[test]
